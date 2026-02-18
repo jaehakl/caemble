@@ -189,6 +189,7 @@ CREATE TABLE IF NOT EXISTS repos (
   full_name TEXT PRIMARY KEY,          -- owner/name
   html_url TEXT,
   api_url TEXT,
+  description TEXT,                    -- repository description
   first_seen_at TEXT,
   last_seen_at TEXT,
   repo_json TEXT,                      -- latest raw GitHub data (Search item or repo detail)
@@ -218,13 +219,48 @@ CREATE INDEX IF NOT EXISTS idx_repo_hits_query ON repo_hits(query_id);
 # -----------------------------
 
 def utcnow_iso() -> str:
-    return dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    return dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def db_connect(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.executescript(SCHEMA_SQL)
+    db_migrate_repos_columns(conn)
     return conn
+
+
+def db_migrate_repos_columns(conn: sqlite3.Connection) -> None:
+    """
+    Backward-compatible migration for existing repos table.
+    """
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(repos)")
+    cols = {r[1] for r in cur.fetchall()}
+
+    if "description" not in cols:
+        conn.execute("ALTER TABLE repos ADD COLUMN description TEXT")
+    if "detail" in cols:
+        try:
+            conn.execute("ALTER TABLE repos DROP COLUMN detail")
+        except sqlite3.OperationalError:
+            # Older SQLite builds may not support DROP COLUMN.
+            pass
+    if "url" in cols:
+        try:
+            conn.execute("ALTER TABLE repos DROP COLUMN url")
+        except sqlite3.OperationalError:
+            # Older SQLite builds may not support DROP COLUMN.
+            pass
+
+    # Backfill for old rows.
+    conn.execute(
+        """
+        UPDATE repos
+        SET
+          description = COALESCE(description, json_extract(repo_json, '$.description'))
+        """
+    )
+    conn.commit()
 
 
 def db_seed_keywords(conn: sqlite3.Connection) -> int:
@@ -364,9 +400,21 @@ def make_random_query(conn: sqlite3.Connection, rng: random.Random) -> Tuple[str
         rng,
     )
 
-    # Helpers to sample a row using weights
+    # Helpers to sample a row using weights.
+    # Pick row objects directly to avoid string re-match edge cases.
     def pick(rows: List[KeywordRow]) -> KeywordRow:
-        return next(r for r in rows if r.term == weighted_choice([(x.term, x.weight) for x in rows], rng))
+        if not rows:
+            raise RuntimeError("Cannot pick from empty keyword rows.")
+        total = sum(float(r.weight) for r in rows)
+        if total <= 0:
+            return rng.choice(rows)
+        rnum = rng.random() * total
+        upto = 0.0
+        for row in rows:
+            upto += float(row.weight)
+            if upto >= rnum:
+                return row
+        return rows[-1]
 
     dom = pick(domains)
     intent = pick(intents)
@@ -466,6 +514,47 @@ def db_mark_query_executed(conn: sqlite3.Connection, query_id: int, status: int,
     conn.commit()
 
 
+def _build_numeric_qualifier(name: str, min_value: Optional[int], max_value: Optional[int]) -> Optional[str]:
+    if min_value is None and max_value is None:
+        return None
+    if min_value is not None and min_value < 0:
+        raise ValueError(f"{name} minimum must be >= 0")
+    if max_value is not None and max_value < 0:
+        raise ValueError(f"{name} maximum must be >= 0")
+    if min_value is not None and max_value is not None:
+        if min_value > max_value:
+            raise ValueError(f"{name} minimum cannot be greater than maximum")
+        return f"{name}:{min_value}..{max_value}"
+    if min_value is not None:
+        return f"{name}:>={min_value}"
+    return f"{name}:<={max_value}"
+
+
+def apply_repo_filters_to_query(
+    base_query: str,
+    min_stars: Optional[int] = None,
+    max_stars: Optional[int] = None,
+    min_forks: Optional[int] = None,
+    max_forks: Optional[int] = None,
+    min_followers: Optional[int] = None,
+    max_followers: Optional[int] = None,
+    min_topics: Optional[int] = None,
+    max_topics: Optional[int] = None,
+) -> str:
+    qualifiers = []
+    for q in (
+        _build_numeric_qualifier("stars", min_stars, max_stars),
+        _build_numeric_qualifier("forks", min_forks, max_forks),
+        _build_numeric_qualifier("followers", min_followers, max_followers),
+        _build_numeric_qualifier("topics", min_topics, max_topics),
+    ):
+        if q:
+            qualifiers.append(q)
+    if not qualifiers:
+        return base_query
+    return f"{base_query} {' '.join(qualifiers)}"
+
+
 # -----------------------------
 # Repo storage + tag merge
 # -----------------------------
@@ -494,6 +583,12 @@ def db_upsert_repo_and_hit(conn: sqlite3.Connection, query_id: int, repo_item: D
     now = utcnow_iso()
     html_url = repo_item.get("html_url")
     api_url = repo_item.get("url")
+    description = repo_item.get("description")
+    incoming_topics = repo_item.get("topics") or []
+    incoming_topics = sorted({
+        normalize_term(str(t)) for t in incoming_topics
+        if str(t).strip()
+    })
 
     cur = conn.cursor()
     cur.execute("SELECT merged_tags_json, topics_json FROM repos WHERE full_name=?", (full_name,))
@@ -501,17 +596,38 @@ def db_upsert_repo_and_hit(conn: sqlite3.Connection, query_id: int, repo_item: D
 
     if row:
         existing_tags = _load_json(row[0], {})
+        existing_topics = _load_json(row[1], [])
         merged_tags = merge_repo_tags(existing_tags, hit_tags)
+        merged_topics = sorted(set(existing_topics) | set(incoming_topics))
         conn.execute(
-            "UPDATE repos SET html_url=?, api_url=?, last_seen_at=?, repo_json=?, merged_tags_json=? WHERE full_name=?",
-            (html_url, api_url, now, json.dumps(repo_item), json.dumps(merged_tags, ensure_ascii=False), full_name),
+            "UPDATE repos SET html_url=?, api_url=?, description=?, last_seen_at=?, repo_json=?, topics_json=?, merged_tags_json=? WHERE full_name=?",
+            (
+                html_url,
+                api_url,
+                description,
+                now,
+                json.dumps(repo_item),
+                json.dumps(merged_topics, ensure_ascii=False),
+                json.dumps(merged_tags, ensure_ascii=False),
+                full_name,
+            ),
         )
     else:
         merged_tags = merge_repo_tags({}, hit_tags)
         conn.execute(
-            "INSERT INTO repos(full_name, html_url, api_url, first_seen_at, last_seen_at, repo_json, topics_json, merged_tags_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (full_name, html_url, api_url, now, now, json.dumps(repo_item), json.dumps([]), json.dumps(merged_tags, ensure_ascii=False)),
+            "INSERT INTO repos(full_name, html_url, api_url, description, first_seen_at, last_seen_at, repo_json, topics_json, merged_tags_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                full_name,
+                html_url,
+                api_url,
+                description,
+                now,
+                now,
+                json.dumps(repo_item),
+                json.dumps(incoming_topics, ensure_ascii=False),
+                json.dumps(merged_tags, ensure_ascii=False),
+            ),
         )
 
     conn.execute(
@@ -579,23 +695,28 @@ def db_get_repos_missing_topics(conn: sqlite3.Connection, limit: int = 200) -> L
     """
     cur = conn.cursor()
     cur.execute(
-        "SELECT full_name, topics_json FROM repos LIMIT ?",
+        """
+        SELECT full_name
+        FROM repos
+        WHERE topics_json IS NULL
+           OR topics_json = ''
+           OR topics_json = '[]'
+           OR (json_valid(topics_json)=1 AND json_type(topics_json)='array' AND json_array_length(topics_json)=0)
+           OR json_valid(topics_json)=0
+        ORDER BY last_seen_at DESC
+        LIMIT ?
+        """,
         (limit,),
     )
-    out = []
-    for full_name, topics_json in cur.fetchall():
-        topics = _load_json(topics_json, [])
-        if not topics:
-            out.append(full_name)
-    return out
+    return [r[0] for r in cur.fetchall()]
 
 
 def db_update_repo_details_and_topics(conn: sqlite3.Connection, full_name: str, repo_detail: Dict) -> None:
     topics = repo_detail.get("topics") or []
     now = utcnow_iso()
     conn.execute(
-        "UPDATE repos SET repo_json=?, topics_json=?, last_seen_at=? WHERE full_name=?",
-        (json.dumps(repo_detail), json.dumps(topics, ensure_ascii=False), now, full_name),
+        "UPDATE repos SET topics_json=?, last_seen_at=? WHERE full_name=?",
+        (json.dumps(topics, ensure_ascii=False), now, full_name),
     )
     conn.commit()
 
@@ -734,6 +855,14 @@ def run_harvest(
     min_sleep: float,
     sort: str,
     order: str,
+    min_stars: Optional[int] = None,
+    max_stars: Optional[int] = None,
+    min_forks: Optional[int] = None,
+    max_forks: Optional[int] = None,
+    min_watchers: Optional[int] = None,
+    max_watchers: Optional[int] = None,
+    min_topics: Optional[int] = None,
+    max_topics: Optional[int] = None,
     max_query_attempts: int = 50,
 ) -> None:
     rng = random.Random(seed)
@@ -745,6 +874,17 @@ def run_harvest(
     while executed_steps < steps and attempts < (steps * max_query_attempts):
         attempts += 1
         query, hit_tags, recipe = make_random_query(conn, rng)
+        query = apply_repo_filters_to_query(
+            base_query=query,
+            min_stars=min_stars,
+            max_stars=max_stars,
+            min_forks=min_forks,
+            max_forks=max_forks,
+            min_followers=min_watchers,
+            max_followers=max_watchers,
+            min_topics=min_topics,
+            max_topics=max_topics,
+        )
         qid = db_insert_query_if_new(conn, query, recipe)
 
         if db_query_is_executed(conn, qid):
@@ -803,10 +943,10 @@ def export_repos_csv(conn: sqlite3.Connection, out_path: str) -> int:
         SELECT
             full_name,
             html_url,
+            description,
             first_seen_at,
             last_seen_at,
             merged_tags_json,
-            json_extract(repo_json, '$.description') AS description,
             json_extract(repo_json, '$.language') AS language,
             json_extract(repo_json, '$.stargazers_count') AS stars,
             json_extract(repo_json, '$.forks_count') AS forks,
@@ -820,8 +960,8 @@ def export_repos_csv(conn: sqlite3.Connection, out_path: str) -> int:
     with open(out_path, "w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
         w.writerow([
-            "full_name", "html_url", "first_seen_at", "last_seen_at",
-            "merged_tags_json", "description", "language", "stars", "forks",
+            "full_name", "html_url", "description", "first_seen_at", "last_seen_at",
+            "merged_tags_json", "language", "stars", "forks",
             "open_issues", "updated_at", "license_spdx", "topics_json"
         ])
         for r in rows:
@@ -876,6 +1016,14 @@ def cmd_harvest(args) -> None:
         min_sleep=args.min_sleep,
         sort=args.sort,
         order=args.order,
+        min_stars=args.min_stars,
+        max_stars=args.max_stars,
+        min_forks=args.min_forks,
+        max_forks=args.max_forks,
+        min_watchers=args.min_watchers,
+        max_watchers=args.max_watchers,
+        min_topics=args.min_topics,
+        max_topics=args.max_topics,
     )
 
 
@@ -934,6 +1082,14 @@ def main() -> None:
     p_h.add_argument("--min_sleep", type=float, default=1.5, help="Minimum sleep between requests")
     p_h.add_argument("--sort", type=str, default="updated", choices=["stars", "forks", "help-wanted-issues", "updated"])
     p_h.add_argument("--order", type=str, default="desc", choices=["desc", "asc"])
+    p_h.add_argument("--min-stars", type=int, default=1, help="GitHub Search qualifier: minimum stars")
+    p_h.add_argument("--max-stars", type=int, default=None, help="GitHub Search qualifier: maximum stars")
+    p_h.add_argument("--min-forks", type=int, default=1, help="GitHub Search qualifier: minimum forks")
+    p_h.add_argument("--max-forks", type=int, default=None, help="GitHub Search qualifier: maximum forks")
+    p_h.add_argument("--min-watchers", type=int, default=None, help="Minimum watchers via GitHub 'followers' qualifier")
+    p_h.add_argument("--max-watchers", type=int, default=None, help="Maximum watchers via GitHub 'followers' qualifier")
+    p_h.add_argument("--min-topics", type=int, default=1, help="GitHub Search qualifier: minimum number of topics")
+    p_h.add_argument("--max-topics", type=int, default=None, help="GitHub Search qualifier: maximum number of topics")
     p_h.set_defaults(func=cmd_harvest)
 
     p_e = sub.add_parser("enrich", help="Fetch repo details to populate topics (and refresh repo_json)")

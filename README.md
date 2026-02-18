@@ -1,4 +1,3 @@
-````markdown
 # GitHub CAE / Simulation DB Harvester (DB-managed keywords)
 
 이 프로젝트는 GitHub에서 “시뮬레이션/CAE/EM/반도체/나노/광학(ray tracing 포함)” 관련 오픈소스 저장소를 최대한 넓게 수집해, SQLite 데이터베이스로 축적하는 수집기입니다.
@@ -151,11 +150,9 @@ python github_cae_db_harvester.py --db cae.sqlite export candidates --status pen
 
 ---
 
-## 다음 확장(원하시면 추가해 드릴 수 있는 부분)
+## 다음 확장
 
 * README를 실제로 내려받아(또는 첫 N KB만) 키워드 후보 추출 원천을 늘리기
 * topics 뿐 아니라 `GET /repos/{owner}/{repo}/languages` 등을 수집해 기능별 필터링 강화
 * “신규 레포 발견 효율”을 기준으로 키워드 weight를 자동 조정하는 bandit 방식
 * 제외 필터(렌더링 엔진 중 CAE/광학 시뮬레이션과 거리가 먼 순수 그래픽스 프로젝트를 후처리로 제외) 추가
-
-```
