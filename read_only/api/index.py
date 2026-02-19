@@ -58,6 +58,7 @@ async def get_db() -> AsyncSession:
 
 # Read APIs
 @app.post("/sw_search", response_model=SoftwareSearchResult)
+@app.post("/api/index/sw_search", response_model=SoftwareSearchResult)
 async def sw_search(
     payload: SoftwareSearchRequest, db: AsyncSession = Depends(get_db)
 ) -> SoftwareSearchResult:
@@ -65,10 +66,12 @@ async def sw_search(
 
 
 @app.get("/sw_filter_options", response_model=SoftwareFilterOptionsResult)
+@app.get("/api/index/sw_filter_options", response_model=SoftwareFilterOptionsResult)
 async def sw_filter_options(db: AsyncSession = Depends(get_db)) -> SoftwareFilterOptionsResult:
     return await sw_filter_options_service(db)
 
 
 @app.get("/sw_detail/{full_name:path}", response_model=SoftwareDetailResult)
+@app.get("/api/index/sw_detail/{full_name:path}", response_model=SoftwareDetailResult)
 async def sw_detail(full_name: str, db: AsyncSession = Depends(get_db)) -> SoftwareDetailResult:
     return await sw_detail_service(db, full_name)
