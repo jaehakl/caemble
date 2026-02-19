@@ -1,0 +1,109 @@
+.page {
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 28px 20px 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: clamp(28px, 4vw, 38px);
+}
+
+.links {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.formWrap {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  padding: 18px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  box-shadow: var(--shadow-card);
+}
+
+.formWrap label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 600;
+  color: #24415f;
+}
+
+.formWrap input,
+.formWrap textarea {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: #fff;
+  color: var(--foreground);
+  font-weight: 400;
+}
+
+.formWrap input:focus,
+.formWrap textarea:focus {
+  outline: 2px solid #b8d4fb;
+  border-color: #86b2eb;
+}
+
+.fullRow {
+  grid-column: 1 / -1;
+}
+
+.actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.actions button {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid #89b2e6;
+  background: linear-gradient(180deg, #2f78d1 0%, #2668bc 100%);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.actions button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.deleteButton {
+  border-color: #c06f6f !important;
+  background: linear-gradient(180deg, #cb4a4a 0%, #b23636 100%) !important;
+}
+
+.error {
+  color: var(--danger);
+}
+
+.success {
+  color: var(--success);
+}
+
+@media (max-width: 900px) {
+  .page {
+    padding: 18px 14px 44px;
+  }
+
+  .formWrap {
+    grid-template-columns: 1fr;
+  }
+}

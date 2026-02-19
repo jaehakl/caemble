@@ -111,10 +111,3 @@ export async function logout() {await post(`${API_URL}/auth/logout`);}
 export const swSearch = (payload) => post(`${API_URL}/api/sw_search`, payload);
 export const swFilterOptions = () => get(`${API_URL}/api/sw_filter_options`);
 export const swDetail = (fullName) => get(`${API_URL}/api/sw_detail/${encodeURIComponent(fullName)}`);
-export const getTopics = () => get(`${API_URL}/api/topics`);
-
-// === Admin Mutation APIs (create/update/delete) ===
-export const swUpsertBatch = (softwares) => post(`${API_URL}/api/sw_upsert_batch`, softwares);
-export const swDelete = (fullName) => deleteRequest(`${API_URL}/api/sw_delete/${encodeURIComponent(fullName)}`);
-export const mergeTopics = (payload) => post(`${API_URL}/api/merge_topics`, payload);
-export const deleteTopic = (topicId) => deleteRequest(`${API_URL}/api/topics/${topicId}`);

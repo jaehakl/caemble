@@ -9,8 +9,30 @@ from api.db import (
     SessionLocal,
     engine,
 )
-from api.models import SoftwareUpsertItem, SwUpsertBatchResult
-from api.service.sw_service import sw_upsert_batch_service
+from api.models import (
+    MergeTopicsRequest,
+    MergeTopicsResult,
+    SoftwareDeleteResult,
+    SoftwareDetailResult,
+    SoftwareFilterOptionsResult,
+    SoftwareSearchRequest,
+    SoftwareSearchResult,
+    SoftwareUpsertItem,
+    SwUpsertBatchResult,
+    TopicDeleteResult,
+    TopicRead,
+)
+from api.admin_service.sw_admin_service import sw_delete_service, sw_upsert_batch_service
+from api.admin_service.topic_admin_service import (
+    delete_topic_service,
+    merge_topics_service,
+)
+from api.service.sw_service import (
+    sw_detail_service,
+    sw_filter_options_service,
+    sw_search_service,
+)
+from api.service.topic_service import list_topics_service
 
 
 @asynccontextmanager
@@ -45,11 +67,53 @@ async def get_db() -> AsyncSession:
         yield session
 
 
+# Admin mutation APIs (create/update/delete)
 @app.post("/api/sw_upsert_batch", response_model=SwUpsertBatchResult)
 async def sw_upsert_batch(
     payload: list[SoftwareUpsertItem], db: AsyncSession = Depends(get_db)
 ) -> SwUpsertBatchResult:
     return await sw_upsert_batch_service(db, payload)
+
+
+# Read APIs
+@app.post("/api/sw_search", response_model=SoftwareSearchResult)
+async def sw_search(
+    payload: SoftwareSearchRequest, db: AsyncSession = Depends(get_db)
+) -> SoftwareSearchResult:
+    return await sw_search_service(db, payload)
+
+
+@app.get("/api/sw_filter_options", response_model=SoftwareFilterOptionsResult)
+async def sw_filter_options(db: AsyncSession = Depends(get_db)) -> SoftwareFilterOptionsResult:
+    return await sw_filter_options_service(db)
+
+
+@app.get("/api/sw_detail/{full_name:path}", response_model=SoftwareDetailResult)
+async def sw_detail(full_name: str, db: AsyncSession = Depends(get_db)) -> SoftwareDetailResult:
+    return await sw_detail_service(db, full_name)
+
+
+# Admin mutation APIs (create/update/delete)
+@app.delete("/api/sw_delete/{full_name:path}", response_model=SoftwareDeleteResult)
+async def sw_delete(full_name: str, db: AsyncSession = Depends(get_db)) -> SoftwareDeleteResult:
+    return await sw_delete_service(db, full_name)
+
+
+@app.get("/api/topics", response_model=list[TopicRead])
+async def get_topics(db: AsyncSession = Depends(get_db)) -> list[TopicRead]:
+    return await list_topics_service(db)
+
+
+@app.post("/api/merge_topics", response_model=MergeTopicsResult)
+async def merge_topics(
+    payload: MergeTopicsRequest, db: AsyncSession = Depends(get_db)
+) -> MergeTopicsResult:
+    return await merge_topics_service(db, payload)
+
+
+@app.delete("/api/topics/{topic_id}", response_model=TopicDeleteResult)
+async def delete_topic(topic_id: int, db: AsyncSession = Depends(get_db)) -> TopicDeleteResult:
+    return await delete_topic_service(db, topic_id)
 
 
 '''

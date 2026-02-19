@@ -1,5 +1,5 @@
 {
-  "name": "caemble-admin",
+  "name": "caemble-read-only",
   "version": "0.1.0",
   "private": true,
   "scripts": {
