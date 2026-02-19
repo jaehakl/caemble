@@ -1,0 +1,103 @@
+﻿.page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 28px 20px 56px;
+}
+
+.header h1 {
+  margin: 0;
+}
+
+.backLinkWrap {
+  margin-top: 8px;
+}
+
+.section {
+  margin-top: 24px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  padding: 16px;
+  background: #fff;
+}
+
+.hint {
+  font-size: 13px;
+  color: #4b5563;
+}
+
+.textarea {
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 10px;
+}
+
+.actions button {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.errorList {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  color: #b91c1c;
+}
+
+.tableWrap {
+  margin-top: 12px;
+  overflow: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 1200px;
+}
+
+.table th,
+.table td {
+  border-bottom: 1px solid #e5e7eb;
+  text-align: left;
+  vertical-align: top;
+  padding: 8px;
+  font-size: 13px;
+}
+
+.table th {
+  background: #f8fafc;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.submitError {
+  color: #b91c1c;
+}
+
+.submitSuccess {
+  color: #065f46;
+}
+
+@media (max-width: 720px) {
+  .actions {
+    flex-wrap: wrap;
+  }
+}

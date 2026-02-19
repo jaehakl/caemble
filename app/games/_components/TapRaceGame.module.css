@@ -1,0 +1,54 @@
+﻿.panel {
+  border: 1px solid #fb7185;
+  border-radius: 18px;
+  padding: 18px;
+  background:
+    radial-gradient(circle at 10% 0, #ffe4e6 0%, transparent 30%),
+    #fff1f2;
+  color: #3f0f1f;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  font-size: 14px;
+  margin-bottom: 14px;
+}
+
+.stats span {
+  text-align: center;
+  padding: 8px;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid #fecdd3;
+}
+
+.tapButton {
+  width: 100%;
+  border: none;
+  border-radius: 16px;
+  padding: 42px 14px;
+  font-size: clamp(24px, 6vw, 40px);
+  font-weight: 800;
+  color: #ffffff;
+  background: linear-gradient(120deg, #ef4444, #f43f5e);
+  cursor: pointer;
+}
+
+.tapButton:active {
+  transform: scale(0.99);
+}
+
+.help {
+  margin-top: 12px;
+  color: #881337;
+  font-size: 13px;
+}
+
+@media (max-width: 640px) {
+  .stats {
+    grid-template-columns: 1fr;
+  }
+}
+

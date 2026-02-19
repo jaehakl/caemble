@@ -1,0 +1,166 @@
+.panel {
+  border: 1px solid #f59e0b;
+  border-radius: 18px;
+  padding: 16px;
+  background:
+    radial-gradient(circle at 12% 0%, #ffedd5 0%, transparent 35%),
+    radial-gradient(circle at 86% 4%, #fee2e2 0%, transparent 30%),
+    #fff7ed;
+  color: #451a03;
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.stats span {
+  background: #ffffff;
+  border: 1px solid #fed7aa;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 13px;
+}
+
+.main {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) minmax(140px, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 2px;
+  background: #111827;
+  border: 3px solid #1f2937;
+  border-radius: 10px;
+  padding: 6px;
+}
+
+.cell {
+  aspect-ratio: 1 / 1;
+  background: #0b1020;
+  border-radius: 2px;
+}
+
+.filled {
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 35%);
+}
+
+.i {
+  background: #22d3ee;
+}
+
+.o {
+  background: #facc15;
+}
+
+.t {
+  background: #a78bfa;
+}
+
+.s {
+  background: #4ade80;
+}
+
+.z {
+  background: #fb7185;
+}
+
+.j {
+  background: #60a5fa;
+}
+
+.l {
+  background: #fb923c;
+}
+
+.side {
+  display: grid;
+  gap: 10px;
+}
+
+.nextBox,
+.statusBox {
+  background: #fff;
+  border: 1px solid #fdba74;
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.nextBox p,
+.statusBox p {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.previewGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 16px);
+  gap: 2px;
+}
+
+.previewCell {
+  width: 16px;
+  height: 16px;
+  border-radius: 2px;
+  background: #f1f5f9;
+}
+
+.actions {
+  display: grid;
+  gap: 8px;
+}
+
+.action {
+  border: none;
+  border-radius: 9px;
+  padding: 9px;
+  background: #1f2937;
+  color: #ffffff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.mobileControls {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.control {
+  border: 1px solid #fdba74;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #7c2d12;
+  font-weight: 800;
+  min-height: 38px;
+  cursor: pointer;
+}
+
+.help {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #9a3412;
+}
+
+@media (max-width: 720px) {
+  .main {
+    grid-template-columns: 1fr;
+  }
+
+  .board {
+    max-width: 320px;
+  }
+}

@@ -1,0 +1,75 @@
+.panel {
+  border: 1px solid #7f1d1d;
+  border-radius: 18px;
+  padding: 14px;
+  background:
+    radial-gradient(circle at 12% 5%, #713f12 0%, transparent 34%),
+    radial-gradient(circle at 88% 8%, #0f172a 0%, transparent 40%),
+    #111827;
+  color: #f8fafc;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.stats span {
+  display: block;
+  border: 1px solid #92400e;
+  border-radius: 10px;
+  padding: 8px;
+  font-size: 12px;
+  text-align: center;
+  background: rgb(30 41 59 / 70%);
+}
+
+.canvasShell {
+  border: 1px solid #78350f;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #0f172a;
+}
+
+.canvasMount {
+  width: 100%;
+  min-height: 320px;
+}
+
+.controls {
+  margin-top: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.control {
+  border: none;
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #111827;
+  background: linear-gradient(120deg, #f59e0b, #fcd34d);
+  cursor: pointer;
+}
+
+.help {
+  margin: 0;
+  font-size: 12px;
+  color: #e2e8f0;
+}
+
+@media (max-width: 860px) {
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

@@ -1,0 +1,173 @@
+﻿.pageShell {
+  min-height: 100vh;
+  padding: 48px 24px 80px;
+  background:
+    radial-gradient(circle at 10% 10%, #fde68a 0%, transparent 30%),
+    radial-gradient(circle at 90% 0%, #a5f3fc 0%, transparent 28%),
+    #f8fafc;
+  color: #0f172a;
+}
+
+.hero {
+  max-width: 900px;
+  margin: 0 auto 28px;
+}
+
+.kicker {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 12px;
+  margin-bottom: 10px;
+  color: #0369a1;
+  font-weight: 700;
+}
+
+.hero h1 {
+  font-size: clamp(28px, 5vw, 44px);
+  line-height: 1.12;
+  margin: 0 0 14px;
+}
+
+.hero p {
+  max-width: 760px;
+  font-size: 16px;
+  color: #334155;
+}
+
+.heroActions {
+  margin-top: 14px;
+}
+
+.manageSavesLink {
+  display: inline-block;
+  text-decoration: none;
+  background: #0369a1;
+  color: #ffffff;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-weight: 700;
+}
+
+.controls {
+  max-width: 900px;
+  margin: 0 auto 24px;
+}
+
+.search {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: #ffffff;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.tag,
+.tagActive {
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  font-size: 13px;
+  padding: 6px 10px;
+}
+
+.tag {
+  background: #ffffff;
+}
+
+.tagActive {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #ffffff;
+}
+
+.grid {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.card {
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  padding: 16px;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 8px 30px -28px #0f172a;
+}
+
+.card h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.card p {
+  margin: 0;
+  color: #475569;
+}
+
+.cardTop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.accent {
+  width: 10px;
+  height: 36px;
+  border-radius: 999px;
+}
+
+.meta {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.meta span {
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: #f8fafc;
+}
+
+.tagsInline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tagsInline span {
+  font-size: 12px;
+  color: #0c4a6e;
+  background: #e0f2fe;
+  border-radius: 999px;
+  padding: 3px 8px;
+}
+
+.playLink {
+  margin-top: auto;
+  text-align: center;
+  background: #0f172a;
+  color: #ffffff;
+  text-decoration: none;
+  border-radius: 10px;
+  padding: 9px 10px;
+  font-weight: 700;
+}
+
+@media (max-width: 640px) {
+  .pageShell {
+    padding: 28px 14px 48px;
+  }
+}
+

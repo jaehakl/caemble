@@ -1,0 +1,63 @@
+﻿.panel {
+  border-radius: 18px;
+  border: 1px solid #38bdf8;
+  background:
+    radial-gradient(circle at 80% 0%, #cffafe 0%, transparent 35%),
+    #ecfeff;
+  color: #0c4a6e;
+  padding: 18px;
+}
+
+.header {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.header span {
+  border: 1px solid #bae6fd;
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: #ffffff;
+  font-size: 13px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tile {
+  border-radius: 14px;
+  border: 1px solid #7dd3fc;
+  background: #ffffff;
+  color: #075985;
+  font-size: clamp(24px, 7vw, 34px);
+  font-weight: 800;
+  min-height: 120px;
+  cursor: pointer;
+}
+
+.active {
+  background: #0ea5e9;
+  color: #ffffff;
+  box-shadow: 0 0 0 2px #0369a1 inset;
+}
+
+.footer {
+  margin-top: 14px;
+}
+
+.control {
+  width: 100%;
+  border: none;
+  border-radius: 10px;
+  padding: 10px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #0f172a;
+  cursor: pointer;
+}
+

@@ -1,0 +1,148 @@
+﻿.shell {
+  min-height: 100vh;
+  padding: 28px 18px 56px;
+  background:
+    radial-gradient(circle at 12% 5%, #fde68a 0%, transparent 26%),
+    radial-gradient(circle at 92% 0%, #bfdbfe 0%, transparent 30%),
+    #f8fafc;
+  color: #0f172a;
+}
+
+.header {
+  max-width: 980px;
+  margin: 0 auto 16px;
+}
+
+.backLink {
+  color: #0c4a6e;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.header h1 {
+  margin: 10px 0 6px;
+  font-size: clamp(26px, 5vw, 40px);
+}
+
+.toolbar {
+  max-width: 980px;
+  margin: 0 auto 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.toolbar span {
+  background: #ffffff;
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.secondaryButton,
+.dangerButton,
+.deleteButton,
+.playLink {
+  border: none;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.secondaryButton {
+  background: #0f172a;
+  color: #ffffff;
+}
+
+.dangerButton,
+.deleteButton {
+  background: #dc2626;
+  color: #ffffff;
+}
+
+.playLink {
+  background: #0369a1;
+  color: #ffffff;
+}
+
+.empty,
+.list {
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.empty {
+  border: 1px dashed #94a3b8;
+  border-radius: 12px;
+  padding: 20px;
+  background: #ffffff;
+}
+
+.list {
+  display: grid;
+  gap: 12px;
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.cardHead {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.cardHead h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.cardHead p {
+  margin: 2px 0 0;
+  color: #475569;
+  font-size: 13px;
+}
+
+.meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+
+.meta span {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.details summary {
+  cursor: pointer;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.details pre {
+  margin: 0;
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 10px;
+  padding: 10px;
+  overflow: auto;
+  font-size: 12px;
+}
+
+.deleteButton {
+  margin-top: 10px;
+}
