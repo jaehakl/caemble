@@ -108,6 +108,6 @@ export async function logout() {await post(`${API_URL}/auth/logout`);}
 
 
 // === Read APIs ===
-export const swSearch = (payload) => post(`${API_URL}/api/sw_search`, payload);
-export const swFilterOptions = () => get(`${API_URL}/api/sw_filter_options`);
-export const swDetail = (fullName) => get(`${API_URL}/api/sw_detail/${encodeURIComponent(fullName)}`);
+export const swSearch = (payload) => post(`${API_URL}/sw_search`, payload);
+export const swFilterOptions = () => get(`${API_URL}/sw_filter_options`);
+export const swDetail = (fullName) => get(`${API_URL}/sw_detail/${encodeURIComponent(fullName)}`);
