@@ -39,7 +39,7 @@ app = FastAPI(lifespan=lifespan)
 # CORS settings
 app.add_middleware(
     CORSMiddleware,
-    #allow_credentials=True,
+    allow_credentials=True,
     allow_origins=[
         "http://localhost",
         "http://localhost:5173",
@@ -57,18 +57,18 @@ async def get_db() -> AsyncSession:
 
 
 # Read APIs
-@app.post("/sw_search", response_model=SoftwareSearchResult)
+@app.post("/api/sw_search", response_model=SoftwareSearchResult)
 async def sw_search(
     payload: SoftwareSearchRequest, db: AsyncSession = Depends(get_db)
 ) -> SoftwareSearchResult:
     return await sw_search_service(db, payload)
 
 
-@app.get("/sw_filter_options", response_model=SoftwareFilterOptionsResult)
+@app.get("/api/sw_filter_options", response_model=SoftwareFilterOptionsResult)
 async def sw_filter_options(db: AsyncSession = Depends(get_db)) -> SoftwareFilterOptionsResult:
     return await sw_filter_options_service(db)
 
 
-@app.get("/sw_detail/{full_name:path}", response_model=SoftwareDetailResult)
+@app.get("/api/sw_detail/{full_name:path}", response_model=SoftwareDetailResult)
 async def sw_detail(full_name: str, db: AsyncSession = Depends(get_db)) -> SoftwareDetailResult:
     return await sw_detail_service(db, full_name)
