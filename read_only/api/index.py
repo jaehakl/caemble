@@ -34,22 +34,18 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(docs_url="/api/docs", openapi_url="/api/openapi.json", lifespan=lifespan)
 
 # CORS settings
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
     allow_origins=[
-        "http://localhost",
-        "http://localhost:5173",
         "http://localhost:3000",
     ],
-    allow_origin_regex=r"https://.*\.(caemble\.com|vercel\.app)",
-    allow_methods=["GET","POST","OPTIONS"],
+    allow_credentials=True,
+    allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 async def get_db() -> AsyncSession:
     async with SessionLocal() as session:
