@@ -67,6 +67,27 @@
   font-size: 13px;
 }
 
+.paginationRow {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.paginationInfo {
+  font-size: 13px;
+  color: #35506f;
+}
+
+.paginationControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .listHeader {
   display: flex;
   align-items: center;

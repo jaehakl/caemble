@@ -26,6 +26,8 @@ type TopicDeleteResult = {
   deleted_links: number;
 };
 
+const PAGE_SIZE = 200;
+
 export default function MergeTopicsPage() {
   const [topics, setTopics] = useState<TopicItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -43,6 +45,7 @@ export default function MergeTopicsPage() {
   const [deleting, setDeleting] = useState(false);
   const [result, setResult] = useState<MergeResult | null>(null);
   const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const loadTopics = useCallback(async () => {
     setLoading(true);
@@ -75,6 +78,24 @@ export default function MergeTopicsPage() {
     () => topics.find((item) => item.id === dragSourceId) ?? null,
     [topics, dragSourceId]
   );
+  const selectedTopic = useMemo(
+    () => topics.find((item) => item.id === selectedTopicId) ?? null,
+    [topics, selectedTopicId]
+  );
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(topics.length / PAGE_SIZE)),
+    [topics.length]
+  );
+  const pagedTopics = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return topics.slice(start, start + PAGE_SIZE);
+  }, [currentPage, topics]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const onDropToTarget = (dropTargetId: number) => {
     if (dragSourceId === null || dragSourceId === dropTargetId) {
@@ -283,9 +304,49 @@ export default function MergeTopicsPage() {
         <p className={styles.helperText}>
           클릭: 카드 1개 선택 후 다른 카드 클릭으로 merge 모달을 엽니다. 선택 후 Del 키를 누르면 삭제 확인창이 열립니다.
         </p>
+        <div className={styles.paginationRow}>
+          <div className={styles.paginationInfo}>
+            Page {currentPage}/{totalPages} · Showing {pagedTopics.length} of {topics.length}
+            {selectedTopic ? ` · Selected: ${selectedTopic.topic} (id=${selectedTopic.id})` : ""}
+          </div>
+          <div className={styles.paginationControls}>
+            <button
+              type="button"
+              className={styles.ghostButton}
+              onClick={() => setCurrentPage(1)}
+              disabled={currentPage === 1}
+            >
+              First
+            </button>
+            <button
+              type="button"
+              className={styles.ghostButton}
+              onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+            >
+              Prev
+            </button>
+            <button
+              type="button"
+              className={styles.ghostButton}
+              onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+            >
+              Next
+            </button>
+            <button
+              type="button"
+              className={styles.ghostButton}
+              onClick={() => setCurrentPage(totalPages)}
+              disabled={currentPage === totalPages}
+            >
+              Last
+            </button>
+          </div>
+        </div>
 
         <div className={styles.topicGrid}>
-          {topics.map((topic) => {
+          {pagedTopics.map((topic) => {
             const isPreviewTarget =
               hoverTargetId === topic.id &&
               dragSourceTopic !== null &&
@@ -327,16 +388,12 @@ export default function MergeTopicsPage() {
                   <>
                     <p className={styles.previewLabel}>Merge Preview</p>
                     <h3>{preview.title}</h3>
-                    <p className={styles.meta}>id={topic.id} / softwares={preview.softwareCount}</p>
-                    <p className={styles.altLabel}>alternative_topics (merged)</p>
-                    <p className={styles.altValue}>{JSON.stringify(preview.alternativeTopics)}</p>
+                    <p className={styles.altValue}> ({preview.softwareCount}) {JSON.stringify(preview.alternativeTopics)}</p>
                   </>
                 ) : (
                   <>
                     <h3>{topic.topic}</h3>
-                    <p className={styles.meta}>id={topic.id} / softwares={topic.software_count}</p>
-                    <p className={styles.altLabel}>alternative_topics</p>
-                    <p className={styles.altValue}>{JSON.stringify(topic.alternative_topics ?? [])}</p>
+                    <p className={styles.altValue}> ({topic.software_count}) {JSON.stringify(topic.alternative_topics ?? [])}</p>
                   </>
                 )}
               </article>
