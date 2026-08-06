@@ -104,8 +104,9 @@ function SyntaxHelp() {
             <h3 className="mt-5 font-semibold text-slate-900">결과와 실행 상태</h3>
             <p className="mt-2">
               Run은 <Code>idle → preparing → running → succeeded | failed | cancelled</Code> 상태를 사용합니다. 중간
-              artifact payload는 simulation Worker 밖으로 나오지 않습니다. 성공 결과에는 global RecordedData, compact
-              trace, provenance만 포함되며 뒤 kernel이 실패하면 staged RecordedData 전체를 폐기합니다.
+              artifact와 solver state는 CAE worker 밖으로 나오지 않습니다. 브라우저는 선언되고 실제{' '}
+              <Code>sim.record()</Code>된 RecordedData만 받으며 trace와 provenance는 CAE 진단 로그에만 남습니다. 뒤
+              kernel이 실패하면 provisional RecordedData와 Blob 전체를 폐기합니다.
             </p>
           </div>
         </div>

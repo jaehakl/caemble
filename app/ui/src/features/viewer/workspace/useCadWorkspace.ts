@@ -23,15 +23,10 @@ import {
   updateCadSimulationCode,
   updateCadSource,
 } from '@/lib/cad'
-import { gpStationApiBaseUrl, useCaeAccessToken } from '@/features/cae/connection'
+import { useCaeAccessToken } from '@/features/cae/connection'
+import { releaseRecordedDataAttachments, simulate } from '@/features/cae/client'
 import { sourceOnlyMaterialParameters, type MaterialResolution } from '@/lib/material'
-import {
-  exportSimulationResult,
-  releaseRecordedDataAttachments,
-  runRemoteCaeSimulation,
-  type SimulationProgramManifest,
-  type SimulationResult,
-} from '@/lib/simulation'
+import type { SimulationProgramManifest } from '@/lib/cad/simulation'
 import type { SimulationCompatibility, SimulationCompatibilityIssue, SimulationProcess } from './simulationUiTypes'
 
 export type AppStatus =
@@ -432,8 +427,6 @@ export type SimulationController = Readonly<{
   cancel: () => void
   compatibility: SimulationCompatibility
   process: SimulationProcess
-  programResult: SimulationResult | null
-  exportProgramResult: () => string | null
   recordedData: RecordedData | null
   run: () => string | null
   stale: boolean
@@ -474,7 +467,6 @@ export function useCadWorkspace(
   const accessToken = useCaeAccessToken()
   const recordedDataRef = useRef<RecordedData | null>(null)
   const [process, setProcess] = useState<SimulationProcess>(idleSimulationProcess)
-  const [programResult, setProgramResult] = useState<SimulationResult | null>(null)
   const [recordedData, setRecordedData] = useState<RecordedData | null>(null)
   const [stale, setStale] = useState(false)
   const [evaluationTimeoutMs, setEvaluationTimeoutMs] = useState<EvaluationTimeoutMs>(3000)
@@ -638,7 +630,6 @@ export function useCadWorkspace(
       activeRun.cancel()
       recordedDataRef.current = null
       setRecordedData(null)
-      setProgramResult(null)
       setProcess(
         Object.freeze({
           runId: activeRun.runId ?? activeRun.requestId,
@@ -754,7 +745,6 @@ export function useCadWorkspace(
     releaseRecordedDataAttachments(recordedDataRef.current)
     recordedDataRef.current = null
     setRecordedData(null)
-    setProgramResult(null)
     setStale(false)
     setProcess(
       Object.freeze({
@@ -767,95 +757,68 @@ export function useCadWorkspace(
         finishedAt: null,
       }),
     )
-    const remote = runRemoteCaeSimulation({
-      apiBaseUrl: gpStationApiBaseUrl(),
-      token: accessToken,
-      sample: structureSnapshot.realization,
-      setup: experimentSnapshot.realization,
-      callbacks: {
-        onRecord(name, tensor) {
-          if (activeRunRef.current?.requestId !== requestId) return
-          const nextRecordedData = Object.freeze({
-            ...(recordedDataRef.current ?? {}),
-            [name]: tensor,
-          }) as RecordedData
-          recordedDataRef.current = nextRecordedData
-          setRecordedData(nextRecordedData)
-        },
-        onProgress(progress) {
-          const active = activeRunRef.current
-          if (active?.requestId !== requestId) return
-          if (active.runId !== progress.runId) {
-            activeRunRef.current = Object.freeze({ ...active, runId: progress.runId })
-          }
-          setProcess(
-            Object.freeze({
-              runId: progress.runId,
-              status: 'running',
-              engine: simulationEngine,
-              stage: `${progress.task}: ${progress.stage}`,
-              error: null,
-              startedAt,
-              finishedAt: null,
-            }),
-          )
-        },
-        onStarted(runId) {
-          const active = activeRunRef.current
-          if (active?.requestId !== requestId) return
-          activeRunRef.current = Object.freeze({ ...active, runId })
-          setProcess(
-            Object.freeze({
-              runId,
-              status: 'running',
-              engine: simulationEngine,
-              stage: 'running',
-              error: null,
-              startedAt,
-              finishedAt: null,
-            }),
-          )
-        },
-        onStatus(status) {
-          const active = activeRunRef.current
-          if (active?.requestId !== requestId) return
-          setProcess(
-            Object.freeze({
-              runId: active.runId ?? requestId,
-              status: status === 'validating' ? 'preparing' : 'running',
-              engine: simulationEngine,
-              stage: status,
-              error: null,
-              startedAt,
-              finishedAt: null,
-            }),
-          )
-        },
+    const abortController = new AbortController()
+    const promise = simulate(structureSnapshot.realization, experimentSnapshot.realization, {
+      signal: abortController.signal,
+      onRecord(name, tensor) {
+        if (activeRunRef.current?.requestId !== requestId) return
+        const nextRecordedData = Object.freeze({
+          ...(recordedDataRef.current ?? {}),
+          [name]: tensor,
+        }) as RecordedData
+        recordedDataRef.current = nextRecordedData
+        setRecordedData(nextRecordedData)
+      },
+      onProgress(progress) {
+        const active = activeRunRef.current
+        if (active?.requestId !== requestId) return
+        if (active.runId !== progress.runId) {
+          activeRunRef.current = Object.freeze({ ...active, runId: progress.runId })
+        }
+        setProcess(
+          Object.freeze({
+            runId: progress.runId,
+            status: 'running',
+            engine: simulationEngine,
+            stage: `${progress.task}: ${progress.stage}`,
+            error: null,
+            startedAt,
+            finishedAt: null,
+          }),
+        )
+      },
+      onStatus(status) {
+        const active = activeRunRef.current
+        if (active?.requestId !== requestId) return
+        setProcess(
+          Object.freeze({
+            runId: active.runId ?? requestId,
+            status: status === 'validating' ? 'preparing' : 'running',
+            engine: simulationEngine,
+            stage: status,
+            error: null,
+            startedAt,
+            finishedAt: null,
+          }),
+        )
       },
     })
     activeRunRef.current = Object.freeze({
-      cancel: remote.cancel,
+      cancel: () => abortController.abort(),
       requestId,
       runId: null,
       startedAt,
     })
-    void remote.promise
+    void promise
       .then((result) => {
         if (activeRunRef.current?.requestId !== requestId) {
-          releaseRecordedDataAttachments(
-            Object.freeze(
-              Object.fromEntries(Object.entries(result.recordedData).map(([name, entry]) => [name, entry.data])),
-            ),
-          )
+          releaseRecordedDataAttachments(result)
           return
         }
+        const completedRunId = activeRunRef.current.runId ?? requestId
         activeRunRef.current = null
-        const nextRecordedData = Object.freeze(
-          Object.fromEntries(Object.entries(result.recordedData).map(([name, entry]) => [name, entry.data])),
-        ) as RecordedData
-        recordedDataRef.current = nextRecordedData
-        setRecordedData(nextRecordedData)
-        setProgramResult(result)
+        recordedDataRef.current = result
+        setRecordedData(result)
         const currentStructure = documentHandlersRef.current.structure?.getSnapshot()
         const currentExperiment = documentHandlersRef.current.experiment?.getSnapshot()
         setStale(
@@ -864,7 +827,7 @@ export function useCadWorkspace(
         )
         setProcess(
           Object.freeze({
-            runId: result.runId,
+            runId: completedRunId,
             status: 'succeeded',
             engine: simulationEngine,
             stage: null,
@@ -881,7 +844,6 @@ export function useCadWorkspace(
         releaseRecordedDataAttachments(recordedDataRef.current)
         recordedDataRef.current = null
         setRecordedData(null)
-        setProgramResult(null)
         setProcess(
           Object.freeze({
             runId: active.runId ?? requestId,
@@ -902,9 +864,9 @@ export function useCadWorkspace(
     if (!active) return
     activeRunRef.current = null
     active.cancel()
+    releaseRecordedDataAttachments(recordedDataRef.current)
     recordedDataRef.current = null
     setRecordedData(null)
-    setProgramResult(null)
     setProcess(
       Object.freeze({
         runId: active.runId ?? active.requestId,
@@ -918,18 +880,11 @@ export function useCadWorkspace(
     )
   }, [])
 
-  const exportProgramResult = useCallback(
-    () => (programResult ? exportSimulationResult(programResult) : null),
-    [programResult],
-  )
-
   const simulation: SimulationController = {
     canRun,
     cancel,
     compatibility,
     process,
-    programResult,
-    exportProgramResult,
     recordedData,
     run,
     stale,

@@ -9,14 +9,11 @@ export type {
   DcCurrentDensityInitialization,
   DcCurrentDensityOutputRequest,
   DcCurrentDensityTaskConfig,
-  PreparedDcInput,
-  ResolvedSurface,
 } from './dcCurrentDensity'
 
 export { steadyStateHeat, steadyStateHeatDescriptor, steadyStateHeatKernelRef } from './steadyStateHeat'
 
 export type {
-  PreparedSteadyStateHeatInput,
   SteadyStateHeatArtifactTypes,
   SteadyStateHeatBoundaryCondition,
   SteadyStateHeatInitialization,

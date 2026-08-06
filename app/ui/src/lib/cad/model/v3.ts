@@ -1,5 +1,5 @@
-import type { DefinedKernelTask, RecordedDataSpec } from '../../simulation/types'
-import { canonicalRecordedDataSpec, simulationProgramManifest } from '../../simulation/authoring'
+import type { DefinedKernelTask, RecordedDataSpec } from '../simulation/types'
+import { canonicalRecordedDataSpec, simulationProgramManifest } from '../simulation/authoring'
 import { Structure, type StructureGroupMap } from './structure'
 import type { Tensor, Vars } from './types'
 import type { UcumUnit } from './units'
@@ -51,7 +51,7 @@ function freezeRecordedData<Recorded extends Readonly<Record<string, RecordedDat
         canonicalRecordedDataSpec(spec, `RecordedData ${JSON.stringify(name)}`),
       ]),
     ),
-  ) as Recorded
+  ) as unknown as Recorded
 }
 
 export class StructureDefinition<Schema extends VarsSchemaDefinition = VarsSchemaDefinition> extends Structure {
@@ -141,7 +141,7 @@ export class ExperimentDefinition<
     return this.geometryFactory(Object.freeze({ vars: vars as InferVars<Schema> }))
   }
 
-  createProgramRuntime(vars: Readonly<Vars>, programHash: string, pythonSource: string, pythonSourceHash: string) {
+  createProgramRuntime(vars: Readonly<Vars>, pythonSource: string) {
     const typedVars = vars as InferVars<Schema>
     const tasks = this.tasksFactory(Object.freeze({ vars: typedVars }))
     if (!tasks || typeof tasks !== 'object' || Array.isArray(tasks) || Object.keys(tasks).length === 0) {
@@ -156,7 +156,7 @@ export class ExperimentDefinition<
     return Object.freeze({
       tasks: frozenTasks,
       recordedData: this.recordedData,
-      manifest: simulationProgramManifest(frozenTasks, this.recordedData, programHash, pythonSource, pythonSourceHash),
+      manifest: simulationProgramManifest(frozenTasks, this.recordedData, pythonSource),
     })
   }
 }

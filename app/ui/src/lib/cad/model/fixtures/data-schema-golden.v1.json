@@ -387,5 +387,88 @@
         "materialized": ["온도", "전류", "응력"]
       }
     }
+  ],
+  "invalidCases": [
+    {
+      "name": "fixed_axis_shape_mismatch",
+      "schema": {
+        "dtype": "int32",
+        "axes": [
+          {
+            "name": "component",
+            "length": 3
+          }
+        ]
+      },
+      "input": {
+        "value": [1, 2]
+      },
+      "issue": "shape",
+      "pythonIssue": "length"
+    },
+    {
+      "name": "dynamic_axis_ticks_mismatch",
+      "schema": {
+        "dtype": "float32",
+        "unit": "{fraction}",
+        "quantityKind": "DimensionlessRatio",
+        "axes": [
+          {
+            "name": "position"
+          }
+        ]
+      },
+      "input": {
+        "value": [1, 2],
+        "axes": [
+          {
+            "ticks": [0]
+          }
+        ]
+      },
+      "issue": "ticks"
+    },
+    {
+      "name": "vector_component_shape_mismatch",
+      "schema": {
+        "dtype": "float64",
+        "unit": "A.m-2",
+        "quantityKind": "electromagnetism.ElectricCurrentDensity",
+        "basis": [
+          [1, 0, 0],
+          [0, 1, 0],
+          [0, 0, 1]
+        ],
+        "axes": [
+          {
+            "name": "point",
+            "length": 2
+          }
+        ]
+      },
+      "input": {
+        "value": [
+          [1, 2],
+          [3, 4]
+        ]
+      },
+      "issue": "component"
+    },
+    {
+      "name": "uint8_out_of_range",
+      "schema": {
+        "dtype": "uint8",
+        "axes": [
+          {
+            "name": "sample",
+            "length": 2
+          }
+        ]
+      },
+      "input": {
+        "value": [0, 256]
+      },
+      "issue": "uint8"
+    }
   ]
 }

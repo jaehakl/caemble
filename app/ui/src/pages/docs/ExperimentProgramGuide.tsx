@@ -97,8 +97,8 @@ export function ExperimentProgramGuide() {
             </table>
           </div>
           <p className="mt-3 text-sm leading-6 text-slate-600">
-            run 중 계산된 물리량은 <Code>varsSchema</Code>를 다시 평가해 표현하지 않습니다. kernel의 opaque{' '}
-            <Code>StateRef</Code>와 typed <Code>ArtifactRef</Code>를 다음 task에 명시적으로 전달합니다.
+            run 중 계산된 물리량은 <Code>varsSchema</Code>를 다시 평가해 표현하지 않습니다. kernel의 opaque state와
+            artifact handle을 Python <Code>simulate()</Code>에서 다음 task에 명시적으로 전달합니다.
           </p>
         </section>
 

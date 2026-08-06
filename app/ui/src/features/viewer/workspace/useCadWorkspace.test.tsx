@@ -11,9 +11,10 @@ import {
   type CadEvaluationResponse,
   type CompiledCadSource,
   type EvaluatedDocumentSnapshot,
+  type RecordedData,
 } from '@/lib/cad'
 import { clearCaeAccessToken, setCaeAccessToken } from '@/features/cae/connection'
-import { runRemoteCaeSimulation, type SimulationResult } from '@/lib/simulation'
+import { simulate } from '@/features/cae/client'
 import { useCadWorkspace } from './useCadWorkspace'
 
 const compilerVersion = 'test-compiler' as CompiledCadSource['compilerVersion']
@@ -27,11 +28,11 @@ vi.mock('@/lib/cad', async (importActual) => {
   }
 })
 
-vi.mock('@/lib/simulation', async (importActual) => {
-  const actual = await importActual<typeof import('@/lib/simulation')>()
+vi.mock('@/features/cae/client', async (importActual) => {
+  const actual = await importActual<typeof import('@/features/cae/client')>()
   return {
     ...actual,
-    runRemoteCaeSimulation: vi.fn(),
+    simulate: vi.fn(),
   }
 })
 
@@ -40,7 +41,7 @@ describe('useCadWorkspace compilation cache', () => {
     vi.useFakeTimers()
     vi.mocked(compileCadDocument).mockReset()
     vi.mocked(evaluateInIsolatedRunner).mockReset()
-    vi.mocked(runRemoteCaeSimulation).mockReset()
+    vi.mocked(simulate).mockReset()
     setCaeAccessToken('gpsk_test')
   })
 
@@ -241,26 +242,19 @@ describe('useCadWorkspace compilation cache', () => {
     const structureHash = 'a'.repeat(64)
     const experimentHash = 'b'.repeat(64)
     const program = Object.freeze({
-      formatVersion: 2 as const,
-      programHash: experimentHash,
+      formatVersion: 3 as const,
       simulationApiVersion: 1 as const,
       pythonSource: 'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
-      pythonSourceHash: 'c'.repeat(64),
       tasks: Object.freeze({
         electric: Object.freeze({
           kernel: Object.freeze({
             name: 'dc-current-density',
             version: '0.0.0',
-            descriptorHash: 'deadbeef',
           }),
-          descriptor: null,
           config: Object.freeze({}),
-          configHash: 'dc-config',
-          outputArtifacts: Object.freeze({}),
         }),
       }),
       recordedData: Object.freeze({}),
-      recordedDataSchemaHash: '811c9dc5',
     })
     const scene = serializeCadScene({
       lengthUnit: 'mm',
@@ -271,7 +265,7 @@ describe('useCadWorkspace compilation cache', () => {
     })
     const evaluationCallbacks: Array<Parameters<typeof evaluateInIsolatedRunner>[1]> = []
     const runCancel = vi.fn()
-    let resolveRun: ((value: SimulationResult) => void) | undefined
+    let resolveRun: ((value: RecordedData) => void) | undefined
     vi.mocked(compileCadDocument).mockImplementation(async (document) => ({
       apiVersion: 3,
       compilerVersion,
@@ -283,11 +277,11 @@ describe('useCadWorkspace compilation cache', () => {
       evaluationCallbacks.push(handlers)
       return vi.fn()
     })
-    vi.mocked(runRemoteCaeSimulation).mockImplementation(() => {
-      const promise = new Promise<SimulationResult>((resolve) => {
+    vi.mocked(simulate).mockImplementation((_sample, _setup, options) => {
+      options?.signal?.addEventListener('abort', runCancel, { once: true })
+      return new Promise<RecordedData>((resolve) => {
         resolveRun = resolve
       })
-      return Object.freeze({ cancel: runCancel, promise })
     })
 
     const structure = createCadSourceDocument('structure', 'structure source', 7)
@@ -346,7 +340,7 @@ describe('useCadWorkspace compilation cache', () => {
     })
     expect(requestId).not.toBeNull()
     expect(compileCadDocument).toHaveBeenCalledTimes(2)
-    expect(runRemoteCaeSimulation).toHaveBeenCalledOnce()
+    expect(simulate).toHaveBeenCalledOnce()
 
     const changedExperiment = updateCadSource(experiment, 'changed experiment source')
     await act(async () => {
@@ -358,29 +352,11 @@ describe('useCadWorkspace compilation cache', () => {
     expect(runCancel).toHaveBeenCalledOnce()
     expect(render.result.current.simulation.process.status).toBe('cancelled')
 
-    const lateResult: SimulationResult = {
-      format: 'caemble-run',
-      formatVersion: 1,
-      runId: requestId!,
-      finalStateRevision: 0,
-      recordedData: {},
-      trace: [],
-      provenance: {
-        programHash: experimentHash,
-        structureSourceHash: structureHash,
-        experimentSourceHash: experimentHash,
-        structureSeed: 7,
-        experimentSeed: 9,
-        structureVars: {},
-        experimentVars: {},
-        kernels: [],
-      },
-    }
     await act(async () => {
-      resolveRun?.(lateResult)
+      resolveRun?.({})
       await Promise.resolve()
     })
-    expect(render.result.current.simulation.programResult).toBeNull()
+    expect(render.result.current.simulation.recordedData).toBeNull()
     expect(render.result.current.simulation.process.status).toBe('cancelled')
     render.unmount()
   })

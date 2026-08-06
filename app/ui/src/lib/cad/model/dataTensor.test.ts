@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { canonicalDataHash } from '../../simulation/authoring'
 import type { DataDType, DataSchema, DataTensor, LegacyRecordedDataTensor } from './descriptor'
 import {
   DATA_TENSOR_ATTACHMENT_SHARD_BYTES,
@@ -17,10 +16,8 @@ const goldenFixture = JSON.parse(
   readFileSync(new URL('./fixtures/data-schema-golden.v1.json', import.meta.url), 'utf8'),
 ) as Readonly<{
   fixtureVersion: number
-  canonicalization: string
   cases: readonly Readonly<{
     name: string
-    schemaHash: string
     schema: unknown
     input: unknown
     expected: Readonly<{
@@ -29,6 +26,12 @@ const goldenFixture = JSON.parse(
       rawHex: string
       materialized: unknown
     }>
+  }>[]
+  invalidCases: readonly Readonly<{
+    name: string
+    schema: unknown
+    input: unknown
+    issue: string
   }>[]
 }>
 
@@ -50,20 +53,30 @@ function hex(bytes: Uint8Array) {
 }
 
 describe('DataTensor codec', () => {
-  it('matches the shared UTF-8 DataSchema golden fixture', () => {
+  it('matches the local UTF-8 DataSchema golden fixture', () => {
     expect(goldenFixture.fixtureVersion).toBe(1)
-    expect(goldenFixture.canonicalization).toBe('caemble-canonical-data-fnv1a32-v1')
 
     goldenFixture.cases.forEach((fixture) => {
       const dataSchema = fixture.schema as DataSchema
       const tensor = createDataTensor(dataSchema, fixture.input as LegacyRecordedDataTensor, fixture.name)
       const accessor = createDataTensorAccessor(dataSchema, tensor, fixture.name)
 
-      expect(canonicalDataHash(dataSchema), fixture.name).toBe(fixture.schemaHash)
       expect(accessor.shape, fixture.name).toEqual(fixture.expected.shape)
       expect(accessor.tensor.axes, fixture.name).toEqual(fixture.expected.axes)
       expect(hex(accessor.rawBytes()), fixture.name).toBe(fixture.expected.rawHex)
       expect(accessor.materialize(), fixture.name).toEqual(fixture.expected.materialized)
+    })
+
+    goldenFixture.invalidCases.forEach((fixture) => {
+      expect(
+        () =>
+          createDataTensor(
+            fixture.schema as DataSchema,
+            fixture.input as LegacyRecordedDataTensor,
+            fixture.name,
+          ),
+        fixture.name,
+      ).toThrow(fixture.issue)
     })
   })
 
@@ -91,7 +104,12 @@ describe('DataTensor codec', () => {
       ],
       axes: [{ name: '위치', length: 2, unit: 'm', quantityKind: 'Length', ticks: ['앞', '뒤'] }],
     } as const satisfies DataSchema
-    const tensor = persistDataTensor(dataSchema, { value: [[1, 2, 3], [4, 5, 6]] })
+    const tensor = persistDataTensor(dataSchema, {
+      value: [
+        [1, 2, 3],
+        [4, 5, 6],
+      ],
+    })
 
     expect(persistDataSchema(dataSchema)).toEqual({
       dtype: 'float32',

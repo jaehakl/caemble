@@ -5,7 +5,7 @@ export const CAEMBLE_MONACO_VERSION = '0.56.0' as const
 export const CAEMBLE_TYPESCRIPT_VERSION = '5.9.3' as const
 export const QUANTITY_KIND_DATA_VERSION = '0.0.0' as const
 export const CAD_API_DECLARATION_FINGERPRINT =
-  '1bd083fd0daaae5c884fe6a647a07852e1cef4cf6281de71f87c8b456f9e3642' as const
+  '0583d3a7d6f031a074c62e8c3c1cf3e3e9ddceb5d57560533c35a411edd8e663' as const
 export const KERNEL_AUTHORING_VERSIONS = Object.freeze({
   'dc-current-density': '0.0.0',
   'steady-state-heat': '0.0.0',

@@ -202,7 +202,7 @@ export const dcNotchedCurrentDensityExample = Object.freeze({
   description: 'notch 주변 전류 집중을 2D vector field와 전체 전류로 함께 기록합니다.',
   concepts: Object.freeze([
     'simulation이 제공하는 initialState',
-    '한 task에서 여러 ArtifactRef 요청',
+    '한 task에서 여러 artifact handle 요청',
     '동적 2D axes와 vector Quantity RecordedData',
   ]),
   structureCode: dcNotchedCurrentDensityStructureCode,

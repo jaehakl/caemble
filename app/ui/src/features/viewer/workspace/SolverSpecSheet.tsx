@@ -1,4 +1,4 @@
-import { kernelModules, type KernelDescriptor, type SimulationProgramManifest } from '@/lib/simulation'
+import { kernelModules, type KernelDescriptor, type SimulationProgramManifest } from '@/lib/cad/simulation'
 import type { SimulationCompatibility } from './simulationUiTypes'
 
 type SolverSpecSheetProps = Readonly<{
@@ -103,8 +103,8 @@ export default function SolverSpecSheet({ compatibility, simulationProgram }: So
               Tasks are prepared independently, then <code>simulate()</code> controls their sequential execution and
               typed artifact handoffs.
             </p>
-            <p className="mt-2 font-mono text-[11px] break-all text-slate-500">
-              programHash · {simulationProgram.programHash}
+            <p className="mt-2 font-mono text-[11px] text-slate-500">
+              Python simulation API v{simulationProgram.simulationApiVersion}
             </p>
           </header>
 
@@ -117,7 +117,9 @@ export default function SolverSpecSheet({ compatibility, simulationProgram }: So
                   <dd className="mt-1 font-mono text-xs text-slate-600">
                     {task.kernel.name}@{task.kernel.version}
                   </dd>
-                  <dd className="mt-1 font-mono text-[11px] text-slate-500">config {task.configHash}</dd>
+                  <dd className="mt-2 overflow-auto rounded bg-slate-50 p-2 font-mono text-[11px] text-slate-500">
+                    {JSON.stringify(task.config, null, 2)}
+                  </dd>
                 </div>
               ))}
             </dl>

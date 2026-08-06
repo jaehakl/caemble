@@ -1,6 +1,6 @@
 import { getListRequest, type GetListRequest, type MaterialNameRecord, type MaterialRecord } from '@/api'
 import { materialModelData, materialParameterCatalog, materialParameterData } from '@/lib/material'
-import { kernelModules } from '@/lib/simulation'
+import { kernelModules } from '@/lib/cad/simulation'
 
 export const dedicatedQualifierNames = Object.freeze(['temperature', 'pressure', 'frequency', 'source'] as const)
 

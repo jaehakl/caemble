@@ -143,12 +143,13 @@ beforeEach(() => {
         sceneHash: 'experiment-scene',
         selection: null,
         simulationProgram: {
-          formatVersion: 1,
-          programHash: 'example-program',
+          formatVersion: 3,
+          simulationApiVersion: 1,
+          pythonSource: 'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
           tasks: {
             solveCurrent: {
               kernel: { name: 'dc-current-density', version: '0.0.0' },
-              configHash: 'example-config',
+              config: {},
             },
           },
           recordedData: {
@@ -156,6 +157,7 @@ beforeEach(() => {
               dtype: 'float64',
               unit: 'A',
               quantityKind: 'electromagnetism.ElectricCurrent',
+              tensorOrder: 0,
             },
           },
         },
@@ -165,7 +167,6 @@ beforeEach(() => {
         canRun: true,
         cancel: vi.fn(),
         compatibility: { status: 'compatible', issues: [] },
-        exportProgramResult: () => null,
         process: {
           runId: null,
           status: 'idle',
@@ -175,7 +176,6 @@ beforeEach(() => {
           startedAt: null,
           finishedAt: null,
         },
-        programResult: null,
         recordedData: null,
         run: workspace.run,
         stale: false,

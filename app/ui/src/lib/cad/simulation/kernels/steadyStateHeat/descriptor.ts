@@ -1,4 +1,4 @@
-import { identityCartesianBasis } from '../../../quantitykind/identityBasis'
+import { identityCartesianBasis } from '../../../../quantitykind/identityBasis'
 import type { KernelDescriptor, KernelMethodCall, KernelOutputRequest, KernelTaskConfig } from '../../kernelContract'
 
 const oneStructureGeometry = Object.freeze({

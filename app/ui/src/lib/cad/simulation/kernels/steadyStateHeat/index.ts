@@ -14,8 +14,6 @@ export {
   type SteadyStateHeatOutputRequest,
   type SteadyStateHeatTaskConfig,
 } from './descriptor'
-export type { PreparedSteadyStateHeatInput } from './prepare'
-
 export const steadyStateHeatKernelRef = Object.freeze({
   name: steadyStateHeatDescriptor.name,
   version: steadyStateHeatDescriptor.version,

@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { CadScene } from '@/lib/cad'
-import { defineKernelTask, simulationProgramManifest } from '@/lib/simulation'
+import { defineKernelTask, simulationProgramManifest } from '@/lib/cad/simulation'
 import CadViewer from './CadViewer'
 import { resolveCadViewerContent } from './cadViewerContent'
 
@@ -32,9 +32,7 @@ const program = simulationProgramManifest(
       quantityKind: 'electromagnetism.ElectricCurrent',
     },
   },
-  'program-hash',
   'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
-  '0'.repeat(64),
 )
 
 describe('CadViewer', () => {

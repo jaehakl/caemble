@@ -10,8 +10,6 @@ export {
   type DcCurrentDensityOutputRequest,
   type DcCurrentDensityTaskConfig,
 } from './descriptor'
-export type { PreparedDcInput, ResolvedSurface } from './prepare'
-
 export const dcCurrentDensityKernelRef = Object.freeze({
   name: dcCurrentDensityDescriptor.name,
   version: dcCurrentDensityDescriptor.version,

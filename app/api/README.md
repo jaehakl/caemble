@@ -66,6 +66,14 @@ index와 FK를 포함한다. 이후 모델 변경은 반드시 새 revision으�
 JSONB, 코드 임베딩은 768차원 pgvector로 저장한다. MaterialName은 공개 범위와
 사용자별 범위에서 각각 유일하다.
 
+## Measurement 저장 경계
+
+RecordedData에는 UI가 완성한 `quantity_kind`, `tensor_order`, `dtype`,
+`data_schema`, `data`를 그대로 저장한다. API는 QuantityKind catalog나 CAE 계약
+package를 사용하지 않으며 unit 호환성, tensor shape, dtype byte 수, base64 내용
+등을 해석하지 않는다. `data_url`과 `file_size`는 신규
+Measurement 저장에서도 `NULL`이다.
+
 ## 실행
 
 ```powershell

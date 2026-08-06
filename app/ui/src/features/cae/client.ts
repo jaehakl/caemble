@@ -5,21 +5,24 @@ import {
   type JobSession,
   type RequestAttachment,
 } from '@gpstation/v1-master-js-sdk'
-import type { BuiltSample, BuiltSetup } from '../cad'
+import type {
+  CaeCompletePayload,
+  CaeFailedPayload,
+  CaeNextRequest,
+  CaeRecordPayload,
+  CaeSimulationProgress,
+  CaeSimulationStatus,
+  CaeStartRequest,
+  CaeStartedPayload,
+} from './protocol'
+import type { BuiltSample, BuiltSetup, DataTensor, RecordedData } from '../../lib/cad'
 import {
+  canonicalizeCaeRealizations,
   createDataTensorAccessor,
   registerDataTensorAttachment,
   releaseDataTensorAttachments,
-  type DataTensor,
-  type RecordedData,
-} from '../cad'
-import type {
-  SimulationProgramManifest,
-  SimulationProgress,
-  SimulationResult,
-  SimulationTraceArtifact,
-  SimulationTraceEntry,
-} from './types'
+} from '../../lib/cad'
+import { getCaeAccessToken, gpStationApiBaseUrl } from './connection'
 
 const INPUT_LIMIT_BYTES = 256 * 1024 * 1024
 const RECORDED_LIMIT_BYTES = 64 * 1024 * 1024
@@ -29,81 +32,15 @@ const CONNECT_TIMEOUT_MS = 60_000
 const FINISH_TIMEOUT_MS = 60_000
 const LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1
 
-type RemoteCaeCallbacks = Readonly<{
+export type CaeSimulationOptions = Readonly<{
+  signal?: AbortSignal
   onRecord?: (name: string, tensor: DataTensor) => void
-  onStarted?: (runId: string) => void
-  onStatus?: (status: 'validating' | 'running' | 'finalizing') => void
-  onProgress?: (progress: SimulationProgress) => void
+  onStatus?: (status: CaeSimulationStatus) => void
+  onProgress?: (progress: CaeSimulationProgress) => void
 }>
 
-type RemoteCaeOptions = Readonly<{
-  apiBaseUrl: string
-  token: string
-  sample: BuiltSample
-  setup: BuiltSetup
-  callbacks?: RemoteCaeCallbacks
-}>
-
-type RemoteCaeRun = Readonly<{
-  cancel: () => void
-  promise: Promise<SimulationResult>
-}>
-
-type FailedPayload = Readonly<{
-  kind: 'failed'
-  sequence: number
-  error: Readonly<{ code: string; message: string }>
-}>
-
-type StartPayload =
-  | Readonly<{
-      kind: 'started'
-      runId: string
-      programHash: string
-      recordedDataSchemaHash: string
-      maxRunSeconds: number
-    }>
-  | FailedPayload
-
-type RecordPayload = Readonly<{
-  kind: 'record'
-  sequence: number
-  name: string
-  tensor: DataTensor
-}>
-
-type CompleteTracePayload = Readonly<{
-  task: string
-  kernel: Readonly<{ name: string; version: string; descriptorHash: string }>
-  inputStateRevision: number
-  outputStateRevision: number
-  inputArtifacts: Readonly<
-    Record<
-      string,
-      Readonly<{ id: string; artifactType: string }> | readonly Readonly<{ id: string; artifactType: string }>[]
-    >
-  >
-  status: 'succeeded'
-  startedAt: number
-  finishedAt: number
-  durationMs: number
-  observations: Readonly<Record<string, unknown>>
-}>
-
-type CompletePayload = Readonly<{
-  kind: 'complete'
-  sequence: number
-  recordSequences: readonly number[]
-  trace: readonly CompleteTracePayload[]
-  provenance: Readonly<{
-    programHash: string
-    recordedDataSchemaHash: string
-    simulationApiVersion: string | number
-    durationMs: number
-  }>
-  finalStateRevision: number
-  finalState: unknown
-}>
+type StartPayload = CaeStartedPayload | CaeFailedPayload
+type NextPayload = CaeRecordPayload | CaeCompletePayload | CaeFailedPayload
 
 export class CaeSimulationError extends Error {
   constructor(
@@ -115,8 +52,17 @@ export class CaeSimulationError extends Error {
   }
 }
 
-export function runRemoteCaeSimulation(options: RemoteCaeOptions): RemoteCaeRun {
-  let cancelled = false
+export function simulate(
+  sample: BuiltSample,
+  setup: BuiltSetup,
+  options: CaeSimulationOptions = {},
+): Promise<RecordedData> {
+  const token = getCaeAccessToken()
+  if (!token) {
+    return Promise.reject(new CaeSimulationError('access_token_required', 'GPStation Access Token이 필요합니다.'))
+  }
+  const apiBaseUrl = gpStationApiBaseUrl()
+  let cancelled = options.signal?.aborted ?? false
   let jobId: string | null = null
   let session: JobSession | null = null
   const attachmentIds: string[] = []
@@ -124,15 +70,12 @@ export function runRemoteCaeSimulation(options: RemoteCaeOptions): RemoteCaeRun 
   const kill = async () => {
     if (!jobId) return
     try {
-      const response = await fetch(
-        `${options.apiBaseUrl.replace(/\/+$/, '')}/v1/jobs/${encodeURIComponent(jobId)}/kill`,
-        {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${options.token}` },
-          keepalive: true,
-          signal: AbortSignal.timeout(10_000),
-        },
-      )
+      const response = await fetch(`${apiBaseUrl.replace(/\/+$/, '')}/v1/jobs/${encodeURIComponent(jobId)}/kill`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        keepalive: true,
+        signal: AbortSignal.timeout(10_000),
+      })
       if (!response.ok) throw new Error(`GPStation kill failed with HTTP ${response.status}`)
     } catch {
       // Closing the peer still lets the launcher-side cancellation watchdog reset an unresponsive worker.
@@ -146,42 +89,36 @@ export function runRemoteCaeSimulation(options: RemoteCaeOptions): RemoteCaeRun 
     session?.close()
     releaseDataTensorAttachments(attachmentIds)
   }
+  options.signal?.addEventListener('abort', cancel, { once: true })
 
   const promise = (async () => {
-    if (!options.token.trim()) throw new CaeSimulationError('access_token_required', 'GPStation Access Token이 필요합니다.')
-    const manifest = options.setup.experiment.simulationProgram
-    if (!manifest || manifest.formatVersion !== 2) {
-      throw new CaeSimulationError('program_required', 'Python simulationProgram v2가 필요합니다.')
+    if (cancelled) throw abortError()
+    const manifest = setup.experiment.simulationProgram
+    if (!manifest || manifest.formatVersion !== 3) {
+      throw new CaeSimulationError('program_required', 'Python simulationProgram v3가 필요합니다.')
     }
-    const request = serializeCaeRequest(options.sample, options.setup)
+    const canonical = canonicalizeCaeRealizations(sample, setup)
+    const request = serializeCaeRequest(canonical.sample, canonical.setup)
     const client = new GpStationClient({
-      apiBaseUrl: options.apiBaseUrl,
-      token: options.token,
+      apiBaseUrl,
+      token,
     })
     let transportSucceeded = false
     try {
       const launchers = await client.listLaunchers()
-      if (
-        !launchers.some(
-          (launcher) => launcher.status !== 'disconnected' && launcher.slave_app_ids.includes('cae'),
-        )
-      ) {
+      if (!launchers.some((launcher) => launcher.status !== 'disconnected' && launcher.slave_app_ids.includes('cae'))) {
         throw new CaeSimulationError('cae_launcher_unavailable', '연결된 GPStation cae launcher가 없습니다.')
       }
-      const started = await client.runJob<unknown, StartPayload>(
-        'cae.simulation.start',
-        request.payload,
-        {
-          slaveAppId: 'cae',
-          autoFinish: false,
-          timeoutMs: CONNECT_TIMEOUT_MS,
-          attachments: request.attachments,
-          onJobCreated(job) {
-            jobId = job.id
-            if (cancelled) void kill()
-          },
+      const started = await client.runJob<unknown, StartPayload>('cae.simulation.start', request.payload, {
+        slaveAppId: 'cae',
+        autoFinish: false,
+        timeoutMs: CONNECT_TIMEOUT_MS,
+        attachments: request.attachments,
+        onJobCreated(job) {
+          jobId = job.id
+          if (cancelled) void kill()
         },
-      )
+      })
       const jobSession = started.session
       session = jobSession
       if (cancelled) throw abortError()
@@ -198,8 +135,7 @@ export function runRemoteCaeSimulation(options: RemoteCaeOptions): RemoteCaeRun 
         transportSucceeded = true
         throw new CaeSimulationError(startedPayload.error.code, startedPayload.error.message)
       }
-      assertStarted(startedPayload, manifest.programHash, manifest.recordedDataSchemaHash)
-      options.callbacks?.onStarted?.(startedPayload.runId)
+      assertStarted(startedPayload)
 
       const records: Record<string, DataTensor> = {}
       const recordSequences: number[] = []
@@ -207,19 +143,16 @@ export function runRemoteCaeSimulation(options: RemoteCaeOptions): RemoteCaeRun 
       let totalRecordedBytes = 0
       while (true) {
         if (cancelled) throw abortError()
-        const response: CallResult<unknown> = await jobSession.call<
-          Readonly<{ runId: string; ackSequence: number | null }>,
-          unknown
-        >(
+        const response: CallResult<unknown> = await jobSession.call<CaeNextRequest, unknown>(
           'cae.simulation.next',
           { runId: startedPayload.runId, ackSequence },
           {
             timeoutMs: (startedPayload.maxRunSeconds + 5 * 60) * 1000,
-            onEvent: (event) => handleEvent(event, startedPayload.runId, options.callbacks),
+            onEvent: (event) => handleEvent(event, startedPayload.runId, options),
           },
         )
         const payload = response.payload
-        assertNextPayload(payload, manifest)
+        assertNextPayload(payload)
         if (payload.kind === 'record') {
           const record = payload
           if (record.sequence !== (ackSequence ?? 0) + 1) {
@@ -242,7 +175,7 @@ export function runRemoteCaeSimulation(options: RemoteCaeOptions): RemoteCaeRun 
           }
           records[record.name] = tensor
           recordSequences.push(record.sequence)
-          options.callbacks?.onRecord?.(record.name, tensor)
+          options.onRecord?.(record.name, tensor)
           ackSequence = record.sequence
           continue
         }
@@ -264,21 +197,9 @@ export function runRemoteCaeSimulation(options: RemoteCaeOptions): RemoteCaeRun 
         ) {
           throw new CaeSimulationError('protocol_error', 'terminal record sequence 목록이 수신 캐시와 다릅니다.')
         }
-        if (
-          payload.provenance.programHash !== manifest.programHash ||
-          payload.provenance.recordedDataSchemaHash !== manifest.recordedDataSchemaHash
-        ) {
-          throw new CaeSimulationError('protocol_error', 'CAE terminal provenance hash가 요청 manifest와 다릅니다.')
-        }
         await jobSession.finish({ timeoutMs: FINISH_TIMEOUT_MS })
         transportSucceeded = true
-        return buildSimulationResult(
-          startedPayload.runId,
-          options.sample,
-          options.setup,
-          records,
-          payload,
-        )
+        return Object.freeze(records)
       }
     } catch (error) {
       releaseDataTensorAttachments(attachmentIds)
@@ -288,7 +209,9 @@ export function runRemoteCaeSimulation(options: RemoteCaeOptions): RemoteCaeRun 
     }
   })()
 
-  return Object.freeze({ cancel, promise })
+  return promise.finally(() => {
+    options.signal?.removeEventListener('abort', cancel)
+  })
 }
 
 export function releaseRecordedDataAttachments(recordedData: RecordedData | null): void {
@@ -305,7 +228,10 @@ function serializeCaeRequest(sample: BuiltSample, setup: BuiltSetup) {
   const visit = (value: unknown, path: string): unknown => {
     if (ArrayBuffer.isView(value) && !(value instanceof DataView)) {
       if (!LITTLE_ENDIAN) {
-        throw new CaeSimulationError('unsupported_platform', 'CAE raw tensor 전송은 little-endian browser가 필요합니다.')
+        throw new CaeSimulationError(
+          'unsupported_platform',
+          'CAE raw tensor 전송은 little-endian browser가 필요합니다.',
+        )
       }
       const typedArray = value as ArrayBufferView & Readonly<{ BYTES_PER_ELEMENT: number }>
       const source = new Uint8Array(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength)
@@ -329,13 +255,11 @@ function serializeCaeRequest(sample: BuiltSample, setup: BuiltSetup) {
     }
     if (Array.isArray(value)) return value.map((item, index) => visit(item, `${path}.${index}`))
     if (value && typeof value === 'object') {
-      return Object.fromEntries(
-        Object.entries(value).map(([key, item]) => [key, visit(item, `${path}.${key}`)]),
-      )
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, visit(item, `${path}.${key}`)]))
     }
     return value
   }
-  const payload = visit({ sample, setup }, 'cae') as Readonly<{ sample: BuiltSample; setup: BuiltSetup }>
+  const payload = visit({ sample, setup }, 'cae') as CaeStartRequest
   const payloadBytes = new TextEncoder().encode(JSON.stringify(payload))
   totalBytes += payloadBytes.byteLength
   if (totalBytes > INPUT_LIMIT_BYTES) {
@@ -414,38 +338,23 @@ async function cacheRecordAttachments(
   })
 }
 
-function assertStarted(
-  payload: unknown,
-  programHash: string,
-  schemaHash: string,
-): asserts payload is Extract<StartPayload, { kind: 'started' }> {
+function assertStarted(payload: unknown): asserts payload is CaeStartedPayload {
   if (
     !isRecord(payload) ||
-    !hasExactKeys(payload, [
-      'kind',
-      'runId',
-      'programHash',
-      'recordedDataSchemaHash',
-      'maxRunSeconds',
-    ]) ||
+    !hasExactKeys(payload, ['kind', 'runId', 'maxRunSeconds']) ||
     payload.kind !== 'started' ||
     typeof payload.runId !== 'string' ||
     !payload.runId ||
-    payload.programHash !== programHash ||
-    payload.recordedDataSchemaHash !== schemaHash ||
     typeof payload.maxRunSeconds !== 'number' ||
     !Number.isSafeInteger(payload.maxRunSeconds) ||
     payload.maxRunSeconds < 1 ||
     payload.maxRunSeconds > 2 * 60 * 60
   ) {
-    throw new CaeSimulationError('protocol_error', 'CAE started payload 또는 program/schema hash가 올바르지 않습니다.')
+    throw new CaeSimulationError('protocol_error', 'CAE started payload가 올바르지 않습니다.')
   }
 }
 
-function assertNextPayload(
-  payload: unknown,
-  manifest: SimulationProgramManifest,
-): asserts payload is RecordPayload | CompletePayload | FailedPayload {
+function assertNextPayload(payload: unknown): asserts payload is NextPayload {
   if (!isRecord(payload)) {
     throw new CaeSimulationError('protocol_error', 'CAE next payload가 객체가 아닙니다.')
   }
@@ -470,116 +379,17 @@ function assertNextPayload(
     throw new CaeSimulationError('protocol_error', '알 수 없는 CAE next payload입니다.')
   }
   if (
-    !hasExactKeys(payload, [
-      'kind',
-      'sequence',
-      'recordSequences',
-      'trace',
-      'provenance',
-      'finalStateRevision',
-      'finalState',
-    ]) ||
+    !hasExactKeys(payload, ['kind', 'sequence', 'recordSequences']) ||
     !Number.isSafeInteger(payload.sequence) ||
     (payload.sequence as number) < 1 ||
     !Array.isArray(payload.recordSequences) ||
-    payload.recordSequences.some(
-      (sequence) => !Number.isSafeInteger(sequence) || (sequence as number) < 1,
-    ) ||
-    !Array.isArray(payload.trace) ||
-    !isRecord(payload.provenance) ||
-    !Number.isSafeInteger(payload.finalStateRevision) ||
-    (payload.finalStateRevision as number) < 0
+    payload.recordSequences.some((sequence) => !Number.isSafeInteger(sequence) || (sequence as number) < 1)
   ) {
     throw new CaeSimulationError('protocol_error', 'CAE complete payload가 올바르지 않습니다.')
   }
-  const provenance = payload.provenance
-  if (
-    !hasExactKeys(provenance, [
-      'programHash',
-      'recordedDataSchemaHash',
-      'simulationApiVersion',
-      'durationMs',
-    ]) ||
-    typeof provenance.programHash !== 'string' ||
-    typeof provenance.recordedDataSchemaHash !== 'string' ||
-    String(provenance.simulationApiVersion) !== String(manifest.simulationApiVersion) ||
-    !Number.isSafeInteger(provenance.durationMs) ||
-    (provenance.durationMs as number) < 0
-  ) {
-    throw new CaeSimulationError('protocol_error', 'CAE complete provenance가 올바르지 않습니다.')
-  }
-  payload.trace.forEach((entry, index) => {
-    if (
-      !isRecord(entry) ||
-      !hasExactKeys(entry, [
-        'task',
-        'kernel',
-        'inputStateRevision',
-        'outputStateRevision',
-        'inputArtifacts',
-        'status',
-        'startedAt',
-        'finishedAt',
-        'durationMs',
-        'observations',
-      ]) ||
-      typeof entry.task !== 'string' ||
-      !entry.task ||
-      !isRecord(entry.kernel) ||
-      !hasExactKeys(entry.kernel, ['name', 'version', 'descriptorHash']) ||
-      typeof entry.kernel.name !== 'string' ||
-      typeof entry.kernel.version !== 'string' ||
-      typeof entry.kernel.descriptorHash !== 'string' ||
-      !Number.isSafeInteger(entry.inputStateRevision) ||
-      (entry.inputStateRevision as number) < 0 ||
-      !Number.isSafeInteger(entry.outputStateRevision) ||
-      (entry.outputStateRevision as number) < 0 ||
-      !isRecord(entry.inputArtifacts) ||
-      entry.status !== 'succeeded' ||
-      !Number.isSafeInteger(entry.startedAt) ||
-      !Number.isSafeInteger(entry.finishedAt) ||
-      (entry.startedAt as number) < 0 ||
-      (entry.finishedAt as number) < (entry.startedAt as number) ||
-      !Number.isSafeInteger(entry.durationMs) ||
-      (entry.durationMs as number) < 0 ||
-      !isRecord(entry.observations)
-    ) {
-      throw new CaeSimulationError('protocol_error', `CAE trace entry ${index + 1}이 올바르지 않습니다.`)
-    }
-    Object.entries(entry.inputArtifacts).forEach(([port, rawArtifact]) => {
-      if (!port || (Array.isArray(rawArtifact) ? rawArtifact : [rawArtifact]).some((artifact) => {
-        return (
-          !isRecord(artifact) ||
-          !hasExactKeys(artifact, ['id', 'artifactType']) ||
-          typeof artifact.id !== 'string' ||
-          !artifact.id ||
-          typeof artifact.artifactType !== 'string' ||
-          !/^[A-Za-z0-9][A-Za-z0-9._/-]*@[1-9][0-9]*$/u.test(artifact.artifactType)
-        )
-      })) {
-        throw new CaeSimulationError(
-          'protocol_error',
-          `CAE trace entry ${index + 1}의 inputArtifacts가 올바르지 않습니다.`,
-        )
-      }
-    })
-    const task = manifest.tasks[entry.task]
-    if (
-      !task ||
-      entry.kernel.name !== task.kernel.name ||
-      entry.kernel.version !== task.kernel.version ||
-      entry.kernel.descriptorHash !== task.kernel.descriptorHash
-    ) {
-      throw new CaeSimulationError(
-        'protocol_error',
-        `CAE trace entry ${index + 1}의 task/kernel이 manifest와 다릅니다.`,
-      )
-    }
-  })
-  assertJsonValue(payload.finalState, 'CAE finalState')
 }
 
-function assertFailedPayload(payload: unknown): asserts payload is FailedPayload {
+function assertFailedPayload(payload: unknown): asserts payload is CaeFailedPayload {
   if (
     !isRecord(payload) ||
     !hasExactKeys(payload, ['kind', 'sequence', 'error']) ||
@@ -597,27 +407,6 @@ function assertFailedPayload(payload: unknown): asserts payload is FailedPayload
   }
 }
 
-function assertJsonValue(value: unknown, path: string, depth = 0): void {
-  if (depth > 64) throw new CaeSimulationError('protocol_error', `${path} 깊이가 너무 큽니다.`)
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) {
-      throw new CaeSimulationError('protocol_error', `${path}에 finite하지 않은 값이 있습니다.`)
-    }
-    return
-  }
-  if (Array.isArray(value)) {
-    value.forEach((item, index) => assertJsonValue(item, `${path}[${index}]`, depth + 1))
-    return
-  }
-  if (!isRecord(value)) {
-    throw new CaeSimulationError('protocol_error', `${path}가 JSON 값이 아닙니다.`)
-  }
-  Object.entries(value).forEach(([key, item]) =>
-    assertJsonValue(item, `${path}.${key}`, depth + 1),
-  )
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -627,7 +416,7 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
   return actual.length === keys.length && actual.every((key) => keys.includes(key))
 }
 
-function handleEvent(event: JobEvent, runId: string, callbacks: RemoteCaeCallbacks | undefined): void {
+function handleEvent(event: JobEvent, runId: string, callbacks: CaeSimulationOptions): void {
   if (event.type === 'status') {
     const status =
       event.payload && typeof event.payload === 'object' && 'status' in event.payload
@@ -637,7 +426,7 @@ function handleEvent(event: JobEvent, runId: string, callbacks: RemoteCaeCallbac
     return
   }
   if (event.type !== 'progress' || !event.payload || typeof event.payload !== 'object') return
-  const progress = event.payload as Partial<SimulationProgress>
+  const progress = event.payload as Partial<CaeSimulationProgress>
   if (
     typeof progress.stage !== 'string' ||
     typeof progress.completed !== 'number' ||
@@ -650,9 +439,7 @@ function handleEvent(event: JobEvent, runId: string, callbacks: RemoteCaeCallbac
       runId,
       task: typeof progress.task === 'string' ? progress.task : 'simulation',
       kernel:
-        progress.kernel &&
-        typeof progress.kernel.name === 'string' &&
-        typeof progress.kernel.version === 'string'
+        progress.kernel && typeof progress.kernel.name === 'string' && typeof progress.kernel.version === 'string'
           ? progress.kernel
           : Object.freeze({ name: 'cae', version: '1' }),
       stage: progress.stage,
@@ -661,91 +448,6 @@ function handleEvent(event: JobEvent, runId: string, callbacks: RemoteCaeCallbac
       ...(typeof progress.message === 'string' ? { message: progress.message } : {}),
     }),
   )
-}
-
-function buildSimulationResult(
-  runId: string,
-  sample: BuiltSample,
-  setup: BuiltSetup,
-  records: Readonly<Record<string, DataTensor>>,
-  terminal: CompletePayload,
-): SimulationResult {
-  const manifest = setup.experiment.simulationProgram!
-  const trace = Object.freeze(
-    terminal.trace.map((entry, index) => {
-      const inputArtifacts = Object.freeze(
-        Object.fromEntries(
-          Object.entries(entry.inputArtifacts).map(([name, rawArtifact]) => [
-            name,
-            Array.isArray(rawArtifact)
-              ? Object.freeze(
-                  rawArtifact.map(
-                    (artifact) =>
-                      Object.freeze({
-                        ...artifact,
-                        artifactType: artifact.artifactType as SimulationTraceArtifact['artifactType'],
-                      }) satisfies SimulationTraceArtifact,
-                  ),
-                )
-              : Object.freeze({
-                  ...(rawArtifact as Readonly<{ id: string; artifactType: string }>),
-                  artifactType: (rawArtifact as Readonly<{ artifactType: string }>).artifactType as
-                    SimulationTraceArtifact['artifactType'],
-                }) satisfies SimulationTraceArtifact,
-          ]),
-        ),
-      ) as SimulationTraceEntry['inputArtifacts']
-      return Object.freeze({
-        sequence: index + 1,
-        task: entry.task,
-        kernel: Object.freeze({
-          name: entry.kernel.name,
-          version: entry.kernel.version,
-        }),
-        inputStateRevision: entry.inputStateRevision,
-        outputStateRevision: entry.outputStateRevision,
-        inputArtifacts,
-        status: entry.status,
-        startedAt: entry.startedAt,
-        finishedAt: entry.finishedAt,
-      }) satisfies SimulationTraceEntry
-    }),
-  )
-  const kernels = Object.freeze(
-    [
-      ...new Map(
-        trace.map((entry) => [
-          `${entry.kernel.name}\u0000${entry.kernel.version}`,
-          entry.kernel,
-        ]),
-      ).values(),
-    ],
-  )
-  return Object.freeze({
-    format: 'caemble-run',
-    formatVersion: 1,
-    runId,
-    finalStateRevision: terminal.finalStateRevision,
-    recordedData: Object.freeze(
-      Object.fromEntries(
-        Object.entries(records).map(([name, data]) => [
-          name,
-          Object.freeze({ spec: manifest.recordedData[name], data }),
-        ]),
-      ),
-    ),
-    trace,
-    provenance: Object.freeze({
-      programHash: manifest.programHash,
-      structureSourceHash: sample.structure.sourceHash,
-      experimentSourceHash: setup.experiment.sourceHash,
-      structureSeed: sample.structure.seed,
-      experimentSeed: setup.experiment.seed,
-      structureVars: sample.structure.variables,
-      experimentVars: setup.experiment.variables,
-      kernels,
-    }),
-  })
 }
 
 function abortError() {

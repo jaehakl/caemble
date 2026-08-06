@@ -38,53 +38,6 @@ const solverMocks = vi.hoisted(() => ({
 const toastMocks = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }))
 const workspaceSpy = vi.hoisted(() => vi.fn())
 
-function mockSimulationResult(runId: string, value: number) {
-  return {
-    format: 'caemble-run' as const,
-    formatVersion: 1 as const,
-    runId,
-    finalStateRevision: 0,
-    recordedData: {
-      Current: {
-        spec: {
-          dtype: 'float64' as const,
-          quantityKind: 'electromagnetism.ElectricCurrent' as const,
-          unit: 'A',
-        },
-        data: { value },
-      },
-    },
-    trace: [
-      {
-        sequence: 1,
-        task: 'electric',
-        kernel: { name: 'dc-current-density', version: '0.0.0' },
-        inputStateRevision: 0,
-        outputStateRevision: 0,
-        inputArtifacts: {
-          source: {
-            id: 'intermediate-only-sentinel',
-            artifactType: 'test/intermediate@1' as const,
-          },
-        },
-        status: 'succeeded' as const,
-        startedAt: 1,
-        finishedAt: 2,
-      },
-    ],
-    provenance: {
-      programHash: 'test-program',
-      structureSourceHash: '1'.repeat(64),
-      experimentSourceHash: '2'.repeat(64),
-      structureSeed: 1,
-      experimentSeed: 2,
-      structureVars: {},
-      experimentVars: {},
-      kernels: [{ name: 'dc-current-density', version: '0.0.0' }],
-    },
-  }
-}
-
 function persistedInlineTensor(value: unknown) {
   return {
     tensorEncodingVersion: 1,
@@ -172,7 +125,6 @@ vi.mock('@/features/viewer/workspace/useCadWorkspace', async () => {
       const [experimentRevision, setExperimentRevision] = useState(1)
       const [compatibilityStatus, setCompatibilityStatus] = useState(solverMocks.compatibilityStatus)
       const [recordedData, setRecordedData] = useState<Record<string, unknown> | null>(null)
-      const [programResult, setProgramResult] = useState<ReturnType<typeof mockSimulationResult> | null>(null)
       const previousStructureVars = useRef(structureVars)
       const [process, setProcess] = useState({
         runId: null as string | null,
@@ -218,7 +170,6 @@ vi.mock('@/features/viewer/workspace/useCadWorkspace', async () => {
         if (!solverMocks.autoComplete) return runId
         if (solverMocks.staleSuccessBeforeRunNumbers.includes(runNumber)) {
           setRecordedData({ Current: { value: 999 } })
-          setProgramResult(mockSimulationResult('previous-run', 999))
           setProcess({
             runId: 'previous-run',
             status: 'succeeded',
@@ -230,7 +181,6 @@ vi.mock('@/features/viewer/workspace/useCadWorkspace', async () => {
           })
           setTimeout(() => {
             setRecordedData({ Current: { value: runNumber } })
-            setProgramResult(mockSimulationResult(runId, runNumber))
             setProcess({
               runId,
               status: 'succeeded',
@@ -257,7 +207,6 @@ vi.mock('@/features/viewer/workspace/useCadWorkspace', async () => {
             return
           }
           setRecordedData({ Current: { value: runNumber } })
-          setProgramResult(mockSimulationResult(`run-${runNumber}`, runNumber))
           setProcess({
             runId: `run-${runNumber}`,
             status: 'succeeded',
@@ -300,12 +249,13 @@ vi.mock('@/features/viewer/workspace/useCadWorkspace', async () => {
           successfulRevision: experimentRevision,
           variables: experimentVars ?? {},
           simulationProgram: {
-            formatVersion: 1,
-            programHash: 'test-program',
+            formatVersion: 3,
+            simulationApiVersion: 1,
+            pythonSource: 'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
             tasks: {
               electric: {
                 kernel: { name: 'dc-current-density', version: '0.0.0' },
-                configHash: 'test-config',
+                config: {},
               },
             },
             recordedData: {
@@ -313,6 +263,7 @@ vi.mock('@/features/viewer/workspace/useCadWorkspace', async () => {
                 dtype: 'float64',
                 quantityKind: 'electromagnetism.ElectricCurrent',
                 unit: 'A',
+                tensorOrder: 0,
               },
             },
           },
@@ -323,7 +274,6 @@ vi.mock('@/features/viewer/workspace/useCadWorkspace', async () => {
           cancel,
           compatibility: { status: compatibilityStatus, issues: [] },
           process,
-          programResult,
           recordedData,
           run,
           stale: false,

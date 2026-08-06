@@ -163,7 +163,7 @@ export const dcUniformBarExample = Object.freeze({
   concepts: Object.freeze([
     'Structure group과 surface target',
     'task factory와 단일 sim.run()',
-    '중간 ArtifactRef를 RecordedData로 승격',
+    '중간 artifact handle을 RecordedData로 기록',
   ]),
   structureCode: dcUniformBarStructureCode,
   experimentCode: dcUniformBarExperimentCode,

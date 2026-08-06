@@ -2,8 +2,8 @@ import { CadModelError } from '../model/errors'
 import type { Vars } from '../model/types'
 import { normalizeVars, normalizeVarsSchema, type VarsSchemaEntry } from '../model/vars'
 import { assertSerializableCadScene, type SerializableCadScene } from './meshValidation'
-import type { SimulationProgramManifest } from '../../simulation/types'
-import { assertSimulationProgramManifest } from '../../simulation/validation'
+import type { SimulationProgramManifest } from '../simulation/types'
+import { assertSimulationProgramManifest } from '../simulation/validation'
 
 type EvaluatedSnapshotBase = Readonly<{
   sourceHash: string

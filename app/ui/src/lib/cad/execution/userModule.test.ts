@@ -103,20 +103,16 @@ describe('compiled CAD source execution', () => {
       throw new Error('Expected an Experiment snapshot.')
     }
     expect(snapshot.simulationProgram).toMatchObject({
-      formatVersion: 2,
-      programHash: sourceHash,
+      formatVersion: 3,
       simulationApiVersion: 1,
-      pythonSourceHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      pythonSource: simulationCode,
       tasks: {
         electric: {
           kernel: {
             name: 'dc-current-density',
             version: '0.0.0',
-            descriptorHash: expect.any(String),
           },
           config: expect.any(Object),
-          configHash: expect.any(String),
-          outputArtifacts: expect.any(Object),
         },
       },
       recordedData: {
@@ -124,6 +120,7 @@ describe('compiled CAD source execution', () => {
           dtype: 'float64',
           unit: 'A',
           quantityKind: 'electromagnetism.ElectricCurrent',
+          tensorOrder: 0,
         },
       },
     })

@@ -6,7 +6,7 @@ import { DataTable } from '@/components/DataTable'
 import { Badge } from '@/components/ui/badge'
 import { CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { kernelModules, type KernelDescriptor } from '@/lib/simulation'
+import { kernelModules, type KernelDescriptor } from '@/lib/cad/simulation'
 
 const solvers: KernelDescriptor[] = kernelModules.map((kernel) => kernel.descriptor)
 const columns: ColumnDef<KernelDescriptor, unknown>[] = [

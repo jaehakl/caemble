@@ -7,9 +7,8 @@ import {
   steadyStateHeat,
   steadyStateHeatDescriptor,
 } from '.'
-import { canonicalDataHash } from '../authoring'
 
-describe('production kernel catalog', () => {
+describe('production kernel authoring catalog', () => {
   it('contains the DC current-density and steady-state Heat kernels', () => {
     expect(kernelModules).toEqual([
       { descriptor: dcCurrentDensityDescriptor },
@@ -19,8 +18,10 @@ describe('production kernel catalog', () => {
     expect(kernelAuthoring).toEqual({ dcCurrentDensity, steadyStateHeat })
   })
 
-  it('pins the descriptor hashes registered by the Python CAE slave', () => {
-    expect(canonicalDataHash(dcCurrentDensityDescriptor)).toBe('ec79ace3')
-    expect(canonicalDataHash(steadyStateHeatDescriptor)).toBe('a955fbb5')
+  it('keeps each readable TypeScript descriptor identified by name and version', () => {
+    expect(kernelModules.map(({ descriptor }) => `${descriptor.name}@${descriptor.version}`)).toEqual([
+      'dc-current-density@0.0.0',
+      'steady-state-heat@0.0.0',
+    ])
   })
 })

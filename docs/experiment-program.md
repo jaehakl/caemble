@@ -227,7 +227,8 @@ production catalog에는 `dc-current-density@0.0.0`과 `steady-state-heat@0.0.0`
 
 - `sim.run()`은 한 번에 하나만 실행할 수 있고, 브라우저는 `next` call을 하나만 outstanding 상태로 둔다.
 - `inputs`의 artifactType과 consumer port의 artifactType이 먼저 일치해야 한다.
-- 호환 가능한 unit과 basis는 consumer 또는 RecordedData schema로 정규화한다.
+- unit, basis, dtype와 QuantityKind는 UI build 단계에서 descriptor 기준으로
+  정규화하며 CAE는 받은 canonical 값을 다시 추론하거나 보완하지 않는다.
 - release한 artifact를 다시 전달하거나 기록하면 실행 전체가 실패한다.
 - kernel output key 누락·초과, payload schema 오류, observation 오류가 있으면 해당 kernel의 state와 artifact를 함께 rollback한다.
 - Experiment `recordedData`의 모든 key는 성공 실행에서 정확히 한 번 기록해야 한다.
@@ -269,21 +270,18 @@ Material에는 양의 등방성 `thermal.conductivity`가 필요하고, observat
 
 ## 새 kernel 추가
 
-모든 kernel은 다음 구조와 공통 contract test를 사용한다.
+공개 authoring descriptor는
+`app/ui/src/lib/cad/simulation/kernels/<solver>/descriptor.ts`에 읽기 쉬운
+TypeScript로 추가한다. UI descriptor가 parameters, Material 역할, input ports,
+initialization/boundary/output method와 canonical unit을 소유한다.
 
-```text
-kernels/<kernel>/
-├─ descriptor
-├─ prepare
-├─ execute
-├─ index
-└─ contract tests
-```
+Python 구현은 GPStation checkout의 `app_v1/slaves/cae/app/kernels.py`에
+`name + version`으로 등록하고, 그 solver가 실제 계산에 쓰는 최소 parameter,
+material unit과 input/output spec만 둔다. 전체 QuantityKind/Material/UCUM catalog나
+descriptor hash를 Python에 복제하지 않는다.
 
-descriptor가 identity, parameters, Material 역할, input ports, observations,
-initialization/boundary/output method와 output artifact schema를 유일하게 소유한다.
-`npm run generate:cad-api`는 production descriptor를 읽어 Monaco의
-`@caemble/kernels` 선언과 declaration fingerprint를 생성한다.
+두 파일을 같은 변경에서 갱신한 뒤 `npm run generate:cad-api`가 로컬 TS descriptor를
+읽어 Monaco의 `@caemble/kernels` 선언과 declaration fingerprint를 생성한다.
 
 ## 검증
 

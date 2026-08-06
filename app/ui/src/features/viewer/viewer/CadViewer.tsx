@@ -3,7 +3,7 @@ import type { CadDocumentType, RecordedDataResult, RecordedDataRule } from '@/li
 import { resolveCadViewerContent, type CadViewerDocument } from './cadViewerContent'
 import JscadViewer from './JscadViewer'
 import type { CadViewerRecordedData } from './recordedData'
-import type { SimulationProgramManifest, SimulationResult } from '@/lib/simulation'
+import type { SimulationProgramManifest } from '@/lib/cad/simulation'
 import type { SimulationCompatibility, SimulationProcess } from '../workspace/simulationUiTypes'
 
 export type { CadViewerDocument } from './cadViewerContent'
@@ -26,8 +26,6 @@ export type CadViewerSimulation = Readonly<{
   compatibility: SimulationCompatibility
   process: SimulationProcess
   program?: SimulationProgramManifest | null
-  programResult?: SimulationResult | null
-  exportProgramResult?: () => string | null
   run: () => string | null
   stale: boolean
 }>

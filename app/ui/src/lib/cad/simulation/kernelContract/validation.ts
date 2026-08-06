@@ -1,27 +1,23 @@
-import type { CadScene, CadScenePart } from '../../cad/evaluation/types'
+import type { CadScene, CadScenePart } from '../../evaluation/types'
 import {
   CadModelError,
   isFloatDType,
   normalizeDataElement,
   type DataValueDescriptor,
   type ExperimentParameter,
-  type RecordedDataRule,
-} from '../../cad/model/core'
-import { assertRecordedDataTensor, normalizeRecordedDataTensor } from '../../cad/model/recordedData'
-import { convertUcumValue, normalizeUcumUnit } from '../../cad/model/units'
-import { QuantityKind } from '../../quantitykind'
+} from '../../model/core'
+import { convertUcumValue, normalizeUcumUnit } from '../../model/units'
+import { QuantityKind } from '../../../quantitykind'
 import {
   getQuantityKindComponentShape,
   getQuantityKindTensorOrder,
   normalizeCartesianBasis,
   transformQuantityValue,
   type QuantityKindName,
-} from '../../quantitykind/runtime'
+} from '../../../quantitykind/runtime'
 import type {
   KernelContractIssue,
-  KernelDataSpec,
   KernelDescriptor,
-  KernelExecutionResult,
   KernelInputPortDescriptor,
   KernelMethodCall,
   KernelMethodDescriptor,
@@ -891,89 +887,4 @@ export function resolveKernelInputPort(
   name: string,
 ): KernelInputPortDescriptor | undefined {
   return Object.prototype.hasOwnProperty.call(descriptor.inputPorts, name) ? descriptor.inputPorts[name] : undefined
-}
-
-function artifactRecordedDataRule(spec: KernelDataSpec, path: string) {
-  return Object.freeze({
-    target: Object.freeze([]),
-    label: path,
-    methodId: 'kernel.artifact',
-    parameters: Object.freeze({}),
-    result: Object.freeze({
-      dtype: spec.dtype,
-      ...(spec.unit === undefined ? {} : { unit: spec.unit }),
-      ...(spec.quantityKind === undefined ? {} : { quantityKind: spec.quantityKind }),
-      ...(spec.basis === undefined ? {} : { basis: spec.basis }),
-      ...(spec.axes === undefined
-        ? {}
-        : {
-            axes: Object.freeze(spec.axes.map((axis) => Object.freeze({ ...axis }))),
-          }),
-    }),
-  }) as RecordedDataRule
-}
-
-export function assertKernelArtifactPayload(spec: KernelDataSpec, payload: unknown, path = 'kernel artifact'): void {
-  assertRecordedDataTensor(artifactRecordedDataRule(spec, path), payload)
-}
-
-export function normalizeKernelArtifactPayload(spec: KernelDataSpec, payload: unknown, path = 'kernel artifact') {
-  const tensor = normalizeRecordedDataTensor(artifactRecordedDataRule(spec, path), payload)
-  return Object.freeze({
-    value: tensor.value,
-    ...(tensor.axes.length === 0
-      ? {}
-      : {
-          axes: Object.freeze(tensor.axes.map((axis) => Object.freeze({ ticks: axis.ticks }))),
-        }),
-  })
-}
-
-export function assertKernelExecutionResult(
-  descriptor: KernelDescriptor,
-  config: KernelTaskConfig,
-  result: KernelExecutionResult,
-): KernelExecutionResult {
-  if (!isRecord(result)) throw new CadModelError('Kernel execution result must be an object.')
-  if (!isRecord(result.artifacts)) throw new CadModelError('Kernel execution artifacts must be an object.')
-  const outputSpecs = resolveKernelOutputSpecs(descriptor, config)
-  const expectedKeys = Object.keys(outputSpecs).sort()
-  const actualKeys = Object.keys(result.artifacts).sort()
-  if (expectedKeys.length !== actualKeys.length || expectedKeys.some((key, index) => key !== actualKeys[index])) {
-    throw new CadModelError(
-      `Kernel artifacts must exactly match requested output keys ${expectedKeys.join(', ') || '(none)'}; ` +
-        `received ${actualKeys.join(', ') || '(none)'}.`,
-    )
-  }
-  const artifacts = Object.freeze(
-    Object.fromEntries(
-      expectedKeys.map((key) => [
-        key,
-        normalizeKernelArtifactPayload(outputSpecs[key].data, result.artifacts[key], `artifacts.${key}`),
-      ]),
-    ),
-  )
-
-  const observations = result.observations ?? {}
-  if (!isRecord(observations)) throw new CadModelError('Kernel observations must be an object.')
-  Object.keys(observations).forEach((name) => {
-    if (!Object.prototype.hasOwnProperty.call(descriptor.observations, name)) {
-      throw new CadModelError(`Kernel returned unknown observation ${name}.`)
-    }
-  })
-  Object.entries(descriptor.observations).forEach(([name, observation]) => {
-    const value = Object.prototype.hasOwnProperty.call(observations, name) ? observations[name] : undefined
-    if (value === undefined) {
-      if (observation.required !== false) throw new CadModelError(`Kernel omitted observation ${name}.`)
-      return
-    }
-    if (typeof value !== observation.type || (typeof value === 'number' && !Number.isFinite(value))) {
-      throw new CadModelError(`Kernel observation ${name} must be a finite ${observation.type}.`)
-    }
-  })
-  return Object.freeze({
-    ...(result.state === undefined ? {} : { state: result.state }),
-    artifacts,
-    observations: Object.freeze({ ...observations }),
-  })
 }

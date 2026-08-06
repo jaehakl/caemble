@@ -1,6 +1,8 @@
 from pathlib import Path
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 
 
@@ -56,9 +58,16 @@ def test_recorded_data_schema_revision_keeps_legacy_rows_readable():
     assert 'op.drop_column("recorded_data", "data_schema")' in source
 
 
+def test_source_migration_graph_ends_at_recorded_data_schema():
+    root = Path(__file__).resolve().parents[1]
+    scripts = ScriptDirectory.from_config(Config(root / "alembic.ini"))
+
+    assert scripts.get_heads() == ["e7b2c5d91a40"]
+    assert not any(root.joinpath("alembic", "versions").glob("*_measurement_contract_metadata.py"))
+
+
 @pytest.mark.asyncio
-async def test_configured_database_is_at_head_with_seeded_roles(db_session):
-    revision = await db_session.scalar(text("SELECT version_num FROM alembic_version"))
+async def test_configured_database_has_seeded_roles_and_required_extensions(db_session):
     roles = list((await db_session.execute(text("SELECT name FROM roles ORDER BY name"))).scalars())
     vector = await db_session.scalar(text("SELECT extversion FROM pg_extension WHERE extname = 'vector'"))
     persisted_token_columns = await db_session.scalar(
@@ -72,7 +81,6 @@ async def test_configured_database_is_at_head_with_seeded_roles(db_session):
             """
         )
     )
-    assert revision == "e7b2c5d91a40"
     assert roles == ["admin", "user"]
     assert vector
     assert persisted_token_columns == 0

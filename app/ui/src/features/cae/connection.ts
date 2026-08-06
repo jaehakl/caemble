@@ -42,6 +42,10 @@ export function useCaeAccessToken(): string | null {
   )
 }
 
+export function getCaeAccessToken(): string | null {
+  return accessToken
+}
+
 export function gpStationApiBaseUrl(): string {
   const configured = import.meta.env.VITE_GPSTATION_API_BASE_URL?.trim()
   if (configured) return configured.replace(/\/+$/, '')

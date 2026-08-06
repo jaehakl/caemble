@@ -847,10 +847,8 @@ export function ExperimentPage() {
             canRun: simulation.canRun,
             cancel: simulation.cancel,
             compatibility: simulation.compatibility,
-            exportProgramResult: simulation.exportProgramResult,
             process: simulation.process,
             program: experimentDocument.simulationProgram,
-            programResult: simulation.programResult,
             run: simulation.run,
             stale: simulation.stale,
           }}

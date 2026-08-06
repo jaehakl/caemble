@@ -1,6 +1,6 @@
-import type { CadScene } from '../../cad/evaluation/types'
-import type { DataSchema, DataSchemaAxis, ExperimentParameter, ExperimentTarget } from '../../cad/model/descriptor'
-import type { UcumUnit } from '../../cad/model/units'
+import type { CadScene } from '../../evaluation/types'
+import type { DataSchema, DataSchemaAxis, ExperimentParameter, ExperimentTarget } from '../../model/descriptor'
+import type { UcumUnit } from '../../model/units'
 
 export type KernelArtifactType = `${string}@${number}`
 
@@ -111,58 +111,6 @@ export type KernelWorld = Readonly<{
     structure: CadScene
     experiment: CadScene
   }>
-}>
-
-export type KernelPrepareContext<
-  Config extends KernelTaskConfig = KernelTaskConfig,
-  World extends KernelWorld = KernelWorld,
-> = Readonly<{
-  taskName: string
-  config: Config
-  world: World
-}>
-
-export type KernelPrepareResult<Prepared> = Readonly<{
-  prepared: Prepared
-}>
-
-export type KernelProgress = Readonly<{
-  stage: string
-  completed: number
-  total?: number
-  message?: string
-}>
-
-export type KernelExecutionInput<Prepared> = Readonly<{
-  prepared: Prepared
-  state: unknown
-  inputs: Readonly<Record<string, unknown>>
-}>
-
-export type KernelExecutionContext = Readonly<{
-  signal: AbortSignal
-  reportProgress: (progress: KernelProgress) => void
-}>
-
-export type KernelObservation = number | boolean | string
-
-export type KernelExecutionResult = Readonly<{
-  /** Returning state signals a namespace update; omit it when the kernel state did not change. */
-  state?: unknown
-  artifacts: Readonly<Record<string, unknown>>
-  observations?: Readonly<Record<string, KernelObservation>>
-}>
-
-export type KernelDefinition<
-  Prepared = unknown,
-  Config extends KernelTaskConfig = KernelTaskConfig,
-  World extends KernelWorld = KernelWorld,
-> = Readonly<{
-  descriptor: KernelDescriptor
-  prepare: (
-    context: KernelPrepareContext<Config, World>,
-  ) => KernelPrepareResult<Prepared> | Promise<KernelPrepareResult<Prepared>>
-  execute: (input: KernelExecutionInput<Prepared>, context: KernelExecutionContext) => Promise<KernelExecutionResult>
 }>
 
 export type ResolvedKernelOutputSpec = Readonly<{

@@ -72,7 +72,10 @@ const dataSchemaAxisSchema = z
   .object({
     length: z.number().int().positive().optional(),
     name: z.string().min(1).optional(),
-    ticks: z.array(z.union([z.number().finite(), z.string()])).readonly().optional(),
+    ticks: z
+      .array(z.union([z.number().finite(), z.string()]))
+      .readonly()
+      .optional(),
     unit: z.string().min(1).optional(),
     quantityKind: z.string().min(1).optional(),
   })
@@ -117,7 +120,7 @@ const measurementSaveRequestSchema = z.object({
       tensor_order: z.number().int().nonnegative(),
       dtype: z.string().min(1),
       data_schema: dataSchemaSchema,
-      data: z.unknown().nullable().optional(),
+      data: z.unknown(),
     }),
   ),
 })

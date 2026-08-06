@@ -285,6 +285,7 @@ describe('unified dbTables API', () => {
               unit: 'A',
               quantityKind: 'electromagnetism.ElectricCurrent',
             },
+            data: { value: 2.5 },
           },
         ],
       }),

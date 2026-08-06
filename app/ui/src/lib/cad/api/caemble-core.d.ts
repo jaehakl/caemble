@@ -2707,6 +2707,7 @@ export type LegacyRecordedDataTensor = Readonly<{
 export type RecordedDataTensor = DataTensor | PersistedDataTensor | LegacyRecordedDataTensor
 export type RecordedData = Readonly<Record<string, RecordedDataTensor>>
 export type RecordedDataSpec = RecordedDataResult
+export type ResolvedDataSchema = RecordedDataSpec & Readonly<{ tensorOrder: number }>
 
 export type BoxAttributes = Readonly<{
   size: Vec3
@@ -3260,22 +3261,6 @@ export type StructureDefinitionOptions<Schema extends VarsSchemaDefinition> = Re
 export type ArtifactType = `${string}@${number}`
 export type SimulationObservation = boolean | number | string
 
-declare const stateRefBrand: unique symbol
-declare const artifactRefBrand: unique symbol
-
-export type StateRef = Readonly<{
-  runId: string
-  revision: number
-  [stateRefBrand]: true
-}>
-
-export type ArtifactRef<Type extends ArtifactType = ArtifactType> = Readonly<{
-  runId: string
-  id: string
-  artifactType: Type
-  [artifactRefBrand]: true
-}>
-
 export type KernelIdentity = Readonly<{
   name: string
   version: string
@@ -3297,92 +3282,6 @@ export type DefinedKernelTask<
   __artifacts?: Artifacts
   __observations?: Observations
   __inputs?: Inputs
-}>
-
-export type ResolvedKernelTask<
-  Config = unknown,
-  Artifacts extends KernelArtifactTypes = KernelArtifactTypes,
-  Observations extends KernelObservationTypes = KernelObservationTypes,
-  Inputs extends KernelInputTypes = KernelInputTypes,
-> = Readonly<{
-  kind: 'caemble-resolved-kernel-task'
-  kernel: KernelIdentity
-  config: Config
-  taskName: string
-  __artifacts?: Artifacts
-  __observations?: Observations
-  __inputs?: Inputs
-}>
-
-type ArtifactRefsFor<Value> = Value extends ArtifactType
-  ? ArtifactRef<Value>
-  : Value extends readonly unknown[]
-    ? Readonly<{ [Index in keyof Value]: ArtifactRefsFor<Value[Index]> }>
-    : never
-
-type RequiredInputKeys<Inputs extends KernelInputTypes> = {
-  [Key in keyof Inputs]-?: undefined extends Inputs[Key] ? never : Key
-}[keyof Inputs]
-
-type OptionalInputKeys<Inputs extends KernelInputTypes> = {
-  [Key in keyof Inputs]-?: undefined extends Inputs[Key] ? Key : never
-}[keyof Inputs]
-
-export type KernelRunInputs<Inputs extends KernelInputTypes> = Readonly<
-  {
-    [Key in RequiredInputKeys<Inputs>]-?: ArtifactRefsFor<Inputs[Key]>
-  } & {
-    [Key in OptionalInputKeys<Inputs>]?: ArtifactRefsFor<Exclude<Inputs[Key], undefined>>
-  }
->
-
-export type KernelRunArguments<Inputs extends KernelInputTypes> = [RequiredInputKeys<Inputs>] extends [never]
-  ? [input?: Readonly<{ state?: StateRef; inputs?: KernelRunInputs<Inputs> }>]
-  : [input: Readonly<{ state?: StateRef; inputs: KernelRunInputs<Inputs> }>]
-
-export type KernelRunResult<
-  Artifacts extends KernelArtifactTypes = KernelArtifactTypes,
-  Observations extends KernelObservationTypes = KernelObservationTypes,
-> = Readonly<{
-  state: StateRef
-  artifacts: Readonly<{
-    [Key in keyof Artifacts]: ArtifactRef<Artifacts[Key]>
-  }>
-  observations: Observations
-}>
-
-export type SimulationWorld = Readonly<{
-  scenes: Readonly<{
-    structure: unknown
-    experiment: unknown
-  }>
-}>
-
-type ResolvedTasks<Tasks extends Readonly<Record<string, DefinedKernelTask>>> = Readonly<{
-  [Key in keyof Tasks]: Tasks[Key] extends DefinedKernelTask<
-    infer Config,
-    infer Artifacts,
-    infer Observations,
-    infer Inputs
-  >
-    ? ResolvedKernelTask<Config, Artifacts, Observations, Inputs>
-    : never
-}>
-
-export type SimulationApi<Recorded extends Readonly<Record<string, RecordedDataSpec>>> = Readonly<{
-  initialState: StateRef
-  run: <
-    Config,
-    Artifacts extends KernelArtifactTypes,
-    Observations extends KernelObservationTypes,
-    Inputs extends KernelInputTypes,
-  >(
-    task: ResolvedKernelTask<Config, Artifacts, Observations, Inputs>,
-    ...args: KernelRunArguments<Inputs>
-  ) => Promise<KernelRunResult<Artifacts, Observations>>
-  record: (name: Extract<keyof Recorded, string>, artifact: ArtifactRef) => void
-  release: (artifact: ArtifactRef) => void
-  random: () => number
 }>
 
 export type ExperimentDefinitionOptions<
@@ -3426,81 +3325,20 @@ export declare function experiment<
   const Recorded extends Readonly<Record<string, RecordedDataSpec>>,
 >(options: ExperimentDefinitionOptions<Schema, Tasks, Recorded>): ExperimentDefinition<Schema, Tasks, Recorded>
 
-export type SimulationTraceArtifact = Readonly<{
-  id: string
-  artifactType: string
-}>
-
-export type SimulationTraceEntry = Readonly<{
-  sequence: number
-  task: string
-  kernel: KernelIdentity
-  inputStateRevision: number
-  outputStateRevision: number | null
-  inputArtifacts: Readonly<Record<string, SimulationTraceArtifact | readonly SimulationTraceArtifact[]>>
-  status: 'succeeded' | 'failed'
-  error?: string
-  startedAt: number
-  finishedAt: number
-}>
-
-export type SimulationProvenance = Readonly<{
-  programHash: string
-  structureSourceHash: string
-  experimentSourceHash: string
-  structureSeed: number
-  experimentSeed: number
-  structureVars: Vars
-  experimentVars: Vars
-  kernels: readonly KernelIdentity[]
-}>
-
 export type SimulationProgramManifest = Readonly<{
-  formatVersion: 2
-  programHash: string
+  formatVersion: 3
   simulationApiVersion: 1
   pythonSource: string
-  pythonSourceHash: string
   tasks: Readonly<
     Record<
       string,
       Readonly<{
-        kernel: KernelIdentity & Readonly<{ descriptorHash: string }>
-        descriptor: unknown
+        kernel: KernelIdentity
         config: unknown
-        configHash: string
-        outputArtifacts: Readonly<
-          Record<
-            string,
-            Readonly<{
-              artifactType: string
-              data: RecordedDataSpec
-            }>
-          >
-        >
       }>
     >
   >
-  recordedData: Readonly<Record<string, RecordedDataSpec>>
-  recordedDataSchemaHash: string
-}>
-
-export type SimulationResult = Readonly<{
-  format: 'caemble-run'
-  formatVersion: 1
-  runId: string
-  finalStateRevision: number
-  recordedData: Readonly<
-    Record<
-      string,
-      Readonly<{
-        spec: RecordedDataSpec
-        data: DataTensor
-      }>
-    >
-  >
-  trace: readonly SimulationTraceEntry[]
-  provenance: SimulationProvenance
+  recordedData: Readonly<Record<string, ResolvedDataSchema>>
 }>
 
 export type ExternalVars = Readonly<Record<string, Tensor>>

@@ -8,7 +8,7 @@ Caemble UI는 React 19, React Router Data Mode, Tailwind CSS v4로 구성된 페
 
 - `src/app`: provider, router, App Shell
 - `src/pages`: URL 단위 페이지와 페이지 소유 상태
-- `src/features`: 인증과 Viewer workspace/editor/persistence
+- `src/features`: 인증, Viewer workspace/editor/persistence, thin CAE client
 - `src/components`: 앱 공통 컴포넌트와 소유 UI primitives
 - `src/api`: native fetch, Zod 응답 검증, endpoint 계약
 - `src/lib/cad`, `src/lib/material`, `src/lib/quantitykind`, `src/lib/solver`: 독립 Code-to-CAD 라이브러리
@@ -39,14 +39,23 @@ npm run test:e2e -- --grep 'actual browser-launcher-CAE'
 
 토큰은 Playwright 프로세스 환경에서 Account 입력란으로만 전달되며 Vite 환경 변수, 저장소, `localStorage`에는 넣지 않는다. 일반 E2E는 토큰 없이 Run이 차단되는 계약을 검증한다.
 
-Generated CAD contracts are checked by every production build:
+Generated CAD authoring APIs are checked by every production build:
 
 ```bash
 npm run generate:cad-api
 npm run check:generated
 ```
 
-The generator reads the CAD element registry, Quantity Kind data, registered `SolverSpec` objects, and `src/lib/cad/api/authoring-manifest.json`. It generates the element catalog/registry, JSX intrinsic types, solver authoring types, Quantity Kind unions/facade, and pinned API versions. Commit all generated changes. CI should run `npm run check:generated`; a non-empty regeneration diff is an error.
+QuantityKind와 Material 전체 catalog는 각각 `src/lib/quantitykind/data`와
+`src/lib/material/data`의 domain별 TypeScript 파일이 원본이다. kernel descriptor도
+`src/lib/cad/simulation/kernels/*/descriptor.ts`에 solver별로 둔다. 별도 JSON
+contract 원본, npm contract package, Python wheel 또는 runtime contract hash는 없다.
+
+The CAD generator reads the element registry, local TypeScript catalogs,
+registered authoring descriptors, and `src/lib/cad/api/authoring-manifest.json`.
+It generates the element catalog/registry, JSX intrinsic types, strict solver
+authoring types, and pinned API versions. Commit all generated changes. CI should
+run `npm run check:generated`; a non-empty regeneration diff is an error.
 
 `src/lib/cad/model/core.ts` remains an internal application facade and is never exposed to Source code. Vars, descriptor contracts, Material construction, Structure, and Experiment live in focused `vars.ts`, `descriptor.ts`, `material.ts`, `structure.ts`, and `experiment.ts` modules; new runtime code should import the focused module when it does not need the facade.
 
@@ -154,26 +163,26 @@ The runner boundary provides the security controls:
 
 The runner itself needs `'unsafe-eval'` because the isolated evaluation Worker executes TypeScript's CommonJS emit. That exception must never be added to the host CSP.
 
-## Snapshot and Solver boundary
+## Snapshot and CAE boundary
 
-The public result is an `EvaluatedDocumentSnapshotV2`:
+JSCAD instances do not cross the untrusted evaluation boundary. Each solid is
+normalized into validated `Float64Array` vertex positions plus `Uint32Array`
+polygon offsets. The UI then resolves variables, Material values, geometry,
+DataSchema and task config into complete `BuiltSample` and
+`BuiltSetup` values.
+
+Simulation callers use only the thin client in `src/features/cae/client.ts`:
 
 ```ts
-type EvaluatedDocumentSnapshotV2 = Readonly<{
-  kind: 'structure' | 'experiment'
-  sourceHash: string
-  apiVersion: 2
-  seed: number
-  variables: ResolvedVars
-  scene: SerializableCadScene
-  experimentRules?: EvaluatedExperimentRules
-  solver?: ResolvedExperimentSolver
-}>
+simulate(sample, setup, { signal, onStatus, onProgress, onRecord })
 ```
 
-JSCAD instances do not cross the untrusted boundary. Each solid is normalized into validated `Float64Array` vertex positions plus `Uint32Array` polygon offsets. Buffers are transferred from the disposable Worker to the runner frame and then to the host. Scene content has a 64-hex content hash; decoded geometry and renderer entities are bounded caches keyed by that scene hash.
-
-The Solver Worker receives the exact successful snapshots shown in preview. It never receives executable Structure/Experiment definitions and does not reevaluate geometry, Materials, rules, or solver parameters. Solver provenance includes both source hashes, vars, seeds, API versions, and the selected solver identity. Structure and Experiment evaluation jobs are independent; a timeout in one does not restart the peer or an active solver. Solver preflight incompatibility leaves both previews `Ready`, exposes a separate amber Simulation state, and disables Run until the latest pair is compatible. If the Solver Worker fails, it is replaced and current snapshots are recached.
+The client canonicalizes the pair for the selected solver, sends only
+`{ sample, setup }`, and hides GPStation session, attachments, `start/next`,
+record ACK and kill handling. Browser-local solver,
+Python/TS simulation runtime and fallback execution do not exist. Only declared
+and actually recorded `DataTensor` values are returned; failed or cancelled runs
+discard every provisional record.
 
 ## Visual round-trip editing
 
@@ -232,4 +241,6 @@ Do not place cookies, credentials, user data, service-worker scope, analytics, o
 - Compiler initialization/operation timeout: 5 seconds after initialization.
 - Preview evaluation: 3 seconds by default; explicit 10- and 30-second heavy modes.
 - Snapshot binary payload: 128 MiB, with finite-value, depth, node-count, and protocol-size checks.
-- The included DC current-density solver is a bounded browser implementation, not a production multiphysics backend.
+- BuiltSample/BuiltSetup request: 256 MiB total.
+- One run's RecordedData: 64 MiB raw bytes, with 16 MiB attachment shards.
+- Physics kernels execute only in the GPStation `cae` slave.

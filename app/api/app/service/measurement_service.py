@@ -93,7 +93,7 @@ class MeasurementService:
                         quantity_kind=item.quantity_kind,
                         tensor_order=item.tensor_order,
                         dtype=item.dtype,
-                        data_schema=item.data_schema.model_dump(exclude_none=True),
+                        data_schema=item.data_schema,
                         data=item.data,
                         data_url=None,
                         file_size=None,

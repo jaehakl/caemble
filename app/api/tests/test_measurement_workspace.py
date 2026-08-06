@@ -1,13 +1,8 @@
-import base64
-import struct
-
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
-import models as api_models
 from db import Experiment, Measurement, RecordedData, Sample, Setup, Structure
-from quantity_kind_catalog import QUANTITY_KIND_SOURCE_SHA256, QUANTITY_KIND_TENSOR_ORDERS
 from settings import settings
 from tests.helpers import auth_headers, create_user
 
@@ -18,14 +13,6 @@ def inline_tensor(value, shape=None):
         "shape": [] if shape is None else shape,
         "storage": {"kind": "inline", "value": value},
     }
-
-
-def test_quantity_kind_catalog_matches_the_caemble_generated_source():
-    assert QUANTITY_KIND_SOURCE_SHA256 == "7f9a6ed1f2f4c2fac2b48da170afebc545faa0118c6c6c8eba6138df80ee9030"
-    assert len(QUANTITY_KIND_TENSOR_ORDERS) == 1_216
-    assert QUANTITY_KIND_TENSOR_ORDERS["electromagnetism.ElectricCurrentDensity"] == 1
-    assert QUANTITY_KIND_TENSOR_ORDERS["mechanics.ElasticStiffnessTensor"] == 4
-
 
 async def create_measurement_graph(db_session, user_id):
     structure = Structure(name="Structure", code="structure", user_id=user_id)
@@ -213,114 +200,32 @@ async def test_save_measurement_persists_inline_recorded_data_atomically(client,
 
 
 @pytest.mark.asyncio
-async def test_save_measurement_validates_base64_tensor_bytes(client, db_session, monkeypatch):
-    monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
-    owner = await create_user(db_session)
-    sample, setup, _, _ = await create_measurement_graph(db_session, owner.id)
-    raw = struct.pack("<ff", 1.5, -2.25)
-    tensor = {
-        "tensorEncodingVersion": 1,
-        "shape": [2],
-        "axes": [{"ticks": ["앞", "뒤"]}],
-        "storage": {
-            "kind": "base64",
-            "data": base64.b64encode(raw).decode("ascii"),
-            "byteLength": len(raw),
-        },
-    }
-
-    response = await client.post(
-        "/measurement/save",
-        headers=auth_headers(owner),
-        json={
-            "sample_id": sample.id,
-            "setup_id": setup.id,
-            "recorded_data": [
-                {
-                    "name": "Temperature",
-                    "quantity_kind": "thermodynamics.Temperature",
-                    "tensor_order": 0,
-                    "dtype": "float32",
-                    "data_schema": {
-                        "dtype": "float32",
-                        "unit": "K",
-                        "quantityKind": "thermodynamics.Temperature",
-                        "axes": [{"name": "시간", "unit": "s", "quantityKind": "Time"}],
-                    },
-                    "data": tensor,
-                }
-            ],
-        },
-    )
-
-    assert response.status_code == 200
-    recorded = await db_session.scalar(
-        select(RecordedData).where(RecordedData.measurement_id == response.json()["id"])
-    )
-    assert recorded is not None
-    assert recorded.data_schema == {
-        "dtype": "float32",
-        "unit": "K",
-        "quantityKind": "thermodynamics.Temperature",
-        "axes": [{"name": "시간", "unit": "s", "quantityKind": "Time"}],
-    }
-    assert recorded.data == tensor
-    assert recorded.data_url is None
-    assert recorded.file_size is None
-
-    malformed = {
-        **tensor,
-        "storage": {**tensor["storage"], "byteLength": len(raw) + 1},
-    }
-    response = await client.post(
-        "/measurement/save",
-        headers=auth_headers(owner),
-        json={
-            "sample_id": sample.id,
-            "setup_id": setup.id,
-            "recorded_data": [
-                {
-                    "name": "Temperature",
-                    "quantity_kind": "thermodynamics.Temperature",
-                    "tensor_order": 0,
-                    "dtype": "float32",
-                    "data_schema": {
-                        "dtype": "float32",
-                        "unit": "K",
-                        "quantityKind": "thermodynamics.Temperature",
-                        "axes": [{"name": "시간", "unit": "s", "quantityKind": "Time"}],
-                    },
-                    "data": malformed,
-                }
-            ],
-        },
-    )
-    assert response.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_save_measurement_uses_catalog_order_and_persists_vector_schema(client, db_session, monkeypatch):
+async def test_save_measurement_persists_opaque_physics_and_tensor_json(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
     sample, setup, _, _ = await create_measurement_graph(db_session, owner.id)
     schema = {
-        "dtype": "float32",
-        "unit": "A.m-2",
-        "quantityKind": "electromagnetism.ElectricCurrentDensity",
-        "basis": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
-        "axes": [{"name": "point", "length": 2, "ticks": ["앞", "뒤"]}],
+        "dtype": "future128",
+        "unit": "알 수 없는 단위",
+        "quantityKind": "future.UnknownPhysics",
+        "basis": {"vendor": "opaque"},
+        "axes": [{"name": "축", "length": "동적"}],
     }
     tensor = {
         "tensorEncodingVersion": 1,
-        "shape": [2, 3],
-        "axes": [{"ticks": ["앞", "뒤"]}],
-        "storage": {"kind": "inline", "value": [[1, 2, 3], [-4, 5, -6]]},
+        "shape": [99],
+        "axes": [{"ticks": ["하나"]}],
+        "storage": {
+            "kind": "base64",
+            "data": "%%%not-base64%%%",
+            "byteLength": 123456,
+        },
     }
     item = {
-        "name": "Current density",
-        "quantity_kind": "electromagnetism.ElectricCurrentDensity",
-        "tensor_order": 1,
-        "dtype": "float32",
+        "name": "미래 데이터",
+        "quantity_kind": "future.UnknownPhysics",
+        "tensor_order": 7,
+        "dtype": "future128",
         "data_schema": schema,
         "data": tensor,
     }
@@ -328,7 +233,11 @@ async def test_save_measurement_uses_catalog_order_and_persists_vector_schema(cl
     response = await client.post(
         "/measurement/save",
         headers=auth_headers(owner),
-        json={"sample_id": sample.id, "setup_id": setup.id, "recorded_data": [item]},
+        json={
+            "sample_id": sample.id,
+            "setup_id": setup.id,
+            "recorded_data": [item],
+        },
     )
 
     assert response.status_code == 200
@@ -336,105 +245,24 @@ async def test_save_measurement_uses_catalog_order_and_persists_vector_schema(cl
         select(RecordedData).where(RecordedData.measurement_id == response.json()["id"])
     )
     assert recorded is not None
+    assert recorded.quantity_kind == item["quantity_kind"]
+    assert recorded.tensor_order == item["tensor_order"]
+    assert recorded.dtype == item["dtype"]
     assert recorded.data_schema == schema
-    assert recorded.tensor_order == 1
+    assert recorded.data == tensor
 
-    wrong_order = await client.post(
+    missing_data = dict(item)
+    missing_data.pop("data")
+    response = await client.post(
         "/measurement/save",
         headers=auth_headers(owner),
         json={
             "sample_id": sample.id,
             "setup_id": setup.id,
-            "recorded_data": [{**item, "tensor_order": 0}],
+            "recorded_data": [missing_data],
         },
     )
-    assert wrong_order.status_code == 422
-
-    wrong_shape = await client.post(
-        "/measurement/save",
-        headers=auth_headers(owner),
-        json={
-            "sample_id": sample.id,
-            "setup_id": setup.id,
-            "recorded_data": [{**item, "data": {**tensor, "shape": [2, 2]}}],
-        },
-    )
-    assert wrong_shape.status_code == 422
-
-    missing_basis = await client.post(
-        "/measurement/save",
-        headers=auth_headers(owner),
-        json={
-            "sample_id": sample.id,
-            "setup_id": setup.id,
-            "recorded_data": [
-                {
-                    **item,
-                    "data_schema": {
-                        key: value
-                        for key, value in schema.items()
-                        if key != "basis"
-                    },
-                }
-            ],
-        },
-    )
-    assert missing_basis.status_code == 422
-
-    invalid_unit = await client.post(
-        "/measurement/save",
-        headers=auth_headers(owner),
-        json={
-            "sample_id": sample.id,
-            "setup_id": setup.id,
-            "recorded_data": [
-                {
-                    **item,
-                    "data_schema": {**schema, "unit": "s"},
-                }
-            ],
-        },
-    )
-    assert invalid_unit.status_code == 422
-
-    mismatched_ticks = await client.post(
-        "/measurement/save",
-        headers=auth_headers(owner),
-        json={
-            "sample_id": sample.id,
-            "setup_id": setup.id,
-            "recorded_data": [
-                {
-                    **item,
-                    "data": {
-                        **tensor,
-                        "axes": [{"ticks": ["앞", "다름"]}],
-                    },
-                }
-            ],
-        },
-    )
-    assert mismatched_ticks.status_code == 422
-
-    missing_dynamic_ticks = await client.post(
-        "/measurement/save",
-        headers=auth_headers(owner),
-        json={
-            "sample_id": sample.id,
-            "setup_id": setup.id,
-            "recorded_data": [
-                {
-                    **item,
-                    "data_schema": {
-                        **schema,
-                        "axes": [{"name": "point"}],
-                    },
-                    "data": {**tensor, "axes": [{}]},
-                }
-            ],
-        },
-    )
-    assert missing_dynamic_ticks.status_code == 422
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -482,12 +310,12 @@ async def test_recorded_data_list_keeps_legacy_rows_without_schema(client, db_se
 
 
 @pytest.mark.asyncio
-async def test_save_measurement_rejects_legacy_and_aggregate_tensor_overflow(client, db_session, monkeypatch):
+async def test_save_measurement_accepts_legacy_data_without_interpretation(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
     sample, setup, _, _ = await create_measurement_graph(db_session, owner.id)
 
-    legacy_response = await client.post(
+    response = await client.post(
         "/measurement/save",
         headers=auth_headers(owner),
         json={
@@ -509,59 +337,12 @@ async def test_save_measurement_rejects_legacy_and_aggregate_tensor_overflow(cli
             ],
         },
     )
-    assert legacy_response.status_code == 422
-
-    oversized_scalar_string = await client.post(
-        "/measurement/save",
-        headers=auth_headers(owner),
-        json={
-            "sample_id": sample.id,
-            "setup_id": setup.id,
-            "recorded_data": [
-                {
-                    "name": "Oversized string",
-                    "quantity_kind": None,
-                    "tensor_order": 0,
-                    "dtype": "string",
-                    "data_schema": {"dtype": "string"},
-                    "data": inline_tensor("한" * 70_000),
-                }
-            ],
-        },
+    assert response.status_code == 200
+    recorded = await db_session.scalar(
+        select(RecordedData).where(RecordedData.measurement_id == response.json()["id"])
     )
-    assert oversized_scalar_string.status_code == 422
-
-    monkeypatch.setattr(api_models, "MAX_RECORDED_DATA_BYTES", 8)
-    raw = bytes([0, 1, 0, 1, 0])
-    tensor = {
-        "tensorEncodingVersion": 1,
-        "shape": [5],
-        "storage": {
-            "kind": "base64",
-            "data": base64.b64encode(raw).decode("ascii"),
-            "byteLength": len(raw),
-        },
-    }
-    overflow_response = await client.post(
-        "/measurement/save",
-        headers=auth_headers(owner),
-        json={
-            "sample_id": sample.id,
-            "setup_id": setup.id,
-            "recorded_data": [
-                {
-                    "name": name,
-                    "quantity_kind": None,
-                    "tensor_order": 0,
-                    "dtype": "bool",
-                    "data_schema": {"dtype": "bool", "axes": [{"length": 5}]},
-                    "data": tensor,
-                }
-                for name in ("A", "B")
-            ],
-        },
-    )
-    assert overflow_response.status_code == 422
+    assert recorded is not None
+    assert recorded.data == {"value": 1}
 
 
 @pytest.mark.asyncio

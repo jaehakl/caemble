@@ -1,9 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { identityCartesianBasis } from '../../quantitykind/identityBasis'
-import { canonicalDataHash } from '../authoring'
 import {
-  assertKernelExecutionResult,
   normalizeKernelTaskConfig,
   resolveKernelInputPort,
   resolveKernelOutputSpecs,
@@ -13,12 +10,11 @@ import {
 import type { KernelDescriptor, KernelTaskConfig, KernelValueSpec } from './types'
 
 const valueSpecFixture = JSON.parse(
-  readFileSync(new URL('../../cad/model/fixtures/data-schema-golden.v1.json', import.meta.url), 'utf8'),
+  readFileSync(new URL('../../model/fixtures/data-schema-golden.v1.json', import.meta.url), 'utf8'),
 ) as Readonly<{
   valueSpecCases: readonly Readonly<{
     name: string
-    specHash: string
-    spec: unknown
+    spec: Readonly<Record<string, unknown>>
     valid: readonly unknown[]
     invalid: readonly Readonly<{ value: unknown; issue: string }>[]
   }>[]
@@ -131,7 +127,7 @@ const config = Object.freeze({
 } as const satisfies KernelTaskConfig)
 
 describe('kernel contract validation', () => {
-  it('matches the shared KernelValueSpec constraint fixture', () => {
+  it('matches the local KernelValueSpec constraint fixture', () => {
     valueSpecFixture.valueSpecCases.forEach((fixture) => {
       const fixtureDescriptor = {
         ...descriptor,
@@ -144,7 +140,6 @@ describe('kernel contract validation', () => {
         },
       } as KernelDescriptor
 
-      expect(canonicalDataHash(fixture.spec), fixture.name).toBe(fixture.specHash)
       expect(validateKernelDescriptor(fixtureDescriptor), fixture.name).toEqual([])
       fixture.valid.forEach((value, index) => {
         const fixtureConfig = {
@@ -233,62 +228,5 @@ describe('kernel contract validation', () => {
         }),
       ]),
     )
-  })
-
-  it('normalizes exact execution outputs and rejects partial or invalid results', () => {
-    expect(
-      assertKernelExecutionResult(descriptor, config, {
-        artifacts: { voltage: { value: 1 } },
-        observations: { converged: true },
-      }),
-    ).toEqual({
-      artifacts: { voltage: { value: 1 } },
-      observations: { converged: true },
-    })
-    expect(() =>
-      assertKernelExecutionResult(descriptor, config, {
-        artifacts: {},
-        observations: { converged: true },
-      }),
-    ).toThrow('must exactly match requested output keys voltage')
-    expect(() =>
-      assertKernelExecutionResult(descriptor, config, {
-        artifacts: { voltage: { value: Number.NaN } },
-        observations: { converged: true },
-      }),
-    ).toThrow()
-    expect(() =>
-      assertKernelExecutionResult(descriptor, config, {
-        artifacts: { voltage: { value: 1 } },
-        observations: { converged: 1 as never },
-      }),
-    ).toThrow('observation converged must be a finite boolean')
-  })
-
-  it('validates tensor payload schemas using the declared basis and axes', () => {
-    const tensorDescriptor = structuredClone(descriptor) as unknown as {
-      methods: { outputs: Array<Record<string, unknown>> }
-    }
-    tensorDescriptor.methods.outputs[0].data = {
-      dtype: 'float64',
-      unit: 'A.m-2',
-      quantityKind: 'electromagnetism.ElectricCurrentDensity',
-      basis: identityCartesianBasis,
-      axes: [{ name: 'x', unit: 'm', quantityKind: 'Length' }],
-    }
-    expect(() =>
-      assertKernelExecutionResult(tensorDescriptor as unknown as KernelDescriptor, config, {
-        artifacts: {
-          voltage: {
-            value: [
-              [1, 2, 3],
-              [4, 5, 6],
-            ],
-            axes: [{ ticks: [0, 1] }],
-          },
-        },
-        observations: { converged: true },
-      }),
-    ).not.toThrow()
   })
 })

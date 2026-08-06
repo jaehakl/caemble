@@ -509,39 +509,6 @@ export function ViewerToolbar({
               {simulation.process.error}
             </div>
           ) : null}
-          {simulation.programResult ? (
-            <details className="w-full max-w-3xl text-left text-[10px] text-slate-600">
-              <summary className="cursor-pointer font-medium">
-                Program trace · {simulation.programResult.trace.length} kernel call
-                {simulation.programResult.trace.length === 1 ? '' : 's'} · state r
-                {simulation.programResult.finalStateRevision}
-              </summary>
-              <ol className="mt-1 max-h-28 overflow-auto rounded border border-slate-200 bg-white p-2 font-mono">
-                {simulation.programResult.trace.map((entry) => (
-                  <li key={entry.sequence}>
-                    {entry.sequence}. {entry.task} · {entry.kernel.name}@{entry.kernel.version} · {entry.status} · r
-                    {entry.inputStateRevision}→{entry.outputStateRevision ?? '—'}
-                  </li>
-                ))}
-              </ol>
-              <button
-                className="mt-1 rounded border border-slate-300 bg-white px-2 py-1 font-sans font-medium hover:bg-slate-50"
-                type="button"
-                onClick={() => {
-                  const json = simulation.exportProgramResult?.()
-                  if (!json) return
-                  const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
-                  const anchor = document.createElement('a')
-                  anchor.href = url
-                  anchor.download = `${simulation.programResult?.runId ?? 'simulation'}.caemble-run.json`
-                  anchor.click()
-                  URL.revokeObjectURL(url)
-                }}
-              >
-                Export .caemble-run.json
-              </button>
-            </details>
-          ) : null}
         </div>
       ) : null}
     </div>

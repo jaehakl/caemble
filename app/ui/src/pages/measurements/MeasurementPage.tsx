@@ -55,7 +55,6 @@ import {
   type Vars,
 } from '@/lib/cad'
 import type { MaterialResolution } from '@/lib/material'
-import { getQuantityKindTensorOrder } from '@/lib/quantitykind/runtime'
 
 function positiveId(value: string | null) {
   const parsed = Number(value)
@@ -691,7 +690,12 @@ export function MeasurementPage() {
         (current) => ({
           total: current ? current.total + (current.items.some((item) => item.id === id) ? 0 : 1) : 1,
           items: [
-            { id, sample_id: request.sample_id, setup_id: request.setup_id, updated_at: updatedAt },
+            {
+              id,
+              sample_id: request.sample_id,
+              setup_id: request.setup_id,
+              updated_at: updatedAt,
+            },
             ...(current?.items ?? []).filter((item) => item.id !== id),
           ],
         }),
@@ -911,19 +915,23 @@ export function MeasurementPage() {
     if (
       simulation.process.status !== 'succeeded' ||
       !simulation.recordedData ||
-      !simulation.programResult ||
+      !experimentDocument.simulationProgram ||
       simulation.stale ||
       simulation.recordedData === runPreviousRecordedData.current
     )
       return
 
-    const result = simulation.programResult
+    const result = simulation.recordedData
+    const schemas = experimentDocument.simulationProgram.recordedData
     let recordedData: MeasurementSaveRequest['recorded_data']
     try {
       let recordedByteLength = 0
-      recordedData = Object.entries(result.recordedData).map(([name, entry]) => {
-        const quantityKind = entry.spec.quantityKind
-        const accessor = createDataTensorAccessor(entry.spec, entry.data, `RecordedData ${JSON.stringify(name)}`)
+      recordedData = Object.entries(result).map(([name, data]) => {
+        const spec = schemas[name]
+        if (!spec) throw new Error(`RecordedData ${JSON.stringify(name)} schema가 없습니다.`)
+        const quantityKind = spec.quantityKind
+        const { tensorOrder, ...dataSchema } = spec
+        const accessor = createDataTensorAccessor(spec, data, `RecordedData ${JSON.stringify(name)}`)
         recordedByteLength += accessor.byteLength
         if (recordedByteLength > MAX_RECORDED_DATA_BYTES) {
           throw new Error(`RecordedData raw bytes exceed the ${MAX_RECORDED_DATA_BYTES / 1024 / 1024} MiB Run limit.`)
@@ -931,10 +939,10 @@ export function MeasurementPage() {
         return {
           name,
           quantity_kind: quantityKind ?? null,
-          tensor_order: quantityKind === undefined ? 0 : getQuantityKindTensorOrder(quantityKind),
-          dtype: entry.spec.dtype,
-          data_schema: persistDataSchema(entry.spec),
-          data: persistDataTensor(entry.spec, entry.data, `RecordedData ${JSON.stringify(name)}`),
+          tensor_order: tensorOrder,
+          dtype: spec.dtype,
+          data_schema: persistDataSchema(dataSchema),
+          data: persistDataTensor(spec, data, `RecordedData ${JSON.stringify(name)}`),
         }
       })
     } catch (error) {
@@ -980,7 +988,7 @@ export function MeasurementPage() {
     simulation.process.error,
     simulation.process.runId,
     simulation.process.status,
-    simulation.programResult,
+    experimentDocument.simulationProgram,
     simulation.recordedData,
     simulation.stale,
   ])

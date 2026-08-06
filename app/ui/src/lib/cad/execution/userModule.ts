@@ -12,7 +12,7 @@ import { Fragment, h } from '../evaluation/jsx'
 import type { CadDocumentType } from '../source/document'
 import type { EvaluatedRuntimeDocumentSnapshot } from './snapshot'
 import { assertCompiledCadSource, type CompiledCadSource } from '../compiler/types'
-import { kernelAuthoring } from '../../simulation/kernels'
+import { kernelAuthoring } from '../simulation/kernels'
 import { assertUcumUnitComparable, convertUcumValue, normalizeUcumUnit } from '../model/units'
 
 const coreModule = Object.freeze({
@@ -107,7 +107,7 @@ export function evaluateDocumentEntry(
     return evaluateWithVars(
       variables,
       () => {
-        const runtime = entry.createProgramRuntime(variables, sourceHash, simulationCode, simulationCodeHash)
+        const runtime = entry.createProgramRuntime(variables, simulationCode)
         return Object.freeze({
           kind: 'experiment' as const,
           sourceHash,
