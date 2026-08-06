@@ -225,6 +225,7 @@ export function MeasurementPage() {
     experimentVars,
     resolveMaterials,
     'fast-reroll',
+    auth.user?.gpstation_connection,
   )
   const structureRevisionRef = useRef(structureDocument.revision)
   structureRevisionRef.current = structureDocument.revision

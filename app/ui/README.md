@@ -29,6 +29,10 @@ npm run test:e2e
 
 앱 개발 서버의 `/api`는 `http://localhost:8000`으로 proxy되며 prefix가 제거된다. 운영 reverse proxy도 같은 계약을 사용한다. 기본 설정은 `VITE_API_BASE_URL=/api`이고, 요청에는 HttpOnly access/refresh 쿠키를 위해 항상 credentials가 포함된다.
 
+GPStation API URL과 Access Token은 로그인 사용자의 Account 화면에서 저장하며,
+로그인 시 Caemble API의 사용자 정보와 함께 복원된다. 브라우저는 이 연결 정보로
+GPStation SDK/WebRTC를 직접 사용한다.
+
 실제 browser↔launcher↔CAE 수용 테스트는 연결된 `cae` launcher와 같은 GPStation 사용자의 평문 client token이 있을 때만 실행된다.
 
 ```powershell

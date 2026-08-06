@@ -19,6 +19,25 @@ const upsertResponseSchema = z.object({
 })
 const logoutResponseSchema = z.object({ ok: z.literal(true) })
 const deleteResponseSchema = z.null()
+const gpStationConnectionSchema = z.object({
+  api_base_url: z.string().min(1),
+  access_token: z.string().min(1),
+})
+const gpStationConnectionInputSchema = z.object({
+  api_base_url: z.string().trim().min(1),
+  access_token: z.string().trim().min(1),
+})
+const authenticatedUserSchema = z.object({
+  id: z.string(),
+  email: z.string().email().nullable().optional(),
+  display_name: z.string().nullable().optional(),
+  picture_url: z.string().url().nullable().optional(),
+  is_active: z.boolean().nullable().optional(),
+  roles: z.array(z.string()),
+  created_at: z.string().nullable().optional(),
+  updated_at: z.string().nullable().optional(),
+  gpstation_connection: gpStationConnectionSchema.nullable().default(null),
+})
 const saveCodeEntityRequestSchema = z.object({
   id: z.number().int().optional(),
   name: z.string().min(1),
@@ -147,7 +166,14 @@ export const dbTables = {
       updated_at: z.string().nullable().optional(),
     }),
     async fetchMe() {
-      return this.rowSchema.parse(await request<unknown>('get', '/auth/me'))
+      return authenticatedUserSchema.parse(await request<unknown>('get', '/auth/me'))
+    },
+    async saveGpStationConnection(value: z.input<typeof gpStationConnectionInputSchema>) {
+      const payload = gpStationConnectionInputSchema.parse(value)
+      return authenticatedUserSchema.parse(await request<unknown>('put', '/user_data/gpstation', payload))
+    },
+    async deleteGpStationConnection() {
+      return authenticatedUserSchema.parse(await request<unknown>('delete', '/user_data/gpstation'))
     },
     async getAllUsersAdmin(limit: number, offset: number) {
       return z

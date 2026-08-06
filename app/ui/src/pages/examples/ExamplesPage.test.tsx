@@ -35,6 +35,10 @@ vi.mock('@/features/viewer/workspace/useCadWorkspace', () => ({
   useCadWorkspace: workspace.useCadWorkspace,
 }))
 
+vi.mock('@/features/auth/use-auth', () => ({
+  useAuth: () => ({ user: null }),
+}))
+
 vi.mock('@/features/viewer/workspace/StructureExperimentViewer', () => ({
   StructureExperimentViewer: ({
     experiment,

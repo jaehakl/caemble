@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from db import SessionLocal
-from models import UserData
+from models import AuthenticatedUserData, GPStationConnectionData, UserData
 from settings import settings
 from user_auth.db import Identity, OAuthProvider, OAuthState, Role, User, UserRole
 from user_auth.utils.auth_utils import (
@@ -71,6 +71,21 @@ def user_data(user: User) -> UserData:
         created_at=user.created_at,
         updated_at=user.updated_at,
         roles=[entry.role.name for entry in user.user_roles],
+    )
+
+
+def authenticated_user_data(user: User) -> AuthenticatedUserData:
+    connection = user.gpstation_connection
+    return AuthenticatedUserData(
+        **user_data(user).model_dump(),
+        gpstation_connection=(
+            GPStationConnectionData(
+                api_base_url=connection.api_base_url,
+                access_token=connection.access_token,
+            )
+            if connection is not None
+            else None
+        ),
     )
 
 
@@ -257,8 +272,8 @@ async def google_callback(request: Request, state: str = "", code: str = "", db:
     return response
 
 
-@router.get("/me", response_model=UserData)
-async def check_user(request: Request, db: AsyncSession = Depends(get_db)) -> UserData:
+@router.get("/me", response_model=AuthenticatedUserData)
+async def check_user(request: Request, db: AsyncSession = Depends(get_db)) -> AuthenticatedUserData:
     token = request.cookies.get("access_token")
     if not token:
         authorization = request.headers.get("Authorization", "")
@@ -273,10 +288,11 @@ async def check_user(request: Request, db: AsyncSession = Depends(get_db)) -> Us
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid access token") from error
     user = await db.scalar(select(User).options(
         selectinload(User.user_roles).selectinload(UserRole.role),
+        selectinload(User.gpstation_connection),
     ).where(User.id == claims["sub"]))
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User inactive")
-    return user_data(user)
+    return authenticated_user_data(user)
 
 
 @router.get("/refresh")

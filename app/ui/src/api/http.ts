@@ -1,6 +1,6 @@
 export const API_URL = (import.meta.env.VITE_API_BASE_URL?.trim() || '/api').replace(/\/+$/, '')
 
-export type HttpMethod = 'get' | 'post' | 'delete'
+export type HttpMethod = 'get' | 'post' | 'put' | 'delete'
 
 export class ApiError extends Error {
   readonly body: unknown

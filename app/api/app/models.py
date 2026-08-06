@@ -1,6 +1,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import EmailStr, Field, field_serializer, field_validator
@@ -27,6 +28,50 @@ class UserData(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     roles: List[RoleEnum]
+
+
+class GPStationConnectionData(BaseModel):
+    api_base_url: str
+    access_token: str
+
+
+class AuthenticatedUserData(UserData):
+    gpstation_connection: Optional[GPStationConnectionData] = None
+
+
+class GPStationConnectionUpdate(BaseModel):
+    api_base_url: str = Field(..., min_length=1, max_length=2048)
+    access_token: str = Field(..., min_length=1, max_length=8192)
+
+    @field_validator("api_base_url")
+    @classmethod
+    def normalize_api_base_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        try:
+            parsed = urlsplit(normalized)
+            port = parsed.port
+        except ValueError as error:
+            raise ValueError("GPStation API URL이 올바르지 않습니다.") from error
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or port is not None and not 0 < port < 65536
+        ):
+            raise ValueError("GPStation API URL은 credential, query, fragment가 없는 HTTP(S) URL이어야 합니다.")
+        return normalized
+
+    @field_validator("access_token")
+    @classmethod
+    def normalize_access_token(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("GPStation Access Token을 입력하세요.")
+        return normalized
 
 
 class GetListRequestBase(BaseModel):

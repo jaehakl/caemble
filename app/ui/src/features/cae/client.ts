@@ -15,6 +15,7 @@ import type {
   CaeStartRequest,
   CaeStartedPayload,
 } from './protocol'
+import type { GPStationConnectionData } from '@/api'
 import type { BuiltSample, BuiltSetup, DataTensor, RecordedData } from '../../lib/cad'
 import {
   canonicalizeCaeRealizations,
@@ -22,7 +23,6 @@ import {
   registerDataTensorAttachment,
   releaseDataTensorAttachments,
 } from '../../lib/cad'
-import { getCaeAccessToken, gpStationApiBaseUrl } from './connection'
 
 const INPUT_LIMIT_BYTES = 256 * 1024 * 1024
 const RECORDED_LIMIT_BYTES = 64 * 1024 * 1024
@@ -33,6 +33,7 @@ const FINISH_TIMEOUT_MS = 60_000
 const LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1
 
 export type CaeSimulationOptions = Readonly<{
+  connection?: GPStationConnectionData | null
   signal?: AbortSignal
   onRecord?: (name: string, tensor: DataTensor) => void
   onStatus?: (status: CaeSimulationStatus) => void
@@ -57,11 +58,12 @@ export function simulate(
   setup: BuiltSetup,
   options: CaeSimulationOptions = {},
 ): Promise<RecordedData> {
-  const token = getCaeAccessToken()
-  if (!token) {
+  const connection = options.connection
+  if (!connection) {
     return Promise.reject(new CaeSimulationError('access_token_required', 'GPStation Access Token이 필요합니다.'))
   }
-  const apiBaseUrl = gpStationApiBaseUrl()
+  const apiBaseUrl = connection.api_base_url
+  const token = connection.access_token
   let cancelled = options.signal?.aborted ?? false
   let jobId: string | null = null
   let session: JobSession | null = null

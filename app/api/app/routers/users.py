@@ -1,12 +1,58 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import UserData
+from models import (
+    AuthenticatedUserData,
+    GPStationConnectionData,
+    GPStationConnectionUpdate,
+    UserData,
+)
 from service.user_sevice import UserService
+from user_auth.db import GPStationConnection
 from user_auth.routes import get_db
 from user_auth.utils.auth_wrapper import require_roles
 
 router = APIRouter(tags=["users"])
+
+
+@router.put("/user_data/gpstation", response_model=AuthenticatedUserData)
+async def api_put_gpstation_connection(
+    value: GPStationConnectionUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: AuthenticatedUserData = Depends(require_roles(["admin", "user"])),
+):
+    connection = await db.get(GPStationConnection, user.id)
+    if connection is None:
+        connection = GPStationConnection(
+            user_id=user.id,
+            api_base_url=value.api_base_url,
+            access_token=value.access_token,
+        )
+        db.add(connection)
+    else:
+        connection.api_base_url = value.api_base_url
+        connection.access_token = value.access_token
+    await db.commit()
+    return user.model_copy(
+        update={
+            "gpstation_connection": GPStationConnectionData(
+                api_base_url=connection.api_base_url,
+                access_token=connection.access_token,
+            )
+        }
+    )
+
+
+@router.delete("/user_data/gpstation", response_model=AuthenticatedUserData)
+async def api_delete_gpstation_connection(
+    db: AsyncSession = Depends(get_db),
+    user: AuthenticatedUserData = Depends(require_roles(["admin", "user"])),
+):
+    connection = await db.get(GPStationConnection, user.id)
+    if connection is not None:
+        await db.delete(connection)
+        await db.commit()
+    return user.model_copy(update={"gpstation_connection": None})
 
 
 @router.get("/user_admin/get_all_users/{limit}/{offset}", response_model=list[UserData])

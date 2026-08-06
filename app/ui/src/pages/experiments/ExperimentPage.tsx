@@ -396,6 +396,8 @@ export function ExperimentPage() {
     undefined,
     undefined,
     resolveMaterials,
+    'standard',
+    auth.user?.gpstation_connection,
   )
 
   const invalidateExperiments = useCallback(async () => {

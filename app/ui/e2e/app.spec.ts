@@ -10,6 +10,7 @@ const user = {
   created_at: '2026-07-21T00:00:00Z',
   updated_at: '2026-07-21T00:00:00Z',
   roles: ['user'],
+  gpstation_connection: null as null | { api_base_url: string; access_token: string },
 }
 const apiPattern = /^http:\/\/127\.0\.0\.1:\d+\/api\//
 const selectControlWarning = /Select is changing from (?:uncontrolled to controlled|controlled to uncontrolled)/i
@@ -23,11 +24,24 @@ async function json(route: Route, body: unknown, status = 200) {
 }
 
 async function mockApi(page: Page, authenticated = false) {
+  let gpStationConnection = user.gpstation_connection
   await page.route(apiPattern, async (route) => {
     const path = new URL(route.request().url()).pathname.replace(/^\/api/, '')
     if (path === '/auth/me')
-      return json(route, authenticated ? user : { detail: 'Not authenticated' }, authenticated ? 200 : 401)
+      return json(
+        route,
+        authenticated ? { ...user, gpstation_connection: gpStationConnection } : { detail: 'Not authenticated' },
+        authenticated ? 200 : 401,
+      )
     if (path === '/auth/refresh') return json(route, { detail: 'No refresh token' }, 401)
+    if (path === '/user_data/gpstation' && route.request().method() === 'PUT') {
+      gpStationConnection = route.request().postDataJSON()
+      return json(route, { ...user, gpstation_connection: gpStationConnection })
+    }
+    if (path === '/user_data/gpstation' && route.request().method() === 'DELETE') {
+      gpStationConnection = null
+      return json(route, { ...user, gpstation_connection: null })
+    }
     if (path.endsWith('/list')) return json(route, { total: 0, items: [] })
     return json(route, { detail: 'Unexpected mocked endpoint' }, 404)
   })
@@ -231,15 +245,20 @@ test('blocks the verified v3 uniform-bar example without a connected CAE launche
 })
 
 test('runs the verified example through an actual browser-launcher-CAE session', async ({ page }) => {
+  const apiBaseUrl = process.env.GPSTATION_E2E_API_BASE_URL?.trim()
   const token = process.env.GPSTATION_E2E_CLIENT_TOKEN?.trim()
-  test.skip(!token, 'Set GPSTATION_E2E_CLIENT_TOKEN and run a connected cae launcher for the live WebRTC test.')
+  test.skip(
+    !apiBaseUrl || !token,
+    'Set GPSTATION_E2E_API_BASE_URL and GPSTATION_E2E_CLIENT_TOKEN, then run a connected cae launcher.',
+  )
   test.setTimeout(180_000)
   await mockApi(page, true)
 
   await page.goto('/account')
+  await page.getByLabel('GPStation API URL').fill(apiBaseUrl!)
   await page.getByLabel('GPStation Access Token').fill(token!)
-  await page.getByRole('button', { name: '연결', exact: true }).click()
-  await expect(page.getByText('CAE Access Token이 연결되어 있습니다.')).toBeVisible({ timeout: 30_000 })
+  await page.getByRole('button', { name: '연결 저장', exact: true }).click()
+  await expect(page.getByText('GPStation 연결 정보가 저장되어 있습니다.')).toBeVisible({ timeout: 30_000 })
 
   await page.goto('/examples/dc-uniform-bar')
   const run = page.getByRole('button', { name: 'Run simulation' })

@@ -53,6 +53,13 @@ class User(TimestampMixin, Base):
     user_roles: Mapped[List["UserRole"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="selectin")
     auth_audits: Mapped[List["AuthAudit"]] = relationship(back_populates="user", lazy="selectin")
     api_keys: Mapped[List["APIKey"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="selectin")
+    gpstation_connection: Mapped[Optional["GPStationConnection"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        single_parent=True,
+        uselist=False,
+    )
     materials: Mapped[List["Material"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     material_names: Mapped[List["MaterialName"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     material_parameters: Mapped[List["MaterialParameter"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
@@ -65,7 +72,19 @@ class User(TimestampMixin, Base):
     recorded_data: Mapped[List["RecordedData"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     designer_models: Mapped[List["DesignerModel"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     predictor_models: Mapped[List["PredictorModel"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
-    
+
+
+class GPStationConnection(TimestampMixin, Base):
+    __tablename__ = "gpstation_connections"
+    user_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    api_base_url: Mapped[str] = mapped_column(Text, nullable=False)
+    access_token: Mapped[str] = mapped_column(Text, nullable=False)
+    user: Mapped[User] = relationship(back_populates="gpstation_connection")
+
 
 class Identity(TimestampMixin, Base):
     __tablename__ = "identities"

@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { useAuth } from '@/features/auth/use-auth'
 import {
   Dialog,
   DialogContent,
@@ -29,6 +30,7 @@ import { resolveMaterialParameters } from '@/lib/material'
 const defaultExample = caembleProgramExamples[0]
 
 export function ExamplesPage() {
+  const auth = useAuth()
   const navigate = useNavigate()
   const { exampleId } = useParams()
   const selectedExample = caembleProgramExamples.find((example) => example.id === exampleId) ?? defaultExample
@@ -84,6 +86,7 @@ export function ExamplesPage() {
     undefined,
     resolveMaterials,
     'fast-reroll',
+    auth.user?.gpstation_connection,
   )
 
   const dirty =

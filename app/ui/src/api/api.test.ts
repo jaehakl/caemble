@@ -101,6 +101,7 @@ describe('unified dbTables API', () => {
       roles: ['user'],
       created_at: '2026-07-21T00:00:00Z',
       updated_at: null,
+      gpstation_connection: null,
     }
     const { dbTables } = await loadApi()
     server.use(http.get('http://api.test/auth/me', () => HttpResponse.json(validUser)))
@@ -117,6 +118,56 @@ describe('unified dbTables API', () => {
       server.use(http.get('http://api.test/auth/me', () => HttpResponse.json(invalidUser)))
       await expect(dbTables.User.fetchMe()).rejects.toBeInstanceOf(ZodError)
     }
+  })
+
+  it('loads and updates the authenticated user GPStation connection separately from public user rows', async () => {
+    const authenticatedUser = {
+      id: 'd7929429-84f8-4d92-865d-dc638d8e64e0',
+      email: 'designer@example.com',
+      display_name: 'Designer',
+      picture_url: null,
+      is_active: true,
+      roles: ['user'],
+      created_at: '2026-07-21T00:00:00Z',
+      updated_at: '2026-07-21T00:00:00Z',
+      gpstation_connection: {
+        api_base_url: 'https://gps.example.test',
+        access_token: 'gpsk_secret',
+      },
+    }
+    const requests: { body: unknown; method: string }[] = []
+    server.use(
+      http.put('http://api.test/user_data/gpstation', async ({ request }) => {
+        requests.push({ body: await request.json(), method: request.method })
+        return HttpResponse.json(authenticatedUser)
+      }),
+      http.delete('http://api.test/user_data/gpstation', ({ request }) => {
+        requests.push({ body: null, method: request.method })
+        return HttpResponse.json({ ...authenticatedUser, gpstation_connection: null })
+      }),
+    )
+    const { dbTables } = await loadApi()
+
+    await expect(
+      dbTables.User.saveGpStationConnection({
+        api_base_url: ' https://gps.example.test ',
+        access_token: ' gpsk_secret ',
+      }),
+    ).resolves.toEqual(authenticatedUser)
+    await expect(dbTables.User.deleteGpStationConnection()).resolves.toMatchObject({
+      gpstation_connection: null,
+    })
+    expect(requests).toEqual([
+      {
+        method: 'PUT',
+        body: {
+          api_base_url: 'https://gps.example.test',
+          access_token: 'gpsk_secret',
+        },
+      },
+      { method: 'DELETE', body: null },
+    ])
+    expect(dbTables.User.rowSchema.parse(authenticatedUser)).not.toHaveProperty('gpstation_connection')
   })
 
   it('validates numeric, FK, required, nullable, and JSON fields before sending', async () => {

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { dbTables, logout } from '@/api'
+import type { GPStationConnectionData } from '@/api'
 
 export const authQueryKey = ['auth', 'me'] as const
 
@@ -25,5 +26,21 @@ export function useLogout() {
       queryClient.setQueryData(authQueryKey, null)
       queryClient.removeQueries({ queryKey: ['work'] })
     },
+  })
+}
+
+export function useSaveGpStationConnection() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (connection: GPStationConnectionData) => dbTables.User.saveGpStationConnection(connection),
+    onSuccess: (user) => queryClient.setQueryData(authQueryKey, user),
+  })
+}
+
+export function useDeleteGpStationConnection() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => dbTables.User.deleteGpStationConnection(),
+    onSuccess: (user) => queryClient.setQueryData(authQueryKey, user),
   })
 }

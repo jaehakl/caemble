@@ -35,7 +35,13 @@ const auth = vi.hoisted(() => ({
   value: {
     isAuthenticated: true,
     isLoading: false,
-    user: { id: 'owner-id', email: 'owner@example.com', is_active: true, roles: ['user'] },
+    user: {
+      id: 'owner-id',
+      email: 'owner@example.com',
+      is_active: true,
+      roles: ['user'],
+      gpstation_connection: null,
+    },
   } as { isAuthenticated: boolean; isLoading: boolean; user: UserData | null },
 }))
 
@@ -247,7 +253,13 @@ beforeEach(() => {
   auth.value = {
     isAuthenticated: true,
     isLoading: false,
-    user: { id: 'owner-id', email: 'owner@example.com', is_active: true, roles: ['user'] },
+    user: {
+      id: 'owner-id',
+      email: 'owner@example.com',
+      is_active: true,
+      roles: ['user'],
+      gpstation_connection: null,
+    },
   }
   api.listExperiments.mockResolvedValue({ items: experiments, total: experiments.length })
   api.listStructures.mockResolvedValue({ items: [currentStructure], total: 1 })
@@ -604,7 +616,13 @@ describe('ExperimentPage', () => {
     auth.value = {
       isAuthenticated: true,
       isLoading: false,
-      user: { id: 'admin-id', email: 'admin@example.com', is_active: true, roles: ['admin'] },
+      user: {
+        id: 'admin-id',
+        email: 'admin@example.com',
+        is_active: true,
+        roles: ['admin'],
+        gpstation_connection: null,
+      },
     }
     renderPage('/experiments?experiment=4')
 
@@ -640,6 +658,8 @@ describe('ExperimentPage', () => {
       undefined,
       undefined,
       expect.any(Function),
+      'standard',
+      undefined,
     )
   })
 })

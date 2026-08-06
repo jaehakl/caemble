@@ -1,7 +1,5 @@
 import { defineConfig, devices } from '@playwright/test'
 
-const gpStationE2eApiBaseUrl = process.env.GPSTATION_E2E_API_BASE_URL?.trim()
-
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
@@ -19,9 +17,6 @@ export default defineConfig({
       url: 'http://127.0.0.1:4173',
       reuseExistingServer: true,
       timeout: 120_000,
-      ...(gpStationE2eApiBaseUrl
-        ? { env: { VITE_GPSTATION_API_BASE_URL: gpStationE2eApiBaseUrl } }
-        : {}),
     },
     {
       command: 'npm run dev:runner -- --port 4174 --host localhost',

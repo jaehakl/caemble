@@ -1,4 +1,4 @@
-import type { DbTableRecord } from './api'
+import type { dbTables, DbTableRecord } from './api'
 
 export type {
   DbTableName,
@@ -12,7 +12,8 @@ export type {
   UpsertResponse,
 } from './api'
 
-export type UserData = DbTableRecord<'User'>
+export type UserData = Awaited<ReturnType<typeof dbTables.User.fetchMe>>
+export type GPStationConnectionData = NonNullable<UserData['gpstation_connection']>
 export type MaterialRecord = DbTableRecord<'Material'>
 export type MaterialNameRecord = DbTableRecord<'MaterialName'>
 export type MaterialParameterRecord = DbTableRecord<'MaterialParameter'>

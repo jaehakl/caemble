@@ -30,6 +30,20 @@ index와 FK를 포함한다. 이후 모델 변경은 반드시 새 revision으�
 제한된다. 로컬 HTTP에서는 `SECURE_COOKIES=false`, HTTPS 운영에서는
 `SECURE_COOKIES=true`를 사용하고 필요할 때만 `COOKIE_DOMAIN`을 설정한다.
 
+## GPStation 연결
+
+사용자별 GPStation API URL과 Access Token은 `users`가 아닌
+`gpstation_connections`에 일대일로 저장한다. `user_id`가 PK이자
+`users.id`의 FK이며 사용자를 삭제하면 연결도 함께 삭제된다.
+
+- `GET /auth/me`는 로그인한 본인의 `gpstation_connection`을 반환한다.
+- `PUT /user_data/gpstation`은 URL과 Token을 함께 생성하거나 교체한다.
+- `DELETE /user_data/gpstation`은 로그인한 사용자의 연결을 삭제한다.
+- 관리자 사용자 목록과 사용자 요약 응답에는 GPStation 연결을 포함하지 않는다.
+
+Access Token은 현재 정책상 DB에 평문 저장된다. 운영 DB 권한을 제한하고 TLS를
+사용해야 하며 Token을 로그나 오류 메시지에 기록해서는 안 된다.
+
 ## CRUD 계약
 
 각 도메인 router는 공통 `utils/crud`를 사용해 다음 경로만 제공한다.

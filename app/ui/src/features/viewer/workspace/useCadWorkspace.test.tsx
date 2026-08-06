@@ -13,11 +13,14 @@ import {
   type EvaluatedDocumentSnapshot,
   type RecordedData,
 } from '@/lib/cad'
-import { clearCaeAccessToken, setCaeAccessToken } from '@/features/cae/connection'
 import { simulate } from '@/features/cae/client'
 import { useCadWorkspace } from './useCadWorkspace'
 
 const compilerVersion = 'test-compiler' as CompiledCadSource['compilerVersion']
+const gpStationConnection = {
+  api_base_url: 'https://gps.example.test',
+  access_token: 'gpsk_test',
+}
 
 vi.mock('@/lib/cad', async (importActual) => {
   const actual = await importActual<typeof import('@/lib/cad')>()
@@ -42,18 +45,28 @@ describe('useCadWorkspace compilation cache', () => {
     vi.mocked(compileCadDocument).mockReset()
     vi.mocked(evaluateInIsolatedRunner).mockReset()
     vi.mocked(simulate).mockReset()
-    setCaeAccessToken('gpsk_test')
   })
 
   afterEach(() => {
-    clearCaeAccessToken()
     vi.useRealTimers()
   })
 
   it('blocks legacy Experiments without Python source before edit, preview, or Run', async () => {
     const handleExperimentChange = vi.fn()
     const experiment = createCadSourceDocument('experiment', 'experiment source', 9, null)
-    const render = renderHook(() => useCadWorkspace(null, experiment, undefined, handleExperimentChange))
+    const render = renderHook(() =>
+      useCadWorkspace(
+        null,
+        experiment,
+        undefined,
+        handleExperimentChange,
+        undefined,
+        undefined,
+        undefined,
+        'standard',
+        gpStationConnection,
+      ),
+    )
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1_000)
@@ -129,6 +142,7 @@ describe('useCadWorkspace compilation cache', () => {
           undefined,
           undefined,
           'fast-reroll',
+          gpStationConnection,
         ),
       { initialProps },
     )
@@ -209,7 +223,18 @@ describe('useCadWorkspace compilation cache', () => {
 
     const document = createCadSourceDocument('structure', 'first source', 1)
     const render = renderHook(
-      ({ activeDocument }) => useCadWorkspace(activeDocument, null, () => undefined, undefined),
+      ({ activeDocument }) =>
+        useCadWorkspace(
+          activeDocument,
+          null,
+          () => undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          'standard',
+          gpStationConnection,
+        ),
       { initialProps: { activeDocument: document } },
     )
     await act(async () => {
@@ -293,6 +318,11 @@ describe('useCadWorkspace compilation cache', () => {
           experimentDocument,
           () => undefined,
           () => undefined,
+          undefined,
+          undefined,
+          undefined,
+          'standard',
+          gpStationConnection,
         ),
       {
         initialProps: {

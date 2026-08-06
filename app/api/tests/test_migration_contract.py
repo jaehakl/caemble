@@ -58,11 +58,26 @@ def test_recorded_data_schema_revision_keeps_legacy_rows_readable():
     assert 'op.drop_column("recorded_data", "data_schema")' in source
 
 
-def test_source_migration_graph_ends_at_recorded_data_schema():
+def test_gpstation_connection_revision_is_separate_from_users_and_reversible():
+    revision = next(
+        (Path(__file__).resolve().parents[1] / "alembic" / "versions").glob(
+            "*_add_gpstation_connections.py"
+        )
+    )
+    source = revision.read_text(encoding="utf-8")
+    assert 'down_revision: Union[str, Sequence[str], None] = "e7b2c5d91a40"' in source
+    assert '"gpstation_connections"' in source
+    assert 'sa.PrimaryKeyConstraint("user_id"' in source
+    assert '["users.id"]' in source
+    assert 'ondelete="CASCADE"' in source
+    assert 'op.drop_table("gpstation_connections")' in source
+
+
+def test_source_migration_graph_ends_at_gpstation_connections():
     root = Path(__file__).resolve().parents[1]
     scripts = ScriptDirectory.from_config(Config(root / "alembic.ini"))
 
-    assert scripts.get_heads() == ["e7b2c5d91a40"]
+    assert scripts.get_heads() == ["9d31a6f7c2e4"]
     assert not any(root.joinpath("alembic", "versions").glob("*_measurement_contract_metadata.py"))
 
 
@@ -81,6 +96,28 @@ async def test_configured_database_has_seeded_roles_and_required_extensions(db_s
             """
         )
     )
+    gpstation_columns = list(
+        (
+            await db_session.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = 'gpstation_connections'
+                    ORDER BY ordinal_position
+                    """
+                )
+            )
+        ).scalars()
+    )
     assert roles == ["admin", "user"]
     assert vector
     assert persisted_token_columns == 0
+    assert gpstation_columns == [
+        "user_id",
+        "api_base_url",
+        "access_token",
+        "created_at",
+        "updated_at",
+    ]

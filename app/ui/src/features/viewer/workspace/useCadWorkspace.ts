@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { GPStationConnectionData } from '@/api'
 import type {
   BuiltRealization,
   CadDiagnostic,
@@ -23,7 +24,6 @@ import {
   updateCadSimulationCode,
   updateCadSource,
 } from '@/lib/cad'
-import { useCaeAccessToken } from '@/features/cae/connection'
 import { releaseRecordedDataAttachments, simulate } from '@/features/cae/client'
 import { sourceOnlyMaterialParameters, type MaterialResolution } from '@/lib/material'
 import type { SimulationProgramManifest } from '@/lib/cad/simulation'
@@ -453,6 +453,7 @@ export function useCadWorkspace(
   experimentVars?: Readonly<Vars>,
   resolveMaterials?: (snapshot: EvaluatedDocumentSnapshot) => Promise<MaterialResolution>,
   structureEvaluationMode: 'standard' | 'fast-reroll' = 'standard',
+  gpStationConnection?: GPStationConnectionData | null,
 ) {
   const documentHandlersRef = useRef<Partial<Record<CadDocumentType, DocumentHandlers>>>({})
   const evaluationJobsRef = useRef<Partial<Record<CadDocumentType, EvaluationJob>>>({})
@@ -464,7 +465,6 @@ export function useCadWorkspace(
     startedAt: number
   }> | null>(null)
   const resolveMaterialsRef = useRef(resolveMaterials)
-  const accessToken = useCaeAccessToken()
   const recordedDataRef = useRef<RecordedData | null>(null)
   const [process, setProcess] = useState<SimulationProcess>(idleSimulationProcess)
   const [recordedData, setRecordedData] = useState<RecordedData | null>(null)
@@ -674,7 +674,7 @@ export function useCadWorkspace(
     }
   }, [clearEvaluationJob])
 
-  const connectionIssues = accessToken
+  const connectionIssues = gpStationConnection
     ? Object.freeze([] as SimulationCompatibilityIssue[])
     : Object.freeze([
         {
@@ -726,7 +726,7 @@ export function useCadWorkspace(
     compatibility.status === 'compatible'
 
   const run = useCallback(() => {
-    if (compatibility.status !== 'compatible' || activeRunRef.current || !accessToken) return null
+    if (compatibility.status !== 'compatible' || activeRunRef.current || !gpStationConnection) return null
     const structureSnapshot = documentHandlersRef.current.structure?.getSnapshot()
     const experimentSnapshot = documentHandlersRef.current.experiment?.getSnapshot()
     if (
@@ -759,6 +759,7 @@ export function useCadWorkspace(
     )
     const abortController = new AbortController()
     const promise = simulate(structureSnapshot.realization, experimentSnapshot.realization, {
+      connection: gpStationConnection,
       signal: abortController.signal,
       onRecord(name, tensor) {
         if (activeRunRef.current?.requestId !== requestId) return
@@ -857,7 +858,7 @@ export function useCadWorkspace(
         )
       })
     return requestId
-  }, [accessToken, compatibility.status])
+  }, [gpStationConnection, compatibility.status])
 
   const cancel = useCallback(() => {
     const active = activeRunRef.current

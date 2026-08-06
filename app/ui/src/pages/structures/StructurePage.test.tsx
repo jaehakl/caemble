@@ -35,7 +35,13 @@ const auth = vi.hoisted(() => ({
   value: {
     isAuthenticated: true,
     isLoading: false,
-    user: { id: 'owner-id', email: 'owner@example.com', is_active: true, roles: ['user'] },
+    user: {
+      id: 'owner-id',
+      email: 'owner@example.com',
+      is_active: true,
+      roles: ['user'],
+      gpstation_connection: null,
+    },
   } as { isAuthenticated: boolean; isLoading: boolean; user: UserData | null },
 }))
 
@@ -235,7 +241,13 @@ beforeEach(() => {
   auth.value = {
     isAuthenticated: true,
     isLoading: false,
-    user: { id: 'owner-id', email: 'owner@example.com', is_active: true, roles: ['user'] },
+    user: {
+      id: 'owner-id',
+      email: 'owner@example.com',
+      is_active: true,
+      roles: ['user'],
+      gpstation_connection: null,
+    },
   }
   api.listStructures.mockResolvedValue({ items: structures, total: structures.length })
   api.listExperiments.mockResolvedValue({ items: [currentExperiment], total: 1 })
@@ -590,7 +602,13 @@ describe('StructurePage', () => {
     auth.value = {
       isAuthenticated: true,
       isLoading: false,
-      user: { id: 'admin-id', email: 'admin@example.com', is_active: true, roles: ['admin'] },
+      user: {
+        id: 'admin-id',
+        email: 'admin@example.com',
+        is_active: true,
+        roles: ['admin'],
+        gpstation_connection: null,
+      },
     }
     renderPage('/structures?structure=4')
 
@@ -627,6 +645,7 @@ describe('StructurePage', () => {
       undefined,
       expect.any(Function),
       'fast-reroll',
+      undefined,
     )
   })
 })
