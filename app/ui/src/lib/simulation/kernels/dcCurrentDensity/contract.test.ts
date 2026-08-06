@@ -9,13 +9,9 @@ import {
   validateKernelTaskConfig,
   type KernelWorld,
 } from '../../kernelContract'
-import {
-  dcCurrentDensity,
-  dcCurrentDensityDescriptor,
-  dcCurrentDensityKernel,
-  prepareDcCurrentDensity,
-  type DcCurrentDensityTaskConfig,
-} from '.'
+import { dcCurrentDensity, dcCurrentDensityDescriptor, type DcCurrentDensityTaskConfig } from '.'
+import { prepareDcCurrentDensity } from './prepare'
+import { dcCurrentDensityKernel } from './runtimeDefinition'
 
 function emptyScene(): CadScene {
   return {

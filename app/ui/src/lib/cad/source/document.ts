@@ -13,6 +13,7 @@ export type CadSourceDocument = Readonly<{
   apiVersion: typeof CAD_SOURCE_API_VERSION
   source: string
   realizationSeed: number
+  simulationCode?: string | null
 }>
 
 export type CadEvaluationInput = Readonly<{
@@ -29,7 +30,7 @@ export function assertCadSourceDocument(value: unknown): asserts value is CadSou
     throw new CadModelError('CAD source document must be a plain object.')
   }
   const unknownKey = Object.keys(value).find(
-    (key) => !['apiVersion', 'formatVersion', 'kind', 'realizationSeed', 'source'].includes(key),
+    (key) => !['apiVersion', 'formatVersion', 'kind', 'realizationSeed', 'simulationCode', 'source'].includes(key),
   )
   if (unknownKey) throw new CadModelError(`CAD source document.${unknownKey} is not allowed.`)
 
@@ -49,6 +50,23 @@ export function assertCadSourceDocument(value: unknown): asserts value is CadSou
   if (new TextEncoder().encode(document.source).byteLength > MAX_CAD_SOURCE_BYTES) {
     throw new CadModelError(`CAD source exceeds ${MAX_CAD_SOURCE_BYTES} bytes.`)
   }
+  if (document.kind === 'structure' && document.simulationCode !== undefined) {
+    throw new CadModelError('Structure source cannot contain Python simulation code.')
+  }
+  if (
+    document.kind === 'experiment' &&
+    document.simulationCode !== undefined &&
+    document.simulationCode !== null &&
+    typeof document.simulationCode !== 'string'
+  ) {
+    throw new CadModelError('Experiment Python simulation code must contain text or be null.')
+  }
+  if (
+    typeof document.simulationCode === 'string' &&
+    new TextEncoder().encode(document.simulationCode).byteLength > MAX_CAD_SOURCE_BYTES
+  ) {
+    throw new CadModelError(`Experiment Python simulation code exceeds ${MAX_CAD_SOURCE_BYTES} bytes.`)
+  }
 }
 
 export function createRealizationSeed() {
@@ -61,6 +79,7 @@ export function createCadSourceDocument(
   kind: CadDocumentType,
   source: string,
   realizationSeed = createRealizationSeed(),
+  simulationCode?: string | null,
 ): CadSourceDocument {
   const document = Object.freeze({
     kind,
@@ -68,6 +87,7 @@ export function createCadSourceDocument(
     apiVersion: CAD_SOURCE_API_VERSION,
     source,
     realizationSeed,
+    ...(kind === 'experiment' && simulationCode !== undefined ? { simulationCode } : {}),
   })
   assertCadSourceDocument(document)
   return document
@@ -80,6 +100,15 @@ export function cadSource(document: CadSourceDocument) {
 
 export function updateCadSource(document: CadSourceDocument, source: string): CadSourceDocument {
   const updated = Object.freeze({ ...document, source })
+  assertCadSourceDocument(updated)
+  return updated
+}
+
+export function updateCadSimulationCode(document: CadSourceDocument, simulationCode: string): CadSourceDocument {
+  if (document.kind !== 'experiment') {
+    throw new CadModelError('Only Experiment documents can contain Python simulation code.')
+  }
+  const updated = Object.freeze({ ...document, simulationCode })
   assertCadSourceDocument(updated)
   return updated
 }
@@ -100,6 +129,7 @@ export async function cadSourceHash(document: CadSourceDocument) {
     formatVersion: document.formatVersion,
     kind: document.kind,
     source: document.source,
+    ...(document.kind === 'experiment' ? { simulationCode: document.simulationCode ?? null } : {}),
   })
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input))
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')

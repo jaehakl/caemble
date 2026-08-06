@@ -287,6 +287,7 @@ class Experiment(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     code: Mapped[str] = mapped_column(Text, nullable=False)
+    simulation_code: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     code_embedding: Mapped[Optional[List[float]]] = mapped_column(
         Vector(768),
         nullable=True,
@@ -447,9 +448,10 @@ class RecordedData(TimestampMixin, Base):
         nullable=False,
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    quantity_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    quantity_kind: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tensor_order: Mapped[int] = mapped_column(Integer, nullable=False)
     dtype: Mapped[str] = mapped_column(Text, nullable=False)
+    data_schema: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
     data: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
     data_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     file_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)

@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { CadScene } from '@/lib/cad'
-import type { SimulationProgramManifest } from '@/lib/simulation'
+import { defineKernelTask, simulationProgramManifest } from '@/lib/simulation'
 import CadViewer from './CadViewer'
 import { resolveCadViewerContent } from './cadViewerContent'
 
@@ -21,23 +21,21 @@ const experimentScene: CadScene = {
   surfaceGroups: [],
 }
 
-const program: SimulationProgramManifest = {
-  formatVersion: 1,
-  programHash: 'program-hash',
-  tasks: {
-    electric: {
-      kernel: { name: 'dc-current-density', version: '0.0.0' },
-      configHash: 'dc-config',
-    },
+const program = simulationProgramManifest(
+  {
+    electric: defineKernelTask({ name: 'dc-current-density', version: '0.0.0' }, {}),
   },
-  recordedData: {
+  {
     measuredCurrent: {
       dtype: 'float64',
       unit: 'A',
       quantityKind: 'electromagnetism.ElectricCurrent',
     },
   },
-}
+  'program-hash',
+  'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
+  '0'.repeat(64),
+)
 
 describe('CadViewer', () => {
   it('defaults available Structure and Experiment sources to visible', () => {

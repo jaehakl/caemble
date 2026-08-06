@@ -86,7 +86,16 @@ describe('compiled CAD source execution', () => {
 
   it('evaluates one Experiment source into the global program manifest', async () => {
     const sourceHash = '2'.repeat(64)
-    const result = executeCompiledCode(await compile(defaultExperimentCode), 'experiment', sourceHash, 17)
+    const simulationCode = 'async def simulate(*, sim, tasks, vars, world):\n    return None\n'
+    const result = executeCompiledCode(
+      await compile(defaultExperimentCode),
+      'experiment',
+      sourceHash,
+      17,
+      {},
+      simulationCode,
+      '3'.repeat(64),
+    )
     const snapshot = serializeEvaluatedDocumentSnapshot(result)
 
     expect(() => assertEvaluatedDocumentSnapshot(snapshot)).not.toThrow()
@@ -94,12 +103,20 @@ describe('compiled CAD source execution', () => {
       throw new Error('Expected an Experiment snapshot.')
     }
     expect(snapshot.simulationProgram).toMatchObject({
-      formatVersion: 1,
+      formatVersion: 2,
       programHash: sourceHash,
+      simulationApiVersion: 1,
+      pythonSourceHash: expect.stringMatching(/^[0-9a-f]{64}$/),
       tasks: {
         electric: {
-          kernel: { name: 'dc-current-density', version: '0.0.0' },
+          kernel: {
+            name: 'dc-current-density',
+            version: '0.0.0',
+            descriptorHash: expect.any(String),
+          },
+          config: expect.any(Object),
           configHash: expect.any(String),
+          outputArtifacts: expect.any(Object),
         },
       },
       recordedData: {
@@ -112,6 +129,14 @@ describe('compiled CAD source execution', () => {
     })
     expect(snapshot.simulationProgram).not.toHaveProperty('outputs')
     expect(result.scene.parts.map((part) => part.id)).toEqual(['experiment-device'])
+  })
+
+  it('does not create a runnable manifest when Python simulation source is absent', async () => {
+    const code = await compile(defaultExperimentCode)
+
+    expect(() => executeCompiledCode(code, 'experiment', '2'.repeat(64), 17)).toThrow(
+      'Experiment evaluation requires non-empty Python simulation source',
+    )
   })
 
   it('checks the compiled source identity before loading it', async () => {

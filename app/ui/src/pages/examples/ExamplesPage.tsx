@@ -36,14 +36,26 @@ export function ExamplesPage() {
     createCadSourceDocument('structure', selectedExample.structureCode, CAEMBLE_PROGRAM_EXAMPLE_SEED),
   )
   const [experiment, setExperiment] = useState<CadSourceDocument>(() =>
-    createCadSourceDocument('experiment', selectedExample.experimentCode, CAEMBLE_PROGRAM_EXAMPLE_SEED),
+    createCadSourceDocument(
+      'experiment',
+      selectedExample.experimentCode,
+      CAEMBLE_PROGRAM_EXAMPLE_SEED,
+      selectedExample.simulationCode,
+    ),
   )
   const [activeDocumentType, setActiveDocumentType] = useState<CadDocumentType>('structure')
   const [pendingExample, setPendingExample] = useState<CaembleProgramExample | null>(null)
 
   const resetCurrentExample = useCallback(() => {
     setStructure(createCadSourceDocument('structure', selectedExample.structureCode, CAEMBLE_PROGRAM_EXAMPLE_SEED))
-    setExperiment(createCadSourceDocument('experiment', selectedExample.experimentCode, CAEMBLE_PROGRAM_EXAMPLE_SEED))
+    setExperiment(
+      createCadSourceDocument(
+        'experiment',
+        selectedExample.experimentCode,
+        CAEMBLE_PROGRAM_EXAMPLE_SEED,
+        selectedExample.simulationCode,
+      ),
+    )
     setActiveDocumentType('structure')
     setPendingExample(null)
   }, [selectedExample])

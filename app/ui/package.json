@@ -7,7 +7,7 @@
     "dev": "concurrently --kill-others-on-fail --names app,runner \"npm:dev:app\" \"npm:dev:runner\"",
     "dev:app": "vite",
     "dev:runner": "vite --config vite.runner.config.ts",
-    "build": "npm run check:generated && tsc -b && vite build && node scripts/check-production-assets.mjs",
+    "build": "npm run verify:gpstation-sdk && npm run check:generated && tsc -b && vite build && node scripts/check-production-assets.mjs",
     "check:generated": "node scripts/generate-cad-api.mjs --check",
     "generate:cad-api": "node scripts/generate-cad-api.mjs",
     "lint": "eslint .",
@@ -19,11 +19,13 @@
     "build-storybook": "storybook build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "verify:gpstation-sdk": "node scripts/verify-gpstation-sdk.mjs"
   },
   "dependencies": {
     "@babel/parser": "^7.29.7",
     "@fhir-toolkit/ucum": "0.2.0",
+    "@gpstation/v1-master-js-sdk": "file:vendor/gpstation-v1-master-js-sdk-0.1.0.tgz",
     "@hookform/resolvers": "^5.4.0",
     "@jridgewell/trace-mapping": "0.3.31",
     "@jscad/modeling": "^2.13.0",

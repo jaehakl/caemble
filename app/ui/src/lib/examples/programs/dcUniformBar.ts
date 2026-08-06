@@ -147,13 +147,13 @@ export default experiment({
     },
   },
 
-  simulate: async ({ sim, tasks }) => {
-    const result = await sim.run(tasks.solveCurrent)
-
-    sim.record('totalCurrent', result.artifacts.totalCurrent)
-    return result.state
-  },
 })
+`
+
+export const dcUniformBarSimulationCode = `async def simulate(*, sim, tasks, vars, world):
+    result = await sim.run(tasks["solveCurrent"])
+    await sim.record("totalCurrent", result["artifacts"]["totalCurrent"])
+    return result["state"]
 `
 
 export const dcUniformBarExample = Object.freeze({
@@ -167,6 +167,7 @@ export const dcUniformBarExample = Object.freeze({
   ]),
   structureCode: dcUniformBarStructureCode,
   experimentCode: dcUniformBarExperimentCode,
+  simulationCode: dcUniformBarSimulationCode,
   verification: Object.freeze({
     kernelTasks: Object.freeze(['solveCurrent']),
     recordedData: Object.freeze(['totalCurrent']),

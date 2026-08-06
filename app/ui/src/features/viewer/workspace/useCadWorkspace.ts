@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   BuiltRealization,
   CadDiagnostic,
@@ -18,13 +18,20 @@ import {
   compileCadDocument,
   deserializeCadScene,
   evaluateInIsolatedRunner,
-  preflightSimulationInIsolatedRunner,
+  rawCodeHash,
   rerollCadSourceDocument,
-  runSimulationInIsolatedRunner,
+  updateCadSimulationCode,
   updateCadSource,
 } from '@/lib/cad'
+import { gpStationApiBaseUrl, useCaeAccessToken } from '@/features/cae/connection'
 import { sourceOnlyMaterialParameters, type MaterialResolution } from '@/lib/material'
-import { exportSimulationResult, type SimulationProgramManifest, type SimulationResult } from '@/lib/simulation'
+import {
+  exportSimulationResult,
+  releaseRecordedDataAttachments,
+  runRemoteCaeSimulation,
+  type SimulationProgramManifest,
+  type SimulationResult,
+} from '@/lib/simulation'
 import type { SimulationCompatibility, SimulationCompatibilityIssue, SimulationProcess } from './simulationUiTypes'
 
 export type AppStatus =
@@ -55,7 +62,7 @@ const idleSimulationProcess: SimulationProcess = Object.freeze({
   finishedAt: null,
 })
 
-const simulationEngine = Object.freeze({ name: 'experiment-program', version: '1' })
+const simulationEngine = Object.freeze({ name: 'gpstation-cae', version: '1' })
 
 function createRequestId(prefix: string) {
   return `${prefix}-${crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`}`
@@ -68,8 +75,13 @@ function sameCadSource(left: CadSourceDocument | null | undefined, right: CadSou
     left.apiVersion === right.apiVersion &&
     left.formatVersion === right.formatVersion &&
     left.kind === right.kind &&
-    left.source === right.source,
+    left.source === right.source &&
+    left.simulationCode === right.simulationCode,
   )
+}
+
+function requiresPythonMigration(document: CadSourceDocument | null | undefined) {
+  return document?.kind === 'experiment' && !document.simulationCode?.trim()
 }
 
 type DocumentHandlers = Readonly<{
@@ -195,6 +207,28 @@ function useDocumentState({
       return
     }
 
+    if (requiresPythonMigration(document)) {
+      requestEvaluation(document, nextRevision, externalVars)
+      latestRequestIdRef.current = ''
+      setCompiledSource(null)
+      setDiagnostics([])
+      setError({
+        title: 'Python Source Required',
+        message:
+          '이 Experiment에는 Python simulation source가 없습니다. Python source가 포함된 새 revision으로 마이그레이션해야 합니다.',
+      })
+      setEvaluatedSnapshot(null)
+      setRealization(null)
+      setMaterialWarnings([])
+      setScene(null)
+      setSimulationProgram(null)
+      setVariables(null)
+      setVarsSchema(null)
+      updateSuccessfulRevision(-1)
+      updateStatus('Error')
+      return
+    }
+
     pendingEvaluationRef.current = Object.freeze({
       document,
       ...(externalVars ? { externalVars } : {}),
@@ -212,6 +246,7 @@ function useDocumentState({
     externalVars,
     fastReroll,
     onInvalidate,
+    requestEvaluation,
     updateStatus,
     updateSuccessfulRevision,
   ])
@@ -241,18 +276,26 @@ function useDocumentState({
     status === 'Evaluating' ||
     status === 'Resolving Materials' ||
     status === 'Rendering'
+  const editingBlocked = !onDocumentChange || requiresPythonMigration(document)
   const handleReroll = useCallback(() => {
-    if (runIsBusy || !document || !onDocumentChange) return
+    if (runIsBusy || !document || editingBlocked) return
     clearPendingEvaluation()
-    onDocumentChange(rerollCadSourceDocument(document))
-  }, [clearPendingEvaluation, document, onDocumentChange, runIsBusy])
+    onDocumentChange?.(rerollCadSourceDocument(document))
+  }, [clearPendingEvaluation, document, editingBlocked, onDocumentChange, runIsBusy])
 
   const handleSourceChange = useCallback(
     (nextSource: string) => {
-      if (!document || !onDocumentChange) return
-      onDocumentChange(updateCadSource(document, nextSource))
+      if (!document || editingBlocked) return
+      onDocumentChange?.(updateCadSource(document, nextSource))
     },
-    [document, onDocumentChange],
+    [document, editingBlocked, onDocumentChange],
+  )
+  const handleSimulationCodeChange = useCallback(
+    (nextSource: string) => {
+      if (!document || document.kind !== 'experiment' || editingBlocked) return
+      onDocumentChange?.(updateCadSimulationCode(document, nextSource))
+    },
+    [document, editingBlocked, onDocumentChange],
   )
 
   const handlers: DocumentHandlers = {
@@ -340,17 +383,18 @@ function useDocumentState({
       handleRenderError,
       handleRenderStart,
       handleReroll,
+      handleSimulationCodeChange,
       handleSourceChange,
       materialParameters: realization?.materialParameters ?? null,
       materialWarnings,
-      readOnly: !onDocumentChange,
+      readOnly: editingBlocked,
       realization,
       revision,
       runIsBusy,
       scene,
       sceneHash: evaluatedSnapshot?.scene.sceneHash ?? null,
       simulationProgram,
-      sourceReadOnly: !onDocumentChange,
+      sourceReadOnly: editingBlocked,
       status,
       successfulRevision,
       variables,
@@ -423,13 +467,11 @@ export function useCadWorkspace(
   const activeRunRef = useRef<Readonly<{
     cancel: () => void
     requestId: string
+    runId: string | null
     startedAt: number
   }> | null>(null)
-  const activePreflightRef = useRef<Readonly<{
-    cancel: () => void
-    requestId: string
-  }> | null>(null)
   const resolveMaterialsRef = useRef(resolveMaterials)
+  const accessToken = useCaeAccessToken()
   const recordedDataRef = useRef<RecordedData | null>(null)
   const [process, setProcess] = useState<SimulationProcess>(idleSimulationProcess)
   const [programResult, setProgramResult] = useState<SimulationResult | null>(null)
@@ -437,11 +479,6 @@ export function useCadWorkspace(
   const [stale, setStale] = useState(false)
   const [evaluationTimeoutMs, setEvaluationTimeoutMs] = useState<EvaluationTimeoutMs>(3000)
   const evaluationTimeoutMsRef = useRef<EvaluationTimeoutMs>(evaluationTimeoutMs)
-  const [preflight, setPreflight] = useState<Readonly<{
-    structureRevision: number
-    experimentRevision: number
-    issues: readonly SimulationCompatibilityIssue[] | null
-  }> | null>(null)
 
   resolveMaterialsRef.current = resolveMaterials
   evaluationTimeoutMsRef.current = evaluationTimeoutMs
@@ -489,6 +526,7 @@ export function useCadWorkspace(
     (document: CadSourceDocument, revision: number, externalVars?: Readonly<Vars>) => {
       const documentType = document.kind
       clearEvaluationJob(documentType)
+      if (requiresPythonMigration(document)) return
       const requestId = createRequestId(documentType)
       const handlers = documentHandlersRef.current[documentType]
       handlers?.handleStart(requestId, revision)
@@ -504,7 +542,11 @@ export function useCadWorkspace(
       }
 
       void compiledSourceFor(document)
-        .then((compiledSource) => {
+        .then(async (compiledSource) => {
+          if (evaluationJobsRef.current[documentType] !== job) return
+          const simulationCode =
+            documentType === 'experiment' && document.simulationCode?.trim() ? document.simulationCode : null
+          const simulationCodeHash = simulationCode ? await rawCodeHash(simulationCode) : null
           if (evaluationJobsRef.current[documentType] !== job) return
           handlers?.handlePhase(requestId, revision, 'Evaluating')
           job.cancel = evaluateInIsolatedRunner(
@@ -515,6 +557,7 @@ export function useCadWorkspace(
               document: {
                 kind: documentType,
                 realizationSeed: document.realizationSeed,
+                ...(simulationCode && simulationCodeHash ? { simulationCode, simulationCodeHash } : {}),
               },
               compiledSource,
               ...(externalVars ? { vars: externalVars } : {}),
@@ -593,9 +636,12 @@ export function useCadWorkspace(
     if (activeRun) {
       activeRunRef.current = null
       activeRun.cancel()
+      recordedDataRef.current = null
+      setRecordedData(null)
+      setProgramResult(null)
       setProcess(
         Object.freeze({
-          runId: activeRun.requestId,
+          runId: activeRun.runId ?? activeRun.requestId,
           status: 'cancelled',
           engine: simulationEngine,
           stage: null,
@@ -605,9 +651,6 @@ export function useCadWorkspace(
         }),
       )
     }
-    activePreflightRef.current?.cancel()
-    activePreflightRef.current = null
-    setPreflight(null)
   }, [])
 
   const structureState = useDocumentState({
@@ -631,96 +674,36 @@ export function useCadWorkspace(
   documentHandlersRef.current.experiment = experimentState.handlers
 
   useEffect(() => {
-    const structureSnapshot = documentHandlersRef.current.structure?.getSnapshot()
-    const experimentSnapshot = documentHandlersRef.current.experiment?.getSnapshot()
-    if (
-      !structureSnapshot ||
-      !experimentSnapshot ||
-      structureSnapshot.successfulRevision !== structureSnapshot.revision ||
-      experimentSnapshot.successfulRevision !== experimentSnapshot.revision ||
-      structureSnapshot.realization?.kind !== 'sample' ||
-      experimentSnapshot.realization?.kind !== 'setup' ||
-      !experimentSnapshot.compiledSource ||
-      experimentSnapshot.evaluatedSnapshot?.kind !== 'experiment'
-    ) {
-      setPreflight(null)
-      return
-    }
-
-    const requestId = createRequestId('preflight')
-    const structureRevision = structureSnapshot.revision
-    const experimentRevision = experimentSnapshot.revision
-    setPreflight(
-      Object.freeze({
-        structureRevision,
-        experimentRevision,
-        issues: null,
-      }),
-    )
-    const cancel = preflightSimulationInIsolatedRunner(
-      {
-        type: 'preflight-simulation',
-        requestId,
-        structureRevision,
-        experimentRevision,
-        compiledSource: experimentSnapshot.compiledSource,
-        sample: structureSnapshot.realization,
-        setup: experimentSnapshot.realization,
-      },
-      {
-        onFailure(message) {
-          if (activePreflightRef.current?.requestId !== requestId) return
-          activePreflightRef.current = null
-          setPreflight(
-            Object.freeze({
-              structureRevision,
-              experimentRevision,
-              issues: Object.freeze([{ path: 'simulation', message }]),
-            }),
-          )
-        },
-        onResponse(response) {
-          if (activePreflightRef.current?.requestId !== requestId) return
-          activePreflightRef.current = null
-          setPreflight(
-            Object.freeze({
-              structureRevision,
-              experimentRevision,
-              issues: response.issues,
-            }),
-          )
-        },
-      },
-    )
-    activePreflightRef.current = Object.freeze({ cancel, requestId })
-    return () => {
-      if (activePreflightRef.current?.requestId !== requestId) return
-      activePreflightRef.current.cancel()
-      activePreflightRef.current = null
-    }
-  }, [
-    experimentState.controller.compiledSource,
-    experimentState.controller.realization,
-    experimentState.controller.revision,
-    experimentState.controller.successfulRevision,
-    structureState.controller.realization,
-    structureState.controller.revision,
-    structureState.controller.successfulRevision,
-  ])
-
-  useEffect(() => {
     const jobs = evaluationJobsRef.current
     return () => {
       Object.keys(jobs).forEach((key) => clearEvaluationJob(key as CadDocumentType))
-      activePreflightRef.current?.cancel()
-      activePreflightRef.current = null
       activeRunRef.current?.cancel()
       activeRunRef.current = null
+      releaseRecordedDataAttachments(recordedDataRef.current)
     }
   }, [clearEvaluationJob])
 
-  const structureIssues = preflight?.issues?.filter((issue) => issue.documentType === 'structure') ?? []
-  const experimentIssues = preflight?.issues?.filter((issue) => issue.documentType !== 'structure') ?? []
+  const connectionIssues = accessToken
+    ? Object.freeze([] as SimulationCompatibilityIssue[])
+    : Object.freeze([
+        {
+          documentType: 'experiment' as const,
+          path: 'simulation.connection',
+          message: '계정 페이지에서 GPStation CAE Access Token을 연결하세요.',
+        },
+      ])
+  const pythonMigrationIssues: readonly SimulationCompatibilityIssue[] = requiresPythonMigration(experiment)
+    ? Object.freeze([
+        {
+          documentType: 'experiment',
+          path: 'simulation_code',
+          message:
+            '이 Experiment에는 Python simulation source가 없습니다. edit, preview, Run 전에 Python source가 포함된 새 revision으로 마이그레이션하세요.',
+        },
+      ])
+    : Object.freeze([])
+  const structureIssues: readonly SimulationCompatibilityIssue[] = Object.freeze([])
+  const experimentIssues = Object.freeze([...pythonMigrationIssues, ...connectionIssues])
   const structureDocument = attachPreflightMetadata(
     structureState.controller,
     structureIssues,
@@ -733,28 +716,14 @@ export function useCadWorkspace(
     evaluationTimeoutMs,
     setEvaluationTimeoutMs,
   )
-  const compatibility = useMemo<SimulationCompatibility>(() => {
-    if (!experimentState.controller.simulationProgram) {
-      return Object.freeze({ status: 'unavailable', issues: Object.freeze([]) })
-    }
-    if (
-      !preflight ||
-      preflight.structureRevision !== structureState.controller.revision ||
-      preflight.experimentRevision !== experimentState.controller.revision ||
-      preflight.issues === null
-    ) {
-      return Object.freeze({ status: 'checking', issues: Object.freeze([]) })
-    }
-    if (preflight.issues.length > 0) {
-      return Object.freeze({ status: 'incompatible', issues: preflight.issues })
-    }
-    return Object.freeze({ status: 'compatible', issues: Object.freeze([]) })
-  }, [
-    experimentState.controller.revision,
-    experimentState.controller.simulationProgram,
-    preflight,
-    structureState.controller.revision,
-  ])
+  const compatibility: SimulationCompatibility =
+    pythonMigrationIssues.length > 0
+      ? Object.freeze({ status: 'incompatible', issues: experimentIssues })
+      : !experimentState.controller.simulationProgram
+        ? Object.freeze({ status: 'unavailable', issues: Object.freeze([]) })
+        : connectionIssues.length > 0
+          ? Object.freeze({ status: 'incompatible', issues: connectionIssues })
+          : Object.freeze({ status: 'compatible', issues: Object.freeze([]) })
 
   const processActive = process.status === 'preparing' || process.status === 'running'
   const canRun =
@@ -766,7 +735,7 @@ export function useCadWorkspace(
     compatibility.status === 'compatible'
 
   const run = useCallback(() => {
-    if (compatibility.status !== 'compatible' || activeRunRef.current) return null
+    if (compatibility.status !== 'compatible' || activeRunRef.current || !accessToken) return null
     const structureSnapshot = documentHandlersRef.current.structure?.getSnapshot()
     const experimentSnapshot = documentHandlersRef.current.experiment?.getSnapshot()
     if (
@@ -775,15 +744,18 @@ export function useCadWorkspace(
       structureSnapshot.successfulRevision !== structureSnapshot.revision ||
       experimentSnapshot.successfulRevision !== experimentSnapshot.revision ||
       structureSnapshot.realization?.kind !== 'sample' ||
-      experimentSnapshot.realization?.kind !== 'setup' ||
-      !experimentSnapshot.compiledSource
+      experimentSnapshot.realization?.kind !== 'setup'
     ) {
       return null
     }
 
     const requestId = createRequestId('simulation')
     const startedAt = Date.now()
-    if (recordedDataRef.current) setStale(true)
+    releaseRecordedDataAttachments(recordedDataRef.current)
+    recordedDataRef.current = null
+    setRecordedData(null)
+    setProgramResult(null)
+    setStale(false)
     setProcess(
       Object.freeze({
         runId: requestId,
@@ -795,37 +767,30 @@ export function useCadWorkspace(
         finishedAt: null,
       }),
     )
-    const cancel = runSimulationInIsolatedRunner(
-      {
-        type: 'run-simulation',
-        requestId,
-        structureRevision: structureSnapshot.revision,
-        experimentRevision: experimentSnapshot.revision,
-        compiledSource: experimentSnapshot.compiledSource,
-        sample: structureSnapshot.realization,
-        setup: experimentSnapshot.realization,
-      },
-      {
-        onFailure(message) {
+    const remote = runRemoteCaeSimulation({
+      apiBaseUrl: gpStationApiBaseUrl(),
+      token: accessToken,
+      sample: structureSnapshot.realization,
+      setup: experimentSnapshot.realization,
+      callbacks: {
+        onRecord(name, tensor) {
           if (activeRunRef.current?.requestId !== requestId) return
-          activeRunRef.current = null
-          setProcess(
-            Object.freeze({
-              runId: requestId,
-              status: 'failed',
-              engine: simulationEngine,
-              stage: null,
-              error: message,
-              startedAt,
-              finishedAt: Date.now(),
-            }),
-          )
+          const nextRecordedData = Object.freeze({
+            ...(recordedDataRef.current ?? {}),
+            [name]: tensor,
+          }) as RecordedData
+          recordedDataRef.current = nextRecordedData
+          setRecordedData(nextRecordedData)
         },
         onProgress(progress) {
-          if (activeRunRef.current?.requestId !== requestId) return
+          const active = activeRunRef.current
+          if (active?.requestId !== requestId) return
+          if (active.runId !== progress.runId) {
+            activeRunRef.current = Object.freeze({ ...active, runId: progress.runId })
+          }
           setProcess(
             Object.freeze({
-              runId: requestId,
+              runId: progress.runId,
               status: 'running',
               engine: simulationEngine,
               stage: `${progress.task}: ${progress.stage}`,
@@ -835,11 +800,13 @@ export function useCadWorkspace(
             }),
           )
         },
-        onStart() {
-          if (activeRunRef.current?.requestId !== requestId) return
+        onStarted(runId) {
+          const active = activeRunRef.current
+          if (active?.requestId !== requestId) return
+          activeRunRef.current = Object.freeze({ ...active, runId })
           setProcess(
             Object.freeze({
-              runId: requestId,
+              runId,
               status: 'running',
               engine: simulationEngine,
               stage: 'running',
@@ -849,61 +816,98 @@ export function useCadWorkspace(
             }),
           )
         },
-        onResponse(response) {
-          if (activeRunRef.current?.requestId !== requestId) return
-          activeRunRef.current = null
-          if (response.type === 'run-simulation-error') {
-            setProcess(
-              Object.freeze({
-                runId: requestId,
-                status: 'failed',
-                engine: simulationEngine,
-                stage: null,
-                error: response.message,
-                startedAt,
-                finishedAt: Date.now(),
-              }),
-            )
-            return
-          }
-          const nextRecordedData = Object.freeze(
-            Object.fromEntries(Object.entries(response.result.recordedData).map(([name, entry]) => [name, entry.data])),
-          ) as RecordedData
-          recordedDataRef.current = nextRecordedData
-          setRecordedData(nextRecordedData)
-          setProgramResult(response.result)
-          const currentStructure = documentHandlersRef.current.structure?.getSnapshot()
-          const currentExperiment = documentHandlersRef.current.experiment?.getSnapshot()
-          setStale(
-            currentStructure?.revision !== response.structureRevision ||
-              currentExperiment?.revision !== response.experimentRevision,
-          )
+        onStatus(status) {
+          const active = activeRunRef.current
+          if (active?.requestId !== requestId) return
           setProcess(
             Object.freeze({
-              runId: requestId,
-              status: 'succeeded',
+              runId: active.runId ?? requestId,
+              status: status === 'validating' ? 'preparing' : 'running',
               engine: simulationEngine,
-              stage: null,
+              stage: status,
               error: null,
               startedAt,
-              finishedAt: Date.now(),
+              finishedAt: null,
             }),
           )
         },
       },
-    )
-    activeRunRef.current = Object.freeze({ cancel, requestId, startedAt })
+    })
+    activeRunRef.current = Object.freeze({
+      cancel: remote.cancel,
+      requestId,
+      runId: null,
+      startedAt,
+    })
+    void remote.promise
+      .then((result) => {
+        if (activeRunRef.current?.requestId !== requestId) {
+          releaseRecordedDataAttachments(
+            Object.freeze(
+              Object.fromEntries(Object.entries(result.recordedData).map(([name, entry]) => [name, entry.data])),
+            ),
+          )
+          return
+        }
+        activeRunRef.current = null
+        const nextRecordedData = Object.freeze(
+          Object.fromEntries(Object.entries(result.recordedData).map(([name, entry]) => [name, entry.data])),
+        ) as RecordedData
+        recordedDataRef.current = nextRecordedData
+        setRecordedData(nextRecordedData)
+        setProgramResult(result)
+        const currentStructure = documentHandlersRef.current.structure?.getSnapshot()
+        const currentExperiment = documentHandlersRef.current.experiment?.getSnapshot()
+        setStale(
+          currentStructure?.revision !== structureSnapshot.revision ||
+            currentExperiment?.revision !== experimentSnapshot.revision,
+        )
+        setProcess(
+          Object.freeze({
+            runId: result.runId,
+            status: 'succeeded',
+            engine: simulationEngine,
+            stage: null,
+            error: null,
+            startedAt,
+            finishedAt: Date.now(),
+          }),
+        )
+      })
+      .catch((error: unknown) => {
+        const active = activeRunRef.current
+        if (active?.requestId !== requestId) return
+        activeRunRef.current = null
+        releaseRecordedDataAttachments(recordedDataRef.current)
+        recordedDataRef.current = null
+        setRecordedData(null)
+        setProgramResult(null)
+        setProcess(
+          Object.freeze({
+            runId: active.runId ?? requestId,
+            status: 'failed',
+            engine: simulationEngine,
+            stage: null,
+            error: error instanceof Error ? error.message : String(error),
+            startedAt,
+            finishedAt: Date.now(),
+          }),
+        )
+      })
     return requestId
-  }, [compatibility.status])
+  }, [accessToken, compatibility.status])
 
   const cancel = useCallback(() => {
     const active = activeRunRef.current
     if (!active) return
     activeRunRef.current = null
     active.cancel()
+    recordedDataRef.current = null
+    setRecordedData(null)
+    setProgramResult(null)
     setProcess(
       Object.freeze({
-        runId: active.requestId,
+        runId: active.runId ?? active.requestId,
         status: 'cancelled',
         engine: simulationEngine,
         stage: null,

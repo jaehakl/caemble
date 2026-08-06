@@ -34,6 +34,7 @@ import {
   type EvaluatedDocumentSnapshot,
 } from '@/lib/cad'
 import { defaultExperimentCode } from '@/lib/defaultExperimentCode'
+import { defaultExperimentSimulationCode } from '@/lib/defaultExperimentSimulationCode'
 import { readMeasurementReturnTo, updateMeasurementReturnTo } from '@/pages/measurements/measurement-return'
 
 type ExperimentRow = ExperimentRecord & { id: number }
@@ -200,6 +201,7 @@ export function ExperimentPage() {
   const [editorOpen, setEditorOpen] = useState(false)
   const [experiment, setExperiment] = useState<CadSourceDocument | null>(null)
   const [savedExperimentCode, setSavedExperimentCode] = useState<string | null>(null)
+  const [savedSimulationCode, setSavedSimulationCode] = useState<string | null>(null)
   const [metadataTarget, setMetadataTarget] = useState<ExperimentRow | null>(null)
   const [metadataName, setMetadataName] = useState('')
   const [metadataDescription, setMetadataDescription] = useState('')
@@ -241,7 +243,13 @@ export function ExperimentPage() {
   )
   const canManage = useCallback((row: ExperimentRow) => canManageExperiment(row, auth.user), [auth.user])
   const selectedManageable = Boolean(selectedExperiment && canManage(selectedExperiment))
-  const dirty = Boolean(experiment && (savedExperimentCode === null || cadSource(experiment) !== savedExperimentCode))
+  const dirty = Boolean(
+    experiment &&
+    (savedExperimentCode === null ||
+      savedSimulationCode === null ||
+      cadSource(experiment) !== savedExperimentCode ||
+      experiment.simulationCode !== savedSimulationCode),
+  )
 
   const leafRows = useMemo(() => {
     const visibleIds = new Set(rows.map((row) => row.id))
@@ -288,9 +296,14 @@ export function ExperimentPage() {
 
   const applyExperiment = useCallback(
     (row: ExperimentRow) => {
-      setExperiment(createCadSourceDocument('experiment', row.code))
+      setExperiment(
+        row.simulation_code === null
+          ? null
+          : createCadSourceDocument('experiment', row.code, undefined, row.simulation_code),
+      )
       setSelectedExperimentId(row.id)
       setSavedExperimentCode(row.code)
+      setSavedSimulationCode(row.simulation_code)
       updateDeepLink(row.id)
     },
     [setSelectedExperimentId, updateDeepLink],
@@ -300,14 +313,18 @@ export function ExperimentPage() {
     setExperiment(null)
     setSelectedExperimentId(null)
     setSavedExperimentCode(null)
+    setSavedSimulationCode(null)
     updateEditorOpen(false)
     updateDeepLink(null)
   }, [setSelectedExperimentId, updateDeepLink, updateEditorOpen])
 
   const startNewExperiment = useCallback(() => {
-    setExperiment(createCadSourceDocument('experiment', defaultExperimentCode))
+    setExperiment(
+      createCadSourceDocument('experiment', defaultExperimentCode, undefined, defaultExperimentSimulationCode),
+    )
     setSelectedExperimentId(null)
     setSavedExperimentCode(null)
+    setSavedSimulationCode(null)
     updateEditorOpen(true)
     updateDeepLink(null)
   }, [setSelectedExperimentId, updateDeepLink, updateEditorOpen])
@@ -333,7 +350,12 @@ export function ExperimentPage() {
       return
     }
     applyExperiment(row)
-    updateEditorOpen(searchParams.get('mode') === 'code')
+    if (searchParams.get('mode') === 'code' && row.simulation_code === null) {
+      toast.error('Python source가 없는 기존 Experiment는 편집하거나 미리 볼 수 없습니다.')
+      updateEditorOpen(false)
+    } else {
+      updateEditorOpen(searchParams.get('mode') === 'code')
+    }
   }, [
     applyExperiment,
     experimentsQuery.isSuccess,
@@ -393,6 +415,7 @@ export function ExperimentPage() {
           name: name.trim(),
           description: description.trim() || null,
           code: row.code,
+          simulation_code: row.simulation_code,
         },
       ]),
     onSuccess: async () => {
@@ -415,13 +438,16 @@ export function ExperimentPage() {
         forceRoot,
         kind: 'experiment',
         savedCode: savedExperimentCode,
+        savedSimulationCode,
         selectedId: selectedExperimentId,
+        simulationCode: experiment.simulationCode,
         values,
       })
     },
-    onSuccess: async ({ action, code, id }, { forceRoot }) => {
+    onSuccess: async ({ action, code, id, simulationCode }, { forceRoot }) => {
       setSelectedExperimentId(id)
       setSavedExperimentCode(code)
+      setSavedSimulationCode(simulationCode ?? null)
       updateDeepLink(id)
       setSaveMode(null)
       await invalidateExperiments()
@@ -462,7 +488,7 @@ export function ExperimentPage() {
   const requestNavigation = useCallback(
     (row: ExperimentRow, rerollWhenSelected: boolean) => {
       if (row.id === selectedExperimentId) {
-        if (rerollWhenSelected) experimentDocument.handleReroll()
+        if (rerollWhenSelected && row.simulation_code !== null) experimentDocument.handleReroll()
         return
       }
       if (dirty) {
@@ -484,6 +510,10 @@ export function ExperimentPage() {
 
   const requestEditorOpen = useCallback(
     (row: ExperimentRow) => {
+      if (row.simulation_code === null) {
+        toast.error('Python source가 없는 기존 Experiment는 편집하거나 미리 볼 수 없습니다.')
+        return
+      }
       if (row.id === selectedExperimentId) {
         updateEditorOpen(true)
         return

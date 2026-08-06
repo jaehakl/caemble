@@ -4,6 +4,14 @@ import { PCA } from 'ml-pca'
 import { RandomForestRegression } from 'ml-random-forest'
 import { mean, quantileSorted, sampleCorrelation, sampleStandardDeviation, silhouette } from 'simple-statistics'
 import type { MeasurementRecord, RecordedDataRecord, SampleRecord, SetupRecord } from '@/api'
+import {
+  createDataTensorAccessor,
+  isDataTensor,
+  type DataDType,
+  type DataSchema,
+  type DataTensorAccessor,
+} from '@/lib/cad'
+import { getQuantityKindTensorOrder, type QuantityKindName } from '@/lib/quantitykind/runtime'
 import type {
   AnalysisColumnDescriptor,
   AnalysisMiningResult,
@@ -71,6 +79,17 @@ type RidgeModel = Readonly<{
   coefficients: readonly number[]
   intercept: number
 }>
+
+type RecordedTensorView = Readonly<{
+  accessor: Pick<DataTensorAccessor, 'at' | 'shape' | 'size'>
+  quantityKind?: string
+  schema: DataSchema
+  signature: string
+  tensorOrder: number
+  unit?: string
+}>
+
+const RECORDED_QUANTILE_SAMPLE_LIMIT = 4_096
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -181,49 +200,82 @@ function recordedTargets(row: RecordedDataRecord): Readonly<{
     value: number
     statistic?: string
   }>[]
+  quantityKind?: string
+  signature: string
+  unit?: string
 }> | null {
-  if (row.dtype === 'bool' || row.dtype === 'string' || !isRecord(row.data)) return null
-  const tensor = numericTensor(row.data.value)
-  if (!tensor || tensor.flat.length === 0) return null
-  const componentSize = 3 ** row.tensor_order
-  if (!Number.isSafeInteger(componentSize) || componentSize <= 0 || tensor.flat.length % componentSize !== 0) {
+  const tensor = recordedTensor(row)
+  if (!tensor || tensor.schema.dtype === 'bool' || tensor.schema.dtype === 'string' || tensor.accessor.size === 0) {
     return null
   }
-  const values: number[] = []
-  for (let index = 0; index < tensor.flat.length; index += componentSize) {
+  const componentSize = 3 ** tensor.tensorOrder
+  if (
+    !Number.isSafeInteger(componentSize) ||
+    componentSize <= 0 ||
+    tensor.accessor.size % componentSize !== 0
+  ) {
+    return null
+  }
+  const valueCount = tensor.accessor.size / componentSize
+  const sampleStep = Math.max(1, Math.ceil(valueCount / RECORDED_QUANTILE_SAMPLE_LIMIT))
+  const quantileSample: number[] = []
+  let average = 0
+  let count = 0
+  let maximum = Number.NEGATIVE_INFINITY
+  let minimum = Number.POSITIVE_INFINITY
+  let squaredDeviation = 0
+  let singleValue = 0
+  for (let valueIndex = 0; valueIndex < valueCount; valueIndex += 1) {
+    const index = valueIndex * componentSize
+    let value: number
     if (componentSize === 1) {
-      values.push(tensor.flat[index])
-      continue
+      const component = tensor.accessor.at(index)
+      if (typeof component !== 'number') return null
+      value = component
+    } else {
+      let squared = 0
+      for (let componentIndex = 0; componentIndex < componentSize; componentIndex += 1) {
+        const component = tensor.accessor.at(index + componentIndex)
+        if (typeof component !== 'number') return null
+        squared += component ** 2
+      }
+      value = Math.sqrt(squared)
     }
-    let squared = 0
-    for (let component = 0; component < componentSize; component += 1) {
-      squared += tensor.flat[index + component] ** 2
-    }
-    values.push(Math.sqrt(squared))
+    count += 1
+    const delta = value - average
+    average += delta / count
+    squaredDeviation += delta * (value - average)
+    minimum = Math.min(minimum, value)
+    maximum = Math.max(maximum, value)
+    singleValue = value
+    if (valueIndex % sampleStep === 0 || valueIndex === valueCount - 1) quantileSample.push(value)
   }
 
-  if (values.length === 1) {
+  if (count === 1) {
     return {
       observations: [
         {
           key: `target:${row.name}`,
           label: row.name,
-          value: values[0],
-          ...(row.tensor_order > 0 ? { statistic: 'magnitude' } : {}),
+          value: singleValue,
+          ...(tensor.tensorOrder > 0 ? { statistic: 'magnitude' } : {}),
         },
       ],
+      ...(tensor.quantityKind ? { quantityKind: tensor.quantityKind } : {}),
+      signature: tensor.signature,
+      ...(tensor.unit ? { unit: tensor.unit } : {}),
     }
   }
 
-  const sorted = [...values].sort((left, right) => left - right)
+  quantileSample.sort((left, right) => left - right)
   const summaries = {
-    mean: mean(values),
-    std: values.length > 1 ? sampleStandardDeviation(values) : 0,
-    min: sorted[0],
-    max: sorted[sorted.length - 1],
-    p05: quantileSorted(sorted, 0.05),
-    p50: quantileSorted(sorted, 0.5),
-    p95: quantileSorted(sorted, 0.95),
+    mean: average,
+    std: Math.sqrt(squaredDeviation / (count - 1)),
+    min: minimum,
+    max: maximum,
+    p05: quantileSorted(quantileSample, 0.05),
+    p50: quantileSorted(quantileSample, 0.5),
+    p95: quantileSorted(quantileSample, 0.95),
   }
   return {
     observations: Object.entries(summaries).map(([statistic, value]) => ({
@@ -232,6 +284,96 @@ function recordedTargets(row: RecordedDataRecord): Readonly<{
       statistic,
       value,
     })),
+    ...(tensor.quantityKind ? { quantityKind: tensor.quantityKind } : {}),
+    signature: tensor.signature,
+    ...(tensor.unit ? { unit: tensor.unit } : {}),
+  }
+}
+
+function recordedTensor(row: RecordedDataRecord): RecordedTensorView | null {
+  if (!isRecord(row.data)) return null
+  if (!isDataTensor(row.data)) {
+    const legacy = numericTensor(row.data.value)
+    if (!legacy) return null
+    const storedSchema = row.data_schema as DataSchema | null | undefined
+    const tensorOrder =
+      storedSchema?.quantityKind === undefined
+        ? row.tensor_order
+        : getQuantityKindTensorOrder(storedSchema.quantityKind as QuantityKindName)
+    if (
+      storedSchema &&
+      (storedSchema.dtype !== row.dtype ||
+        storedSchema.quantityKind !== (row.quantity_kind ?? undefined) ||
+        tensorOrder !== row.tensor_order)
+    ) {
+      return null
+    }
+    return {
+      accessor: {
+        at: (index) => legacy.flat[index],
+        shape: legacy.shape,
+        size: legacy.flat.length,
+      },
+      ...(storedSchema?.quantityKind || row.quantity_kind
+        ? { quantityKind: storedSchema?.quantityKind ?? row.quantity_kind ?? undefined }
+        : {}),
+      schema: storedSchema ?? ({ dtype: row.dtype as DataDType } as DataSchema),
+      signature: storedSchema
+        ? `schema:${JSON.stringify(storedSchema)}`
+        : `legacy:${row.dtype}:${row.quantity_kind ?? ''}:${row.tensor_order}`,
+      tensorOrder,
+      ...(storedSchema?.unit ? { unit: storedSchema.unit } : {}),
+    }
+  }
+  try {
+    const storedSchema = row.data_schema as DataSchema | null | undefined
+    let schema: DataSchema
+    let tensorOrder: number
+    if (storedSchema) {
+      if (storedSchema.dtype !== row.dtype) return null
+      tensorOrder =
+        storedSchema.quantityKind === undefined
+          ? 0
+          : getQuantityKindTensorOrder(storedSchema.quantityKind as QuantityKindName)
+      if (
+        storedSchema.quantityKind !== (row.quantity_kind ?? undefined) ||
+        tensorOrder !== row.tensor_order
+      ) {
+        return null
+      }
+      schema = storedSchema
+    } else {
+      tensorOrder = row.tensor_order
+      const outerRank = row.data.shape.length - tensorOrder
+      if (outerRank < 0) return null
+      const quantityMetadata =
+        row.dtype.startsWith('float') && row.quantity_kind
+          ? (() => {
+              if (getQuantityKindTensorOrder(row.quantity_kind as QuantityKindName) !== tensorOrder) {
+                throw new Error('Legacy RecordedData QuantityKind does not match tensor_order.')
+              }
+              return { quantityKind: row.quantity_kind, unit: '1' }
+            })()
+          : {}
+      schema = {
+        dtype: row.dtype as DataDType,
+        ...quantityMetadata,
+        axes: row.data.shape.slice(0, outerRank).map((length) => ({ length })),
+      } as DataSchema
+    }
+    const accessor = createDataTensorAccessor(schema, row.data, `RecordedData ${JSON.stringify(row.name)}`)
+    return {
+      accessor,
+      ...(storedSchema?.quantityKind ? { quantityKind: storedSchema.quantityKind } : {}),
+      schema,
+      signature: storedSchema
+        ? `schema:${JSON.stringify(storedSchema)}`
+        : `legacy:${row.dtype}:${row.quantity_kind ?? ''}:${row.tensor_order}`,
+      tensorOrder,
+      ...(storedSchema?.unit ? { unit: storedSchema.unit } : {}),
+    }
+  } catch {
+    return null
   }
 }
 
@@ -239,6 +381,19 @@ function categoricalValues(value: unknown): string[] {
   if (typeof value === 'boolean' || typeof value === 'string') return [String(value)]
   if (!Array.isArray(value)) return []
   return value.flatMap(categoricalValues)
+}
+
+function forEachRecordedCategoricalValue(row: RecordedDataRecord, visit: (value: string) => void): void {
+  if (isRecord(row.data) && !isDataTensor(row.data)) {
+    categoricalValues(row.data.value).forEach(visit)
+    return
+  }
+  const tensor = recordedTensor(row)
+  if (!tensor) return
+  for (let index = 0; index < tensor.accessor.size; index += 1) {
+    const value = tensor.accessor.at(index)
+    if (typeof value === 'boolean' || typeof value === 'string') visit(String(value))
+  }
 }
 
 function describeColumn(state: ColumnState, values: Float64Array, rowCount: number): AnalysisColumnDescriptor {
@@ -390,7 +545,7 @@ export function buildAnalysisDataset({
       counts: Map<string, number>
       dtype: string
       name: string
-      quantityKind: string
+      quantityKind?: string
       signatures: Set<string>
     }
   >()
@@ -447,19 +602,24 @@ export function buildAnalysisDataset({
     const resultRows = recordedByMeasurement.get(measurement.id) ?? []
     recordedDataCount += resultRows.length
     resultRows.forEach((resultRow) => {
+      const storedSchema = resultRow.data_schema
+      const quantityKind = storedSchema?.quantityKind ?? resultRow.quantity_kind ?? undefined
+      const schemaSignature = storedSchema
+        ? `schema:${JSON.stringify(storedSchema)}`
+        : `legacy:${resultRow.dtype}:${resultRow.quantity_kind ?? ''}:${resultRow.tensor_order}`
       const signatures = targetSignatures.get(resultRow.name) ?? new Set<string>()
-      signatures.add(`${resultRow.dtype}:${resultRow.quantity_kind}:${resultRow.tensor_order}`)
+      signatures.add(schemaSignature)
       targetSignatures.set(resultRow.name, signatures)
-      if ((resultRow.dtype === 'bool' || resultRow.dtype === 'string') && isRecord(resultRow.data)) {
+      if (resultRow.dtype === 'bool' || resultRow.dtype === 'string') {
         const state = categoricalStates.get(resultRow.name) ?? {
           counts: new Map<string, number>(),
           dtype: resultRow.dtype,
           name: resultRow.name,
-          quantityKind: resultRow.quantity_kind,
+          ...(quantityKind ? { quantityKind } : {}),
           signatures: new Set<string>(),
         }
-        state.signatures.add(`${resultRow.dtype}:${resultRow.quantity_kind}:${resultRow.tensor_order}`)
-        categoricalValues(resultRow.data.value).forEach((value) => {
+        state.signatures.add(schemaSignature)
+        forEachRecordedCategoricalValue(resultRow, (value) => {
           state.counts.set(value, (state.counts.get(value) ?? 0) + 1)
         })
         categoricalStates.set(resultRow.name, state)
@@ -480,13 +640,14 @@ export function buildAnalysisDataset({
             kind: 'target',
             source: 'recorded-data',
             values: Array(rowIndex + 1).fill(Number.NaN),
-            quantityKind: resultRow.quantity_kind,
+            ...(extracted.quantityKind ? { quantityKind: extracted.quantityKind } : {}),
+            ...(extracted.unit ? { unit: extracted.unit } : {}),
             ...(target.statistic ? { statistic: target.statistic } : {}),
           }
           states.set(target.key, state)
         } else {
           while (state.values.length <= rowIndex) state.values.push(Number.NaN)
-          if (state.quantityKind !== resultRow.quantity_kind) {
+          if (state.quantityKind !== extracted.quantityKind || state.unit !== extracted.unit) {
             state.invalidReason = 'Recorded Data QuantityKind가 행마다 다릅니다.'
           }
         }
@@ -545,7 +706,7 @@ export function buildAnalysisDataset({
         .map((state) => ({
           name: state.name,
           dtype: state.dtype,
-          quantityKind: state.quantityKind,
+          ...(state.quantityKind ? { quantityKind: state.quantityKind } : {}),
           counts: [...state.counts.entries()]
             .map(([value, count]) => ({ value, count }))
             .sort((left, right) => right.count - left.count || left.value.localeCompare(right.value)),

@@ -102,13 +102,5 @@ export default experiment({
     },
   },
 
-  simulate: async ({ sim, tasks }) => {
-    const electric = await sim.run(tasks.electric)
-
-    sim.record('measuredCurrent', electric.artifacts.totalCurrent)
-    sim.release(electric.artifacts.currentDensity)
-
-    return electric.state
-  },
 })
 `

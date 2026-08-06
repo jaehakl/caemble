@@ -85,6 +85,14 @@ function mockSimulationResult(runId: string, value: number) {
   }
 }
 
+function persistedInlineTensor(value: unknown) {
+  return {
+    tensorEncodingVersion: 1,
+    shape: [],
+    storage: { kind: 'inline', value },
+  }
+}
+
 vi.mock('@/features/auth/use-auth', () => ({
   useAuth: () => ({
     isAuthenticated: true,
@@ -748,7 +756,15 @@ describe('MeasurementPage', () => {
           recorded_data: [
             expect.objectContaining({
               name: 'Current',
-              data: { value: 1 },
+              quantity_kind: 'electromagnetism.ElectricCurrent',
+              tensor_order: 0,
+              dtype: 'float64',
+              data_schema: {
+                dtype: 'float64',
+                quantityKind: 'electromagnetism.ElectricCurrent',
+                unit: 'A',
+              },
+              data: persistedInlineTensor(1),
             }),
           ],
         }),
@@ -766,7 +782,7 @@ describe('MeasurementPage', () => {
     })
     await waitFor(() =>
       expect(cadViewerSpy).toHaveBeenLastCalledWith(
-        expect.objectContaining({ recordedData: { Current: { value: 1 } } }),
+        expect.objectContaining({ recordedData: { Current: persistedInlineTensor(1) } }),
       ),
     )
   })
@@ -825,7 +841,7 @@ describe('MeasurementPage', () => {
     })
     await waitFor(() =>
       expect(cadViewerSpy).toHaveBeenLastCalledWith(
-        expect.objectContaining({ recordedData: { Current: { value: 2 } } }),
+        expect.objectContaining({ recordedData: { Current: persistedInlineTensor(2) } }),
       ),
     )
     expect(apiMocks.structureList).toHaveBeenCalledTimes(1)
@@ -901,7 +917,7 @@ describe('MeasurementPage', () => {
     await waitFor(() => expect(apiMocks.measurementSave).toHaveBeenCalledOnce())
     expect(apiMocks.measurementSave).toHaveBeenCalledWith(
       expect.objectContaining({
-        recorded_data: [expect.objectContaining({ data: { value: 1 } })],
+        recorded_data: [expect.objectContaining({ data: persistedInlineTensor(1) })],
       }),
     )
   })

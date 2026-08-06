@@ -2,7 +2,14 @@ import { h } from '../cad/evaluation/jsx'
 import { evaluateCadScene } from '../cad/evaluation/evaluator'
 import { buildSourceOnlyRealization, type BuiltSample, type BuiltSetup } from '../cad/execution/realization'
 import { serializeEvaluatedDocumentSnapshot } from '../cad/execution/snapshot'
-import { experiment, structure, type ExperimentDefinition, type VarsSchemaDefinition } from '../cad/model/v3'
+import { registerDataTensorAttachment, releaseDataTensorAttachments } from '../cad/model/dataTensor'
+import {
+  ExperimentDefinition,
+  structure,
+  type ExperimentDefinitionOptions,
+  type InferVars,
+  type VarsSchemaDefinition,
+} from '../cad/model/v3'
 import { identityCartesianBasis } from '../quantitykind/identityBasis'
 import { defineKernelTask } from './authoring'
 import { SimulationKernelError } from './errors'
@@ -15,9 +22,18 @@ import type {
   KernelTaskConfig,
 } from './kernelContract'
 import { KernelRegistry } from './registry'
-import { runSimulationProgram } from './runtime'
+import { exportSimulationResult } from './resultExport'
+import { runSimulationProgram, type SimulationProgramRuntimeDefinition, type SimulationScriptApi } from './runtime'
 import { assertSimulationResult } from './validation'
-import type { ArtifactRef, DefinedKernelTask, RecordedDataSpec } from './types'
+import type {
+  ArtifactRef,
+  DefinedKernelTask,
+  RecordedDataSpec,
+  ResolvedKernelTask,
+  SimulationResult,
+  SimulationWorld,
+  StateRef,
+} from './types'
 import { describe, expect, it } from 'vitest'
 
 const milliampSpec = Object.freeze({
@@ -38,6 +54,44 @@ function Specimen() {
 
 function Fixture() {
   return h('box', { size: [1, 1, 1] })
+}
+
+type ResolvedTasks<Tasks extends Readonly<Record<string, DefinedKernelTask>>> = Readonly<{
+  [Key in keyof Tasks]: Tasks[Key] extends DefinedKernelTask<
+    infer Config,
+    infer Artifacts,
+    infer Observations,
+    infer Inputs
+  >
+    ? ResolvedKernelTask<Config, Artifacts, Observations, Inputs>
+    : never
+}>
+
+const conformanceSimulations = new WeakMap<object, SimulationProgramRuntimeDefinition['simulate']>()
+
+function conformanceExperiment<
+  const Schema extends VarsSchemaDefinition,
+  const Tasks extends Readonly<Record<string, DefinedKernelTask>>,
+  const Recorded extends Readonly<Record<string, RecordedDataSpec>>,
+>(
+  options: ExperimentDefinitionOptions<Schema, Tasks, Recorded> &
+    Readonly<{
+      simulate: (
+        context: Readonly<{
+          sim: SimulationScriptApi
+          tasks: ResolvedTasks<Tasks>
+          vars: InferVars<Schema>
+          world: SimulationWorld
+        }>,
+      ) => Promise<StateRef> | StateRef
+    }>,
+) {
+  const { simulate, ...definitionOptions } = options
+  const definition = new ExperimentDefinition<Schema, Tasks, Recorded>(
+    definitionOptions as ExperimentDefinitionOptions<Schema, Tasks, Recorded>,
+  )
+  conformanceSimulations.set(definition, simulate as SimulationProgramRuntimeDefinition['simulate'])
+  return definition
 }
 
 function kernelDescriptor(
@@ -111,7 +165,17 @@ function createRealizations<
   })
   const structureVars = structureDefinition.resolveExternal({}, 11)
   const experimentVars = definition.resolveExternal({}, 13)
-  const runtime = definition.createProgramRuntime(experimentVars, '2'.repeat(64))
+  const simulate = conformanceSimulations.get(definition)
+  if (!simulate) throw new Error('Runtime conformance test is missing its simulate callback.')
+  const runtime = Object.freeze({
+    ...definition.createProgramRuntime(
+      experimentVars,
+      '2'.repeat(64),
+      'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
+      '3'.repeat(64),
+    ),
+    simulate,
+  })
   const structureSnapshot = serializeEvaluatedDocumentSnapshot({
     kind: 'structure',
     sourceHash: '1'.repeat(64),
@@ -207,7 +271,7 @@ describe('multiphysics simulation runtime', () => {
       { residual: number },
       { current: 'test/current@1' }
     >(sinkDescriptor, taskConfig(sinkDescriptor))
-    const definition = experiment({
+    const definition = conformanceExperiment({
       lengthUnit: 'mm',
       geometry: () => h(Fixture, { id: 'fixture' }),
       varsSchema: {},
@@ -253,6 +317,36 @@ describe('multiphysics simulation runtime', () => {
     })
     expect(JSON.stringify(result)).not.toContain('1500')
     expect(() => assertSimulationResult(result)).not.toThrow()
+
+    const exportBytes = new Uint8Array(16)
+    const exportView = new DataView(exportBytes.buffer)
+    exportView.setFloat64(0, 2.5, true)
+    exportView.setFloat64(8, 3.5, true)
+    registerDataTensorAttachment('export.current.0', exportBytes)
+    try {
+      const exportResult = {
+        ...result,
+        recordedData: {
+          measuredCurrent: {
+            spec: { ...ampSpec, axes: [{ length: 2 }] },
+            data: {
+              shape: [2],
+              storage: {
+                kind: 'attachments',
+                ids: ['export.current.0'],
+                byteLength: exportBytes.byteLength,
+              },
+            },
+          },
+        },
+      } as SimulationResult
+      expect(JSON.parse(exportSimulationResult(exportResult)).recordedData.measuredCurrent.data).toEqual({
+        value: [2.5, 3.5],
+        axes: [{ ticks: [0, 1] }],
+      })
+    } finally {
+      releaseDataTensorAttachments(['export.current.0'])
+    }
   })
 
   it('normalizes unit and basis at the RecordedData boundary before allowing release', async () => {
@@ -289,7 +383,7 @@ describe('multiphysics simulation runtime', () => {
     }
     const scalar = defineKernelTask(scalarDescriptor, taskConfig(scalarDescriptor))
     const vector = defineKernelTask(vectorDescriptor, taskConfig(vectorDescriptor))
-    const definition = experiment({
+    const definition = conformanceExperiment({
       lengthUnit: 'mm',
       geometry: () => h(Fixture, { id: 'fixture' }),
       varsSchema: {},
@@ -356,7 +450,7 @@ describe('multiphysics simulation runtime', () => {
     }
     const producer = defineKernelTask(producerDescriptor, taskConfig(producerDescriptor))
     const consumer = defineKernelTask(consumerDescriptor, taskConfig(consumerDescriptor))
-    const handoffDefinition = experiment({
+    const handoffDefinition = conformanceExperiment({
       lengthUnit: 'mm',
       geometry: () => h(Fixture, { id: 'fixture' }),
       varsSchema: {},
@@ -380,7 +474,7 @@ describe('multiphysics simulation runtime', () => {
       ),
     ).rejects.toThrow('incompatible metadata')
 
-    const recordedDefinition = experiment({
+    const recordedDefinition = conformanceExperiment({
       lengthUnit: 'mm',
       geometry: () => h(Fixture, { id: 'fixture' }),
       varsSchema: {},
@@ -447,7 +541,7 @@ describe('multiphysics simulation runtime', () => {
       Record<string, never>
     >(descriptor, taskConfig(descriptor))
     let recoveredArtifactId = ''
-    const definition = experiment({
+    const definition = conformanceExperiment({
       lengthUnit: 'mm',
       geometry: () => h(Fixture, { id: 'fixture' }),
       varsSchema: {},
@@ -508,7 +602,7 @@ describe('multiphysics simulation runtime', () => {
       },
     }
     const task = defineKernelTask(descriptor, taskConfig(descriptor))
-    const definition = experiment({
+    const definition = conformanceExperiment({
       lengthUnit: 'mm',
       geometry: () => h(Fixture, { id: 'fixture' }),
       varsSchema: {},
@@ -559,7 +653,7 @@ describe('multiphysics simulation runtime', () => {
     })
     const first = defineKernelTask(firstDescriptor, taskConfig(firstDescriptor))
     const second = defineKernelTask(secondDescriptor, taskConfig(secondDescriptor))
-    const definition = experiment({
+    const definition = conformanceExperiment({
       lengthUnit: 'mm',
       geometry: () => h(Fixture, { id: 'fixture' }),
       varsSchema: {},
@@ -618,7 +712,7 @@ describe('multiphysics simulation runtime', () => {
     }
     const source = defineKernelTask(sourceDescriptor, taskConfig(sourceDescriptor))
     const sink = defineKernelTask(sinkDescriptor, taskConfig(sinkDescriptor))
-    const definition = experiment({
+    const definition = conformanceExperiment({
       lengthUnit: 'mm',
       geometry: () => h(Fixture, { id: 'fixture' }),
       varsSchema: {},
@@ -676,7 +770,7 @@ describe('multiphysics simulation runtime', () => {
     const producer = defineKernelTask(producerDescriptor, taskConfig(producerDescriptor))
     const consumer = defineKernelTask(consumerDescriptor, taskConfig(consumerDescriptor))
     const makeDefinition = (mode: 'required' | 'unknown' | 'prototype' | 'wrong-type') =>
-      experiment({
+      conformanceExperiment({
         lengthUnit: 'mm',
         geometry: () => h(Fixture, { id: 'fixture' }),
         varsSchema: {},
@@ -739,7 +833,7 @@ describe('multiphysics simulation runtime', () => {
     }
     const task = defineKernelTask(descriptor, taskConfig(descriptor))
     let foreignRef: ArtifactRef<'test/sequential@1'> | undefined
-    const originDefinition = experiment({
+    const originDefinition = conformanceExperiment({
       lengthUnit: 'mm',
       geometry: () => h(Fixture, { id: 'fixture' }),
       varsSchema: {},
@@ -760,7 +854,7 @@ describe('multiphysics simulation runtime', () => {
       new AbortController().signal,
       'origin-run',
     )
-    const foreignDefinition = experiment({
+    const foreignDefinition = conformanceExperiment({
       lengthUnit: 'mm',
       geometry: () => h(Fixture, { id: 'fixture' }),
       varsSchema: {},
@@ -784,7 +878,7 @@ describe('multiphysics simulation runtime', () => {
     ).rejects.toThrow('belongs to another run')
 
     for (const referenceRunId of ['another-run', 'forged-run']) {
-      const forgedDefinition = experiment({
+      const forgedDefinition = conformanceExperiment({
         lengthUnit: 'mm',
         geometry: () => h(Fixture, { id: 'fixture' }),
         varsSchema: {},
@@ -820,7 +914,7 @@ describe('multiphysics simulation runtime', () => {
       ).rejects.toThrow('forged, uncommitted, or belongs to another run')
     }
 
-    const concurrentDefinition = experiment({
+    const concurrentDefinition = conformanceExperiment({
       lengthUnit: 'mm',
       geometry: () => h(Fixture, { id: 'fixture' }),
       varsSchema: {},
@@ -855,7 +949,7 @@ describe('multiphysics simulation runtime', () => {
     }
     const task = defineKernelTask(descriptor, taskConfig(descriptor))
     const makeDefinition = (mode: 'missing' | 'duplicate' | 'undeclared' | 'prototype') =>
-      experiment({
+      conformanceExperiment({
         lengthUnit: 'mm',
         geometry: () => h(Fixture, { id: 'fixture' }),
         varsSchema: {},
@@ -913,7 +1007,7 @@ describe('multiphysics simulation runtime', () => {
     }
     const first = defineKernelTask(firstDescriptor, taskConfig(firstDescriptor))
     const failing = defineKernelTask(failingDescriptor, taskConfig(failingDescriptor))
-    const definition = experiment({
+    const definition = conformanceExperiment({
       lengthUnit: 'mm',
       geometry: () => h(Fixture, { id: 'fixture' }),
       varsSchema: {},
@@ -959,7 +1053,7 @@ describe('multiphysics simulation runtime', () => {
     }
     const first = defineKernelTask(firstDescriptor, taskConfig(firstDescriptor))
     const second = defineKernelTask(secondDescriptor, taskConfig(secondDescriptor))
-    const definition = experiment({
+    const definition = conformanceExperiment({
       lengthUnit: 'mm',
       geometry: () => h(Fixture, { id: 'fixture' }),
       varsSchema: {},

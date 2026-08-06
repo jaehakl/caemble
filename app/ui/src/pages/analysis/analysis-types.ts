@@ -37,7 +37,7 @@ export type AnalysisProfile = Readonly<{
   categoricalSummaries: readonly Readonly<{
     name: string
     dtype: string
-    quantityKind: string
+    quantityKind?: string
     counts: readonly Readonly<{ value: string; count: number }>[]
     excludedReason?: string
   }>[]

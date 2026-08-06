@@ -17,7 +17,6 @@ const upsertResponseSchema = z.object({
   id: z.number().int(),
   fk_not_found: z.record(z.string(), z.array(z.number().int())).nullable().optional(),
 })
-const gpsAccessTokenSchema = z.object({ gps_access_token: z.string().nullable() })
 const logoutResponseSchema = z.object({ ok: z.literal(true) })
 const deleteResponseSchema = z.null()
 const saveCodeEntityRequestSchema = z.object({
@@ -37,6 +36,29 @@ const saveCodeEntityRequestSchema = z.object({
     .regex(/^[0-9a-f]{64}$/)
     .optional(),
 })
+const saveExperimentRequestSchema = z.object({
+  id: z.number().int().optional(),
+  name: z.string().min(1),
+  description: z.string().nullable(),
+  code: z.string().min(1),
+  rawCodeHash: z.string().regex(/^[0-9a-f]{64}$/),
+  semanticHash: z.string().regex(/^[0-9a-f]{64}$/),
+  semanticHashVersion: z.literal(1),
+  baseRawCodeHash: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
+  baseSemanticHash: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
+  simulationCode: z.string().min(1),
+  simulationRawCodeHash: z.string().regex(/^[0-9a-f]{64}$/),
+  baseSimulationRawCodeHash: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
+})
 const saveCodeEntityResponseSchema = z.object({
   id: z.number().int(),
   action: z.enum(['created', 'updated', 'forked']),
@@ -46,15 +68,55 @@ const measurementContextRequestSchema = z.object({
   structure_id: z.number().int(),
   experiment_id: z.number().int(),
 })
+const dataSchemaAxisSchema = z
+  .object({
+    length: z.number().int().positive().optional(),
+    name: z.string().min(1).optional(),
+    ticks: z.array(z.union([z.number().finite(), z.string()])).readonly().optional(),
+    unit: z.string().min(1).optional(),
+    quantityKind: z.string().min(1).optional(),
+  })
+  .strict()
+const dataSchemaSchema = z
+  .object({
+    dtype: z.enum([
+      'bool',
+      'string',
+      'int8',
+      'int16',
+      'int32',
+      'int64',
+      'uint8',
+      'uint16',
+      'uint32',
+      'uint64',
+      'float16',
+      'float32',
+      'float64',
+    ]),
+    unit: z.string().min(1).optional(),
+    quantityKind: z.string().min(1).optional(),
+    basis: z
+      .tuple([
+        z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]).readonly(),
+        z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]).readonly(),
+        z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]).readonly(),
+      ])
+      .readonly()
+      .optional(),
+    axes: z.array(dataSchemaAxisSchema).min(1).readonly().optional(),
+  })
+  .strict()
 const measurementSaveRequestSchema = z.object({
   sample_id: z.number().int(),
   setup_id: z.number().int(),
   recorded_data: z.array(
     z.object({
       name: z.string().min(1),
-      quantity_kind: z.string().min(1),
+      quantity_kind: z.string().min(1).nullable(),
       tensor_order: z.number().int().nonnegative(),
       dtype: z.string().min(1),
+      data_schema: dataSchemaSchema,
       data: z.unknown().nullable().optional(),
     }),
   ),
@@ -64,9 +126,9 @@ const measurementSaveResponseSchema = z.object({ id: z.number().int() })
 export type GetListRequest = z.infer<typeof getListRequestSchema>
 export type UpsertResponse = z.infer<typeof upsertResponseSchema>
 export type SaveCodeEntityRequest = z.infer<typeof saveCodeEntityRequestSchema>
+export type SaveExperimentRequest = z.infer<typeof saveExperimentRequestSchema>
 export type SaveCodeEntityResponse = z.infer<typeof saveCodeEntityResponseSchema>
 export type MeasurementSaveRequest = z.infer<typeof measurementSaveRequestSchema>
-export type GpsAccessTokenData = z.infer<typeof gpsAccessTokenSchema>
 export type GetListResponse<TItem> = { items: TItem[]; total: number }
 
 export const dbTables = {
@@ -283,6 +345,7 @@ export const dbTables = {
       name: z.string(),
       description: z.string().nullable().optional(),
       code: z.string(),
+      simulation_code: z.string().nullable(),
     }),
     async listRows(listRequest: GetListRequest = getListRequest()) {
       const payload = getListRequestSchema.parse(listRequest)
@@ -293,8 +356,8 @@ export const dbTables = {
       const payload = z.array(this.rowSchema).parse(items)
       return z.array(upsertResponseSchema).parse(await request<unknown>('post', '/experiment/upsert', payload))
     },
-    async save(item: SaveCodeEntityRequest) {
-      const payload = saveCodeEntityRequestSchema.parse(item)
+    async save(item: SaveExperimentRequest) {
+      const payload = saveExperimentRequestSchema.parse(item)
       return saveCodeEntityResponseSchema.parse(await request<unknown>('post', '/experiment/save', payload))
     },
     async deleteRows(ids: readonly number[]) {
@@ -397,9 +460,10 @@ export const dbTables = {
       user_id: z.string().nullable().optional(),
       measurement_id: z.number().int(),
       name: z.string(),
-      quantity_kind: z.string(),
+      quantity_kind: z.string().nullable(),
       tensor_order: z.number().int(),
       dtype: z.string(),
+      data_schema: dataSchemaSchema.nullable().optional(),
       data: z.unknown().nullable().optional(),
       data_url: z.string().nullable().optional(),
       file_size: z.number().int().nullable().optional(),
@@ -484,15 +548,6 @@ export function startGoogleLogin(returnTo?: string) {
 
 export async function logout() {
   return logoutResponseSchema.parse(await request<unknown>('post', '/auth/logout'))
-}
-
-export async function getGpsAccessToken() {
-  return gpsAccessTokenSchema.parse(await request<unknown>('get', '/auth/gps-access-token'))
-}
-
-export async function updateGpsAccessToken(gpsAccessToken: string | null) {
-  const payload = gpsAccessTokenSchema.parse({ gps_access_token: gpsAccessToken })
-  return gpsAccessTokenSchema.parse(await request<unknown>('post', '/auth/gps-access-token', payload))
 }
 
 export function getListRequest(

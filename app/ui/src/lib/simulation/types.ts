@@ -1,11 +1,12 @@
 import type { CadScene } from '../cad/evaluation/types'
-import type { RecordedDataResult, RecordedDataTensor } from '../cad/model/descriptor'
+import type { DataTensor as CadDataTensor, RecordedDataResult, RecordedDataTensor } from '../cad/model/descriptor'
 import type { Vars } from '../cad/model/types'
+import type { KernelDescriptor, ResolvedKernelOutputSpec } from './kernelContract'
 
 export type ArtifactType = `${string}@${number}`
 export type SimulationObservation = boolean | number | string
 export type RecordedDataSpec = RecordedDataResult
-export type DataTensor = RecordedDataTensor
+export type DataTensor = CadDataTensor
 
 export type SimulationWorld = Readonly<{
   scenes: Readonly<{
@@ -48,6 +49,7 @@ export type DefinedKernelTask<
   kind: 'caemble-kernel-task'
   kernel: KernelIdentity
   config: Config
+  descriptor?: KernelDescriptor
   /** Compile-time capability information. It is not inspected at runtime. */
   __artifacts?: Artifacts
   /** Compile-time capability information. It is not inspected at runtime. */
@@ -139,7 +141,7 @@ export type SimulationProvenance = Readonly<{
 
 export type RecordedDataEntry = Readonly<{
   spec: RecordedDataSpec
-  data: DataTensor
+  data: RecordedDataTensor
 }>
 
 export type SimulationResult = Readonly<{
@@ -153,15 +155,22 @@ export type SimulationResult = Readonly<{
 }>
 
 export type SimulationProgramTaskManifest = Readonly<{
-  kernel: KernelIdentity
+  kernel: KernelIdentity & Readonly<{ descriptorHash: string }>
+  descriptor: KernelDescriptor | null
+  config: unknown
   configHash: string
+  outputArtifacts: Readonly<Record<string, ResolvedKernelOutputSpec>>
 }>
 
 export type SimulationProgramManifest = Readonly<{
-  formatVersion: 1
+  formatVersion: 2
   programHash: string
+  simulationApiVersion: 1
+  pythonSource: string
+  pythonSourceHash: string
   tasks: Readonly<Record<string, SimulationProgramTaskManifest>>
   recordedData: Readonly<Record<string, RecordedDataSpec>>
+  recordedDataSchemaHash: string
 }>
 
 export type SimulationProgress = Readonly<{

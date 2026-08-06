@@ -47,7 +47,6 @@ export default experiment({
   varsSchema: {},
   tasks: () => ({ electric: dcCurrentDensity({}) }),
   recordedData: {},
-  simulate: ({ sim }) => sim.initialState,
 })`
 
     expect(analyzeCadSource(program, 'experiment').factoryName).toBe('experiment')

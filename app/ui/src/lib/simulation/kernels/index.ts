@@ -1,12 +1,7 @@
-import { dcCurrentDensity, dcCurrentDensityKernel } from './dcCurrentDensity'
-import { steadyStateHeat, steadyStateHeatKernel } from './steadyStateHeat'
+import { dcCurrentDensity, dcCurrentDensityDescriptor } from './dcCurrentDensity'
+import { steadyStateHeat, steadyStateHeatDescriptor } from './steadyStateHeat'
 
-export {
-  dcCurrentDensity,
-  dcCurrentDensityDescriptor,
-  dcCurrentDensityKernel,
-  dcCurrentDensityKernelRef,
-} from './dcCurrentDensity'
+export { dcCurrentDensity, dcCurrentDensityDescriptor, dcCurrentDensityKernelRef } from './dcCurrentDensity'
 
 export type {
   DcArtifactTypes,
@@ -18,12 +13,7 @@ export type {
   ResolvedSurface,
 } from './dcCurrentDensity'
 
-export {
-  steadyStateHeat,
-  steadyStateHeatDescriptor,
-  steadyStateHeatKernel,
-  steadyStateHeatKernelRef,
-} from './steadyStateHeat'
+export { steadyStateHeat, steadyStateHeatDescriptor, steadyStateHeatKernelRef } from './steadyStateHeat'
 
 export type {
   PreparedSteadyStateHeatInput,
@@ -38,16 +28,18 @@ const productionKernelCatalog = Object.freeze([
   Object.freeze({
     authoringName: 'dcCurrentDensity',
     builder: dcCurrentDensity,
-    definition: dcCurrentDensityKernel,
+    descriptor: dcCurrentDensityDescriptor,
   }),
   Object.freeze({
     authoringName: 'steadyStateHeat',
     builder: steadyStateHeat,
-    definition: steadyStateHeatKernel,
+    descriptor: steadyStateHeatDescriptor,
   }),
 ])
 
-export const kernelModules = Object.freeze(productionKernelCatalog.map(({ definition }) => definition))
+export const kernelModules = Object.freeze(
+  productionKernelCatalog.map(({ descriptor }) => Object.freeze({ descriptor })),
+)
 
 export const kernelAuthoring = Object.freeze(
   Object.fromEntries(productionKernelCatalog.map(({ authoringName, builder }) => [authoringName, builder])),

@@ -83,6 +83,15 @@ for (const [name, source] of contents) {
     throw new Error(`${name} contains new Function outside the isolated evaluation Worker.`)
   }
 }
+const localSimulationMarkers = [
+  'Finite-volume matrix contains an isolated cell.',
+  'finite-volume matrix is not positive definite.',
+  'sim.run() calls must be awaited and executed sequentially.',
+]
+for (const [name, source] of contents) {
+  const marker = localSimulationMarkers.find((candidate) => source.includes(candidate))
+  if (marker) throw new Error(`${name} contains browser-local simulation runtime code: ${marker}`)
+}
 if (assetNames.some((name) => name.endsWith('.wasm'))) {
   throw new Error('The production build contains a WASM asset.')
 }

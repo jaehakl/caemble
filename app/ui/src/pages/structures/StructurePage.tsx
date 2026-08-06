@@ -233,7 +233,14 @@ export function StructurePage() {
   const selectedStructure = rows.find((row) => row.id === selectedStructureId) ?? null
   const currentExperiment = useMemo(
     () =>
-      currentExperimentQuery.data ? createCadSourceDocument('experiment', currentExperimentQuery.data.code) : null,
+      currentExperimentQuery.data
+        ? createCadSourceDocument(
+            'experiment',
+            currentExperimentQuery.data.code,
+            undefined,
+            currentExperimentQuery.data.simulation_code,
+          )
+        : null,
     [currentExperimentQuery.data],
   )
   const canManage = useCallback((row: StructureRow) => canManageStructure(row, auth.user), [auth.user])

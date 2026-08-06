@@ -9,13 +9,9 @@ import {
   validateKernelTaskConfig,
   type KernelWorld,
 } from '../../kernelContract'
-import {
-  prepareSteadyStateHeat,
-  steadyStateHeat,
-  steadyStateHeatDescriptor,
-  steadyStateHeatKernel,
-  type SteadyStateHeatTaskConfig,
-} from '.'
+import { steadyStateHeat, steadyStateHeatDescriptor, type SteadyStateHeatTaskConfig } from '.'
+import { prepareSteadyStateHeat } from './prepare'
+import { steadyStateHeatKernel } from './runtimeDefinition'
 
 function emptyScene(): CadScene {
   return {

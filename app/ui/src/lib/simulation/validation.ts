@@ -1,6 +1,15 @@
 import { isFloatDType } from '../cad/model/core'
 import { normalizeQuantityMetadata } from '../quantitykind/runtime'
-import { assertKernelArtifactPayload, type KernelDataSpec } from './kernelContract'
+import { canonicalDataHash } from './authoring'
+import {
+  assertKernelArtifactPayload,
+  assertValidKernelDescriptor,
+  normalizeKernelTaskConfig,
+  resolveKernelOutputSpecs,
+  type KernelDataSpec,
+  type KernelDescriptor,
+  type KernelTaskConfig,
+} from './kernelContract'
 import type { RecordedDataSpec, SimulationProgramManifest, SimulationResult } from './types'
 
 const dataDTypes = new Set([
@@ -109,16 +118,36 @@ function assertProvenanceVars(value: unknown, path: string) {
 export function assertSimulationProgramManifest(value: unknown): asserts value is SimulationProgramManifest {
   if (
     !isPlainObject(value) ||
-    value.formatVersion !== 1 ||
+    value.formatVersion !== 2 ||
     typeof value.programHash !== 'string' ||
-    !value.programHash ||
+    !/^[0-9a-f]{64}$/.test(value.programHash) ||
+    value.simulationApiVersion !== 1 ||
+    typeof value.pythonSource !== 'string' ||
+    !value.pythonSource.trim() ||
+    typeof value.pythonSourceHash !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(value.pythonSourceHash) ||
     !isPlainObject(value.tasks) ||
     Object.keys(value.tasks).length === 0 ||
-    !isPlainObject(value.recordedData)
+    !isPlainObject(value.recordedData) ||
+    typeof value.recordedDataSchemaHash !== 'string' ||
+    !/^[0-9a-f]{8}$/.test(value.recordedDataSchemaHash)
   ) {
     throw new Error('Simulation Program manifest is invalid.')
   }
-  assertExactKeys(value, ['formatVersion', 'programHash', 'tasks', 'recordedData'], 'Simulation Program manifest')
+  assertExactKeys(
+    value,
+    [
+      'formatVersion',
+      'programHash',
+      'simulationApiVersion',
+      'pythonSource',
+      'pythonSourceHash',
+      'tasks',
+      'recordedData',
+      'recordedDataSchemaHash',
+    ],
+    'Simulation Program manifest',
+  )
   Object.entries(value.tasks).forEach(([taskName, task]) => {
     if (
       !taskName.trim() ||
@@ -128,18 +157,70 @@ export function assertSimulationProgramManifest(value: unknown): asserts value i
       !task.kernel.name.trim() ||
       typeof task.kernel.version !== 'string' ||
       !task.kernel.version.trim() ||
+      typeof task.kernel.descriptorHash !== 'string' ||
+      !/^[0-9a-f]{8}$/.test(task.kernel.descriptorHash) ||
       typeof task.configHash !== 'string' ||
-      !task.configHash
+      !/^[0-9a-f]{8}$/.test(task.configHash) ||
+      !isPlainObject(task.outputArtifacts)
     ) {
       throw new Error(`Simulation Program task "${taskName}" is invalid.`)
     }
-    assertExactKeys(task, ['kernel', 'configHash'], `Simulation Program task "${taskName}"`)
-    assertExactKeys(task.kernel, ['name', 'version'], `Simulation Program task "${taskName}".kernel`)
+    assertExactKeys(
+      task,
+      ['kernel', 'descriptor', 'config', 'configHash', 'outputArtifacts'],
+      `Simulation Program task "${taskName}"`,
+    )
+    assertExactKeys(task.kernel, ['name', 'version', 'descriptorHash'], `Simulation Program task "${taskName}".kernel`)
+    if (task.descriptor !== null) {
+      if (!isPlainObject(task.descriptor)) {
+        throw new Error(`Simulation Program task "${taskName}" descriptor is invalid.`)
+      }
+      const descriptor = task.descriptor as unknown as KernelDescriptor
+      assertValidKernelDescriptor(descriptor)
+      if (
+        descriptor.name !== task.kernel.name ||
+        descriptor.version !== task.kernel.version ||
+        canonicalDataHash(descriptor) !== task.kernel.descriptorHash
+      ) {
+        throw new Error(`Simulation Program task "${taskName}" descriptor does not match its kernel identity.`)
+      }
+      const normalizedConfig = normalizeKernelTaskConfig(descriptor, task.config as KernelTaskConfig)
+      if (canonicalDataHash(normalizedConfig) !== task.configHash) {
+        throw new Error(`Simulation Program task "${taskName}" config is not canonical for its descriptor.`)
+      }
+      const resolvedOutputs = resolveKernelOutputSpecs(descriptor, normalizedConfig)
+      if (canonicalDataHash(resolvedOutputs) !== canonicalDataHash(task.outputArtifacts)) {
+        throw new Error(`Simulation Program task "${taskName}" resolved output specs are invalid.`)
+      }
+    } else if (
+      canonicalDataHash({ name: task.kernel.name, version: task.kernel.version }) !== task.kernel.descriptorHash
+    ) {
+      throw new Error(`Simulation Program task "${taskName}" descriptor hash is invalid.`)
+    }
+    if (canonicalDataHash(task.config) !== task.configHash) {
+      throw new Error(`Simulation Program task "${taskName}" config hash is invalid.`)
+    }
+    Object.entries(task.outputArtifacts).forEach(([name, output]) => {
+      if (
+        !name.trim() ||
+        !isPlainObject(output) ||
+        typeof output.artifactType !== 'string' ||
+        !output.artifactType ||
+        !isPlainObject(output.data)
+      ) {
+        throw new Error(`Simulation Program task "${taskName}" output "${name}" is invalid.`)
+      }
+      assertExactKeys(output, ['artifactType', 'data'], `Simulation Program task "${taskName}" output "${name}"`)
+      assertRecordedDataSpec(output.data, `Simulation Program task "${taskName}" output "${name}".data`)
+    })
   })
   Object.entries(value.recordedData).forEach(([name, spec]) => {
     if (!name.trim()) throw new Error('RecordedData names must not be empty.')
     assertRecordedDataSpec(spec, `Simulation Program recordedData "${name}"`)
   })
+  if (canonicalDataHash(value.recordedData) !== value.recordedDataSchemaHash) {
+    throw new Error('Simulation Program RecordedData schema hash is invalid.')
+  }
 }
 
 export function assertSimulationResult(value: unknown): asserts value is SimulationResult {

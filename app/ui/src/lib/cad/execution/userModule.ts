@@ -84,6 +84,8 @@ export function evaluateDocumentEntry(
   sourceHash: string,
   seed: number,
   partialVars: ExternalVars = {},
+  simulationCode?: string,
+  simulationCodeHash?: string,
 ): CadExecutionResult {
   if (!Number.isSafeInteger(seed) || seed < 0) {
     throw new CadModelError('Evaluation seed must be a non-negative safe integer.')
@@ -93,11 +95,19 @@ export function evaluateDocumentEntry(
     if (!(entry instanceof ExperimentDefinition)) {
       throw new CadModelError('Experiment Source must export default experiment({...}) from @caemble/core.')
     }
+    if (
+      typeof simulationCode !== 'string' ||
+      !simulationCode.trim() ||
+      typeof simulationCodeHash !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(simulationCodeHash)
+    ) {
+      throw new CadModelError('Experiment evaluation requires non-empty Python simulation source and its SHA-256 hash.')
+    }
     const variables = entry.resolveExternal(partialVars, seed)
     return evaluateWithVars(
       variables,
       () => {
-        const runtime = entry.createProgramRuntime(variables, sourceHash)
+        const runtime = entry.createProgramRuntime(variables, sourceHash, simulationCode, simulationCodeHash)
         return Object.freeze({
           kind: 'experiment' as const,
           sourceHash,
@@ -153,8 +163,18 @@ export function executeCompiledCode(
   sourceHash = 'test-source',
   seed = 0,
   partialVars: ExternalVars = {},
+  simulationCode?: string,
+  simulationCodeHash?: string,
 ) {
-  return evaluateDocumentEntry(loadCompiledCode(jsCode, documentType), documentType, sourceHash, seed, partialVars)
+  return evaluateDocumentEntry(
+    loadCompiledCode(jsCode, documentType),
+    documentType,
+    sourceHash,
+    seed,
+    partialVars,
+    simulationCode,
+    simulationCodeHash,
+  )
 }
 
 export function executeCompiledSource(
@@ -162,6 +182,8 @@ export function executeCompiledSource(
   documentType: CadDocumentType,
   seed: number,
   partialVars: ExternalVars = {},
+  simulationCode?: string,
+  simulationCodeHash?: string,
 ) {
   return evaluateDocumentEntry(
     loadCompiledSource(compiledSource, documentType),
@@ -169,5 +191,7 @@ export function executeCompiledSource(
     compiledSource.sourceHash,
     seed,
     partialVars,
+    simulationCode,
+    simulationCodeHash,
   )
 }

@@ -133,7 +133,8 @@ async def upsert_items(
             (
                 field_name
                 for field_name in spec.immutable_update_fields
-                if getattr(existing, field_name) != getattr(item, field_name)
+                if field_name in item.model_fields_set
+                and getattr(existing, field_name) != getattr(item, field_name)
             ),
             None,
         )

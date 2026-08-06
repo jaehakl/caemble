@@ -4,6 +4,7 @@ import type { CadDiagnostic } from '@/lib/cad'
 
 type CadEditorProps = {
   diagnostics?: readonly CadDiagnostic[]
+  language?: 'python' | 'typescript'
   modelPath: string
   onChange: (value: string) => void
   readOnly?: boolean
@@ -25,7 +26,14 @@ function markerData(monaco: typeof Monaco, diagnostics: readonly CadDiagnostic[]
   }))
 }
 
-function CadEditor({ diagnostics = [], modelPath, onChange, readOnly = false, value }: CadEditorProps) {
+function CadEditor({
+  diagnostics = [],
+  language = 'typescript',
+  modelPath,
+  onChange,
+  readOnly = false,
+  value,
+}: CadEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
   const onChangeRef = useRef(onChange)
@@ -48,7 +56,7 @@ function CadEditor({ diagnostics = [], modelPath, onChange, readOnly = false, va
       .then((monaco) => {
         if (disposed || !containerRef.current) return
         const uri = monaco.Uri.parse(modelPath)
-        const model = monaco.editor.getModel(uri) ?? monaco.editor.createModel(valueRef.current, 'typescript', uri)
+        const model = monaco.editor.getModel(uri) ?? monaco.editor.createModel(valueRef.current, language, uri)
         if (model.getValue() !== valueRef.current) model.setValue(valueRef.current)
         const editor = monaco.editor.create(containerRef.current, {
           automaticLayout: true,
@@ -60,7 +68,7 @@ function CadEditor({ diagnostics = [], modelPath, onChange, readOnly = false, va
           padding: { top: 14 },
           readOnly: readOnlyRef.current,
           scrollBeyondLastLine: false,
-          tabSize: 2,
+          tabSize: language === 'python' ? 4 : 2,
           theme: 'vs-light',
           wordWrap: 'on',
         })
@@ -85,7 +93,7 @@ function CadEditor({ diagnostics = [], modelPath, onChange, readOnly = false, va
       editorRef.current = null
       monacoRef.current = null
     }
-  }, [modelPath])
+  }, [language, modelPath])
 
   useEffect(() => {
     valueRef.current = value

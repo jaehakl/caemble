@@ -110,18 +110,21 @@ export default experiment({
     },
   },
 
-  simulate: async ({ sim, tasks }) => {
-    const coarse = await sim.run(tasks.solveCoarse)
-    sim.record('coarseTotalCurrent', coarse.artifacts.coarseTotalCurrent)
-
-    const fine = await sim.run(tasks.solveFine, {
-      state: coarse.state,
-    })
-    sim.record('fineTotalCurrent', fine.artifacts.fineTotalCurrent)
-
-    return fine.state
-  },
 })
+`
+
+export const dcResolutionStudySimulationCode = `async def simulate(*, sim, tasks, vars, world):
+    coarse = await sim.run(tasks["solveCoarse"])
+    await sim.record(
+        "coarseTotalCurrent",
+        coarse["artifacts"]["coarseTotalCurrent"],
+    )
+    fine = await sim.run(tasks["solveFine"], state=coarse["state"])
+    await sim.record(
+        "fineTotalCurrent",
+        fine["artifacts"]["fineTotalCurrent"],
+    )
+    return fine["state"]
 `
 
 export const dcResolutionStudyExample = Object.freeze({
@@ -135,6 +138,7 @@ export const dcResolutionStudyExample = Object.freeze({
   ]),
   structureCode: dcUniformBarStructureCode,
   experimentCode: dcResolutionStudyExperimentCode,
+  simulationCode: dcResolutionStudySimulationCode,
   verification: Object.freeze({
     kernelTasks: Object.freeze(['solveCoarse', 'solveFine']),
     recordedData: Object.freeze(['coarseTotalCurrent', 'fineTotalCurrent']),

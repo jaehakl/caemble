@@ -1,6 +1,6 @@
 # Caemble UI
 
-Caemble UI는 React 19, React Router Data Mode, Tailwind CSS v4로 구성된 페이지 중심 웹앱이다. 홈과 공개 Structure/Experiment, 읽기 전용 카탈로그, 문서는 로그인 없이 열람할 수 있고 저장 기능은 Google OAuth 로그인이 필요하다. TSX는 Structure/Experiment 정의의 source of truth이며 preview와 solver는 격리된 runner가 만든 immutable v2 snapshot을 사용한다.
+Caemble UI는 React 19, React Router Data Mode, Tailwind CSS v4로 구성된 페이지 중심 웹앱이다. 홈과 공개 Structure/Experiment, 읽기 전용 카탈로그, 문서는 로그인 없이 열람할 수 있고 저장 기능은 Google OAuth 로그인이 필요하다. TSX는 Structure/Experiment 정의의 source of truth이며 preview는 격리된 runner가 만든 immutable snapshot을, simulation은 GPStation WebRTC CAE slave를 사용한다.
 
 주요 URL은 `/`, `/structures`, `/experiments`, `/examples/:exampleId?`, `/measurements`, `/materials`, `/catalog/cad`, `/catalog/materials`, `/catalog/quantity-kinds`, `/catalog/solvers`, `/docs`, `/login`, `/account`다. 기존 `/viewer`와 `/#viewer`는 `/structures?structure=new&mode=code`로 이동하고, `/#help`는 `/docs`로 이동한다.
 
@@ -28,6 +28,16 @@ npm run test:e2e
 `npm run dev`는 앱을 `http://localhost:5173`, 격리 runner를 `http://localhost:5174`에서 함께 실행한다. runner 서버는 `runner.html`을 Vite HTML 변환 없이 제공하며 HMR과 React Refresh를 주입하지 않는다. 따라서 개발 환경도 운영과 동일하게 별도 origin, `connect-src 'none'` CSP, sandboxed iframe 계약을 사용한다. 커스텀 포트를 쓸 때는 앱과 runner를 인접 포트로 실행하거나 `VITE_CAEMBLE_HOST_ORIGIN`과 `VITE_CAEMBLE_RUNNER_ORIGIN`을 모두 지정한다.
 
 앱 개발 서버의 `/api`는 `http://localhost:8000`으로 proxy되며 prefix가 제거된다. 운영 reverse proxy도 같은 계약을 사용한다. 기본 설정은 `VITE_API_BASE_URL=/api`이고, 요청에는 HttpOnly access/refresh 쿠키를 위해 항상 credentials가 포함된다.
+
+실제 browser↔launcher↔CAE 수용 테스트는 연결된 `cae` launcher와 같은 GPStation 사용자의 평문 client token이 있을 때만 실행된다.
+
+```powershell
+$env:GPSTATION_E2E_API_BASE_URL='https://gps.example.com'
+$env:GPSTATION_E2E_CLIENT_TOKEN='gpsk_...'
+npm run test:e2e -- --grep 'actual browser-launcher-CAE'
+```
+
+토큰은 Playwright 프로세스 환경에서 Account 입력란으로만 전달되며 Vite 환경 변수, 저장소, `localStorage`에는 넣지 않는다. 일반 E2E는 토큰 없이 Run이 차단되는 계약을 검증한다.
 
 Generated CAD contracts are checked by every production build:
 

@@ -47,7 +47,6 @@ class User(TimestampMixin, Base):
     email_verified_at: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True))
     display_name: Mapped[Optional[str]] = mapped_column(Text)
     picture_url: Mapped[Optional[str]] = mapped_column(Text)
-    gps_access_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     identities: Mapped[List["Identity"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="selectin")
     sessions: Mapped[List["Session"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="selectin")

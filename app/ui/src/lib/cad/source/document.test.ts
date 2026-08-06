@@ -7,6 +7,7 @@ import {
   cadSourceHash,
   createCadSourceDocument,
   rerollCadSourceDocument,
+  updateCadSimulationCode,
   updateCadSource,
   type CadSourceDocument,
 } from './document'
@@ -31,6 +32,26 @@ describe('CadSourceDocument', () => {
     await expect(cadSourceHash(differentSeed)).resolves.toBe(hash)
     await expect(cadSourceHash(updateCadSource(document, 'changed'))).resolves.not.toBe(hash)
     await expect(cadSourceHash({ ...document, kind: 'experiment' })).resolves.not.toBe(hash)
+  })
+
+  it('includes Python simulation source in the Experiment program hash', async () => {
+    const document = createCadSourceDocument(
+      'experiment',
+      'export default experiment({})',
+      7,
+      'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
+    )
+    const hash = await cadSourceHash(document)
+
+    await expect(cadSourceHash({ ...document, realizationSeed: 99 })).resolves.toBe(hash)
+    await expect(
+      cadSourceHash(
+        updateCadSimulationCode(
+          document,
+          'async def simulate(*, sim, tasks, vars, world):\n    return await sim.random()\n',
+        ),
+      ),
+    ).resolves.not.toBe(hash)
   })
 
   it('changes only source on edits and only seed on reroll', () => {

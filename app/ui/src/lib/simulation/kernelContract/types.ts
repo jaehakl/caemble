@@ -1,25 +1,11 @@
 import type { CadScene } from '../../cad/evaluation/types'
-import type { DataDType, ExperimentParameter, ExperimentTarget } from '../../cad/model/descriptor'
+import type { DataSchema, DataSchemaAxis, ExperimentParameter, ExperimentTarget } from '../../cad/model/descriptor'
 import type { UcumUnit } from '../../cad/model/units'
-import type { CartesianBasis, QuantityKindName, ScalarQuantityKindName } from '../../quantitykind/runtime'
 
 export type KernelArtifactType = `${string}@${number}`
 
-export type KernelDataAxis = Readonly<{
-  length?: number
-  name?: string
-  ticks?: readonly (number | string)[]
-  unit?: UcumUnit
-  quantityKind?: ScalarQuantityKindName
-}>
-
-export type KernelDataSpec = Readonly<{
-  dtype: DataDType
-  unit?: UcumUnit
-  quantityKind?: QuantityKindName
-  basis?: CartesianBasis
-  axes?: readonly KernelDataAxis[]
-}>
+export type KernelDataAxis = DataSchemaAxis
+export type KernelDataSpec = DataSchema
 
 export type KernelValueSpec = KernelDataSpec &
   Readonly<{

@@ -72,7 +72,7 @@ test('supports direct public routes, legacy hashes, filters, and mobile navigati
 
   await page.getByRole('link', { name: 'Physics', exact: true }).click()
   await expect(page).toHaveURL(/\/catalog\/solvers$/)
-  await expect(page.getByText('1 entries')).toBeVisible()
+  await expect(page.getByText('2 entries')).toBeVisible()
   await expect(page.getByRole('heading', { level: 2, name: 'Simulations & Analysis' })).toBeVisible()
   await expect(page.getByText('1,216 entries')).toHaveCount(0)
 
@@ -204,7 +204,7 @@ test('creates a Structure definition from the legacy Viewer redirect', async ({ 
   expect(selectWarnings).toEqual([])
 })
 
-test('runs the verified v3 uniform-bar example through the Playground', async ({ page }) => {
+test('blocks the verified v3 uniform-bar example without a connected CAE launcher', async ({ page }) => {
   test.setTimeout(90_000)
   const pageErrors: string[] = []
   const consoleProblems: string[] = []
@@ -220,14 +220,7 @@ test('runs the verified v3 uniform-bar example through the Playground', async ({
   await expect(page.getByRole('heading', { name: 'DC Uniform Bar' })).toBeVisible()
 
   const run = page.getByRole('button', { name: 'Run simulation' })
-  await expect(run).toBeEnabled({ timeout: 60_000 })
-  await run.click()
-
-  await expect(page.getByLabel('Simulation status: succeeded')).toBeVisible({ timeout: 60_000 })
-  await expect(page.getByText(/Program trace · 1 kernel call/)).toBeVisible()
-  await page.getByRole('tab', { name: 'Results' }).click()
-  await expect(page.getByLabel('Recorded scalar value')).toContainText('14.9')
-  await expect(page.getByLabel('Recorded scalar value')).toContainText('A')
+  await expect(run).toBeDisabled({ timeout: 60_000 })
 
   expect(pageErrors).toEqual([])
   expect(
@@ -235,4 +228,27 @@ test('runs the verified v3 uniform-bar example through the Playground', async ({
       (message) => message !== 'Failed to load resource: the server responded with a status of 401 (Unauthorized)',
     ),
   ).toEqual([])
+})
+
+test('runs the verified example through an actual browser-launcher-CAE session', async ({ page }) => {
+  const token = process.env.GPSTATION_E2E_CLIENT_TOKEN?.trim()
+  test.skip(!token, 'Set GPSTATION_E2E_CLIENT_TOKEN and run a connected cae launcher for the live WebRTC test.')
+  test.setTimeout(180_000)
+  await mockApi(page, true)
+
+  await page.goto('/account')
+  await page.getByLabel('GPStation Access Token').fill(token!)
+  await page.getByRole('button', { name: '연결', exact: true }).click()
+  await expect(page.getByText('CAE Access Token이 연결되어 있습니다.')).toBeVisible({ timeout: 30_000 })
+
+  await page.goto('/examples/dc-uniform-bar')
+  const run = page.getByRole('button', { name: 'Run simulation' })
+  await expect(run).toBeEnabled({ timeout: 60_000 })
+  await run.click()
+
+  await expect(page.getByLabel('Simulation status: succeeded')).toBeVisible({ timeout: 120_000 })
+  await expect(page.getByText(/Program trace · 1 kernel call/)).toBeVisible()
+  await page.getByRole('tab', { name: 'Results' }).click()
+  await expect(page.getByLabel('Recorded scalar value')).toContainText('14.9')
+  await expect(page.getByLabel('Recorded scalar value')).toContainText('A')
 })

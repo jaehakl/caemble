@@ -1,25 +1,23 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { SimulationProgramManifest } from '@/lib/simulation'
+import { defineKernelTask, simulationProgramManifest } from '@/lib/simulation'
 import SolverSpecSheet from './SolverSpecSheet'
 
-const simulationProgram: SimulationProgramManifest = {
-  formatVersion: 1,
-  programHash: 'program-hash',
-  tasks: {
-    electric: {
-      kernel: { name: 'dc-current-density', version: '0.0.0' },
-      configHash: 'dc-config',
-    },
+const simulationProgram = simulationProgramManifest(
+  {
+    electric: defineKernelTask({ name: 'dc-current-density', version: '0.0.0' }, {}),
   },
-  recordedData: {
+  {
     measuredCurrent: {
       dtype: 'float64',
       unit: 'A',
       quantityKind: 'electromagnetism.ElectricCurrent',
     },
   },
-}
+  'program-hash',
+  'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
+  '0'.repeat(64),
+)
 
 describe('SolverSpecSheet', () => {
   it('renders the Experiment manifest and registered kernel descriptor without kernel-specific UI', () => {

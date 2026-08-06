@@ -68,7 +68,7 @@ describe('CAD registry contracts', () => {
     expect(coreDeclarations).toMatch(/GeometryAttributes[\s\S]*?id: string/)
     expect(coreDeclarations).toContain('tasks: (context: ModelContext<Schema>) => Tasks')
     expect(coreDeclarations).toContain('recordedData: Recorded')
-    expect(coreDeclarations).toContain('simulate: (')
+    expect(coreDeclarations).not.toContain('simulate?: (')
     expect(coreDeclarations).not.toContain('ExperimentRule')
     expect(cadElementCatalog.find((element) => element.tag === 'shell')).toMatchObject({
       category: 'operation',

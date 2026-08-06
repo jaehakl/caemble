@@ -125,6 +125,41 @@ export function convertRecordedNumericValue(
   return convertValue(value)
 }
 
+export function readRecordedValue(
+  tensor: ResolvedRecordedTensor,
+  outerIndices: readonly number[],
+  componentSelection = 'norm',
+): boolean | string | number {
+  if (outerIndices.length !== tensor.axes.length) {
+    throw new Error(`Recorded tensor requires ${tensor.axes.length} outer indices.`)
+  }
+  if (tensor.tensorOrder === 0) return tensor.accessor.get(outerIndices)
+  if (componentSelection.startsWith('component:')) {
+    const components = componentSelection.slice('component:'.length).split(',').map(Number)
+    if (
+      components.length !== tensor.tensorOrder ||
+      components.some((index) => !Number.isSafeInteger(index) || index < 0 || index > 2)
+    ) {
+      throw new Error('Recorded tensor component selection is invalid.')
+    }
+    return tensor.accessor.get([...outerIndices, ...components])
+  }
+  let squared = 0
+  const componentCount = 3 ** tensor.tensorOrder
+  for (let flatIndex = 0; flatIndex < componentCount; flatIndex += 1) {
+    let remaining = flatIndex
+    const components = Array(tensor.tensorOrder).fill(0) as number[]
+    for (let dimension = tensor.tensorOrder - 1; dimension >= 0; dimension -= 1) {
+      components[dimension] = remaining % 3
+      remaining = Math.floor(remaining / 3)
+    }
+    const value = tensor.accessor.get([...outerIndices, ...components])
+    if (typeof value !== 'number') throw new Error('Recorded tensor norm requires numeric components.')
+    squared += value ** 2
+  }
+  return Math.sqrt(squared)
+}
+
 export function convertRecordedNumericTicks(
   ticks: readonly number[],
   sourceUnit: UcumUnit,

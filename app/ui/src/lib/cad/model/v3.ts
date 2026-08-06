@@ -1,12 +1,5 @@
-import type {
-  DefinedKernelTask,
-  RecordedDataSpec,
-  ResolvedKernelTask,
-  StateRef,
-  SimulationWorld,
-} from '../../simulation/types'
-import type { SimulationProgramRuntimeDefinition, SimulationScriptApi } from '../../simulation/runtime'
-import { simulationProgramManifest } from '../../simulation/authoring'
+import type { DefinedKernelTask, RecordedDataSpec } from '../../simulation/types'
+import { canonicalRecordedDataSpec, simulationProgramManifest } from '../../simulation/authoring'
 import { Structure, type StructureGroupMap } from './structure'
 import type { Tensor, Vars } from './types'
 import type { UcumUnit } from './units'
@@ -38,17 +31,6 @@ export type StructureDefinitionOptions<Schema extends VarsSchemaDefinition> = Re
   surfaceGroup?: StructureGroupMap
 }>
 
-type ResolvedTasks<Tasks extends Readonly<Record<string, DefinedKernelTask>>> = Readonly<{
-  [Key in keyof Tasks]: Tasks[Key] extends DefinedKernelTask<
-    infer Config,
-    infer Artifacts,
-    infer Observations,
-    infer Inputs
-  >
-    ? ResolvedKernelTask<Config, Artifacts, Observations, Inputs>
-    : never
-}>
-
 export type ExperimentDefinitionOptions<
   Schema extends VarsSchemaDefinition,
   Tasks extends Readonly<Record<string, DefinedKernelTask>>,
@@ -59,14 +41,6 @@ export type ExperimentDefinitionOptions<
     lengthUnit?: UcumUnit
     tasks: (context: ModelContext<Schema>) => Tasks
     recordedData: Recorded
-    simulate: (
-      context: Readonly<{
-        sim: SimulationScriptApi
-        tasks: ResolvedTasks<Tasks>
-        vars: InferVars<Schema>
-        world: SimulationWorld
-      }>,
-    ) => Promise<StateRef> | StateRef
   }>
 
 function freezeRecordedData<Recorded extends Readonly<Record<string, RecordedDataSpec>>>(recordedData: Recorded) {
@@ -74,24 +48,7 @@ function freezeRecordedData<Recorded extends Readonly<Record<string, RecordedDat
     Object.fromEntries(
       Object.entries(recordedData).map(([name, spec]) => [
         name,
-        Object.freeze({
-          ...spec,
-          ...(spec.basis === undefined
-            ? {}
-            : { basis: Object.freeze(spec.basis.map((axis) => Object.freeze([...axis]))) }),
-          ...(spec.axes === undefined
-            ? {}
-            : {
-                axes: Object.freeze(
-                  spec.axes.map((axis) =>
-                    Object.freeze({
-                      ...axis,
-                      ...(axis.ticks === undefined ? {} : { ticks: Object.freeze([...axis.ticks]) }),
-                    }),
-                  ),
-                ),
-              }),
-        }),
+        canonicalRecordedDataSpec(spec, `RecordedData ${JSON.stringify(name)}`),
       ]),
     ),
   ) as Recorded
@@ -144,7 +101,6 @@ export class ExperimentDefinition<
   readonly geometryFactory: (context: ModelContext<Schema>) => unknown
   readonly tasksFactory: ExperimentDefinitionOptions<Schema, Tasks, Recorded>['tasks']
   readonly recordedData: Recorded
-  readonly simulateFactory: ExperimentDefinitionOptions<Schema, Tasks, Recorded>['simulate']
 
   constructor(options: ExperimentDefinitionOptions<Schema, Tasks, Recorded>) {
     super({
@@ -163,13 +119,9 @@ export class ExperimentDefinition<
     if (!options.recordedData || typeof options.recordedData !== 'object' || Array.isArray(options.recordedData)) {
       throw new Error('Experiment recordedData must be an object.')
     }
-    if (typeof options.simulate !== 'function') {
-      throw new Error('Experiment simulate must be a function.')
-    }
     this.geometryFactory = options.geometry ?? (() => null)
     this.tasksFactory = options.tasks
     this.recordedData = freezeRecordedData(options.recordedData)
-    this.simulateFactory = options.simulate
     Object.freeze(this)
   }
 
@@ -189,7 +141,7 @@ export class ExperimentDefinition<
     return this.geometryFactory(Object.freeze({ vars: vars as InferVars<Schema> }))
   }
 
-  createProgramRuntime(vars: Readonly<Vars>, programHash = 'unresolved-program'): SimulationProgramRuntimeDefinition {
+  createProgramRuntime(vars: Readonly<Vars>, programHash: string, pythonSource: string, pythonSourceHash: string) {
     const typedVars = vars as InferVars<Schema>
     const tasks = this.tasksFactory(Object.freeze({ vars: typedVars }))
     if (!tasks || typeof tasks !== 'object' || Array.isArray(tasks) || Object.keys(tasks).length === 0) {
@@ -204,13 +156,7 @@ export class ExperimentDefinition<
     return Object.freeze({
       tasks: frozenTasks,
       recordedData: this.recordedData,
-      manifest: simulationProgramManifest(frozenTasks, this.recordedData, programHash),
-      simulate: (context) =>
-        this.simulateFactory({
-          ...context,
-          vars: typedVars,
-          tasks: context.tasks as ResolvedTasks<Tasks>,
-        }),
+      manifest: simulationProgramManifest(frozenTasks, this.recordedData, programHash, pythonSource, pythonSourceHash),
     })
   }
 }

@@ -241,22 +241,24 @@ export default experiment({
     },
   },
 
-  simulate: async ({ sim, tasks }) => {
-    const electric = await sim.run(tasks.electric)
-    const thermal = await sim.run(tasks.thermal, {
-      state: electric.state,
-      inputs: {
-        heatSource: electric.artifacts.jouleHeating,
-      },
-    })
-
-    sim.record('totalCurrent', electric.artifacts.totalCurrent)
-    sim.record('temperature', thermal.artifacts.temperature)
-    sim.record('maximumTemperature', thermal.artifacts.maximumTemperature)
-    sim.release(electric.artifacts.jouleHeating)
-    return thermal.state
-  },
 })
+`
+
+export const electroThermalUniformBarSimulationCode = `async def simulate(*, sim, tasks, vars, world):
+    electric = await sim.run(tasks["electric"])
+    thermal = await sim.run(
+        tasks["thermal"],
+        state=electric["state"],
+        inputs={"heatSource": electric["artifacts"]["jouleHeating"]},
+    )
+    await sim.record("totalCurrent", electric["artifacts"]["totalCurrent"])
+    await sim.record("temperature", thermal["artifacts"]["temperature"])
+    await sim.record(
+        "maximumTemperature",
+        thermal["artifacts"]["maximumTemperature"],
+    )
+    sim.release(electric["artifacts"]["jouleHeating"])
+    return thermal["state"]
 `
 
 export const electroThermalUniformBarExample = Object.freeze({
@@ -270,6 +272,7 @@ export const electroThermalUniformBarExample = Object.freeze({
   ]),
   structureCode: electroThermalUniformBarStructureCode,
   experimentCode: electroThermalUniformBarExperimentCode,
+  simulationCode: electroThermalUniformBarSimulationCode,
   verification: Object.freeze({
     kernelTasks: Object.freeze(['electric', 'thermal']),
     recordedData: Object.freeze(['totalCurrent', 'temperature', 'maximumTemperature']),

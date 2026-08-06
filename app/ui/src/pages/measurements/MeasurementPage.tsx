@@ -44,6 +44,10 @@ import CadViewer from '@/features/viewer/viewer/CadViewer'
 import { useCadWorkspace } from '@/features/viewer/workspace/useCadWorkspace'
 import {
   createCadSourceDocument,
+  createDataTensorAccessor,
+  MAX_RECORDED_DATA_BYTES,
+  persistDataSchema,
+  persistDataTensor,
   type CadDocumentType,
   type CadSourceDocument,
   type EvaluatedDocumentSnapshot,
@@ -259,7 +263,7 @@ export function MeasurementPage() {
   const applyExperiment = useCallback(
     (record: ExperimentRecord, resetRealization: boolean) => {
       if (!record.id) throw new Error('Experiment ID가 없습니다.')
-      setExperiment(createCadSourceDocument('experiment', record.code))
+      setExperiment(createCadSourceDocument('experiment', record.code, undefined, record.simulation_code))
       setExperimentRecord(record)
       setCurrentExperimentId(record.id)
       if (resetRealization) {
@@ -914,19 +918,36 @@ export function MeasurementPage() {
       return
 
     const result = simulation.programResult
+    let recordedData: MeasurementSaveRequest['recorded_data']
+    try {
+      let recordedByteLength = 0
+      recordedData = Object.entries(result.recordedData).map(([name, entry]) => {
+        const quantityKind = entry.spec.quantityKind
+        const accessor = createDataTensorAccessor(entry.spec, entry.data, `RecordedData ${JSON.stringify(name)}`)
+        recordedByteLength += accessor.byteLength
+        if (recordedByteLength > MAX_RECORDED_DATA_BYTES) {
+          throw new Error(`RecordedData raw bytes exceed the ${MAX_RECORDED_DATA_BYTES / 1024 / 1024} MiB Run limit.`)
+        }
+        return {
+          name,
+          quantity_kind: quantityKind ?? null,
+          tensor_order: quantityKind === undefined ? 0 : getQuantityKindTensorOrder(quantityKind),
+          dtype: entry.spec.dtype,
+          data_schema: persistDataSchema(entry.spec),
+          data: persistDataTensor(entry.spec, entry.data, `RecordedData ${JSON.stringify(name)}`),
+        }
+      })
+    } catch (error) {
+      advanceRunQueue(currentRunSampleId, {
+        message: error instanceof Error ? error.message : 'RecordedData tensor를 저장 형식으로 변환하지 못했습니다.',
+        type: 'failure',
+      })
+      return
+    }
     const request: MeasurementSaveRequest = {
       sample_id: currentRunSampleId,
       setup_id: runQueue.setupId,
-      recorded_data: Object.entries(result.recordedData).map(([name, entry]) => {
-        const quantityKind = entry.spec.quantityKind
-        return {
-          name,
-          quantity_kind: quantityKind ?? 'Dimensionless',
-          tensor_order: quantityKind === undefined ? 0 : getQuantityKindTensorOrder(quantityKind),
-          dtype: entry.spec.dtype,
-          data: entry.data,
-        }
-      }),
+      recorded_data: recordedData,
     }
     setHideLiveRecordedData(false)
     setRunQueue((current) =>

@@ -27,11 +27,52 @@ def test_measurement_uniqueness_revision_keeps_latest_duplicate():
     assert "uq_measurements_sample_id_setup_id" in source
 
 
+def test_experiment_simulation_code_revision_is_nullable_and_reversible():
+    revision = next(
+        (Path(__file__).resolve().parents[1] / "alembic" / "versions").glob(
+            "*_add_experiment_simulation_code.py"
+        )
+    )
+    source = revision.read_text(encoding="utf-8")
+    assert 'down_revision: Union[str, Sequence[str], None] = "b6e2a21f4c9d"' in source
+    assert 'sa.Column("simulation_code", sa.Text(), nullable=True)' in source
+    assert 'op.drop_column("users", "gps_access_token")' in source
+    assert 'sa.Column("gps_access_token", sa.Text(), nullable=True)' in source
+    assert 'op.drop_column("experiments", "simulation_code")' in source
+
+
+def test_recorded_data_schema_revision_keeps_legacy_rows_readable():
+    revision = next(
+        (Path(__file__).resolve().parents[1] / "alembic" / "versions").glob(
+            "*_add_recorded_data_schema.py"
+        )
+    )
+    source = revision.read_text(encoding="utf-8")
+    assert 'down_revision: Union[str, Sequence[str], None] = "c4f8e21a9b6d"' in source
+    assert 'sa.Column("data_schema", postgresql.JSONB' in source
+    assert '"quantity_kind"' in source
+    assert "nullable=True" in source
+    assert "SET quantity_kind = 'Dimensionless'" in source
+    assert 'op.drop_column("recorded_data", "data_schema")' in source
+
+
 @pytest.mark.asyncio
 async def test_configured_database_is_at_head_with_seeded_roles(db_session):
     revision = await db_session.scalar(text("SELECT version_num FROM alembic_version"))
     roles = list((await db_session.execute(text("SELECT name FROM roles ORDER BY name"))).scalars())
     vector = await db_session.scalar(text("SELECT extversion FROM pg_extension WHERE extname = 'vector'"))
-    assert revision == "b6e2a21f4c9d"
+    persisted_token_columns = await db_session.scalar(
+        text(
+            """
+            SELECT count(*)
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'users'
+              AND column_name = 'gps_access_token'
+            """
+        )
+    )
+    assert revision == "e7b2c5d91a40"
     assert roles == ["admin", "user"]
     assert vector
+    assert persisted_token_columns == 0

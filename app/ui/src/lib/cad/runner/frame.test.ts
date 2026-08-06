@@ -1,9 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CAD_COMPILER_VERSION, type CompiledCadSource } from '../compiler/types'
-import { buildSourceOnlyRealization, type BuiltSample, type BuiltSetup } from '../execution/realization'
-import { serializeCadScene } from '../execution/mesh'
-import type { EvaluatedExperimentSnapshot, EvaluatedStructureSnapshot } from '../execution/snapshot'
-import type { RunnerEvaluationEnvelope, RunnerSimulationEnvelope } from './protocol'
+import type { RunnerEvaluationEnvelope } from './protocol'
 
 type MessageHandler = (event: MessageEvent<unknown>) => void
 
@@ -41,54 +38,6 @@ function compiledSource(entryFile: 'structure.tsx' | 'experiment.tsx'): Compiled
 }
 
 const structureSource = compiledSource('structure.tsx')
-const experimentSource = compiledSource('experiment.tsx')
-const structureSnapshot: EvaluatedStructureSnapshot = {
-  kind: 'structure',
-  scene: serializeCadScene({
-    geometryGroups: [],
-    lengthUnit: 'mm',
-    parts: [],
-    surfaceGroups: [],
-    tree: { children: [], key: 'structure', label: 'Structure' },
-  }),
-  seed: 7,
-  sourceHash: structureSource.sourceHash,
-  variables: {},
-  varsSchema: {},
-}
-const experimentSnapshot: EvaluatedExperimentSnapshot = {
-  kind: 'experiment',
-  scene: serializeCadScene({
-    geometryGroups: [],
-    lengthUnit: 'mm',
-    parts: [],
-    surfaceGroups: [],
-    tree: { children: [], key: 'experiment', label: 'Experiment' },
-  }),
-  seed: 9,
-  sourceHash: experimentSource.sourceHash,
-  variables: {},
-  varsSchema: {},
-  simulationProgram: {
-    formatVersion: 1,
-    programHash: experimentSource.sourceHash,
-    tasks: {
-      electric: {
-        kernel: { name: 'dc-current-density', version: '0.0.0' },
-        configHash: 'dc-config',
-      },
-    },
-    recordedData: {
-      measuredCurrent: {
-        dtype: 'float64',
-        unit: 'A',
-        quantityKind: 'electromagnetism.ElectricCurrent',
-      },
-    },
-  },
-}
-const sample = buildSourceOnlyRealization(structureSnapshot) as BuiltSample
-const setup = buildSourceOnlyRealization(experimentSnapshot) as BuiltSetup
 const evaluation: RunnerEvaluationEnvelope = {
   type: 'evaluate',
   nonce: '12345678-1234-1234-1234-123456789abc',
@@ -100,17 +49,12 @@ const evaluation: RunnerEvaluationEnvelope = {
     compiledSource: structureSource,
   },
 }
-const simulation: RunnerSimulationEnvelope = {
+const simulation = {
   type: 'run-simulation',
   nonce: '87654321-4321-4321-4321-cba987654321',
   request: {
     type: 'run-simulation',
     requestId: 'simulation-1',
-    structureRevision: 4,
-    experimentRevision: 5,
-    compiledSource: experimentSource,
-    sample,
-    setup,
   },
 }
 
@@ -219,8 +163,7 @@ describe('isolated runner frame', () => {
     expect(port.closed).toBe(true)
   })
 
-  it('forwards simulation progress and cancellation to one disposable Worker', () => {
-    vi.useFakeTimers()
+  it('ignores simulation messages without creating a Worker', () => {
     const { messages, port } = createPort()
     windowMessageHandlers[0]({
       data: simulation,
@@ -228,75 +171,9 @@ describe('isolated runner frame', () => {
       ports: [port],
     } as unknown as MessageEvent<unknown>)
 
-    const worker = FakeWorker.instances[0]
-    worker.onmessage?.({ data: { type: 'runner-worker-ready' } } as MessageEvent<unknown>)
-    expect(messages).toEqual([
-      {
-        type: 'simulation-started',
-        nonce: simulation.nonce,
-        requestId: simulation.request.requestId,
-        structureRevision: 4,
-        experimentRevision: 5,
-      },
-    ])
-    expect(worker.messages).toEqual([simulation])
-
-    const progress = {
-      type: 'simulation-progress',
-      nonce: simulation.nonce,
-      requestId: simulation.request.requestId,
-      structureRevision: 4,
-      experimentRevision: 5,
-      progress: {
-        runId: simulation.request.requestId,
-        task: 'electric',
-        kernel: { name: 'dc-current-density', version: '0.0.0' },
-        stage: 'pcg',
-        completed: 20,
-        total: 100,
-      },
-    }
-    worker.onmessage?.({ data: progress } as MessageEvent<unknown>)
-    expect(messages[messages.length - 1]).toEqual(progress)
-    expect(worker.terminated).toBe(false)
-
-    const cancel = {
-      type: 'cancel-simulation',
-      nonce: simulation.nonce,
-      requestId: simulation.request.requestId,
-    } as const
-    port.onmessage?.({ data: cancel } as MessageEvent<unknown>)
-    expect(worker.messages).toEqual([simulation, cancel])
-    expect(worker.terminated).toBe(false)
-
-    vi.advanceTimersByTime(1_000)
-    expect(worker.terminated).toBe(true)
-    expect(port.closed).toBe(true)
-    vi.useRealTimers()
-  })
-
-  it('does not start a simulation cancelled before the Worker is ready', () => {
-    const { port } = createPort()
-    windowMessageHandlers[0]({
-      data: simulation,
-      origin: 'http://localhost:5173',
-      ports: [port],
-    } as unknown as MessageEvent<unknown>)
-
-    const worker = FakeWorker.instances[0]
-    port.onmessage?.({
-      data: {
-        type: 'cancel-simulation',
-        nonce: simulation.nonce,
-        requestId: simulation.request.requestId,
-      },
-    } as MessageEvent<unknown>)
-
-    expect(worker.terminated).toBe(true)
-    expect(worker.messages).toEqual([])
-    expect(port.closed).toBe(true)
-
-    worker.onmessage?.({ data: { type: 'runner-worker-ready' } } as MessageEvent<unknown>)
-    expect(worker.messages).toEqual([])
+    expect(FakeWorker.instances).toEqual([])
+    expect(messages).toEqual([])
+    expect(port.start).not.toHaveBeenCalled()
+    expect(port.closed).toBe(false)
   })
 })

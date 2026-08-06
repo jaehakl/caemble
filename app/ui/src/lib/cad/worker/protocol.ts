@@ -29,6 +29,8 @@ export type CadEvaluationRequest = Readonly<{
   document: Readonly<{
     kind: CadDocumentType
     realizationSeed: number
+    simulationCode?: string
+    simulationCodeHash?: string
   }>
   compiledSource: CompiledCadSource
   vars?: Readonly<Record<string, Tensor>>

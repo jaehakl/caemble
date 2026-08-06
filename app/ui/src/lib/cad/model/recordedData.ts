@@ -8,11 +8,13 @@ import {
   type RecordedDataRule,
   type RecordedDataTensor,
 } from './core'
+import { createDataTensorAccessor, isDataTensor, type DataTensorAccessor } from './dataTensor'
 import { getQuantityKindComponentShape, getQuantityKindTensorOrder } from '../../quantitykind/runtime'
 import type { UcumUnit } from './units'
 
 export type ResolvedRecordedTensor = Readonly<{
   value: boolean | string | number | readonly unknown[]
+  accessor: DataTensorAccessor
   componentShape: readonly 3[]
   tensorOrder: number
   dtype: DataDType
@@ -177,6 +179,44 @@ function normalizePayloadAxes(value: unknown, rule: RecordedDataRule, actualShap
 
 function resolveRecordedDataTensor(rule: RecordedDataRule, value: unknown, copyValue: boolean): ResolvedRecordedTensor {
   const path = `recordedData[${JSON.stringify(rule.label)}]`
+  if (isDataTensor(value)) {
+    const accessor = createDataTensorAccessor(rule.result, value, path)
+    const axisCount = rule.result.axes?.length ?? 0
+    const componentShape =
+      rule.result.quantityKind === undefined
+        ? (Object.freeze([]) as readonly 3[])
+        : getQuantityKindComponentShape(rule.result.quantityKind)
+    const tensorOrder =
+      rule.result.quantityKind === undefined ? 0 : getQuantityKindTensorOrder(rule.result.quantityKind)
+    const resolved = {
+      axes: Object.freeze(
+        Array.from({ length: axisCount }, (_, axisIndex) =>
+          Object.freeze({
+            length: accessor.shape[axisIndex],
+            name: rule.result.axes?.[axisIndex]?.name ?? `axis ${axisIndex}`,
+            ticks:
+              accessor.tensor.axes?.[axisIndex]?.ticks ??
+              Object.freeze(Array.from({ length: accessor.shape[axisIndex] }, (_, index) => index)),
+          }),
+        ),
+      ),
+      componentShape,
+      tensorOrder,
+      dtype: rule.result.dtype,
+      ...(rule.result.unit === undefined ? {} : { unit: rule.result.unit }),
+      ...(rule.result.quantityKind === undefined ? {} : { quantityKind: rule.result.quantityKind }),
+      ...(rule.result.basis === undefined ? {} : { basis: rule.result.basis }),
+    }
+    return Object.freeze(
+      Object.defineProperties(resolved, {
+        accessor: { value: accessor },
+        value: {
+          enumerable: true,
+          get: () => accessor.materialize(),
+        },
+      }),
+    ) as ResolvedRecordedTensor
+  }
   if (!isPlainObject(value)) throw new CadModelError(`${path} must be a plain object containing value.`)
   const obsoleteField = ['type', 'shape', 'dimension', 'sampleDimension', 'sampleShape', 'sampleAxes'].find((field) =>
     Object.prototype.hasOwnProperty.call(value, field),
@@ -202,16 +242,35 @@ function resolveRecordedDataTensor(rule: RecordedDataRule, value: unknown, copyV
   const storageShape = Object.freeze([...expectedOuterShape, ...componentShape])
   const actualStorageShape = resolveActualShape(value.value, storageShape, `${path}.value`)
   const actualOuterShape = Object.freeze(actualStorageShape.slice(0, expectedOuterShape.length))
-  return Object.freeze({
-    axes: normalizePayloadAxes(value.axes, rule, actualOuterShape, path),
+  const normalizedValue = normalizeRecordedValue(
+    value.value,
+    actualStorageShape,
+    rule.result.dtype,
+    `${path}.value`,
+    0,
+    copyValue,
+  )
+  const axes = normalizePayloadAxes(value.axes, rule, actualOuterShape, path)
+  const accessor = createDataTensorAccessor(
+    rule.result,
+    {
+      shape: actualStorageShape,
+      ...(axes.length === 0 ? {} : { axes: axes.map((axis) => Object.freeze({ ticks: axis.ticks })) }),
+      storage: { kind: 'inline', value: normalizedValue },
+    },
+    path,
+  )
+  const resolved = {
+    axes,
     componentShape,
     tensorOrder,
     dtype: rule.result.dtype,
     ...(rule.result.unit === undefined ? {} : { unit: rule.result.unit }),
     ...(rule.result.quantityKind === undefined ? {} : { quantityKind: rule.result.quantityKind }),
     ...(rule.result.basis === undefined ? {} : { basis: rule.result.basis }),
-    value: normalizeRecordedValue(value.value, actualStorageShape, rule.result.dtype, `${path}.value`, 0, copyValue),
-  })
+    value: normalizedValue,
+  }
+  return Object.freeze(Object.defineProperty(resolved, 'accessor', { value: accessor })) as ResolvedRecordedTensor
 }
 
 export function normalizeRecordedDataTensor(rule: RecordedDataRule, value: unknown): ResolvedRecordedTensor {

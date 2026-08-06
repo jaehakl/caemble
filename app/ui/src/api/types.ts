@@ -5,10 +5,10 @@ export type {
   DbTableRecord,
   GetListRequest,
   GetListResponse,
-  GpsAccessTokenData,
   MeasurementSaveRequest,
   SaveCodeEntityRequest,
   SaveCodeEntityResponse,
+  SaveExperimentRequest,
   UpsertResponse,
 } from './api'
 

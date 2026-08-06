@@ -28,6 +28,7 @@ vi.mock('@/lib/cad', async (importOriginal) => {
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.structureSave.mockResolvedValue({ id: 8, action: 'updated', parentId: null })
+  mocks.experimentSave.mockResolvedValue({ id: 9, action: 'forked', parentId: 8 })
 })
 
 describe('saveCadDefinition', () => {
@@ -104,5 +105,53 @@ describe('saveCadDefinition', () => {
         baseSemanticHash: '1'.repeat(64),
       }),
     )
+  })
+
+  it('atomically includes current and base Python hashes for an Experiment revision', async () => {
+    mocks.rawHash
+      .mockResolvedValueOnce('a'.repeat(64))
+      .mockResolvedValueOnce('c'.repeat(64))
+      .mockResolvedValueOnce('e'.repeat(64))
+      .mockResolvedValueOnce('f'.repeat(64))
+    mocks.semanticHash.mockResolvedValueOnce('b'.repeat(64)).mockResolvedValueOnce('d'.repeat(64))
+    const document = createCadSourceDocument(
+      'experiment',
+      'experiment source',
+      14,
+      'async def simulate(*, sim, tasks, vars, world):\n    return 2\n',
+    )
+
+    const result = await saveCadDefinition({
+      document,
+      kind: 'experiment',
+      savedCode: 'experiment source',
+      savedSimulationCode: 'async def simulate(*, sim, tasks, vars, world):\n    return 1\n',
+      selectedId: 8,
+      simulationCode: document.simulationCode,
+      values: { name: 'Python child', description: 'atomic sources' },
+    })
+
+    expect(mocks.experimentSave).toHaveBeenCalledWith({
+      id: 8,
+      name: 'Python child',
+      description: 'atomic sources',
+      code: 'experiment source',
+      rawCodeHash: 'a'.repeat(64),
+      semanticHash: 'b'.repeat(64),
+      semanticHashVersion: 1,
+      baseRawCodeHash: 'c'.repeat(64),
+      baseSemanticHash: 'd'.repeat(64),
+      simulationCode: document.simulationCode,
+      simulationRawCodeHash: 'e'.repeat(64),
+      baseSimulationRawCodeHash: 'f'.repeat(64),
+    })
+    expect(result).toEqual({
+      id: 9,
+      action: 'forked',
+      parentId: 8,
+      code: 'experiment source',
+      kind: 'experiment',
+      simulationCode: document.simulationCode,
+    })
   })
 })

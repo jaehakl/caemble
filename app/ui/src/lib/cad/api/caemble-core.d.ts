@@ -2654,65 +2654,59 @@ export type QuantityMetadata<Name extends QuantityKindName = QuantityKindName> =
   quantityKind: Name
 }> &
   QuantityBasisMetadata<Name>
-type DataAxisBase = Readonly<{
-  length: number
-  name?: string
-  ticks?: readonly (number | string)[]
-}>
-export type DataAxis = DataAxisBase &
-  Readonly<{ unit: UcumUnit; quantityKind: ScalarQuantityKindName } | { unit?: never; quantityKind?: never }>
-type DataValueDescriptorBase = Readonly<{
-  axes?: readonly DataAxis[]
-  value: boolean | string | number | readonly unknown[]
-}>
-export type MatrixValue = readonly (readonly number[])[]
-export type DataValueDescriptor = DataValueDescriptorBase &
-  Readonly<
-    | ({
-        dtype: FloatDataDType
-      } & (QuantityMetadata<ScalarQuantityKindName> | QuantityMetadata<TensorQuantityKindName>))
-    | {
-        dtype: NonFloatDataDType
-        unit?: never
-        quantityKind?: never
-        basis?: never
-      }
-  >
-export type ScalarValue = boolean | string | number
-export type ExperimentParameter = ScalarValue | DataValueDescriptor
-export type ExperimentParameters = Readonly<Record<string, ExperimentParameter>>
-type RecordedDataResultAxisBase = Readonly<{
+type DataSchemaAxisBase = Readonly<{
   length?: number
   name?: string
   ticks?: readonly (number | string)[]
 }>
-export type RecordedDataResultAxis = RecordedDataResultAxisBase &
+export type DataSchemaAxis = DataSchemaAxisBase &
   Readonly<{ unit: UcumUnit; quantityKind: ScalarQuantityKindName } | { unit?: never; quantityKind?: never }>
-type RecordedDataResultBase = Readonly<{
-  axes?: readonly RecordedDataResultAxis[]
-}>
-export type RecordedDataResult = RecordedDataResultBase &
-  Readonly<
-    | ({
-        dtype: FloatDataDType
-      } & (QuantityMetadata<ScalarQuantityKindName> | QuantityMetadata<TensorQuantityKindName>))
-    | {
-        dtype: NonFloatDataDType
-        unit?: never
-        quantityKind?: never
-        basis?: never
-      }
-  >
+export type DataAxis = DataSchemaAxis & Readonly<{ length: number }>
+type DataTypeMetadata = Readonly<
+  | ({
+      dtype: FloatDataDType
+    } & (QuantityMetadata<ScalarQuantityKindName> | QuantityMetadata<TensorQuantityKindName>))
+  | {
+      dtype: NonFloatDataDType
+      unit?: never
+      quantityKind?: never
+      basis?: never
+    }
+>
+export type DataSchema = Readonly<{
+  axes?: readonly DataSchemaAxis[]
+}> &
+  DataTypeMetadata
+export type DataValueDescriptor = Readonly<{
+  axes?: readonly DataAxis[]
+  value: boolean | string | number | readonly unknown[]
+}> &
+  DataTypeMetadata
+export type MatrixValue = readonly (readonly number[])[]
+export type ScalarValue = boolean | string | number
+export type ExperimentParameter = ScalarValue | DataValueDescriptor
+export type ExperimentParameters = Readonly<Record<string, ExperimentParameter>>
+export type RecordedDataResultAxis = DataSchemaAxis
+export type RecordedDataResult = DataSchema
 export type RecordedDataAxis = Readonly<{
   ticks?: readonly (number | string)[]
 }>
-export type RecordedDataTensor = Readonly<{
+export type DataTensor = Readonly<{
+  shape: readonly number[]
+  axes?: readonly RecordedDataAxis[]
+  storage:
+    | Readonly<{ kind: 'inline'; value: unknown }>
+    | Readonly<{ kind: 'attachments'; ids: readonly string[]; byteLength: number }>
+    | Readonly<{ kind: 'base64'; data: string; byteLength: number }>
+}>
+export type PersistedDataTensor = DataTensor & Readonly<{ tensorEncodingVersion: 1 }>
+export type LegacyRecordedDataTensor = Readonly<{
   value: boolean | string | number | readonly unknown[]
   axes?: readonly RecordedDataAxis[]
 }>
+export type RecordedDataTensor = DataTensor | PersistedDataTensor | LegacyRecordedDataTensor
 export type RecordedData = Readonly<Record<string, RecordedDataTensor>>
 export type RecordedDataSpec = RecordedDataResult
-export type DataTensor = RecordedDataTensor
 
 export type BoxAttributes = Readonly<{
   size: Vec3
@@ -3401,14 +3395,6 @@ export type ExperimentDefinitionOptions<
     lengthUnit?: UcumUnit
     tasks: (context: ModelContext<Schema>) => Tasks
     recordedData: Recorded
-    simulate: (
-      context: Readonly<{
-        sim: SimulationApi<Recorded>
-        tasks: ResolvedTasks<Tasks>
-        vars: InferVars<Schema>
-        world: SimulationWorld
-      }>,
-    ) => Promise<StateRef> | StateRef
   }>
 
 export class StructureDefinition<Schema extends VarsSchemaDefinition = VarsSchemaDefinition> extends Structure {
@@ -3470,18 +3456,33 @@ export type SimulationProvenance = Readonly<{
 }>
 
 export type SimulationProgramManifest = Readonly<{
-  formatVersion: 1
+  formatVersion: 2
   programHash: string
+  simulationApiVersion: 1
+  pythonSource: string
+  pythonSourceHash: string
   tasks: Readonly<
     Record<
       string,
       Readonly<{
-        kernel: KernelIdentity
+        kernel: KernelIdentity & Readonly<{ descriptorHash: string }>
+        descriptor: unknown
+        config: unknown
         configHash: string
+        outputArtifacts: Readonly<
+          Record<
+            string,
+            Readonly<{
+              artifactType: string
+              data: RecordedDataSpec
+            }>
+          >
+        >
       }>
     >
   >
   recordedData: Readonly<Record<string, RecordedDataSpec>>
+  recordedDataSchemaHash: string
 }>
 
 export type SimulationResult = Readonly<{

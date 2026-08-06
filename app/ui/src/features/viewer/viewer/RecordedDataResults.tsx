@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { RecordedDataRule, UcumUnit } from '@/lib/cad'
+import { convertUcumValue, type RecordedDataRule, type UcumUnit } from '@/lib/cad'
 import { QuantityKind } from '@/lib/quantitykind'
 import { identityCartesianBasis } from '@/lib/quantitykind'
 import {
   convertRecordedNumericTicks,
-  convertRecordedNumericValue,
   isNumericRecordedDType,
+  readRecordedValue,
   recordedDisplayUnitOptions,
   resolveCadViewerRecordedData,
   type CadViewerRecordedData,
@@ -14,7 +14,7 @@ import {
   type RecordedDataDisplayUnitTarget,
   type ResolvedRecordedTensor,
 } from './recordedData'
-import { componentIndexPaths, componentLabel, projectRecordedComponents } from './recordedComponents'
+import { componentIndexPaths, componentLabel } from './recordedComponents'
 
 type RecordedDataResultsProps = {
   displayUnits?: RecordedDataDisplayUnits
@@ -176,14 +176,14 @@ function heatmapColor(value: number, minimum: number, maximum: number) {
 
 function Heatmap({
   columnTicks,
-  matrix,
+  getValue,
   resultUnit,
   rowTicks,
   xTitle,
   yTitle,
 }: {
   columnTicks: readonly (number | string)[]
-  matrix: readonly (readonly number[])[]
+  getValue: (rowIndex: number, columnIndex: number) => number
   resultUnit: UcumUnit | undefined
   rowTicks: readonly (number | string)[]
   xTitle: string
@@ -191,8 +191,9 @@ function Heatmap({
 }) {
   let minimum = Number.POSITIVE_INFINITY
   let maximum = Number.NEGATIVE_INFINITY
-  matrix.forEach((row) =>
-    row.forEach((value) => {
+  rowTicks.forEach((_row, rowIndex) =>
+    columnTicks.forEach((_column, columnIndex) => {
+      const value = getValue(rowIndex, columnIndex)
       minimum = Math.min(minimum, value)
       maximum = Math.max(maximum, value)
     }),
@@ -217,9 +218,9 @@ function Heatmap({
   const renderedRowCount = Math.ceil(rowTicks.length / rowStride)
   const columnStride = Math.max(1, Math.ceil((columnTicks.length * renderedRowCount) / 10_000))
   const cells: ReactNode[] = []
-  for (let rowIndex = 0; rowIndex < matrix.length; rowIndex += rowStride) {
-    for (let columnIndex = 0; columnIndex < matrix[rowIndex].length; columnIndex += columnStride) {
-      const value = matrix[rowIndex][columnIndex]
+  for (let rowIndex = 0; rowIndex < rowTicks.length; rowIndex += rowStride) {
+    for (let columnIndex = 0; columnIndex < columnTicks.length; columnIndex += columnStride) {
+      const value = getValue(rowIndex, columnIndex)
       cells.push(
         <rect
           fill={heatmapColor(value, minimum, maximum)}
@@ -283,22 +284,18 @@ function Heatmap({
   )
 }
 
-function getSlice(value: ResolvedRecordedTensor['value'], indices: readonly number[]) {
-  return indices.reduce<unknown>((slice, index) => (slice as readonly unknown[])[index], value)
-}
-
 function MatrixTable({
   axisUnits,
+  getValue,
   resultUnit,
   rule,
   tensor,
-  value,
 }: {
   axisUnits: readonly (UcumUnit | undefined)[]
+  getValue: (rowIndex: number, columnIndex?: number) => boolean | string | number
   resultUnit: UcumUnit | undefined
   rule: RecordedDataRule
   tensor: ResolvedRecordedTensor
-  value: unknown
 }) {
   if (tensor.axes.length === 1) {
     const axis = tensor.axes[0]
@@ -312,10 +309,10 @@ function MatrixTable({
             </tr>
           </thead>
           <tbody>
-            {(value as readonly unknown[]).map((item, index) => (
+            {axis.ticks.map((_tick, index) => (
               <tr className="border-t border-slate-100" key={index}>
                 <td className="px-3 py-2">{String(axis.ticks[index])}</td>
-                <td className="px-3 py-2 font-mono">{String(item)}</td>
+                <td className="px-3 py-2 font-mono">{String(getValue(index))}</td>
               </tr>
             ))}
           </tbody>
@@ -343,12 +340,12 @@ function MatrixTable({
           </tr>
         </thead>
         <tbody>
-          {(value as readonly (readonly unknown[])[]).map((row, rowIndex) => (
+          {rowAxis.ticks.map((_tick, rowIndex) => (
             <tr className="border-t border-slate-100" key={rowIndex}>
               <th className="sticky left-0 bg-white px-3 py-2 text-slate-600">{String(rowAxis.ticks[rowIndex])}</th>
-              {row.map((item, columnIndex) => (
+              {columnAxis.ticks.map((_columnTick, columnIndex) => (
                 <td className="px-3 py-2 font-mono" key={columnIndex}>
-                  {String(item)}
+                  {String(getValue(rowIndex, columnIndex))}
                 </td>
               ))}
             </tr>
@@ -361,13 +358,17 @@ function MatrixTable({
 
 function TensorVisualization({
   axisUnits,
+  componentSelection,
   resultUnit,
   rule,
+  sourceUnit,
   tensor,
 }: {
   axisUnits: readonly (UcumUnit | undefined)[]
+  componentSelection: string
   resultUnit: UcumUnit | undefined
   rule: RecordedDataRule
+  sourceUnit: UcumUnit | undefined
   tensor: ResolvedRecordedTensor
 }) {
   const leadingAxisCount = Math.max(0, tensor.axes.length - 2)
@@ -375,16 +376,22 @@ function TensorVisualization({
   const safeIndices = sliceIndices.map((index, axisIndex) =>
     Math.min(index, Math.max(0, tensor.axes[axisIndex].length - 1)),
   )
-  const value = getSlice(tensor.value, safeIndices)
+  const readValue = (outerIndices: readonly number[]) => {
+    const value = readRecordedValue(tensor, outerIndices, componentSelection)
+    return typeof value === 'number' && sourceUnit && resultUnit && sourceUnit !== resultUnit
+      ? convertUcumValue(value, sourceUnit, resultUnit, 'Recorded value display unit')
+      : value
+  }
 
   if (tensor.axes.length === 0) {
+    const value = readValue([])
     return (
       <div
         aria-label="Recorded scalar value"
         className="flex min-h-32 items-baseline justify-center gap-2 rounded border border-slate-200 bg-slate-50 font-mono text-3xl text-slate-900"
         data-result-visualization="scalar"
       >
-        <span>{String(tensor.value)}</span>
+        <span>{String(value)}</span>
         <span className="text-base text-slate-500">{unitLabel(resultUnit)}</span>
       </div>
     )
@@ -436,17 +443,19 @@ function TensorVisualization({
     ) : null
 
   if (!isNumericRecordedDType(tensor.dtype)) {
+    const getValue = (rowIndex: number, columnIndex?: number) =>
+      readValue([...safeIndices, rowIndex, ...(columnIndex === undefined ? [] : [columnIndex])])
     return (
       <>
         {controls}
-        <MatrixTable axisUnits={axisUnits} resultUnit={resultUnit} rule={rule} tensor={tensor} value={value} />
+        <MatrixTable axisUnits={axisUnits} getValue={getValue} resultUnit={resultUnit} rule={rule} tensor={tensor} />
       </>
     )
   }
 
   if (tensor.axes.length === 1) {
     const axis = tensor.axes[0]
-    const values = value as readonly number[]
+    const values = Array.from({ length: axis.length }, (_, index) => readValue([index]) as number)
     return (
       <LineChart resultUnit={resultUnit} ticks={axis.ticks} values={values} xTitle={axisTitle(rule, 0, axisUnits)} />
     )
@@ -454,13 +463,12 @@ function TensorVisualization({
 
   const rowAxis = tensor.axes[tensor.axes.length - 2]
   const columnAxis = tensor.axes[tensor.axes.length - 1]
-  const matrix = value as readonly (readonly number[])[]
   return (
     <>
       {controls}
       <Heatmap
         columnTicks={columnAxis.ticks}
-        matrix={matrix}
+        getValue={(rowIndex, columnIndex) => readValue([...safeIndices, rowIndex, columnIndex]) as number}
         resultUnit={resultUnit}
         rowTicks={rowAxis.ticks}
         xTitle={axisTitle(rule, tensor.axes.length - 1, axisUnits)}
@@ -494,19 +502,18 @@ function RecordedResultCard({
     const requestedResultUnit =
       displayUnits?.result && resultUnitOptions.includes(displayUnits.result) ? displayUnits.result : rule.result.unit
     let resultUnit = requestedResultUnit
-    let resultValue = tensor?.value
 
     if (tensor && rule.result.unit && requestedResultUnit && requestedResultUnit !== rule.result.unit) {
       try {
-        resultValue = convertRecordedNumericValue(
-          tensor.value,
-          rule.result.unit,
-          requestedResultUnit,
-          tensor.tensorOrder,
-        )
+        convertUcumValue(1, rule.result.unit, requestedResultUnit, 'Recorded value display unit')
+        if (
+          tensor.tensorOrder > 0 &&
+          convertUcumValue(0, rule.result.unit, requestedResultUnit, 'Recorded value display unit') !== 0
+        ) {
+          throw new Error('Recorded tensor display unit conversion must preserve zero.')
+        }
       } catch (conversionError) {
         resultUnit = rule.result.unit
-        resultValue = tensor.value
         conversionErrors.push(
           `Result ${rule.result.unit} → ${requestedResultUnit}: ${conversionError instanceof Error ? conversionError.message : String(conversionError)}`,
         )
@@ -540,23 +547,29 @@ function RecordedResultCard({
       return { ...axis, ticks, unit, unitOptions }
     })
     const displayedTensor = tensor
-      ? Object.freeze({
-          ...tensor,
-          axes: Object.freeze(
-            tensor.axes.map((axis, axisIndex) =>
-              Object.freeze({
-                ...axis,
-                ticks: axes[axisIndex].ticks ?? axis.ticks,
-              }),
-            ),
+      ? (Object.freeze(
+          Object.defineProperty(
+            {
+              accessor: tensor.accessor,
+              axes: Object.freeze(
+                tensor.axes.map((axis, axisIndex) =>
+                  Object.freeze({
+                    ...axis,
+                    ticks: axes[axisIndex].ticks ?? axis.ticks,
+                  }),
+                ),
+              ),
+              componentShape: tensor.componentShape,
+              tensorOrder: tensor.tensorOrder,
+              dtype: tensor.dtype,
+              ...(tensor.unit === undefined ? {} : { unit: tensor.unit }),
+              ...(tensor.quantityKind === undefined ? {} : { quantityKind: tensor.quantityKind }),
+              ...(tensor.basis === undefined ? {} : { basis: tensor.basis }),
+            },
+            'value',
+            { get: () => tensor.value },
           ),
-          value: projectRecordedComponents(
-            resultValue ?? tensor.value,
-            tensor.axes.length,
-            tensor.tensorOrder,
-            componentSelection,
-          ) as ResolvedRecordedTensor['value'],
-        })
+        ) as ResolvedRecordedTensor)
       : null
 
     return {
@@ -567,7 +580,7 @@ function RecordedResultCard({
       resultUnitOptions,
       tensor: displayedTensor,
     }
-  }, [componentSelection, displayUnits, rule, tensor])
+  }, [displayUnits, rule, tensor])
 
   return (
     <article className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -675,8 +688,10 @@ function RecordedResultCard({
           <TensorVisualization
             key={`${rule.result.dtype}-${JSON.stringify(display.tensor.axes.map((axis) => axis.length))}-${componentSelection}`}
             axisUnits={display.axisUnits}
+            componentSelection={componentSelection}
             resultUnit={display.resultUnit}
             rule={rule}
+            sourceUnit={rule.result.unit}
             tensor={display.tensor}
           />
         ) : (

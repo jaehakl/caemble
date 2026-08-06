@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { identityCartesianBasis } from '../../quantitykind/identityBasis'
+import { canonicalDataHash } from '../authoring'
 import {
   assertKernelExecutionResult,
   normalizeKernelTaskConfig,
@@ -8,7 +10,19 @@ import {
   validateKernelDescriptor,
   validateKernelTaskConfig,
 } from '.'
-import type { KernelDescriptor, KernelTaskConfig } from './types'
+import type { KernelDescriptor, KernelTaskConfig, KernelValueSpec } from './types'
+
+const valueSpecFixture = JSON.parse(
+  readFileSync(new URL('../../cad/model/fixtures/data-schema-golden.v1.json', import.meta.url), 'utf8'),
+) as Readonly<{
+  valueSpecCases: readonly Readonly<{
+    name: string
+    specHash: string
+    spec: unknown
+    valid: readonly unknown[]
+    invalid: readonly Readonly<{ value: unknown; issue: string }>[]
+  }>[]
+}>
 
 const descriptor = Object.freeze({
   name: 'test-kernel',
@@ -117,6 +131,43 @@ const config = Object.freeze({
 } as const satisfies KernelTaskConfig)
 
 describe('kernel contract validation', () => {
+  it('matches the shared KernelValueSpec constraint fixture', () => {
+    valueSpecFixture.valueSpecCases.forEach((fixture) => {
+      const fixtureDescriptor = {
+        ...descriptor,
+        parameters: {
+          fixture: {
+            description: 'Shared golden fixture parameter.',
+            required: true,
+            data: fixture.spec as KernelValueSpec,
+          },
+        },
+      } as KernelDescriptor
+
+      expect(canonicalDataHash(fixture.spec), fixture.name).toBe(fixture.specHash)
+      expect(validateKernelDescriptor(fixtureDescriptor), fixture.name).toEqual([])
+      fixture.valid.forEach((value, index) => {
+        const fixtureConfig = {
+          ...config,
+          parameters: { fixture: value },
+        } as KernelTaskConfig
+        expect(validateKernelTaskConfig(fixtureDescriptor, fixtureConfig), `${fixture.name}.valid[${index}]`).toEqual(
+          [],
+        )
+      })
+      fixture.invalid.forEach(({ value, issue }, index) => {
+        const fixtureConfig = {
+          ...config,
+          parameters: { fixture: value },
+        } as KernelTaskConfig
+        const messages = validateKernelTaskConfig(fixtureDescriptor, fixtureConfig)
+          .map((entry) => `${entry.path}: ${entry.message}`)
+          .join('\n')
+        expect(messages, `${fixture.name}.invalid[${index}]`).toContain(issue)
+      })
+    })
+  })
+
   it('normalizes task quantities and resolves typed ports and output artifacts', () => {
     expect(validateKernelDescriptor(descriptor)).toEqual([])
     expect(validateKernelTaskConfig(descriptor, config)).toEqual([])

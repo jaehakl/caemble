@@ -6,15 +6,14 @@ import {
   compileCadDocument,
   createCadSourceDocument,
   evaluateInIsolatedRunner,
-  preflightSimulationInIsolatedRunner,
-  runSimulationInIsolatedRunner,
   serializeCadScene,
   updateCadSource,
   type CadEvaluationResponse,
   type CompiledCadSource,
   type EvaluatedDocumentSnapshot,
 } from '@/lib/cad'
-import type { SimulationResult } from '@/lib/simulation'
+import { clearCaeAccessToken, setCaeAccessToken } from '@/features/cae/connection'
+import { runRemoteCaeSimulation, type SimulationResult } from '@/lib/simulation'
 import { useCadWorkspace } from './useCadWorkspace'
 
 const compilerVersion = 'test-compiler' as CompiledCadSource['compilerVersion']
@@ -25,8 +24,14 @@ vi.mock('@/lib/cad', async (importActual) => {
     ...actual,
     compileCadDocument: vi.fn(),
     evaluateInIsolatedRunner: vi.fn(),
-    preflightSimulationInIsolatedRunner: vi.fn(),
-    runSimulationInIsolatedRunner: vi.fn(),
+  }
+})
+
+vi.mock('@/lib/simulation', async (importActual) => {
+  const actual = await importActual<typeof import('@/lib/simulation')>()
+  return {
+    ...actual,
+    runRemoteCaeSimulation: vi.fn(),
   }
 })
 
@@ -35,12 +40,51 @@ describe('useCadWorkspace compilation cache', () => {
     vi.useFakeTimers()
     vi.mocked(compileCadDocument).mockReset()
     vi.mocked(evaluateInIsolatedRunner).mockReset()
-    vi.mocked(preflightSimulationInIsolatedRunner).mockReset()
-    vi.mocked(runSimulationInIsolatedRunner).mockReset()
+    vi.mocked(runRemoteCaeSimulation).mockReset()
+    setCaeAccessToken('gpsk_test')
   })
 
   afterEach(() => {
+    clearCaeAccessToken()
     vi.useRealTimers()
+  })
+
+  it('blocks legacy Experiments without Python source before edit, preview, or Run', async () => {
+    const handleExperimentChange = vi.fn()
+    const experiment = createCadSourceDocument('experiment', 'experiment source', 9, null)
+    const render = renderHook(() => useCadWorkspace(null, experiment, undefined, handleExperimentChange))
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000)
+    })
+
+    expect(compileCadDocument).not.toHaveBeenCalled()
+    expect(evaluateInIsolatedRunner).not.toHaveBeenCalled()
+    expect(render.result.current.experimentDocument).toMatchObject({
+      error: {
+        title: 'Python Source Required',
+      },
+      scene: null,
+      simulationProgram: null,
+      sourceReadOnly: true,
+      status: 'Error',
+    })
+    expect(render.result.current.simulation.compatibility).toMatchObject({
+      status: 'incompatible',
+      issues: [{ documentType: 'experiment', path: 'simulation_code' }],
+    })
+    expect(render.result.current.simulation.canRun).toBe(false)
+    expect(render.result.current.simulation.run()).toBeNull()
+
+    act(() => {
+      render.result.current.experimentDocument.handleSourceChange('changed source')
+      render.result.current.experimentDocument.handleSimulationCodeChange(
+        'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
+      )
+      render.result.current.experimentDocument.handleReroll()
+    })
+    expect(handleExperimentChange).not.toHaveBeenCalled()
+    render.unmount()
   })
 
   it('compiles once for a source revision and reuses it for vars and seed rerolls', async () => {
@@ -197,15 +241,26 @@ describe('useCadWorkspace compilation cache', () => {
     const structureHash = 'a'.repeat(64)
     const experimentHash = 'b'.repeat(64)
     const program = Object.freeze({
-      formatVersion: 1 as const,
+      formatVersion: 2 as const,
       programHash: experimentHash,
+      simulationApiVersion: 1 as const,
+      pythonSource: 'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
+      pythonSourceHash: 'c'.repeat(64),
       tasks: Object.freeze({
         electric: Object.freeze({
-          kernel: Object.freeze({ name: 'dc-current-density', version: '0.0.0' }),
+          kernel: Object.freeze({
+            name: 'dc-current-density',
+            version: '0.0.0',
+            descriptorHash: 'deadbeef',
+          }),
+          descriptor: null,
+          config: Object.freeze({}),
           configHash: 'dc-config',
+          outputArtifacts: Object.freeze({}),
         }),
       }),
       recordedData: Object.freeze({}),
+      recordedDataSchemaHash: '811c9dc5',
     })
     const scene = serializeCadScene({
       lengthUnit: 'mm',
@@ -215,9 +270,8 @@ describe('useCadWorkspace compilation cache', () => {
       surfaceGroups: [],
     })
     const evaluationCallbacks: Array<Parameters<typeof evaluateInIsolatedRunner>[1]> = []
-    let preflightCallbacks: Parameters<typeof preflightSimulationInIsolatedRunner>[1] | undefined
-    let runCallbacks: Parameters<typeof runSimulationInIsolatedRunner>[1] | undefined
     const runCancel = vi.fn()
+    let resolveRun: ((value: SimulationResult) => void) | undefined
     vi.mocked(compileCadDocument).mockImplementation(async (document) => ({
       apiVersion: 3,
       compilerVersion,
@@ -229,17 +283,15 @@ describe('useCadWorkspace compilation cache', () => {
       evaluationCallbacks.push(handlers)
       return vi.fn()
     })
-    vi.mocked(preflightSimulationInIsolatedRunner).mockImplementation((_request, handlers) => {
-      preflightCallbacks = handlers
-      return vi.fn()
-    })
-    vi.mocked(runSimulationInIsolatedRunner).mockImplementation((_request, handlers) => {
-      runCallbacks = handlers
-      return runCancel
+    vi.mocked(runRemoteCaeSimulation).mockImplementation(() => {
+      const promise = new Promise<SimulationResult>((resolve) => {
+        resolveRun = resolve
+      })
+      return Object.freeze({ cancel: runCancel, promise })
     })
 
     const structure = createCadSourceDocument('structure', 'structure source', 7)
-    const experiment = createCadSourceDocument('experiment', 'experiment source', 9)
+    const experiment = createCadSourceDocument('experiment', 'experiment source', 9, program.pythonSource)
     const render = renderHook(
       ({ structureDocument, experimentDocument }) =>
         useCadWorkspace(
@@ -260,7 +312,7 @@ describe('useCadWorkspace compilation cache', () => {
       await vi.advanceTimersByTimeAsync(500)
     })
     expect(compileCadDocument).toHaveBeenCalledTimes(2)
-    expect(evaluateInIsolatedRunner).toHaveBeenCalledTimes(2)
+    await vi.waitFor(() => expect(evaluateInIsolatedRunner).toHaveBeenCalledTimes(2))
 
     await act(async () => {
       vi.mocked(evaluateInIsolatedRunner).mock.calls.forEach(([request], index) => {
@@ -286,17 +338,6 @@ describe('useCadWorkspace compilation cache', () => {
       await Promise.resolve()
     })
 
-    expect(preflightSimulationInIsolatedRunner).toHaveBeenCalledOnce()
-    const preflightRequest = vi.mocked(preflightSimulationInIsolatedRunner).mock.calls[0][0]
-    await act(async () => {
-      preflightCallbacks?.onResponse({
-        type: 'preflight-simulation-result',
-        requestId: preflightRequest.requestId,
-        structureRevision: preflightRequest.structureRevision,
-        experimentRevision: preflightRequest.experimentRevision,
-        issues: [],
-      })
-    })
     expect(render.result.current.simulation.canRun).toBe(true)
 
     let requestId: string | null = null
@@ -305,9 +346,7 @@ describe('useCadWorkspace compilation cache', () => {
     })
     expect(requestId).not.toBeNull()
     expect(compileCadDocument).toHaveBeenCalledTimes(2)
-    expect(runSimulationInIsolatedRunner).toHaveBeenCalledOnce()
-    const runRequest = vi.mocked(runSimulationInIsolatedRunner).mock.calls[0][0]
-    expect(runRequest.compiledSource.sourceHash).toBe(experimentHash)
+    expect(runRemoteCaeSimulation).toHaveBeenCalledOnce()
 
     const changedExperiment = updateCadSource(experiment, 'changed experiment source')
     await act(async () => {
@@ -338,13 +377,8 @@ describe('useCadWorkspace compilation cache', () => {
       },
     }
     await act(async () => {
-      runCallbacks?.onResponse({
-        type: 'run-simulation-success',
-        requestId: requestId!,
-        structureRevision: runRequest.structureRevision,
-        experimentRevision: runRequest.experimentRevision,
-        result: lateResult,
-      })
+      resolveRun?.(lateResult)
+      await Promise.resolve()
     })
     expect(render.result.current.simulation.programResult).toBeNull()
     expect(render.result.current.simulation.process.status).toBe('cancelled')

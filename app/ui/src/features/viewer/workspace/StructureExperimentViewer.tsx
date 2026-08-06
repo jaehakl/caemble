@@ -23,6 +23,7 @@ const workspaceTabs = [
   { id: 'structure-vars', documentType: 'structure', panel: 'vars', label: 'Structure Vars' },
   { id: 'structure-lineage', documentType: 'structure', panel: 'lineage', label: '족보 보기' },
   { id: 'experiment-source', documentType: 'experiment', panel: 'source', label: 'Experiment Source' },
+  { id: 'experiment-python', documentType: 'experiment', panel: 'python', label: 'Python simulate' },
   { id: 'experiment-lineage', documentType: 'experiment', panel: 'lineage', label: '족보 보기' },
   { id: 'solver-spec', documentType: 'experiment', panel: 'spec', label: 'Solver Spec' },
 ] as const
@@ -205,6 +206,14 @@ export function StructureExperimentViewer({
                   readOnly={document.sourceReadOnly}
                   value={source}
                   onChange={document.handleSourceChange}
+                />
+              ) : tab.panel === 'python' ? (
+                <CadEditor
+                  language="python"
+                  modelPath="file:///simulate.py"
+                  readOnly={document.sourceReadOnly}
+                  value={sourceDocument?.simulationCode ?? ''}
+                  onChange={document.handleSimulationCodeChange}
                 />
               ) : (
                 <SolverSpecSheet

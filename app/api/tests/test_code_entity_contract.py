@@ -32,6 +32,8 @@ class CodeEntityContractTests(unittest.TestCase):
 
                 self.assertNotIn("code_embedding", schema.model_fields)
                 self.assertNotIn("code_embedding", entity.model_dump())
+        self.assertIn("simulation_code", ExperimentBase.model_fields)
+        self.assertTrue(Experiment.__table__.columns.simulation_code.nullable)
 
     def test_code_embedding_is_deferred_from_default_entity_selects(self):
         for model in (Geometry, Structure, Experiment):

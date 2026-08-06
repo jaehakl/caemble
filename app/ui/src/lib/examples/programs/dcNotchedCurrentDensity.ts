@@ -186,14 +186,14 @@ export default experiment({
     },
   },
 
-  simulate: async ({ sim, tasks }) => {
-    const result = await sim.run(tasks.solveField)
-
-    sim.record('currentDensity', result.artifacts.currentDensity)
-    sim.record('totalCurrent', result.artifacts.totalCurrent)
-    return result.state
-  },
 })
+`
+
+export const dcNotchedCurrentDensitySimulationCode = `async def simulate(*, sim, tasks, vars, world):
+    result = await sim.run(tasks["solveField"])
+    await sim.record("currentDensity", result["artifacts"]["currentDensity"])
+    await sim.record("totalCurrent", result["artifacts"]["totalCurrent"])
+    return result["state"]
 `
 
 export const dcNotchedCurrentDensityExample = Object.freeze({
@@ -207,6 +207,7 @@ export const dcNotchedCurrentDensityExample = Object.freeze({
   ]),
   structureCode: dcNotchedCurrentDensityStructureCode,
   experimentCode: dcNotchedCurrentDensityExperimentCode,
+  simulationCode: dcNotchedCurrentDensitySimulationCode,
   verification: Object.freeze({
     kernelTasks: Object.freeze(['solveField']),
     recordedData: Object.freeze(['currentDensity', 'totalCurrent']),

@@ -35,6 +35,9 @@ function createDataset(targetValue = (width: number, voltage: number) => width *
       measurements.push({ id, sample_id: sample.id!, setup_id: setup.id! })
       const width = sample.vars.width as number
       const voltage = setup.vars.voltage as number
+      const response = targetValue(width, voltage)
+      const responseBytes = new Uint8Array(8)
+      new DataView(responseBytes.buffer).setFloat64(0, response, true)
       recordedData.push({
         id: id + 10_000,
         measurement_id: id,
@@ -42,16 +45,40 @@ function createDataset(targetValue = (width: number, voltage: number) => width *
         dtype: 'float64',
         quantity_kind: 'Dimensionless',
         tensor_order: 0,
-        data: { value: targetValue(width, voltage) },
+        data_schema: {
+          dtype: 'float64',
+          unit: '1',
+          quantityKind: 'Dimensionless',
+        },
+        data:
+          id % 2 === 0
+            ? { value: response }
+            : {
+                tensorEncodingVersion: 1,
+                shape: [],
+                storage: {
+                  kind: 'base64',
+                  data: btoa(String.fromCharCode(...responseBytes)),
+                  byteLength: responseBytes.byteLength,
+                },
+              },
       })
       recordedData.push({
         id: id + 20_000,
         measurement_id: id,
         name: 'state',
         dtype: 'string',
-        quantity_kind: 'Dimensionless',
+        quantity_kind: null,
         tensor_order: 0,
-        data: { value: width > 2 ? 'wide' : 'narrow' },
+        data_schema: { dtype: 'string' },
+        data:
+          id % 2 === 0
+            ? { value: width > 2 ? 'wide' : 'narrow' }
+            : {
+                tensorEncodingVersion: 1,
+                shape: [],
+                storage: { kind: 'inline', value: width > 2 ? 'wide' : 'narrow' },
+              },
       })
     })
   })
@@ -87,6 +114,7 @@ describe('Analysis engine', () => {
       recordedDataCount: 60,
     })
     expect(response?.eligible).toBe(true)
+    expect(response?.unit).toBe('1')
     expect(response?.histogram?.length).toBeGreaterThan(1)
     expect(dataset.profile.columns.some((column) => column.key.includes('sampleId'))).toBe(false)
     expect(dataset.profile.columns.some((column) => column.key.includes('metadata'))).toBe(false)
@@ -99,6 +127,54 @@ describe('Analysis engine', () => {
     })
     expect(getTablePage(dataset, ['sample.vars.width', 'target:response'], 0, 1).rows).toHaveLength(1)
     expect(getTablePage(dataset, ['sample.vars.width'], 0, 1_000).rows).toHaveLength(30)
+  })
+
+  it('streams a large persisted DataTensor through its accessor without materializing the tensor', () => {
+    const length = 100_000
+    const bytes = new Uint8Array(length * 4)
+    const view = new DataView(bytes.buffer)
+    for (let index = 0; index < length; index += 1) view.setFloat32(index * 4, index, true)
+    let binary = ''
+    for (let offset = 0; offset < bytes.length; offset += 32_768) {
+      binary += String.fromCharCode(...bytes.subarray(offset, Math.min(bytes.length, offset + 32_768)))
+    }
+    const dataset = buildAnalysisDataset({
+      experimentId: 22,
+      fingerprint: 'large-accessor',
+      measurements: [{ id: 1, sample_id: 1, setup_id: 1 }],
+      recordedData: [
+        {
+          id: 2,
+          measurement_id: 1,
+          name: 'large',
+          dtype: 'float32',
+          quantity_kind: 'Dimensionless',
+          tensor_order: 0,
+          data_schema: {
+            dtype: 'float32',
+            unit: '1',
+            quantityKind: 'Dimensionless',
+            axes: [{ name: 'index', length }],
+          },
+          data: {
+            tensorEncodingVersion: 1,
+            shape: [length],
+            axes: [{ ticks: Array.from({ length }, (_, index) => index) }],
+            storage: { kind: 'base64', data: btoa(binary), byteLength: bytes.byteLength },
+          },
+        },
+      ],
+      samples: [{ id: 1, structure_id: 11, vars: {}, material_parameters: {} }],
+      setups: [{ id: 1, experiment_id: 22, vars: {}, material_parameters: {} }],
+      structureId: 11,
+    })
+
+    expect(dataset.profile.columns.find((column) => column.key === 'target:large:mean')?.mean).toBeCloseTo(
+      (length - 1) / 2,
+      5,
+    )
+    expect(dataset.profile.columns.find((column) => column.key === 'target:large:min')?.mean).toBe(0)
+    expect(dataset.profile.columns.find((column) => column.key === 'target:large:max')?.mean).toBe(length - 1)
   })
 
   it('seed 42로 PCA·K-Means·reconstruction anomaly를 재현한다', () => {

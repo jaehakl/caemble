@@ -1,14 +1,8 @@
 export { defineKernelTask, simulationProgramManifest } from './authoring'
 export { SimulationFatalError, SimulationKernelError } from './errors'
-export { KernelRegistry } from './registry'
+export { CaeSimulationError, releaseRecordedDataAttachments, runRemoteCaeSimulation } from './remoteCae'
+export { exportSimulationResult } from './resultExport'
 export * from './kernelContract'
 export * from './kernels'
-export { exportSimulationResult, preflightSimulation, runSimulationProgram } from './runtime'
 export { assertSimulationProgramManifest, assertSimulationResult } from './validation'
-export type {
-  SimulationPreflightIssue,
-  SimulationPreflightResult,
-  SimulationProgramRuntimeDefinition,
-  SimulationScriptApi,
-} from './runtime'
 export type * from './types'

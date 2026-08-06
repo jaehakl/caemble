@@ -195,7 +195,14 @@ describe('unified dbTables API', () => {
     }
 
     await expect(dbTables.Structure.save(payload)).resolves.toMatchObject({ action: 'updated' })
-    await expect(dbTables.Experiment.save(payload)).resolves.toMatchObject({ action: 'forked' })
+    await expect(
+      dbTables.Experiment.save({
+        ...payload,
+        simulationCode: 'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
+        simulationRawCodeHash: '5'.repeat(64),
+        baseSimulationRawCodeHash: '6'.repeat(64),
+      }),
+    ).resolves.toMatchObject({ action: 'forked' })
     expect(seen).toEqual(['structure', 'experiment'])
   })
 
@@ -225,9 +232,14 @@ describe('unified dbTables API', () => {
         recorded_data: [
           {
             name: 'Current',
-            quantity_kind: 'ElectricCurrent',
+            quantity_kind: 'electromagnetism.ElectricCurrent',
             tensor_order: 0,
             dtype: 'float64',
+            data_schema: {
+              dtype: 'float64',
+              unit: 'A',
+              quantityKind: 'electromagnetism.ElectricCurrent',
+            },
             data: { value: 2.5 },
           },
         ],
@@ -243,9 +255,14 @@ describe('unified dbTables API', () => {
           recorded_data: [
             {
               name: 'Current',
-              quantity_kind: 'ElectricCurrent',
+              quantity_kind: 'electromagnetism.ElectricCurrent',
               tensor_order: 0,
               dtype: 'float64',
+              data_schema: {
+                dtype: 'float64',
+                unit: 'A',
+                quantityKind: 'electromagnetism.ElectricCurrent',
+              },
               data: { value: 2.5 },
             },
           ],
@@ -260,13 +277,82 @@ describe('unified dbTables API', () => {
         recorded_data: [
           {
             name: 'Current',
-            quantity_kind: 'ElectricCurrent',
+            quantity_kind: 'electromagnetism.ElectricCurrent',
             tensor_order: -1,
             dtype: 'float64',
+            data_schema: {
+              dtype: 'float64',
+              unit: 'A',
+              quantityKind: 'electromagnetism.ElectricCurrent',
+            },
           },
         ],
       }),
     ).rejects.toBeInstanceOf(ZodError)
+    await expect(
+      dbTables.Measurement.save({
+        sample_id: 3,
+        setup_id: 4,
+        recorded_data: [
+          {
+            name: 'Current',
+            quantity_kind: 'electromagnetism.ElectricCurrent',
+            tensor_order: 0,
+            dtype: 'float64',
+            data_schema: {
+              dtype: 'float64',
+              unit: 'A',
+              quantityKind: 'electromagnetism.ElectricCurrent',
+              axes: [{ name: 'time', unsupported: true }],
+            },
+          },
+        ],
+      } as never),
+    ).rejects.toBeInstanceOf(ZodError)
+  })
+
+  it('reads shared RecordedData schemas and nullable legacy compatibility fields', async () => {
+    const vectorSchema = {
+      dtype: 'float32' as const,
+      unit: 'A.m-2',
+      quantityKind: 'electromagnetism.ElectricCurrentDensity',
+      basis: [
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+      ] as [[number, number, number], [number, number, number], [number, number, number]],
+      axes: [{ name: 'point', length: 2 }],
+    }
+    server.use(
+      http.post('http://api.test/recorded_data/list', () =>
+        HttpResponse.json({
+          total: 2,
+          items: [
+            {
+              measurement_id: 1,
+              name: 'Current density',
+              quantity_kind: 'electromagnetism.ElectricCurrentDensity',
+              tensor_order: 1,
+              dtype: 'float32',
+              data_schema: vectorSchema,
+            },
+            {
+              measurement_id: 1,
+              name: 'Labels',
+              quantity_kind: null,
+              tensor_order: 0,
+              dtype: 'string',
+              data_schema: null,
+            },
+          ],
+        }),
+      ),
+    )
+    const { dbTables } = await loadApi()
+
+    await expect(dbTables.RecordedData.listRows()).resolves.toMatchObject({
+      items: [{ data_schema: vectorSchema }, { data_schema: null, quantity_kind: null }],
+    })
   })
 
   it('uses validated list, upsert, and delete contracts for every CRUD table', async () => {
@@ -281,7 +367,11 @@ describe('unified dbTables API', () => {
       ],
       ['Geometry', 'geometry', { name: 'Geometry', code: 'export default null' }],
       ['Structure', 'structure', { name: 'Structure', code: 'export default structure({})' }],
-      ['Experiment', 'experiment', { name: 'Experiment', code: 'export default experiment({})' }],
+      [
+        'Experiment',
+        'experiment',
+        { name: 'Experiment', code: 'export default experiment({})', simulation_code: null },
+      ],
       ['Sample', 'sample', { structure_id: 1, vars: {}, material_parameters: {} }],
       ['Setup', 'setup', { experiment_id: 1, vars: {}, material_parameters: {} }],
       ['Measurement', 'measurement', { sample_id: 1, setup_id: 1 }],
@@ -371,10 +461,9 @@ describe('unified dbTables API', () => {
         calls += 1
         return HttpResponse.json({ total: 0, items: [] })
       }),
-      http.get('http://api.test/auth/gps-access-token', () => HttpResponse.json({ gps_access_token: 123 })),
       http.post('http://api.test/auth/logout', () => HttpResponse.json({ ok: false })),
     )
-    const { dbTables, getGpsAccessToken, logout } = await loadApi()
+    const { dbTables, logout } = await loadApi()
     await expect(
       dbTables.Structure.listRows({
         scope: 'visible',
@@ -388,7 +477,6 @@ describe('unified dbTables API', () => {
       }),
     ).rejects.toBeInstanceOf(ZodError)
     expect(calls).toBe(0)
-    await expect(getGpsAccessToken()).rejects.toBeInstanceOf(ZodError)
     await expect(logout()).rejects.toBeInstanceOf(ZodError)
   })
 })

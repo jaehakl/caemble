@@ -1,14 +1,19 @@
+import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { defaultCode } from '../../defaultCode'
 import { defaultExperimentCode } from '../../defaultExperimentCode'
 import { defaultExperimentProgramCode } from '../../defaultExperimentProgramCode'
 import { caembleExamples, caembleProgramExamples } from '../../examples'
-import experimentProgramDoc from '../../../../docs/experiment-program.md?raw'
 import coreTypes from './caemble-core.d.ts?raw'
 import jsxTypes from './cad-jsx.d.ts?raw'
 import kernelTypes from './caemble-kernels.d.ts?raw'
 import { KERNEL_AUTHORING_VERSIONS } from './generatedVersions'
+
+const experimentProgramDoc = readFileSync(
+  new URL('../../../../../../docs/experiment-program.md', import.meta.url),
+  'utf8',
+)
 
 function diagnosticsFor(source: string) {
   const sourcePath = 'C:/caemble-source/source.tsx'
@@ -119,7 +124,6 @@ describe('unversioned CAD authoring declarations', () => {
             }),
           }),
           recordedData: {},
-          simulate: ({ sim }) => sim.initialState,
         })
       `),
     ).toEqual([])
@@ -156,64 +160,9 @@ describe('unversioned CAD authoring declarations', () => {
     expect(diagnosticsFor(wrongParameter).join('\n')).toContain('unknownGridShape')
   })
 
-  it('infers task-local artifact keys and global RecordedData names', () => {
-    const unknownArtifact = defaultExperimentProgramCode.replace(
-      'electric.artifacts.totalCurrent',
-      'electric.artifacts.unknown',
-    )
-    const unknownRecordedData = defaultExperimentProgramCode.replace(
-      "sim.record('measuredCurrent'",
-      "sim.record('unknown'",
-    )
-
-    expect(diagnosticsFor(unknownArtifact).join('\n')).toContain("Property 'unknown' does not exist")
-    expect(diagnosticsFor(unknownRecordedData).join('\n')).toContain('Argument of type \'"unknown"\' is not assignable')
-  })
-
-  it('preserves required, optional, unknown, and typed kernel input ports', () => {
-    const program = (inputs: string, runInput: string) => `
-      import {
-        experiment,
-        type ArtifactRef,
-        type DefinedKernelTask,
-      } from '@caemble/core'
-
-      declare const consumer: DefinedKernelTask<
-        {},
-        Readonly<{ done: 'test/done@1' }>,
-        Readonly<Record<never, never>>,
-        ${inputs}
-      >
-      declare const source: ArtifactRef<'test/source@1'>
-      declare const other: ArtifactRef<'test/other@1'>
-
-      export default experiment({
-        lengthUnit: 'mm',
-        varsSchema: {},
-        geometry: () => <box size={[1, 1, 1]} />,
-        tasks: () => ({ consumer }),
-        recordedData: {
-          done: { dtype: 'float64', unit: 'A', quantityKind: 'electromagnetism.ElectricCurrent' },
-        },
-        simulate: async ({ sim, tasks }) => {
-          const result = await sim.run(tasks.consumer${runInput})
-          sim.record('done', result.artifacts.done)
-          return result.state
-        },
-      })
-    `
-
-    expect(diagnosticsFor(program(`Readonly<{ source: 'test/source@1' }>`, `, { inputs: { source } }`))).toEqual([])
-    expect(diagnosticsFor(program(`Readonly<{ source: 'test/source@1' | undefined }>`, ''))).toEqual([])
-    expect(diagnosticsFor(program(`Readonly<{ source: 'test/source@1' }>`, '')).join('\n')).toContain(
-      'Expected 2 arguments',
-    )
-    expect(
-      diagnosticsFor(program(`Readonly<{ source: 'test/source@1' }>`, `, { inputs: { unknown: source } }`)).join('\n'),
-    ).toContain('unknown')
-    expect(
-      diagnosticsFor(program(`Readonly<{ source: 'test/source@1' }>`, `, { inputs: { source: other } }`)).join('\n'),
-    ).toContain('test/other@1')
+  it('keeps browser-side simulate orchestration out of new Experiment source', () => {
+    expect(defaultExperimentProgramCode).not.toContain('simulate:')
+    expect(defaultExperimentProgramCode).not.toContain('sim.run(')
   })
 
   it('keeps canonical Material property and model authoring types strict', () => {

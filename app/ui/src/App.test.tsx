@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { redirectLegacyHash } from '@/app/legacy-routes'
 import { appRoutePaths, redirectViewerToStructures } from '@/app/router'
 import { defaultExperimentCode } from '@/lib/defaultExperimentCode'
+import { defaultExperimentSimulationCode } from '@/lib/defaultExperimentSimulationCode'
 import { catalogCounts } from '@/lib/metadata'
 
 describe('페이지 중심 앱 라우팅', () => {
@@ -55,6 +56,8 @@ describe('페이지 중심 앱 라우팅', () => {
     expect(defaultExperimentCode).toContain('electric: dcCurrentDensity({')
     expect(defaultExperimentCode).toContain("methodId: 'dc.voxel-grid'")
     expect(defaultExperimentCode).toContain("quantityKind: 'electromagnetism.ElectricCurrent'")
-    expect(defaultExperimentCode).toContain("sim.record('measuredCurrent', electric.artifacts.totalCurrent)")
+    expect(defaultExperimentCode).not.toContain('simulate:')
+    expect(defaultExperimentSimulationCode).toContain('await sim.record(')
+    expect(defaultExperimentSimulationCode).toContain('"measuredCurrent"')
   })
 })

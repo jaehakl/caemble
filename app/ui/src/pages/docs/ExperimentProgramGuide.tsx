@@ -11,7 +11,7 @@ const ownership = [
   ['tasks()', 'Experiment 최상위', 'vars로 각 kernel task를 구성하는 factory'],
   ['task.outputs', 'kernel task 내부', '다른 kernel에도 전달할 중간 artifact 요청'],
   ['recordedData', 'Experiment 최상위', 'Measurement에 최종 저장할 데이터 schema'],
-  ['simulate()', 'Experiment 최상위', 'task 순서, 분기, artifact 전달·해제·기록 정책'],
+  ['simulate.py', 'Experiment Python tab', 'task 순서, 분기, artifact 전달·해제·기록 정책'],
 ] as const
 
 const dcMethods = [
@@ -47,7 +47,7 @@ export function ExperimentProgramGuide() {
           </h2>
           <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600 sm:text-base">
             고정된 geometry와 설계 변수는 Experiment 최상위에 두고, 물리 분야별 수치 설정은 named task로 분리합니다.{' '}
-            <Code>simulate()</Code>에는 task의 선택·순서·분기와 결과 기록만 남깁니다.
+            Python <Code>simulate()</Code>에는 task의 선택·순서·분기와 결과 기록만 남깁니다.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             <Button asChild>
@@ -126,7 +126,8 @@ export function ExperimentProgramGuide() {
               <Braces className="size-5 text-orange-700" />
               <CardTitle className="text-base">3. 실행 정책 작성</CardTitle>
               <CardDescription>
-                <Code>sim.run()</Code>으로 artifact를 교환하고 <Code>sim.record()</Code>로 RecordedData를 확정합니다.
+                Python <Code>sim.run()</Code>으로 artifact를 교환하고 <Code>await sim.record()</Code>로 RecordedData를
+                확정합니다.
               </CardDescription>
             </CardHeader>
           </Card>
@@ -149,6 +150,14 @@ export function ExperimentProgramGuide() {
                 <code>{firstExample.structureCode}</code>
               </pre>
             </details>
+            <details className="overflow-hidden rounded-xl border bg-slate-950 text-slate-100 xl:col-span-2" open>
+              <summary className="cursor-pointer border-b border-slate-800 px-4 py-3 text-sm font-semibold">
+                Python simulate.py
+              </summary>
+              <pre className="max-h-[520px] overflow-auto p-4 text-xs leading-5">
+                <code>{firstExample.simulationCode}</code>
+              </pre>
+            </details>
             <details className="overflow-hidden rounded-xl border bg-slate-950 text-slate-100" open>
               <summary className="cursor-pointer border-b border-slate-800 px-4 py-3 text-sm font-semibold">
                 Experiment Source
@@ -168,7 +177,8 @@ export function ExperimentProgramGuide() {
             </CardHeader>
             <CardContent className="space-y-3 text-sm leading-6 text-slate-600">
               <p>
-                <Code>{'tasks({ vars })'}</Code>는 <Code>simulate()</Code> 전에 한 번 평가됩니다.
+                <Code>{'tasks({ vars })'}</Code>는 CAE slave에서 Python <Code>simulate()</Code>를 시작하기 전에 한 번
+                평가됩니다.
               </p>
               <p>
                 kernel이 자기 opaque state를 변경했을 때만 revision이 증가합니다. 실패한 호출은 state와 artifact를 함께
@@ -179,8 +189,8 @@ export function ExperimentProgramGuide() {
                 사용자 코드가 catch해도 run 전체가 실패합니다.
               </p>
               <p>
-                <Code>sim.record()</Code>는 global RecordedData schema로 정규화해 staging합니다. 뒤 task가 실패하면
-                staging 전체를 폐기하며, 시계열은 시간축을 가진 하나의 tensor artifact로 기록합니다.
+                <Code>await sim.record()</Code>는 global RecordedData schema로 정규화하고 browser ACK를 기다립니다. 뒤
+                task가 실패하면 provisional 결과 전체를 폐기합니다.
               </p>
             </CardContent>
           </Card>
@@ -188,7 +198,7 @@ export function ExperimentProgramGuide() {
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">DC·Heat kernel의 현재 한계</CardTitle>
-              <CardDescription>브라우저에서 검증할 수 있는 bounded reference kernel입니다.</CardDescription>
+              <CardDescription>CAE slave가 실행하는 bounded reference kernel입니다.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 text-sm leading-6 text-slate-600">
               <p>하나의 연결된 homogeneous isotropic conductor와 서로 마주 보는 두 planar terminal을 지원합니다.</p>

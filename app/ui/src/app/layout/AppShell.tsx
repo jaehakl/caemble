@@ -15,6 +15,7 @@ import {
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAuth, useLogout } from '@/features/auth/use-auth'
+import { clearCaeAccessToken } from '@/features/cae/connection'
 import { cn } from '@/lib/utils'
 import { brandIcon as BrandIcon, catalogNavigation, primaryNavigation, type AppNavigationItem } from './app-navigation'
 
@@ -102,6 +103,7 @@ function AccountMenu() {
             logoutMutation.mutate(undefined, {
               onError: () => toast.error('로그아웃하지 못했습니다.'),
               onSuccess: () => {
+                clearCaeAccessToken()
                 toast.success('로그아웃했습니다.')
                 navigate('/')
               },

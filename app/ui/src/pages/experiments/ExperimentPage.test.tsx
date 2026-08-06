@@ -8,7 +8,7 @@ import { RouterProvider } from 'react-router/dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { UserData } from '@/api'
 import { CurrentCadSelectionProvider, useCurrentCadSelection } from '@/features/viewer/current-cad-selection'
-import { cadSource, updateCadSource, type CadSourceDocument } from '@/lib/cad'
+import { cadSource, updateCadSimulationCode, updateCadSource, type CadSourceDocument } from '@/lib/cad'
 import { defaultExperimentCode } from '@/lib/defaultExperimentCode'
 import { ExperimentPage } from './ExperimentPage'
 
@@ -81,13 +81,26 @@ vi.mock('@/features/viewer/workspace/StructureExperimentViewer', () => ({
     experimentLineage,
     structure,
   }: {
-    experimentDocument: { handleSourceChange: (source: string) => void }
+    experimentDocument: {
+      handleSimulationCodeChange: (source: string) => void
+      handleSourceChange: (source: string) => void
+    }
     experimentLineage?: React.ReactNode
     structure?: CadSourceDocument | null
   }) => (
     <div>
       <button type="button" onClick={() => experimentDocument.handleSourceChange('changed source')}>
         Source 변경
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          experimentDocument.handleSimulationCodeChange(
+            'async def simulate(*, sim, tasks, vars, world):\n    return 2\n',
+          )
+        }
+      >
+        Python 변경
       </button>
       <div data-testid="experiment-workspace-counterpart">
         {structure ? 'Structure source exposed' : 'Structure source hidden'}
@@ -138,6 +151,7 @@ const experiments = [
     name: 'Root',
     description: 'family root',
     code: 'root source',
+    simulation_code: 'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
     user_id: 'owner-id',
     updated_at: '2026-07-01T00:00:00Z',
   },
@@ -147,6 +161,7 @@ const experiments = [
     name: 'Middle',
     description: 'middle node',
     code: 'middle source',
+    simulation_code: 'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
     user_id: 'owner-id',
     updated_at: '2026-07-02T00:00:00Z',
   },
@@ -156,6 +171,7 @@ const experiments = [
     name: 'Public Leaf',
     description: 'searchable beta',
     code: 'public source',
+    simulation_code: 'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
     user_id: null,
     updated_at: '2026-07-03T00:00:00Z',
   },
@@ -165,6 +181,7 @@ const experiments = [
     name: 'Foreign Leaf',
     description: 'outside family',
     code: 'foreign source',
+    simulation_code: 'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
     user_id: 'other-id',
     updated_at: '2026-07-04T00:00:00Z',
   },
@@ -174,6 +191,7 @@ const experiments = [
     name: 'Owned Grandchild',
     description: 'alpha leaf',
     code: 'owned source',
+    simulation_code: 'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
     user_id: 'owner-id',
     updated_at: '2026-07-05T00:00:00Z',
   },
@@ -241,6 +259,7 @@ beforeEach(() => {
     parentId: null,
     code: 'owned source',
     kind: 'experiment',
+    simulationCode: 'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
   })
   workspace.useCadWorkspace.mockImplementation(
     (
@@ -251,6 +270,9 @@ beforeEach(() => {
     ) => {
       const experimentDocument = {
         handleReroll: workspace.reroll,
+        handleSimulationCodeChange: (source: string) => {
+          if (experiment && onExperimentChange) onExperimentChange(updateCadSimulationCode(experiment, source))
+        },
         handleSourceChange: (source: string) => {
           if (experiment && onExperimentChange) onExperimentChange(updateCadSource(experiment, source))
         },
@@ -413,6 +435,18 @@ describe('ExperimentPage', () => {
     expect(workspace.reroll).not.toHaveBeenCalled()
   })
 
+  it('blocks preview and editing for a legacy Experiment without Python source', async () => {
+    api.listExperiments.mockResolvedValueOnce({
+      items: experiments.map((row) => (row.id === 5 ? { ...row, simulation_code: null } : row)),
+      total: experiments.length,
+    })
+    renderPage('/experiments?experiment=5&mode=code')
+
+    await screen.findByText('Owned Grandchild')
+    expect(screen.getByTestId('experiment-viewer')).toHaveTextContent('No Experiment selected')
+    expect(screen.queryByRole('button', { name: '목록' })).not.toBeInTheDocument()
+  })
+
   it('confirms dirty navigation before opening a double-clicked Experiment', async () => {
     const router = renderPage('/experiments?experiment=5')
     await screen.findByText('Owned Grandchild')
@@ -433,6 +467,28 @@ describe('ExperimentPage', () => {
     expect(router.state.location.search).toBe('?experiment=3')
   })
 
+  it('treats a Python-only edit as dirty and saves both sources together', async () => {
+    renderPage('/experiments?experiment=5')
+    await screen.findByText('Owned Grandchild')
+    await userEvent.click(screen.getByRole('button', { name: 'Owned Grandchild 코드 에디터 열기' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Python 변경' }))
+
+    expect(screen.getByText('저장되지 않은 코드 변경이 있습니다.')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Experiment 저장' }))
+    const saveDialog = screen.getByRole('dialog')
+    await userEvent.click(within(saveDialog).getByRole('button', { name: 'Experiment 저장' }))
+
+    await waitFor(() =>
+      expect(api.saveDefinition).toHaveBeenCalledWith(
+        expect.objectContaining({
+          savedCode: 'owned source',
+          savedSimulationCode: 'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
+          simulationCode: 'async def simulate(*, sim, tasks, vars, world):\n    return 2\n',
+        }),
+      ),
+    )
+  })
+
   it('starts a default Experiment from the list and saves it as a new root', async () => {
     api.saveDefinition.mockResolvedValueOnce({
       id: 10,
@@ -440,6 +496,7 @@ describe('ExperimentPage', () => {
       parentId: null,
       code: defaultExperimentCode,
       kind: 'experiment',
+      simulationCode: 'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
     })
     renderPage('/experiments?experiment=5')
     await screen.findByText('Owned Grandchild')

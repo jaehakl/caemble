@@ -1,10 +1,7 @@
-import { assertCompiledCadSource, type CompiledCadSource } from '../compiler/types'
+import { assertCompiledCadSource } from '../compiler/types'
 import { assertEvaluatedDocumentSnapshot } from '../execution/snapshotValidation'
-import { assertBuiltRealization, type BuiltSample, type BuiltSetup } from '../execution/realization'
 import { CadModelError } from '../model/errors'
 import type { CadEvaluationRequest, CadEvaluationResponse } from '../worker/protocol'
-import type { SimulationProgress, SimulationResult } from '../../simulation/types'
-import { assertSimulationResult } from '../../simulation/validation'
 
 export type RunnerEvaluationEnvelope = Readonly<{
   type: 'evaluate'
@@ -28,93 +25,6 @@ export type RunnerEvaluationResultEnvelope = Readonly<{
 
 export type RunnerCancelEvaluationEnvelope = Readonly<{
   type: 'cancel-evaluation'
-  nonce: string
-  requestId: string
-}>
-
-type SimulationRequestBase = Readonly<{
-  requestId: string
-  structureRevision: number
-  experimentRevision: number
-  compiledSource: CompiledCadSource
-  sample: BuiltSample
-  setup: BuiltSetup
-}>
-
-export type SimulationPreflightRequest = SimulationRequestBase &
-  Readonly<{
-    type: 'preflight-simulation'
-  }>
-
-export type SimulationRunRequest = SimulationRequestBase &
-  Readonly<{
-    type: 'run-simulation'
-  }>
-
-export type SimulationRequest = SimulationPreflightRequest | SimulationRunRequest
-
-export type SimulationPreflightIssue = Readonly<{
-  path: string
-  message: string
-  documentType?: 'structure' | 'experiment'
-}>
-
-export type SimulationPreflightResponse = Readonly<{
-  type: 'preflight-simulation-result'
-  requestId: string
-  structureRevision: number
-  experimentRevision: number
-  issues: readonly SimulationPreflightIssue[]
-}>
-
-export type SimulationRunResponse =
-  | Readonly<{
-      type: 'run-simulation-success'
-      requestId: string
-      structureRevision: number
-      experimentRevision: number
-      result: SimulationResult
-    }>
-  | Readonly<{
-      type: 'run-simulation-error'
-      requestId: string
-      structureRevision: number
-      experimentRevision: number
-      message: string
-      stack?: string
-    }>
-
-export type RunnerSimulationEnvelope = Readonly<{
-  type: SimulationRequest['type']
-  nonce: string
-  request: SimulationRequest
-}>
-
-export type RunnerSimulationStartedEnvelope = Readonly<{
-  type: 'simulation-started'
-  nonce: string
-  requestId: string
-  structureRevision: number
-  experimentRevision: number
-}>
-
-export type RunnerSimulationProgressEnvelope = Readonly<{
-  type: 'simulation-progress'
-  nonce: string
-  requestId: string
-  structureRevision: number
-  experimentRevision: number
-  progress: SimulationProgress
-}>
-
-export type RunnerSimulationResultEnvelope = Readonly<{
-  type: 'preflight-simulation-result' | 'run-simulation-result'
-  nonce: string
-  response: SimulationPreflightResponse | SimulationRunResponse
-}>
-
-export type RunnerCancelSimulationEnvelope = Readonly<{
-  type: 'cancel-simulation'
   nonce: string
   requestId: string
 }>
@@ -167,13 +77,29 @@ export function assertCadEvaluationRequest(value: unknown): asserts value is Cad
   if (value.type !== 'evaluate') throw new CadModelError('CAD evaluation request type is invalid.')
   assertIdentity(value.requestId, value.revision, 'CAD evaluation request')
   assertPlainObject(value.document, 'request.document')
-  assertOnlyKeys(value.document, ['kind', 'realizationSeed'], 'request.document')
+  assertOnlyKeys(
+    value.document,
+    ['kind', 'realizationSeed', 'simulationCode', 'simulationCodeHash'],
+    'request.document',
+  )
   if (
     (value.document.kind !== 'structure' && value.document.kind !== 'experiment') ||
     !Number.isSafeInteger(value.document.realizationSeed) ||
     (value.document.realizationSeed as number) < 0
   ) {
     throw new CadModelError('CAD evaluation request document is invalid.')
+  }
+  if (value.document.kind === 'experiment') {
+    if (
+      typeof value.document.simulationCode !== 'string' ||
+      !value.document.simulationCode.trim() ||
+      typeof value.document.simulationCodeHash !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(value.document.simulationCodeHash)
+    ) {
+      throw new CadModelError('Experiment evaluation requires hashed Python simulation code.')
+    }
+  } else if (value.document.simulationCode !== undefined || value.document.simulationCodeHash !== undefined) {
+    throw new CadModelError('Structure evaluation cannot contain Python simulation code.')
   }
   assertCompiledCadSource(value.compiledSource)
   if (value.compiledSource.entryFile !== `${value.document.kind}.tsx`) {
@@ -241,184 +167,11 @@ export function assertRunnerEvaluationResultEnvelope(value: unknown): asserts va
   )
 }
 
-function assertSimulationRequest(value: unknown): asserts value is SimulationRequest {
-  assertPlainObject(value, 'simulation.request')
-  assertOnlyKeys(
-    value,
-    ['type', 'requestId', 'structureRevision', 'experimentRevision', 'compiledSource', 'sample', 'setup'],
-    'simulation.request',
-  )
-  if (value.type !== 'preflight-simulation' && value.type !== 'run-simulation') {
-    throw new CadModelError('Simulation request type is invalid.')
-  }
-  assertIdentity(value.requestId, value.structureRevision, 'Simulation request structure')
-  assertIdentity(value.requestId, value.experimentRevision, 'Simulation request experiment')
-  assertCompiledCadSource(value.compiledSource)
-  assertBuiltRealization(value.sample)
-  assertBuiltRealization(value.setup)
-  if (value.sample.kind !== 'sample' || value.setup.kind !== 'setup') {
-    throw new CadModelError('Simulation requires a Sample and Setup.')
-  }
-  if (
-    value.compiledSource.entryFile !== 'experiment.tsx' ||
-    value.setup.experiment.sourceHash !== value.compiledSource.sourceHash
-  ) {
-    throw new CadModelError('Simulation Experiment source does not match its compiled source.')
-  }
-}
-
-export function assertRunnerSimulationEnvelope(value: unknown): asserts value is RunnerSimulationEnvelope {
-  assertPlainObject(value, 'simulation')
-  assertOnlyKeys(value, ['type', 'nonce', 'request'], 'simulation')
-  if (value.type !== 'preflight-simulation' && value.type !== 'run-simulation') {
-    throw new CadModelError('Runner simulation type is invalid.')
-  }
-  assertNonce(value.nonce)
-  assertSimulationRequest(value.request)
-  if (value.type !== value.request.type) {
-    throw new CadModelError('Runner simulation envelope and request types do not match.')
-  }
-}
-
-export function assertRunnerSimulationStartedEnvelope(
-  value: unknown,
-): asserts value is RunnerSimulationStartedEnvelope {
-  assertPlainObject(value, 'simulationStarted')
-  assertOnlyKeys(value, ['type', 'nonce', 'requestId', 'structureRevision', 'experimentRevision'], 'simulationStarted')
-  if (value.type !== 'simulation-started') {
-    throw new CadModelError('Runner simulation started type is invalid.')
-  }
-  assertNonce(value.nonce)
-  assertIdentity(value.requestId, value.structureRevision, 'Simulation started structure')
-  assertIdentity(value.requestId, value.experimentRevision, 'Simulation started experiment')
-}
-
-export function assertRunnerSimulationProgressEnvelope(
-  value: unknown,
-): asserts value is RunnerSimulationProgressEnvelope {
-  assertPlainObject(value, 'simulationProgress')
-  assertOnlyKeys(
-    value,
-    ['type', 'nonce', 'requestId', 'structureRevision', 'experimentRevision', 'progress'],
-    'simulationProgress',
-  )
-  if (value.type !== 'simulation-progress') {
-    throw new CadModelError('Runner simulation progress type is invalid.')
-  }
-  assertNonce(value.nonce)
-  assertIdentity(value.requestId, value.structureRevision, 'Simulation progress structure')
-  assertIdentity(value.requestId, value.experimentRevision, 'Simulation progress experiment')
-  assertPlainObject(value.progress, 'simulationProgress.progress')
-  assertOnlyKeys(
-    value.progress,
-    ['runId', 'task', 'kernel', 'stage', 'completed', 'total', 'message'],
-    'simulationProgress.progress',
-  )
-  assertPlainObject(value.progress.kernel, 'simulationProgress.progress.kernel')
-  assertOnlyKeys(value.progress.kernel, ['name', 'version'], 'simulationProgress.progress.kernel')
-  if (
-    value.progress.runId !== value.requestId ||
-    typeof value.progress.task !== 'string' ||
-    !value.progress.task.trim() ||
-    typeof value.progress.kernel.name !== 'string' ||
-    !value.progress.kernel.name.trim() ||
-    typeof value.progress.kernel.version !== 'string' ||
-    !value.progress.kernel.version.trim() ||
-    typeof value.progress.stage !== 'string' ||
-    !value.progress.stage.trim() ||
-    typeof value.progress.completed !== 'number' ||
-    !Number.isFinite(value.progress.completed) ||
-    value.progress.completed < 0 ||
-    (value.progress.total !== undefined &&
-      (typeof value.progress.total !== 'number' ||
-        !Number.isFinite(value.progress.total) ||
-        value.progress.total < value.progress.completed)) ||
-    (value.progress.message !== undefined && typeof value.progress.message !== 'string')
-  ) {
-    throw new CadModelError('Runner simulation progress payload is invalid.')
-  }
-}
-
-function assertPreflightIssues(value: unknown): asserts value is readonly SimulationPreflightIssue[] {
-  if (!Array.isArray(value)) throw new CadModelError('Simulation preflight issues must be an array.')
-  value.forEach((issue, index) => {
-    assertPlainObject(issue, `simulationResult.response.issues[${index}]`)
-    assertOnlyKeys(issue, ['path', 'message', 'documentType'], `simulationResult.response.issues[${index}]`)
-    if (
-      typeof issue.path !== 'string' ||
-      typeof issue.message !== 'string' ||
-      (issue.documentType !== undefined && issue.documentType !== 'structure' && issue.documentType !== 'experiment')
-    ) {
-      throw new CadModelError(`Simulation preflight issue ${index} is invalid.`)
-    }
-  })
-}
-
-export function assertRunnerSimulationResultEnvelope(value: unknown): asserts value is RunnerSimulationResultEnvelope {
-  assertPlainObject(value, 'simulationResult')
-  assertOnlyKeys(value, ['type', 'nonce', 'response'], 'simulationResult')
-  if (value.type !== 'preflight-simulation-result' && value.type !== 'run-simulation-result') {
-    throw new CadModelError('Runner simulation result type is invalid.')
-  }
-  assertNonce(value.nonce)
-  assertPlainObject(value.response, 'simulationResult.response')
-  const response = value.response
-  assertIdentity(response.requestId, response.structureRevision, 'Simulation result structure')
-  assertIdentity(response.requestId, response.experimentRevision, 'Simulation result experiment')
-  if (response.type === 'preflight-simulation-result') {
-    if (value.type !== response.type) throw new CadModelError('Simulation preflight envelope type is invalid.')
-    assertOnlyKeys(
-      response,
-      ['type', 'requestId', 'structureRevision', 'experimentRevision', 'issues'],
-      'simulationResult.response',
-    )
-    assertPreflightIssues(response.issues)
-    return
-  }
-  if (value.type !== 'run-simulation-result') {
-    throw new CadModelError('Simulation run envelope type is invalid.')
-  }
-  if (response.type === 'run-simulation-success') {
-    assertOnlyKeys(
-      response,
-      ['type', 'requestId', 'structureRevision', 'experimentRevision', 'result'],
-      'simulationResult.response',
-    )
-    assertSimulationResult(response.result)
-    if (response.result.runId !== response.requestId) {
-      throw new CadModelError('Simulation result runId does not match its request.')
-    }
-    return
-  }
-  if (
-    response.type !== 'run-simulation-error' ||
-    typeof response.message !== 'string' ||
-    response.message.length > 65_536 ||
-    (response.stack !== undefined && typeof response.stack !== 'string')
-  ) {
-    throw new CadModelError('Simulation run error response is invalid.')
-  }
-  assertOnlyKeys(
-    response,
-    ['type', 'requestId', 'structureRevision', 'experimentRevision', 'message', 'stack'],
-    'simulationResult.response',
-  )
-}
-
 export function assertRunnerCancelEvaluationEnvelope(value: unknown): asserts value is RunnerCancelEvaluationEnvelope {
   assertPlainObject(value, 'cancelEvaluation')
   assertOnlyKeys(value, ['type', 'nonce', 'requestId'], 'cancelEvaluation')
   if (value.type !== 'cancel-evaluation' || typeof value.requestId !== 'string' || !value.requestId) {
     throw new CadModelError('Runner evaluation cancellation is invalid.')
-  }
-  assertNonce(value.nonce)
-}
-
-export function assertRunnerCancelSimulationEnvelope(value: unknown): asserts value is RunnerCancelSimulationEnvelope {
-  assertPlainObject(value, 'cancelSimulation')
-  assertOnlyKeys(value, ['type', 'nonce', 'requestId'], 'cancelSimulation')
-  if (value.type !== 'cancel-simulation' || typeof value.requestId !== 'string' || !value.requestId) {
-    throw new CadModelError('Runner simulation cancellation is invalid.')
   }
   assertNonce(value.nonce)
 }

@@ -7,13 +7,24 @@ export type { CaembleProgramExample } from './types'
 export {
   dcNotchedCurrentDensityExample,
   dcNotchedCurrentDensityExperimentCode,
+  dcNotchedCurrentDensitySimulationCode,
   dcNotchedCurrentDensityStructureCode,
 } from './dcNotchedCurrentDensity'
-export { dcResolutionStudyExample, dcResolutionStudyExperimentCode } from './dcResolutionStudy'
-export { dcUniformBarExample, dcUniformBarExperimentCode, dcUniformBarStructureCode } from './dcUniformBar'
+export {
+  dcResolutionStudyExample,
+  dcResolutionStudyExperimentCode,
+  dcResolutionStudySimulationCode,
+} from './dcResolutionStudy'
+export {
+  dcUniformBarExample,
+  dcUniformBarExperimentCode,
+  dcUniformBarSimulationCode,
+  dcUniformBarStructureCode,
+} from './dcUniformBar'
 export {
   electroThermalUniformBarExample,
   electroThermalUniformBarExperimentCode,
+  electroThermalUniformBarSimulationCode,
   electroThermalUniformBarStructureCode,
 } from './electroThermalUniformBar'
 

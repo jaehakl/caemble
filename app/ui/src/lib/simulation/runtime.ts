@@ -1,5 +1,6 @@
 import { applyFrozenMaterialParameters, type BuiltSample, type BuiltSetup } from '../cad/execution/realization'
 import { deserializeCadScene } from '../cad/execution/mesh'
+import type { RecordedDataTensor } from '../cad/model/descriptor'
 import type { Vars } from '../cad/model/types'
 import { convertUcumValue } from '../cad/model/units'
 import { getQuantityKindComponentShape, transformQuantityValue } from '../quantitykind/runtime'
@@ -20,7 +21,6 @@ import { assertSimulationProgramManifest } from './validation'
 import type {
   ArtifactRef,
   ArtifactType,
-  DataTensor,
   DefinedKernelTask,
   KernelArtifactTypes,
   KernelInputTypes,
@@ -173,7 +173,13 @@ function resolveProgramTasks(
 
 function assertDefinitionManifest(definition: SimulationProgramRuntimeDefinition, setup: BuiltSetup) {
   assertSimulationProgramManifest(definition.manifest)
-  const expected = simulationProgramManifest(definition.tasks, definition.recordedData, definition.manifest.programHash)
+  const expected = simulationProgramManifest(
+    definition.tasks,
+    definition.recordedData,
+    definition.manifest.programHash,
+    definition.manifest.pythonSource,
+    definition.manifest.pythonSourceHash,
+  )
   if (JSON.stringify(expected) !== JSON.stringify(definition.manifest)) {
     throw new SimulationFatalError('Simulation Program manifest does not match the evaluated Experiment.')
   }
@@ -212,7 +218,7 @@ function normalizeForDataSpec(
   source: KernelDataSpec,
   target: KernelDataSpec | RecordedDataSpec,
   path: string,
-): DataTensor {
+): RecordedDataTensor {
   if (
     source.dtype !== target.dtype ||
     source.quantityKind !== target.quantityKind ||
@@ -233,9 +239,12 @@ function normalizeForDataSpec(
     }
   })
 
-  const normalized = payload as DataTensor
+  const normalized = payload as RecordedDataTensor
   if (dataSpecsMatch(source, target)) return normalized
 
+  if (!('value' in normalized)) {
+    throw new Error(`${path} must already use the canonical DataSchema before raw DataTensor encoding.`)
+  }
   let value: unknown = normalized.value
   if (source.quantityKind !== undefined) {
     const componentShape = getQuantityKindComponentShape(source.quantityKind)
@@ -347,7 +356,7 @@ export async function runSimulationProgram(
   const stateRefs = new WeakSet<object>()
   const artifacts = new Map<string, StoredArtifact>()
   const artifactRefs = new WeakSet<object>()
-  const stagedRecordedData = new Map<string, Readonly<{ spec: RecordedDataSpec; data: DataTensor }>>()
+  const stagedRecordedData = new Map<string, Readonly<{ spec: RecordedDataSpec; data: RecordedDataTensor }>>()
   const prepared = new Map<ResolvedKernelTask, Promise<unknown>>()
   const trace: SimulationTraceEntry[] = []
   let stateSequence = 0
@@ -705,8 +714,4 @@ export async function runSimulationProgram(
     trace: Object.freeze(trace),
     provenance,
   })
-}
-
-export function exportSimulationResult(result: SimulationResult) {
-  return JSON.stringify(result, null, 2)
 }

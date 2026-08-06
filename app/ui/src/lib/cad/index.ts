@@ -27,6 +27,9 @@ export type {
   CartesianBasis,
   DataAxis,
   DataDType,
+  DataSchema,
+  DataSchemaAxis,
+  DataTensor,
   DataValueDescriptor,
   FloatDataDType,
   ExperimentParameter,
@@ -35,6 +38,7 @@ export type {
   Geometry,
   GeometryAttributes,
   IntegerDataDType,
+  LegacyRecordedDataTensor,
   MaterialDataValueDescriptor,
   MaterialQuantitySeries,
   MaterialSampledRelation,
@@ -43,6 +47,7 @@ export type {
   MatrixValue,
   NonFloatDataDType,
   NormalizedMaterialVariables,
+  PersistedDataTensor,
   QuantityKindDomain,
   QuantityKindName,
   QuantityKindNameForDomain,
@@ -84,6 +89,7 @@ export {
   createCadSourceDocument,
   createRealizationSeed,
   rerollCadSourceDocument,
+  updateCadSimulationCode,
   updateCadSource,
 } from './source/document'
 export type { CadDocumentType, CadEvaluationInput, CadSourceDocument } from './source/document'
@@ -107,21 +113,25 @@ export { assertSerializableCadScene, deserializeCadScene, serializeCadScene } fr
 export type { SerializableCadMesh, SerializableCadScene, SerializableCadScenePart } from './execution/mesh'
 export { normalizeRecordedData, normalizeRecordedDataTensor } from './model/recordedData'
 export type { ResolvedRecordedTensor } from './model/recordedData'
+export {
+  DATA_TENSOR_ATTACHMENT_SHARD_BYTES,
+  DATA_TENSOR_INLINE_BYTES,
+  MAX_RECORDED_DATA_BYTES,
+  createAttachmentDataTensor,
+  createDataTensor,
+  createDataTensorAccessor,
+  isDataTensor,
+  persistDataSchema,
+  persistDataTensor,
+  registerDataTensorAttachment,
+  releaseDataTensorAttachments,
+  shardDataTensorBytes,
+} from './model/dataTensor'
+export type { DataTensorAccessor } from './model/dataTensor'
 export { CadCompilationError, compileCadDocument } from './compiler/monacoCompiler'
 export type { CadDiagnostic as CompilerDiagnostic, CompiledCadSource } from './compiler/types'
 export { cadSemanticHash, compiledCadSemanticHash, rawCodeHash } from './compiler/semanticHash'
-export {
-  evaluateInIsolatedRunner,
-  preflightSimulationInIsolatedRunner,
-  runSimulationInIsolatedRunner,
-} from './runner/client'
-export type {
-  SimulationPreflightIssue,
-  SimulationPreflightRequest,
-  SimulationPreflightResponse,
-  SimulationRunRequest,
-  SimulationRunResponse,
-} from './runner/protocol'
+export { evaluateInIsolatedRunner } from './runner/client'
 export type { ArrayAttributes } from './elements/operations/array/definition'
 export type { BooleanAttributes } from './elements/operations/booleans/definition'
 export type { ShellAttributes } from './elements/operations/shell/definition'

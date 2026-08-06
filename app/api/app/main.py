@@ -3,7 +3,6 @@ from routers import (
     designer_model,
     experiment,
     geometry,
-    gps_access_token,
     material,
     material_name,
     material_parameter,
@@ -33,5 +32,4 @@ app.include_router(measurement.router)
 app.include_router(recorded_data.router)
 app.include_router(designer_model.router)
 app.include_router(predictor_model.router)
-app.include_router(gps_access_token.router)
 app.include_router(users.router)

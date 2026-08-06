@@ -80,10 +80,10 @@ function SyntaxHelp() {
               Measurement에 저장할 최종 계약은 Experiment 최상위 <Code>recordedData</Code>에 한 번만 선언합니다.
             </p>
             <p className="mt-2">
-              <Code>simulate()</Code>는 일반 JavaScript loop/branch로 <Code>sim.run()</Code> 순서를 결정하고,
-              <Code>inputs</Code>로 typed artifact를 다음 kernel에 전달합니다. <Code>sim.record()</Code>는 artifact를
-              global RecordedData로 승격하고, <Code>sim.release()</Code>는 사용이 끝난 중간 artifact를 해제합니다.
-              release한 ref, 다른 run의 ref, undeclared/duplicate/missing RecordedData는 fatal error입니다.
+              Python <Code>simulate()</Code>가 <Code>sim.run()</Code> 순서를 결정하고, <Code>inputs</Code>로 typed
+              artifact를 다음 kernel에 전달합니다. <Code>await sim.record()</Code>는 artifact를 global RecordedData로
+              승격하고 브라우저 ACK까지 실행을 정지합니다. <Code>sim.release()</Code>는 사용이 끝난 중간 artifact를
+              해제합니다.
             </p>
 
             <h3 className="mt-5 font-semibold text-slate-900">DC current density와 steady-state Heat kernel</h3>

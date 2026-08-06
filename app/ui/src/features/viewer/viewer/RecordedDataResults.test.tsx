@@ -204,6 +204,33 @@ describe('RecordedDataResults', () => {
     expect(markup).toContain('aria-label="Recorded line chart"')
   })
 
+  it('renders raw base64 DataTensor values through the shared accessor', () => {
+    const vectorRule = rule('Current density', [2], 'float64', 'A.m-2')
+    const bytes = new Uint8Array(6 * 8)
+    const view = new DataView(bytes.buffer)
+    ;[3, 4, 0, 0, 0, 5].forEach((value, index) => view.setFloat64(index * 8, value, true))
+    const markup = renderToStaticMarkup(
+      <RecordedDataResults
+        rules={[vectorRule]}
+        recordedData={{
+          'Current density': {
+            tensorEncodingVersion: 1,
+            shape: [2, 3],
+            storage: {
+              kind: 'base64',
+              data: btoa(String.fromCharCode(...bytes)),
+              byteLength: bytes.byteLength,
+            },
+          },
+        }}
+      />,
+    )
+
+    expect(markup).toContain('aria-label="Recorded line chart"')
+    expect(markup).toContain('0:0: 5 A.m-2')
+    expect(markup).not.toContain('role="alert"')
+  })
+
   it('projects vector and general tensor components after recursive unit conversion', () => {
     const converted = convertRecordedNumericValue([[3, 4, 0]], 'A', 'mA', 1)
     expect(projectRecordedComponents(converted, 1, 1, 'norm')).toEqual([5_000])
