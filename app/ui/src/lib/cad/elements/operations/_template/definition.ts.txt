@@ -1,0 +1,12 @@
+import type { CadElementManifest } from '../../../evaluation/types'
+
+export type ExampleOperationAttributes = Readonly<{
+  children?: unknown
+}>
+
+export const exampleOperationManifest = {
+  tag: 'exampleOperation',
+  category: 'operation',
+  syntax: '<exampleOperation>Geometry</exampleOperation>',
+  summary: 'Example geometry operation.',
+} as const satisfies CadElementManifest<'exampleOperation'>

@@ -1,0 +1,16 @@
+import { CadModelError } from '../../../model/core'
+import type { GeometryOperationDefinition } from '../../../evaluation/types'
+import { exampleOperationManifest } from './definition'
+
+export const exampleOperationDefinition = {
+  kind: 'operation',
+  tag: exampleOperationManifest.tag,
+  manifest: exampleOperationManifest,
+  surfacePolicy: 'preserve',
+  evaluate(node, context) {
+    if (node.children.length !== 1) {
+      throw new CadModelError('<exampleOperation> requires exactly one child Geometry.')
+    }
+    return context.evaluate(node.children[0], context.inheritedMaterials)
+  },
+} satisfies GeometryOperationDefinition<'exampleOperation'>

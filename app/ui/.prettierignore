@@ -1,0 +1,6 @@
+dist
+storybook-static
+playwright-report
+test-results
+public/assets/quantity-kind-data-0.0.0.js
+src/lib/code-to-cad/quantitykind/data/quantity-kind-data-0.0.0.ts

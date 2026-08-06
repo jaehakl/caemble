@@ -8,8 +8,6 @@ venv/
 **/venv/
 .venv/
 **/.venv/
-.venv-admin/
-**/.venv-admin/
 build/
 **/build/
 dist/
@@ -19,10 +17,6 @@ dist/
 **/pytest_cache/
 .coverage
 **/coverage
-espnet/
-**/espnet/
-*.whl
-ffmpeg/
 
 ### Node / Next.js ###
 node_modules/
@@ -34,9 +28,10 @@ yarn-error.log*
 
 ### Secrets ###
 # .env 파일을 포함한 모든 환경변수 설정 파일을 무시합니다.
-# 단, env.example 파일은 예외로 하여 버전 관리에 포함시킵니다.
+# 단, .env.example 파일은 예외로 하여 버전 관리에 포함시킵니다.
 *.env
-!env.example
+**/.env
+!.env.example
 
 ### IDE / Editor ###
 .vscode/
@@ -48,9 +43,15 @@ yarn-error.log*
 Thumbs.db
 
 ### User Data ###
-*.sqlite3
+.data/
+**/.data/
+.models/
+**/.models/
+*cookies.json
+**/cookies.json
+.cookies.json
+**/.cookies.json
+.sqlite3
+**/.sqlite3
 *.db
-alembic.ini
-*.onnx
-*.npy
-
+**/*.db

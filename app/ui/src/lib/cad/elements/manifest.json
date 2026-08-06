@@ -1,0 +1,93 @@
+{
+  "version": 2,
+  "elements": [
+    {
+      "tag": "box",
+      "attributes": "BoxAttributes",
+      "definitionModule": "./primitives/box/definition",
+      "manifestExport": "boxManifest",
+      "runtimeModule": "./primitives/box/runtime",
+      "definitionExport": "boxDefinition"
+    },
+    {
+      "tag": "cylinder",
+      "attributes": "CylinderAttributes",
+      "definitionModule": "./primitives/cylinder/definition",
+      "manifestExport": "cylinderManifest",
+      "runtimeModule": "./primitives/cylinder/runtime",
+      "definitionExport": "cylinderDefinition"
+    },
+    {
+      "tag": "curvedEdgeCylinder",
+      "attributes": "CurvedEdgeCylinderAttributes",
+      "definitionModule": "./primitives/curvedEdgeCylinder/definition",
+      "manifestExport": "curvedEdgeCylinderManifest",
+      "runtimeModule": "./primitives/curvedEdgeCylinder/runtime",
+      "definitionExport": "curvedEdgeCylinderDefinition"
+    },
+    {
+      "tag": "sphere",
+      "attributes": "SphereAttributes",
+      "definitionModule": "./primitives/sphere/definition",
+      "manifestExport": "sphereManifest",
+      "runtimeModule": "./primitives/sphere/runtime",
+      "definitionExport": "sphereDefinition"
+    },
+    {
+      "tag": "curvedSurfaceSphere",
+      "attributes": "CurvedSurfaceSphereAttributes",
+      "definitionModule": "./primitives/curvedSurfaceSphere/definition",
+      "manifestExport": "curvedSurfaceSphereManifest",
+      "runtimeModule": "./primitives/curvedSurfaceSphere/runtime",
+      "definitionExport": "curvedSurfaceSphereDefinition"
+    },
+    {
+      "tag": "fiber",
+      "attributes": "FiberAttributes",
+      "definitionModule": "./primitives/fiber/definition",
+      "manifestExport": "fiberManifest",
+      "runtimeModule": "./primitives/fiber/runtime",
+      "definitionExport": "fiberDefinition"
+    },
+    {
+      "tag": "shell",
+      "attributes": "ShellAttributes",
+      "definitionModule": "./operations/shell/definition",
+      "manifestExport": "shellManifest",
+      "runtimeModule": "./operations/shell/runtime",
+      "definitionExport": "shellDefinition"
+    },
+    {
+      "tag": "array",
+      "attributes": "ArrayAttributes",
+      "definitionModule": "./operations/array/definition",
+      "manifestExport": "arrayManifest",
+      "runtimeModule": "./operations/array/runtime",
+      "definitionExport": "arrayDefinition"
+    },
+    {
+      "tag": "union",
+      "attributes": "BooleanAttributes",
+      "definitionModule": "./operations/booleans/definition",
+      "manifestExport": "unionManifest",
+      "runtimeModule": "./operations/booleans/runtime",
+      "definitionExport": "unionDefinition"
+    },
+    {
+      "tag": "subtract",
+      "attributes": "BooleanAttributes",
+      "definitionModule": "./operations/booleans/definition",
+      "manifestExport": "subtractManifest",
+      "runtimeModule": "./operations/booleans/runtime",
+      "definitionExport": "subtractDefinition"
+    },
+    {
+      "tag": "intersect",
+      "attributes": "BooleanAttributes",
+      "definitionModule": "./operations/booleans/definition",
+      "manifestExport": "intersectManifest",
+      "runtimeModule": "./operations/booleans/runtime",
+      "definitionExport": "intersectDefinition"
+    }
+  ]
+}

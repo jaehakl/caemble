@@ -1,0 +1,362 @@
+# Caemble deployment
+
+이 문서는 Caemble FastAPI API와 Vite 정적 UI를 Ubuntu 서버에 배포한다. UI의
+Code-to-CAD 실행기는 사용자 TSX를 평가하므로 메인 앱과 다른 origin에서 제공한다.
+
+- 메인 앱: `https://www.caemble.com`
+- 격리 실행기: `https://code-to-cad.caemble.com`
+- FastAPI: `127.0.0.1:8000`
+- 정적 웹 루트: `/var/www/caemble/current`
+- 저장소: `/home/ubuntu/waveform`
+- systemd 서비스: `caemble-api`
+- PostgreSQL: 외부 관리형 또는 별도 서버
+
+두 웹 origin은 동일한 `apps/caemble/ui/dist` 빌드를 사용한다. 메인 origin은 SPA와
+`/api/` reverse proxy를 제공하고, runner origin은 `runner.html`과 그 파일이 참조하는
+해시 자산만 제공한다.
+
+## 1. DNS와 방화벽
+
+두 `A` 레코드가 같은 서버의 고정 IP를 가리키게 한다.
+
+```text
+www.caemble.com         -> <SERVER_STATIC_IP>
+code-to-cad.caemble.com -> <SERVER_STATIC_IP>
+```
+
+인터넷에는 `22`, `80`, `443`만 개방한다. FastAPI의 `8000` 포트는 Nginx 뒤의
+loopback에만 바인딩한다. 외부 PostgreSQL 방화벽에는 이 서버에서 DB로 나가는 연결만
+허용하고, DB를 일반 인터넷에 공개하지 않는다.
+
+## 2. 서버 패키지
+
+```bash
+sudo apt update && sudo apt -y upgrade
+sudo apt -y install nginx certbot python3-certbot-nginx git python3-venv build-essential curl rsync
+
+curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+source ~/.bashrc
+nvm install --lts
+nvm use --lts
+
+curl -sSL https://install.python-poetry.org | python3 -
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+확인한다.
+
+```bash
+node --version
+npm --version
+poetry --version
+nginx -v
+```
+
+## 3. 외부 PostgreSQL 준비
+
+대상 데이터베이스에는 PostgreSQL과 pgvector가 설치되어 있어야 한다. 예시는 다음
+이름을 사용하지만 실제 계정과 비밀번호는 운영 DB 정책에 맞춘다.
+
+```text
+database: caemble
+user:     caemble
+extension: vector
+```
+
+초기 Alembic migration은 `CREATE EXTENSION IF NOT EXISTS vector`를 실행한다. 앱 DB
+사용자에게 extension 생성 권한이 없다면 DBA가 대상 `caemble` 데이터베이스에서 먼저
+다음을 실행해야 한다.
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+DB 연결은 TLS 사용을 권장한다. 공급자가 요구한다면 `DB_URL`에 `ssl=require` 등 해당
+공급자의 asyncpg 연결 옵션을 포함한다. 비밀번호의 `@`, `:`, `/`, `%` 같은 문자는 URL
+encoding해야 한다.
+
+## 4. 저장소와 환경 변수
+
+```bash
+git clone https://github.com/jaehakl/waveform.git /home/ubuntu/waveform
+cd /home/ubuntu/waveform
+
+cp apps/caemble/api/.env.example apps/caemble/api/.env
+cp apps/caemble/ui/.env.example apps/caemble/ui/.env
+```
+
+`apps/caemble/api/.env`를 운영값으로 채운다.
+
+```dotenv
+DB_URL=postgresql+asyncpg://caemble:<URL_ENCODED_PASSWORD>@<DB_HOST>:5432/caemble
+
+GOOGLE_CLIENT_ID=<GOOGLE_CLIENT_ID>.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=<GOOGLE_CLIENT_SECRET>
+GOOGLE_REDIRECT_URI=https://www.caemble.com/api/auth/google/callback
+
+APP_BASE_URL=https://www.caemble.com
+ALLOWED_APP_ORIGINS=https://www.caemble.com
+APP_TIMEZONE=Asia/Seoul
+OAUTH_STATE_TTL_SEC=600
+
+JWT_SECRET=<AT_LEAST_32_RANDOM_BYTES>
+
+# 빈 값은 www.caemble.com의 host-only 쿠키를 만든다. .caemble.com으로 설정하지 않는다.
+COOKIE_DOMAIN=
+SECURE_COOKIES=true
+```
+
+JWT secret은 다음과 같이 생성할 수 있다.
+
+```bash
+python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
+```
+
+`COOKIE_DOMAIN`을 비워 두는 것은 필수 보안 경계다. `.caemble.com`을 설정하면 인증 쿠키가
+`code-to-cad.caemble.com`에도 전달될 수 있다.
+
+`apps/caemble/ui/.env`는 다음과 같이 설정한다. 세 값은 Vite build 시점에 번들에
+포함되므로 변경 후 반드시 UI를 다시 빌드한다.
+
+```dotenv
+VITE_API_BASE_URL=/api
+VITE_CAEMBLE_HOST_ORIGIN=https://www.caemble.com
+VITE_CAEMBLE_RUNNER_ORIGIN=https://code-to-cad.caemble.com
+```
+
+실제 `.env` 파일은 commit하지 않는다.
+
+Google Cloud Console의 OAuth client에는 다음 값만 추가한다.
+
+- Authorized JavaScript origin: `https://www.caemble.com`
+- Authorized redirect URI: `https://www.caemble.com/api/auth/google/callback`
+
+runner origin에는 OAuth origin이나 redirect URI를 등록하지 않는다.
+
+## 5. 의존성, migration, UI build
+
+```bash
+cd /home/ubuntu/waveform/apps/caemble/api
+poetry install --only main
+poetry run alembic upgrade head
+poetry run alembic current
+
+cd /home/ubuntu/waveform/apps/caemble/ui
+npm ci
+npm run build
+```
+
+`npm run build`는 production 자산 검사를 포함한다. 다음 조건을 검증하므로 실패를
+무시하면 안 된다.
+
+- `runner.html`과 배포 header의 runner CSP 일치
+- runner Worker 밖에 `new Function`이 없는지 확인
+- 금지된 CDN/WASM runtime 의존성 확인
+- 생성된 CAD API와 고정된 Monaco/API 버전 확인
+
+첫 정적 릴리스를 release 디렉터리에 복사하고 `current` 링크를 만든다.
+
+```bash
+cd /home/ubuntu/waveform
+RELEASE="initial-$(git rev-parse --short HEAD)"
+sudo mkdir -p "/var/www/caemble/releases/$RELEASE"
+sudo rsync -a --delete apps/caemble/ui/dist/ "/var/www/caemble/releases/$RELEASE/"
+sudo chown -R root:www-data "/var/www/caemble/releases/$RELEASE"
+sudo find "/var/www/caemble/releases/$RELEASE" -type d -exec chmod 755 {} \;
+sudo find "/var/www/caemble/releases/$RELEASE" -type f -exec chmod 644 {} \;
+sudo ln -sfn "/var/www/caemble/releases/$RELEASE" /var/www/caemble/current
+```
+
+## 6. systemd API 서비스
+
+`/etc/systemd/system/caemble-api.service`를 만든다.
+
+```ini
+[Unit]
+Description=Caemble FastAPI service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/waveform/apps/caemble/api/app
+EnvironmentFile=/home/ubuntu/waveform/apps/caemble/api/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/.local/bin/poetry run uvicorn main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`WorkingDirectory`가 `api/app`인 이유는 현재 API module이 `main:app`과 같은 app-local
+import 계약을 사용하기 때문이다.
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now caemble-api
+sudo systemctl status caemble-api --no-pager
+curl -fsS http://127.0.0.1:8000/openapi.json >/dev/null
+```
+
+현재 API에는 별도 `/health` route가 없으므로 `/openapi.json`을 기본 프로세스 smoke
+check로 사용한다.
+
+## 7. 최초 인증서 발급과 Nginx
+
+최종 `app.conf`는 다음 인증서 파일을 참조한다.
+
+```text
+/etc/letsencrypt/live/www.caemble.com/fullchain.pem
+/etc/letsencrypt/live/www.caemble.com/privkey.pem
+```
+
+인증서가 생기기 전에 최종 설정을 활성화하면 `nginx -t`가 실패한다. 먼저 임시
+HTTP-only 사이트를 만든다.
+
+```bash
+sudo mkdir -p /var/www/letsencrypt
+sudo tee /etc/nginx/sites-available/caemble-bootstrap.conf >/dev/null <<'EOF'
+server {
+    listen 80;
+    listen [::]:80;
+    server_name www.caemble.com code-to-cad.caemble.com;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+    }
+
+    location / {
+        return 200 "caemble bootstrap\n";
+    }
+}
+EOF
+
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo ln -sfn /etc/nginx/sites-available/caemble-bootstrap.conf /etc/nginx/sites-enabled/caemble-bootstrap.conf
+sudo nginx -t
+sudo systemctl reload nginx
+
+sudo certbot certonly --nginx \
+  -d www.caemble.com \
+  -d code-to-cad.caemble.com
+```
+
+`www.caemble.com`을 첫 번째 SAN 이름으로 발급해야 저장소의 `app.conf`에 적힌 인증서
+경로와 일치한다. 발급 후 최종 설정으로 교체한다.
+
+```bash
+sudo cp /home/ubuntu/waveform/apps/caemble/deployment/app.conf /etc/nginx/sites-available/caemble.conf
+sudo rm -f /etc/nginx/sites-enabled/caemble-bootstrap.conf
+sudo ln -sfn /etc/nginx/sites-available/caemble.conf /etc/nginx/sites-enabled/caemble.conf
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+최종 설정은 다음 보안 경계를 유지한다.
+
+- `www.caemble.com/api/*`만 FastAPI로 전달하고 외부 `/api/` prefix는 제거한다.
+- 메인 CSP는 `code-to-cad.caemble.com`만 frame으로 허용하며 `'unsafe-eval'`을 허용하지 않는다.
+- runner CSP는 코드의 production 검사와 동일한 값이며 `connect-src 'none'`을 유지한다.
+- runner origin의 `/`와 `/api/*`는 `404`이며 쿠키나 일반 앱 route를 제공하지 않는다.
+- 메인 origin의 `/runner.html`도 `404`로 차단한다.
+
+인증서 자동 갱신을 확인한다.
+
+```bash
+sudo certbot renew --dry-run
+```
+
+## 8. 배포 확인
+
+```bash
+curl -I https://www.caemble.com/
+curl -I https://www.caemble.com/viewer
+curl -fsS https://www.caemble.com/api/openapi.json >/dev/null
+
+test "$(curl -sS -o /dev/null -w '%{http_code}' https://www.caemble.com/api/auth/me)" = "401"
+test "$(curl -sS -o /dev/null -w '%{http_code}' https://code-to-cad.caemble.com/)" = "404"
+test "$(curl -sS -o /dev/null -w '%{http_code}' https://code-to-cad.caemble.com/api/openapi.json)" = "404"
+
+curl -sSI https://code-to-cad.caemble.com/runner.html
+curl -I "https://www.caemble.com/api/auth/google/start?return_to=https%3A%2F%2Fwww.caemble.com%2Faccount"
+
+sudo systemctl status caemble-api --no-pager
+sudo nginx -t
+```
+
+확인 기준은 다음과 같다.
+
+- `/`와 `/viewer`는 `200`을 반환하고 새로고침해도 SPA가 열린다.
+- `/api/openapi.json`은 FastAPI schema를 반환한다.
+- 비로그인 `/api/auth/me`는 예상된 `401`을 반환한다.
+- runner의 `/runner.html`만 `200`이며 정확한 CSP와 `Cache-Control: no-store`가 있다.
+- Google OAuth 시작 route는 Google로 redirect하고 callback 후 `www.caemble.com`으로 돌아온다.
+- 브라우저 Viewer에서 runner iframe이 로드되고 TSX preview가 실행된다.
+- 브라우저에 CSP, cross-origin, cookie 경고가 없다.
+
+## 9. 이후 업데이트
+
+```bash
+cd /home/ubuntu/waveform
+bash apps/caemble/deployment/update.sh
+```
+
+스크립트는 fast-forward pull, UI build, API dependency 설치, Alembic migration, 새 정적
+release 게시, API 재시작, Nginx 검증/reload 순서로 동작한다. UI는 새 release 디렉터리에
+완성된 뒤 `/var/www/caemble/current` 링크가 한 번에 교체된다.
+
+필요하면 기본값을 환경 변수로 재정의한다.
+
+```bash
+APP_DIR=/srv/waveform \
+WEB_ROOT=/srv/www/caemble \
+API_SERVICE=caemble-api \
+bash /srv/waveform/apps/caemble/deployment/update.sh
+```
+
+기존 release는 자동 삭제하지 않는다. 디스크 사용량을 확인한 뒤 현재 링크와 직전
+release를 제외하고 운영자가 정리한다.
+
+## 10. 로그, 장애 확인, 롤백
+
+API가 뜨지 않으면 다음 순서로 확인한다.
+
+```bash
+sudo journalctl -u caemble-api -n 100 --no-pager
+sudo systemctl status caemble-api --no-pager
+curl -v http://127.0.0.1:8000/openapi.json
+cd /home/ubuntu/waveform/apps/caemble/api
+poetry run alembic current
+```
+
+Nginx 또는 정적 파일 문제가 있으면 확인한다.
+
+```bash
+readlink -f /var/www/caemble/current
+ls -la /var/www/caemble/current/
+sudo -u www-data test -r /var/www/caemble/current/index.html && echo "index readable"
+sudo nginx -t
+sudo tail -n 100 /var/log/nginx/caemble-error.log
+sudo tail -n 100 /var/log/nginx/caemble-runner-error.log
+```
+
+UI만 긴급 롤백할 때는 기존 release를 확인한 뒤 `current` 링크를 원자적으로 바꾼다.
+
+```bash
+ls -1 /var/www/caemble/releases
+PREVIOUS_RELEASE=<PREVIOUS_RELEASE_DIRECTORY>
+sudo ln -sfn "/var/www/caemble/releases/$PREVIOUS_RELEASE" /var/www/caemble/.rollback-current
+sudo mv -Tf /var/www/caemble/.rollback-current /var/www/caemble/current
+```
+
+API 코드 롤백은 운영 branch에서 문제 commit을 `git revert`한 후 update script를 다시
+실행한다. 이미 적용한 DB migration은 임의로 `alembic downgrade`하지 않는다. schema
+호환이 깨진 migration이라면 사전에 준비한 DB snapshot을 복원하거나 검토된 보정
+migration을 적용한다.

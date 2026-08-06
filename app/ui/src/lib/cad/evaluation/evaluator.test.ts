@@ -1,0 +1,174 @@
+import { measurements } from '@jscad/modeling'
+import { describe, expect, it } from 'vitest'
+import { Material } from '../model/core'
+import { Fragment, evaluateCad, h } from '../index'
+
+const size = [2, 2, 2]
+
+function Box() {
+  return h('box', { size })
+}
+
+describe('CAD evaluator', () => {
+  it('passes normalized frozen transforms to Geometry with identity defaults', () => {
+    const core = new Material('Core', { color: '#2563eb' })
+    const received: Record<string, unknown>[] = []
+
+    function Positioned(input: Record<string, unknown>) {
+      received.push(input)
+      return h('box', { size })
+    }
+
+    const [part] = evaluateCad(h(Positioned, { id: 'positioned', materials: [core] }))
+    evaluateCad(
+      h(Positioned, {
+        id: 'positioned',
+        pos: [2, 3, 4],
+        rotate: { axis: [0, 0, 5], angle: Math.PI / 2 },
+        scale: [2, 3, 4],
+        materials: [core],
+      }),
+    )
+
+    expect(received[0]).toMatchObject({ pos: [0, 0, 0], rotate: undefined, scale: [1, 1, 1] })
+    expect(received[1]).toMatchObject({
+      pos: [2, 3, 4],
+      rotate: { axis: [0, 0, 1], angle: Math.PI / 2 },
+      scale: [2, 3, 4],
+    })
+    expect(Object.isFrozen(received[0].pos)).toBe(true)
+    expect(Object.isFrozen(received[0].scale)).toBe(true)
+    expect(Object.isFrozen(received[1].rotate)).toBe(true)
+    expect(Object.isFrozen((received[1].rotate as { axis: unknown }).axis)).toBe(true)
+    expect(measurements.measureBoundingBox(part.geometry)).toEqual([
+      [-1, -1, -1],
+      [1, 1, 1],
+    ])
+  })
+
+  it('accumulates primitive and nested Geometry positions relative to their parents', () => {
+    const core = new Material('Core', { color: '#2563eb' })
+
+    function Child() {
+      return h('box', { size, pos: [1, 1, 1] })
+    }
+
+    function Parent() {
+      return h(Child, { id: 'child', pos: [4, 5, 6] })
+    }
+
+    const [part] = evaluateCad(h(Parent, { id: 'parent', pos: [1, 2, 3], materials: [core] }))
+
+    expect(measurements.measureBoundingBox(part.geometry)).toEqual([
+      [5, 7, 9],
+      [7, 9, 11],
+    ])
+  })
+
+  it('preserves custom props used to derive child-local transforms before applying the parent once', () => {
+    const core = new Material('Core', { color: '#2563eb' })
+    let parentInput: Record<string, unknown> | undefined
+    let childInput: Record<string, unknown> | undefined
+
+    function Child(input: Record<string, unknown>) {
+      childInput = input
+      return h('box', { size: input.size })
+    }
+
+    function Parent(input: Record<string, unknown>) {
+      parentInput = input
+      const pos = input.pos as readonly number[]
+      const rotate = input.rotate as { axis: readonly number[]; angle: number }
+      const scale = input.scale as readonly number[]
+      const gap = input.gap as number
+      const profileScale = input.profileScale as number
+
+      return h(Child, {
+        id: 'child',
+        size: [2 * scale[0], 2, 2],
+        pos: [gap + pos[0] * 0.1, 0, 0],
+        rotate: { axis: rotate.axis, angle: rotate.angle / 2 },
+        scale: [profileScale, 1, 1],
+      })
+    }
+
+    const [part] = evaluateCad(
+      h(Parent, {
+        id: 'parent',
+        pos: [10, 0, 0],
+        rotate: { axis: [0, 0, 1], angle: Math.PI / 2 },
+        scale: [2, 1, 1],
+        gap: 1,
+        profileScale: 0.5,
+        materials: [core],
+      }),
+    )
+
+    expect(parentInput).toMatchObject({ gap: 1, profileScale: 0.5 })
+    expect(childInput).toMatchObject({
+      size: [4, 2, 2],
+      pos: [2, 0, 0],
+      rotate: { axis: [0, 0, 1], angle: Math.PI / 4 },
+      scale: [0.5, 1, 1],
+    })
+
+    const bounds = measurements.measureBoundingBox(part.geometry)
+    expect(bounds[0][0]).toBeCloseTo(10 - Math.SQRT2)
+    expect(bounds[1][0]).toBeCloseTo(10 + Math.SQRT2)
+    expect(bounds[0][1]).toBeCloseTo(4 - 2 * Math.SQRT2)
+    expect(bounds[1][1]).toBeCloseTo(4 + 2 * Math.SQRT2)
+  })
+
+  it('rejects invalid transforms, Fragment transforms, and removed transform elements', () => {
+    const core = new Material('Core', { color: '#2563eb' })
+
+    ;[null, 1, [1, 2], [1, 2, 3, 4], [1, '2', 3], [1, Number.NaN, 3], [1, Number.POSITIVE_INFINITY, 3]].forEach(
+      (pos) => {
+        expect(() => evaluateCad(h('box', { size, pos, materials: [core] }))).toThrow(
+          'pos must be an array of exactly three finite numbers',
+        )
+      },
+    )
+
+    expect(() => evaluateCad(h(Fragment, { pos: [1, 2, 3] }, h(Box, { id: 'box', materials: [core] })))).toThrow(
+      'Fragment does not accept pos, rotate, or scale',
+    )
+
+    ;[null, 1, [1, 2, 3], { axis: [0, 0, 1] }].forEach((rotate) => {
+      expect(() => evaluateCad(h(Box, { id: 'box', rotate, materials: [core] }))).toThrow()
+    })
+    ;[
+      [0, 0, 0],
+      [1, 2],
+      [1, Number.NaN, 0],
+    ].forEach((axis) => {
+      expect(() => evaluateCad(h(Box, { id: 'box', rotate: { axis, angle: 1 }, materials: [core] }))).toThrow(
+        'rotate.axis',
+      )
+    })
+    ;[Number.NaN, Number.POSITIVE_INFINITY, '1'].forEach((angle) => {
+      expect(() => evaluateCad(h(Box, { id: 'box', rotate: { axis: [0, 0, 1], angle }, materials: [core] }))).toThrow(
+        'rotate.angle must be a finite number',
+      )
+    })
+    ;[
+      [1, 2],
+      [1, 2, 3, 4],
+      [1, Number.NaN, 1],
+    ].forEach((scale) => {
+      expect(() => evaluateCad(h(Box, { id: 'box', scale, materials: [core] }))).toThrow(
+        'scale must be an array of exactly three finite numbers',
+      )
+    })
+
+    expect(() => evaluateCad(h('translate', { pos: [1, 2, 3], materials: [core] }, h(Box, { id: 'box' })))).toThrow(
+      'Use the relative pos attribute instead',
+    )
+    expect(() => evaluateCad(h('rotate', null, h(Box, { id: 'box', materials: [core] })))).toThrow(
+      'Use the axis-angle rotate attribute instead',
+    )
+    expect(() => evaluateCad(h('scale', null, h(Box, { id: 'box', materials: [core] })))).toThrow(
+      'Use the scale attribute instead',
+    )
+  })
+})
