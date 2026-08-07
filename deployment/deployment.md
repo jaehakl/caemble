@@ -13,8 +13,10 @@ Code-to-CAD 실행기는 사용자 TSX를 평가하므로 메인 앱과 다른 o
 
 두 웹 origin은 동일한 `app/ui/dist` 빌드를 사용한다. 메인 origin은 SPA와
 `/api/` reverse proxy를 제공하고, runner origin은 `runner.html`과 그 파일이 참조하는
-해시 자산만 제공한다. UI build는 같은 checkout의 `app/sdk`와 `app/slaves`를 직접
-사용하므로 이 디렉터리를 따로 떼어 배포하지 않는다.
+해시 자산만 제공한다. UI는 로컬 Windows 개발 장비에서 build하고,
+`deployment/caemble-ui.tar.gz`를 소스와 함께 Git에 commit한다. 서버에서는 Node.js나
+Vite를 실행하지 않으며, `deployment/update.sh`가 최신 소스와 artifact를 함께 받아
+배포한다.
 
 ## 1. DNS와 방화벽
 
@@ -33,12 +35,7 @@ loopback에만 바인딩한다. 외부 PostgreSQL 방화벽에는 이 서버에�
 
 ```bash
 sudo apt update && sudo apt -y upgrade
-sudo apt -y install nginx certbot python3-certbot-nginx git python3-venv build-essential curl rsync
-
-curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-source ~/.bashrc
-nvm install --lts
-nvm use --lts
+sudo apt -y install nginx certbot python3-certbot-nginx git python3-venv build-essential curl
 
 curl -sSL https://install.python-poetry.org | python3 -
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
@@ -48,11 +45,11 @@ source ~/.bashrc
 확인한다.
 
 ```bash
-node --version
-npm --version
 poetry --version
 nginx -v
 ```
+
+Node.js와 npm은 UI artifact를 만드는 로컬 장비에만 필요하다.
 
 ## 3. 외부 PostgreSQL 준비
 
@@ -84,7 +81,6 @@ git clone <CAEMBLE_REPOSITORY_URL> /home/ubuntu/caemble
 cd /home/ubuntu/caemble
 
 cp app/api/.env.example app/api/.env
-cp app/ui/.env.example app/ui/.env
 ```
 
 `app/api/.env`를 운영값으로 채운다.
@@ -119,8 +115,8 @@ python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
 `COOKIE_DOMAIN`을 비워 두는 것은 필수 보안 경계다. `.caemble.com`을 설정하면 인증 쿠키가
 `code-to-cad.caemble.com`에도 전달될 수 있다.
 
-`app/ui/.env`는 다음과 같이 설정한다. 세 값은 Vite build 시점에 번들에
-포함되므로 변경 후 반드시 UI를 다시 빌드한다.
+UI의 세 환경 변수는 로컬 build shell에서 설정한다. Vite build 시점에 번들에
+포함되므로 변경 후에는 새 artifact를 만들어 다시 배포해야 한다.
 
 ```dotenv
 VITE_API_BASE_URL=/api
@@ -128,7 +124,7 @@ VITE_CAEMBLE_HOST_ORIGIN=https://www.caemble.com
 VITE_CAEMBLE_RUNNER_ORIGIN=https://code-to-cad.caemble.com
 ```
 
-실제 `.env` 파일은 commit하지 않는다.
+실제 API `.env` 파일은 commit하지 않는다. 서버에는 UI `.env` 파일을 만들지 않는다.
 
 Google Cloud Console의 OAuth client에는 다음 값만 추가한다.
 
@@ -137,72 +133,49 @@ Google Cloud Console의 OAuth client에는 다음 값만 추가한다.
 
 runner origin에는 OAuth origin이나 redirect URI를 등록하지 않는다.
 
-## 5. 의존성, migration, UI build
+## 5. 로컬 UI build와 최초 release
 
-```bash
-cd /home/ubuntu/caemble/app/api
-poetry install --only main
-poetry run alembic upgrade head
-poetry run alembic current
+로컬 장비에는 Node.js와 npm, `tar`가 필요하다. 현재 dependency의 지원 범위에 맞는
+Node.js 22.13 LTS 또는 Node.js 24 이상을 권장한다. 실행 중인 Caemble UI 개발 서버를
+종료한 뒤 다음 배치 파일을 실행한다.
 
-cd /home/ubuntu/caemble/app/sdk/master/js
-npm ci
-npm run build
-
-cd /home/ubuntu/caemble/app/ui
-npm ci
-npm run build
+```powershell
+cd E:\caemble
+deployment\build-ui.bat
 ```
 
-`npm run build`는 production 자산 검사를 포함한다. 다음 조건을 검증하므로 실패를
-무시하면 안 된다.
+배치 파일은 시작할 때 기존 `deployment\caemble-ui.tar.gz`를 삭제한다. SDK/UI
+dependency 설치와 production build가 모두 성공하고 `index.html`, `runner.html`,
+production asset 검사를 통과한 경우에만 같은 경로에 새 artifact를 만든다. production
+UI 환경 변수도 배치 파일이 설정하므로 로컬 `.env`를 배포용으로 바꿀 필요가 없다.
+
+`npm run build`가 검사하는 주요 조건은 다음과 같다.
 
 - `runner.html`과 배포 header의 runner CSP 일치
 - runner Worker 밖에 `new Function`이 없는지 확인
 - 금지된 CDN/WASM runtime 의존성 확인
 - 생성된 CAD API와 고정된 Monaco/API 버전 확인
 
-첫 정적 릴리스를 release 디렉터리에 복사하고 `current` 링크를 만든다.
+artifact를 관련 소스 변경과 같은 commit에 포함해 push한다.
+
+```powershell
+git add deployment\caemble-ui.tar.gz
+# 관련 소스 파일도 같은 commit에 stage한다.
+git commit
+git push
+```
+
+최초 전환 시에는 서버에 아직 이전 `update.sh`가 있으므로 한 번만 직접 pull한 뒤 새
+스크립트를 실행한다.
 
 ```bash
 cd /home/ubuntu/caemble
-RELEASE="initial-$(git rev-parse --short HEAD)"
-sudo mkdir -p "/var/www/caemble/releases/$RELEASE"
-sudo rsync -a --delete app/ui/dist/ "/var/www/caemble/releases/$RELEASE/"
-sudo chown -R root:www-data "/var/www/caemble/releases/$RELEASE"
-sudo find "/var/www/caemble/releases/$RELEASE" -type d -exec chmod 755 {} \;
-sudo find "/var/www/caemble/releases/$RELEASE" -type f -exec chmod 644 {} \;
-sudo ln -sfn "/var/www/caemble/releases/$RELEASE" /var/www/caemble/current
+git pull --ff-only
+bash deployment/update.sh
 ```
 
-### 기존 client token 일회성 이관
-
-먼저 새 schema와 API를 배포한 뒤 GPStation DB의 read-only 계정 URL을 일회성 환경
-변수로만 전달한다. 이 URL을 `app/api/.env`나 다른 설정 파일에 기록하지 않는다.
-기본 실행은 dry-run이며 대상 Caemble DB를 변경하지 않는다.
-
-```bash
-cd /home/ubuntu/caemble/app/api/app
-export CAEMBLE_GPSTATION_IMPORT_DB_URL='postgresql://<READ_ONLY_USER>:<PASSWORD>@<HOST>/<DB>'
-
-poetry run python -m import_gpstation_client_tokens \
-  --map '<GP_USER_ID>=<CAEMBLE_USER_ID>'
-
-poetry run python -m import_gpstation_client_tokens \
-  --map '<GP_USER_ID>=<CAEMBLE_USER_ID>' \
-  --apply
-
-unset CAEMBLE_GPSTATION_IMPORT_DB_URL
-```
-
-provider identity로 안전하게 매핑되지 않는 계정만 `--map`을 반복해 명시한다. importer는
-유효한 `client` token의 hash, prefix, 만료, 상태, IP/origin/rate-limit 정책만 옮기며
-plaintext secret을 읽거나 출력하지 않는다. 같은 hash와 owner는 멱등적으로 건너뛰고,
-owner 또는 prefix 충돌이 있으면 apply 전체를 rollback한다. 각 성공 건은 audit에
-기록된다. `launcher` token은 이관하지 않고 Caemble에서 새로 발급한다.
-
-이관된 secret은 GPStation에서 별도로 만료하거나 폐기할 때까지 양쪽에서 유효할 수 있다.
-전환이 끝나면 위 환경 변수를 제거하고 운영 서버에서 GPStation DB 접근 권한도 제거한다.
+새 서버에서 처음 배포할 때도 같은 명령을 사용한다. 이 시점에 systemd 서비스가 아직
+설치되지 않았다면 API 재시작만 건너뛰며, 6절에서 서비스를 설치하고 시작한다.
 
 ## 6. systemd API 서비스
 
@@ -381,24 +354,29 @@ sudo nginx -t
 
 ## 9. 이후 업데이트
 
+로컬에서 UI artifact를 만들고 소스 변경과 함께 commit/push한다.
+
+```powershell
+cd E:\caemble
+deployment\build-ui.bat
+git add deployment\caemble-ui.tar.gz
+# 관련 소스 파일도 같은 commit에 stage한다.
+git commit
+git push
+```
+
+서버에서는 다음 명령 하나만 실행한다.
+
 ```bash
 cd /home/ubuntu/caemble
 bash deployment/update.sh
 ```
 
-스크립트는 fast-forward pull, 로컬 v1 JavaScript SDK build, UI build, API dependency
-설치, Alembic migration, 새 정적 release 게시, API 재시작, Nginx 검증/reload 순서로
-동작한다. UI는 새 release 디렉터리에 완성된 뒤 `/var/www/caemble/current` 링크가 한
-번에 교체된다.
-
-필요하면 기본값을 환경 변수로 재정의한다.
-
-```bash
-APP_DIR=/srv/caemble \
-WEB_ROOT=/srv/www/caemble \
-API_SERVICE=caemble-api \
-bash /srv/caemble/deployment/update.sh
-```
+`update.sh`는 `git pull --ff-only`로 최신 소스와 artifact를 함께 받은 뒤 archive
+무결성과 `index.html`, `runner.html`을 먼저 검사한다. 검사가 끝난 후에만 API
+dependency 설치, Alembic migration, 새 정적 release 게시, `current` 링크 원자적 교체,
+API 재시작, Nginx 검사/reload를 수행한다. Git 추적 파일인 artifact는 배포 후에도
+삭제하거나 수정하지 않는다.
 
 기존 release는 자동 삭제하지 않는다. 디스크 사용량을 확인한 뒤 현재 링크와 직전
 release를 제외하고 운영자가 정리한다.
@@ -435,10 +413,10 @@ sudo ln -sfn "/var/www/caemble/releases/$PREVIOUS_RELEASE" /var/www/caemble/.rol
 sudo mv -Tf /var/www/caemble/.rollback-current /var/www/caemble/current
 ```
 
-API 코드 롤백은 운영 branch에서 문제 commit을 `git revert`한 후 update script를 다시
-실행한다. 이미 적용한 DB migration은 임의로 `alembic downgrade`하지 않는다. schema
-호환이 깨진 migration이라면 사전에 준비한 DB snapshot을 복원하거나 검토된 보정
-migration을 적용한다.
+API 코드 롤백은 운영 branch에서 문제 commit을 `git revert`한 후 9절의 로컬
+artifact build와 서버 update를 다시 실행한다. 이미 적용한 DB migration은 임의로
+`alembic downgrade`하지 않는다. schema 호환이 깨진 migration이라면 사전에 준비한
+DB snapshot을 복원하거나 검토된 보정 migration을 적용한다.
 
 ## 11. 전환 순서
 
