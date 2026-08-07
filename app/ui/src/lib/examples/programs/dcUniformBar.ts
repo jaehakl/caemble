@@ -176,5 +176,21 @@ export const dcUniformBarExample = Object.freeze({
       'dc-current-density@0.0.0 호출 1회',
       'stateless DC 실행은 입력 state revision 유지',
     ]),
+    fixture: Object.freeze({
+      records: Object.freeze([
+        Object.freeze({
+          name: 'totalCurrent',
+          dtype: 'float64',
+          shape: Object.freeze([]),
+          value: 14.9,
+          absoluteTolerance: 1e-6,
+        }),
+      ]),
+      terminal: Object.freeze({
+        kind: 'complete',
+        sequence: 2,
+        recordSequences: Object.freeze([1]),
+      }),
+    }),
   }),
 }) satisfies CaembleProgramExample

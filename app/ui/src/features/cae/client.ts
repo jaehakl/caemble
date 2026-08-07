@@ -1,10 +1,4 @@
-import {
-  GpStationClient,
-  type CallResult,
-  type JobEvent,
-  type JobSession,
-  type RequestAttachment,
-} from '@gpstation/v1-master-js-sdk'
+import { GpStationClient, type CallResult, type JobEvent, type JobSession } from '@gpstation/v1-master-js-sdk'
 import type {
   CaeCompletePayload,
   CaeFailedPayload,
@@ -12,9 +6,10 @@ import type {
   CaeRecordPayload,
   CaeSimulationProgress,
   CaeSimulationStatus,
-  CaeStartRequest,
   CaeStartedPayload,
 } from './protocol'
+import { CaeSimulationError } from './errors'
+import { serializeCaeRequest } from './request'
 import type { GPStationConnectionData } from '@/api'
 import type { BuiltSample, BuiltSetup, DataTensor, RecordedData } from '../../lib/cad'
 import {
@@ -24,13 +19,10 @@ import {
   releaseDataTensorAttachments,
 } from '../../lib/cad'
 
-const INPUT_LIMIT_BYTES = 256 * 1024 * 1024
 const RECORDED_LIMIT_BYTES = 64 * 1024 * 1024
 const SHARD_BYTES = 16 * 1024 * 1024
-const INLINE_CALL_PAYLOAD_BYTES = 512 * 1024
 const CONNECT_TIMEOUT_MS = 60_000
 const FINISH_TIMEOUT_MS = 60_000
-const LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1
 
 export type CaeSimulationOptions = Readonly<{
   connection?: GPStationConnectionData | null
@@ -43,15 +35,7 @@ export type CaeSimulationOptions = Readonly<{
 type StartPayload = CaeStartedPayload | CaeFailedPayload
 type NextPayload = CaeRecordPayload | CaeCompletePayload | CaeFailedPayload
 
-export class CaeSimulationError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-  ) {
-    super(message)
-    this.name = 'CaeSimulationError'
-  }
-}
+export { CaeSimulationError } from './errors'
 
 export function simulate(
   sample: BuiltSample,
@@ -101,6 +85,10 @@ export function simulate(
     }
     const canonical = canonicalizeCaeRealizations(sample, setup)
     const request = serializeCaeRequest(canonical.sample, canonical.setup)
+    const requestAttachments = request.attachments.map(({ bytes, ...attachment }) => ({
+      ...attachment,
+      blob: new Blob([bytes.slice().buffer as ArrayBuffer], { type: attachment.mimeType }),
+    }))
     const client = new GpStationClient({
       apiBaseUrl,
       token,
@@ -115,7 +103,7 @@ export function simulate(
         slaveAppId: 'cae',
         autoFinish: false,
         timeoutMs: CONNECT_TIMEOUT_MS,
-        attachments: request.attachments,
+        attachments: requestAttachments,
         onJobCreated(job) {
           jobId = job.id
           if (cancelled) void kill()
@@ -222,77 +210,6 @@ export function releaseRecordedDataAttachments(recordedData: RecordedData | null
     'storage' in tensor && tensor.storage.kind === 'attachments' ? [...tensor.storage.ids] : [],
   )
   releaseDataTensorAttachments(ids)
-}
-
-function serializeCaeRequest(sample: BuiltSample, setup: BuiltSetup) {
-  const attachments: RequestAttachment[] = []
-  let totalBytes = 0
-  const visit = (value: unknown, path: string): unknown => {
-    if (ArrayBuffer.isView(value) && !(value instanceof DataView)) {
-      if (!LITTLE_ENDIAN) {
-        throw new CaeSimulationError(
-          'unsupported_platform',
-          'CAE raw tensor 전송은 little-endian browser가 필요합니다.',
-        )
-      }
-      const typedArray = value as ArrayBufferView & Readonly<{ BYTES_PER_ELEMENT: number }>
-      const source = new Uint8Array(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength)
-      const ids: string[] = []
-      for (let offset = 0; offset < source.byteLength; offset += SHARD_BYTES) {
-        const id = `input-${attachments.length}`
-        const bytes = source.slice(offset, Math.min(offset + SHARD_BYTES, source.byteLength))
-        ids.push(id)
-        attachments.push({
-          id,
-          name: `${path}.${ids.length - 1}.bin`,
-          mimeType: 'application/octet-stream',
-          blob: new Blob([bytes.buffer as ArrayBuffer], { type: 'application/octet-stream' }),
-        })
-      }
-      totalBytes += source.byteLength
-      return {
-        shape: [typedArray.byteLength / typedArray.BYTES_PER_ELEMENT],
-        storage: { kind: 'attachments', ids, byteLength: source.byteLength },
-      }
-    }
-    if (Array.isArray(value)) return value.map((item, index) => visit(item, `${path}.${index}`))
-    if (value && typeof value === 'object') {
-      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, visit(item, `${path}.${key}`)]))
-    }
-    return value
-  }
-  const payload = visit({ sample, setup }, 'cae') as CaeStartRequest
-  const payloadBytes = new TextEncoder().encode(JSON.stringify(payload))
-  totalBytes += payloadBytes.byteLength
-  if (totalBytes > INPUT_LIMIT_BYTES) {
-    throw new CaeSimulationError('resource_limit', 'BuiltSample/BuiltSetup이 256 MiB를 초과했습니다.')
-  }
-  if (payloadBytes.byteLength > INLINE_CALL_PAYLOAD_BYTES) {
-    const ids: string[] = []
-    for (let offset = 0; offset < payloadBytes.byteLength; offset += SHARD_BYTES) {
-      const id = `input-${attachments.length}`
-      const bytes = payloadBytes.slice(offset, Math.min(offset + SHARD_BYTES, payloadBytes.byteLength))
-      ids.push(id)
-      attachments.push({
-        id,
-        name: `cae-start.${ids.length - 1}.json`,
-        mimeType: 'application/json; charset=utf-8',
-        blob: new Blob([bytes.buffer as ArrayBuffer], { type: 'application/json' }),
-      })
-    }
-    return Object.freeze({
-      payload: Object.freeze({
-        kind: 'cae.start.payload-attachments',
-        storage: Object.freeze({
-          kind: 'attachments',
-          ids: Object.freeze(ids),
-          byteLength: payloadBytes.byteLength,
-        }),
-      }),
-      attachments,
-    })
-  }
-  return Object.freeze({ payload, attachments })
 }
 
 async function cacheRecordAttachments(

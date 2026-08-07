@@ -56,7 +56,8 @@ class User(TimestampMixin, Base):
     gpstation_connection: Mapped[Optional["GPStationConnection"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="raise",
+        passive_deletes=True,
         single_parent=True,
         uselist=False,
     )

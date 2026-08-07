@@ -1,7 +1,7 @@
 """add per-user GPStation connections
 
 Revision ID: 9d31a6f7c2e4
-Revises: e7b2c5d91a40
+Revises: f24a6b91d3ce
 Create Date: 2026-08-06
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 revision: str = "9d31a6f7c2e4"
-down_revision: Union[str, Sequence[str], None] = "e7b2c5d91a40"
+down_revision: Union[str, Sequence[str], None] = "f24a6b91d3ce"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

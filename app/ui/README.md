@@ -51,12 +51,19 @@ npm run check:generated
 ```
 
 QuantityKind와 Material 전체 catalog는 각각 `src/lib/quantitykind/data`와
-`src/lib/material/data`의 domain별 TypeScript 파일이 원본이다. kernel descriptor도
-`src/lib/cad/simulation/kernels/*/descriptor.ts`에 solver별로 둔다. 별도 JSON
-contract 원본, npm contract package, Python wheel 또는 runtime contract hash는 없다.
+`src/lib/material/data`의 domain별 TypeScript 파일이 원본이다. CAE kernel descriptor의
+단일 원본은 GPStation CAE의 `app/solvers/*/manifest.json`이다. UI의
+`src/lib/cad/simulation/kernels/generated.ts`는 직접 수정하지 않고 다음 명령으로
+갱신하거나 검사한다.
+
+```powershell
+cd E:\gpstation\app_v1\slaves\cae
+poetry run python -m app.solver_framework.codegen --caemble-ui E:\caemble\app\ui
+poetry run python -m app.solver_framework.codegen --caemble-ui E:\caemble\app\ui --check
+```
 
 The CAD generator reads the element registry, local TypeScript catalogs,
-registered authoring descriptors, and `src/lib/cad/api/authoring-manifest.json`.
+the generated solver catalog, and `src/lib/cad/api/authoring-manifest.json`.
 It generates the element catalog/registry, JSX intrinsic types, strict solver
 authoring types, and pinned API versions. Commit all generated changes. CI should
 run `npm run check:generated`; a non-empty regeneration diff is an error.

@@ -5,9 +5,10 @@ from urllib.parse import parse_qs, urlsplit
 
 import jwt as pyjwt
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 
 from settings import settings
+from tests.helpers import create_user
 from user_auth import routes as auth_routes
 from user_auth.db import Identity, OAuthState, User
 from user_auth.utils.auth_utils import pkce_challenge, safe_return_to
@@ -48,6 +49,30 @@ def test_return_to_is_restricted_to_configured_origins(monkeypatch):
     assert safe_return_to("https://preview.example.com/docs") == "https://preview.example.com/docs"
     assert safe_return_to("https://evil.example/viewer") == "https://app.example.com"
     assert safe_return_to("//evil.example/viewer") == "https://app.example.com"
+
+
+@pytest.mark.asyncio
+async def test_refresh_does_not_load_gpstation_connection(
+    client,
+    db_session,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
+    user = await create_user(db_session)
+    statements: list[str] = []
+
+    def record_statement(_connection, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+
+    event.listen(db_session.bind.sync_engine, "before_cursor_execute", record_statement)
+    try:
+        client.cookies.set("refresh_token", make_refresh(user.id))
+        response = await client.get("/auth/refresh")
+    finally:
+        event.remove(db_session.bind.sync_engine, "before_cursor_execute", record_statement)
+
+    assert response.status_code == 200
+    assert not any("gpstation_connections" in statement for statement in statements)
 
 
 @pytest.mark.asyncio

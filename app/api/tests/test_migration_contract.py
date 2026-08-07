@@ -65,7 +65,7 @@ def test_gpstation_connection_revision_is_separate_from_users_and_reversible():
         )
     )
     source = revision.read_text(encoding="utf-8")
-    assert 'down_revision: Union[str, Sequence[str], None] = "e7b2c5d91a40"' in source
+    assert 'down_revision: Union[str, Sequence[str], None] = "f24a6b91d3ce"' in source
     assert '"gpstation_connections"' in source
     assert 'sa.PrimaryKeyConstraint("user_id"' in source
     assert '["users.id"]' in source
@@ -73,11 +73,25 @@ def test_gpstation_connection_revision_is_separate_from_users_and_reversible():
     assert 'op.drop_table("gpstation_connections")' in source
 
 
+def test_deployed_revision_marker_is_a_noop_compatibility_revision():
+    revision = next(
+        (Path(__file__).resolve().parents[1] / "alembic" / "versions").glob(
+            "f24a6b91d3ce_*.py"
+        )
+    )
+    source = revision.read_text(encoding="utf-8")
+    assert 'revision: str = "f24a6b91d3ce"' in source
+    assert 'down_revision: Union[str, Sequence[str], None] = "e7b2c5d91a40"' in source
+    assert source.count("    pass") == 2
+
+
 def test_source_migration_graph_ends_at_gpstation_connections():
     root = Path(__file__).resolve().parents[1]
     scripts = ScriptDirectory.from_config(Config(root / "alembic.ini"))
 
     assert scripts.get_heads() == ["9d31a6f7c2e4"]
+    assert scripts.get_revision("f24a6b91d3ce").down_revision == "e7b2c5d91a40"
+    assert scripts.get_revision("9d31a6f7c2e4").down_revision == "f24a6b91d3ce"
     assert not any(root.joinpath("alembic", "versions").glob("*_measurement_contract_metadata.py"))
 
 

@@ -289,7 +289,7 @@ async def check_user(request: Request, db: AsyncSession = Depends(get_db)) -> Au
     user = await db.scalar(select(User).options(
         selectinload(User.user_roles).selectinload(UserRole.role),
         selectinload(User.gpstation_connection),
-    ).where(User.id == claims["sub"]))
+    ).where(User.id == claims["sub"]).execution_options(populate_existing=True))
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User inactive")
     return authenticated_user_data(user)
