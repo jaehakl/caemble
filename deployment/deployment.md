@@ -313,8 +313,11 @@ sudo systemctl reload nginx
 - `www.caemble.com/api/*`만 FastAPI로 전달하고 외부 `/api/` prefix는 제거한다.
 - `/api/`는 WebSocket upgrade를 전달하고 job/launcher 장기 연결에 3,600초 timeout을
   적용한다.
-- 메인 CSP는 `code-to-cad.caemble.com`만 frame으로 허용하며 `'unsafe-eval'`을 허용하지 않는다.
+- 메인 CSP는 `code-to-cad.caemble.com`만 frame으로 허용한다. 3D Viewer의
+  `@jscad/regl-renderer`가 WebGL command를 생성할 때 `Function.apply`를 사용하므로
+  `script-src`에는 `'unsafe-eval'`이 필요하다.
 - runner CSP는 코드의 production 검사와 동일한 값이며 `connect-src 'none'`을 유지한다.
+- 사용자 TSX 평가는 메인 앱에서 실행하지 않고 계속 별도 runner Worker에서만 실행한다.
 - runner origin의 `/`와 `/api/*`는 `404`이며 쿠키나 일반 앱 route를 제공하지 않는다.
 - 메인 origin의 `/runner.html`도 `404`로 차단한다.
 
@@ -375,8 +378,8 @@ bash deployment/update.sh
 `update.sh`는 `git pull --ff-only`로 최신 소스와 artifact를 함께 받은 뒤 archive
 무결성과 `index.html`, `runner.html`을 먼저 검사한다. 검사가 끝난 후에만 API
 dependency 설치, Alembic migration, 새 정적 release 게시, `current` 링크 원자적 교체,
-API 재시작, Nginx 검사/reload를 수행한다. Git 추적 파일인 artifact는 배포 후에도
-삭제하거나 수정하지 않는다.
+API 재시작, 설치된 Nginx 설정 동기화, Nginx 검사/reload를 수행한다. Git 추적 파일인
+artifact는 배포 후에도 삭제하거나 수정하지 않는다.
 
 기존 release는 자동 삭제하지 않는다. 디스크 사용량을 확인한 뒤 현재 링크와 직전
 release를 제외하고 운영자가 정리한다.

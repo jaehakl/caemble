@@ -19,11 +19,12 @@ async function productionSources(directory) {
   return files.flat()
 }
 
-const [indexHtml, packageJson, authoringManifest, runnerHeaders] = await Promise.all([
+const [indexHtml, packageJson, authoringManifest, runnerHeaders, deploymentConfig] = await Promise.all([
   readFile(path.join(dist, 'index.html'), 'utf8'),
   readFile(path.join(root, 'package.json'), 'utf8').then(JSON.parse),
   readFile(path.join(root, 'src/lib/cad/api/authoring-manifest.json'), 'utf8').then(JSON.parse),
   readFile(path.join(root, 'public/_headers'), 'utf8'),
+  readFile(path.join(root, '../../deployment/app.conf'), 'utf8'),
 ])
 
 if (!/^\d+\.\d+\.\d+$/.test(packageJson.dependencies['monaco-editor'])) {
@@ -62,8 +63,13 @@ const contents = new Map(
   ),
 )
 const runnerHtml = contents.get('runner.html')
+const hostCsp =
+  "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-src https://code-to-cad.caemble.com; base-uri 'self'; form-action 'self'; object-src 'none'; frame-ancestors 'self'"
 const runnerCsp =
   "default-src 'none'; script-src 'self' 'unsafe-eval'; worker-src 'self'; connect-src 'none'; img-src 'none'; style-src 'none'; base-uri 'none'; form-action 'none'"
+if (!deploymentConfig.includes(`add_header Content-Security-Policy "${hostCsp}" always;`)) {
+  throw new Error('The deployment config must allow the regl renderer required by the host UI.')
+}
 if (!runnerHtml?.includes(runnerCsp) || !runnerHeaders.includes(runnerCsp)) {
   throw new Error('Runner HTML and deployment headers must preserve the isolated runner CSP.')
 }

@@ -6,8 +6,10 @@ API_DIR=${API_DIR:-$APP_DIR/app/api}
 UI_ARTIFACT=${UI_ARTIFACT:-$APP_DIR/deployment/caemble-ui.tar.gz}
 WEB_ROOT=${WEB_ROOT:-/var/www/caemble}
 API_SERVICE=${API_SERVICE:-caemble-api}
+NGINX_CONFIG_SOURCE=${NGINX_CONFIG_SOURCE:-$APP_DIR/deployment/app.conf}
+NGINX_CONFIG_TARGET=${NGINX_CONFIG_TARGET:-/etc/nginx/sites-available/caemble.conf}
 
-for command_name in git grep poetry sudo tar; do
+for command_name in git grep install poetry sudo tar; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "Required command not found: $command_name" >&2
         exit 1
@@ -75,7 +77,12 @@ else
     echo "API service is not installed yet; skipping restart: $API_SERVICE"
 fi
 
-echo "[6/7] Validate and reload Nginx"
+echo "[6/7] Install, validate and reload Nginx"
+if sudo test -f "$NGINX_CONFIG_TARGET"; then
+    sudo install -m 644 "$NGINX_CONFIG_SOURCE" "$NGINX_CONFIG_TARGET"
+else
+    echo "Final Nginx config is not installed yet; skipping config sync: $NGINX_CONFIG_TARGET"
+fi
 sudo nginx -t
 sudo systemctl reload nginx
 
