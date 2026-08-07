@@ -1,0 +1,1 @@
+"""Caemble CAE slave."""

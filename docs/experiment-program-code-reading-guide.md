@@ -6,7 +6,7 @@
 Structure/Experiment TS authoring
 → UI compile/evaluate/raw serialization
 → { sample, setup }
-→ GPStation cae slave
+→ Caemble cae slave
 → manifest validation and UCUM conversion
 → sim.record()된 DataTensor
 → Viewer/Analysis와 Measurement JSONB
@@ -25,18 +25,22 @@ Structure/Experiment TS authoring
 별도 `contracts/cae` JSON 원본, npm contract package, Python contract wheel과
 contract hash 검사는 없다.
 
-## 1. CAE manifest와 live Solver Catalog
+## 1. CAE manifest와 Solver Catalog
 
 먼저 다음 순서로 읽는다.
 
-1. GPStation CAE `app/solvers/*/manifest.json`: solver별 단일 계약 원본
-2. GPStation CAE `app/solver_framework/registry.py`: schema 검증, 자동 발견, lazy import
-3. GPStation CAE `app/handlers.py`: `cae.solvers.manifests` attachment 응답
-4. [`manifests.ts`](../app/ui/src/features/cae/manifests.ts): 전체 응답 검증
-5. [`SolverCatalogPage.tsx`](../app/ui/src/pages/catalog/solvers/SolverCatalogPage.tsx): 연결별 메모리 cache와 표시
+1. Caemble [`app/slaves/cae/app/solvers/*/manifest.json`](../app/slaves/cae/app/solvers):
+   solver별 단일 계약 원본
+2. Caemble CAE `app/solver_framework/registry.py`: schema 검증, 자동 발견, lazy import
+3. Caemble CAE `app/handlers.py`: 외부 SDK용 `cae.solvers.manifests` attachment 응답
+4. [`manifests.ts`](../app/ui/src/features/cae/manifests.ts): 같은 JSON을 Vite build 시 직접
+   포함하고 검증
+5. [`SolverCatalogPage.tsx`](../app/ui/src/pages/catalog/solvers/SolverCatalogPage.tsx):
+   build에 포함된 descriptor 표시
 
 UI에는 solver manifest 사본, generated solver catalog, solver별 authoring builder가
-없다. Catalog는 연결된 CAE worker가 보내는 manifest의 `descriptor`만 표시한다.
+없다. Catalog는 같은 checkout의 canonical manifest를 사용하며 manifest를 변경한 뒤에는
+UI를 다시 빌드한다.
 
 ## 2. 실행 manifest
 
@@ -96,7 +100,7 @@ client는 다음을 내부 처리한다.
 
 ## 5. Python CAE slave
 
-별도 GPStation checkout의 `app_v1/slaves/cae`는 다음 순서로 읽는다.
+같은 Caemble checkout의 [`app/slaves/cae`](../app/slaves/cae)는 다음 순서로 읽는다.
 
 1. `handlers.py`: start/next handler와 request attachment decode
 2. `runtime.py`: run lifecycle, ACK, Python orchestration, artifact ownership
@@ -145,23 +149,26 @@ base64 내용을 교차 검증하지 않는다. `data_url`과 `file_size`는 신
 ## 검증 순서
 
 ```powershell
-cd E:\caemble\app\ui
+Push-Location app/ui
 npm run generate:cad-api
 npm run check:generated
 npx tsc -b
 npm test
 npm run lint
 npm run build
+Pop-Location
 
-cd E:\caemble\app\api
+Push-Location app/api
 .\.venv\Scripts\python.exe -m pytest -q
+Pop-Location
 
-cd E:\gpstation\app_v1\slaves\cae
-poetry lock
+Push-Location app/slaves/cae
 poetry install
 poetry run pytest -q
+Pop-Location
 ```
 
 마지막으로 UI import graph에 로컬 solver runtime이나 contract package가 없고,
-CAE import graph에 전체 catalog, UCUM 변환기와 contract wheel이 없으며 GPStation
-SDK/server source diff가 없는지 확인한다.
+CAE import graph에 전체 UI catalog나 UCUM 변환기가 없으며 SDK, launcher, API와 두
+slave 어디에도 외부 GPStation checkout 절대경로나 runtime dependency가 없는지
+확인한다.

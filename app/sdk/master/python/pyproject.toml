@@ -1,0 +1,27 @@
+[project]
+name = "gpstation-v1-master-python-sdk"
+version = "0.1.0"
+description = "Async Python master SDK for Caemble's GPStation v1-compatible job runtime"
+authors = [{ name = "Caemble" }]
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+    "aiortc>=1.9,<2.0",
+    "httpx>=0.28,<1.0",
+]
+
+[tool.poetry]
+packages = [{ include = "gpstation_master" }]
+include = [{ path = "gpstation_master/py.typed", format = ["sdist", "wheel"] }]
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0,<10.0"
+pytest-asyncio = ">=1.0,<2.0"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

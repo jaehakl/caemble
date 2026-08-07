@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://caemble.com/schemas/cae-solver-manifest-v1.json",
+  "title": "Caemble CAE solver manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "implementation", "descriptor"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "implementation": {
+      "type": "string",
+      "pattern": "^app\\.solvers\\.[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*:[A-Za-z_][A-Za-z0-9_]*$"
+    },
+    "descriptor": { "$ref": "#/$defs/descriptor" }
+  },
+  "$defs": {
+    "data": {
+      "type": "object",
+      "required": ["dtype"],
+      "properties": {
+        "dtype": { "type": "string", "minLength": 1 },
+        "quantityKind": { "type": "string", "minLength": 1 },
+        "tensorOrder": { "type": "integer", "minimum": 0 },
+        "unit": { "type": "string" },
+        "basis": { "type": "array" },
+        "axes": { "type": "array" },
+        "minimum": { "type": "number" },
+        "maximum": { "type": "number" },
+        "exclusiveMinimum": { "type": "boolean" },
+        "exclusiveMaximum": { "type": "boolean" },
+        "minimumLength": { "type": "integer", "minimum": 0 },
+        "values": { "type": "array" }
+      }
+    },
+    "parameter": {
+      "type": "object",
+      "required": ["data"],
+      "properties": {
+        "description": { "type": "string" },
+        "required": { "type": "boolean" },
+        "data": { "$ref": "#/$defs/data" }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "kind", "minimumTargets", "maximumTargets"],
+      "properties": {
+        "source": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "minLength": 1 },
+        "minimumTargets": { "type": "integer", "minimum": 0 },
+        "maximumTargets": { "type": "integer", "minimum": 0 },
+        "minimumResolved": { "type": "integer", "minimum": 0 },
+        "maximumResolved": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "method": {
+      "type": "object",
+      "required": [
+        "methodId",
+        "minimumOccurrences",
+        "maximumOccurrences",
+        "target",
+        "parameters"
+      ],
+      "properties": {
+        "methodId": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "minimumOccurrences": { "type": "integer", "minimum": 0 },
+        "maximumOccurrences": { "type": "integer", "minimum": 0 },
+        "target": { "$ref": "#/$defs/target" },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/parameter" }
+        },
+        "artifactType": { "type": "string", "minLength": 1 },
+        "data": { "$ref": "#/$defs/data" }
+      }
+    },
+    "descriptor": {
+      "type": "object",
+      "required": [
+        "name",
+        "version",
+        "referenceLengthUnit",
+        "minimumOutputs",
+        "parameters",
+        "materials",
+        "inputPorts",
+        "observations",
+        "methods"
+      ],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "description": { "type": "string" },
+        "referenceLengthUnit": { "type": "string", "minLength": 1 },
+        "minimumOutputs": { "type": "integer", "minimum": 0 },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/parameter" }
+        },
+        "materials": { "type": "array" },
+        "inputPorts": { "type": "object" },
+        "observations": { "type": "object" },
+        "methods": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["initializations", "boundaryConditions", "outputs"],
+          "properties": {
+            "initializations": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/method" }
+            },
+            "boundaryConditions": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/method" }
+            },
+            "outputs": {
+              "type": "array",
+              "items": {
+                "allOf": [
+                  { "$ref": "#/$defs/method" },
+                  { "required": ["artifactType", "data"] }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -2,7 +2,7 @@ export function readMeasurementReturnTo(state: unknown) {
   if (typeof state !== 'object' || state === null || !('measurementReturnTo' in state)) return null
   const value = String(state.measurementReturnTo)
   const url = new URL(value, 'https://caemble.local')
-  return url.pathname === '/measurements' ? `${url.pathname}${url.search}` : null
+  return url.pathname === '/measurements' || url.pathname === '/viewer' ? `${url.pathname}${url.search}` : null
 }
 
 export function updateMeasurementReturnTo(

@@ -1,0 +1,6 @@
+{
+  "id": "cae",
+  "name": "CAE",
+  "module": "app",
+  "startup_timeout_seconds": 60
+}

@@ -70,9 +70,7 @@ function assertRecordedDataSpec(value: unknown, path: string): asserts value is 
   value.axes.forEach((axis, index) => {
     const axisPath = `${path}.axes[${index}]`
     if (!isPlainObject(axis)) throw new Error(`${axisPath} must be an object.`)
-    const axisKeys = ['length', 'name', 'ticks', 'unit', 'quantityKind'].filter(
-      (key) => axis[key] !== undefined,
-    )
+    const axisKeys = ['length', 'name', 'ticks', 'unit', 'quantityKind'].filter((key) => axis[key] !== undefined)
     assertExactKeys(axis, axisKeys, axisPath)
     if (axis.length !== undefined && (!Number.isSafeInteger(axis.length) || (axis.length as number) <= 0)) {
       throw new Error(`${axisPath}.length must be a positive safe integer.`)

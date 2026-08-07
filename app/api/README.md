@@ -30,19 +30,41 @@ index와 FK를 포함한다. 이후 모델 변경은 반드시 새 revision으�
 제한된다. 로컬 HTTP에서는 `SECURE_COOKIES=false`, HTTPS 운영에서는
 `SECURE_COOKIES=true`를 사용하고 필요할 때만 `COOKIE_DOMAIN`을 설정한다.
 
-## GPStation 연결
+## 통합 job runtime
 
-사용자별 GPStation API URL과 Access Token은 `users`가 아닌
-`gpstation_connections`에 일대일로 저장한다. `user_id`가 PK이자
-`users.id`의 FK이며 사용자를 삭제하면 연결도 함께 삭제된다.
+Caemble은 GPStation 연결 정보를 저장하지 않고 `/v1` client/launcher API와
+`/web` 관리 API를 직접 제공한다. Access Token 원문은 생성 응답에 한 번만
+표시하고 DB에는 SHA-256 hash와 표시용 prefix만 저장한다.
 
-- `GET /auth/me`는 로그인한 본인의 `gpstation_connection`을 반환한다.
-- `PUT /user_data/gpstation`은 URL과 Token을 함께 생성하거나 교체한다.
-- `DELETE /user_data/gpstation`은 로그인한 사용자의 연결을 삭제한다.
-- 관리자 사용자 목록과 사용자 요약 응답에는 GPStation 연결을 포함하지 않는다.
+서버 시작 시 `../slaves/*/manifest.json`을 UTF-8로 직접 읽어 `id`, `name`,
+`module`과 중복을 검증한다. 등록되지 않은 `slave_app_id`의 job과 launcher는
+거부된다. 런처 연결과 job dispatcher는 프로세스 메모리를 사용하므로 API는
+반드시 단일 worker/replica로 실행한다. PostgreSQL advisory lock이 두 번째
+runtime 프로세스의 시작을 차단하며, 재시작 시 진행 중 job은 실패로 복구된다.
 
-Access Token은 현재 정책상 DB에 평문 저장된다. 운영 DB 권한을 제한하고 TLS를
-사용해야 하며 Token을 로그나 오류 메시지에 기록해서는 안 된다.
+기존 GPStation의 활성 client AccessKey는 원본 DB를 read-only transaction으로
+직접 읽어 가져올 수 있다. 기본 실행은 dry-run이다.
+
+```powershell
+cd app/api/app
+$env:CAEMBLE_GPSTATION_IMPORT_DB_URL = "postgresql://..."
+poetry run python -m import_gpstation_client_tokens `
+  --map "GP_USER_ID=CAEMBLE_USER_ID"
+
+poetry run python -m import_gpstation_client_tokens `
+  --map "GP_USER_ID=CAEMBLE_USER_ID" `
+  --apply
+
+Remove-Item Env:CAEMBLE_GPSTATION_IMPORT_DB_URL
+```
+
+사용자 매핑은 provider identity, 명시적 `--map`, 검증된 고유 email 순서로
+해결한다. 유효한 `(provider, provider_user_id)` identity가 있으면 email이 없어도
+새 Caemble `user` 계정을 만들 수 있다. 안전한 provider identity가 없으면
+`--map`을 요구한다. hash와 기존 prefix는 보존하지만 scope는 `client`만
+가져오며, launcher token은 Caemble에서 새로 발급해야 한다.
+소스 DB URL은 `CAEMBLE_GPSTATION_IMPORT_DB_URL` 환경변수에서만 읽으며 결과나
+로그에 출력하지 않는다.
 
 ## CRUD 계약
 
@@ -91,9 +113,11 @@ Measurement 저장에서도 `NULL`이다.
 ## 실행
 
 ```powershell
-cd app
+cd app/api/app
 poetry run python -m uvicorn main:app --reload --host 0.0.0.0
 ```
+
+운영 실행에는 `--workers`를 추가하지 않는다.
 
 테스트는 설정된 PostgreSQL의 transaction 안에서 실행된다.
 

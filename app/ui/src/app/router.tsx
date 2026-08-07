@@ -1,11 +1,6 @@
-import { createBrowserRouter, Outlet, redirect } from 'react-router'
+import { createBrowserRouter, Outlet } from 'react-router'
 import { RouteErrorPage } from '@/pages/error/RouteErrorPage'
-import { viewerReplacementPath } from './legacy-routes'
 import { AppShell } from './layout/AppShell'
-
-export function redirectViewerToStructures(request: Request) {
-  return redirect(viewerReplacementPath(new URL(request.url).search))
-}
 
 export const appRoutePaths = [
   'index',
@@ -15,6 +10,9 @@ export const appRoutePaths = [
   'examples/:exampleId?',
   'measurements',
   'analysis',
+  'ai/chat',
+  'launchers',
+  'jobs',
   'materials',
   'materials/:materialId',
   'catalog/cad/:tag?',
@@ -43,12 +41,15 @@ export function createAppRouter() {
       ),
       children: [
         { index: true, lazy: () => import('@/pages/home/HomePage') },
-        { path: 'viewer', loader: ({ request }) => redirectViewerToStructures(request) },
+        { path: 'viewer', lazy: () => import('@/pages/measurements/MeasurementPage') },
         { path: 'structures', lazy: () => import('@/pages/structures/StructurePage') },
         { path: 'experiments', lazy: () => import('@/pages/experiments/ExperimentPage') },
         { path: 'examples/:exampleId?', lazy: () => import('@/pages/examples/ExamplesPage') },
         { path: 'measurements', lazy: () => import('@/pages/measurements/MeasurementPage') },
         { path: 'analysis', lazy: () => import('@/pages/analysis/AnalysisPage') },
+        { path: 'ai/chat', lazy: () => import('@/pages/ai/AiChatPage') },
+        { path: 'launchers', lazy: () => import('@/pages/launchers/LaunchersPage') },
+        { path: 'jobs', lazy: () => import('@/pages/jobs/JobsPage') },
         { path: 'materials', lazy: () => import('@/pages/materials/MaterialListPage') },
         { path: 'materials/:materialId', lazy: () => import('@/pages/materials/MaterialDetailPage') },
         {

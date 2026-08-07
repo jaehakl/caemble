@@ -289,6 +289,7 @@ function renderPage(initialEntry: string) {
   const router = createMemoryRouter(
     [
       { path: '/measurements', Component: MeasurementPage },
+      { path: '/viewer', Component: MeasurementPage },
       { path: '/structures', element: <div>Structure manager</div> },
       { path: '/experiments', element: <div>Experiment manager</div> },
       { path: '/analysis', element: <div>Analysis workspace</div> },
@@ -993,11 +994,17 @@ describe('MeasurementPage', () => {
       ],
     })
 
-    renderPage('/measurements?measurement=30')
+    const router = renderPage('/viewer?structure=1&experiment=2&sample=10&setup=20&measurement=30')
 
     expect(await screen.findByText('Copper bar')).toBeInTheDocument()
     expect(screen.getByText('DC experiment')).toBeInTheDocument()
-    expect(await screen.findByRole('button', { name: 'Measurement #30' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Sample #10' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Setup #20' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Measurement #30' })).toHaveAttribute('aria-pressed', 'true')
+    expect(router.state.location.pathname).toBe('/viewer')
+    expect(new URLSearchParams(router.state.location.search)).toEqual(
+      new URLSearchParams('structure=1&experiment=2&sample=10&setup=20&measurement=30'),
+    )
     expect(apiMocks.structureList).toHaveBeenCalledOnce()
     expect(apiMocks.experimentList).toHaveBeenCalledOnce()
     await waitFor(() =>
@@ -1150,5 +1157,18 @@ describe('MeasurementPage', () => {
     expect(router.state.location.state).toEqual({
       measurementReturnTo: '/measurements?structure=1&experiment=2',
     })
+  })
+
+  it('preserves a full Viewer-alias context while opening the Structure editor', async () => {
+    mockSelectedMeasurement()
+    const returnTo = '/viewer?structure=1&experiment=2&sample=10&setup=20&measurement=30'
+    const router = renderPage(returnTo)
+
+    await screen.findByRole('button', { name: 'Measurement #30' })
+    await userEvent.click(screen.getByRole('button', { name: '현재 Structure 편집' }))
+
+    expect(router.state.location.pathname).toBe('/structures')
+    expect(router.state.location.search).toBe('?structure=1&mode=code')
+    expect(router.state.location.state).toEqual({ measurementReturnTo: returnTo })
   })
 })

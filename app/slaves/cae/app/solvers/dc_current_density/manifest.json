@@ -1,0 +1,309 @@
+{
+  "schemaVersion": 1,
+  "implementation": "app.solvers.dc_current_density.solver:run",
+  "descriptor": {
+    "name": "dc-current-density",
+    "version": "0.0.0",
+    "description": "Solves steady-state electric potential and requested current outputs in one conductor.",
+    "referenceLengthUnit": "m",
+    "minimumOutputs": 1,
+    "parameters": {
+      "relativeTolerance": {
+        "description": "Relative convergence tolerance for the preconditioned conjugate-gradient solve.",
+        "data": {
+          "dtype": "float64",
+          "quantityKind": "DimensionlessRatio",
+          "unit": "{fraction}",
+          "minimum": 0,
+          "maximum": 1,
+          "exclusiveMinimum": true,
+          "exclusiveMaximum": true,
+          "tensorOrder": 0
+        }
+      },
+      "maxIterations": {
+        "description": "Maximum number of solver iterations.",
+        "data": {
+          "dtype": "int32",
+          "minimum": 1,
+          "tensorOrder": 0
+        }
+      }
+    },
+    "materials": [
+      {
+        "role": "conductor",
+        "description": "The homogeneous isotropic conductor targeted by dc.voxel-grid.",
+        "target": {
+          "category": "initializations",
+          "methodId": "dc.voxel-grid"
+        },
+        "properties": {
+          "electrical.conductivity": {
+            "description": "Positive isotropic electrical-conductivity tensor in the global identity basis.",
+            "data": {
+              "dtype": "float64",
+              "quantityKind": "electromagnetism.ElectricConductivity",
+              "unit": "S.m-1",
+              "basis": [
+                [
+                  1,
+                  0,
+                  0
+                ],
+                [
+                  0,
+                  1,
+                  0
+                ],
+                [
+                  0,
+                  0,
+                  1
+                ]
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "inputPorts": {},
+    "observations": {
+      "iterations": {
+        "description": "Number of completed PCG iterations.",
+        "type": "number"
+      },
+      "relativeResidual": {
+        "description": "Final relative residual of the PCG solve.",
+        "type": "number"
+      }
+    },
+    "methods": {
+      "initializations": [
+        {
+          "methodId": "dc.voxel-grid",
+          "description": "Defines the cell-centered conductor voxel grid in axial, u, and v order.",
+          "minimumOccurrences": 1,
+          "maximumOccurrences": 1,
+          "target": {
+            "source": "structure",
+            "kind": "geometry",
+            "minimumTargets": 1,
+            "maximumTargets": 1,
+            "minimumResolved": 1,
+            "maximumResolved": 1
+          },
+          "parameters": {
+            "gridShape": {
+              "description": "Number of cells along the s, u, and v grid axes.",
+              "data": {
+                "dtype": "int32",
+                "axes": [
+                  {
+                    "length": 3
+                  }
+                ],
+                "minimum": 3,
+                "tensorOrder": 0
+              }
+            }
+          }
+        }
+      ],
+      "boundaryConditions": [
+        {
+          "methodId": "dc.source-potential",
+          "description": "Applies the source terminal electric potential.",
+          "minimumOccurrences": 1,
+          "maximumOccurrences": 1,
+          "target": {
+            "source": "structure",
+            "kind": "surface",
+            "minimumTargets": 1,
+            "maximumTargets": 1,
+            "minimumResolved": 1,
+            "maximumResolved": 1
+          },
+          "parameters": {
+            "voltage": {
+              "description": "Source terminal electric potential.",
+              "data": {
+                "dtype": "float64",
+                "quantityKind": "electromagnetism.Voltage",
+                "unit": "V",
+                "tensorOrder": 0
+              }
+            }
+          }
+        },
+        {
+          "methodId": "dc.reference-potential",
+          "description": "Applies the reference terminal electric potential.",
+          "minimumOccurrences": 1,
+          "maximumOccurrences": 1,
+          "target": {
+            "source": "structure",
+            "kind": "surface",
+            "minimumTargets": 1,
+            "maximumTargets": 1,
+            "minimumResolved": 1,
+            "maximumResolved": 1
+          },
+          "parameters": {
+            "voltage": {
+              "description": "Reference terminal electric potential.",
+              "data": {
+                "dtype": "float64",
+                "quantityKind": "electromagnetism.Voltage",
+                "unit": "V",
+                "tensorOrder": 0
+              }
+            }
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "methodId": "dc.current-density",
+          "description": "Produces a two-dimensional current-density cross-section.",
+          "minimumOccurrences": 0,
+          "maximumOccurrences": 9007199254740991,
+          "target": {
+            "source": "structure",
+            "kind": "geometry",
+            "minimumTargets": 1,
+            "maximumTargets": 1,
+            "minimumResolved": 1,
+            "maximumResolved": 1
+          },
+          "parameters": {
+            "crossSectionPosition": {
+              "description": "Normalized axial position of the requested cross-section.",
+              "data": {
+                "dtype": "float64",
+                "quantityKind": "DimensionlessRatio",
+                "unit": "{fraction}",
+                "minimum": 0,
+                "maximum": 1,
+                "exclusiveMinimum": true,
+                "exclusiveMaximum": true,
+                "tensorOrder": 0
+              }
+            }
+          },
+          "artifactType": "caemble.dc/current-density@1",
+          "data": {
+            "dtype": "float64",
+            "quantityKind": "electromagnetism.ElectricCurrentDensity",
+            "unit": "A.m-2",
+            "basis": [
+              [
+                1,
+                0,
+                0
+              ],
+              [
+                0,
+                1,
+                0
+              ],
+              [
+                0,
+                0,
+                1
+              ]
+            ],
+            "axes": [
+              {
+                "name": "cross-section v",
+                "quantityKind": "Length",
+                "unit": "m"
+              },
+              {
+                "name": "cross-section u",
+                "quantityKind": "Length",
+                "unit": "m"
+              }
+            ],
+            "tensorOrder": 1
+          }
+        },
+        {
+          "methodId": "dc.total-current",
+          "description": "Produces absolute current integrated over a cross-section.",
+          "minimumOccurrences": 0,
+          "maximumOccurrences": 9007199254740991,
+          "target": {
+            "source": "structure",
+            "kind": "geometry",
+            "minimumTargets": 1,
+            "maximumTargets": 1,
+            "minimumResolved": 1,
+            "maximumResolved": 1
+          },
+          "parameters": {
+            "crossSectionPosition": {
+              "description": "Normalized axial position of the requested cross-section.",
+              "data": {
+                "dtype": "float64",
+                "quantityKind": "DimensionlessRatio",
+                "unit": "{fraction}",
+                "minimum": 0,
+                "maximum": 1,
+                "exclusiveMinimum": true,
+                "exclusiveMaximum": true,
+                "tensorOrder": 0
+              }
+            }
+          },
+          "artifactType": "caemble.dc/total-current@1",
+          "data": {
+            "dtype": "float64",
+            "quantityKind": "electromagnetism.ElectricCurrent",
+            "unit": "A",
+            "tensorOrder": 0
+          }
+        },
+        {
+          "methodId": "dc.joule-heating",
+          "description": "Produces volumetric Joule heating on the conductor voxel grid.",
+          "minimumOccurrences": 0,
+          "maximumOccurrences": 1,
+          "target": {
+            "source": "structure",
+            "kind": "geometry",
+            "minimumTargets": 1,
+            "maximumTargets": 1,
+            "minimumResolved": 1,
+            "maximumResolved": 1
+          },
+          "parameters": {},
+          "artifactType": "caemble.dc/joule-heating@1",
+          "data": {
+            "dtype": "float64",
+            "quantityKind": "PowerDensity",
+            "unit": "W.m-3",
+            "axes": [
+              {
+                "name": "axial position",
+                "quantityKind": "Length",
+                "unit": "m"
+              },
+              {
+                "name": "cross-section v",
+                "quantityKind": "Length",
+                "unit": "m"
+              },
+              {
+                "name": "cross-section u",
+                "quantityKind": "Length",
+                "unit": "m"
+              }
+            ],
+            "tensorOrder": 0
+          }
+        }
+      ]
+    }
+  }
+}

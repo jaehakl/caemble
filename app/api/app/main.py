@@ -10,6 +10,8 @@ from routers import (
     measurement,
     predictor_model,
     recorded_data,
+    runtime_v1,
+    runtime_web,
     sample,
     setup,
     structure,
@@ -33,3 +35,5 @@ app.include_router(recorded_data.router)
 app.include_router(designer_model.router)
 app.include_router(predictor_model.router)
 app.include_router(users.router)
+app.include_router(runtime_web.router)
+app.include_router(runtime_v1.router)

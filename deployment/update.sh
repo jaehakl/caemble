@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR=${APP_DIR:-/home/ubuntu/waveform}
-API_DIR=${API_DIR:-$APP_DIR/apps/caemble/api}
-UI_DIR=${UI_DIR:-$APP_DIR/apps/caemble/ui}
+APP_DIR=${APP_DIR:-/home/ubuntu/caemble}
+API_DIR=${API_DIR:-$APP_DIR/app/api}
+UI_DIR=${UI_DIR:-$APP_DIR/app/ui}
+SDK_JS_DIR=${SDK_JS_DIR:-$APP_DIR/app/sdk/master/js}
 WEB_ROOT=${WEB_ROOT:-/var/www/caemble}
 API_SERVICE=${API_SERVICE:-caemble-api}
 
@@ -27,23 +28,28 @@ if [[ ! -f "$UI_DIR/.env" ]]; then
     exit 1
 fi
 
-echo "[1/7] Pull latest code"
+echo "[1/8] Pull latest code"
 cd "$APP_DIR"
 git pull --ff-only
 
-echo "[2/7] Install and build UI"
+echo "[2/8] Install and build the v1 JavaScript SDK"
+cd "$SDK_JS_DIR"
+npm ci
+npm run build
+
+echo "[3/8] Install and build UI"
 cd "$UI_DIR"
 npm ci
 npm run build
 
-echo "[3/7] Install API dependencies"
+echo "[4/8] Install API dependencies"
 cd "$API_DIR"
 poetry install --only main
 
-echo "[4/7] Apply database migrations"
+echo "[5/8] Apply database migrations"
 poetry run alembic upgrade head
 
-echo "[5/7] Publish an atomic static release"
+echo "[6/8] Publish an atomic static release"
 release_name="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "$APP_DIR" rev-parse --short HEAD)"
 releases_dir="$WEB_ROOT/releases"
 release_dir="$releases_dir/$release_name"
@@ -57,10 +63,10 @@ sudo find "$release_dir" -type f -exec chmod 644 {} \;
 sudo ln -s "$release_dir" "$next_link"
 sudo mv -Tf "$next_link" "$WEB_ROOT/current"
 
-echo "[6/7] Restart API service"
+echo "[7/8] Restart API service"
 sudo systemctl restart "$API_SERVICE"
 
-echo "[7/7] Validate and reload Nginx"
+echo "[8/8] Validate and reload Nginx"
 sudo nginx -t
 sudo systemctl reload nginx
 

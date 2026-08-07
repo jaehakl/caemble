@@ -10,7 +10,6 @@ const user = {
   created_at: '2026-07-21T00:00:00Z',
   updated_at: '2026-07-21T00:00:00Z',
   roles: ['user'],
-  gpstation_connection: null as null | { api_base_url: string; access_token: string },
 }
 const apiPattern = /^http:\/\/127\.0\.0\.1:\d+\/api\//
 const selectControlWarning = /Select is changing from (?:uncontrolled to controlled|controlled to uncontrolled)/i
@@ -24,24 +23,11 @@ async function json(route: Route, body: unknown, status = 200) {
 }
 
 async function mockApi(page: Page, authenticated = false) {
-  let gpStationConnection = user.gpstation_connection
   await page.route(apiPattern, async (route) => {
     const path = new URL(route.request().url()).pathname.replace(/^\/api/, '')
     if (path === '/auth/me')
-      return json(
-        route,
-        authenticated ? { ...user, gpstation_connection: gpStationConnection } : { detail: 'Not authenticated' },
-        authenticated ? 200 : 401,
-      )
+      return json(route, authenticated ? user : { detail: 'Not authenticated' }, authenticated ? 200 : 401)
     if (path === '/auth/refresh') return json(route, { detail: 'No refresh token' }, 401)
-    if (path === '/user_data/gpstation' && route.request().method() === 'PUT') {
-      gpStationConnection = route.request().postDataJSON()
-      return json(route, { ...user, gpstation_connection: gpStationConnection })
-    }
-    if (path === '/user_data/gpstation' && route.request().method() === 'DELETE') {
-      gpStationConnection = null
-      return json(route, { ...user, gpstation_connection: null })
-    }
     if (path.endsWith('/list')) return json(route, { total: 0, items: [] })
     return json(route, { detail: 'Unexpected mocked endpoint' }, 404)
   })
@@ -135,6 +121,159 @@ test('restores an expired authenticated account through one refresh', async ({ p
   expect(refreshCalls).toBe(1)
 })
 
+test('operates authenticated tokens, launchers, and jobs through the local web API', async ({ page }) => {
+  const csrfToken = 'csrf-browser-test'
+  const createdSecret = 'csk_secret_shown_once'
+  const protectedRequests: { csrf: string | undefined; path: string }[] = []
+  const actionPaths: string[] = []
+  let csrfCalls = 0
+  let createdTokenPayload: unknown = null
+
+  const existingAccessKey = {
+    id: 'access-key-1',
+    user_id: user.id,
+    key_type: 'user_api',
+    name: 'existing-client',
+    key_prefix: 'csk_existing',
+    scopes: ['client'],
+    status: 'active',
+    last_used_at: null,
+    expires_at: null,
+    created_at: '2026-08-07T00:00:00Z',
+    revoked_at: null,
+  }
+  const launcher = {
+    id: 'launcher-1',
+    user_id: user.id,
+    launcher_name: 'gpu-workstation',
+    ip_address: '127.0.0.1',
+    status: 'busy',
+    slave_app_ids: ['ai', 'cae'],
+    connected_at: '2026-08-07T00:00:00Z',
+    last_heartbeat_at: '2026-08-07T00:00:05Z',
+    disconnected_at: null,
+    created_at: '2026-08-07T00:00:00Z',
+    updated_at: '2026-08-07T00:00:05Z',
+  }
+  const job = {
+    id: 'job-1',
+    user_id: user.id,
+    handler_type: 'cae.simulation.start',
+    slave_app_id: 'cae',
+    state: 'running',
+    latest_progress: {
+      time: '2031-04-05T06:07:08Z',
+      progress: { stage: 'solving', percent: 42 },
+    },
+    launcher_id: launcher.id,
+    assigned_at: '2026-08-07T00:00:01Z',
+    answer_ready_at: null,
+    started_at: '2026-08-07T00:00:02Z',
+    finished_at: null,
+    cancel_requested_at: null,
+    last_error: null,
+    attempt_count: 1,
+    created_at: '2026-08-07T00:00:00Z',
+    updated_at: '2026-08-07T00:00:05Z',
+  }
+
+  await page.route(apiPattern, async (route) => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname.replace(/^\/api/, '')
+    const method = request.method()
+    if (path === '/auth/me') return json(route, user)
+    if (path === '/auth/refresh') return json(route, { detail: 'Unexpected refresh' }, 401)
+    if (path === '/web/auth/csrf') {
+      csrfCalls += 1
+      return json(route, { csrf_token: csrfToken })
+    }
+    if (method === 'POST' && path.startsWith('/web/')) {
+      protectedRequests.push({ csrf: request.headers()['x-csrf-token'], path })
+    }
+    if (path === '/web/crud/access_keys/list' && method === 'POST') {
+      return json(route, { total: 1, items: [existingAccessKey] })
+    }
+    if (path === '/web/users/me/access-tokens' && method === 'POST') {
+      createdTokenPayload = request.postDataJSON()
+      return json(route, {
+        access_key: {
+          ...existingAccessKey,
+          id: 'access-key-2',
+          name: 'browser-e2e',
+          key_prefix: 'csk_created',
+        },
+        secret: createdSecret,
+      })
+    }
+    if (path === '/web/crud/launchers/list' && method === 'POST') {
+      return json(route, { total: 1, items: [launcher] })
+    }
+    if (path === '/web/launchers/runtime' && method === 'GET') {
+      return json(route, [
+        {
+          launcher_id: launcher.id,
+          current_job_id: job.id,
+          loaded_slave_app_id: 'cae',
+          worker_status: 'running',
+          resetting: false,
+          metadata: {},
+        },
+      ])
+    }
+    if (path === `/web/launchers/${launcher.id}/cancel-current-job` && method === 'POST') {
+      actionPaths.push(path)
+      return json(route, { ok: true })
+    }
+    if (path === '/web/jobs' && method === 'GET') return json(route, [job])
+    if (path === `/web/jobs/${job.id}/kill` && method === 'POST') {
+      actionPaths.push(path)
+      return json(route, { ok: true })
+    }
+    return json(route, { detail: `Unexpected mocked endpoint: ${method} ${path}` }, 404)
+  })
+
+  await page.goto('/account')
+  await expect(page.getByRole('heading', { name: '내 계정' })).toBeVisible()
+  await expect(page.getByText('existing-client')).toBeVisible()
+  await expect(page.getByText(createdSecret)).toHaveCount(0)
+  await page.getByLabel('Token 이름').fill('browser-e2e')
+  await page.getByRole('button', { name: '생성', exact: true }).click()
+  await expect(page.getByText(createdSecret)).toBeVisible()
+  await expect(page.getByText(/다시 표시되지 않습니다/)).toBeVisible()
+  expect(createdTokenPayload).toEqual({
+    name: 'browser-e2e',
+    scopes: ['client'],
+    expires_at: null,
+  })
+
+  await page.goto('/launchers')
+  await expect(page.getByRole('heading', { level: 2, name: 'Launchers' })).toBeVisible()
+  await expect(page.getByText('gpu-workstation')).toBeVisible()
+  await expect(page.getByText('busy', { exact: true })).toBeVisible()
+  await expect(page.getByText('running', { exact: true })).toBeVisible()
+  await expect(page.getByText(job.id, { exact: true })).toBeVisible()
+  page.once('dialog', (dialog) => void dialog.accept())
+  await page.getByRole('button', { name: '취소', exact: true }).click()
+  await expect(page.getByText('현재 Job 취소를 요청했습니다.')).toBeVisible()
+
+  await page.goto('/jobs')
+  await expect(page.getByRole('heading', { level: 2, name: 'Jobs' })).toBeVisible()
+  await expect(page.getByText('cae.simulation.start')).toBeVisible()
+  await expect(page.getByText('{"stage":"solving","percent":42}')).toBeVisible()
+  await expect(page.getByText(/2031/)).toBeVisible()
+  page.once('dialog', (dialog) => void dialog.accept())
+  await page.getByRole('button', { name: '중단', exact: true }).click()
+  await expect(page.getByText('Job 중단을 요청했습니다.')).toBeVisible()
+
+  await page.goto('/account')
+  await expect(page.getByText(createdSecret)).toHaveCount(0)
+
+  expect(actionPaths).toEqual(['/web/launchers/launcher-1/cancel-current-job', '/web/jobs/job-1/kill'])
+  expect(csrfCalls).toBeGreaterThan(0)
+  expect(protectedRequests.length).toBeGreaterThanOrEqual(5)
+  expect(protectedRequests.every((request) => request.csrf === csrfToken)).toBe(true)
+})
+
 test('Structure editor and isolated runner survive delayed Monaco loading and remounts', async ({ page }) => {
   test.setTimeout(90_000)
   const isolationProblems: string[] = []
@@ -153,7 +292,7 @@ test('Structure editor and isolated runner survive delayed Monaco loading and re
     await route.continue()
   })
 
-  await page.goto('/viewer')
+  await page.goto('/structures?structure=new&mode=code')
   const editorInput = page.getByRole('textbox', { name: 'Editor content' }).first()
   await expect(editorInput).toBeVisible({ timeout: 20_000 })
   await editorInput.focus()
@@ -171,7 +310,7 @@ test('Structure editor and isolated runner survive delayed Monaco loading and re
 
   await page.getByRole('link', { name: 'Manual', exact: true }).click()
   await expect(page).toHaveURL(/\/docs$/)
-  await page.goto('/viewer')
+  await page.goto('/structures?structure=new&mode=code')
   await expect(page).toHaveURL(/\/structures\?.*structure=new.*mode=code/)
   await expect(page.getByRole('textbox', { name: 'Editor content' }).first()).toBeVisible({ timeout: 20_000 })
   await page.reload()
@@ -181,7 +320,7 @@ test('Structure editor and isolated runner survive delayed Monaco loading and re
   expect(isolationProblems).toEqual([])
 })
 
-test('creates a Structure definition from the legacy Viewer redirect', async ({ page }) => {
+test('creates a Structure definition from the legacy Viewer hash redirect', async ({ page }) => {
   let structurePayload: unknown = null
   const selectWarnings: string[] = []
   page.on('console', (message) => {
@@ -198,7 +337,7 @@ test('creates a Structure definition from the legacy Viewer redirect', async ({ 
     return json(route, { detail: 'Unexpected mocked endpoint' }, 404)
   })
 
-  await page.goto('/viewer')
+  await page.goto('/#viewer')
   await page.getByRole('button', { name: 'Structure 생성' }).click()
   const dialog = page.getByRole('dialog', { name: '새 Structure 생성' })
   await dialog.getByLabel('이름').fill('E2E Structure')
@@ -218,7 +357,7 @@ test('creates a Structure definition from the legacy Viewer redirect', async ({ 
   expect(selectWarnings).toEqual([])
 })
 
-test('blocks the verified v3 uniform-bar example without a connected CAE launcher', async ({ page }) => {
+test('blocks the verified v3 uniform-bar example while signed out', async ({ page }) => {
   test.setTimeout(90_000)
   const pageErrors: string[] = []
   const consoleProblems: string[] = []
@@ -242,32 +381,4 @@ test('blocks the verified v3 uniform-bar example without a connected CAE launche
       (message) => message !== 'Failed to load resource: the server responded with a status of 401 (Unauthorized)',
     ),
   ).toEqual([])
-})
-
-test('runs the verified example through an actual browser-launcher-CAE session', async ({ page }) => {
-  const apiBaseUrl = process.env.GPSTATION_E2E_API_BASE_URL?.trim()
-  const token = process.env.GPSTATION_E2E_CLIENT_TOKEN?.trim()
-  test.skip(
-    !apiBaseUrl || !token,
-    'Set GPSTATION_E2E_API_BASE_URL and GPSTATION_E2E_CLIENT_TOKEN, then run a connected cae launcher.',
-  )
-  test.setTimeout(180_000)
-  await mockApi(page, true)
-
-  await page.goto('/account')
-  await page.getByLabel('GPStation API URL').fill(apiBaseUrl!)
-  await page.getByLabel('GPStation Access Token').fill(token!)
-  await page.getByRole('button', { name: '연결 저장', exact: true }).click()
-  await expect(page.getByText('GPStation 연결 정보가 저장되어 있습니다.')).toBeVisible({ timeout: 30_000 })
-
-  await page.goto('/examples/dc-uniform-bar')
-  const run = page.getByRole('button', { name: 'Run simulation' })
-  await expect(run).toBeEnabled({ timeout: 60_000 })
-  await run.click()
-
-  await expect(page.getByLabel('Simulation status: succeeded')).toBeVisible({ timeout: 120_000 })
-  await expect(page.getByText(/Program trace · 1 kernel call/)).toBeVisible()
-  await page.getByRole('tab', { name: 'Results' }).click()
-  await expect(page.getByLabel('Recorded scalar value')).toContainText('14.9')
-  await expect(page.getByLabel('Recorded scalar value')).toContainText('A')
 })

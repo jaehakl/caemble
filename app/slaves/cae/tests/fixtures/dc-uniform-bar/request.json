@@ -1,0 +1,608 @@
+{
+  "formatVersion": 1,
+  "payload": {
+    "sample": {
+      "kind": "sample",
+      "structure": {
+        "kind": "structure",
+        "sourceHash": "d0df4eb20176ca5cb24e1fa3917d6fe87c655ca8b83bbd61b28cf49421ba443e",
+        "seed": 20260803,
+        "scene": {
+          "lengthUnit": "mm",
+          "parts": [
+            {
+              "id": "conductor",
+              "geometry": {
+                "kind": "mesh",
+                "positions": {
+                  "shape": [
+                    72
+                  ],
+                  "storage": {
+                    "kind": "attachments",
+                    "ids": [
+                      "input-0"
+                    ],
+                    "byteLength": 576
+                  }
+                },
+                "polygonOffsets": {
+                  "shape": [
+                    7
+                  ],
+                  "storage": {
+                    "kind": "attachments",
+                    "ids": [
+                      "input-1"
+                    ],
+                    "byteLength": 28
+                  }
+                }
+              },
+              "material": {
+                "name": "Copper",
+                "source": "reference",
+                "errorRate": 0,
+                "variables": {
+                  "electrical.conductivity": {
+                    "dtype": "float64",
+                    "unit": "S.m-1",
+                    "quantityKind": "electromagnetism.ElectricConductivity",
+                    "basis": [
+                      [
+                        1,
+                        0,
+                        0
+                      ],
+                      [
+                        0,
+                        1,
+                        0
+                      ],
+                      [
+                        0,
+                        0,
+                        1
+                      ]
+                    ],
+                    "value": [
+                      [
+                        59600000,
+                        0,
+                        0
+                      ],
+                      [
+                        0,
+                        59600000,
+                        0
+                      ],
+                      [
+                        0,
+                        0,
+                        59600000
+                      ]
+                    ]
+                  },
+                  "color": "#d97706"
+                }
+              },
+              "surfaces": [
+                {
+                  "id": "conductor/surface-1",
+                  "name": "-X",
+                  "polygonIndices": [
+                    0
+                  ]
+                },
+                {
+                  "id": "conductor/surface-2",
+                  "name": "+X",
+                  "polygonIndices": [
+                    1
+                  ]
+                },
+                {
+                  "id": "conductor/surface-3",
+                  "name": "-Y",
+                  "polygonIndices": [
+                    2
+                  ]
+                },
+                {
+                  "id": "conductor/surface-4",
+                  "name": "+Y",
+                  "polygonIndices": [
+                    3
+                  ]
+                },
+                {
+                  "id": "conductor/surface-5",
+                  "name": "Bottom",
+                  "polygonIndices": [
+                    4
+                  ]
+                },
+                {
+                  "id": "conductor/surface-6",
+                  "name": "Top",
+                  "polygonIndices": [
+                    5
+                  ]
+                }
+              ]
+            }
+          ],
+          "tree": {
+            "key": "structure",
+            "label": "Structure",
+            "children": [
+              {
+                "key": "structure/root",
+                "label": "Conductor",
+                "globalId": "conductor",
+                "children": [
+                  {
+                    "key": "structure/root/result",
+                    "label": "<box>",
+                    "children": [
+                      {
+                        "key": "structure/root/result/conductor/surface-1",
+                        "label": "-X",
+                        "surfaceId": "conductor/surface-1",
+                        "children": []
+                      },
+                      {
+                        "key": "structure/root/result/conductor/surface-2",
+                        "label": "+X",
+                        "surfaceId": "conductor/surface-2",
+                        "children": []
+                      },
+                      {
+                        "key": "structure/root/result/conductor/surface-3",
+                        "label": "-Y",
+                        "surfaceId": "conductor/surface-3",
+                        "children": []
+                      },
+                      {
+                        "key": "structure/root/result/conductor/surface-4",
+                        "label": "+Y",
+                        "surfaceId": "conductor/surface-4",
+                        "children": []
+                      },
+                      {
+                        "key": "structure/root/result/conductor/surface-5",
+                        "label": "Bottom",
+                        "surfaceId": "conductor/surface-5",
+                        "children": []
+                      },
+                      {
+                        "key": "structure/root/result/conductor/surface-6",
+                        "label": "Top",
+                        "surfaceId": "conductor/surface-6",
+                        "children": []
+                      }
+                    ]
+                  }
+                ],
+                "geometryId": "conductor"
+              }
+            ]
+          },
+          "geometryGroups": [
+            {
+              "id": "@geometry-group/conductor",
+              "name": "conductor",
+              "kind": "geometry",
+              "memberIds": [
+                "conductor"
+              ],
+              "geometryIds": [
+                "conductor"
+              ],
+              "surfaceIds": [],
+              "missingMemberIds": []
+            }
+          ],
+          "surfaceGroups": [
+            {
+              "id": "@surface-group/sourceTerminal",
+              "name": "sourceTerminal",
+              "kind": "surface",
+              "memberIds": [
+                "conductor/surface-1"
+              ],
+              "geometryIds": [
+                "conductor"
+              ],
+              "surfaceIds": [
+                "conductor/surface-1"
+              ],
+              "missingMemberIds": []
+            },
+            {
+              "id": "@surface-group/referenceTerminal",
+              "name": "referenceTerminal",
+              "kind": "surface",
+              "memberIds": [
+                "conductor/surface-2"
+              ],
+              "geometryIds": [
+                "conductor"
+              ],
+              "surfaceIds": [
+                "conductor/surface-2"
+              ],
+              "missingMemberIds": []
+            }
+          ],
+          "sceneHash": "71a327cb0b9b2bb19ad85869e05d53e1289dc5d149de0bd1ae39a5f48d8780e9"
+        },
+        "variables": {
+          "conductorSize": [
+            100,
+            5,
+            5
+          ],
+          "electricalConductivity": 59600000
+        },
+        "varsSchema": {
+          "conductorSize": {
+            "min": [
+              100,
+              5,
+              5
+            ],
+            "max": [
+              100,
+              5,
+              5
+            ]
+          },
+          "electricalConductivity": {
+            "min": 59600000,
+            "max": 59600000
+          }
+        }
+      },
+      "materialParameters": {
+        "schemaVersion": 1,
+        "materials": {
+          "Copper": {
+            "electrical.conductivity": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": [
+                  [
+                    59600000,
+                    0,
+                    0
+                  ],
+                  [
+                    0,
+                    59600000,
+                    0
+                  ],
+                  [
+                    0,
+                    0,
+                    59600000
+                  ]
+                ],
+                "unit": "S.m-1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            }
+          }
+        },
+        "materialColors": {}
+      },
+      "materialWarnings": [
+        "Legacy Material snapshot: database parameters were not automatically re-resolved."
+      ]
+    },
+    "setup": {
+      "kind": "setup",
+      "experiment": {
+        "kind": "experiment",
+        "sourceHash": "2169fae97376a3b4920bcca0a6f659452134d193d3310dc9bc7fe63f0501088a",
+        "seed": 20260803,
+        "scene": {
+          "lengthUnit": "mm",
+          "parts": [
+            {
+              "id": "probe",
+              "geometry": {
+                "kind": "mesh",
+                "positions": {
+                  "shape": [
+                    72
+                  ],
+                  "storage": {
+                    "kind": "attachments",
+                    "ids": [
+                      "input-2"
+                    ],
+                    "byteLength": 576
+                  }
+                },
+                "polygonOffsets": {
+                  "shape": [
+                    7
+                  ],
+                  "storage": {
+                    "kind": "attachments",
+                    "ids": [
+                      "input-3"
+                    ],
+                    "byteLength": 28
+                  }
+                }
+              },
+              "surfaces": [
+                {
+                  "id": "probe/surface-1",
+                  "name": "-X",
+                  "polygonIndices": [
+                    0
+                  ]
+                },
+                {
+                  "id": "probe/surface-2",
+                  "name": "+X",
+                  "polygonIndices": [
+                    1
+                  ]
+                },
+                {
+                  "id": "probe/surface-3",
+                  "name": "-Y",
+                  "polygonIndices": [
+                    2
+                  ]
+                },
+                {
+                  "id": "probe/surface-4",
+                  "name": "+Y",
+                  "polygonIndices": [
+                    3
+                  ]
+                },
+                {
+                  "id": "probe/surface-5",
+                  "name": "Bottom",
+                  "polygonIndices": [
+                    4
+                  ]
+                },
+                {
+                  "id": "probe/surface-6",
+                  "name": "Top",
+                  "polygonIndices": [
+                    5
+                  ]
+                }
+              ]
+            }
+          ],
+          "tree": {
+            "key": "experiment",
+            "label": "Experiment",
+            "children": [
+              {
+                "key": "experiment/root",
+                "label": "Probe",
+                "globalId": "probe",
+                "children": [
+                  {
+                    "key": "experiment/root/result",
+                    "label": "<box>",
+                    "children": [
+                      {
+                        "key": "experiment/root/result/probe/surface-1",
+                        "label": "-X",
+                        "surfaceId": "probe/surface-1",
+                        "children": []
+                      },
+                      {
+                        "key": "experiment/root/result/probe/surface-2",
+                        "label": "+X",
+                        "surfaceId": "probe/surface-2",
+                        "children": []
+                      },
+                      {
+                        "key": "experiment/root/result/probe/surface-3",
+                        "label": "-Y",
+                        "surfaceId": "probe/surface-3",
+                        "children": []
+                      },
+                      {
+                        "key": "experiment/root/result/probe/surface-4",
+                        "label": "+Y",
+                        "surfaceId": "probe/surface-4",
+                        "children": []
+                      },
+                      {
+                        "key": "experiment/root/result/probe/surface-5",
+                        "label": "Bottom",
+                        "surfaceId": "probe/surface-5",
+                        "children": []
+                      },
+                      {
+                        "key": "experiment/root/result/probe/surface-6",
+                        "label": "Top",
+                        "surfaceId": "probe/surface-6",
+                        "children": []
+                      }
+                    ]
+                  }
+                ],
+                "geometryId": "probe"
+              }
+            ]
+          },
+          "geometryGroups": [],
+          "surfaceGroups": [],
+          "sceneHash": "1d144636d532dfce749c94408ae9b162e2589e1c96cbeb86237d49c7cab9af32"
+        },
+        "variables": {
+          "sourceVoltage": 1,
+          "referenceVoltage": 0
+        },
+        "varsSchema": {
+          "sourceVoltage": {
+            "min": 1,
+            "max": 1
+          },
+          "referenceVoltage": {
+            "min": 0,
+            "max": 0
+          }
+        },
+        "simulationProgram": {
+          "formatVersion": 3,
+          "simulationApiVersion": 1,
+          "pythonSource": "async def simulate(*, sim, tasks, vars, world):\n    result = await sim.run(tasks[\"solveCurrent\"])\n    await sim.record(\"totalCurrent\", result[\"artifacts\"][\"totalCurrent\"])\n    return result[\"state\"]\n",
+          "tasks": {
+            "solveCurrent": {
+              "kernel": {
+                "name": "dc-current-density",
+                "version": "0.0.0"
+              },
+              "config": {
+                "boundaryConditions": [
+                  {
+                    "methodId": "dc.source-potential",
+                    "parameters": {
+                      "voltage": {
+                        "dtype": "float64",
+                        "quantityKind": "electromagnetism.Voltage",
+                        "unit": "mV",
+                        "value": 1
+                      }
+                    },
+                    "target": [
+                      "structure.surface.sourceTerminal"
+                    ]
+                  },
+                  {
+                    "methodId": "dc.reference-potential",
+                    "parameters": {
+                      "voltage": {
+                        "dtype": "float64",
+                        "quantityKind": "electromagnetism.Voltage",
+                        "unit": "mV",
+                        "value": 0
+                      }
+                    },
+                    "target": [
+                      "structure.surface.referenceTerminal"
+                    ]
+                  }
+                ],
+                "initializations": [
+                  {
+                    "methodId": "dc.voxel-grid",
+                    "parameters": {
+                      "gridShape": {
+                        "axes": [
+                          {
+                            "length": 3
+                          }
+                        ],
+                        "dtype": "int32",
+                        "value": [
+                          20,
+                          11,
+                          11
+                        ]
+                      }
+                    },
+                    "target": [
+                      "structure.geometry.conductor"
+                    ]
+                  }
+                ],
+                "outputs": [
+                  {
+                    "key": "totalCurrent",
+                    "methodId": "dc.total-current",
+                    "parameters": {
+                      "crossSectionPosition": {
+                        "dtype": "float64",
+                        "quantityKind": "DimensionlessRatio",
+                        "unit": "{fraction}",
+                        "value": 0.5
+                      }
+                    },
+                    "target": [
+                      "structure.geometry.conductor"
+                    ]
+                  }
+                ],
+                "parameters": {
+                  "maxIterations": 1000,
+                  "relativeTolerance": {
+                    "dtype": "float64",
+                    "quantityKind": "DimensionlessRatio",
+                    "unit": "{fraction}",
+                    "value": 1e-10
+                  }
+                }
+              }
+            }
+          },
+          "recordedData": {
+            "totalCurrent": {
+              "dtype": "float64",
+              "unit": "A",
+              "quantityKind": "electromagnetism.ElectricCurrent",
+              "tensorOrder": 0
+            }
+          }
+        }
+      },
+      "materialParameters": {
+        "schemaVersion": 1,
+        "materials": {},
+        "materialColors": {}
+      },
+      "materialWarnings": [
+        "Legacy Material snapshot: database parameters were not automatically re-resolved."
+      ]
+    }
+  },
+  "attachments": [
+    {
+      "id": "input-0",
+      "name": "cae.sample.structure.scene.parts.0.geometry.positions.0.bin",
+      "mimeType": "application/octet-stream",
+      "byteLength": 576,
+      "file": "attachments/000-input-0.bin"
+    },
+    {
+      "id": "input-1",
+      "name": "cae.sample.structure.scene.parts.0.geometry.polygonOffsets.0.bin",
+      "mimeType": "application/octet-stream",
+      "byteLength": 28,
+      "file": "attachments/001-input-1.bin"
+    },
+    {
+      "id": "input-2",
+      "name": "cae.setup.experiment.scene.parts.0.geometry.positions.0.bin",
+      "mimeType": "application/octet-stream",
+      "byteLength": 576,
+      "file": "attachments/002-input-2.bin"
+    },
+    {
+      "id": "input-3",
+      "name": "cae.setup.experiment.scene.parts.0.geometry.polygonOffsets.0.bin",
+      "mimeType": "application/octet-stream",
+      "byteLength": 28,
+      "file": "attachments/003-input-3.bin"
+    }
+  ]
+}

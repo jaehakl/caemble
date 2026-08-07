@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDataTensorAccessor } from '../../lib/cad'
 import { releaseRecordedDataAttachments, simulate } from './client'
 
-const sdk = vi.hoisted(() => ({ clientOptions: vi.fn(), listLaunchers: vi.fn(), runJob: vi.fn() }))
+const sdk = vi.hoisted(() => ({ clientOptions: vi.fn(), runJob: vi.fn() }))
+const api = vi.hoisted(() => ({ request: vi.fn() }))
+
+vi.mock('@/api/http', () => ({ API_URL: '/api', request: api.request }))
 
 vi.mock('@gpstation/v1-master-js-sdk', () => ({
   GpStationClient: class {
@@ -12,15 +15,9 @@ vi.mock('@gpstation/v1-master-js-sdk', () => ({
       sdk.clientOptions(options)
     }
 
-    listLaunchers = sdk.listLaunchers
     runJob = sdk.runJob
   },
 }))
-
-const gpStationConnection = {
-  api_base_url: 'https://gps.example.test',
-  access_token: 'gpsk_test',
-}
 
 function readBlobText(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -127,9 +124,9 @@ function realization() {
 describe('CAE session client', () => {
   beforeEach(() => {
     sdk.runJob.mockReset()
-    sdk.listLaunchers.mockReset()
     sdk.clientOptions.mockReset()
-    sdk.listLaunchers.mockResolvedValue([{ id: 'launcher-1', status: 'ready', slave_app_ids: ['cae'] }])
+    api.request.mockReset()
+    api.request.mockResolvedValue({ ok: true })
   })
 
   it('sends only sample/setup, ACKs one record at a time, and returns RecordedData only', async () => {
@@ -169,16 +166,18 @@ describe('CAE session client', () => {
     })
     const onRecord = vi.fn()
 
-    const result = await simulate(fixture.sample as never, fixture.setup as never, {
-      connection: gpStationConnection,
-      onRecord,
-    })
+    const result = await simulate(fixture.sample as never, fixture.setup as never, { onRecord })
 
     expect(sdk.runJob).toHaveBeenCalledWith(
       'cae.simulation.start',
       expect.objectContaining({ sample: expect.any(Object), setup: expect.any(Object) }),
       expect.objectContaining({ autoFinish: false, slaveAppId: 'cae' }),
     )
+    expect(sdk.clientOptions).toHaveBeenCalledWith({
+      apiBaseUrl: '/api',
+      authMode: 'cookie',
+      jobApiPrefix: '/web/jobs',
+    })
     expect(Object.keys(sdk.runJob.mock.calls[0][1]).sort()).toEqual(['sample', 'setup'])
     const startPayload = sdk.runJob.mock.calls[0][1]
     expect(startPayload.sample.structure.scene.lengthUnit).toBe('mm')
@@ -199,10 +198,6 @@ describe('CAE session client', () => {
     expect(Object.keys(result)).toEqual(['values'])
     expect(createDataTensorAccessor(fixture.recordedData.values, result.values).materialize()).toEqual([1.25, 2.5])
     expect(finish).toHaveBeenCalledOnce()
-    expect(sdk.clientOptions).toHaveBeenCalledWith({
-      apiBaseUrl: 'https://gps.example.test',
-      token: 'gpsk_test',
-    })
 
     releaseRecordedDataAttachments(result)
   })
@@ -229,9 +224,7 @@ describe('CAE session client', () => {
       },
     })
 
-    await expect(
-      simulate(fixture.sample as never, fixture.setup as never, { connection: gpStationConnection }),
-    ).rejects.toMatchObject({
+    await expect(simulate(fixture.sample as never, fixture.setup as never)).rejects.toMatchObject({
       code: 'solver_convergence',
       message: '수렴하지 않았습니다.',
     })
@@ -256,7 +249,7 @@ describe('CAE session client', () => {
       },
     })
 
-    await simulate(fixture.sample as never, fixture.setup as never, { connection: gpStationConnection })
+    await simulate(fixture.sample as never, fixture.setup as never)
 
     expect(sdk.runJob.mock.calls[0][1]).toMatchObject({
       kind: 'cae.start.payload-attachments',
@@ -294,9 +287,7 @@ describe('CAE session client', () => {
       },
     })
 
-    await expect(
-      simulate(fixture.sample as never, fixture.setup as never, { connection: gpStationConnection }),
-    ).rejects.toMatchObject({
+    await expect(simulate(fixture.sample as never, fixture.setup as never)).rejects.toMatchObject({
       code: 'protocol_error',
     })
   })
@@ -324,36 +315,12 @@ describe('CAE session client', () => {
         session: { call, finish: vi.fn(), close, jobId: 'job-cancel', closed: false },
       }
     })
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 200 }))
-
     await expect(
       simulate(fixture.sample as never, fixture.setup as never, {
-        connection: gpStationConnection,
         signal: controller.signal,
       }),
     ).rejects.toMatchObject({ name: 'AbortError' })
     expect(close).toHaveBeenCalled()
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://gps.example.test/v1/jobs/job-cancel/kill',
-      expect.objectContaining({
-        headers: { Authorization: 'Bearer gpsk_test' },
-      }),
-    )
-    fetchMock.mockRestore()
-  })
-
-  it('blocks runs when no access token or connected CAE launcher exists', async () => {
-    const fixture = realization()
-    await expect(simulate(fixture.sample as never, fixture.setup as never)).rejects.toMatchObject({
-      code: 'access_token_required',
-    })
-
-    sdk.listLaunchers.mockResolvedValue([{ id: 'launcher-1', status: 'disconnected', slave_app_ids: ['cae'] }])
-    await expect(
-      simulate(fixture.sample as never, fixture.setup as never, { connection: gpStationConnection }),
-    ).rejects.toMatchObject({
-      code: 'cae_launcher_unavailable',
-    })
-    expect(sdk.runJob).not.toHaveBeenCalled()
+    expect(api.request).toHaveBeenCalledWith('post', '/web/jobs/job-cancel/kill')
   })
 })

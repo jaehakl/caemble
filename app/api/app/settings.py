@@ -25,6 +25,7 @@ class Settings(BaseModel):
     google_id_token_clock_skew_sec: int = int(os.getenv("GOOGLE_ID_TOKEN_CLOCK_SKEW_SEC", "10"))
 
     app_base_url: str = os.getenv("APP_BASE_URL", "http://localhost:5173").rstrip("/")
+    public_api_base_url: str = os.getenv("PUBLIC_API_BASE_URL", "http://localhost:8000").rstrip("/")
     allowed_app_origins: tuple[str, ...] = env_csv(
         "ALLOWED_APP_ORIGINS",
         "http://localhost:5173",
@@ -36,6 +37,7 @@ class Settings(BaseModel):
     JWT_ALG: str = "HS256"
     ACCESS_TTL_SEC: int = 1200
     REFRESH_TTL_SEC: int = 60 * 60 * 24 * 14
+    CSRF_TTL_SEC: int = int(os.getenv("CSRF_TTL_SEC", "3600"))
     COOKIE_DOMAIN: str = os.getenv("COOKIE_DOMAIN", "")
     SECURE_COOKIES: bool = env_bool("SECURE_COOKIES", True)
 

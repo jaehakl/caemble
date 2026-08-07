@@ -15,6 +15,8 @@ export class ApiError extends Error {
 }
 
 let refreshPromise: Promise<void> | null = null
+let csrfPromise: Promise<string> | null = null
+let csrfToken: string | null = null
 
 async function responseBody(response: Response) {
   if (response.status === 204) return undefined
@@ -24,14 +26,44 @@ async function responseBody(response: Response) {
   return text || undefined
 }
 
-async function send<T>(method: HttpMethod, url: string, data?: unknown): Promise<T> {
+async function fetchCsrfToken(): Promise<string> {
+  const response = await fetch(`${API_URL}/web/auth/csrf`, {
+    credentials: 'include',
+    headers: { accept: 'application/json' },
+  })
+  const body = await responseBody(response)
+  if (!response.ok) throw new ApiError(response.status, 'CSRF 토큰을 가져오지 못했습니다.', body)
+  if (typeof body !== 'object' || body === null || !('csrf_token' in body) || typeof body.csrf_token !== 'string') {
+    throw new Error('CSRF token response is missing csrf_token')
+  }
+  const token = body.csrf_token
+  csrfToken = token
+  return token
+}
+
+async function ensureCsrfToken() {
+  if (csrfToken) return csrfToken
+  csrfPromise ??= fetchCsrfToken().finally(() => {
+    csrfPromise = null
+  })
+  return csrfPromise
+}
+
+async function send<T>(method: HttpMethod, url: string, data?: unknown, retryCsrf = true): Promise<T> {
+  const csrfProtected = method !== 'get' && url.startsWith('/web/')
+  const headers = new Headers(data === undefined ? undefined : { 'content-type': 'application/json' })
+  if (csrfProtected) headers.set('X-CSRF-Token', await ensureCsrfToken())
   const response = await fetch(`${API_URL}${url}`, {
     method: method.toUpperCase(),
     credentials: 'include',
-    headers: data === undefined ? undefined : { 'content-type': 'application/json' },
+    headers,
     body: data === undefined ? undefined : JSON.stringify(data),
   })
   const body = await responseBody(response)
+  if (csrfProtected && retryCsrf && response.status === 403) {
+    csrfToken = null
+    return send<T>(method, url, data, false)
+  }
   if (!response.ok) {
     const detail =
       typeof body === 'object' && body !== null && 'detail' in body

@@ -3,6 +3,10 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath, URL } from 'node:url'
 
+const uiRoot = fileURLToPath(new URL('.', import.meta.url))
+const sdkRoot = fileURLToPath(new URL('../sdk/master/js', import.meta.url))
+const slavesRoot = fileURLToPath(new URL('../slaves', import.meta.url))
+
 // https://vite.dev/config/
 export default defineConfig({
   cacheDir: 'node_modules/.vite-app',
@@ -12,6 +16,9 @@ export default defineConfig({
     },
   },
   server: {
+    fs: {
+      allow: [uiRoot, sdkRoot, slavesRoot],
+    },
     host: 'localhost',
     port: 5173,
     strictPort: true,

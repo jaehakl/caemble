@@ -1,0 +1,238 @@
+{
+  "schemaVersion": 1,
+  "implementation": "app.solvers.steady_state_heat.solver:run",
+  "descriptor": {
+    "name": "steady-state-heat",
+    "version": "0.0.0",
+    "description": "Solves steady-state heat conduction with fixed-temperature ends and adiabatic side walls.",
+    "referenceLengthUnit": "m",
+    "minimumOutputs": 1,
+    "parameters": {
+      "relativeTolerance": {
+        "description": "Relative convergence tolerance for the preconditioned conjugate-gradient solve.",
+        "data": {
+          "dtype": "float64",
+          "quantityKind": "DimensionlessRatio",
+          "unit": "{fraction}",
+          "minimum": 0,
+          "maximum": 1,
+          "exclusiveMinimum": true,
+          "exclusiveMaximum": true,
+          "tensorOrder": 0
+        }
+      },
+      "maxIterations": {
+        "description": "Maximum number of solver iterations.",
+        "data": {
+          "dtype": "int32",
+          "minimum": 1,
+          "tensorOrder": 0
+        }
+      }
+    },
+    "materials": [
+      {
+        "role": "thermalDomain",
+        "description": "The homogeneous isotropic thermal domain targeted by heat.voxel-grid.",
+        "target": {
+          "category": "initializations",
+          "methodId": "heat.voxel-grid"
+        },
+        "properties": {
+          "thermal.conductivity": {
+            "description": "Positive isotropic thermal-conductivity tensor in the global identity basis.",
+            "data": {
+              "dtype": "float64",
+              "quantityKind": "thermodynamics.ThermalConductivity",
+              "unit": "W.m-1.K-1",
+              "basis": [
+                [
+                  1,
+                  0,
+                  0
+                ],
+                [
+                  0,
+                  1,
+                  0
+                ],
+                [
+                  0,
+                  0,
+                  1
+                ]
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "inputPorts": {
+      "heatSource": {
+        "description": "Optional volumetric heat source sampled on the same voxel grid.",
+        "artifactTypes": [
+          "caemble.dc/joule-heating@1"
+        ],
+        "minimumOccurrences": 0,
+        "maximumOccurrences": 1,
+        "data": {
+          "dtype": "float64",
+          "quantityKind": "PowerDensity",
+          "unit": "W.m-3",
+          "axes": [
+            {
+              "name": "axial position",
+              "quantityKind": "Length",
+              "unit": "m"
+            },
+            {
+              "name": "cross-section v",
+              "quantityKind": "Length",
+              "unit": "m"
+            },
+            {
+              "name": "cross-section u",
+              "quantityKind": "Length",
+              "unit": "m"
+            }
+          ],
+          "tensorOrder": 0
+        }
+      }
+    },
+    "observations": {
+      "iterations": {
+        "description": "Number of completed PCG iterations.",
+        "type": "number"
+      },
+      "relativeResidual": {
+        "description": "Final relative residual of the PCG solve.",
+        "type": "number"
+      }
+    },
+    "methods": {
+      "initializations": [
+        {
+          "methodId": "heat.voxel-grid",
+          "description": "Defines the cell-centered thermal voxel grid in axial, u, and v order.",
+          "minimumOccurrences": 1,
+          "maximumOccurrences": 1,
+          "target": {
+            "source": "structure",
+            "kind": "geometry",
+            "minimumTargets": 1,
+            "maximumTargets": 1,
+            "minimumResolved": 1,
+            "maximumResolved": 1
+          },
+          "parameters": {
+            "gridShape": {
+              "description": "Number of cells along the s, u, and v grid axes.",
+              "data": {
+                "dtype": "int32",
+                "axes": [
+                  {
+                    "length": 3
+                  }
+                ],
+                "minimum": 3,
+                "tensorOrder": 0
+              }
+            }
+          }
+        }
+      ],
+      "boundaryConditions": [
+        {
+          "methodId": "heat.fixed-temperature",
+          "description": "Applies a fixed temperature to one complete end surface.",
+          "minimumOccurrences": 2,
+          "maximumOccurrences": 2,
+          "target": {
+            "source": "structure",
+            "kind": "surface",
+            "minimumTargets": 1,
+            "maximumTargets": 1,
+            "minimumResolved": 1,
+            "maximumResolved": 1
+          },
+          "parameters": {
+            "temperature": {
+              "description": "Fixed surface temperature.",
+              "data": {
+                "dtype": "float64",
+                "quantityKind": "thermodynamics.Temperature",
+                "unit": "K",
+                "minimum": 0,
+                "tensorOrder": 0
+              }
+            }
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "methodId": "heat.temperature",
+          "description": "Produces the three-dimensional voxel temperature field.",
+          "minimumOccurrences": 0,
+          "maximumOccurrences": 1,
+          "target": {
+            "source": "structure",
+            "kind": "geometry",
+            "minimumTargets": 1,
+            "maximumTargets": 1,
+            "minimumResolved": 1,
+            "maximumResolved": 1
+          },
+          "parameters": {},
+          "artifactType": "caemble.heat/temperature@1",
+          "data": {
+            "dtype": "float64",
+            "quantityKind": "thermodynamics.Temperature",
+            "unit": "K",
+            "axes": [
+              {
+                "name": "axial position",
+                "quantityKind": "Length",
+                "unit": "m"
+              },
+              {
+                "name": "cross-section v",
+                "quantityKind": "Length",
+                "unit": "m"
+              },
+              {
+                "name": "cross-section u",
+                "quantityKind": "Length",
+                "unit": "m"
+              }
+            ],
+            "tensorOrder": 0
+          }
+        },
+        {
+          "methodId": "heat.maximum-temperature",
+          "description": "Produces the maximum temperature among occupied voxel cells.",
+          "minimumOccurrences": 0,
+          "maximumOccurrences": 1,
+          "target": {
+            "source": "structure",
+            "kind": "geometry",
+            "minimumTargets": 1,
+            "maximumTargets": 1,
+            "minimumResolved": 1,
+            "maximumResolved": 1
+          },
+          "parameters": {},
+          "artifactType": "caemble.heat/maximum-temperature@1",
+          "data": {
+            "dtype": "float64",
+            "quantityKind": "thermodynamics.Temperature",
+            "unit": "K",
+            "tensorOrder": 0
+          }
+        }
+      ]
+    }
+  }
+}

@@ -40,7 +40,6 @@ const auth = vi.hoisted(() => ({
       email: 'owner@example.com',
       is_active: true,
       roles: ['user'],
-      gpstation_connection: null,
     },
   } as { isAuthenticated: boolean; isLoading: boolean; user: UserData | null },
 }))
@@ -258,7 +257,6 @@ beforeEach(() => {
       email: 'owner@example.com',
       is_active: true,
       roles: ['user'],
-      gpstation_connection: null,
     },
   }
   api.listExperiments.mockResolvedValue({ items: experiments, total: experiments.length })
@@ -621,7 +619,6 @@ describe('ExperimentPage', () => {
         email: 'admin@example.com',
         is_active: true,
         roles: ['admin'],
-        gpstation_connection: null,
       },
     }
     renderPage('/experiments?experiment=4')
@@ -659,7 +656,7 @@ describe('ExperimentPage', () => {
       undefined,
       expect.any(Function),
       'standard',
-      undefined,
+      false,
     )
   })
 })

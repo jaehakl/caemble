@@ -52,7 +52,7 @@ def test_return_to_is_restricted_to_configured_origins(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_refresh_does_not_load_gpstation_connection(
+async def test_refresh_has_no_legacy_gpstation_connection_query(
     client,
     db_session,
     monkeypatch,

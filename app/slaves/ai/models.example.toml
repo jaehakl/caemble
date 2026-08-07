@@ -1,0 +1,126 @@
+[llm]
+default_model = "Qwen3.6-35B-A3B-Q8"
+use_max_gpu = false
+# Optional. When omitted, use_max_gpu selects -1 (GPU) or 0 (CPU).
+# n_gpu_layers = -1
+# Optional. When omitted, llama.cpp chooses its thread count.
+# n_threads = 8
+context_size = 262144
+split_mode = "tensor"
+tensor_split = []
+main_gpu = 0
+flash_attn = true
+swa_full = false
+n_batch = 1024
+n_ubatch = 1024
+offload_kqv = true
+max_tokens = 8192
+temperature = 0.8
+top_p = 0.9
+enable_thinking = false
+
+[[llm.models]]
+name = "Qwen3.6-35B-A3B-Q8"
+path = "/ssd3/llm/Qwen3.6-35B-A3B-Q8_0.gguf"
+
+[[llm.models]]
+name = "Qwen3.6-27B-Q4"
+path = "/ssd3/llm/Qwen3.6-27B-Q4_K_M.gguf"
+
+[[llm.models]]
+name = "Qwen3.6-27B-Q8"
+path = "/ssd3/llm/Qwen3.6-27B-Q8_0.gguf"
+
+[[llm.models]]
+name = "Qwen3.6-35B-A3B-Uncensored-Q8"
+path = "/ssd3/llm/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf"
+
+[[llm.models]]
+name = "gemma-4"
+path = "/ssd3/llm/gemma-4-31B-it-QAT-Q4_0.gguf"
+
+[[llm.models]]
+name = "supergemma4"
+path = "/ssd3/llm/supergemma4-26b-uncensored-fast-v2-Q4_K_M.gguf"
+context_size = 131072
+n_batch = 1024
+n_ubatch = 512
+
+
+[sdxl]
+default_model = "JANKU_777"
+controlnet_scribble_model_id = "xinsir/controlnet-scribble-sdxl-1.0"
+controlnet_openpose_model_id = "xinsir/controlnet-openpose-sdxl-1.0"
+step = 30
+cfg = 7.0
+height = 1024
+width = 1024
+strength = 1.0
+max_chunk_size = 1
+seed_min = 0
+seed_max = 2147483647
+sampler = "euler"
+scheduler = ""
+# Optional; omit to use the checkpoint default.
+# clip_skip = 2
+format = "png"
+scribble_scale = 0.6
+scribble_guidance_start = 0.0
+scribble_guidance_end = 0.6
+pose_scale = 0.9
+pose_guidance_start = 0.0
+pose_guidance_end = 0.8
+
+[[sdxl.models]]
+name = "Wai_150"
+path = "/ssd3/sdxl/waiNSFWIllustrious_v150.safetensors"
+
+[[sdxl.models]]
+name = "JANKU_777"
+path = "/ssd3/sdxl/JANKUTrainedChenkinNoobai_v777.safetensors"
+
+[[sdxl.models]]
+name = "JANKU_Rouwei_60"
+path = "/ssd3/sdxl/JANKUTrainedNoobaiRouwei_v60.safetensors"
+
+[[sdxl.models]]
+name = "novaAnime_150"
+path = "/ssd3/sdxl/novaAnimeXL_ilV150.safetensors"
+
+[[sdxl.models]]
+name = "Perfectdeliberate_60"
+path = "/ssd3/sdxl/perfectdeliberate_v60.safetensors"
+
+[[sdxl.models]]
+name = "Cyberrealistic_IllustriousAnimeV20"
+path = "/ssd3/sdxl/cyberrealistic_illustriousAnimeV20.safetensors"
+
+[[sdxl.models]]
+name = "ponymagine91_gamma"
+path = "/ssd3/sdxl/ponymagine91_gamma.safetensors"
+cfg = 7.0
+
+[[sdxl.models]]
+name = "unnamedixlRealisticModel_v4"
+path = "/ssd3/sdxl/unnamedixlRealisticModel_v4.safetensors"
+
+[[sdxl.models]]
+name = "Illustrij_v19"
+path = "/ssd3/sdxl/illustrij_v19.safetensors"
+
+
+[embeddings]
+default_model = "multilingual-e5-large"
+
+[[embeddings.models]]
+name = "multilingual-e5-large"
+model_name = "intfloat/multilingual-e5-large"
+
+[[embeddings.models]]
+name = "ruri-v3-310m"
+model_name = "cl-nagoya/ruri-v3-310m"
+
+#[[embeddings.models]]
+#name = "local-embedding"
+#path = "models/embedding"
+#local_files_only = true

@@ -295,7 +295,7 @@ export function ExperimentProgramGuide() {
             <li>Source를 수정했다면 Stale 결과를 다시 실행합니다.</li>
           </ol>
           <p className="mt-3">
-            저장소의 상세 문서는 <Code>apps/caemble/ui/docs/experiment-program.md</Code>에 있습니다.
+            저장소의 상세 문서는 <Code>docs/experiment-program.md</Code>에 있습니다.
           </p>
         </section>
       </div>

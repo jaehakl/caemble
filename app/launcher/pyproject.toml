@@ -1,0 +1,35 @@
+[project]
+name = "caemble-launcher"
+version = "0.1.0"
+description = "Caemble GPStation v1-compatible slave launcher and subprocess runtime"
+authors = [{ name = "Caemble" }]
+requires-python = ">=3.11,<3.15"
+dependencies = [
+    "caemble-runtime-sdk",
+    "pydantic-settings>=2.8,<3.0",
+    "typer>=0.12,<1.0",
+    "websockets>=12.0,<16.0",
+]
+
+[project.scripts]
+launcher = "app.cli:app"
+
+[tool.poetry]
+packages = [
+    { include = "app" },
+]
+
+[tool.poetry.dependencies]
+caemble-runtime-sdk = { path = "../sdk", develop = true }
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0,<10.0"
+pytest-asyncio = ">=1.0,<2.0"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

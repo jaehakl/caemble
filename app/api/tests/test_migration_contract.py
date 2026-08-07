@@ -4,6 +4,9 @@ import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+
+from user_auth.db import AuthAudit
 
 
 def test_initial_revision_contains_extension_enum_tables_and_role_seed():
@@ -85,14 +88,45 @@ def test_deployed_revision_marker_is_a_noop_compatibility_revision():
     assert source.count("    pass") == 2
 
 
-def test_source_migration_graph_ends_at_gpstation_connections():
+def test_source_migration_graph_ends_at_integrated_runtime():
     root = Path(__file__).resolve().parents[1]
     scripts = ScriptDirectory.from_config(Config(root / "alembic.ini"))
 
-    assert scripts.get_heads() == ["9d31a6f7c2e4"]
+    assert scripts.get_heads() == ["a4c8e2f19b73"]
     assert scripts.get_revision("f24a6b91d3ce").down_revision == "e7b2c5d91a40"
     assert scripts.get_revision("9d31a6f7c2e4").down_revision == "f24a6b91d3ce"
+    assert scripts.get_revision("a4c8e2f19b73").down_revision == "9d31a6f7c2e4"
     assert not any(root.joinpath("alembic", "versions").glob("*_measurement_contract_metadata.py"))
+
+
+def test_runtime_revision_removes_legacy_connection_and_expands_audit_contract():
+    revision = next(
+        (Path(__file__).resolve().parents[1] / "alembic" / "versions").glob(
+            "*_integrate_job_runtime.py"
+        )
+    )
+    source = revision.read_text(encoding="utf-8")
+    assert 'op.drop_table("gpstation_connections")' in source
+    assert 'op.create_table(\n        "launchers"' in source
+    assert 'op.create_table(\n        "jobs"' in source
+    for column in (
+        "key_prefix",
+        "scopes",
+        "status",
+        "allowed_ips",
+        "allowed_origins",
+        "expires_at",
+    ):
+        assert f'"{column}"' in source
+    for event in (
+        "token_created",
+        "token_revoked",
+        "token_imported",
+        "launcher_connected",
+        "launcher_rejected",
+        "launcher_disconnected",
+    ):
+        assert event in source
 
 
 @pytest.mark.asyncio
@@ -110,7 +144,7 @@ async def test_configured_database_has_seeded_roles_and_required_extensions(db_s
             """
         )
     )
-    gpstation_columns = list(
+    legacy_connection_columns = list(
         (
             await db_session.execute(
                 text(
@@ -128,10 +162,51 @@ async def test_configured_database_has_seeded_roles_and_required_extensions(db_s
     assert roles == ["admin", "user"]
     assert vector
     assert persisted_token_columns == 0
-    assert gpstation_columns == [
-        "user_id",
-        "api_base_url",
-        "access_token",
-        "created_at",
-        "updated_at",
-    ]
+    runtime_tables = set(
+        (
+            await db_session.execute(
+                text(
+                    """
+                    SELECT table_name
+                    FROM information_schema.tables
+                    WHERE table_schema = current_schema()
+                      AND table_name IN ('jobs', 'launchers')
+                    """
+                )
+            )
+        ).scalars()
+    )
+    access_key_columns = set(
+        (
+            await db_session.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = 'api_keys'
+                    """
+                )
+            )
+        ).scalars()
+    )
+    assert legacy_connection_columns == []
+    assert runtime_tables == {"jobs", "launchers"}
+    assert {
+        "key_type",
+        "key_prefix",
+        "scopes",
+        "status",
+        "rate_limit_per_minute",
+        "allowed_ips",
+        "allowed_origins",
+        "expires_at",
+    } <= access_key_columns
+
+
+@pytest.mark.asyncio
+async def test_auth_audit_check_rejects_events_outside_the_runtime_contract(db_session):
+    db_session.add(AuthAudit(event="not_a_real_audit_event"))
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()

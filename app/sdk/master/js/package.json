@@ -1,0 +1,28 @@
+{
+  "name": "@gpstation/v1-master-js-sdk",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npx --yes --package typescript@6.0.3 tsc -p tsconfig.build.json",
+    "test": "npm run build && node --test tests/client-event.test.mjs tests/live-e2e.test.mjs",
+    "test:live": "npm run build && node --test tests/live-e2e.test.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

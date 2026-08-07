@@ -1,0 +1,47 @@
+[project]
+name = "caemble-runtime-sdk"
+version = "0.1.0"
+description = "Caemble-bundled GPStation v1 compatibility SDK libraries"
+authors = [{ name = "Caemble" }]
+requires-python = ">=3.11,<3.15"
+dependencies = [
+    "pydantic>=2.10,<3.0",
+]
+
+[project.optional-dependencies]
+slave = [
+    "aiortc>=1.9,<2.0",
+]
+
+[tool.poetry]
+packages = [
+    { include = "sdk", from = ".." },
+]
+exclude = [
+    ".cache/**",
+    ".mypy_cache/**",
+    ".pytest_cache/**",
+    ".ruff_cache/**",
+    ".venv/**",
+    "dist/**",
+    "master/**",
+    "tests/**",
+    "README.md",
+    "poetry.lock",
+    "pyproject.toml",
+    "**/__pycache__/**",
+    "**/node_modules/**",
+    "**/.next/**",
+]
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0,<10.0"
+pytest-asyncio = ">=1.0,<2.0"
+
+[tool.pytest.ini_options]
+pythonpath = [".."]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

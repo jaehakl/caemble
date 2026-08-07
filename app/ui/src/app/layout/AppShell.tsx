@@ -47,7 +47,7 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }) {
     ))
 
   return (
-    <nav aria-label="주요 탐색" className="flex flex-col gap-1">
+    <nav aria-label="주요 탐색" className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pr-1">
       {items(primaryNavigation)}
       <div className="mt-5 mb-1 px-3 text-[11px] font-semibold tracking-[0.16em] text-muted-foreground uppercase">
         카탈로그
@@ -121,8 +121,12 @@ function pageTitle(pathname: string) {
   if (pathname.startsWith('/structures')) return 'Structures'
   if (pathname.startsWith('/experiments')) return 'Experiments'
   if (pathname.startsWith('/examples')) return 'Examples Playground'
+  if (pathname.startsWith('/viewer')) return 'Measurements'
   if (pathname.startsWith('/measurements')) return 'Measurements'
   if (pathname.startsWith('/analysis')) return 'Analysis'
+  if (pathname.startsWith('/ai/chat')) return 'AI Chat'
+  if (pathname.startsWith('/launchers')) return 'Launchers'
+  if (pathname.startsWith('/jobs')) return 'Jobs'
   if (pathname.startsWith('/materials')) return 'Materials'
   if (pathname.startsWith('/catalog/cad')) return 'Geometry'
   if (pathname.startsWith('/catalog/materials')) return 'Material Catalog'

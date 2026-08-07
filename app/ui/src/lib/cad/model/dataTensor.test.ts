@@ -69,12 +69,7 @@ describe('DataTensor codec', () => {
 
     goldenFixture.invalidCases.forEach((fixture) => {
       expect(
-        () =>
-          createDataTensor(
-            fixture.schema as DataSchema,
-            fixture.input as LegacyRecordedDataTensor,
-            fixture.name,
-          ),
+        () => createDataTensor(fixture.schema as DataSchema, fixture.input as LegacyRecordedDataTensor, fixture.name),
         fixture.name,
       ).toThrow(fixture.issue)
     })

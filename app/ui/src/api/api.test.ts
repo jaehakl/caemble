@@ -73,9 +73,10 @@ describe('unified dbTables API', () => {
     expect(authSource).toContain('queryFn: () => dbTables.User.fetchMe()')
 
     const { dbTables } = await loadApi()
-    const rowSchemas = Object.values(dbTables).map((table) => table.rowSchema)
+    const rowSchemas = Object.values(dbTables).flatMap((table) => ('rowSchema' in table ? [table.rowSchema] : []))
     expect(new Set(rowSchemas)).toHaveLength(rowSchemas.length)
     for (const table of Object.values(dbTables)) {
+      if (!('rowSchema' in table)) continue
       expect(table).toHaveProperty('rowSchema')
       expect(table).not.toHaveProperty('columns')
       expect(table).not.toHaveProperty('label')
@@ -101,7 +102,6 @@ describe('unified dbTables API', () => {
       roles: ['user'],
       created_at: '2026-07-21T00:00:00Z',
       updated_at: null,
-      gpstation_connection: null,
     }
     const { dbTables } = await loadApi()
     server.use(http.get('http://api.test/auth/me', () => HttpResponse.json(validUser)))
@@ -120,54 +120,79 @@ describe('unified dbTables API', () => {
     }
   })
 
-  it('loads and updates the authenticated user GPStation connection separately from public user rows', async () => {
-    const authenticatedUser = {
-      id: 'd7929429-84f8-4d92-865d-dc638d8e64e0',
-      email: 'designer@example.com',
-      display_name: 'Designer',
-      picture_url: null,
-      is_active: true,
-      roles: ['user'],
-      created_at: '2026-07-21T00:00:00Z',
-      updated_at: '2026-07-21T00:00:00Z',
-      gpstation_connection: {
-        api_base_url: 'https://gps.example.test',
-        access_token: 'gpsk_secret',
-      },
+  it('creates, lists, and revokes same-origin access tokens with CSRF protection', async () => {
+    const token = {
+      id: 'token-1',
+      user_id: 'user-1',
+      key_type: 'user_api',
+      name: 'sdk',
+      key_prefix: 'csk_example',
+      scopes: ['client'],
+      status: 'active',
     }
-    const requests: { body: unknown; method: string }[] = []
+    const requests: { body: unknown; csrf: string | null; path: string }[] = []
     server.use(
-      http.put('http://api.test/user_data/gpstation', async ({ request }) => {
-        requests.push({ body: await request.json(), method: request.method })
-        return HttpResponse.json(authenticatedUser)
+      http.get('http://api.test/web/auth/csrf', () => HttpResponse.json({ csrf_token: 'csrf-test' })),
+      http.post('http://api.test/web/crud/access_keys/list', async ({ request }) => {
+        requests.push({
+          body: await request.json(),
+          csrf: request.headers.get('X-CSRF-Token'),
+          path: '/list',
+        })
+        return HttpResponse.json({ total: 1, items: [token] })
       }),
-      http.delete('http://api.test/user_data/gpstation', ({ request }) => {
-        requests.push({ body: null, method: request.method })
-        return HttpResponse.json({ ...authenticatedUser, gpstation_connection: null })
+      http.post('http://api.test/web/users/me/access-tokens', async ({ request }) => {
+        requests.push({
+          body: await request.json(),
+          csrf: request.headers.get('X-CSRF-Token'),
+          path: '/create',
+        })
+        return HttpResponse.json({ access_key: token, secret: 'csk_secret' })
+      }),
+      http.post('http://api.test/web/crud/access_keys/delete', async ({ request }) => {
+        requests.push({
+          body: await request.json(),
+          csrf: request.headers.get('X-CSRF-Token'),
+          path: '/delete',
+        })
+        return HttpResponse.json({ deleted: 1 })
       }),
     )
     const { dbTables } = await loadApi()
 
-    await expect(
-      dbTables.User.saveGpStationConnection({
-        api_base_url: ' https://gps.example.test ',
-        access_token: ' gpsk_secret ',
-      }),
-    ).resolves.toEqual(authenticatedUser)
-    await expect(dbTables.User.deleteGpStationConnection()).resolves.toMatchObject({
-      gpstation_connection: null,
+    await expect(dbTables.AccessKey.list()).resolves.toEqual({ total: 1, items: [token] })
+    await expect(dbTables.AccessKey.create({ name: ' sdk ', scopes: ['client'] })).resolves.toEqual({
+      access_key: token,
+      secret: 'csk_secret',
     })
-    expect(requests).toEqual([
-      {
-        method: 'PUT',
-        body: {
-          api_base_url: 'https://gps.example.test',
-          access_token: 'gpsk_secret',
-        },
+    await expect(dbTables.AccessKey.revoke('token-1')).resolves.toEqual({ deleted: 1 })
+    expect(requests.map((item) => item.path)).toEqual(['/list', '/create', '/delete'])
+    expect(requests.every((item) => item.csrf === 'csrf-test')).toBe(true)
+    expect(requests[1].body).toEqual({ name: 'sdk', scopes: ['client'] })
+  })
+
+  it('validates the bounded latest progress contract on web job summaries', async () => {
+    const job = {
+      id: 'job-1',
+      user_id: 'user-1',
+      handler_type: 'cae.simulation.start',
+      slave_app_id: 'cae',
+      state: 'running',
+      latest_progress: {
+        time: '2031-04-05T06:07:08Z',
+        progress: { stage: 'solve', completed: 42, total: 100 },
       },
-      { method: 'DELETE', body: null },
-    ])
-    expect(dbTables.User.rowSchema.parse(authenticatedUser)).not.toHaveProperty('gpstation_connection')
+      attempt_count: 1,
+    }
+    server.use(
+      http.get('http://api.test/web/jobs', ({ request }) => {
+        expect(new URL(request.url).searchParams.get('active_only')).toBe('true')
+        return HttpResponse.json([job])
+      }),
+    )
+    const { dbTables } = await loadApi()
+
+    await expect(dbTables.Job.list(true)).resolves.toEqual([job])
   })
 
   it('validates numeric, FK, required, nullable, and JSON fields before sending', async () => {

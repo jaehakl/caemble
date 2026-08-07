@@ -272,10 +272,11 @@ Material에는 양의 등방성 `thermal.conductivity`가 필요하고, observat
 
 ## 새 kernel 추가
 
-GPStation CAE checkout의 `app/solvers/<solver_name>/`에 `manifest.json`,
-`solver.py`, 전용 테스트를 추가한다. registry는 manifest를 자동 발견하며 중앙 등록
+Caemble의 `app/slaves/cae/app/solvers/<solver_name>/`에 `manifest.json`,
+`solver.py`, 전용 테스트를 추가한다. CAE registry는 manifest를 자동 발견하며 중앙 등록
 코드를 수정하지 않는다. UI에는 manifest 사본이나 solver별 TypeScript 선언을 만들지
-않는다. Solver Catalog는 연결된 CAE worker의 `cae.solvers.manifests` 응답을 표시한다.
+않는다. Solver Catalog는 같은 manifest를 Vite build 시 직접 포함하므로 변경 후 UI를
+다시 빌드한다. 외부 SDK 호환을 위한 `cae.solvers.manifests` handler는 그대로 유지한다.
 
 UI example을 `defineTask({ name, version }, config)`로 추가하고 raw fixture를
 재생성해 UI-CAE 계약 테스트를 실행한다.

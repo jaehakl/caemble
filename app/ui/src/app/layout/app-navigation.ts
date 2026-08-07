@@ -11,6 +11,9 @@ import {
   GitBranch,
   Home,
   Layers3,
+  ListChecks,
+  MessageCircle,
+  Server,
   TestTubeDiagonal,
   type LucideIcon,
 } from 'lucide-react'
@@ -28,6 +31,9 @@ export const primaryNavigation: readonly AppNavigationItem[] = [
   { href: '/examples', icon: GalleryVerticalEnd, label: 'Examples' },
   { href: '/measurements', icon: Activity, label: 'Measurements' },
   { href: '/analysis', icon: ChartNoAxesCombined, label: 'Analysis' },
+  { href: '/ai/chat', icon: MessageCircle, label: 'AI Chat' },
+  { href: '/launchers', icon: Server, label: 'Launchers' },
+  { href: '/jobs', icon: ListChecks, label: 'Jobs' },
   { href: '/materials', icon: Database, label: 'Materials' },
   { href: '/docs', icon: BookOpenText, label: 'Manual' },
 ]

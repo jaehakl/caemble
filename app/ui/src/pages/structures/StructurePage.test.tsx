@@ -40,7 +40,6 @@ const auth = vi.hoisted(() => ({
       email: 'owner@example.com',
       is_active: true,
       roles: ['user'],
-      gpstation_connection: null,
     },
   } as { isAuthenticated: boolean; isLoading: boolean; user: UserData | null },
 }))
@@ -246,7 +245,6 @@ beforeEach(() => {
       email: 'owner@example.com',
       is_active: true,
       roles: ['user'],
-      gpstation_connection: null,
     },
   }
   api.listStructures.mockResolvedValue({ items: structures, total: structures.length })
@@ -607,7 +605,6 @@ describe('StructurePage', () => {
         email: 'admin@example.com',
         is_active: true,
         roles: ['admin'],
-        gpstation_connection: null,
       },
     }
     renderPage('/structures?structure=4')
@@ -645,7 +642,7 @@ describe('StructurePage', () => {
       undefined,
       expect.any(Function),
       'fast-reroll',
-      undefined,
+      false,
     )
   })
 })

@@ -86,7 +86,7 @@ export function ExamplesPage() {
     undefined,
     resolveMaterials,
     'fast-reroll',
-    auth.user?.gpstation_connection,
+    auth.isAuthenticated,
   )
 
   const dirty =

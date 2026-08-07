@@ -1,61 +1,34 @@
 // @vitest-environment jsdom
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AccountPage } from './AccountPage'
 
-const state = vi.hoisted(() => ({
-  deleteConnection: vi.fn(),
-  saveConnection: vi.fn(),
-  user: null as null | {
-    id: string
-    email: string
-    display_name: string
-    picture_url: null
-    is_active: true
-    created_at: string
-    updated_at: string
-    roles: string[]
-    gpstation_connection: null | { api_base_url: string; access_token: string }
-  },
-  validateConnection: vi.fn(),
+const api = vi.hoisted(() => ({
+  create: vi.fn(),
+  list: vi.fn(),
+  revoke: vi.fn(),
 }))
+
+vi.mock('@/api', async (importActual) => {
+  const actual = await importActual<typeof import('@/api')>()
+  return {
+    ...actual,
+    dbTables: {
+      ...actual.dbTables,
+      AccessKey: api,
+    },
+  }
+})
 
 vi.mock('@/features/auth/use-auth', () => ({
   useAuth: () => ({
     isAuthenticated: true,
     isLoading: false,
-    user: state.user,
-  }),
-  useDeleteGpStationConnection: () => ({
-    isPending: false,
-    mutateAsync: state.deleteConnection,
-  }),
-  useSaveGpStationConnection: () => ({
-    isPending: false,
-    mutateAsync: state.saveConnection,
-  }),
-}))
-
-vi.mock('@/features/cae/connection', () => ({
-  validateGpStationConnection: state.validateConnection,
-}))
-
-function renderPage() {
-  render(
-    <MemoryRouter initialEntries={['/account']}>
-      <AccountPage />
-    </MemoryRouter>,
-  )
-}
-
-afterEach(cleanup)
-
-describe('Account GPStation connection', () => {
-  beforeEach(() => {
-    state.user = {
+    user: {
       id: 'user-1',
       email: 'designer@example.com',
       display_name: 'Designer',
@@ -64,63 +37,76 @@ describe('Account GPStation connection', () => {
       created_at: '2026-07-21T00:00:00Z',
       updated_at: '2026-07-21T00:00:00Z',
       roles: ['user'],
-      gpstation_connection: null,
-    }
-    state.deleteConnection.mockReset()
-    state.deleteConnection.mockResolvedValue(undefined)
-    state.saveConnection.mockReset()
-    state.saveConnection.mockResolvedValue(undefined)
-    state.validateConnection.mockReset()
-    state.validateConnection.mockResolvedValue({ hasOnlineCaeLauncher: true })
+    },
+  }),
+}))
+
+function token() {
+  return {
+    id: 'token-1',
+    user_id: 'user-1',
+    key_type: 'user_api',
+    name: 'local-launcher',
+    key_prefix: 'csk_example',
+    scopes: ['launcher'],
+    status: 'active',
+    last_used_at: null,
+    expires_at: null,
+    created_at: '2026-08-07T00:00:00Z',
+    revoked_at: null,
+  }
+}
+
+function renderPage() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/account']}>
+        <AccountPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+afterEach(cleanup)
+
+describe('Account access tokens', () => {
+  beforeEach(() => {
+    api.list.mockReset()
+    api.list.mockResolvedValue({ total: 1, items: [token()] })
+    api.create.mockReset()
+    api.create.mockResolvedValue({ access_key: token(), secret: 'csk_secret' })
+    api.revoke.mockReset()
+    api.revoke.mockResolvedValue({ deleted: 1 })
   })
 
-  it('validates and saves the URL and token together', async () => {
+  it('creates a purpose-scoped token and reveals its secret once', async () => {
     const user = userEvent.setup()
     renderPage()
+    expect(await screen.findByText('csk_example')).toBeVisible()
 
-    await user.type(screen.getByLabelText('GPStation API URL'), 'https://gps.example.test')
-    await user.type(screen.getByLabelText('GPStation Access Token'), 'gpsk_secret')
-    await user.click(screen.getByRole('button', { name: '연결 저장' }))
+    await user.type(screen.getByLabelText('Token 이름'), 'automation')
+    await user.selectOptions(screen.getByLabelText('Token 용도'), 'client')
+    await user.click(screen.getByRole('button', { name: '생성' }))
 
     await waitFor(() =>
-      expect(state.validateConnection).toHaveBeenCalledWith({
-        api_base_url: 'https://gps.example.test',
-        access_token: 'gpsk_secret',
+      expect(api.create).toHaveBeenCalledWith({
+        name: 'automation',
+        scopes: ['client'],
+        expires_at: null,
       }),
     )
-    expect(state.saveConnection).toHaveBeenCalledWith({
-      api_base_url: 'https://gps.example.test',
-      access_token: 'gpsk_secret',
-    })
+    expect(await screen.findByText('csk_secret')).toBeVisible()
+    expect(screen.getByText(/다시 표시되지 않습니다/)).toBeVisible()
   })
 
-  it('saves valid authentication and warns when no cae launcher is online', async () => {
-    state.validateConnection.mockResolvedValue({ hasOnlineCaeLauncher: false })
+  it('revokes an active token after confirmation', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
     const user = userEvent.setup()
     renderPage()
 
-    await user.type(screen.getByLabelText('GPStation API URL'), 'https://gps.example.test')
-    await user.type(screen.getByLabelText('GPStation Access Token'), 'gpsk_secret')
-    await user.click(screen.getByRole('button', { name: '연결 저장' }))
+    await user.click(await screen.findByRole('button', { name: '폐기' }))
 
-    expect(
-      await screen.findByText('Token은 확인되어 저장했지만 현재 온라인 상태인 cae launcher가 없습니다.'),
-    ).toBeVisible()
-    expect(state.saveConnection).toHaveBeenCalledOnce()
-  })
-
-  it('deletes a stored connection without rendering its token', async () => {
-    state.user!.gpstation_connection = {
-      api_base_url: 'https://gps.example.test',
-      access_token: 'gpsk_must_not_render',
-    }
-    const user = userEvent.setup()
-    renderPage()
-
-    expect(screen.getByText('Server · https://gps.example.test')).toBeVisible()
-    expect(screen.queryByText('gpsk_must_not_render')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '연결 해제' }))
-
-    await waitFor(() => expect(state.deleteConnection).toHaveBeenCalledOnce())
+    await waitFor(() => expect(api.revoke).toHaveBeenCalledWith('token-1'))
   })
 })

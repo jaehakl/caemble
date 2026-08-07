@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { redirectLegacyHash } from '@/app/legacy-routes'
-import { appRoutePaths, redirectViewerToStructures } from '@/app/router'
+import { appRoutePaths } from '@/app/router'
 import { defaultExperimentCode } from '@/lib/defaultExperimentCode'
 import { defaultExperimentSimulationCode } from '@/lib/defaultExperimentSimulationCode'
 import { catalogCounts } from '@/lib/metadata'
@@ -15,6 +15,9 @@ describe('페이지 중심 앱 라우팅', () => {
       'examples/:exampleId?',
       'measurements',
       'analysis',
+      'ai/chat',
+      'launchers',
+      'jobs',
       'materials',
       'materials/:materialId',
       'catalog/cad/:tag?',
@@ -38,16 +41,6 @@ describe('페이지 중심 앱 라우팅', () => {
       { replaceState } as unknown as History,
     )
     expect(replaceState).toHaveBeenCalledWith(null, '', hash === '#viewer' ? target : `${target}?from=legacy`)
-  })
-
-  it.each([
-    ['https://caemble.test/viewer', '/structures?structure=new&mode=code'],
-    ['https://caemble.test/viewer?structure=111&experiment=112&sample=113', '/structures?structure=new&mode=code'],
-    ['https://caemble.test/viewer?from=bookmark&measurement=114', '/structures?from=bookmark&structure=new&mode=code'],
-  ])('retired Viewer URL %s를 새 Structure 코드 모드로 이동한다', (url, target) => {
-    const response = redirectViewerToStructures(new Request(url))
-    expect(response.status).toBe(302)
-    expect(response.headers.get('Location')).toBe(target)
   })
 
   it('카탈로그 수와 독립 Experiment 예제를 유지한다', () => {

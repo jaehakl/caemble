@@ -10,7 +10,8 @@ import type {
 } from './protocol'
 import { CaeSimulationError } from './errors'
 import { serializeCaeRequest } from './request'
-import type { GPStationConnectionData } from '@/api'
+import { API_URL } from '@/api'
+import { request as apiRequest } from '@/api/http'
 import type { BuiltSample, BuiltSetup, DataTensor, RecordedData } from '../../lib/cad'
 import { createDataTensorAccessor, registerDataTensorAttachment, releaseDataTensorAttachments } from '../../lib/cad'
 
@@ -20,7 +21,6 @@ const CONNECT_TIMEOUT_MS = 60_000
 const FINISH_TIMEOUT_MS = 60_000
 
 export type CaeSimulationOptions = Readonly<{
-  connection?: GPStationConnectionData | null
   signal?: AbortSignal
   onRecord?: (name: string, tensor: DataTensor) => void
   onStatus?: (status: CaeSimulationStatus) => void
@@ -37,12 +37,6 @@ export function simulate(
   setup: BuiltSetup,
   options: CaeSimulationOptions = {},
 ): Promise<RecordedData> {
-  const connection = options.connection
-  if (!connection) {
-    return Promise.reject(new CaeSimulationError('access_token_required', 'GPStation Access Token이 필요합니다.'))
-  }
-  const apiBaseUrl = connection.api_base_url
-  const token = connection.access_token
   let cancelled = options.signal?.aborted ?? false
   let jobId: string | null = null
   let session: JobSession | null = null
@@ -51,13 +45,7 @@ export function simulate(
   const kill = async () => {
     if (!jobId) return
     try {
-      const response = await fetch(`${apiBaseUrl.replace(/\/+$/, '')}/v1/jobs/${encodeURIComponent(jobId)}/kill`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        keepalive: true,
-        signal: AbortSignal.timeout(10_000),
-      })
-      if (!response.ok) throw new Error(`GPStation kill failed with HTTP ${response.status}`)
+      await apiRequest<unknown>('post', `/web/jobs/${encodeURIComponent(jobId)}/kill`)
     } catch {
       // Closing the peer still lets the launcher-side cancellation watchdog reset an unresponsive worker.
     }
@@ -84,15 +72,12 @@ export function simulate(
       blob: new Blob([bytes.slice().buffer as ArrayBuffer], { type: attachment.mimeType }),
     }))
     const client = new GpStationClient({
-      apiBaseUrl,
-      token,
+      apiBaseUrl: API_URL,
+      authMode: 'cookie',
+      jobApiPrefix: '/web/jobs',
     })
     let transportSucceeded = false
     try {
-      const launchers = await client.listLaunchers()
-      if (!launchers.some((launcher) => launcher.status !== 'disconnected' && launcher.slave_app_ids.includes('cae'))) {
-        throw new CaeSimulationError('cae_launcher_unavailable', '연결된 GPStation cae launcher가 없습니다.')
-      }
       const started = await client.runJob<unknown, StartPayload>('cae.simulation.start', request.payload, {
         slaveAppId: 'cae',
         autoFinish: false,

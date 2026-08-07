@@ -3,8 +3,14 @@ import type { dbTables, DbTableRecord } from './api'
 export type {
   DbTableName,
   DbTableRecord,
+  AccessKeyRecord,
+  AccessKeyScope,
   GetListRequest,
   GetListResponse,
+  JobState,
+  JobSummary,
+  LauncherRecord,
+  LauncherRuntime,
   MeasurementSaveRequest,
   SaveCodeEntityRequest,
   SaveCodeEntityResponse,
@@ -13,7 +19,6 @@ export type {
 } from './api'
 
 export type UserData = Awaited<ReturnType<typeof dbTables.User.fetchMe>>
-export type GPStationConnectionData = NonNullable<UserData['gpstation_connection']>
 export type MaterialRecord = DbTableRecord<'Material'>
 export type MaterialNameRecord = DbTableRecord<'MaterialName'>
 export type MaterialParameterRecord = DbTableRecord<'MaterialParameter'>

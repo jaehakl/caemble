@@ -392,7 +392,7 @@ export function StructurePage() {
     undefined,
     resolveMaterials,
     'fast-reroll',
-    auth.user?.gpstation_connection,
+    auth.isAuthenticated,
   )
 
   const invalidateStructures = useCallback(async () => {

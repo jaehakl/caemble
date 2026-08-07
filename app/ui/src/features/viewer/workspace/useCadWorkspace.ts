@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { GPStationConnectionData } from '@/api'
 import type {
   BuiltRealization,
   CadDiagnostic,
@@ -57,7 +56,7 @@ const idleSimulationProcess: SimulationProcess = Object.freeze({
   finishedAt: null,
 })
 
-const simulationEngine = Object.freeze({ name: 'gpstation-cae', version: '1' })
+const simulationEngine = Object.freeze({ name: 'caemble-cae', version: '1' })
 
 function createRequestId(prefix: string) {
   return `${prefix}-${crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`}`
@@ -449,7 +448,7 @@ export function useCadWorkspace(
   experimentVars?: Readonly<Vars>,
   resolveMaterials?: (snapshot: EvaluatedDocumentSnapshot) => Promise<MaterialResolution>,
   structureEvaluationMode: 'standard' | 'fast-reroll' = 'standard',
-  gpStationConnection?: GPStationConnectionData | null,
+  runtimeEnabled = true,
 ) {
   const documentHandlersRef = useRef<Partial<Record<CadDocumentType, DocumentHandlers>>>({})
   const evaluationJobsRef = useRef<Partial<Record<CadDocumentType, EvaluationJob>>>({})
@@ -689,10 +688,10 @@ export function useCadWorkspace(
     structureDocument.successfulRevision === structureDocument.revision &&
     experimentDocument.successfulRevision === experimentDocument.revision &&
     Boolean(experimentDocument.simulationProgram) &&
-    Boolean(gpStationConnection)
+    runtimeEnabled
 
   const run = useCallback(() => {
-    if (!experimentDocument.simulationProgram || activeRunRef.current || !gpStationConnection) return null
+    if (!experimentDocument.simulationProgram || activeRunRef.current || !runtimeEnabled) return null
     const structureSnapshot = documentHandlersRef.current.structure?.getSnapshot()
     const experimentSnapshot = documentHandlersRef.current.experiment?.getSnapshot()
     if (
@@ -725,7 +724,6 @@ export function useCadWorkspace(
     )
     const abortController = new AbortController()
     const promise = simulate(structureSnapshot.realization, experimentSnapshot.realization, {
-      connection: gpStationConnection,
       signal: abortController.signal,
       onRecord(name, tensor) {
         if (activeRunRef.current?.requestId !== requestId) return
@@ -824,7 +822,7 @@ export function useCadWorkspace(
         )
       })
     return requestId
-  }, [experimentDocument.simulationProgram, gpStationConnection])
+  }, [experimentDocument.simulationProgram, runtimeEnabled])
 
   const cancel = useCallback(() => {
     const active = activeRunRef.current

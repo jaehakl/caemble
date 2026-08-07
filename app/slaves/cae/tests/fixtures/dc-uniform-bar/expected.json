@@ -1,0 +1,19 @@
+{
+  "formatVersion": 1,
+  "records": [
+    {
+      "name": "totalCurrent",
+      "dtype": "float64",
+      "shape": [],
+      "value": 14.9,
+      "absoluteTolerance": 0.000001
+    }
+  ],
+  "terminal": {
+    "kind": "complete",
+    "sequence": 2,
+    "recordSequences": [
+      1
+    ]
+  }
+}

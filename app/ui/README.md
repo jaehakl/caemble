@@ -1,8 +1,8 @@
 # Caemble UI
 
-Caemble UI는 React 19, React Router Data Mode, Tailwind CSS v4로 구성된 페이지 중심 웹앱이다. 홈과 공개 Structure/Experiment, 읽기 전용 카탈로그, 문서는 로그인 없이 열람할 수 있고 저장 기능은 Google OAuth 로그인이 필요하다. TSX는 Structure/Experiment 정의의 source of truth이며 preview는 격리된 runner가 만든 immutable snapshot을, simulation은 GPStation WebRTC CAE slave를 사용한다.
+Caemble UI는 React 19, React Router Data Mode, Tailwind CSS v4로 구성된 페이지 중심 웹앱이다. 홈과 공개 Structure/Experiment, 읽기 전용 카탈로그, 문서는 로그인 없이 열람할 수 있고 저장 기능은 Google OAuth 로그인이 필요하다. TSX는 Structure/Experiment 정의의 source of truth이며 preview는 격리된 runner가 만든 immutable snapshot을, simulation은 Caemble Launcher와 CAE slave를 사용한다.
 
-주요 URL은 `/`, `/structures`, `/experiments`, `/examples/:exampleId?`, `/measurements`, `/materials`, `/catalog/cad`, `/catalog/materials`, `/catalog/quantity-kinds`, `/catalog/solvers`, `/docs`, `/login`, `/account`다. 기존 `/viewer`와 `/#viewer`는 `/structures?structure=new&mode=code`로 이동하고, `/#help`는 `/docs`로 이동한다.
+주요 URL은 `/`, `/structures`, `/experiments`, `/examples/:exampleId?`, `/measurements`, `/viewer`, `/materials`, `/ai/chat`, `/launchers`, `/jobs`, `/catalog/cad`, `/catalog/materials`, `/catalog/quantity-kinds`, `/catalog/solvers`, `/docs`, `/login`, `/account`다. `/viewer`는 `/measurements`와 동일한 Measurement 실행·Recorded Data 저장 workspace를 query string을 유지한 채 연다. 기존 `/#viewer`는 `/structures?structure=new&mode=code`로 이동하고, `/#help`는 `/docs`로 이동한다.
 
 코드 구조는 다음 경계를 따른다.
 
@@ -25,23 +25,17 @@ npm run build-storybook
 npm run test:e2e
 ```
 
+`npm install`은 `../sdk/master/js`의 로컬 SDK를 연결한다. UI production build는 이 SDK를 먼저
+빌드하므로 vendored package나 외부 repository checkout이 필요하지 않다.
+
 `npm run dev`는 앱을 `http://localhost:5173`, 격리 runner를 `http://localhost:5174`에서 함께 실행한다. runner 서버는 `runner.html`을 Vite HTML 변환 없이 제공하며 HMR과 React Refresh를 주입하지 않는다. 따라서 개발 환경도 운영과 동일하게 별도 origin, `connect-src 'none'` CSP, sandboxed iframe 계약을 사용한다. 커스텀 포트를 쓸 때는 앱과 runner를 인접 포트로 실행하거나 `VITE_CAEMBLE_HOST_ORIGIN`과 `VITE_CAEMBLE_RUNNER_ORIGIN`을 모두 지정한다.
 
 앱 개발 서버의 `/api`는 `http://localhost:8000`으로 proxy되며 prefix가 제거된다. 운영 reverse proxy도 같은 계약을 사용한다. 기본 설정은 `VITE_API_BASE_URL=/api`이고, 요청에는 HttpOnly access/refresh 쿠키를 위해 항상 credentials가 포함된다.
 
-GPStation API URL과 Access Token은 로그인 사용자의 Account 화면에서 저장하며,
-로그인 시 Caemble API의 사용자 정보와 함께 복원된다. 브라우저는 이 연결 정보로
-GPStation SDK/WebRTC를 직접 사용한다.
-
-실제 browser↔launcher↔CAE 수용 테스트는 연결된 `cae` launcher와 같은 GPStation 사용자의 평문 client token이 있을 때만 실행된다.
-
-```powershell
-$env:GPSTATION_E2E_API_BASE_URL='https://gps.example.com'
-$env:GPSTATION_E2E_CLIENT_TOKEN='gpsk_...'
-npm run test:e2e -- --grep 'actual browser-launcher-CAE'
-```
-
-토큰은 Playwright 프로세스 환경에서 Account 입력란으로만 전달되며 Vite 환경 변수, 저장소, `localStorage`에는 넣지 않는다. 일반 E2E는 토큰 없이 Run이 차단되는 계약을 검증한다.
+브라우저의 Job/WebRTC 요청도 같은 origin의 `/web/jobs`를 사용하고 로그인 HttpOnly 쿠키로
+인증한다. 별도 API URL이나 브라우저 저장 Access Token은 없다. Account 화면에서 만드는
+`csk_` Access Token은 외부 SDK(`client`) 또는 Launcher 등록(`launcher`)에만 사용하며
+원문은 생성 직후 한 번만 표시된다.
 
 Generated CAD authoring APIs are checked by every production build:
 
@@ -52,9 +46,10 @@ npm run check:generated
 
 QuantityKind와 Material 전체 catalog는 각각 `src/lib/quantitykind/data`와
 `src/lib/material/data`의 domain별 TypeScript 파일이 원본이다. CAE kernel descriptor의
-단일 원본은 GPStation CAE의 `app/solvers/*/manifest.json`이다. UI에는 solver manifest
-사본이나 generated catalog를 두지 않는다. Solver Catalog는 저장된 GPStation 연결로
-`cae.solvers.manifests`를 호출해 현재 CAE worker의 manifest를 조회한다.
+단일 원본은 Caemble의 `../slaves/cae/app/solvers/*/manifest.json`이다. UI에는 solver
+manifest 사본이나 generated catalog를 두지 않는다. Vite는 이 파일들을 build-time에 직접
+읽어 Solver Catalog에 포함하며, Launcher 화면도 `../slaves/*/manifest.json`의 앱 목록을
+같은 방식으로 사용한다.
 
 The CAD generator reads the element registry, local TypeScript catalogs, and
 `src/lib/cad/api/authoring-manifest.json`. It generates the element
@@ -184,7 +179,7 @@ simulate(sample, setup, { signal, onStatus, onProgress, onRecord })
 ```
 
 The client preserves author-supplied units, sends only `{ sample, setup }`,
-and hides GPStation session, attachments, `start/next`,
+and hides the JobSession, attachments, `start/next`,
 record ACK and kill handling. Browser-local solver,
 Python/TS simulation runtime and fallback execution do not exist. Only declared
 and actually recorded `DataTensor` values are returned; failed or cancelled runs
@@ -249,4 +244,4 @@ Do not place cookies, credentials, user data, service-worker scope, analytics, o
 - Snapshot binary payload: 128 MiB, with finite-value, depth, node-count, and protocol-size checks.
 - BuiltSample/BuiltSetup request: 256 MiB total.
 - One run's RecordedData: 64 MiB raw bytes, with 16 MiB attachment shards.
-- Physics kernels execute only in the GPStation `cae` slave.
+- Physics kernels execute only in the Caemble `cae` slave.

@@ -1,0 +1,502 @@
+import { GpStationClient, type JobEvent, type JobSession } from '@gpstation/v1-master-js-sdk'
+import { MessageCircle, Send, Settings, Square } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import rehypeKatex from 'rehype-katex'
+import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import { Navigate, useLocation } from 'react-router'
+import 'katex/dist/katex.min.css'
+import { API_URL } from '@/api'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { PageHeader } from '@/components/PageHeader'
+import { useAuth } from '@/features/auth/use-auth'
+import { runtimeErrorMessage } from '@/features/runtime/format'
+
+const CHAT_TIMEOUT_MS = 600_000
+
+type ChatResponse = {
+  model: string
+  answer: string
+  context_window: number
+  remaining_tokens: number
+  cache_enabled: boolean
+}
+
+type ChatMessage = {
+  id: number
+  role: 'user' | 'assistant'
+  content: string
+  streaming: boolean
+}
+
+type LlmModel = {
+  name: string
+  context_size: number
+  top_p: number
+}
+
+export function AiChatPage() {
+  const auth = useAuth()
+  const location = useLocation()
+  const client = useMemo(
+    () =>
+      new GpStationClient({
+        apiBaseUrl: API_URL,
+        authMode: 'cookie',
+        jobApiPrefix: '/web/jobs',
+      }),
+    [],
+  )
+  const [models, setModels] = useState<LlmModel[]>([])
+  const [selectedModel, setSelectedModel] = useState('')
+  const [modelsLoading, setModelsLoading] = useState(false)
+  const [modelsError, setModelsError] = useState<string | null>(null)
+  const [systemPrompt, setSystemPrompt] = useState('You are a helpful engineering assistant.')
+  const [prompt, setPrompt] = useState('')
+  const [maxTokens, setMaxTokens] = useState('8192')
+  const [temperature, setTemperature] = useState('1.0')
+  const [contextSize, setContextSize] = useState('')
+  const [topP, setTopP] = useState('')
+  const [think, setThink] = useState(false)
+  const [thinkingEffort, setThinkingEffort] = useState<'default' | 'low'>('low')
+  const [responseFormat, setResponseFormat] = useState<'text' | 'json'>('text')
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [context, setContext] = useState<ChatResponse | null>(null)
+  const [session, setSession] = useState<JobSession | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState('대기 중')
+  const [error, setError] = useState<string | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const messageIdRef = useRef(0)
+  const sessionRef = useRef<JobSession | null>(null)
+  const activeAssistantIdRef = useRef<number | null>(null)
+  const pendingDeltaRef = useRef('')
+  const deltaFrameRef = useRef<number | null>(null)
+  const transcriptEndRef = useRef<HTMLDivElement | null>(null)
+
+  const chatOpen = Boolean(session && !session.closed)
+  const selectedModelSettings = models.find((model) => model.name === selectedModel) ?? null
+
+  useEffect(() => {
+    sessionRef.current = session
+  }, [session])
+
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView?.({ block: 'end' })
+  }, [messages, busy])
+
+  useEffect(() => {
+    if (!auth.isAuthenticated) return
+    let cancelled = false
+    setModelsLoading(true)
+    setModelsError(null)
+    void client
+      .runJob<Record<string, never>, unknown>('ai.llm.models', {}, { slaveAppId: 'ai', timeoutMs: CHAT_TIMEOUT_MS })
+      .then((result) => {
+        if (cancelled) return
+        if (!isModelList(result.payload)) throw new Error('LLM 모델 목록 응답이 올바르지 않습니다.')
+        const payload = result.payload
+        const nextModels = payload.models.filter(isLlmModel)
+        if (!nextModels.length) throw new Error('사용 가능한 LLM 모델이 없습니다.')
+        const nextDefault = nextModels.some((model) => model.name === payload.default_model)
+          ? payload.default_model
+          : nextModels[0].name
+        setModels(nextModels)
+        setSelectedModel(nextDefault)
+      })
+      .catch((nextError: unknown) => {
+        if (!cancelled) setModelsError(runtimeErrorMessage(nextError, 'LLM 모델 목록을 불러오지 못했습니다.'))
+      })
+      .finally(() => {
+        if (!cancelled) setModelsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [auth.isAuthenticated, client])
+
+  useEffect(
+    () => () => {
+      sessionRef.current?.close()
+      if (deltaFrameRef.current !== null) window.cancelAnimationFrame(deltaFrameRef.current)
+    },
+    [],
+  )
+
+  if (auth.isLoading) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center text-sm text-muted-foreground">인증 확인 중</div>
+    )
+  }
+  if (!auth.isAuthenticated) {
+    return <Navigate replace state={{ from: `${location.pathname}${location.search}` }} to="/login" />
+  }
+
+  function nextMessageId() {
+    messageIdRef.current += 1
+    return messageIdRef.current
+  }
+
+  function queueDelta(messageId: number, delta: string) {
+    if (activeAssistantIdRef.current !== messageId) return
+    pendingDeltaRef.current += delta
+    if (deltaFrameRef.current !== null) return
+    deltaFrameRef.current = window.requestAnimationFrame(() => {
+      const buffered = pendingDeltaRef.current
+      pendingDeltaRef.current = ''
+      deltaFrameRef.current = null
+      setMessages((items) =>
+        items.map((item) =>
+          item.id === messageId && item.streaming ? { ...item, content: item.content + buffered } : item,
+        ),
+      )
+    })
+  }
+
+  function handleChatEvent(event: JobEvent, messageId: number) {
+    if (event.type !== 'ai.chat.delta' || activeAssistantIdRef.current !== messageId) return
+    if (
+      typeof event.payload === 'object' &&
+      event.payload !== null &&
+      'delta' in event.payload &&
+      typeof event.payload.delta === 'string'
+    ) {
+      queueDelta(messageId, event.payload.delta)
+    }
+  }
+
+  function finishAssistant(messageId: number, content: string) {
+    if (deltaFrameRef.current !== null) window.cancelAnimationFrame(deltaFrameRef.current)
+    deltaFrameRef.current = null
+    pendingDeltaRef.current = ''
+    activeAssistantIdRef.current = null
+    setMessages((items) => items.map((item) => (item.id === messageId ? { ...item, content, streaming: false } : item)))
+  }
+
+  async function sendPrompt() {
+    const trimmedPrompt = prompt.trim()
+    const currentSession = sessionRef.current && !sessionRef.current.closed ? sessionRef.current : null
+    if (!selectedModel || !trimmedPrompt) {
+      setError(selectedModel ? '질문을 입력하세요.' : '사용할 LLM 모델을 선택하세요.')
+      if (!selectedModel) setSettingsOpen(true)
+      return
+    }
+    if (!currentSession && !systemPrompt.trim()) {
+      setError('새 대화에는 System Prompt가 필요합니다.')
+      setSettingsOpen(true)
+      return
+    }
+
+    let payload: Record<string, unknown>
+    try {
+      payload = {
+        model: selectedModel,
+        prompt: trimmedPrompt,
+        max_tokens: optionalNumber(maxTokens, 'Max Tokens', true),
+        temperature: optionalNumber(temperature, 'Temperature'),
+        context_size: optionalNumber(contextSize, 'Context Size', true),
+        top_p: optionalNumber(topP, 'Top P'),
+        think,
+        thinking_effort: thinkingEffort,
+        response_format: responseFormat,
+        ...(!currentSession ? { system_prompt: systemPrompt.trim() } : {}),
+      }
+    } catch (nextError) {
+      setError(runtimeErrorMessage(nextError, '설정 값을 확인하세요.'))
+      setSettingsOpen(true)
+      return
+    }
+
+    const userId = nextMessageId()
+    const assistantId = nextMessageId()
+    activeAssistantIdRef.current = assistantId
+    setMessages((items) => [
+      ...items.map((item) => (item.streaming ? { ...item, streaming: false } : item)),
+      { id: userId, role: 'user', content: trimmedPrompt, streaming: false },
+      { id: assistantId, role: 'assistant', content: '', streaming: true },
+    ])
+    setPrompt('')
+    setBusy(true)
+    setError(null)
+    setStatus('응답 생성 중')
+    try {
+      let response: ChatResponse
+      if (currentSession) {
+        const result = await currentSession.call<Record<string, unknown>, ChatResponse>('ai.chat', payload, {
+          timeoutMs: CHAT_TIMEOUT_MS,
+          onEvent: (event) => handleChatEvent(event, assistantId),
+        })
+        response = result.payload
+      } else {
+        const result = await client.runJob<Record<string, unknown>, ChatResponse>('ai.chat', payload, {
+          slaveAppId: 'ai',
+          autoFinish: false,
+          timeoutMs: CHAT_TIMEOUT_MS,
+          onEvent: (event) => handleChatEvent(event, assistantId),
+          onStatus: setStatus,
+        })
+        sessionRef.current = result.session
+        setSession(result.session)
+        response = result.payload
+      }
+      finishAssistant(assistantId, response.answer)
+      setContext(response)
+      setStatus('대화 연결됨')
+    } catch (nextError) {
+      const message = runtimeErrorMessage(nextError, 'AI 응답을 받지 못했습니다.')
+      finishAssistant(assistantId, `오류: ${message}`)
+      setError(message)
+      setStatus('실패')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function endChat() {
+    const currentSession = sessionRef.current
+    setBusy(true)
+    try {
+      if (currentSession && !currentSession.closed) await currentSession.finish({ timeoutMs: CHAT_TIMEOUT_MS })
+    } catch {
+      currentSession?.close()
+    } finally {
+      sessionRef.current = null
+      setSession(null)
+      setMessages([])
+      setContext(null)
+      setError(null)
+      setStatus('새 대화')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="mx-auto flex h-[calc(100dvh-4rem)] min-h-[680px] max-w-6xl flex-col gap-5 px-5 py-8">
+      <div className="flex items-start justify-between gap-4">
+        <PageHeader
+          description="Caemble Launcher의 로컬 LLM과 지속적인 streaming 대화를 시작합니다."
+          eyebrow="AI"
+          title="AI Chat"
+        />
+        <Button onClick={() => setSettingsOpen(true)} variant="outline">
+          <Settings />
+          설정
+        </Button>
+      </div>
+
+      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <CardHeader className="flex-row items-center justify-between gap-3 border-b py-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <MessageCircle className="size-4 text-primary" />
+            {selectedModel || (modelsLoading ? '모델 조회 중' : '모델 미선택')}
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            <Badge className={chatOpen ? 'bg-primary text-primary-foreground' : undefined}>{status}</Badge>
+            {context ? (
+              <span className="text-xs text-muted-foreground">
+                {context.context_window - context.remaining_tokens} / {context.context_window} tokens
+              </span>
+            ) : null}
+          </div>
+        </CardHeader>
+        <CardContent className="flex min-h-0 flex-1 flex-col p-0">
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-6">
+            {messages.length ? (
+              messages.map((message) => (
+                <div className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'} key={message.id}>
+                  <div
+                    className={
+                      message.role === 'user'
+                        ? 'max-w-[82%] rounded-2xl rounded-br-sm bg-primary px-4 py-3 text-sm whitespace-pre-wrap text-primary-foreground'
+                        : 'max-w-[90%] rounded-2xl rounded-bl-sm border bg-muted/30 px-4 py-3 text-sm'
+                    }
+                  >
+                    {message.role === 'assistant' ? (
+                      <div className="space-y-3 overflow-hidden break-words [&_a]:text-primary [&_a]:underline [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-zinc-950 [&_pre]:p-3 [&_pre]:text-zinc-50 [&_table]:block [&_table]:border-collapse [&_table]:overflow-x-auto [&_td]:border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:px-2 [&_th]:py-1 [&_ul]:list-disc [&_ul]:pl-5">
+                        <ReactMarkdown
+                          rehypePlugins={[[rehypeKatex, { strict: false, throwOnError: false }]]}
+                          remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: true }]]}
+                        >
+                          {message.content || (message.streaming ? '…' : '')}
+                        </ReactMarkdown>
+                      </div>
+                    ) : (
+                      message.content
+                    )}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="flex h-full min-h-48 flex-col items-center justify-center text-center">
+                <MessageCircle className="mb-3 size-9 text-muted-foreground" />
+                <p className="font-medium">무엇이든 물어보세요.</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  대화가 열리면 같은 JobSession에서 문맥을 유지합니다.
+                </p>
+              </div>
+            )}
+            <div ref={transcriptEndRef} />
+          </div>
+          <form
+            className="border-t bg-background p-4"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void sendPrompt()
+            }}
+          >
+            {error || modelsError ? <p className="mb-2 text-sm text-destructive">{error ?? modelsError}</p> : null}
+            <textarea
+              aria-label="AI 질문"
+              className="min-h-24 w-full resize-y rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
+              onChange={(event) => setPrompt(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+                event.preventDefault()
+                if (!busy && selectedModel) void sendPrompt()
+              }}
+              placeholder="질문을 입력하세요. Shift+Enter로 줄바꿈"
+              value={prompt}
+            />
+            <div className="mt-3 flex justify-end gap-2">
+              <Button disabled={!chatOpen || busy} onClick={() => void endChat()} type="button" variant="outline">
+                <Square />새 대화
+              </Button>
+              <Button disabled={busy || modelsLoading || !selectedModel || !prompt.trim()} type="submit">
+                <Send />
+                전송
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Dialog onOpenChange={setSettingsOpen} open={settingsOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>AI Chat 설정</DialogTitle>
+            <DialogDescription>모델과 생성 옵션은 현재 대화에 적용됩니다.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4">
+            <label className="grid gap-1.5 text-sm">
+              Model
+              <select
+                className="h-9 rounded-md border border-input bg-transparent px-3 text-sm"
+                disabled={chatOpen || modelsLoading}
+                onChange={(event) => setSelectedModel(event.target.value)}
+                value={selectedModel}
+              >
+                {!models.length ? (
+                  <option value="">{modelsLoading ? '모델 조회 중' : '사용 가능한 모델 없음'}</option>
+                ) : null}
+                {models.map((model) => (
+                  <option key={model.name} value={model.name}>
+                    {model.name}
+                  </option>
+                ))}
+              </select>
+              {selectedModelSettings ? (
+                <span className="text-xs text-muted-foreground">
+                  기본 context {selectedModelSettings.context_size}, top-p {selectedModelSettings.top_p}
+                </span>
+              ) : null}
+            </label>
+            <label className="grid gap-1.5 text-sm">
+              System Prompt
+              <textarea
+                className="min-h-24 rounded-md border border-input bg-transparent px-3 py-2 text-sm"
+                disabled={chatOpen}
+                onChange={(event) => setSystemPrompt(event.target.value)}
+                value={systemPrompt}
+              />
+            </label>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <SettingInput label="Max Tokens" onChange={setMaxTokens} value={maxTokens} />
+              <SettingInput label="Temperature" onChange={setTemperature} value={temperature} />
+              <SettingInput label="Context Size" onChange={setContextSize} value={contextSize} />
+              <SettingInput label="Top P" onChange={setTopP} value={topP} />
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <label className="flex items-center gap-2 text-sm">
+                <input checked={think} onChange={(event) => setThink(event.target.checked)} type="checkbox" />
+                Thinking
+              </label>
+              <label className="grid gap-1 text-sm">
+                Thinking Effort
+                <select
+                  className="h-9 rounded-md border border-input bg-transparent px-3"
+                  disabled={!think}
+                  onChange={(event) => setThinkingEffort(event.target.value as 'default' | 'low')}
+                  value={thinkingEffort}
+                >
+                  <option value="low">LOW</option>
+                  <option value="default">DEFAULT</option>
+                </select>
+              </label>
+              <label className="grid gap-1 text-sm">
+                Response Format
+                <select
+                  className="h-9 rounded-md border border-input bg-transparent px-3"
+                  onChange={(event) => setResponseFormat(event.target.value as 'text' | 'json')}
+                  value={responseFormat}
+                >
+                  <option value="text">Text</option>
+                  <option value="json">JSON</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+function SettingInput({ label, onChange, value }: { label: string; onChange: (value: string) => void; value: string }) {
+  return (
+    <label className="grid gap-1 text-sm">
+      {label}
+      <Input inputMode="decimal" onChange={(event) => onChange(event.target.value)} value={value} />
+    </label>
+  )
+}
+
+function optionalNumber(value: string, label: string, integer = false) {
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  const parsed = Number(trimmed)
+  if (!Number.isFinite(parsed) || (integer && !Number.isInteger(parsed))) {
+    throw new Error(`${label} 값이 올바르지 않습니다.`)
+  }
+  return parsed
+}
+
+function isModelList(value: unknown): value is { default_model: string; models: unknown[] } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'default_model' in value &&
+    typeof value.default_model === 'string' &&
+    'models' in value &&
+    Array.isArray(value.models)
+  )
+}
+
+function isLlmModel(value: unknown): value is LlmModel {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'name' in value &&
+    typeof value.name === 'string' &&
+    'context_size' in value &&
+    typeof value.context_size === 'number' &&
+    'top_p' in value &&
+    typeof value.top_p === 'number'
+  )
+}
+
+export const Component = AiChatPage

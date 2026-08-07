@@ -1,0 +1,6 @@
+{
+  "id": "ai",
+  "name": "AI",
+  "module": "app",
+  "startup_timeout_seconds": 300
+}

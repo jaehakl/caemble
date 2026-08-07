@@ -225,7 +225,7 @@ export function MeasurementPage() {
     experimentVars,
     resolveMaterials,
     'fast-reroll',
-    auth.user?.gpstation_connection,
+    auth.isAuthenticated,
   )
   const structureRevisionRef = useRef(structureDocument.revision)
   structureRevisionRef.current = structureDocument.revision
@@ -862,7 +862,7 @@ export function MeasurementPage() {
 
     if (!simulation.canRun) {
       advanceRunQueue(currentRunSampleId, {
-        message: 'Simulation program 또는 GPStation 연결이 준비되지 않았습니다.',
+        message: 'Simulation program 또는 로그인 상태가 준비되지 않았습니다.',
         type: 'failure',
       })
       return

@@ -1,33 +1,65 @@
-import { CalendarDays, Link2, LoaderCircle, Mail, ShieldCheck, Unplug } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { CalendarDays, Clipboard, KeyRound, LoaderCircle, Mail, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
+import { useState } from 'react'
 import { Navigate, useLocation } from 'react-router'
+import { dbTables, type AccessKeyScope } from '@/api'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { PageHeader } from '@/components/PageHeader'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useAuth, useDeleteGpStationConnection, useSaveGpStationConnection } from '@/features/auth/use-auth'
-import { validateGpStationConnection } from '@/features/cae/connection'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { PageHeader } from '@/components/PageHeader'
+import { useAuth } from '@/features/auth/use-auth'
+import { formatRuntimeDate, runtimeErrorMessage } from '@/features/runtime/format'
 
 export function AccountPage() {
   const auth = useAuth()
   const location = useLocation()
-  const saveConnection = useSaveGpStationConnection()
-  const deleteConnection = useDeleteGpStationConnection()
-  const connection = auth.user?.gpstation_connection ?? null
-  const [apiBaseUrl, setApiBaseUrl] = useState('')
-  const [tokenInput, setTokenInput] = useState('')
-  const [connectionError, setConnectionError] = useState<string | null>(null)
-  const [connectionWarning, setConnectionWarning] = useState<string | null>(null)
-
-  useEffect(() => {
-    setApiBaseUrl(connection?.api_base_url ?? '')
-  }, [connection?.api_base_url])
+  const queryClient = useQueryClient()
+  const [tokenName, setTokenName] = useState('')
+  const [tokenScope, setTokenScope] = useState<AccessKeyScope>('client')
+  const [expiresAt, setExpiresAt] = useState('')
+  const [createdSecret, setCreatedSecret] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const tokens = useQuery({
+    queryKey: ['runtime', 'access-keys'],
+    queryFn: () => dbTables.AccessKey.list(),
+    enabled: auth.isAuthenticated,
+  })
+  const createToken = useMutation({
+    mutationFn: () =>
+      dbTables.AccessKey.create({
+        name: tokenName,
+        scopes: [tokenScope],
+        expires_at: expiresAt ? new Date(expiresAt).toISOString() : null,
+      }),
+    onSuccess: async (result) => {
+      setCreatedSecret(result.secret)
+      setTokenName('')
+      setExpiresAt('')
+      setError(null)
+      setMessage('Access Token을 생성했습니다. 원문은 지금만 확인할 수 있습니다.')
+      await queryClient.invalidateQueries({ queryKey: ['runtime', 'access-keys'] })
+    },
+    onError: (nextError) => setError(runtimeErrorMessage(nextError, 'Access Token을 생성하지 못했습니다.')),
+  })
+  const revokeToken = useMutation({
+    mutationFn: (id: string) => dbTables.AccessKey.revoke(id),
+    onSuccess: async () => {
+      setCreatedSecret(null)
+      setError(null)
+      setMessage('Access Token을 폐기했습니다.')
+      await queryClient.invalidateQueries({ queryKey: ['runtime', 'access-keys'] })
+    },
+    onError: (nextError) => setError(runtimeErrorMessage(nextError, 'Access Token을 폐기하지 못했습니다.')),
+  })
 
   if (auth.isLoading)
     return (
-      <div className="mx-auto max-w-5xl space-y-6 px-5 py-10">
+      <div className="mx-auto max-w-6xl space-y-6 px-5 py-10">
         <Skeleton className="h-20 w-full" />
         <Skeleton className="h-56 w-full" />
       </div>
@@ -37,9 +69,9 @@ export function AccountPage() {
 
   const label = auth.user.display_name || auth.user.email || '사용자'
   return (
-    <div className="mx-auto max-w-5xl space-y-8 px-5 py-10">
+    <div className="mx-auto max-w-6xl space-y-8 px-5 py-10">
       <PageHeader
-        description="Google OAuth로 연결된 계정과 Caemble 권한을 확인합니다."
+        description="Google OAuth 계정과 Caemble API 및 Launcher 접근 권한을 관리합니다."
         eyebrow="Account"
         title="내 계정"
       />
@@ -55,129 +87,170 @@ export function AccountPage() {
           </div>
         </CardHeader>
         <CardContent className="grid gap-4 border-t pt-6 sm:grid-cols-3">
-          <div className="flex items-start gap-3">
-            <Mail className="mt-0.5 size-4 text-primary" />
-            <div>
-              <p className="text-xs text-muted-foreground">이메일</p>
-              <p className="mt-1 text-sm">{auth.user.email || '연결되지 않음'}</p>
-            </div>
-          </div>
-          <div className="flex items-start gap-3">
-            <ShieldCheck className="mt-0.5 size-4 text-primary" />
-            <div>
-              <p className="text-xs text-muted-foreground">역할</p>
-              <p className="mt-1 text-sm">{auth.user.roles.join(', ') || 'user'}</p>
-            </div>
-          </div>
-          <div className="flex items-start gap-3">
-            <CalendarDays className="mt-0.5 size-4 text-primary" />
-            <div>
-              <p className="text-xs text-muted-foreground">가입일</p>
-              <p className="mt-1 text-sm">
-                {auth.user.created_at ? new Date(auth.user.created_at).toLocaleDateString('ko-KR') : '정보 없음'}
-              </p>
-            </div>
-          </div>
+          <AccountField icon={Mail} label="이메일" value={auth.user.email || '연결되지 않음'} />
+          <AccountField icon={ShieldCheck} label="역할" value={auth.user.roles.join(', ') || 'user'} />
+          <AccountField
+            icon={CalendarDays}
+            label="가입일"
+            value={auth.user.created_at ? new Date(auth.user.created_at).toLocaleDateString('ko-KR') : '정보 없음'}
+          />
         </CardContent>
       </Card>
+
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <Link2 className="size-5 text-primary" />
-            GPStation CAE 연결
-          </CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Server URL과 Access Token은 계정에 저장되며 로그인할 때 자동으로 CAE 실행에 연결됩니다.
-          </p>
+        <CardHeader className="flex flex-row items-start justify-between gap-4">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <KeyRound className="size-5 text-primary" />
+              Access Token
+            </CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">
+              외부 SDK에는 client token을, Launcher 등록에는 launcher token을 사용하세요.
+            </p>
+          </div>
+          <Button disabled={tokens.isFetching} onClick={() => void tokens.refetch()} size="sm" variant="outline">
+            <RefreshCw className={tokens.isFetching ? 'animate-spin' : undefined} />
+            새로고침
+          </Button>
         </CardHeader>
-        <CardContent className="space-y-4 border-t pt-6">
-          {connection ? (
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm text-emerald-700">GPStation 연결 정보가 저장되어 있습니다.</p>
-                <p className="mt-1 text-xs text-muted-foreground">Server · {connection.api_base_url}</p>
-              </div>
-              <Button
-                disabled={saveConnection.isPending || deleteConnection.isPending}
-                onClick={() => {
-                  setConnectionError(null)
-                  setConnectionWarning(null)
-                  void deleteConnection
-                    .mutateAsync()
-                    .then(() => {
-                      setApiBaseUrl('')
-                      setTokenInput('')
-                    })
-                    .catch((error: unknown) =>
-                      setConnectionError(
-                        error instanceof Error ? error.message : 'GPStation 연결을 해제하지 못했습니다.',
-                      ),
-                    )
-                }}
-                type="button"
-                variant="outline"
-              >
-                {deleteConnection.isPending ? <LoaderCircle className="animate-spin" /> : <Unplug />}
-                연결 해제
-              </Button>
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">저장된 GPStation 연결 정보가 없습니다.</p>
-          )}
+        <CardContent className="space-y-6 border-t pt-6">
           <form
-            className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+            className="grid gap-3 rounded-lg border bg-muted/20 p-4 md:grid-cols-[minmax(0,1fr)_10rem_13rem_auto]"
             onSubmit={(event) => {
               event.preventDefault()
-              setConnectionError(null)
-              setConnectionWarning(null)
-              const nextConnection = {
-                api_base_url: apiBaseUrl,
-                access_token: tokenInput,
-              }
-              void validateGpStationConnection(nextConnection)
-                .then(async ({ hasOnlineCaeLauncher }) => {
-                  await saveConnection.mutateAsync(nextConnection)
-                  setTokenInput('')
-                  if (!hasOnlineCaeLauncher) {
-                    setConnectionWarning('Token은 확인되어 저장했지만 현재 온라인 상태인 cae launcher가 없습니다.')
-                  }
-                })
-                .catch((error: unknown) =>
-                  setConnectionError(error instanceof Error ? error.message : 'GPStation 연결에 실패했습니다.'),
-                )
+              setError(null)
+              setMessage(null)
+              setCreatedSecret(null)
+              createToken.mutate()
             }}
           >
             <Input
-              aria-label="GPStation API URL"
-              autoComplete="url"
-              onChange={(event) => setApiBaseUrl(event.target.value)}
-              placeholder="http://localhost:8000"
-              type="url"
-              value={apiBaseUrl}
+              aria-label="Token 이름"
+              onChange={(event) => setTokenName(event.target.value)}
+              placeholder="예: local-launcher"
+              value={tokenName}
             />
-            <Input
-              aria-label="GPStation Access Token"
-              autoComplete="off"
-              onChange={(event) => setTokenInput(event.target.value)}
-              placeholder={connection ? '새 Token을 입력해 연결 교체' : 'gpsk_...'}
-              type="password"
-              value={tokenInput}
-            />
-            <Button
-              disabled={
-                !apiBaseUrl.trim() || !tokenInput.trim() || saveConnection.isPending || deleteConnection.isPending
-              }
-              type="submit"
+            <select
+              aria-label="Token 용도"
+              className="h-9 rounded-md border border-input bg-transparent px-3 text-sm"
+              onChange={(event) => setTokenScope(event.target.value as AccessKeyScope)}
+              value={tokenScope}
             >
-              {saveConnection.isPending ? <LoaderCircle className="animate-spin" /> : null}
-              {connection ? '연결 교체' : '연결 저장'}
+              <option value="client">client</option>
+              <option value="launcher">launcher</option>
+            </select>
+            <Input
+              aria-label="Token 만료일"
+              onChange={(event) => setExpiresAt(event.target.value)}
+              type="datetime-local"
+              value={expiresAt}
+            />
+            <Button disabled={!tokenName.trim() || createToken.isPending} type="submit">
+              {createToken.isPending ? <LoaderCircle className="animate-spin" /> : <KeyRound />}
+              생성
             </Button>
           </form>
-          {connectionWarning ? <p className="text-sm text-amber-700">{connectionWarning}</p> : null}
-          {connectionError ? <p className="text-sm text-destructive">{connectionError}</p> : null}
+
+          {createdSecret ? (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950">
+              <p className="text-sm font-semibold">새 Access Token · 다시 표시되지 않습니다.</p>
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                <code className="min-w-0 flex-1 overflow-x-auto rounded bg-white px-3 py-2 text-xs">
+                  {createdSecret}
+                </code>
+                <Button
+                  onClick={() => {
+                    void navigator.clipboard.writeText(createdSecret).then(() => setMessage('Token을 복사했습니다.'))
+                  }}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  <Clipboard />
+                  복사
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+          {message ? <p className="text-sm text-emerald-700">{message}</p> : null}
+
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>이름</TableHead>
+                <TableHead>Prefix</TableHead>
+                <TableHead>용도</TableHead>
+                <TableHead>상태</TableHead>
+                <TableHead>마지막 사용</TableHead>
+                <TableHead>만료</TableHead>
+                <TableHead className="text-right">작업</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {tokens.isLoading ? (
+                <EmptyTokenRow text="Access Token을 불러오는 중입니다." />
+              ) : tokens.isError ? (
+                <EmptyTokenRow text={runtimeErrorMessage(tokens.error, 'Access Token을 불러오지 못했습니다.')} />
+              ) : tokens.data?.items.length ? (
+                tokens.data.items.map((token) => (
+                  <TableRow key={token.id}>
+                    <TableCell className="font-medium">{token.name}</TableCell>
+                    <TableCell className="font-mono text-xs">{token.key_prefix}</TableCell>
+                    <TableCell>{token.scopes.join(', ')}</TableCell>
+                    <TableCell>
+                      <Badge className={token.status === 'active' ? 'bg-primary text-primary-foreground' : undefined}>
+                        {token.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{formatRuntimeDate(token.last_used_at)}</TableCell>
+                    <TableCell>{formatRuntimeDate(token.expires_at)}</TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        disabled={token.status !== 'active' || revokeToken.isPending}
+                        onClick={() => {
+                          if (window.confirm(`${token.name} token을 폐기할까요?`)) revokeToken.mutate(token.id)
+                        }}
+                        size="sm"
+                        type="button"
+                        variant="destructive"
+                      >
+                        <Trash2 />
+                        폐기
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <EmptyTokenRow text="생성된 Access Token이 없습니다." />
+              )}
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+function AccountField({ icon: Icon, label, value }: { icon: typeof Mail; label: string; value: string }) {
+  return (
+    <div className="flex items-start gap-3">
+      <Icon className="mt-0.5 size-4 text-primary" />
+      <div>
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="mt-1 text-sm">{value}</p>
+      </div>
+    </div>
+  )
+}
+
+function EmptyTokenRow({ text }: { text: string }) {
+  return (
+    <TableRow>
+      <TableCell className="py-8 text-center text-muted-foreground" colSpan={7}>
+        {text}
+      </TableCell>
+    </TableRow>
   )
 }
 

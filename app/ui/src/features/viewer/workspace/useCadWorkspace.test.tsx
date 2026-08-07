@@ -17,10 +17,6 @@ import { simulate } from '@/features/cae/client'
 import { useCadWorkspace } from './useCadWorkspace'
 
 const compilerVersion = 'test-compiler' as CompiledCadSource['compilerVersion']
-const gpStationConnection = {
-  api_base_url: 'https://gps.example.test',
-  access_token: 'gpsk_test',
-}
 
 vi.mock('@/lib/cad', async (importActual) => {
   const actual = await importActual<typeof import('@/lib/cad')>()
@@ -64,7 +60,7 @@ describe('useCadWorkspace compilation cache', () => {
         undefined,
         undefined,
         'standard',
-        gpStationConnection,
+        true,
       ),
     )
 
@@ -138,7 +134,7 @@ describe('useCadWorkspace compilation cache', () => {
           undefined,
           undefined,
           'fast-reroll',
-          gpStationConnection,
+          true,
         ),
       { initialProps },
     )
@@ -229,7 +225,7 @@ describe('useCadWorkspace compilation cache', () => {
           undefined,
           undefined,
           'standard',
-          gpStationConnection,
+          true,
         ),
       { initialProps: { activeDocument: document } },
     )
@@ -318,7 +314,7 @@ describe('useCadWorkspace compilation cache', () => {
           undefined,
           undefined,
           'standard',
-          gpStationConnection,
+          true,
         ),
       {
         initialProps: {
@@ -367,6 +363,7 @@ describe('useCadWorkspace compilation cache', () => {
     expect(requestId).not.toBeNull()
     expect(compileCadDocument).toHaveBeenCalledTimes(2)
     expect(simulate).toHaveBeenCalledOnce()
+    expect(render.result.current.simulation.process.engine).toEqual({ name: 'caemble-cae', version: '1' })
 
     const changedExperiment = updateCadSource(experiment, 'changed experiment source')
     await act(async () => {

@@ -209,11 +209,7 @@ function recordedTargets(row: RecordedDataRecord): Readonly<{
     return null
   }
   const componentSize = 3 ** tensor.tensorOrder
-  if (
-    !Number.isSafeInteger(componentSize) ||
-    componentSize <= 0 ||
-    tensor.accessor.size % componentSize !== 0
-  ) {
+  if (!Number.isSafeInteger(componentSize) || componentSize <= 0 || tensor.accessor.size % componentSize !== 0) {
     return null
   }
   const valueCount = tensor.accessor.size / componentSize
@@ -335,10 +331,7 @@ function recordedTensor(row: RecordedDataRecord): RecordedTensorView | null {
         storedSchema.quantityKind === undefined
           ? 0
           : getQuantityKindTensorOrder(storedSchema.quantityKind as QuantityKindName)
-      if (
-        storedSchema.quantityKind !== (row.quantity_kind ?? undefined) ||
-        tensorOrder !== row.tensor_order
-      ) {
+      if (storedSchema.quantityKind !== (row.quantity_kind ?? undefined) || tensorOrder !== row.tensor_order) {
         return null
       }
       schema = storedSchema
