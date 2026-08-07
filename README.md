@@ -55,7 +55,7 @@ Copy-Item models.example.toml models.toml
 poetry install
 
 cd ../../launcher
-Copy-Item env.example .env
+Copy-Item .env.example .env
 # Set CAEMBLE_API_URL and CAEMBLE_ACCESS_TOKEN.
 poetry install
 poetry run launcher
@@ -76,31 +76,6 @@ Caemble `client` token instead.
 See [v1 SDK compatibility](docs/v1-sdk-compatibility.md) for the frozen public
 contract and [deployment](deployment/deployment.md) for the production setup.
 
-## One-time client token migration
-
-The importer reads the old database through
-`CAEMBLE_GPSTATION_IMPORT_DB_URL`, always opens a read-only source transaction,
-and performs a dry run unless `--apply` is supplied:
-
-```powershell
-Push-Location app/api/app
-$env:CAEMBLE_GPSTATION_IMPORT_DB_URL = "postgresql://readonly-user:password@host/gpstation"
-
-poetry run python -m import_gpstation_client_tokens `
-  --map "GP_USER_ID=CAEMBLE_USER_ID"
-
-poetry run python -m import_gpstation_client_tokens `
-  --map "GP_USER_ID=CAEMBLE_USER_ID" `
-  --apply
-
-Remove-Item Env:CAEMBLE_GPSTATION_IMPORT_DB_URL
-Pop-Location
-```
-
-Only active `client` tokens are eligible. The command preserves their hash,
-prefix, expiry, and access policy without reading or printing plaintext
-secrets. It aborts the apply transaction on ownership conflicts. Launcher
-tokens are always issued anew by Caemble.
 
 ## Runtime boundaries
 
