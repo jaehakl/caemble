@@ -60,11 +60,10 @@ export default structure({
 })
 `
 
-export const dcNotchedCurrentDensityExperimentCode = `import { experiment } from '@caemble/core'
-import { dcCurrentDensity } from '@caemble/kernels'
+export const dcNotchedCurrentDensityExperimentCode = `import { defineTask, experiment } from '@caemble/core'
 
 function fieldTask(sourceVoltage: number) {
-  return dcCurrentDensity({
+  return defineTask({ name: 'dc-current-density', version: '0.0.0' }, {
   parameters: {
     relativeTolerance: {
       dtype: 'float64',

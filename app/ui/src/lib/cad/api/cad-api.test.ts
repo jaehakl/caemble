@@ -7,8 +7,6 @@ import { defaultExperimentProgramCode } from '../../defaultExperimentProgramCode
 import { caembleExamples, caembleProgramExamples } from '../../examples'
 import coreTypes from './caemble-core.d.ts?raw'
 import jsxTypes from './cad-jsx.d.ts?raw'
-import kernelTypes from './caemble-kernels.d.ts?raw'
-import { KERNEL_AUTHORING_VERSIONS } from './generatedVersions'
 
 const experimentProgramDoc = readFileSync(
   new URL('../../../../../../docs/experiment-program.md', import.meta.url),
@@ -20,7 +18,6 @@ function diagnosticsFor(source: string) {
   const virtualFiles = new Map<string, string>([
     [sourcePath, source],
     ['C:/node_modules/@caemble/core/index.d.ts', coreTypes],
-    ['C:/node_modules/@caemble/kernels/index.d.ts', kernelTypes],
     ['C:/node_modules/@caemble/core/cad-jsx.d.ts', jsxTypes],
   ])
   const options: ts.CompilerOptions = {
@@ -38,7 +35,6 @@ function diagnosticsFor(source: string) {
     types: [],
     paths: {
       '@caemble/core': ['node_modules/@caemble/core/index.d.ts'],
-      '@caemble/kernels': ['node_modules/@caemble/kernels/index.d.ts'],
     },
   }
   const host = ts.createCompilerHost(options)
@@ -70,13 +66,6 @@ describe('unversioned CAD authoring declarations', () => {
     expect(jsxTypes).not.toContain('const Fragment: unknown')
   })
 
-  it('generates public declarations from both production kernels', () => {
-    expect(KERNEL_AUTHORING_VERSIONS).toEqual({
-      'dc-current-density': '0.0.0',
-      'steady-state-heat': '0.0.0',
-    })
-  })
-
   it('type-checks the v3-only Structure and Experiment defaults', () => {
     expect(defaultExperimentCode).toBe(defaultExperimentProgramCode)
     expect(diagnosticsFor(defaultCode)).toEqual([])
@@ -86,12 +75,11 @@ describe('unversioned CAD authoring declarations', () => {
   it('allows an orchestration-only Experiment without fixture geometry', () => {
     expect(
       diagnosticsFor(`
-        import { experiment } from '@caemble/core'
-        import { dcCurrentDensity } from '@caemble/kernels'
+        import { defineTask, experiment } from '@caemble/core'
         export default experiment({
           varsSchema: {},
           tasks: () => ({
-            electric: dcCurrentDensity({
+            electric: defineTask({ name: 'dc-current-density', version: '0.0.0' }, {
               parameters: {
                 relativeTolerance: {
                   dtype: 'float64',
@@ -152,12 +140,12 @@ describe('unversioned CAD authoring declarations', () => {
     expect(diagnosticsFor(wrongTuple).join('\n')).toContain('Source has 2 element(s) but target requires 3')
   })
 
-  it('rejects unknown kernel methods and parameter keys', () => {
+  it('keeps solver config generic so CAE performs contract validation', () => {
     const wrongMethod = defaultExperimentProgramCode.replace("methodId: 'dc.voxel-grid'", "methodId: 'dc.unknown'")
     const wrongParameter = defaultExperimentProgramCode.replace('gridShape: {', 'unknownGridShape: {')
 
-    expect(diagnosticsFor(wrongMethod).join('\n')).toContain('dc.unknown')
-    expect(diagnosticsFor(wrongParameter).join('\n')).toContain('unknownGridShape')
+    expect(diagnosticsFor(wrongMethod)).toEqual([])
+    expect(diagnosticsFor(wrongParameter)).toEqual([])
   })
 
   it('keeps browser-side simulate orchestration out of new Experiment source', () => {
@@ -166,8 +154,6 @@ describe('unversioned CAD authoring declarations', () => {
   })
 
   it('keeps canonical Material property and model authoring types strict', () => {
-    expect(kernelTypes).toContain("'electrical.conductivity': MaterialDataValueDescriptor<'electrical.conductivity'>")
-    expect(kernelTypes).toContain("'thermal.conductivity': MaterialDataValueDescriptor<'thermal.conductivity'>")
     expect(coreTypes).toContain("'model.sorption.isotherm': Readonly<{")
     expect(coreTypes).toContain('{ color?: string; errorRate?: number }')
     expect(coreTypes).toContain('readonly errorRate: number')

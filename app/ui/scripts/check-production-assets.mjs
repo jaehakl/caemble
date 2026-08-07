@@ -32,10 +32,6 @@ if (!/^\d+\.\d+\.\d+$/.test(packageJson.dependencies['monaco-editor'])) {
 if (!/^\d+\.\d+\.\d+$/.test(authoringManifest.coreDeclarationVersion)) {
   throw new Error('@caemble/core declaration version must be pinned.')
 }
-if (!/^\d+\.\d+\.\d+$/.test(authoringManifest.kernelDeclarationVersion)) {
-  throw new Error('@caemble/kernels declaration version must be pinned.')
-}
-
 const legacyExecutionSymbols = [
   'ExperimentDefinitionV2',
   'experimentRules',

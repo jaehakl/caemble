@@ -306,7 +306,7 @@ beforeEach(() => {
       }
       return {
         structureDocument,
-        simulation: { compatibility: { status: 'unavailable', issues: [] } },
+        simulation: {},
         experimentDocument,
       }
     },

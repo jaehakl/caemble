@@ -1,5 +1,4 @@
-export const defaultExperimentProgramCode = `import { experiment } from '@caemble/core'
-import { dcCurrentDensity } from '@caemble/kernels'
+export const defaultExperimentProgramCode = `import { defineTask, experiment } from '@caemble/core'
 
 function ExperimentDevice() {
   return <box size={[1, 1, 1]} />
@@ -14,7 +13,7 @@ export default experiment({
   geometry: () => <ExperimentDevice id="experiment-device" />,
 
   tasks: ({ vars }) => ({
-    electric: dcCurrentDensity({
+    electric: defineTask({ name: 'dc-current-density', version: '0.0.0' }, {
       parameters: {
         relativeTolerance: {
           dtype: 'float64',

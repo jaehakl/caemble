@@ -1,15 +1,14 @@
 import { dcUniformBarStructureCode } from './dcUniformBar'
 import type { CaembleProgramExample } from './types'
 
-export const dcResolutionStudyExperimentCode = `import { experiment } from '@caemble/core'
-import { dcCurrentDensity } from '@caemble/kernels'
+export const dcResolutionStudyExperimentCode = `import { defineTask, experiment } from '@caemble/core'
 
 function currentTask(
   gridShape: readonly [number, number, number],
   outputKey: string,
   sourceVoltage: number,
 ) {
-  return dcCurrentDensity({
+  return defineTask({ name: 'dc-current-density', version: '0.0.0' }, {
     parameters: {
       relativeTolerance: {
         dtype: 'float64',

@@ -170,7 +170,6 @@ beforeEach(() => {
       simulation: {
         canRun: true,
         cancel: vi.fn(),
-        compatibility: { status: 'compatible', issues: [] },
         process: {
           runId: null,
           status: 'idle',
@@ -202,7 +201,9 @@ describe('ExamplesPage', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe(`/examples/${example.id}`))
     expect(screen.getByRole('heading', { name: example.title })).toBeInTheDocument()
     expect(screen.getByTestId('structure-source')).toHaveTextContent('structure({')
-    expect(screen.getByTestId('experiment-source')).toHaveTextContent('dcCurrentDensity({')
+    expect(screen.getByTestId('experiment-source')).toHaveTextContent(
+      "defineTask({ name: 'dc-current-density', version: '0.0.0' }",
+    )
     expect(screen.getByTestId('program-manifest')).toHaveTextContent('v3 program connected')
 
     await userEvent.click(screen.getByRole('button', { name: 'Mock Run Simulation' }))

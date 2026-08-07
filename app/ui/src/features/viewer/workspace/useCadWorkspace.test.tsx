@@ -83,10 +83,6 @@ describe('useCadWorkspace compilation cache', () => {
       sourceReadOnly: true,
       status: 'Error',
     })
-    expect(render.result.current.simulation.compatibility).toMatchObject({
-      status: 'incompatible',
-      issues: [{ documentType: 'experiment', path: 'simulation_code' }],
-    })
     expect(render.result.current.simulation.canRun).toBe(false)
     expect(render.result.current.simulation.run()).toBeNull()
 

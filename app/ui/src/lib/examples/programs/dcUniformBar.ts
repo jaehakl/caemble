@@ -47,11 +47,10 @@ export default structure({
 })
 `
 
-export const dcUniformBarExperimentCode = `import { experiment } from '@caemble/core'
-import { dcCurrentDensity } from '@caemble/kernels'
+export const dcUniformBarExperimentCode = `import { defineTask, experiment } from '@caemble/core'
 
 function currentTask(sourceVoltage: number, referenceVoltage: number) {
-  return dcCurrentDensity({
+  return defineTask({ name: 'dc-current-density', version: '0.0.0' }, {
   parameters: {
     relativeTolerance: {
       dtype: 'float64',

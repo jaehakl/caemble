@@ -4,7 +4,7 @@ import { resolveCadViewerContent, type CadViewerDocument } from './cadViewerCont
 import JscadViewer from './JscadViewer'
 import type { CadViewerRecordedData } from './recordedData'
 import type { SimulationProgramManifest } from '@/lib/cad/simulation'
-import type { SimulationCompatibility, SimulationProcess } from '../workspace/simulationUiTypes'
+import type { SimulationProcess } from '../workspace/simulationUiTypes'
 
 export type { CadViewerDocument } from './cadViewerContent'
 export type { CadViewerRecordedAxis, CadViewerRecordedData, CadViewerRecordedTensor } from './recordedData'
@@ -23,7 +23,6 @@ export type CadViewerProps = {
 export type CadViewerSimulation = Readonly<{
   canRun: boolean
   cancel: () => void
-  compatibility: SimulationCompatibility
   process: SimulationProcess
   program?: SimulationProgramManifest | null
   run: () => string | null

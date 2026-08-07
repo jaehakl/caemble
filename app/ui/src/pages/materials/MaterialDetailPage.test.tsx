@@ -146,7 +146,7 @@ describe('MaterialDetailPage permissions and solver guidance', () => {
     )
   })
 
-  it('keeps a public Material read-only while allowing a user to add a private missing parameter', async () => {
+  it('keeps a public Material read-only while allowing a user to add a private parameter', async () => {
     renderPage()
     expect(await screen.findByRole('heading', { name: 'Copper' })).toBeInTheDocument()
     expect(screen.getByText('#d97706')).toBeInTheDocument()
@@ -155,13 +155,9 @@ describe('MaterialDetailPage permissions and solver guidance', () => {
     expect(screen.getByRole('button', { name: '이름 추가' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Parameter 추가' })).toBeEnabled()
 
-    const solverSection = screen.getByRole('heading', { name: '사용 가능한 Solver' }).parentElement?.parentElement
-    expect(solverSection).not.toBeNull()
-    const dcSolverCard = within(solverSection!)
-      .getByRole('heading', { name: 'dc-current-density' })
-      .closest('.rounded-xl')
-    if (!(dcSolverCard instanceof HTMLElement)) throw new Error('DC solver card was not rendered.')
-    await userEvent.click(within(dcSolverCard).getByRole('button', { name: '추가' }))
+    expect(screen.queryByRole('heading', { name: '사용 가능한 Solver' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Parameter 추가' }))
+    await chooseMaterialCatalogEntry('electrical.conductivity')
     const dialog = screen.getByRole('dialog')
     expect(within(dialog).getByText('electrical.conductivity')).toBeInTheDocument()
     expect(within(dialog).getByRole('combobox', { name: 'Dtype' })).toHaveTextContent('float32')

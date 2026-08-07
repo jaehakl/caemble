@@ -40,24 +40,22 @@ export default structure({})`,
     ).toThrow('experiment must be a named import')
   })
 
-  it('allows an unversioned kernel import only for Experiment Sources', () => {
-    const program = `import { experiment } from '@caemble/core'
-import { dcCurrentDensity } from '@caemble/kernels'
+  it('allows generic solver tasks from the core module', () => {
+    const program = `import { defineTask, experiment } from '@caemble/core'
 export default experiment({
   varsSchema: {},
-  tasks: () => ({ electric: dcCurrentDensity({}) }),
+  tasks: () => ({ electric: defineTask({ name: 'solver', version: '1.0.0' }, {}) }),
   recordedData: {},
 })`
 
     expect(analyzeCadSource(program, 'experiment').factoryName).toBe('experiment')
-    expect(() => analyzeCadSource(program, 'structure')).toThrow('Structure Source cannot import @caemble/kernels')
   })
 
   it('rejects relative, versioned, external, URL, dynamic, and source-level require imports', () => {
     expect(() => parseCadSource("import value from './value'")).toThrow('single-file')
     expect(() => parseCadSource("import value from '@caemble/core/v2'")).toThrow('single-file')
     expect(() => parseCadSource("import value from '@caemble/core/v3'")).toThrow('single-file')
-    expect(() => parseCadSource("import value from '@caemble/kernels/v1'")).toThrow('single-file')
+    expect(() => parseCadSource("import value from '@caemble/kernels'")).toThrow('single-file')
     expect(() => parseCadSource("import value from 'other-package'")).toThrow('single-file')
     expect(() => parseCadSource("import value from 'https://example.com/value.ts'")).toThrow('single-file')
     expect(() => parseCadSource("const value = import('@caemble/core')")).toThrow('Dynamic import is not supported')

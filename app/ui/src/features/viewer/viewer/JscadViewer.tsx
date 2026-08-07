@@ -137,13 +137,6 @@ const cameraViewDirections = {
   y: [0, 1, 0],
   z: [0, 0, 1],
 } as const
-const solverCompatibilityLabels = Object.freeze({
-  unavailable: 'Unavailable',
-  checking: 'Checking',
-  compatible: 'Compatible',
-  incompatible: 'Incompatible',
-})
-
 function formatSpacing(value: number) {
   return Number(value.toPrecision(6)).toString()
 }
@@ -228,7 +221,6 @@ export function ViewerToolbar({
   visibleSources = [],
 }: ViewerToolbarProps) {
   const appliedSpacingChanged = gridResult && gridResult.effectiveSpacing !== gridResult.requestedSpacing
-  const firstCompatibilityIssue = simulation?.compatibility.issues[0]
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     const modes: ViewerMode[] = hasResults ? ['geometry', 'material-grid', 'results'] : ['geometry', 'material-grid']
     const currentIndex = modes.indexOf(mode)
@@ -425,24 +417,6 @@ export function ViewerToolbar({
               : 'Simulation program'}
           </span>
           <span
-            aria-label={`Solver compatibility: ${simulation.compatibility.status}`}
-            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase ${
-              simulation.compatibility.status === 'compatible'
-                ? 'bg-emerald-100 text-emerald-700'
-                : simulation.compatibility.status === 'incompatible'
-                  ? 'bg-amber-100 text-amber-800'
-                  : 'bg-slate-100 text-slate-600'
-            }`}
-            title={
-              firstCompatibilityIssue
-                ? `${firstCompatibilityIssue.path}: ${firstCompatibilityIssue.message}`
-                : undefined
-            }
-          >
-            {solverCompatibilityLabels[simulation.compatibility.status]}
-            {simulation.compatibility.status === 'incompatible' ? ` · ${simulation.compatibility.issues.length}` : ''}
-          </span>
-          <span
             aria-label={`Simulation status: ${simulation.process.status}`}
             className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase ${
               simulation.process.status === 'failed'
@@ -473,37 +447,15 @@ export function ViewerToolbar({
             </button>
           ) : (
             <button
-              aria-describedby={
-                simulation.compatibility.status === 'incompatible' ? 'simulation-compatibility-message' : undefined
-              }
               aria-label="Run simulation"
               className="rounded border border-slate-300 bg-slate-900 px-2.5 py-1 text-xs font-medium text-white shadow-sm hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
               disabled={!simulation.canRun}
-              title={
-                simulation.compatibility.status === 'incompatible'
-                  ? `Resolve ${simulation.compatibility.issues.length} compatibility issue${simulation.compatibility.issues.length === 1 ? '' : 's'} in Kernel Spec before running.`
-                  : undefined
-              }
               type="button"
               onClick={simulation.run}
             >
               Run Simulation
             </button>
           )}
-          {simulation.compatibility.status === 'incompatible' ? (
-            <div
-              className="max-h-16 w-full max-w-3xl overflow-auto text-right text-[10px] leading-4 text-amber-800"
-              id="simulation-compatibility-message"
-              role="status"
-            >
-              Simulation incompatible · {simulation.compatibility.issues.length} issue
-              {simulation.compatibility.issues.length === 1 ? '' : 's'}
-              {firstCompatibilityIssue
-                ? ` · ${firstCompatibilityIssue.path}: ${firstCompatibilityIssue.message}`
-                : ''}{' '}
-              · See Kernel Spec.
-            </div>
-          ) : null}
           {simulation.process.error ? (
             <div className="max-h-16 w-full overflow-auto text-right text-[10px] text-rose-600" role="alert">
               {simulation.process.error}

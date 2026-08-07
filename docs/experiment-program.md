@@ -7,19 +7,19 @@ Structure는 TSX Source 하나로 작성하고, Experiment는 선언 TSX와 Pyth
 ```text
 Structure Source + Experiment Source
 → Source별 1회 compile/evaluate
-→ DataSchema와 task별 kernel descriptor 정규화
+→ 작성 단위를 보존한 raw sample/setup 직렬화
 → WebRTC를 통한 CAE slave 요청
+→ CAE manifest 기준 검증과 UCUM 단위 변환
 → Python simulate()의 순차 제어와 typed artifact 교환
 → await sim.record() 단위 결과/ACK
 → Experiment RecordedData 확정
 → Measurement 저장
 ```
 
-공개 import는 두 개뿐이다.
+공개 import는 하나뿐이다.
 
 ```ts
-import { experiment, structure } from "@caemble/core";
-import { dcCurrentDensity } from "@caemble/kernels";
+import { defineTask, experiment, structure } from "@caemble/core";
 ```
 
 상대 경로, 동적 import, `require()`, 버전 경로가 붙은 package import는 지원하지 않는다.
@@ -83,8 +83,7 @@ export default structure({
 ## Experiment Source
 
 ```tsx
-import { experiment, type Geometry } from "@caemble/core";
-import { dcCurrentDensity } from "@caemble/kernels";
+import { defineTask, experiment, type Geometry } from "@caemble/core";
 
 const Probe: Geometry = () => <box size={[1, 1, 1]} />;
 
@@ -96,84 +95,87 @@ export default experiment({
   geometry: () => <Probe id="probe" />,
 
   tasks: ({ vars }) => ({
-    electric: dcCurrentDensity({
-      parameters: {
-        relativeTolerance: {
-          dtype: "float64",
-          value: 1e-8,
-          unit: "{fraction}",
-          quantityKind: "DimensionlessRatio",
+    electric: defineTask(
+      { name: "dc-current-density", version: "0.0.0" },
+      {
+        parameters: {
+          relativeTolerance: {
+            dtype: "float64",
+            value: 1e-8,
+            unit: "{fraction}",
+            quantityKind: "DimensionlessRatio",
+          },
+          maxIterations: 2000,
         },
-        maxIterations: 2000,
+        initializations: [
+          {
+            methodId: "dc.voxel-grid",
+            target: ["structure.geometry.conductor"],
+            parameters: {
+              gridShape: {
+                dtype: "int32",
+                axes: [{ length: 3 }],
+                value: [100, 41, 41],
+              },
+            },
+          },
+        ],
+        boundaryConditions: [
+          {
+            methodId: "dc.source-potential",
+            target: ["structure.surface.sourceTerminal"],
+            parameters: {
+              voltage: {
+                dtype: "float64",
+                value: vars.sourceVoltage,
+                unit: "mV",
+                quantityKind: "electromagnetism.Voltage",
+              },
+            },
+          },
+          {
+            methodId: "dc.reference-potential",
+            target: ["structure.surface.referenceTerminal"],
+            parameters: {
+              voltage: {
+                dtype: "float64",
+                value: 0,
+                unit: "mV",
+                quantityKind: "electromagnetism.Voltage",
+              },
+            },
+          },
+        ],
+        outputs: [
+          {
+            key: "currentDensity",
+            methodId: "dc.current-density",
+            target: ["structure.geometry.conductor"],
+            parameters: {
+              crossSectionPosition: {
+                dtype: "float64",
+                value: 0.5,
+                unit: "{fraction}",
+                quantityKind: "DimensionlessRatio",
+              },
+            },
+          },
+          {
+            key: "totalCurrent",
+            methodId: "dc.total-current",
+            target: ["structure.geometry.conductor"],
+            parameters: {
+              crossSectionPosition: {
+                dtype: "float64",
+                value: 0.5,
+                unit: "{fraction}",
+                quantityKind: "DimensionlessRatio",
+              },
+            },
+          },
+        ],
       },
-      initializations: [
-        {
-          methodId: "dc.voxel-grid",
-          target: ["structure.geometry.conductor"],
-          parameters: {
-            gridShape: {
-              dtype: "int32",
-              axes: [{ length: 3 }],
-              value: [100, 41, 41],
-            },
-          },
-        },
-      ],
-      boundaryConditions: [
-        {
-          methodId: "dc.source-potential",
-          target: ["structure.surface.sourceTerminal"],
-          parameters: {
-            voltage: {
-              dtype: "float64",
-              value: vars.sourceVoltage,
-              unit: "mV",
-              quantityKind: "electromagnetism.Voltage",
-            },
-          },
-        },
-        {
-          methodId: "dc.reference-potential",
-          target: ["structure.surface.referenceTerminal"],
-          parameters: {
-            voltage: {
-              dtype: "float64",
-              value: 0,
-              unit: "mV",
-              quantityKind: "electromagnetism.Voltage",
-            },
-          },
-        },
-      ],
-      outputs: [
-        {
-          key: "currentDensity",
-          methodId: "dc.current-density",
-          target: ["structure.geometry.conductor"],
-          parameters: {
-            crossSectionPosition: {
-              dtype: "float64",
-              value: 0.5,
-              unit: "{fraction}",
-              quantityKind: "DimensionlessRatio",
-            },
-          },
-        },
-        {
-          key: "totalCurrent",
-          methodId: "dc.total-current",
-          target: ["structure.geometry.conductor"],
-          parameters: {
-            crossSectionPosition: {
-              dtype: "float64",
-              value: 0.5,
-              unit: "{fraction}",
-              quantityKind: "DimensionlessRatio",
-            },
-          },
-        },
-      ],
-    }),
+    ),
   }),
 
   recordedData: {
@@ -270,18 +272,13 @@ Material에는 양의 등방성 `thermal.conductivity`가 필요하고, observat
 
 ## 새 kernel 추가
 
-공개 authoring descriptor는
-`app/ui/src/lib/cad/simulation/kernels/<solver>/descriptor.ts`에 읽기 쉬운
-TypeScript로 추가한다. UI descriptor가 parameters, Material 역할, input ports,
-initialization/boundary/output method와 canonical unit을 소유한다.
+GPStation CAE checkout의 `app/solvers/<solver_name>/`에 `manifest.json`,
+`solver.py`, 전용 테스트를 추가한다. registry는 manifest를 자동 발견하며 중앙 등록
+코드를 수정하지 않는다. UI에는 manifest 사본이나 solver별 TypeScript 선언을 만들지
+않는다. Solver Catalog는 연결된 CAE worker의 `cae.solvers.manifests` 응답을 표시한다.
 
-Python 구현은 GPStation checkout의 `app_v1/slaves/cae/app/kernels.py`에
-`name + version`으로 등록하고, 그 solver가 실제 계산에 쓰는 최소 parameter,
-material unit과 input/output spec만 둔다. 전체 QuantityKind/Material/UCUM catalog나
-descriptor hash를 Python에 복제하지 않는다.
-
-두 파일을 같은 변경에서 갱신한 뒤 `npm run generate:cad-api`가 로컬 TS descriptor를
-읽어 Monaco의 `@caemble/kernels` 선언과 declaration fingerprint를 생성한다.
+UI example을 `defineTask({ name, version }, config)`로 추가하고 raw fixture를
+재생성해 UI-CAE 계약 테스트를 실행한다.
 
 ## 검증
 

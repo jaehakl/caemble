@@ -718,7 +718,6 @@ export function StructurePage() {
                   activeDocumentType="structure"
                   experiment={null}
                   experimentDocument={experimentDocument}
-                  solverCompatibility={simulation.compatibility}
                   structure={structure}
                   structureDocument={structureDocument}
                   structureLineage={
@@ -849,7 +848,6 @@ export function StructurePage() {
           simulation={{
             canRun: simulation.canRun,
             cancel: simulation.cancel,
-            compatibility: simulation.compatibility,
             process: simulation.process,
             program: experimentDocument.simulationProgram,
             run: simulation.run,

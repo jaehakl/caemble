@@ -7,18 +7,19 @@ import {
   type CadDefinition,
   type ExternalVars,
 } from '../model/v3'
+import { defineTask as defineSimulationTask } from '../simulation/authoring'
 import { evaluateCadScene } from '../evaluation/evaluator'
 import { Fragment, h } from '../evaluation/jsx'
 import type { CadDocumentType } from '../source/document'
 import type { EvaluatedRuntimeDocumentSnapshot } from './snapshot'
 import { assertCompiledCadSource, type CompiledCadSource } from '../compiler/types'
-import { kernelAuthoring } from '../simulation/kernels'
 import { assertUcumUnitComparable, convertUcumValue, normalizeUcumUnit } from '../model/units'
 
 const coreModule = Object.freeze({
   assertUcumUnitComparable,
   CadModelError,
   convertUcumValue,
+  defineTask: defineSimulationTask,
   experiment,
   ExperimentDefinition,
   isFloatDType,
@@ -30,14 +31,11 @@ const coreModule = Object.freeze({
   StructureDefinition,
 })
 
-const kernelsModule = kernelAuthoring
-
 export type CadExecutionResult = EvaluatedRuntimeDocumentSnapshot
 export type CadDocumentEntry = CadDefinition
 
 export function requireCaembleModule(specifier: string) {
   if (specifier === '@caemble/core') return coreModule
-  if (specifier === '@caemble/kernels') return kernelsModule
   throw new CadModelError(`Unsupported Caemble runtime import: ${specifier}`)
 }
 

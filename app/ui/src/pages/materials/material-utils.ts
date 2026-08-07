@@ -1,6 +1,5 @@
 import { getListRequest, type GetListRequest, type MaterialNameRecord, type MaterialRecord } from '@/api'
 import { materialModelData, materialParameterCatalog, materialParameterData } from '@/lib/material'
-import { kernelModules } from '@/lib/cad/simulation'
 
 export const dedicatedQualifierNames = Object.freeze(['temperature', 'pressure', 'frequency', 'source'] as const)
 
@@ -62,22 +61,4 @@ export function materialDisplayName(material: MaterialRecord, names: readonly Ma
     .map((entry) => entry.name)
     .sort((left, right) => left.localeCompare(right))
   return visibleNames[0] ?? `Material #${material.id}`
-}
-
-export function getSolverReadiness(parameterNames: Iterable<string>) {
-  const availableNames = new Set(parameterNames)
-  return kernelModules.map(({ descriptor: spec }) => {
-    const roles = spec.materials.map((role) => {
-      const required = Object.entries(role.properties)
-        .filter(([, parameter]) => !('required' in parameter) || parameter.required !== false)
-        .map(([name]) => name)
-      const missing = required.filter((name) => !availableNames.has(name))
-      return { role, required, missing, available: missing.length === 0 }
-    })
-    return {
-      spec,
-      roles,
-      available: roles.length === 0 || roles.some((role) => role.available),
-    }
-  })
 }

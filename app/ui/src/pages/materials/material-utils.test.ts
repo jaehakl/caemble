@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MaterialNameRecord, MaterialRecord } from '@/api'
-import { getQualifierNames, getSolverReadiness, isMaterialCatalogKey, materialDisplayName } from './material-utils'
+import { getQualifierNames, isMaterialCatalogKey, materialDisplayName } from './material-utils'
 
 describe('Material management helpers', () => {
   it('uses the alphabetically first visible name and falls back to the id', () => {
@@ -22,15 +22,5 @@ describe('Material management helpers', () => {
     expect(qualifiers).toContain('wavelength')
     expect(qualifiers).not.toContain('frequency')
     expect(qualifiers).not.toContain('source')
-  })
-
-  it('reports solver readiness and missing parameters by material role', () => {
-    const missing = getSolverReadiness([])[0]
-    expect(missing?.available).toBe(false)
-    expect(missing?.roles[0]?.missing).toEqual(['electrical.conductivity'])
-
-    const ready = getSolverReadiness(['electrical.conductivity'])[0]
-    expect(ready?.available).toBe(true)
-    expect(ready?.roles[0]).toMatchObject({ available: true, missing: [] })
   })
 })

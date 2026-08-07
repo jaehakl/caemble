@@ -225,7 +225,6 @@ export function ExamplesPage() {
             activeDocumentType={activeDocumentType}
             experiment={experiment}
             experimentDocument={experimentDocument}
-            solverCompatibility={simulation.compatibility}
             structure={structure}
             structureDocument={structureDocument}
             onActiveDocumentTypeChange={setActiveDocumentType}
@@ -239,7 +238,6 @@ export function ExamplesPage() {
             simulation={{
               canRun: simulation.canRun,
               cancel: simulation.cancel,
-              compatibility: simulation.compatibility,
               process: simulation.process,
               program: experimentDocument.simulationProgram,
               run: simulation.run,

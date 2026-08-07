@@ -27,12 +27,10 @@ const cadViewerSpy = vi.hoisted(() => vi.fn())
 const solverMocks = vi.hoisted(() => ({
   autoComplete: false,
   cancel: vi.fn(),
-  compatibilityStatus: 'compatible' as 'checking' | 'compatible' | 'incompatible',
   failRunNumbers: [] as number[],
   rejectRunAttempts: 0,
   run: vi.fn(),
   runCount: 0,
-  setCompatibilityStatus: null as ((status: 'checking' | 'compatible' | 'incompatible') => void) | null,
   staleSuccessBeforeRunNumbers: [] as number[],
 }))
 const toastMocks = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }))
@@ -100,7 +98,6 @@ const documentController = {
   handleSourceChange: vi.fn(),
   materialParameters: { schemaVersion: 1, materials: {} },
   materialWarnings: [],
-  preflightIssues: [],
   readOnly: false,
   revision: 1,
   runIsBusy: false,
@@ -123,7 +120,6 @@ vi.mock('@/features/viewer/workspace/useCadWorkspace', async () => {
       const experimentVars = args[5] as Record<string, unknown> | undefined
       const [structureRevision, setStructureRevision] = useState(1)
       const [experimentRevision, setExperimentRevision] = useState(1)
-      const [compatibilityStatus, setCompatibilityStatus] = useState(solverMocks.compatibilityStatus)
       const [recordedData, setRecordedData] = useState<Record<string, unknown> | null>(null)
       const previousStructureVars = useRef(structureVars)
       const [process, setProcess] = useState({
@@ -227,8 +223,6 @@ vi.mock('@/features/viewer/workspace/useCadWorkspace', async () => {
           finishedAt: Date.now(),
         }))
       }, [])
-      solverMocks.setCompatibilityStatus = setCompatibilityStatus
-
       return {
         structureDocument: {
           ...documentController,
@@ -269,10 +263,8 @@ vi.mock('@/features/viewer/workspace/useCadWorkspace', async () => {
           },
         },
         simulation: {
-          canRun:
-            compatibilityStatus === 'compatible' && process.status !== 'preparing' && process.status !== 'running',
+          canRun: process.status !== 'preparing' && process.status !== 'running',
           cancel,
-          compatibility: { status: compatibilityStatus, issues: [] },
           process,
           recordedData,
           run,
@@ -524,11 +516,9 @@ afterEach(() => {
   cleanup()
   vi.clearAllMocks()
   solverMocks.autoComplete = false
-  solverMocks.compatibilityStatus = 'compatible'
   solverMocks.failRunNumbers = []
   solverMocks.rejectRunAttempts = 0
   solverMocks.runCount = 0
-  solverMocks.setCompatibilityStatus = null
   solverMocks.staleSuccessBeforeRunNumbers = []
 })
 
@@ -798,12 +788,11 @@ describe('MeasurementPage', () => {
     expect(apiMocks.experimentList).toHaveBeenCalledTimes(1)
   })
 
-  it('shows batch loading, evaluation, and Solver stages in order', async () => {
+  it('shows batch loading and Solver stages in order', async () => {
     mockRunWorkflow([
       { id: 11, structure_id: 1, vars: { sampleId: 11 }, material_parameters: {} },
       { id: 10, structure_id: 1, vars: { sampleId: 10 }, material_parameters: {} },
     ])
-    solverMocks.compatibilityStatus = 'checking'
     const sampleListImplementation = apiMocks.sampleList.getMockImplementation()
     if (!sampleListImplementation) throw new Error('Sample list mock is missing.')
     let releaseLoad: (() => void) | undefined
@@ -826,9 +815,6 @@ describe('MeasurementPage', () => {
     expect(await screen.findByText('Sample 불러오는 중')).toBeInTheDocument()
     await waitFor(() => expect(releaseLoad).toBeDefined())
     act(() => releaseLoad?.())
-    expect(await screen.findByText('CAD 평가·Solver 호환성 확인 중')).toBeInTheDocument()
-
-    act(() => solverMocks.setCompatibilityStatus?.('compatible'))
     await waitFor(() => expect(solverMocks.run).toHaveBeenCalledOnce())
     expect(screen.getByText('Solver 실행 중')).toBeInTheDocument()
   })

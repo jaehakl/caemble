@@ -107,7 +107,6 @@ export {
   assertBuiltRealization,
   buildRealization,
   buildSourceOnlyRealization,
-  canonicalizeCaeRealizations,
 } from './execution/realization'
 export type { BuiltRealization, BuiltSample, BuiltSetup } from './execution/realization'
 export { assertSerializableCadScene, deserializeCadScene, serializeCadScene } from './execution/mesh'

@@ -51,9 +51,9 @@ function SyntaxHelp() {
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700">
             <h3 className="font-semibold text-slate-900">Source와 import</h3>
             <p className="mt-2">
-              공개 import는 <Code>@caemble/core</Code>와 <Code>@caemble/kernels</Code>만 허용합니다. 상대 경로, 동적
-              import, <Code>require()</Code>, URL, 다른 package는 거부됩니다. 재사용할 Geometry component와 Material
-              class는 같은 Source 안에 선언하세요.
+              공개 import는 <Code>@caemble/core</Code>만 허용합니다. 상대 경로, 동적 import, <Code>require()</Code>,
+              URL, 다른 package는 거부됩니다. 재사용할 Geometry component와 Material class는 같은 Source 안에
+              선언하세요.
             </p>
 
             <h3 className="mt-5 font-semibold text-slate-900">Vars와 Geometry</h3>
@@ -74,10 +74,13 @@ function SyntaxHelp() {
 
             <h3 className="mt-5 font-semibold text-slate-900">Experiment task와 RecordedData</h3>
             <p className="mt-2">
-              <Code>{'tasks: ({ vars }) => ({ electric: dcCurrentDensity({...}) })'}</Code>는 kernel별{' '}
-              <Code>parameters</Code>, <Code>initializations</Code>, <Code>boundaryConditions</Code>,{' '}
-              <Code>outputs</Code>를 정의합니다. task output은 중간 artifact 요청이며 Measurement schema가 아닙니다.
-              Measurement에 저장할 최종 계약은 Experiment 최상위 <Code>recordedData</Code>에 한 번만 선언합니다.
+              <Code>
+                {"tasks: ({ vars }) => ({ electric: defineTask({ name: 'solver', version: '1.0.0' }, {...}) })"}
+              </Code>
+              는 solver별 <Code>parameters</Code>, <Code>initializations</Code>, <Code>boundaryConditions</Code>,{' '}
+              <Code>outputs</Code>를 정의합니다. 실제 계약 검증과 단위 변환은 CAE가 수행합니다. task output은 중간
+              artifact 요청이며 Measurement schema가 아닙니다. Measurement에 저장할 최종 계약은 Experiment 최상위{' '}
+              <Code>recordedData</Code>에 한 번만 선언합니다.
             </p>
             <p className="mt-2">
               Python <Code>simulate()</Code>가 <Code>sim.run()</Code> 순서를 결정하고, <Code>inputs</Code>로 typed

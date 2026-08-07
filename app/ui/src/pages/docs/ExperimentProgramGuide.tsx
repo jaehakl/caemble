@@ -40,7 +40,7 @@ export function ExperimentProgramGuide() {
         <header className="overflow-hidden rounded-2xl border bg-gradient-to-br from-orange-50 via-white to-slate-50 p-6 sm:p-9">
           <div className="flex flex-wrap items-center gap-2">
             <Badge>Experiment Program</Badge>
-            <Badge className="border bg-white">@caemble/core · @caemble/kernels</Badge>
+            <Badge className="border bg-white">@caemble/core</Badge>
           </div>
           <h2 className="mt-5 max-w-3xl text-2xl font-semibold tracking-tight text-slate-950 sm:text-4xl">
             kernel task를 조합해 문제에 맞는 CAE 프로그램을 작성합니다
@@ -215,7 +215,7 @@ export function ExperimentProgramGuide() {
         </section>
 
         <section>
-          <h3 className="font-semibold text-slate-950">@caemble/kernels · DC와 Heat method</h3>
+          <h3 className="font-semibold text-slate-950">defineTask · DC와 Heat method</h3>
           <div className="mt-4 overflow-x-auto rounded-xl border">
             <table className="w-full min-w-[720px] border-collapse text-left text-sm">
               <thead className="bg-slate-50 text-xs text-slate-500">

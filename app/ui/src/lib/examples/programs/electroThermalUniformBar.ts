@@ -53,13 +53,12 @@ export default structure({
 })
 `
 
-export const electroThermalUniformBarExperimentCode = `import { experiment } from '@caemble/core'
-import { dcCurrentDensity, steadyStateHeat } from '@caemble/kernels'
+export const electroThermalUniformBarExperimentCode = `import { defineTask, experiment } from '@caemble/core'
 
 const gridShape = [20, 11, 11] as const
 
 function electricTask(sourceVoltage: number) {
-  return dcCurrentDensity({
+  return defineTask({ name: 'dc-current-density', version: '0.0.0' }, {
     parameters: {
       relativeTolerance: {
         dtype: 'float64',
@@ -133,7 +132,7 @@ function electricTask(sourceVoltage: number) {
 }
 
 function thermalTask(fixedTemperature: number) {
-  return steadyStateHeat({
+  return defineTask({ name: 'steady-state-heat', version: '0.0.0' }, {
     parameters: {
       relativeTolerance: {
         dtype: 'float64',

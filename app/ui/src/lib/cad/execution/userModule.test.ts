@@ -24,19 +24,14 @@ async function compile(source: string) {
 describe('compiled CAD source execution', () => {
   it('exposes only the unversioned public authoring modules', () => {
     expect(requireCaembleModule('@caemble/core')).toMatchObject({
+      defineTask: expect.any(Function),
       experiment: expect.any(Function),
       Mat: expect.any(Function),
       Material: expect.any(Function),
       structure: expect.any(Function),
     })
-    expect(requireCaembleModule('@caemble/kernels')).toEqual({
-      dcCurrentDensity: expect.any(Function),
-      steadyStateHeat: expect.any(Function),
-    })
-    expect(requireCaembleModule('@caemble/kernels')).not.toHaveProperty('execute')
-
     expect(() => requireCaembleModule('@caemble/core/versioned')).toThrow('Unsupported Caemble runtime import')
-    expect(() => requireCaembleModule('@caemble/kernels/versioned')).toThrow('Unsupported Caemble runtime import')
+    expect(() => requireCaembleModule('@caemble/kernels')).toThrow('Unsupported Caemble runtime import')
     expect(() => requireCaembleModule('./local-module')).toThrow('Unsupported Caemble runtime import')
   })
 

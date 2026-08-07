@@ -4,9 +4,10 @@
 
 ```text
 Structure/Experiment TS authoring
-→ UI compile/evaluate/canonicalize
+→ UI compile/evaluate/raw serialization
 → { sample, setup }
 → GPStation cae slave
+→ manifest validation and UCUM conversion
 → sim.record()된 DataTensor
 → Viewer/Analysis와 Measurement JSONB
 ```
@@ -15,58 +16,62 @@ Structure/Experiment TS authoring
 
 ## 책임 경계
 
-| 계층 | 책임 |
-| --- | --- |
-| UI | 전체 QuantityKind/Material catalog, unit 변환, solver authoring descriptor, BuiltSample/BuiltSetup 생성 |
-| CAE slave | Python `simulate()` 실행, 등록 solver 계산, tensor 구조 검증, record streaming |
-| API | UI가 보낸 RecordedData 컬럼과 JSON을 불투명하게 저장·반환 |
+| 계층      | 책임                                                                                             |
+| --------- | ------------------------------------------------------------------------------------------------ |
+| UI        | authoring과 BuiltSample/BuiltSetup 생성, live Solver Catalog 표시                                |
+| CAE slave | solver manifest 소유, 계약 검증과 UCUM 변환, Python `simulate()`와 solver 실행, record streaming |
+| API       | UI가 보낸 RecordedData 컬럼과 JSON을 불투명하게 저장·반환                                        |
 
 별도 `contracts/cae` JSON 원본, npm contract package, Python contract wheel과
 contract hash 검사는 없다.
 
-## 1. UI catalog와 solver descriptor
+## 1. CAE manifest와 live Solver Catalog
 
 먼저 다음 순서로 읽는다.
 
-1. [`quantitykind/data`](../app/ui/src/lib/quantitykind/data): domain별 QuantityKind
-2. [`material/data`](../app/ui/src/lib/material/data): domain별 Material property
-3. [`dcCurrentDensity/descriptor.ts`](../app/ui/src/lib/cad/simulation/kernels/dcCurrentDensity/descriptor.ts)
-4. [`steadyStateHeat/descriptor.ts`](../app/ui/src/lib/cad/simulation/kernels/steadyStateHeat/descriptor.ts)
-5. [`generate-cad-api.mjs`](../app/ui/scripts/generate-cad-api.mjs)
+1. GPStation CAE `app/solvers/*/manifest.json`: solver별 단일 계약 원본
+2. GPStation CAE `app/solver_framework/registry.py`: schema 검증, 자동 발견, lazy import
+3. GPStation CAE `app/handlers.py`: `cae.solvers.manifests` attachment 응답
+4. [`manifests.ts`](../app/ui/src/features/cae/manifests.ts): 전체 응답 검증
+5. [`SolverCatalogPage.tsx`](../app/ui/src/pages/catalog/solvers/SolverCatalogPage.tsx): 연결별 메모리 cache와 표시
 
-전체 catalog는 UI에만 있다. CAD API generator도 이 TypeScript 원본과 등록된
-descriptor를 직접 읽는다.
+UI에는 solver manifest 사본, generated solver catalog, solver별 authoring builder가
+없다. Catalog는 연결된 CAE worker가 보내는 manifest의 `descriptor`만 표시한다.
 
 ## 2. 실행 manifest
 
-[`authoring.ts`](../app/ui/src/lib/cad/simulation/authoring.ts)가 task config를 solver
-descriptor 기준으로 canonicalize하고 다음 v3 manifest를 만든다.
+[`authoring.ts`](../app/ui/src/lib/cad/simulation/authoring.ts)의 범용
+`defineTask({ name, version }, config)`가 config와 작성 단위를 그대로 다음 v3
+manifest에 넣는다.
 
 ```ts
 type SimulationProgram = {
-  formatVersion: 3
-  simulationApiVersion: 1
-  pythonSource: string
-  tasks: Record<string, {
-    kernel: { name: string; version: string }
-    config: unknown
-  }>
-  recordedData: Record<string, DataSchema & { tensorOrder: number }>
-}
+  formatVersion: 3;
+  simulationApiVersion: 1;
+  pythonSource: string;
+  tasks: Record<
+    string,
+    {
+      kernel: { name: string; version: string };
+      config: unknown;
+    }
+  >;
+  recordedData: Record<string, DataSchema & { tensorOrder: number }>;
+};
 ```
 
-descriptor 본문, output artifact spec과 각종 실행 hash는 직렬화하지 않는다.
-`tensorOrder`는 UI가 QuantityKind catalog에서 계산한다.
+solver descriptor 본문과 output artifact spec은 직렬화하지 않는다. RecordedData의
+`tensorOrder`만 UI가 자체 DataSchema를 완성하기 위해 계산한다.
 
-## 3. BuiltSample/BuiltSetup canonicalization
+## 3. BuiltSample/BuiltSetup 직렬화
 
-[`realization.ts`](../app/ui/src/lib/cad/execution/realization.ts)의
-`canonicalizeCaeRealizations()`가 원격 전송 직전의 마지막 경계다.
+[`realization.ts`](../app/ui/src/lib/cad/execution/realization.ts)가 실제 authoring을
+BuiltSample/BuiltSetup으로 만들고, [`request.ts`](../app/ui/src/features/cae/request.ts)가
+attachment를 분리한다.
 
-- geometry 좌표를 solver의 reference length unit으로 변환한다.
-- solver가 쓰는 Material property만 해당 canonical unit과 dtype으로 변환한다.
-- task config는 이미 authoring descriptor 기준으로 정규화된 값을 사용한다.
-- 등록되지 않은 solver 또는 서로 다른 geometry 기준 단위를 섞은 setup은 거부한다.
+- geometry의 `lengthUnit`, Material property unit, task parameter unit을 보존한다.
+- UI는 solver별 정규화나 호환성 검사를 하지 않는다.
+- CAE가 각 task의 manifest를 선택한 뒤 geometry와 Material의 solver-local view를 만든다.
 
 ## 4. 브라우저 원격 실행
 
@@ -74,7 +79,7 @@ descriptor 본문, output artifact spec과 각종 실행 hash는 직렬화하지
 [`client.ts`](../app/ui/src/features/cae/client.ts)의 함수 하나다.
 
 ```ts
-simulate(sample, setup, { signal, onStatus, onProgress, onRecord })
+simulate(sample, setup, { signal, onStatus, onProgress, onRecord });
 ```
 
 client는 다음을 내부 처리한다.
@@ -96,13 +101,14 @@ client는 다음을 내부 처리한다.
 1. `handlers.py`: start/next handler와 request attachment decode
 2. `runtime.py`: run lifecycle, ACK, Python orchestration, artifact ownership
 3. `program.py`: `simulate()` AST allowlist
-4. `kernels.py`: 등록 solver의 최소 spec과 계산 구현
-5. `tensor.py`: dtype/tensorOrder/shape/ticks/raw bytes 검증과 sharding
+4. `solver_framework/registry.py`: manifest 자동 탐색과 lazy solver import
+5. `solver_framework/validation.py`, `units.py`, `world.py`: 계약 검증과 단위 변환
+6. `solvers/*/solver.py`: solver별 계산
+7. `tensor.py`: dtype/tensorOrder/shape/ticks/raw bytes 검증과 sharding
 
-CAE는 `name + version`으로 solver를 선택한다. `kernels.py`에는 DC와 Heat가 실제로
-쓰는 `m`, `S.m-1`, `W.m-1.K-1`, parameter와 artifact spec만 있다. 일반 tensor
-codec은 `quantityKind`나 `unit` catalog를 조회하지 않는다. 잘못된 solver 입력 단위는
-변환하지 않고 해당 solver가 명확한 domain error로 거부한다.
+CAE는 `name + version`으로 manifest와 solver를 선택한다. `quantityKind`는 manifest와
+정확히 일치해야 하며 호환 가능한 UCUM 단위는 manifest 단위로 변환한다. geometry와
+Material 원본은 변경하지 않고 사용하는 solver의 local view에서만 변환한다.
 
 Python에서 허용되는 실행 API는 네 개다.
 

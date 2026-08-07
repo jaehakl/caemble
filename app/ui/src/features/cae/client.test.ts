@@ -181,14 +181,14 @@ describe('CAE session client', () => {
     )
     expect(Object.keys(sdk.runJob.mock.calls[0][1]).sort()).toEqual(['sample', 'setup'])
     const startPayload = sdk.runJob.mock.calls[0][1]
-    expect(startPayload.sample.structure.scene.lengthUnit).toBe('m')
+    expect(startPayload.sample.structure.scene.lengthUnit).toBe('mm')
     expect(startPayload.sample.materialParameters.materials.Copper['electrical.conductivity'].value).toMatchObject({
       dtype: 'float64',
-      unit: 'S.m-1',
+      unit: 'S.cm-1',
       value: [
-        [200, 0, 0],
-        [0, 200, 0],
-        [0, 0, 200],
+        [2, 0, 0],
+        [0, 2, 0],
+        [0, 0, 2],
       ],
     })
     expect(call.mock.calls.map((entry) => entry[1])).toEqual([

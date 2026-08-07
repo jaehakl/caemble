@@ -294,7 +294,7 @@ beforeEach(() => {
       }
       return {
         experimentDocument,
-        simulation: { compatibility: { status: 'unavailable', issues: [] } },
+        simulation: {},
         structureDocument,
       }
     },
@@ -529,7 +529,7 @@ describe('StructurePage', () => {
     renderPage('/structures?structure=5')
     await screen.findByText('Owned Grandchild')
     await userEvent.click(screen.getByRole('button', { name: 'Owned Grandchild 코드 에디터 열기' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Source 변경' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Source 변경' }))
     await userEvent.click(screen.getByRole('button', { name: '목록' }))
 
     await userEvent.click(screen.getByRole('button', { name: '새 Structure 생성' }))

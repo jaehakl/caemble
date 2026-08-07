@@ -1,9 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { cadSource, type CadDocumentType, type CadSourceDocument } from '@/lib/cad'
 import CadEditor from '../editor/CadEditor'
-import SolverSpecSheet from './SolverSpecSheet'
 import type { CadDocumentController } from './useCadWorkspace'
-import type { SimulationCompatibility } from './simulationUiTypes'
 
 export type StructureExperimentViewerProps = {
   activeDocumentType: CadDocumentType | null
@@ -12,7 +10,6 @@ export type StructureExperimentViewerProps = {
   experimentLineage?: ReactNode
   structureDocument: CadDocumentController
   experimentDocument: CadDocumentController
-  solverCompatibility: SimulationCompatibility
   structureLineage?: ReactNode
   structureVarsPanel?: ReactNode
   onActiveDocumentTypeChange: (documentType: CadDocumentType) => void
@@ -25,7 +22,6 @@ const workspaceTabs = [
   { id: 'experiment-source', documentType: 'experiment', panel: 'source', label: 'Experiment Source' },
   { id: 'experiment-python', documentType: 'experiment', panel: 'python', label: 'Python simulate' },
   { id: 'experiment-lineage', documentType: 'experiment', panel: 'lineage', label: '족보 보기' },
-  { id: 'solver-spec', documentType: 'experiment', panel: 'spec', label: 'Solver Spec' },
 ] as const
 
 type WorkspaceTab = (typeof workspaceTabs)[number]['id']
@@ -49,7 +45,6 @@ export function StructureExperimentViewer({
   experimentDocument,
   experimentLineage,
   onActiveDocumentTypeChange,
-  solverCompatibility,
   structure,
   structureDocument,
   structureLineage,
@@ -215,12 +210,7 @@ export function StructureExperimentViewer({
                   value={sourceDocument?.simulationCode ?? ''}
                   onChange={document.handleSimulationCodeChange}
                 />
-              ) : (
-                <SolverSpecSheet
-                  compatibility={solverCompatibility}
-                  simulationProgram={experimentDocument.simulationProgram}
-                />
-              )}
+              ) : null}
             </div>
           )
         })}
@@ -239,17 +229,6 @@ export function StructureExperimentViewer({
           <div className="max-h-36 overflow-auto text-amber-900" role="status">
             <div className="text-sm font-semibold">Preview ready · Material warning</div>
             <p className="mt-1 text-xs leading-5">{activeDocument.materialWarnings[0]}</p>
-          </div>
-        ) : solverCompatibility.status === 'incompatible' ? (
-          <div className="max-h-36 overflow-auto text-amber-900" role="status">
-            <div className="text-sm font-semibold">Preview ready · Simulation incompatible</div>
-            <p className="mt-1 text-xs leading-5">
-              {solverCompatibility.issues.length} compatibility issue
-              {solverCompatibility.issues.length === 1 ? '' : 's'} ·{' '}
-              {(activeDocument.preflightIssues[0] ?? solverCompatibility.issues[0])?.path}:{' '}
-              {(activeDocument.preflightIssues[0] ?? solverCompatibility.issues[0])?.message} See Solver Spec for all
-              compatibility issues.
-            </p>
           </div>
         ) : (
           <div className="text-sm text-slate-600">

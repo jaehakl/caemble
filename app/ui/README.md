@@ -52,21 +52,16 @@ npm run check:generated
 
 QuantityKind와 Material 전체 catalog는 각각 `src/lib/quantitykind/data`와
 `src/lib/material/data`의 domain별 TypeScript 파일이 원본이다. CAE kernel descriptor의
-단일 원본은 GPStation CAE의 `app/solvers/*/manifest.json`이다. UI의
-`src/lib/cad/simulation/kernels/generated.ts`는 직접 수정하지 않고 다음 명령으로
-갱신하거나 검사한다.
+단일 원본은 GPStation CAE의 `app/solvers/*/manifest.json`이다. UI에는 solver manifest
+사본이나 generated catalog를 두지 않는다. Solver Catalog는 저장된 GPStation 연결로
+`cae.solvers.manifests`를 호출해 현재 CAE worker의 manifest를 조회한다.
 
-```powershell
-cd E:\gpstation\app_v1\slaves\cae
-poetry run python -m app.solver_framework.codegen --caemble-ui E:\caemble\app\ui
-poetry run python -m app.solver_framework.codegen --caemble-ui E:\caemble\app\ui --check
-```
-
-The CAD generator reads the element registry, local TypeScript catalogs,
-the generated solver catalog, and `src/lib/cad/api/authoring-manifest.json`.
-It generates the element catalog/registry, JSX intrinsic types, strict solver
-authoring types, and pinned API versions. Commit all generated changes. CI should
-run `npm run check:generated`; a non-empty regeneration diff is an error.
+The CAD generator reads the element registry, local TypeScript catalogs, and
+`src/lib/cad/api/authoring-manifest.json`. It generates the element
+catalog/registry, JSX intrinsic types, and pinned API versions. Solver authoring
+uses the generic `defineTask({ name, version }, config)` API and is validated by
+CAE at execution time. Commit all generated changes. CI should run
+`npm run check:generated`; a non-empty regeneration diff is an error.
 
 `src/lib/cad/model/core.ts` remains an internal application facade and is never exposed to Source code. Vars, descriptor contracts, Material construction, Structure, and Experiment live in focused `vars.ts`, `descriptor.ts`, `material.ts`, `structure.ts`, and `experiment.ts` modules; new runtime code should import the focused module when it does not need the facade.
 
@@ -122,7 +117,7 @@ The lowercase functions create model definitions; they are not JSX components or
 
 ## Experiment Program v3
 
-v3 Experiment는 `@caemble/core/v3`의 `defineTask()`와 `experiment()`를 사용해 named kernel task를 조합한다. 현재 `@caemble/kernels/v1`은 실제 제품 capability로 `dcCurrentDensity`를 제공한다. Structure는 계속 `@caemble/core/v2`로 작성한다.
+Experiment는 `@caemble/core`의 `defineTask({ name, version }, config)`와 `experiment()`를 사용해 named solver task를 조합한다. solver별 manifest와 검증 규칙은 CAE가 소유하며 UI에는 별도 solver package나 generated catalog가 없다. Structure도 `@caemble/core`로 작성한다.
 
 상세 저작 규칙, state/artifact 전달, output 기록, DC method 계약과 문제 해결 방법은 [Experiment Program v3 저작 가이드](./docs/experiment-program-v3.md)에 정리되어 있다. `/examples` Playground의 세 Structure–Experiment pair는 문서, TypeScript 검사, source-policy 검사, 실제 DC kernel 통합 테스트가 같은 source fixture를 사용한다.
 
@@ -188,8 +183,8 @@ Simulation callers use only the thin client in `src/features/cae/client.ts`:
 simulate(sample, setup, { signal, onStatus, onProgress, onRecord })
 ```
 
-The client canonicalizes the pair for the selected solver, sends only
-`{ sample, setup }`, and hides GPStation session, attachments, `start/next`,
+The client preserves author-supplied units, sends only `{ sample, setup }`,
+and hides GPStation session, attachments, `start/next`,
 record ACK and kill handling. Browser-local solver,
 Python/TS simulation runtime and fallback execution do not exist. Only declared
 and actually recorded `DataTensor` values are returned; failed or cancelled runs

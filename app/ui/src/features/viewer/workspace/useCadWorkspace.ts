@@ -27,7 +27,7 @@ import {
 import { releaseRecordedDataAttachments, simulate } from '@/features/cae/client'
 import { sourceOnlyMaterialParameters, type MaterialResolution } from '@/lib/material'
 import type { SimulationProgramManifest } from '@/lib/cad/simulation'
-import type { SimulationCompatibility, SimulationCompatibilityIssue, SimulationProcess } from './simulationUiTypes'
+import type { SimulationProcess } from './simulationUiTypes'
 
 export type AppStatus =
   'Dirty' | 'Checking' | 'Compiling' | 'Evaluating' | 'Resolving Materials' | 'Ready' | 'Rendering' | 'Error'
@@ -404,20 +404,17 @@ type BaseCadDocumentController = ReturnType<typeof useDocumentState>['controller
 export type CadDocumentController = BaseCadDocumentController &
   Readonly<{
     evaluationTimeoutMs: EvaluationTimeoutMs
-    preflightIssues: readonly SimulationCompatibilityIssue[]
     setEvaluationTimeoutMs: (timeout: EvaluationTimeoutMs) => void
   }>
 
-export function attachPreflightMetadata(
+export function attachWorkspaceMetadata(
   controller: BaseCadDocumentController,
-  issues: readonly SimulationCompatibilityIssue[],
   evaluationTimeoutMs: EvaluationTimeoutMs,
   setEvaluationTimeoutMs: (timeout: EvaluationTimeoutMs) => void,
 ): CadDocumentController {
   return {
     ...controller,
     evaluationTimeoutMs,
-    preflightIssues: issues,
     setEvaluationTimeoutMs,
   }
 }
@@ -425,7 +422,6 @@ export function attachPreflightMetadata(
 export type SimulationController = Readonly<{
   canRun: boolean
   cancel: () => void
-  compatibility: SimulationCompatibility
   process: SimulationProcess
   recordedData: RecordedData | null
   run: () => string | null
@@ -674,47 +670,16 @@ export function useCadWorkspace(
     }
   }, [clearEvaluationJob])
 
-  const connectionIssues = gpStationConnection
-    ? Object.freeze([] as SimulationCompatibilityIssue[])
-    : Object.freeze([
-        {
-          documentType: 'experiment' as const,
-          path: 'simulation.connection',
-          message: '계정 페이지에서 GPStation CAE Access Token을 연결하세요.',
-        },
-      ])
-  const pythonMigrationIssues: readonly SimulationCompatibilityIssue[] = requiresPythonMigration(experiment)
-    ? Object.freeze([
-        {
-          documentType: 'experiment',
-          path: 'simulation_code',
-          message:
-            '이 Experiment에는 Python simulation source가 없습니다. edit, preview, Run 전에 Python source가 포함된 새 revision으로 마이그레이션하세요.',
-        },
-      ])
-    : Object.freeze([])
-  const structureIssues: readonly SimulationCompatibilityIssue[] = Object.freeze([])
-  const experimentIssues = Object.freeze([...pythonMigrationIssues, ...connectionIssues])
-  const structureDocument = attachPreflightMetadata(
+  const structureDocument = attachWorkspaceMetadata(
     structureState.controller,
-    structureIssues,
     evaluationTimeoutMs,
     setEvaluationTimeoutMs,
   )
-  const experimentDocument = attachPreflightMetadata(
+  const experimentDocument = attachWorkspaceMetadata(
     experimentState.controller,
-    experimentIssues,
     evaluationTimeoutMs,
     setEvaluationTimeoutMs,
   )
-  const compatibility: SimulationCompatibility =
-    pythonMigrationIssues.length > 0
-      ? Object.freeze({ status: 'incompatible', issues: experimentIssues })
-      : !experimentState.controller.simulationProgram
-        ? Object.freeze({ status: 'unavailable', issues: Object.freeze([]) })
-        : connectionIssues.length > 0
-          ? Object.freeze({ status: 'incompatible', issues: connectionIssues })
-          : Object.freeze({ status: 'compatible', issues: Object.freeze([]) })
 
   const processActive = process.status === 'preparing' || process.status === 'running'
   const canRun =
@@ -723,10 +688,11 @@ export function useCadWorkspace(
     experimentDocument.status === 'Ready' &&
     structureDocument.successfulRevision === structureDocument.revision &&
     experimentDocument.successfulRevision === experimentDocument.revision &&
-    compatibility.status === 'compatible'
+    Boolean(experimentDocument.simulationProgram) &&
+    Boolean(gpStationConnection)
 
   const run = useCallback(() => {
-    if (compatibility.status !== 'compatible' || activeRunRef.current || !gpStationConnection) return null
+    if (!experimentDocument.simulationProgram || activeRunRef.current || !gpStationConnection) return null
     const structureSnapshot = documentHandlersRef.current.structure?.getSnapshot()
     const experimentSnapshot = documentHandlersRef.current.experiment?.getSnapshot()
     if (
@@ -858,7 +824,7 @@ export function useCadWorkspace(
         )
       })
     return requestId
-  }, [gpStationConnection, compatibility.status])
+  }, [experimentDocument.simulationProgram, gpStationConnection])
 
   const cancel = useCallback(() => {
     const active = activeRunRef.current
@@ -884,7 +850,6 @@ export function useCadWorkspace(
   const simulation: SimulationController = {
     canRun,
     cancel,
-    compatibility,
     process,
     recordedData,
     run,

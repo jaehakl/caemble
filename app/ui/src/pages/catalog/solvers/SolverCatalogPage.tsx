@@ -1,14 +1,17 @@
+import { useQuery } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
-import { Cpu, FlaskConical } from 'lucide-react'
-import { useNavigate, useParams } from 'react-router'
+import { Cpu, FlaskConical, RefreshCw } from 'lucide-react'
+import { Link, useNavigate, useParams } from 'react-router'
 import { CatalogPageLayout } from '@/components/CatalogPageLayout'
 import { DataTable } from '@/components/DataTable'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { kernelModules, type KernelDescriptor } from '@/lib/cad/simulation'
+import { useAuth } from '@/features/auth/use-auth'
+import { CaeManifestError, fetchCaeSolverManifests } from '@/features/cae/manifests'
+import type { KernelDescriptor } from '@/lib/cad/simulation'
 
-const solvers: KernelDescriptor[] = kernelModules.map((kernel) => kernel.descriptor)
 const columns: ColumnDef<KernelDescriptor, unknown>[] = [
   {
     accessorKey: 'name',
@@ -26,6 +29,17 @@ const columns: ColumnDef<KernelDescriptor, unknown>[] = [
 export function SolverCatalogPage() {
   const navigate = useNavigate()
   const { name, version } = useParams()
+  const auth = useAuth()
+  const connection = auth.user?.gpstation_connection ?? null
+  const manifests = useQuery({
+    queryKey: ['cae', 'solver-manifests', auth.user?.id ?? null, connection?.api_base_url ?? null],
+    queryFn: () => fetchCaeSolverManifests(connection!),
+    enabled: Boolean(connection),
+    retry: false,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  })
+  const solvers = manifests.data?.map((manifest) => manifest.descriptor) ?? []
   const selected = solvers.find((solver) => solver.name === name && (!version || solver.version === version))
   const methods = selected
     ? Object.entries(selected.methods).flatMap(([category, entries]) => entries.map((method) => ({ category, method })))
@@ -36,21 +50,64 @@ export function SolverCatalogPage() {
       description="Solver 별 구동 및 데이터 입출력 API 일람"
       title="Simulations & Analysis"
       filters={
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Cpu className="size-4" />
-          웹브라우저 구동
+        <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+          <span className="flex items-center gap-2">
+            <Cpu className="size-4" />
+            연결된 CAE worker에서 조회
+          </span>
+          <Button
+            disabled={!connection || manifests.isFetching}
+            onClick={() => void manifests.refetch()}
+            size="sm"
+            variant="outline"
+          >
+            <RefreshCw className={manifests.isFetching ? 'animate-spin' : undefined} />
+            새로고침
+          </Button>
         </div>
       }
       list={
-        <DataTable
-          columns={columns}
-          data={solvers}
-          getRowKey={(row) => `${row.name}@${row.version}`}
-          onRowClick={(row) =>
-            navigate(`/catalog/solvers/${encodeURIComponent(row.name)}/${encodeURIComponent(row.version)}`)
-          }
-          selectedKey={selected ? `${selected.name}@${selected.version}` : undefined}
-        />
+        !connection ? (
+          <div className="flex min-h-60 flex-col items-center justify-center p-8 text-center">
+            <p className="font-medium">GPStation 연결이 없습니다.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Solver Catalog를 조회하려면 연결 정보를 저장하세요.</p>
+            <Button asChild className="mt-4" size="sm" variant="outline">
+              <Link to="/account">연결 설정</Link>
+            </Button>
+          </div>
+        ) : manifests.isPending ? (
+          <div className="flex min-h-60 items-center justify-center p-8 text-sm text-muted-foreground">
+            CAE solver manifest를 조회하고 있습니다.
+          </div>
+        ) : manifests.isError ? (
+          <div className="flex min-h-60 flex-col items-center justify-center p-8 text-center">
+            <p className="font-medium text-destructive">
+              {manifests.error instanceof CaeManifestError
+                ? manifests.error.code === 'invalid_manifest'
+                  ? '잘못된 solver manifest입니다.'
+                  : '잘못된 manifest attachment 응답입니다.'
+                : 'CAE launcher 또는 worker에 연결할 수 없습니다.'}
+            </p>
+            <p className="mt-2 max-w-xl text-sm text-muted-foreground">
+              {manifests.error instanceof Error ? manifests.error.message : String(manifests.error)}
+            </p>
+          </div>
+        ) : solvers.length === 0 ? (
+          <div className="flex min-h-60 flex-col items-center justify-center p-8 text-center">
+            <p className="font-medium">등록된 solver가 없습니다.</p>
+            <p className="mt-1 text-sm text-muted-foreground">연결된 CAE worker가 빈 manifest 목록을 반환했습니다.</p>
+          </div>
+        ) : (
+          <DataTable
+            columns={columns}
+            data={solvers}
+            getRowKey={(row) => `${row.name}@${row.version}`}
+            onRowClick={(row) =>
+              navigate(`/catalog/solvers/${encodeURIComponent(row.name)}/${encodeURIComponent(row.version)}`)
+            }
+            selectedKey={selected ? `${selected.name}@${selected.version}` : undefined}
+          />
+        )
       }
       detail={
         selected ? (

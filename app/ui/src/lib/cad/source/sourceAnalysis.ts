@@ -93,7 +93,7 @@ function assertImportPolicy(ast: File) {
         ? statement.source?.value
         : undefined
     if (source === undefined) return
-    if (source !== '@caemble/core' && source !== '@caemble/kernels') {
+    if (source !== '@caemble/core') {
       throw new SourceAnalysisError(`Import is not allowed in a single-file Caemble CAD source: ${source}`)
     }
   })
@@ -153,20 +153,6 @@ export function analyzeCadSource(source: string, documentType: CadDocumentType):
   const ast = parseCadSource(source)
 
   const statements = ast.program.body
-  if (
-    documentType === 'structure' &&
-    statements.some((statement) => {
-      const moduleSource =
-        statement.type === 'ImportDeclaration' ||
-        statement.type === 'ExportAllDeclaration' ||
-        statement.type === 'ExportNamedDeclaration'
-          ? statement.source?.value
-          : undefined
-      return moduleSource === '@caemble/kernels'
-    })
-  ) {
-    throw new SourceAnalysisError('Structure Source cannot import @caemble/kernels.')
-  }
   const factoryName = documentType === 'structure' ? 'structure' : 'experiment'
   const factoryNames = importedFactoryNames(statements, factoryName)
   if (factoryNames.size === 0) {

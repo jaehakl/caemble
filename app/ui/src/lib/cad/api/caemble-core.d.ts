@@ -3258,31 +3258,18 @@ export type StructureDefinitionOptions<Schema extends VarsSchemaDefinition> = Re
   surfaceGroup?: StructureGroupMap
 }>
 
-export type ArtifactType = `${string}@${number}`
-export type SimulationObservation = boolean | number | string
-
 export type KernelIdentity = Readonly<{
   name: string
   version: string
 }>
 
-export type KernelArtifactTypes = Readonly<Record<string, ArtifactType>>
-export type KernelInputTypes = Readonly<Record<string, ArtifactType | readonly ArtifactType[] | undefined>>
-export type KernelObservationTypes = Readonly<Record<string, SimulationObservation | undefined>>
-
-export type DefinedKernelTask<
-  Config = unknown,
-  Artifacts extends KernelArtifactTypes = KernelArtifactTypes,
-  Observations extends KernelObservationTypes = KernelObservationTypes,
-  Inputs extends KernelInputTypes = KernelInputTypes,
-> = Readonly<{
+export type DefinedKernelTask<Config = unknown> = Readonly<{
   kind: 'caemble-kernel-task'
   kernel: KernelIdentity
   config: Config
-  __artifacts?: Artifacts
-  __observations?: Observations
-  __inputs?: Inputs
 }>
+
+export declare function defineTask<const Config>(kernel: KernelIdentity, config: Config): DefinedKernelTask<Config>
 
 export type ExperimentDefinitionOptions<
   Schema extends VarsSchemaDefinition,

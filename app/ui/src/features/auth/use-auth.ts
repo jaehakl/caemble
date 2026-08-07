@@ -25,6 +25,7 @@ export function useLogout() {
     onSuccess: () => {
       queryClient.setQueryData(authQueryKey, null)
       queryClient.removeQueries({ queryKey: ['work'] })
+      queryClient.removeQueries({ queryKey: ['cae', 'solver-manifests'] })
     },
   })
 }
@@ -33,7 +34,10 @@ export function useSaveGpStationConnection() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (connection: GPStationConnectionData) => dbTables.User.saveGpStationConnection(connection),
-    onSuccess: (user) => queryClient.setQueryData(authQueryKey, user),
+    onSuccess: (user) => {
+      queryClient.setQueryData(authQueryKey, user)
+      queryClient.removeQueries({ queryKey: ['cae', 'solver-manifests'] })
+    },
   })
 }
 
@@ -41,6 +45,9 @@ export function useDeleteGpStationConnection() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: () => dbTables.User.deleteGpStationConnection(),
-    onSuccess: (user) => queryClient.setQueryData(authQueryKey, user),
+    onSuccess: (user) => {
+      queryClient.setQueryData(authQueryKey, user)
+      queryClient.removeQueries({ queryKey: ['cae', 'solver-manifests'] })
+    },
   })
 }

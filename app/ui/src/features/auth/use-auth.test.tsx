@@ -45,6 +45,7 @@ describe('GPStation auth cache mutations', () => {
   it('replaces the auth user cache after save and delete', async () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(authQueryKey, baseUser)
+    queryClient.setQueryData(['cae', 'solver-manifests', baseUser.id, 'https://old.example.test'], ['cached'])
     const connection = {
       api_base_url: 'https://gps.example.test',
       access_token: 'gpsk_secret',
@@ -62,10 +63,14 @@ describe('GPStation auth cache mutations', () => {
       await save.result.current.mutateAsync(connection)
     })
     expect(queryClient.getQueryData(authQueryKey)).toEqual(connectedUser)
+    expect(queryClient.getQueriesData({ queryKey: ['cae', 'solver-manifests'] })).toEqual([])
+
+    queryClient.setQueryData(['cae', 'solver-manifests', baseUser.id, connection.api_base_url], ['cached'])
 
     await act(async () => {
       await remove.result.current.mutateAsync()
     })
     expect(queryClient.getQueryData(authQueryKey)).toEqual(baseUser)
+    expect(queryClient.getQueriesData({ queryKey: ['cae', 'solver-manifests'] })).toEqual([])
   })
 })

@@ -731,7 +731,6 @@ export function ExperimentPage() {
                   activeDocumentType="experiment"
                   structure={null}
                   structureDocument={structureDocument}
-                  solverCompatibility={simulation.compatibility}
                   experiment={experiment}
                   experimentDocument={experimentDocument}
                   experimentLineage={
@@ -848,7 +847,6 @@ export function ExperimentPage() {
           simulation={{
             canRun: simulation.canRun,
             cancel: simulation.cancel,
-            compatibility: simulation.compatibility,
             process: simulation.process,
             program: experimentDocument.simulationProgram,
             run: simulation.run,

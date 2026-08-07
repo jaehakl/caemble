@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { CadScene } from '@/lib/cad'
-import { defineKernelTask, simulationProgramManifest } from '@/lib/cad/simulation'
+import { defineTask, simulationProgramManifest } from '@/lib/cad/simulation'
 import CadViewer from './CadViewer'
 import { resolveCadViewerContent } from './cadViewerContent'
 
@@ -23,7 +23,7 @@ const experimentScene: CadScene = {
 
 const program = simulationProgramManifest(
   {
-    electric: defineKernelTask({ name: 'dc-current-density', version: '0.0.0' }, {}),
+    electric: defineTask({ name: 'dc-current-density', version: '0.0.0' }, {}),
   },
   {
     measuredCurrent: {
@@ -131,7 +131,6 @@ describe('CadViewer', () => {
         simulation={{
           canRun: false,
           cancel: () => undefined,
-          compatibility: { status: 'compatible', issues: [] },
           process: {
             runId: null,
             status: 'idle',

@@ -2,7 +2,7 @@ import { transform } from 'esbuild'
 import { createHash } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { buildSourceOnlyRealization, canonicalizeCaeRealizations } from '../src/lib/cad/execution/realization'
+import { buildSourceOnlyRealization } from '../src/lib/cad/execution/realization'
 import { serializeEvaluatedDocumentSnapshot } from '../src/lib/cad/execution/snapshot'
 import { evaluateDocumentEntry, loadCompiledCode } from '../src/lib/cad/execution/userModule'
 import {
@@ -59,7 +59,7 @@ async function buildRealizations(example: CaembleProgramExample) {
   if (sample.kind !== 'sample' || setup.kind !== 'setup') {
     throw new Error(`${example.id} did not build a sample/setup pair.`)
   }
-  return canonicalizeCaeRealizations(sample, setup)
+  return { sample, setup }
 }
 
 const exampleId = argument('example')
@@ -84,8 +84,8 @@ if (outputDirectory === path.parse(outputDirectory).root || outputDirectory === 
   throw new Error(`Refusing unsafe fixture output directory: ${outputDirectory}`)
 }
 
-const canonical = await buildRealizations(example)
-const request = serializeCaeRequest(canonical.sample, canonical.setup)
+const realizations = await buildRealizations(example)
+const request = serializeCaeRequest(realizations.sample, realizations.setup)
 await mkdir(outputDirectory, { recursive: true })
 await rm(attachmentDirectory, { recursive: true, force: true })
 await mkdir(attachmentDirectory)

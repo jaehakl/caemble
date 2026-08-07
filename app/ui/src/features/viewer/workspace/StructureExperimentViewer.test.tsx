@@ -3,8 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { createCadSourceDocument, type CadDocumentType } from '@/lib/cad'
 import { defaultExperimentSimulationCode } from '@/lib/defaultExperimentSimulationCode'
 import { StructureExperimentViewer } from './StructureExperimentViewer'
-import { attachPreflightMetadata, useCadWorkspace } from './useCadWorkspace'
-import type { SimulationCompatibilityIssue } from './simulationUiTypes'
+import { useCadWorkspace } from './useCadWorkspace'
 
 function tabLabels(markup: string) {
   const tabList = markup.match(/<div[^>]*aria-label="Structure and Experiment panels"[^>]*>.*?<\/div>/)?.[0] ?? ''
@@ -15,7 +14,6 @@ function ViewerHarness({
   activeDocumentType,
   experiment,
   experimentLineage,
-  preflightIssues = [],
   structure,
   structureLineage,
   structureVarsPanel,
@@ -23,7 +21,6 @@ function ViewerHarness({
   activeDocumentType: CadDocumentType | null
   experiment?: string | null
   experimentLineage?: React.ReactNode
-  preflightIssues?: readonly SimulationCompatibilityIssue[]
   structure?: string | null
   structureLineage?: React.ReactNode
   structureVarsPanel?: React.ReactNode
@@ -39,29 +36,14 @@ function ViewerHarness({
     () => undefined,
     () => undefined,
   )
-  const visibleStructure =
-    preflightIssues.length === 0
-      ? workspace.structureDocument
-      : attachPreflightMetadata(
-          workspace.structureDocument,
-          preflightIssues,
-          workspace.structureDocument.evaluationTimeoutMs,
-          workspace.structureDocument.setEvaluationTimeoutMs,
-        )
-
   return (
     <StructureExperimentViewer
       activeDocumentType={activeDocumentType}
       experiment={experimentDocument}
       experimentDocument={workspace.experimentDocument}
       experimentLineage={experimentLineage}
-      solverCompatibility={
-        preflightIssues.length === 0
-          ? workspace.simulation.compatibility
-          : { status: 'incompatible', issues: preflightIssues }
-      }
       structure={structureDocument}
-      structureDocument={visibleStructure}
+      structureDocument={workspace.structureDocument}
       structureLineage={structureLineage}
       structureVarsPanel={structureVarsPanel}
       onActiveDocumentTypeChange={() => undefined}
@@ -70,12 +52,12 @@ function ViewerHarness({
 }
 
 describe('StructureExperimentViewer', () => {
-  it('renders source and simulation specification tabs from externally owned controllers', () => {
+  it('renders source tabs from externally owned controllers', () => {
     const markup = renderToStaticMarkup(
       <ViewerHarness activeDocumentType="structure" experiment="experiment source" structure="structure source" />,
     )
 
-    expect(tabLabels(markup)).toEqual(['Structure Source', 'Experiment Source', 'Python simulate', 'Solver Spec'])
+    expect(tabLabels(markup)).toEqual(['Structure Source', 'Experiment Source', 'Python simulate'])
     expect(markup).toContain('id="structure-source-panel" role="tabpanel"')
     expect(markup).not.toContain('Structure Tree')
     expect(markup).not.toContain('Experiment Tree')
@@ -95,7 +77,7 @@ describe('StructureExperimentViewer', () => {
 
     expect(tabLabels(structureMarkup)).toEqual(['Structure Source'])
     expect(structureMarkup).toMatch(/<button[^>]*aria-selected="true"[^>]*id="structure-source-tab"/)
-    expect(tabLabels(experimentMarkup)).toEqual(['Experiment Source', 'Python simulate', 'Solver Spec'])
+    expect(tabLabels(experimentMarkup)).toEqual(['Experiment Source', 'Python simulate'])
     expect(experimentMarkup).toMatch(/<button[^>]*aria-selected="true"[^>]*id="experiment-source-tab"/)
   })
 
@@ -119,7 +101,7 @@ describe('StructureExperimentViewer', () => {
     expect(tabLabels(structureMarkup)).toEqual(['Structure Source', 'Structure Vars', '족보 보기'])
     expect(tabLabels(structureMarkup)).toHaveLength(3)
     expect(structureMarkup).toContain('id="structure-lineage-panel" role="tabpanel"')
-    expect(tabLabels(experimentMarkup)).toEqual(['Experiment Source', 'Python simulate', '족보 보기', 'Solver Spec'])
+    expect(tabLabels(experimentMarkup)).toEqual(['Experiment Source', 'Python simulate', '족보 보기'])
     expect(experimentMarkup).toContain('id="experiment-lineage-panel" role="tabpanel"')
   })
 
@@ -136,28 +118,5 @@ describe('StructureExperimentViewer', () => {
     expect(emptySourceMarkup).not.toContain('No modeling source')
     expect(tabLabels(experimentMarkup)).not.toContain('Result')
     expect(experimentMarkup).not.toContain('result-tab')
-  })
-
-  it('keeps a successful preview Ready and reports simulation incompatibility in the footer', () => {
-    const markup = renderToStaticMarkup(
-      <ViewerHarness
-        activeDocumentType="structure"
-        experiment="experiment source"
-        preflightIssues={[
-          {
-            documentType: 'structure',
-            path: 'tasks.electric.initializations[0].target[0]',
-            message: 'references missing structure.geometry.conductor.',
-          },
-        ]}
-        structure="structure source"
-      />,
-    )
-
-    expect(markup).toContain('>Ready</span>')
-    expect(markup).toContain('role="status"')
-    expect(markup).toContain('Preview ready')
-    expect(markup).toContain('Simulation incompatible')
-    expect(markup).toContain('See Solver Spec for all compatibility issues.')
   })
 })

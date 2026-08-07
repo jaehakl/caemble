@@ -1,25 +1,13 @@
 import type {
   DefinedKernelTask,
-  KernelArtifactTypes,
   KernelIdentity,
-  KernelInputTypes,
-  KernelObservationTypes,
   RecordedDataSpec,
   ResolvedDataSchema,
   SimulationProgramManifest,
 } from './types'
 import { getQuantityKindTensorOrder, normalizeQuantityMetadata } from '../../quantitykind/runtime'
-import { normalizeKernelTaskConfig, type KernelDescriptor, type KernelTaskConfig } from './kernelContract'
 
-export function defineKernelTask<
-  Config,
-  Artifacts extends KernelArtifactTypes = KernelArtifactTypes,
-  Observations extends KernelObservationTypes = KernelObservationTypes,
-  Inputs extends KernelInputTypes = KernelInputTypes,
->(
-  kernel: KernelIdentity | KernelDescriptor,
-  config: NoInfer<Config>,
-): DefinedKernelTask<Config, Artifacts, Observations, Inputs> {
+export function defineTask<Config>(kernel: KernelIdentity, config: NoInfer<Config>): DefinedKernelTask<Config> {
   if (
     !kernel ||
     typeof kernel !== 'object' ||
@@ -37,8 +25,7 @@ export function defineKernelTask<
       version: kernel.version.trim(),
     }),
     config,
-    ...('referenceLengthUnit' in kernel ? { descriptor: kernel } : {}),
-  }) as DefinedKernelTask<Config, Artifacts, Observations, Inputs>
+  }) as DefinedKernelTask<Config>
 }
 
 function stableJson(value: unknown): string {
@@ -85,8 +72,7 @@ export function canonicalRecordedDataSpec(spec: RecordedDataSpec, path = 'Record
   return Object.freeze({
     ...spec,
     ...(quantityMetadata ?? {}),
-    tensorOrder:
-      quantityMetadata === null ? 0 : getQuantityKindTensorOrder(quantityMetadata.quantityKind),
+    tensorOrder: quantityMetadata === null ? 0 : getQuantityKindTensorOrder(quantityMetadata.quantityKind),
     ...(spec.axes === undefined
       ? {}
       : {
@@ -125,15 +111,11 @@ export function simulationProgramManifest(
     tasks: Object.freeze(
       Object.fromEntries(
         Object.entries(tasks).map(([name, task]) => {
-          const descriptor = task.descriptor ?? null
-          const config = descriptor
-            ? normalizeKernelTaskConfig(descriptor, task.config as KernelTaskConfig)
-            : canonicalValue(task.config)
           return [
             name,
             Object.freeze({
               kernel: Object.freeze({ ...task.kernel }),
-              config,
+              config: canonicalValue(task.config),
             }),
           ]
         }),

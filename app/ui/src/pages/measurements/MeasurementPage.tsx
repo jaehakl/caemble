@@ -856,19 +856,17 @@ export function MeasurementPage() {
       structureDocument.status !== 'Ready' ||
       experimentDocument.status !== 'Ready' ||
       structureDocument.successfulRevision !== structureDocument.revision ||
-      experimentDocument.successfulRevision !== experimentDocument.revision ||
-      simulation.compatibility.status === 'checking'
+      experimentDocument.successfulRevision !== experimentDocument.revision
     )
       return
 
-    if (simulation.compatibility.status === 'incompatible' || simulation.compatibility.status === 'unavailable') {
+    if (!simulation.canRun) {
       advanceRunQueue(currentRunSampleId, {
-        message: '현재 Sample과 Setup이 Solver 계약과 호환되지 않습니다.',
+        message: 'Simulation program 또는 GPStation 연결이 준비되지 않았습니다.',
         type: 'failure',
       })
       return
     }
-    if (!simulation.canRun) return
 
     const runId = simulation.run()
     if (!runId) return
@@ -1505,7 +1503,7 @@ export function MeasurementPage() {
                       {runQueue.stage === 'load'
                         ? 'Sample 불러오는 중'
                         : runQueue.stage === 'evaluate'
-                          ? 'CAD 평가·Solver 호환성 확인 중'
+                          ? 'CAD 평가 중'
                           : runQueue.stage === 'running'
                             ? 'Solver 실행 중'
                             : runQueue.stage === 'saving'
@@ -1540,11 +1538,9 @@ export function MeasurementPage() {
             <p className="text-[11px] leading-4 text-muted-foreground">
               {!selectedSampleId || !selectedSetupId
                 ? 'Sample과 Setup을 각각 선택하세요.'
-                : simulation.compatibility.status === 'incompatible'
-                  ? '현재 조합은 Solver 계약과 호환되지 않습니다.'
-                  : measurementBusy
-                    ? 'Solver 실행 또는 결과 저장 중입니다.'
-                    : '선택된 실현값으로 Solver를 실행하고 결과를 저장합니다.'}
+                : measurementBusy
+                  ? 'Solver 실행 또는 결과 저장 중입니다.'
+                  : '선택된 실현값으로 Solver를 실행하고 결과를 저장합니다.'}
             </p>
           </CardHeader>
           <CardContent className="h-48 overflow-y-auto border-t pt-3">

@@ -1,16 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import {
-  ArrowLeft,
-  CheckCircle2,
-  ChevronRight,
-  CircleAlert,
-  Edit3,
-  FlaskConical,
-  LoaderCircle,
-  LockKeyhole,
-  Plus,
-  Trash2,
-} from 'lucide-react'
+import { ArrowLeft, CircleAlert, Edit3, LoaderCircle, LockKeyhole, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
@@ -35,7 +24,6 @@ import {
 import {
   allRowsRequest,
   getQualifierNames,
-  getSolverReadiness,
   isDedicatedQualifierName,
   isMaterialCatalogKey,
   materialDisplayName,
@@ -223,7 +211,6 @@ export function MaterialDetailPage() {
   })
 
   const parameterItems = parametersQuery.data?.items ?? []
-  const readiness = getSolverReadiness(parameterItems.map((parameter) => parameter.name))
 
   const loading = materialQuery.isLoading || namesQuery.isLoading || parametersQuery.isLoading
   if (!validId) return <div className="p-8 text-center text-destructive">유효하지 않은 Material ID입니다.</div>
@@ -534,85 +521,6 @@ export function MaterialDetailPage() {
           ) : (
             <EmptyState>등록된 Material parameter가 없습니다.</EmptyState>
           )}
-        </div>
-      </section>
-
-      <section className="space-y-3" aria-labelledby="solver-readiness-title">
-        <div>
-          <h3 className="font-semibold" id="solver-readiness-title">
-            사용 가능한 Solver
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            현재 보이는 parameter key를 solver material role과 비교합니다.
-          </p>
-        </div>
-        <div className="grid gap-3 lg:grid-cols-2">
-          {readiness.map(({ available, roles, spec }) => (
-            <Card key={`${spec.name}@${spec.version}`}>
-              <CardHeader>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <CardTitle className="font-mono text-base">{spec.name}</CardTitle>
-                    <CardDescription className="mt-1">{spec.description}</CardDescription>
-                  </div>
-                  <Badge className={available ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}>
-                    {available ? '사용 가능' : 'Parameter 부족'}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {roles.map(({ available: roleAvailable, missing, required, role }) => (
-                  <div className="rounded-lg border p-3" key={role.role}>
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        {roleAvailable ? (
-                          <CheckCircle2 className="size-4 text-emerald-600" />
-                        ) : (
-                          <CircleAlert className="size-4 text-amber-600" />
-                        )}
-                        <code className="text-xs font-semibold">{role.role}</code>
-                      </div>
-                      <span className="text-xs text-muted-foreground">
-                        {required.length - missing.length}/{required.length}
-                      </span>
-                    </div>
-                    {missing.length ? (
-                      <div className="mt-3 space-y-2">
-                        {missing.map((name) => (
-                          <div
-                            className="flex items-center justify-between gap-2 rounded bg-muted/60 px-2 py-1.5"
-                            key={name}
-                          >
-                            <code className="min-w-0 text-[11px] break-all text-orange-700">{name}</code>
-                            <Button
-                              disabled={!canAddChild}
-                              onClick={() => setParameterDialog({ initialName: name })}
-                              size="sm"
-                              variant="outline"
-                            >
-                              <Plus />
-                              추가
-                            </Button>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="mt-2 text-xs text-emerald-700">필수 parameter를 모두 확보했습니다.</p>
-                    )}
-                  </div>
-                ))}
-                <Button asChild className="w-full justify-between" variant="ghost">
-                  <Link to={`/catalog/solvers/${encodeURIComponent(spec.name)}/${encodeURIComponent(spec.version)}`}>
-                    <span className="flex items-center gap-2">
-                      <FlaskConical />
-                      Solver 계약 보기
-                    </span>
-                    <ChevronRight />
-                  </Link>
-                </Button>
-              </CardContent>
-            </Card>
-          ))}
         </div>
       </section>
 
