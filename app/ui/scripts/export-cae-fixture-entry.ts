@@ -1,10 +1,17 @@
 import { transform } from 'esbuild'
-import { createHash } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { buildSourceOnlyRealization } from '../src/lib/cad/execution/realization'
 import { serializeEvaluatedDocumentSnapshot } from '../src/lib/cad/execution/snapshot'
-import { evaluateDocumentEntry, loadCompiledCode } from '../src/lib/cad/execution/userModule'
+import { evaluateDocumentEntry, loadCompiledCode, loadCompiledTaskCode } from '../src/lib/cad/execution/userModule'
+import {
+  cadSourceHash,
+  createCadSourceDocument,
+  EXPERIMENT_ENTRY_PATH,
+  EXPERIMENT_SIMULATION_PATH,
+  experimentTaskName,
+  experimentTaskPaths,
+} from '../src/lib/cad/source/document'
 import {
   CAEMBLE_PROGRAM_EXAMPLE_SEED,
   caembleProgramExamples,
@@ -30,28 +37,40 @@ async function compileSource(source: string) {
   ).code
 }
 
-function sourceHash(source: string) {
-  return createHash('sha256').update(source, 'utf8').digest('hex')
-}
-
 async function buildRealizations(example: CaembleProgramExample) {
+  const structureDocument = createCadSourceDocument('structure', example.structureCode, CAEMBLE_PROGRAM_EXAMPLE_SEED)
+  const experimentDocument = createCadSourceDocument(
+    'experiment',
+    example.experimentSourceBundle,
+    CAEMBLE_PROGRAM_EXAMPLE_SEED,
+  )
+  const taskDefinitions = Object.fromEntries(
+    await Promise.all(
+      experimentTaskPaths(example.experimentSourceBundle).map(async (taskPath) => [
+        experimentTaskName(taskPath)!,
+        loadCompiledTaskCode(await compileSource(example.experimentSourceBundle.files[taskPath])),
+      ]),
+    ),
+  )
   const structure = serializeEvaluatedDocumentSnapshot(
     evaluateDocumentEntry(
       loadCompiledCode(await compileSource(example.structureCode), 'structure'),
       'structure',
-      sourceHash(example.structureCode),
+      await cadSourceHash(structureDocument),
       CAEMBLE_PROGRAM_EXAMPLE_SEED,
     ),
   )
+  const experimentSource = example.experimentSourceBundle.files[EXPERIMENT_ENTRY_PATH]
+  const simulationSource = example.experimentSourceBundle.files[EXPERIMENT_SIMULATION_PATH]
   const experiment = serializeEvaluatedDocumentSnapshot(
     evaluateDocumentEntry(
-      loadCompiledCode(await compileSource(example.experimentCode), 'experiment'),
+      loadCompiledCode(await compileSource(experimentSource), 'experiment'),
       'experiment',
-      sourceHash(example.experimentCode),
+      await cadSourceHash(experimentDocument),
       CAEMBLE_PROGRAM_EXAMPLE_SEED,
       {},
-      example.simulationCode,
-      sourceHash(example.simulationCode),
+      simulationSource,
+      taskDefinitions,
     ),
   )
   const sample = buildSourceOnlyRealization(structure)

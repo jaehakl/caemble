@@ -1,5 +1,5 @@
 import { dcUniformBarStructureCode } from './dcUniformBar'
-import { createExperimentSourceBundle } from '../../cad'
+import { createExperimentSourceBundle } from '../../cad/source/document'
 import type { CaembleProgramExample } from './types'
 
 export const dcResolutionStudyExperimentCode = `import { experiment } from '@caemble/core'

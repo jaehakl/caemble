@@ -1,4 +1,4 @@
-import type { ExperimentSourceBundle } from '../../cad'
+import type { ExperimentSourceBundle } from '../../cad/source/document'
 
 export type CaembleProgramExample = Readonly<{
   id: string

@@ -7,7 +7,7 @@ from app.program import validate_and_load_simulate
 def test_accepts_exact_async_simulate_abi():
     simulate = validate_and_load_simulate(
         """
-async def simulate(*, sim, tasks, vars, world):
+async def simulate(*, sim, tasks, vars):
     result = await sim.run(tasks["electric"])
     await sim.record("totalCurrent", result["artifacts"]["totalCurrent"])
     sim.release(result["artifacts"]["totalCurrent"])
@@ -21,37 +21,32 @@ async def simulate(*, sim, tasks, vars, world):
 @pytest.mark.parametrize(
     "source, expected",
     [
-        ("import os\nasync def simulate(*, sim, tasks, vars, world):\n    return None", "exactly one"),
+        ("import os\nasync def simulate(*, sim, tasks, vars):\n    return None", "exactly one"),
         (
-            "async def simulate(*, sim, tasks, vars, world):\n    return eval('1')",
+            "async def simulate(*, sim, tasks, vars):\n    return eval('1')",
             "eval",
         ),
         (
-            "async def simulate(*, sim, tasks, vars, world):\n    return sim.__class__",
+            "async def simulate(*, sim, tasks, vars):\n    return sim.__class__",
             "private",
         ),
         (
-            "async def simulate(sim, tasks, vars, world):\n    return None",
+            "async def simulate(sim, tasks, vars):\n    return None",
             "signature",
         ),
         (
-            'async def simulate(*, sim, tasks, vars, world):\n    tasks["electric"] = {}',
+            'async def simulate(*, sim, tasks, vars):\n    tasks["electric"] = {}',
             "local names",
         ),
         (
-            'async def simulate(*, sim, tasks, vars, world):\n'
-            '    world["sample"]["structure"]["scene"]["parts"][0]["geometry"]["positions"][0] = 0',
-            "local names",
-        ),
-        (
-            "async def simulate(*, sim, tasks, vars, world):\n"
+            "async def simulate(*, sim, tasks, vars):\n"
             "    abs = int\n"
             "    return abs(1)",
             "reserved name",
         ),
         (
-            'async def simulate(*, sim, tasks, vars, world):\n'
-            '    writer = world["positions"].tofile\n'
+            'async def simulate(*, sim, tasks, vars):\n'
+            '    writer = tasks["electric"].items\n'
             "    return None",
             "only direct sim",
         ),

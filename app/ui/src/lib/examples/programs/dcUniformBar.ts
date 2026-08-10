@@ -1,4 +1,4 @@
-import { createExperimentSourceBundle } from '../../cad'
+import { createExperimentSourceBundle } from '../../cad/source/document'
 import type { CaembleProgramExample } from './types'
 
 export const dcUniformBarStructureCode = `import {

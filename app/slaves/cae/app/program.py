@@ -6,7 +6,7 @@ from typing import Any
 
 from app.errors import CaeError
 
-SIMULATION_API_VERSION = "1"
+SIMULATION_API_VERSION = "2"
 MAX_SIMULATION_SOURCE_BYTES = 1024 * 1024
 
 _ALLOWED_NODES = {
@@ -79,7 +79,7 @@ _ALLOWED_BUILTINS = {
     "zip": zip,
 }
 _SIM_METHODS = {"run", "record", "release", "random"}
-_RESERVED_NAMES = {*_ALLOWED_BUILTINS, "sim", "tasks", "vars", "world"}
+_RESERVED_NAMES = {*_ALLOWED_BUILTINS, "sim", "tasks", "vars"}
 
 
 def validate_and_load_simulate(source: str) -> Any:
@@ -106,12 +106,12 @@ def validate_and_load_simulate(source: str) -> Any:
         or args.args
         or args.vararg
         or args.kwarg
-        or [arg.arg for arg in args.kwonlyargs] != ["sim", "tasks", "vars", "world"]
+        or [arg.arg for arg in args.kwonlyargs] != ["sim", "tasks", "vars"]
         or any(default is not None for default in args.kw_defaults)
     ):
         raise CaeError(
             "invalid_program",
-            "entrypoint signature must be async def simulate(*, sim, tasks, vars, world)",
+            "entrypoint signature must be async def simulate(*, sim, tasks, vars)",
         )
     for node in ast.walk(tree):
         if type(node) not in _ALLOWED_NODES:

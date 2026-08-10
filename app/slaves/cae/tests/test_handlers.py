@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import gc
 import json
 import sys
@@ -189,7 +190,7 @@ def payload():
     }
     recorded_data = {"totalCurrent": total_current_schema}
     source = (
-        "async def simulate(*, sim, tasks, vars, world):\n"
+        "async def simulate(*, sim, tasks, vars):\n"
         "    result = await sim.run(tasks[\"electric\"])\n"
         "    await sim.record(\"totalCurrent\", result[\"artifacts\"][\"totalCurrent\"])\n"
         "    return result[\"state\"]\n"
@@ -220,14 +221,14 @@ def payload():
             "kind": "setup",
             "experiment": {
                 "kind": "experiment",
-                "scene": scene,
+                "taskScenes": {"electric": scene},
                 "variables": {},
                 "varsSchema": {},
                 "seed": 1,
                 "sourceHash": "a" * 64,
                 "simulationProgram": {
-                    "formatVersion": 3,
-                    "simulationApiVersion": 1,
+                    "formatVersion": 4,
+                    "simulationApiVersion": 2,
                     "pythonSource": source,
                     "tasks": {
                         "electric": {
@@ -245,8 +246,10 @@ def payload():
                     "recordedData": recorded_data,
                 },
             },
-            "materialParameters": {"schemaVersion": 1, "materials": {}},
-            "materialWarnings": [],
+            "taskMaterialParameters": {
+                "electric": {"schemaVersion": 1, "materials": {}}
+            },
+            "taskMaterialWarnings": {"electric": []},
         },
     }
 
@@ -273,8 +276,15 @@ def artifact_chain_payload(
             ),
         },
     }
+    experiment = request["setup"]["experiment"]
+    scene = experiment["taskScenes"]["electric"]
+    experiment["taskScenes"] = {name: scene for name in program["tasks"]}
+    request["setup"]["taskMaterialParameters"] = {
+        name: {"schemaVersion": 1, "materials": {}} for name in program["tasks"]
+    }
+    request["setup"]["taskMaterialWarnings"] = {name: [] for name in program["tasks"]}
     source = (
-        "async def simulate(*, sim, tasks, vars, world):\n"
+        "async def simulate(*, sim, tasks, vars):\n"
         '    produced = await sim.run(tasks["producer"])\n'
         f'    await sim.run(tasks["consumer"], inputs={{"{input_name}": {artifact_expression}}})\n'
         "    return None\n"
@@ -333,6 +343,149 @@ async def test_start_rejects_an_unregistered_kernel_version():
 
     assert response.payload["kind"] == "failed"
     assert response.payload["error"]["code"] == "kernel_not_found"
+
+
+@pytest.mark.parametrize(
+    "field, value, code",
+    [
+        ("formatVersion", 3, "invalid_program"),
+        ("simulationApiVersion", 1, "unsupported_program"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_start_requires_manifest_v4_and_python_api_v2(field, value, code):
+    request = payload()
+    request["setup"]["experiment"]["simulationProgram"][field] = value
+
+    response = await cae_simulation_start(
+        DataChannelMessage(id="start", type="cae.simulation.start", payload=request),
+        {"runs": {}},
+        SlaveContext(session_id="session", ttl_seconds=10, call_id="start"),
+    )
+
+    assert response.payload["kind"] == "failed"
+    assert response.payload["error"]["code"] == code
+
+
+@pytest.mark.asyncio
+async def test_sim_run_selects_only_the_current_task_scene_and_material_snapshot(monkeypatch):
+    request = payload()
+    experiment = request["setup"]["experiment"]
+    program = experiment["simulationProgram"]
+    program["tasks"]["thermal"] = copy.deepcopy(program["tasks"]["electric"])
+    electric_scene = experiment["taskScenes"]["electric"]
+    electric_scene["tree"]["label"] = "electric-scene"
+    thermal_scene = copy.deepcopy(electric_scene)
+    thermal_scene["sceneHash"] = "e" * 64
+    thermal_scene["tree"]["label"] = "thermal-scene"
+    experiment["taskScenes"] = {
+        "electric": electric_scene,
+        "thermal": thermal_scene,
+    }
+    request["setup"]["taskMaterialParameters"] = {
+        "electric": {
+            "schemaVersion": 1,
+            "materials": {},
+            "materialColors": {"Electric": {"color": "#111111", "materialId": 1}},
+        },
+        "thermal": {
+            "schemaVersion": 1,
+            "materials": {},
+            "materialColors": {"Thermal": {"color": "#222222", "materialId": 2}},
+        },
+    }
+    request["setup"]["taskMaterialWarnings"] = {
+        "electric": ["electric-warning"],
+        "thermal": ["thermal-warning"],
+    }
+    program["recordedData"] = {}
+    program["pythonSource"] = (
+        "async def simulate(*, sim, tasks, vars):\n"
+        '    await sim.run(tasks["electric"])\n'
+        '    await sim.run(tasks["thermal"])\n'
+        "    return None\n"
+    )
+    selected = []
+
+    async def fake_kernel(task, state, inputs, world, progress):
+        assert set(world) == {"structure", "experiment", "sample", "setup"}
+        assert set(world["sample"]) == {"materialParameters", "materialWarnings"}
+        assert set(world["setup"]) == {"materialParameters", "materialWarnings"}
+        selected.append(
+            (
+                world["experiment"]["tree"]["label"],
+                tuple(world["setup"]["materialParameters"].get("materialColors", {})),
+                tuple(world["setup"]["materialWarnings"]),
+            )
+        )
+        return {
+            "state": None,
+            "artifacts": {"totalCurrent": {"value": 14.9}},
+            "observations": {},
+        }
+
+    monkeypatch.setattr("app.runtime.run_kernel", fake_kernel)
+    memory = {"runs": {}}
+    start = await cae_simulation_start(
+        DataChannelMessage(id="start", type="cae.simulation.start", payload=request),
+        memory,
+        SlaveContext(session_id="session", ttl_seconds=10, call_id="start"),
+    )
+
+    assert start.payload["kind"] == "started"
+    run = memory["runs"][start.payload["runId"]]
+    assert set(run.tasks["electric"]) == {"kernel", "config"}
+    with pytest.raises(TypeError):
+        run.tasks["electric"]["config"]["rogue"] = True
+
+    response = await cae_simulation_next(
+        DataChannelMessage(
+            id="next",
+            type="cae.simulation.next",
+            payload={"runId": start.payload["runId"], "ackSequence": None},
+        ),
+        memory,
+        SlaveContext(session_id="session", ttl_seconds=10, call_id="next"),
+    )
+
+    assert response.payload["kind"] == "complete"
+    assert selected == [
+        ("electric-scene", ("Electric",), ("electric-warning",)),
+        ("thermal-scene", ("Thermal",), ("thermal-warning",)),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_start_rejects_task_material_maps_that_do_not_match_task_scenes():
+    request = payload()
+    request["setup"]["taskMaterialWarnings"]["unknown"] = []
+
+    response = await cae_simulation_start(
+        DataChannelMessage(id="start", type="cae.simulation.start", payload=request),
+        {"runs": {}},
+        SlaveContext(session_id="session", ttl_seconds=10, call_id="start"),
+    )
+
+    assert response.payload["kind"] == "failed"
+    assert response.payload["error"]["code"] == "invalid_input"
+    assert "taskMaterialWarnings" in response.payload["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_start_rejects_manifest_tasks_that_do_not_match_task_scenes():
+    request = payload()
+    tasks = request["setup"]["experiment"]["simulationProgram"]["tasks"]
+    tasks["unknown"] = tasks.pop("electric")
+
+    response = await cae_simulation_start(
+        DataChannelMessage(id="start", type="cae.simulation.start", payload=request),
+        {"runs": {}},
+        SlaveContext(session_id="session", ttl_seconds=10, call_id="start"),
+    )
+
+    assert response.payload["kind"] == "failed"
+    assert response.payload["error"]["code"] == "invalid_input"
+    assert "Task scenes" in response.payload["error"]["message"]
 
 
 @pytest.mark.asyncio
@@ -500,7 +653,7 @@ async def test_sim_run_rejects_equal_but_unregistered_task(monkeypatch):
     program = request["setup"]["experiment"]["simulationProgram"]
     rogue_task = repr(program["tasks"]["electric"])
     source = (
-        "async def simulate(*, sim, tasks, vars, world):\n"
+        "async def simulate(*, sim, tasks, vars):\n"
         f"    task = {rogue_task}\n"
         "    return await sim.run(task)\n"
     )
@@ -578,8 +731,6 @@ async def test_sim_run_validates_actual_kernel_output_against_resolved_data_sche
         'tasks["electric"] = tasks["electric"]',
         'tasks["electric"]["config"]["rogue"] = 1',
         'vars["rogue"] = 1',
-        'world["setup"]["experiment"]["seed"] = 2',
-        'world["setup"]["experiment"]["simulationProgram"]["tasks"]["electric"]["config"]["rogue"] = 1',
     ],
 )
 @pytest.mark.asyncio
@@ -587,7 +738,7 @@ async def test_simulation_rejects_mutation_assignment_targets(mutation, monkeypa
     request = payload()
     program = request["setup"]["experiment"]["simulationProgram"]
     source = (
-        "async def simulate(*, sim, tasks, vars, world):\n"
+        "async def simulate(*, sim, tasks, vars):\n"
         f"    {mutation}\n"
         '    return await sim.run(tasks["electric"])\n'
     )
@@ -612,46 +763,6 @@ async def test_simulation_rejects_mutation_assignment_targets(mutation, monkeypa
     assert start.payload["error"]["code"] == "invalid_program"
     assert "local names" in start.payload["error"]["message"]
     assert calls == 0
-
-
-@pytest.mark.asyncio
-async def test_world_manifest_task_is_not_an_alias_of_registered_task(monkeypatch):
-    request = payload()
-    program = request["setup"]["experiment"]["simulationProgram"]
-    source = (
-        "async def simulate(*, sim, tasks, vars, world):\n"
-        '    task = world["setup"]["experiment"]["simulationProgram"]["tasks"]["electric"]\n'
-        "    return await sim.run(task)\n"
-    )
-    program["pythonSource"] = source
-    calls = 0
-
-    async def fake_kernel(task, state, inputs, world, progress):
-        nonlocal calls
-        calls += 1
-        return {"state": None, "artifacts": {}, "observations": {}}
-
-    monkeypatch.setattr("app.runtime.run_kernel", fake_kernel)
-    monkeypatch.setattr("app.runtime.validate_kernel_tasks", lambda *_args: None)
-    memory = {"runs": {}}
-    start = await cae_simulation_start(
-        DataChannelMessage(id="start", type="cae.simulation.start", payload=request),
-        memory,
-        SlaveContext(session_id="session", ttl_seconds=10, call_id="start"),
-    )
-    failed = await cae_simulation_next(
-        DataChannelMessage(
-            id="next",
-            type="cae.simulation.next",
-            payload={"runId": start.payload["runId"], "ackSequence": None},
-        ),
-        memory,
-        SlaveContext(session_id="session", ttl_seconds=10, call_id="next"),
-    )
-
-    assert failed.payload["error"]["code"] == "invalid_input"
-    assert calls == 0
-
 
 @pytest.mark.parametrize(
     "second_arguments",
@@ -681,6 +792,13 @@ async def test_sim_run_forwards_state_and_owned_artifact_to_registered_kernel(
             ),
         },
     }
+    experiment = request["setup"]["experiment"]
+    scene = experiment["taskScenes"]["electric"]
+    experiment["taskScenes"] = {name: scene for name in program["tasks"]}
+    request["setup"]["taskMaterialParameters"] = {
+        name: {"schemaVersion": 1, "materials": {}} for name in program["tasks"]
+    }
+    request["setup"]["taskMaterialWarnings"] = {name: [] for name in program["tasks"]}
     program["recordedData"] = {
         "maximumTemperature": {
             "dtype": "float64",
@@ -690,7 +808,7 @@ async def test_sim_run_forwards_state_and_owned_artifact_to_registered_kernel(
         }
     }
     source = (
-        "async def simulate(*, sim, tasks, vars, world):\n"
+        "async def simulate(*, sim, tasks, vars):\n"
         '    coarse = await sim.run(tasks["solveCoarse"])\n'
         f'    fine = await sim.run(tasks["solveFine"], {second_arguments})\n'
         '    await sim.record("maximumTemperature", fine["artifacts"]["maximumTemperature"])\n'
@@ -767,7 +885,7 @@ async def test_sim_run_rejects_fabricated_state_before_kernel_execution(monkeypa
     request = payload()
     program = request["setup"]["experiment"]["simulationProgram"]
     source = (
-        "async def simulate(*, sim, tasks, vars, world):\n"
+        "async def simulate(*, sim, tasks, vars):\n"
         '    return await sim.run(tasks["electric"], state={"forged": True})\n'
     )
     program["pythonSource"] = source
@@ -873,7 +991,7 @@ async def test_sim_run_rejects_an_artifact_after_release(monkeypatch):
     request = artifact_chain_payload('produced["artifacts"]["heatSource"]')
     program = request["setup"]["experiment"]["simulationProgram"]
     source = (
-        "async def simulate(*, sim, tasks, vars, world):\n"
+        "async def simulate(*, sim, tasks, vars):\n"
         '    produced = await sim.run(tasks["producer"])\n'
         '    artifact = produced["artifacts"]["heatSource"]\n'
         "    sim.release(artifact)\n"
@@ -920,7 +1038,7 @@ async def test_sim_run_rejects_an_artifact_after_release(monkeypatch):
 async def test_duplicate_record_name_returns_terminal_domain_failure(monkeypatch):
     request = payload()
     source = (
-        "async def simulate(*, sim, tasks, vars, world):\n"
+        "async def simulate(*, sim, tasks, vars):\n"
         "    result = await sim.run(tasks[\"electric\"])\n"
         "    await sim.record(\"totalCurrent\", result[\"artifacts\"][\"totalCurrent\"])\n"
         "    await sim.record(\"totalCurrent\", result[\"artifacts\"][\"totalCurrent\"])\n"
@@ -978,7 +1096,7 @@ async def test_duplicate_record_name_returns_terminal_domain_failure(monkeypatch
 async def test_failed_record_encoding_does_not_consume_a_protocol_sequence(monkeypatch):
     request = payload()
     source = (
-        "async def simulate(*, sim, tasks, vars, world):\n"
+        "async def simulate(*, sim, tasks, vars):\n"
         '    await sim.record("totalCurrent", {"value": [1.0]})\n'
         "    return None\n"
     )
@@ -1198,7 +1316,7 @@ async def test_sim_release_clears_owned_numpy_buffers_and_rejects_views(monkeypa
 async def test_sim_release_rejects_values_not_returned_by_sim_run(monkeypatch):
     request = payload()
     source = (
-        "async def simulate(*, sim, tasks, vars, world):\n"
+        "async def simulate(*, sim, tasks, vars):\n"
         "    sim.release(tasks[\"electric\"])\n"
         "    return None\n"
     )
@@ -1237,7 +1355,7 @@ async def test_sim_release_keeps_owned_graphs_alive_and_rejects_injected_descend
         SlaveContext(session_id="session", ttl_seconds=10, call_id="start"),
     )
     run = memory["runs"][start.payload["runId"]]
-    sim = SimulationApi(run, {})
+    sim = SimulationApi(run)
     owned = np.arange(4, dtype=np.float64)
     output = {"artifacts": {"value": owned}}
     output_id = id(output)

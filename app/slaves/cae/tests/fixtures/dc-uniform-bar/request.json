@@ -5,7 +5,7 @@
       "kind": "sample",
       "structure": {
         "kind": "structure",
-        "sourceHash": "d0df4eb20176ca5cb24e1fa3917d6fe87c655ca8b83bbd61b28cf49421ba443e",
+        "sourceHash": "658aadbcb7af63667303e78fab31ab762250abeb7837a7bf0bebffe044c5b43d",
         "seed": 20260803,
         "scene": {
           "lengthUnit": "mm",
@@ -308,145 +308,147 @@
       "kind": "setup",
       "experiment": {
         "kind": "experiment",
-        "sourceHash": "2169fae97376a3b4920bcca0a6f659452134d193d3310dc9bc7fe63f0501088a",
+        "sourceHash": "4e22c8ab58f877280b255232f567f6d33feb3eb50048f333bb9d81284fc2c0b5",
         "seed": 20260803,
-        "scene": {
-          "lengthUnit": "mm",
-          "parts": [
-            {
-              "id": "probe",
-              "geometry": {
-                "kind": "mesh",
-                "positions": {
-                  "shape": [
-                    72
-                  ],
-                  "storage": {
-                    "kind": "attachments",
-                    "ids": [
-                      "input-2"
-                    ],
-                    "byteLength": 576
-                  }
-                },
-                "polygonOffsets": {
-                  "shape": [
-                    7
-                  ],
-                  "storage": {
-                    "kind": "attachments",
-                    "ids": [
-                      "input-3"
-                    ],
-                    "byteLength": 28
-                  }
-                }
-              },
-              "surfaces": [
-                {
-                  "id": "probe/surface-1",
-                  "name": "-X",
-                  "polygonIndices": [
-                    0
-                  ]
-                },
-                {
-                  "id": "probe/surface-2",
-                  "name": "+X",
-                  "polygonIndices": [
-                    1
-                  ]
-                },
-                {
-                  "id": "probe/surface-3",
-                  "name": "-Y",
-                  "polygonIndices": [
-                    2
-                  ]
-                },
-                {
-                  "id": "probe/surface-4",
-                  "name": "+Y",
-                  "polygonIndices": [
-                    3
-                  ]
-                },
-                {
-                  "id": "probe/surface-5",
-                  "name": "Bottom",
-                  "polygonIndices": [
-                    4
-                  ]
-                },
-                {
-                  "id": "probe/surface-6",
-                  "name": "Top",
-                  "polygonIndices": [
-                    5
-                  ]
-                }
-              ]
-            }
-          ],
-          "tree": {
-            "key": "experiment",
-            "label": "Experiment",
-            "children": [
+        "taskScenes": {
+          "solveCurrent": {
+            "lengthUnit": "mm",
+            "parts": [
               {
-                "key": "experiment/root",
-                "label": "Probe",
-                "globalId": "probe",
-                "children": [
+                "id": "probe",
+                "geometry": {
+                  "kind": "mesh",
+                  "positions": {
+                    "shape": [
+                      72
+                    ],
+                    "storage": {
+                      "kind": "attachments",
+                      "ids": [
+                        "input-2"
+                      ],
+                      "byteLength": 576
+                    }
+                  },
+                  "polygonOffsets": {
+                    "shape": [
+                      7
+                    ],
+                    "storage": {
+                      "kind": "attachments",
+                      "ids": [
+                        "input-3"
+                      ],
+                      "byteLength": 28
+                    }
+                  }
+                },
+                "surfaces": [
                   {
-                    "key": "experiment/root/result",
-                    "label": "<box>",
-                    "children": [
-                      {
-                        "key": "experiment/root/result/probe/surface-1",
-                        "label": "-X",
-                        "surfaceId": "probe/surface-1",
-                        "children": []
-                      },
-                      {
-                        "key": "experiment/root/result/probe/surface-2",
-                        "label": "+X",
-                        "surfaceId": "probe/surface-2",
-                        "children": []
-                      },
-                      {
-                        "key": "experiment/root/result/probe/surface-3",
-                        "label": "-Y",
-                        "surfaceId": "probe/surface-3",
-                        "children": []
-                      },
-                      {
-                        "key": "experiment/root/result/probe/surface-4",
-                        "label": "+Y",
-                        "surfaceId": "probe/surface-4",
-                        "children": []
-                      },
-                      {
-                        "key": "experiment/root/result/probe/surface-5",
-                        "label": "Bottom",
-                        "surfaceId": "probe/surface-5",
-                        "children": []
-                      },
-                      {
-                        "key": "experiment/root/result/probe/surface-6",
-                        "label": "Top",
-                        "surfaceId": "probe/surface-6",
-                        "children": []
-                      }
+                    "id": "probe/surface-1",
+                    "name": "-X",
+                    "polygonIndices": [
+                      0
+                    ]
+                  },
+                  {
+                    "id": "probe/surface-2",
+                    "name": "+X",
+                    "polygonIndices": [
+                      1
+                    ]
+                  },
+                  {
+                    "id": "probe/surface-3",
+                    "name": "-Y",
+                    "polygonIndices": [
+                      2
+                    ]
+                  },
+                  {
+                    "id": "probe/surface-4",
+                    "name": "+Y",
+                    "polygonIndices": [
+                      3
+                    ]
+                  },
+                  {
+                    "id": "probe/surface-5",
+                    "name": "Bottom",
+                    "polygonIndices": [
+                      4
+                    ]
+                  },
+                  {
+                    "id": "probe/surface-6",
+                    "name": "Top",
+                    "polygonIndices": [
+                      5
                     ]
                   }
-                ],
-                "geometryId": "probe"
+                ]
               }
-            ]
-          },
-          "geometryGroups": [],
-          "surfaceGroups": [],
-          "sceneHash": "1d144636d532dfce749c94408ae9b162e2589e1c96cbeb86237d49c7cab9af32"
+            ],
+            "tree": {
+              "key": "task \"solvecurrent\"",
+              "label": "Task \"solveCurrent\"",
+              "children": [
+                {
+                  "key": "task \"solvecurrent\"/root",
+                  "label": "Probe",
+                  "globalId": "probe",
+                  "children": [
+                    {
+                      "key": "task \"solvecurrent\"/root/result",
+                      "label": "<box>",
+                      "children": [
+                        {
+                          "key": "task \"solvecurrent\"/root/result/probe/surface-1",
+                          "label": "-X",
+                          "surfaceId": "probe/surface-1",
+                          "children": []
+                        },
+                        {
+                          "key": "task \"solvecurrent\"/root/result/probe/surface-2",
+                          "label": "+X",
+                          "surfaceId": "probe/surface-2",
+                          "children": []
+                        },
+                        {
+                          "key": "task \"solvecurrent\"/root/result/probe/surface-3",
+                          "label": "-Y",
+                          "surfaceId": "probe/surface-3",
+                          "children": []
+                        },
+                        {
+                          "key": "task \"solvecurrent\"/root/result/probe/surface-4",
+                          "label": "+Y",
+                          "surfaceId": "probe/surface-4",
+                          "children": []
+                        },
+                        {
+                          "key": "task \"solvecurrent\"/root/result/probe/surface-5",
+                          "label": "Bottom",
+                          "surfaceId": "probe/surface-5",
+                          "children": []
+                        },
+                        {
+                          "key": "task \"solvecurrent\"/root/result/probe/surface-6",
+                          "label": "Top",
+                          "surfaceId": "probe/surface-6",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ],
+                  "geometryId": "probe"
+                }
+              ]
+            },
+            "geometryGroups": [],
+            "surfaceGroups": [],
+            "sceneHash": "60bdfad45ad7b5604962135aeb32dfac2473195ea34c19b88840882d14a5816c"
+          }
         },
         "variables": {
           "sourceVoltage": 1,
@@ -463,9 +465,9 @@
           }
         },
         "simulationProgram": {
-          "formatVersion": 3,
-          "simulationApiVersion": 1,
-          "pythonSource": "async def simulate(*, sim, tasks, vars, world):\n    result = await sim.run(tasks[\"solveCurrent\"])\n    await sim.record(\"totalCurrent\", result[\"artifacts\"][\"totalCurrent\"])\n    return result[\"state\"]\n",
+          "formatVersion": 4,
+          "simulationApiVersion": 2,
+          "pythonSource": "async def simulate(*, sim, tasks, vars):\n    result = await sim.run(tasks[\"solveCurrent\"])\n    await sim.record(\"totalCurrent\", result[\"artifacts\"][\"totalCurrent\"])\n    return result[\"state\"]\n",
           "tasks": {
             "solveCurrent": {
               "kernel": {
@@ -565,14 +567,18 @@
           }
         }
       },
-      "materialParameters": {
-        "schemaVersion": 1,
-        "materials": {},
-        "materialColors": {}
+      "taskMaterialParameters": {
+        "solveCurrent": {
+          "schemaVersion": 1,
+          "materials": {},
+          "materialColors": {}
+        }
       },
-      "materialWarnings": [
-        "Legacy Material snapshot: database parameters were not automatically re-resolved."
-      ]
+      "taskMaterialWarnings": {
+        "solveCurrent": [
+          "Legacy Material snapshot: database parameters were not automatically re-resolved."
+        ]
+      }
     }
   },
   "attachments": [
@@ -592,14 +598,14 @@
     },
     {
       "id": "input-2",
-      "name": "cae.setup.experiment.scene.parts.0.geometry.positions.0.bin",
+      "name": "cae.setup.experiment.taskScenes.solveCurrent.parts.0.geometry.positions.0.bin",
       "mimeType": "application/octet-stream",
       "byteLength": 576,
       "file": "attachments/002-input-2.bin"
     },
     {
       "id": "input-3",
-      "name": "cae.setup.experiment.scene.parts.0.geometry.polygonOffsets.0.bin",
+      "name": "cae.setup.experiment.taskScenes.solveCurrent.parts.0.geometry.polygonOffsets.0.bin",
       "mimeType": "application/octet-stream",
       "byteLength": 28,
       "file": "attachments/003-input-3.bin"

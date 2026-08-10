@@ -81,6 +81,9 @@ class CaeRun:
             name: resolve_output_specs(task, name)
             for name, task in canonical_tasks.items()
         }
+        self._task_scenes = self.setup["experiment"]["taskScenes"]
+        self._task_material_parameters = self.setup["taskMaterialParameters"]
+        self._task_material_warnings = self.setup["taskMaterialWarnings"]
         for name, task in canonical_tasks.items():
             _validate_task_artifact_contract(
                 name,
@@ -280,14 +283,7 @@ class CaeRun:
         started = time.perf_counter()
         try:
             await self._status("validating")
-            kernel_world = {
-                "structure": self.sample["structure"]["scene"],
-                "experiment": self.setup["experiment"]["scene"],
-                "sample": self.sample,
-                "setup": self.setup,
-            }
-            sim = SimulationApi(self, kernel_world)
-            simulation_world = _read_only(kernel_world)
+            sim = SimulationApi(self)
             simulation_vars = _read_only(_variables(self.setup))
             await self._status("running")
             final_state = await asyncio.wait_for(
@@ -295,7 +291,6 @@ class CaeRun:
                     sim=sim,
                     tasks=self.tasks,
                     vars=simulation_vars,
-                    world=simulation_world,
                 ),
                 timeout=self.max_run_seconds,
             )
@@ -445,9 +440,8 @@ class CaeRun:
 
 
 class SimulationApi:
-    def __init__(self, run: CaeRun, world: dict[str, Any]) -> None:
+    def __init__(self, run: CaeRun) -> None:
         self._run = run
-        self._world = world
         self._releasable: dict[int, Any] = {}
         self._artifact_provenance: dict[int, dict[str, Any]] = {}
         self._artifact_sequence = 0
@@ -493,6 +487,18 @@ class SimulationApi:
         task_name, normalized_task = registered
         task = copy.deepcopy(normalized_task)
         kernel = task.get("kernel") or {}
+        kernel_world = {
+            "structure": self._run.sample["structure"]["scene"],
+            "experiment": self._run._task_scenes[task_name],
+            "sample": {
+                "materialParameters": self._run.sample["materialParameters"],
+                "materialWarnings": self._run.sample["materialWarnings"],
+            },
+            "setup": {
+                "materialParameters": self._run._task_material_parameters[task_name],
+                "materialWarnings": self._run._task_material_warnings[task_name],
+            },
+        }
         input_state_revision = self.state_revision(kernel_state)
         trace_inputs = self._validate_inputs(
             task_name,
@@ -518,7 +524,7 @@ class SimulationApi:
             task,
             kernel_state,
             kernel_inputs,
-            self._world,
+            kernel_world,
             report,
         )
         finished_at = int(time.time() * 1000)
@@ -820,18 +826,43 @@ def create_run(
 def _validate_built_realization(value: Any, kind: str, snapshot_key: str) -> None:
     if not isinstance(value, dict) or value.get("kind") != kind:
         raise CaeError("invalid_input", f"start.{kind} must be a Built{kind.title()}")
-    if set(value) != {"kind", snapshot_key, "materialParameters", "materialWarnings"}:
+    if kind == "sample":
+        if set(value) != {"kind", snapshot_key, "materialParameters", "materialWarnings"}:
+            raise CaeError("invalid_input", f"start.{kind} fields are invalid")
+        _validate_snapshot(value.get(snapshot_key), snapshot_key)
+        _validate_material_snapshot(value.get("materialParameters"), "start.sample.materialParameters")
+        warnings = value.get("materialWarnings")
+        if not isinstance(warnings, list) or any(not isinstance(item, str) for item in warnings):
+            raise CaeError("invalid_input", "start.sample.materialWarnings must be an array of strings")
+        return
+
+    if set(value) != {"kind", snapshot_key, "taskMaterialParameters", "taskMaterialWarnings"}:
         raise CaeError("invalid_input", f"start.{kind} fields are invalid")
     snapshot = value.get(snapshot_key)
     _validate_snapshot(snapshot, snapshot_key)
-    _validate_material_snapshot(value.get("materialParameters"), f"start.{kind}.materialParameters")
-    warnings = value.get("materialWarnings")
-    if not isinstance(warnings, list) or any(not isinstance(item, str) for item in warnings):
-        raise CaeError("invalid_input", f"start.{kind}.materialWarnings must be an array of strings")
+    task_names = set(snapshot["taskScenes"])
+    material_parameters = value.get("taskMaterialParameters")
+    material_warnings = value.get("taskMaterialWarnings")
+    if not isinstance(material_parameters, dict) or set(material_parameters) != task_names:
+        raise CaeError("invalid_input", "start.setup.taskMaterialParameters must exactly match Task scenes")
+    if not isinstance(material_warnings, dict) or set(material_warnings) != task_names:
+        raise CaeError("invalid_input", "start.setup.taskMaterialWarnings must exactly match Task scenes")
+    for task_name in task_names:
+        _validate_material_snapshot(
+            material_parameters[task_name],
+            f"start.setup.taskMaterialParameters.{task_name}",
+        )
+        warnings = material_warnings[task_name]
+        if not isinstance(warnings, list) or any(not isinstance(item, str) for item in warnings):
+            raise CaeError(
+                "invalid_input",
+                f"start.setup.taskMaterialWarnings.{task_name} must be an array of strings",
+            )
 
 
 def _validate_snapshot(value: Any, kind: str) -> None:
-    expected = {"kind", "sourceHash", "seed", "variables", "varsSchema", "scene"}
+    expected = {"kind", "sourceHash", "seed", "variables", "varsSchema"}
+    expected.add("scene" if kind == "structure" else "taskScenes")
     if kind == "experiment":
         expected.add("simulationProgram")
     if not isinstance(value, dict) or value.get("kind") != kind or set(value) != expected:
@@ -858,7 +889,20 @@ def _validate_snapshot(value: Any, kind: str) -> None:
         value["varsSchema"],
         f"Built {kind}",
     )
-    _validate_scene(value.get("scene"), f"Built {kind}.scene")
+    if kind == "structure":
+        _validate_scene(value.get("scene"), "Built structure.scene")
+        return
+    task_scenes = value.get("taskScenes")
+    if not isinstance(task_scenes, dict) or not task_scenes:
+        raise CaeError("invalid_input", "Built experiment.taskScenes must be a non-empty object")
+    for task_name, scene in task_scenes.items():
+        if not isinstance(task_name, str) or not task_name.strip():
+            raise CaeError("invalid_input", "Built experiment Task names must be non-empty strings")
+        _validate_scene(scene, f"Built experiment.taskScenes.{task_name}")
+    manifest = value.get("simulationProgram")
+    tasks = manifest.get("tasks") if isinstance(manifest, dict) else None
+    if not isinstance(tasks, dict) or set(tasks) != set(task_scenes):
+        raise CaeError("invalid_input", "Built experiment Task scenes must exactly match simulationProgram tasks")
 
 
 def _validate_variables(variables: dict[str, Any], schema: dict[str, Any], path: str) -> None:
@@ -1163,7 +1207,7 @@ def _manifest(setup: dict[str, Any]) -> dict[str, Any]:
     manifest = experiment.get("simulationProgram") if isinstance(experiment, dict) else None
     if (
         not isinstance(manifest, dict)
-        or manifest.get("formatVersion") != 3
+        or manifest.get("formatVersion") != 4
         or set(manifest) != {
             "formatVersion",
             "simulationApiVersion",
@@ -1172,7 +1216,7 @@ def _manifest(setup: dict[str, Any]) -> dict[str, Any]:
             "recordedData",
         }
     ):
-        raise CaeError("invalid_program", "BuiltSetup simulationProgram formatVersion 3 is required")
+        raise CaeError("invalid_program", "BuiltSetup simulationProgram formatVersion 4 is required")
     return manifest
 
 
