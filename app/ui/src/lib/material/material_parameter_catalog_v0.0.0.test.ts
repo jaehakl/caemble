@@ -124,7 +124,7 @@ describe('material parameter catalog', () => {
   it('uses the canonical QuantityKind dataset without source prefixes or extensions', () => {
     expect(materialParameterCatalog.catalog_id).toBe('material-parameter-catalog')
     expect(materialParameterCatalog.catalog_version).toBe('0.0.0')
-    expect(materialParameterCatalog.quantity_kind_data_version).toBe('0.0.0')
+    expect(materialParameterCatalog.quantity_kind_data_version).toBe('0.0.1')
     expect(materialParameterCatalog.design_rules.quantity_kind).toEqual(expect.any(String))
     expect(materialParameterCatalog).not.toHaveProperty('aliases')
     expect(materialParameterCatalog).not.toHaveProperty('relationships')
@@ -144,7 +144,7 @@ describe('material parameter catalog', () => {
     expect(materialModelCatalog).toMatchObject({
       catalog_id: 'material-model-catalog',
       catalog_version: '0.0.0',
-      quantity_kind_data_version: '0.0.0',
+      quantity_kind_data_version: '0.0.1',
     })
     expect(materialModelData).toHaveLength(2)
     expect(Object.keys(materialModelByKey)).toEqual(['model.magnetic_hysteresis.b_h_curve', 'model.sorption.isotherm'])

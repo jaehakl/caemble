@@ -13,7 +13,7 @@ export const coupledPhenomenaQuantityKindData = {
     tensorOrder: 0,
     description:
       '"Electric Current per Unit Temperature" is used to express how a current is subject to temperature. Originally used in Wien\'s Law to describe phenomena related to filaments. One use today is to express how a current generator derates with temperature.',
-    applicableUnits: ['A.Cel-1', 'A.K-1', 'kA.K-1', 'uA.K-1', 'mA.K-1', 'nA.K-1'],
+    applicableUnits: ['A.K-1', 'kA.K-1', 'uA.K-1', 'mA.K-1', 'nA.K-1'],
   },
   'coupledPhenomena.ElectricPotentialPerTemperature': {
     domain,

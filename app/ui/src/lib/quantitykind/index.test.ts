@@ -2,7 +2,7 @@ import { createUcumService } from '@fhir-toolkit/ucum'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import { CadModelError } from '../cad/model/errors'
 import { identityCartesianBasis } from './identityBasis'
-import { quantityKindData, quantityKindDomains } from './data'
+import { opaqueQuantityKindNames, quantityKindData, quantityKindDomains } from './data'
 import {
   QuantityKind,
   type ApplicableUnit,
@@ -207,13 +207,7 @@ describe('QuantityKind', () => {
       ],
       'acoustics.FlowResistivity': ['Pa.s.m-2', 'kPa.s.m-2', 'N.s.m-4', 'kN.s.m-4'],
       'mechanics.StiffnessPerArea': ['N.m-3', 'kN.m-3', 'MN.m-3', 'N.mm-3', 'kN.mm-3'],
-      'thermodynamics.ThermalResistancePerArea': [
-        '[degF].h.[ft_i]2.[Btu_IT]-1',
-        '[degF].h.[ft_i]2.[Btu_th]-1',
-        '[ft_i]2.h.[degF].[Btu_IT]-1',
-        'm2.h.Cel.kcal_IT-1',
-        'm2.K.W-1',
-      ],
+      'thermodynamics.ThermalResistancePerArea': ['m2.K.W-1'],
       'coupledPhenomena.ElectricPotentialPerTemperature': ['V.K-1', 'mV.K-1', 'uV.K-1'],
       'coupledPhenomena.PiezoelectricChargeCoefficient': [
         'C.N-1',
@@ -321,16 +315,29 @@ describe('QuantityKind', () => {
     }
   })
 
-  it('returns frozen, unique, validator-supported UCUM lists', () => {
+  it('returns frozen, unique, converter-compatible UCUM lists and explicit opaque exceptions', () => {
     const ucum = createUcumService()
     const entries = Object.values(QuantityKind)
     const withUnits = entries.filter((entry) => entry.applicableUnits().length > 0)
     const unitEntryCount = entries.reduce((sum, entry) => sum + entry.applicableUnits().length, 0)
+    const opaqueNames = new Set<string>(opaqueQuantityKindNames)
 
     expect(withUnits).toHaveLength(1_216)
     expect(entries.length - withUnits.length).toBe(0)
-    expect(unitEntryCount).toBe(10_971)
+    expect(unitEntryCount).toBe(10_338)
+    expect(opaqueQuantityKindNames).toEqual([
+      'LinearLogarithmicRatio',
+      'thermodynamics.AreaTimeTemperature',
+      'thermodynamics.LengthTemperatureTime',
+      'thermodynamics.TemperatureVariance',
+      'chemistry.Acidity',
+      'chemistry.Basicity',
+    ])
+    expect(Object.isFrozen(opaqueQuantityKindNames)).toBe(true)
     expect(QuantityKind['fluidDynamics.APIGravity'].applicableUnits()).toEqual(['1'])
+    expect(QuantityKind.Angle.applicableUnits()).not.toContain("'")
+    expect(QuantityKind['thermodynamics.Temperature'].applicableUnits()).not.toContain('mCel')
+    expect(QuantityKind['thermodynamics.ThermalResistancePerArea'].applicableUnits()).toEqual(['m2.K.W-1'])
 
     for (const entry of entries) {
       const units = entry.applicableUnits()
@@ -339,9 +346,17 @@ describe('QuantityKind', () => {
       for (const unit of units) {
         expect(() => ucum.validate(unit)).not.toThrow()
         expect(() => ucum.canonical(1, unit)).not.toThrow()
-        expect(() => ucum.convert(1, units[0], unit)).not.toThrow()
+        if (!opaqueNames.has(entry.name)) expect(() => ucum.convert(1, units[0], unit)).not.toThrow()
       }
     }
+  })
+
+  it('allows opaque-unit identity use and rejects opaque cross-unit conversion', () => {
+    expect(QuantityKind['chemistry.Acidity'].transform(7, '[pH]', '[pH]')).toBe(7)
+    expect(QuantityKind.LinearLogarithmicRatio.transform(2, 'B.m-1', 'B.m-1')).toBe(2)
+    expect(() => QuantityKind.LinearLogarithmicRatio.transform(2, 'B.m-1', 'dB.m-1')).toThrow(
+      'does not support unit conversion',
+    )
   })
 
   it('transforms linear and affine applicable units', () => {

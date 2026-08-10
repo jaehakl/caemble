@@ -49,6 +49,6 @@ export const materialModelByKey = Object.freeze(
 export const materialModelCatalog = Object.freeze({
   catalog_id: 'material-model-catalog',
   catalog_version: '0.0.0',
-  quantity_kind_data_version: '0.0.0',
+  quantity_kind_data_version: '0.0.1',
   relations: materialModelData,
 }) satisfies MaterialModelCatalog

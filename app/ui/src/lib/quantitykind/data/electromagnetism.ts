@@ -73,7 +73,7 @@ export const electromagnetismQuantityKindData = {
     tensorOrder: 1,
     description:
       'Magnetic Fields surround magnetic materials and electric currents and are detected by the force they exert on other magnetic materials and moving electric charges. The electric and magnetic fields are two interrelated aspects of a single object, called the electromagnetic field. A pure electric field in one reference frame is observed as a combination of both an electric field and a magnetic field in a moving reference frame. The Auxillary Magnetic Field, H characterizes how the true Magnetic Field B influences the organization of magnetic dipoles in a given medium.',
-    applicableUnits: ['A.cm-1', 'A.mm-1', 'kA.m-1', 'mA.[in_i]-1', 'mA.mm-1', 'Oe'],
+    applicableUnits: ['A.cm-1', 'A.mm-1', 'kA.m-1', 'mA.[in_i]-1', 'mA.mm-1'],
   },
   'electromagnetism.BatteryCapacity': {
     domain,
@@ -100,7 +100,7 @@ export const electromagnetismQuantityKindData = {
     tensorOrder: 0,
     description:
       '$\\textit{Coercivity}$, also referred to as $\\textit{Coercive Field Strength}$, is the magnetic field strength to be applied to bring the magnetic flux density in a substance from its remaining magnetic flux density to zero. This is defined as the coercive field strength in a substance when either the magnetic flux density or the magnetic polarization and magnetization is brought from its value at magnetic saturation to zero by monotonic reduction of the applied magnetic field strength. The quantity which is brought to zero should be stated, and the appropriate symbol used: $H_{cB}$, $H_{cJ}$ or $H_{cM}$ for the coercivity relating to the magnetic flux density, the magnetic polarization or the magnetization respectively, where $H_{cJ} = H_{cM}$.',
-    applicableUnits: ['A.cm-1', 'A.mm-1', 'kA.m-1', 'mA.[in_i]-1', 'mA.mm-1', 'Oe'],
+    applicableUnits: ['A.cm-1', 'A.mm-1', 'kA.m-1', 'mA.[in_i]-1', 'mA.mm-1'],
   },
   'electromagnetism.ComplexPower': {
     domain,
@@ -264,7 +264,7 @@ export const electromagnetismQuantityKindData = {
     tensorOrder: 0,
     description:
       '"Electric Charge Per Mass" is the charge associated with a specific mass of a substance. In the SI and ISO systems this is $1 kg$.',
-    applicableUnits: ['A.h.kg-1', 'A.m2.J-1.s-1', 'C.kg-1', 'Hz.T-1', 'kR', 'MHz.T-1', 'mC.kg-1', 'mR', 'T-1.s-1', 'R'],
+    applicableUnits: ['A.h.kg-1', 'A.m2.J-1.s-1', 'C.kg-1', 'Hz.T-1', 'MHz.T-1', 'mC.kg-1', 'T-1.s-1', 'R'],
   },
   'electromagnetism.ElectricChargeSurfaceDensity': {
     domain,
@@ -670,13 +670,13 @@ export const electromagnetismQuantityKindData = {
     tensorOrder: 0,
     description:
       '"Linked Flux" is defined as the path integral of the magnetic vector potential. This is the line integral of a magnetic vector potential $A$ along a curve $C$. The line vector element $dr$ is the differential of position vector $r$.',
-    applicableUnits: ['k[lbf_av].[ft_i].A-1', 'kWb', 'Mx', 'mWb', 'N.m.A-1', '10.nV.s', 'Wb'],
+    applicableUnits: ['kWb', 'mWb', 'N.m.A-1', '10.nV.s', 'Wb'],
   },
   'electromagnetism.LossAngle': {
     domain,
     tensorOrder: 0,
     description: undefined,
-    applicableUnits: ["'", "''", 'deg', 'gon', 'urad', 'mrad', 'rad'],
+    applicableUnits: ['deg', 'gon', 'urad', 'mrad', 'rad'],
   },
   'electromagnetism.MagneticAreaMoment': {
     domain,
@@ -704,14 +704,14 @@ export const electromagnetismQuantityKindData = {
     tensorOrder: 1,
     description:
       'The Magnetic Field, denoted $B$, is a fundamental field in electrodynamics which characterizes the magnetic force exerted by electric currents. It is closely related to the auxillary magnetic field H.',
-    applicableUnits: ['G', 'kG', 'kT', 'uT', 'mT', 'nT', 'T'],
+    applicableUnits: ['kT', 'uT', 'mT', 'nT', 'T'],
   },
   'electromagnetism.MagneticFieldStrength': {
     domain,
     tensorOrder: 1,
     description:
       '$\\textit{Magnetic Field Strength}$ is a vector quantity obtained at a given point by subtracting the magnetization $M$ from the magnetic flux density $B$ divided by the magnetic constant $\\mu_0$. The magnetic field strength is related to the total current density $J_{tot}$ via: $\\text{rot} H = J_{tot}$.',
-    applicableUnits: ['A.cm-1', 'A.m-1', 'A.mm-1', 'kA.m-1', 'mA.[in_i]-1', 'mA.mm-1', 'Oe'],
+    applicableUnits: ['A.cm-1', 'A.m-1', 'A.mm-1', 'kA.m-1', 'mA.[in_i]-1', 'mA.mm-1'],
   },
   'electromagnetism.MagneticFieldStrength_H': {
     domain,
@@ -725,14 +725,14 @@ export const electromagnetismQuantityKindData = {
     tensorOrder: 0,
     description:
       '"Magnetic Flux" is the product of the average magnetic field times the perpendicular area that it penetrates.',
-    applicableUnits: ['k[lbf_av].[ft_i].A-1', 'kWb', 'Mx', 'mWb', 'N.m.A-1', '10.nV.s', 'Wb'],
+    applicableUnits: ['kWb', 'mWb', 'N.m.A-1', '10.nV.s', 'Wb'],
   },
   'electromagnetism.MagneticFluxDensity': {
     domain,
     tensorOrder: 1,
     description:
       '"Magnetic Flux Density" is a vector quantity and is the magnetic flux per unit area of a magnetic field at right angles to the magnetic force. It can be defined in terms of the effects the field has, for example by $B = F/q v \\sin \\theta$, where $F$ is the force a moving charge $q$ would experience if it was travelling at a velocity $v$ in a direction making an angle θ with that of the field. The magnetic field strength is also a vector quantity and is related to $B$ by: $H = B/\\mu$, where $\\mu$ is the permeability of the medium.',
-    applicableUnits: ['G', 'kG', 'kT', 'uT', 'mT', 'nT', 'T'],
+    applicableUnits: ['kT', 'uT', 'mT', 'nT', 'T'],
   },
   'electromagnetism.MagneticFluxDensityOrMagneticPolarization': {
     domain,
@@ -808,7 +808,7 @@ export const electromagnetismQuantityKindData = {
     tensorOrder: 0,
     description:
       '$\\text{Magnetomotive Force}$, also referred to as ($mmf$), is the ability of an electric circuit to produce magnetic flux. Just as the ability of a battery to produce electric current is called its electromotive force or emf, mmf is taken as the work required to move a unit magnet pole from any point through any path which links the electric circuit back the same point in the presence of the magnetic force produced by the electric current in the circuit. $\\text{Magnetomotive Force}$ is the scalar line integral of the magnetic field strength along a closed path.',
-    applicableUnits: ['Gb', 'Oe.cm'],
+    applicableUnits: ['Gb'],
   },
   'electromagnetism.MassicElectricCurrent': {
     domain,

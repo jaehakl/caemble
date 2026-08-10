@@ -80,6 +80,15 @@ export const quantityKindData = {
   ...economicsOperationsQuantityKindData,
 } as const
 
+export const opaqueQuantityKindNames = Object.freeze([
+  'LinearLogarithmicRatio',
+  'thermodynamics.AreaTimeTemperature',
+  'thermodynamics.LengthTemperatureTime',
+  'thermodynamics.TemperatureVariance',
+  'chemistry.Acidity',
+  'chemistry.Basicity',
+] as const satisfies readonly (keyof typeof quantityKindData)[])
+
 const domainEntryCount = quantityKindDataByDomain.reduce((count, [, data]) => count + Object.keys(data).length, 0)
 if (Object.keys(quantityKindData).length !== domainEntryCount) {
   throw new Error('QuantityKind names must be unique across physical domains.')

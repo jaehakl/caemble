@@ -21,7 +21,7 @@ export type {
 
 export { transformQuantityValue } from './runtime'
 export { identityCartesianBasis } from './identityBasis'
-export { quantityKindData } from './runtimeData'
+export { opaqueQuantityKindNames, quantityKindData } from './runtimeData'
 
 export const QuantityKind = Object.freeze(
   Object.fromEntries(

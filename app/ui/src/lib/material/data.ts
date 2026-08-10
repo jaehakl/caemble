@@ -182,7 +182,7 @@ const globalQualifiers = Object.freeze([
 export const materialParameterCatalog = Object.freeze({
   catalog_id: 'material-parameter-catalog',
   catalog_version: '0.0.0',
-  quantity_kind_data_version: '0.0.0',
+  quantity_kind_data_version: '0.0.1',
   design_rules: designRules,
   global_qualifiers: globalQualifiers,
   properties: materialParameterData,

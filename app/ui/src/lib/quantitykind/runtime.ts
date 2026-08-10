@@ -1,10 +1,11 @@
 import { CadModelError } from '../cad/model/errors'
 import type { Vec3 } from '../cad/model/types'
 import { convertUcumValue, normalizeUcumUnit, type UcumUnit } from '../cad/model/units'
-import { quantityKindData } from './runtimeData'
+import { opaqueQuantityKindNames, quantityKindData } from './runtimeData'
 import { identityCartesianBasis } from './identityBasis'
 
 type QuantityKindData = typeof quantityKindData
+const opaqueQuantityKinds = new Set<string>(opaqueQuantityKindNames)
 
 export type QuantityKindName = keyof QuantityKindData
 
@@ -319,6 +320,9 @@ export class QuantityKindEntry<Name extends QuantityKindName> implements Quantit
     }
     if (!applicableUnits.includes(toUnit)) {
       throw new CadModelError(`QuantityKind ${this.name} does not include target UCUM unit ${toUnit}.`)
+    }
+    if (opaqueQuantityKinds.has(this.name) && fromUnit !== toUnit) {
+      throw new CadModelError(`QuantityKind ${this.name} does not support unit conversion.`)
     }
 
     return transformQuantityValue(

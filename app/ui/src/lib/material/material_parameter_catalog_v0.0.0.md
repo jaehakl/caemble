@@ -1,7 +1,7 @@
 # Material Parameter Catalog v0.0.0
 
 - Catalog ID: `material-parameter-catalog`
-- QuantityKind data version: `0.0.0`
+- QuantityKind data version: `0.0.1`
 - Total canonical property keys: **258**
 
 ## Rules

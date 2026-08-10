@@ -37,7 +37,7 @@ export interface MaterialParameterDefinition<
 export interface MaterialParameterCatalog {
   readonly catalog_id: 'material-parameter-catalog'
   readonly catalog_version: '0.0.0'
-  readonly quantity_kind_data_version: '0.0.0'
+  readonly quantity_kind_data_version: '0.0.1'
   readonly design_rules: Readonly<{
     canonical_key: string
     value_shape: string
@@ -72,7 +72,7 @@ export interface MaterialModelRelationDefinition<
 export interface MaterialModelCatalog {
   readonly catalog_id: 'material-model-catalog'
   readonly catalog_version: '0.0.0'
-  readonly quantity_kind_data_version: '0.0.0'
+  readonly quantity_kind_data_version: '0.0.1'
   readonly relations: readonly MaterialModelRelationDefinition[]
 }
 

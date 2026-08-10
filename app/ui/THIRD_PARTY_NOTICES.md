@@ -25,3 +25,9 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+## @lhncbc/ucum-lhc 7.1.8
+
+This package is used during development and CI to validate the QuantityKind unit catalog against UCUM.
+
+The software was developed by the Lister Hill National Center for Biomedical Communications (LHNCBC), a research and development division of the U.S. National Library of Medicine (NLM), with permission and based on copyrighted content of the Regenstrief Institute. It is distributed under the conditions in its [LICENSE.md](https://github.com/lhncbc/ucum-lhc/blob/v7.1.8/LICENSE.md). UCUM content is additionally subject to the [UCUM license](https://ucum.org/license).
