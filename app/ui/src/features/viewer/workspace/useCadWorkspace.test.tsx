@@ -56,6 +56,21 @@ describe('useCadWorkspace v4 bundle editing', () => {
     second.unmount()
   })
 
+  it('keeps Experiment Task scene hashes stable across render status transitions', () => {
+    const render = renderHook(() => useCadWorkspace(null, null, undefined, undefined))
+    const initialHashes = render.result.current.experimentDocument.taskSceneHashes
+
+    expect(render.result.current.experimentDocument.status).toBe('Ready')
+    act(() => render.result.current.experimentDocument.handleRenderStart())
+    expect(render.result.current.experimentDocument.status).toBe('Rendering')
+    expect(render.result.current.experimentDocument.taskSceneHashes).toBe(initialHashes)
+
+    act(() => render.result.current.experimentDocument.handleRenderEnd())
+    expect(render.result.current.experimentDocument.status).toBe('Ready')
+    expect(render.result.current.experimentDocument.taskSceneHashes).toBe(initialHashes)
+    render.unmount()
+  })
+
   it('compiles once for a Structure source and reuses the compiled document for a seed change', async () => {
     const sourceHash = 'a'.repeat(64)
     vi.mocked(compileCadDocument).mockResolvedValue({

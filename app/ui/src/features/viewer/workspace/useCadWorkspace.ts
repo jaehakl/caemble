@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   BuiltRealization,
   CadDiagnostic,
@@ -387,6 +387,18 @@ function useDocumentState({
     },
   }
 
+  const taskSceneHashes = useMemo(
+    () =>
+      evaluatedSnapshot?.kind === 'experiment'
+        ? Object.freeze(
+            Object.fromEntries(
+              Object.entries(evaluatedSnapshot.taskScenes).map(([name, value]) => [name, value.sceneHash]),
+            ),
+          )
+        : Object.freeze({}),
+    [evaluatedSnapshot],
+  )
+
   return {
     controller: {
       compiledSource,
@@ -417,14 +429,7 @@ function useDocumentState({
       scene,
       sceneHash: evaluatedSnapshot?.kind === 'structure' ? evaluatedSnapshot.scene.sceneHash : null,
       taskScenes,
-      taskSceneHashes:
-        evaluatedSnapshot?.kind === 'experiment'
-          ? Object.freeze(
-              Object.fromEntries(
-                Object.entries(evaluatedSnapshot.taskScenes).map(([name, value]) => [name, value.sceneHash]),
-              ),
-            )
-          : Object.freeze({}),
+      taskSceneHashes,
       simulationProgram,
       sourceReadOnly: editingBlocked,
       status,
