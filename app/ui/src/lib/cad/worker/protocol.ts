@@ -1,4 +1,4 @@
-import type { CompiledCadSource } from '../compiler/types'
+import type { CompiledCadDocument } from '../compiler/types'
 import type { EvaluatedDocumentSnapshot } from '../execution/snapshot'
 import type { Tensor } from '../model/types'
 import type { CadDocumentType } from '../source/document'
@@ -29,10 +29,9 @@ export type CadEvaluationRequest = Readonly<{
   document: Readonly<{
     kind: CadDocumentType
     realizationSeed: number
-    simulationCode?: string
-    simulationCodeHash?: string
+    pythonSource?: string
   }>
-  compiledSource: CompiledCadSource
+  compiledDocument: CompiledCadDocument
   vars?: Readonly<Record<string, Tensor>>
 }>
 

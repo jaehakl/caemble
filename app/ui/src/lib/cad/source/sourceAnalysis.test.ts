@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { analyzeCadSource, parseCadSource, staticCadSourceImports } from './sourceAnalysis'
+import { analyzeCadSource, analyzeTaskSource, parseCadSource, staticCadSourceImports } from './sourceAnalysis'
 
 describe('CAD source policy', () => {
   it('resolves one lowercase factory through direct top-level const bindings', () => {
@@ -40,24 +40,25 @@ export default structure({})`,
     ).toThrow('experiment must be a named import')
   })
 
-  it('allows generic solver tasks from the core module', () => {
-    const program = `import { defineTask, experiment } from '@caemble/core'
-export default experiment({
-  varsSchema: {},
-  tasks: () => ({ electric: defineTask({ name: 'solver', version: '1.0.0' }, {}) }),
-  recordedData: {},
+  it('recognizes an independent Task definition from the core module', () => {
+    const task = `import { defineTask } from '@caemble/core'
+export default defineTask({
+  kernel: { name: 'solver', version: '1.0.0' },
+  lengthUnit: 'mm',
+  geometry: () => null,
+  config: () => ({}),
 })`
 
-    expect(analyzeCadSource(program, 'experiment').factoryName).toBe('experiment')
+    expect(analyzeTaskSource(task).factoryName).toBe('defineTask')
   })
 
   it('rejects relative, versioned, external, URL, dynamic, and source-level require imports', () => {
-    expect(() => parseCadSource("import value from './value'")).toThrow('single-file')
-    expect(() => parseCadSource("import value from '@caemble/core/v2'")).toThrow('single-file')
-    expect(() => parseCadSource("import value from '@caemble/core/v3'")).toThrow('single-file')
-    expect(() => parseCadSource("import value from '@caemble/kernels'")).toThrow('single-file')
-    expect(() => parseCadSource("import value from 'other-package'")).toThrow('single-file')
-    expect(() => parseCadSource("import value from 'https://example.com/value.ts'")).toThrow('single-file')
+    expect(() => parseCadSource("import value from './value'")).toThrow('independent')
+    expect(() => parseCadSource("import value from '@caemble/core/v2'")).toThrow('independent')
+    expect(() => parseCadSource("import value from '@caemble/core/v3'")).toThrow('independent')
+    expect(() => parseCadSource("import value from '@caemble/kernels'")).toThrow('independent')
+    expect(() => parseCadSource("import value from 'other-package'")).toThrow('independent')
+    expect(() => parseCadSource("import value from 'https://example.com/value.ts'")).toThrow('independent')
     expect(() => parseCadSource("const value = import('@caemble/core')")).toThrow('Dynamic import is not supported')
     expect(() => parseCadSource("const value = require('@caemble/core')")).toThrow(
       'Source-level require() is not supported',

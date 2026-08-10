@@ -27,14 +27,13 @@ import CadViewer from '@/features/viewer/viewer/CadViewer'
 import { StructureExperimentViewer } from '@/features/viewer/workspace/StructureExperimentViewer'
 import { useCadWorkspace } from '@/features/viewer/workspace/useCadWorkspace'
 import {
-  cadSource,
   createCadSourceDocument,
   type CadDocumentType,
   type CadSourceDocument,
   type EvaluatedDocumentSnapshot,
+  type ExperimentSourceBundle,
 } from '@/lib/cad'
-import { defaultExperimentCode } from '@/lib/defaultExperimentCode'
-import { defaultExperimentSimulationCode } from '@/lib/defaultExperimentSimulationCode'
+import { defaultExperimentSourceBundle } from '@/lib/defaultExperimentCode'
 import { readMeasurementReturnTo, updateMeasurementReturnTo } from '@/pages/measurements/measurement-return'
 
 type ExperimentRow = ExperimentRecord & { id: number }
@@ -200,8 +199,8 @@ export function ExperimentPage() {
   const [query, setQuery] = useState('')
   const [editorOpen, setEditorOpen] = useState(false)
   const [experiment, setExperiment] = useState<CadSourceDocument | null>(null)
-  const [savedExperimentCode, setSavedExperimentCode] = useState<string | null>(null)
-  const [savedSimulationCode, setSavedSimulationCode] = useState<string | null>(null)
+  const [savedSourceBundle, setSavedSourceBundle] = useState<ExperimentSourceBundle | null>(null)
+  const [activeExperimentTaskName, setActiveExperimentTaskName] = useState<string | null>(null)
   const [metadataTarget, setMetadataTarget] = useState<ExperimentRow | null>(null)
   const [metadataName, setMetadataName] = useState('')
   const [metadataDescription, setMetadataDescription] = useState('')
@@ -245,10 +244,8 @@ export function ExperimentPage() {
   const selectedManageable = Boolean(selectedExperiment && canManage(selectedExperiment))
   const dirty = Boolean(
     experiment &&
-    (savedExperimentCode === null ||
-      savedSimulationCode === null ||
-      cadSource(experiment) !== savedExperimentCode ||
-      experiment.simulationCode !== savedSimulationCode),
+    experiment.kind === 'experiment' &&
+    (savedSourceBundle === null || JSON.stringify(experiment.sourceBundle) !== JSON.stringify(savedSourceBundle)),
   )
 
   const leafRows = useMemo(() => {
@@ -296,14 +293,10 @@ export function ExperimentPage() {
 
   const applyExperiment = useCallback(
     (row: ExperimentRow) => {
-      setExperiment(
-        row.simulation_code === null
-          ? null
-          : createCadSourceDocument('experiment', row.code, undefined, row.simulation_code),
-      )
+      setExperiment(createCadSourceDocument('experiment', row.source_bundle))
       setSelectedExperimentId(row.id)
-      setSavedExperimentCode(row.code)
-      setSavedSimulationCode(row.simulation_code)
+      setSavedSourceBundle(row.source_bundle)
+      setActiveExperimentTaskName(null)
       updateDeepLink(row.id)
     },
     [setSelectedExperimentId, updateDeepLink],
@@ -312,19 +305,17 @@ export function ExperimentPage() {
   const clearExperiment = useCallback(() => {
     setExperiment(null)
     setSelectedExperimentId(null)
-    setSavedExperimentCode(null)
-    setSavedSimulationCode(null)
+    setSavedSourceBundle(null)
+    setActiveExperimentTaskName(null)
     updateEditorOpen(false)
     updateDeepLink(null)
   }, [setSelectedExperimentId, updateDeepLink, updateEditorOpen])
 
   const startNewExperiment = useCallback(() => {
-    setExperiment(
-      createCadSourceDocument('experiment', defaultExperimentCode, undefined, defaultExperimentSimulationCode),
-    )
+    setExperiment(createCadSourceDocument('experiment', defaultExperimentSourceBundle))
     setSelectedExperimentId(null)
-    setSavedExperimentCode(null)
-    setSavedSimulationCode(null)
+    setSavedSourceBundle(null)
+    setActiveExperimentTaskName(null)
     updateEditorOpen(true)
     updateDeepLink(null)
   }, [setSelectedExperimentId, updateDeepLink, updateEditorOpen])
@@ -350,12 +341,7 @@ export function ExperimentPage() {
       return
     }
     applyExperiment(row)
-    if (searchParams.get('mode') === 'code' && row.simulation_code === null) {
-      toast.error('Python source가 없는 기존 Experiment는 편집하거나 미리 볼 수 없습니다.')
-      updateEditorOpen(false)
-    } else {
-      updateEditorOpen(searchParams.get('mode') === 'code')
-    }
+    updateEditorOpen(searchParams.get('mode') === 'code')
   }, [
     applyExperiment,
     experimentsQuery.isSuccess,
@@ -416,8 +402,7 @@ export function ExperimentPage() {
           parent_id: row.parent_id,
           name: name.trim(),
           description: description.trim() || null,
-          code: row.code,
-          simulation_code: row.simulation_code,
+          source_bundle: row.source_bundle,
         },
       ]),
     onSuccess: async () => {
@@ -439,17 +424,15 @@ export function ExperimentPage() {
         document: experiment,
         forceRoot,
         kind: 'experiment',
-        savedCode: savedExperimentCode,
-        savedSimulationCode,
+        savedCode: null,
+        savedSourceBundle,
         selectedId: selectedExperimentId,
-        simulationCode: experiment.simulationCode,
         values,
       })
     },
-    onSuccess: async ({ action, code, id, simulationCode }, { forceRoot }) => {
+    onSuccess: async ({ action, id, sourceBundle }, { forceRoot }) => {
       setSelectedExperimentId(id)
-      setSavedExperimentCode(code)
-      setSavedSimulationCode(simulationCode ?? null)
+      setSavedSourceBundle(sourceBundle ?? null)
       updateDeepLink(id)
       setSaveMode(null)
       await invalidateExperiments()
@@ -490,7 +473,7 @@ export function ExperimentPage() {
   const requestNavigation = useCallback(
     (row: ExperimentRow, rerollWhenSelected: boolean) => {
       if (row.id === selectedExperimentId) {
-        if (rerollWhenSelected && row.simulation_code !== null) experimentDocument.handleReroll()
+        if (rerollWhenSelected) experimentDocument.handleReroll()
         return
       }
       if (dirty) {
@@ -512,10 +495,6 @@ export function ExperimentPage() {
 
   const requestEditorOpen = useCallback(
     (row: ExperimentRow) => {
-      if (row.simulation_code === null) {
-        toast.error('Python source가 없는 기존 Experiment는 편집하거나 미리 볼 수 없습니다.')
-        return
-      }
       if (row.id === selectedExperimentId) {
         updateEditorOpen(true)
         return
@@ -616,10 +595,19 @@ export function ExperimentPage() {
         ? {
             scene: experimentDocument.scene,
             sceneHash: experimentDocument.sceneHash,
+            taskScenes: experimentDocument.taskScenes,
+            taskSceneHashes: experimentDocument.taskSceneHashes,
             variables: experimentDocument.variables,
           }
         : null,
-    [experiment, experimentDocument.scene, experimentDocument.sceneHash, experimentDocument.variables],
+    [
+      experiment,
+      experimentDocument.scene,
+      experimentDocument.sceneHash,
+      experimentDocument.taskSceneHashes,
+      experimentDocument.taskScenes,
+      experimentDocument.variables,
+    ],
   )
   const structureViewerDocument = useMemo(
     () =>
@@ -745,6 +733,7 @@ export function ExperimentPage() {
                     ) : null
                   }
                   onActiveDocumentTypeChange={() => undefined}
+                  onActiveExperimentTaskChange={setActiveExperimentTaskName}
                 />
               </div>
             </div>
@@ -842,6 +831,7 @@ export function ExperimentPage() {
           <span className="w-px bg-border group-hover:bg-neutral-400" />
         </div>
         <CadViewer
+          activeExperimentTaskName={activeExperimentTaskName}
           experiment={experimentViewerDocument}
           recordedData={simulation.recordedData}
           simulation={{

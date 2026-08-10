@@ -63,8 +63,8 @@ export function simulate(
   const promise = (async () => {
     if (cancelled) throw abortError()
     const manifest = setup.experiment.simulationProgram
-    if (!manifest || manifest.formatVersion !== 3) {
-      throw new CaeSimulationError('program_required', 'Python simulationProgram v3가 필요합니다.')
+    if (!manifest || manifest.formatVersion !== 4) {
+      throw new CaeSimulationError('program_required', 'Python simulationProgram v4가 필요합니다.')
     }
     const request = serializeCaeRequest(sample, setup)
     const requestAttachments = request.attachments.map(({ bytes, ...attachment }) => ({

@@ -10,17 +10,18 @@ type EvaluatedSnapshotBase = Readonly<{
   seed: number
   variables: Readonly<Vars>
   varsSchema: Readonly<Record<string, VarsSchemaEntry>>
-  scene: SerializableCadScene
 }>
 
 export type EvaluatedStructureSnapshot = EvaluatedSnapshotBase &
   Readonly<{
     kind: 'structure'
+    scene: SerializableCadScene
   }>
 
 export type EvaluatedExperimentSnapshot = EvaluatedSnapshotBase &
   Readonly<{
     kind: 'experiment'
+    taskScenes: Readonly<Record<string, SerializableCadScene>>
     simulationProgram: SimulationProgramManifest
   }>
 
@@ -110,13 +111,30 @@ export function assertEvaluatedDocumentSnapshot(value: unknown): asserts value i
   }
   const schema = normalizeVarsSchema(snapshot.varsSchema, 'Evaluated document snapshot')
   normalizeVars(schema.normalized, snapshot.variables, 'Evaluated document snapshot')
-  assertSerializableCadScene(snapshot.scene)
   if (snapshot.kind === 'experiment') {
+    if (
+      typeof snapshot.taskScenes !== 'object' ||
+      snapshot.taskScenes === null ||
+      Array.isArray(snapshot.taskScenes) ||
+      Object.keys(snapshot.taskScenes).length === 0
+    ) {
+      throw new CadModelError('Evaluated Experiment snapshot Task scenes are invalid.')
+    }
+    Object.entries(snapshot.taskScenes).forEach(([name, scene]) => {
+      if (!name.trim()) throw new CadModelError('Evaluated Experiment snapshot Task name is invalid.')
+      assertSerializableCadScene(scene)
+    })
+    if (
+      Object.keys(snapshot.taskScenes).length !== Object.keys(snapshot.simulationProgram?.tasks ?? {}).length ||
+      Object.keys(snapshot.taskScenes).some((name) => !(name in (snapshot.simulationProgram?.tasks ?? {})))
+    ) {
+      throw new CadModelError('Evaluated Experiment snapshot Task scenes do not match its Simulation Program.')
+    }
     assertSimulationProgramManifest(snapshot.simulationProgram)
-  }
+  } else assertSerializableCadScene((snapshot as Partial<EvaluatedStructureSnapshot>).scene)
   const allowedKeys =
     snapshot.kind === 'experiment'
-      ? ['kind', 'sourceHash', 'seed', 'variables', 'varsSchema', 'scene', 'simulationProgram']
+      ? ['kind', 'sourceHash', 'seed', 'variables', 'varsSchema', 'taskScenes', 'simulationProgram']
       : ['kind', 'sourceHash', 'seed', 'variables', 'varsSchema', 'scene']
   const unknownKey = Object.keys(snapshot).find((key) => !allowedKeys.includes(key))
   if (unknownKey) throw new CadModelError(`Evaluated document snapshot.${unknownKey} is not allowed.`)

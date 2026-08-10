@@ -44,14 +44,14 @@ UI를 다시 빌드한다.
 
 ## 2. 실행 manifest
 
-[`authoring.ts`](../app/ui/src/lib/cad/simulation/authoring.ts)의 범용
-`defineTask({ name, version }, config)`가 config와 작성 단위를 그대로 다음 v3
-manifest에 넣는다.
+각 `tasks/<taskName>.tsx`의 `defineTask({ kernel, lengthUnit, geometry, config })`가
+평가한 kernel config와 공통 `experiment.tsx`의 RecordedData를 다음 v4 manifest에
+넣는다.
 
 ```ts
 type SimulationProgram = {
-  formatVersion: 3;
-  simulationApiVersion: 1;
+  formatVersion: 4;
+  simulationApiVersion: 2;
   pythonSource: string;
   tasks: Record<
     string,

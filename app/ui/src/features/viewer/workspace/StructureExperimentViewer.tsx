@@ -1,5 +1,13 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { cadSource, type CadDocumentType, type CadSourceDocument } from '@/lib/cad'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import {
+  EXPERIMENT_ENTRY_PATH,
+  EXPERIMENT_SIMULATION_PATH,
+  cadSource,
+  experimentTaskName,
+  experimentTaskPaths,
+  type CadDocumentType,
+  type CadSourceDocument,
+} from '@/lib/cad'
 import CadEditor from '../editor/CadEditor'
 import type { CadDocumentController } from './useCadWorkspace'
 
@@ -13,18 +21,32 @@ export type StructureExperimentViewerProps = {
   structureLineage?: ReactNode
   structureVarsPanel?: ReactNode
   onActiveDocumentTypeChange: (documentType: CadDocumentType) => void
+  onActiveExperimentTaskChange?: (taskName: string | null) => void
 }
 
-const workspaceTabs = [
-  { id: 'structure-source', documentType: 'structure', panel: 'source', label: 'Structure Source' },
-  { id: 'structure-vars', documentType: 'structure', panel: 'vars', label: 'Structure Vars' },
-  { id: 'structure-lineage', documentType: 'structure', panel: 'lineage', label: '족보 보기' },
-  { id: 'experiment-source', documentType: 'experiment', panel: 'source', label: 'Experiment Source' },
-  { id: 'experiment-python', documentType: 'experiment', panel: 'python', label: 'Python simulate' },
-  { id: 'experiment-lineage', documentType: 'experiment', panel: 'lineage', label: '족보 보기' },
-] as const
+type WorkspaceTab = Readonly<{
+  id: string
+  documentType: CadDocumentType
+  label: string
+  panel: 'lineage' | 'program' | 'source' | 'task' | 'vars'
+  taskName?: string
+  taskPath?: string
+}>
 
-type WorkspaceTab = (typeof workspaceTabs)[number]['id']
+const newTaskSource = `import { defineTask } from '@caemble/core'
+
+export default defineTask({
+  kernel: { name: 'solver-name', version: '0.0.0' },
+  lengthUnit: 'mm',
+  geometry: () => null,
+  config: () => ({
+    parameters: {},
+    initializations: [],
+    boundaryConditions: [],
+    outputs: [],
+  }),
+})
+`
 
 function Status({ document }: { document: CadDocumentController }) {
   return (
@@ -45,49 +67,88 @@ export function StructureExperimentViewer({
   experimentDocument,
   experimentLineage,
   onActiveDocumentTypeChange,
+  onActiveExperimentTaskChange,
   structure,
   structureDocument,
   structureLineage,
   structureVarsPanel,
 }: StructureExperimentViewerProps) {
-  const hasStructure = structure !== null && structure !== undefined
-  const hasExperiment = experiment !== null && experiment !== undefined
-  const availableTabs = workspaceTabs.filter(
-    (tab) =>
-      (tab.documentType === 'structure' ? hasStructure : hasExperiment) &&
-      (tab.id !== 'structure-vars' || structureVarsPanel !== undefined) &&
-      (tab.id !== 'structure-lineage' || structureLineage !== undefined) &&
-      (tab.id !== 'experiment-lineage' || experimentLineage !== undefined),
+  const structureSource = structure?.kind === 'structure' ? structure : null
+  const experimentSource = experiment?.kind === 'experiment' ? experiment : null
+  const hasStructure = structureSource !== null
+  const hasExperiment = experimentSource !== null
+  const taskPaths = useMemo(
+    () => (experimentSource ? experimentTaskPaths(experimentSource.sourceBundle) : []),
+    [experimentSource],
   )
-  const [activeTab, setActiveTab] = useState<WorkspaceTab | null>(() =>
+  const availableTabs = useMemo<readonly WorkspaceTab[]>(
+    () => [
+      ...(hasStructure
+        ? [
+            { id: 'structure-source', documentType: 'structure', panel: 'source', label: 'Structure' } as const,
+            ...(structureVarsPanel === undefined
+              ? []
+              : [{ id: 'structure-vars', documentType: 'structure', panel: 'vars', label: 'Structure Vars' } as const]),
+            ...(structureLineage === undefined
+              ? []
+              : [
+                  { id: 'structure-lineage', documentType: 'structure', panel: 'lineage', label: '족보 보기' } as const,
+                ]),
+          ]
+        : []),
+      ...(hasExperiment
+        ? [
+            { id: 'experiment-program', documentType: 'experiment', panel: 'program', label: 'Experiment' } as const,
+            ...taskPaths.map((taskPath) => {
+              const taskName = experimentTaskName(taskPath)!
+              return {
+                id: `experiment-task-${taskName}`,
+                documentType: 'experiment' as const,
+                panel: 'task' as const,
+                label: taskName,
+                taskName,
+                taskPath,
+              }
+            }),
+            ...(experimentLineage === undefined
+              ? []
+              : [
+                  {
+                    id: 'experiment-lineage',
+                    documentType: 'experiment',
+                    panel: 'lineage',
+                    label: '족보 보기',
+                  } as const,
+                ]),
+          ]
+        : []),
+    ],
+    [experimentLineage, hasExperiment, hasStructure, structureLineage, structureVarsPanel, taskPaths],
+  )
+  const [activeTab, setActiveTab] = useState<string | null>(() =>
     activeDocumentType === 'experiment' && hasExperiment
-      ? 'experiment-source'
+      ? 'experiment-program'
       : hasStructure
         ? 'structure-source'
         : hasExperiment
-          ? 'experiment-source'
+          ? 'experiment-program'
           : null,
   )
-  const selectedTab =
-    activeTab && availableTabs.some((tab) => tab.id === activeTab) ? activeTab : (availableTabs[0]?.id ?? null)
-  const selectedDocumentType: CadDocumentType | null = selectedTab?.startsWith('structure')
-    ? 'structure'
-    : selectedTab
-      ? 'experiment'
-      : null
+  const selectedTab = availableTabs.find((tab) => tab.id === activeTab) ?? availableTabs[0] ?? null
   const activeDocument =
-    selectedDocumentType === 'structure'
+    selectedTab?.documentType === 'structure'
       ? structureDocument
-      : selectedDocumentType === 'experiment'
+      : selectedTab?.documentType === 'experiment'
         ? experimentDocument
         : null
 
   useEffect(() => {
-    if (activeTab !== selectedTab) setActiveTab(selectedTab)
-    if (selectedDocumentType && selectedDocumentType !== activeDocumentType) {
-      onActiveDocumentTypeChange(selectedDocumentType)
+    if (activeTab !== selectedTab?.id) setActiveTab(selectedTab?.id ?? null)
+    if (selectedTab && selectedTab.documentType !== activeDocumentType) {
+      onActiveDocumentTypeChange(selectedTab.documentType)
     }
-  }, [activeDocumentType, activeTab, onActiveDocumentTypeChange, selectedDocumentType, selectedTab])
+    onActiveExperimentTaskChange?.(selectedTab?.panel === 'task' ? (selectedTab.taskName ?? null) : null)
+  }, [activeDocumentType, activeTab, onActiveDocumentTypeChange, onActiveExperimentTaskChange, selectedTab])
 
   if (!activeDocument) {
     return (
@@ -101,6 +162,33 @@ export function StructureExperimentViewer({
         </div>
       </section>
     )
+  }
+
+  const addTask = () => {
+    if (!experimentSource) return
+    const taskName = window.prompt(
+      '새 Task 이름을 입력하세요. 영문자로 시작하고 영문자, 숫자, _, -만 사용할 수 있습니다.',
+    )
+    if (taskName === null) return
+    const trimmed = taskName.trim()
+    const path = `tasks/${trimmed}.tsx`
+    if (experimentTaskName(path) !== trimmed) {
+      window.alert('Task 이름이 올바르지 않습니다.')
+      return
+    }
+    if (path in experimentSource.sourceBundle.files) {
+      window.alert('같은 이름의 Task가 이미 있습니다.')
+      return
+    }
+    experimentDocument.handleAddExperimentTask(trimmed, newTaskSource)
+    setActiveTab(`experiment-task-${trimmed}`)
+  }
+
+  const removeTask = () => {
+    if (!experimentSource || selectedTab?.panel !== 'task' || !selectedTab.taskName || taskPaths.length <= 1) return
+    if (!window.confirm(`${selectedTab.taskName} Task를 삭제할까요? simulate.py 참조는 자동 변경되지 않습니다.`)) return
+    experimentDocument.handleRemoveExperimentTask(selectedTab.taskName)
+    setActiveTab('experiment-program')
   }
 
   return (
@@ -117,28 +205,46 @@ export function StructureExperimentViewer({
           {availableTabs.map((tab) => (
             <button
               aria-controls={`${tab.id}-panel`}
-              aria-selected={selectedTab === tab.id}
+              aria-selected={selectedTab?.id === tab.id}
               className={`h-12 shrink-0 border-b-2 px-3 text-xs font-semibold tracking-wide uppercase ${
-                selectedTab === tab.id
+                selectedTab?.id === tab.id
                   ? 'border-slate-900 text-slate-950'
                   : 'border-transparent text-slate-500 hover:text-slate-800'
               }`}
               id={`${tab.id}-tab`}
               key={tab.id}
               role="tab"
-              tabIndex={selectedTab === tab.id ? 0 : -1}
+              tabIndex={selectedTab?.id === tab.id ? 0 : -1}
               type="button"
-              onClick={() => {
-                setActiveTab(tab.id)
-                onActiveDocumentTypeChange(tab.documentType)
-              }}
+              onClick={() => setActiveTab(tab.id)}
             >
               {tab.label}
             </button>
           ))}
+          {hasExperiment ? (
+            <button
+              aria-label="Task 추가"
+              className="h-8 shrink-0 rounded border px-2 text-sm text-slate-600 hover:bg-slate-50"
+              disabled={experimentDocument.sourceReadOnly}
+              type="button"
+              onClick={addTask}
+            >
+              + Task
+            </button>
+          ) : null}
         </div>
 
         <div className="flex shrink-0 items-center gap-3 pb-1 text-sm sm:pb-0">
+          {selectedTab?.panel === 'task' ? (
+            <button
+              className="rounded border border-rose-200 px-2 py-1.5 text-xs font-medium text-rose-700 disabled:opacity-40"
+              disabled={experimentDocument.sourceReadOnly || taskPaths.length <= 1}
+              type="button"
+              onClick={removeTask}
+            >
+              Task 삭제
+            </button>
+          ) : null}
           <label className="flex items-center gap-1.5 text-xs font-medium text-slate-600">
             <span>Limit</span>
             <select
@@ -170,50 +276,64 @@ export function StructureExperimentViewer({
       </div>
 
       <div className="min-h-0 flex-1">
-        {availableTabs.map((tab) => {
-          const document = tab.documentType === 'structure' ? structureDocument : experimentDocument
-          const sourceDocument = tab.documentType === 'structure' ? structure : experiment
-          const source = sourceDocument ? cadSource(sourceDocument) : ''
-
-          return (
-            <div
-              aria-labelledby={`${tab.id}-tab`}
-              className={selectedTab === tab.id ? 'h-full min-h-0' : 'hidden'}
-              hidden={selectedTab !== tab.id}
-              id={`${tab.id}-panel`}
-              key={tab.id}
-              role="tabpanel"
-            >
-              {selectedTab !== tab.id ? null : tab.panel === 'lineage' ? (
-                tab.documentType === 'structure' ? (
-                  structureLineage
-                ) : (
-                  experimentLineage
-                )
-              ) : tab.panel === 'vars' ? (
-                structureVarsPanel
-              ) : tab.panel === 'source' ? (
+        {selectedTab?.panel === 'lineage' ? (
+          selectedTab.documentType === 'structure' ? (
+            structureLineage
+          ) : (
+            experimentLineage
+          )
+        ) : selectedTab?.panel === 'vars' ? (
+          structureVarsPanel
+        ) : selectedTab?.panel === 'source' && structureSource ? (
+          <CadEditor
+            diagnostics={structureDocument.diagnostics.filter((diagnostic) => diagnostic.file === 'structure.tsx')}
+            modelPath="file:///structure.tsx"
+            readOnly={structureDocument.sourceReadOnly}
+            value={cadSource(structureSource)}
+            onChange={structureDocument.handleSourceChange}
+          />
+        ) : selectedTab?.panel === 'program' && experimentSource ? (
+          <div className="grid h-full min-h-0 grid-rows-2 divide-y">
+            <div className="flex min-h-0 flex-col">
+              <div className="shrink-0 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">experiment.tsx</div>
+              <div className="min-h-0 flex-1">
                 <CadEditor
-                  diagnostics={document.diagnostics.filter(
-                    (diagnostic) => diagnostic.file === `${tab.documentType}.tsx`,
+                  diagnostics={experimentDocument.diagnostics.filter(
+                    (diagnostic) => diagnostic.file === EXPERIMENT_ENTRY_PATH,
                   )}
-                  modelPath={`file:///${tab.documentType}.tsx`}
-                  readOnly={document.sourceReadOnly}
-                  value={source}
-                  onChange={document.handleSourceChange}
+                  modelPath="file:///experiment.tsx"
+                  readOnly={experimentDocument.sourceReadOnly}
+                  value={experimentSource.sourceBundle.files[EXPERIMENT_ENTRY_PATH]}
+                  onChange={(source) => experimentDocument.handleExperimentFileChange(EXPERIMENT_ENTRY_PATH, source)}
                 />
-              ) : tab.panel === 'python' ? (
+              </div>
+            </div>
+            <div className="flex min-h-0 flex-col">
+              <div className="shrink-0 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">simulate.py</div>
+              <div className="min-h-0 flex-1">
                 <CadEditor
                   language="python"
                   modelPath="file:///simulate.py"
-                  readOnly={document.sourceReadOnly}
-                  value={sourceDocument?.simulationCode ?? ''}
-                  onChange={document.handleSimulationCodeChange}
+                  readOnly={experimentDocument.sourceReadOnly}
+                  value={experimentSource.sourceBundle.files[EXPERIMENT_SIMULATION_PATH]}
+                  onChange={(source) =>
+                    experimentDocument.handleExperimentFileChange(EXPERIMENT_SIMULATION_PATH, source)
+                  }
                 />
-              ) : null}
+              </div>
             </div>
-          )
-        })}
+          </div>
+        ) : selectedTab?.panel === 'task' && experimentSource && selectedTab.taskPath ? (
+          <CadEditor
+            diagnostics={experimentDocument.diagnostics.filter(
+              (diagnostic) => diagnostic.file === selectedTab.taskPath,
+            )}
+            modelPath={`file:///${selectedTab.taskPath}`}
+            readOnly={experimentDocument.sourceReadOnly}
+            value={experimentSource.sourceBundle.files[selectedTab.taskPath]}
+            onChange={(source) => experimentDocument.handleExperimentFileChange(selectedTab.taskPath!, source)}
+          />
+        ) : null}
       </div>
 
       <footer className="min-h-24 shrink-0 border-t border-slate-200 bg-slate-50 px-5 py-3">
@@ -234,7 +354,7 @@ export function StructureExperimentViewer({
           <div className="text-sm text-slate-600">
             {activeDocument.documentType === 'structure'
               ? 'Edit the Structure definition. Successful geometry remains visible while new errors are shown here.'
-              : 'Edit the Experiment definition. Structure targets remain name-based until simulation time.'}
+              : 'Program defines shared vars and RecordedData. Each Task owns its geometry, length unit, and kernel config.'}
           </div>
         )}
       </footer>

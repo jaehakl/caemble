@@ -1,8 +1,7 @@
 import { compileCadDocument } from '../compiler/monacoCompiler'
-import { rawCodeHash } from '../compiler/semanticHash'
 import { evaluateInIsolatedRunner } from '../runner/client'
 import { assertCadEvaluationRequest } from '../runner/protocol'
-import { assertCadSourceDocument, type CadEvaluationInput } from '../source/document'
+import { EXPERIMENT_SIMULATION_PATH, assertCadSourceDocument, type CadEvaluationInput } from '../source/document'
 import type { CadDiagnostic, CadEvaluationRequest } from '../worker/protocol'
 import type { EvaluatedDocumentSnapshot } from './snapshot'
 
@@ -30,17 +29,16 @@ export async function evaluateDocument(
     throw new CadDocumentEvaluationError('Evaluation seed must be a non-negative safe integer.')
   }
   if (options.signal?.aborted) throw new DOMException('The CAD evaluation was aborted.', 'AbortError')
-  const compiledSource = await compileCadDocument(input.document)
-  const simulationCode =
-    input.document.kind === 'experiment' && input.document.simulationCode?.trim() ? input.document.simulationCode : null
-  const simulationCodeHash = simulationCode ? await rawCodeHash(simulationCode) : null
+  const compiledDocument = await compileCadDocument(input.document)
+  const pythonSource =
+    input.document.kind === 'experiment' ? input.document.sourceBundle.files[EXPERIMENT_SIMULATION_PATH] : null
   const request: CadEvaluationRequest = {
     type: 'evaluate',
-    compiledSource,
+    compiledDocument,
     document: {
       kind: input.document.kind,
       realizationSeed: input.seed,
-      ...(simulationCode && simulationCodeHash ? { simulationCode, simulationCodeHash } : {}),
+      ...(pythonSource ? { pythonSource } : {}),
     },
     requestId: `evaluate-${crypto.randomUUID()}`,
     revision: 0,

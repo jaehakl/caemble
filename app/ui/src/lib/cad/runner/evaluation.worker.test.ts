@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CAD_COMPILER_VERSION, type CompiledCadSource } from '../compiler/types'
+import { CAD_COMPILER_VERSION, type CompiledCadDocument } from '../compiler/types'
 import type { RunnerEvaluationEnvelope } from './protocol'
 
 const responses: unknown[] = []
@@ -11,12 +11,17 @@ const workerScope = {
 }
 const nonce = '12345678-90ab-cdef-1234-567890abcdef'
 const structureHash = 'c'.repeat(64)
-const compiledStructure: CompiledCadSource = {
-  apiVersion: 3,
+const compiledStructure: CompiledCadDocument = {
+  apiVersion: 4,
   compilerVersion: CAD_COMPILER_VERSION,
-  entryFile: 'structure.tsx',
   sourceHash: structureHash,
-  code: `
+  sources: {
+    'structure.tsx': {
+      apiVersion: 4,
+      compilerVersion: CAD_COMPILER_VERSION,
+      entryFile: 'structure.tsx',
+      sourceHash: structureHash,
+      code: `
 const { structure } = require('@caemble/core')
 function Body({ width }) {
   return h('box', { size: [width, 1, 1] })
@@ -27,6 +32,8 @@ module.exports.default = structure({
   geometry: ({ vars }) => h(Body, { id: 'body', width: vars.width }),
 })
 `,
+    },
+  },
 }
 
 function dispatch(data: RunnerEvaluationEnvelope | unknown) {
@@ -60,7 +67,7 @@ describe('evaluation Worker', () => {
         requestId: 'evaluation-1',
         revision: 2,
         document: { kind: 'structure', realizationSeed: 7 },
-        compiledSource: compiledStructure,
+        compiledDocument: compiledStructure,
         vars: { width: 4 },
       },
     })

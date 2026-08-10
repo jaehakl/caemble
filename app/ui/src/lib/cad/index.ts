@@ -11,7 +11,14 @@ export type {
   CadSceneTreeNode,
 } from './evaluation/types'
 export { CadModelError, isFloatDType, Mat, Material } from './model/core'
-export { experiment, ExperimentDefinition, structure, StructureDefinition } from './model/v3'
+export {
+  defineTask,
+  experiment,
+  ExperimentDefinition,
+  structure,
+  StructureDefinition,
+  TaskDefinition,
+} from './model/v4'
 export type {
   CadDefinition,
   ExperimentDefinitionOptions,
@@ -19,8 +26,10 @@ export type {
   InferVars,
   ModelContext,
   StructureDefinitionOptions,
+  TaskDefinitionOptions,
+  TaskModelContext,
   VarsSchemaDefinition,
-} from './model/v3'
+} from './model/v4'
 export { assertUcumUnitComparable, convertUcumValue, normalizeUcumUnit } from './model/units'
 export { normalizeDataValueDescriptor } from './model/core'
 export type {
@@ -83,16 +92,33 @@ export {
   CAD_SOURCE_API_VERSION,
   CAD_SOURCE_FORMAT_VERSION,
   MAX_CAD_SOURCE_BYTES,
+  EXPERIMENT_ENTRY_PATH,
+  EXPERIMENT_SIMULATION_PATH,
+  EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION,
+  addExperimentTask,
   assertCadSourceDocument,
+  assertExperimentSourceBundle,
   cadSource,
   cadSourceHash,
   createCadSourceDocument,
+  createExperimentSourceBundle,
   createRealizationSeed,
+  experimentSourceFile,
+  experimentTaskName,
+  experimentTaskPaths,
+  removeExperimentTask,
   rerollCadSourceDocument,
-  updateCadSimulationCode,
   updateCadSource,
+  updateExperimentSourceFile,
 } from './source/document'
-export type { CadDocumentType, CadEvaluationInput, CadSourceDocument } from './source/document'
+export type {
+  CadDocumentType,
+  CadEvaluationInput,
+  CadSourceDocument,
+  ExperimentSourceBundle,
+  ExperimentSourceDocument,
+  StructureSourceDocument,
+} from './source/document'
 export { CadDocumentEvaluationError, evaluateDocument } from './execution/evaluateDocument'
 export type { EvaluateDocumentOptions } from './execution/evaluateDocument'
 export { assertEvaluatedDocumentSnapshot, serializeEvaluatedDocumentSnapshot } from './execution/snapshot'
@@ -108,7 +134,7 @@ export {
   buildRealization,
   buildSourceOnlyRealization,
 } from './execution/realization'
-export type { BuiltRealization, BuiltSample, BuiltSetup } from './execution/realization'
+export type { BuiltRealization, BuiltSample, BuiltSetup, TaskMaterialResolution } from './execution/realization'
 export { assertSerializableCadScene, deserializeCadScene, serializeCadScene } from './execution/mesh'
 export type { SerializableCadMesh, SerializableCadScene, SerializableCadScenePart } from './execution/mesh'
 export { normalizeRecordedData, normalizeRecordedDataTensor } from './model/recordedData'
@@ -129,8 +155,13 @@ export {
 } from './model/dataTensor'
 export type { DataTensorAccessor } from './model/dataTensor'
 export { CadCompilationError, compileCadDocument } from './compiler/monacoCompiler'
-export type { CadDiagnostic as CompilerDiagnostic, CompiledCadSource } from './compiler/types'
-export { cadSemanticHash, compiledCadSemanticHash, rawCodeHash } from './compiler/semanticHash'
+export type { CadDiagnostic as CompilerDiagnostic, CompiledCadDocument, CompiledCadSource } from './compiler/types'
+export {
+  cadSemanticHash,
+  compiledCadDocumentSemanticHash,
+  compiledCadSemanticHash,
+  rawCodeHash,
+} from './compiler/semanticHash'
 export { evaluateInIsolatedRunner } from './runner/client'
 export type { ArrayAttributes } from './elements/operations/array/definition'
 export type { BooleanAttributes } from './elements/operations/booleans/definition'

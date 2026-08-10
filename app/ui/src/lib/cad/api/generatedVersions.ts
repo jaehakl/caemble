@@ -4,4 +4,4 @@ export const CAEMBLE_MONACO_VERSION = '0.56.0' as const
 export const CAEMBLE_TYPESCRIPT_VERSION = '5.9.3' as const
 export const QUANTITY_KIND_DATA_VERSION = '0.0.1' as const
 export const CAD_API_DECLARATION_FINGERPRINT =
-  'c26e6a6fc9d8be1b7a1883492fa4524633ac00c797ad5d308c1f55d19ac40929' as const
+  '46f15a27e7bedcb83b263a461c447ef9f2a9720a61082d03b324960f6d80bf80' as const

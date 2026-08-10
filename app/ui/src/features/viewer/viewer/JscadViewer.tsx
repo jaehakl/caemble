@@ -831,6 +831,7 @@ function JscadViewer({
             lengthUnit,
             scenes: displayLayers.map((layer) => [
               layer.documentType,
+              layer.taskName ?? null,
               layer.sceneHash,
               layer.parts.map((part) => [part.id, part.material?.name ?? null, materialColor(part.material) ?? null]),
             ]),

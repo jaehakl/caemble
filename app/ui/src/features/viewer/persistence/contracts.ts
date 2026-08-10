@@ -12,7 +12,7 @@ export function createSampleRecord(
 export function createSetupRecord(
   experimentId: number,
   variables: Readonly<Record<string, unknown>>,
-  materialParameters: FrozenMaterialParameters,
+  materialParameters: Readonly<Record<string, unknown>>,
 ): SetupRecord {
   return { experiment_id: experimentId, vars: { ...variables }, material_parameters: materialParameters }
 }

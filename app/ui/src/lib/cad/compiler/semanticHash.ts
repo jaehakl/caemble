@@ -1,7 +1,7 @@
 import { parse } from '@babel/parser'
-import type { CadSourceDocument } from '../source/document'
+import { EXPERIMENT_SIMULATION_PATH, type CadSourceDocument } from '../source/document'
 import { compileCadDocument } from './monacoCompiler'
-import type { CompiledCadSource } from './types'
+import type { CompiledCadDocument, CompiledCadSource } from './types'
 
 const ignoredAstFields = new Set([
   'comments',
@@ -42,6 +42,20 @@ export async function compiledCadSemanticHash(compiled: CompiledCadSource) {
   return sha256(JSON.stringify(canonicalAstValue(ast.program)))
 }
 
+export async function compiledCadDocumentSemanticHash(
+  compiled: CompiledCadDocument,
+  pythonSource: string | null = null,
+) {
+  const sourceHashes = await Promise.all(
+    Object.entries(compiled.sources)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(async ([path, source]) => [path, await compiledCadSemanticHash(source)] as const),
+  )
+  return sha256(JSON.stringify({ sources: sourceHashes, pythonSource }))
+}
+
 export async function cadSemanticHash(document: CadSourceDocument) {
-  return compiledCadSemanticHash(await compileCadDocument(document))
+  const compiled = await compileCadDocument(document)
+  const pythonSource = document.kind === 'experiment' ? document.sourceBundle.files[EXPERIMENT_SIMULATION_PATH] : null
+  return compiledCadDocumentSemanticHash(compiled, pythonSource)
 }

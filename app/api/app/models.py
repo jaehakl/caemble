@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import EmailStr, Field, field_serializer, field_validator
+from pydantic import EmailStr, Field, field_serializer, field_validator, model_validator
 from utils.datetime_utils import serialize_datetime_utc
 
 
@@ -114,8 +114,48 @@ class StructureBase(CodeEntityBase):
     pass
 
 
-class ExperimentBase(CodeEntityBase):
-    simulation_code: Optional[str] = None
+class ExperimentSourceBundle(BaseModel):
+    formatVersion: Literal[1]
+    files: Dict[str, str]
+
+    @model_validator(mode="after")
+    def validate_files(self):
+        import re
+
+        allowed_task = re.compile(r"^tasks/[A-Za-z][A-Za-z0-9_-]*\.tsx$")
+        invalid = [
+            path
+            for path in self.files
+            if path not in {"experiment.tsx", "simulate.py"}
+            and allowed_task.fullmatch(path) is None
+        ]
+        if invalid:
+            raise ValueError(f"Experiment source file path is not allowed: {invalid[0]}")
+        if "experiment.tsx" not in self.files or "simulate.py" not in self.files:
+            raise ValueError("Experiment source bundle requires experiment.tsx and simulate.py.")
+        if not any(allowed_task.fullmatch(path) for path in self.files):
+            raise ValueError("Experiment source bundle requires at least one Task file.")
+        total_bytes = 0
+        for path, source in self.files.items():
+            try:
+                source_bytes = len(source.encode("utf-8"))
+            except UnicodeEncodeError as error:
+                raise ValueError(f"Experiment source {path} must contain valid UTF-8 text.") from error
+            if source_bytes > 1024 * 1024:
+                raise ValueError(f"Experiment source {path} exceeds 1 MiB.")
+            total_bytes += source_bytes
+        if total_bytes > 1024 * 1024:
+            raise ValueError("Experiment source bundle exceeds 1 MiB.")
+        if not self.files["experiment.tsx"].strip() or not self.files["simulate.py"].strip():
+            raise ValueError("Experiment program sources must not be empty.")
+        return self
+
+
+class ExperimentBase(OwnedTimestampFields):
+    parent_id: Optional[int] = None
+    name: str = Field(..., min_length=1)
+    description: Optional[str] = None
+    source_bundle: ExperimentSourceBundle
 
 
 class SaveCodeEntityRequest(BaseModel):
@@ -136,13 +176,19 @@ class SaveCodeEntityRequest(BaseModel):
     )
 
 
-class SaveExperimentRequest(SaveCodeEntityRequest):
-    simulationCode: str = Field(..., min_length=1)
-    simulationRawCodeHash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
-    baseSimulationRawCodeHash: Optional[str] = Field(
+class SaveExperimentRequest(BaseModel):
+    id: Optional[int] = None
+    name: str = Field(..., min_length=1)
+    description: Optional[str] = None
+    sourceBundle: ExperimentSourceBundle
+    bundleHash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    semanticHash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    semanticHashVersion: Literal[2]
+    baseBundleHash: Optional[str] = Field(
         default=None,
         pattern=r"^[0-9a-f]{64}$",
     )
+    baseSemanticHash: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class SaveCodeEntityResponse(BaseModel):

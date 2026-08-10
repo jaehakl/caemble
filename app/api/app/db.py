@@ -286,8 +286,7 @@ class Experiment(TimestampMixin, Base):
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    code: Mapped[str] = mapped_column(Text, nullable=False)
-    simulation_code: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source_bundle: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     code_embedding: Mapped[Optional[List[float]]] = mapped_column(
         Vector(768),
         nullable=True,

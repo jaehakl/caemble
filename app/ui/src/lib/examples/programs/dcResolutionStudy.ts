@@ -1,14 +1,40 @@
 import { dcUniformBarStructureCode } from './dcUniformBar'
+import { createExperimentSourceBundle } from '../../cad'
 import type { CaembleProgramExample } from './types'
 
-export const dcResolutionStudyExperimentCode = `import { defineTask, experiment } from '@caemble/core'
+export const dcResolutionStudyExperimentCode = `import { experiment } from '@caemble/core'
 
-function currentTask(
-  gridShape: readonly [number, number, number],
-  outputKey: string,
-  sourceVoltage: number,
-) {
-  return defineTask({ name: 'dc-current-density', version: '0.0.0' }, {
+export default experiment({
+  varsSchema: {
+    sourceVoltage: { min: 1, max: 1 },
+  },
+  recordedData: {
+    coarseTotalCurrent: {
+      dtype: 'float64',
+      unit: 'A',
+      quantityKind: 'electromagnetism.ElectricCurrent',
+    },
+    fineTotalCurrent: {
+      dtype: 'float64',
+      unit: 'A',
+      quantityKind: 'electromagnetism.ElectricCurrent',
+    },
+  },
+})
+`
+
+function resolutionTaskCode(gridShape: string, outputKey: string, probePosition: number) {
+  return `import { defineTask } from '@caemble/core'
+
+function ConvergenceProbe() {
+  return <box size={[2, 2, 2]} />
+}
+
+export default defineTask({
+  kernel: { name: 'dc-current-density', version: '0.0.0' },
+  lengthUnit: 'mm',
+  geometry: () => <ConvergenceProbe id="convergence-probe" pos={[0, ${probePosition}, 0]} />,
+  config: ({ vars }) => ({
     parameters: {
       relativeTolerance: {
         dtype: 'float64',
@@ -27,7 +53,7 @@ function currentTask(
           gridShape: {
             dtype: 'int32',
             axes: [{ length: 3 }],
-            value: gridShape,
+            value: ${gridShape},
           },
         },
       },
@@ -40,7 +66,7 @@ function currentTask(
         parameters: {
           voltage: {
             dtype: 'float64',
-            value: sourceVoltage,
+            value: vars.sourceVoltage,
             unit: 'mV',
             quantityKind: 'electromagnetism.Voltage',
           },
@@ -62,7 +88,7 @@ function currentTask(
 
     outputs: [
       {
-        key: outputKey,
+        key: '${outputKey}',
         target: ['structure.geometry.conductor'],
         methodId: 'dc.total-current',
         parameters: {
@@ -75,44 +101,15 @@ function currentTask(
         },
       },
     ],
-  })
-}
-
-function ConvergenceProbe() {
-  return <box size={[2, 2, 2]} />
-}
-
-export default experiment({
-  lengthUnit: 'mm',
-
-  varsSchema: {
-    sourceVoltage: { min: 1, max: 1 },
-  },
-
-  geometry: () => <ConvergenceProbe id="convergence-probe" pos={[0, -10, 0]} />,
-
-  tasks: ({ vars }) => ({
-    solveCoarse: currentTask([10, 7, 7], 'coarseTotalCurrent', vars.sourceVoltage),
-    solveFine: currentTask([20, 11, 11], 'fineTotalCurrent', vars.sourceVoltage),
   }),
-
-  recordedData: {
-    coarseTotalCurrent: {
-      dtype: 'float64',
-      unit: 'A',
-      quantityKind: 'electromagnetism.ElectricCurrent',
-    },
-    fineTotalCurrent: {
-      dtype: 'float64',
-      unit: 'A',
-      quantityKind: 'electromagnetism.ElectricCurrent',
-    },
-  },
-
 })
 `
+}
 
-export const dcResolutionStudySimulationCode = `async def simulate(*, sim, tasks, vars, world):
+export const dcResolutionStudyCoarseTaskCode = resolutionTaskCode('[10, 7, 7]', 'coarseTotalCurrent', -10)
+export const dcResolutionStudyFineTaskCode = resolutionTaskCode('[20, 11, 11]', 'fineTotalCurrent', -14)
+
+export const dcResolutionStudySimulationCode = `async def simulate(*, sim, tasks, vars):
     coarse = await sim.run(tasks["solveCoarse"])
     await sim.record(
         "coarseTotalCurrent",
@@ -126,6 +123,13 @@ export const dcResolutionStudySimulationCode = `async def simulate(*, sim, tasks
     return fine["state"]
 `
 
+export const dcResolutionStudyExperimentSourceBundle = createExperimentSourceBundle({
+  'experiment.tsx': dcResolutionStudyExperimentCode,
+  'simulate.py': dcResolutionStudySimulationCode,
+  'tasks/solveCoarse.tsx': dcResolutionStudyCoarseTaskCode,
+  'tasks/solveFine.tsx': dcResolutionStudyFineTaskCode,
+})
+
 export const dcResolutionStudyExample = Object.freeze({
   id: 'dc-resolution-study',
   title: 'DC Resolution Study',
@@ -136,8 +140,7 @@ export const dcResolutionStudyExample = Object.freeze({
     '여러 task의 RecordedData와 trace 비교',
   ]),
   structureCode: dcUniformBarStructureCode,
-  experimentCode: dcResolutionStudyExperimentCode,
-  simulationCode: dcResolutionStudySimulationCode,
+  experimentSourceBundle: dcResolutionStudyExperimentSourceBundle,
   verification: Object.freeze({
     kernelTasks: Object.freeze(['solveCoarse', 'solveFine']),
     recordedData: Object.freeze(['coarseTotalCurrent', 'fineTotalCurrent']),

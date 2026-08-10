@@ -1,114 +1,104 @@
 import { dbTables, type SaveCodeEntityResponse } from '@/api'
 import {
-  cadSource,
   cadSemanticHash,
+  cadSource,
   createCadSourceDocument,
   rawCodeHash,
   type CadDocumentType,
   type CadSourceDocument,
+  type ExperimentSourceBundle,
 } from '@/lib/cad'
 import type { DefinitionFormValues } from './SaveDefinitionDialog'
+
+function canonicalBundle(bundle: ExperimentSourceBundle) {
+  return JSON.stringify({
+    files: Object.fromEntries(Object.entries(bundle.files).sort(([left], [right]) => left.localeCompare(right))),
+    formatVersion: bundle.formatVersion,
+  })
+}
+
+export async function experimentSourceBundleHash(bundle: ExperimentSourceBundle) {
+  return rawCodeHash(canonicalBundle(bundle))
+}
 
 export async function saveCadDefinition({
   document,
   forceRoot = false,
   kind,
   savedCode,
-  savedSimulationCode,
+  savedSourceBundle,
   selectedId,
-  simulationCode,
   values,
 }: {
   document: CadSourceDocument
   forceRoot?: boolean
   kind: CadDocumentType
   savedCode: string | null
-  savedSimulationCode?: string | null
+  savedSourceBundle?: ExperimentSourceBundle | null
   selectedId: number | null
-  simulationCode?: string | null
   values: DefinitionFormValues
-}): Promise<SaveCodeEntityResponse & { code: string; kind: CadDocumentType; simulationCode?: string }> {
-  if (!forceRoot && selectedId && savedCode === null) throw new Error('저장 기준 source를 찾을 수 없습니다.')
-  if (kind === 'experiment' && !simulationCode?.trim()) {
-    throw new Error('Python simulate source가 필요합니다.')
+}): Promise<
+  SaveCodeEntityResponse & {
+    code?: string
+    kind: CadDocumentType
+    sourceBundle?: ExperimentSourceBundle
   }
-  if (kind === 'experiment' && !forceRoot && selectedId && savedSimulationCode === null) {
-    throw new Error('Python source가 없는 기존 Experiment는 수정할 수 없습니다. 새 root로 저장하세요.')
-  }
-
-  const code = cadSource(document)
+> {
   const activeId = forceRoot ? null : selectedId
-  const baseCode = forceRoot ? null : savedCode
-  const pythonSource = kind === 'experiment' ? simulationCode! : null
-  const basePythonSource = forceRoot || kind === 'structure' ? null : savedSimulationCode
-
-  if (baseCode === code && basePythonSource === pythonSource) {
-    const unchangedHash = await rawCodeHash(code)
-    const simulationRawCodeHash = pythonSource === null ? null : await rawCodeHash(pythonSource)
-    const payload = {
+  if (kind === 'structure') {
+    if (document.kind !== 'structure') throw new Error('Structure source document가 필요합니다.')
+    if (!forceRoot && selectedId && savedCode === null) throw new Error('저장 기준 source를 찾을 수 없습니다.')
+    const code = cadSource(document)
+    const baseCode = forceRoot ? null : savedCode
+    const unchanged = baseCode === code
+    const baseDocument =
+      baseCode === null ? null : createCadSourceDocument('structure', baseCode, document.realizationSeed)
+    const [nextRawHash, semanticHash, baseRawHash, baseSemanticHash] = await Promise.all([
+      rawCodeHash(code),
+      unchanged ? rawCodeHash(code) : cadSemanticHash(document),
+      baseCode === null ? Promise.resolve(undefined) : rawCodeHash(baseCode),
+      baseDocument === null
+        ? Promise.resolve(undefined)
+        : unchanged
+          ? rawCodeHash(baseCode!)
+          : cadSemanticHash(baseDocument),
+    ])
+    const result = await dbTables.Structure.save({
       ...(activeId ? { id: activeId } : {}),
       name: values.name,
       description: values.description || null,
       code,
-      rawCodeHash: unchangedHash,
-      semanticHash: unchangedHash,
-      semanticHashVersion: 1 as const,
-      ...(activeId ? { baseRawCodeHash: unchangedHash } : {}),
-      ...(simulationRawCodeHash
-        ? {
-            simulationCode: pythonSource!,
-            simulationRawCodeHash,
-            ...(activeId ? { baseSimulationRawCodeHash: simulationRawCodeHash } : {}),
-          }
-        : {}),
-    }
-    const result =
-      kind === 'structure'
-        ? await dbTables.Structure.save(payload)
-        : await dbTables.Experiment.save({
-            ...payload,
-            simulationCode: pythonSource!,
-            simulationRawCodeHash: simulationRawCodeHash!,
-          })
-    return { ...result, code, kind, ...(pythonSource === null ? {} : { simulationCode: pythonSource }) }
+      rawCodeHash: nextRawHash,
+      semanticHash,
+      semanticHashVersion: 1,
+      ...(baseRawHash ? { baseRawCodeHash: baseRawHash } : {}),
+      ...(baseSemanticHash ? { baseSemanticHash } : {}),
+    })
+    return { ...result, code, kind }
   }
 
+  if (document.kind !== 'experiment') throw new Error('Experiment source bundle이 필요합니다.')
+  if (!forceRoot && selectedId && !savedSourceBundle) throw new Error('저장 기준 source bundle을 찾을 수 없습니다.')
+  const sourceBundle = document.sourceBundle
+  const baseBundle = forceRoot ? null : (savedSourceBundle ?? null)
   const baseDocument =
-    baseCode === null ? null : createCadSourceDocument(kind, baseCode, document.realizationSeed, basePythonSource)
-  const [nextRawHash, semanticHash, baseRawHash, baseSemanticHash, simulationRawCodeHash, baseSimulationRawCodeHash] =
-    await Promise.all([
-      rawCodeHash(code),
-      cadSemanticHash(document),
-      baseCode === null ? Promise.resolve(undefined) : rawCodeHash(baseCode),
-      baseDocument === null ? Promise.resolve(undefined) : cadSemanticHash(baseDocument),
-      pythonSource === null ? Promise.resolve(undefined) : rawCodeHash(pythonSource),
-      basePythonSource == null ? Promise.resolve(undefined) : rawCodeHash(basePythonSource),
-    ])
-  const payload = {
+    baseBundle === null ? null : createCadSourceDocument('experiment', baseBundle, document.realizationSeed)
+  const [bundleHash, semanticHash, baseBundleHash, baseSemanticHash] = await Promise.all([
+    experimentSourceBundleHash(sourceBundle),
+    cadSemanticHash(document),
+    baseBundle === null ? Promise.resolve(undefined) : experimentSourceBundleHash(baseBundle),
+    baseDocument === null ? Promise.resolve(undefined) : cadSemanticHash(baseDocument),
+  ])
+  const result = await dbTables.Experiment.save({
     ...(activeId ? { id: activeId } : {}),
     name: values.name,
     description: values.description || null,
-    code,
-    rawCodeHash: nextRawHash,
+    sourceBundle,
+    bundleHash,
     semanticHash,
-    semanticHashVersion: 1 as const,
-    ...(baseRawHash ? { baseRawCodeHash: baseRawHash } : {}),
+    semanticHashVersion: 2,
+    ...(baseBundleHash ? { baseBundleHash } : {}),
     ...(baseSemanticHash ? { baseSemanticHash } : {}),
-    ...(simulationRawCodeHash
-      ? {
-          simulationCode: pythonSource!,
-          simulationRawCodeHash,
-          ...(baseSimulationRawCodeHash ? { baseSimulationRawCodeHash } : {}),
-        }
-      : {}),
-  }
-  const result =
-    kind === 'structure'
-      ? await dbTables.Structure.save(payload)
-      : await dbTables.Experiment.save({
-          ...payload,
-          simulationCode: pythonSource!,
-          simulationRawCodeHash: simulationRawCodeHash!,
-        })
-  return { ...result, code, kind, ...(pythonSource === null ? {} : { simulationCode: pythonSource }) }
+  })
+  return { ...result, kind, sourceBundle }
 }

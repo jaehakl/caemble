@@ -129,12 +129,13 @@ async def upsert_items(
         existing = existing_entities.get(item.id)
         if existing is None:
             continue
+        immutable_payload = item.model_dump(include=set(spec.immutable_update_fields))
         changed_field = next(
             (
                 field_name
                 for field_name in spec.immutable_update_fields
                 if field_name in item.model_fields_set
-                and getattr(existing, field_name) != getattr(item, field_name)
+                and getattr(existing, field_name) != immutable_payload[field_name]
             ),
             None,
         )

@@ -2,11 +2,13 @@
 
 이 문서는 버전 경로가 없는 CAD authoring과 Python CAE slave 실행 계약을 설명한다.
 
-Structure는 TSX Source 하나로 작성하고, Experiment는 선언 TSX와 Python `simulate.py`를 함께 저장한다.
+Structure는 TSX Source 하나로 작성한다. Experiment는 `experiment.tsx`, `simulate.py`, 하나 이상의
+`tasks/*.tsx`를 `{ formatVersion: 1, files }` JSON bundle 하나로 원자적으로 저장한다.
 
 ```text
-Structure Source + Experiment Source
-→ Source별 1회 compile/evaluate
+Structure Source + Experiment source bundle
+→ 공통 vars 1회 resolve, TSX 파일별 compile/evaluate
+→ Task별 scene/config/material snapshot 생성
 → 작성 단위를 보존한 raw sample/setup 직렬화
 → WebRTC를 통한 CAE slave 요청
 → CAE manifest 기준 검증과 UCUM 단위 변환
@@ -18,11 +20,8 @@ Structure Source + Experiment Source
 
 공개 import는 하나뿐이다.
 
-```ts
-import { defineTask, experiment, structure } from "@caemble/core";
-```
-
-상대 경로, 동적 import, `require()`, 버전 경로가 붙은 package import는 지원하지 않는다.
+각 TSX 파일의 공개 import는 `@caemble/core` 하나뿐이다. 상대 import, Task 간 import,
+동적 import, `require()`, 버전 경로가 붙은 package import는 지원하지 않는다.
 
 ## 역할 구분
 
@@ -80,104 +79,15 @@ export default structure({
 });
 ```
 
-## Experiment Source
+## 공통 Experiment Source (`experiment.tsx`)
 
 ```tsx
-import { defineTask, experiment, type Geometry } from "@caemble/core";
-
-const Probe: Geometry = () => <box size={[1, 1, 1]} />;
+import { experiment } from "@caemble/core";
 
 export default experiment({
-  lengthUnit: "mm",
   varsSchema: {
     sourceVoltage: { min: 1, max: 1 },
   },
-  geometry: () => <Probe id="probe" />,
-
-  tasks: ({ vars }) => ({
-    electric: defineTask(
-      { name: "dc-current-density", version: "0.0.0" },
-      {
-        parameters: {
-          relativeTolerance: {
-            dtype: "float64",
-            value: 1e-8,
-            unit: "{fraction}",
-            quantityKind: "DimensionlessRatio",
-          },
-          maxIterations: 2000,
-        },
-        initializations: [
-          {
-            methodId: "dc.voxel-grid",
-            target: ["structure.geometry.conductor"],
-            parameters: {
-              gridShape: {
-                dtype: "int32",
-                axes: [{ length: 3 }],
-                value: [100, 41, 41],
-              },
-            },
-          },
-        ],
-        boundaryConditions: [
-          {
-            methodId: "dc.source-potential",
-            target: ["structure.surface.sourceTerminal"],
-            parameters: {
-              voltage: {
-                dtype: "float64",
-                value: vars.sourceVoltage,
-                unit: "mV",
-                quantityKind: "electromagnetism.Voltage",
-              },
-            },
-          },
-          {
-            methodId: "dc.reference-potential",
-            target: ["structure.surface.referenceTerminal"],
-            parameters: {
-              voltage: {
-                dtype: "float64",
-                value: 0,
-                unit: "mV",
-                quantityKind: "electromagnetism.Voltage",
-              },
-            },
-          },
-        ],
-        outputs: [
-          {
-            key: "currentDensity",
-            methodId: "dc.current-density",
-            target: ["structure.geometry.conductor"],
-            parameters: {
-              crossSectionPosition: {
-                dtype: "float64",
-                value: 0.5,
-                unit: "{fraction}",
-                quantityKind: "DimensionlessRatio",
-              },
-            },
-          },
-          {
-            key: "totalCurrent",
-            methodId: "dc.total-current",
-            target: ["structure.geometry.conductor"],
-            parameters: {
-              crossSectionPosition: {
-                dtype: "float64",
-                value: 0.5,
-                unit: "{fraction}",
-                quantityKind: "DimensionlessRatio",
-              },
-            },
-          },
-        ],
-      },
-    ),
-  }),
-
   recordedData: {
     measuredCurrent: {
       dtype: "float64",
@@ -188,10 +98,94 @@ export default experiment({
 });
 ```
 
+## Task Source (`tasks/electric.tsx`)
+
+Task 이름 `electric`은 파일명에서 등록된다. `geometry`를 사용하지 않는 Task도
+`geometry: () => null`과 `lengthUnit`을 반드시 선언한다.
+
+```tsx
+import { defineTask } from "@caemble/core";
+
+function Probe() {
+  return <box size={[1, 1, 1]} />;
+}
+
+export default defineTask({
+  kernel: { name: "dc-current-density", version: "0.0.0" },
+  lengthUnit: "mm",
+  geometry: () => <Probe id="probe" />,
+  geometryGroup: { probe: ["probe"] },
+  config: ({ vars }) => ({
+    parameters: {
+      relativeTolerance: {
+        dtype: "float64",
+        value: 1e-8,
+        unit: "{fraction}",
+        quantityKind: "DimensionlessRatio",
+      },
+      maxIterations: 2000,
+    },
+    initializations: [
+      {
+        methodId: "dc.voxel-grid",
+        target: ["structure.geometry.conductor"],
+        parameters: {
+          gridShape: {
+            dtype: "int32",
+            axes: [{ length: 3 }],
+            value: [100, 41, 41],
+          },
+        },
+      },
+    ],
+    boundaryConditions: [
+      {
+        methodId: "dc.source-potential",
+        target: ["structure.surface.sourceTerminal"],
+        parameters: {
+          voltage: {
+            dtype: "float64",
+            value: vars.sourceVoltage,
+            unit: "mV",
+            quantityKind: "electromagnetism.Voltage",
+          },
+        },
+      },
+      {
+        methodId: "dc.reference-potential",
+        target: ["structure.surface.referenceTerminal"],
+        parameters: {
+          voltage: {
+            dtype: "float64",
+            value: 0,
+            unit: "mV",
+            quantityKind: "electromagnetism.Voltage",
+          },
+        },
+      },
+    ],
+    outputs: [
+      {
+        key: "currentDensity",
+        methodId: "dc.current-density",
+        target: ["structure.geometry.conductor"],
+        parameters: {},
+      },
+      {
+        key: "totalCurrent",
+        methodId: "dc.total-current",
+        target: ["structure.geometry.conductor"],
+        parameters: {},
+      },
+    ],
+  }),
+});
+```
+
 ## Python simulate.py
 
 ```python
-async def simulate(*, sim, tasks, vars, world):
+async def simulate(*, sim, tasks, vars):
     electric = await sim.run(tasks["electric"])
     await sim.record(
         "measuredCurrent",
@@ -206,7 +200,8 @@ Python source는 import, 파일·네트워크 접근, `eval` 계열을 허용하
 
 ## Multiphysics orchestration
 
-여러 physics kernel도 같은 `tasks` object에 선언한다. 연결 순서와 전달할 artifact는 Python `simulate()`가 직접 결정한다.
+여러 physics kernel은 각각 독립된 `tasks/<taskName>.tsx` 파일로 선언한다. 연결 순서와 전달할
+artifact는 Python `simulate()`가 직접 결정한다. `experiment.*` target은 현재 실행 중인 Task scene만 가리킨다.
 
 ```python
 electric = await sim.run(tasks["electric"])
@@ -278,8 +273,8 @@ Caemble의 `app/slaves/cae/app/solvers/<solver_name>/`에 `manifest.json`,
 않는다. Solver Catalog는 같은 manifest를 Vite build 시 직접 포함하므로 변경 후 UI를
 다시 빌드한다. 외부 SDK 호환을 위한 `cae.solvers.manifests` handler는 그대로 유지한다.
 
-UI example을 `defineTask({ name, version }, config)`로 추가하고 raw fixture를
-재생성해 UI-CAE 계약 테스트를 실행한다.
+UI example에는 공통 `experiment.tsx`, `simulate.py`, 독립 `tasks/*.tsx` bundle을 추가하고 raw
+fixture를 재생성해 UI-CAE 계약 테스트를 실행한다.
 
 ## 검증
 

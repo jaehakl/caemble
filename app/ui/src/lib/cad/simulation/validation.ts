@@ -95,8 +95,8 @@ function assertRecordedDataSpec(value: unknown, path: string): asserts value is 
 export function assertSimulationProgramManifest(value: unknown): asserts value is SimulationProgramManifest {
   if (
     !isPlainObject(value) ||
-    value.formatVersion !== 3 ||
-    value.simulationApiVersion !== 1 ||
+    value.formatVersion !== 4 ||
+    value.simulationApiVersion !== 2 ||
     typeof value.pythonSource !== 'string' ||
     !value.pythonSource.trim() ||
     !isPlainObject(value.tasks) ||

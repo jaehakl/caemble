@@ -88,16 +88,31 @@ def test_deployed_revision_marker_is_a_noop_compatibility_revision():
     assert source.count("    pass") == 2
 
 
-def test_source_migration_graph_ends_at_retired_token_import_cleanup():
+def test_source_migration_graph_ends_at_experiment_source_bundles():
     root = Path(__file__).resolve().parents[1]
     scripts = ScriptDirectory.from_config(Config(root / "alembic.ini"))
 
-    assert scripts.get_heads() == ["b17d4c2e8a90"]
+    assert scripts.get_heads() == ["d2f7a1c9e4b6"]
     assert scripts.get_revision("f24a6b91d3ce").down_revision == "e7b2c5d91a40"
     assert scripts.get_revision("9d31a6f7c2e4").down_revision == "f24a6b91d3ce"
     assert scripts.get_revision("a4c8e2f19b73").down_revision == "9d31a6f7c2e4"
     assert scripts.get_revision("b17d4c2e8a90").down_revision == "a4c8e2f19b73"
+    assert scripts.get_revision("d2f7a1c9e4b6").down_revision == "b17d4c2e8a90"
     assert not any(root.joinpath("alembic", "versions").glob("*_measurement_contract_metadata.py"))
+
+
+def test_experiment_source_bundle_revision_guards_non_empty_tables():
+    revision = next(
+        (Path(__file__).resolve().parents[1] / "alembic" / "versions").glob(
+            "*_use_experiment_source_bundles.py"
+        )
+    )
+    source = revision.read_text(encoding="utf-8")
+    assert "SELECT count(*) FROM experiments" in source
+    assert "raise RuntimeError" in source
+    assert 'sa.Column("source_bundle", postgresql.JSONB' in source
+    assert 'op.drop_column("experiments", "code")' in source
+    assert 'op.drop_column("experiments", "simulation_code")' in source
 
 
 def test_runtime_revision_removes_legacy_connection_and_expands_audit_contract():

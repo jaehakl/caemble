@@ -3,7 +3,7 @@ import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { defaultCode } from '../../defaultCode'
 import { defaultExperimentCode } from '../../defaultExperimentCode'
-import { defaultExperimentProgramCode } from '../../defaultExperimentProgramCode'
+import { defaultExperimentProgramCode, defaultExperimentTaskCode } from '../../defaultExperimentProgramCode'
 import { caembleExamples, caembleProgramExamples } from '../../examples'
 import coreTypes from './caemble-core.d.ts?raw'
 import jsxTypes from './cad-jsx.d.ts?raw'
@@ -66,54 +66,17 @@ describe('unversioned CAD authoring declarations', () => {
     expect(jsxTypes).not.toContain('const Fragment: unknown')
   })
 
-  it('type-checks the v3-only Structure and Experiment defaults', () => {
+  it('type-checks the v4 Structure, Experiment, and Task defaults', () => {
     expect(defaultExperimentCode).toBe(defaultExperimentProgramCode)
     expect(diagnosticsFor(defaultCode)).toEqual([])
     expect(diagnosticsFor(defaultExperimentCode)).toEqual([])
+    expect(diagnosticsFor(defaultExperimentTaskCode)).toEqual([])
   })
 
-  it('allows an orchestration-only Experiment without fixture geometry', () => {
+  it('allows an orchestration-only Experiment without global geometry', () => {
     expect(
-      diagnosticsFor(`
-        import { defineTask, experiment } from '@caemble/core'
-        export default experiment({
-          varsSchema: {},
-          tasks: () => ({
-            electric: defineTask({ name: 'dc-current-density', version: '0.0.0' }, {
-              parameters: {
-                relativeTolerance: {
-                  dtype: 'float64',
-                  value: 1e-8,
-                  unit: '{fraction}',
-                  quantityKind: 'DimensionlessRatio',
-                },
-                maxIterations: 2000,
-              },
-              initializations: [{
-                methodId: 'dc.voxel-grid',
-                target: ['structure.geometry.conductor'],
-                parameters: { gridShape: { dtype: 'int32', axes: [{ length: 3 }], value: [10, 4, 4] } },
-              }],
-              boundaryConditions: [{
-                methodId: 'dc.source-potential',
-                target: ['structure.surface.sourceTerminal'],
-                parameters: { voltage: { dtype: 'float64', value: 1, unit: 'mV', quantityKind: 'electromagnetism.Voltage' } },
-              }, {
-                methodId: 'dc.reference-potential',
-                target: ['structure.surface.referenceTerminal'],
-                parameters: { voltage: { dtype: 'float64', value: 0, unit: 'mV', quantityKind: 'electromagnetism.Voltage' } },
-              }],
-              outputs: [{
-                key: 'current',
-                methodId: 'dc.total-current',
-                target: ['structure.geometry.conductor'],
-                parameters: { crossSectionPosition: { dtype: 'float64', value: 0.5, unit: '{fraction}', quantityKind: 'DimensionlessRatio' } },
-              }],
-            }),
-          }),
-          recordedData: {},
-        })
-      `),
+      diagnosticsFor(`import { experiment } from '@caemble/core'
+      export default experiment({ varsSchema: {}, recordedData: {} })`),
     ).toEqual([])
   })
 
@@ -123,12 +86,14 @@ describe('unversioned CAD authoring declarations', () => {
 
   it.each(caembleProgramExamples)('type-checks the $title Structure–Experiment pair', (example) => {
     expect(diagnosticsFor(example.structureCode)).toEqual([])
-    expect(diagnosticsFor(example.experimentCode)).toEqual([])
+    Object.entries(example.experimentSourceBundle.files)
+      .filter(([path]) => path.endsWith('.tsx'))
+      .forEach(([, source]) => expect(diagnosticsFor(source)).toEqual([]))
   })
 
   it('type-checks the complete Structure and Experiment sources in the standalone guide', () => {
     const sources = [...experimentProgramDoc.matchAll(/```tsx\r?\n([\s\S]*?)```/g)].map((match) => match[1])
-    expect(sources).toHaveLength(2)
+    expect(sources).toHaveLength(3)
     sources.forEach((source) => expect(diagnosticsFor(source)).toEqual([]))
   })
 

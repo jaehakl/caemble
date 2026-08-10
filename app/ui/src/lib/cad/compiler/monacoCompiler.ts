@@ -1,9 +1,15 @@
 import type * as Monaco from 'monaco-editor'
-import { assertCadSourceDocument, cadSourceHash, type CadSourceDocument } from '../source/document'
-import { analyzeCadSource } from '../source/sourceAnalysis'
-import { CAD_COMPILER_VERSION, type CadDiagnostic, type CompiledCadSource } from './types'
+import {
+  EXPERIMENT_ENTRY_PATH,
+  assertCadSourceDocument,
+  cadSourceHash,
+  experimentTaskPaths,
+  type CadSourceDocument,
+} from '../source/document'
+import { analyzeCadSource, analyzeTaskSource } from '../source/sourceAnalysis'
+import { CAD_COMPILER_VERSION, type CadDiagnostic, type CompiledCadDocument, type CompiledCadSource } from './types'
 
-const compilationCache = new Map<string, Promise<CompiledCadSource>>()
+const compilationCache = new Map<string, Promise<CompiledCadDocument>>()
 const maximumCompilationCacheEntries = 32
 const compilationTimeoutMs = 15_000
 
@@ -19,8 +25,20 @@ export class CadCompilationError extends Error {
   }
 }
 
-function assertSourcePolicy(document: CadSourceDocument) {
-  analyzeCadSource(document.source, document.kind)
+function documentSources(document: CadSourceDocument) {
+  if (document.kind === 'structure') return { 'structure.tsx': document.source }
+  return Object.fromEntries(
+    [EXPERIMENT_ENTRY_PATH, ...experimentTaskPaths(document.sourceBundle)].map((path) => [
+      path,
+      document.sourceBundle.files[path],
+    ]),
+  )
+}
+
+function assertSourcePolicy(document: CadSourceDocument, path: string, source: string) {
+  if (document.kind === 'structure') analyzeCadSource(source, 'structure')
+  else if (path === EXPERIMENT_ENTRY_PATH) analyzeCadSource(source, 'experiment')
+  else analyzeTaskSource(source)
 }
 
 function diagnosticMessage(message: string | { messageText: string; next?: readonly unknown[] }): string {
@@ -78,79 +96,87 @@ async function getTypeScriptWorker(monaco: typeof Monaco) {
   throw registrationError
 }
 
-async function compile(document: CadSourceDocument, sourceHash: string): Promise<CompiledCadSource> {
-  const entryFile = `${document.kind}.tsx` as const
-  try {
-    assertSourcePolicy(document)
-  } catch (error) {
-    if (error instanceof CadCompilationError) throw error
-    const message = error instanceof Error ? error.message : String(error)
-    throw new CadCompilationError('policy', message, [
-      {
-        code: 'CAD_POLICY',
-        file: entryFile,
-        message,
-        phase: 'policy',
-        range: {
-          startLineNumber: 1,
-          startColumn: 1,
-          endLineNumber: 1,
-          endColumn: 1,
+async function compile(document: CadSourceDocument, sourceHash: string): Promise<CompiledCadDocument> {
+  const sources = documentSources(document)
+  for (const [path, source] of Object.entries(sources)) {
+    try {
+      assertSourcePolicy(document, path, source)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new CadCompilationError('policy', message, [
+        {
+          code: 'CAD_POLICY',
+          file: path,
+          message,
+          phase: 'policy',
+          range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 },
+          severity: 'error',
         },
-        severity: 'error',
-      },
-    ])
+      ])
+    }
   }
 
   const { loadMonaco } = await import('./monacoRuntime')
   const monaco = await loadMonaco()
-  const uri = monaco.Uri.parse(`file:///caemble-source/${sourceHash}/${entryFile}`)
-  const model = monaco.editor.createModel(document.source, 'typescript', uri)
-
+  const models = Object.fromEntries(
+    Object.entries(sources).map(([path, source]) => {
+      const uri = monaco.Uri.parse(`file:///caemble-source/${sourceHash}/${path}`)
+      return [path, monaco.editor.createModel(source, 'typescript', uri)]
+    }),
+  )
   let timeout = 0
   try {
     const compilation = async () => {
       const workerFactory = await getTypeScriptWorker(monaco)
-      const worker = await workerFactory(uri)
-      const [syntactic, semantic] = await Promise.all([
-        worker.getSyntacticDiagnostics(uri.toString()),
-        worker.getSemanticDiagnostics(uri.toString()),
-      ])
-      const diagnostics = [
-        ...syntactic.map((diagnostic) => convertDiagnostic(diagnostic, model, entryFile, 'syntax')),
-        ...semantic.map((diagnostic) => convertDiagnostic(diagnostic, model, entryFile, 'semantic')),
-      ]
-      const errors = diagnostics.filter((diagnostic) => diagnostic.severity === 'error')
-      if (errors.length > 0) {
-        throw new CadCompilationError(
-          'type',
-          errors
-            .map(
-              (diagnostic) =>
-                `${diagnostic.file}:${diagnostic.range.startLineNumber}:${diagnostic.range.startColumn} ${diagnostic.message}`,
+      const compiledEntries = await Promise.all(
+        Object.entries(models).map(async ([path, model]) => {
+          const worker = await workerFactory(model.uri)
+          const [syntactic, semantic] = await Promise.all([
+            worker.getSyntacticDiagnostics(model.uri.toString()),
+            worker.getSemanticDiagnostics(model.uri.toString()),
+          ])
+          const diagnostics = [
+            ...syntactic.map((diagnostic) => convertDiagnostic(diagnostic, model, path, 'syntax')),
+            ...semantic.map((diagnostic) => convertDiagnostic(diagnostic, model, path, 'semantic')),
+          ]
+          const errors = diagnostics.filter((diagnostic) => diagnostic.severity === 'error')
+          if (errors.length > 0) {
+            throw new CadCompilationError(
+              'type',
+              errors
+                .map(
+                  (diagnostic) =>
+                    `${diagnostic.file}:${diagnostic.range.startLineNumber}:${diagnostic.range.startColumn} ${diagnostic.message}`,
+                )
+                .join('\n'),
+              diagnostics,
             )
-            .join('\n'),
-          diagnostics,
-        )
-      }
-
-      const output = await worker.getEmitOutput(uri.toString())
-      const emittedCode = output.outputFiles.find((file) => file.name.endsWith('.js'))?.text
-      const sourceMap = output.outputFiles.find((file) => file.name.endsWith('.js.map'))?.text
-      if (output.emitSkipped || emittedCode === undefined) {
-        throw new CadCompilationError('compile', `TypeScript did not emit JavaScript for ${entryFile}.`, diagnostics)
-      }
-      const executableCode = emittedCode.replace(/\r?\n\/\/# sourceMappingURL=.*?(?:\r?\n)?$/, '')
+          }
+          const output = await worker.getEmitOutput(model.uri.toString())
+          const emittedCode = output.outputFiles.find((file) => file.name.endsWith('.js'))?.text
+          const sourceMap = output.outputFiles.find((file) => file.name.endsWith('.js.map'))?.text
+          if (output.emitSkipped || emittedCode === undefined) {
+            throw new CadCompilationError('compile', `TypeScript did not emit JavaScript for ${path}.`, diagnostics)
+          }
+          const executableCode = emittedCode.replace(/\r?\n\/\/# sourceMappingURL=.*?(?:\r?\n)?$/u, '')
+          const compiledSource: CompiledCadSource = Object.freeze({
+            apiVersion: 4,
+            compilerVersion: CAD_COMPILER_VERSION,
+            entryFile: path,
+            code: `${executableCode}\n//# sourceURL=caemble://${sourceHash}/${path}`,
+            ...(sourceMap === undefined ? {} : { sourceMap }),
+            sourceHash,
+          })
+          return [path, compiledSource] as const
+        }),
+      )
       return Object.freeze({
-        apiVersion: 3 as const,
+        apiVersion: 4 as const,
         compilerVersion: CAD_COMPILER_VERSION,
-        entryFile,
-        code: `${executableCode}\n//# sourceURL=caemble://${sourceHash}/${entryFile}`,
-        ...(sourceMap === undefined ? {} : { sourceMap }),
         sourceHash,
+        sources: Object.freeze(Object.fromEntries(compiledEntries)),
       })
     }
-
     const timedOut = new Promise<never>((_resolve, reject) => {
       timeout = window.setTimeout(() => {
         reject(new CadCompilationError('compile', 'TypeScript compilation timed out after 15 seconds.'))
@@ -159,7 +185,7 @@ async function compile(document: CadSourceDocument, sourceHash: string): Promise
     return await Promise.race([compilation(), timedOut])
   } finally {
     window.clearTimeout(timeout)
-    model.dispose()
+    Object.values(models).forEach((model) => model.dispose())
   }
 }
 

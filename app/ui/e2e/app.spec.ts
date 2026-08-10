@@ -357,7 +357,7 @@ test('creates a Structure definition from the legacy Viewer hash redirect', asyn
   expect(selectWarnings).toEqual([])
 })
 
-test('blocks the verified v3 uniform-bar example while signed out', async ({ page }) => {
+test('blocks the verified v4 uniform-bar example while signed out', async ({ page }) => {
   test.setTimeout(90_000)
   const pageErrors: string[] = []
   const consoleProblems: string[] = []

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CAD_COMPILER_VERSION, type CompiledCadSource } from '../compiler/types'
+import { CAD_COMPILER_VERSION, type CompiledCadDocument } from '../compiler/types'
 import type { RunnerEvaluationEnvelope } from './protocol'
 
 type MessageHandler = (event: MessageEvent<unknown>) => void
@@ -27,13 +27,21 @@ class FakeWorker {
   }
 }
 
-function compiledSource(entryFile: 'structure.tsx' | 'experiment.tsx'): CompiledCadSource {
+function compiledSource(entryFile: 'structure.tsx' | 'experiment.tsx'): CompiledCadDocument {
+  const sourceHash = (entryFile === 'structure.tsx' ? 'a' : 'b').repeat(64)
   return {
-    apiVersion: 3,
+    apiVersion: 4,
     compilerVersion: CAD_COMPILER_VERSION,
-    entryFile,
-    code: 'module.exports.default = {}',
-    sourceHash: (entryFile === 'structure.tsx' ? 'a' : 'b').repeat(64),
+    sourceHash,
+    sources: {
+      [entryFile]: {
+        apiVersion: 4,
+        compilerVersion: CAD_COMPILER_VERSION,
+        entryFile,
+        code: 'module.exports.default = {}',
+        sourceHash,
+      },
+    },
   }
 }
 
@@ -46,7 +54,7 @@ const evaluation: RunnerEvaluationEnvelope = {
     requestId: 'evaluation-1',
     revision: 2,
     document: { kind: 'structure', realizationSeed: 7 },
-    compiledSource: structureSource,
+    compiledDocument: structureSource,
   },
 }
 const simulation = {

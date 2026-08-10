@@ -25,3 +25,14 @@ async def create_user(db: AsyncSession, role_name: str = "user") -> User:
 
 def auth_headers(user: User) -> dict[str, str]:
     return {"Authorization": f"Bearer {make_access(user)}"}
+
+
+def experiment_source_bundle(label: str = "experiment") -> dict:
+    return {
+        "formatVersion": 1,
+        "files": {
+            "experiment.tsx": label,
+            "simulate.py": "async def simulate(*, sim, tasks, vars):\n    return None\n",
+            "tasks/main.tsx": "task",
+        },
+    }

@@ -6,12 +6,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { caembleProgramExamples } from '@/lib/examples'
 
 const ownership = [
-  ['varsSchema', 'Structure/Experiment 최상위', 'run 전에 결정되는 immutable 설계·실험 변수'],
-  ['geometry, groups, lengthUnit', 'Structure/Experiment 최상위', 'reference geometry, stable target, 저작 단위'],
-  ['tasks()', 'Experiment 최상위', 'vars로 각 kernel task를 구성하는 factory'],
+  ['varsSchema', 'experiment.tsx', '모든 Task가 공유하는 immutable 실험 변수'],
+  ['recordedData', 'experiment.tsx', 'Measurement에 최종 저장할 데이터 schema'],
+  ['geometry, groups, lengthUnit', 'tasks/<name>.tsx', 'Task에 독립적인 scene, stable target, 저작 단위'],
+  ['kernel, config()', 'tasks/<name>.tsx', '공통 vars로 만드는 kernel별 설정'],
   ['task.outputs', 'kernel task 내부', '다른 kernel에도 전달할 중간 artifact 요청'],
-  ['recordedData', 'Experiment 최상위', 'Measurement에 최종 저장할 데이터 schema'],
-  ['simulate.py', 'Experiment Python tab', 'task 순서, 분기, artifact 전달·해제·기록 정책'],
+  ['simulate.py', 'Program tab', 'Task 순서, 분기, artifact 전달·해제·기록 정책'],
 ] as const
 
 const dcMethods = [
@@ -33,6 +33,9 @@ function Code({ children }: { children: string }) {
 
 export function ExperimentProgramGuide() {
   const firstExample = caembleProgramExamples[0]
+  const taskSources = Object.entries(firstExample.experimentSourceBundle.files).filter(([path]) =>
+    path.startsWith('tasks/'),
+  )
 
   return (
     <section className="bg-white">
@@ -46,8 +49,8 @@ export function ExperimentProgramGuide() {
             kernel task를 조합해 문제에 맞는 CAE 프로그램을 작성합니다
           </h2>
           <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600 sm:text-base">
-            고정된 geometry와 설계 변수는 Experiment 최상위에 두고, 물리 분야별 수치 설정은 named task로 분리합니다.{' '}
-            Python <Code>simulate()</Code>에는 task의 선택·순서·분기와 결과 기록만 남깁니다.
+            공통 변수와 기록 schema는 <Code>experiment.tsx</Code>에 두고, 각 Task의 scene·단위·kernel 설정은 독립 파일로
+            분리합니다. Python <Code>simulate()</Code>에는 Task의 선택·순서·분기와 결과 기록만 남깁니다.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             <Button asChild>
@@ -108,7 +111,7 @@ export function ExperimentProgramGuide() {
               <Boxes className="size-5 text-orange-700" />
               <CardTitle className="text-base">1. 고정 세계 정의</CardTitle>
               <CardDescription>
-                Structure와 Experiment geometry, stable ID, group, lengthUnit을 작성합니다.
+                Structure와 각 Task 파일에 geometry, stable ID, group, lengthUnit을 작성합니다.
               </CardDescription>
             </CardHeader>
           </Card>
@@ -117,7 +120,7 @@ export function ExperimentProgramGuide() {
               <CircleDot className="size-5 text-orange-700" />
               <CardTitle className="text-base">2. named task 선언</CardTitle>
               <CardDescription>
-                <Code>{'tasks: ({ vars }) => ({ ... })'}</Code>에서 kernel 전용 설정과 중간 output을 정의합니다.
+                <Code>tasks/name.tsx</Code>의 <Code>defineTask()</Code>에서 kernel 설정과 중간 output을 정의합니다.
               </CardDescription>
             </CardHeader>
           </Card>
@@ -155,17 +158,27 @@ export function ExperimentProgramGuide() {
                 Python simulate.py
               </summary>
               <pre className="max-h-[520px] overflow-auto p-4 text-xs leading-5">
-                <code>{firstExample.simulationCode}</code>
+                <code>{firstExample.experimentSourceBundle.files['simulate.py']}</code>
               </pre>
             </details>
             <details className="overflow-hidden rounded-xl border bg-slate-950 text-slate-100" open>
               <summary className="cursor-pointer border-b border-slate-800 px-4 py-3 text-sm font-semibold">
-                Experiment Source
+                experiment.tsx
               </summary>
               <pre className="max-h-[520px] overflow-auto p-4 text-xs leading-5">
-                <code>{firstExample.experimentCode}</code>
+                <code>{firstExample.experimentSourceBundle.files['experiment.tsx']}</code>
               </pre>
             </details>
+            {taskSources.map(([path, source]) => (
+              <details className="overflow-hidden rounded-xl border bg-slate-950 text-slate-100" key={path} open>
+                <summary className="cursor-pointer border-b border-slate-800 px-4 py-3 text-sm font-semibold">
+                  {path}
+                </summary>
+                <pre className="max-h-[520px] overflow-auto p-4 text-xs leading-5">
+                  <code>{source}</code>
+                </pre>
+              </details>
+            ))}
           </div>
         </section>
 
@@ -177,7 +190,7 @@ export function ExperimentProgramGuide() {
             </CardHeader>
             <CardContent className="space-y-3 text-sm leading-6 text-slate-600">
               <p>
-                <Code>{'tasks({ vars })'}</Code>는 CAE slave에서 Python <Code>simulate()</Code>를 시작하기 전에 한 번
+                모든 Task의 <Code>{'config({ vars })'}</Code>와 scene은 Python <Code>simulate()</Code> 시작 전에 한 번
                 평가됩니다.
               </p>
               <p>

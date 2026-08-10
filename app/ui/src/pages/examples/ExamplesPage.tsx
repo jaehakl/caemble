@@ -38,27 +38,19 @@ export function ExamplesPage() {
     createCadSourceDocument('structure', selectedExample.structureCode, CAEMBLE_PROGRAM_EXAMPLE_SEED),
   )
   const [experiment, setExperiment] = useState<CadSourceDocument>(() =>
-    createCadSourceDocument(
-      'experiment',
-      selectedExample.experimentCode,
-      CAEMBLE_PROGRAM_EXAMPLE_SEED,
-      selectedExample.simulationCode,
-    ),
+    createCadSourceDocument('experiment', selectedExample.experimentSourceBundle, CAEMBLE_PROGRAM_EXAMPLE_SEED),
   )
   const [activeDocumentType, setActiveDocumentType] = useState<CadDocumentType>('structure')
+  const [activeExperimentTaskName, setActiveExperimentTaskName] = useState<string | null>(null)
   const [pendingExample, setPendingExample] = useState<CaembleProgramExample | null>(null)
 
   const resetCurrentExample = useCallback(() => {
     setStructure(createCadSourceDocument('structure', selectedExample.structureCode, CAEMBLE_PROGRAM_EXAMPLE_SEED))
     setExperiment(
-      createCadSourceDocument(
-        'experiment',
-        selectedExample.experimentCode,
-        CAEMBLE_PROGRAM_EXAMPLE_SEED,
-        selectedExample.simulationCode,
-      ),
+      createCadSourceDocument('experiment', selectedExample.experimentSourceBundle, CAEMBLE_PROGRAM_EXAMPLE_SEED),
     )
     setActiveDocumentType('structure')
+    setActiveExperimentTaskName(null)
     setPendingExample(null)
   }, [selectedExample])
 
@@ -73,9 +65,25 @@ export function ExamplesPage() {
   }, [resetCurrentExample])
 
   const resolveMaterials = useCallback(async (snapshot: EvaluatedDocumentSnapshot) => {
-    const scene = deserializeCadScene(snapshot.scene)
-    const materials = scene.parts.flatMap((part) => (part.material ? [part.material] : []))
-    return resolveMaterialParameters(materials, [], [], { sourceOnly: true })
+    if (snapshot.kind === 'structure') {
+      const scene = deserializeCadScene(snapshot.scene)
+      const materials = scene.parts.flatMap((part) => (part.material ? [part.material] : []))
+      return resolveMaterialParameters(materials, [], [], { sourceOnly: true })
+    }
+    return Object.freeze({
+      taskMaterialParameters: Object.freeze(
+        Object.fromEntries(
+          Object.entries(snapshot.taskScenes).map(([name, serialized]) => {
+            const scene = deserializeCadScene(serialized)
+            const materials = scene.parts.flatMap((part) => (part.material ? [part.material] : []))
+            return [name, resolveMaterialParameters(materials, [], [], { sourceOnly: true }).materialParameters]
+          }),
+        ),
+      ),
+      taskMaterialWarnings: Object.freeze(
+        Object.fromEntries(Object.keys(snapshot.taskScenes).map((name) => [name, Object.freeze([])])),
+      ),
+    })
   }, [])
   const { experimentDocument, simulation, structureDocument } = useCadWorkspace(
     structure,
@@ -90,7 +98,9 @@ export function ExamplesPage() {
   )
 
   const dirty =
-    cadSource(structure) !== selectedExample.structureCode || cadSource(experiment) !== selectedExample.experimentCode
+    cadSource(structure) !== selectedExample.structureCode ||
+    (experiment.kind === 'experiment' &&
+      JSON.stringify(experiment.sourceBundle) !== JSON.stringify(selectedExample.experimentSourceBundle))
   const structureViewerDocument = useMemo(
     () => ({
       scene: structureDocument.scene,
@@ -103,9 +113,17 @@ export function ExamplesPage() {
     () => ({
       scene: experimentDocument.scene,
       sceneHash: experimentDocument.sceneHash,
+      taskScenes: experimentDocument.taskScenes,
+      taskSceneHashes: experimentDocument.taskSceneHashes,
       variables: experimentDocument.variables,
     }),
-    [experimentDocument.scene, experimentDocument.sceneHash, experimentDocument.variables],
+    [
+      experimentDocument.scene,
+      experimentDocument.sceneHash,
+      experimentDocument.taskSceneHashes,
+      experimentDocument.taskScenes,
+      experimentDocument.variables,
+    ],
   )
   const handleRenderStart = useCallback(
     (sources: readonly CadDocumentType[]) => {
@@ -132,7 +150,13 @@ export function ExamplesPage() {
   const copySource = useCallback(
     async (documentType: CadDocumentType) => {
       try {
-        await navigator.clipboard.writeText(cadSource(documentType === 'structure' ? structure : experiment))
+        await navigator.clipboard.writeText(
+          documentType === 'structure'
+            ? cadSource(structure)
+            : experiment.kind === 'experiment'
+              ? JSON.stringify(experiment.sourceBundle, null, 2)
+              : '',
+        )
         toast.success(`${documentType === 'structure' ? 'Structure' : 'Experiment'} Source를 복사했습니다.`)
       } catch {
         toast.error('Source를 클립보드에 복사하지 못했습니다.')
@@ -143,14 +167,14 @@ export function ExamplesPage() {
 
   return (
     <section
-      aria-label="Caemble v3 Examples Playground"
+      aria-label="Caemble v4 Examples Playground"
       className="flex h-full min-h-0 flex-col overflow-auto bg-background lg:overflow-hidden"
     >
       <header className="shrink-0 border-b bg-background px-3 py-3 sm:px-5">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge>검증된 v3 예제</Badge>
+              <Badge>검증된 v4 예제</Badge>
               <Badge className="border bg-white">dc-current-density@0.0.0</Badge>
               <Badge className="border bg-white">steady-state-heat@0.0.0</Badge>
               {dirty ? <Badge className="bg-amber-100 text-amber-900">수정됨</Badge> : null}
@@ -197,7 +221,7 @@ export function ExamplesPage() {
             <Button asChild size="sm" variant="ghost">
               <Link to="/docs?section=program">
                 <BookOpenText />
-                v3 가이드
+                v4 가이드
               </Link>
             </Button>
           </div>
@@ -228,10 +252,12 @@ export function ExamplesPage() {
             structure={structure}
             structureDocument={structureDocument}
             onActiveDocumentTypeChange={setActiveDocumentType}
+            onActiveExperimentTaskChange={setActiveExperimentTaskName}
           />
         </div>
         <div className="min-h-[520px] min-w-0 lg:h-full lg:min-h-0">
           <CadViewer
+            activeExperimentTaskName={activeExperimentTaskName}
             experiment={experimentViewerDocument}
             recordedData={simulation.recordedData}
             resultsLayout="tabs"

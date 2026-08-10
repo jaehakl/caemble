@@ -1,11 +1,12 @@
+import type { ExperimentSourceBundle } from '../../cad'
+
 export type CaembleProgramExample = Readonly<{
   id: string
   title: string
   description: string
   concepts: readonly string[]
   structureCode: string
-  experimentCode: string
-  simulationCode: string
+  experimentSourceBundle: ExperimentSourceBundle
   verification: Readonly<{
     kernelTasks: readonly string[]
     recordedData: readonly string[]

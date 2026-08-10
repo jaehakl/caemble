@@ -1,4 +1,4 @@
-import { assertCompiledCadSource } from '../compiler/types'
+import { assertCompiledCadDocument } from '../compiler/types'
 import { assertEvaluatedDocumentSnapshot } from '../execution/snapshotValidation'
 import { CadModelError } from '../model/errors'
 import type { CadEvaluationRequest, CadEvaluationResponse } from '../worker/protocol'
@@ -73,15 +73,11 @@ function assertEvaluationVars(vars: unknown) {
 
 export function assertCadEvaluationRequest(value: unknown): asserts value is CadEvaluationRequest {
   assertPlainObject(value, 'request')
-  assertOnlyKeys(value, ['type', 'requestId', 'revision', 'document', 'compiledSource', 'vars'], 'request')
+  assertOnlyKeys(value, ['type', 'requestId', 'revision', 'document', 'compiledDocument', 'vars'], 'request')
   if (value.type !== 'evaluate') throw new CadModelError('CAD evaluation request type is invalid.')
   assertIdentity(value.requestId, value.revision, 'CAD evaluation request')
   assertPlainObject(value.document, 'request.document')
-  assertOnlyKeys(
-    value.document,
-    ['kind', 'realizationSeed', 'simulationCode', 'simulationCodeHash'],
-    'request.document',
-  )
+  assertOnlyKeys(value.document, ['kind', 'realizationSeed', 'pythonSource'], 'request.document')
   if (
     (value.document.kind !== 'structure' && value.document.kind !== 'experiment') ||
     !Number.isSafeInteger(value.document.realizationSeed) ||
@@ -90,20 +86,15 @@ export function assertCadEvaluationRequest(value: unknown): asserts value is Cad
     throw new CadModelError('CAD evaluation request document is invalid.')
   }
   if (value.document.kind === 'experiment') {
-    if (
-      typeof value.document.simulationCode !== 'string' ||
-      !value.document.simulationCode.trim() ||
-      typeof value.document.simulationCodeHash !== 'string' ||
-      !/^[0-9a-f]{64}$/.test(value.document.simulationCodeHash)
-    ) {
-      throw new CadModelError('Experiment evaluation requires hashed Python simulation code.')
+    if (typeof value.document.pythonSource !== 'string' || !value.document.pythonSource.trim()) {
+      throw new CadModelError('Experiment evaluation requires Python simulation source.')
     }
-  } else if (value.document.simulationCode !== undefined || value.document.simulationCodeHash !== undefined) {
+  } else if (value.document.pythonSource !== undefined) {
     throw new CadModelError('Structure evaluation cannot contain Python simulation code.')
   }
-  assertCompiledCadSource(value.compiledSource)
-  if (value.compiledSource.entryFile !== `${value.document.kind}.tsx`) {
-    throw new CadModelError('Compiled CAD source does not match the requested document kind.')
+  assertCompiledCadDocument(value.compiledDocument)
+  if (!value.compiledDocument.sources[`${value.document.kind}.tsx`]) {
+    throw new CadModelError('Compiled CAD document does not match the requested document kind.')
   }
   assertEvaluationVars(value.vars)
 }

@@ -1,8 +1,9 @@
-import { CadModelError } from '../model/errors'
 import { CAD_API_DECLARATION_FINGERPRINT, CAEMBLE_MONACO_VERSION } from '../api/generatedVersions'
+import { CadModelError } from '../model/errors'
+import { EXPERIMENT_ENTRY_PATH, experimentTaskName } from '../source/document'
 
 export const CAD_COMPILER_VERSION =
-  `monaco-${CAEMBLE_MONACO_VERSION}-api-3-${CAD_API_DECLARATION_FINGERPRINT}-single-source-v1` as const
+  `monaco-${CAEMBLE_MONACO_VERSION}-api-4-${CAD_API_DECLARATION_FINGERPRINT}-multi-source-v1` as const
 
 export type CadDiagnostic = Readonly<{
   code: number | string
@@ -19,13 +20,24 @@ export type CadDiagnostic = Readonly<{
 }>
 
 export type CompiledCadSource = Readonly<{
-  apiVersion: 3
+  apiVersion: 4
   compilerVersion: typeof CAD_COMPILER_VERSION
-  entryFile: 'structure.tsx' | 'experiment.tsx'
+  entryFile: string
   code: string
   sourceMap?: string
   sourceHash: string
 }>
+
+export type CompiledCadDocument = Readonly<{
+  apiVersion: 4
+  compilerVersion: typeof CAD_COMPILER_VERSION
+  sourceHash: string
+  sources: Readonly<Record<string, CompiledCadSource>>
+}>
+
+function validEntryFile(entryFile: string) {
+  return entryFile === 'structure.tsx' || entryFile === EXPERIMENT_ENTRY_PATH || experimentTaskName(entryFile) !== null
+}
 
 export function assertCompiledCadSource(value: unknown): asserts value is CompiledCadSource {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -41,12 +53,13 @@ export function assertCompiledCadSource(value: unknown): asserts value is Compil
 
   const compiled = value as Partial<CompiledCadSource>
   if (
-    compiled.apiVersion !== 3 ||
+    compiled.apiVersion !== 4 ||
     compiled.compilerVersion !== CAD_COMPILER_VERSION ||
-    (compiled.entryFile !== 'structure.tsx' && compiled.entryFile !== 'experiment.tsx') ||
+    typeof compiled.entryFile !== 'string' ||
+    !validEntryFile(compiled.entryFile) ||
     typeof compiled.code !== 'string' ||
     typeof compiled.sourceHash !== 'string' ||
-    !/^[0-9a-f]{64}$/.test(compiled.sourceHash)
+    !/^[0-9a-f]{64}$/u.test(compiled.sourceHash)
   ) {
     throw new CadModelError('Compiled CAD source provenance is invalid.')
   }
@@ -56,4 +69,34 @@ export function assertCompiledCadSource(value: unknown): asserts value is Compil
   if (compiled.code.length + (compiled.sourceMap?.length ?? 0) > 4 * 1024 * 1024) {
     throw new CadModelError('Compiled CAD source exceeds 4 MiB.')
   }
+}
+
+export function assertCompiledCadDocument(value: unknown): asserts value is CompiledCadDocument {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new CadModelError('Compiled CAD document must be an object.')
+  }
+  const compiled = value as Partial<CompiledCadDocument>
+  const unknownKey = Object.keys(value).find(
+    (key) => !['apiVersion', 'compilerVersion', 'sourceHash', 'sources'].includes(key),
+  )
+  if (
+    unknownKey ||
+    compiled.apiVersion !== 4 ||
+    compiled.compilerVersion !== CAD_COMPILER_VERSION ||
+    typeof compiled.sourceHash !== 'string' ||
+    !/^[0-9a-f]{64}$/u.test(compiled.sourceHash) ||
+    typeof compiled.sources !== 'object' ||
+    compiled.sources === null ||
+    Array.isArray(compiled.sources)
+  ) {
+    throw new CadModelError('Compiled CAD document provenance is invalid.')
+  }
+  const entries = Object.entries(compiled.sources)
+  if (entries.length === 0) throw new CadModelError('Compiled CAD document has no sources.')
+  entries.forEach(([path, source]) => {
+    assertCompiledCadSource(source)
+    if (path !== source.entryFile || source.sourceHash !== compiled.sourceHash) {
+      throw new CadModelError('Compiled CAD document source provenance does not match.')
+    }
+  })
 }

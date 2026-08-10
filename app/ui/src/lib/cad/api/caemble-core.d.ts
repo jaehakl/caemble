@@ -3250,6 +3250,10 @@ export type ModelContext<Schema extends VarsSchemaDefinition> = Readonly<{
   vars: InferVars<Schema>
 }>
 
+export type TaskModelContext = Readonly<{
+  vars: Readonly<Vars>
+}>
+
 export type StructureDefinitionOptions<Schema extends VarsSchemaDefinition> = Readonly<{
   geometry: (context: ModelContext<Schema>) => unknown
   lengthUnit: UcumUnit
@@ -3263,43 +3267,46 @@ export type KernelIdentity = Readonly<{
   version: string
 }>
 
-export type DefinedKernelTask<Config = unknown> = Readonly<{
-  kind: 'caemble-kernel-task'
-  kernel: KernelIdentity
-  config: Config
-}>
-
-export declare function defineTask<const Config>(kernel: KernelIdentity, config: Config): DefinedKernelTask<Config>
-
 export type ExperimentDefinitionOptions<
   Schema extends VarsSchemaDefinition,
-  Tasks extends Readonly<Record<string, DefinedKernelTask>>,
   Recorded extends Readonly<Record<string, RecordedDataSpec>>,
-> = Omit<StructureDefinitionOptions<Schema>, 'geometry' | 'lengthUnit'> &
-  Readonly<{
-    geometry?: StructureDefinitionOptions<Schema>['geometry']
-    lengthUnit?: UcumUnit
-    tasks: (context: ModelContext<Schema>) => Tasks
-    recordedData: Recorded
-  }>
+> = Readonly<{
+  varsSchema: Schema
+  recordedData: Recorded
+}>
+
+export type TaskDefinitionOptions<Config> = Readonly<{
+  kernel: KernelIdentity
+  lengthUnit: UcumUnit
+  geometry: (context: TaskModelContext) => unknown
+  geometryGroup?: StructureGroupMap
+  surfaceGroup?: StructureGroupMap
+  config: (context: TaskModelContext) => Config
+}>
 
 export class StructureDefinition<Schema extends VarsSchemaDefinition = VarsSchemaDefinition> extends Structure {
   constructor(options: StructureDefinitionOptions<Schema>)
-  readonly apiVersion: 3
+  readonly apiVersion: 4
   readonly documentType: 'structure'
   readonly varsSchema: Schema
 }
 
 export class ExperimentDefinition<
   Schema extends VarsSchemaDefinition = VarsSchemaDefinition,
-  Tasks extends Readonly<Record<string, DefinedKernelTask>> = Readonly<Record<string, DefinedKernelTask>>,
   Recorded extends Readonly<Record<string, RecordedDataSpec>> = Readonly<Record<string, RecordedDataSpec>>,
 > extends Structure {
-  constructor(options: ExperimentDefinitionOptions<Schema, Tasks, Recorded>)
-  readonly apiVersion: 3
+  constructor(options: ExperimentDefinitionOptions<Schema, Recorded>)
+  readonly apiVersion: 4
   readonly documentType: 'experiment'
   readonly varsSchema: Schema
   readonly recordedData: Recorded
+}
+
+export class TaskDefinition<Config = unknown> extends Structure {
+  constructor(options: TaskDefinitionOptions<Config>)
+  readonly apiVersion: 4
+  readonly documentType: 'task'
+  readonly kernel: KernelIdentity
 }
 
 export declare function structure<const Schema extends VarsSchemaDefinition>(
@@ -3308,13 +3315,14 @@ export declare function structure<const Schema extends VarsSchemaDefinition>(
 
 export declare function experiment<
   const Schema extends VarsSchemaDefinition,
-  const Tasks extends Readonly<Record<string, DefinedKernelTask>>,
   const Recorded extends Readonly<Record<string, RecordedDataSpec>>,
->(options: ExperimentDefinitionOptions<Schema, Tasks, Recorded>): ExperimentDefinition<Schema, Tasks, Recorded>
+>(options: ExperimentDefinitionOptions<Schema, Recorded>): ExperimentDefinition<Schema, Recorded>
+
+export declare function defineTask<const Config>(options: TaskDefinitionOptions<Config>): TaskDefinition<Config>
 
 export type SimulationProgramManifest = Readonly<{
-  formatVersion: 3
-  simulationApiVersion: 1
+  formatVersion: 4
+  simulationApiVersion: 2
   pythonSource: string
   tasks: Readonly<
     Record<

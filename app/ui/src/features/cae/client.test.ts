@@ -100,11 +100,11 @@ function realization() {
         seed: 2,
         variables: {},
         varsSchema: {},
-        scene,
+        taskScenes: { electric: scene },
         simulationProgram: {
-          formatVersion: 3,
-          simulationApiVersion: 1,
-          pythonSource: 'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
+          formatVersion: 4,
+          simulationApiVersion: 2,
+          pythonSource: 'async def simulate(*, sim, tasks, vars):\n    return None\n',
           tasks: {
             electric: {
               kernel: { name: 'dc-current-density', version: '0.0.0' },
@@ -114,8 +114,8 @@ function realization() {
           recordedData,
         },
       },
-      materialParameters: { schemaVersion: 1, materials: {} },
-      materialWarnings: [],
+      taskMaterialParameters: { electric: { schemaVersion: 1, materials: {} } },
+      taskMaterialWarnings: { electric: [] },
     },
     recordedData,
   }

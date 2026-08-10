@@ -12,7 +12,7 @@ export class SourceAnalysisError extends Error {
 export type SourceAnalysis = Readonly<{
   ast: File
   bindings: ReadonlyMap<string, Expression>
-  factoryName: 'experiment' | 'structure'
+  factoryName: 'defineTask' | 'experiment' | 'structure'
   options: ObjectExpression
 }>
 
@@ -71,7 +71,10 @@ export function resolveSourceBinding(
   }
 }
 
-function importedFactoryNames(statements: readonly Statement[], factoryName: 'experiment' | 'structure') {
+function importedFactoryNames(
+  statements: readonly Statement[],
+  factoryName: 'defineTask' | 'experiment' | 'structure',
+) {
   return new Set(
     statements.flatMap((statement) => {
       if (statement.type !== 'ImportDeclaration' || statement.source.value !== '@caemble/core') return []
@@ -94,7 +97,7 @@ function assertImportPolicy(ast: File) {
         : undefined
     if (source === undefined) return
     if (source !== '@caemble/core') {
-      throw new SourceAnalysisError(`Import is not allowed in a single-file Caemble CAD source: ${source}`)
+      throw new SourceAnalysisError(`Import is not allowed in an independent Caemble TSX source: ${source}`)
     }
   })
 
@@ -149,11 +152,10 @@ export function staticCadSourceImports(source: string) {
   })
 }
 
-export function analyzeCadSource(source: string, documentType: CadDocumentType): SourceAnalysis {
+function analyzeFactorySource(source: string, factoryName: 'defineTask' | 'experiment' | 'structure'): SourceAnalysis {
   const ast = parseCadSource(source)
 
   const statements = ast.program.body
-  const factoryName = documentType === 'structure' ? 'structure' : 'experiment'
   const factoryNames = importedFactoryNames(statements, factoryName)
   if (factoryNames.size === 0) {
     throw new SourceAnalysisError(`${factoryName} must be a named import from @caemble/core.`)
@@ -190,4 +192,12 @@ export function analyzeCadSource(source: string, documentType: CadDocumentType):
     )
   }
   return { ast, bindings, factoryName, options }
+}
+
+export function analyzeCadSource(source: string, documentType: CadDocumentType): SourceAnalysis {
+  return analyzeFactorySource(source, documentType === 'structure' ? 'structure' : 'experiment')
+}
+
+export function analyzeTaskSource(source: string): SourceAnalysis {
+  return analyzeFactorySource(source, 'defineTask')
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CAD_COMPILER_VERSION, type CompiledCadSource } from '../compiler/types'
+import { CAD_COMPILER_VERSION, type CompiledCadDocument } from '../compiler/types'
 import { serializeCadScene } from '../execution/mesh'
 import type { EvaluatedStructureSnapshot } from '../execution/snapshot'
 import {
@@ -19,19 +19,34 @@ const scene = serializeCadScene({
   surfaceGroups: [],
   tree: { children: [], key: 'structure', label: 'Structure' },
 })
-const compiledStructure: CompiledCadSource = {
-  apiVersion: 3,
+const compiledStructure: CompiledCadDocument = {
+  apiVersion: 4,
   compilerVersion: CAD_COMPILER_VERSION,
-  entryFile: 'structure.tsx',
-  code: 'module.exports.default = {}',
   sourceHash,
+  sources: {
+    'structure.tsx': {
+      apiVersion: 4,
+      compilerVersion: CAD_COMPILER_VERSION,
+      entryFile: 'structure.tsx',
+      code: 'module.exports.default = {}',
+      sourceHash,
+    },
+  },
 }
-const compiledExperiment: CompiledCadSource = {
-  apiVersion: 3,
+const experimentHash = 'c'.repeat(64)
+const compiledExperiment: CompiledCadDocument = {
+  apiVersion: 4,
   compilerVersion: CAD_COMPILER_VERSION,
-  entryFile: 'experiment.tsx',
-  code: 'module.exports.default = {}',
-  sourceHash: 'c'.repeat(64),
+  sourceHash: experimentHash,
+  sources: {
+    'experiment.tsx': {
+      apiVersion: 4,
+      compilerVersion: CAD_COMPILER_VERSION,
+      entryFile: 'experiment.tsx',
+      code: 'module.exports.default = {}',
+      sourceHash: experimentHash,
+    },
+  },
 }
 const structureSnapshot: EvaluatedStructureSnapshot = {
   kind: 'structure',
@@ -46,7 +61,7 @@ const evaluationRequest = {
   requestId: 'request-1',
   revision: 3,
   document: { kind: 'structure' as const, realizationSeed: 7 },
-  compiledSource: compiledStructure,
+  compiledDocument: compiledStructure,
   vars: { width: 2 },
 }
 
@@ -98,7 +113,7 @@ describe('isolated runner protocol', () => {
     expect(() =>
       assertCadEvaluationRequest({
         ...evaluationRequest,
-        compiledSource: compiledExperiment,
+        compiledDocument: compiledExperiment,
       }),
     ).toThrow('does not match the requested document kind')
     expect(() =>

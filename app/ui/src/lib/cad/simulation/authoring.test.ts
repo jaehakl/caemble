@@ -13,10 +13,11 @@ describe('simulationProgramManifest', () => {
           quantityKind: 'electromagnetism.ElectricCurrentDensity',
         },
       },
-      'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
+      'async def simulate(*, sim, tasks, vars):\n    return None\n',
     )
 
-    expect(manifest.formatVersion).toBe(3)
+    expect(manifest.formatVersion).toBe(4)
+    expect(manifest.simulationApiVersion).toBe(2)
     expect(manifest.recordedData.currentDensity.basis).toEqual(identityCartesianBasis)
     expect(manifest.recordedData.currentDensity.tensorOrder).toBe(1)
   })

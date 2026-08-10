@@ -273,10 +273,18 @@ describe('unified dbTables API', () => {
     await expect(dbTables.Structure.save(payload)).resolves.toMatchObject({ action: 'updated' })
     await expect(
       dbTables.Experiment.save({
-        ...payload,
-        simulationCode: 'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
-        simulationRawCodeHash: '5'.repeat(64),
-        baseSimulationRawCodeHash: '6'.repeat(64),
+        id: 1,
+        name: 'Definition',
+        description: null,
+        sourceBundle: {
+          formatVersion: 1,
+          files: { 'experiment.tsx': 'experiment', 'simulate.py': 'simulate', 'tasks/main.tsx': 'task' },
+        },
+        bundleHash: '1'.repeat(64),
+        semanticHash: '2'.repeat(64),
+        semanticHashVersion: 2,
+        baseBundleHash: '3'.repeat(64),
+        baseSemanticHash: '4'.repeat(64),
       }),
     ).resolves.toMatchObject({ action: 'forked' })
     expect(seen).toEqual(['structure', 'experiment'])
@@ -447,7 +455,13 @@ describe('unified dbTables API', () => {
       [
         'Experiment',
         'experiment',
-        { name: 'Experiment', code: 'export default experiment({})', simulation_code: null },
+        {
+          name: 'Experiment',
+          source_bundle: {
+            formatVersion: 1,
+            files: { 'experiment.tsx': 'experiment', 'simulate.py': 'simulate', 'tasks/main.tsx': 'task' },
+          },
+        },
       ],
       ['Sample', 'sample', { structure_id: 1, vars: {}, material_parameters: {} }],
       ['Setup', 'setup', { experiment_id: 1, vars: {}, material_parameters: {} }],

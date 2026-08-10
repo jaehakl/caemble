@@ -1,4 +1,4 @@
-export const defaultExperimentSimulationCode = `async def simulate(*, sim, tasks, vars, world):
+export const defaultExperimentSimulationCode = `async def simulate(*, sim, tasks, vars):
     electric = await sim.run(tasks["electric"])
     await sim.record(
         "measuredCurrent",

@@ -1,3 +1,4 @@
+import { createExperimentSourceBundle } from '../../cad'
 import type { CaembleProgramExample } from './types'
 
 export const dcUniformBarStructureCode = `import {
@@ -47,10 +48,34 @@ export default structure({
 })
 `
 
-export const dcUniformBarExperimentCode = `import { defineTask, experiment } from '@caemble/core'
+export const dcUniformBarExperimentCode = `import { experiment } from '@caemble/core'
 
-function currentTask(sourceVoltage: number, referenceVoltage: number) {
-  return defineTask({ name: 'dc-current-density', version: '0.0.0' }, {
+export default experiment({
+  varsSchema: {
+    sourceVoltage: { min: 1, max: 1 },
+    referenceVoltage: { min: 0, max: 0 },
+  },
+  recordedData: {
+    totalCurrent: {
+      dtype: 'float64',
+      unit: 'A',
+      quantityKind: 'electromagnetism.ElectricCurrent',
+    },
+  },
+})
+`
+
+export const dcUniformBarTaskCode = `import { defineTask } from '@caemble/core'
+
+function Probe() {
+  return <box size={[2, 2, 2]} />
+}
+
+export default defineTask({
+  kernel: { name: 'dc-current-density', version: '0.0.0' },
+  lengthUnit: 'mm',
+  geometry: () => <Probe id="probe" pos={[0, -10, 0]} />,
+  config: ({ vars }) => ({
   parameters: {
     relativeTolerance: {
       dtype: 'float64',
@@ -82,7 +107,7 @@ function currentTask(sourceVoltage: number, referenceVoltage: number) {
       parameters: {
         voltage: {
           dtype: 'float64',
-          value: sourceVoltage,
+          value: vars.sourceVoltage,
           unit: 'mV',
           quantityKind: 'electromagnetism.Voltage',
         },
@@ -94,7 +119,7 @@ function currentTask(sourceVoltage: number, referenceVoltage: number) {
       parameters: {
         voltage: {
           dtype: 'float64',
-          value: referenceVoltage,
+          value: vars.referenceVoltage,
           unit: 'mV',
           quantityKind: 'electromagnetism.Voltage',
         },
@@ -117,43 +142,21 @@ function currentTask(sourceVoltage: number, referenceVoltage: number) {
       },
     },
   ],
-  })
-}
-
-function Probe() {
-  return <box size={[2, 2, 2]} />
-}
-
-export default experiment({
-  lengthUnit: 'mm',
-
-  varsSchema: {
-    sourceVoltage: { min: 1, max: 1 },
-    referenceVoltage: { min: 0, max: 0 },
-  },
-
-  geometry: () => <Probe id="probe" pos={[0, -10, 0]} />,
-
-  tasks: ({ vars }) => ({
-    solveCurrent: currentTask(vars.sourceVoltage, vars.referenceVoltage),
   }),
-
-  recordedData: {
-    totalCurrent: {
-      dtype: 'float64',
-      unit: 'A',
-      quantityKind: 'electromagnetism.ElectricCurrent',
-    },
-  },
-
 })
 `
 
-export const dcUniformBarSimulationCode = `async def simulate(*, sim, tasks, vars, world):
+export const dcUniformBarSimulationCode = `async def simulate(*, sim, tasks, vars):
     result = await sim.run(tasks["solveCurrent"])
     await sim.record("totalCurrent", result["artifacts"]["totalCurrent"])
     return result["state"]
 `
+
+export const dcUniformBarExperimentSourceBundle = createExperimentSourceBundle({
+  'experiment.tsx': dcUniformBarExperimentCode,
+  'simulate.py': dcUniformBarSimulationCode,
+  'tasks/solveCurrent.tsx': dcUniformBarTaskCode,
+})
 
 export const dcUniformBarExample = Object.freeze({
   id: 'dc-uniform-bar',
@@ -165,8 +168,7 @@ export const dcUniformBarExample = Object.freeze({
     '중간 artifact handle을 RecordedData로 기록',
   ]),
   structureCode: dcUniformBarStructureCode,
-  experimentCode: dcUniformBarExperimentCode,
-  simulationCode: dcUniformBarSimulationCode,
+  experimentSourceBundle: dcUniformBarExperimentSourceBundle,
   verification: Object.freeze({
     kernelTasks: Object.freeze(['solveCurrent']),
     recordedData: Object.freeze(['totalCurrent']),

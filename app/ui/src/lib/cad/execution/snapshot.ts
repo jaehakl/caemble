@@ -19,10 +19,18 @@ export type {
 
 export type EvaluatedRuntimeDocumentSnapshot =
   | Readonly<Omit<EvaluatedStructureSnapshot, 'scene'> & { scene: CadScene }>
-  | Readonly<Omit<EvaluatedExperimentSnapshot, 'scene'> & { scene: CadScene }>
+  | Readonly<Omit<EvaluatedExperimentSnapshot, 'taskScenes'> & { taskScenes: Readonly<Record<string, CadScene>> }>
 
 export function serializeEvaluatedDocumentSnapshot(
   snapshot: EvaluatedRuntimeDocumentSnapshot,
 ): EvaluatedDocumentSnapshot {
-  return Object.freeze({ ...snapshot, scene: serializeCadScene(snapshot.scene) })
+  if (snapshot.kind === 'structure') {
+    return Object.freeze({ ...snapshot, scene: serializeCadScene(snapshot.scene) })
+  }
+  return Object.freeze({
+    ...snapshot,
+    taskScenes: Object.freeze(
+      Object.fromEntries(Object.entries(snapshot.taskScenes).map(([name, scene]) => [name, serializeCadScene(scene)])),
+    ),
+  })
 }

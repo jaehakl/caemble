@@ -132,25 +132,25 @@ const saveCodeEntityRequestSchema = z.object({
     .regex(/^[0-9a-f]{64}$/)
     .optional(),
 })
+const experimentSourceBundleSchema = z
+  .object({
+    formatVersion: z.literal(1),
+    files: z.record(z.string(), z.string()),
+  })
+  .strict()
 const saveExperimentRequestSchema = z.object({
   id: z.number().int().optional(),
   name: z.string().min(1),
   description: z.string().nullable(),
-  code: z.string().min(1),
-  rawCodeHash: z.string().regex(/^[0-9a-f]{64}$/),
+  sourceBundle: experimentSourceBundleSchema,
+  bundleHash: z.string().regex(/^[0-9a-f]{64}$/),
   semanticHash: z.string().regex(/^[0-9a-f]{64}$/),
-  semanticHashVersion: z.literal(1),
-  baseRawCodeHash: z
+  semanticHashVersion: z.literal(2),
+  baseBundleHash: z
     .string()
     .regex(/^[0-9a-f]{64}$/)
     .optional(),
   baseSemanticHash: z
-    .string()
-    .regex(/^[0-9a-f]{64}$/)
-    .optional(),
-  simulationCode: z.string().min(1),
-  simulationRawCodeHash: z.string().regex(/^[0-9a-f]{64}$/),
-  baseSimulationRawCodeHash: z
     .string()
     .regex(/^[0-9a-f]{64}$/)
     .optional(),
@@ -528,8 +528,7 @@ export const dbTables = {
       parent_id: z.number().int().nullable().optional(),
       name: z.string(),
       description: z.string().nullable().optional(),
-      code: z.string(),
-      simulation_code: z.string().nullable(),
+      source_bundle: experimentSourceBundleSchema,
     }),
     async listRows(listRequest: GetListRequest = getListRequest()) {
       const payload = getListRequestSchema.parse(listRequest)

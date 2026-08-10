@@ -8,7 +8,13 @@ import { RouterProvider } from 'react-router/dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { UserData } from '@/api'
 import { CurrentCadSelectionProvider, useCurrentCadSelection } from '@/features/viewer/current-cad-selection'
-import { cadSource, rerollCadSourceDocument, updateCadSource, type CadSourceDocument } from '@/lib/cad'
+import {
+  cadSource,
+  createExperimentSourceBundle,
+  rerollCadSourceDocument,
+  updateCadSource,
+  type CadSourceDocument,
+} from '@/lib/cad'
 import { defaultCode } from '@/lib/defaultCode'
 import { StructurePage } from './StructurePage'
 
@@ -195,7 +201,12 @@ const currentExperiment = {
   parent_id: null,
   name: 'Current Experiment',
   description: null,
-  code: 'current experiment source',
+  source_bundle: createExperimentSourceBundle({
+    'experiment.tsx': 'current experiment source',
+    'simulate.py': 'async def simulate(*, sim, tasks, vars):\n    return None\n',
+    'tasks/main.tsx': `import { defineTask } from '@caemble/core'
+export default defineTask({ kernel: { name: 'test', version: '1' }, lengthUnit: 'm', geometry: () => null, config: () => ({}) })`,
+  }),
   user_id: null,
   updated_at: '2026-07-06T00:00:00Z',
 }

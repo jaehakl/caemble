@@ -154,7 +154,7 @@ export function evaluateInIsolatedRunner(request: CadEvaluationRequest, callback
             event.data.response.revision !== request.revision ||
             event.data.response.documentType !== request.document.kind ||
             (event.data.response.type === 'evaluation-success' &&
-              (event.data.response.snapshot.sourceHash !== request.compiledSource.sourceHash ||
+              (event.data.response.snapshot.sourceHash !== request.compiledDocument.sourceHash ||
                 event.data.response.snapshot.seed !== request.document.realizationSeed))
           ) {
             throw new Error('The isolated CAD runner response identity is invalid.')

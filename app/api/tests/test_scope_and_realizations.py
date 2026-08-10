@@ -3,7 +3,7 @@ from sqlalchemy import select
 
 from db import Experiment, Sample, Setup, Structure
 from settings import settings
-from tests.helpers import auth_headers, create_user
+from tests.helpers import auth_headers, create_user, experiment_source_bundle
 
 
 def list_payload(scope="visible"):
@@ -27,8 +27,12 @@ async def test_visible_mine_public_scopes_and_realization_ownership(client, db_s
     public_structure = Structure(name="Public", code="public", user_id=None)
     owner_structure = Structure(name="Mine", code="mine", user_id=owner.id)
     other_structure = Structure(name="Other", code="other", user_id=other.id)
-    owner_experiment = Experiment(name="Experiment", code="experiment", user_id=owner.id)
-    other_experiment = Experiment(name="Other experiment", code="other experiment", user_id=other.id)
+    owner_experiment = Experiment(name="Experiment", source_bundle=experiment_source_bundle(), user_id=owner.id)
+    other_experiment = Experiment(
+        name="Other experiment",
+        source_bundle=experiment_source_bundle("other experiment"),
+        user_id=other.id,
+    )
     db_session.add_all([public_structure, owner_structure, other_structure, owner_experiment, other_experiment])
     await db_session.commit()
 

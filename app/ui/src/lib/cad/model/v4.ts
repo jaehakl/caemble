@@ -1,4 +1,4 @@
-import type { DefinedKernelTask, RecordedDataSpec } from '../simulation/types'
+import type { DefinedKernelTask, KernelIdentity, RecordedDataSpec } from '../simulation/types'
 import { canonicalRecordedDataSpec, simulationProgramManifest } from '../simulation/authoring'
 import { Structure, type StructureGroupMap } from './structure'
 import type { Tensor, Vars } from './types'
@@ -23,6 +23,8 @@ export type ModelContext<Schema extends VarsSchemaDefinition> = Readonly<{
   vars: InferVars<Schema>
 }>
 
+export type TaskModelContext = Readonly<{ vars: Readonly<Vars> }>
+
 export type StructureDefinitionOptions<Schema extends VarsSchemaDefinition> = Readonly<{
   geometry: (context: ModelContext<Schema>) => unknown
   lengthUnit: UcumUnit
@@ -33,15 +35,20 @@ export type StructureDefinitionOptions<Schema extends VarsSchemaDefinition> = Re
 
 export type ExperimentDefinitionOptions<
   Schema extends VarsSchemaDefinition,
-  Tasks extends Readonly<Record<string, DefinedKernelTask>>,
   Recorded extends Readonly<Record<string, RecordedDataSpec>>,
-> = Omit<StructureDefinitionOptions<Schema>, 'geometry' | 'lengthUnit'> &
-  Readonly<{
-    geometry?: StructureDefinitionOptions<Schema>['geometry']
-    lengthUnit?: UcumUnit
-    tasks: (context: ModelContext<Schema>) => Tasks
-    recordedData: Recorded
-  }>
+> = Readonly<{
+  varsSchema: Schema
+  recordedData: Recorded
+}>
+
+export type TaskDefinitionOptions<Config> = Readonly<{
+  kernel: KernelIdentity
+  lengthUnit: UcumUnit
+  geometry: (context: TaskModelContext) => unknown
+  geometryGroup?: StructureGroupMap
+  surfaceGroup?: StructureGroupMap
+  config: (context: TaskModelContext) => Config
+}>
 
 function freezeRecordedData<Recorded extends Readonly<Record<string, RecordedDataSpec>>>(recordedData: Recorded) {
   return Object.freeze(
@@ -55,7 +62,7 @@ function freezeRecordedData<Recorded extends Readonly<Record<string, RecordedDat
 }
 
 export class StructureDefinition<Schema extends VarsSchemaDefinition = VarsSchemaDefinition> extends Structure {
-  readonly apiVersion = 3 as const
+  readonly apiVersion = 4 as const
   readonly documentType = 'structure' as const
   readonly geometryFactory: (context: ModelContext<Schema>) => unknown
 
@@ -91,36 +98,69 @@ export class StructureDefinition<Schema extends VarsSchemaDefinition = VarsSchem
   }
 }
 
-export class ExperimentDefinition<
-  Schema extends VarsSchemaDefinition = VarsSchemaDefinition,
-  Tasks extends Readonly<Record<string, DefinedKernelTask>> = Readonly<Record<string, DefinedKernelTask>>,
-  Recorded extends Readonly<Record<string, RecordedDataSpec>> = Readonly<Record<string, RecordedDataSpec>>,
-> extends Structure {
-  readonly apiVersion = 3 as const
-  readonly documentType = 'experiment' as const
-  readonly geometryFactory: (context: ModelContext<Schema>) => unknown
-  readonly tasksFactory: ExperimentDefinitionOptions<Schema, Tasks, Recorded>['tasks']
-  readonly recordedData: Recorded
+export class TaskDefinition<Config = unknown> extends Structure {
+  readonly apiVersion = 4 as const
+  readonly documentType = 'task' as const
+  readonly kernel: KernelIdentity
+  readonly geometryFactory: TaskDefinitionOptions<Config>['geometry']
+  readonly configFactory: TaskDefinitionOptions<Config>['config']
 
-  constructor(options: ExperimentDefinitionOptions<Schema, Tasks, Recorded>) {
+  constructor(options: TaskDefinitionOptions<Config>) {
     super({
       geometry: () => null,
-      lengthUnit: options.lengthUnit ?? 'm',
-      varsSchema: options.varsSchema as Record<string, VarsSchemaEntry>,
+      lengthUnit: options.lengthUnit,
+      varsSchema: {},
       geometryGroup: options.geometryGroup,
       surfaceGroup: options.surfaceGroup,
     })
-    if (options.geometry !== undefined && typeof options.geometry !== 'function') {
-      throw new Error('Experiment geometry must be a function.')
+    if (
+      !options.kernel ||
+      typeof options.kernel !== 'object' ||
+      typeof options.kernel.name !== 'string' ||
+      !options.kernel.name.trim() ||
+      typeof options.kernel.version !== 'string' ||
+      !options.kernel.version.trim()
+    ) {
+      throw new Error('Task kernel requires a non-empty name and version.')
     }
-    if (typeof options.tasks !== 'function') {
-      throw new Error('Experiment tasks must be a function.')
-    }
+    if (typeof options.geometry !== 'function') throw new Error('Task geometry must be a function.')
+    if (typeof options.config !== 'function') throw new Error('Task config must be a function.')
+    this.kernel = Object.freeze({ name: options.kernel.name.trim(), version: options.kernel.version.trim() })
+    this.geometryFactory = options.geometry
+    this.configFactory = options.config
+    Object.freeze(this)
+  }
+
+  evaluateResolvedGeometry(vars: Readonly<Vars>) {
+    return this.geometryFactory(Object.freeze({ vars }))
+  }
+
+  createResolvedTask(vars: Readonly<Vars>): DefinedKernelTask<Config> {
+    return Object.freeze({
+      kind: 'caemble-kernel-task' as const,
+      kernel: this.kernel,
+      config: this.configFactory(Object.freeze({ vars })),
+    })
+  }
+}
+
+export class ExperimentDefinition<
+  Schema extends VarsSchemaDefinition = VarsSchemaDefinition,
+  Recorded extends Readonly<Record<string, RecordedDataSpec>> = Readonly<Record<string, RecordedDataSpec>>,
+> extends Structure {
+  readonly apiVersion = 4 as const
+  readonly documentType = 'experiment' as const
+  readonly recordedData: Recorded
+
+  constructor(options: ExperimentDefinitionOptions<Schema, Recorded>) {
+    super({
+      geometry: () => null,
+      lengthUnit: 'm',
+      varsSchema: options.varsSchema as Record<string, VarsSchemaEntry>,
+    })
     if (!options.recordedData || typeof options.recordedData !== 'object' || Array.isArray(options.recordedData)) {
       throw new Error('Experiment recordedData must be an object.')
     }
-    this.geometryFactory = options.geometry ?? (() => null)
-    this.tasksFactory = options.tasks
     this.recordedData = freezeRecordedData(options.recordedData)
     Object.freeze(this)
   }
@@ -133,30 +173,25 @@ export class ExperimentDefinition<
     return this.resolveVars(partialVars, seed, 'Experiment')
   }
 
-  evaluateGeometry(vars: InferVars<Schema>) {
-    return this.geometryFactory(Object.freeze({ vars }))
-  }
-
-  evaluateResolvedGeometry(vars: Readonly<Vars>) {
-    return this.geometryFactory(Object.freeze({ vars: vars as InferVars<Schema> }))
-  }
-
-  createProgramRuntime(vars: Readonly<Vars>, pythonSource: string) {
-    const typedVars = vars as InferVars<Schema>
-    const tasks = this.tasksFactory(Object.freeze({ vars: typedVars }))
-    if (!tasks || typeof tasks !== 'object' || Array.isArray(tasks) || Object.keys(tasks).length === 0) {
-      throw new Error('Experiment tasks must return a non-empty object.')
-    }
-    Object.entries(tasks).forEach(([name, task]) => {
-      if (!name.trim() || task.kind !== 'caemble-kernel-task') {
-        throw new Error(`Experiment task "${name}" is invalid.`)
-      }
-    })
-    const frozenTasks = Object.freeze({ ...tasks }) as Tasks
+  createProgramRuntime(
+    vars: Readonly<Vars>,
+    pythonSource: string,
+    taskDefinitions: Readonly<Record<string, TaskDefinition>>,
+  ) {
+    if (Object.keys(taskDefinitions).length === 0) throw new Error('Experiment requires at least one Task.')
+    const tasks = Object.freeze(
+      Object.fromEntries(
+        Object.entries(taskDefinitions).map(([name, task]) => {
+          if (!name.trim() || !(task instanceof TaskDefinition))
+            throw new Error(`Experiment task "${name}" is invalid.`)
+          return [name, task.createResolvedTask(vars)]
+        }),
+      ),
+    )
     return Object.freeze({
-      tasks: frozenTasks,
+      tasks,
       recordedData: this.recordedData,
-      manifest: simulationProgramManifest(frozenTasks, this.recordedData, pythonSource),
+      manifest: simulationProgramManifest(tasks, this.recordedData, pythonSource),
     })
   }
 }
@@ -167,10 +202,13 @@ export function structure<const Schema extends VarsSchemaDefinition>(options: St
 
 export function experiment<
   const Schema extends VarsSchemaDefinition,
-  const Tasks extends Readonly<Record<string, DefinedKernelTask>>,
   const Recorded extends Readonly<Record<string, RecordedDataSpec>>,
->(options: ExperimentDefinitionOptions<Schema, Tasks, Recorded>) {
+>(options: ExperimentDefinitionOptions<Schema, Recorded>) {
   return new ExperimentDefinition(options)
+}
+
+export function defineTask<const Config>(options: TaskDefinitionOptions<Config>) {
+  return new TaskDefinition(options)
 }
 
 export type CadDefinition = StructureDefinition | ExperimentDefinition

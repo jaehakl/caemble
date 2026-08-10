@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-import { executeCompiledSource } from '../execution/userModule'
+import { executeCompiledDocument } from '../execution/userModule'
 import { assertEvaluatedDocumentSnapshot, serializeEvaluatedDocumentSnapshot } from '../execution/snapshot'
 import { cadSnapshotTransferables } from '../execution/meshValidation'
 import { runtimeDiagnostic } from '../execution/runtimeDiagnostics'
@@ -13,13 +13,12 @@ function handleEvaluation(value: unknown) {
   let response: RunnerEvaluationResultEnvelope['response']
   try {
     const snapshot = serializeEvaluatedDocumentSnapshot(
-      executeCompiledSource(
-        request.compiledSource,
+      executeCompiledDocument(
+        request.compiledDocument,
         request.document.kind,
         request.document.realizationSeed,
         request.vars,
-        request.document.simulationCode ?? '',
-        request.document.simulationCodeHash ?? '',
+        request.document.pythonSource,
       ),
     )
     assertEvaluatedDocumentSnapshot(snapshot)
@@ -31,7 +30,8 @@ function handleEvaluation(value: unknown) {
       snapshot,
     }
   } catch (error) {
-    const diagnostic = error instanceof Error ? runtimeDiagnostic(error, request.compiledSource) : undefined
+    const entrySource = request.compiledDocument.sources[`${request.document.kind}.tsx`]
+    const diagnostic = error instanceof Error && entrySource ? runtimeDiagnostic(error, entrySource) : undefined
     response = {
       type: 'evaluation-error',
       requestId: request.requestId,
@@ -45,7 +45,11 @@ function handleEvaluation(value: unknown) {
   }
   self.postMessage(
     { type: 'evaluation-result', nonce, response },
-    response.type === 'evaluation-success' ? cadSnapshotTransferables(response.snapshot.scene) : [],
+    response.type === 'evaluation-success'
+      ? response.snapshot.kind === 'structure'
+        ? cadSnapshotTransferables(response.snapshot.scene)
+        : Object.values(response.snapshot.taskScenes).flatMap(cadSnapshotTransferables)
+      : [],
   )
 }
 

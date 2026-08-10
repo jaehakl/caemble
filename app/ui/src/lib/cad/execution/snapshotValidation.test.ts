@@ -48,11 +48,13 @@ describe('plain snapshot validation', () => {
       variables: {},
       varsSchema: {},
     })
+    if (snapshot.kind !== 'structure') throw new Error('Expected Structure')
 
     expect(snapshot.scene.parts[0].material).toBe(snapshot.scene.parts[1].material)
     expect(() => assertEvaluatedDocumentSnapshot(snapshot)).not.toThrow()
 
     const cloned = structuredClone(snapshot)
+    if (cloned.kind !== 'structure') throw new Error('Expected Structure')
     expect(cloned.scene.parts[0].material).toBe(cloned.scene.parts[1].material)
     expect(() => assertEvaluatedDocumentSnapshot(cloned)).not.toThrow()
   })

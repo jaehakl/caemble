@@ -32,7 +32,7 @@ const program = simulationProgramManifest(
       quantityKind: 'electromagnetism.ElectricCurrent',
     },
   },
-  'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
+  'async def simulate(*, sim, tasks, vars):\n    return None\n',
 )
 
 describe('CadViewer', () => {

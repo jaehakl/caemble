@@ -53,70 +53,28 @@ manifest 사본이나 generated catalog를 두지 않는다. Vite는 이 파일�
 
 The CAD generator reads the element registry, local TypeScript catalogs, and
 `src/lib/cad/api/authoring-manifest.json`. It generates the element
-catalog/registry, JSX intrinsic types, and pinned API versions. Solver authoring
-uses the generic `defineTask({ name, version }, config)` API and is validated by
-CAE at execution time. Commit all generated changes. CI should run
-`npm run check:generated`; a non-empty regeneration diff is an error.
+catalog/registry, JSX intrinsic types, and the pinned CAD authoring API v4.
+Commit all generated changes. CI should run `npm run check:generated`; a
+non-empty regeneration diff is an error.
 
-`src/lib/cad/model/core.ts` remains an internal application facade and is never exposed to Source code. Vars, descriptor contracts, Material construction, Structure, and Experiment live in focused `vars.ts`, `descriptor.ts`, `material.ts`, `structure.ts`, and `experiment.ts` modules; new runtime code should import the focused module when it does not need the facade.
+## Experiment source bundle
 
-## TSX v2 source format
+An Experiment is stored atomically as `{ formatVersion: 1, files }`. The bundle
+contains exactly `experiment.tsx`, `simulate.py`, and one or more independent
+`tasks/<taskName>.tsx` files. Every TSX file may import only `@caemble/core`;
+relative imports, Task-to-Task imports, dynamic imports, and `require()` are
+rejected before execution.
 
-A source project contains at most 32 `.ts`/`.tsx` files and 1 MiB in total. It has exactly one entry-file default export. Only static imports from `@caemble/core/v2` and relative files inside the virtual project are accepted. Dynamic imports, URL imports, and other packages are rejected before execution.
+`experiment.tsx` defines only the common `varsSchema` and `recordedData`.
+Each Task file default-exports `defineTask({ kernel, lengthUnit, geometry,
+geometryGroup, surfaceGroup, config })`, and its filename registers the Task
+name. `geometry: () => null` and `lengthUnit` remain mandatory for Tasks without
+visible geometry. `simulate.py` uses `async def simulate(*, sim, tasks, vars)`.
 
-Structure:
-
-```tsx
-import { structure } from '@caemble/core/v2'
-
-export default structure({
-  lengthUnit: 'mm',
-  varsSchema: {
-    conductorSize: {
-      min: [10, 10, 10],
-      max: [100, 100, 100],
-    },
-  },
-  geometry: ({ vars }) => <box id="conductor" size={vars.conductorSize} />,
-  geometryGroup: {
-    conductor: ['conductor'],
-  },
-})
-```
-
-Experiment:
-
-```tsx
-import { experiment } from '@caemble/core/v2'
-
-export default experiment({
-  lengthUnit: 'mm',
-  varsSchema: {
-    voltage: { min: 0, max: 10 },
-  },
-  solver: {
-    name: 'dc-current-density',
-    version: '0.0.0',
-    parameters: ({ vars }) => ({
-      appliedVoltage: vars.voltage,
-    }),
-  },
-  geometry: ({ vars }) => <box size={[vars.voltage + 1, 1, 1]} />,
-  initializations: ({ vars }) => [],
-  boundaryConditions: ({ vars }) => [],
-  recordedData: ({ vars }) => [],
-})
-```
-
-The lowercase functions create model definitions; they are not JSX components or class constructors. v2 does not expose `Structure`, `Experiment`, `Sample`, `Setup`, `VariableObject`, or a global `vars` binding to Source code. `varsSchema` infers scalar and tuple/tensor shapes, so ordinary `vars` access does not need `as number` or `as Vec3` casts.
-
-## Experiment Program v3
-
-Experiment는 `@caemble/core`의 `defineTask({ name, version }, config)`와 `experiment()`를 사용해 named solver task를 조합한다. solver별 manifest와 검증 규칙은 CAE가 소유하며 UI에는 별도 solver package나 generated catalog가 없다. Structure도 `@caemble/core`로 작성한다.
-
-상세 저작 규칙, state/artifact 전달, output 기록, DC method 계약과 문제 해결 방법은 [Experiment Program v3 저작 가이드](./docs/experiment-program-v3.md)에 정리되어 있다. `/examples` Playground의 세 Structure–Experiment pair는 문서, TypeScript 검사, source-policy 검사, 실제 DC kernel 통합 테스트가 같은 source fixture를 사용한다.
-
-Every geometry, solver, and rule callback receives the same frozen `{ vars }` context for one evaluation. Module-level helpers may accept values from that context, but cannot read a global `vars` value.
+The Program tab shows `experiment.tsx` and `simulate.py` together. Sorted Task
+tabs edit and preview independent scenes, while the Program preview overlays all
+Task scenes after unit conversion. See [the Experiment Program guide](../../docs/experiment-program.md)
+for the complete authoring and execution contract.
 
 ## External vars and deterministic evaluation
 
@@ -190,19 +148,6 @@ discard every provisional record.
 The supported writable form is an object literal, or a directly referenced top-level `const` object literal. Spread, computed properties, `map`/`filter`, and other dynamic expressions can still execute, but the affected visual editor is read-only.
 
 Group and Experiment parameter editors create source-hash-bound patches through one patch API. A patch is rejected if Source changed after analysis. Visual save is disabled whenever the current source hash differs from the evaluated snapshot hash.
-
-## v1 migration
-
-There is no runtime v1 adapter. `migrateCadSourceV1ToV2()` performs the static conversion:
-
-- `new Structure({...})` → `structure({...})`;
-- `new Experiment({...})` → `experiment({...})`;
-- `new Sample(structure)` and `new Setup(experiment)` wrappers are removed;
-- model callbacks receive `{ vars }`;
-- `@caemble/core` becomes `@caemble/core/v2`;
-- redundant scalar/tuple assertions on `vars` are removed.
-
-If a module-level helper reads global `vars`, or a wrapper contains realization values that cannot be moved safely, the codemod reports source locations and returns the original source unchanged.
 
 ## Production deployment
 

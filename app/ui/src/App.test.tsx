@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { redirectLegacyHash } from '@/app/legacy-routes'
 import { appRoutePaths } from '@/app/router'
 import { defaultExperimentCode } from '@/lib/defaultExperimentCode'
+import { defaultExperimentTaskCode } from '@/lib/defaultExperimentProgramCode'
 import { defaultExperimentSimulationCode } from '@/lib/defaultExperimentSimulationCode'
 import { catalogCounts } from '@/lib/metadata'
 
@@ -45,9 +46,10 @@ describe('페이지 중심 앱 라우팅', () => {
 
   it('카탈로그 수와 독립 Experiment 예제를 유지한다', () => {
     expect(catalogCounts).toEqual({ cad: 11, materials: 260, quantityKinds: 1_216, solvers: 1 })
-    expect(defaultExperimentCode).toContain("import { defineTask, experiment } from '@caemble/core'")
-    expect(defaultExperimentCode).toContain("electric: defineTask({ name: 'dc-current-density'")
-    expect(defaultExperimentCode).toContain("methodId: 'dc.voxel-grid'")
+    expect(defaultExperimentCode).toContain("import { experiment } from '@caemble/core'")
+    expect(defaultExperimentTaskCode).toContain("import { defineTask } from '@caemble/core'")
+    expect(defaultExperimentTaskCode).toContain("kernel: { name: 'dc-current-density'")
+    expect(defaultExperimentTaskCode).toContain("methodId: 'dc.voxel-grid'")
     expect(defaultExperimentCode).toContain("quantityKind: 'electromagnetism.ElectricCurrent'")
     expect(defaultExperimentCode).not.toContain('simulate:')
     expect(defaultExperimentSimulationCode).toContain('await sim.record(')

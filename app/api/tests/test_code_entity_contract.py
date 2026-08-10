@@ -20,20 +20,36 @@ from utils.crud.list import serialize_list_entities  # noqa: E402
 
 class CodeEntityContractTests(unittest.TestCase):
     def test_schemas_ignore_code_embedding(self):
-        payload = {
+        code_payload = {
             "name": "entity",
             "code": "export default {};",
             "code_embedding": [0.0] * 768,
         }
 
-        for schema in (CodeEntityBase, GeometryBase, StructureBase, ExperimentBase):
+        for schema in (CodeEntityBase, GeometryBase, StructureBase):
             with self.subTest(schema=schema.__name__):
-                entity = schema.model_validate(payload)
+                entity = schema.model_validate(code_payload)
 
                 self.assertNotIn("code_embedding", schema.model_fields)
                 self.assertNotIn("code_embedding", entity.model_dump())
-        self.assertIn("simulation_code", ExperimentBase.model_fields)
-        self.assertTrue(Experiment.__table__.columns.simulation_code.nullable)
+        experiment = ExperimentBase.model_validate(
+            {
+                "name": "entity",
+                "source_bundle": {
+                    "formatVersion": 1,
+                    "files": {
+                        "experiment.tsx": "experiment",
+                        "simulate.py": "simulate",
+                        "tasks/main.tsx": "task",
+                    },
+                },
+                "code_embedding": [0.0] * 768,
+            }
+        )
+        self.assertNotIn("code_embedding", experiment.model_dump())
+        self.assertNotIn("code", ExperimentBase.model_fields)
+        self.assertIn("source_bundle", ExperimentBase.model_fields)
+        self.assertFalse(Experiment.__table__.columns.source_bundle.nullable)
 
     def test_code_embedding_is_deferred_from_default_entity_selects(self):
         for model in (Geometry, Structure, Experiment):
@@ -50,11 +66,25 @@ class CodeEntityContractTests(unittest.TestCase):
 
         for model, schema in cases:
             with self.subTest(model=model.__name__):
+                source = (
+                    {"code": "export default {};"}
+                    if model is not Experiment
+                    else {
+                        "source_bundle": {
+                            "formatVersion": 1,
+                            "files": {
+                                "experiment.tsx": "experiment",
+                                "simulate.py": "simulate",
+                                "tasks/main.tsx": "task",
+                            },
+                        }
+                    }
+                )
                 entity = model(
                     id=1,
                     name="entity",
-                    code="export default {};",
                     code_embedding=[0.0] * 768,
+                    **source,
                 )
                 items = asyncio.run(
                     serialize_list_entities(None, [entity], CrudSpec(model=model, schema=schema))

@@ -6,25 +6,29 @@ import type {
   CadEvaluationResponse,
   CadScene,
   CadSourceDocument,
-  CompiledCadSource,
+  CompiledCadDocument,
   EvaluatedDocumentSnapshot,
   RecordedData,
+  TaskMaterialResolution,
   Vars,
 } from '@/lib/cad'
 import {
+  EXPERIMENT_SIMULATION_PATH,
+  addExperimentTask,
   applyFrozenMaterialParameters,
   buildRealization,
+  buildSourceOnlyRealization,
   CadCompilationError,
   compileCadDocument,
   deserializeCadScene,
   evaluateInIsolatedRunner,
-  rawCodeHash,
   rerollCadSourceDocument,
-  updateCadSimulationCode,
+  removeExperimentTask,
   updateCadSource,
+  updateExperimentSourceFile,
 } from '@/lib/cad'
 import { releaseRecordedDataAttachments, simulate } from '@/features/cae/client'
-import { sourceOnlyMaterialParameters, type MaterialResolution } from '@/lib/material'
+import type { MaterialResolution } from '@/lib/material'
 import type { SimulationProgramManifest } from '@/lib/cad/simulation'
 import type { SimulationProcess } from './simulationUiTypes'
 
@@ -63,19 +67,12 @@ function createRequestId(prefix: string) {
 }
 
 function sameCadSource(left: CadSourceDocument | null | undefined, right: CadSourceDocument | null | undefined) {
-  return Boolean(
-    left &&
-    right &&
-    left.apiVersion === right.apiVersion &&
-    left.formatVersion === right.formatVersion &&
-    left.kind === right.kind &&
-    left.source === right.source &&
-    left.simulationCode === right.simulationCode,
-  )
-}
-
-function requiresPythonMigration(document: CadSourceDocument | null | undefined) {
-  return document?.kind === 'experiment' && !document.simulationCode?.trim()
+  if (!left || !right || left.kind !== right.kind) return false
+  if (left.kind === 'structure' && right.kind === 'structure') return left.source === right.source
+  if (left.kind === 'experiment' && right.kind === 'experiment') {
+    return JSON.stringify(left.sourceBundle) === JSON.stringify(right.sourceBundle)
+  }
+  return false
 }
 
 type DocumentHandlers = Readonly<{
@@ -84,12 +81,12 @@ type DocumentHandlers = Readonly<{
   handleSuccess: (
     response: Extract<CadEvaluationResponse, { type: 'evaluation-success' }>,
     realization: BuiltRealization,
-    compiledSource: CompiledCadSource,
+    compiledSource: CompiledCadDocument,
   ) => void
   handleError: (response: Extract<CadEvaluationResponse, { type: 'evaluation-error' }>) => void
   handleWorkerFailure: (message: string) => void
   getSnapshot: () => Readonly<{
-    compiledSource: CompiledCadSource | null
+    compiledSource: CompiledCadDocument | null
     document: CadSourceDocument | null | undefined
     evaluatedSnapshot: EvaluatedDocumentSnapshot | null
     realization: BuiltRealization | null
@@ -117,10 +114,11 @@ function useDocumentState({
   onDocumentChange,
   requestEvaluation,
 }: DocumentStateOptions) {
-  const [compiledSource, setCompiledSource] = useState<CompiledCadSource | null>(null)
+  const [compiledSource, setCompiledSource] = useState<CompiledCadDocument | null>(null)
   const [diagnostics, setDiagnostics] = useState<readonly CadDiagnostic[]>([])
   const [error, setError] = useState<RunError | null>(null)
   const [scene, setScene] = useState<CadScene | null>(null)
+  const [taskScenes, setTaskScenes] = useState<Readonly<Record<string, CadScene>>>(Object.freeze({}))
   const [evaluatedSnapshot, setEvaluatedSnapshot] = useState<EvaluatedDocumentSnapshot | null>(null)
   const [realization, setRealization] = useState<BuiltRealization | null>(null)
   const [materialWarnings, setMaterialWarnings] = useState<readonly string[]>([])
@@ -142,7 +140,7 @@ function useDocumentState({
   const documentRef = useRef(document)
   const statusRef = useRef<AppStatus>('Ready')
   const successfulRevisionRef = useRef(-1)
-  const compiledSourceRef = useRef<CompiledCadSource | null>(null)
+  const compiledSourceRef = useRef<CompiledCadDocument | null>(null)
   const evaluatedSnapshotRef = useRef<EvaluatedDocumentSnapshot | null>(null)
   const realizationRef = useRef<BuiltRealization | null>(null)
 
@@ -193,33 +191,12 @@ function useDocumentState({
       setRealization(null)
       setMaterialWarnings([])
       setScene(null)
+      setTaskScenes(Object.freeze({}))
       setSimulationProgram(null)
       setVariables(null)
       setVarsSchema(null)
       updateSuccessfulRevision(-1)
       updateStatus('Ready')
-      return
-    }
-
-    if (requiresPythonMigration(document)) {
-      requestEvaluation(document, nextRevision, externalVars)
-      latestRequestIdRef.current = ''
-      setCompiledSource(null)
-      setDiagnostics([])
-      setError({
-        title: 'Python Source Required',
-        message:
-          '이 Experiment에는 Python simulation source가 없습니다. Python source가 포함된 새 revision으로 마이그레이션해야 합니다.',
-      })
-      setEvaluatedSnapshot(null)
-      setRealization(null)
-      setMaterialWarnings([])
-      setScene(null)
-      setSimulationProgram(null)
-      setVariables(null)
-      setVarsSchema(null)
-      updateSuccessfulRevision(-1)
-      updateStatus('Error')
       return
     }
 
@@ -270,7 +247,7 @@ function useDocumentState({
     status === 'Evaluating' ||
     status === 'Resolving Materials' ||
     status === 'Rendering'
-  const editingBlocked = !onDocumentChange || requiresPythonMigration(document)
+  const editingBlocked = !onDocumentChange
   const handleReroll = useCallback(() => {
     if (runIsBusy || !document || editingBlocked) return
     clearPendingEvaluation()
@@ -287,7 +264,28 @@ function useDocumentState({
   const handleSimulationCodeChange = useCallback(
     (nextSource: string) => {
       if (!document || document.kind !== 'experiment' || editingBlocked) return
-      onDocumentChange?.(updateCadSimulationCode(document, nextSource))
+      onDocumentChange?.(updateExperimentSourceFile(document, EXPERIMENT_SIMULATION_PATH, nextSource))
+    },
+    [document, editingBlocked, onDocumentChange],
+  )
+  const handleExperimentFileChange = useCallback(
+    (path: string, nextSource: string) => {
+      if (!document || document.kind !== 'experiment' || editingBlocked) return
+      onDocumentChange?.(updateExperimentSourceFile(document, path, nextSource))
+    },
+    [document, editingBlocked, onDocumentChange],
+  )
+  const handleAddExperimentTask = useCallback(
+    (taskName: string, source: string) => {
+      if (!document || document.kind !== 'experiment' || editingBlocked) return
+      onDocumentChange?.(addExperimentTask(document, taskName, source))
+    },
+    [document, editingBlocked, onDocumentChange],
+  )
+  const handleRemoveExperimentTask = useCallback(
+    (taskName: string) => {
+      if (!document || document.kind !== 'experiment' || editingBlocked) return
+      onDocumentChange?.(removeExperimentTask(document, taskName))
     },
     [document, editingBlocked, onDocumentChange],
   )
@@ -313,18 +311,41 @@ function useDocumentState({
       ) {
         return
       }
-      const runtimeScene = applyFrozenMaterialParameters(
-        deserializeCadScene(response.snapshot.scene),
-        builtRealization.materialParameters,
-      )
+      let runtimeScene: CadScene | null = null
+      let runtimeTaskScenes: Readonly<Record<string, CadScene>> = Object.freeze({})
+      let warnings: readonly string[] = []
+      if (response.snapshot.kind === 'structure' && builtRealization.kind === 'sample') {
+        runtimeScene = applyFrozenMaterialParameters(
+          deserializeCadScene(response.snapshot.scene),
+          builtRealization.materialParameters,
+        )
+        warnings = builtRealization.materialWarnings
+      } else if (response.snapshot.kind === 'experiment' && builtRealization.kind === 'setup') {
+        runtimeTaskScenes = Object.freeze(
+          Object.fromEntries(
+            Object.entries(response.snapshot.taskScenes).map(([name, serialized]) => [
+              name,
+              applyFrozenMaterialParameters(
+                deserializeCadScene(serialized),
+                builtRealization.taskMaterialParameters[name],
+              ),
+            ]),
+          ),
+        )
+        runtimeScene = Object.values(runtimeTaskScenes)[0] ?? null
+        warnings = Object.entries(builtRealization.taskMaterialWarnings).flatMap(([name, items]) =>
+          items.map((item) => `${name}: ${item}`),
+        )
+      }
       updateStatus('Ready')
       setDiagnostics([])
       setError(null)
       setCompiledSource(nextCompiledSource)
       setScene(runtimeScene)
+      setTaskScenes(runtimeTaskScenes)
       setEvaluatedSnapshot(response.snapshot)
       setRealization(builtRealization)
-      setMaterialWarnings(builtRealization.materialWarnings)
+      setMaterialWarnings(warnings)
       setVariables(response.snapshot.variables)
       setVarsSchema(response.snapshot.varsSchema)
       setSimulationProgram(response.snapshot.kind === 'experiment' ? response.snapshot.simulationProgram : null)
@@ -376,17 +397,34 @@ function useDocumentState({
       handleRenderEnd,
       handleRenderError,
       handleRenderStart,
+      handleAddExperimentTask,
+      handleExperimentFileChange,
+      handleRemoveExperimentTask,
       handleReroll,
       handleSimulationCodeChange,
       handleSourceChange,
-      materialParameters: realization?.materialParameters ?? null,
+      materialParameters:
+        realization?.kind === 'sample'
+          ? realization.materialParameters
+          : realization?.kind === 'setup'
+            ? Object.freeze({ schemaVersion: 1 as const, tasks: realization.taskMaterialParameters })
+            : null,
       materialWarnings,
       readOnly: editingBlocked,
       realization,
       revision,
       runIsBusy,
       scene,
-      sceneHash: evaluatedSnapshot?.scene.sceneHash ?? null,
+      sceneHash: evaluatedSnapshot?.kind === 'structure' ? evaluatedSnapshot.scene.sceneHash : null,
+      taskScenes,
+      taskSceneHashes:
+        evaluatedSnapshot?.kind === 'experiment'
+          ? Object.freeze(
+              Object.fromEntries(
+                Object.entries(evaluatedSnapshot.taskScenes).map(([name, value]) => [name, value.sceneHash]),
+              ),
+            )
+          : Object.freeze({}),
       simulationProgram,
       sourceReadOnly: editingBlocked,
       status,
@@ -435,8 +473,8 @@ type EvaluationJob = {
 
 type CompiledSourceSlot = {
   document: CadSourceDocument
-  compiledSource: CompiledCadSource | null
-  promise: Promise<CompiledCadSource>
+  compiledSource: CompiledCadDocument | null
+  promise: Promise<CompiledCadDocument>
 }
 
 export function useCadWorkspace(
@@ -446,7 +484,7 @@ export function useCadWorkspace(
   onExperimentChange: ((document: CadSourceDocument) => void) | undefined,
   structureVars?: Readonly<Vars>,
   experimentVars?: Readonly<Vars>,
-  resolveMaterials?: (snapshot: EvaluatedDocumentSnapshot) => Promise<MaterialResolution>,
+  resolveMaterials?: (snapshot: EvaluatedDocumentSnapshot) => Promise<MaterialResolution | TaskMaterialResolution>,
   structureEvaluationMode: 'standard' | 'fast-reroll' = 'standard',
   runtimeEnabled = true,
 ) {
@@ -513,7 +551,6 @@ export function useCadWorkspace(
     (document: CadSourceDocument, revision: number, externalVars?: Readonly<Vars>) => {
       const documentType = document.kind
       clearEvaluationJob(documentType)
-      if (requiresPythonMigration(document)) return
       const requestId = createRequestId(documentType)
       const handlers = documentHandlersRef.current[documentType]
       handlers?.handleStart(requestId, revision)
@@ -529,12 +566,10 @@ export function useCadWorkspace(
       }
 
       void compiledSourceFor(document)
-        .then(async (compiledSource) => {
+        .then((compiledSource) => {
           if (evaluationJobsRef.current[documentType] !== job) return
-          const simulationCode =
-            documentType === 'experiment' && document.simulationCode?.trim() ? document.simulationCode : null
-          const simulationCodeHash = simulationCode ? await rawCodeHash(simulationCode) : null
-          if (evaluationJobsRef.current[documentType] !== job) return
+          const pythonSource =
+            document.kind === 'experiment' ? document.sourceBundle.files[EXPERIMENT_SIMULATION_PATH] : null
           handlers?.handlePhase(requestId, revision, 'Evaluating')
           job.cancel = evaluateInIsolatedRunner(
             {
@@ -544,9 +579,9 @@ export function useCadWorkspace(
               document: {
                 kind: documentType,
                 realizationSeed: document.realizationSeed,
-                ...(simulationCode && simulationCodeHash ? { simulationCode, simulationCodeHash } : {}),
+                ...(pythonSource ? { pythonSource } : {}),
               },
-              compiledSource,
+              compiledDocument: compiledSource,
               ...(externalVars ? { vars: externalVars } : {}),
             },
             {
@@ -571,19 +606,15 @@ export function useCadWorkspace(
                   return
                 }
                 handlers?.handlePhase(requestId, revision, 'Resolving Materials')
-                const fallback = () => {
-                  const scene = deserializeCadScene(response.snapshot.scene)
-                  const materials = scene.parts.flatMap((part) => (part.material ? [part.material] : []))
-                  return sourceOnlyMaterialParameters(materials)
-                }
-                void (
-                  resolveMaterialsRef.current
-                    ? resolveMaterialsRef.current(response.snapshot)
-                    : Promise.resolve(fallback())
-                )
-                  .then((resolution) => {
+                const realizationPromise = resolveMaterialsRef.current
+                  ? resolveMaterialsRef
+                      .current(response.snapshot)
+                      .then((resolution) => buildRealization(response.snapshot, resolution))
+                  : Promise.resolve(buildSourceOnlyRealization(response.snapshot))
+                void realizationPromise
+                  .then((builtRealization) => {
                     if (handlers?.getSnapshot().revision !== revision) return
-                    handlers.handleSuccess(response, buildRealization(response.snapshot, resolution), compiledSource)
+                    handlers.handleSuccess(response, builtRealization, compiledSource)
                   })
                   .catch((error: unknown) => {
                     handlers?.handleError({

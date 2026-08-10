@@ -1,3 +1,4 @@
+import { createExperimentSourceBundle } from '../../cad'
 import type { CaembleProgramExample } from './types'
 
 export const dcNotchedCurrentDensityStructureCode = `import {
@@ -60,10 +61,47 @@ export default structure({
 })
 `
 
-export const dcNotchedCurrentDensityExperimentCode = `import { defineTask, experiment } from '@caemble/core'
+export const dcNotchedCurrentDensityExperimentCode = `import { experiment } from '@caemble/core'
 
-function fieldTask(sourceVoltage: number) {
-  return defineTask({ name: 'dc-current-density', version: '0.0.0' }, {
+export default experiment({
+  varsSchema: {
+    sourceVoltage: { min: 1, max: 1 },
+  },
+  recordedData: {
+    currentDensity: {
+      dtype: 'float64',
+      unit: 'A.m-2',
+      quantityKind: 'electromagnetism.ElectricCurrentDensity',
+      basis: [
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+      ],
+      axes: [
+        { name: 'cross-section v', unit: 'm', quantityKind: 'Length' },
+        { name: 'cross-section u', unit: 'm', quantityKind: 'Length' },
+      ],
+    },
+    totalCurrent: {
+      dtype: 'float64',
+      unit: 'A',
+      quantityKind: 'electromagnetism.ElectricCurrent',
+    },
+  },
+})
+`
+
+export const dcNotchedCurrentDensityTaskCode = `import { defineTask } from '@caemble/core'
+
+function FieldProbe() {
+  return <box size={[3, 3, 3]} />
+}
+
+export default defineTask({
+  kernel: { name: 'dc-current-density', version: '0.0.0' },
+  lengthUnit: 'mm',
+  geometry: () => <FieldProbe id="field-probe" pos={[0, -15, 0]} />,
+  config: ({ vars }) => ({
   parameters: {
     relativeTolerance: {
       dtype: 'float64',
@@ -95,7 +133,7 @@ function fieldTask(sourceVoltage: number) {
       parameters: {
         voltage: {
           dtype: 'float64',
-          value: sourceVoltage,
+          value: vars.sourceVoltage,
           unit: 'mV',
           quantityKind: 'electromagnetism.Voltage',
         },
@@ -143,57 +181,22 @@ function fieldTask(sourceVoltage: number) {
       },
     },
   ],
-  })
-}
-
-function FieldProbe() {
-  return <box size={[3, 3, 3]} />
-}
-
-export default experiment({
-  lengthUnit: 'mm',
-
-  varsSchema: {
-    sourceVoltage: { min: 1, max: 1 },
-  },
-
-  geometry: () => <FieldProbe id="field-probe" pos={[0, -15, 0]} />,
-
-  tasks: ({ vars }) => ({
-    solveField: fieldTask(vars.sourceVoltage),
   }),
-
-  recordedData: {
-    currentDensity: {
-      dtype: 'float64',
-      unit: 'A.m-2',
-      quantityKind: 'electromagnetism.ElectricCurrentDensity',
-      basis: [
-        [1, 0, 0],
-        [0, 1, 0],
-        [0, 0, 1],
-      ],
-      axes: [
-        { name: 'cross-section v', unit: 'm', quantityKind: 'Length' },
-        { name: 'cross-section u', unit: 'm', quantityKind: 'Length' },
-      ],
-    },
-    totalCurrent: {
-      dtype: 'float64',
-      unit: 'A',
-      quantityKind: 'electromagnetism.ElectricCurrent',
-    },
-  },
-
 })
 `
 
-export const dcNotchedCurrentDensitySimulationCode = `async def simulate(*, sim, tasks, vars, world):
+export const dcNotchedCurrentDensitySimulationCode = `async def simulate(*, sim, tasks, vars):
     result = await sim.run(tasks["solveField"])
     await sim.record("currentDensity", result["artifacts"]["currentDensity"])
     await sim.record("totalCurrent", result["artifacts"]["totalCurrent"])
     return result["state"]
 `
+
+export const dcNotchedCurrentDensityExperimentSourceBundle = createExperimentSourceBundle({
+  'experiment.tsx': dcNotchedCurrentDensityExperimentCode,
+  'simulate.py': dcNotchedCurrentDensitySimulationCode,
+  'tasks/solveField.tsx': dcNotchedCurrentDensityTaskCode,
+})
 
 export const dcNotchedCurrentDensityExample = Object.freeze({
   id: 'dc-notched-current-density',
@@ -205,8 +208,7 @@ export const dcNotchedCurrentDensityExample = Object.freeze({
     '동적 2D axes와 vector Quantity RecordedData',
   ]),
   structureCode: dcNotchedCurrentDensityStructureCode,
-  experimentCode: dcNotchedCurrentDensityExperimentCode,
-  simulationCode: dcNotchedCurrentDensitySimulationCode,
+  experimentSourceBundle: dcNotchedCurrentDensityExperimentSourceBundle,
   verification: Object.freeze({
     kernelTasks: Object.freeze(['solveField']),
     recordedData: Object.freeze(['currentDensity', 'totalCurrent']),

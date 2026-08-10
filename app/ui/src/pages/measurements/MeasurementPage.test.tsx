@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CurrentCadSelectionProvider } from '@/features/viewer/current-cad-selection'
+import { createExperimentSourceBundle } from '@/lib/cad'
 import { MeasurementPage } from './MeasurementPage'
 
 const apiMocks = vi.hoisted(() => ({
@@ -43,6 +44,14 @@ function persistedInlineTensor(value: unknown) {
     storage: { kind: 'inline', value },
   }
 }
+
+const experimentSourceBundle = createExperimentSourceBundle({
+  'experiment.tsx': `import { experiment } from '@caemble/core'
+export default experiment({ varsSchema: {}, recordedData: {} })`,
+  'simulate.py': 'async def simulate(*, sim, tasks, vars):\n    return None\n',
+  'tasks/electric.tsx': `import { defineTask } from '@caemble/core'
+export default defineTask({ kernel: { name: 'dc-current-density', version: '0.0.0' }, lengthUnit: 'm', geometry: () => null, config: () => ({}) })`,
+})
 
 vi.mock('@/features/auth/use-auth', () => ({
   useAuth: () => ({
@@ -243,9 +252,9 @@ vi.mock('@/features/viewer/workspace/useCadWorkspace', async () => {
           successfulRevision: experimentRevision,
           variables: experimentVars ?? {},
           simulationProgram: {
-            formatVersion: 3,
-            simulationApiVersion: 1,
-            pythonSource: 'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
+            formatVersion: 4,
+            simulationApiVersion: 2,
+            pythonSource: 'async def simulate(*, sim, tasks, vars):\n    return None\n',
             tasks: {
               electric: {
                 kernel: { name: 'dc-current-density', version: '0.0.0' },
@@ -325,7 +334,7 @@ function mockSelectedMeasurement() {
   })
   apiMocks.experimentList.mockResolvedValue({
     total: 1,
-    items: [{ id: 2, name: 'DC experiment', code: 'export default experiment({})' }],
+    items: [{ id: 2, name: 'DC experiment', source_bundle: experimentSourceBundle }],
   })
   apiMocks.measurementContext.mockResolvedValue({
     total: 1,
@@ -387,7 +396,7 @@ function mockMeasurementCombinations() {
   })
   apiMocks.experimentList.mockResolvedValue({
     total: 1,
-    items: [{ id: 2, name: 'DC experiment', code: 'export default experiment({})' }],
+    items: [{ id: 2, name: 'DC experiment', source_bundle: experimentSourceBundle }],
   })
   apiMocks.measurementContext.mockResolvedValue({
     total: measurements.length,
@@ -440,7 +449,7 @@ function mockRunWorkflow(
   })
   apiMocks.experimentList.mockResolvedValue({
     total: 1,
-    items: [{ id: 2, name: 'DC experiment', code: 'export default experiment({})' }],
+    items: [{ id: 2, name: 'DC experiment', source_bundle: experimentSourceBundle }],
   })
   apiMocks.sampleList.mockImplementation(async (request: { selected_ids?: number[] }) => ({
     total: samples.length,
@@ -973,7 +982,7 @@ describe('MeasurementPage', () => {
     })
     apiMocks.experimentList.mockResolvedValue({
       total: 1,
-      items: [{ id: 2, name: 'DC experiment', code: 'export default experiment({})' }],
+      items: [{ id: 2, name: 'DC experiment', source_bundle: experimentSourceBundle }],
     })
     apiMocks.measurementContext.mockResolvedValue({
       total: 1,
@@ -1138,7 +1147,7 @@ describe('MeasurementPage', () => {
     })
     apiMocks.experimentList.mockResolvedValue({
       total: 1,
-      items: [{ id: 2, name: 'DC experiment', code: 'export default experiment({})' }],
+      items: [{ id: 2, name: 'DC experiment', source_bundle: experimentSourceBundle }],
     })
     apiMocks.sampleList.mockResolvedValue({ total: 0, items: [] })
     apiMocks.setupList.mockResolvedValue({ total: 0, items: [] })

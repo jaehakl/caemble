@@ -95,7 +95,9 @@ function handleEvaluation(event: MessageEvent<unknown>, envelope: RunnerEvaluati
       port.postMessage(
         workerEvent.data,
         workerEvent.data.response.type === 'evaluation-success'
-          ? cadSnapshotTransferables(workerEvent.data.response.snapshot.scene)
+          ? workerEvent.data.response.snapshot.kind === 'structure'
+            ? cadSnapshotTransferables(workerEvent.data.response.snapshot.scene)
+            : Object.values(workerEvent.data.response.snapshot.taskScenes).flatMap(cadSnapshotTransferables)
           : [],
       )
     } catch (error) {

@@ -234,12 +234,7 @@ export function StructurePage() {
   const currentExperiment = useMemo(
     () =>
       currentExperimentQuery.data
-        ? createCadSourceDocument(
-            'experiment',
-            currentExperimentQuery.data.code,
-            undefined,
-            currentExperimentQuery.data.simulation_code,
-          )
+        ? createCadSourceDocument('experiment', currentExperimentQuery.data.source_bundle)
         : null,
     [currentExperimentQuery.data],
   )
@@ -377,7 +372,13 @@ export function StructurePage() {
     () => createDocumentMaterialResolver(null),
     // These values intentionally define the lifetime of the session-local Material lookup cache.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [auth.user, currentExperiment?.source, currentExperimentId, selectedStructureId, structure?.source],
+    [
+      auth.user,
+      currentExperiment ? cadSource(currentExperiment) : null,
+      currentExperimentId,
+      selectedStructureId,
+      structure ? cadSource(structure) : null,
+    ],
   )
   const handleStructureChange = useCallback((document: CadSourceDocument) => {
     setStructure(document)
@@ -440,7 +441,7 @@ export function StructurePage() {
     },
     onSuccess: async ({ action, code, id }, { forceRoot }) => {
       setSelectedStructureId(id)
-      setSavedStructureCode(code)
+      setSavedStructureCode(code ?? null)
       updateDeepLink(id)
       setSaveMode(null)
       await invalidateStructures()
@@ -614,10 +615,19 @@ export function StructurePage() {
         ? {
             scene: experimentDocument.scene,
             sceneHash: experimentDocument.sceneHash,
+            taskScenes: experimentDocument.taskScenes,
+            taskSceneHashes: experimentDocument.taskSceneHashes,
             variables: experimentDocument.variables,
           }
         : null,
-    [currentExperiment, experimentDocument.scene, experimentDocument.sceneHash, experimentDocument.variables],
+    [
+      currentExperiment,
+      experimentDocument.scene,
+      experimentDocument.sceneHash,
+      experimentDocument.taskSceneHashes,
+      experimentDocument.taskScenes,
+      experimentDocument.variables,
+    ],
   )
   const handleRenderStart = useCallback(
     (sources: readonly CadDocumentType[]) => {

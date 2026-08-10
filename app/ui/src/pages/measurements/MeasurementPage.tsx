@@ -54,7 +54,6 @@ import {
   type RecordedData,
   type Vars,
 } from '@/lib/cad'
-import type { MaterialResolution } from '@/lib/material'
 
 function positiveId(value: string | null) {
   const parsed = Number(value)
@@ -209,7 +208,7 @@ export function MeasurementPage() {
   )
 
   const resolveMaterials = useCallback(
-    (snapshot: EvaluatedDocumentSnapshot): Promise<MaterialResolution> =>
+    (snapshot: EvaluatedDocumentSnapshot) =>
       resolveDocumentMaterials(
         snapshot,
         snapshot.kind === 'structure' ? structureMaterialSnapshot : experimentMaterialSnapshot,
@@ -263,7 +262,7 @@ export function MeasurementPage() {
   const applyExperiment = useCallback(
     (record: ExperimentRecord, resetRealization: boolean) => {
       if (!record.id) throw new Error('Experiment ID가 없습니다.')
-      setExperiment(createCadSourceDocument('experiment', record.code, undefined, record.simulation_code))
+      setExperiment(createCadSourceDocument('experiment', record.source_bundle))
       setExperimentRecord(record)
       setCurrentExperimentId(record.id)
       if (resetRealization) {
@@ -604,25 +603,29 @@ export function MeasurementPage() {
       runSetupId: number | null
     }) => {
       if (kind === 'sample') {
-        if (!currentStructureId || !structureDocument.variables || !structureDocument.materialParameters) {
+        const materialParameters = structureDocument.materialParameters
+        if (
+          !currentStructureId ||
+          !structureDocument.variables ||
+          !materialParameters ||
+          !('materials' in materialParameters)
+        ) {
           throw new Error('Ready 상태의 Structure 실현값이 필요합니다.')
         }
-        const record = createSampleRecord(
-          currentStructureId,
-          structureDocument.variables,
-          structureDocument.materialParameters,
-        )
+        const record = createSampleRecord(currentStructureId, structureDocument.variables, materialParameters)
         const [result] = await dbTables.Sample.upsertRow([record])
         return { id: result.id, kind, record: { ...record, id: result.id, updated_at: new Date().toISOString() } }
       }
-      if (!currentExperimentId || !experimentDocument.variables || !experimentDocument.materialParameters) {
+      const materialParameters = experimentDocument.materialParameters
+      if (
+        !currentExperimentId ||
+        !experimentDocument.variables ||
+        !materialParameters ||
+        !('tasks' in materialParameters)
+      ) {
         throw new Error('Ready 상태의 Experiment 실현값이 필요합니다.')
       }
-      const record = createSetupRecord(
-        currentExperimentId,
-        experimentDocument.variables,
-        experimentDocument.materialParameters,
-      )
+      const record = createSetupRecord(currentExperimentId, experimentDocument.variables, materialParameters)
       const [result] = await dbTables.Setup.upsertRow([record])
       return { id: result.id, kind, record: { ...record, id: result.id, updated_at: new Date().toISOString() } }
     },
@@ -1163,10 +1166,19 @@ export function MeasurementPage() {
         ? {
             scene: experimentDocument.scene,
             sceneHash: experimentDocument.sceneHash,
+            taskScenes: experimentDocument.taskScenes,
+            taskSceneHashes: experimentDocument.taskSceneHashes,
             variables: experimentDocument.variables,
           }
         : null,
-    [experiment, experimentDocument.scene, experimentDocument.sceneHash, experimentDocument.variables],
+    [
+      experiment,
+      experimentDocument.scene,
+      experimentDocument.sceneHash,
+      experimentDocument.taskSceneHashes,
+      experimentDocument.taskScenes,
+      experimentDocument.variables,
+    ],
   )
   const handleRenderStart = useCallback(
     (sources: readonly CadDocumentType[]) => {

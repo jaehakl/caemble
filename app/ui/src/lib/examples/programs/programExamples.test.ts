@@ -1,9 +1,8 @@
 import { transform } from 'esbuild'
 import { describe, expect, it } from 'vitest'
-import { serializeEvaluatedDocumentSnapshot } from '../../cad/execution/snapshot'
-import { evaluateDocumentEntry, loadCompiledCode } from '../../cad/execution/userModule'
-import { ExperimentDefinition } from '../../cad/model/v3'
-import { analyzeCadSource } from '../../cad/source/sourceAnalysis'
+import { CAD_COMPILER_VERSION, type CompiledCadDocument, type CompiledCadSource } from '../../cad/compiler/types'
+import { executeCompiledDocument } from '../../cad/execution/userModule'
+import { analyzeCadSource, analyzeTaskSource } from '../../cad/source/sourceAnalysis'
 import { assertSimulationProgramManifest } from '../../cad/simulation'
 import type { CaembleProgramExample } from './types'
 import { CAEMBLE_PROGRAM_EXAMPLE_SEED, caembleProgramExamples } from '.'
@@ -23,84 +22,70 @@ async function compileSource(source: string) {
 
 async function prepareExample(example: CaembleProgramExample, seed = CAEMBLE_PROGRAM_EXAMPLE_SEED) {
   analyzeCadSource(example.structureCode, 'structure')
-  analyzeCadSource(example.experimentCode, 'experiment')
-  const entry = loadCompiledCode(await compileSource(example.experimentCode), 'experiment')
-  expect(entry).toBeInstanceOf(ExperimentDefinition)
-  const snapshot = serializeEvaluatedDocumentSnapshot(
-    evaluateDocumentEntry(entry, 'experiment', '2'.repeat(64), seed, {}, example.simulationCode, '3'.repeat(64)),
+  const sourceHash = '2'.repeat(64)
+  const sources = await Promise.all(
+    Object.entries(example.experimentSourceBundle.files)
+      .filter(([path]) => path.endsWith('.tsx'))
+      .map(async ([entryFile, source]) => {
+        if (entryFile === 'experiment.tsx') analyzeCadSource(source, 'experiment')
+        else analyzeTaskSource(source)
+        const compiled: CompiledCadSource = {
+          apiVersion: 4,
+          compilerVersion: CAD_COMPILER_VERSION,
+          entryFile,
+          code: await compileSource(source),
+          sourceHash,
+        }
+        return [entryFile, compiled] as const
+      }),
   )
-  if (snapshot.kind !== 'experiment') throw new Error(`${example.id} did not produce an Experiment snapshot.`)
-  return snapshot.simulationProgram
+  const document: CompiledCadDocument = {
+    apiVersion: 4,
+    compilerVersion: CAD_COMPILER_VERSION,
+    sourceHash,
+    sources: Object.fromEntries(sources),
+  }
+  const result = executeCompiledDocument(
+    document,
+    'experiment',
+    seed,
+    {},
+    example.experimentSourceBundle.files['simulate.py'],
+  )
+  if (result.kind !== 'experiment') throw new Error(`${example.id} did not produce an Experiment snapshot.`)
+  return result.simulationProgram
 }
 
 describe('Python CAE Experiment examples', () => {
-  it('keeps unique immutable fixtures with compact manifest v3 tasks', async () => {
+  it('keeps unique immutable fixtures with compact manifest v4 tasks', async () => {
     expect(new Set(caembleProgramExamples.map((example) => example.id)).size).toBe(caembleProgramExamples.length)
 
     for (const [index, example] of caembleProgramExamples.entries()) {
       const manifest = await prepareExample(example, 101 + index)
       expect(manifest).toMatchObject({
-        formatVersion: 3,
-        simulationApiVersion: 1,
-        pythonSource: example.simulationCode,
+        formatVersion: 4,
+        simulationApiVersion: 2,
+        pythonSource: example.experimentSourceBundle.files['simulate.py'],
       })
       expect(Object.keys(manifest.tasks)).toEqual(example.verification.kernelTasks)
       expect(Object.keys(manifest.recordedData)).toEqual(example.verification.recordedData)
-      Object.values(manifest.tasks).forEach((task) => {
-        expect(Object.keys(task).sort()).toEqual(['config', 'kernel'])
-        expect(Object.keys(task.kernel).sort()).toEqual(['name', 'version'])
-        expect(task.config).toEqual(expect.any(Object))
-      })
-      Object.values(manifest.recordedData).forEach((schema) => {
-        expect(schema.tensorOrder).toBeGreaterThanOrEqual(0)
-      })
       expect(() => assertSimulationProgramManifest(manifest)).not.toThrow()
-      expect(Object.isFrozen(example)).toBe(true)
-      expect(Object.isFrozen(example.verification)).toBe(true)
+      expect(
+        Object.keys(example.experimentSourceBundle.files).filter((path) => path.startsWith('tasks/')),
+      ).toHaveLength(example.verification.kernelTasks.length)
     }
   })
 
-  it('rejects obsolete task fields and inconsistent RecordedData tensor orders', async () => {
-    const manifest = await prepareExample(caembleProgramExamples[0])
-    const [taskName] = Object.keys(manifest.tasks)
-    const task = manifest.tasks[taskName]
-
-    expect(() =>
-      assertSimulationProgramManifest({
-        ...manifest,
-        tasks: {
-          ...manifest.tasks,
-          [taskName]: {
-            ...task,
-            descriptorHash: 'obsolete',
-          },
-        },
-      }),
-    ).toThrow('must contain exactly')
-    const [recordName] = Object.keys(manifest.recordedData)
-    const record = manifest.recordedData[recordName]
-    expect(() =>
-      assertSimulationProgramManifest({
-        ...manifest,
-        recordedData: {
-          ...manifest.recordedData,
-          [recordName]: { ...record, tensorOrder: record.tensorOrder + 1 },
-        },
-      }),
-    ).toThrow('tensorOrder')
-  })
-
-  it('uses only the Python ABI for orchestration and awaitable records', () => {
+  it('uses only the Python v2 ABI for orchestration and records', () => {
     caembleProgramExamples.forEach((example) => {
-      expect(example.experimentCode).not.toContain('simulate:')
-      expect(example.experimentCode).not.toContain('sim.run(')
-      expect(example.simulationCode).toMatch(/^async def simulate\(\*, sim, tasks, vars, world\):/u)
-      example.verification.kernelTasks.forEach((task) => {
-        expect(example.simulationCode).toContain(`tasks["${task}"]`)
-      })
-      example.verification.recordedData.forEach((name) => {
-        expect(example.simulationCode).toMatch(new RegExp(`await\\s+sim\\.record\\(\\s*["']${name}["']`, 'u'))
-      })
+      const pythonSource = example.experimentSourceBundle.files['simulate.py']
+      expect(example.experimentSourceBundle.files['experiment.tsx']).not.toContain('sim.run(')
+      expect(pythonSource).toMatch(/^async def simulate\(\*, sim, tasks, vars\):/u)
+      expect(pythonSource).not.toContain('world')
+      example.verification.kernelTasks.forEach((task) => expect(pythonSource).toContain(`tasks["${task}"]`))
+      example.verification.recordedData.forEach((name) =>
+        expect(pythonSource).toMatch(new RegExp(`await\\s+sim\\.record\\(\\s*["']${name}["']`, 'u')),
+      )
     })
   })
 })

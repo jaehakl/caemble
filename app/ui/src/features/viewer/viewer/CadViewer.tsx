@@ -12,6 +12,7 @@ export type { CadViewerRecordedAxis, CadViewerRecordedData, CadViewerRecordedTen
 export type CadViewerProps = {
   structure: CadViewerDocument | null
   experiment: CadViewerDocument | null
+  activeExperimentTaskName?: string | null
   recordedData?: CadViewerRecordedData | null
   resultsLayout?: 'split' | 'tabs'
   simulation?: CadViewerSimulation | null
@@ -30,6 +31,7 @@ export type CadViewerSimulation = Readonly<{
 }>
 
 export function CadViewer({
+  activeExperimentTaskName = null,
   experiment,
   onRenderEnd,
   onRenderError,
@@ -42,8 +44,8 @@ export function CadViewer({
   const [structureVisible, setStructureVisible] = useState(true)
   const [experimentVisible, setExperimentVisible] = useState(true)
   const content = useMemo(
-    () => resolveCadViewerContent(structure, experiment, structureVisible, experimentVisible),
-    [experiment, experimentVisible, structure, structureVisible],
+    () => resolveCadViewerContent(structure, experiment, structureVisible, experimentVisible, activeExperimentTaskName),
+    [activeExperimentTaskName, experiment, experimentVisible, structure, structureVisible],
   )
   const programRecordedDataRules = useMemo<readonly RecordedDataRule[]>(
     () =>

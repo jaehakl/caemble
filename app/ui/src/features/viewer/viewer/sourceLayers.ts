@@ -4,6 +4,7 @@ import { createRenderParts } from './renderParts'
 
 export type JscadViewerLayer = Readonly<{
   documentType: CadDocumentType
+  taskName?: string
   lengthUnit: UcumUnit
   parts: CadScenePart[]
   sceneHash?: string | null

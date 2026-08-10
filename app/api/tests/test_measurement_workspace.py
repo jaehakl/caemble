@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 
 from db import Experiment, Measurement, RecordedData, Sample, Setup, Structure
 from settings import settings
-from tests.helpers import auth_headers, create_user
+from tests.helpers import auth_headers, create_user, experiment_source_bundle
 
 
 def inline_tensor(value, shape=None):
@@ -16,7 +16,7 @@ def inline_tensor(value, shape=None):
 
 async def create_measurement_graph(db_session, user_id):
     structure = Structure(name="Structure", code="structure", user_id=user_id)
-    experiment = Experiment(name="Experiment", code="experiment", user_id=user_id)
+    experiment = Experiment(name="Experiment", source_bundle=experiment_source_bundle(), user_id=user_id)
     db_session.add_all([structure, experiment])
     await db_session.flush()
     sample = Sample(structure_id=structure.id, user_id=user_id, vars={}, material_parameters={})
@@ -47,7 +47,7 @@ async def test_context_list_filters_by_structure_experiment_and_owner(client, db
     other = await create_user(db_session)
     structure = Structure(name="Structure", code="structure", user_id=owner.id)
     other_structure = Structure(name="Other structure", code="other structure", user_id=owner.id)
-    experiment = Experiment(name="Experiment", code="experiment", user_id=owner.id)
+    experiment = Experiment(name="Experiment", source_bundle=experiment_source_bundle(), user_id=owner.id)
     db_session.add_all([structure, other_structure, experiment])
     await db_session.flush()
 
@@ -81,7 +81,7 @@ async def test_save_measurement_persists_inline_recorded_data_atomically(client,
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
     structure = Structure(name="Structure", code="structure", user_id=owner.id)
-    experiment = Experiment(name="Experiment", code="experiment", user_id=owner.id)
+    experiment = Experiment(name="Experiment", source_bundle=experiment_source_bundle(), user_id=owner.id)
     db_session.add_all([structure, experiment])
     await db_session.flush()
     sample = Sample(
@@ -351,7 +351,7 @@ async def test_save_measurement_rejects_foreign_realizations(client, db_session,
     owner = await create_user(db_session)
     other = await create_user(db_session)
     structure = Structure(name="Structure", code="structure", user_id=other.id)
-    experiment = Experiment(name="Experiment", code="experiment", user_id=other.id)
+    experiment = Experiment(name="Experiment", source_bundle=experiment_source_bundle(), user_id=other.id)
     db_session.add_all([structure, experiment])
     await db_session.flush()
     sample = Sample(structure_id=structure.id, user_id=other.id, vars={}, material_parameters={})
@@ -375,7 +375,7 @@ async def test_save_measurement_rolls_back_when_result_commit_fails(client, db_s
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
     structure = Structure(name="Structure", code="structure", user_id=owner.id)
-    experiment = Experiment(name="Experiment", code="experiment", user_id=owner.id)
+    experiment = Experiment(name="Experiment", source_bundle=experiment_source_bundle(), user_id=owner.id)
     db_session.add_all([structure, experiment])
     await db_session.flush()
     sample = Sample(structure_id=structure.id, user_id=owner.id, vars={}, material_parameters={})

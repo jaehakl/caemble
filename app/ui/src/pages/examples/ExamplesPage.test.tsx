@@ -81,7 +81,7 @@ vi.mock('@/features/viewer/viewer/CadViewer', () => ({
     }
   }) => (
     <div>
-      <div data-testid="program-manifest">{simulation.program ? 'v3 program connected' : 'no program'}</div>
+      <div data-testid="program-manifest">{simulation.program ? 'v4 program connected' : 'no program'}</div>
       <button type="button" onClick={simulation.run}>
         Mock Run Simulation
       </button>
@@ -143,13 +143,14 @@ beforeEach(() => {
         handleRenderError: workspace.experimentRenderError,
         handleRenderStart: workspace.experimentRenderStart,
         handleSourceChange: (source: string) => onExperimentChange(updateCadSource(experiment, source)),
-        scene: { lengthUnit: 'mm', parts: [] },
+        taskScenes: { solveCurrent: { lengthUnit: 'mm', parts: [] } },
+        taskSceneHashes: { solveCurrent: 'experiment-scene' },
         sceneHash: 'experiment-scene',
         selection: null,
         simulationProgram: {
-          formatVersion: 3,
-          simulationApiVersion: 1,
-          pythonSource: 'async def simulate(*, sim, tasks, vars, world):\n    return None\n',
+          formatVersion: 4,
+          simulationApiVersion: 2,
+          pythonSource: 'async def simulate(*, sim, tasks, vars):\n    return None\n',
           tasks: {
             solveCurrent: {
               kernel: { name: 'dc-current-density', version: '0.0.0' },
@@ -201,10 +202,8 @@ describe('ExamplesPage', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe(`/examples/${example.id}`))
     expect(screen.getByRole('heading', { name: example.title })).toBeInTheDocument()
     expect(screen.getByTestId('structure-source')).toHaveTextContent('structure({')
-    expect(screen.getByTestId('experiment-source')).toHaveTextContent(
-      "defineTask({ name: 'dc-current-density', version: '0.0.0' }",
-    )
-    expect(screen.getByTestId('program-manifest')).toHaveTextContent('v3 program connected')
+    expect(screen.getByTestId('experiment-source')).toHaveTextContent("import { experiment } from '@caemble/core'")
+    expect(screen.getByTestId('program-manifest')).toHaveTextContent('v4 program connected')
 
     await userEvent.click(screen.getByRole('button', { name: 'Mock Run Simulation' }))
     expect(workspace.run).toHaveBeenCalledOnce()
@@ -243,6 +242,6 @@ describe('ExamplesPage', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe('/examples/dc-resolution-study'))
     expect(screen.getByRole('heading', { name: 'DC Resolution Study' })).toBeInTheDocument()
     expect(screen.queryByText('수정됨')).not.toBeInTheDocument()
-    expect(screen.getByTestId('experiment-source')).toHaveTextContent('solveCoarse')
+    expect(screen.getByTestId('experiment-source')).toHaveTextContent('coarseTotalCurrent')
   })
 })

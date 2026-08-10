@@ -1,3 +1,4 @@
+import { createExperimentSourceBundle } from '../../cad'
 import type { CaembleProgramExample } from './types'
 
 export const electroThermalUniformBarStructureCode = `import {
@@ -12,13 +13,11 @@ const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />
 
 export default structure({
   lengthUnit: 'mm',
-
   varsSchema: {
     conductorSize: { min: [100, 5, 5], max: [100, 5, 5] },
     electricalConductivity: { min: 5.96e7, max: 5.96e7 },
     thermalConductivity: { min: 401, max: 401 },
   },
-
   geometry: ({ vars }) => (
     <Conductor
       id="conductor"
@@ -41,11 +40,7 @@ export default structure({
       ]}
     />
   ),
-
-  geometryGroup: {
-    conductor: ['conductor'],
-  },
-
+  geometryGroup: { conductor: ['conductor'] },
   surfaceGroup: {
     sourceTerminal: ['conductor/surface-1'],
     referenceTerminal: ['conductor/surface-2'],
@@ -53,170 +48,13 @@ export default structure({
 })
 `
 
-export const electroThermalUniformBarExperimentCode = `import { defineTask, experiment } from '@caemble/core'
-
-const gridShape = [20, 11, 11] as const
-
-function electricTask(sourceVoltage: number) {
-  return defineTask({ name: 'dc-current-density', version: '0.0.0' }, {
-    parameters: {
-      relativeTolerance: {
-        dtype: 'float64',
-        value: 1e-10,
-        unit: '{fraction}',
-        quantityKind: 'DimensionlessRatio',
-      },
-      maxIterations: 1000,
-    },
-    initializations: [
-      {
-        target: ['structure.geometry.conductor'],
-        methodId: 'dc.voxel-grid',
-        parameters: {
-          gridShape: {
-            dtype: 'int32',
-            axes: [{ length: 3 }],
-            value: gridShape,
-          },
-        },
-      },
-    ],
-    boundaryConditions: [
-      {
-        target: ['structure.surface.sourceTerminal'],
-        methodId: 'dc.source-potential',
-        parameters: {
-          voltage: {
-            dtype: 'float64',
-            value: sourceVoltage,
-            unit: 'mV',
-            quantityKind: 'electromagnetism.Voltage',
-          },
-        },
-      },
-      {
-        target: ['structure.surface.referenceTerminal'],
-        methodId: 'dc.reference-potential',
-        parameters: {
-          voltage: {
-            dtype: 'float64',
-            value: 0,
-            unit: 'mV',
-            quantityKind: 'electromagnetism.Voltage',
-          },
-        },
-      },
-    ],
-    outputs: [
-      {
-        key: 'totalCurrent',
-        target: ['structure.geometry.conductor'],
-        methodId: 'dc.total-current',
-        parameters: {
-          crossSectionPosition: {
-            dtype: 'float64',
-            value: 0.5,
-            unit: '{fraction}',
-            quantityKind: 'DimensionlessRatio',
-          },
-        },
-      },
-      {
-        key: 'jouleHeating',
-        target: ['structure.geometry.conductor'],
-        methodId: 'dc.joule-heating',
-        parameters: {},
-      },
-    ],
-  })
-}
-
-function thermalTask(fixedTemperature: number) {
-  return defineTask({ name: 'steady-state-heat', version: '0.0.0' }, {
-    parameters: {
-      relativeTolerance: {
-        dtype: 'float64',
-        value: 1e-10,
-        unit: '{fraction}',
-        quantityKind: 'DimensionlessRatio',
-      },
-      maxIterations: 1000,
-    },
-    initializations: [
-      {
-        target: ['structure.geometry.conductor'],
-        methodId: 'heat.voxel-grid',
-        parameters: {
-          gridShape: {
-            dtype: 'int32',
-            axes: [{ length: 3 }],
-            value: gridShape,
-          },
-        },
-      },
-    ],
-    boundaryConditions: [
-      {
-        target: ['structure.surface.sourceTerminal'],
-        methodId: 'heat.fixed-temperature',
-        parameters: {
-          temperature: {
-            dtype: 'float64',
-            value: fixedTemperature,
-            unit: 'K',
-            quantityKind: 'thermodynamics.Temperature',
-          },
-        },
-      },
-      {
-        target: ['structure.surface.referenceTerminal'],
-        methodId: 'heat.fixed-temperature',
-        parameters: {
-          temperature: {
-            dtype: 'float64',
-            value: fixedTemperature,
-            unit: 'K',
-            quantityKind: 'thermodynamics.Temperature',
-          },
-        },
-      },
-    ],
-    outputs: [
-      {
-        key: 'temperature',
-        target: ['structure.geometry.conductor'],
-        methodId: 'heat.temperature',
-        parameters: {},
-      },
-      {
-        key: 'maximumTemperature',
-        target: ['structure.geometry.conductor'],
-        methodId: 'heat.maximum-temperature',
-        parameters: {},
-      },
-    ],
-  })
-}
-
-function Probe() {
-  return <box size={[2, 2, 2]} />
-}
+export const electroThermalUniformBarExperimentCode = `import { experiment } from '@caemble/core'
 
 export default experiment({
-  lengthUnit: 'mm',
-
   varsSchema: {
     sourceVoltage: { min: 1, max: 1 },
     fixedTemperature: { min: 293.15, max: 293.15 },
   },
-
-  geometry: () => <Probe id="probe" pos={[0, -10, 0]} />,
-
-  tasks: ({ vars }) => ({
-    electric: electricTask(vars.sourceVoltage),
-    thermal: thermalTask(vars.fixedTemperature),
-  }),
-
   recordedData: {
     totalCurrent: {
       dtype: 'float64',
@@ -239,11 +77,95 @@ export default experiment({
       quantityKind: 'thermodynamics.Temperature',
     },
   },
-
 })
 `
 
-export const electroThermalUniformBarSimulationCode = `async def simulate(*, sim, tasks, vars, world):
+export const electroThermalUniformBarElectricTaskCode = `import { defineTask } from '@caemble/core'
+
+function ElectricProbe() {
+  return <box size={[2, 2, 2]} />
+}
+
+export default defineTask({
+  kernel: { name: 'dc-current-density', version: '0.0.0' },
+  lengthUnit: 'mm',
+  geometry: () => <ElectricProbe id="electric-probe" pos={[0, -10, 0]} />,
+  config: ({ vars }) => ({
+    parameters: {
+      relativeTolerance: { dtype: 'float64', value: 1e-10, unit: '{fraction}', quantityKind: 'DimensionlessRatio' },
+      maxIterations: 1000,
+    },
+    initializations: [{
+      target: ['structure.geometry.conductor'],
+      methodId: 'dc.voxel-grid',
+      parameters: { gridShape: { dtype: 'int32', axes: [{ length: 3 }], value: [20, 11, 11] } },
+    }],
+    boundaryConditions: [
+      {
+        target: ['structure.surface.sourceTerminal'],
+        methodId: 'dc.source-potential',
+        parameters: { voltage: { dtype: 'float64', value: vars.sourceVoltage, unit: 'mV', quantityKind: 'electromagnetism.Voltage' } },
+      },
+      {
+        target: ['structure.surface.referenceTerminal'],
+        methodId: 'dc.reference-potential',
+        parameters: { voltage: { dtype: 'float64', value: 0, unit: 'mV', quantityKind: 'electromagnetism.Voltage' } },
+      },
+    ],
+    outputs: [
+      {
+        key: 'totalCurrent',
+        target: ['structure.geometry.conductor'],
+        methodId: 'dc.total-current',
+        parameters: { crossSectionPosition: { dtype: 'float64', value: 0.5, unit: '{fraction}', quantityKind: 'DimensionlessRatio' } },
+      },
+      { key: 'jouleHeating', target: ['structure.geometry.conductor'], methodId: 'dc.joule-heating', parameters: {} },
+    ],
+  }),
+})
+`
+
+export const electroThermalUniformBarThermalTaskCode = `import { defineTask } from '@caemble/core'
+
+function ThermalProbe() {
+  return <box size={[2, 2, 2]} />
+}
+
+export default defineTask({
+  kernel: { name: 'steady-state-heat', version: '0.0.0' },
+  lengthUnit: 'mm',
+  geometry: () => <ThermalProbe id="thermal-probe" pos={[0, -14, 0]} />,
+  config: ({ vars }) => ({
+    parameters: {
+      relativeTolerance: { dtype: 'float64', value: 1e-10, unit: '{fraction}', quantityKind: 'DimensionlessRatio' },
+      maxIterations: 1000,
+    },
+    initializations: [{
+      target: ['structure.geometry.conductor'],
+      methodId: 'heat.voxel-grid',
+      parameters: { gridShape: { dtype: 'int32', axes: [{ length: 3 }], value: [20, 11, 11] } },
+    }],
+    boundaryConditions: [
+      {
+        target: ['structure.surface.sourceTerminal'],
+        methodId: 'heat.fixed-temperature',
+        parameters: { temperature: { dtype: 'float64', value: vars.fixedTemperature, unit: 'K', quantityKind: 'thermodynamics.Temperature' } },
+      },
+      {
+        target: ['structure.surface.referenceTerminal'],
+        methodId: 'heat.fixed-temperature',
+        parameters: { temperature: { dtype: 'float64', value: vars.fixedTemperature, unit: 'K', quantityKind: 'thermodynamics.Temperature' } },
+      },
+    ],
+    outputs: [
+      { key: 'temperature', target: ['structure.geometry.conductor'], methodId: 'heat.temperature', parameters: {} },
+      { key: 'maximumTemperature', target: ['structure.geometry.conductor'], methodId: 'heat.maximum-temperature', parameters: {} },
+    ],
+  }),
+})
+`
+
+export const electroThermalUniformBarSimulationCode = `async def simulate(*, sim, tasks, vars):
     electric = await sim.run(tasks["electric"])
     thermal = await sim.run(
         tasks["thermal"],
@@ -260,6 +182,13 @@ export const electroThermalUniformBarSimulationCode = `async def simulate(*, sim
     return thermal["state"]
 `
 
+export const electroThermalUniformBarExperimentSourceBundle = createExperimentSourceBundle({
+  'experiment.tsx': electroThermalUniformBarExperimentCode,
+  'simulate.py': electroThermalUniformBarSimulationCode,
+  'tasks/electric.tsx': electroThermalUniformBarElectricTaskCode,
+  'tasks/thermal.tsx': electroThermalUniformBarThermalTaskCode,
+})
+
 export const electroThermalUniformBarExample = Object.freeze({
   id: 'electro-thermal-uniform-bar',
   title: 'Electro-Thermal Uniform Bar',
@@ -270,8 +199,7 @@ export const electroThermalUniformBarExample = Object.freeze({
     '3D temperature RecordedData와 maximum temperature',
   ]),
   structureCode: electroThermalUniformBarStructureCode,
-  experimentCode: electroThermalUniformBarExperimentCode,
-  simulationCode: electroThermalUniformBarSimulationCode,
+  experimentSourceBundle: electroThermalUniformBarExperimentSourceBundle,
   verification: Object.freeze({
     kernelTasks: Object.freeze(['electric', 'thermal']),
     recordedData: Object.freeze(['totalCurrent', 'temperature', 'maximumTemperature']),
