@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from models import JobCreateRequest
+from gpstation.models import JobCreateRequest
 from sdk.protocol.messages import SignalPayload
 
 

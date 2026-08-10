@@ -3,10 +3,11 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import select
 
-from service.job_service import JobService
+from gpstation.db import APIKey, Job, Launcher
+from gpstation.service.job_service import JobService
 from settings import settings
 from tests.helpers import create_user
-from user_auth.db import APIKey, AuthAudit, Job, Launcher
+from user_auth.db import AuthAudit
 from user_auth.utils.jwt import make_access, make_refresh
 
 

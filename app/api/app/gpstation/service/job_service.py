@@ -3,16 +3,18 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 from sqlalchemy import and_, cast, func, or_, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
-from models import JobData, JobSummary
+from gpstation.db import Job, Launcher
+from gpstation.models import JobData, JobSummary
+from gpstation.utils.slave_registry import require_slave_app_id
 from sdk.protocol.messages import SignalPayload
-from slave_registry import require_slave_app_id
-from user_auth.db import Job, Launcher
+from settings import settings
 
 
 JOB_TERMINAL_STATES = {"succeeded", "failed", "cancelled", "killed"}
@@ -63,6 +65,13 @@ def job_to_data(job: Job) -> JobData:
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
+
+
+def build_job_wait_url(job_id: str, prefix: str) -> str:
+    parsed = urlparse(settings.public_api_base_url)
+    base_path = parsed.path.rstrip("/")
+    path = f"{base_path}{prefix}/{job_id}/wait-answer"
+    return urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
 
 
 class JobService:

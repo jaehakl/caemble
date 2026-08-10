@@ -3,13 +3,13 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from runtime_state import RuntimeRegistry
+from gpstation.db import Job, Launcher
+from gpstation.service import job_orchestrator as orchestrator_module
+from gpstation.service.job_orchestrator import JobOrchestrator, LauncherPolicyViolation
+from gpstation.service.job_service import JobService
+from gpstation.service.state import RuntimeRegistry
 from sdk.protocol.messages import parse_launcher_message
-from service import job_orchestrator as orchestrator_module
-from service.job_orchestrator import JobOrchestrator, LauncherPolicyViolation
-from service.job_service import JobService
 from tests.helpers import create_user
-from user_auth.db import Job, Launcher
 
 
 class FakeWebSocket:

@@ -12,7 +12,8 @@ from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from user_auth.db import APIKey, Role, User, UserRole
+from gpstation.db import APIKey
+from user_auth.db import Role, User, UserRole
 from user_auth.routes import get_db
 from user_auth.utils.auth_utils import hash_token
 

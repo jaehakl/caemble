@@ -1,7 +1,8 @@
 # Caemble API
 
 FastAPI와 PostgreSQL을 사용하는 Caemble 백엔드다. 인증 테이블은
-`app/user_auth/db.py`, Caemble 도메인 테이블은 `app/db.py`에서 관리한다.
+`app/user_auth/db.py`, GPStation 실행 테이블은 `app/gpstation/db.py`, Caemble
+도메인 테이블은 `app/db.py`에서 관리한다.
 
 ## 초기 설정과 migration
 
@@ -42,29 +43,9 @@ Caemble은 GPStation 연결 정보를 저장하지 않고 `/v1` client/launcher 
 반드시 단일 worker/replica로 실행한다. PostgreSQL advisory lock이 두 번째
 runtime 프로세스의 시작을 차단하며, 재시작 시 진행 중 job은 실패로 복구된다.
 
-기존 GPStation의 활성 client AccessKey는 원본 DB를 read-only transaction으로
-직접 읽어 가져올 수 있다. 기본 실행은 dry-run이다.
-
-```powershell
-cd app/api/app
-$env:CAEMBLE_GPSTATION_IMPORT_DB_URL = "postgresql://..."
-poetry run python -m import_gpstation_client_tokens `
-  --map "GP_USER_ID=CAEMBLE_USER_ID"
-
-poetry run python -m import_gpstation_client_tokens `
-  --map "GP_USER_ID=CAEMBLE_USER_ID" `
-  --apply
-
-Remove-Item Env:CAEMBLE_GPSTATION_IMPORT_DB_URL
-```
-
-사용자 매핑은 provider identity, 명시적 `--map`, 검증된 고유 email 순서로
-해결한다. 유효한 `(provider, provider_user_id)` identity가 있으면 email이 없어도
-새 Caemble `user` 계정을 만들 수 있다. 안전한 provider identity가 없으면
-`--map`을 요구한다. hash와 기존 prefix는 보존하지만 scope는 `client`만
-가져오며, launcher token은 Caemble에서 새로 발급해야 한다.
-소스 DB URL은 `CAEMBLE_GPSTATION_IMPORT_DB_URL` 환경변수에서만 읽으며 결과나
-로그에 출력하지 않는다.
+GPStation 호환 API의 ORM, 요청/응답 model, router, service와 보안 utility는
+`app/gpstation` 패키지에서 함께 관리한다. `/v1`은 외부 SDK와 launcher용 bearer
+token API이며, `/web`은 Caemble 쿠키와 CSRF 보호를 사용하는 관리 API다.
 
 ## CRUD 계약
 

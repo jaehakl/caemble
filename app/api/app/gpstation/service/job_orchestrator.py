@@ -8,7 +8,12 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import SessionLocal
-from runtime_state import RuntimeRegistry, runtime
+from gpstation.db import Job
+from gpstation.service.access_key_service import AccessKeyService
+from gpstation.service.auth_audit_service import add_auth_audit
+from gpstation.service.job_service import JOB_ACTIVE_STATES, JOB_TERMINAL_STATES, JobService
+from gpstation.service.launcher_service import LauncherService
+from gpstation.service.state import RuntimeRegistry, runtime
 from sdk.protocol.messages import (
     JobAnswer,
     JobCancelled,
@@ -19,11 +24,6 @@ from sdk.protocol.messages import (
     LauncherToServerMessage,
     WorkerResetDone,
 )
-from service.access_key_service import AccessKeyService
-from service.auth_audit_service import add_auth_audit
-from service.job_service import JOB_ACTIVE_STATES, JOB_TERMINAL_STATES, JobService
-from service.launcher_service import LauncherService
-from user_auth.db import Job
 
 
 class LauncherPolicyViolation(RuntimeError):

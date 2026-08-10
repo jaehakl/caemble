@@ -3,9 +3,9 @@ from datetime import datetime, timezone
 import pytest
 from fastapi import HTTPException
 
-from runtime_auth import authenticate_db_authorization
+from gpstation.db import APIKey, Job, Launcher
+from gpstation.service.auth_service import authenticate_db_authorization
 from tests.helpers import create_user
-from user_auth.db import APIKey, Job, Launcher
 from user_auth.utils.auth_utils import hash_token
 
 

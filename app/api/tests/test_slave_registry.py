@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-import slave_registry
-from slave_registry import load_slave_manifests
+from gpstation.utils import slave_registry
+from gpstation.utils.slave_registry import load_slave_manifests
 
 
 def write_manifest(root, folder, payload):

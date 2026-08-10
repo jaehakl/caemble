@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 
-SLAVES_DIR = Path(__file__).resolve().parents[2] / "slaves"
+SLAVES_DIR = Path(__file__).resolve().parents[4] / "slaves"
 
 
 def load_slave_manifests(slaves_dir: Path | None = None) -> dict[str, dict[str, Any]]:

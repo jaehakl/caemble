@@ -88,14 +88,15 @@ def test_deployed_revision_marker_is_a_noop_compatibility_revision():
     assert source.count("    pass") == 2
 
 
-def test_source_migration_graph_ends_at_integrated_runtime():
+def test_source_migration_graph_ends_at_retired_token_import_cleanup():
     root = Path(__file__).resolve().parents[1]
     scripts = ScriptDirectory.from_config(Config(root / "alembic.ini"))
 
-    assert scripts.get_heads() == ["a4c8e2f19b73"]
+    assert scripts.get_heads() == ["b17d4c2e8a90"]
     assert scripts.get_revision("f24a6b91d3ce").down_revision == "e7b2c5d91a40"
     assert scripts.get_revision("9d31a6f7c2e4").down_revision == "f24a6b91d3ce"
     assert scripts.get_revision("a4c8e2f19b73").down_revision == "9d31a6f7c2e4"
+    assert scripts.get_revision("b17d4c2e8a90").down_revision == "a4c8e2f19b73"
     assert not any(root.joinpath("alembic", "versions").glob("*_measurement_contract_metadata.py"))
 
 
@@ -127,6 +128,19 @@ def test_runtime_revision_removes_legacy_connection_and_expands_audit_contract()
         "launcher_disconnected",
     ):
         assert event in source
+
+
+def test_token_import_cleanup_revision_deletes_logs_and_tightens_audit_contract():
+    revision = next(
+        (Path(__file__).resolve().parents[1] / "alembic" / "versions").glob(
+            "*_remove_token_import_audit_event.py"
+        )
+    )
+    source = revision.read_text(encoding="utf-8")
+    upgrade = source.split("def downgrade()", 1)[0]
+    assert "DELETE FROM auth_audit WHERE event = 'token_imported'" in upgrade
+    assert "'token_created','token_revoked'," in upgrade
+    assert "'token_created','token_revoked','token_imported'," not in upgrade
 
 
 @pytest.mark.asyncio
@@ -205,8 +219,12 @@ async def test_configured_database_has_seeded_roles_and_required_extensions(db_s
 
 
 @pytest.mark.asyncio
-async def test_auth_audit_check_rejects_events_outside_the_runtime_contract(db_session):
-    db_session.add(AuthAudit(event="not_a_real_audit_event"))
+@pytest.mark.parametrize("event", ["not_a_real_audit_event", "token_imported"])
+async def test_auth_audit_check_rejects_events_outside_the_runtime_contract(
+    db_session,
+    event,
+):
+    db_session.add(AuthAudit(event=event))
     with pytest.raises(IntegrityError):
         await db_session.commit()
     await db_session.rollback()

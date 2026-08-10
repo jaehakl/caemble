@@ -5,8 +5,8 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import LauncherView
-from user_auth.db import Launcher
+from gpstation.db import Launcher
+from gpstation.models import LauncherView
 
 
 ACTIVE_LAUNCHER_STATUSES = {"ready", "busy"}
