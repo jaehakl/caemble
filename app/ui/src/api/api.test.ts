@@ -336,6 +336,7 @@ describe('unified dbTables API', () => {
         payload: {
           sample_id: 3,
           setup_id: 4,
+          overwrite: false,
           recorded_data: [
             {
               name: 'Current',
@@ -353,6 +354,23 @@ describe('unified dbTables API', () => {
         },
       },
     ])
+    await expect(
+      dbTables.Measurement.save({
+        sample_id: 3,
+        setup_id: 4,
+        overwrite: true,
+        recorded_data: [],
+      }),
+    ).resolves.toEqual({ id: 9 })
+    expect(seen[seen.length - 1]).toEqual({
+      endpoint: 'save',
+      payload: {
+        sample_id: 3,
+        setup_id: 4,
+        overwrite: true,
+        recorded_data: [],
+      },
+    })
     await expect(dbTables.Measurement.listContext(1.5, 2)).rejects.toBeInstanceOf(ZodError)
     await expect(
       dbTables.Measurement.save({
@@ -394,6 +412,108 @@ describe('unified dbTables API', () => {
         ],
       } as never),
     ).rejects.toBeInstanceOf(ZodError)
+    await expect(
+      dbTables.Measurement.save({
+        sample_id: 3,
+        setup_id: 4,
+        overwrite: 'yes',
+        recorded_data: [],
+      } as never),
+    ).rejects.toBeInstanceOf(ZodError)
+  })
+
+  it('validates CAE workbench pair, paged context, and history contracts', async () => {
+    const seen: Array<{ path: string; payload: unknown }> = []
+    const history = {
+      selected_id: 2,
+      root_id: 1,
+      items: [
+        {
+          id: 1,
+          parent_id: null,
+          user_id: null,
+          name: 'Root',
+          description: null,
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        },
+        {
+          id: 2,
+          parent_id: 1,
+          user_id: 'user-id',
+          name: 'Child',
+          description: 'Selected',
+          created_at: '2026-01-02T00:00:00Z',
+          updated_at: '2026-01-02T00:00:00Z',
+        },
+      ],
+    }
+    server.use(
+      http.post('http://api.test/measurement/pair-list', async ({ request }) => {
+        seen.push({ path: 'pair-list', payload: await request.json() })
+        return HttpResponse.json({
+          total: 1,
+          items: [
+            {
+              structure_id: 1,
+              structure_name: 'Bracket',
+              structure_description: null,
+              structure_user_id: 'user-id',
+              experiment_id: 2,
+              experiment_name: 'Thermal',
+              experiment_description: 'Heat',
+              experiment_user_id: null,
+              measurement_count: 3,
+              latest_measurement_id: 9,
+              latest_measurement_at: '2026-01-03T00:00:00Z',
+            },
+          ],
+        })
+      }),
+      http.post('http://api.test/measurement/context-list', async ({ request }) => {
+        seen.push({ path: 'context-list', payload: await request.json() })
+        return HttpResponse.json({ total: 1, items: [{ id: 9, sample_id: 3, setup_id: 4 }] })
+      }),
+      http.post('http://api.test/:kind/history', async ({ params, request }) => {
+        seen.push({ path: `${String(params.kind)}-history`, payload: await request.json() })
+        return HttpResponse.json(history)
+      }),
+    )
+    const { dbTables } = await loadApi()
+
+    await expect(
+      dbTables.Measurement.listPairs({ search_text: 'heat', sort: ['measurement_count', 'desc'] }),
+    ).resolves.toMatchObject({ total: 1, items: [{ latest_measurement_id: 9 }] })
+    await expect(
+      dbTables.Measurement.listContextPage({ structure_id: 1, experiment_id: 2, offset: 4, limit: 2 }),
+    ).resolves.toMatchObject({ total: 1, items: [{ id: 9 }] })
+    await expect(dbTables.Structure.history(2)).resolves.toEqual(history)
+    await expect(dbTables.Experiment.history(2)).resolves.toEqual(history)
+
+    expect(seen[0]).toEqual({
+      path: 'pair-list',
+      payload: {
+        offset: 0,
+        limit: 20,
+        search_text: 'heat',
+        structure_scope: 'visible',
+        experiment_scope: 'visible',
+        sort: ['measurement_count', 'desc'],
+      },
+    })
+    expect(seen[1]).toMatchObject({
+      path: 'context-list',
+      payload: { structure_id: 1, experiment_id: 2, offset: 4, limit: 2, sort: ['updated_at', 'desc'] },
+    })
+    expect(seen.slice(2)).toEqual([
+      { path: 'structure-history', payload: { id: 2 } },
+      { path: 'experiment-history', payload: { id: 2 } },
+    ])
+
+    await expect(dbTables.Measurement.listPairs({ sort: ['updated_at', 'desc'] } as never)).rejects.toBeInstanceOf(
+      ZodError,
+    )
+    await expect(dbTables.Structure.history(0)).rejects.toBeInstanceOf(ZodError)
   })
 
   it('reads shared RecordedData schemas and nullable legacy compatibility fields', async () => {

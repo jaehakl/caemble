@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import EmailStr, Field, field_serializer, field_validator, model_validator
-from utils.datetime_utils import serialize_datetime_utc
+from utils.datetime_utils import serialize_datetime_utc, to_utc_datetime
 
 
 class BaseModel(PydanticBaseModel):
@@ -214,9 +214,85 @@ class MeasurementBase(OwnedTimestampFields):
     setup_id: int
 
 
-class MeasurementContextListRequest(BaseModel):
+class MeasurementContextListRequest(GetListRequestBase):
     structure_id: int
     experiment_id: int
+    sort: Optional[List[str]] = Field(
+        default_factory=lambda: ["updated_at", "desc"]
+    )
+
+
+class MeasurementPairListRequest(BaseModel):
+    offset: int = Field(default=0, ge=0)
+    limit: Optional[int] = Field(default=20, ge=1, le=100)
+    search_text: Optional[str] = None
+    structure_id: Optional[int] = Field(default=None, gt=0)
+    experiment_id: Optional[int] = Field(default=None, gt=0)
+    exclude_structure_id: Optional[int] = Field(default=None, gt=0)
+    exclude_experiment_id: Optional[int] = Field(default=None, gt=0)
+    structure_scope: Literal["visible", "mine", "public"] = "visible"
+    experiment_scope: Literal["visible", "mine", "public"] = "visible"
+    measured_from: Optional[datetime] = None
+    measured_to: Optional[datetime] = None
+    sort: Optional[List[str]] = None
+
+    @field_validator("measured_from", "measured_to")
+    @classmethod
+    def normalize_measured_at(cls, value: Optional[datetime]) -> Optional[datetime]:
+        return to_utc_datetime(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def validate_pair_list(self):
+        allowed_sort_fields = {
+            "latest_measurement_at",
+            "measurement_count",
+            "structure_name",
+            "experiment_name",
+        }
+        if self.sort:
+            if len(self.sort) > 2 or self.sort[0] not in allowed_sort_fields:
+                raise ValueError("Unsupported Measurement pair sort.")
+            if len(self.sort) == 2 and self.sort[1].lower() not in {"asc", "desc"}:
+                raise ValueError("Measurement pair sort direction must be asc or desc.")
+        if self.measured_from and self.measured_to and self.measured_from > self.measured_to:
+            raise ValueError("measured_from must not be after measured_to.")
+        return self
+
+
+class MeasurementPairSummary(BaseModel):
+    structure_id: int
+    structure_name: str
+    structure_description: Optional[str] = None
+    structure_user_id: Optional[str] = None
+    experiment_id: int
+    experiment_name: str
+    experiment_description: Optional[str] = None
+    experiment_user_id: Optional[str] = None
+    measurement_count: int
+    latest_measurement_id: int
+    latest_measurement_at: datetime
+
+
+class MeasurementPairListResponse(BaseModel):
+    total: int
+    items: List[MeasurementPairSummary]
+
+
+class CodeEntityHistoryRequest(BaseModel):
+    id: int = Field(..., gt=0)
+
+
+class CodeEntityHistoryItem(OwnedTimestampFields):
+    id: int
+    parent_id: Optional[int] = None
+    name: str
+    description: Optional[str] = None
+
+
+class CodeEntityHistoryResponse(BaseModel):
+    selected_id: int
+    root_id: int
+    items: List[CodeEntityHistoryItem]
 
 
 class MeasurementSaveRecordedData(BaseModel):
@@ -231,6 +307,7 @@ class MeasurementSaveRecordedData(BaseModel):
 class MeasurementSaveRequest(BaseModel):
     sample_id: int
     setup_id: int
+    overwrite: bool = False
     recorded_data: List[MeasurementSaveRecordedData] = Field(default_factory=list)
 
 

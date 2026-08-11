@@ -7,6 +7,7 @@ import { createMemoryRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MaterialListPage } from './MaterialListPage'
+import { MaterialManager } from './MaterialManager'
 
 const api = vi.hoisted(() => ({
   deleteMaterial: vi.fn(),
@@ -137,5 +138,18 @@ describe('MaterialListPage', () => {
     expect(api.upsertName).toHaveBeenCalledWith([
       expect.objectContaining({ material_id: 42, name: 'Carbon', user_id: null }),
     ])
+  })
+
+  it('라우터 없이 선택된 Material을 상위 manager에 전달한다', async () => {
+    const onMaterialIdChange = vi.fn()
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MaterialManager materialId={null} onMaterialIdChange={onMaterialIdChange} />
+      </QueryClientProvider>,
+    )
+
+    await userEvent.click(await screen.findByText('Iron'))
+    expect(onMaterialIdChange).toHaveBeenCalledWith(2)
   })
 })

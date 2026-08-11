@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useEffect } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { Button } from '@/components/ui/button'
@@ -23,6 +23,7 @@ export type DefinitionFormValues = z.infer<typeof definitionFormSchema>
 export function SaveDefinitionDialog({
   defaults,
   description,
+  context,
   kind,
   onOpenChange,
   onSubmit,
@@ -33,6 +34,7 @@ export function SaveDefinitionDialog({
 }: {
   defaults: DefinitionFormValues
   description?: string
+  context?: ReactNode
   kind: 'Experiment' | 'Structure'
   onOpenChange: (open: boolean) => void
   onSubmit: (values: DefinitionFormValues) => Promise<void>
@@ -49,7 +51,12 @@ export function SaveDefinitionDialog({
   }, [defaultDescription, defaultName, form, open])
 
   return (
-    <Dialog onOpenChange={onOpenChange} open={open}>
+    <Dialog
+      onOpenChange={(nextOpen) => {
+        if (nextOpen || !pending) onOpenChange(nextOpen)
+      }}
+      open={open}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title ?? `${kind} 정의 저장`}</DialogTitle>
@@ -57,10 +64,11 @@ export function SaveDefinitionDialog({
             {description ?? '이름, 설명과 현재 Source code를 저장합니다. 평가된 vars는 별도 실현값으로 저장하세요.'}
           </DialogDescription>
         </DialogHeader>
+        {context}
         <form className="space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
           <label className="grid gap-1.5 text-sm font-medium">
             이름
-            <Input autoFocus {...form.register('name')} />
+            <Input autoFocus disabled={pending} {...form.register('name')} />
             {form.formState.errors.name ? (
               <span className="text-xs text-destructive">{form.formState.errors.name.message}</span>
             ) : null}
@@ -69,6 +77,7 @@ export function SaveDefinitionDialog({
             설명
             <textarea
               className="min-h-24 rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30"
+              disabled={pending}
               {...form.register('description')}
             />
             {form.formState.errors.description ? (
@@ -76,7 +85,7 @@ export function SaveDefinitionDialog({
             ) : null}
           </label>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button disabled={pending} type="button" variant="outline" onClick={() => onOpenChange(false)}>
               취소
             </Button>
             <Button disabled={pending} type="submit">

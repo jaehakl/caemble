@@ -9,13 +9,23 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import Experiment
-from models import SaveCodeEntityResponse, SaveExperimentRequest
+from models import CodeEntityHistoryResponse, SaveCodeEntityResponse, SaveExperimentRequest
+from service.lineage import get_code_entity_history
 from utils.crud.common import is_admin_user
 
 
 def _bundle_hash(bundle: dict[str, Any]) -> str:
     canonical = json.dumps(bundle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+async def get_experiment_history(
+    db: AsyncSession,
+    experiment_id: int,
+    *,
+    user: Any,
+) -> CodeEntityHistoryResponse:
+    return await get_code_entity_history(db, Experiment, experiment_id, user=user)
 
 
 async def save_experiment(

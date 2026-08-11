@@ -26,6 +26,7 @@ export type AppNavigationItem = Readonly<{
 
 export const primaryNavigation: readonly AppNavigationItem[] = [
   { href: '/', icon: Home, label: '홈' },
+  { href: '/cae', icon: Atom, label: 'CAE Workbench' },
   { href: '/structures', icon: GitBranch, label: 'Structures' },
   { href: '/experiments', icon: TestTubeDiagonal, label: 'Experiments' },
   { href: '/examples', icon: GalleryVerticalEnd, label: 'Examples' },

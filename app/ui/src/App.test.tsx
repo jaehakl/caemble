@@ -10,6 +10,7 @@ describe('페이지 중심 앱 라우팅', () => {
   it('직접 진입할 모든 공개·계정 URL을 등록한다', () => {
     expect(appRoutePaths).toEqual([
       'index',
+      'cae',
       'viewer',
       'structures',
       'experiments',

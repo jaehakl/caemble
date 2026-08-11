@@ -8,12 +8,17 @@ from models import (
     GetListResponseBase,
     MeasurementBase,
     MeasurementContextListRequest,
+    MeasurementPairListRequest,
+    MeasurementPairListResponse,
     MeasurementSaveRequest,
     MeasurementSaveResponse,
     UpsertResponseBase,
     UserData,
 )
-from service.measurement_service import MeasurementService
+from service.measurement_service import (
+    MeasurementOverwriteRequiredError,
+    MeasurementService,
+)
 from user_auth.routes import get_db
 from user_auth.utils.auth_wrapper import require_roles
 from utils.crud import CrudSpec, delete_items, get_list_response, upsert_items
@@ -41,6 +46,15 @@ async def list_context_measurements(
     return await MeasurementService.get_context_measurements(request, db, user)
 
 
+@router.post("/pair-list", response_model=MeasurementPairListResponse)
+async def list_measurement_pairs(
+    request: MeasurementPairListRequest,
+    db: AsyncSession = Depends(get_db),
+    user: UserData = Depends(require_roles(["admin", "user"])),
+):
+    return await MeasurementService.get_measurement_pairs(request, db, user)
+
+
 @router.post("/save", response_model=MeasurementSaveResponse)
 async def save_measurement(
     request: MeasurementSaveRequest,
@@ -52,6 +66,11 @@ async def save_measurement(
     except LookupError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except MeasurementOverwriteRequiredError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(error),
         ) from error
     except IntegrityError as error:

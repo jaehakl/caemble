@@ -8,12 +8,22 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import Structure
-from models import SaveCodeEntityRequest, SaveCodeEntityResponse
+from models import CodeEntityHistoryResponse, SaveCodeEntityRequest, SaveCodeEntityResponse
+from service.lineage import get_code_entity_history
 from utils.crud.common import is_admin_user
 
 
 def _code_hash(code: str) -> str:
     return hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+
+async def get_structure_history(
+    db: AsyncSession,
+    structure_id: int,
+    *,
+    user: Any,
+) -> CodeEntityHistoryResponse:
+    return await get_code_entity_history(db, Structure, structure_id, user=user)
 
 
 async def save_structure(

@@ -957,6 +957,7 @@ export function MeasurementPage() {
     const request: MeasurementSaveRequest = {
       sample_id: currentRunSampleId,
       setup_id: runQueue.setupId,
+      overwrite: true,
       recorded_data: recordedData,
     }
     setHideLiveRecordedData(false)

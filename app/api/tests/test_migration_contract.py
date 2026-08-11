@@ -88,17 +88,48 @@ def test_deployed_revision_marker_is_a_noop_compatibility_revision():
     assert source.count("    pass") == 2
 
 
-def test_source_migration_graph_ends_at_experiment_source_bundles():
+def test_source_migration_graph_continues_to_cae_workbench_indexes():
     root = Path(__file__).resolve().parents[1]
     scripts = ScriptDirectory.from_config(Config(root / "alembic.ini"))
 
-    assert scripts.get_heads() == ["d2f7a1c9e4b6"]
+    assert scripts.get_heads() == ["e91f6b3a2c7d"]
     assert scripts.get_revision("f24a6b91d3ce").down_revision == "e7b2c5d91a40"
     assert scripts.get_revision("9d31a6f7c2e4").down_revision == "f24a6b91d3ce"
     assert scripts.get_revision("a4c8e2f19b73").down_revision == "9d31a6f7c2e4"
     assert scripts.get_revision("b17d4c2e8a90").down_revision == "a4c8e2f19b73"
     assert scripts.get_revision("d2f7a1c9e4b6").down_revision == "b17d4c2e8a90"
+    assert scripts.get_revision("e91f6b3a2c7d").down_revision == "d2f7a1c9e4b6"
     assert not any(root.joinpath("alembic", "versions").glob("*_measurement_contract_metadata.py"))
+
+
+def test_cae_workbench_query_index_revision_is_non_destructive_and_reversible():
+    revision = next(
+        (Path(__file__).resolve().parents[1] / "alembic" / "versions").glob(
+            "*_add_cae_workbench_query_indexes.py"
+        )
+    )
+    source = revision.read_text(encoding="utf-8")
+    expected_indexes = {
+        "ix_structures_parent_id": ("structures", '["parent_id"]'),
+        "ix_experiments_parent_id": ("experiments", '["parent_id"]'),
+        "ix_samples_structure_id": ("samples", '["structure_id"]'),
+        "ix_setups_experiment_id": ("setups", '["experiment_id"]'),
+        "ix_measurements_setup_id": ("measurements", '["setup_id"]'),
+        "ix_measurements_user_id_updated_at": (
+            "measurements",
+            '["user_id", "updated_at"]',
+        ),
+        "ix_recorded_data_measurement_id": ("recorded_data", '["measurement_id"]'),
+    }
+
+    upgrade = source.split("def downgrade()", 1)[0]
+    assert "drop_table" not in upgrade
+    assert "drop_column" not in upgrade
+    for index_name, (table_name, columns) in expected_indexes.items():
+        assert f'"{index_name}"' in upgrade
+        assert f'"{table_name}"' in upgrade
+        assert columns in upgrade
+        assert f'"{index_name}"' in source.split("def downgrade()", 1)[1]
 
 
 def test_experiment_source_bundle_revision_guards_non_empty_tables():

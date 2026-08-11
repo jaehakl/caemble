@@ -41,6 +41,287 @@ async def create_measurement_graph(db_session, user_id):
 
 
 @pytest.mark.asyncio
+async def test_save_measurement_requires_explicit_overwrite_without_changing_existing_data(
+    client,
+    db_session,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
+    owner = await create_user(db_session)
+    sample, setup, measurement, recorded = await create_measurement_graph(db_session, owner.id)
+    measurement_id = measurement.id
+    recorded_id = recorded.id
+    original_updated_at = measurement.updated_at
+
+    response = await client.post(
+        "/measurement/save",
+        headers=auth_headers(owner),
+        json={
+            "sample_id": sample.id,
+            "setup_id": setup.id,
+            "recorded_data": [
+                {
+                    "name": "Replacement",
+                    "quantity_kind": "Dimensionless",
+                    "tensor_order": 0,
+                    "dtype": "float64",
+                    "data_schema": {
+                        "dtype": "float64",
+                        "unit": "1",
+                        "quantityKind": "Dimensionless",
+                    },
+                    "data": inline_tensor(2),
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"].endswith("overwrite=true가 필요합니다.")
+    db_session.expire_all()
+    persisted_measurement = await db_session.get(Measurement, measurement_id)
+    persisted_recorded = await db_session.get(RecordedData, recorded_id)
+    assert persisted_measurement is not None
+    assert persisted_measurement.updated_at == original_updated_at
+    assert persisted_recorded is not None
+    assert persisted_recorded.name == "Result"
+    assert persisted_recorded.data == {"value": 1}
+
+
+@pytest.mark.asyncio
+async def test_admin_overwrite_preserves_measurement_and_recorded_data_owner(
+    client,
+    db_session,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
+    owner = await create_user(db_session)
+    admin = await create_user(db_session, "admin")
+    owner_id = owner.id
+    sample, setup, measurement, _ = await create_measurement_graph(db_session, owner.id)
+    measurement_id = measurement.id
+
+    response = await client.post(
+        "/measurement/save",
+        headers=auth_headers(admin),
+        json={
+            "sample_id": sample.id,
+            "setup_id": setup.id,
+            "overwrite": True,
+            "recorded_data": [
+                {
+                    "name": "Admin replacement",
+                    "quantity_kind": "Dimensionless",
+                    "tensor_order": 0,
+                    "dtype": "float64",
+                    "data_schema": {
+                        "dtype": "float64",
+                        "unit": "1",
+                        "quantityKind": "Dimensionless",
+                    },
+                    "data": inline_tensor(3),
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == measurement_id
+    db_session.expire_all()
+    persisted_measurement = await db_session.get(Measurement, measurement_id)
+    recorded_rows = list(
+        (
+            await db_session.scalars(
+                select(RecordedData).where(RecordedData.measurement_id == measurement_id)
+            )
+        ).all()
+    )
+    assert persisted_measurement is not None
+    assert persisted_measurement.user_id == owner_id
+    assert len(recorded_rows) == 1
+    assert recorded_rows[0].name == "Admin replacement"
+    assert recorded_rows[0].user_id == owner_id
+
+
+@pytest.mark.asyncio
+async def test_admin_new_measurement_uses_request_user_as_result_owner(
+    client,
+    db_session,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
+    owner = await create_user(db_session)
+    admin = await create_user(db_session, "admin")
+    structure = Structure(name="Structure", code="structure", user_id=owner.id)
+    experiment = Experiment(
+        name="Experiment",
+        source_bundle=experiment_source_bundle(),
+        user_id=owner.id,
+    )
+    db_session.add_all([structure, experiment])
+    await db_session.flush()
+    sample = Sample(structure_id=structure.id, user_id=owner.id, vars={}, material_parameters={})
+    setup = Setup(experiment_id=experiment.id, user_id=owner.id, vars={}, material_parameters={})
+    db_session.add_all([sample, setup])
+    await db_session.commit()
+
+    response = await client.post(
+        "/measurement/save",
+        headers=auth_headers(admin),
+        json={
+            "sample_id": sample.id,
+            "setup_id": setup.id,
+            "recorded_data": [
+                {
+                    "name": "Admin result",
+                    "quantity_kind": "Dimensionless",
+                    "tensor_order": 0,
+                    "dtype": "float64",
+                    "data_schema": {
+                        "dtype": "float64",
+                        "unit": "1",
+                        "quantityKind": "Dimensionless",
+                    },
+                    "data": inline_tensor(4),
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    measurement = await db_session.get(Measurement, response.json()["id"])
+    recorded = await db_session.scalar(
+        select(RecordedData).where(RecordedData.measurement_id == response.json()["id"])
+    )
+    assert measurement is not None
+    assert recorded is not None
+    assert measurement.user_id == admin.id
+    assert recorded.user_id == admin.id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("overwrite", "expected_status"),
+    [(False, 409), (True, 200)],
+)
+async def test_save_handles_concurrent_insert_winning_unique_pair_race(
+    client,
+    db_session,
+    monkeypatch,
+    overwrite,
+    expected_status,
+):
+    monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
+    owner = await create_user(db_session)
+    admin = await create_user(db_session, "admin")
+    owner_id = owner.id
+    structure = Structure(name="Structure", code="structure", user_id=owner.id)
+    experiment = Experiment(
+        name="Experiment",
+        source_bundle=experiment_source_bundle(),
+        user_id=owner.id,
+    )
+    db_session.add_all([structure, experiment])
+    await db_session.flush()
+    sample = Sample(structure_id=structure.id, user_id=owner.id, vars={}, material_parameters={})
+    setup = Setup(experiment_id=experiment.id, user_id=owner.id, vars={}, material_parameters={})
+    db_session.add_all([sample, setup])
+    await db_session.commit()
+
+    original_execute = db_session.execute
+    concurrent_measurement = None
+    concurrent_measurement_id = None
+    injected = False
+
+    class NoInsertedRow:
+        @staticmethod
+        def one_or_none():
+            return None
+
+    async def execute_with_concurrent_winner(statement, *args, **kwargs):
+        nonlocal concurrent_measurement, concurrent_measurement_id, injected
+        if (
+            not injected
+            and getattr(statement, "is_insert", False)
+            and getattr(getattr(statement, "table", None), "name", None) == "measurements"
+        ):
+            injected = True
+            concurrent_measurement = Measurement(
+                sample_id=sample.id,
+                setup_id=setup.id,
+                user_id=owner.id,
+            )
+            db_session.add(concurrent_measurement)
+            await db_session.flush()
+            concurrent_measurement_id = concurrent_measurement.id
+            db_session.add(
+                RecordedData(
+                    measurement_id=concurrent_measurement.id,
+                    user_id=owner.id,
+                    name="Concurrent result",
+                    quantity_kind="Dimensionless",
+                    tensor_order=0,
+                    dtype="float64",
+                    data={"value": 0},
+                )
+            )
+            await db_session.flush()
+            return NoInsertedRow()
+        return await original_execute(statement, *args, **kwargs)
+
+    monkeypatch.setattr(db_session, "execute", execute_with_concurrent_winner)
+    response = await client.post(
+        "/measurement/save",
+        headers=auth_headers(admin),
+        json={
+            "sample_id": sample.id,
+            "setup_id": setup.id,
+            "overwrite": overwrite,
+            "recorded_data": [
+                {
+                    "name": "Race replacement",
+                    "quantity_kind": "Dimensionless",
+                    "tensor_order": 0,
+                    "dtype": "float64",
+                    "data_schema": {
+                        "dtype": "float64",
+                        "unit": "1",
+                        "quantityKind": "Dimensionless",
+                    },
+                    "data": inline_tensor(5),
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == expected_status
+    assert concurrent_measurement is not None
+    assert concurrent_measurement_id is not None
+    if not overwrite:
+        assert response.json()["detail"].endswith("overwrite=true가 필요합니다.")
+        assert await db_session.scalar(select(func.count(Measurement.id))) == 0
+        return
+
+    assert response.json()["id"] == concurrent_measurement_id
+    db_session.expire_all()
+    measurement = await db_session.get(Measurement, concurrent_measurement_id)
+    recorded_rows = list(
+        (
+            await db_session.scalars(
+                select(RecordedData).where(
+                    RecordedData.measurement_id == concurrent_measurement_id
+                )
+            )
+        ).all()
+    )
+    assert measurement is not None
+    assert measurement.user_id == owner_id
+    assert len(recorded_rows) == 1
+    assert recorded_rows[0].name == "Race replacement"
+    assert recorded_rows[0].user_id == owner_id
+
+
+@pytest.mark.asyncio
 async def test_context_list_filters_by_structure_experiment_and_owner(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
@@ -152,6 +433,7 @@ async def test_save_measurement_persists_inline_recorded_data_atomically(client,
         json={
             "sample_id": sample.id,
             "setup_id": setup.id,
+            "overwrite": True,
             "recorded_data": [
                 {
                     "name": "Voltage",
@@ -236,6 +518,7 @@ async def test_save_measurement_persists_opaque_physics_and_tensor_json(client, 
         json={
             "sample_id": sample.id,
             "setup_id": setup.id,
+            "overwrite": True,
             "recorded_data": [item],
         },
     )
@@ -321,6 +604,7 @@ async def test_save_measurement_accepts_legacy_data_without_interpretation(clien
         json={
             "sample_id": sample.id,
             "setup_id": setup.id,
+            "overwrite": True,
             "recorded_data": [
                 {
                     "name": "Legacy",
@@ -419,6 +703,7 @@ async def test_save_measurement_rolls_back_when_result_commit_fails(client, db_s
         json={
             "sample_id": sample.id,
             "setup_id": setup.id,
+            "overwrite": True,
             "recorded_data": [
                 {
                     "name": "Result",

@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useAuth } from '@/features/auth/use-auth'
+import { cn } from '@/lib/utils'
 import { MaterialColorField } from './MaterialColorField'
 import { allRowsRequest, isMaterialColorValid, materialDisplayName } from './material-utils'
 import { VisibilityField, type Visibility } from './VisibilityField'
@@ -69,8 +70,15 @@ const columns: ColumnDef<MaterialListRow, unknown>[] = [
   },
 ]
 
-function MaterialCreateDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const navigate = useNavigate()
+function MaterialCreateDialog({
+  open,
+  onCreated,
+  onOpenChange,
+}: {
+  open: boolean
+  onCreated: (id: number) => void
+  onOpenChange: (open: boolean) => void
+}) {
   const queryClient = useQueryClient()
   const { isAuthenticated, user } = useAuth()
   const isAdmin = Boolean(user?.roles.includes('admin'))
@@ -125,7 +133,7 @@ function MaterialCreateDialog({ open, onOpenChange }: { open: boolean; onOpenCha
       toast.success('Material을 생성했습니다.')
       reset()
       onOpenChange(false)
-      navigate(`/materials/${id}`)
+      onCreated(id)
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : 'Material을 생성하지 못했습니다.'),
   })
@@ -205,8 +213,13 @@ function MaterialCreateDialog({ open, onOpenChange }: { open: boolean; onOpenCha
   )
 }
 
-export function MaterialListPage() {
-  const navigate = useNavigate()
+export function MaterialList({
+  embedded = false,
+  onSelectMaterial,
+}: {
+  embedded?: boolean
+  onSelectMaterial: (id: number) => void
+}) {
   const { isAuthenticated } = useAuth()
   const [query, setQuery] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
@@ -242,7 +255,7 @@ export function MaterialListPage() {
   const failed = materialsQuery.isError || namesQuery.isError
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-4 py-8 sm:px-6">
+    <div className={cn('space-y-6', !embedded && 'mx-auto max-w-7xl px-4 py-8 sm:px-6')}>
       <PageHeader
         actions={
           <Button onClick={() => setCreateOpen(true)}>
@@ -281,13 +294,18 @@ export function MaterialListPage() {
             columns={columns}
             data={rows}
             getRowKey={(row) => String(row.material.id)}
-            onRowClick={(row) => navigate(`/materials/${row.material.id}`)}
+            onRowClick={(row) => onSelectMaterial(row.material.id!)}
           />
         )}
       </Card>
-      <MaterialCreateDialog onOpenChange={setCreateOpen} open={createOpen} />
+      <MaterialCreateDialog onCreated={onSelectMaterial} onOpenChange={setCreateOpen} open={createOpen} />
     </div>
   )
+}
+
+export function MaterialListPage() {
+  const navigate = useNavigate()
+  return <MaterialList onSelectMaterial={(id) => navigate(`/materials/${id}`)} />
 }
 
 export const Component = MaterialListPage

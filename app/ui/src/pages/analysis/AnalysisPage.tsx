@@ -36,7 +36,20 @@ import type {
 } from './analysis-types'
 
 const analysisTabs = ['overview', 'relationships', 'mining', 'prediction', 'data'] as const
-type AnalysisTab = (typeof analysisTabs)[number]
+export type AnalysisTab = (typeof analysisTabs)[number]
+
+export type AnalysisWorkspaceProps = {
+  structureId: number | null
+  experimentId: number | null
+  embedded?: boolean
+  initialTargetKey?: string | null
+  onExperimentIdChange?: (id: number) => void
+  onStructureIdChange?: (id: number) => void
+  onTabChange?: (tab: AnalysisTab) => void
+  onTargetKeyChange?: (key: string | null) => void
+  showContextSelectors?: boolean
+  tab?: AnalysisTab
+}
 
 function positiveId(value: string | null) {
   const parsed = Number(value)
@@ -240,19 +253,21 @@ function MetricCard({ label, value }: { label: string; value: number }) {
   )
 }
 
-export function AnalysisPage() {
+export function AnalysisWorkspace({
+  structureId: selectedStructureId,
+  experimentId: selectedExperimentId,
+  embedded = false,
+  initialTargetKey = null,
+  onExperimentIdChange,
+  onStructureIdChange,
+  onTabChange,
+  onTargetKeyChange,
+  showContextSelectors = false,
+  tab: controlledTab,
+}: AnalysisWorkspaceProps) {
   const auth = useAuth()
-  const [searchParams, setSearchParams] = useSearchParams()
-  const { currentExperimentId, currentStructureId, setCurrentExperimentId, setCurrentStructureId } =
-    useCurrentCadSelection()
-  const queryStructureId = positiveId(searchParams.get('structure'))
-  const queryExperimentId = positiveId(searchParams.get('experiment'))
-  const selectedStructureId = queryStructureId ?? currentStructureId
-  const selectedExperimentId = queryExperimentId ?? currentExperimentId
-  const requestedTab = searchParams.get('tab')
-  const tab: AnalysisTab = analysisTabs.includes(requestedTab as AnalysisTab)
-    ? (requestedTab as AnalysisTab)
-    : 'overview'
+  const [workspaceTab, setWorkspaceTab] = useState<AnalysisTab>(controlledTab ?? 'overview')
+  const tab = controlledTab ?? workspaceTab
 
   const [profile, setProfile] = useState<AnalysisProfile | null>(null)
   const [mining, setMining] = useState<AnalysisMiningResult | null>(null)
@@ -278,18 +293,18 @@ export function AnalysisPage() {
   const activeRequestId = useRef('')
   const tableRequestId = useRef('')
   const staleRequestId = useRef('')
-  const targetQueryRef = useRef(searchParams.get('target'))
-  targetQueryRef.current = searchParams.get('target')
+  const targetQueryRef = useRef(initialTargetKey)
+  targetQueryRef.current = initialTargetKey
 
   const structuresQuery = useQuery({
     queryKey: ['analysis', 'structures'],
     queryFn: () => dbTables.Structure.listRows({ ...getListRequest('visible'), limit: null }),
-    enabled: auth.isAuthenticated,
+    enabled: auth.isAuthenticated && showContextSelectors,
   })
   const experimentsQuery = useQuery({
     queryKey: ['analysis', 'experiments'],
     queryFn: () => dbTables.Experiment.listRows({ ...getListRequest('visible'), limit: null }),
-    enabled: auth.isAuthenticated,
+    enabled: auth.isAuthenticated && showContextSelectors,
   })
   const structures = useMemo(
     () =>
@@ -311,48 +326,9 @@ export function AnalysisPage() {
     return `analysis-${kind}-${requestSequence.current}`
   }, [])
 
-  const updateQuery = useCallback(
-    (updates: Readonly<Record<string, string | number | null>>) => {
-      setSearchParams(
-        (current) => {
-          const next = new URLSearchParams(current)
-          Object.entries(updates).forEach(([key, value]) => {
-            if (value === null || value === '') next.delete(key)
-            else next.set(key, String(value))
-          })
-          return next
-        },
-        { replace: true },
-      )
-    },
-    [setSearchParams],
-  )
-
   useEffect(() => {
-    if (queryStructureId !== null && queryStructureId !== currentStructureId) {
-      setCurrentStructureId(queryStructureId)
-    } else if (queryStructureId === null && currentStructureId !== null) {
-      updateQuery({ structure: currentStructureId })
-    }
-  }, [currentStructureId, queryStructureId, setCurrentStructureId, updateQuery])
-
-  useEffect(() => {
-    if (queryExperimentId !== null && queryExperimentId !== currentExperimentId) {
-      setCurrentExperimentId(queryExperimentId)
-    } else if (queryExperimentId === null && currentExperimentId !== null) {
-      updateQuery({ experiment: currentExperimentId })
-    }
-  }, [currentExperimentId, queryExperimentId, setCurrentExperimentId, updateQuery])
-
-  useEffect(() => {
-    if (profile) updateQuery({ target: selectedTargetKey || null })
-  }, [profile, selectedTargetKey, updateQuery])
-
-  useEffect(() => {
-    if (requestedTab && !analysisTabs.includes(requestedTab as AnalysisTab)) {
-      updateQuery({ tab: null })
-    }
-  }, [requestedTab, updateQuery])
+    if (profile) onTargetKeyChange?.(selectedTargetKey || null)
+  }, [onTargetKeyChange, profile, selectedTargetKey])
 
   useEffect(() => {
     if (!auth.isAuthenticated || selectedStructureId === null || selectedExperimentId === null) return
@@ -605,7 +581,7 @@ export function AnalysisPage() {
   }
 
   return (
-    <div className="mx-auto max-w-[1500px] space-y-5 px-4 py-6 sm:px-6">
+    <div className={cn('space-y-5', !embedded && 'mx-auto max-w-[1500px] px-4 py-6 sm:px-6')}>
       <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
         <div>
           <p className="text-sm font-medium text-primary">Browser analysis workspace</p>
@@ -627,52 +603,54 @@ export function AnalysisPage() {
         </div>
       </div>
 
-      <Card>
-        <CardContent className="grid gap-4 pt-6 md:grid-cols-2">
-          <label className="space-y-1.5 text-sm">
-            <span className="font-medium">Structure</span>
-            <Select
-              onValueChange={(value) => {
-                const id = Number(value)
-                updateQuery({ structure: id, target: null })
-              }}
-              value={selectedStructureId ? String(selectedStructureId) : undefined}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Structure 선택" />
-              </SelectTrigger>
-              <SelectContent>
-                {structures.map((structure) => (
-                  <SelectItem key={structure.id} value={String(structure.id)}>
-                    {structure.name} · #{structure.id}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </label>
-          <label className="space-y-1.5 text-sm">
-            <span className="font-medium">Experiment</span>
-            <Select
-              onValueChange={(value) => {
-                const id = Number(value)
-                updateQuery({ experiment: id, target: null })
-              }}
-              value={selectedExperimentId ? String(selectedExperimentId) : undefined}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Experiment 선택" />
-              </SelectTrigger>
-              <SelectContent>
-                {experiments.map((experiment) => (
-                  <SelectItem key={experiment.id} value={String(experiment.id)}>
-                    {experiment.name} · #{experiment.id}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </label>
-        </CardContent>
-      </Card>
+      {showContextSelectors ? (
+        <Card>
+          <CardContent className="grid gap-4 pt-6 md:grid-cols-2">
+            <label className="space-y-1.5 text-sm">
+              <span className="font-medium">Structure</span>
+              <Select
+                onValueChange={(value) => {
+                  const id = Number(value)
+                  onStructureIdChange?.(id)
+                }}
+                value={selectedStructureId ? String(selectedStructureId) : undefined}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Structure 선택" />
+                </SelectTrigger>
+                <SelectContent>
+                  {structures.map((structure) => (
+                    <SelectItem key={structure.id} value={String(structure.id)}>
+                      {structure.name} · #{structure.id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+            <label className="space-y-1.5 text-sm">
+              <span className="font-medium">Experiment</span>
+              <Select
+                onValueChange={(value) => {
+                  const id = Number(value)
+                  onExperimentIdChange?.(id)
+                }}
+                value={selectedExperimentId ? String(selectedExperimentId) : undefined}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Experiment 선택" />
+                </SelectTrigger>
+                <SelectContent>
+                  {experiments.map((experiment) => (
+                    <SelectItem key={experiment.id} value={String(experiment.id)}>
+                      {experiment.name} · #{experiment.id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {stale ? (
         <div className="flex flex-col gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950 sm:flex-row sm:items-center">
@@ -725,7 +703,14 @@ export function AnalysisPage() {
       ) : null}
 
       {profile ? (
-        <Tabs onValueChange={(value) => updateQuery({ tab: value === 'overview' ? null : value })} value={tab}>
+        <Tabs
+          onValueChange={(value) => {
+            const nextTab = value as AnalysisTab
+            setWorkspaceTab(nextTab)
+            onTabChange?.(nextTab)
+          }}
+          value={tab}
+        >
           <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-5">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="relationships">Relationships</TabsTrigger>
@@ -1364,6 +1349,85 @@ export function AnalysisPage() {
         </Tabs>
       ) : null}
     </div>
+  )
+}
+
+export function AnalysisPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const { currentExperimentId, currentStructureId, setCurrentExperimentId, setCurrentStructureId } =
+    useCurrentCadSelection()
+  const queryStructureId = positiveId(searchParams.get('structure'))
+  const queryExperimentId = positiveId(searchParams.get('experiment'))
+  const structureId = queryStructureId ?? currentStructureId
+  const experimentId = queryExperimentId ?? currentExperimentId
+  const requestedTab = searchParams.get('tab')
+  const tab: AnalysisTab = analysisTabs.includes(requestedTab as AnalysisTab)
+    ? (requestedTab as AnalysisTab)
+    : 'overview'
+
+  const updateQuery = useCallback(
+    (updates: Readonly<Record<string, string | number | null>>) => {
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current)
+          Object.entries(updates).forEach(([key, value]) => {
+            if (value === null || value === '') next.delete(key)
+            else next.set(key, String(value))
+          })
+          return next
+        },
+        { replace: true },
+      )
+    },
+    [setSearchParams],
+  )
+
+  useEffect(() => {
+    if (queryStructureId !== null && queryStructureId !== currentStructureId) {
+      setCurrentStructureId(queryStructureId)
+    } else if (queryStructureId === null && currentStructureId !== null) {
+      updateQuery({ structure: currentStructureId })
+    }
+  }, [currentStructureId, queryStructureId, setCurrentStructureId, updateQuery])
+
+  useEffect(() => {
+    if (queryExperimentId !== null && queryExperimentId !== currentExperimentId) {
+      setCurrentExperimentId(queryExperimentId)
+    } else if (queryExperimentId === null && currentExperimentId !== null) {
+      updateQuery({ experiment: currentExperimentId })
+    }
+  }, [currentExperimentId, queryExperimentId, setCurrentExperimentId, updateQuery])
+
+  useEffect(() => {
+    if (requestedTab && !analysisTabs.includes(requestedTab as AnalysisTab)) updateQuery({ tab: null })
+  }, [requestedTab, updateQuery])
+
+  const handleStructureIdChange = useCallback(
+    (id: number) => updateQuery({ structure: id, target: null }),
+    [updateQuery],
+  )
+  const handleExperimentIdChange = useCallback(
+    (id: number) => updateQuery({ experiment: id, target: null }),
+    [updateQuery],
+  )
+  const handleTabChange = useCallback(
+    (nextTab: AnalysisTab) => updateQuery({ tab: nextTab === 'overview' ? null : nextTab }),
+    [updateQuery],
+  )
+  const handleTargetKeyChange = useCallback((key: string | null) => updateQuery({ target: key }), [updateQuery])
+
+  return (
+    <AnalysisWorkspace
+      experimentId={experimentId}
+      initialTargetKey={searchParams.get('target')}
+      onExperimentIdChange={handleExperimentIdChange}
+      onStructureIdChange={handleStructureIdChange}
+      onTabChange={handleTabChange}
+      onTargetKeyChange={handleTargetKeyChange}
+      showContextSelectors
+      structureId={structureId}
+      tab={tab}
+    />
   )
 }
 

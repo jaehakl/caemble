@@ -7,7 +7,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CurrentCadSelectionProvider } from '@/features/viewer/current-cad-selection'
 import type { AnalysisProfile, AnalysisWorkerRequest, AnalysisWorkerResponse } from './analysis-types'
-import { AnalysisPage } from './AnalysisPage'
+import { AnalysisPage, AnalysisWorkspace } from './AnalysisPage'
 
 const apiMocks = vi.hoisted(() => ({
   experimentList: vi.fn(),
@@ -283,5 +283,23 @@ describe('AnalysisPage', () => {
       )
     })
     expect(URL.createObjectURL).toHaveBeenCalled()
+  })
+
+  it('라우터 상태 없이 고정된 Structure와 Experiment 조합을 분석한다', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AnalysisWorkspace experimentId={8} structureId={7} />
+      </QueryClientProvider>,
+    )
+
+    await screen.findAllByText('24')
+    expect(MockWorker.instances[0].messages[0]).toMatchObject({
+      type: 'load-context',
+      structureId: 7,
+      experimentId: 8,
+    })
+    expect(screen.queryByText('Structure 선택')).not.toBeInTheDocument()
+    expect(screen.queryByText('Experiment 선택')).not.toBeInTheDocument()
   })
 })

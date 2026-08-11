@@ -1,8 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { CadScene } from '@/lib/cad'
+import type { CadScene, RecordedDataRule } from '@/lib/cad'
 import { defineTask, simulationProgramManifest } from '@/lib/cad/simulation'
 import CadViewer from './CadViewer'
+import { resolveCadViewerRecordedDataRules } from './recordedData'
 import { resolveCadViewerContent } from './cadViewerContent'
 
 const structureScene: CadScene = {
@@ -154,5 +155,24 @@ describe('CadViewer', () => {
     expect(markup).toContain('id="viewer-results-tab"')
     expect(markup).toContain('>Results</button>')
     expect(markup).not.toContain('currentDensity')
+  })
+
+  it('uses persisted rules instead of the current Experiment schema for historical data', () => {
+    const historicalRules: readonly RecordedDataRule[] = [
+      {
+        label: 'historicalVoltage',
+        methodId: 'simulation.record',
+        parameters: {},
+        result: {
+          dtype: 'float64',
+          quantityKind: 'electromagnetism.ElectricPotential',
+          unit: 'V',
+        },
+        target: [],
+      },
+    ]
+
+    expect(resolveCadViewerRecordedDataRules(historicalRules, program)).toBe(historicalRules)
+    expect(resolveCadViewerRecordedDataRules(undefined, program).map((rule) => rule.label)).toEqual(['measuredCurrent'])
   })
 })

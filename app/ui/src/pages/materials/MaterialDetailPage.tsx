@@ -119,9 +119,15 @@ function ParameterValueSummary({ parameter }: { parameter: MaterialParameterReco
   )
 }
 
-export function MaterialDetailPage() {
-  const navigate = useNavigate()
-  const { materialId } = useParams()
+export function MaterialDetail({
+  embedded = false,
+  materialId,
+  onBack,
+}: {
+  embedded?: boolean
+  materialId: number
+  onBack: () => void
+}) {
   const id = Number(materialId)
   const validId = Number.isSafeInteger(id) && id > 0
   const queryClient = useQueryClient()
@@ -180,7 +186,7 @@ export function MaterialDetailPage() {
     onSuccess: async () => {
       await invalidate()
       toast.success('Material을 삭제했습니다.')
-      navigate('/materials')
+      onBack()
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : 'Material을 삭제하지 못했습니다.'),
   })
@@ -228,8 +234,8 @@ export function MaterialDetailPage() {
     return (
       <div className="p-8 text-center">
         <p className="font-medium">Material을 찾을 수 없습니다.</p>
-        <Button asChild className="mt-4" variant="outline">
-          <Link to="/materials">목록으로</Link>
+        <Button className="mt-4" onClick={onBack} variant="outline">
+          목록으로
         </Button>
       </div>
     )
@@ -243,12 +249,10 @@ export function MaterialDetailPage() {
   const canEditOwned = (ownerId?: string | null) => Boolean(user && (admin || ownerId === user.id))
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-4 py-8 sm:px-6">
-      <Button asChild size="sm" variant="ghost">
-        <Link to="/materials">
-          <ArrowLeft />
-          Material 목록
-        </Link>
+    <div className={cn('space-y-6', !embedded && 'mx-auto max-w-7xl px-4 py-8 sm:px-6')}>
+      <Button onClick={onBack} size="sm" variant="ghost">
+        <ArrowLeft />
+        Material 목록
       </Button>
       <PageHeader
         actions={
@@ -576,6 +580,12 @@ export function MaterialDetailPage() {
       ) : null}
     </div>
   )
+}
+
+export function MaterialDetailPage() {
+  const navigate = useNavigate()
+  const { materialId } = useParams()
+  return <MaterialDetail materialId={Number(materialId)} onBack={() => navigate('/materials')} />
 }
 
 export const Component = MaterialDetailPage

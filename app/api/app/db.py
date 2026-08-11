@@ -234,6 +234,7 @@ class Structure(TimestampMixin, Base):
         Integer,
         ForeignKey("structures.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -283,6 +284,7 @@ class Experiment(TimestampMixin, Base):
         Integer,
         ForeignKey("experiments.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -332,6 +334,7 @@ class Sample(TimestampMixin, Base):
         Integer,
         ForeignKey("structures.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     vars: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
@@ -368,6 +371,7 @@ class Setup(TimestampMixin, Base):
         Integer,
         ForeignKey("experiments.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     vars: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
@@ -399,6 +403,11 @@ class Measurement(TimestampMixin, Base):
             "setup_id",
             name="uq_measurements_sample_id_setup_id",
         ),
+        Index(
+            "ix_measurements_user_id_updated_at",
+            "user_id",
+            "updated_at",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -416,6 +425,7 @@ class Measurement(TimestampMixin, Base):
         Integer,
         ForeignKey("setups.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
 
     user: Mapped[Optional["User"]] = relationship("User", back_populates="measurements")
@@ -445,6 +455,7 @@ class RecordedData(TimestampMixin, Base):
         Integer,
         ForeignKey("measurements.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     quantity_kind: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

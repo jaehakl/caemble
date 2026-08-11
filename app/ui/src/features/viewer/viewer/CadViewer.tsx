@@ -1,8 +1,8 @@
 import { useCallback, useMemo, useState } from 'react'
-import type { CadDocumentType, RecordedDataResult, RecordedDataRule } from '@/lib/cad'
+import type { CadDocumentType, RecordedDataRule } from '@/lib/cad'
 import { resolveCadViewerContent, type CadViewerDocument } from './cadViewerContent'
 import JscadViewer from './JscadViewer'
-import type { CadViewerRecordedData } from './recordedData'
+import { resolveCadViewerRecordedDataRules, type CadViewerRecordedData } from './recordedData'
 import type { SimulationProgramManifest } from '@/lib/cad/simulation'
 import type { SimulationProcess } from '../workspace/simulationUiTypes'
 
@@ -14,6 +14,7 @@ export type CadViewerProps = {
   experiment: CadViewerDocument | null
   activeExperimentTaskName?: string | null
   recordedData?: CadViewerRecordedData | null
+  recordedDataRules?: readonly RecordedDataRule[]
   resultsLayout?: 'split' | 'tabs'
   simulation?: CadViewerSimulation | null
   onRenderEnd: (sources: readonly CadDocumentType[]) => void
@@ -37,6 +38,7 @@ export function CadViewer({
   onRenderError,
   onRenderStart,
   recordedData,
+  recordedDataRules: providedRecordedDataRules,
   resultsLayout,
   simulation,
   structure,
@@ -47,22 +49,10 @@ export function CadViewer({
     () => resolveCadViewerContent(structure, experiment, structureVisible, experimentVisible, activeExperimentTaskName),
     [activeExperimentTaskName, experiment, experimentVisible, structure, structureVisible],
   )
-  const programRecordedDataRules = useMemo<readonly RecordedDataRule[]>(
-    () =>
-      Object.freeze(
-        Object.entries(simulation?.program?.recordedData ?? {}).map(([name, result]) =>
-          Object.freeze({
-            target: Object.freeze([]),
-            label: name,
-            methodId: 'simulation.record',
-            parameters: Object.freeze({}),
-            result: result as RecordedDataResult,
-          }),
-        ),
-      ),
-    [simulation?.program],
+  const recordedDataRules = useMemo(
+    () => resolveCadViewerRecordedDataRules(providedRecordedDataRules, simulation?.program),
+    [providedRecordedDataRules, simulation?.program],
   )
-  const recordedDataRules = programRecordedDataRules
   const handleRenderStart = useCallback(
     () => onRenderStart(content.visibleSources),
     [content.visibleSources, onRenderStart],

@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import Structure
 from models import (
+    CodeEntityHistoryRequest,
+    CodeEntityHistoryResponse,
     GetListRequestBase,
     GetListResponseBase,
     SaveCodeEntityRequest,
@@ -13,7 +15,7 @@ from models import (
 )
 from user_auth.routes import get_db
 from user_auth.utils.auth_wrapper import require_roles
-from service.structure import save_structure as save_structure_entity
+from service.structure import get_structure_history, save_structure as save_structure_entity
 from utils.crud import CrudSpec, delete_items, get_list_response, upsert_items
 
 
@@ -23,6 +25,7 @@ CRUD_SPEC = CrudSpec(
     schema=StructureBase,
     tree_parent_field="parent_id",
     immutable_update_fields=("code",),
+    search_aliases={"workbench": ("name", "description", "code")},
 )
 
 
@@ -33,6 +36,21 @@ async def save_structure(
     user: UserData = Depends(require_roles(["admin", "user"])),
 ):
     return await save_structure_entity(db, request, user=user)
+
+
+@router.post("/history", response_model=CodeEntityHistoryResponse)
+async def structure_history(
+    request: CodeEntityHistoryRequest,
+    db: AsyncSession = Depends(get_db),
+    user: UserData = Depends(require_roles(["admin", "user"])),
+):
+    try:
+        return await get_structure_history(db, request.id, user=user)
+    except LookupError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
 
 
 @router.post("/list", response_model=GetListResponseBase)

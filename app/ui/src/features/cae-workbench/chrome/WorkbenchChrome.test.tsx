@@ -1,0 +1,175 @@
+// @vitest-environment jsdom
+
+import { cleanup, render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { Beaker } from 'lucide-react'
+import { useState } from 'react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { EditorDock, type EditorDockTab } from './EditorDock'
+import { ResizableWorkbenchSplit } from './ResizableWorkbenchSplit'
+import { WorkbenchMenubar } from './WorkbenchMenubar'
+import { WorkbenchRibbon } from './WorkbenchRibbon'
+import { WorkbenchShell } from './WorkbenchShell'
+import { WorkbenchToolbar } from './WorkbenchToolbar'
+import type { WorkbenchMenuDefinition } from './actions'
+
+afterEach(cleanup)
+
+describe('workbench action chrome', () => {
+  it('uses the same action contract for menu and toolbar commands', async () => {
+    const user = userEvent.setup()
+    const run = vi.fn()
+    const blocked = vi.fn()
+    const action = { id: 'run', label: '실행', icon: <Beaker />, onSelect: run }
+    const disabledAction = {
+      id: 'blocked',
+      label: '측정',
+      icon: <Beaker />,
+      disabled: true,
+      disabledReason: '저장된 Setup이 필요합니다.',
+      onSelect: blocked,
+    }
+    const menus: readonly WorkbenchMenuDefinition[] = [
+      {
+        id: 'data',
+        label: 'Data',
+        items: [
+          { type: 'action', action },
+          { type: 'action', action: disabledAction },
+        ],
+      },
+    ]
+
+    render(
+      <>
+        <WorkbenchMenubar menus={menus} />
+        <WorkbenchToolbar actions={[action, disabledAction]} />
+      </>,
+    )
+
+    await user.click(screen.getByRole('menuitem', { name: 'Data' }))
+    await user.click(screen.getByRole('menuitem', { name: '실행' }))
+    await user.click(screen.getByRole('button', { name: '실행' }))
+    const blockedButton = screen.getByRole('button', { name: /측정: 저장된 Setup이 필요합니다/ })
+    await user.click(blockedButton)
+
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(blocked).not.toHaveBeenCalled()
+  })
+
+  it('shows only the active tab ribbon', () => {
+    const { rerender } = render(
+      <WorkbenchRibbon
+        activeTabId="structure"
+        panels={[
+          { tabId: 'structure', label: 'Structure', content: <div>Structure actions</div> },
+          { tabId: 'experiment', label: 'Experiment', content: <div>Experiment actions</div> },
+        ]}
+      />,
+    )
+
+    expect(screen.getByRole('region', { name: 'Structure 리본' })).toHaveTextContent('Structure actions')
+    expect(screen.queryByText('Experiment actions')).not.toBeInTheDocument()
+
+    rerender(
+      <WorkbenchRibbon
+        activeTabId="experiment"
+        panels={[
+          { tabId: 'structure', label: 'Structure', content: <div>Structure actions</div> },
+          { tabId: 'experiment', label: 'Experiment', content: <div>Experiment actions</div> },
+        ]}
+      />,
+    )
+    expect(screen.getByRole('region', { name: 'Experiment 리본' })).toHaveTextContent('Experiment actions')
+  })
+})
+
+describe('EditorDock', () => {
+  it('activates, closes, and keyboard-reorders tabs', async () => {
+    const user = userEvent.setup()
+    const close = vi.fn()
+    const initialTabs: readonly EditorDockTab[] = [
+      { id: 'structure', label: 'Structure', content: <div>Structure editor</div> },
+      { id: 'experiment', label: 'Experiment', content: <div>Experiment editor</div> },
+      { id: 'recorded-data', label: 'RecordedData', content: <div>Recorded data</div> },
+    ]
+
+    function DockHarness() {
+      const [tabs, setTabs] = useState(initialTabs)
+      const [activeTab, setActiveTab] = useState('structure')
+      return (
+        <EditorDock
+          activeTabId={activeTab}
+          onActiveTabChange={setActiveTab}
+          onTabClose={close}
+          onTabsReorder={(ids) => setTabs(ids.map((id) => initialTabs.find((tab) => tab.id === id)!))}
+          tabs={tabs}
+        />
+      )
+    }
+
+    render(<DockHarness />)
+    await user.click(screen.getByRole('tab', { name: 'Experiment' }))
+    expect(screen.getByRole('tabpanel')).toHaveTextContent('Experiment editor')
+
+    const experimentTab = screen.getByRole('tab', { name: 'Experiment' })
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('tab', { name: 'RecordedData' })).toHaveAttribute('aria-selected', 'true')
+    expect(experimentTab).toHaveAttribute('aria-selected', 'false')
+
+    const moveStructure = screen.getByRole('button', { name: 'Structure 탭 이동' })
+    moveStructure.focus()
+    await user.keyboard('{Alt>}{ArrowRight}{/Alt}')
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+      'Experiment',
+      'Structure',
+      'RecordedData',
+    ])
+
+    await user.click(screen.getByRole('button', { name: 'Structure 탭 닫기' }))
+    expect(close).toHaveBeenCalledWith('structure')
+  })
+})
+
+describe('responsive workbench layout', () => {
+  it('resizes the desktop split with an accessible separator', async () => {
+    const user = userEvent.setup()
+    const changed = vi.fn()
+    render(
+      <ResizableWorkbenchSplit
+        editor={<div>Editor content</div>}
+        onViewerPercentChange={changed}
+        viewer={<div>Viewer content</div>}
+      />,
+    )
+
+    const separator = screen.getByRole('separator', { name: 'Viewer와 Editor 크기 조절' })
+    separator.focus()
+    await user.keyboard('{ArrowRight}')
+    expect(separator).toHaveAttribute('aria-valuenow', '52')
+    expect(changed).toHaveBeenLastCalledWith(52)
+
+    await user.keyboard('{Home}')
+    expect(separator).toHaveAttribute('aria-valuenow', '25')
+  })
+
+  it('keeps the editor visible and opens the Viewer in a modal on a small screen', async () => {
+    const user = userEvent.setup()
+    render(
+      <WorkbenchShell
+        editor={<div>Editor content</div>}
+        menubar={<div>Menubar</div>}
+        ribbon={<div>Ribbon</div>}
+        toolbar={<div>Toolbar</div>}
+        viewer={<div>Viewer content</div>}
+      />,
+    )
+
+    expect(screen.getByRole('region', { name: 'Editor' })).toHaveTextContent('Editor content')
+    expect(screen.queryByText('Viewer content')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '3D Viewer' }))
+    const dialog = screen.getByRole('dialog', { name: '3D Viewer' })
+    expect(within(dialog).getByText('Viewer content')).toBeInTheDocument()
+  })
+})

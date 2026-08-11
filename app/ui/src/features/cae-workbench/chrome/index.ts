@@ -1,0 +1,7 @@
+export type { WorkbenchAction, WorkbenchMenuDefinition, WorkbenchMenuNode } from './actions'
+export { EditorDock, type EditorDockTab } from './EditorDock'
+export { ResizableWorkbenchSplit } from './ResizableWorkbenchSplit'
+export { WorkbenchMenubar } from './WorkbenchMenubar'
+export { WorkbenchRibbon, type WorkbenchRibbonPanel } from './WorkbenchRibbon'
+export { WorkbenchShell } from './WorkbenchShell'
+export { WorkbenchToolbar } from './WorkbenchToolbar'
