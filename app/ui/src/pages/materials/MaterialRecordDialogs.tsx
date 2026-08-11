@@ -552,7 +552,7 @@ export function MaterialParameterDialog({
   return (
     <>
       <Dialog onOpenChange={onOpenChange} open={open}>
-        <DialogContent className="max-h-[90dvh] max-w-3xl overflow-y-auto">
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl">
           <form
             className="grid gap-5"
             onSubmit={(event: FormEvent) => {

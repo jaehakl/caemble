@@ -35,6 +35,7 @@ export function CaeUtilityDialogs({
   return (
     <>
       <UtilityDialog
+        contentClassName="sm:max-w-4xl"
         description="Docs와 현재 Workbench를 바탕으로 CAE 작업을 도와줍니다."
         dialog={dialog}
         id="ai-helper"
@@ -49,6 +50,7 @@ export function CaeUtilityDialogs({
         />
       </UtilityDialog>
       <UtilityDialog
+        contentClassName="sm:max-w-4xl"
         description="로컬 LLM과 대화합니다."
         dialog={dialog}
         id="ai-chat"
@@ -58,6 +60,7 @@ export function CaeUtilityDialogs({
         <AiChatWorkspace onRequestLogin={requestLogin} />
       </UtilityDialog>
       <UtilityDialog
+        contentClassName="sm:max-w-7xl"
         description="연결된 Launcher와 worker 상태를 관리합니다."
         dialog={dialog}
         id="launchers"
@@ -67,6 +70,7 @@ export function CaeUtilityDialogs({
         <LaunchersWorkspace onRequestLogin={requestLogin} />
       </UtilityDialog>
       <UtilityDialog
+        contentClassName="sm:max-w-7xl"
         description="CAE 및 AI Job 실행 이력을 확인합니다."
         dialog={dialog}
         id="jobs"
@@ -76,6 +80,7 @@ export function CaeUtilityDialogs({
         <JobsWorkspace onRequestLogin={requestLogin} />
       </UtilityDialog>
       <UtilityDialog
+        contentClassName="sm:max-w-6xl"
         description="계정과 Access Token을 관리합니다."
         dialog={dialog}
         id="account"
@@ -90,6 +95,7 @@ export function CaeUtilityDialogs({
 
 function UtilityDialog({
   children,
+  contentClassName,
   description,
   dialog,
   id,
@@ -97,6 +103,7 @@ function UtilityDialog({
   title,
 }: {
   children: ReactNode
+  contentClassName: string
   description: string
   dialog: WorkbenchDialog
   id: Exclude<WorkbenchDialog, null>
@@ -106,7 +113,9 @@ function UtilityDialog({
   const open = dialog === id
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && setDialog(null)}>
-      <DialogContent className="grid h-[calc(100dvh-2rem)] max-w-[calc(100%-2rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-0 sm:max-w-[calc(100%-2rem)]">
+      <DialogContent
+        className={`grid h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-0 ${contentClassName}`}
+      >
         <DialogHeader className="sr-only">
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>

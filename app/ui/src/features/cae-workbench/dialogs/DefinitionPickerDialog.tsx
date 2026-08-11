@@ -75,7 +75,7 @@ export function DefinitionPickerDialog({
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="max-h-[85dvh] max-w-4xl overflow-hidden sm:max-w-4xl">
+      <DialogContent className="max-h-[85dvh] overflow-hidden sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>검색, 공개 범위와 정렬을 조합해 저장된 정의를 선택합니다.</DialogDescription>

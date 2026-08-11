@@ -69,7 +69,7 @@ export function HistoryDialog({ open, onOpenChange, kind, id, onSelect }: Histor
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="grid max-h-[calc(100dvh-2rem)] max-w-3xl grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
+      <DialogContent className="grid max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{label} History</DialogTitle>
           <DialogDescription>{label} 계보를 확인하고 불러올 버전을 선택합니다.</DialogDescription>

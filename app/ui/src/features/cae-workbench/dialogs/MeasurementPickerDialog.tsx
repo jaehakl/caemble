@@ -60,7 +60,7 @@ export function MeasurementPickerDialog({
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="max-h-[85dvh] max-w-3xl overflow-hidden sm:max-w-3xl">
+      <DialogContent className="max-h-[85dvh] overflow-hidden sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Measurement 선택</DialogTitle>
           <DialogDescription>현재 Structure + Experiment 조합에 저장된 Measurement를 선택합니다.</DialogDescription>

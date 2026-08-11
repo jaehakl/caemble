@@ -48,7 +48,15 @@ describe('AiChatWorkspace', () => {
         return {
           payload: {
             model: 'local-llm',
-            answer: '안녕하세요 **Caemble**',
+            answer: [
+              '안녕하세요 **Caemble**',
+              '',
+              '인라인 `box()` 예시입니다.',
+              '',
+              '```tsx',
+              'const shape = box({ size: [1, 2, 3] })',
+              '```',
+            ].join('\n'),
             context_window: 8192,
             remaining_tokens: 8000,
             cache_enabled: true,
@@ -76,6 +84,19 @@ describe('AiChatWorkspace', () => {
 
     expect(await screen.findByText(/안녕하세요/)).toBeVisible()
     expect(screen.getByText('Caemble')).toBeVisible()
+    const inlineCode = screen.getByText('box()')
+    const blockCode = screen.getByText('const shape = box({ size: [1, 2, 3] })')
+    const markdown = blockCode.closest('pre')?.parentElement
+    expect(inlineCode.tagName).toBe('CODE')
+    expect(inlineCode.closest('pre')).toBeNull()
+    expect(blockCode.tagName).toBe('CODE')
+    expect(markdown).toHaveClass(
+      '[&_code]:bg-muted',
+      '[&_pre_code]:rounded-none',
+      '[&_pre_code]:bg-transparent',
+      '[&_pre_code]:p-0',
+      '[&_pre_code]:text-inherit',
+    )
     expect(sdk.clientOptions).toHaveBeenCalledWith({
       apiBaseUrl: '/api',
       authMode: 'cookie',
@@ -104,6 +125,7 @@ describe('AiChatWorkspace', () => {
         fixedSystemPrompt
         questionLabel="Helper 질문"
         referenceProvider={referenceProvider}
+        showCodeCopy
         title="AI Helper"
       />,
     )
@@ -129,5 +151,9 @@ describe('AiChatWorkspace', () => {
       recentUserPrompts: [],
     })
     expect(screen.getByRole('link', { name: 'Structure Authoring' })).toHaveAttribute('href', '/docs?section=structure')
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    await user.click(screen.getByRole('button', { name: '코드 복사' }))
+    expect(writeText).toHaveBeenCalledWith('const shape = box({ size: [1, 2, 3] })\n')
   })
 })

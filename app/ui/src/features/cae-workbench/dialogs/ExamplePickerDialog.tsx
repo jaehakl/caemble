@@ -25,7 +25,7 @@ export function ExamplePickerDialog({
   const Icon = kind === 'research' ? Microscope : kind === 'structure' ? Box : FlaskConical
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="max-h-[85dvh] max-w-4xl overflow-hidden sm:max-w-4xl">
+      <DialogContent className="max-h-[85dvh] overflow-hidden sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>New {label}</DialogTitle>
           <DialogDescription>

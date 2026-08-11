@@ -79,7 +79,7 @@ export function RealizationPickerDialog({
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="max-h-[85dvh] max-w-3xl overflow-hidden sm:max-w-3xl">
+      <DialogContent className="max-h-[85dvh] overflow-hidden sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>

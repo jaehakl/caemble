@@ -31,7 +31,7 @@ export function MaterialCatalogPickerDialog({
       }}
       open={open}
     >
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Material parameter 탐색</DialogTitle>
           <DialogDescription>표준 parameter 또는 model relation을 검색한 뒤 선택하세요.</DialogDescription>

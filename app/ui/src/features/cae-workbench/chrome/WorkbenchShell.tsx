@@ -77,7 +77,7 @@ export function WorkbenchShell({
             {editor}
           </section>
           <Dialog onOpenChange={setViewerOpen} open={viewerOpen}>
-            <DialogContent className="h-[calc(100dvh-2rem)] max-w-[calc(100%-2rem)] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-[calc(100%-2rem)]">
+            <DialogContent className="h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-[calc(100%-2rem)]">
               <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12">
                 <DialogTitle>3D Viewer</DialogTitle>
                 <DialogDescription className="sr-only">

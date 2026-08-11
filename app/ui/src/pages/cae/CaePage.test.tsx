@@ -272,7 +272,10 @@ describe('root CAE workbench page', () => {
     await user.click(screen.getByRole('menuitem', { name: 'Settings' }))
     await user.click(screen.getByRole('menuitem', { name: 'Launchers' }))
     expect(await screen.findByText('Launchers workspace')).toBeInTheDocument()
-    expect(screen.getByRole('dialog', { name: 'Launchers' })).toContainElement(screen.getByText('Launchers workspace'))
+    const launchersDialog = screen.getByRole('dialog', { name: 'Launchers' })
+    expect(launchersDialog).toContainElement(screen.getByText('Launchers workspace'))
+    expect(launchersDialog).toHaveClass('w-fit', 'sm:max-w-7xl')
+    expect(launchersDialog).not.toHaveClass('w-[calc(100%-2rem)]', 'sm:max-w-[calc(100%-2rem)]')
     await user.click(screen.getByRole('button', { name: '닫기' }))
 
     const toolbar = screen.getByRole('toolbar', { name: 'CAE 빠른 작업' })
@@ -282,6 +285,9 @@ describe('root CAE workbench page', () => {
 
     await user.click(within(toolbar).getByRole('button', { name: 'Jobs' }))
     expect(await screen.findByText('Jobs workspace')).toBeInTheDocument()
+    const jobsDialog = screen.getByRole('dialog', { name: 'Jobs' })
+    expect(jobsDialog).toHaveClass('w-fit', 'sm:max-w-7xl')
+    expect(jobsDialog).not.toHaveClass('w-[calc(100%-2rem)]', 'sm:max-w-[calc(100%-2rem)]')
   })
 
   it('preserves Lab AI Chat and opens AI Helper with the focused Workbench context', async () => {
@@ -297,6 +303,8 @@ describe('root CAE workbench page', () => {
     await user.click(screen.getByRole('menuitem', { name: 'AI Helper' }))
     const helperDialog = await screen.findByRole('dialog', { name: 'AI Helper' })
     expect(helperDialog).toContainElement(await screen.findByText('AI Helper workspace: structure:experiment.tsx:Beam'))
+    expect(helperDialog).toHaveClass('w-fit', 'sm:max-w-4xl')
+    expect(helperDialog).not.toHaveClass('w-[calc(100%-2rem)]', 'sm:max-w-[calc(100%-2rem)]')
     expect(mocks.openWindow).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: '닫기' }))
   })

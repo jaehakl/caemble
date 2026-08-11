@@ -236,7 +236,7 @@ export function CaeWorkbenchDialogs({
         }}
       />
       <Dialog open={dialog === 'material'} onOpenChange={closeDialog}>
-        <DialogContent className="grid h-[calc(100dvh-2rem)] max-w-[calc(100%-2rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-0 sm:max-w-[calc(100%-2rem)]">
+        <DialogContent className="grid h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-0 sm:max-w-[calc(100%-2rem)]">
           <DialogHeader className="border-b px-5 py-4 pr-12">
             <DialogTitle>Material Manager</DialogTitle>
             <DialogDescription>Material 목록과 속성을 조회하고 편집합니다.</DialogDescription>
@@ -247,7 +247,7 @@ export function CaeWorkbenchDialogs({
         </DialogContent>
       </Dialog>
       <Dialog open={dialog === 'analysis'} onOpenChange={closeDialog}>
-        <DialogContent className="grid h-[calc(100dvh-2rem)] max-w-[calc(100%-2rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-0 sm:max-w-[calc(100%-2rem)]">
+        <DialogContent className="grid h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-0 sm:max-w-[calc(100%-2rem)]">
           <DialogHeader className="border-b px-5 py-4 pr-12">
             <DialogTitle>Analyze Measurements</DialogTitle>
             <DialogDescription>현재 Structure + Experiment 조합의 Measurement 데이터를 분석합니다.</DialogDescription>
