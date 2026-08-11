@@ -83,6 +83,7 @@ async def ai_chat(
             f"session={context.session_id} "
             f"history_messages={len(messages)} "
             f"prompt_chars={len(request.prompt)} "
+            f"reference_bytes={len(request.reference_context.encode('utf-8')) if request.reference_context else 0} "
             f"max_tokens={request.max_tokens} "
             f"temperature={request.temperature} "
             f"think={request.think} "

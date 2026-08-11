@@ -42,6 +42,7 @@ async def generate_chat_answer(
         thinking_effort=request.thinking_effort,
         response_format=request.response_format,
         on_delta=on_delta,
+        reference_context=request.reference_context,
     )
     return ChatResponse(
         model=model_name,

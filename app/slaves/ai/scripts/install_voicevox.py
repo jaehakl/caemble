@@ -14,7 +14,7 @@ from dotenv import dotenv_values
 
 
 VOICEVOX_CORE_VERSION = "0.16.4"
-VOICEVOX_INSTALLER_USER_AGENT = "caemble-voicevox-installer"
+VOICEVOX_INSTALLER_USER_AGENT = "gpstation-ai-voicevox-installer"
 AI_DIR = Path(__file__).resolve().parent.parent
 DOWNLOADERS = {
     ("Windows", "x86_64"): (

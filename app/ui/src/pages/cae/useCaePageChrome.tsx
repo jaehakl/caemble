@@ -1,6 +1,7 @@
 import { useMemo, type Dispatch, type SetStateAction } from 'react'
 import {
   Beaker,
+  Bot,
   BookOpenText,
   Box,
   Boxes,
@@ -28,6 +29,10 @@ import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWor
 import type { WorkbenchTabId } from '@/features/cae-workbench/types'
 import type { WorkbenchDialog } from './caePageTypes'
 import { RibbonActions } from './RibbonActions'
+
+function openDocsWindow(href: string) {
+  window.open(href, '_blank', 'noopener,noreferrer')
+}
 
 export function useCaePageChrome({
   authenticated,
@@ -217,6 +222,12 @@ export function useCaePageChrome({
         icon: <MessageCircle className="size-4" />,
         onSelect: () => setDialog('ai-chat'),
       },
+      aiHelper: {
+        id: 'ai-helper',
+        label: 'AI Helper',
+        icon: <Bot className="size-4" />,
+        onSelect: () => setDialog('ai-helper'),
+      },
       launchers: {
         id: 'launchers',
         label: 'Launchers',
@@ -239,31 +250,31 @@ export function useCaePageChrome({
         id: 'manual',
         label: 'Manual',
         icon: <BookOpenText className="size-4" />,
-        onSelect: () => setDialog('manual'),
+        onSelect: () => openDocsWindow('/docs?section=program'),
       },
       geometryCatalog: {
         id: 'geometry-catalog',
         label: 'Geometry Catalog',
         icon: <Boxes className="size-4" />,
-        onSelect: () => setDialog('geometry-catalog'),
+        onSelect: () => openDocsWindow('/docs?section=geometry'),
       },
       materialCatalog: {
         id: 'material-catalog',
         label: 'Material Catalog',
         icon: <Layers3 className="size-4" />,
-        onSelect: () => setDialog('material-catalog'),
+        onSelect: () => openDocsWindow('/docs?section=materials'),
       },
       quantityCatalog: {
         id: 'quantity-catalog',
         label: 'Quantity Catalog',
         icon: <Gauge className="size-4" />,
-        onSelect: () => setDialog('quantity-catalog'),
+        onSelect: () => openDocsWindow('/docs?section=quantity-kinds'),
       },
       physicsCatalog: {
         id: 'physics-catalog',
         label: 'Physics Catalog',
         icon: <FlaskConical className="size-4" />,
-        onSelect: () => setDialog('physics-catalog'),
+        onSelect: () => openDocsWindow('/docs?section=solvers'),
       },
       generateSample: {
         id: 'generate-sample',
@@ -543,6 +554,8 @@ export function useCaePageChrome({
         id: 'help',
         label: 'Help',
         items: [
+          { type: 'action', action: actions.aiHelper },
+          { type: 'separator', id: 'ai-helper-separator' },
           { type: 'action', action: actions.manual },
           { type: 'separator', id: 'catalog-separator' },
           { type: 'action', action: actions.geometryCatalog },

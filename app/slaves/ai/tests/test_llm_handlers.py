@@ -10,7 +10,13 @@ from app import __main__ as ai_slave
 from app.llm import chat as llm_chat
 from app.llm import handlers as llm_handlers
 from app.llm import service as llm_service
-from app.llm.models import ChatRequest, ChatResponse, LlmRequest, LlmResponse
+from app.llm.models import (
+    REFERENCE_CONTEXT_MAX_BYTES,
+    ChatRequest,
+    ChatResponse,
+    LlmRequest,
+    LlmResponse,
+)
 
 
 def context() -> SlaveContext:
@@ -186,6 +192,85 @@ class LlmHandlerTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_chat_reference_context_is_generation_only_and_not_accumulated(self) -> None:
+        calls = []
+
+        async def generate_chat_answer(request, messages, on_delta):
+            generation_messages = llm_chat.build_reference_generation_messages(
+                messages,
+                request.reference_context,
+            )
+            calls.append(generation_messages)
+            return ChatResponse(
+                model=request.model,
+                answer=f"answer {len(calls)}",
+                context_window=4096,
+                prompt_tokens=10,
+                max_response_tokens=512,
+                remaining_tokens=4000,
+                cache_enabled=True,
+            )
+
+        with patch.object(llm_handlers, "generate_chat_answer", generate_chat_answer):
+            await ai_slave.app.dispatch(
+                DataChannelMessage(
+                    id="call-1",
+                    type="ai.chat",
+                    payload={
+                        "system_prompt": "Use the provided documentation.",
+                        "prompt": "첫 번째 질문",
+                        "reference_context": "첫 참고자료: structure() 사용법",
+                    },
+                ),
+                context(),
+            )
+            await ai_slave.app.dispatch(
+                DataChannelMessage(
+                    id="call-2",
+                    type="ai.chat",
+                    payload={
+                        "prompt": "두 번째 질문",
+                        "reference_context": "둘째 참고자료: experiment() 사용법",
+                    },
+                ),
+                context(),
+            )
+            await ai_slave.app.dispatch(
+                DataChannelMessage(
+                    id="call-3",
+                    type="ai.chat",
+                    payload={"prompt": "참고자료 없는 질문"},
+                ),
+                context(),
+            )
+
+        first_generation = calls[0][-1]["content"]
+        self.assertIn("첫 참고자료: structure() 사용법", first_generation)
+        self.assertTrue(first_generation.endswith("\n\n첫 번째 질문"))
+
+        second_generation_text = "\n".join(message["content"] for message in calls[1])
+        self.assertNotIn("첫 참고자료: structure() 사용법", second_generation_text)
+        self.assertIn("둘째 참고자료: experiment() 사용법", second_generation_text)
+        self.assertIn("첫 번째 질문", second_generation_text)
+
+        third_generation_text = "\n".join(message["content"] for message in calls[2])
+        self.assertNotIn("첫 참고자료: structure() 사용법", third_generation_text)
+        self.assertNotIn("둘째 참고자료: experiment() 사용법", third_generation_text)
+        self.assertEqual(calls[2][-1], {"role": "user", "content": "참고자료 없는 질문"})
+
+        self.assertEqual(
+            ai_slave.app.memory[llm_chat.CHAT_MEMORY_KEY]["messages"],
+            [
+                {"role": "system", "content": "Use the provided documentation."},
+                {"role": "user", "content": "첫 번째 질문"},
+                {"role": "assistant", "content": "answer 1"},
+                {"role": "user", "content": "두 번째 질문"},
+                {"role": "assistant", "content": "answer 2"},
+                {"role": "user", "content": "참고자료 없는 질문"},
+                {"role": "assistant", "content": "answer 3"},
+            ],
+        )
+
     async def test_chat_requires_system_prompt_for_first_call(self) -> None:
         with self.assertRaises(ValueError) as error:
             await ai_slave.app.dispatch(
@@ -269,9 +354,30 @@ class LlmHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(requests[1].think, True)
 
     def test_chat_request_accepts_korean_text(self) -> None:
-        request = ChatRequest(system_prompt="친절하게 답하세요.", prompt="한글 질문입니다.")
+        request = ChatRequest(
+            system_prompt="친절하게 답하세요.",
+            prompt="한글 질문입니다.",
+            reference_context="한글 참고자료입니다.",
+        )
 
         self.assertEqual(request.prompt, "한글 질문입니다.")
+        self.assertEqual(request.reference_context, "한글 참고자료입니다.")
+
+    def test_chat_request_limits_reference_context_by_utf8_bytes(self) -> None:
+        maximum = "x" * REFERENCE_CONTEXT_MAX_BYTES
+        self.assertEqual(
+            ChatRequest(system_prompt="system", prompt="prompt", reference_context=maximum).reference_context,
+            maximum,
+        )
+
+        with self.assertRaises(ValueError) as error:
+            ChatRequest(
+                system_prompt="system",
+                prompt="prompt",
+                reference_context="한" * ((REFERENCE_CONTEXT_MAX_BYTES // 3) + 1),
+            )
+
+        self.assertIn(f"exceeds {REFERENCE_CONTEXT_MAX_BYTES} UTF-8 bytes", str(error.exception))
 
     def test_chat_request_accepts_enable_thinking(self) -> None:
         request = ChatRequest(system_prompt="system", prompt="prompt", enable_thinking=True)
@@ -289,9 +395,63 @@ class LlmHandlerTest(unittest.IsolatedAsyncioTestCase):
 
     def test_chat_request_rejects_surrogate_text(self) -> None:
         with self.assertRaises(ValueError) as error:
-            ChatRequest(system_prompt="system", prompt="bad\udcec")
+            ChatRequest(system_prompt="system", prompt="prompt", reference_context="bad\udcec")
 
         self.assertIn("invalid Unicode surrogate", str(error.exception))
+
+    def test_reference_generation_prunes_oldest_history_by_token_budget(self) -> None:
+        class CharacterTokenizer:
+            @staticmethod
+            def tokenize(value, add_bos=False, special=True):
+                return list(value.decode("utf-8"))
+
+        base_messages = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "old question " * 5},
+            {"role": "assistant", "content": "old answer " * 5},
+            {"role": "user", "content": "recent question"},
+            {"role": "assistant", "content": "recent answer"},
+            {"role": "user", "content": "current question"},
+        ]
+        generation_messages = llm_chat.build_reference_generation_messages(
+            base_messages,
+            "reference data",
+        )
+        recent_only = [generation_messages[0], *generation_messages[3:]]
+        recent_tokens = llm_chat._estimate_prompt_tokens(CharacterTokenizer(), recent_only)
+
+        selected = llm_chat._select_reference_generation_messages(
+            CharacterTokenizer(),
+            generation_messages,
+            context_size=recent_tokens + 32,
+            max_response_tokens=32,
+        )
+
+        self.assertEqual(selected, recent_only)
+        self.assertNotIn("old question", "\n".join(message["content"] for message in selected))
+
+    def test_reference_generation_rejects_reference_and_question_over_context(self) -> None:
+        class CharacterTokenizer:
+            @staticmethod
+            def tokenize(value, add_bos=False, special=True):
+                return list(value.decode("utf-8"))
+
+        generation_messages = llm_chat.build_reference_generation_messages(
+            [
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "question"},
+            ],
+            "large reference",
+        )
+        minimum_tokens = llm_chat._estimate_prompt_tokens(CharacterTokenizer(), generation_messages)
+
+        with self.assertRaisesRegex(ValueError, "exceed the LLM context window"):
+            llm_chat._select_reference_generation_messages(
+                CharacterTokenizer(),
+                generation_messages,
+                context_size=minimum_tokens,
+                max_response_tokens=1,
+            )
 
     async def test_chat_switches_models_and_keeps_history(self) -> None:
         calls = []
@@ -404,7 +564,13 @@ class LlmServiceTest(unittest.IsolatedAsyncioTestCase):
                 cache_enabled=True,
             )
         )
-        request = ChatRequest(model="model-b", prompt="prompt", context_size=24576, top_p=0.55)
+        request = ChatRequest(
+            model="model-b",
+            prompt="prompt",
+            reference_context="Product documentation",
+            context_size=24576,
+            top_p=0.55,
+        )
         with (
             patch.object(llm_service, "get_selected_model_name", return_value="model-b"),
             patch.object(llm_service, "generate_chat_with_llm", generate_chat),
@@ -414,6 +580,7 @@ class LlmServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.context_window, 24576)
         self.assertEqual(generate_chat.await_args.kwargs["context_size"], 24576)
         self.assertEqual(generate_chat.await_args.kwargs["top_p"], 0.55)
+        self.assertEqual(generate_chat.await_args.kwargs["reference_context"], "Product documentation")
 
 
 if __name__ == "__main__":

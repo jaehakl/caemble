@@ -28,7 +28,7 @@ class FakeStreamingLlm:
 
     def create_chat_completion(self, **kwargs):
         self.kwargs = kwargs
-        self.enable_thinking_override = getattr(self, "_caemble_enable_thinking_override", None)
+        self.enable_thinking_override = getattr(self, "_ai_slave_enable_thinking_override", None)
         return iter(self.chunks)
 
     def set_cache(self, cache):
@@ -52,7 +52,7 @@ class FakePromptCompletionLlm:
 
     def create_chat_completion(self, **kwargs):
         self.kwargs = kwargs
-        self.enable_thinking_override = getattr(self, "_caemble_enable_thinking_override", None)
+        self.enable_thinking_override = getattr(self, "_ai_slave_enable_thinking_override", None)
         if self.error is not None:
             raise self.error
         return {"choices": [{"message": {"content": self.content}}]}
@@ -387,7 +387,7 @@ class LlmChatRuntimeTest(unittest.IsolatedAsyncioTestCase):
         class FakeLlama:
             _chat_handlers = {"chat_template.default": base_handler}
             chat_format = "qwen"
-            _caemble_enable_thinking_override = False
+            _ai_slave_enable_thinking_override = False
 
         llm_runtime._create_llm_chat_handler(True)(llama=FakeLlama(), messages=[])
 
@@ -426,7 +426,7 @@ class LlmChatRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
                 self.assertEqual(answer, "answer")
                 self.assertIs(fake_llm.enable_thinking_override, enabled)
-                self.assertFalse(hasattr(fake_llm, "_caemble_enable_thinking_override"))
+                self.assertFalse(hasattr(fake_llm, "_ai_slave_enable_thinking_override"))
 
     async def test_generate_prompt_with_llm_uses_model_default_when_think_is_omitted(self) -> None:
         fake_llm = FakePromptCompletionLlm()
@@ -442,11 +442,11 @@ class LlmChatRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(answer, "answer")
         self.assertIsNone(fake_llm.enable_thinking_override)
-        self.assertFalse(hasattr(fake_llm, "_caemble_enable_thinking_override"))
+        self.assertFalse(hasattr(fake_llm, "_ai_slave_enable_thinking_override"))
 
     async def test_generate_prompt_with_llm_restores_previous_thinking_override(self) -> None:
         fake_llm = FakePromptCompletionLlm()
-        fake_llm._caemble_enable_thinking_override = False
+        fake_llm._ai_slave_enable_thinking_override = False
         with (
             patch.object(llm_runtime, "build_prompt_llm_config", return_value=config()),
             patch.object(llm_runtime, "acquire_gpu_model_multi", return_value=NullAsyncContext()),
@@ -459,7 +459,7 @@ class LlmChatRuntimeTest(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertIs(fake_llm.enable_thinking_override, True)
-        self.assertIs(fake_llm._caemble_enable_thinking_override, False)
+        self.assertIs(fake_llm._ai_slave_enable_thinking_override, False)
 
     async def test_generate_prompt_with_llm_clears_thinking_override_after_failure(self) -> None:
         fake_llm = FakePromptCompletionLlm(error=RuntimeError("completion failed"))
@@ -476,7 +476,7 @@ class LlmChatRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertIs(fake_llm.enable_thinking_override, True)
-        self.assertFalse(hasattr(fake_llm, "_caemble_enable_thinking_override"))
+        self.assertFalse(hasattr(fake_llm, "_ai_slave_enable_thinking_override"))
 
     async def test_generate_prompt_with_llm_removes_gemma_and_qwen_reasoning(self) -> None:
         cases = {
@@ -627,7 +627,7 @@ class LlmChatRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake_llm.kwargs["max_tokens"], 32)
         self.assertEqual(fake_llm.kwargs["temperature"], 0.25)
         self.assertIs(fake_llm.enable_thinking_override, True)
-        self.assertFalse(hasattr(fake_llm, "_caemble_enable_thinking_override"))
+        self.assertFalse(hasattr(fake_llm, "_ai_slave_enable_thinking_override"))
 
     async def test_generate_chat_with_llm_hides_reasoning_from_stream_and_answer(self) -> None:
         fake_llm = FakeStreamingLlm(

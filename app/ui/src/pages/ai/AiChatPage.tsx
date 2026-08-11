@@ -1,6 +1,6 @@
 import { GpStationClient, type JobEvent, type JobSession } from '@gpstation/v1-master-js-sdk'
-import { MessageCircle, Send, Settings, Square } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Check, Copy, MessageCircle, Send, Settings, Square } from 'lucide-react'
+import { isValidElement, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
@@ -40,7 +40,49 @@ type LlmModel = {
   top_p: number
 }
 
+export type ChatReferenceContext = Readonly<{
+  text: string
+  sources: readonly Readonly<{ href: string; title: string }>[]
+  truncated?: boolean
+}>
+
+export type ChatReferenceRequest = Readonly<{
+  contextSize: number
+  prompt: string
+  recentUserPrompts: readonly string[]
+}>
+
 export function AiChatWorkspace({ onRequestLogin }: { onRequestLogin?: () => void }) {
+  return <ChatWorkspace onRequestLogin={onRequestLogin} />
+}
+
+export function ChatWorkspace({
+  defaultSystemPrompt = 'You are a helpful engineering assistant.',
+  description = 'Caemble Launcher의 로컬 LLM과 지속적인 streaming 대화를 시작합니다.',
+  emptyDescription = '대화가 열리면 같은 JobSession에서 문맥을 유지합니다.',
+  emptyTitle = '무엇이든 물어보세요.',
+  fixedSystemPrompt = false,
+  onRequestLogin,
+  questionLabel = 'AI 질문',
+  questionPlaceholder = '질문을 입력하세요. Shift+Enter로 줄바꿈',
+  referenceLabel = '현재 Docs와 Workbench 문맥 자동 첨부',
+  referenceProvider,
+  showCodeCopy = false,
+  title = 'AI Chat',
+}: {
+  defaultSystemPrompt?: string
+  description?: string
+  emptyDescription?: string
+  emptyTitle?: string
+  fixedSystemPrompt?: boolean
+  onRequestLogin?: () => void
+  questionLabel?: string
+  questionPlaceholder?: string
+  referenceLabel?: string
+  referenceProvider?: (request: ChatReferenceRequest) => ChatReferenceContext | Promise<ChatReferenceContext>
+  showCodeCopy?: boolean
+  title?: string
+}) {
   const auth = useAuth()
   const client = useMemo(
     () =>
@@ -55,7 +97,7 @@ export function AiChatWorkspace({ onRequestLogin }: { onRequestLogin?: () => voi
   const [selectedModel, setSelectedModel] = useState('')
   const [modelsLoading, setModelsLoading] = useState(false)
   const [modelsError, setModelsError] = useState<string | null>(null)
-  const [systemPrompt, setSystemPrompt] = useState('You are a helpful engineering assistant.')
+  const [systemPrompt, setSystemPrompt] = useState(defaultSystemPrompt)
   const [prompt, setPrompt] = useState('')
   const [maxTokens, setMaxTokens] = useState('8192')
   const [temperature, setTemperature] = useState('1.0')
@@ -71,6 +113,8 @@ export function AiChatWorkspace({ onRequestLogin }: { onRequestLogin?: () => voi
   const [status, setStatus] = useState('대기 중')
   const [error, setError] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [referenceEnabled, setReferenceEnabled] = useState(Boolean(referenceProvider))
+  const [referenceContext, setReferenceContext] = useState<ChatReferenceContext | null>(null)
   const messageIdRef = useRef(0)
   const sessionRef = useRef<JobSession | null>(null)
   const activeAssistantIdRef = useRef<number | null>(null)
@@ -135,7 +179,7 @@ export function AiChatWorkspace({ onRequestLogin }: { onRequestLogin?: () => voi
   if (!auth.isAuthenticated) {
     return (
       <WorkbenchSignInPrompt
-        description="AI Chat을 사용하려면 Account에서 로그인하세요."
+        description={`${title}을 사용하려면 Account에서 로그인하세요.`}
         onSignIn={() => onRequestLogin?.()}
       />
     )
@@ -196,24 +240,51 @@ export function AiChatWorkspace({ onRequestLogin }: { onRequestLogin?: () => voi
       return
     }
 
-    let payload: Record<string, unknown>
+    let generationSettings: Record<string, unknown>
+    let effectiveContextSize: number
     try {
-      payload = {
+      const requestedContextSize = optionalNumber(contextSize, 'Context Size', true)
+      effectiveContextSize = requestedContextSize ?? selectedModelSettings?.context_size ?? 8192
+      generationSettings = {
         model: selectedModel,
-        prompt: trimmedPrompt,
         max_tokens: optionalNumber(maxTokens, 'Max Tokens', true),
         temperature: optionalNumber(temperature, 'Temperature'),
-        context_size: optionalNumber(contextSize, 'Context Size', true),
+        context_size: requestedContextSize,
         top_p: optionalNumber(topP, 'Top P'),
         think,
         thinking_effort: thinkingEffort,
         response_format: responseFormat,
-        ...(!currentSession ? { system_prompt: systemPrompt.trim() } : {}),
       }
     } catch (nextError) {
       setError(runtimeErrorMessage(nextError, '설정 값을 확인하세요.'))
       setSettingsOpen(true)
       return
+    }
+
+    let nextReferenceContext: ChatReferenceContext | null = null
+    if (referenceProvider && referenceEnabled) {
+      setStatus('참고자료 준비 중')
+      try {
+        nextReferenceContext = await referenceProvider({
+          contextSize: effectiveContextSize,
+          prompt: trimmedPrompt,
+          recentUserPrompts: messages
+            .filter((message) => message.role === 'user')
+            .slice(-2)
+            .map((message) => message.content),
+        })
+      } catch (nextError) {
+        setError(runtimeErrorMessage(nextError, '참고자료를 준비하지 못했습니다.'))
+        setStatus('참고자료 오류')
+        return
+      }
+    }
+    setReferenceContext(nextReferenceContext)
+    const payload: Record<string, unknown> = {
+      ...generationSettings,
+      prompt: trimmedPrompt,
+      ...(!currentSession ? { system_prompt: systemPrompt.trim() } : {}),
+      ...(nextReferenceContext?.text ? { reference_context: nextReferenceContext.text } : {}),
     }
 
     const userId = nextMessageId()
@@ -273,6 +344,7 @@ export function AiChatWorkspace({ onRequestLogin }: { onRequestLogin?: () => voi
       setSession(null)
       setMessages([])
       setContext(null)
+      setReferenceContext(null)
       setError(null)
       setStatus('새 대화')
       setBusy(false)
@@ -282,11 +354,7 @@ export function AiChatWorkspace({ onRequestLogin }: { onRequestLogin?: () => voi
   return (
     <div className="mx-auto flex h-[calc(100dvh-4rem)] min-h-[680px] max-w-6xl flex-col gap-5 px-5 py-8">
       <div className="flex items-start justify-between gap-4">
-        <PageHeader
-          description="Caemble Launcher의 로컬 LLM과 지속적인 streaming 대화를 시작합니다."
-          eyebrow="AI"
-          title="AI Chat"
-        />
+        <PageHeader description={description} eyebrow="AI" title={title} />
         <Button onClick={() => setSettingsOpen(true)} variant="outline">
           <Settings />
           설정
@@ -323,6 +391,7 @@ export function AiChatWorkspace({ onRequestLogin }: { onRequestLogin?: () => voi
                     {message.role === 'assistant' ? (
                       <div className="space-y-3 overflow-hidden break-words [&_a]:text-primary [&_a]:underline [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-zinc-950 [&_pre]:p-3 [&_pre]:text-zinc-50 [&_table]:block [&_table]:border-collapse [&_table]:overflow-x-auto [&_td]:border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:px-2 [&_th]:py-1 [&_ul]:list-disc [&_ul]:pl-5">
                         <ReactMarkdown
+                          components={showCodeCopy ? { pre: CopyablePre } : undefined}
                           rehypePlugins={[[rehypeKatex, { strict: false, throwOnError: false }]]}
                           remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: true }]]}
                         >
@@ -338,10 +407,8 @@ export function AiChatWorkspace({ onRequestLogin }: { onRequestLogin?: () => voi
             ) : (
               <div className="flex h-full min-h-48 flex-col items-center justify-center text-center">
                 <MessageCircle className="mb-3 size-9 text-muted-foreground" />
-                <p className="font-medium">무엇이든 물어보세요.</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  대화가 열리면 같은 JobSession에서 문맥을 유지합니다.
-                </p>
+                <p className="font-medium">{emptyTitle}</p>
+                <p className="mt-1 text-sm text-muted-foreground">{emptyDescription}</p>
               </div>
             )}
             <div ref={transcriptEndRef} />
@@ -353,9 +420,38 @@ export function AiChatWorkspace({ onRequestLogin }: { onRequestLogin?: () => voi
               void sendPrompt()
             }}
           >
+            {referenceProvider ? (
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                <label className="flex items-center gap-2">
+                  <input
+                    checked={referenceEnabled}
+                    disabled={busy}
+                    onChange={(event) => setReferenceEnabled(event.target.checked)}
+                    type="checkbox"
+                  />
+                  {referenceLabel}
+                </label>
+                {referenceContext ? (
+                  <details className="max-w-full">
+                    <summary className="cursor-pointer">
+                      참고자료 {referenceContext.sources.length}개{referenceContext.truncated ? ' · 일부 생략' : ''}
+                    </summary>
+                    <ul className="mt-2 max-h-28 space-y-1 overflow-auto rounded border bg-muted/30 p-2 text-left">
+                      {referenceContext.sources.map((source) => (
+                        <li key={`${source.href}:${source.title}`}>
+                          <a href={source.href} rel="noreferrer" target="_blank" className="text-primary underline">
+                            {source.title}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
+              </div>
+            ) : null}
             {error || modelsError ? <p className="mb-2 text-sm text-destructive">{error ?? modelsError}</p> : null}
             <textarea
-              aria-label="AI 질문"
+              aria-label={questionLabel}
               className="min-h-24 w-full resize-y rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
               onChange={(event) => setPrompt(event.target.value)}
               onKeyDown={(event) => {
@@ -363,7 +459,7 @@ export function AiChatWorkspace({ onRequestLogin }: { onRequestLogin?: () => voi
                 event.preventDefault()
                 if (!busy && selectedModel) void sendPrompt()
               }}
-              placeholder="질문을 입력하세요. Shift+Enter로 줄바꿈"
+              placeholder={questionPlaceholder}
               value={prompt}
             />
             <div className="mt-3 flex justify-end gap-2">
@@ -382,7 +478,7 @@ export function AiChatWorkspace({ onRequestLogin }: { onRequestLogin?: () => voi
       <Dialog onOpenChange={setSettingsOpen} open={settingsOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>AI Chat 설정</DialogTitle>
+            <DialogTitle>{title} 설정</DialogTitle>
             <DialogDescription>모델과 생성 옵션은 현재 대화에 적용됩니다.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4">
@@ -409,15 +505,17 @@ export function AiChatWorkspace({ onRequestLogin }: { onRequestLogin?: () => voi
                 </span>
               ) : null}
             </label>
-            <label className="grid gap-1.5 text-sm">
-              System Prompt
-              <textarea
-                className="min-h-24 rounded-md border border-input bg-transparent px-3 py-2 text-sm"
-                disabled={chatOpen}
-                onChange={(event) => setSystemPrompt(event.target.value)}
-                value={systemPrompt}
-              />
-            </label>
+            {!fixedSystemPrompt ? (
+              <label className="grid gap-1.5 text-sm">
+                System Prompt
+                <textarea
+                  className="min-h-24 rounded-md border border-input bg-transparent px-3 py-2 text-sm"
+                  disabled={chatOpen}
+                  onChange={(event) => setSystemPrompt(event.target.value)}
+                  value={systemPrompt}
+                />
+              </label>
+            ) : null}
             <div className="grid gap-3 sm:grid-cols-2">
               <SettingInput label="Max Tokens" onChange={setMaxTokens} value={maxTokens} />
               <SettingInput label="Temperature" onChange={setTemperature} value={temperature} />
@@ -458,6 +556,36 @@ export function AiChatWorkspace({ onRequestLogin }: { onRequestLogin?: () => voi
       </Dialog>
     </div>
   )
+}
+
+function CopyablePre({ children, ...props }: ComponentProps<'pre'>) {
+  const [copied, setCopied] = useState(false)
+  const code = markdownText(children)
+  return (
+    <pre {...props} className="group relative">
+      <button
+        aria-label="코드 복사"
+        className="absolute top-2 right-2 rounded border border-zinc-700 bg-zinc-900/90 p-1.5 text-zinc-200 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+        onClick={() => {
+          void navigator.clipboard.writeText(code).then(() => {
+            setCopied(true)
+            window.setTimeout(() => setCopied(false), 1500)
+          })
+        }}
+        type="button"
+      >
+        {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+      </button>
+      {children}
+    </pre>
+  )
+}
+
+function markdownText(value: ReactNode): string {
+  if (typeof value === 'string' || typeof value === 'number') return String(value)
+  if (Array.isArray(value)) return value.map(markdownText).join('')
+  if (isValidElement<{ children?: ReactNode }>(value)) return markdownText(value.props.children)
+  return ''
 }
 
 function SettingInput({ label, onChange, value }: { label: string; onChange: (value: string) => void; value: string }) {

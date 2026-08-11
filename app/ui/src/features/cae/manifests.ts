@@ -5,6 +5,8 @@ const manifestModules = import.meta.glob('../../../../slaves/cae/app/solvers/*/m
   import: 'default',
 })
 
+export const caeSolverManifestsQueryKey = ['cae', 'solver-manifests'] as const
+
 export type CaeSolverManifest = Readonly<{
   schemaVersion: 1
   implementation: string

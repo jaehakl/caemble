@@ -51,17 +51,17 @@ def apply_thinking_effort(
 
 @contextmanager
 def thinking_override(llm: Any, requested: bool | None) -> Iterator[None]:
-    had_previous_override = hasattr(llm, "_caemble_enable_thinking_override")
-    previous_override = getattr(llm, "_caemble_enable_thinking_override", None)
+    had_previous_override = hasattr(llm, "_ai_slave_enable_thinking_override")
+    previous_override = getattr(llm, "_ai_slave_enable_thinking_override", None)
     if requested is not None:
-        setattr(llm, "_caemble_enable_thinking_override", requested)
+        setattr(llm, "_ai_slave_enable_thinking_override", requested)
     try:
         yield
     finally:
         if had_previous_override:
-            setattr(llm, "_caemble_enable_thinking_override", previous_override)
-        elif hasattr(llm, "_caemble_enable_thinking_override"):
-            delattr(llm, "_caemble_enable_thinking_override")
+            setattr(llm, "_ai_slave_enable_thinking_override", previous_override)
+        elif hasattr(llm, "_ai_slave_enable_thinking_override"):
+            delattr(llm, "_ai_slave_enable_thinking_override")
 
 
 class GenerationOutputParser:

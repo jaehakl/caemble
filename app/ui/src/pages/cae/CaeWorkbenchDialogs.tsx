@@ -20,6 +20,8 @@ import type { WorkbenchDialog } from './caePageTypes'
 import { CaeUtilityDialogs } from './CaeUtilityDialogs'
 
 export function CaeWorkbenchDialogs({
+  activeExperimentFile,
+  activeTab,
   authenticated,
   dialog,
   guardReplacement,
@@ -28,6 +30,8 @@ export function CaeWorkbenchDialogs({
   setDialog,
   workbench,
 }: {
+  activeExperimentFile: string | null
+  activeTab: WorkbenchTabId
   authenticated: boolean
   dialog: WorkbenchDialog
   guardReplacement: (target: 'experiment' | 'pair' | 'structure', run: () => unknown | Promise<unknown>) => void
@@ -258,7 +262,13 @@ export function CaeWorkbenchDialogs({
           </div>
         </DialogContent>
       </Dialog>
-      <CaeUtilityDialogs dialog={dialog} setDialog={setDialog} />
+      <CaeUtilityDialogs
+        activeExperimentFile={activeExperimentFile}
+        activeTab={activeTab}
+        dialog={dialog}
+        setDialog={setDialog}
+        workbench={workbench}
+      />
     </>
   )
 }

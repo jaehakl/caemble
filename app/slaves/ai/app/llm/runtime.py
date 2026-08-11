@@ -323,7 +323,7 @@ def _create_llm_chat_handler(enable_thinking: bool) -> Any:
     def chat_handler(**kwargs: Any) -> Any:
         llama = kwargs.get("llama")
         base_handler = _resolve_llm_chat_handler(llama)
-        request_enable_thinking = getattr(llama, "_caemble_enable_thinking_override", None)
+        request_enable_thinking = getattr(llama, "_ai_slave_enable_thinking_override", None)
         if isinstance(request_enable_thinking, bool):
             kwargs["enable_thinking"] = request_enable_thinking
         else:

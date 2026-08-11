@@ -42,12 +42,22 @@ const columns: ColumnDef<QuantityKindRow, unknown>[] = [
   },
 ]
 
-export function QuantityCatalog() {
-  const [selectedName, setSelectedName] = useState<string | null>(null)
+export function QuantityCatalog({
+  embedded = false,
+  onSelectedKeyChange,
+  selectedKey,
+}: {
+  embedded?: boolean
+  onSelectedKeyChange?: (key: string) => void
+  selectedKey?: string | null
+} = {}) {
+  const [internalSelectedName, setInternalSelectedName] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [unit, setUnit] = useState('')
   const [domain, setDomain] = useState('all')
   const [tensorOrder, setTensorOrder] = useState('all')
+  const selectedName = selectedKey === undefined ? internalSelectedName : selectedKey
+  const selectName = onSelectedKeyChange ?? setInternalSelectedName
   const selected = rows.find((row) => row.name === selectedName)
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -65,6 +75,7 @@ export function QuantityCatalog() {
     <CatalogPageLayout
       count={rows.length}
       description="다양한 물리 계산에서 사용될 수 있는 표준화된 물리량 및 단위"
+      embedded={embedded}
       title="Physical Quantity Kinds"
       filters={
         <>
@@ -118,7 +129,7 @@ export function QuantityCatalog() {
           columns={columns}
           data={filtered.slice(0, 250)}
           getRowKey={(row) => row.name}
-          onRowClick={(row) => setSelectedName(row.name)}
+          onRowClick={(row) => selectName(row.name)}
           selectedKey={selected?.name}
         />
       }

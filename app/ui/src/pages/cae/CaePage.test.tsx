@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   loadDraft: vi.fn(),
   saveDraft: vi.fn(),
   performMeasurement: vi.fn(),
+  openWindow: vi.fn(),
   toastError: vi.fn(),
 }))
 
@@ -104,19 +105,19 @@ vi.mock('@/pages/materials/MaterialManager', () => ({
 
 vi.mock('@/pages/account/AccountPage', () => ({ AccountWorkspace: () => <div>Account workspace</div> }))
 vi.mock('@/pages/ai/AiChatPage', () => ({ AiChatWorkspace: () => <div>AI Chat workspace</div> }))
-vi.mock('@/pages/docs/DocsPage', () => ({ ManualWorkspace: () => <div>Manual workspace</div> }))
+vi.mock('@/pages/ai/AiHelperPage', () => ({
+  AiHelperWorkspace: ({
+    activeExperimentFile,
+    activeTab,
+    workbench,
+  }: {
+    activeExperimentFile: string | null
+    activeTab: string
+    workbench: { structureName: string }
+  }) => <div>{`AI Helper workspace: ${activeTab}:${activeExperimentFile}:${workbench.structureName}`}</div>,
+}))
 vi.mock('@/pages/jobs/JobsPage', () => ({ JobsWorkspace: () => <div>Jobs workspace</div> }))
 vi.mock('@/pages/launchers/LaunchersPage', () => ({ LaunchersWorkspace: () => <div>Launchers workspace</div> }))
-vi.mock('@/pages/catalog/cad/CadCatalogPage', () => ({ GeometryCatalog: () => <div>Geometry catalog</div> }))
-vi.mock('@/pages/catalog/materials/MaterialCatalogPage', () => ({
-  MaterialCatalog: () => <div>Material catalog</div>,
-}))
-vi.mock('@/pages/catalog/quantity-kinds/QuantityKindCatalogPage', () => ({
-  QuantityCatalog: () => <div>Quantity catalog</div>,
-}))
-vi.mock('@/pages/catalog/solvers/SolverCatalogPage', () => ({
-  PhysicsCatalog: () => <div>Physics catalog</div>,
-}))
 
 vi.mock('sonner', () => ({
   toast: { error: mocks.toastError, success: vi.fn() },
@@ -214,13 +215,17 @@ function renderPage(entry = '/') {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.spyOn(window, 'open').mockImplementation(mocks.openWindow)
   currentWorkbench = createWorkbenchState()
   mocks.loadDraft.mockResolvedValue(null)
   mocks.saveDraft.mockResolvedValue(undefined)
   mocks.listMeasurements.mockResolvedValue({ total: 0, items: [] })
 })
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
 
 describe('root CAE workbench page', () => {
   it.each(['/#viewer', '/#help'])('renders Not Found for the removed legacy hash %s', (entry) => {
@@ -230,10 +235,10 @@ describe('root CAE workbench page', () => {
     expect(screen.queryByRole('menubar', { name: 'CAE 워크벤치 메뉴' })).not.toBeInTheDocument()
   })
 
-  it('registers only the root app and renders the desktop-style chrome with exactly ten quick actions', async () => {
+  it('registers Workbench and docs routes and renders the desktop-style chrome with exactly ten quick actions', async () => {
     renderPage()
 
-    expect(appRoutePaths).toEqual(['index', '*'])
+    expect(appRoutePaths).toEqual(['index', 'docs', '*'])
     expect(screen.getByRole('menubar', { name: 'CAE 워크벤치 메뉴' })).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Structure 리본' })).toBeInTheDocument()
     expect(screen.getByRole('tablist', { name: 'CAE Editor 탭' })).toBeInTheDocument()
@@ -279,7 +284,7 @@ describe('root CAE workbench page', () => {
     expect(await screen.findByText('Jobs workspace')).toBeInTheDocument()
   })
 
-  it('opens Lab and Help workspaces without leaving the Workbench', async () => {
+  it('preserves Lab AI Chat and opens AI Helper with the focused Workbench context', async () => {
     const user = userEvent.setup()
     renderPage()
 
@@ -289,8 +294,31 @@ describe('root CAE workbench page', () => {
     await user.click(screen.getByRole('button', { name: '닫기' }))
 
     await user.click(screen.getByRole('menuitem', { name: 'Help' }))
-    await user.click(screen.getByRole('menuitem', { name: 'Manual' }))
-    expect(await screen.findByText('Manual workspace')).toBeInTheDocument()
+    await user.click(screen.getByRole('menuitem', { name: 'AI Helper' }))
+    const helperDialog = await screen.findByRole('dialog', { name: 'AI Helper' })
+    expect(helperDialog).toContainElement(await screen.findByText('AI Helper workspace: structure:experiment.tsx:Beam'))
+    expect(mocks.openWindow).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '닫기' }))
+  })
+
+  it('opens every Help document entry in a new window', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    for (const [label, url] of [
+      ['Manual', '/docs?section=program'],
+      ['Geometry Catalog', '/docs?section=geometry'],
+      ['Material Catalog', '/docs?section=materials'],
+      ['Quantity Catalog', '/docs?section=quantity-kinds'],
+      ['Physics Catalog', '/docs?section=solvers'],
+    ]) {
+      await user.click(screen.getByRole('menuitem', { name: 'Help' }))
+      await user.click(screen.getByRole('menuitem', { name: label }))
+      expect(mocks.openWindow).toHaveBeenLastCalledWith(url, '_blank', 'noopener,noreferrer')
+    }
+
+    expect(mocks.openWindow).toHaveBeenCalledTimes(5)
+    expect(screen.queryByRole('dialog', { name: /Manual|Catalog/ })).not.toBeInTheDocument()
     expect(window.location.pathname).toBe('/')
   })
 

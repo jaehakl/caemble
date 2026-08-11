@@ -5,9 +5,9 @@ import { defaultExperimentTaskCode } from '@/lib/defaultExperimentProgramCode'
 import { defaultExperimentSimulationCode } from '@/lib/defaultExperimentSimulationCode'
 import { catalogCounts } from '@/lib/metadata'
 
-describe('CAE Workbench 단일 페이지 라우팅', () => {
-  it('루트 Workbench와 Not Found만 등록한다', () => {
-    expect(appRoutePaths).toEqual(['index', '*'])
+describe('CAE Workbench와 문서 라우팅', () => {
+  it('루트 Workbench, 통합 문서와 Not Found를 등록한다', () => {
+    expect(appRoutePaths).toEqual(['index', 'docs', '*'])
   })
 
   it('기존 제품 및 Viewer URL을 공개 route로 등록하지 않는다', () => {
@@ -20,7 +20,6 @@ describe('CAE Workbench 단일 페이지 라우팅', () => {
         'jobs',
         'materials',
         'catalog/cad/:tag?',
-        'docs',
         'login',
         'account',
         'viewer',

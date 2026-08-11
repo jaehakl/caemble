@@ -10,10 +10,10 @@ from scripts import install_voicevox
 
 
 class InstallVoicevoxTest(unittest.TestCase):
-    def test_installer_uses_caemble_user_agent(self) -> None:
+    def test_installer_uses_generic_ai_slave_user_agent(self) -> None:
         self.assertEqual(
             install_voicevox.VOICEVOX_INSTALLER_USER_AGENT,
-            "caemble-voicevox-installer",
+            "gpstation-ai-voicevox-installer",
         )
 
     def test_resolve_output_dir_reads_only_voicevox_setting_from_dotenv(self) -> None:

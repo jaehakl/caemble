@@ -7,7 +7,7 @@ import { DataTable } from '@/components/DataTable'
 import { Badge } from '@/components/ui/badge'
 import { CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { CaeManifestError, fetchCaeSolverManifests } from '@/features/cae/manifests'
+import { caeSolverManifestsQueryKey, CaeManifestError, fetchCaeSolverManifests } from '@/features/cae/manifests'
 import type { KernelDescriptor } from '@/lib/cad/simulation'
 
 const columns: ColumnDef<KernelDescriptor, unknown>[] = [
@@ -24,10 +24,20 @@ const columns: ColumnDef<KernelDescriptor, unknown>[] = [
   },
 ]
 
-export function PhysicsCatalog() {
-  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+export function PhysicsCatalog({
+  embedded = false,
+  onSelectedKeyChange,
+  selectedKey: controlledSelectedKey,
+}: {
+  embedded?: boolean
+  onSelectedKeyChange?: (key: string) => void
+  selectedKey?: string | null
+} = {}) {
+  const [internalSelectedKey, setInternalSelectedKey] = useState<string | null>(null)
+  const selectedKey = controlledSelectedKey === undefined ? internalSelectedKey : controlledSelectedKey
+  const selectKey = onSelectedKeyChange ?? setInternalSelectedKey
   const manifests = useQuery({
-    queryKey: ['cae', 'solver-manifests'],
+    queryKey: caeSolverManifestsQueryKey,
     queryFn: fetchCaeSolverManifests,
     retry: false,
     staleTime: Infinity,
@@ -42,6 +52,7 @@ export function PhysicsCatalog() {
     <CatalogPageLayout
       count={solvers.length}
       description="Solver 별 구동 및 데이터 입출력 API 일람"
+      embedded={embedded}
       title="Simulations & Analysis"
       filters={
         <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
@@ -77,7 +88,7 @@ export function PhysicsCatalog() {
             columns={columns}
             data={solvers}
             getRowKey={(row) => `${row.name}@${row.version}`}
-            onRowClick={(row) => setSelectedKey(`${row.name}@${row.version}`)}
+            onRowClick={(row) => selectKey(`${row.name}@${row.version}`)}
             selectedKey={selected ? `${selected.name}@${selected.version}` : undefined}
           />
         )

@@ -3,6 +3,7 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { RouterProvider } from 'react-router/dom'
 import { afterEach, describe, expect, it } from 'vitest'
+import { AppProviders } from './providers'
 import { createAppRouter } from './router'
 
 afterEach(() => {
@@ -11,6 +12,21 @@ afterEach(() => {
 })
 
 describe('single-page router', () => {
+  it('renders the integrated public documentation route', async () => {
+    window.history.replaceState(null, '', '/docs?section=reference')
+    const router = createAppRouter()
+    render(
+      <AppProviders>
+        <RouterProvider router={router} />
+      </AppProviders>,
+    )
+
+    expect(await screen.findByRole('heading', { name: 'API / CAD Reference' }, { timeout: 5_000 })).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/docs')
+    expect(window.location.search).toBe('?section=reference')
+    await router.dispose()
+  })
+
   it.each([
     '/cae',
     '/analysis',
@@ -20,7 +36,6 @@ describe('single-page router', () => {
     '/materials',
     '/account',
     '/login',
-    '/docs',
     '/catalog/cad',
     '/catalog/materials',
     '/catalog/quantity-kinds',

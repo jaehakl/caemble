@@ -7,6 +7,9 @@ from pydantic import BaseModel, field_validator, model_validator
 from app.llm.generation import ResponseFormat, ThinkingEffort
 
 
+REFERENCE_CONTEXT_MAX_BYTES = 128 * 1024
+
+
 class GenerationRequest(BaseModel):
     model: str | None = None
     max_tokens: int | None = None
@@ -58,10 +61,20 @@ class ChatResponse(LlmResponse):
 class ChatRequest(GenerationRequest):
     system_prompt: str | None = None
     prompt: str
+    reference_context: str | None = None
 
-    @field_validator("system_prompt", "prompt")
+    @field_validator("system_prompt", "prompt", "reference_context")
     @classmethod
     def reject_surrogates(cls, value: str | None) -> str | None:
         if value is not None and any(0xD800 <= ord(char) <= 0xDFFF for char in value):
             raise ValueError("LLM text contains invalid Unicode surrogate characters")
+        return value
+
+    @field_validator("reference_context")
+    @classmethod
+    def limit_reference_context_size(cls, value: str | None) -> str | None:
+        if value is not None and len(value.encode("utf-8")) > REFERENCE_CONTEXT_MAX_BYTES:
+            raise ValueError(
+                f"reference_context exceeds {REFERENCE_CONTEXT_MAX_BYTES} UTF-8 bytes"
+            )
         return value

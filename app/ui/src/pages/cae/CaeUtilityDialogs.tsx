@@ -1,5 +1,7 @@
 import { lazy, Suspense, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
+import type { WorkbenchTabId } from '@/features/cae-workbench/types'
 import type { WorkbenchDialog } from './caePageTypes'
 
 const AccountWorkspace = lazy(() =>
@@ -8,22 +10,8 @@ const AccountWorkspace = lazy(() =>
 const AiChatWorkspace = lazy(() =>
   import('@/pages/ai/AiChatPage').then((module) => ({ default: module.AiChatWorkspace })),
 )
-const GeometryCatalog = lazy(() =>
-  import('@/pages/catalog/cad/CadCatalogPage').then((module) => ({ default: module.GeometryCatalog })),
-)
-const MaterialCatalog = lazy(() =>
-  import('@/pages/catalog/materials/MaterialCatalogPage').then((module) => ({ default: module.MaterialCatalog })),
-)
-const QuantityCatalog = lazy(() =>
-  import('@/pages/catalog/quantity-kinds/QuantityKindCatalogPage').then((module) => ({
-    default: module.QuantityCatalog,
-  })),
-)
-const PhysicsCatalog = lazy(() =>
-  import('@/pages/catalog/solvers/SolverCatalogPage').then((module) => ({ default: module.PhysicsCatalog })),
-)
-const ManualWorkspace = lazy(() =>
-  import('@/pages/docs/DocsPage').then((module) => ({ default: module.ManualWorkspace })),
+const AiHelperWorkspace = lazy(() =>
+  import('@/pages/ai/AiHelperPage').then((module) => ({ default: module.AiHelperWorkspace })),
 )
 const JobsWorkspace = lazy(() => import('@/pages/jobs/JobsPage').then((module) => ({ default: module.JobsWorkspace })))
 const LaunchersWorkspace = lazy(() =>
@@ -31,15 +19,35 @@ const LaunchersWorkspace = lazy(() =>
 )
 
 export function CaeUtilityDialogs({
+  activeExperimentFile,
+  activeTab,
   dialog,
   setDialog,
+  workbench,
 }: {
+  activeExperimentFile: string | null
+  activeTab: WorkbenchTabId
   dialog: WorkbenchDialog
   setDialog: Dispatch<SetStateAction<WorkbenchDialog>>
+  workbench: CaeWorkbenchState
 }) {
   const requestLogin = () => setDialog('account')
   return (
     <>
+      <UtilityDialog
+        description="Docs와 현재 Workbench를 바탕으로 CAE 작업을 도와줍니다."
+        dialog={dialog}
+        id="ai-helper"
+        title="AI Helper"
+        setDialog={setDialog}
+      >
+        <AiHelperWorkspace
+          activeExperimentFile={activeExperimentFile}
+          activeTab={activeTab}
+          workbench={workbench}
+          onRequestLogin={requestLogin}
+        />
+      </UtilityDialog>
       <UtilityDialog
         description="로컬 LLM과 대화합니다."
         dialog={dialog}
@@ -75,51 +83,6 @@ export function CaeUtilityDialogs({
         setDialog={setDialog}
       >
         <AccountWorkspace />
-      </UtilityDialog>
-      <UtilityDialog
-        description="Caemble 사용법과 CAD reference를 확인합니다."
-        dialog={dialog}
-        id="manual"
-        title="Manual"
-        setDialog={setDialog}
-      >
-        <ManualWorkspace onOpenWorkbench={() => setDialog(null)} />
-      </UtilityDialog>
-      <UtilityDialog
-        description="Code-to-CAD 문법을 조회합니다."
-        dialog={dialog}
-        id="geometry-catalog"
-        title="Geometry Catalog"
-        setDialog={setDialog}
-      >
-        <GeometryCatalog />
-      </UtilityDialog>
-      <UtilityDialog
-        description="표준 Material parameter 계약을 조회합니다."
-        dialog={dialog}
-        id="material-catalog"
-        title="Material Catalog"
-        setDialog={setDialog}
-      >
-        <MaterialCatalog />
-      </UtilityDialog>
-      <UtilityDialog
-        description="표준 물리량과 UCUM 단위를 조회합니다."
-        dialog={dialog}
-        id="quantity-catalog"
-        title="Quantity Catalog"
-        setDialog={setDialog}
-      >
-        <QuantityCatalog />
-      </UtilityDialog>
-      <UtilityDialog
-        description="Solver와 simulation API를 조회합니다."
-        dialog={dialog}
-        id="physics-catalog"
-        title="Physics Catalog"
-        setDialog={setDialog}
-      >
-        <PhysicsCatalog />
       </UtilityDialog>
     </>
   )

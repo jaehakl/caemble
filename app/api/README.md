@@ -40,8 +40,9 @@ Caemble은 GPStation 연결 정보를 저장하지 않고 `/v1` client/launcher 
 서버 시작 시 `../slaves/*/manifest.json`을 UTF-8로 직접 읽어 `id`, `name`,
 `module`과 중복을 검증한다. 등록되지 않은 `slave_app_id`의 job과 launcher는
 거부된다. 런처 연결과 job dispatcher는 프로세스 메모리를 사용하므로 API는
-반드시 단일 worker/replica로 실행한다. PostgreSQL advisory lock이 두 번째
-runtime 프로세스의 시작을 차단하며, 재시작 시 진행 중 job은 실패로 복구된다.
+반드시 단일 worker/replica로 실행한다. 애플리케이션은 중복 runtime 시작을
+DB 잠금으로 차단하지 않으므로 실행 환경에서 단일 인스턴스를 보장해야 한다.
+재시작 시 진행 중 job은 실패로 복구된다.
 
 GPStation 호환 API의 ORM, 요청/응답 model, router, service와 보안 utility는
 `app/gpstation` 패키지에서 함께 관리한다. `/v1`은 외부 SDK와 launcher용 bearer

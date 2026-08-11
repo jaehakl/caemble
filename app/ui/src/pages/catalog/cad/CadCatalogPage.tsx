@@ -27,10 +27,20 @@ const columns: ColumnDef<CadCatalogEntry, unknown>[] = [
   },
 ]
 
-export function GeometryCatalog() {
-  const [selectedTag, setSelectedTag] = useState<string | null>(null)
+export function GeometryCatalog({
+  embedded = false,
+  onSelectedKeyChange,
+  selectedKey,
+}: {
+  embedded?: boolean
+  onSelectedKeyChange?: (key: string) => void
+  selectedKey?: string | null
+} = {}) {
+  const [internalSelectedTag, setInternalSelectedTag] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<'all' | 'operation' | 'primitive'>('all')
+  const selectedTag = selectedKey === undefined ? internalSelectedTag : selectedKey
+  const selectTag = onSelectedKeyChange ?? setInternalSelectedTag
   const selected = cadElementCatalog.find((entry) => entry.tag === selectedTag)
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -45,6 +55,7 @@ export function GeometryCatalog() {
     <CatalogPageLayout
       count={cadElementCatalog.length}
       description="Code-to-CAD 문법 기본 요소"
+      embedded={embedded}
       title="Primitives & Operations"
       filters={
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -71,7 +82,7 @@ export function GeometryCatalog() {
           columns={columns}
           data={filtered}
           getRowKey={(row) => row.tag}
-          onRowClick={(row) => setSelectedTag(row.tag)}
+          onRowClick={(row) => selectTag(row.tag)}
           selectedKey={selected?.tag}
         />
       }

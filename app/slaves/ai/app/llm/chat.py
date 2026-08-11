@@ -86,6 +86,19 @@ def prune_chat_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
     return [*system_messages, *tail]
 
 
+def build_reference_generation_messages(
+    messages: list[dict[str, str]],
+    reference_context: str | None,
+) -> list[dict[str, str]]:
+    if not reference_context:
+        return messages
+    if not messages or messages[-1].get("role") != "user":
+        raise ValueError("reference_context requires a current user question")
+    question = messages[-1].get("content", "")
+    generation_question = f"{reference_context.rstrip()}\n\n{question}"
+    return [*messages[:-1], {"role": "user", "content": generation_question}]
+
+
 async def generate_chat_with_llm(
     messages: list[dict[str, str]],
     model_name: str | None = None,
@@ -97,6 +110,7 @@ async def generate_chat_with_llm(
     thinking_effort: ThinkingEffort = "default",
     response_format: ResponseFormat = "text",
     on_delta: Callable[[str], Awaitable[None]] | None = None,
+    reference_context: str | None = None,
 ) -> ChatGenerationResult:
     config = build_prompt_llm_config(
         model_name=model_name,
@@ -107,6 +121,7 @@ async def generate_chat_with_llm(
     )
     effective_enable_thinking = resolve_thinking(config.enable_thinking, enable_thinking)
     generation_messages = apply_thinking_effort(messages, effective_enable_thinking, thinking_effort)
+    generation_messages = build_reference_generation_messages(generation_messages, reference_context)
     loop = asyncio.get_running_loop()
     async with acquire_gpu_model_multi("llm", config.lease_device_ids, config.model_key, release_llm_runtime):
         async with llm_runtime._prompt_llm_lock:
@@ -118,6 +133,7 @@ async def generate_chat_with_llm(
                 response_format,
                 loop,
                 on_delta,
+                reference_context is not None and bool(reference_context),
             )
     if not result.answer.strip():
         raise RuntimeError("LLM returned empty answer")
@@ -131,9 +147,17 @@ def _generate_chat_with_llm_locked(
     response_format: ResponseFormat,
     loop: asyncio.AbstractEventLoop,
     on_delta: Callable[[str], Awaitable[None]] | None,
+    has_reference_context: bool = False,
 ) -> ChatGenerationResult:
     llm = llm_runtime._get_prompt_llm_locked(config)
     cache_enabled = _ensure_chat_cache(llm)
+    if has_reference_context:
+        messages = _select_reference_generation_messages(
+            llm,
+            messages,
+            config.context_size,
+            config.max_tokens,
+        )
     prompt_tokens = _estimate_prompt_tokens(llm, messages)
     max_response_tokens = max(0, min(config.max_tokens, config.context_size - prompt_tokens))
     effective_enable_thinking = resolve_thinking(config.enable_thinking, enable_thinking)
@@ -197,8 +221,39 @@ def _generate_chat_with_llm_locked(
     )
 
 
+def _select_reference_generation_messages(
+    llm: Any,
+    messages: list[dict[str, str]],
+    context_size: int,
+    max_response_tokens: int,
+) -> list[dict[str, str]]:
+    if not messages:
+        return messages
+    system_messages = messages[:1] if messages[0].get("role") == "system" else []
+    current_question = messages[-1:]
+    history = messages[len(system_messages):-1]
+    minimum_messages = [*system_messages, *current_question]
+    minimum_tokens = _estimate_prompt_tokens(llm, minimum_messages)
+    if minimum_tokens >= context_size:
+        raise ValueError("reference_context and current question exceed the LLM context window")
+
+    target_prompt_tokens = max(1, context_size - max_response_tokens)
+    selected = [*system_messages, *history, *current_question]
+    while history and _estimate_prompt_tokens(llm, selected) > target_prompt_tokens:
+        history = _drop_oldest_history_turn(history)
+        selected = [*system_messages, *history, *current_question]
+    return selected
+
+
+def _drop_oldest_history_turn(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    remaining = messages[1:]
+    while remaining and remaining[0].get("role") == "assistant":
+        remaining = remaining[1:]
+    return remaining
+
+
 def _ensure_chat_cache(llm: Any) -> bool:
-    if getattr(llm, "_caemble_chat_cache_enabled", False):
+    if getattr(llm, "_ai_slave_chat_cache_enabled", False):
         return True
     set_cache = getattr(llm, "set_cache", None)
     if not callable(set_cache):
@@ -209,7 +264,7 @@ def _ensure_chat_cache(llm: Any) -> bool:
         log(f"LLM chat RAM cache unavailable: {exc}")
         return False
     set_cache(cache)
-    setattr(llm, "_caemble_chat_cache_enabled", True)
+    setattr(llm, "_ai_slave_chat_cache_enabled", True)
     return True
 
 

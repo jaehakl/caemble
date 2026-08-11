@@ -3,7 +3,7 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { AiChatWorkspace } from './AiChatPage'
+import { AiChatWorkspace, ChatWorkspace } from './AiChatPage'
 
 const sdk = vi.hoisted(() => ({
   call: vi.fn(),
@@ -88,5 +88,46 @@ describe('AiChatWorkspace', () => {
         expect.objectContaining({ autoFinish: false, slaveAppId: 'ai' }),
       ),
     )
+    const chatPayload = sdk.runJob.mock.calls.find(([handler]) => handler === 'ai.chat')?.[1]
+    expect(chatPayload).not.toHaveProperty('reference_context')
+  })
+
+  it('adds an ephemeral reference context only when a reference provider is configured', async () => {
+    const user = userEvent.setup()
+    const referenceProvider = vi.fn().mockResolvedValue({
+      text: '[REFERENCE]\nStructure 작성 가이드',
+      sources: [{ href: '/docs?section=structure', title: 'Structure Authoring' }],
+    })
+    render(
+      <ChatWorkspace
+        defaultSystemPrompt="Fixed CAE helper instructions."
+        fixedSystemPrompt
+        questionLabel="Helper 질문"
+        referenceProvider={referenceProvider}
+        title="AI Helper"
+      />,
+    )
+
+    expect(await screen.findByText('local-llm')).toBeVisible()
+    await user.type(screen.getByLabelText('Helper 질문'), 'box를 만들어 줘')
+    await user.click(screen.getByRole('button', { name: '전송' }))
+
+    await waitFor(() =>
+      expect(sdk.runJob).toHaveBeenCalledWith(
+        'ai.chat',
+        expect.objectContaining({
+          prompt: 'box를 만들어 줘',
+          reference_context: '[REFERENCE]\nStructure 작성 가이드',
+          system_prompt: 'Fixed CAE helper instructions.',
+        }),
+        expect.objectContaining({ autoFinish: false, slaveAppId: 'ai' }),
+      ),
+    )
+    expect(referenceProvider).toHaveBeenCalledWith({
+      contextSize: 8192,
+      prompt: 'box를 만들어 줘',
+      recentUserPrompts: [],
+    })
+    expect(screen.getByRole('link', { name: 'Structure Authoring' })).toHaveAttribute('href', '/docs?section=structure')
   })
 })

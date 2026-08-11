@@ -29,7 +29,7 @@ async function mockApi(page: Page, authenticated = false) {
   })
 }
 
-test('uses the root Workbench as the only product route', async ({ page }) => {
+test('uses the root Workbench and opens integrated documentation in a new window', async ({ page }) => {
   await mockApi(page)
   await page.goto('/')
 
@@ -40,10 +40,25 @@ test('uses the root Workbench as the only product route', async ({ page }) => {
   await expect(toolbar.getByRole('button', { name: 'Jobs' })).toBeVisible()
 
   await page.getByRole('menuitem', { name: 'Help' }).click()
-  await page.getByRole('menuitem', { name: 'Geometry Catalog' }).click()
-  await expect(page.getByRole('dialog', { name: 'Geometry Catalog' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Primitives & Operations' })).toBeVisible()
+  await page.getByRole('menuitem', { name: 'AI Helper' }).click()
+  await expect(page.getByRole('dialog', { name: 'AI Helper' })).toBeVisible()
   await page.getByRole('button', { name: '닫기' }).click()
+
+  await page.getByRole('menuitem', { name: 'Help' }).click()
+  const manualPagePromise = page.waitForEvent('popup')
+  await page.getByRole('menuitem', { name: 'Manual' }).click()
+  const manualPage = await manualPagePromise
+  await expect(manualPage).toHaveURL(/\/docs\?section=program$/)
+  await manualPage.close()
+
+  await page.getByRole('menuitem', { name: 'Help' }).click()
+  const docsPagePromise = page.waitForEvent('popup')
+  await page.getByRole('menuitem', { name: 'Geometry Catalog' }).click()
+  const docsPage = await docsPagePromise
+  await expect(docsPage).toHaveURL(/\/docs\?section=geometry$/)
+  await expect(docsPage.getByRole('heading', { name: 'Primitives & Operations' })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: 'Geometry Catalog' })).toHaveCount(0)
+  await docsPage.close()
 
   for (const path of [
     '/cae',
@@ -54,7 +69,6 @@ test('uses the root Workbench as the only product route', async ({ page }) => {
     '/materials',
     '/account',
     '/login',
-    '/docs',
     '/catalog/cad',
     '/viewer',
     '/structures',

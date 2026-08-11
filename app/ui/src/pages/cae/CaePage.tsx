@@ -159,6 +159,8 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       </footer>
 
       <CaeWorkbenchDialogs
+        activeExperimentFile={page.activeExperimentFile}
+        activeTab={page.activeTab}
         authenticated={auth.isAuthenticated}
         dialog={page.dialog}
         guardReplacement={page.guardReplacement}

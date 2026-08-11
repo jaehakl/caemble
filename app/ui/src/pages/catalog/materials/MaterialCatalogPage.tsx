@@ -51,11 +51,21 @@ const columns: ColumnDef<MaterialRow, unknown>[] = [
   },
 ]
 
-export function MaterialCatalog() {
-  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+export function MaterialCatalog({
+  embedded = false,
+  onSelectedKeyChange,
+  selectedKey: controlledSelectedKey,
+}: {
+  embedded?: boolean
+  onSelectedKeyChange?: (key: string) => void
+  selectedKey?: string | null
+} = {}) {
+  const [internalSelectedKey, setInternalSelectedKey] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [quantityKind, setQuantityKind] = useState('')
   const [domain, setDomain] = useState('all')
+  const selectedKey = controlledSelectedKey === undefined ? internalSelectedKey : controlledSelectedKey
+  const selectKey = onSelectedKeyChange ?? setInternalSelectedKey
   const selected = rows.find((row) => row.key === selectedKey)
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -74,6 +84,7 @@ export function MaterialCatalog() {
     <CatalogPageLayout
       count={rows.length}
       description="다양한 물리 계산에서 사용될 수 있는 표준화된 물성 파라미터"
+      embedded={embedded}
       title="Material Parameters"
       filters={
         <div className="grid gap-2 md:grid-cols-[1fr_1fr_180px]">
@@ -110,7 +121,7 @@ export function MaterialCatalog() {
           columns={columns}
           data={filtered}
           getRowKey={(row) => row.key}
-          onRowClick={(row) => setSelectedKey(row.key)}
+          onRowClick={(row) => selectKey(row.key)}
           selectedKey={selected?.key}
         />
       }
