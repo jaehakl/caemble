@@ -3,15 +3,19 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { JobsPage } from './JobsPage'
+import { JobsWorkspace } from './JobsPage'
 
 const api = vi.hoisted(() => ({ kill: vi.fn(), list: vi.fn() }))
+const auth = vi.hoisted(() => ({ authenticated: true }))
 
 vi.mock('@/api', () => ({ dbTables: { Job: api } }))
 vi.mock('@/features/auth/use-auth', () => ({
-  useAuth: () => ({ isAuthenticated: true, isLoading: false, user: { id: 'user-1', roles: ['user'] } }),
+  useAuth: () => ({
+    isAuthenticated: auth.authenticated,
+    isLoading: false,
+    user: auth.authenticated ? { id: 'user-1', roles: ['user'] } : null,
+  }),
 }))
 
 const runningJob = {
@@ -35,25 +39,34 @@ const runningJob = {
   started_at: '2026-08-07T00:00:02Z',
 }
 
-function renderPage() {
+function renderPage(onRequestLogin?: () => void) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <JobsPage />
-      </MemoryRouter>
+      <JobsWorkspace onRequestLogin={onRequestLogin} />
     </QueryClientProvider>,
   )
 }
 
 afterEach(cleanup)
 
-describe('JobsPage', () => {
+describe('JobsWorkspace', () => {
   beforeEach(() => {
+    auth.authenticated = true
     api.list.mockReset()
     api.list.mockResolvedValue([runningJob])
     api.kill.mockReset()
     api.kill.mockResolvedValue({ ok: true })
+  })
+
+  it('opens Account instead of navigating to a removed login page', async () => {
+    auth.authenticated = false
+    const onRequestLogin = vi.fn()
+    renderPage(onRequestLogin)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Account 열기' }))
+    expect(onRequestLogin).toHaveBeenCalledOnce()
+    expect(api.list).not.toHaveBeenCalled()
   })
 
   it('lists active jobs and requests cancellation', async () => {

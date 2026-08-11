@@ -131,7 +131,7 @@ describe('CAE page session recovery', () => {
     mocks.loadDraft.mockRejectedValue(new Error('IndexedDB unavailable'))
     render(
       <StrictMode>
-        <MemoryRouter initialEntries={['/cae']}>
+        <MemoryRouter initialEntries={['/']}>
           <SessionStatus workbench={workbench} />
         </MemoryRouter>
       </StrictMode>,
@@ -148,7 +148,7 @@ describe('CAE page session recovery', () => {
     mocks.loadDraft.mockResolvedValue(draft)
     vi.mocked(workbench.loadResearch).mockRejectedValue(new Error('network unavailable'))
     render(
-      <MemoryRouter initialEntries={['/cae?structure=30&experiment=40']}>
+      <MemoryRouter initialEntries={['/?structure=30&experiment=40']}>
         <SessionStatus workbench={workbench} />
       </MemoryRouter>,
     )
@@ -178,7 +178,7 @@ describe('CAE page session recovery', () => {
       ],
     })
     render(
-      <MemoryRouter initialEntries={['/cae?structure=10&experiment=20&measurement=33']}>
+      <MemoryRouter initialEntries={['/?structure=10&experiment=20&measurement=33']}>
         <SessionStatus workbench={workbench} />
       </MemoryRouter>,
     )
@@ -194,15 +194,15 @@ describe('CAE page session recovery', () => {
 
   it('applies an external selection-only URL change without reloading clean source files', async () => {
     const workbench = fakeWorkbench()
-    const router = createMemoryRouter([{ path: '/cae', element: <SessionStatus workbench={workbench} /> }], {
-      initialEntries: ['/cae?structure=10&experiment=20'],
+    const router = createMemoryRouter([{ path: '/', element: <SessionStatus workbench={workbench} /> }], {
+      initialEntries: ['/?structure=10&experiment=20'],
     })
     render(<RouterProvider router={router} />)
     expect(await screen.findByText('ready')).toBeInTheDocument()
     vi.mocked(workbench.loadResearch).mockClear()
 
     await act(async () => {
-      await router.navigate('/cae?structure=10&experiment=20&measurement=33')
+      await router.navigate('/?structure=10&experiment=20&measurement=33')
     })
 
     await waitFor(() =>

@@ -5,9 +5,11 @@ import { MaterialList } from './MaterialListPage'
 export function MaterialManager({
   materialId,
   onMaterialIdChange,
+  onRequestLogin,
 }: {
   materialId?: number | null
   onMaterialIdChange?: (id: number | null) => void
+  onRequestLogin?: () => void
 }) {
   const [internalMaterialId, setInternalMaterialId] = useState<number | null>(materialId ?? null)
   const selectedMaterialId = materialId === undefined ? internalMaterialId : materialId
@@ -24,6 +26,7 @@ export function MaterialManager({
       key={selectedMaterialId}
       materialId={selectedMaterialId}
       onBack={() => selectMaterial(null)}
+      onRequestLogin={onRequestLogin}
     />
   )
 }

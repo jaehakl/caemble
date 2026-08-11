@@ -1,4 +1,5 @@
 import { Badge } from '@/components/ui/badge'
+import { useLocation } from 'react-router'
 import { useAuth } from '@/features/auth/use-auth'
 import {
   EditorDock,
@@ -12,11 +13,18 @@ import { ExperimentEditor, RecordedDataEditor, StructureEditor } from '@/feature
 import { useCaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { WorkbenchTabId } from '@/features/cae-workbench/types'
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
+import { NotFoundPage } from '@/pages/not-found/NotFoundPage'
 import { CaeWorkbenchDialogs } from './CaeWorkbenchDialogs'
 import { useCaePageChrome } from './useCaePageChrome'
 import { caeWorkbenchTabs, useCaePageSession } from './useCaePageSession'
 
 export function CaePage() {
+  const location = useLocation()
+  if (location.hash) return <NotFoundPage />
+  return <AuthenticatedCaePage />
+}
+
+function AuthenticatedCaePage() {
   const auth = useAuth()
   return <CaeWorkbenchPage auth={auth} key={auth.user?.id ?? 'anonymous'} />
 }
@@ -102,8 +110,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               activeExperimentTaskName={page.activeExperimentFile}
               experiment={workbench.experiment}
               experimentDocument={workbench.experimentDocument}
-              selection={workbench.selection}
-              simulation={workbench.simulation}
               structure={workbench.structure}
               structureDocument={workbench.structureDocument}
             />
@@ -137,7 +143,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         {workbench.measurementActions.busy ? (
           <span className="flex items-center gap-2">
             {workbench.measurementActions.stage}
-            {workbench.measurementActions.cancelable ? (
+            {workbench.measurementActions.cancelable && workbench.measurementActions.operation !== 'measurement' ? (
               <button
                 className="font-medium text-destructive"
                 type="button"

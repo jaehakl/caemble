@@ -1,7 +1,6 @@
 import type { ColumnDef } from '@tanstack/react-table'
 import { Check, Clipboard, Code2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
 import { CatalogPageLayout } from '@/components/CatalogPageLayout'
 import { DataTable } from '@/components/DataTable'
@@ -28,12 +27,11 @@ const columns: ColumnDef<CadCatalogEntry, unknown>[] = [
   },
 ]
 
-export function CadCatalogPage() {
-  const navigate = useNavigate()
-  const { tag } = useParams()
+export function GeometryCatalog() {
+  const [selectedTag, setSelectedTag] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<'all' | 'operation' | 'primitive'>('all')
-  const selected = cadElementCatalog.find((entry) => entry.tag === tag)
+  const selected = cadElementCatalog.find((entry) => entry.tag === selectedTag)
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
     return cadElementCatalog.filter(
@@ -73,7 +71,7 @@ export function CadCatalogPage() {
           columns={columns}
           data={filtered}
           getRowKey={(row) => row.tag}
-          onRowClick={(row) => navigate(`/catalog/cad/${encodeURIComponent(row.tag)}`)}
+          onRowClick={(row) => setSelectedTag(row.tag)}
           selectedKey={selected?.tag}
         />
       }
@@ -111,12 +109,9 @@ export function CadCatalogPage() {
             <Check className="mb-3 size-8 text-muted-foreground" />
             <p className="font-medium">요소를 선택하세요</p>
             <p className="mt-1 text-sm text-muted-foreground">목록의 행을 누르면 문법과 설명을 볼 수 있습니다.</p>
-            {tag ? <p className="mt-3 text-xs text-destructive">알 수 없는 tag: {tag}</p> : null}
           </CardContent>
         )
       }
     />
   )
 }
-
-export const Component = CadCatalogPage

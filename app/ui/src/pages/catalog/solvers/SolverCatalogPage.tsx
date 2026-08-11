@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Cpu, FlaskConical } from 'lucide-react'
-import { useNavigate, useParams } from 'react-router'
+import { useState } from 'react'
 import { CatalogPageLayout } from '@/components/CatalogPageLayout'
 import { DataTable } from '@/components/DataTable'
 import { Badge } from '@/components/ui/badge'
@@ -24,9 +24,8 @@ const columns: ColumnDef<KernelDescriptor, unknown>[] = [
   },
 ]
 
-export function SolverCatalogPage() {
-  const navigate = useNavigate()
-  const { name, version } = useParams()
+export function PhysicsCatalog() {
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const manifests = useQuery({
     queryKey: ['cae', 'solver-manifests'],
     queryFn: fetchCaeSolverManifests,
@@ -35,7 +34,7 @@ export function SolverCatalogPage() {
     gcTime: Infinity,
   })
   const solvers = manifests.data?.map((manifest) => manifest.descriptor) ?? []
-  const selected = solvers.find((solver) => solver.name === name && (!version || solver.version === version))
+  const selected = solvers.find((solver) => `${solver.name}@${solver.version}` === selectedKey)
   const methods = selected
     ? Object.entries(selected.methods).flatMap(([category, entries]) => entries.map((method) => ({ category, method })))
     : []
@@ -78,9 +77,7 @@ export function SolverCatalogPage() {
             columns={columns}
             data={solvers}
             getRowKey={(row) => `${row.name}@${row.version}`}
-            onRowClick={(row) =>
-              navigate(`/catalog/solvers/${encodeURIComponent(row.name)}/${encodeURIComponent(row.version)}`)
-            }
+            onRowClick={(row) => setSelectedKey(`${row.name}@${row.version}`)}
             selectedKey={selected ? `${selected.name}@${selected.version}` : undefined}
           />
         )
@@ -154,17 +151,9 @@ export function SolverCatalogPage() {
             <FlaskConical className="mb-3 size-8 text-muted-foreground" />
             <p className="font-medium">Solver를 선택하세요</p>
             <p className="mt-1 text-sm text-muted-foreground">정확한 name과 version 단위로 계약을 표시합니다.</p>
-            {name ? (
-              <p className="mt-3 text-xs text-destructive">
-                등록되지 않은 Solver: {name}
-                {version ? `@${version}` : ''}
-              </p>
-            ) : null}
           </CardContent>
         )
       }
     />
   )
 }
-
-export const Component = SolverCatalogPage

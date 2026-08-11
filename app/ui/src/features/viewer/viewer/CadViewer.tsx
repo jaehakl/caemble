@@ -1,35 +1,18 @@
 import { useCallback, useMemo, useState } from 'react'
-import type { CadDocumentType, RecordedDataRule } from '@/lib/cad'
+import type { CadDocumentType } from '@/lib/cad'
 import { resolveCadViewerContent, type CadViewerDocument } from './cadViewerContent'
 import JscadViewer from './JscadViewer'
-import { resolveCadViewerRecordedDataRules, type CadViewerRecordedData } from './recordedData'
-import type { SimulationProgramManifest } from '@/lib/cad/simulation'
-import type { SimulationProcess } from '../workspace/simulationUiTypes'
 
 export type { CadViewerDocument } from './cadViewerContent'
-export type { CadViewerRecordedAxis, CadViewerRecordedData, CadViewerRecordedTensor } from './recordedData'
 
 export type CadViewerProps = {
   structure: CadViewerDocument | null
   experiment: CadViewerDocument | null
   activeExperimentTaskName?: string | null
-  recordedData?: CadViewerRecordedData | null
-  recordedDataRules?: readonly RecordedDataRule[]
-  resultsLayout?: 'split' | 'tabs'
-  simulation?: CadViewerSimulation | null
   onRenderEnd: (sources: readonly CadDocumentType[]) => void
   onRenderError: (message: string, sources: readonly CadDocumentType[]) => void
   onRenderStart: (sources: readonly CadDocumentType[]) => void
 }
-
-export type CadViewerSimulation = Readonly<{
-  canRun: boolean
-  cancel: () => void
-  process: SimulationProcess
-  program?: SimulationProgramManifest | null
-  run: () => string | null
-  stale: boolean
-}>
 
 export function CadViewer({
   activeExperimentTaskName = null,
@@ -37,10 +20,6 @@ export function CadViewer({
   onRenderEnd,
   onRenderError,
   onRenderStart,
-  recordedData,
-  recordedDataRules: providedRecordedDataRules,
-  resultsLayout,
-  simulation,
   structure,
 }: CadViewerProps) {
   const [structureVisible, setStructureVisible] = useState(true)
@@ -48,10 +27,6 @@ export function CadViewer({
   const content = useMemo(
     () => resolveCadViewerContent(structure, experiment, structureVisible, experimentVisible, activeExperimentTaskName),
     [activeExperimentTaskName, experiment, experimentVisible, structure, structureVisible],
-  )
-  const recordedDataRules = useMemo(
-    () => resolveCadViewerRecordedDataRules(providedRecordedDataRules, simulation?.program),
-    [providedRecordedDataRules, simulation?.program],
   )
   const handleRenderStart = useCallback(
     () => onRenderStart(content.visibleSources),
@@ -70,10 +45,6 @@ export function CadViewer({
         emptyMessage={content.emptyMessage}
         layers={content.layers}
         lengthUnit={content.lengthUnit}
-        recordedData={recordedData}
-        recordedDataRules={recordedDataRules}
-        resultsLayout={resultsLayout}
-        simulation={simulation}
         visibleSources={content.visibleSources}
         onRenderEnd={handleRenderEnd}
         onRenderError={handleRenderError}

@@ -1,8 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CalendarDays, Clipboard, KeyRound, LoaderCircle, Mail, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
+import {
+  CalendarDays,
+  Clipboard,
+  Globe2,
+  KeyRound,
+  LoaderCircle,
+  LogOut,
+  Mail,
+  RefreshCw,
+  ShieldCheck,
+  Trash2,
+} from 'lucide-react'
 import { useState } from 'react'
-import { Navigate, useLocation } from 'react-router'
-import { dbTables, type AccessKeyScope } from '@/api'
+import { dbTables, startGoogleLogin, type AccessKeyScope } from '@/api'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -11,12 +21,12 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { PageHeader } from '@/components/PageHeader'
-import { useAuth } from '@/features/auth/use-auth'
+import { useAuth, useLogout } from '@/features/auth/use-auth'
 import { formatRuntimeDate, runtimeErrorMessage } from '@/features/runtime/format'
 
-export function AccountPage() {
+export function AccountWorkspace() {
   const auth = useAuth()
-  const location = useLocation()
+  const logout = useLogout()
   const queryClient = useQueryClient()
   const [tokenName, setTokenName] = useState('')
   const [tokenScope, setTokenScope] = useState<AccessKeyScope>('client')
@@ -65,16 +75,45 @@ export function AccountPage() {
       </div>
     )
   if (!auth.isAuthenticated || !auth.user)
-    return <Navigate replace state={{ from: `${location.pathname}${location.search}` }} to="/login" />
+    return (
+      <div className="mx-auto flex min-h-[60vh] max-w-md items-center px-4 py-10">
+        <Card className="w-full">
+          <CardHeader className="text-center">
+            <div className="mx-auto mb-3 flex size-11 items-center justify-center rounded-xl bg-orange-100 text-orange-700">
+              <ShieldCheck />
+            </div>
+            <CardTitle className="text-xl">Caemble에 로그인</CardTitle>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Google 계정으로 CAE 연구 데이터와 Runtime 기능을 안전하게 관리하세요.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <Button className="w-full" size="lg" onClick={() => startGoogleLogin(window.location.href)}>
+              <Globe2 />
+              Google로 계속하기
+            </Button>
+            <p className="mt-4 text-center text-xs leading-5 text-muted-foreground">
+              로그인 후 현재 CAE Workbench로 돌아옵니다.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    )
 
   const label = auth.user.display_name || auth.user.email || '사용자'
   return (
     <div className="mx-auto max-w-6xl space-y-8 px-5 py-10">
-      <PageHeader
-        description="Google OAuth 계정과 Caemble API 및 Launcher 접근 권한을 관리합니다."
-        eyebrow="Account"
-        title="내 계정"
-      />
+      <div className="flex items-start justify-between gap-4">
+        <PageHeader
+          description="Google OAuth 계정과 Caemble API 및 Launcher 접근 권한을 관리합니다."
+          eyebrow="Account"
+          title="내 계정"
+        />
+        <Button disabled={logout.isPending} type="button" variant="outline" onClick={() => logout.mutate()}>
+          {logout.isPending ? <LoaderCircle className="animate-spin" /> : <LogOut />}
+          로그아웃
+        </Button>
+      </div>
       <Card>
         <CardHeader className="flex flex-row items-center gap-4">
           <Avatar className="size-16">
@@ -253,5 +292,3 @@ function EmptyTokenRow({ text }: { text: string }) {
     </TableRow>
   )
 }
-
-export const Component = AccountPage

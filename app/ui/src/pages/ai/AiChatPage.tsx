@@ -5,7 +5,6 @@ import ReactMarkdown from 'react-markdown'
 import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
-import { Navigate, useLocation } from 'react-router'
 import 'katex/dist/katex.min.css'
 import { API_URL } from '@/api'
 import { Badge } from '@/components/ui/badge'
@@ -15,6 +14,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input'
 import { PageHeader } from '@/components/PageHeader'
 import { useAuth } from '@/features/auth/use-auth'
+import { WorkbenchSignInPrompt } from '@/features/auth/WorkbenchSignInPrompt'
 import { runtimeErrorMessage } from '@/features/runtime/format'
 
 const CHAT_TIMEOUT_MS = 600_000
@@ -40,9 +40,8 @@ type LlmModel = {
   top_p: number
 }
 
-export function AiChatPage() {
+export function AiChatWorkspace({ onRequestLogin }: { onRequestLogin?: () => void }) {
   const auth = useAuth()
-  const location = useLocation()
   const client = useMemo(
     () =>
       new GpStationClient({
@@ -134,7 +133,12 @@ export function AiChatPage() {
     )
   }
   if (!auth.isAuthenticated) {
-    return <Navigate replace state={{ from: `${location.pathname}${location.search}` }} to="/login" />
+    return (
+      <WorkbenchSignInPrompt
+        description="AI Chat을 사용하려면 Account에서 로그인하세요."
+        onSignIn={() => onRequestLogin?.()}
+      />
+    )
   }
 
   function nextMessageId() {
@@ -498,5 +502,3 @@ function isLlmModel(value: unknown): value is LlmModel {
     typeof value.top_p === 'number'
   )
 }
-
-export const Component = AiChatPage

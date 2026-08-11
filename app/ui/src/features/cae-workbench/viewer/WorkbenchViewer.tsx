@@ -1,23 +1,18 @@
 import { useCallback, useMemo } from 'react'
 import CadViewer from '@/features/viewer/viewer/CadViewer'
 import type { CadDocumentType, CadSourceDocument } from '@/lib/cad'
-import type { CaeDataSelection } from '../measurement/useCaeDataSelection'
-import type { CadDocumentController, SimulationController } from '@/features/viewer/workspace/useCadWorkspace'
+import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
 
 export function WorkbenchViewer({
   activeExperimentTaskName,
   experiment,
   experimentDocument,
-  selection,
-  simulation,
   structure,
   structureDocument,
 }: {
   activeExperimentTaskName?: string | null
   experiment: CadSourceDocument | null
   experimentDocument: CadDocumentController
-  selection: CaeDataSelection
-  simulation: SimulationController
   structure: CadSourceDocument | null
   structureDocument: CadDocumentController
 }) {
@@ -78,17 +73,6 @@ export function WorkbenchViewer({
     <CadViewer
       activeExperimentTaskName={activeExperimentTaskName?.replace(/^tasks\//u, '').replace(/\.tsx$/u, '') ?? null}
       experiment={experimentViewerDocument}
-      recordedData={selection.measurement ? selection.recordedData : simulation.recordedData}
-      recordedDataRules={selection.measurement ? selection.recordedRules : undefined}
-      resultsLayout="tabs"
-      simulation={{
-        canRun: simulation.canRun,
-        cancel: simulation.cancel,
-        process: simulation.process,
-        program: experimentDocument.simulationProgram,
-        run: simulation.run,
-        stale: simulation.stale,
-      }}
       structure={structureViewerDocument}
       onRenderEnd={handleRenderEnd}
       onRenderError={handleRenderError}

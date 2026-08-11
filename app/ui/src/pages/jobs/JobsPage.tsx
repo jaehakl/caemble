@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { ListChecks, RefreshCw, Square } from 'lucide-react'
 import { useState } from 'react'
-import { Navigate, useLocation } from 'react-router'
 import { dbTables, type JobState } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,14 +9,14 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { PageHeader } from '@/components/PageHeader'
 import { useAuth } from '@/features/auth/use-auth'
+import { WorkbenchSignInPrompt } from '@/features/auth/WorkbenchSignInPrompt'
 import { formatRuntimeDate, runtimeErrorMessage } from '@/features/runtime/format'
 
 const ACTIVE_STATES: readonly JobState[] = ['queued', 'assigned', 'answer_ready', 'running']
 const PROGRESS_SUMMARY_LIMIT = 96
 
-export function JobsPage() {
+export function JobsWorkspace({ onRequestLogin }: { onRequestLogin?: () => void }) {
   const auth = useAuth()
-  const location = useLocation()
   const [activeOnly, setActiveOnly] = useState(true)
   const [killingJobId, setKillingJobId] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -37,7 +36,12 @@ export function JobsPage() {
       </div>
     )
   if (!auth.isAuthenticated)
-    return <Navigate replace state={{ from: `${location.pathname}${location.search}` }} to="/login" />
+    return (
+      <WorkbenchSignInPrompt
+        description="Job 실행 이력을 확인하려면 Account에서 로그인하세요."
+        onSignIn={() => onRequestLogin?.()}
+      />
+    )
 
   async function killJob(id: string) {
     if (!window.confirm('이 Job을 중단할까요? 실행 중이면 worker에 취소 요청이 전달됩니다.')) return
@@ -196,5 +200,3 @@ function EmptyRow({ text }: { text: string }) {
     </TableRow>
   )
 }
-
-export const Component = JobsPage

@@ -1,13 +1,14 @@
 # Caemble UI
 
-Caemble UI는 React 19, React Router Data Mode, Tailwind CSS v4로 구성된 페이지 중심 웹앱이다. 홈과 공개 Structure/Experiment, 읽기 전용 카탈로그, 문서는 로그인 없이 열람할 수 있고 저장 기능은 Google OAuth 로그인이 필요하다. TSX는 Structure/Experiment 정의의 source of truth이며 preview는 격리된 runner가 만든 immutable snapshot을, simulation은 Caemble Launcher와 CAE slave를 사용한다.
+Caemble UI는 React 19, React Router Data Mode, Tailwind CSS v4로 구성된 CAE Workbench SPA다. 공개 Structure/Experiment와 읽기 전용 카탈로그는 로그인 없이 열람할 수 있고 저장 및 Runtime 기능은 Google OAuth 로그인이 필요하다. TSX는 Structure/Experiment 정의의 source of truth이며 preview는 격리된 runner가 만든 immutable snapshot을, simulation은 Caemble Launcher와 CAE slave를 사용한다.
 
-주요 URL은 `/`, `/structures`, `/experiments`, `/examples/:exampleId?`, `/measurements`, `/viewer`, `/materials`, `/ai/chat`, `/launchers`, `/jobs`, `/catalog/cad`, `/catalog/materials`, `/catalog/quantity-kinds`, `/catalog/solvers`, `/docs`, `/login`, `/account`다. `/viewer`는 `/measurements`와 동일한 Measurement 실행·Recorded Data 저장 workspace를 query string을 유지한 채 연다. 기존 `/#viewer`는 `/structures?structure=new&mode=code`로 이동하고, `/#help`는 `/docs`로 이동한다.
+유일한 제품 URL은 `/`이다. Source, Data, AI Chat, Material Manager, Analysis, Launchers, Jobs, Account, Manual과 모든 카탈로그는 Workbench의 Menubar 또는 Toolbar에서 모달로 연다. 과거 제품 URL과 legacy hash는 리다이렉트하지 않고 Not Found로 처리한다.
 
 코드 구조는 다음 경계를 따른다.
 
-- `src/app`: provider, router, App Shell
-- `src/pages`: URL 단위 페이지와 페이지 소유 상태
+- `src/app`: provider와 단일 Workbench router
+- `src/pages/cae`: Workbench chrome, session, dialog orchestration
+- `src/pages`: Workbench 모달에 삽입되는 workspace와 manager
 - `src/features`: 인증, Viewer workspace/editor/persistence, thin CAE client
 - `src/components`: 앱 공통 컴포넌트와 소유 UI primitives
 - `src/api`: native fetch, Zod 응답 검증, endpoint 계약

@@ -102,6 +102,22 @@ vi.mock('@/pages/materials/MaterialManager', () => ({
   MaterialManager: () => <div>Material manager</div>,
 }))
 
+vi.mock('@/pages/account/AccountPage', () => ({ AccountWorkspace: () => <div>Account workspace</div> }))
+vi.mock('@/pages/ai/AiChatPage', () => ({ AiChatWorkspace: () => <div>AI Chat workspace</div> }))
+vi.mock('@/pages/docs/DocsPage', () => ({ ManualWorkspace: () => <div>Manual workspace</div> }))
+vi.mock('@/pages/jobs/JobsPage', () => ({ JobsWorkspace: () => <div>Jobs workspace</div> }))
+vi.mock('@/pages/launchers/LaunchersPage', () => ({ LaunchersWorkspace: () => <div>Launchers workspace</div> }))
+vi.mock('@/pages/catalog/cad/CadCatalogPage', () => ({ GeometryCatalog: () => <div>Geometry catalog</div> }))
+vi.mock('@/pages/catalog/materials/MaterialCatalogPage', () => ({
+  MaterialCatalog: () => <div>Material catalog</div>,
+}))
+vi.mock('@/pages/catalog/quantity-kinds/QuantityKindCatalogPage', () => ({
+  QuantityCatalog: () => <div>Quantity catalog</div>,
+}))
+vi.mock('@/pages/catalog/solvers/SolverCatalogPage', () => ({
+  PhysicsCatalog: () => <div>Physics catalog</div>,
+}))
+
 vi.mock('sonner', () => ({
   toast: { error: mocks.toastError, success: vi.fn() },
 }))
@@ -150,12 +166,18 @@ function createWorkbenchState() {
       measurement: null,
       recordedData: null,
       recordedRules: [],
+      clearAll: vi.fn(),
+      clearMeasurement: vi.fn(),
+      clearSample: vi.fn(),
+      clearSetup: vi.fn(),
       selectSample: vi.fn(),
       selectSetup: vi.fn(),
       loadMeasurement: vi.fn(),
     },
     measurementActions: {
       busy: false,
+      cancelable: false,
+      operation: null as 'sample' | 'setup' | 'measurement' | null,
       stage: 'idle',
       cancel: vi.fn(),
       generateSample: vi.fn(),
@@ -182,9 +204,9 @@ function createWorkbenchState() {
   }
 }
 
-function renderPage() {
+function renderPage(entry = '/') {
   return render(
-    <MemoryRouter initialEntries={['/cae']}>
+    <MemoryRouter initialEntries={[entry]}>
       <CaePage />
     </MemoryRouter>,
   )
@@ -200,17 +222,24 @@ beforeEach(() => {
 
 afterEach(cleanup)
 
-describe('independent CAE workbench page', () => {
-  it('registers /cae and renders the desktop-style chrome with exactly eight quick actions', async () => {
+describe('root CAE workbench page', () => {
+  it.each(['/#viewer', '/#help'])('renders Not Found for the removed legacy hash %s', (entry) => {
+    renderPage(entry)
+
+    expect(screen.getByRole('heading', { name: '페이지를 찾을 수 없습니다' })).toBeInTheDocument()
+    expect(screen.queryByRole('menubar', { name: 'CAE 워크벤치 메뉴' })).not.toBeInTheDocument()
+  })
+
+  it('registers only the root app and renders the desktop-style chrome with exactly ten quick actions', async () => {
     renderPage()
 
-    expect(appRoutePaths).toContain('cae')
+    expect(appRoutePaths).toEqual(['index', '*'])
     expect(screen.getByRole('menubar', { name: 'CAE 워크벤치 메뉴' })).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Structure 리본' })).toBeInTheDocument()
     expect(screen.getByRole('tablist', { name: 'CAE Editor 탭' })).toBeInTheDocument()
 
     const toolbar = screen.getByRole('toolbar', { name: 'CAE 빠른 작업' })
-    expect(within(toolbar).getAllByRole('button')).toHaveLength(8)
+    expect(within(toolbar).getAllByRole('button')).toHaveLength(10)
     expect(
       within(toolbar)
         .getAllByRole('button')
@@ -224,9 +253,45 @@ describe('independent CAE workbench page', () => {
       'Generate Setup',
       'Perform Measurement',
       'Generate Measurement',
+      'Launchers',
+      'Jobs',
     ])
 
     await waitFor(() => expect(screen.getByText('Draft 자동 저장')).toBeInTheDocument())
+  })
+
+  it('opens the same Launchers and Jobs workspaces from Settings and the Toolbar', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    await user.click(screen.getByRole('menuitem', { name: 'Settings' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Launchers' }))
+    expect(await screen.findByText('Launchers workspace')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Launchers' })).toContainElement(screen.getByText('Launchers workspace'))
+    await user.click(screen.getByRole('button', { name: '닫기' }))
+
+    const toolbar = screen.getByRole('toolbar', { name: 'CAE 빠른 작업' })
+    await user.click(within(toolbar).getByRole('button', { name: 'Launchers' }))
+    expect(await screen.findByText('Launchers workspace')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '닫기' }))
+
+    await user.click(within(toolbar).getByRole('button', { name: 'Jobs' }))
+    expect(await screen.findByText('Jobs workspace')).toBeInTheDocument()
+  })
+
+  it('opens Lab and Help workspaces without leaving the Workbench', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    await user.click(screen.getByRole('menuitem', { name: 'Lab' }))
+    await user.click(screen.getByRole('menuitem', { name: 'AI Chat' }))
+    expect(await screen.findByText('AI Chat workspace')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '닫기' }))
+
+    await user.click(screen.getByRole('menuitem', { name: 'Help' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Manual' }))
+    expect(await screen.findByText('Manual workspace')).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/')
   })
 
   it('disables source-dependent Data actions while Structure has unsaved edits', () => {
@@ -248,6 +313,57 @@ describe('independent CAE workbench page', () => {
       'true',
     )
     expect(within(toolbar).getByRole('button', { name: 'Generate Setup' })).not.toHaveAttribute('aria-disabled')
+  })
+
+  it('clears persisted realization selections before manually rerolling each definition', async () => {
+    const user = userEvent.setup()
+    currentWorkbench.selection.sample = { id: 11 } as never
+    currentWorkbench.selection.setup = { id: 22 } as never
+    currentWorkbench.selection.measurement = { id: 33 } as never
+    renderPage()
+
+    await user.click(screen.getByRole('button', { name: 'Reroll' }))
+    expect(currentWorkbench.selection.clearSample).toHaveBeenCalledOnce()
+    expect(currentWorkbench.structureDocument.handleReroll).toHaveBeenCalledOnce()
+    expect(currentWorkbench.selection.clearSample.mock.invocationCallOrder[0]).toBeLessThan(
+      currentWorkbench.structureDocument.handleReroll.mock.invocationCallOrder[0],
+    )
+
+    await user.click(screen.getByRole('tab', { name: 'Experiment' }))
+    await user.click(screen.getByRole('button', { name: 'Reroll' }))
+    expect(currentWorkbench.selection.clearSetup).toHaveBeenCalledOnce()
+    expect(currentWorkbench.experimentDocument.handleReroll).toHaveBeenCalledOnce()
+  })
+
+  it('turns the Toolbar Perform Measurement action into Cancel during a cancellable measurement run', async () => {
+    const user = userEvent.setup()
+    currentWorkbench.measurementActions.busy = true
+    currentWorkbench.measurementActions.cancelable = true
+    currentWorkbench.measurementActions.operation = 'measurement'
+    currentWorkbench.measurementActions.stage = 'CAE 실행 중'
+    renderPage()
+
+    const toolbar = screen.getByRole('toolbar', { name: 'CAE 빠른 작업' })
+    await user.click(within(toolbar).getByRole('button', { name: 'Cancel Measurement' }))
+    expect(currentWorkbench.measurementActions.cancel).toHaveBeenCalledOnce()
+    expect(within(toolbar).queryByRole('button', { name: 'Perform Measurement' })).not.toBeInTheDocument()
+  })
+
+  it('keeps measurement cancellation disabled while the Measurement is being saved', () => {
+    currentWorkbench.selection.sample = { id: 11 } as never
+    currentWorkbench.selection.setup = { id: 22 } as never
+    currentWorkbench.measurementActions.busy = true
+    currentWorkbench.measurementActions.cancelable = false
+    currentWorkbench.measurementActions.operation = 'measurement'
+    currentWorkbench.measurementActions.stage = 'Measurement 저장 중'
+    renderPage()
+
+    const toolbar = screen.getByRole('toolbar', { name: 'CAE 빠른 작업' })
+    expect(within(toolbar).getByRole('button', { name: /Perform Measurement:/ })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+    expect(within(toolbar).queryByRole('button', { name: 'Cancel Measurement' })).not.toBeInTheDocument()
   })
 
   it('reopens a closed editor tab from the View menu', async () => {

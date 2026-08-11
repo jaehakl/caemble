@@ -17,6 +17,7 @@ import { SaveDefinitionDialog } from '@/features/viewer/persistence/SaveDefiniti
 import { AnalysisWorkspace } from '@/pages/analysis/AnalysisPage'
 import { MaterialManager } from '@/pages/materials/MaterialManager'
 import type { WorkbenchDialog } from './caePageTypes'
+import { CaeUtilityDialogs } from './CaeUtilityDialogs'
 
 export function CaeWorkbenchDialogs({
   authenticated,
@@ -237,7 +238,7 @@ export function CaeWorkbenchDialogs({
             <DialogDescription>Material 목록과 속성을 조회하고 편집합니다.</DialogDescription>
           </DialogHeader>
           <div className="min-h-0 overflow-auto p-4">
-            <MaterialManager />
+            <MaterialManager onRequestLogin={() => setDialog('account')} />
           </div>
         </DialogContent>
       </Dialog>
@@ -248,10 +249,16 @@ export function CaeWorkbenchDialogs({
             <DialogDescription>현재 Structure + Experiment 조합의 Measurement 데이터를 분석합니다.</DialogDescription>
           </DialogHeader>
           <div className="min-h-0 overflow-auto">
-            <AnalysisWorkspace embedded experimentId={workbench.experimentId} structureId={workbench.structureId} />
+            <AnalysisWorkspace
+              embedded
+              experimentId={workbench.experimentId}
+              structureId={workbench.structureId}
+              onRequestLogin={() => setDialog('account')}
+            />
           </div>
         </DialogContent>
       </Dialog>
+      <CaeUtilityDialogs dialog={dialog} setDialog={setDialog} />
     </>
   )
 }

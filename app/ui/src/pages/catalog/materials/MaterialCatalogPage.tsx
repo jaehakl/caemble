@@ -1,7 +1,6 @@
 import type { ColumnDef } from '@tanstack/react-table'
 import { Layers3 } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router'
 import { CatalogPageLayout } from '@/components/CatalogPageLayout'
 import { DataTable } from '@/components/DataTable'
 import { Badge } from '@/components/ui/badge'
@@ -52,13 +51,12 @@ const columns: ColumnDef<MaterialRow, unknown>[] = [
   },
 ]
 
-export function MaterialCatalogPage() {
-  const navigate = useNavigate()
-  const { key } = useParams()
+export function MaterialCatalog() {
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [quantityKind, setQuantityKind] = useState('')
   const [domain, setDomain] = useState('all')
-  const selected = rows.find((row) => row.key === key)
+  const selected = rows.find((row) => row.key === selectedKey)
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
     const quantityNeedle = quantityKind.trim().toLowerCase()
@@ -112,7 +110,7 @@ export function MaterialCatalogPage() {
           columns={columns}
           data={filtered}
           getRowKey={(row) => row.key}
-          onRowClick={(row) => navigate(`/catalog/materials/${encodeURIComponent(row.key)}`)}
+          onRowClick={(row) => setSelectedKey(row.key)}
           selectedKey={selected?.key}
         />
       }
@@ -183,12 +181,9 @@ export function MaterialCatalogPage() {
             <p className="mt-1 text-sm text-muted-foreground">
               parameter 또는 model relation의 계약을 확인할 수 있습니다.
             </p>
-            {key ? <p className="mt-3 text-xs text-destructive">알 수 없는 key: {key}</p> : null}
           </CardContent>
         )
       }
     />
   )
 }
-
-export const Component = MaterialCatalogPage

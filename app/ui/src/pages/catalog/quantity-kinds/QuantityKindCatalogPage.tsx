@@ -1,7 +1,6 @@
 import type { ColumnDef } from '@tanstack/react-table'
 import { Gauge } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router'
 import { CatalogPageLayout } from '@/components/CatalogPageLayout'
 import { DataTable } from '@/components/DataTable'
 import { Badge } from '@/components/ui/badge'
@@ -43,14 +42,13 @@ const columns: ColumnDef<QuantityKindRow, unknown>[] = [
   },
 ]
 
-export function QuantityKindCatalogPage() {
-  const navigate = useNavigate()
-  const { name } = useParams()
+export function QuantityCatalog() {
+  const [selectedName, setSelectedName] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [unit, setUnit] = useState('')
   const [domain, setDomain] = useState('all')
   const [tensorOrder, setTensorOrder] = useState('all')
-  const selected = rows.find((row) => row.name === name)
+  const selected = rows.find((row) => row.name === selectedName)
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
     const unitNeedle = unit.trim().toLowerCase()
@@ -120,7 +118,7 @@ export function QuantityKindCatalogPage() {
           columns={columns}
           data={filtered.slice(0, 250)}
           getRowKey={(row) => row.name}
-          onRowClick={(row) => navigate(`/catalog/quantity-kinds/${encodeURIComponent(row.name)}`)}
+          onRowClick={(row) => setSelectedName(row.name)}
           selectedKey={selected?.name}
         />
       }
@@ -167,12 +165,9 @@ export function QuantityKindCatalogPage() {
             <Gauge className="mb-3 size-8 text-muted-foreground" />
             <p className="font-medium">Quantity Kind를 선택하세요</p>
             <p className="mt-1 text-sm text-muted-foreground">설명, tensor order, 적용 가능한 unit을 확인합니다.</p>
-            {name ? <p className="mt-3 text-xs text-destructive">알 수 없는 이름: {name}</p> : null}
           </CardContent>
         )
       }
     />
   )
 }
-
-export const Component = QuantityKindCatalogPage

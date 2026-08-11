@@ -2,14 +2,12 @@ import type {
   QuantityKindName,
   RecordedData,
   RecordedDataAxis,
-  RecordedDataResult,
   RecordedDataRule,
   RecordedDataTensor,
   UcumUnit,
 } from '@/lib/cad'
 import { convertUcumValue } from '@/lib/cad'
 import { normalizeRecordedDataTensor, type ResolvedRecordedTensor } from '@/lib/cad'
-import type { SimulationProgramManifest } from '@/lib/cad/simulation'
 import { QuantityKind } from '@/lib/quantitykind'
 
 export type CadViewerRecordedAxis = RecordedDataAxis
@@ -40,24 +38,6 @@ export type ResolvedRecordedData = Readonly<{
 }>
 
 export const normalizeCadViewerRecordedTensor = normalizeRecordedDataTensor
-
-export function resolveCadViewerRecordedDataRules(
-  provided: readonly RecordedDataRule[] | undefined,
-  program: SimulationProgramManifest | null | undefined,
-) {
-  if (provided !== undefined) return provided
-  return Object.freeze(
-    Object.entries(program?.recordedData ?? {}).map(([name, result]) =>
-      Object.freeze({
-        target: Object.freeze([]),
-        label: name,
-        methodId: 'simulation.record',
-        parameters: Object.freeze({}),
-        result: result as RecordedDataResult,
-      }),
-    ),
-  ) satisfies readonly RecordedDataRule[]
-}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return (

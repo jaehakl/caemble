@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, CircleAlert, Edit3, LoaderCircle, LockKeyhole, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
 import {
   dbTables,
@@ -123,10 +122,12 @@ export function MaterialDetail({
   embedded = false,
   materialId,
   onBack,
+  onRequestLogin,
 }: {
   embedded?: boolean
   materialId: number
   onBack: () => void
+  onRequestLogin?: () => void
 }) {
   const id = Number(materialId)
   const validId = Number.isSafeInteger(id) && id > 0
@@ -535,8 +536,8 @@ export function MaterialDetail({
               <p className="font-medium">Material 데이터를 추가하려면 로그인하세요</p>
               <p className="text-sm text-muted-foreground">공개 Material과 parameter는 계속 조회할 수 있습니다.</p>
             </div>
-            <Button asChild>
-              <Link to="/login">로그인</Link>
+            <Button type="button" onClick={onRequestLogin}>
+              Account 열기
             </Button>
           </CardContent>
         </Card>
@@ -581,11 +582,3 @@ export function MaterialDetail({
     </div>
   )
 }
-
-export function MaterialDetailPage() {
-  const navigate = useNavigate()
-  const { materialId } = useParams()
-  return <MaterialDetail materialId={Number(materialId)} onBack={() => navigate('/materials')} />
-}
-
-export const Component = MaterialDetailPage

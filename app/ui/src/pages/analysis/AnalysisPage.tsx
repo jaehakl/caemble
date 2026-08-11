@@ -11,7 +11,6 @@ import {
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router'
 import { dbTables, getListRequest } from '@/api'
 import type { ExperimentRecord, StructureRecord } from '@/api'
 import { Badge } from '@/components/ui/badge'
@@ -22,7 +21,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuth } from '@/features/auth/use-auth'
-import { useCurrentCadSelection } from '@/features/viewer/current-cad-selection'
 import { cn } from '@/lib/utils'
 import type {
   AnalysisColumnDescriptor,
@@ -35,25 +33,20 @@ import type {
   AnalysisWorkerResponse,
 } from './analysis-types'
 
-const analysisTabs = ['overview', 'relationships', 'mining', 'prediction', 'data'] as const
-export type AnalysisTab = (typeof analysisTabs)[number]
+export type AnalysisTab = 'overview' | 'relationships' | 'mining' | 'prediction' | 'data'
 
 export type AnalysisWorkspaceProps = {
   structureId: number | null
   experimentId: number | null
   embedded?: boolean
   initialTargetKey?: string | null
+  onRequestLogin?: () => void
   onExperimentIdChange?: (id: number) => void
   onStructureIdChange?: (id: number) => void
   onTabChange?: (tab: AnalysisTab) => void
   onTargetKeyChange?: (key: string | null) => void
   showContextSelectors?: boolean
   tab?: AnalysisTab
-}
-
-function positiveId(value: string | null) {
-  const parsed = Number(value)
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
 }
 
 function formatNumber(value: number | undefined) {
@@ -258,6 +251,7 @@ export function AnalysisWorkspace({
   experimentId: selectedExperimentId,
   embedded = false,
   initialTargetKey = null,
+  onRequestLogin,
   onExperimentIdChange,
   onStructureIdChange,
   onTabChange,
@@ -568,11 +562,9 @@ export function AnalysisWorkspace({
             <CardDescription>내 Measurement와 Recorded Data를 브라우저에서 분석하려면 로그인하세요.</CardDescription>
           </CardHeader>
           <CardContent>
-            <Button asChild>
-              <Link to="/login?from=/analysis">
-                <LogIn />
-                로그인
-              </Link>
+            <Button type="button" onClick={onRequestLogin}>
+              <LogIn />
+              Account 열기
             </Button>
           </CardContent>
         </Card>
@@ -1351,84 +1343,3 @@ export function AnalysisWorkspace({
     </div>
   )
 }
-
-export function AnalysisPage() {
-  const [searchParams, setSearchParams] = useSearchParams()
-  const { currentExperimentId, currentStructureId, setCurrentExperimentId, setCurrentStructureId } =
-    useCurrentCadSelection()
-  const queryStructureId = positiveId(searchParams.get('structure'))
-  const queryExperimentId = positiveId(searchParams.get('experiment'))
-  const structureId = queryStructureId ?? currentStructureId
-  const experimentId = queryExperimentId ?? currentExperimentId
-  const requestedTab = searchParams.get('tab')
-  const tab: AnalysisTab = analysisTabs.includes(requestedTab as AnalysisTab)
-    ? (requestedTab as AnalysisTab)
-    : 'overview'
-
-  const updateQuery = useCallback(
-    (updates: Readonly<Record<string, string | number | null>>) => {
-      setSearchParams(
-        (current) => {
-          const next = new URLSearchParams(current)
-          Object.entries(updates).forEach(([key, value]) => {
-            if (value === null || value === '') next.delete(key)
-            else next.set(key, String(value))
-          })
-          return next
-        },
-        { replace: true },
-      )
-    },
-    [setSearchParams],
-  )
-
-  useEffect(() => {
-    if (queryStructureId !== null && queryStructureId !== currentStructureId) {
-      setCurrentStructureId(queryStructureId)
-    } else if (queryStructureId === null && currentStructureId !== null) {
-      updateQuery({ structure: currentStructureId })
-    }
-  }, [currentStructureId, queryStructureId, setCurrentStructureId, updateQuery])
-
-  useEffect(() => {
-    if (queryExperimentId !== null && queryExperimentId !== currentExperimentId) {
-      setCurrentExperimentId(queryExperimentId)
-    } else if (queryExperimentId === null && currentExperimentId !== null) {
-      updateQuery({ experiment: currentExperimentId })
-    }
-  }, [currentExperimentId, queryExperimentId, setCurrentExperimentId, updateQuery])
-
-  useEffect(() => {
-    if (requestedTab && !analysisTabs.includes(requestedTab as AnalysisTab)) updateQuery({ tab: null })
-  }, [requestedTab, updateQuery])
-
-  const handleStructureIdChange = useCallback(
-    (id: number) => updateQuery({ structure: id, target: null }),
-    [updateQuery],
-  )
-  const handleExperimentIdChange = useCallback(
-    (id: number) => updateQuery({ experiment: id, target: null }),
-    [updateQuery],
-  )
-  const handleTabChange = useCallback(
-    (nextTab: AnalysisTab) => updateQuery({ tab: nextTab === 'overview' ? null : nextTab }),
-    [updateQuery],
-  )
-  const handleTargetKeyChange = useCallback((key: string | null) => updateQuery({ target: key }), [updateQuery])
-
-  return (
-    <AnalysisWorkspace
-      experimentId={experimentId}
-      initialTargetKey={searchParams.get('target')}
-      onExperimentIdChange={handleExperimentIdChange}
-      onStructureIdChange={handleStructureIdChange}
-      onTabChange={handleTabChange}
-      onTargetKeyChange={handleTargetKeyChange}
-      showContextSelectors
-      structureId={structureId}
-      tab={tab}
-    />
-  )
-}
-
-export const Component = AnalysisPage

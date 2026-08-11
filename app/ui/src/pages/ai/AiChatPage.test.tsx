@@ -2,9 +2,8 @@
 
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { AiChatPage } from './AiChatPage'
+import { AiChatWorkspace } from './AiChatPage'
 
 const sdk = vi.hoisted(() => ({
   call: vi.fn(),
@@ -28,7 +27,7 @@ vi.mock('@/features/auth/use-auth', () => ({
 
 afterEach(cleanup)
 
-describe('AiChatPage', () => {
+describe('AiChatWorkspace', () => {
   beforeEach(() => {
     sdk.call.mockReset()
     sdk.clientOptions.mockReset()
@@ -69,11 +68,7 @@ describe('AiChatPage', () => {
 
   it('uses the cookie job endpoint, discovers models, and renders a streamed chat response', async () => {
     const user = userEvent.setup()
-    render(
-      <MemoryRouter>
-        <AiChatPage />
-      </MemoryRouter>,
-    )
+    render(<AiChatWorkspace />)
 
     expect(await screen.findByText('local-llm')).toBeVisible()
     await user.type(screen.getByLabelText('AI 질문'), '인사해 줘')

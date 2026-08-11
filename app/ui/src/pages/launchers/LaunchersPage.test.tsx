@@ -3,9 +3,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { LaunchersPage } from './LaunchersPage'
+import { LaunchersWorkspace } from './LaunchersPage'
 
 const api = vi.hoisted(() => ({
   cancelCurrentJob: vi.fn(),
@@ -27,16 +26,14 @@ function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <LaunchersPage />
-      </MemoryRouter>
+      <LaunchersWorkspace />
     </QueryClientProvider>,
   )
 }
 
 afterEach(cleanup)
 
-describe('LaunchersPage', () => {
+describe('LaunchersWorkspace', () => {
   beforeEach(() => {
     api.list.mockReset()
     api.list.mockResolvedValue({

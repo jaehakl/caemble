@@ -63,6 +63,7 @@ vi.mock('@/features/cae-workbench/measurement/useCaeMeasurementActions', () => (
     generateMeasurement: vi.fn(),
     generateSample: vi.fn(),
     generateSetup: vi.fn(),
+    operation: null,
     performMeasurement: vi.fn(),
     stage: null,
   }),

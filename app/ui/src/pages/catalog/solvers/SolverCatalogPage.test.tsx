@@ -3,10 +3,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CaeManifestError, fetchCaeSolverManifests } from '@/features/cae/manifests'
-import { SolverCatalogPage } from './SolverCatalogPage'
+import { PhysicsCatalog } from './SolverCatalogPage'
 
 vi.mock('@/features/cae/manifests', async (importActual) => {
   const actual = await importActual<typeof import('@/features/cae/manifests')>()
@@ -32,15 +31,7 @@ const manifests = [
 ]
 
 function Harness({ children, client }: { children: ReactNode; client: QueryClient }) {
-  return (
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/catalog/solvers']}>
-        <Routes>
-          <Route element={children} path="/catalog/solvers" />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>
-  )
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>
 }
 
 describe('bundled Solver Catalog', () => {
@@ -53,7 +44,7 @@ describe('bundled Solver Catalog', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const first = render(
       <Harness client={client}>
-        <SolverCatalogPage />
+        <PhysicsCatalog />
       </Harness>,
     )
     expect(await screen.findByText('alpha')).toBeInTheDocument()
@@ -62,7 +53,7 @@ describe('bundled Solver Catalog', () => {
     first.unmount()
     render(
       <Harness client={client}>
-        <SolverCatalogPage />
+        <PhysicsCatalog />
       </Harness>,
     )
     expect(await screen.findByText('alpha')).toBeInTheDocument()
@@ -73,7 +64,7 @@ describe('bundled Solver Catalog', () => {
     vi.mocked(fetchCaeSolverManifests).mockResolvedValueOnce([])
     const empty = render(
       <Harness client={new QueryClient()}>
-        <SolverCatalogPage />
+        <PhysicsCatalog />
       </Harness>,
     )
     expect(await screen.findByText('등록된 solver가 없습니다.')).toBeInTheDocument()
@@ -82,7 +73,7 @@ describe('bundled Solver Catalog', () => {
     vi.mocked(fetchCaeSolverManifests).mockRejectedValueOnce(new Error('worker unavailable'))
     const unavailable = render(
       <Harness client={new QueryClient()}>
-        <SolverCatalogPage />
+        <PhysicsCatalog />
       </Harness>,
     )
     expect(await screen.findByText('Solver manifest를 읽을 수 없습니다.')).toBeInTheDocument()
@@ -91,7 +82,7 @@ describe('bundled Solver Catalog', () => {
     vi.mocked(fetchCaeSolverManifests).mockRejectedValueOnce(new CaeManifestError('invalid_manifest', 'bad descriptor'))
     const invalid = render(
       <Harness client={new QueryClient()}>
-        <SolverCatalogPage />
+        <PhysicsCatalog />
       </Harness>,
     )
     expect(await screen.findByText('잘못된 solver manifest입니다.')).toBeInTheDocument()

@@ -32,12 +32,6 @@ export function scaleViewerLayers(
   })
 }
 
-export function materialGridPartsFromLayers(layers: readonly JscadViewerLayer[]) {
-  return (['experiment', 'structure'] as const).flatMap((documentType) =>
-    layers.filter((layer) => layer.documentType === documentType).flatMap((layer) => layer.parts),
-  )
-}
-
 export function createLayerRenderParts(layers: readonly JscadViewerLayer[]) {
   return layers.flatMap((layer) => createRenderParts(layer.parts))
 }

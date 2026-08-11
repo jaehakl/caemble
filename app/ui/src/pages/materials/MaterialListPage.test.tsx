@@ -3,10 +3,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createMemoryRouter } from 'react-router'
-import { RouterProvider } from 'react-router/dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MaterialListPage } from './MaterialListPage'
+import { MaterialList } from './MaterialListPage'
 import { MaterialManager } from './MaterialManager'
 
 const api = vi.hoisted(() => ({
@@ -53,19 +51,13 @@ vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 
 function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  const router = createMemoryRouter(
-    [
-      { path: '/materials', element: <MaterialListPage /> },
-      { path: '/materials/:materialId', element: <div>Material detail destination</div> },
-    ],
-    { initialEntries: ['/materials'] },
-  )
+  const onSelectMaterial = vi.fn()
   render(
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
+      <MaterialList onSelectMaterial={onSelectMaterial} />
     </QueryClientProvider>,
   )
-  return router
+  return onSelectMaterial
 }
 
 beforeEach(() => {
@@ -96,7 +88,7 @@ afterEach(() => {
 
 describe('MaterialListPage', () => {
   it('searches all visible names and InChI and opens the selected detail', async () => {
-    const router = renderPage()
+    const onSelectMaterial = renderPage()
     expect(await screen.findByText('Copper')).toBeInTheDocument()
     expect(screen.getByText('#d97706')).toBeInTheDocument()
     expect(screen.getByLabelText('색상 #d97706')).toHaveStyle({ backgroundColor: '#d97706' })
@@ -106,7 +98,7 @@ describe('MaterialListPage', () => {
     await userEvent.clear(screen.getByRole('textbox', { name: 'Material 검색' }))
     await userEvent.type(screen.getByRole('textbox', { name: 'Material 검색' }), '1S/Fe')
     await userEvent.click(screen.getByText('Iron'))
-    await waitFor(() => expect(router.state.location.pathname).toBe('/materials/2'))
+    expect(onSelectMaterial).toHaveBeenCalledWith(2)
   })
 
   it('shows white in an unset picker while creating the Material with a null color', async () => {

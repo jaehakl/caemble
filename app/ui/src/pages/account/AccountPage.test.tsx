@@ -3,15 +3,16 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { AccountPage } from './AccountPage'
+import { AccountWorkspace } from './AccountPage'
 
 const api = vi.hoisted(() => ({
   create: vi.fn(),
   list: vi.fn(),
   revoke: vi.fn(),
+  startGoogleLogin: vi.fn(),
 }))
+const auth = vi.hoisted(() => ({ authenticated: true }))
 
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
@@ -21,24 +22,28 @@ vi.mock('@/api', async (importActual) => {
       ...actual.dbTables,
       AccessKey: api,
     },
+    startGoogleLogin: api.startGoogleLogin,
   }
 })
 
 vi.mock('@/features/auth/use-auth', () => ({
   useAuth: () => ({
-    isAuthenticated: true,
+    isAuthenticated: auth.authenticated,
     isLoading: false,
-    user: {
-      id: 'user-1',
-      email: 'designer@example.com',
-      display_name: 'Designer',
-      picture_url: null,
-      is_active: true,
-      created_at: '2026-07-21T00:00:00Z',
-      updated_at: '2026-07-21T00:00:00Z',
-      roles: ['user'],
-    },
+    user: auth.authenticated
+      ? {
+          id: 'user-1',
+          email: 'designer@example.com',
+          display_name: 'Designer',
+          picture_url: null,
+          is_active: true,
+          created_at: '2026-07-21T00:00:00Z',
+          updated_at: '2026-07-21T00:00:00Z',
+          roles: ['user'],
+        }
+      : null,
   }),
+  useLogout: () => ({ isPending: false, mutate: vi.fn() }),
 }))
 
 function token() {
@@ -61,9 +66,7 @@ function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={['/account']}>
-        <AccountPage />
-      </MemoryRouter>
+      <AccountWorkspace />
     </QueryClientProvider>,
   )
 }
@@ -72,12 +75,22 @@ afterEach(cleanup)
 
 describe('Account access tokens', () => {
   beforeEach(() => {
+    auth.authenticated = true
+    api.startGoogleLogin.mockReset()
     api.list.mockReset()
     api.list.mockResolvedValue({ total: 1, items: [token()] })
     api.create.mockReset()
     api.create.mockResolvedValue({ access_key: token(), secret: 'csk_secret' })
     api.revoke.mockReset()
     api.revoke.mockResolvedValue({ deleted: 1 })
+  })
+
+  it('starts Google login from Account and returns to the current Workbench URL', async () => {
+    auth.authenticated = false
+    renderPage()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Google로 계속하기' }))
+    expect(api.startGoogleLogin).toHaveBeenCalledWith(window.location.href)
   })
 
   it('creates a purpose-scoped token and reveals its secret once', async () => {

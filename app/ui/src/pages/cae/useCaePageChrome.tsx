@@ -1,18 +1,26 @@
 import { useMemo, type Dispatch, type SetStateAction } from 'react'
 import {
   Beaker,
+  BookOpenText,
   Box,
+  Boxes,
   ChartNoAxesCombined,
+  CircleUserRound,
   Database,
   FilePlus2,
   FlaskConical,
   FolderOpen,
   GitBranch,
+  Gauge,
   Layers3,
+  ListChecks,
+  MessageCircle,
   Play,
   RotateCw,
   Save,
   SaveAll,
+  Server,
+  Square,
   TableProperties,
 } from 'lucide-react'
 import type { WorkbenchAction, WorkbenchMenuDefinition } from '@/features/cae-workbench/chrome'
@@ -52,6 +60,8 @@ export function useCaePageChrome({
       : workbench.experimentDocument.runIsBusy
         ? 'Experiment 평가가 진행 중입니다.'
         : busyReason
+    const cancellingMeasurement =
+      workbench.measurementActions.operation === 'measurement' && workbench.measurementActions.cancelable
     const defined: Record<string, WorkbenchAction> = {
       newResearch: {
         id: 'new-research',
@@ -201,6 +211,60 @@ export function useCaePageChrome({
         icon: <Database className="size-4" />,
         onSelect: () => setDialog('material'),
       },
+      aiChat: {
+        id: 'ai-chat',
+        label: 'AI Chat',
+        icon: <MessageCircle className="size-4" />,
+        onSelect: () => setDialog('ai-chat'),
+      },
+      launchers: {
+        id: 'launchers',
+        label: 'Launchers',
+        icon: <Server className="size-4" />,
+        onSelect: () => setDialog('launchers'),
+      },
+      jobs: {
+        id: 'jobs',
+        label: 'Jobs',
+        icon: <ListChecks className="size-4" />,
+        onSelect: () => setDialog('jobs'),
+      },
+      account: {
+        id: 'account',
+        label: 'Account',
+        icon: <CircleUserRound className="size-4" />,
+        onSelect: () => setDialog('account'),
+      },
+      manual: {
+        id: 'manual',
+        label: 'Manual',
+        icon: <BookOpenText className="size-4" />,
+        onSelect: () => setDialog('manual'),
+      },
+      geometryCatalog: {
+        id: 'geometry-catalog',
+        label: 'Geometry Catalog',
+        icon: <Boxes className="size-4" />,
+        onSelect: () => setDialog('geometry-catalog'),
+      },
+      materialCatalog: {
+        id: 'material-catalog',
+        label: 'Material Catalog',
+        icon: <Layers3 className="size-4" />,
+        onSelect: () => setDialog('material-catalog'),
+      },
+      quantityCatalog: {
+        id: 'quantity-catalog',
+        label: 'Quantity Catalog',
+        icon: <Gauge className="size-4" />,
+        onSelect: () => setDialog('quantity-catalog'),
+      },
+      physicsCatalog: {
+        id: 'physics-catalog',
+        label: 'Physics Catalog',
+        icon: <FlaskConical className="size-4" />,
+        onSelect: () => setDialog('physics-catalog'),
+      },
       generateSample: {
         id: 'generate-sample',
         label: 'Generate Sample',
@@ -251,22 +315,27 @@ export function useCaePageChrome({
       },
       performMeasurement: {
         id: 'perform-measurement',
-        label: 'Perform Measurement',
-        icon: <Play className="size-4" />,
+        label: cancellingMeasurement ? 'Cancel Measurement' : 'Perform Measurement',
+        icon: cancellingMeasurement ? <Square className="size-4" /> : <Play className="size-4" />,
         disabled:
-          !authenticated ||
-          !workbench.pairClean ||
-          !workbench.selection.sample ||
-          !workbench.selection.setup ||
-          workbench.measurementActions.busy,
-        disabledReason: !authenticated
-          ? loginReason
-          : !workbench.pairClean
-            ? pairReason
-            : !workbench.selection.sample || !workbench.selection.setup
-              ? 'Sample과 Setup을 선택하세요.'
-              : busyReason,
-        onSelect: () => runSafely(requestPerformMeasurement),
+          !cancellingMeasurement &&
+          (!authenticated ||
+            !workbench.pairClean ||
+            !workbench.selection.sample ||
+            !workbench.selection.setup ||
+            workbench.measurementActions.busy),
+        disabledReason: cancellingMeasurement
+          ? undefined
+          : !authenticated
+            ? loginReason
+            : !workbench.pairClean
+              ? pairReason
+              : !workbench.selection.sample || !workbench.selection.setup
+                ? 'Sample과 Setup을 선택하세요.'
+                : busyReason,
+        onSelect: cancellingMeasurement
+          ? workbench.measurementActions.cancel
+          : () => runSafely(requestPerformMeasurement),
       },
       generateMeasurement: {
         id: 'generate-measurement',
@@ -320,14 +389,20 @@ export function useCaePageChrome({
         label: 'Reroll',
         icon: <RotateCw className="size-4" />,
         disabled: !workbench.structure || workbench.structureDocument.runIsBusy,
-        onSelect: workbench.structureDocument.handleReroll,
+        onSelect: () => {
+          workbench.selection.clearSample()
+          workbench.structureDocument.handleReroll()
+        },
       },
       rerollExperiment: {
         id: 'reroll-experiment',
         label: 'Reroll',
         icon: <RotateCw className="size-4" />,
         disabled: !workbench.experiment || workbench.experimentDocument.runIsBusy,
-        onSelect: workbench.experimentDocument.handleReroll,
+        onSelect: () => {
+          workbench.selection.clearSetup()
+          workbench.experimentDocument.handleReroll()
+        },
       },
     }
     if (!sourceLockReason) return defined
@@ -449,6 +524,33 @@ export function useCaePageChrome({
           { type: 'action', action: actions.recordedDataTab },
         ],
       },
+      {
+        id: 'lab',
+        label: 'Lab',
+        items: [{ type: 'action', action: actions.aiChat }],
+      },
+      {
+        id: 'settings',
+        label: 'Settings',
+        items: [
+          { type: 'action', action: actions.launchers },
+          { type: 'action', action: actions.jobs },
+          { type: 'separator', id: 'account-separator' },
+          { type: 'action', action: actions.account },
+        ],
+      },
+      {
+        id: 'help',
+        label: 'Help',
+        items: [
+          { type: 'action', action: actions.manual },
+          { type: 'separator', id: 'catalog-separator' },
+          { type: 'action', action: actions.geometryCatalog },
+          { type: 'action', action: actions.materialCatalog },
+          { type: 'action', action: actions.quantityCatalog },
+          { type: 'action', action: actions.physicsCatalog },
+        ],
+      },
     ],
     [actions],
   )
@@ -462,6 +564,8 @@ export function useCaePageChrome({
     actions.generateSetup,
     actions.performMeasurement,
     actions.generateMeasurement,
+    actions.launchers,
+    actions.jobs,
   ]
 
   const ribbonPanels = [

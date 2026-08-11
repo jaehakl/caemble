@@ -132,8 +132,8 @@ Experiment용 가드레일이며 OS sandbox를 대신하지 않는다.
 base64와 legacy JSON을 같은 accessor로 읽는다. Viewer와 Analysis는 필요한 slice만
 읽고 export 시에만 전체 값을 materialize한다.
 
-[`MeasurementPage.tsx`](../app/ui/src/pages/measurements/MeasurementPage.tsx)는 실행
-manifest의 schema와 record를 결합해 다음 값을 완성한다.
+[`useCaeMeasurementActions.ts`](../app/ui/src/features/cae-workbench/measurement/useCaeMeasurementActions.ts)는
+Workbench Toolbar의 Measurement 실행과 저장을 연결하며 manifest의 schema와 record를 결합해 다음 값을 완성한다.
 
 - `quantity_kind`
 - `tensor_order`

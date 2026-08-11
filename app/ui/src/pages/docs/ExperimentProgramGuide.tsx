@@ -1,5 +1,4 @@
 import { ArrowRight, Boxes, Braces, CircleDot, GitBranch, PlayCircle } from 'lucide-react'
-import { Link } from 'react-router'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -31,7 +30,7 @@ function Code({ children }: { children: string }) {
   return <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[0.82em] text-slate-800">{children}</code>
 }
 
-export function ExperimentProgramGuide() {
+export function ExperimentProgramGuide({ onOpenWorkbench }: { onOpenWorkbench?: () => void }) {
   const firstExample = caembleProgramExamples[0]
   const taskSources = Object.entries(firstExample.experimentSourceBundle.files).filter(([path]) =>
     path.startsWith('tasks/'),
@@ -53,10 +52,9 @@ export function ExperimentProgramGuide() {
             분리합니다. Python <Code>simulate()</Code>에는 Task의 선택·순서·분기와 결과 기록만 남깁니다.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
-            <Button asChild>
-              <Link to={`/examples/${firstExample.id}`}>
-                <PlayCircle />첫 예제 실행
-              </Link>
+            <Button type="button" onClick={onOpenWorkbench}>
+              <PlayCircle />
+              CAE Workbench에서 예제 선택
             </Button>
             <Button asChild variant="outline">
               <a href="#experiment-program-minimal-pair">
@@ -286,11 +284,9 @@ export function ExperimentProgramGuide() {
                       </li>
                     ))}
                   </ul>
-                  <Button asChild className="mt-5 w-full" variant="outline">
-                    <Link to={`/examples/${example.id}`}>
-                      Playground에서 열기
-                      <ArrowRight />
-                    </Link>
+                  <Button className="mt-5 w-full" type="button" variant="outline" onClick={onOpenWorkbench}>
+                    CAE Workbench에서 열기
+                    <ArrowRight />
                   </Button>
                 </CardContent>
               </Card>

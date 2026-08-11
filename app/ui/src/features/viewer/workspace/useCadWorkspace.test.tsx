@@ -8,6 +8,7 @@ import {
   createExperimentSourceBundle,
   evaluateInIsolatedRunner,
   type CompiledCadDocument,
+  type Vars,
 } from '@/lib/cad'
 import { useCadWorkspace } from './useCadWorkspace'
 
@@ -71,7 +72,7 @@ describe('useCadWorkspace v4 bundle editing', () => {
     render.unmount()
   })
 
-  it('compiles once for a Structure source and reuses the compiled document for a seed change', async () => {
+  it('drops selected vars and reuses the compiled Structure source for a seed reroll', async () => {
     const sourceHash = 'a'.repeat(64)
     vi.mocked(compileCadDocument).mockResolvedValue({
       apiVersion: 4,
@@ -90,18 +91,30 @@ describe('useCadWorkspace v4 bundle editing', () => {
     vi.mocked(evaluateInIsolatedRunner).mockReturnValue(vi.fn())
     const document = createCadSourceDocument('structure', 'structure', 7)
     const render = renderHook(
-      ({ active }) =>
-        useCadWorkspace(active, null, () => undefined, undefined, undefined, undefined, undefined, 'fast-reroll'),
-      { initialProps: { active: document } },
+      ({ active, externalVars }: { active: typeof document; externalVars: Vars | undefined }) =>
+        useCadWorkspace(active, null, () => undefined, undefined, externalVars, undefined, undefined, 'fast-reroll'),
+      { initialProps: { active: document, externalVars: { radius: 2 } as Vars | undefined } },
     )
 
     await act(async () => vi.advanceTimersByTimeAsync(500))
     expect(compileCadDocument).toHaveBeenCalledOnce()
-    render.rerender({ active: { ...document, realizationSeed: 8 } })
+    expect(vi.mocked(evaluateInIsolatedRunner).mock.calls[0][0]).toMatchObject({
+      document: { realizationSeed: 7 },
+      revision: 1,
+      vars: { radius: 2 },
+    })
+
+    render.rerender({ active: { ...document, realizationSeed: 8 }, externalVars: undefined })
     await act(async () => vi.advanceTimersByTimeAsync(75))
     expect(compileCadDocument).toHaveBeenCalledOnce()
     expect(evaluateInIsolatedRunner).toHaveBeenCalledTimes(2)
-    expect(vi.mocked(evaluateInIsolatedRunner).mock.calls[1][0].compiledDocument.sourceHash).toBe(sourceHash)
+    const rerollRequest = vi.mocked(evaluateInIsolatedRunner).mock.calls[1][0]
+    expect(rerollRequest).toMatchObject({
+      document: { realizationSeed: 8 },
+      revision: 2,
+    })
+    expect(rerollRequest).not.toHaveProperty('vars')
+    expect(rerollRequest.compiledDocument.sourceHash).toBe(sourceHash)
     render.unmount()
   })
 })

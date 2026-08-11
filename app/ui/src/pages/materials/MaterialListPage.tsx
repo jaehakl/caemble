@@ -2,7 +2,6 @@ import type { ColumnDef } from '@tanstack/react-table'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { LoaderCircle, LockKeyhole, Plus, Search } from 'lucide-react'
 import { useMemo, useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router'
 import { toast } from 'sonner'
 import { dbTables, type MaterialNameRecord, type MaterialRecord } from '@/api'
 import { DataTable } from '@/components/DataTable'
@@ -302,10 +301,3 @@ export function MaterialList({
     </div>
   )
 }
-
-export function MaterialListPage() {
-  const navigate = useNavigate()
-  return <MaterialList onSelectMaterial={(id) => navigate(`/materials/${id}`)} />
-}
-
-export const Component = MaterialListPage

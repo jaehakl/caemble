@@ -2,11 +2,9 @@
 
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createMemoryRouter } from 'react-router'
-import { RouterProvider } from 'react-router/dom'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { caembleProgramExamples } from '@/lib/examples'
-import { DocsPage } from './DocsPage'
+import { ManualWorkspace } from './DocsPage'
 
 const NativeRequest = globalThis.Request
 
@@ -23,30 +21,29 @@ beforeEach(() => {
 afterAll(() => vi.unstubAllGlobals())
 afterEach(cleanup)
 
-function renderDocs(path = '/docs') {
-  const router = createMemoryRouter([{ path: '/docs', Component: DocsPage }], {
-    initialEntries: [path],
-  })
-  render(<RouterProvider router={router} />)
-  return router
+function renderDocs(onOpenWorkbench = vi.fn()) {
+  render(<ManualWorkspace onOpenWorkbench={onOpenWorkbench} />)
+  return onOpenWorkbench
 }
 
-describe('DocsPage', () => {
-  it('opens the Experiment Program authoring guide by default and links every verified example', () => {
-    renderDocs()
+describe('ManualWorkspace', () => {
+  it('opens the Experiment Program guide and returns every verified example to the CAE workbench', async () => {
+    const onOpenWorkbench = renderDocs()
 
     expect(screen.getByRole('heading', { name: /kernel task를 조합해/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Experiment Program' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getAllByRole('link', { name: /Playground에서 열기/ })).toHaveLength(caembleProgramExamples.length)
+    const exampleButtons = screen.getAllByRole('button', { name: /CAE Workbench에서 열기/ })
+    expect(exampleButtons).toHaveLength(caembleProgramExamples.length)
+    await userEvent.click(exampleButtons[0])
+    expect(onOpenWorkbench).toHaveBeenCalledOnce()
     expect(screen.getByText('docs/experiment-program.md')).toBeInTheDocument()
   })
 
-  it('keeps the CAD reference behind a deep-linkable section', async () => {
-    const router = renderDocs('/docs?section=program')
+  it('switches the embedded Manual to the CAD reference without changing the URL', async () => {
+    renderDocs()
 
     await userEvent.click(screen.getByRole('button', { name: 'CAD Reference' }))
 
-    expect(router.state.location.search).toBe('?section=reference')
     expect(screen.getByRole('heading', { name: 'Caemble Help' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'CAD Reference' })).toHaveAttribute('aria-pressed', 'true')
   })

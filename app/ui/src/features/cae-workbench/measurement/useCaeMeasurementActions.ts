@@ -416,6 +416,7 @@ export function useCaeMeasurementActions({
   }, [cancelable, run?.stage, simulation])
 
   const busy = realization !== null || generation !== null || run !== null
+  const operation = realization?.kind ?? (generation || run ? 'measurement' : null)
   const stage = realization
     ? realization.stage === 'saving'
       ? `${realization.kind === 'sample' ? 'Sample' : 'Setup'} 저장 중`
@@ -436,6 +437,7 @@ export function useCaeMeasurementActions({
     busy,
     cancelable,
     error,
+    operation,
     stage,
     cancel,
     clearError: () => setError(null),

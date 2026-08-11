@@ -3,11 +3,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createMemoryRouter, RouterProvider } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CurrentCadSelectionProvider } from '@/features/viewer/current-cad-selection'
 import type { AnalysisProfile, AnalysisWorkerRequest, AnalysisWorkerResponse } from './analysis-types'
-import { AnalysisPage, AnalysisWorkspace } from './AnalysisPage'
+import { AnalysisWorkspace, type AnalysisTab } from './AnalysisPage'
 
 const apiMocks = vi.hoisted(() => ({
   experimentList: vi.fn(),
@@ -164,24 +162,17 @@ class MockWorker {
 
 function renderPage(initialEntry: string) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  const router = createMemoryRouter(
-    [
-      { path: '/analysis', Component: AnalysisPage },
-      { path: '/login', element: <div>Login</div> },
-    ],
-    { initialEntries: [initialEntry] },
-  )
+  const url = new URL(initialEntry, 'http://localhost')
+  const requestedTab = url.searchParams.get('tab')
+  const tab: AnalysisTab = requestedTab === 'data' ? 'data' : 'overview'
   render(
     <QueryClientProvider client={queryClient}>
-      <CurrentCadSelectionProvider>
-        <RouterProvider router={router} />
-      </CurrentCadSelectionProvider>
+      <AnalysisWorkspace experimentId={2} initialTargetKey={url.searchParams.get('target')} structureId={1} tab={tab} />
     </QueryClientProvider>,
   )
-  return router
 }
 
-describe('AnalysisPage', () => {
+describe('AnalysisWorkspace', () => {
   beforeEach(() => {
     MockWorker.instances = []
     MockWorker.autoLoad = true
@@ -204,8 +195,8 @@ describe('AnalysisPage', () => {
     vi.unstubAllGlobals()
   })
 
-  it('URL context와 Data 탭을 복원하고 Worker에서 현재 100행만 요청한다', async () => {
-    const router = renderPage('/analysis?structure=1&experiment=2&tab=data&target=target%3Aresult')
+  it('주어진 context와 Data 탭을 복원하고 Worker에서 현재 100행만 요청한다', async () => {
+    renderPage('/?structure=1&experiment=2&tab=data&target=target%3Aresult')
 
     expect(await screen.findByText('#101')).toBeInTheDocument()
     const worker = MockWorker.instances[0]
@@ -222,12 +213,11 @@ describe('AnalysisPage', () => {
         columnKeys: ['sample.vars.width', 'target:result'],
       }),
     )
-    expect(router.state.location.search).toContain('target=target%3Aresult')
   })
 
   it('포커스 복귀 때 signature를 확인하고 stale 배너를 표시한다', async () => {
     MockWorker.stale = true
-    renderPage('/analysis?structure=1&experiment=2')
+    renderPage('/?structure=1&experiment=2')
     await screen.findAllByText('24')
 
     act(() => window.dispatchEvent(new Event('focus')))
@@ -245,14 +235,14 @@ describe('AnalysisPage', () => {
       recordedDataCount: 0,
       columns: [],
     }
-    renderPage('/analysis?structure=1&experiment=2')
+    renderPage('/?structure=1&experiment=2')
 
     expect(await screen.findByText('이 조합에 Measurement가 없습니다.')).toBeInTheDocument()
   })
 
   it('취소 시 실행 중 Worker를 종료하고 새 Worker로 context를 다시 불러온다', async () => {
     MockWorker.autoLoad = false
-    renderPage('/analysis?structure=1&experiment=2')
+    renderPage('/?structure=1&experiment=2')
     expect(await screen.findByText('1/2 범위 완료')).toBeInTheDocument()
     const first = MockWorker.instances[0]
 
@@ -268,7 +258,7 @@ describe('AnalysisPage', () => {
   })
 
   it('CSV 버튼은 전체 matrix 대신 Worker export 명령을 보낸다', async () => {
-    renderPage('/analysis?structure=1&experiment=2')
+    renderPage('/?structure=1&experiment=2')
     await screen.findAllByText('24')
 
     await userEvent.click(screen.getByRole('button', { name: '분석 데이터 CSV' }))

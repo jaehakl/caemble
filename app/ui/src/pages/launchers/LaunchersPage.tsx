@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { RefreshCw, RotateCcw, Server, Square, Wrench } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { Navigate, useLocation } from 'react-router'
 import { dbTables } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,12 +9,12 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { PageHeader } from '@/components/PageHeader'
 import { useAuth } from '@/features/auth/use-auth'
+import { WorkbenchSignInPrompt } from '@/features/auth/WorkbenchSignInPrompt'
 import { formatRuntimeDate, runtimeErrorMessage } from '@/features/runtime/format'
 import { bundledSlaveManifests } from '@/features/runtime/manifests'
 
-export function LaunchersPage() {
+export function LaunchersWorkspace({ onRequestLogin }: { onRequestLogin?: () => void }) {
   const auth = useAuth()
-  const location = useLocation()
   const [activeOnly, setActiveOnly] = useState(true)
   const [actionLauncherId, setActionLauncherId] = useState<string | null>(null)
   const [reconciling, setReconciling] = useState(false)
@@ -47,7 +46,12 @@ export function LaunchersPage() {
       </div>
     )
   if (!auth.isAuthenticated)
-    return <Navigate replace state={{ from: `${location.pathname}${location.search}` }} to="/login" />
+    return (
+      <WorkbenchSignInPrompt
+        description="Launcher 상태를 확인하려면 Account에서 로그인하세요."
+        onSignIn={() => onRequestLogin?.()}
+      />
+    )
 
   async function runAction(id: string, action: 'cancel' | 'reset') {
     const question =
@@ -213,5 +217,3 @@ function EmptyRow({ text }: { text: string }) {
     </TableRow>
   )
 }
-
-export const Component = LaunchersPage
