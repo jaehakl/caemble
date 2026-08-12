@@ -10,13 +10,12 @@ from models import (
     GetListResponseBase,
     SaveCodeEntityResponse,
     SaveExperimentRequest,
-    UpsertResponseBase,
     UserData,
 )
 from user_auth.routes import get_db
 from user_auth.utils.auth_wrapper import require_roles
 from service.experiment import get_experiment_history, save_experiment as save_experiment_entity
-from utils.crud import CrudSpec, delete_items, get_list_response, upsert_items
+from utils.crud import CrudSpec, delete_items, get_list_response
 
 
 router = APIRouter(prefix="/experiment", tags=["experiment"])
@@ -60,15 +59,6 @@ async def list_experiments(
     user: UserData | None = Depends(require_roles(["*"])),
 ):
     return await get_list_response(db, request, CRUD_SPEC, user=user)
-
-
-@router.post("/upsert", response_model=list[UpsertResponseBase])
-async def upsert_experiments(
-    items: list[ExperimentBase],
-    db: AsyncSession = Depends(get_db),
-    user: UserData = Depends(require_roles(["admin", "user"])),
-):
-    return await upsert_items(db, items, CRUD_SPEC, user=user)
 
 
 @router.delete("/", status_code=200)

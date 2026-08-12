@@ -29,7 +29,7 @@ def auth_headers(user: User) -> dict[str, str]:
 
 def experiment_source_bundle(label: str = "experiment") -> dict:
     return {
-        "formatVersion": 1,
+        "formatVersion": 2,
         "files": {
             "experiment.tsx": label,
             "simulate.py": "async def simulate(*, sim, tasks, vars):\n    return None\n",

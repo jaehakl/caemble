@@ -2,22 +2,17 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from 're
 
 const CurrentCadSelectionContext = createContext<{
   currentExperimentId: number | null
-  currentStructureId: number | null
   setCurrentExperimentId: (id: number | null) => void
-  setCurrentStructureId: (id: number | null) => void
 } | null>(null)
 
 export function CurrentCadSelectionProvider({ children }: { children: ReactNode }) {
   const [currentExperimentId, setCurrentExperimentId] = useState<number | null>(null)
-  const [currentStructureId, setCurrentStructureId] = useState<number | null>(null)
   const value = useMemo(
     () => ({
       currentExperimentId,
-      currentStructureId,
       setCurrentExperimentId,
-      setCurrentStructureId,
     }),
-    [currentExperimentId, currentStructureId],
+    [currentExperimentId],
   )
 
   return <CurrentCadSelectionContext.Provider value={value}>{children}</CurrentCadSelectionContext.Provider>

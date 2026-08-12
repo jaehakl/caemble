@@ -1,9 +1,10 @@
 import { transform } from 'esbuild'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { buildSourceOnlyRealization } from '../src/lib/cad/execution/realization'
+import { buildSourceOnlyMeasurement } from '../src/lib/cad/execution/measurement'
 import { serializeEvaluatedDocumentSnapshot } from '../src/lib/cad/execution/snapshot'
 import { evaluateDocumentEntry, loadCompiledCode, loadCompiledTaskCode } from '../src/lib/cad/execution/userModule'
+import { generateRandomVars } from '../src/lib/cad/model/vars'
 import {
   cadSourceHash,
   createCadSourceDocument,
@@ -12,11 +13,7 @@ import {
   experimentTaskName,
   experimentTaskPaths,
 } from '../src/lib/cad/source/document'
-import {
-  CAEMBLE_PROGRAM_EXAMPLE_SEED,
-  caembleProgramExamples,
-  type CaembleProgramExample,
-} from '../src/lib/examples/programs'
+import { caembleProgramExamples, type CaembleProgramExample } from '../src/lib/examples/programs'
 import { serializeCaeRequest } from '../src/features/cae/request'
 
 function argument(name: string) {
@@ -37,13 +34,8 @@ async function compileSource(source: string) {
   ).code
 }
 
-async function buildRealizations(example: CaembleProgramExample) {
-  const structureDocument = createCadSourceDocument('structure', example.structureCode, CAEMBLE_PROGRAM_EXAMPLE_SEED)
-  const experimentDocument = createCadSourceDocument(
-    'experiment',
-    example.experimentSourceBundle,
-    CAEMBLE_PROGRAM_EXAMPLE_SEED,
-  )
+async function buildMeasurement(example: CaembleProgramExample) {
+  const experimentDocument = createCadSourceDocument('experiment', example.experimentSourceBundle)
   const taskDefinitions = Object.fromEntries(
     await Promise.all(
       experimentTaskPaths(example.experimentSourceBundle).map(async (taskPath) => [
@@ -52,33 +44,19 @@ async function buildRealizations(example: CaembleProgramExample) {
       ]),
     ),
   )
-  const structure = serializeEvaluatedDocumentSnapshot(
-    evaluateDocumentEntry(
-      loadCompiledCode(await compileSource(example.structureCode), 'structure'),
-      'structure',
-      await cadSourceHash(structureDocument),
-      CAEMBLE_PROGRAM_EXAMPLE_SEED,
-    ),
-  )
   const experimentSource = example.experimentSourceBundle.files[EXPERIMENT_ENTRY_PATH]
   const simulationSource = example.experimentSourceBundle.files[EXPERIMENT_SIMULATION_PATH]
+  const entry = loadCompiledCode(await compileSource(experimentSource))
   const experiment = serializeEvaluatedDocumentSnapshot(
     evaluateDocumentEntry(
-      loadCompiledCode(await compileSource(experimentSource), 'experiment'),
-      'experiment',
+      entry,
       await cadSourceHash(experimentDocument),
-      CAEMBLE_PROGRAM_EXAMPLE_SEED,
-      {},
+      generateRandomVars(entry.varsSchema),
       simulationSource,
       taskDefinitions,
     ),
   )
-  const sample = buildSourceOnlyRealization(structure)
-  const setup = buildSourceOnlyRealization(experiment)
-  if (sample.kind !== 'sample' || setup.kind !== 'setup') {
-    throw new Error(`${example.id} did not build a sample/setup pair.`)
-  }
-  return { sample, setup }
+  return buildSourceOnlyMeasurement(experiment)
 }
 
 const exampleId = argument('example')
@@ -103,8 +81,8 @@ if (outputDirectory === path.parse(outputDirectory).root || outputDirectory === 
   throw new Error(`Refusing unsafe fixture output directory: ${outputDirectory}`)
 }
 
-const realizations = await buildRealizations(example)
-const request = serializeCaeRequest(realizations.sample, realizations.setup)
+const measurement = await buildMeasurement(example)
+const request = serializeCaeRequest(measurement)
 await mkdir(outputDirectory, { recursive: true })
 await rm(attachmentDirectory, { recursive: true, force: true })
 await mkdir(attachmentDirectory)

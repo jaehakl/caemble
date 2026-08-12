@@ -16,8 +16,8 @@ describe('simulationProgramManifest', () => {
       'async def simulate(*, sim, tasks, vars):\n    return None\n',
     )
 
-    expect(manifest.formatVersion).toBe(4)
-    expect(manifest.simulationApiVersion).toBe(2)
+    expect(manifest.formatVersion).toBe(5)
+    expect(manifest.simulationApiVersion).toBe(3)
     expect(manifest.recordedData.currentDensity.basis).toEqual(identityCartesianBasis)
     expect(manifest.recordedData.currentDensity.tensorOrder).toBe(1)
   })

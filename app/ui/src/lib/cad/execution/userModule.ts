@@ -6,24 +6,18 @@ import {
 } from '../compiler/types'
 import { evaluateCadScene } from '../evaluation/evaluator'
 import { Fragment, h } from '../evaluation/jsx'
-import { CadModelError, evaluateWithVars, isFloatDType, Mat, Material, Structure } from '../model/core'
+import type { CadScene } from '../evaluation/types'
+import { CadModelError, evaluateWithVars, isFloatDType, Mat, Material } from '../model/core'
 import {
   defineTask,
   experiment,
   ExperimentDefinition,
-  structure,
-  StructureDefinition,
   TaskDefinition,
-  type CadDefinition,
   type ExternalVars,
-} from '../model/v4'
-import { assertUcumUnitComparable, convertUcumValue, normalizeUcumUnit } from '../model/units'
-import {
-  EXPERIMENT_ENTRY_PATH,
-  EXPERIMENT_SIMULATION_PATH,
-  experimentTaskName,
-  type CadDocumentType,
-} from '../source/document'
+} from '../model/v5'
+import { assertUcumUnitComparable, convertUcumValue, normalizeUcumUnit, type UcumUnit } from '../model/units'
+import type { VarsSchemaEntry } from '../model/vars'
+import { EXPERIMENT_ENTRY_PATH, EXPERIMENT_SIMULATION_PATH, experimentTaskName } from '../source/document'
 import type { EvaluatedRuntimeDocumentSnapshot } from './snapshot'
 
 const coreModule = Object.freeze({
@@ -37,14 +31,22 @@ const coreModule = Object.freeze({
   Mat,
   Material,
   normalizeUcumUnit,
-  structure,
-  Structure,
-  StructureDefinition,
   TaskDefinition,
 })
 
+const deterministicMath = Object.freeze(
+  Object.fromEntries(
+    Object.getOwnPropertyNames(Math)
+      .filter((name) => name !== 'random')
+      .map((name) => [name, (Math as unknown as Record<string, unknown>)[name]]),
+  ),
+)
+
 export type CadExecutionResult = EvaluatedRuntimeDocumentSnapshot
-export type CadDocumentEntry = CadDefinition
+export type CadDocumentEntry = ExperimentDefinition
+export type CadInspectionResult = Readonly<{
+  varsSchema: Readonly<Record<string, VarsSchemaEntry>>
+}>
 
 export function requireCaembleModule(specifier: string) {
   if (specifier === '@caemble/core') return coreModule
@@ -60,14 +62,52 @@ function loadCompiledModule(jsCode: string) {
     'require',
     'exports',
     'module',
+    'Math',
+    'Date',
+    'crypto',
+    'performance',
+    'globalThis',
+    'window',
+    'self',
+    'fetch',
+    'Function',
+    'XMLHttpRequest',
+    'WebSocket',
+    'queueMicrotask',
+    'setInterval',
+    'setTimeout',
     `"use strict";\n${jsCode}\nreturn module.exports;`,
   )
-  const moduleExports = runner(h, Fragment, requireCaembleModule, exports, module) as Record<string, unknown>
+  const moduleExports = runner(
+    h,
+    Fragment,
+    requireCaembleModule,
+    exports,
+    module,
+    deterministicMath,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+  ) as Record<string, unknown>
   return moduleExports.default ?? exports.default
 }
 
-export function loadCompiledCode(jsCode: string, documentType: CadDocumentType): CadDocumentEntry {
-  return assertDocumentEntry(loadCompiledModule(jsCode), documentType)
+export function loadCompiledCode(jsCode: string): ExperimentDefinition {
+  const entry = loadCompiledModule(jsCode)
+  if (!(entry instanceof ExperimentDefinition)) {
+    throw new CadModelError('Experiment Source must export default experiment({...}) from @caemble/core.')
+  }
+  return entry
 }
 
 export function loadCompiledTaskCode(jsCode: string) {
@@ -78,30 +118,16 @@ export function loadCompiledTaskCode(jsCode: string) {
   return entry
 }
 
-function assertDocumentEntry(entry: unknown, documentType: CadDocumentType): CadDocumentEntry {
-  if (documentType === 'experiment') {
-    if (!(entry instanceof ExperimentDefinition)) {
-      throw new CadModelError('Experiment Source must export default experiment({...}) from @caemble/core.')
-    }
-    return entry
-  }
-  if (!(entry instanceof StructureDefinition) || entry instanceof ExperimentDefinition) {
-    throw new CadModelError('Structure Source must export default structure({...}) from @caemble/core.')
-  }
-  return entry
-}
-
-export function loadCompiledSource(compiledSource: CompiledCadSource, documentType: CadDocumentType): CadDocumentEntry {
+export function loadCompiledSource(compiledSource: CompiledCadSource) {
   assertCompiledCadSource(compiledSource)
-  const expectedEntry = `${documentType}.tsx`
-  if (compiledSource.entryFile !== expectedEntry) {
-    throw new CadModelError(`Compiled CAD source entry ${compiledSource.entryFile} does not match ${documentType}.`)
+  if (compiledSource.entryFile !== EXPERIMENT_ENTRY_PATH) {
+    throw new CadModelError(`Compiled Experiment source entry must be ${EXPERIMENT_ENTRY_PATH}.`)
   }
-  return loadCompiledCode(compiledSource.code, documentType)
+  return loadCompiledCode(compiledSource.code)
 }
 
 function taskDefinitionsFromCompiled(compiled: CompiledCadDocument) {
-  return Object.freeze(
+  const definitions = Object.freeze(
     Object.fromEntries(
       Object.entries(compiled.sources)
         .flatMap(([path, source]) => {
@@ -111,139 +137,104 @@ function taskDefinitionsFromCompiled(compiled: CompiledCadDocument) {
         .sort(([left], [right]) => left.localeCompare(right)),
     ),
   )
+  if (Object.keys(definitions).length === 0) throw new CadModelError('Experiment requires at least one Task.')
+  return definitions
+}
+
+function compiledExperimentEntry(compiled: CompiledCadDocument) {
+  assertCompiledCadDocument(compiled)
+  const entrySource = compiled.sources[EXPERIMENT_ENTRY_PATH]
+  if (!entrySource) throw new CadModelError(`Compiled Experiment is missing ${EXPERIMENT_ENTRY_PATH}.`)
+  return loadCompiledCode(entrySource.code)
+}
+
+export function inspectCompiledDocument(compiled: CompiledCadDocument): CadInspectionResult {
+  const entry = compiledExperimentEntry(compiled)
+  taskDefinitionsFromCompiled(compiled)
+  return Object.freeze({ varsSchema: entry.varsSchema })
+}
+
+function emptyTaskScene(label: string, lengthUnit: UcumUnit): CadScene {
+  return {
+    lengthUnit,
+    parts: [],
+    tree: { key: label.toLowerCase().replace(/[^a-z0-9]+/gu, '-'), label, children: [] },
+    geometryGroups: [],
+    surfaceGroups: [],
+  }
 }
 
 export function evaluateDocumentEntry(
-  entry: CadDocumentEntry,
-  documentType: CadDocumentType,
+  entry: ExperimentDefinition,
   sourceHash: string,
-  seed: number,
-  partialVars: ExternalVars = {},
-  pythonSource?: string,
-  taskDefinitions: Readonly<Record<string, TaskDefinition>> = {},
+  vars: ExternalVars,
+  pythonSource: string,
+  taskDefinitions: Readonly<Record<string, TaskDefinition>>,
 ): CadExecutionResult {
-  if (!Number.isSafeInteger(seed) || seed < 0) {
-    throw new CadModelError('Evaluation seed must be a non-negative safe integer.')
+  if (typeof pythonSource !== 'string' || !pythonSource.trim()) {
+    throw new CadModelError('Experiment evaluation requires non-empty Python simulation source.')
   }
-
-  if (documentType === 'experiment') {
-    if (!(entry instanceof ExperimentDefinition)) {
-      throw new CadModelError('Experiment Source must export default experiment({...}) from @caemble/core.')
-    }
-    if (typeof pythonSource !== 'string' || !pythonSource.trim()) {
-      throw new CadModelError('Experiment evaluation requires non-empty Python simulation source.')
-    }
-    const variables = entry.resolveExternal(partialVars, seed)
-    return evaluateWithVars(
-      variables,
-      () => {
-        const runtime = entry.createProgramRuntime(variables, pythonSource, taskDefinitions)
-        const taskScenes = Object.freeze(
-          Object.fromEntries(
-            Object.entries(taskDefinitions).map(([name, task]) => [
-              name,
-              evaluateCadScene(
-                task.evaluateResolvedGeometry(variables),
-                { geometryGroup: task.geometryGroup, surfaceGroup: task.surfaceGroup },
-                `Task ${JSON.stringify(name)}`,
-                task.lengthUnit,
-              ),
-            ]),
-          ),
-        )
-        return Object.freeze({
-          kind: 'experiment' as const,
-          sourceHash,
-          seed,
-          taskScenes,
-          variables,
-          varsSchema: entry.varsSchema,
-          simulationProgram: runtime.manifest,
-        })
-      },
-      seed,
+  const variables = entry.resolveExternal(vars)
+  return evaluateWithVars(variables, () => {
+    const runtime = entry.createProgramRuntime(variables, pythonSource, taskDefinitions)
+    const scene = evaluateCadScene(
+      entry.evaluateResolvedGeometry(variables),
+      { geometryGroup: entry.geometryGroup, surfaceGroup: entry.surfaceGroup },
+      'Experiment',
+      entry.lengthUnit,
     )
-  }
-
-  if (!(entry instanceof StructureDefinition) || entry instanceof ExperimentDefinition) {
-    throw new CadModelError('Structure Source must export default structure({...}) from @caemble/core.')
-  }
-  const variables = entry.resolveExternal(partialVars, seed)
-  return evaluateWithVars(
-    variables,
-    () =>
-      Object.freeze({
-        kind: 'structure' as const,
-        sourceHash,
-        seed,
-        scene: evaluateCadScene(
-          entry.evaluateResolvedGeometry(variables),
-          { geometryGroup: entry.geometryGroup, surfaceGroup: entry.surfaceGroup },
-          'Structure',
-          entry.lengthUnit,
-        ),
-        variables,
-        varsSchema: entry.varsSchema,
-      }),
-    seed,
-  )
+    const taskScenes = Object.freeze(
+      Object.fromEntries(
+        Object.entries(taskDefinitions).map(([name, task]) => {
+          const label = `Task ${JSON.stringify(name)}`
+          const lengthUnit = task.lengthUnit ?? entry.lengthUnit
+          const root = task.evaluateResolvedGeometry(variables)
+          return [
+            name,
+            root === undefined
+              ? emptyTaskScene(label, lengthUnit)
+              : evaluateCadScene(
+                  root,
+                  { geometryGroup: task.geometryGroup, surfaceGroup: task.surfaceGroup },
+                  label,
+                  lengthUnit,
+                ),
+          ]
+        }),
+      ),
+    )
+    return Object.freeze({
+      kind: 'experiment' as const,
+      sourceHash,
+      variables,
+      varsSchema: entry.varsSchema,
+      scene,
+      taskScenes,
+      simulationProgram: runtime.manifest,
+    })
+  })
 }
 
 export function executeCompiledCode(
   jsCode: string,
-  documentType: CadDocumentType = 'structure',
-  sourceHash = 'test-source',
-  seed = 0,
-  partialVars: ExternalVars = {},
-  pythonSource?: string,
-  taskDefinitions: Readonly<Record<string, TaskDefinition>> = {},
+  sourceHash: string,
+  vars: ExternalVars,
+  pythonSource: string,
+  taskDefinitions: Readonly<Record<string, TaskDefinition>>,
 ) {
-  return evaluateDocumentEntry(
-    loadCompiledCode(jsCode, documentType),
-    documentType,
-    sourceHash,
-    seed,
-    partialVars,
-    pythonSource,
-    taskDefinitions,
-  )
+  return evaluateDocumentEntry(loadCompiledCode(jsCode), sourceHash, vars, pythonSource, taskDefinitions)
 }
 
 export function executeCompiledDocument(
   compiled: CompiledCadDocument,
-  documentType: CadDocumentType,
-  seed: number,
-  partialVars: ExternalVars = {},
+  vars: ExternalVars,
   pythonSource?: string,
 ) {
-  assertCompiledCadDocument(compiled)
-  const entryPath = documentType === 'structure' ? 'structure.tsx' : EXPERIMENT_ENTRY_PATH
-  const entrySource = compiled.sources[entryPath]
-  if (!entrySource) throw new CadModelError(`Compiled CAD document is missing ${entryPath}.`)
-  if (documentType === 'structure' && Object.keys(compiled.sources).length !== 1) {
-    throw new CadModelError('Compiled Structure document cannot contain Task sources.')
-  }
-  const taskDefinitions = documentType === 'experiment' ? taskDefinitionsFromCompiled(compiled) : {}
-  if (documentType === 'experiment' && !pythonSource?.trim()) {
+  const entry = compiledExperimentEntry(compiled)
+  if (!pythonSource?.trim()) {
     throw new CadModelError(`Compiled Experiment document is missing ${EXPERIMENT_SIMULATION_PATH}.`)
   }
-  return evaluateDocumentEntry(
-    loadCompiledCode(entrySource.code, documentType),
-    documentType,
-    compiled.sourceHash,
-    seed,
-    partialVars,
-    pythonSource,
-    taskDefinitions,
-  )
+  return evaluateDocumentEntry(entry, compiled.sourceHash, vars, pythonSource, taskDefinitionsFromCompiled(compiled))
 }
 
-export function executeCompiledSource(
-  compiled: CompiledCadDocument,
-  documentType: CadDocumentType,
-  seed: number,
-  partialVars: ExternalVars = {},
-  pythonSource?: string,
-) {
-  return executeCompiledDocument(compiled, documentType, seed, partialVars, pythonSource)
-}
+export const executeCompiledSource = executeCompiledDocument

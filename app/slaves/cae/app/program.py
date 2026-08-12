@@ -6,7 +6,7 @@ from typing import Any
 
 from app.errors import CaeError
 
-SIMULATION_API_VERSION = "2"
+SIMULATION_API_VERSION = "3"
 MAX_SIMULATION_SOURCE_BYTES = 1024 * 1024
 
 _ALLOWED_NODES = {
@@ -78,7 +78,7 @@ _ALLOWED_BUILTINS = {
     "tuple": tuple,
     "zip": zip,
 }
-_SIM_METHODS = {"run", "record", "release", "random"}
+_SIM_METHODS = {"run", "record", "release"}
 _RESERVED_NAMES = {*_ALLOWED_BUILTINS, "sim", "tasks", "vars"}
 
 
@@ -135,7 +135,7 @@ def validate_and_load_simulate(source: str) -> Any:
             ):
                 raise CaeError(
                     "invalid_program",
-                    "only direct sim.run/record/release/random attributes are allowed",
+                    "only direct sim.run/record/release attributes are allowed",
                 )
         if isinstance(node, ast.Call):
             _validate_call(node)
@@ -175,4 +175,4 @@ def _validate_call(node: ast.Call) -> None:
         or function.value.id != "sim"
         or function.attr not in _SIM_METHODS
     ):
-        raise CaeError("invalid_program", "only approved builtins and sim.run/record/release/random may be called")
+        raise CaeError("invalid_program", "only approved builtins and sim.run/record/release may be called")

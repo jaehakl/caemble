@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { MeasurementRecord, RecordedDataRecord, SampleRecord, SetupRecord } from '@/api'
+import type { MeasurementRecord, RecordedDataRecord } from '@/api'
 import {
   buildAnalysisDataset,
   createCsv,
@@ -10,31 +10,22 @@ import {
 } from './analysis-engine'
 
 function createDataset(targetValue = (width: number, voltage: number) => width * 3 + voltage * 2) {
-  const samples: SampleRecord[] = Array.from({ length: 5 }, (_, index) => ({
-    id: index + 1,
-    structure_id: 11,
-    vars: {
-      width: index + 1,
-      sampleId: index + 100,
-      metadata: { revision: index },
-      nested: { offset: index * 0.25 },
-    },
-    material_parameters: { schemaVersion: 1, materials: {} },
-  }))
-  const setups: SetupRecord[] = Array.from({ length: 6 }, (_, index) => ({
-    id: index + 101,
-    experiment_id: 22,
-    vars: { voltage: index + 0.5, steps: index + 2 },
-    material_parameters: { schemaVersion: 1, materials: {} },
-  }))
   const measurements: MeasurementRecord[] = []
   const recordedData: RecordedDataRecord[] = []
-  samples.forEach((sample) => {
-    setups.forEach((setup) => {
+  Array.from({ length: 5 }, (_, widthIndex) => widthIndex + 1).forEach((width) => {
+    Array.from({ length: 6 }, (_, voltageIndex) => voltageIndex + 0.5).forEach((voltage) => {
       const id = measurements.length + 1_000
-      measurements.push({ id, sample_id: sample.id!, setup_id: setup.id! })
-      const width = sample.vars.width as number
-      const voltage = setup.vars.voltage as number
+      measurements.push({
+        id,
+        experiment_id: 22,
+        vars: { width, voltage, nested: { offset: (width - 1) * 0.25 } },
+        material_parameters: {
+          schemaVersion: 2,
+          experiment: { schemaVersion: 1, materials: {} },
+          tasks: { main: { schemaVersion: 1, materials: {} } },
+        },
+        recorded_at: '2026-08-12T00:00:00Z',
+      })
       const response = targetValue(width, voltage)
       const responseBytes = new Uint8Array(8)
       new DataView(responseBytes.buffer).setFloat64(0, response, true)
@@ -87,9 +78,6 @@ function createDataset(targetValue = (width: number, voltage: number) => width *
     fingerprint: 'fixture',
     measurements,
     recordedData,
-    samples,
-    setups,
-    structureId: 11,
   })
 }
 
@@ -109,14 +97,13 @@ describe('Analysis engine', () => {
 
     expect(dataset.profile).toMatchObject({
       rowCount: 30,
-      sampleCount: 5,
-      setupCount: 6,
+      preparedCount: 0,
+      recordedMeasurementCount: 30,
       recordedDataCount: 60,
     })
     expect(response?.eligible).toBe(true)
     expect(response?.unit).toBe('1')
     expect(response?.histogram?.length).toBeGreaterThan(1)
-    expect(dataset.profile.columns.some((column) => column.key.includes('sampleId'))).toBe(false)
     expect(dataset.profile.columns.some((column) => column.key.includes('metadata'))).toBe(false)
     expect(dataset.profile.categoricalSummaries[0]).toMatchObject({
       name: 'state',
@@ -125,8 +112,109 @@ describe('Analysis engine', () => {
         { value: 'narrow', count: 12 },
       ]),
     })
-    expect(getTablePage(dataset, ['sample.vars.width', 'target:response'], 0, 1).rows).toHaveLength(1)
-    expect(getTablePage(dataset, ['sample.vars.width'], 0, 1_000).rows).toHaveLength(30)
+    expect(getTablePage(dataset, ['measurement.vars.width', 'target:response'], 0, 1).rows).toHaveLength(1)
+    expect(getTablePage(dataset, ['measurement.vars.width'], 0, 1_000).rows).toHaveLength(30)
+  })
+
+  it('v2 Measurement의 Experiment/Task Material을 입력 identity에 포함한다', () => {
+    const base: MeasurementRecord = {
+      id: 1,
+      experiment_id: 22,
+      vars: { width: 2 },
+      material_parameters: {
+        schemaVersion: 2,
+        experiment: {
+          schemaVersion: 1,
+          materials: {
+            Copper: {
+              'thermal.conductivity': {
+                value: { dtype: 'float64', quantityKind: 'ThermalConductivity', unit: 'W/(m.K)', value: 400 },
+              },
+            },
+          },
+        },
+        tasks: {
+          thermal: {
+            schemaVersion: 1,
+            materials: {
+              Copper: {
+                'general.mass_density': {
+                  value: { dtype: 'float64', quantityKind: 'MassDensity', unit: 'kg/m3', value: 8960 },
+                },
+              },
+            },
+          },
+        },
+      },
+      recorded_at: null,
+    }
+    const changedMaterial: MeasurementRecord = {
+      ...base,
+      id: 3,
+      material_parameters: {
+        ...base.material_parameters,
+        experiment: {
+          schemaVersion: 1,
+          materials: {
+            Copper: {
+              'thermal.conductivity': {
+                value: { dtype: 'float64', quantityKind: 'ThermalConductivity', unit: 'W/(m.K)', value: 401 },
+              },
+            },
+          },
+        },
+      },
+    }
+    const dataset = buildAnalysisDataset({
+      experimentId: 22,
+      fingerprint: 'materials',
+      measurements: [base, { ...base, id: 2 }, changedMaterial],
+      recordedData: [],
+    })
+
+    expect(dataset.profile.columns.map((column) => column.key)).toEqual(
+      expect.arrayContaining([
+        'measurement.material.experiment.Copper.thermal.conductivity',
+        'measurement.material.tasks.thermal.Copper.general.mass_density',
+      ]),
+    )
+    expect(dataset.rows[0].inputFingerprint).toBe(dataset.rows[1].inputFingerprint)
+    expect(dataset.rows[0].inputFingerprint).not.toBe(dataset.rows[2].inputFingerprint)
+  })
+
+  it('결과 기반 상관 분석에서 prepared Measurement를 제외한다', () => {
+    const measurements: MeasurementRecord[] = [1, 2, 3, 100, 200].map((value, index) => ({
+      id: index + 1,
+      experiment_id: 22,
+      vars: { x: value, y: value ** 2 },
+      material_parameters: {
+        schemaVersion: 2,
+        experiment: { schemaVersion: 1, materials: {} },
+        tasks: { main: { schemaVersion: 1, materials: {} } },
+      },
+      recorded_at: index < 3 ? '2026-08-12T00:00:00Z' : null,
+    }))
+    const recordedData: RecordedDataRecord[] = [1, 2, 3].map((value) => ({
+      id: value,
+      measurement_id: value,
+      name: 'response',
+      quantity_kind: null,
+      tensor_order: 0,
+      dtype: 'float64',
+      data_schema: { dtype: 'float64' },
+      data: { value },
+    }))
+    const dataset = buildAnalysisDataset({ experimentId: 22, fingerprint: 'recorded-only', measurements, recordedData })
+    const result = mineDataset(dataset, {
+      featureKeys: ['measurement.vars.x', 'measurement.vars.y'],
+      targetKey: 'target:response',
+      xKey: null,
+      yKey: null,
+      outlierFraction: 0.05,
+    })
+
+    expect(result.correlations[0][2]).toBeCloseTo(1)
+    expect(result.spearmanCorrelations[0][2]).toBeCloseTo(1)
   })
 
   it('streams a large persisted DataTensor through its accessor without materializing the tensor', () => {
@@ -141,7 +229,19 @@ describe('Analysis engine', () => {
     const dataset = buildAnalysisDataset({
       experimentId: 22,
       fingerprint: 'large-accessor',
-      measurements: [{ id: 1, sample_id: 1, setup_id: 1 }],
+      measurements: [
+        {
+          id: 1,
+          experiment_id: 22,
+          vars: {},
+          material_parameters: {
+            schemaVersion: 2,
+            experiment: { schemaVersion: 1, materials: {} },
+            tasks: { main: { schemaVersion: 1, materials: {} } },
+          },
+          recorded_at: '2026-08-12T00:00:00Z',
+        },
+      ],
       recordedData: [
         {
           id: 2,
@@ -164,9 +264,6 @@ describe('Analysis engine', () => {
           },
         },
       ],
-      samples: [{ id: 1, structure_id: 11, vars: {}, material_parameters: {} }],
-      setups: [{ id: 1, experiment_id: 22, vars: {}, material_parameters: {} }],
-      structureId: 11,
     })
 
     expect(dataset.profile.columns.find((column) => column.key === 'target:large:mean')?.mean).toBeCloseTo(
@@ -181,10 +278,10 @@ describe('Analysis engine', () => {
     const firstDataset = createDataset()
     const secondDataset = createDataset()
     const options = {
-      featureKeys: ['sample.vars.width', 'sample.vars.nested.offset', 'setup.vars.voltage'],
+      featureKeys: ['measurement.vars.width', 'measurement.vars.nested.offset', 'measurement.vars.voltage'],
       outlierFraction: 0.05,
       targetKey: 'target:response',
-      xKey: 'sample.vars.width',
+      xKey: 'measurement.vars.width',
       yKey: 'target:response',
     }
 
@@ -199,35 +296,35 @@ describe('Analysis engine', () => {
     expect(first.points.filter((point) => point.outlier).length).toBeGreaterThan(0)
   })
 
-  it('Sample group을 fold 사이에 섞지 않고 Ridge·Random Forest를 비교한다', () => {
+  it('동일 Measurement 입력을 fold 사이에 섞지 않고 Ridge·Random Forest를 비교한다', () => {
     const dataset = createDataset()
     const result = predictDataset(dataset, {
-      featureKeys: ['sample.vars.width', 'setup.vars.voltage'],
+      featureKeys: ['measurement.vars.width', 'measurement.vars.voltage'],
       targetKey: 'target:response',
-      whatIf: { 'sample.vars.width': 20, 'setup.vars.voltage': 2 },
+      whatIf: { 'measurement.vars.width': 20, 'measurement.vars.voltage': 2 },
     })
-    const foldsBySample = new Map<number, Set<number>>()
+    const foldsByInput = new Map<string, Set<number>>()
     result.rows.forEach((row) => {
-      const folds = foldsBySample.get(row.sampleId) ?? new Set<number>()
+      const folds = foldsByInput.get(row.inputFingerprint) ?? new Set<number>()
       folds.add(row.fold)
-      foldsBySample.set(row.sampleId, folds)
+      foldsByInput.set(row.inputFingerprint, folds)
     })
 
-    expect([...foldsBySample.values()].every((folds) => folds.size === 1)).toBe(true)
+    expect([...foldsByInput.values()].every((folds) => folds.size === 1)).toBe(true)
     expect([1e-4, 1e-3, 1e-2, 1e-1, 1, 10, 100, 1_000, 10_000]).toContain(result.ridgeAlpha)
     expect(result.selectedModel).toBe('ridge')
     expect(result.metrics.ridge.rmse).toBeLessThan(result.metrics.randomForest.rmse)
     expect(result.interval[0]).toBeLessThanOrEqual(result.prediction)
     expect(result.interval[1]).toBeGreaterThanOrEqual(result.prediction)
-    expect(result.extrapolatedFeatureKeys).toContain('sample.vars.width')
+    expect(result.extrapolatedFeatureKeys).toContain('measurement.vars.width')
   })
 
   it('비선형 target에서는 Random Forest importance까지 계산한다', () => {
     const dataset = createDataset((width, voltage) => Math.sin(voltage * 2) * 20 + width * 0.1)
     const result = predictDataset(dataset, {
-      featureKeys: ['sample.vars.width', 'setup.vars.voltage'],
+      featureKeys: ['measurement.vars.width', 'measurement.vars.voltage'],
       targetKey: 'target:response',
-      whatIf: { 'sample.vars.width': 3, 'setup.vars.voltage': 2.5 },
+      whatIf: { 'measurement.vars.width': 3, 'measurement.vars.voltage': 2.5 },
     })
 
     expect(result.selectedModel).toBe('random-forest')
@@ -237,12 +334,12 @@ describe('Analysis engine', () => {
 
   it('RFC 4180 escaping과 UTF-8 BOM을 적용한 CSV를 만든다', async () => {
     const dataset = createDataset()
-    const blob = createCsv(dataset, 'dataset', ['sample.vars.width', 'target:response'])
+    const blob = createCsv(dataset, 'dataset', ['measurement.vars.width', 'target:response'])
     const bytes = new Uint8Array(await blob.arrayBuffer())
     const text = await blob.text()
 
     expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf])
-    expect(text).toContain('measurement_id,sample_id,setup_id')
+    expect(text).toContain('measurement_id,input_fingerprint')
     expect(text.split('\r\n')).toHaveLength(31)
   })
 })

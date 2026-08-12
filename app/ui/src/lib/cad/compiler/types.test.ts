@@ -4,7 +4,7 @@ import { CAD_COMPILER_VERSION, assertCompiledCadSource, type CompiledCadSource }
 
 function compiled(): CompiledCadSource {
   return {
-    apiVersion: 4,
+    apiVersion: 5,
     compilerVersion: CAD_COMPILER_VERSION,
     entryFile: 'experiment.tsx',
     code: '"use strict";',

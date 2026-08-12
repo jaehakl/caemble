@@ -1,14 +1,16 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   CAD_SOURCE_API_VERSION,
+  CAD_SOURCE_FORMAT_VERSION,
+  EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION,
   MAX_CAD_SOURCE_BYTES,
   addExperimentTask,
+  assertCadSourceDocument,
   assertExperimentSourceBundle,
   cadSourceHash,
   createCadSourceDocument,
   createExperimentSourceBundle,
   removeExperimentTask,
-  rerollCadSourceDocument,
   updateCadSource,
   updateExperimentSourceFile,
 } from './document'
@@ -21,18 +23,20 @@ function bundle() {
   })
 }
 
-describe('CadSourceDocument', () => {
-  it('hashes sorted bundle paths and ignores realization seed', async () => {
-    const document = createCadSourceDocument('experiment', bundle(), 7)
+describe('ExperimentSourceDocument v2', () => {
+  it('hashes the complete sorted source bundle without generation state', async () => {
+    const document = createCadSourceDocument('experiment', bundle())
     const hash = await cadSourceHash(document)
 
-    expect(hash).toMatch(/^[0-9a-f]{64}$/)
-    await expect(cadSourceHash({ ...document, realizationSeed: 99 })).resolves.toBe(hash)
+    expect(hash).toMatch(/^[0-9a-f]{64}$/u)
     await expect(cadSourceHash(updateExperimentSourceFile(document, 'simulate.py', 'changed'))).resolves.not.toBe(hash)
+    expect(() => assertCadSourceDocument({ ...document, generationMetadata: { method: 'random' } })).toThrow(
+      'generationMetadata',
+    )
   })
 
   it('adds and removes independent Task files but keeps the last Task', () => {
-    const document = createCadSourceDocument('experiment', bundle(), 7)
+    const document = createCadSourceDocument('experiment', bundle())
     const added = addExperimentTask(document, 'thermal', 'thermal task')
     expect(Object.keys(added.sourceBundle.files)).toEqual([
       'experiment.tsx',
@@ -44,25 +48,23 @@ describe('CadSourceDocument', () => {
     expect(() => removeExperimentTask(document, 'electric')).toThrow('at least one Task')
   })
 
-  it('changes only source on edits and only seed on reroll', () => {
-    const document = createCadSourceDocument('structure', 'before', 7)
-    const edited = updateCadSource(document, 'after')
-    const random = vi.spyOn(globalThis.crypto, 'getRandomValues').mockImplementation(((array: Uint32Array) => {
-      array[0] = 7
-      return array
-    }) as Crypto['getRandomValues'])
-    expect(rerollCadSourceDocument(edited)).toEqual({ ...edited, realizationSeed: 8 })
-    random.mockRestore()
+  it('updates only the Experiment entry while preserving the bundle contract', () => {
+    const document = createCadSourceDocument('experiment', bundle())
+    const edited = updateCadSource(document, 'updated experiment')
+    expect(edited.sourceBundle.files['experiment.tsx']).toBe('updated experiment')
+    expect(edited).not.toHaveProperty('generationMetadata')
   })
 
-  it('validates paths, required files, UTF-8 sizes, and API v4', () => {
-    expect(CAD_SOURCE_API_VERSION).toBe(4)
-    expect(() => assertExperimentSourceBundle({ formatVersion: 1, files: { 'experiment.tsx': 'x' } })).toThrow(
+  it('validates paths, required files, UTF-8 sizes, and v5/v2 versions', () => {
+    expect(CAD_SOURCE_API_VERSION).toBe(5)
+    expect(CAD_SOURCE_FORMAT_VERSION).toBe(2)
+    expect(EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION).toBe(2)
+    expect(() => assertExperimentSourceBundle({ formatVersion: 2, files: { 'experiment.tsx': 'x' } })).toThrow(
       'requires experiment.tsx and simulate.py',
     )
     expect(() =>
       assertExperimentSourceBundle({
-        formatVersion: 1,
+        formatVersion: 2,
         files: { 'experiment.tsx': 'x', 'simulate.py': 'x', '../task.tsx': 'x' },
       }),
     ).toThrow('path is not allowed')

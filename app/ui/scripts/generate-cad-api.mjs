@@ -463,14 +463,13 @@ function materialModelCatalogMarkdown(materialModelCatalog) {
 await validateElementManifest()
 
 const [modelRuntime, coreRuntime] = await Promise.all([
-  loadBundledModule(path.join(root, 'src/lib/cad/model/v4.ts')),
+  loadBundledModule(path.join(root, 'src/lib/cad/model/v5.ts')),
   loadBundledModule(path.join(root, 'src/lib/cad/model/core.ts')),
 ])
 if (
-  typeof modelRuntime.structure !== 'function' ||
   typeof modelRuntime.experiment !== 'function' ||
-  typeof modelRuntime.StructureDefinition !== 'function' ||
   typeof modelRuntime.ExperimentDefinition !== 'function' ||
+  typeof modelRuntime.TaskDefinition !== 'function' ||
   typeof coreRuntime.Material !== 'function' ||
   typeof coreRuntime.Mat !== 'function'
 ) {

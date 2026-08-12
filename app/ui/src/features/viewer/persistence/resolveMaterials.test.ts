@@ -1,29 +1,40 @@
 import { primitives } from '@jscad/modeling'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { dbTables } from '@/api'
-import { serializeCadScene, type EvaluatedDocumentSnapshot } from '@/lib/cad'
+import { serializeCadScene, type EvaluatedExperimentSnapshot } from '@/lib/cad'
 import { createDocumentMaterialResolver } from './resolveMaterials'
 
-function materialSnapshot(seed: number): EvaluatedDocumentSnapshot {
+function scene(materialName: string) {
+  return serializeCadScene({
+    geometryGroups: [],
+    lengthUnit: 'mm',
+    parts: [
+      {
+        id: materialName,
+        geometry: primitives.cuboid({ size: [1, 1, 1] }),
+        material: { name: materialName, variables: { color: '#112233' } },
+        surfaces: [],
+      },
+    ],
+    surfaceGroups: [],
+    tree: { children: [], key: materialName, label: materialName },
+  })
+}
+
+function materialSnapshot(): EvaluatedExperimentSnapshot {
   return {
-    kind: 'structure',
-    scene: serializeCadScene({
-      geometryGroups: [],
-      lengthUnit: 'mm',
-      parts: [
-        {
-          id: 'body',
-          geometry: primitives.cuboid({ size: [seed, 1, 1] }),
-          material: { name: 'Core', variables: { color: '#112233' } },
-          surfaces: [],
-        },
-      ],
-      surfaceGroups: [],
-      tree: { children: [], key: 'structure', label: 'Structure' },
-    }),
-    seed,
+    kind: 'experiment',
+    scene: scene('Common'),
+    taskScenes: { Heat: scene('Task') },
+    simulationProgram: {
+      formatVersion: 5,
+      simulationApiVersion: 3,
+      pythonSource: 'async def simulate(*, sim, tasks, vars):\n    return None\n',
+      tasks: { Heat: { kernel: { name: 'test', version: '1' }, config: {} } },
+      recordedData: {},
+    },
     sourceHash: 'e'.repeat(64),
-    variables: { width: seed },
+    variables: { width: 2 },
     varsSchema: { width: { min: 1, max: 10 } },
   }
 }
@@ -31,32 +42,25 @@ function materialSnapshot(seed: number): EvaluatedDocumentSnapshot {
 describe('createDocumentMaterialResolver', () => {
   afterEach(() => vi.restoreAllMocks())
 
-  it('reuses database rows for the same material set and resolves every snapshot locally', async () => {
-    const listNames = vi.spyOn(dbTables.MaterialName, 'listRows').mockResolvedValue({
-      items: [{ id: 1, material_id: 10, name: 'Core' }],
-      total: 1,
-    })
-    const listMaterials = vi.spyOn(dbTables.Material, 'listRows').mockResolvedValue({
-      items: [{ id: 10 }],
-      total: 1,
-    })
-    const listParameters = vi.spyOn(dbTables.MaterialParameter, 'listRows').mockResolvedValue({
-      items: [],
-      total: 0,
-    })
-    const resolve = createDocumentMaterialResolver(null)
+  it('resolves common and Task-local materials into one Measurement snapshot', async () => {
+    vi.spyOn(dbTables.MaterialName, 'listRows').mockResolvedValue({ items: [], total: 0 })
+    const result = await createDocumentMaterialResolver(null)(materialSnapshot())
 
-    const first = await resolve(materialSnapshot(2))
-    const second = await resolve(materialSnapshot(4))
+    expect(result.materialParameters.materials).toHaveProperty('Common')
+    expect(result.taskMaterialParameters.Heat.materials).toHaveProperty('Task')
+  })
 
-    expect(listNames).toHaveBeenCalledOnce()
-    expect(listMaterials).toHaveBeenCalledOnce()
-    expect(listParameters).toHaveBeenCalledOnce()
-    expect(first).not.toBe(second)
-    expect('materialParameters' in first).toBe(true)
-    expect('materialParameters' in second).toBe(true)
-    if (!('materialParameters' in first) || !('materialParameters' in second)) throw new Error('Expected Structure')
-    expect(first.materialParameters.materials).toHaveProperty('Core')
-    expect(second.materialParameters.materials).toHaveProperty('Core')
+  it('replays an exact frozen schema-v2 snapshot without catalog queries', async () => {
+    const empty = { schemaVersion: 1, materials: {} } as const
+    const listNames = vi.spyOn(dbTables.MaterialName, 'listRows')
+    const result = await createDocumentMaterialResolver({
+      schemaVersion: 2,
+      experiment: empty,
+      tasks: { Heat: empty },
+    })(materialSnapshot())
+
+    expect(result.materialParameters).toBe(empty)
+    expect(result.taskMaterialParameters.Heat).toBe(empty)
+    expect(listNames).not.toHaveBeenCalled()
   })
 })

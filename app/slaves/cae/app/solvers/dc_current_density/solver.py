@@ -20,7 +20,7 @@ from app.solver_framework.world import (
     material_scalar,
     scalar_parameter,
     single_method,
-    structure_scene,
+    experiment_scene,
     surface,
     target_group,
 )
@@ -36,7 +36,7 @@ async def _run_dc(
     del state
     if inputs:
         raise CaeError("invalid_input", "dc-current-density does not accept artifact inputs")
-    scene = structure_scene(world)
+    scene = experiment_scene(world)
     grid_rule = single_method(config, "initializations", "dc.voxel-grid")
     group_name = target_group(grid_rule, "geometry")
     part = geometry_part(scene, group_name)

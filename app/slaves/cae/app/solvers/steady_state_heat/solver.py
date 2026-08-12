@@ -14,7 +14,7 @@ from app.solver_framework.world import (
     material_scalar,
     scalar_parameter,
     single_method,
-    structure_scene,
+    experiment_scene,
     surface,
     target_group,
 )
@@ -30,7 +30,7 @@ async def _run_heat(
     del state
     if any(name != "heatSource" for name in inputs):
         raise CaeError("invalid_input", "steady-state-heat received an undeclared artifact input")
-    scene = structure_scene(world)
+    scene = experiment_scene(world)
     grid_rule = single_method(config, "initializations", "heat.voxel-grid")
     group_name = target_group(grid_rule, "geometry")
     part = geometry_part(scene, group_name)

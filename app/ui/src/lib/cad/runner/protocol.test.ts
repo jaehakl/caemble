@@ -1,146 +1,77 @@
 import { describe, expect, it } from 'vitest'
 import { CAD_COMPILER_VERSION, type CompiledCadDocument } from '../compiler/types'
-import { serializeCadScene } from '../execution/mesh'
-import type { EvaluatedStructureSnapshot } from '../execution/snapshot'
 import {
   assertCadEvaluationRequest,
-  assertRunnerCancelEvaluationEnvelope,
-  assertRunnerEvaluationEnvelope,
-  assertRunnerEvaluationResultEnvelope,
-  assertRunnerEvaluationStartedEnvelope,
+  assertCadInspectionRequest,
+  assertRunnerCancelOperationEnvelope,
+  assertRunnerOperationEnvelope,
+  assertRunnerOperationResultEnvelope,
+  assertRunnerOperationStartedEnvelope,
 } from './protocol'
 
 const sourceHash = 'b'.repeat(64)
 const nonce = '12345678-1234-1234-1234-123456789abc'
-const scene = serializeCadScene({
-  geometryGroups: [],
-  lengthUnit: 'mm',
-  parts: [],
-  surfaceGroups: [],
-  tree: { children: [], key: 'structure', label: 'Structure' },
-})
-const compiledStructure: CompiledCadDocument = {
-  apiVersion: 4,
+const compiledExperiment: CompiledCadDocument = {
+  apiVersion: 5,
   compilerVersion: CAD_COMPILER_VERSION,
   sourceHash,
   sources: {
-    'structure.tsx': {
-      apiVersion: 4,
+    'experiment.tsx': {
+      apiVersion: 5,
       compilerVersion: CAD_COMPILER_VERSION,
-      entryFile: 'structure.tsx',
+      entryFile: 'experiment.tsx',
       code: 'module.exports.default = {}',
       sourceHash,
     },
   },
 }
-const experimentHash = 'c'.repeat(64)
-const compiledExperiment: CompiledCadDocument = {
-  apiVersion: 4,
-  compilerVersion: CAD_COMPILER_VERSION,
-  sourceHash: experimentHash,
-  sources: {
-    'experiment.tsx': {
-      apiVersion: 4,
-      compilerVersion: CAD_COMPILER_VERSION,
-      entryFile: 'experiment.tsx',
-      code: 'module.exports.default = {}',
-      sourceHash: experimentHash,
-    },
-  },
-}
-const structureSnapshot: EvaluatedStructureSnapshot = {
-  kind: 'structure',
-  scene,
-  seed: 7,
-  sourceHash,
-  variables: {},
-  varsSchema: {},
-}
-const evaluationRequest = {
-  type: 'evaluate' as const,
-  requestId: 'request-1',
-  revision: 3,
-  document: { kind: 'structure' as const, realizationSeed: 7 },
-  compiledDocument: compiledStructure,
-  vars: { width: 2 },
-}
 
-describe('isolated runner protocol', () => {
-  it('accepts the exact evaluate, start, result, and cancel messages', () => {
-    expect(() => assertCadEvaluationRequest(evaluationRequest)).not.toThrow()
+describe('isolated runner protocol v5', () => {
+  it('accepts exact inspect, evaluate, start, result, and cancel messages', () => {
+    const inspect = { type: 'inspect' as const, requestId: 'inspect-1', revision: 1, compiledDocument: compiledExperiment }
+    const evaluate = {
+      type: 'evaluate' as const,
+      requestId: 'evaluate-1',
+      revision: 2,
+      compiledDocument: compiledExperiment,
+      pythonSource: 'async def simulate(*, sim, tasks, vars):\n    return None\n',
+      vars: { width: 2 },
+    }
+    expect(() => assertCadInspectionRequest(inspect)).not.toThrow()
+    expect(() => assertCadEvaluationRequest(evaluate)).not.toThrow()
+    expect(() => assertRunnerOperationEnvelope({ type: 'inspect', nonce, request: inspect })).not.toThrow()
     expect(() =>
-      assertRunnerEvaluationEnvelope({
-        type: 'evaluate',
-        nonce,
-        request: evaluationRequest,
+      assertRunnerOperationStartedEnvelope({
+        type: 'operation-started', operation: 'inspect', nonce,
+        requestId: inspect.requestId, revision: inspect.revision, documentType: 'experiment',
       }),
     ).not.toThrow()
     expect(() =>
-      assertRunnerEvaluationStartedEnvelope({
-        type: 'evaluation-started',
-        nonce,
-        requestId: evaluationRequest.requestId,
-        revision: evaluationRequest.revision,
-        documentType: 'structure',
-      }),
-    ).not.toThrow()
-    expect(() =>
-      assertRunnerEvaluationResultEnvelope({
-        type: 'evaluation-result',
-        nonce,
+      assertRunnerOperationResultEnvelope({
+        type: 'operation-result', operation: 'inspect', nonce,
         response: {
-          type: 'evaluation-success',
-          documentType: 'structure',
-          requestId: evaluationRequest.requestId,
-          revision: evaluationRequest.revision,
-          snapshot: structureSnapshot,
+          type: 'inspection-success', requestId: inspect.requestId, revision: inspect.revision,
+          documentType: 'experiment', sourceHash, varsSchema: { width: { min: 1, max: 3 } },
         },
       }),
     ).not.toThrow()
-    expect(() =>
-      assertRunnerCancelEvaluationEnvelope({
-        type: 'cancel-evaluation',
-        nonce,
-        requestId: evaluationRequest.requestId,
-      }),
-    ).not.toThrow()
+    expect(() => assertRunnerCancelOperationEnvelope({ type: 'cancel-operation', nonce, requestId: inspect.requestId })).not.toThrow()
   })
 
-  it('rejects extra fields, wrong source kinds, and forged snapshot kinds', () => {
-    expect(() => assertCadEvaluationRequest({ ...evaluationRequest, elevated: true })).toThrow(
-      'request.elevated is not allowed',
-    )
+  it('rejects incomplete vars, extra fields, and mismatched operations', () => {
+    const evaluate = {
+      type: 'evaluate', requestId: 'evaluate-1', revision: 2, compiledDocument: compiledExperiment,
+      pythonSource: 'python', vars: {}, elevated: true,
+    }
+    expect(() => assertCadEvaluationRequest(evaluate)).toThrow('request.elevated is not allowed')
+    const { elevated, ...allowed } = evaluate
+    expect(elevated).toBe(true)
+    expect(() => assertCadEvaluationRequest({ ...allowed, vars: undefined })).toThrow('request.vars')
     expect(() =>
-      assertCadEvaluationRequest({
-        ...evaluationRequest,
-        compiledDocument: compiledExperiment,
+      assertRunnerOperationEnvelope({
+        type: 'inspect', nonce,
+        request: { type: 'evaluate', requestId: 'evaluate-1', revision: 2, compiledDocument: compiledExperiment, pythonSource: 'x', vars: {} },
       }),
-    ).toThrow('does not match the requested document kind')
-    expect(() =>
-      assertRunnerEvaluationResultEnvelope({
-        type: 'evaluation-result',
-        nonce,
-        response: {
-          type: 'evaluation-success',
-          documentType: 'experiment',
-          requestId: evaluationRequest.requestId,
-          revision: evaluationRequest.revision,
-          snapshot: structureSnapshot,
-        },
-      }),
-    ).toThrow('snapshot kind does not match')
-  })
-
-  it('rejects simulation messages as evaluation envelopes', () => {
-    expect(() =>
-      assertRunnerEvaluationEnvelope({
-        type: 'run-simulation',
-        nonce,
-        request: {
-          type: 'run-simulation',
-          requestId: 'simulation-1',
-        },
-      }),
-    ).toThrow('Runner evaluation type is invalid')
+    ).toThrow('does not match')
   })
 })

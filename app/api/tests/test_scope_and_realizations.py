@@ -1,9 +1,16 @@
-import pytest
-from sqlalchemy import select
+import hashlib
+import json
 
-from db import Experiment, Sample, Setup, Structure
+import pytest
+
+from db import DesignerModel, Experiment, PredictorModel
 from settings import settings
 from tests.helpers import auth_headers, create_user, experiment_source_bundle
+
+
+def bundle_hash(bundle: dict) -> str:
+    value = json.dumps(bundle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def list_payload(scope="visible"):
@@ -20,72 +27,62 @@ def list_payload(scope="visible"):
 
 
 @pytest.mark.asyncio
-async def test_visible_mine_public_scopes_and_realization_ownership(client, db_session, monkeypatch):
+async def test_experiment_visibility_and_removed_split_endpoints(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
     other = await create_user(db_session)
-    public_structure = Structure(name="Public", code="public", user_id=None)
-    owner_structure = Structure(name="Mine", code="mine", user_id=owner.id)
-    other_structure = Structure(name="Other", code="other", user_id=other.id)
-    owner_experiment = Experiment(name="Experiment", source_bundle=experiment_source_bundle(), user_id=owner.id)
-    other_experiment = Experiment(
-        name="Other experiment",
-        source_bundle=experiment_source_bundle("other experiment"),
-        user_id=other.id,
+    public_bundle = experiment_source_bundle("public")
+    mine_bundle = experiment_source_bundle("mine")
+    other_bundle = experiment_source_bundle("other")
+    db_session.add_all(
+        [
+            Experiment(name="Public", source_bundle=public_bundle, source_hash=bundle_hash(public_bundle), user_id=None),
+            Experiment(name="Mine", source_bundle=mine_bundle, source_hash=bundle_hash(mine_bundle), user_id=owner.id),
+            Experiment(name="Other", source_bundle=other_bundle, source_hash=bundle_hash(other_bundle), user_id=other.id),
+        ]
     )
-    db_session.add_all([public_structure, owner_structure, other_structure, owner_experiment, other_experiment])
     await db_session.commit()
 
-    anonymous = await client.post("/structure/list", json=list_payload())
-    assert anonymous.status_code == 200
-    assert {item["name"] for item in anonymous.json()["items"]} == {"Public"}
-    assert (await client.post("/structure/list", json=list_payload("mine"))).status_code == 401
-
+    assert {item["name"] for item in (await client.post("/experiment/list", json=list_payload())).json()["items"]} == {"Public"}
     headers = auth_headers(owner)
-    visible = await client.post("/structure/list", json=list_payload(), headers=headers)
+    visible = await client.post("/experiment/list", headers=headers, json=list_payload())
     assert {item["name"] for item in visible.json()["items"]} == {"Public", "Mine"}
-    mine = await client.post("/structure/list", json=list_payload("mine"), headers=headers)
-    assert {item["name"] for item in mine.json()["items"]} == {"Mine"}
-    public = await client.post("/structure/list", json=list_payload("public"), headers=headers)
-    assert {item["name"] for item in public.json()["items"]} == {"Public"}
+    assert all(len(item["source_hash"]) == 64 for item in visible.json()["items"])
 
-    sample_response = await client.post("/sample/upsert", headers=headers, json=[{
-        "structure_id": owner_structure.id,
-        "vars": {"size": [1, 2, 3]},
-        "material_parameters": {},
-    }])
-    assert sample_response.status_code == 200
-    sample = await db_session.get(Sample, sample_response.json()[0]["id"])
-    assert sample.user_id == owner.id
-    assert sample.material_parameters == {}
-    assert sample.vars == {"size": [1, 2, 3]}
+    for endpoint in ("structure", "sample", "setup"):
+        assert (await client.post(f"/{endpoint}/list", headers=headers, json=list_payload())).status_code == 404
 
-    forbidden_sample = await client.post("/sample/upsert", headers=headers, json=[{
-        "structure_id": other_structure.id,
-        "vars": {},
-        "material_parameters": {},
-    }])
-    assert forbidden_sample.status_code == 404
 
-    setup_response = await client.post("/setup/upsert", headers=headers, json=[{
-        "experiment_id": owner_experiment.id,
-        "vars": {"voltage": 1},
-        "material_parameters": {"schemaVersion": 1, "materials": {}},
-    }])
-    assert setup_response.status_code == 200
-    setup = await db_session.get(Setup, setup_response.json()[0]["id"])
-    assert setup.user_id == owner.id
-    assert setup.vars == {"voltage": 1}
-    assert setup.material_parameters == {"schemaVersion": 1, "materials": {}}
-    forbidden_setup = await client.post("/setup/upsert", headers=headers, json=[{
-        "experiment_id": other_experiment.id,
-        "vars": {},
-        "material_parameters": {},
-    }])
-    assert forbidden_setup.status_code == 404
+@pytest.mark.asyncio
+async def test_model_artifacts_are_scoped_only_by_experiment(client, db_session, monkeypatch):
+    monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
+    owner = await create_user(db_session)
+    other = await create_user(db_session)
+    mine_bundle = experiment_source_bundle("mine")
+    other_bundle = experiment_source_bundle("other")
+    mine = Experiment(name="Mine", source_bundle=mine_bundle, source_hash=bundle_hash(mine_bundle), user_id=owner.id)
+    hidden = Experiment(name="Hidden", source_bundle=other_bundle, source_hash=bundle_hash(other_bundle), user_id=other.id)
+    db_session.add_all([mine, hidden])
+    await db_session.commit()
+    headers = auth_headers(owner)
 
-    sample_rows = await client.post("/sample/list", json=list_payload("mine"), headers=headers)
-    setup_rows = await client.post("/setup/list", json=list_payload("mine"), headers=headers)
-    assert [item["id"] for item in sample_rows.json()["items"]] == [sample.id]
-    assert [item["id"] for item in setup_rows.json()["items"]] == [setup.id]
-    assert await db_session.scalar(select(Sample.id).where(Sample.id == sample.id)) == sample.id
+    designer = await client.post(
+        "/designer_model/upsert",
+        headers=headers,
+        json=[{"experiment_id": mine.id, "model_url": "designer.bin"}],
+    )
+    predictor = await client.post(
+        "/predictor_model/upsert",
+        headers=headers,
+        json=[{"experiment_id": mine.id, "model_url": "predictor.bin"}],
+    )
+    assert designer.status_code == predictor.status_code == 200
+    assert (await db_session.get(DesignerModel, designer.json()[0]["id"])).experiment_id == mine.id
+    assert (await db_session.get(PredictorModel, predictor.json()[0]["id"])).experiment_id == mine.id
+
+    forbidden = await client.post(
+        "/designer_model/upsert",
+        headers=headers,
+        json=[{"experiment_id": hidden.id}],
+    )
+    assert forbidden.status_code == 404

@@ -12,9 +12,6 @@ from routers import (
     measurement,
     predictor_model,
     recorded_data,
-    sample,
-    setup,
-    structure,
     users,
 )
 
@@ -26,10 +23,7 @@ app.include_router(material_name.router)
 app.include_router(material_parameter.router)
 app.include_router(material_parameter_qualifier.router)
 app.include_router(geometry.router)
-app.include_router(structure.router)
 app.include_router(experiment.router)
-app.include_router(sample.router)
-app.include_router(setup.router)
 app.include_router(measurement.router)
 app.include_router(recorded_data.router)
 app.include_router(designer_model.router)

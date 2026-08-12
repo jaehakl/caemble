@@ -3,7 +3,7 @@
   "implementation": "app.solvers.steady_state_heat.solver:run",
   "descriptor": {
     "name": "steady-state-heat",
-    "version": "0.0.0",
+    "version": "0.1.0",
     "description": "Solves steady-state heat conduction with fixed-temperature ends and adiabatic side walls.",
     "referenceLengthUnit": "m",
     "minimumOutputs": 1,
@@ -118,7 +118,7 @@
           "minimumOccurrences": 1,
           "maximumOccurrences": 1,
           "target": {
-            "source": "structure",
+            "source": "experiment",
             "kind": "geometry",
             "minimumTargets": 1,
             "maximumTargets": 1,
@@ -149,7 +149,7 @@
           "minimumOccurrences": 2,
           "maximumOccurrences": 2,
           "target": {
-            "source": "structure",
+            "source": "experiment",
             "kind": "surface",
             "minimumTargets": 1,
             "maximumTargets": 1,
@@ -177,7 +177,7 @@
           "minimumOccurrences": 0,
           "maximumOccurrences": 1,
           "target": {
-            "source": "structure",
+            "source": "experiment",
             "kind": "geometry",
             "minimumTargets": 1,
             "maximumTargets": 1,
@@ -216,7 +216,7 @@
           "minimumOccurrences": 0,
           "maximumOccurrences": 1,
           "target": {
-            "source": "structure",
+            "source": "experiment",
             "kind": "geometry",
             "minimumTargets": 1,
             "maximumTargets": 1,

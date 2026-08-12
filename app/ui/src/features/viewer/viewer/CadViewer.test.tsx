@@ -4,10 +4,10 @@ import type { CadScene } from '@/lib/cad'
 import CadViewer from './CadViewer'
 import { resolveCadViewerContent } from './cadViewerContent'
 
-const structureScene: CadScene = {
+const taskScene: CadScene = {
   lengthUnit: 'mm',
-  parts: [{ id: 'structure-part', geometry: {}, surfaces: [] }],
-  tree: { key: 'structure', label: 'Structure', children: [] },
+  parts: [{ id: 'task-part', geometry: {}, surfaces: [] }],
+  tree: { key: 'task', label: 'Task', children: [] },
   geometryGroups: [],
   surfaceGroups: [],
 }
@@ -21,11 +21,10 @@ const experimentScene: CadScene = {
 }
 
 describe('CadViewer', () => {
-  it('defaults available Structure and Experiment sources to visible', () => {
+  it('defaults common Experiment and Task geometry to visible', () => {
     const markup = renderToStaticMarkup(
       <CadViewer
-        experiment={{ scene: experimentScene, variables: { duration: 1 } }}
-        structure={{ scene: structureScene, variables: { width: 2 } }}
+        experiment={{ scene: experimentScene, taskScenes: { electric: taskScene }, variables: { duration: 1 } }}
         onRenderEnd={() => undefined}
         onRenderError={() => undefined}
         onRenderStart={() => undefined}
@@ -33,8 +32,8 @@ describe('CadViewer', () => {
     )
 
     expect(markup).toContain('aria-label="3D CAD Viewer"')
-    expect(markup).toMatch(/<button[^>]*aria-label="Toggle structure"[^>]*aria-pressed="true"/)
     expect(markup).toMatch(/<button[^>]*aria-label="Toggle experiment"[^>]*aria-pressed="true"/)
+    expect(markup).toMatch(/<button[^>]*aria-label="Toggle task"[^>]*aria-pressed="true"/)
     expect(markup).not.toContain('role="tab"')
     expect(markup).not.toContain('Material Grid')
     expect(markup).not.toContain('Results')
@@ -46,7 +45,6 @@ describe('CadViewer', () => {
     const markup = renderToStaticMarkup(
       <CadViewer
         experiment={null}
-        structure={{ scene: null, variables: null }}
         onRenderEnd={() => undefined}
         onRenderError={() => undefined}
         onRenderStart={() => undefined}
@@ -54,42 +52,39 @@ describe('CadViewer', () => {
     )
 
     expect(markup).toMatch(/<button[^>]*aria-label="Toggle experiment"[^>]*disabled/)
-    expect(markup).toContain('Waiting for model...')
+    expect(markup).toContain('No Experiment geometry is available.')
   })
 
-  it('builds Experiment then Structure layers and an explicit all-hidden state', () => {
+  it('builds common Experiment then Task layers and an explicit all-hidden state', () => {
     const visible = resolveCadViewerContent(
-      { scene: structureScene, variables: { width: 2 } },
-      { scene: experimentScene, variables: { duration: 1 } },
+      { scene: experimentScene, taskScenes: { electric: taskScene }, variables: { duration: 1 } },
       true,
       true,
     )
     const hidden = resolveCadViewerContent(
-      { scene: structureScene, variables: { width: 2 } },
-      { scene: experimentScene, variables: { duration: 1 } },
+      { scene: experimentScene, taskScenes: { electric: taskScene }, variables: { duration: 1 } },
       false,
       false,
     )
 
-    expect(visible.visibleSources).toEqual(['structure', 'experiment'])
-    expect(visible.layers.map((layer) => layer.documentType)).toEqual(['experiment', 'structure'])
+    expect(visible.visibleSources).toEqual(['experiment', 'task'])
+    expect(visible.layers.map((layer) => layer.source)).toEqual(['experiment', 'task'])
     expect(visible.lengthUnit).toBe('mm')
     expect(hidden.visibleSources).toEqual([])
     expect(hidden.layers).toEqual([])
-    expect(hidden.emptyMessage).toBe('All Structure and Experiment sources are hidden.')
+    expect(hidden.emptyMessage).toBe('All Experiment geometry layers are hidden.')
   })
 
-  it('prefers the Structure display unit while preserving each layer unit', () => {
-    const meterExperimentScene = { ...experimentScene, lengthUnit: 'm' } as const
+  it('prefers the common Experiment display unit while preserving each layer unit', () => {
+    const meterTaskScene = { ...taskScene, lengthUnit: 'm' } as const
     const content = resolveCadViewerContent(
-      { scene: structureScene, variables: {} },
-      { scene: meterExperimentScene, variables: {} },
+      { scene: experimentScene, taskScenes: { electric: meterTaskScene }, variables: {} },
       true,
       true,
     )
 
     expect(content.lengthUnit).toBe('mm')
-    expect(content.layers.map((layer) => layer.lengthUnit)).toEqual(['m', 'mm'])
-    expect(meterExperimentScene.lengthUnit).toBe('m')
+    expect(content.layers.map((layer) => layer.lengthUnit)).toEqual(['mm', 'm'])
+    expect(meterTaskScene.lengthUnit).toBe('m')
   })
 })

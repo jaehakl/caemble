@@ -1,22 +1,24 @@
 import { createExperimentSourceBundle } from '../../cad/source/document'
 import type { CaembleProgramExample } from './types'
 
-export const dcUniformBarStructureCode = `import {
+export const dcUniformBarExperimentCode = `import {
   Mat,
   Material,
-  structure,
+  experiment,
   type Geometry,
   type Vec3,
 } from '@caemble/core'
 
 const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />
 
-export default structure({
+export default experiment({
   lengthUnit: 'mm',
 
   varsSchema: {
     conductorSize: { min: [100, 5, 5], max: [100, 5, 5] },
     electricalConductivity: { min: 5.96e7, max: 5.96e7 },
+    sourceVoltage: { min: 1, max: 1 },
+    referenceVoltage: { min: 0, max: 0 },
   },
 
   geometry: ({ vars }) => (
@@ -45,16 +47,6 @@ export default structure({
     sourceTerminal: ['conductor/surface-1'],
     referenceTerminal: ['conductor/surface-2'],
   },
-})
-`
-
-export const dcUniformBarExperimentCode = `import { experiment } from '@caemble/core'
-
-export default experiment({
-  varsSchema: {
-    sourceVoltage: { min: 1, max: 1 },
-    referenceVoltage: { min: 0, max: 0 },
-  },
   recordedData: {
     totalCurrent: {
       dtype: 'float64',
@@ -72,7 +64,7 @@ function Probe() {
 }
 
 export default defineTask({
-  kernel: { name: 'dc-current-density', version: '0.0.0' },
+  kernel: { name: 'dc-current-density', version: '0.1.0' },
   lengthUnit: 'mm',
   geometry: () => <Probe id="probe" pos={[0, -10, 0]} />,
   config: ({ vars }) => ({
@@ -88,7 +80,7 @@ export default defineTask({
 
   initializations: [
     {
-      target: ['structure.geometry.conductor'],
+      target: ['experiment.geometry.conductor'],
       methodId: 'dc.voxel-grid',
       parameters: {
         gridShape: {
@@ -102,7 +94,7 @@ export default defineTask({
 
   boundaryConditions: [
     {
-      target: ['structure.surface.sourceTerminal'],
+      target: ['experiment.surface.sourceTerminal'],
       methodId: 'dc.source-potential',
       parameters: {
         voltage: {
@@ -114,7 +106,7 @@ export default defineTask({
       },
     },
     {
-      target: ['structure.surface.referenceTerminal'],
+      target: ['experiment.surface.referenceTerminal'],
       methodId: 'dc.reference-potential',
       parameters: {
         voltage: {
@@ -130,7 +122,7 @@ export default defineTask({
   outputs: [
     {
       key: 'totalCurrent',
-      target: ['structure.geometry.conductor'],
+      target: ['experiment.geometry.conductor'],
       methodId: 'dc.total-current',
       parameters: {
         crossSectionPosition: {
@@ -163,18 +155,17 @@ export const dcUniformBarExample = Object.freeze({
   title: 'DC Uniform Bar',
   description: '가장 작은 Experiment Program으로 균일 구리 막대의 전체 전류를 계산합니다.',
   concepts: Object.freeze([
-    'Structure group과 surface target',
+    'Experiment geometry group과 surface target',
     'task factory와 단일 sim.run()',
     '중간 artifact handle을 RecordedData로 기록',
   ]),
-  structureCode: dcUniformBarStructureCode,
   experimentSourceBundle: dcUniformBarExperimentSourceBundle,
   verification: Object.freeze({
     kernelTasks: Object.freeze(['solveCurrent']),
     recordedData: Object.freeze(['totalCurrent']),
     expectations: Object.freeze([
       'totalCurrent = 14.9 A ± 1e-6',
-      'dc-current-density@0.0.0 호출 1회',
+      'dc-current-density@0.1.0 호출 1회',
       'stateless DC 실행은 입력 state revision 유지',
     ]),
     fixture: Object.freeze({

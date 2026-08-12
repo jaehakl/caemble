@@ -1,54 +1,48 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type {
-  BuiltRealization,
-  CadDiagnostic,
-  CadDocumentType,
-  CadEvaluationResponse,
-  CadScene,
-  CadSourceDocument,
-  CompiledCadDocument,
-  EvaluatedDocumentSnapshot,
-  RecordedData,
-  TaskMaterialResolution,
-  Vars,
-} from '@/lib/cad'
+import { releaseRecordedDataAttachments, simulate } from '@/features/cae/client'
 import {
   EXPERIMENT_SIMULATION_PATH,
   addExperimentTask,
   applyFrozenMaterialParameters,
-  buildRealization,
-  buildSourceOnlyRealization,
+  buildMeasurement,
   CadCompilationError,
-  compileCadDocument,
+  CadDocumentEvaluationError,
   deserializeCadScene,
-  evaluateInIsolatedRunner,
-  rerollCadSourceDocument,
+  evaluateDocument,
+  generateRandomVars,
+  inspectDocument,
   removeExperimentTask,
   updateCadSource,
   updateExperimentSourceFile,
+  type BuiltMeasurement,
+  type CadDiagnostic,
+  type CadScene,
+  type EvaluatedExperimentSnapshot,
+  type ExperimentSourceDocument,
+  type RecordedData,
+  type Vars,
 } from '@/lib/cad'
-import { releaseRecordedDataAttachments, simulate } from '@/features/cae/client'
-import type { MaterialResolution } from '@/lib/material'
 import type { SimulationProgramManifest } from '@/lib/cad/simulation'
+import type { MeasurementMaterialParameters } from '../persistence/contracts'
+import { resolveDocumentMaterials } from '../persistence/resolveMaterials'
 import type { SimulationProcess } from './simulationUiTypes'
 
 export type AppStatus =
-  'Dirty' | 'Checking' | 'Compiling' | 'Evaluating' | 'Resolving Materials' | 'Ready' | 'Rendering' | 'Error'
+  | 'Dirty'
+  | 'Checking'
+  | 'Compiling'
+  | 'Evaluating'
+  | 'Resolving Materials'
+  | 'Ready'
+  | 'Rendering'
+  | 'Error'
 export type EvaluationTimeoutMs = 3000 | 10000 | 30000
 
-export type RunError = {
+export type RunError = Readonly<{
   title: string
   message: string
   stack?: string
-}
-
-const errorTitles = {
-  compile: 'Compile Error',
-  type: 'Type Error',
-  policy: 'Source Policy Error',
-  model: 'Model Error',
-  runtime: 'Runtime Error',
-}
+}>
 
 const idleSimulationProcess: SimulationProcess = Object.freeze({
   runId: null,
@@ -59,407 +53,50 @@ const idleSimulationProcess: SimulationProcess = Object.freeze({
   startedAt: null,
   finishedAt: null,
 })
-
 const simulationEngine = Object.freeze({ name: 'caemble-cae', version: '1' })
 
-function createRequestId(prefix: string) {
-  return `${prefix}-${crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`}`
+function requestId(prefix: string) {
+  return `${prefix}-${crypto.randomUUID()}`
 }
 
-function sameCadSource(left: CadSourceDocument | null | undefined, right: CadSourceDocument | null | undefined) {
-  if (!left || !right || left.kind !== right.kind) return false
-  if (left.kind === 'structure' && right.kind === 'structure') return left.source === right.source
-  if (left.kind === 'experiment' && right.kind === 'experiment') {
-    return JSON.stringify(left.sourceBundle) === JSON.stringify(right.sourceBundle)
-  }
-  return false
+function stableInput(value: unknown) {
+  return JSON.stringify(value)
 }
 
-type DocumentHandlers = Readonly<{
-  handleStart: (requestId: string, revision: number) => void
-  handlePhase: (requestId: string, revision: number, phase: AppStatus) => void
-  handleSuccess: (
-    response: Extract<CadEvaluationResponse, { type: 'evaluation-success' }>,
-    realization: BuiltRealization,
-    compiledSource: CompiledCadDocument,
-  ) => void
-  handleError: (response: Extract<CadEvaluationResponse, { type: 'evaluation-error' }>) => void
-  handleWorkerFailure: (message: string) => void
-  getSnapshot: () => Readonly<{
-    compiledSource: CompiledCadDocument | null
-    document: CadSourceDocument | null | undefined
-    evaluatedSnapshot: EvaluatedDocumentSnapshot | null
-    realization: BuiltRealization | null
-    revision: number
-    successfulRevision: number
-  }>
+export type CadDocumentController = Readonly<{
+  compiledSource: null
+  diagnostics: readonly CadDiagnostic[]
+  documentType: 'experiment'
+  error: RunError | null
+  evaluatedSnapshot: EvaluatedExperimentSnapshot | null
+  evaluationTimeoutMs: EvaluationTimeoutMs
+  generateCandidate: () => void
+  handleAddExperimentTask: (taskName: string, source: string) => void
+  handleExperimentFileChange: (path: string, source: string) => void
+  handleRemoveExperimentTask: (taskName: string) => void
+  handleRenderEnd: () => void
+  handleRenderError: (message: string) => void
+  handleRenderStart: () => void
+  handleSimulationCodeChange: (source: string) => void
+  handleSourceChange: (source: string) => void
+  materialParameters: MeasurementMaterialParameters | null
+  materialWarnings: readonly string[]
+  readOnly: boolean
+  measurement: BuiltMeasurement | null
+  revision: number
+  runIsBusy: boolean
+  scene: CadScene | null
+  sceneHash: string | null
+  setEvaluationTimeoutMs: (timeout: EvaluationTimeoutMs) => void
+  simulationProgram: SimulationProgramManifest | null
+  sourceReadOnly: boolean
+  status: AppStatus
+  successfulRevision: number
+  taskSceneHashes: Readonly<Record<string, string>>
+  taskScenes: Readonly<Record<string, CadScene>>
+  variables: Readonly<Vars> | null
+  varsSchema: EvaluatedExperimentSnapshot['varsSchema'] | null
 }>
-
-type DocumentStateOptions = Readonly<{
-  document: CadSourceDocument | null | undefined
-  documentType: CadDocumentType
-  externalVars?: Readonly<Vars>
-  onDocumentChange: ((document: CadSourceDocument) => void) | undefined
-  onInvalidate: () => void
-  fastReroll?: boolean
-  requestEvaluation: (document: CadSourceDocument, revision: number, externalVars?: Readonly<Vars>) => void
-}>
-
-function useDocumentState({
-  document,
-  documentType,
-  externalVars,
-  fastReroll = false,
-  onInvalidate,
-  onDocumentChange,
-  requestEvaluation,
-}: DocumentStateOptions) {
-  const [compiledSource, setCompiledSource] = useState<CompiledCadDocument | null>(null)
-  const [diagnostics, setDiagnostics] = useState<readonly CadDiagnostic[]>([])
-  const [error, setError] = useState<RunError | null>(null)
-  const [scene, setScene] = useState<CadScene | null>(null)
-  const [taskScenes, setTaskScenes] = useState<Readonly<Record<string, CadScene>>>(Object.freeze({}))
-  const [evaluatedSnapshot, setEvaluatedSnapshot] = useState<EvaluatedDocumentSnapshot | null>(null)
-  const [realization, setRealization] = useState<BuiltRealization | null>(null)
-  const [materialWarnings, setMaterialWarnings] = useState<readonly string[]>([])
-  const [simulationProgram, setSimulationProgram] = useState<SimulationProgramManifest | null>(null)
-  const [status, setStatus] = useState<AppStatus>('Ready')
-  const [variables, setVariables] = useState<Readonly<Vars> | null>(null)
-  const [varsSchema, setVarsSchema] = useState<EvaluatedDocumentSnapshot['varsSchema'] | null>(null)
-  const [revision, setRevision] = useState(0)
-  const [successfulRevision, setSuccessfulRevision] = useState(-1)
-  const latestRequestIdRef = useRef('')
-  const pendingEvaluationRef = useRef<Readonly<{
-    document: CadSourceDocument
-    externalVars?: Readonly<Vars>
-    revision: number
-  }> | null>(null)
-  const pendingTimerRef = useRef<number | null>(null)
-  const revisionRef = useRef(0)
-  const previousDocumentRef = useRef<CadSourceDocument | null | undefined>(undefined)
-  const documentRef = useRef(document)
-  const statusRef = useRef<AppStatus>('Ready')
-  const successfulRevisionRef = useRef(-1)
-  const compiledSourceRef = useRef<CompiledCadDocument | null>(null)
-  const evaluatedSnapshotRef = useRef<EvaluatedDocumentSnapshot | null>(null)
-  const realizationRef = useRef<BuiltRealization | null>(null)
-
-  documentRef.current = document
-  compiledSourceRef.current = compiledSource
-  evaluatedSnapshotRef.current = evaluatedSnapshot
-  realizationRef.current = realization
-
-  const updateStatus = useCallback((nextStatus: AppStatus) => {
-    statusRef.current = nextStatus
-    setStatus(nextStatus)
-  }, [])
-
-  const updateSuccessfulRevision = useCallback((nextRevision: number) => {
-    successfulRevisionRef.current = nextRevision
-    setSuccessfulRevision(nextRevision)
-  }, [])
-
-  const clearPendingEvaluation = useCallback(() => {
-    if (pendingTimerRef.current !== null) window.clearTimeout(pendingTimerRef.current)
-    pendingTimerRef.current = null
-    pendingEvaluationRef.current = null
-  }, [])
-
-  const dispatchPendingEvaluation = useCallback(() => {
-    const pending = pendingEvaluationRef.current
-    pendingEvaluationRef.current = null
-    pendingTimerRef.current = null
-    if (pending) requestEvaluation(pending.document, pending.revision, pending.externalVars)
-  }, [requestEvaluation])
-
-  useEffect(() => {
-    const previousDocument = previousDocumentRef.current
-    previousDocumentRef.current = document
-    const sourceChanged = !sameCadSource(previousDocument, document)
-    const nextRevision = revisionRef.current + 1
-    revisionRef.current = nextRevision
-    setRevision(nextRevision)
-    onInvalidate()
-    clearPendingEvaluation()
-
-    if (!document) {
-      latestRequestIdRef.current = ''
-      setCompiledSource(null)
-      setDiagnostics([])
-      setError(null)
-      setEvaluatedSnapshot(null)
-      setRealization(null)
-      setMaterialWarnings([])
-      setScene(null)
-      setTaskScenes(Object.freeze({}))
-      setSimulationProgram(null)
-      setVariables(null)
-      setVarsSchema(null)
-      updateSuccessfulRevision(-1)
-      updateStatus('Ready')
-      return
-    }
-
-    pendingEvaluationRef.current = Object.freeze({
-      document,
-      ...(externalVars ? { externalVars } : {}),
-      revision: nextRevision,
-    })
-    updateStatus(sourceChanged ? 'Dirty' : 'Evaluating')
-    setRealization(null)
-    setMaterialWarnings([])
-    const delay = !sourceChanged && fastReroll ? 75 : 500
-    pendingTimerRef.current = window.setTimeout(dispatchPendingEvaluation, delay)
-  }, [
-    clearPendingEvaluation,
-    dispatchPendingEvaluation,
-    document,
-    externalVars,
-    fastReroll,
-    onInvalidate,
-    requestEvaluation,
-    updateStatus,
-    updateSuccessfulRevision,
-  ])
-
-  useEffect(() => clearPendingEvaluation, [clearPendingEvaluation])
-
-  const handleRenderStart = useCallback(() => {
-    if (statusRef.current !== 'Ready') return
-    updateStatus('Rendering')
-  }, [updateStatus])
-  const handleRenderEnd = useCallback(() => {
-    if (statusRef.current !== 'Rendering') return
-    updateStatus('Ready')
-  }, [updateStatus])
-  const handleRenderError = useCallback(
-    (message: string) => {
-      if (statusRef.current === 'Compiling' || statusRef.current === 'Error') return
-      updateStatus('Error')
-      setError({ title: 'Rendering Error', message })
-    },
-    [updateStatus],
-  )
-
-  const runIsBusy =
-    status === 'Checking' ||
-    status === 'Compiling' ||
-    status === 'Evaluating' ||
-    status === 'Resolving Materials' ||
-    status === 'Rendering'
-  const editingBlocked = !onDocumentChange
-  const handleReroll = useCallback(() => {
-    if (runIsBusy || !document || editingBlocked) return
-    clearPendingEvaluation()
-    onDocumentChange?.(rerollCadSourceDocument(document))
-  }, [clearPendingEvaluation, document, editingBlocked, onDocumentChange, runIsBusy])
-
-  const handleSourceChange = useCallback(
-    (nextSource: string) => {
-      if (!document || editingBlocked) return
-      onDocumentChange?.(updateCadSource(document, nextSource))
-    },
-    [document, editingBlocked, onDocumentChange],
-  )
-  const handleSimulationCodeChange = useCallback(
-    (nextSource: string) => {
-      if (!document || document.kind !== 'experiment' || editingBlocked) return
-      onDocumentChange?.(updateExperimentSourceFile(document, EXPERIMENT_SIMULATION_PATH, nextSource))
-    },
-    [document, editingBlocked, onDocumentChange],
-  )
-  const handleExperimentFileChange = useCallback(
-    (path: string, nextSource: string) => {
-      if (!document || document.kind !== 'experiment' || editingBlocked) return
-      onDocumentChange?.(updateExperimentSourceFile(document, path, nextSource))
-    },
-    [document, editingBlocked, onDocumentChange],
-  )
-  const handleAddExperimentTask = useCallback(
-    (taskName: string, source: string) => {
-      if (!document || document.kind !== 'experiment' || editingBlocked) return
-      onDocumentChange?.(addExperimentTask(document, taskName, source))
-    },
-    [document, editingBlocked, onDocumentChange],
-  )
-  const handleRemoveExperimentTask = useCallback(
-    (taskName: string) => {
-      if (!document || document.kind !== 'experiment' || editingBlocked) return
-      onDocumentChange?.(removeExperimentTask(document, taskName))
-    },
-    [document, editingBlocked, onDocumentChange],
-  )
-
-  const handlers: DocumentHandlers = {
-    handleStart(requestId, requestRevision) {
-      if (requestRevision !== revisionRef.current) return
-      latestRequestIdRef.current = requestId
-      updateStatus('Checking')
-      setDiagnostics([])
-      setError(null)
-    },
-    handlePhase(requestId, requestRevision, phase) {
-      if (requestRevision !== revisionRef.current || requestId !== latestRequestIdRef.current) return
-      updateStatus(phase)
-    },
-    handleSuccess(response, builtRealization, nextCompiledSource) {
-      if (
-        response.documentType !== documentType ||
-        response.revision !== revisionRef.current ||
-        response.requestId !== latestRequestIdRef.current ||
-        response.snapshot.kind !== documentType
-      ) {
-        return
-      }
-      let runtimeScene: CadScene | null = null
-      let runtimeTaskScenes: Readonly<Record<string, CadScene>> = Object.freeze({})
-      let warnings: readonly string[] = []
-      if (response.snapshot.kind === 'structure' && builtRealization.kind === 'sample') {
-        runtimeScene = applyFrozenMaterialParameters(
-          deserializeCadScene(response.snapshot.scene),
-          builtRealization.materialParameters,
-        )
-        warnings = builtRealization.materialWarnings
-      } else if (response.snapshot.kind === 'experiment' && builtRealization.kind === 'setup') {
-        runtimeTaskScenes = Object.freeze(
-          Object.fromEntries(
-            Object.entries(response.snapshot.taskScenes).map(([name, serialized]) => [
-              name,
-              applyFrozenMaterialParameters(
-                deserializeCadScene(serialized),
-                builtRealization.taskMaterialParameters[name],
-              ),
-            ]),
-          ),
-        )
-        runtimeScene = Object.values(runtimeTaskScenes)[0] ?? null
-        warnings = Object.entries(builtRealization.taskMaterialWarnings).flatMap(([name, items]) =>
-          items.map((item) => `${name}: ${item}`),
-        )
-      }
-      updateStatus('Ready')
-      setDiagnostics([])
-      setError(null)
-      setCompiledSource(nextCompiledSource)
-      setScene(runtimeScene)
-      setTaskScenes(runtimeTaskScenes)
-      setEvaluatedSnapshot(response.snapshot)
-      setRealization(builtRealization)
-      setMaterialWarnings(warnings)
-      setVariables(response.snapshot.variables)
-      setVarsSchema(response.snapshot.varsSchema)
-      setSimulationProgram(response.snapshot.kind === 'experiment' ? response.snapshot.simulationProgram : null)
-      updateSuccessfulRevision(response.revision)
-    },
-    handleError(response) {
-      if (
-        response.documentType !== documentType ||
-        response.revision !== revisionRef.current ||
-        response.requestId !== latestRequestIdRef.current
-      ) {
-        return
-      }
-      updateStatus('Error')
-      updateSuccessfulRevision(-1)
-      setDiagnostics(response.diagnostics ?? [])
-      setError({
-        title: errorTitles[response.errorType],
-        message: response.message,
-        stack: response.stack,
-      })
-    },
-    handleWorkerFailure(message) {
-      latestRequestIdRef.current = ''
-      updateStatus('Error')
-      updateSuccessfulRevision(-1)
-      setDiagnostics([])
-      setError({ title: 'Runtime Error', message })
-    },
-    getSnapshot() {
-      return {
-        compiledSource: compiledSourceRef.current,
-        document: documentRef.current,
-        evaluatedSnapshot: evaluatedSnapshotRef.current,
-        realization: realizationRef.current,
-        revision: revisionRef.current,
-        successfulRevision: successfulRevisionRef.current,
-      }
-    },
-  }
-
-  const taskSceneHashes = useMemo(
-    () =>
-      evaluatedSnapshot?.kind === 'experiment'
-        ? Object.freeze(
-            Object.fromEntries(
-              Object.entries(evaluatedSnapshot.taskScenes).map(([name, value]) => [name, value.sceneHash]),
-            ),
-          )
-        : Object.freeze({}),
-    [evaluatedSnapshot],
-  )
-
-  return {
-    controller: {
-      compiledSource,
-      diagnostics,
-      documentType,
-      error,
-      evaluatedSnapshot,
-      handleRenderEnd,
-      handleRenderError,
-      handleRenderStart,
-      handleAddExperimentTask,
-      handleExperimentFileChange,
-      handleRemoveExperimentTask,
-      handleReroll,
-      handleSimulationCodeChange,
-      handleSourceChange,
-      materialParameters:
-        realization?.kind === 'sample'
-          ? realization.materialParameters
-          : realization?.kind === 'setup'
-            ? Object.freeze({ schemaVersion: 1 as const, tasks: realization.taskMaterialParameters })
-            : null,
-      materialWarnings,
-      readOnly: editingBlocked,
-      realization,
-      revision,
-      runIsBusy,
-      scene,
-      sceneHash: evaluatedSnapshot?.kind === 'structure' ? evaluatedSnapshot.scene.sceneHash : null,
-      taskScenes,
-      taskSceneHashes,
-      simulationProgram,
-      sourceReadOnly: editingBlocked,
-      status,
-      successfulRevision,
-      variables,
-      varsSchema,
-    },
-    handlers,
-  }
-}
-
-type BaseCadDocumentController = ReturnType<typeof useDocumentState>['controller']
-
-export type CadDocumentController = BaseCadDocumentController &
-  Readonly<{
-    evaluationTimeoutMs: EvaluationTimeoutMs
-    setEvaluationTimeoutMs: (timeout: EvaluationTimeoutMs) => void
-  }>
-
-export function attachWorkspaceMetadata(
-  controller: BaseCadDocumentController,
-  evaluationTimeoutMs: EvaluationTimeoutMs,
-  setEvaluationTimeoutMs: (timeout: EvaluationTimeoutMs) => void,
-): CadDocumentController {
-  return {
-    ...controller,
-    evaluationTimeoutMs,
-    setEvaluationTimeoutMs,
-  }
-}
 
 export type SimulationController = Readonly<{
   canRun: boolean
@@ -470,278 +107,274 @@ export type SimulationController = Readonly<{
   stale: boolean
 }>
 
-type EvaluationJob = {
-  cancel: () => void
-  requestId: string
-  timeout: number | null
-}
-
-type CompiledSourceSlot = {
-  document: CadSourceDocument
-  compiledSource: CompiledCadDocument | null
-  promise: Promise<CompiledCadDocument>
-}
-
 export function useCadWorkspace(
-  structure: CadSourceDocument | null | undefined,
-  experiment: CadSourceDocument | null | undefined,
-  onStructureChange: ((document: CadSourceDocument) => void) | undefined,
-  onExperimentChange: ((document: CadSourceDocument) => void) | undefined,
-  structureVars?: Readonly<Vars>,
-  experimentVars?: Readonly<Vars>,
-  resolveMaterials?: (snapshot: EvaluatedDocumentSnapshot) => Promise<MaterialResolution | TaskMaterialResolution>,
-  structureEvaluationMode: 'standard' | 'fast-reroll' = 'standard',
+  experiment: ExperimentSourceDocument | null | undefined,
+  onExperimentChange: ((document: ExperimentSourceDocument) => void) | undefined,
+  candidateVars?: Readonly<Vars>,
+  frozenMaterialSnapshot: unknown | null = null,
   runtimeEnabled = true,
 ) {
-  const documentHandlersRef = useRef<Partial<Record<CadDocumentType, DocumentHandlers>>>({})
-  const evaluationJobsRef = useRef<Partial<Record<CadDocumentType, EvaluationJob>>>({})
-  const compiledSourcesRef = useRef<Partial<Record<CadDocumentType, CompiledSourceSlot>>>({})
+  const [diagnostics, setDiagnostics] = useState<readonly CadDiagnostic[]>([])
+  const [error, setError] = useState<RunError | null>(null)
+  const [evaluatedSnapshot, setEvaluatedSnapshot] = useState<EvaluatedExperimentSnapshot | null>(null)
+  const [evaluationTimeoutMs, setEvaluationTimeoutMs] = useState<EvaluationTimeoutMs>(3000)
+  const [generation, setGeneration] = useState(0)
+  const [materialParameters, setMaterialParameters] = useState<MeasurementMaterialParameters | null>(null)
+  const [materialWarnings, setMaterialWarnings] = useState<readonly string[]>([])
+  const [builtMeasurement, setBuiltMeasurement] = useState<BuiltMeasurement | null>(null)
+  const [revision, setRevision] = useState(0)
+  const [scene, setScene] = useState<CadScene | null>(null)
+  const [simulationProgram, setSimulationProgram] = useState<SimulationProgramManifest | null>(null)
+  const [status, setStatus] = useState<AppStatus>('Ready')
+  const [successfulRevision, setSuccessfulRevision] = useState(-1)
+  const [taskScenes, setTaskScenes] = useState<Readonly<Record<string, CadScene>>>(Object.freeze({}))
+  const [variables, setVariables] = useState<Readonly<Vars> | null>(null)
+  const [varsSchema, setVarsSchema] = useState<EvaluatedExperimentSnapshot['varsSchema'] | null>(null)
+  const [process, setProcess] = useState<SimulationProcess>(idleSimulationProcess)
+  const [recordedData, setRecordedData] = useState<RecordedData | null>(null)
+  const [stale, setStale] = useState(false)
+
+  const activeEvaluationRef = useRef<AbortController | null>(null)
   const activeRunRef = useRef<Readonly<{
-    cancel: () => void
+    abort: AbortController
     requestId: string
     runId: string | null
     startedAt: number
   }> | null>(null)
-  const resolveMaterialsRef = useRef(resolveMaterials)
+  const builtMeasurementRef = useRef<BuiltMeasurement | null>(null)
+  const evaluationTimeoutRef = useRef<EvaluationTimeoutMs>(evaluationTimeoutMs)
+  const lastHandledGenerationRef = useRef(0)
   const recordedDataRef = useRef<RecordedData | null>(null)
-  const [process, setProcess] = useState<SimulationProcess>(idleSimulationProcess)
-  const [recordedData, setRecordedData] = useState<RecordedData | null>(null)
-  const [stale, setStale] = useState(false)
-  const [evaluationTimeoutMs, setEvaluationTimeoutMs] = useState<EvaluationTimeoutMs>(3000)
-  const evaluationTimeoutMsRef = useRef<EvaluationTimeoutMs>(evaluationTimeoutMs)
+  const revisionRef = useRef(0)
+  const statusRef = useRef<AppStatus>('Ready')
+  const successfulRevisionRef = useRef(-1)
 
-  resolveMaterialsRef.current = resolveMaterials
-  evaluationTimeoutMsRef.current = evaluationTimeoutMs
+  builtMeasurementRef.current = builtMeasurement
+  evaluationTimeoutRef.current = evaluationTimeoutMs
+  recordedDataRef.current = recordedData
+  statusRef.current = status
+  successfulRevisionRef.current = successfulRevision
 
-  const clearEvaluationJob = useCallback((documentType: CadDocumentType, requestId?: string) => {
-    const active = evaluationJobsRef.current[documentType]
-    if (!active || (requestId && active.requestId !== requestId)) return
-    if (active.timeout !== null) window.clearTimeout(active.timeout)
-    active.cancel()
-    delete evaluationJobsRef.current[documentType]
+  const updateStatus = useCallback((next: AppStatus) => {
+    statusRef.current = next
+    setStatus(next)
   }, [])
 
-  const finishEvaluationJob = useCallback((documentType: CadDocumentType, requestId: string) => {
-    const active = evaluationJobsRef.current[documentType]
-    if (!active || active.requestId !== requestId) return false
-    if (active.timeout !== null) window.clearTimeout(active.timeout)
-    delete evaluationJobsRef.current[documentType]
-    return true
-  }, [])
-
-  const compiledSourceFor = useCallback((document: CadSourceDocument) => {
-    const existing = compiledSourcesRef.current[document.kind]
-    if (existing && sameCadSource(existing.document, document)) return existing.promise
-    const slot: CompiledSourceSlot = {
-      document,
-      compiledSource: null,
-      promise: Promise.resolve(null as never),
-    }
-    slot.promise = compileCadDocument(document)
-      .then((compiledSource) => {
-        slot.compiledSource = compiledSource
-        return compiledSource
-      })
-      .catch((error) => {
-        if (compiledSourcesRef.current[document.kind] === slot) {
-          delete compiledSourcesRef.current[document.kind]
-        }
-        throw error
-      })
-    compiledSourcesRef.current[document.kind] = slot
-    return slot.promise
-  }, [])
-
-  const requestEvaluation = useCallback(
-    (document: CadSourceDocument, revision: number, externalVars?: Readonly<Vars>) => {
-      const documentType = document.kind
-      clearEvaluationJob(documentType)
-      const requestId = createRequestId(documentType)
-      const handlers = documentHandlersRef.current[documentType]
-      handlers?.handleStart(requestId, revision)
-      const job: EvaluationJob = {
-        cancel: () => undefined,
-        requestId,
-        timeout: null,
-      }
-      evaluationJobsRef.current[documentType] = job
-      const cached = compiledSourcesRef.current[documentType]
-      if (!cached || !sameCadSource(cached.document, document)) {
-        handlers?.handlePhase(requestId, revision, 'Compiling')
-      }
-
-      void compiledSourceFor(document)
-        .then((compiledSource) => {
-          if (evaluationJobsRef.current[documentType] !== job) return
-          const pythonSource =
-            document.kind === 'experiment' ? document.sourceBundle.files[EXPERIMENT_SIMULATION_PATH] : null
-          handlers?.handlePhase(requestId, revision, 'Evaluating')
-          job.cancel = evaluateInIsolatedRunner(
-            {
-              type: 'evaluate',
-              requestId,
-              revision,
-              document: {
-                kind: documentType,
-                realizationSeed: document.realizationSeed,
-                ...(pythonSource ? { pythonSource } : {}),
-              },
-              compiledDocument: compiledSource,
-              ...(externalVars ? { vars: externalVars } : {}),
-            },
-            {
-              onFailure(message) {
-                if (!finishEvaluationJob(documentType, requestId)) return
-                handlers?.handleWorkerFailure(message)
-              },
-              onStart() {
-                if (evaluationJobsRef.current[documentType] !== job) return
-                job.timeout = window.setTimeout(() => {
-                  if (!finishEvaluationJob(documentType, requestId)) return
-                  job.cancel()
-                  handlers?.handleWorkerFailure(
-                    `Model evaluation timed out after ${evaluationTimeoutMsRef.current / 1000} seconds for revision ${revision}.`,
-                  )
-                }, evaluationTimeoutMsRef.current)
-              },
-              onResponse(response) {
-                if (!finishEvaluationJob(documentType, requestId)) return
-                if (response.type === 'evaluation-error') {
-                  handlers?.handleError(response)
-                  return
-                }
-                handlers?.handlePhase(requestId, revision, 'Resolving Materials')
-                const realizationPromise = resolveMaterialsRef.current
-                  ? resolveMaterialsRef
-                      .current(response.snapshot)
-                      .then((resolution) => buildRealization(response.snapshot, resolution))
-                  : Promise.resolve(buildSourceOnlyRealization(response.snapshot))
-                void realizationPromise
-                  .then((builtRealization) => {
-                    if (handlers?.getSnapshot().revision !== revision) return
-                    handlers.handleSuccess(response, builtRealization, compiledSource)
-                  })
-                  .catch((error: unknown) => {
-                    handlers?.handleError({
-                      type: 'evaluation-error',
-                      requestId,
-                      revision,
-                      documentType,
-                      errorType: 'model',
-                      message: error instanceof Error ? error.message : String(error),
-                    })
-                  })
-              },
-            },
-          )
-        })
-        .catch((error: unknown) => {
-          if (!finishEvaluationJob(documentType, requestId)) return
-          const compilationError = error instanceof CadCompilationError ? error : null
-          handlers?.handleError({
-            type: 'evaluation-error',
-            requestId,
-            revision,
-            documentType,
-            errorType: compilationError?.errorType ?? 'compile',
-            message: error instanceof Error ? error.message : String(error),
-            ...(compilationError?.diagnostics.length ? { diagnostics: compilationError.diagnostics } : {}),
-            ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
-          })
-        })
-    },
-    [clearEvaluationJob, compiledSourceFor, finishEvaluationJob],
-  )
-
-  const invalidateWorkspace = useCallback(() => {
+  const invalidateSimulation = useCallback(() => {
     if (recordedDataRef.current) setStale(true)
-    const activeRun = activeRunRef.current
-    if (activeRun) {
-      activeRunRef.current = null
-      activeRun.cancel()
-      recordedDataRef.current = null
-      setRecordedData(null)
-      setProcess(
-        Object.freeze({
-          runId: activeRun.runId ?? activeRun.requestId,
-          status: 'cancelled',
-          engine: simulationEngine,
-          stage: null,
-          error: 'Simulation run was invalidated by a Structure, Experiment, or variable change.',
-          startedAt: activeRun.startedAt,
-          finishedAt: Date.now(),
-        }),
-      )
-    }
+    const active = activeRunRef.current
+    if (!active) return
+    activeRunRef.current = null
+    active.abort.abort()
+    setProcess(
+      Object.freeze({
+        runId: active.runId ?? active.requestId,
+        status: 'cancelled',
+        engine: simulationEngine,
+        stage: null,
+        error: 'Simulation run was invalidated by an Experiment or candidate change.',
+        startedAt: active.startedAt,
+        finishedAt: Date.now(),
+      }),
+    )
   }, [])
 
-  const structureState = useDocumentState({
-    document: structure,
-    documentType: 'structure',
-    externalVars: structureVars,
-    onDocumentChange: onStructureChange,
-    onInvalidate: invalidateWorkspace,
-    fastReroll: structureEvaluationMode === 'fast-reroll',
-    requestEvaluation,
-  })
-  const experimentState = useDocumentState({
-    document: experiment,
-    documentType: 'experiment',
-    externalVars: experimentVars,
-    onDocumentChange: onExperimentChange,
-    onInvalidate: invalidateWorkspace,
-    requestEvaluation,
-  })
-  documentHandlersRef.current.structure = structureState.handlers
-  documentHandlersRef.current.experiment = experimentState.handlers
+  const varsKey = stableInput(candidateVars ?? null)
+  const materialsKey = stableInput(frozenMaterialSnapshot)
 
   useEffect(() => {
-    const jobs = evaluationJobsRef.current
-    return () => {
-      Object.keys(jobs).forEach((key) => clearEvaluationJob(key as CadDocumentType))
-      activeRunRef.current?.cancel()
-      activeRunRef.current = null
-      releaseRecordedDataAttachments(recordedDataRef.current)
-    }
-  }, [clearEvaluationJob])
+    activeEvaluationRef.current?.abort()
+    invalidateSimulation()
+    const requestRevision = revisionRef.current + 1
+    revisionRef.current = requestRevision
+    setRevision(requestRevision)
+    setSuccessfulRevision(-1)
+    successfulRevisionRef.current = -1
+    setDiagnostics([])
+    setError(null)
+    setEvaluatedSnapshot(null)
+    setBuiltMeasurement(null)
+    builtMeasurementRef.current = null
+    setMaterialParameters(null)
+    setMaterialWarnings([])
+    setScene(null)
+    setTaskScenes(Object.freeze({}))
+    setSimulationProgram(null)
+    setVariables(null)
 
-  const structureDocument = attachWorkspaceMetadata(
-    structureState.controller,
-    evaluationTimeoutMs,
-    setEvaluationTimeoutMs,
+    if (!experiment) {
+      setVarsSchema(null)
+      updateStatus('Ready')
+      return
+    }
+
+    const abort = new AbortController()
+    activeEvaluationRef.current = abort
+    updateStatus('Checking')
+    const explicitGeneration = generation !== lastHandledGenerationRef.current
+    if (explicitGeneration) lastHandledGenerationRef.current = generation
+
+    void inspectDocument(experiment, { signal: abort.signal, timeoutMs: evaluationTimeoutRef.current })
+      .then(async (inspection) => {
+        if (abort.signal.aborted || revisionRef.current !== requestRevision) return
+        setVarsSchema(inspection.varsSchema)
+        const nextVars = explicitGeneration || candidateVars === undefined
+          ? generateRandomVars(inspection.varsSchema)
+          : candidateVars
+        updateStatus('Evaluating')
+        const snapshot = await evaluateDocument(
+          { document: experiment, vars: nextVars },
+          { signal: abort.signal, timeoutMs: evaluationTimeoutRef.current },
+        )
+        if (abort.signal.aborted || revisionRef.current !== requestRevision) return
+        updateStatus('Resolving Materials')
+        const resolution = await resolveDocumentMaterials(snapshot, explicitGeneration ? null : frozenMaterialSnapshot)
+        if (abort.signal.aborted || revisionRef.current !== requestRevision) return
+        const built = buildMeasurement(snapshot, resolution)
+        const commonScene = applyFrozenMaterialParameters(deserializeCadScene(snapshot.scene), built.materialParameters)
+        const nextTaskScenes = Object.freeze(
+          Object.fromEntries(
+            Object.entries(snapshot.taskScenes).map(([name, serialized]) => [
+              name,
+              applyFrozenMaterialParameters(deserializeCadScene(serialized), built.taskMaterialParameters[name]),
+            ]),
+          ),
+        )
+        const persistedMaterials: MeasurementMaterialParameters = Object.freeze({
+          schemaVersion: 2,
+          experiment: built.materialParameters,
+          tasks: built.taskMaterialParameters,
+        })
+        const warnings = Object.freeze([
+          ...built.materialWarnings,
+          ...Object.entries(built.taskMaterialWarnings).flatMap(([name, items]) =>
+            items.map((item) => `${name}: ${item}`),
+          ),
+        ])
+        builtMeasurementRef.current = built
+        setBuiltMeasurement(built)
+        setEvaluatedSnapshot(snapshot)
+        setVariables(snapshot.variables)
+        setVarsSchema(snapshot.varsSchema)
+        setScene(commonScene)
+        setTaskScenes(nextTaskScenes)
+        setSimulationProgram(snapshot.simulationProgram)
+        setMaterialParameters(persistedMaterials)
+        setMaterialWarnings(warnings)
+        successfulRevisionRef.current = requestRevision
+        setSuccessfulRevision(requestRevision)
+        updateStatus('Ready')
+      })
+      .catch((cause: unknown) => {
+        if (abort.signal.aborted || revisionRef.current !== requestRevision) return
+        const compilation = cause instanceof CadCompilationError ? cause : null
+        const evaluation = cause instanceof CadDocumentEvaluationError ? cause : null
+        setDiagnostics(compilation?.diagnostics ?? evaluation?.diagnostics ?? [])
+        setError({
+          title: compilation
+            ? compilation.errorType === 'policy'
+              ? 'Source Policy Error'
+              : compilation.errorType === 'type'
+                ? 'Type Error'
+                : 'Compile Error'
+            : 'Experiment Error',
+          message: cause instanceof Error ? cause.message : String(cause),
+          ...(cause instanceof Error && cause.stack ? { stack: cause.stack } : {}),
+        })
+        updateStatus('Error')
+      })
+
+    return () => {
+      abort.abort()
+      if (activeEvaluationRef.current === abort) activeEvaluationRef.current = null
+    }
+    // Canonical keys deliberately avoid reevaluating when parent state reuses the same persisted values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [experiment, generation, invalidateSimulation, materialsKey, updateStatus, varsKey])
+
+  useEffect(
+    () => () => {
+      activeEvaluationRef.current?.abort()
+      activeRunRef.current?.abort.abort()
+      releaseRecordedDataAttachments(recordedDataRef.current)
+    },
+    [],
   )
-  const experimentDocument = attachWorkspaceMetadata(
-    experimentState.controller,
-    evaluationTimeoutMs,
-    setEvaluationTimeoutMs,
+
+  const sourceReadOnly = !onExperimentChange
+  const generateCandidate = useCallback(() => {
+    if (!experiment || statusRef.current === 'Rendering') return
+    setGeneration((value) => value + 1)
+  }, [experiment])
+  const handleSourceChange = useCallback(
+    (source: string) => {
+      if (experiment && onExperimentChange) onExperimentChange(updateCadSource(experiment, source))
+    },
+    [experiment, onExperimentChange],
+  )
+  const handleSimulationCodeChange = useCallback(
+    (source: string) => {
+      if (experiment && onExperimentChange) {
+        onExperimentChange(updateExperimentSourceFile(experiment, EXPERIMENT_SIMULATION_PATH, source))
+      }
+    },
+    [experiment, onExperimentChange],
+  )
+  const handleExperimentFileChange = useCallback(
+    (path: string, source: string) => {
+      if (experiment && onExperimentChange) onExperimentChange(updateExperimentSourceFile(experiment, path, source))
+    },
+    [experiment, onExperimentChange],
+  )
+  const handleAddExperimentTask = useCallback(
+    (taskName: string, source: string) => {
+      if (experiment && onExperimentChange) onExperimentChange(addExperimentTask(experiment, taskName, source))
+    },
+    [experiment, onExperimentChange],
+  )
+  const handleRemoveExperimentTask = useCallback(
+    (taskName: string) => {
+      if (experiment && onExperimentChange) onExperimentChange(removeExperimentTask(experiment, taskName))
+    },
+    [experiment, onExperimentChange],
+  )
+  const handleRenderStart = useCallback(() => {
+    if (statusRef.current === 'Ready') updateStatus('Rendering')
+  }, [updateStatus])
+  const handleRenderEnd = useCallback(() => {
+    if (statusRef.current === 'Rendering') updateStatus('Ready')
+  }, [updateStatus])
+  const handleRenderError = useCallback(
+    (message: string) => {
+      if (statusRef.current === 'Error') return
+      setError({ title: 'Rendering Error', message })
+      updateStatus('Error')
+    },
+    [updateStatus],
   )
 
   const processActive = process.status === 'preparing' || process.status === 'running'
-  const canRun =
-    !processActive &&
-    structureDocument.status === 'Ready' &&
-    experimentDocument.status === 'Ready' &&
-    structureDocument.successfulRevision === structureDocument.revision &&
-    experimentDocument.successfulRevision === experimentDocument.revision &&
-    Boolean(experimentDocument.simulationProgram) &&
-    runtimeEnabled
+  const canRun = Boolean(
+    runtimeEnabled &&
+      !processActive &&
+      status === 'Ready' &&
+      successfulRevision === revision &&
+      builtMeasurement &&
+      simulationProgram,
+  )
 
   const run = useCallback(() => {
-    if (!experimentDocument.simulationProgram || activeRunRef.current || !runtimeEnabled) return null
-    const structureSnapshot = documentHandlersRef.current.structure?.getSnapshot()
-    const experimentSnapshot = documentHandlersRef.current.experiment?.getSnapshot()
+    const built = builtMeasurementRef.current
     if (
-      !structureSnapshot ||
-      !experimentSnapshot ||
-      structureSnapshot.successfulRevision !== structureSnapshot.revision ||
-      experimentSnapshot.successfulRevision !== experimentSnapshot.revision ||
-      structureSnapshot.realization?.kind !== 'sample' ||
-      experimentSnapshot.realization?.kind !== 'setup'
+      !runtimeEnabled ||
+      !built ||
+      activeRunRef.current ||
+      statusRef.current !== 'Ready' ||
+      successfulRevisionRef.current !== revisionRef.current
     ) {
       return null
     }
-
-    const requestId = createRequestId('simulation')
+    const id = requestId('simulation')
     const startedAt = Date.now()
     releaseRecordedDataAttachments(recordedDataRef.current)
     recordedDataRef.current = null
@@ -749,7 +382,7 @@ export function useCadWorkspace(
     setStale(false)
     setProcess(
       Object.freeze({
-        runId: requestId,
+        runId: id,
         status: 'preparing',
         engine: simulationEngine,
         stage: 'startup',
@@ -758,24 +391,20 @@ export function useCadWorkspace(
         finishedAt: null,
       }),
     )
-    const abortController = new AbortController()
-    const promise = simulate(structureSnapshot.realization, experimentSnapshot.realization, {
-      signal: abortController.signal,
+    const abort = new AbortController()
+    activeRunRef.current = Object.freeze({ abort, requestId: id, runId: null, startedAt })
+    void simulate(built, {
+      signal: abort.signal,
       onRecord(name, tensor) {
-        if (activeRunRef.current?.requestId !== requestId) return
-        const nextRecordedData = Object.freeze({
-          ...(recordedDataRef.current ?? {}),
-          [name]: tensor,
-        }) as RecordedData
-        recordedDataRef.current = nextRecordedData
-        setRecordedData(nextRecordedData)
+        if (activeRunRef.current?.requestId !== id) return
+        const next = Object.freeze({ ...(recordedDataRef.current ?? {}), [name]: tensor }) as RecordedData
+        recordedDataRef.current = next
+        setRecordedData(next)
       },
       onProgress(progress) {
         const active = activeRunRef.current
-        if (active?.requestId !== requestId) return
-        if (active.runId !== progress.runId) {
-          activeRunRef.current = Object.freeze({ ...active, runId: progress.runId })
-        }
+        if (active?.requestId !== id) return
+        if (active.runId !== progress.runId) activeRunRef.current = Object.freeze({ ...active, runId: progress.runId })
         setProcess(
           Object.freeze({
             runId: progress.runId,
@@ -788,15 +417,15 @@ export function useCadWorkspace(
           }),
         )
       },
-      onStatus(status) {
+      onStatus(nextStatus) {
         const active = activeRunRef.current
-        if (active?.requestId !== requestId) return
+        if (active?.requestId !== id) return
         setProcess(
           Object.freeze({
-            runId: active.runId ?? requestId,
-            status: status === 'validating' ? 'preparing' : 'running',
+            runId: active.runId ?? id,
+            status: nextStatus === 'validating' ? 'preparing' : 'running',
             engine: simulationEngine,
-            stage: status,
+            stage: nextStatus,
             error: null,
             startedAt,
             finishedAt: null,
@@ -804,31 +433,19 @@ export function useCadWorkspace(
         )
       },
     })
-    activeRunRef.current = Object.freeze({
-      cancel: () => abortController.abort(),
-      requestId,
-      runId: null,
-      startedAt,
-    })
-    void promise
       .then((result) => {
-        if (activeRunRef.current?.requestId !== requestId) {
+        const active = activeRunRef.current
+        if (active?.requestId !== id) {
           releaseRecordedDataAttachments(result)
           return
         }
-        const completedRunId = activeRunRef.current.runId ?? requestId
         activeRunRef.current = null
         recordedDataRef.current = result
         setRecordedData(result)
-        const currentStructure = documentHandlersRef.current.structure?.getSnapshot()
-        const currentExperiment = documentHandlersRef.current.experiment?.getSnapshot()
-        setStale(
-          currentStructure?.revision !== structureSnapshot.revision ||
-            currentExperiment?.revision !== experimentSnapshot.revision,
-        )
+        setStale(builtMeasurementRef.current !== built)
         setProcess(
           Object.freeze({
-            runId: completedRunId,
+            runId: active.runId ?? id,
             status: 'succeeded',
             engine: simulationEngine,
             stage: null,
@@ -838,33 +455,33 @@ export function useCadWorkspace(
           }),
         )
       })
-      .catch((error: unknown) => {
+      .catch((cause: unknown) => {
         const active = activeRunRef.current
-        if (active?.requestId !== requestId) return
+        if (active?.requestId !== id) return
         activeRunRef.current = null
         releaseRecordedDataAttachments(recordedDataRef.current)
         recordedDataRef.current = null
         setRecordedData(null)
         setProcess(
           Object.freeze({
-            runId: active.runId ?? requestId,
+            runId: active.runId ?? id,
             status: 'failed',
             engine: simulationEngine,
             stage: null,
-            error: error instanceof Error ? error.message : String(error),
+            error: cause instanceof Error ? cause.message : String(cause),
             startedAt,
             finishedAt: Date.now(),
           }),
         )
       })
-    return requestId
-  }, [experimentDocument.simulationProgram, runtimeEnabled])
+    return id
+  }, [runtimeEnabled])
 
   const cancel = useCallback(() => {
     const active = activeRunRef.current
     if (!active) return
     activeRunRef.current = null
-    active.cancel()
+    active.abort.abort()
     releaseRecordedDataAttachments(recordedDataRef.current)
     recordedDataRef.current = null
     setRecordedData(null)
@@ -881,18 +498,45 @@ export function useCadWorkspace(
     )
   }, [])
 
-  const simulation: SimulationController = {
-    canRun,
-    cancel,
-    process,
-    recordedData,
-    run,
-    stale,
+  const taskSceneHashes = useMemo(
+    () => Object.freeze(Object.fromEntries(Object.entries(evaluatedSnapshot?.taskScenes ?? {}).map(([name, value]) => [name, value.sceneHash]))),
+    [evaluatedSnapshot],
+  )
+  const runIsBusy = ['Checking', 'Compiling', 'Evaluating', 'Resolving Materials', 'Rendering'].includes(status)
+  const experimentDocument: CadDocumentController = {
+    compiledSource: null,
+    diagnostics,
+    documentType: 'experiment',
+    error,
+    evaluatedSnapshot,
+    evaluationTimeoutMs,
+    generateCandidate,
+    handleAddExperimentTask,
+    handleExperimentFileChange,
+    handleRemoveExperimentTask,
+    handleRenderEnd,
+    handleRenderError,
+    handleRenderStart,
+    handleSimulationCodeChange,
+    handleSourceChange,
+    materialParameters,
+    materialWarnings,
+    readOnly: sourceReadOnly,
+    measurement: builtMeasurement,
+    revision,
+    runIsBusy,
+    scene,
+    sceneHash: evaluatedSnapshot?.scene.sceneHash ?? null,
+    setEvaluationTimeoutMs,
+    simulationProgram,
+    sourceReadOnly,
+    status,
+    successfulRevision,
+    taskSceneHashes,
+    taskScenes,
+    variables,
+    varsSchema,
   }
-
-  return {
-    experimentDocument,
-    simulation,
-    structureDocument,
-  }
+  const simulation: SimulationController = { canRun, cancel, process, recordedData, run, stale }
+  return { experimentDocument, simulation }
 }

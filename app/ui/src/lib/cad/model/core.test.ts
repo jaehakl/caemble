@@ -7,7 +7,6 @@ import {
   resolveMaterialVariables,
   Mat,
   Material,
-  Structure,
   evaluateWithVars,
   vars,
   type Geometry,
@@ -16,6 +15,8 @@ import {
   type DataValueDescriptor,
   type QuantityKindName,
 } from './core'
+import { ExperimentDefinition } from './v5'
+import { generateRandomVars } from './vars'
 import { identityCartesianBasis } from '../../quantitykind/identityBasis'
 import { componentShapeForTensorOrder } from '../../quantitykind/runtime'
 
@@ -70,10 +71,11 @@ function assertQuantityMetadataTypes() {
 }
 void assertQuantityMetadataTypes
 
-function createStructure() {
-  return new Structure({
+function createExperiment() {
+  return new ExperimentDefinition({
     lengthUnit: 'mm',
     geometry: () => null,
+    recordedData: {},
     varsSchema: {
       width: { min: 10, max: 30 },
       offset: {
@@ -94,9 +96,16 @@ function createStructure() {
   })
 }
 
-describe('Structure vars and groups', () => {
-  it('randomizes omitted vars and applies validated partial vars', () => {
-    const resolved = createStructure().resolveVars({ width: 25, offset: [0, 1] })
+describe('Experiment vars and groups', () => {
+  it('requires and validates complete vars', () => {
+    const resolved = createExperiment().resolveExternal({
+      width: 25,
+      offset: [0, 1],
+      fixed: [
+        [1, 2],
+        [3, 4],
+      ],
+    })
 
     expect(resolved).toEqual({
       width: 25,
@@ -111,21 +120,31 @@ describe('Structure vars and groups', () => {
   })
 
   it('rejects unknown, malformed, non-finite, and out-of-range vars', () => {
-    const structure = createStructure()
+    const experiment = createExperiment()
+    const valid = {
+      width: 25,
+      offset: [0, 1],
+      fixed: [
+        [1, 2],
+        [3, 4],
+      ],
+    }
 
-    expect(() => structure.resolveVars({ extra: 1 })).toThrow('Unknown Structure var: extra')
-    expect(() => structure.resolveVars({ offset: [1] })).toThrow('must have shape [2]')
-    expect(() => structure.resolveVars({ fixed: [[1, 2], [3]] })).toThrow('must have shape [2]')
-    expect(() => structure.resolveVars({ width: Number.NaN })).toThrow('must be a finite number')
-    expect(() => structure.resolveVars({ width: 31 })).toThrow('less than or equal to 30')
+    expect(() => experiment.resolveExternal({ ...valid, extra: 1 })).toThrow('Unknown Experiment var: extra')
+    expect(() => experiment.resolveExternal({ ...valid, offset: [1] })).toThrow('must have shape [2]')
+    expect(() => experiment.resolveExternal({ ...valid, fixed: [[1, 2], [3]] })).toThrow('must have shape [2]')
+    expect(() => experiment.resolveExternal({ ...valid, width: Number.NaN })).toThrow('must be a finite number')
+    expect(() => experiment.resolveExternal({ ...valid, width: 31 })).toThrow('less than or equal to 30')
+    expect(() => experiment.resolveExternal({ width: 25 })).toThrow('vars.offset')
   })
 
   it('infers shapes and rejects invalid or legacy bounds', () => {
     expect(
       () =>
-        new Structure({
+        new ExperimentDefinition({
           lengthUnit: 'mm',
           geometry: () => null,
+          recordedData: {},
           varsSchema: {
             invalid: { min: [0, 3], max: [2, 2] },
           },
@@ -134,9 +153,10 @@ describe('Structure vars and groups', () => {
 
     expect(
       () =>
-        new Structure({
+        new ExperimentDefinition({
           lengthUnit: 'mm',
           geometry: () => null,
+          recordedData: {},
           varsSchema: {
             invalid: { min: 0 } as never,
           },
@@ -145,9 +165,10 @@ describe('Structure vars and groups', () => {
 
     expect(
       () =>
-        new Structure({
+        new ExperimentDefinition({
           lengthUnit: 'mm',
           geometry: () => null,
+          recordedData: {},
           varsSchema: {
             legacy: { shape: [], default: 1, min: 0, max: 2 } as never,
           },
@@ -155,9 +176,10 @@ describe('Structure vars and groups', () => {
     ).toThrow('shape is not supported')
     expect(
       () =>
-        new Structure({
+        new ExperimentDefinition({
           lengthUnit: 'mm',
           geometry: () => null,
+          recordedData: {},
           varsSchema: {
             ragged: { min: [[0], [1, 2]], max: 3 },
           },
@@ -165,9 +187,10 @@ describe('Structure vars and groups', () => {
     ).toThrow('must be a rectangular tensor')
     expect(
       () =>
-        new Structure({
+        new ExperimentDefinition({
           lengthUnit: 'mm',
           geometry: () => null,
+          recordedData: {},
           varsSchema: {
             mismatch: { min: [0, 0], max: [[1, 1]] },
           },
@@ -175,9 +198,10 @@ describe('Structure vars and groups', () => {
     ).toThrow('must have shape [2]')
     expect(
       () =>
-        new Structure({
+        new ExperimentDefinition({
           lengthUnit: 'mm',
           geometry: () => null,
+          recordedData: {},
           varsSchema: {
             nonFinite: { min: Number.NaN, max: 1 },
           },
@@ -185,12 +209,15 @@ describe('Structure vars and groups', () => {
     ).toThrow('must contain only finite numbers')
   })
 
-  it('generates deterministic seeded vars within scalar-broadcast and tensor bounds', () => {
-    const structure = createStructure()
-    const first = structure.randomVars(260713)
-    const second = structure.randomVars(260713)
+  it('generates fresh unseeded vars within scalar-broadcast and tensor bounds', () => {
+    const experiment = createExperiment()
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.25)
+    const first = generateRandomVars(experiment.varsSchema)
+    random.mockReturnValue(0.75)
+    const second = generateRandomVars(experiment.varsSchema)
+    random.mockRestore()
 
-    expect(first).toEqual(second)
+    expect(first).not.toEqual(second)
     expect(first.width).toBeGreaterThanOrEqual(10)
     expect(first.width).toBeLessThanOrEqual(30)
     expect((first.offset as readonly number[])[0]).toBeGreaterThanOrEqual(-2)
@@ -202,75 +229,51 @@ describe('Structure vars and groups', () => {
     ])
   })
 
-  it('creates a new unseeded realization per instance and lets partial vars win', () => {
-    const random = vi
-      .spyOn(Math, 'random')
-      .mockReturnValueOnce(0.1)
-      .mockReturnValueOnce(0.2)
-      .mockReturnValueOnce(0.3)
-      .mockReturnValueOnce(0.4)
-      .mockReturnValueOnce(0.5)
-      .mockReturnValueOnce(0.6)
-      .mockReturnValueOnce(0.7)
-      .mockReturnValueOnce(0.8)
-
-    try {
-      const structure = createStructure()
-      const first = structure.resolveVars()
-      const second = structure.resolveVars({ width: 27 })
-
-      expect(first.width).toBe(12)
-      expect(second.width).toBe(27)
-      expect(first.offset).not.toEqual(second.offset)
-    } finally {
-      random.mockRestore()
-    }
-  })
-
-  it('normalizes, deduplicates, and deeply freezes Structure groups', () => {
-    const structure = new Structure({
+  it('normalizes, deduplicates, and deeply freezes Experiment groups', () => {
+    const experiment = new ExperimentDefinition({
       lengthUnit: 'mm',
       geometry: () => null,
       varsSchema: {},
+      recordedData: {},
       geometryGroup: {
         ' 본체 ': [' assembly.body ', 'assembly.body', 'missing'],
       },
       surfaceGroup: { 접촉면: [] },
     })
 
-    expect(structure.geometryGroup).toEqual({ 본체: ['assembly.body', 'missing'] })
-    expect(structure.surfaceGroup).toEqual({ 접촉면: [] })
-    expect(Object.isFrozen(structure.geometryGroup)).toBe(true)
-    expect(Object.isFrozen(structure.geometryGroup.본체)).toBe(true)
-    expect(Object.isFrozen(structure.surfaceGroup.접촉면)).toBe(true)
-    expect(createStructure().geometryGroup).toEqual({})
+    expect(experiment.geometryGroup).toEqual({ 본체: ['assembly.body', 'missing'] })
+    expect(experiment.surfaceGroup).toEqual({ 접촉면: [] })
+    expect(Object.isFrozen(experiment.geometryGroup)).toBe(true)
+    expect(Object.isFrozen(experiment.geometryGroup.본체)).toBe(true)
+    expect(Object.isFrozen(experiment.surfaceGroup.접촉면)).toBe(true)
+    expect(createExperiment().geometryGroup).toEqual({})
   })
 
-  it('rejects malformed Structure group maps, names, and members', () => {
-    const options = { geometry: () => null, varsSchema: {} }
+  it('rejects malformed Experiment group maps, names, and members', () => {
+    const options = { geometry: () => null, varsSchema: {}, recordedData: {} }
 
-    expect(() => new Structure({ lengthUnit: 'mm', ...options, geometryGroup: [] as never })).toThrow(
+    expect(() => new ExperimentDefinition({ lengthUnit: 'mm', ...options, geometryGroup: [] as never })).toThrow(
       'geometryGroup must be an object',
     )
-    expect(() => new Structure({ lengthUnit: 'mm', ...options, geometryGroup: { ' ': [] } })).toThrow(
+    expect(() => new ExperimentDefinition({ lengthUnit: 'mm', ...options, geometryGroup: { ' ': [] } })).toThrow(
       'group names must not be empty',
     )
     expect(
-      () => new Structure({ lengthUnit: 'mm', ...options, geometryGroup: { duplicate: [], ' duplicate ': [] } }),
+      () => new ExperimentDefinition({ lengthUnit: 'mm', ...options, geometryGroup: { duplicate: [], ' duplicate ': [] } }),
     ).toThrow('duplicated after trimming')
     expect(
-      () => new Structure({ lengthUnit: 'mm', ...options, geometryGroup: { invalid: 'assembly' as never } }),
+      () => new ExperimentDefinition({ lengthUnit: 'mm', ...options, geometryGroup: { invalid: 'assembly' as never } }),
     ).toThrow('must be an array')
-    expect(() => new Structure({ lengthUnit: 'mm', ...options, surfaceGroup: { invalid: [''] } })).toThrow(
+    expect(() => new ExperimentDefinition({ lengthUnit: 'mm', ...options, surfaceGroup: { invalid: [''] } })).toThrow(
       'must be a non-empty string',
     )
-    expect(() => new Structure({ lengthUnit: 'mm', ...options, surfaceGroup: { invalid: [1 as never] } })).toThrow(
+    expect(() => new ExperimentDefinition({ lengthUnit: 'mm', ...options, surfaceGroup: { invalid: [1 as never] } })).toThrow(
       'must be a non-empty string',
     )
   })
 })
 
-describe('Data values and Structure units', () => {
+describe('Data values and Experiment units', () => {
   it('normalizes raw scalars and dtype descriptors and rejects unsupported forms', () => {
     const normalizeParameter = (parameter: unknown) =>
       typeof parameter === 'object' && parameter !== null && !Array.isArray(parameter)
@@ -424,11 +427,18 @@ describe('Data values and Structure units', () => {
   })
 
   it('requires a valid UCUM lengthUnit', () => {
-    expect(() => new Structure({ geometry: () => null, varsSchema: {} } as never)).toThrow('Structure lengthUnit')
-    expect(() => new Structure({ lengthUnit: 's', geometry: () => null, varsSchema: {} })).toThrow(
+    expect(() => new ExperimentDefinition({ geometry: () => null, varsSchema: {}, recordedData: {} } as never)).toThrow(
+      'Experiment lengthUnit',
+    )
+    expect(
+      () =>
+        new ExperimentDefinition({ lengthUnit: 's', geometry: () => null, varsSchema: {}, recordedData: {} }),
+    ).toThrow(
       'cannot convert s to m',
     )
-    expect(new Structure({ lengthUnit: 'cm', geometry: () => null, varsSchema: {} }).lengthUnit).toBe('cm')
+    expect(
+      new ExperimentDefinition({ lengthUnit: 'cm', geometry: () => null, varsSchema: {}, recordedData: {} }).lengthUnit,
+    ).toBe('cm')
   })
 })
 
@@ -976,7 +986,7 @@ describe('Material and global vars', () => {
     ).toThrow('input and output must use the same Cartesian basis')
   })
 
-  it('realizes float values deterministically per evaluation seed and strips error rates', () => {
+  it('preserves nominal float values and error rates until material resolution', () => {
     const material = new Material('Variable', {
       'general.mass_density': {
         dtype: 'float64',
@@ -1001,43 +1011,29 @@ describe('Material and global vars', () => {
         unit: 'S.m-1',
       },
     })
-    const materialStructure = new Structure({ lengthUnit: 'mm', geometry: () => null, varsSchema: {} })
-    const resolvedVars = materialStructure.resolveVars({}, 1)
     const direct = resolveMaterialVariables(material)
-    const first = evaluateWithVars(resolvedVars, () => resolveMaterialVariables(material), 1)
-    const replay = evaluateWithVars(resolvedVars, () => resolveMaterialVariables(material), 1)
-    const second = evaluateWithVars(resolvedVars, () => resolveMaterialVariables(material), 2)
+    const evaluated = evaluateWithVars({}, () => resolveMaterialVariables(material))
 
     expect(direct['general.mass_density']).toEqual({
       dtype: 'float64',
       value: 100,
       unit: 'kg.m-3',
       quantityKind: 'MassDensity',
+      errorRate: 0.1,
     })
-    expect(first).toEqual(replay)
-    expect(second).not.toEqual(first)
-    expect(first['general.mass_density']).not.toHaveProperty('errorRate')
-    expect(first['electrical.conductivity']).not.toHaveProperty('errorRate')
+    expect(evaluated).toEqual(direct)
+    expect(evaluated['general.mass_density']).toHaveProperty('errorRate', 0.1)
+    expect(evaluated['electrical.conductivity']).toHaveProperty('errorRate', 0.2)
     expect(material.variables['general.mass_density']).toMatchObject({ value: 100, errorRate: 0.1 })
-    expect(first['thermal.specific_heat_capacity']).toEqual({
+    expect(evaluated['thermal.specific_heat_capacity']).toEqual({
       dtype: 'float64',
       value: 25,
       unit: 'J.kg-1.K-1',
       quantityKind: 'thermodynamics.SpecificHeatCapacity',
+      errorRate: 0,
     })
-    expect(Object.isFrozen(first)).toBe(true)
-    expect(Object.isFrozen(first['electrical.conductivity'])).toBe(true)
-
-    const scalar = first['general.mass_density'] as { value: number }
-    expect(scalar.value).toBeGreaterThanOrEqual(90)
-    expect(scalar.value).toBeLessThanOrEqual(110)
-    const field = (first['electrical.conductivity'] as { value: readonly (readonly number[])[] }).value
-    const multipliers = [field[0][0] / 10, field[1][1] / 20, field[2][2] / 30]
-    multipliers.forEach((multiplier) => {
-      expect(multiplier).toBeGreaterThanOrEqual(0.8)
-      expect(multiplier).toBeLessThanOrEqual(1.2)
-    })
-    expect(multipliers[0]).toBe(multipliers[1])
+    expect(Object.isFrozen(evaluated)).toBe(true)
+    expect(Object.isFrozen(evaluated['electrical.conductivity'])).toBe(true)
   })
 
   it('applies hierarchical Material error rates and keeps them out of scene variables', () => {
@@ -1064,8 +1060,7 @@ describe('Material and global vars', () => {
     expect(resolveMaterialVariables(inherited)).not.toHaveProperty('errorRate')
   })
 
-  it('rejects a realized float tensor value that exceeds its dtype range', () => {
-    const resolvedVars = createStructure().resolveVars({}, 1)
+  it('does not sample float uncertainty during Experiment evaluation', () => {
     const material = new Material('Overflow', {
       'general.mass_density': {
         dtype: 'float16',
@@ -1075,13 +1070,14 @@ describe('Material and global vars', () => {
       },
     })
 
-    expect(() => evaluateWithVars(resolvedVars, () => resolveMaterialVariables(material), 1)).toThrow(
-      'must be a finite float16 value in [-65504, 65504]',
-    )
+    expect(evaluateWithVars({}, () => resolveMaterialVariables(material))['general.mass_density']).toMatchObject({
+      value: 65504,
+      errorRate: 0.5,
+    })
   })
 
   it('constructs Materials after vars are bound and deeply freezes dtype descriptors', () => {
-    const resolvedVars = createStructure().resolveVars({ width: 24 }, 1)
+    const resolvedVars = { width: 24 }
     const source = [
       [1, 0, 0],
       [0, 1, 0],

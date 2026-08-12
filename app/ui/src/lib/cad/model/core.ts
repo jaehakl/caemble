@@ -11,7 +11,6 @@ import {
   type MaterialModelKey,
   type MaterialPropertyKey,
 } from '../../material/data'
-import { createRandom } from './vars'
 import { Material } from './material'
 import type {
   DataDType,
@@ -25,8 +24,7 @@ import type {
 
 export type { Rotation, Tensor, Vars, Vec3 } from './types'
 export type { VarsSchemaEntry } from './vars'
-export { Structure } from './structure'
-export type { Geometry, GeometryAttributes, StructureGroupMap, StructureOptions } from './structure'
+export type { Geometry, GeometryAttributes, GeometryGroupMap } from './structure'
 export { Material } from './material'
 export { CadModelError } from './errors'
 export { Mat } from './descriptor'
@@ -415,7 +413,6 @@ export function normalizeMaterialSampledRelation(
 }
 
 let activeVars: Readonly<Vars> | null = null
-let activeMaterialRandom: (() => number) | null = null
 
 export function applyMaterialErrorMultiplier(
   value: number | readonly unknown[],
@@ -438,7 +435,6 @@ export function resolveMaterialVariables(material: Material): ResolvedMaterialVa
   const resolved: Record<string, unknown> = {}
 
   Object.entries(material.variables).forEach(([key, value]) => {
-    const path = `Material ${material.name} variables.${key}`
     if (
       isPlainObject(value) &&
       'dtype' in value &&
@@ -450,21 +446,13 @@ export function resolveMaterialVariables(material: Material): ResolvedMaterialVa
         dtype: FloatDataDType
         errorRate: number
       }
-      const multiplier =
-        activeMaterialRandom === null || parameter.errorRate === 0
-          ? 1
-          : 1 - parameter.errorRate + 2 * parameter.errorRate * activeMaterialRandom()
       resolved[key] = Object.freeze({
         dtype: parameter.dtype,
         unit: parameter.unit,
         quantityKind: parameter.quantityKind,
+        errorRate: parameter.errorRate,
         ...(parameter.basis === undefined ? {} : { basis: parameter.basis }),
-        value: applyMaterialErrorMultiplier(
-          parameter.value as number | readonly unknown[],
-          parameter.dtype,
-          multiplier,
-          `${path}.value`,
-        ),
+        value: parameter.value,
       }) as DataValueDescriptor
       return
     }
@@ -511,16 +499,13 @@ export const vars = new Proxy<Record<string, Tensor>>(
   },
 )
 
-export function evaluateWithVars<T>(sampleVars: Readonly<Vars>, evaluate: () => T, materialSeed?: number) {
+export function evaluateWithVars<T>(sampleVars: Readonly<Vars>, evaluate: () => T) {
   const previousVars = activeVars
-  const previousMaterialRandom = activeMaterialRandom
   activeVars = sampleVars
-  activeMaterialRandom = materialSeed === undefined ? null : createRandom(materialSeed)
 
   try {
     return evaluate()
   } finally {
     activeVars = previousVars
-    activeMaterialRandom = previousMaterialRandom
   }
 }

@@ -1,11 +1,6 @@
 import type { MaterialNameRecord, MaterialParameterRecord, MaterialRecord } from '@/api'
 import type { CadSceneMaterial } from '../cad/evaluation/types'
-import {
-  applyMaterialErrorMultiplier,
-  DEFAULT_MATERIAL_ERROR_RATE,
-  normalizeDataValueDescriptor,
-} from '../cad/model/core'
-import { createRandom } from '../cad/model/vars'
+import { applyMaterialErrorMultiplier, normalizeDataValueDescriptor } from '../cad/model/core'
 import { QuantityKind } from '../quantitykind'
 import { materialModelByKey, materialParameterByKey } from './data'
 
@@ -156,6 +151,15 @@ function sourceCatalogValue(name: string, value: unknown) {
   return relationValue(name, value)
 }
 
+function sampleProperty(value: MaterialPropertyValue, errorRate: number, path: string) {
+  if (errorRate === 0) return value
+  const multiplier = 1 - errorRate + 2 * errorRate * Math.random()
+  return Object.freeze({
+    ...value,
+    value: applyMaterialErrorMultiplier(value.value, value.dtype, multiplier, `${path}.value`),
+  })
+}
+
 function timestamp(value: string | null | undefined) {
   const parsed = value ? Date.parse(value) : 0
   return Number.isFinite(parsed) ? parsed : 0
@@ -175,37 +179,6 @@ function canonical(value: Record<string, unknown>) {
   return JSON.stringify(Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right))))
 }
 
-function stableSeed(value: string) {
-  let hash = 0x811c9dc5
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index)
-    hash = Math.imul(hash, 0x01000193)
-  }
-  return hash >>> 0
-}
-
-function realizeDatabaseProperty(
-  material: CadSceneMaterial,
-  name: string,
-  parameterId: number | null,
-  value: MaterialPropertyValue,
-  snapshotSeed: number,
-) {
-  const errorRate = material.errorRate ?? DEFAULT_MATERIAL_ERROR_RATE
-  if (errorRate === 0) return value
-  const random = createRandom(stableSeed(`${snapshotSeed}:${material.name}:${name}:${parameterId ?? 0}`))
-  const multiplier = 1 - errorRate + 2 * errorRate * random()
-  return Object.freeze({
-    ...value,
-    value: applyMaterialErrorMultiplier(
-      value.value,
-      value.dtype,
-      multiplier,
-      `Material ${material.name} database parameter ${name}.value`,
-    ),
-  })
-}
-
 export function sourceOnlyMaterialParameters(materials: readonly CadSceneMaterial[]): MaterialResolution {
   return resolveMaterialParameters(materials, [], [], {
     sourceOnly: true,
@@ -219,7 +192,6 @@ export function resolveMaterialParameters(
   parameters: readonly MaterialParameterRecord[],
   options: Readonly<{
     materials?: readonly MaterialRecord[]
-    seed?: number
     sourceOnly?: boolean
     warnings?: string[]
   }> = {},
@@ -227,14 +199,35 @@ export function resolveMaterialParameters(
   const warnings = options.warnings ?? []
   const resolved: Record<string, Record<string, unknown>> = {}
   const materialColors: Record<string, Readonly<{ color: string; materialId: number }>> = {}
+  const declarations = new Map<string, string>()
 
   sceneMaterials.forEach((material) => {
+    const declaration = JSON.stringify(material)
+    const previousDeclaration = declarations.get(material.name)
+    if (previousDeclaration !== undefined) {
+      if (previousDeclaration !== declaration) {
+        throw new Error(`Material ${material.name} resolves to conflicting parameter sets.`)
+      }
+      return
+    }
+    declarations.set(material.name, declaration)
+
     const explicit = new Map<string, MaterialPropertyValue | MaterialRelationValue>()
     Object.entries(material.variables).forEach(([name, value]) => {
       if (name === 'color') return
       const normalized = sourceCatalogValue(name, value)
       if (!normalized) throw new Error(`Material ${material.name} source parameter ${name} is invalid.`)
-      explicit.set(name, normalized)
+      const sourceValue = value as unknown
+      const errorRate =
+        isRecord(sourceValue) && typeof sourceValue.errorRate === 'number' && Number.isFinite(sourceValue.errorRate)
+          ? sourceValue.errorRate
+          : 0
+      explicit.set(
+        name,
+        Object.prototype.hasOwnProperty.call(materialParameterByKey, name)
+          ? sampleProperty(normalized as MaterialPropertyValue, errorRate, `Material ${material.name} source parameter ${name}`)
+          : normalized,
+      )
     })
 
     const values: Record<string, unknown> = {}
@@ -287,12 +280,10 @@ export function resolveMaterialParameters(
         const normalized = catalogValue(name, selected.value)
         const value =
           normalized && Object.prototype.hasOwnProperty.call(materialParameterByKey, name)
-            ? realizeDatabaseProperty(
-                material,
-                name,
-                selected.id ?? null,
+            ? sampleProperty(
                 normalized as MaterialPropertyValue,
-                options.seed ?? 0,
+                material.errorRate ?? 0,
+                `Material ${material.name} database parameter ${name}`,
               )
             : normalized
         if (!value) throw new Error(`Material ${material.name} database parameter ${name} is invalid.`)

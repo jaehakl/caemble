@@ -1,10 +1,9 @@
 import type { CompiledCadDocument } from '../compiler/types'
-import type { EvaluatedDocumentSnapshot } from '../execution/snapshot'
+import type { EvaluatedExperimentSnapshot } from '../execution/snapshot'
 import type { Tensor } from '../model/types'
-import type { CadDocumentType } from '../source/document'
+import type { VarsSchemaEntry } from '../model/vars'
 
-export type { CadDocumentType } from '../source/document'
-
+export type CadDocumentType = 'experiment'
 export type CadWorkerErrorType = 'compile' | 'type' | 'policy' | 'runtime' | 'model'
 export type CadDiagnosticPhase = 'syntax' | 'semantic' | 'policy' | 'runtime' | 'model'
 
@@ -22,34 +21,51 @@ export type CadDiagnostic = Readonly<{
   message: string
 }>
 
-export type CadEvaluationRequest = Readonly<{
-  type: 'evaluate'
+type CadRequestIdentity = Readonly<{
   requestId: string
   revision: number
-  document: Readonly<{
-    kind: CadDocumentType
-    realizationSeed: number
-    pythonSource?: string
-  }>
   compiledDocument: CompiledCadDocument
-  vars?: Readonly<Record<string, Tensor>>
 }>
 
+export type CadInspectionRequest = CadRequestIdentity & Readonly<{ type: 'inspect' }>
+
+export type CadEvaluationRequest = CadRequestIdentity &
+  Readonly<{
+    type: 'evaluate'
+    pythonSource: string
+    vars: Readonly<Record<string, Tensor>>
+  }>
+
+type CadResponseIdentity = Readonly<{
+  requestId: string
+  revision: number
+  documentType: 'experiment'
+}>
+
+export type CadInspectionResponse =
+  | (CadResponseIdentity &
+      Readonly<{
+        type: 'inspection-success'
+        sourceHash: string
+        varsSchema: Readonly<Record<string, VarsSchemaEntry>>
+      }>)
+  | (CadResponseIdentity & CadErrorResponse<'inspection-error'>)
+
 export type CadEvaluationResponse =
-  | Readonly<{
-      type: 'evaluation-success'
-      requestId: string
-      revision: number
-      documentType: CadDocumentType
-      snapshot: EvaluatedDocumentSnapshot
-    }>
-  | Readonly<{
-      type: 'evaluation-error'
-      requestId: string
-      revision: number
-      documentType: CadDocumentType
-      errorType: CadWorkerErrorType
-      message: string
-      diagnostics?: readonly CadDiagnostic[]
-      stack?: string
-    }>
+  | (CadResponseIdentity &
+      Readonly<{
+        type: 'evaluation-success'
+        snapshot: EvaluatedExperimentSnapshot
+      }>)
+  | (CadResponseIdentity & CadErrorResponse<'evaluation-error'>)
+
+type CadErrorResponse<Type extends string> = Readonly<{
+  type: Type
+  errorType: CadWorkerErrorType
+  message: string
+  diagnostics?: readonly CadDiagnostic[]
+  stack?: string
+}>
+
+export type CadWorkerRequest = CadInspectionRequest | CadEvaluationRequest
+export type CadWorkerResponse = CadInspectionResponse | CadEvaluationResponse

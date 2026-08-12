@@ -35,7 +35,7 @@ export function SaveDefinitionDialog({
   defaults: DefinitionFormValues
   description?: string
   context?: ReactNode
-  kind: 'Experiment' | 'Structure'
+  kind: 'Experiment'
   onOpenChange: (open: boolean) => void
   onSubmit: (values: DefinitionFormValues) => Promise<void>
   open: boolean

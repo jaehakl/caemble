@@ -3,7 +3,7 @@ import { CadModelError } from '../model/errors'
 import { EXPERIMENT_ENTRY_PATH, experimentTaskName } from '../source/document'
 
 export const CAD_COMPILER_VERSION =
-  `monaco-${CAEMBLE_MONACO_VERSION}-api-4-${CAD_API_DECLARATION_FINGERPRINT}-multi-source-v1` as const
+  `monaco-${CAEMBLE_MONACO_VERSION}-api-5-${CAD_API_DECLARATION_FINGERPRINT}-multi-source-v2` as const
 
 export type CadDiagnostic = Readonly<{
   code: number | string
@@ -20,7 +20,7 @@ export type CadDiagnostic = Readonly<{
 }>
 
 export type CompiledCadSource = Readonly<{
-  apiVersion: 4
+  apiVersion: 5
   compilerVersion: typeof CAD_COMPILER_VERSION
   entryFile: string
   code: string
@@ -29,14 +29,14 @@ export type CompiledCadSource = Readonly<{
 }>
 
 export type CompiledCadDocument = Readonly<{
-  apiVersion: 4
+  apiVersion: 5
   compilerVersion: typeof CAD_COMPILER_VERSION
   sourceHash: string
   sources: Readonly<Record<string, CompiledCadSource>>
 }>
 
 function validEntryFile(entryFile: string) {
-  return entryFile === 'structure.tsx' || entryFile === EXPERIMENT_ENTRY_PATH || experimentTaskName(entryFile) !== null
+  return entryFile === EXPERIMENT_ENTRY_PATH || experimentTaskName(entryFile) !== null
 }
 
 export function assertCompiledCadSource(value: unknown): asserts value is CompiledCadSource {
@@ -53,7 +53,7 @@ export function assertCompiledCadSource(value: unknown): asserts value is Compil
 
   const compiled = value as Partial<CompiledCadSource>
   if (
-    compiled.apiVersion !== 4 ||
+    compiled.apiVersion !== 5 ||
     compiled.compilerVersion !== CAD_COMPILER_VERSION ||
     typeof compiled.entryFile !== 'string' ||
     !validEntryFile(compiled.entryFile) ||
@@ -81,7 +81,7 @@ export function assertCompiledCadDocument(value: unknown): asserts value is Comp
   )
   if (
     unknownKey ||
-    compiled.apiVersion !== 4 ||
+    compiled.apiVersion !== 5 ||
     compiled.compilerVersion !== CAD_COMPILER_VERSION ||
     typeof compiled.sourceHash !== 'string' ||
     !/^[0-9a-f]{64}$/u.test(compiled.sourceHash) ||

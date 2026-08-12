@@ -21,8 +21,8 @@ export type SimulationProgramTaskManifest = Readonly<{
 }>
 
 export type SimulationProgramManifest = Readonly<{
-  formatVersion: 4
-  simulationApiVersion: 2
+  formatVersion: 5
+  simulationApiVersion: 3
   pythonSource: string
   tasks: Readonly<Record<string, SimulationProgramTaskManifest>>
   recordedData: Readonly<Record<string, ResolvedDataSchema>>

@@ -2,13 +2,13 @@ import { useQuery } from '@tanstack/react-query'
 import { GitBranch, LoaderCircle } from 'lucide-react'
 import { dbTables } from '@/api'
 
-export function DefinitionLineageSummary({ kind, id }: { kind: 'structure' | 'experiment'; id: number | null }) {
+export function DefinitionLineageSummary({ id }: { id: number | null }) {
   const query = useQuery({
-    queryKey: ['cae-workbench', kind, 'save-lineage', id],
-    queryFn: () => (kind === 'structure' ? dbTables.Structure.history(id!) : dbTables.Experiment.history(id!)),
+    queryKey: ['cae-workbench', 'experiment', 'save-lineage', id],
+    queryFn: () => dbTables.Experiment.history(id!),
     enabled: id !== null,
   })
-  const label = kind === 'structure' ? 'Structure' : 'Experiment'
+  const label = 'Experiment'
 
   if (id === null) {
     return (

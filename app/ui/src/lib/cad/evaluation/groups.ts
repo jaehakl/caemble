@@ -1,9 +1,9 @@
-import type { StructureGroupMap } from '../model/core'
+import type { GeometryGroupMap } from '../model/core'
 import type { CadScene, CadSceneGroup, CadSceneTreeNode } from './types'
 
 export type CadSceneGroupOptions = Readonly<{
-  geometryGroup?: StructureGroupMap
-  surfaceGroup?: StructureGroupMap
+  geometryGroup?: GeometryGroupMap
+  surfaceGroup?: GeometryGroupMap
 }>
 
 function createSelectionId(kind: CadSceneGroup['kind'], name: string) {
@@ -25,7 +25,7 @@ function collectGeometryMembers(tree: CadSceneTreeNode, partIds: ReadonlySet<str
   return members
 }
 
-function resolveGeometryGroups(scene: CadScene, groups: StructureGroupMap) {
+function resolveGeometryGroups(scene: CadScene, groups: GeometryGroupMap) {
   const partIds = new Set(scene.parts.map((part) => part.id))
   const geometryMembers = collectGeometryMembers(scene.tree, partIds)
 
@@ -59,7 +59,7 @@ function resolveGeometryGroups(scene: CadScene, groups: StructureGroupMap) {
   })
 }
 
-function resolveSurfaceGroups(scene: CadScene, groups: StructureGroupMap) {
+function resolveSurfaceGroups(scene: CadScene, groups: GeometryGroupMap) {
   const surfaces = new Map<string, string>()
   scene.parts.forEach((part) => {
     part.surfaces.forEach((surface) => surfaces.set(surface.id, part.id))

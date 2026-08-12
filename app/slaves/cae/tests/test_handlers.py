@@ -83,7 +83,7 @@ def task_config(kernel: str, output_method: str, output_key: str):
         [
             {
                 "methodId": "dc.source-potential",
-                "target": ["structure.surface.source"],
+                "target": ["experiment.surface.source"],
                 "parameters": {
                     "voltage": {
                         "dtype": "float64",
@@ -95,7 +95,7 @@ def task_config(kernel: str, output_method: str, output_key: str):
             },
             {
                 "methodId": "dc.reference-potential",
-                "target": ["structure.surface.reference"],
+                "target": ["experiment.surface.reference"],
                 "parameters": {
                     "voltage": {
                         "dtype": "float64",
@@ -110,7 +110,7 @@ def task_config(kernel: str, output_method: str, output_key: str):
         else [
             {
                 "methodId": "heat.fixed-temperature",
-                "target": ["structure.surface.source"],
+                "target": ["experiment.surface.source"],
                 "parameters": {
                     "temperature": {
                         "dtype": "float64",
@@ -122,7 +122,7 @@ def task_config(kernel: str, output_method: str, output_key: str):
             },
             {
                 "methodId": "heat.fixed-temperature",
-                "target": ["structure.surface.reference"],
+                "target": ["experiment.surface.reference"],
                 "parameters": {
                     "temperature": {
                         "dtype": "float64",
@@ -159,7 +159,7 @@ def task_config(kernel: str, output_method: str, output_key: str):
         "initializations": [
             {
                 "methodId": f"{prefix}.voxel-grid",
-                "target": ["structure.geometry.conductor"],
+                "target": ["experiment.geometry.conductor"],
                 "parameters": {
                     "gridShape": {
                         "dtype": "int32",
@@ -174,7 +174,7 @@ def task_config(kernel: str, output_method: str, output_key: str):
             {
                 "key": output_key,
                 "methodId": output_method,
-                "target": ["structure.geometry.conductor"],
+                "target": ["experiment.geometry.conductor"],
                 "parameters": output_parameters,
             }
         ],
@@ -204,37 +204,26 @@ def payload():
         "surfaceGroups": [],
     }
     return {
-        "sample": {
-            "kind": "sample",
-            "structure": {
-                "kind": "structure",
-                "sourceHash": "d" * 64,
-                "seed": 1,
-                "variables": {},
-                "varsSchema": {},
-                "scene": scene,
-            },
+        "measurement": {
+            "kind": "measurement",
             "materialParameters": {"schemaVersion": 1, "materials": {}},
             "materialWarnings": [],
-        },
-        "setup": {
-            "kind": "setup",
             "experiment": {
                 "kind": "experiment",
+                "scene": scene,
                 "taskScenes": {"electric": scene},
                 "variables": {},
                 "varsSchema": {},
-                "seed": 1,
                 "sourceHash": "a" * 64,
                 "simulationProgram": {
-                    "formatVersion": 4,
-                    "simulationApiVersion": 2,
+                    "formatVersion": 5,
+                    "simulationApiVersion": 3,
                     "pythonSource": source,
                     "tasks": {
                         "electric": {
                             "kernel": {
                                 "name": "dc-current-density",
-                                "version": "0.0.0",
+                                "version": "0.1.0",
                             },
                             "config": task_config(
                                 "dc-current-density",
@@ -261,14 +250,14 @@ def artifact_chain_payload(
     producer_method="dc.joule-heating",
 ):
     request = payload()
-    program = request["setup"]["experiment"]["simulationProgram"]
+    program = request["measurement"]["experiment"]["simulationProgram"]
     program["tasks"] = {
         "producer": {
-            "kernel": {"name": "dc-current-density", "version": "0.0.0"},
+            "kernel": {"name": "dc-current-density", "version": "0.1.0"},
             "config": task_config("dc-current-density", producer_method, "heatSource"),
         },
         "consumer": {
-            "kernel": {"name": "steady-state-heat", "version": "0.0.0"},
+            "kernel": {"name": "steady-state-heat", "version": "0.1.0"},
             "config": task_config(
                 "steady-state-heat",
                 "heat.maximum-temperature",
@@ -276,13 +265,13 @@ def artifact_chain_payload(
             ),
         },
     }
-    experiment = request["setup"]["experiment"]
+    experiment = request["measurement"]["experiment"]
     scene = experiment["taskScenes"]["electric"]
     experiment["taskScenes"] = {name: scene for name in program["tasks"]}
-    request["setup"]["taskMaterialParameters"] = {
+    request["measurement"]["taskMaterialParameters"] = {
         name: {"schemaVersion": 1, "materials": {}} for name in program["tasks"]
     }
-    request["setup"]["taskMaterialWarnings"] = {name: [] for name in program["tasks"]}
+    request["measurement"]["taskMaterialWarnings"] = {name: [] for name in program["tasks"]}
     source = (
         "async def simulate(*, sim, tasks, vars):\n"
         '    produced = await sim.run(tasks["producer"])\n'
@@ -333,7 +322,7 @@ async def test_start_rejects_obsolete_contract_metadata_before_run_creation():
 @pytest.mark.asyncio
 async def test_start_rejects_an_unregistered_kernel_version():
     request = payload()
-    request["setup"]["experiment"]["simulationProgram"]["tasks"]["electric"]["kernel"]["version"] = "9.9.9"
+    request["measurement"]["experiment"]["simulationProgram"]["tasks"]["electric"]["kernel"]["version"] = "9.9.9"
 
     response = await cae_simulation_start(
         DataChannelMessage(id="start", type="cae.simulation.start", payload=request),
@@ -353,9 +342,9 @@ async def test_start_rejects_an_unregistered_kernel_version():
     ],
 )
 @pytest.mark.asyncio
-async def test_start_requires_manifest_v4_and_python_api_v2(field, value, code):
+async def test_start_requires_manifest_v5_and_python_api_v3(field, value, code):
     request = payload()
-    request["setup"]["experiment"]["simulationProgram"][field] = value
+    request["measurement"]["experiment"]["simulationProgram"][field] = value
 
     response = await cae_simulation_start(
         DataChannelMessage(id="start", type="cae.simulation.start", payload=request),
@@ -370,7 +359,7 @@ async def test_start_requires_manifest_v4_and_python_api_v2(field, value, code):
 @pytest.mark.asyncio
 async def test_sim_run_selects_only_the_current_task_scene_and_material_snapshot(monkeypatch):
     request = payload()
-    experiment = request["setup"]["experiment"]
+    experiment = request["measurement"]["experiment"]
     program = experiment["simulationProgram"]
     program["tasks"]["thermal"] = copy.deepcopy(program["tasks"]["electric"])
     electric_scene = experiment["taskScenes"]["electric"]
@@ -382,7 +371,7 @@ async def test_sim_run_selects_only_the_current_task_scene_and_material_snapshot
         "electric": electric_scene,
         "thermal": thermal_scene,
     }
-    request["setup"]["taskMaterialParameters"] = {
+    request["measurement"]["taskMaterialParameters"] = {
         "electric": {
             "schemaVersion": 1,
             "materials": {},
@@ -394,7 +383,7 @@ async def test_sim_run_selects_only_the_current_task_scene_and_material_snapshot
             "materialColors": {"Thermal": {"color": "#222222", "materialId": 2}},
         },
     }
-    request["setup"]["taskMaterialWarnings"] = {
+    request["measurement"]["taskMaterialWarnings"] = {
         "electric": ["electric-warning"],
         "thermal": ["thermal-warning"],
     }
@@ -408,14 +397,14 @@ async def test_sim_run_selects_only_the_current_task_scene_and_material_snapshot
     selected = []
 
     async def fake_kernel(task, state, inputs, world, progress):
-        assert set(world) == {"structure", "experiment", "sample", "setup"}
-        assert set(world["sample"]) == {"materialParameters", "materialWarnings"}
-        assert set(world["setup"]) == {"materialParameters", "materialWarnings"}
+        assert set(world) == {"experiment", "task", "materials"}
+        assert set(world["materials"]) == {"experiment", "task"}
+        assert set(world["materials"]["task"]) == {"parameters", "warnings"}
         selected.append(
             (
-                world["experiment"]["tree"]["label"],
-                tuple(world["setup"]["materialParameters"].get("materialColors", {})),
-                tuple(world["setup"]["materialWarnings"]),
+                world["task"]["tree"]["label"],
+                tuple(world["materials"]["task"]["parameters"].get("materialColors", {})),
+                tuple(world["materials"]["task"]["warnings"]),
             )
         )
         return {
@@ -458,7 +447,7 @@ async def test_sim_run_selects_only_the_current_task_scene_and_material_snapshot
 @pytest.mark.asyncio
 async def test_start_rejects_task_material_maps_that_do_not_match_task_scenes():
     request = payload()
-    request["setup"]["taskMaterialWarnings"]["unknown"] = []
+    request["measurement"]["taskMaterialWarnings"]["unknown"] = []
 
     response = await cae_simulation_start(
         DataChannelMessage(id="start", type="cae.simulation.start", payload=request),
@@ -474,7 +463,7 @@ async def test_start_rejects_task_material_maps_that_do_not_match_task_scenes():
 @pytest.mark.asyncio
 async def test_start_rejects_manifest_tasks_that_do_not_match_task_scenes():
     request = payload()
-    tasks = request["setup"]["experiment"]["simulationProgram"]["tasks"]
+    tasks = request["measurement"]["experiment"]["simulationProgram"]["tasks"]
     tasks["unknown"] = tasks.pop("electric")
 
     response = await cae_simulation_start(
@@ -650,7 +639,7 @@ async def test_record_ack_watchdog_cleans_up_after_outer_run_timeout(monkeypatch
 @pytest.mark.asyncio
 async def test_sim_run_rejects_equal_but_unregistered_task(monkeypatch):
     request = payload()
-    program = request["setup"]["experiment"]["simulationProgram"]
+    program = request["measurement"]["experiment"]["simulationProgram"]
     rogue_task = repr(program["tasks"]["electric"])
     source = (
         "async def simulate(*, sim, tasks, vars):\n"
@@ -687,7 +676,7 @@ async def test_sim_run_rejects_equal_but_unregistered_task(monkeypatch):
     assert failed.payload["kind"] == "failed"
     assert failed.payload["error"] == {
         "code": "invalid_input",
-        "message": "sim.run only accepts a task registered by this BuiltSetup",
+        "message": "sim.run only accepts a task registered by this BuiltMeasurement",
     }
     assert calls == 0
 
@@ -736,7 +725,7 @@ async def test_sim_run_validates_actual_kernel_output_against_resolved_data_sche
 @pytest.mark.asyncio
 async def test_simulation_rejects_mutation_assignment_targets(mutation, monkeypatch):
     request = payload()
-    program = request["setup"]["experiment"]["simulationProgram"]
+    program = request["measurement"]["experiment"]["simulationProgram"]
     source = (
         "async def simulate(*, sim, tasks, vars):\n"
         f"    {mutation}\n"
@@ -777,14 +766,14 @@ async def test_sim_run_forwards_state_and_owned_artifact_to_registered_kernel(
     monkeypatch,
 ):
     request = payload()
-    program = request["setup"]["experiment"]["simulationProgram"]
+    program = request["measurement"]["experiment"]["simulationProgram"]
     program["tasks"] = {
         "solveCoarse": {
-            "kernel": {"name": "dc-current-density", "version": "0.0.0"},
+            "kernel": {"name": "dc-current-density", "version": "0.1.0"},
             "config": task_config("dc-current-density", "dc.joule-heating", "heatSource"),
         },
         "solveFine": {
-            "kernel": {"name": "steady-state-heat", "version": "0.0.0"},
+            "kernel": {"name": "steady-state-heat", "version": "0.1.0"},
             "config": task_config(
                 "steady-state-heat",
                 "heat.maximum-temperature",
@@ -792,13 +781,13 @@ async def test_sim_run_forwards_state_and_owned_artifact_to_registered_kernel(
             ),
         },
     }
-    experiment = request["setup"]["experiment"]
+    experiment = request["measurement"]["experiment"]
     scene = experiment["taskScenes"]["electric"]
     experiment["taskScenes"] = {name: scene for name in program["tasks"]}
-    request["setup"]["taskMaterialParameters"] = {
+    request["measurement"]["taskMaterialParameters"] = {
         name: {"schemaVersion": 1, "materials": {}} for name in program["tasks"]
     }
-    request["setup"]["taskMaterialWarnings"] = {name: [] for name in program["tasks"]}
+    request["measurement"]["taskMaterialWarnings"] = {name: [] for name in program["tasks"]}
     program["recordedData"] = {
         "maximumTemperature": {
             "dtype": "float64",
@@ -883,7 +872,7 @@ async def test_sim_run_forwards_state_and_owned_artifact_to_registered_kernel(
 @pytest.mark.asyncio
 async def test_sim_run_rejects_fabricated_state_before_kernel_execution(monkeypatch):
     request = payload()
-    program = request["setup"]["experiment"]["simulationProgram"]
+    program = request["measurement"]["experiment"]["simulationProgram"]
     source = (
         "async def simulate(*, sim, tasks, vars):\n"
         '    return await sim.run(tasks["electric"], state={"forged": True})\n'
@@ -989,7 +978,7 @@ async def test_sim_run_rejects_unowned_or_incompatible_artifacts_before_consumer
 @pytest.mark.asyncio
 async def test_sim_run_rejects_an_artifact_after_release(monkeypatch):
     request = artifact_chain_payload('produced["artifacts"]["heatSource"]')
-    program = request["setup"]["experiment"]["simulationProgram"]
+    program = request["measurement"]["experiment"]["simulationProgram"]
     source = (
         "async def simulate(*, sim, tasks, vars):\n"
         '    produced = await sim.run(tasks["producer"])\n'
@@ -1044,7 +1033,7 @@ async def test_duplicate_record_name_returns_terminal_domain_failure(monkeypatch
         "    await sim.record(\"totalCurrent\", result[\"artifacts\"][\"totalCurrent\"])\n"
         "    return result[\"state\"]\n"
     )
-    request["setup"]["experiment"]["simulationProgram"]["pythonSource"] = source
+    request["measurement"]["experiment"]["simulationProgram"]["pythonSource"] = source
 
     async def fake_kernel(task, state, inputs, world, progress):
         return {
@@ -1100,7 +1089,7 @@ async def test_failed_record_encoding_does_not_consume_a_protocol_sequence(monke
         '    await sim.record("totalCurrent", {"value": [1.0]})\n'
         "    return None\n"
     )
-    program = request["setup"]["experiment"]["simulationProgram"]
+    program = request["measurement"]["experiment"]["simulationProgram"]
     program["pythonSource"] = source
     monkeypatch.setattr("app.runtime.validate_kernel_tasks", lambda *_args: None)
     memory = {"runs": {}}
@@ -1126,7 +1115,7 @@ async def test_failed_record_encoding_does_not_consume_a_protocol_sequence(monke
 
 
 @pytest.mark.asyncio
-async def test_start_rejects_incomplete_built_realizations(monkeypatch):
+async def test_start_rejects_incomplete_built_measurement(monkeypatch):
     emitted = []
     monkeypatch.setattr("app.handlers.emit", emitted.append)
     memory = {"runs": {}}
@@ -1134,10 +1123,7 @@ async def test_start_rejects_incomplete_built_realizations(monkeypatch):
         DataChannelMessage(
             id="start",
             type="cae.simulation.start",
-            payload={
-                "sample": {"kind": "sample"},
-                "setup": {"kind": "setup"},
-            },
+            payload={"measurement": {"kind": "measurement"}},
         ),
         memory,
         SlaveContext(session_id="session", ttl_seconds=10, call_id="start"),
@@ -1161,8 +1147,8 @@ async def test_start_rejects_incomplete_built_realizations(monkeypatch):
 @pytest.mark.asyncio
 async def test_start_validates_variables_against_vars_schema(variables, schema):
     request = payload()
-    request["sample"]["structure"]["variables"] = variables
-    request["sample"]["structure"]["varsSchema"] = schema
+    request["measurement"]["experiment"]["variables"] = variables
+    request["measurement"]["experiment"]["varsSchema"] = schema
 
     response = await cae_simulation_start(
         DataChannelMessage(id="start", type="cae.simulation.start", payload=request),
@@ -1201,7 +1187,7 @@ async def test_start_validates_material_value_and_provenance(field, value):
         "materialParameterId": None,
     }
     entry[field] = value
-    request["sample"]["materialParameters"]["materials"] = {
+    request["measurement"]["materialParameters"]["materials"] = {
         "Copper": {"electrical.conductivity": entry}
     }
 
@@ -1218,11 +1204,11 @@ async def test_start_validates_material_value_and_provenance(field, value):
 @pytest.mark.asyncio
 async def test_start_accepts_canonical_variables_and_material_snapshot(monkeypatch):
     request = payload()
-    request["sample"]["structure"]["variables"] = {"width": [4, 5]}
-    request["sample"]["structure"]["varsSchema"] = {
+    request["measurement"]["experiment"]["variables"] = {"width": [4, 5]}
+    request["measurement"]["experiment"]["varsSchema"] = {
         "width": {"min": 1, "max": [10, 12]}
     }
-    request["sample"]["materialParameters"]["materials"] = {
+    request["measurement"]["materialParameters"]["materials"] = {
         "Copper": {
             "electrical.conductivity": {
                 "origin": "source",
@@ -1238,7 +1224,7 @@ async def test_start_accepts_canonical_variables_and_material_snapshot(monkeypat
             }
         }
     }
-    request["sample"]["materialParameters"]["materialColors"] = {
+    request["measurement"]["materialParameters"]["materialColors"] = {
         "Copper": {"color": "#d97706", "materialId": 7}
     }
     monkeypatch.setattr("app.runtime.validate_kernel_tasks", lambda *_args: None)
@@ -1255,32 +1241,19 @@ async def test_start_accepts_canonical_variables_and_material_snapshot(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_sim_random_matches_caemble_seeded_generator(monkeypatch):
-    emitted = []
-    monkeypatch.setattr("app.runtime.emit", emitted.append)
-    monkeypatch.setattr("app.runtime.validate_kernel_tasks", lambda *_args: None)
-    memory = {"runs": {}}
-    start = await cae_simulation_start(
-        DataChannelMessage(id="start", type="cae.simulation.start", payload=payload()),
-        memory,
+async def test_sim_random_is_not_part_of_python_api_v3():
+    request = payload()
+    request["measurement"]["experiment"]["simulationProgram"]["pythonSource"] = (
+        "async def simulate(*, sim, tasks, vars):\n"
+        "    return sim.random()\n"
+    )
+    response = await cae_simulation_start(
+        DataChannelMessage(id="start", type="cae.simulation.start", payload=request),
+        {"runs": {}},
         SlaveContext(session_id="session", ttl_seconds=10, call_id="start"),
     )
-    run = memory["runs"][start.payload["runId"]]
-
-    assert [run.random() for _ in range(4)] == [
-        0.6270739405881613,
-        0.002735721180215478,
-        0.5274470399599522,
-        0.9810509674716741,
-    ]
-    run.abort()
-    assert emitted == [
-        {
-            "type": "cae.run.cleaned",
-            "job_id": "session",
-            "run_id": start.payload["runId"],
-        }
-    ]
+    assert response.payload["kind"] == "failed"
+    assert response.payload["error"]["code"] == "invalid_program"
 
 
 @pytest.mark.asyncio
@@ -1320,7 +1293,7 @@ async def test_sim_release_rejects_values_not_returned_by_sim_run(monkeypatch):
         "    sim.release(tasks[\"electric\"])\n"
         "    return None\n"
     )
-    request["setup"]["experiment"]["simulationProgram"]["pythonSource"] = source
+    request["measurement"]["experiment"]["simulationProgram"]["pythonSource"] = source
     monkeypatch.setattr("app.runtime.emit", lambda *_args: None)
     monkeypatch.setattr("app.runtime.validate_kernel_tasks", lambda *_args: None)
     memory = {"runs": {}}

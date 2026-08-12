@@ -1,12 +1,47 @@
 {
   "formatVersion": 1,
   "payload": {
-    "sample": {
-      "kind": "sample",
-      "structure": {
-        "kind": "structure",
-        "sourceHash": "658aadbcb7af63667303e78fab31ab762250abeb7837a7bf0bebffe044c5b43d",
-        "seed": 20260803,
+    "measurement": {
+      "kind": "measurement",
+      "experiment": {
+        "kind": "experiment",
+        "sourceHash": "8a0209d872cec409c2a61b7fed50ad84424ecbcf0a7868e0dbd06d82033ce141",
+        "variables": {
+          "conductorSize": [
+            100,
+            5,
+            5
+          ],
+          "electricalConductivity": 59600000,
+          "sourceVoltage": 1,
+          "referenceVoltage": 0
+        },
+        "varsSchema": {
+          "conductorSize": {
+            "min": [
+              100,
+              5,
+              5
+            ],
+            "max": [
+              100,
+              5,
+              5
+            ]
+          },
+          "electricalConductivity": {
+            "min": 59600000,
+            "max": 59600000
+          },
+          "sourceVoltage": {
+            "min": 1,
+            "max": 1
+          },
+          "referenceVoltage": {
+            "min": 0,
+            "max": 0
+          }
+        },
         "scene": {
           "lengthUnit": "mm",
           "parts": [
@@ -48,6 +83,7 @@
                     "dtype": "float64",
                     "unit": "S.m-1",
                     "quantityKind": "electromagnetism.ElectricConductivity",
+                    "errorRate": 0,
                     "basis": [
                       [
                         1,
@@ -133,50 +169,50 @@
             }
           ],
           "tree": {
-            "key": "structure",
-            "label": "Structure",
+            "key": "experiment",
+            "label": "Experiment",
             "children": [
               {
-                "key": "structure/root",
+                "key": "experiment/root",
                 "label": "Conductor",
                 "globalId": "conductor",
                 "children": [
                   {
-                    "key": "structure/root/result",
+                    "key": "experiment/root/result",
                     "label": "<box>",
                     "children": [
                       {
-                        "key": "structure/root/result/conductor/surface-1",
+                        "key": "experiment/root/result/conductor/surface-1",
                         "label": "-X",
                         "surfaceId": "conductor/surface-1",
                         "children": []
                       },
                       {
-                        "key": "structure/root/result/conductor/surface-2",
+                        "key": "experiment/root/result/conductor/surface-2",
                         "label": "+X",
                         "surfaceId": "conductor/surface-2",
                         "children": []
                       },
                       {
-                        "key": "structure/root/result/conductor/surface-3",
+                        "key": "experiment/root/result/conductor/surface-3",
                         "label": "-Y",
                         "surfaceId": "conductor/surface-3",
                         "children": []
                       },
                       {
-                        "key": "structure/root/result/conductor/surface-4",
+                        "key": "experiment/root/result/conductor/surface-4",
                         "label": "+Y",
                         "surfaceId": "conductor/surface-4",
                         "children": []
                       },
                       {
-                        "key": "structure/root/result/conductor/surface-5",
+                        "key": "experiment/root/result/conductor/surface-5",
                         "label": "Bottom",
                         "surfaceId": "conductor/surface-5",
                         "children": []
                       },
                       {
-                        "key": "structure/root/result/conductor/surface-6",
+                        "key": "experiment/root/result/conductor/surface-6",
                         "label": "Top",
                         "surfaceId": "conductor/surface-6",
                         "children": []
@@ -235,81 +271,8 @@
               "missingMemberIds": []
             }
           ],
-          "sceneHash": "71a327cb0b9b2bb19ad85869e05d53e1289dc5d149de0bd1ae39a5f48d8780e9"
+          "sceneHash": "b2e3660db6311e397db52ee7a5757a9d26321e63fbe6f06102f9d392bc140c6d"
         },
-        "variables": {
-          "conductorSize": [
-            100,
-            5,
-            5
-          ],
-          "electricalConductivity": 59600000
-        },
-        "varsSchema": {
-          "conductorSize": {
-            "min": [
-              100,
-              5,
-              5
-            ],
-            "max": [
-              100,
-              5,
-              5
-            ]
-          },
-          "electricalConductivity": {
-            "min": 59600000,
-            "max": 59600000
-          }
-        }
-      },
-      "materialParameters": {
-        "schemaVersion": 1,
-        "materials": {
-          "Copper": {
-            "electrical.conductivity": {
-              "origin": "source",
-              "value": {
-                "dtype": "float64",
-                "value": [
-                  [
-                    59600000,
-                    0,
-                    0
-                  ],
-                  [
-                    0,
-                    59600000,
-                    0
-                  ],
-                  [
-                    0,
-                    0,
-                    59600000
-                  ]
-                ],
-                "unit": "S.m-1"
-              },
-              "source": null,
-              "version": null,
-              "materialId": null,
-              "materialParameterId": null
-            }
-          }
-        },
-        "materialColors": {}
-      },
-      "materialWarnings": [
-        "Legacy Material snapshot: database parameters were not automatically re-resolved."
-      ]
-    },
-    "setup": {
-      "kind": "setup",
-      "experiment": {
-        "kind": "experiment",
-        "sourceHash": "4e22c8ab58f877280b255232f567f6d33feb3eb50048f333bb9d81284fc2c0b5",
-        "seed": 20260803,
         "taskScenes": {
           "solveCurrent": {
             "lengthUnit": "mm",
@@ -450,29 +413,15 @@
             "sceneHash": "60bdfad45ad7b5604962135aeb32dfac2473195ea34c19b88840882d14a5816c"
           }
         },
-        "variables": {
-          "sourceVoltage": 1,
-          "referenceVoltage": 0
-        },
-        "varsSchema": {
-          "sourceVoltage": {
-            "min": 1,
-            "max": 1
-          },
-          "referenceVoltage": {
-            "min": 0,
-            "max": 0
-          }
-        },
         "simulationProgram": {
-          "formatVersion": 4,
-          "simulationApiVersion": 2,
+          "formatVersion": 5,
+          "simulationApiVersion": 3,
           "pythonSource": "async def simulate(*, sim, tasks, vars):\n    result = await sim.run(tasks[\"solveCurrent\"])\n    await sim.record(\"totalCurrent\", result[\"artifacts\"][\"totalCurrent\"])\n    return result[\"state\"]\n",
           "tasks": {
             "solveCurrent": {
               "kernel": {
                 "name": "dc-current-density",
-                "version": "0.0.0"
+                "version": "0.1.0"
               },
               "config": {
                 "boundaryConditions": [
@@ -487,7 +436,7 @@
                       }
                     },
                     "target": [
-                      "structure.surface.sourceTerminal"
+                      "experiment.surface.sourceTerminal"
                     ]
                   },
                   {
@@ -501,7 +450,7 @@
                       }
                     },
                     "target": [
-                      "structure.surface.referenceTerminal"
+                      "experiment.surface.referenceTerminal"
                     ]
                   }
                 ],
@@ -524,7 +473,7 @@
                       }
                     },
                     "target": [
-                      "structure.geometry.conductor"
+                      "experiment.geometry.conductor"
                     ]
                   }
                 ],
@@ -541,7 +490,7 @@
                       }
                     },
                     "target": [
-                      "structure.geometry.conductor"
+                      "experiment.geometry.conductor"
                     ]
                   }
                 ],
@@ -567,6 +516,45 @@
           }
         }
       },
+      "materialParameters": {
+        "schemaVersion": 1,
+        "materials": {
+          "Copper": {
+            "electrical.conductivity": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": [
+                  [
+                    59600000,
+                    0,
+                    0
+                  ],
+                  [
+                    0,
+                    59600000,
+                    0
+                  ],
+                  [
+                    0,
+                    0,
+                    59600000
+                  ]
+                ],
+                "unit": "S.m-1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            }
+          }
+        },
+        "materialColors": {}
+      },
+      "materialWarnings": [
+        "Legacy Material snapshot: database parameters were not automatically re-resolved."
+      ],
       "taskMaterialParameters": {
         "solveCurrent": {
           "schemaVersion": 1,
@@ -584,28 +572,28 @@
   "attachments": [
     {
       "id": "input-0",
-      "name": "cae.sample.structure.scene.parts.0.geometry.positions.0.bin",
+      "name": "cae.measurement.experiment.scene.parts.0.geometry.positions.0.bin",
       "mimeType": "application/octet-stream",
       "byteLength": 576,
       "file": "attachments/000-input-0.bin"
     },
     {
       "id": "input-1",
-      "name": "cae.sample.structure.scene.parts.0.geometry.polygonOffsets.0.bin",
+      "name": "cae.measurement.experiment.scene.parts.0.geometry.polygonOffsets.0.bin",
       "mimeType": "application/octet-stream",
       "byteLength": 28,
       "file": "attachments/001-input-1.bin"
     },
     {
       "id": "input-2",
-      "name": "cae.setup.experiment.taskScenes.solveCurrent.parts.0.geometry.positions.0.bin",
+      "name": "cae.measurement.experiment.taskScenes.solveCurrent.parts.0.geometry.positions.0.bin",
       "mimeType": "application/octet-stream",
       "byteLength": 576,
       "file": "attachments/002-input-2.bin"
     },
     {
       "id": "input-3",
-      "name": "cae.setup.experiment.taskScenes.solveCurrent.parts.0.geometry.polygonOffsets.0.bin",
+      "name": "cae.measurement.experiment.taskScenes.solveCurrent.parts.0.geometry.polygonOffsets.0.bin",
       "mimeType": "application/octet-stream",
       "byteLength": 28,
       "file": "attachments/003-input-3.bin"

@@ -105,8 +105,8 @@ export function simulationProgramManifest(
     ),
   ) as Readonly<Record<string, ResolvedDataSchema>>
   return Object.freeze({
-    formatVersion: 4 as const,
-    simulationApiVersion: 2 as const,
+    formatVersion: 5 as const,
+    simulationApiVersion: 3 as const,
     pythonSource,
     tasks: Object.freeze(
       Object.fromEntries(

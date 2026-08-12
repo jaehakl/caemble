@@ -3,7 +3,7 @@ import { Matrix, solve } from 'ml-matrix'
 import { PCA } from 'ml-pca'
 import { RandomForestRegression } from 'ml-random-forest'
 import { mean, quantileSorted, sampleCorrelation, sampleStandardDeviation, silhouette } from 'simple-statistics'
-import type { MeasurementRecord, RecordedDataRecord, SampleRecord, SetupRecord } from '@/api'
+import type { MeasurementRecord, RecordedDataRecord } from '@/api'
 import {
   createDataTensorAccessor,
   isDataTensor,
@@ -26,8 +26,7 @@ export const ANALYSIS_MAX_PREDICTION_FEATURES = 50
 
 type RowIdentity = Readonly<{
   measurementId: number
-  sampleId: number
-  setupId: number
+  inputFingerprint: string
 }>
 
 type AnalysisColumn = Readonly<{
@@ -125,12 +124,7 @@ function componentPath(index: number, shape: readonly number[]) {
   return coordinates.map((coordinate) => `[${coordinate}]`).join('')
 }
 
-function extractVars(
-  value: unknown,
-  prefix: string,
-  source: 'sample-vars' | 'setup-vars',
-  observations: NumericObservation[],
-) {
+function extractVars(value: unknown, prefix: string, source: 'measurement-vars', observations: NumericObservation[]) {
   if (finiteNumber(value)) {
     observations.push({ key: prefix, label: prefix, source, value })
     return
@@ -162,8 +156,8 @@ function extractVars(
 
 function extractMaterials(
   value: unknown,
-  prefix: 'sample' | 'setup',
-  source: 'sample-material' | 'setup-material',
+  prefix: string,
+  source: 'measurement-material',
   observations: NumericObservation[],
 ) {
   if (!isRecord(value) || value.schemaVersion !== 1 || !isRecord(value.materials)) return
@@ -175,7 +169,7 @@ function extractMaterials(
       if (parameterValue.kind === 'sampled_relation' || typeof parameterValue.unit !== 'string') return
       const tensor = numericTensor(parameterValue.value)
       if (!tensor) return
-      const root = `${prefix}.material.${materialName}.${parameterName}`
+      const root = `${prefix}.${materialName}.${parameterName}`
       const signature = `${parameterValue.unit}:${JSON.stringify(tensor.shape)}`
       tensor.flat.forEach((item, index) => {
         const key = `${root}${componentPath(index, tensor.shape)}`
@@ -452,12 +446,38 @@ function describeColumn(state: ColumnState, values: Float64Array, rowCount: numb
 
 function sourceOrder(source: AnalysisColumnDescriptor['source']) {
   return {
-    'sample-vars': 0,
-    'setup-vars': 1,
-    'sample-material': 2,
-    'setup-material': 3,
-    'recorded-data': 4,
+    'measurement-vars': 0,
+    'measurement-material': 1,
+    'recorded-data': 2,
   }[source]
+}
+
+function canonicalInput(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalInput)
+  if (!isRecord(value)) return value
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, canonicalInput(value[key])]),
+  )
+}
+
+function inputFingerprint(measurement: MeasurementRecord) {
+  const source = JSON.stringify(
+    canonicalInput({
+      experimentId: measurement.experiment_id,
+      vars: measurement.vars,
+      materialParameters: measurement.material_parameters,
+    }),
+  )
+  let first = 0x811c9dc5
+  let second = 0x9e3779b9
+  for (let index = 0; index < source.length; index += 1) {
+    const code = source.charCodeAt(index)
+    first = Math.imul(first ^ code, 0x01000193)
+    second = Math.imul(second ^ code, 0x85ebca6b)
+  }
+  return `${(first >>> 0).toString(16).padStart(8, '0')}${(second >>> 0).toString(16).padStart(8, '0')}`
 }
 
 export function stableSignature(rows: readonly Readonly<{ id?: number; updated_at?: string | null }>[]) {
@@ -496,17 +516,11 @@ export function buildAnalysisDataset({
   fingerprint,
   measurements,
   recordedData,
-  samples,
-  setups,
-  structureId,
 }: {
   experimentId: number
   fingerprint: string
   measurements: readonly MeasurementRecord[]
   recordedData: readonly RecordedDataRecord[]
-  samples: readonly SampleRecord[]
-  setups: readonly SetupRecord[]
-  structureId: number
 }): AnalysisDataset {
   if (measurements.length > ANALYSIS_MAX_ROWS) {
     throw new Error(`Analysis는 최대 ${ANALYSIS_MAX_ROWS.toLocaleString()}개 Measurement까지 지원합니다.`)
@@ -514,12 +528,6 @@ export function buildAnalysisDataset({
 
   const usableMeasurements = measurements.filter(
     (row): row is MeasurementRecord & { id: number } => Number.isSafeInteger(row.id) && (row.id ?? 0) > 0,
-  )
-  const sampleById = new Map(
-    samples.filter((row): row is SampleRecord & { id: number } => Boolean(row.id)).map((row) => [row.id, row]),
-  )
-  const setupById = new Map(
-    setups.filter((row): row is SetupRecord & { id: number } => Boolean(row.id)).map((row) => [row.id, row]),
   )
   const recordedByMeasurement = new Map<number, RecordedDataRecord[]>()
   recordedData.forEach((row) => {
@@ -575,21 +583,23 @@ export function buildAnalysisDataset({
 
   usableMeasurements.forEach((measurement) => {
     const rowIndex = identities.length
-    const sample = sampleById.get(measurement.sample_id)
-    const setup = setupById.get(measurement.setup_id)
-    if (!sample || !setup) return
     identities.push({
       measurementId: measurement.id,
-      sampleId: measurement.sample_id,
-      setupId: measurement.setup_id,
+      inputFingerprint: inputFingerprint(measurement),
     })
     states.forEach((state) => state.values.push(Number.NaN))
 
     const observations: NumericObservation[] = []
-    extractVars(sample.vars, 'sample.vars', 'sample-vars', observations)
-    extractVars(setup.vars, 'setup.vars', 'setup-vars', observations)
-    extractMaterials(sample.material_parameters, 'sample', 'sample-material', observations)
-    extractMaterials(setup.material_parameters, 'setup', 'setup-material', observations)
+    extractVars(measurement.vars, 'measurement.vars', 'measurement-vars', observations)
+    const materials = measurement.material_parameters
+    if (isRecord(materials) && materials.schemaVersion === 2) {
+      extractMaterials(materials.experiment, 'measurement.material.experiment', 'measurement-material', observations)
+      if (isRecord(materials.tasks)) {
+        Object.entries(materials.tasks).forEach(([taskName, value]) => {
+          extractMaterials(value, `measurement.material.tasks.${taskName}`, 'measurement-material', observations)
+        })
+      }
+    }
     observations.forEach((observation) => observe(observation, rowIndex))
 
     const resultRows = recordedByMeasurement.get(measurement.id) ?? []
@@ -678,9 +688,6 @@ export function buildAnalysisDataset({
     .sort((left, right) => sourceOrder(left.source) - sourceOrder(right.source) || left.key.localeCompare(right.key))
 
   const warnings: string[] = []
-  if (identities.length !== usableMeasurements.length) {
-    warnings.push('부모 Sample 또는 Setup을 찾을 수 없는 Measurement를 제외했습니다.')
-  }
   if (recordedDataCount === 0 && identities.length > 0) {
     warnings.push('분석할 Recorded Data가 없습니다.')
   }
@@ -688,11 +695,10 @@ export function buildAnalysisDataset({
   return {
     profile: {
       fingerprint,
-      structureId,
       experimentId,
       rowCount: identities.length,
-      sampleCount: new Set(identities.map((row) => row.sampleId)).size,
-      setupCount: new Set(identities.map((row) => row.setupId)).size,
+      preparedCount: usableMeasurements.filter((row) => row.recorded_at === null).length,
+      recordedMeasurementCount: usableMeasurements.filter((row) => row.recorded_at !== null).length,
       recordedDataCount,
       columns: descriptors,
       categoricalSummaries: [...categoricalStates.values()]
@@ -828,19 +834,19 @@ function metrics(observed: readonly number[], predicted: readonly number[]) {
 }
 
 function groupFolds(rows: readonly RowIdentity[], rowIndexes: readonly number[]) {
-  const groups = new Map<number, number[]>()
+  const groups = new Map<string, number[]>()
   rowIndexes.forEach((rowIndex) => {
-    const sampleId = rows[rowIndex].sampleId
-    const group = groups.get(sampleId) ?? []
+    const fingerprint = rows[rowIndex].inputFingerprint
+    const group = groups.get(fingerprint) ?? []
     group.push(rowIndex)
-    groups.set(sampleId, group)
+    groups.set(fingerprint, group)
   })
-  if (groups.size < 5) throw new Error('Prediction에는 서로 다른 Sample이 5개 이상 필요합니다.')
+  if (groups.size < 5) throw new Error('Prediction에는 서로 다른 Measurement 입력이 5개 이상 필요합니다.')
   const foldCount = Math.min(5, groups.size)
   const folds = Array.from({ length: foldCount }, () => [] as number[])
   const sizes = Array(foldCount).fill(0) as number[]
   ;[...groups.entries()]
-    .sort((left, right) => right[1].length - left[1].length || left[0] - right[0])
+    .sort((left, right) => right[1].length - left[1].length || left[0].localeCompare(right[0]))
     .forEach(([, group]) => {
       const targetFold = sizes.indexOf(Math.min(...sizes))
       folds[targetFold].push(...group)
@@ -887,11 +893,6 @@ function rankValues(values: Float64Array) {
     start = end
   }
   return ranked
-}
-
-function medianImputedValues(values: Float64Array) {
-  const replacement = median(Array.from(values))
-  return Float64Array.from(values, (value) => (Number.isFinite(value) ? value : replacement))
 }
 
 function standardizedMatrix(dataset: AnalysisDataset, featureKeys: readonly string[]) {
@@ -984,9 +985,10 @@ export function mineDataset(
 
   const correlationKeys = [...featureKeys, ...(targetKey ? [targetKey] : [])]
   const correlationColumns = requireColumns(dataset, correlationKeys)
-  const imputedColumns = correlationColumns.map((column) => medianImputedValues(column.values))
-  const correlations = imputedColumns.map((left) => imputedColumns.map((right) => pairwiseCorrelation(left, right)))
-  const rankedColumns = imputedColumns.map(rankValues)
+  const correlations = correlationColumns.map((left) =>
+    correlationColumns.map((right) => pairwiseCorrelation(left.values, right.values)),
+  )
+  const rankedColumns = correlationColumns.map((column) => rankValues(column.values))
   const spearmanCorrelations = rankedColumns.map((left) =>
     rankedColumns.map((right) => pairwiseCorrelation(left, right)),
   )
@@ -1182,8 +1184,7 @@ export function createCsv(dataset: AnalysisDataset, kind: 'dataset' | 'predictio
     lines.push(
       [
         'measurement_id',
-        'sample_id',
-        'setup_id',
+        'input_fingerprint',
         'observed',
         'predicted',
         'residual',
@@ -1198,8 +1199,7 @@ export function createCsv(dataset: AnalysisDataset, kind: 'dataset' | 'predictio
       lines.push(
         [
           row.measurementId,
-          row.sampleId,
-          row.setupId,
+          row.inputFingerprint,
           row.observed,
           row.predicted,
           row.residual,
@@ -1213,13 +1213,12 @@ export function createCsv(dataset: AnalysisDataset, kind: 'dataset' | 'predictio
     })
   } else {
     const columns = requireColumns(dataset, columnKeys)
-    lines.push(['measurement_id', 'sample_id', 'setup_id', ...columnKeys].map(csvCell).join(','))
+    lines.push(['measurement_id', 'input_fingerprint', ...columnKeys].map(csvCell).join(','))
     dataset.rows.forEach((row, rowIndex) => {
       lines.push(
         [
           row.measurementId,
-          row.sampleId,
-          row.setupId,
+          row.inputFingerprint,
           ...columns.map((column) => (Number.isFinite(column.values[rowIndex]) ? column.values[rowIndex] : null)),
         ]
           .map(csvCell)

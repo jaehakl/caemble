@@ -35,7 +35,8 @@ async def save_experiment(
     user: Any,
 ) -> SaveCodeEntityResponse:
     source_bundle = request.sourceBundle.model_dump(mode="json")
-    if _bundle_hash(source_bundle) != request.bundleHash:
+    source_hash = _bundle_hash(source_bundle)
+    if source_hash != request.bundleHash:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bundleHash does not match sourceBundle.")
 
     if request.id is None:
@@ -45,6 +46,7 @@ async def save_experiment(
             name=request.name.strip(),
             description=request.description,
             source_bundle=source_bundle,
+            source_hash=source_hash,
         )
         db.add(entity)
         action: Literal["created", "updated", "forked"] = "created"
@@ -53,24 +55,16 @@ async def save_experiment(
         entity = await db.scalar(select(Experiment).where(Experiment.id == request.id).with_for_update())
         if entity is None or (not is_admin_user(user) and entity.user_id != user.id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Experiment not found.")
-        if request.baseBundleHash is None or _bundle_hash(entity.source_bundle) != request.baseBundleHash:
+        if request.baseBundleHash is None or entity.source_hash != request.baseBundleHash:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="The saved source bundle changed before this save.")
 
         bundle_changed = entity.source_bundle != source_bundle
-        structural_change = bundle_changed and request.baseSemanticHash != request.semanticHash
-        if not structural_change:
+        if not bundle_changed:
             entity.name = request.name.strip()
             entity.description = request.description
-            entity.source_bundle = source_bundle
-            entity.code_embedding = None
             action = "updated"
             parent_id = entity.parent_id
         else:
-            if request.baseSemanticHash is None:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="baseSemanticHash is required when the source bundle changes.",
-                )
             parent_id = entity.id
             entity = Experiment(
                 user_id=entity.user_id,
@@ -78,10 +72,16 @@ async def save_experiment(
                 name=request.name.strip(),
                 description=request.description,
                 source_bundle=source_bundle,
+                source_hash=source_hash,
             )
             db.add(entity)
             action = "forked"
 
     await db.flush()
     await db.commit()
-    return SaveCodeEntityResponse(id=entity.id, action=action, parentId=parent_id)
+    return SaveCodeEntityResponse(
+        id=entity.id,
+        action=action,
+        parentId=parent_id,
+        sourceHash=entity.source_hash,
+    )

@@ -2,10 +2,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { AnalysisWorkerRequest, AnalysisWorkerResponse } from './analysis-types'
 
 const apiMocks = vi.hoisted(() => ({
-  measurementContext: vi.fn(),
+  measurementList: vi.fn(),
   recordedDataList: vi.fn(),
-  sampleList: vi.fn(),
-  setupList: vi.fn(),
 }))
 
 vi.mock('@/api', () => ({
@@ -20,10 +18,8 @@ vi.mock('@/api', () => ({
     sort: ['updated_at', 'desc'],
   }),
   dbTables: {
-    Measurement: { listContext: apiMocks.measurementContext },
+    Measurement: { listRows: apiMocks.measurementList },
     RecordedData: { listRows: apiMocks.recordedDataList },
-    Sample: { listRows: apiMocks.sampleList },
-    Setup: { listRows: apiMocks.setupList },
   },
 }))
 
@@ -44,31 +40,19 @@ async function waitForResponse(type: AnalysisWorkerResponse['type'], requestId: 
   return responses.find((response) => response.type === type && response.requestId === requestId)!
 }
 
-function stableParents() {
-  apiMocks.sampleList.mockResolvedValue({
-    total: 1,
-    items: [
-      {
-        id: 10,
-        updated_at: '2026-01-01',
-        structure_id: 1,
-        vars: { width: 2 },
-        material_parameters: { schemaVersion: 1, materials: {} },
-      },
-    ],
-  })
-  apiMocks.setupList.mockResolvedValue({
-    total: 1,
-    items: [
-      {
-        id: 20,
-        updated_at: '2026-01-01',
-        experiment_id: 2,
-        vars: { voltage: 3 },
-        material_parameters: { schemaVersion: 1, materials: {} },
-      },
-    ],
-  })
+function measurement(id: number, updatedAt: string) {
+  return {
+    id,
+    updated_at: updatedAt,
+    experiment_id: 2,
+    vars: { width: id },
+    material_parameters: {
+      schemaVersion: 2,
+      experiment: { schemaVersion: 1, materials: {} },
+      tasks: { main: { schemaVersion: 1, materials: {} } },
+    },
+    recorded_at: '2026-08-12T00:00:00Z',
+  }
 }
 
 describe('Analysis Worker data loading', () => {
@@ -80,18 +64,14 @@ describe('Analysis Worker data loading', () => {
   beforeEach(() => {
     responses.splice(0)
     vi.clearAllMocks()
-    stableParents()
   })
 
   afterAll(() => vi.unstubAllGlobals())
 
   it('range 응답을 정확한 Measurement ID 집합으로 다시 필터링한다', async () => {
-    apiMocks.measurementContext.mockResolvedValue({
+    apiMocks.measurementList.mockResolvedValue({
       total: 2,
-      items: [
-        { id: 1, updated_at: 'a', sample_id: 10, setup_id: 20 },
-        { id: 3, updated_at: 'a', sample_id: 10, setup_id: 20 },
-      ],
+      items: [measurement(1, 'a'), measurement(3, 'a')],
     })
     apiMocks.recordedDataList.mockResolvedValue({
       total: 2,
@@ -119,7 +99,7 @@ describe('Analysis Worker data loading', () => {
       ],
     })
 
-    dispatch({ type: 'load-context', requestId: 'exact', structureId: 1, experimentId: 2 })
+    dispatch({ type: 'load-context', requestId: 'exact', experimentId: 2 })
     const response = await waitForResponse('profile', 'exact')
 
     expect(response.type === 'profile' && response.profile.recordedDataCount).toBe(1)
@@ -132,35 +112,35 @@ describe('Analysis Worker data loading', () => {
   })
 
   it('전후 signature가 바뀌면 한 번 다시 읽고 안정된 snapshot만 반환한다', async () => {
-    const oldRows = { total: 1, items: [{ id: 1, updated_at: 'old', sample_id: 10, setup_id: 20 }] }
-    const newRows = { total: 1, items: [{ id: 1, updated_at: 'new', sample_id: 10, setup_id: 20 }] }
-    apiMocks.measurementContext
+    const oldRows = { total: 1, items: [measurement(1, 'old')] }
+    const newRows = { total: 1, items: [measurement(1, 'new')] }
+    apiMocks.measurementList
       .mockResolvedValueOnce(oldRows)
       .mockResolvedValueOnce(newRows)
       .mockResolvedValueOnce(newRows)
       .mockResolvedValueOnce(newRows)
     apiMocks.recordedDataList.mockResolvedValue({ total: 0, items: [] })
 
-    dispatch({ type: 'load-context', requestId: 'retry', structureId: 1, experimentId: 2 })
+    dispatch({ type: 'load-context', requestId: 'retry', experimentId: 2 })
     await waitForResponse('profile', 'retry')
 
-    expect(apiMocks.measurementContext).toHaveBeenCalledTimes(4)
+    expect(apiMocks.measurementList).toHaveBeenCalledTimes(4)
     expect(apiMocks.recordedDataList).toHaveBeenCalledTimes(2)
   })
 
   it('재시도 중에도 데이터가 바뀌면 새로고침을 요구한다', async () => {
     const rows = (updatedAt: string) => ({
       total: 1,
-      items: [{ id: 1, updated_at: updatedAt, sample_id: 10, setup_id: 20 }],
+      items: [measurement(1, updatedAt)],
     })
-    apiMocks.measurementContext
+    apiMocks.measurementList
       .mockResolvedValueOnce(rows('a'))
       .mockResolvedValueOnce(rows('b'))
       .mockResolvedValueOnce(rows('b'))
       .mockResolvedValueOnce(rows('c'))
     apiMocks.recordedDataList.mockResolvedValue({ total: 0, items: [] })
 
-    dispatch({ type: 'load-context', requestId: 'unstable', structureId: 1, experimentId: 2 })
+    dispatch({ type: 'load-context', requestId: 'unstable', experimentId: 2 })
     const response = await waitForResponse('error', 'unstable')
 
     expect(response.type === 'error' && response.message).toContain('계속 변경되었습니다')
@@ -171,9 +151,9 @@ describe('Analysis Worker data loading', () => {
     const ids = [1, 3_002, 6_003, 9_004, 12_005]
     const context = {
       total: ids.length,
-      items: ids.map((id) => ({ id, updated_at: 'a', sample_id: 10, setup_id: 20 })),
+      items: ids.map((id) => measurement(id, 'a')),
     }
-    apiMocks.measurementContext.mockResolvedValue(context)
+    apiMocks.measurementList.mockResolvedValue(context)
     let active = 0
     let maximumActive = 0
     apiMocks.recordedDataList.mockImplementation(async () => {
@@ -184,7 +164,7 @@ describe('Analysis Worker data loading', () => {
       return { total: 0, items: [] }
     })
 
-    dispatch({ type: 'load-context', requestId: 'concurrency', structureId: 1, experimentId: 2 })
+    dispatch({ type: 'load-context', requestId: 'concurrency', experimentId: 2 })
     await waitForResponse('profile', 'concurrency')
 
     expect(apiMocks.recordedDataList).toHaveBeenCalledTimes(5)

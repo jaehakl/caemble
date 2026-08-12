@@ -211,7 +211,7 @@ function evaluateNode(
 export function evaluateCadScene(
   root: unknown,
   groupOptions: CadSceneGroupOptions = {},
-  rootLabel = 'Structure',
+  rootLabel = 'Experiment',
   rawLengthUnit: UcumUnit = 'm',
 ): CadScene {
   const lengthUnit = normalizeUcumUnit(rawLengthUnit, `${rootLabel} scene lengthUnit`)

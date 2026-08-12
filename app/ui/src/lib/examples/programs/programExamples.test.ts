@@ -1,11 +1,12 @@
 import { transform } from 'esbuild'
 import { describe, expect, it } from 'vitest'
 import { CAD_COMPILER_VERSION, type CompiledCadDocument, type CompiledCadSource } from '../../cad/compiler/types'
-import { executeCompiledDocument } from '../../cad/execution/userModule'
+import { executeCompiledDocument, inspectCompiledDocument } from '../../cad/execution/userModule'
+import { generateRandomVars } from '../../cad/model/vars'
 import { analyzeCadSource, analyzeTaskSource } from '../../cad/source/sourceAnalysis'
 import { assertSimulationProgramManifest } from '../../cad/simulation'
 import type { CaembleProgramExample } from './types'
-import { CAEMBLE_PROGRAM_EXAMPLE_SEED, caembleProgramExamples } from '.'
+import { caembleProgramExamples } from '.'
 
 async function compileSource(source: string) {
   return (
@@ -20,17 +21,16 @@ async function compileSource(source: string) {
   ).code
 }
 
-async function prepareExample(example: CaembleProgramExample, seed = CAEMBLE_PROGRAM_EXAMPLE_SEED) {
-  analyzeCadSource(example.structureCode, 'structure')
+async function prepareExample(example: CaembleProgramExample) {
   const sourceHash = '2'.repeat(64)
   const sources = await Promise.all(
     Object.entries(example.experimentSourceBundle.files)
       .filter(([path]) => path.endsWith('.tsx'))
       .map(async ([entryFile, source]) => {
-        if (entryFile === 'experiment.tsx') analyzeCadSource(source, 'experiment')
+        if (entryFile === 'experiment.tsx') analyzeCadSource(source)
         else analyzeTaskSource(source)
         const compiled: CompiledCadSource = {
-          apiVersion: 4,
+          apiVersion: 5,
           compilerVersion: CAD_COMPILER_VERSION,
           entryFile,
           code: await compileSource(source),
@@ -40,31 +40,29 @@ async function prepareExample(example: CaembleProgramExample, seed = CAEMBLE_PRO
       }),
   )
   const document: CompiledCadDocument = {
-    apiVersion: 4,
+    apiVersion: 5,
     compilerVersion: CAD_COMPILER_VERSION,
     sourceHash,
     sources: Object.fromEntries(sources),
   }
+  const inspection = inspectCompiledDocument(document)
   const result = executeCompiledDocument(
     document,
-    'experiment',
-    seed,
-    {},
+    generateRandomVars(inspection.varsSchema),
     example.experimentSourceBundle.files['simulate.py'],
   )
-  if (result.kind !== 'experiment') throw new Error(`${example.id} did not produce an Experiment snapshot.`)
   return result.simulationProgram
 }
 
 describe('Python CAE Experiment examples', () => {
-  it('keeps unique immutable fixtures with compact manifest v4 tasks', async () => {
+  it('keeps unique immutable fixtures with compact manifest v5 tasks', async () => {
     expect(new Set(caembleProgramExamples.map((example) => example.id)).size).toBe(caembleProgramExamples.length)
 
-    for (const [index, example] of caembleProgramExamples.entries()) {
-      const manifest = await prepareExample(example, 101 + index)
+    for (const example of caembleProgramExamples) {
+      const manifest = await prepareExample(example)
       expect(manifest).toMatchObject({
-        formatVersion: 4,
-        simulationApiVersion: 2,
+        formatVersion: 5,
+        simulationApiVersion: 3,
         pythonSource: example.experimentSourceBundle.files['simulate.py'],
       })
       expect(Object.keys(manifest.tasks)).toEqual(example.verification.kernelTasks)
@@ -76,7 +74,7 @@ describe('Python CAE Experiment examples', () => {
     }
   })
 
-  it('uses only the Python v2 ABI for orchestration and records', () => {
+  it('uses only the Python v3 ABI for orchestration and records', () => {
     caembleProgramExamples.forEach((example) => {
       const pythonSource = example.experimentSourceBundle.files['simulate.py']
       expect(example.experimentSourceBundle.files['experiment.tsx']).not.toContain('sim.run(')

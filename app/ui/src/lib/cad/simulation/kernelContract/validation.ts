@@ -223,8 +223,8 @@ function validateTargetDescriptor(target: unknown, path: string, issues: KernelC
     addIssue(issues, path, 'must be a target descriptor.')
     return
   }
-  if (target.source !== 'structure' && target.source !== 'experiment') {
-    addIssue(issues, `${path}.source`, 'must be structure or experiment.')
+  if (target.source !== 'experiment' && target.source !== 'task') {
+    addIssue(issues, `${path}.source`, 'must be experiment or task.')
   }
   if (target.kind !== 'geometry' && target.kind !== 'surface') {
     addIssue(issues, `${path}.kind`, 'must be geometry or surface.')
@@ -406,7 +406,7 @@ function methodsFor(descriptor: KernelDescriptor, category: 'initializations' | 
   return descriptor.methods[category] as readonly (KernelMethodDescriptor | KernelOutputMethodDescriptor)[]
 }
 
-function sceneForTarget(world: KernelWorld, source: 'structure' | 'experiment') {
+function sceneForTarget(world: KernelWorld, source: 'experiment' | 'task') {
   return world.scenes[source]
 }
 
@@ -693,7 +693,7 @@ function validateMaterials(
       call.target.forEach((target) => {
         const [, source, kind, groupName] = /^([^.]+)\.([^.]+)\.(.+)$/.exec(target) ?? []
         if (
-          (source !== 'structure' && source !== 'experiment') ||
+          (source !== 'experiment' && source !== 'task') ||
           (kind !== 'geometry' && kind !== 'surface') ||
           !groupName
         )

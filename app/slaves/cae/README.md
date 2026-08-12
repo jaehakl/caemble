@@ -1,6 +1,6 @@
 # Caemble CAE slave
 
-Caemble의 fully-built `BuiltSample`과 `BuiltSetup`만 받아 Python kernel을 실행하고, 선언된
+Caemble의 fully-built `BuiltMeasurement`만 받아 Python kernel을 실행하고, 선언된
 RecordedData만 public v1 WebRTC result attachment로 반환한다. Caemble에 포함된 SDK와
 application-level `cae.simulation.start` → `cae.simulation.next` protocol을 사용한다.
 
@@ -38,7 +38,7 @@ poetry run python -c "import app, numpy, aiortc"
 poetry run pytest
 ```
 
-UI가 실제로 build/serialize한 raw `sample`, `setup`, tensor attachment를
+UI가 실제로 build/serialize한 raw `measurement`와 tensor attachment를
 API나 launcher 없이 검증하려면 같은 Caemble checkout에서 fixture를 갱신한 뒤 focused
 test를 실행한다.
 
@@ -79,7 +79,10 @@ UI와 CAE는 함께 배포하지만 별도 contract package나 hash 비교를 �
 build 시 직접 포함하며 사본이나 generated solver catalog를 커밋하지 않는다. 외부 SDK
 호환을 위한 `cae.solvers.manifests` handler는 유지한다.
 
-CAE registry는 solver `manifest.json`을 자동 검색한다. start payload는 정확히 `{sample, setup}`이다.
+CAE registry는 solver `manifest.json`을 자동 검색한다. start payload는 정확히
+`{ measurement: BuiltMeasurement }`이며 Simulation manifest v5와 Python simulation API v3만
+받는다. 각 kernel world의 `experiment` scope는 공통 physical scene과 frozen materials를,
+`task` scope는 현재 Task-local scene과 frozen materials를 제공한다.
 첫 `next`가 계산을 시작하며 각 record는 다음
 `next`의 `ackSequence`를 받아야 해제된다. 기본 실행 제한은 2시간, 첫 `next` 제한은 30초,
 record ACK 제한은 120초다.

@@ -26,7 +26,7 @@ describe('workbench action chrome', () => {
       label: '측정',
       icon: <Beaker />,
       disabled: true,
-      disabledReason: '저장된 Setup이 필요합니다.',
+      disabledReason: 'Prepared Measurement가 필요합니다.',
       onSelect: blocked,
     }
     const menus: readonly WorkbenchMenuDefinition[] = [
@@ -50,7 +50,7 @@ describe('workbench action chrome', () => {
     await user.click(screen.getByRole('menuitem', { name: 'Data' }))
     await user.click(screen.getByRole('menuitem', { name: '실행' }))
     await user.click(screen.getByRole('button', { name: '실행' }))
-    const blockedButton = screen.getByRole('button', { name: /측정: 저장된 Setup이 필요합니다/ })
+    const blockedButton = screen.getByRole('button', { name: /측정: Prepared Measurement가 필요합니다/ })
     await user.click(blockedButton)
 
     expect(run).toHaveBeenCalledTimes(2)
@@ -60,27 +60,27 @@ describe('workbench action chrome', () => {
   it('shows only the active tab ribbon', () => {
     const { rerender } = render(
       <WorkbenchRibbon
-        activeTabId="structure"
+        activeTabId="experiment"
         panels={[
-          { tabId: 'structure', label: 'Structure', content: <div>Structure actions</div> },
           { tabId: 'experiment', label: 'Experiment', content: <div>Experiment actions</div> },
+          { tabId: 'recorded-data', label: 'RecordedData', content: <div>RecordedData actions</div> },
         ]}
       />,
     )
 
-    expect(screen.getByRole('region', { name: 'Structure 리본' })).toHaveTextContent('Structure actions')
-    expect(screen.queryByText('Experiment actions')).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Experiment 리본' })).toHaveTextContent('Experiment actions')
+    expect(screen.queryByText('RecordedData actions')).not.toBeInTheDocument()
 
     rerender(
       <WorkbenchRibbon
-        activeTabId="experiment"
+        activeTabId="recorded-data"
         panels={[
-          { tabId: 'structure', label: 'Structure', content: <div>Structure actions</div> },
           { tabId: 'experiment', label: 'Experiment', content: <div>Experiment actions</div> },
+          { tabId: 'recorded-data', label: 'RecordedData', content: <div>RecordedData actions</div> },
         ]}
       />,
     )
-    expect(screen.getByRole('region', { name: 'Experiment 리본' })).toHaveTextContent('Experiment actions')
+    expect(screen.getByRole('region', { name: 'RecordedData 리본' })).toHaveTextContent('RecordedData actions')
   })
 })
 
@@ -89,14 +89,14 @@ describe('EditorDock', () => {
     const user = userEvent.setup()
     const close = vi.fn()
     const initialTabs: readonly EditorDockTab[] = [
-      { id: 'structure', label: 'Structure', content: <div>Structure editor</div> },
       { id: 'experiment', label: 'Experiment', content: <div>Experiment editor</div> },
       { id: 'recorded-data', label: 'RecordedData', content: <div>Recorded data</div> },
+      { id: 'notes', label: 'Notes', content: <div>Notes editor</div> },
     ]
 
     function DockHarness() {
       const [tabs, setTabs] = useState(initialTabs)
-      const [activeTab, setActiveTab] = useState('structure')
+      const [activeTab, setActiveTab] = useState('experiment')
       return (
         <EditorDock
           activeTabId={activeTab}
@@ -117,17 +117,13 @@ describe('EditorDock', () => {
     expect(screen.getByRole('tab', { name: 'RecordedData' })).toHaveAttribute('aria-selected', 'true')
     expect(experimentTab).toHaveAttribute('aria-selected', 'false')
 
-    const moveStructure = screen.getByRole('button', { name: 'Structure 탭 이동' })
-    moveStructure.focus()
+    const moveExperiment = screen.getByRole('button', { name: 'Experiment 탭 이동' })
+    moveExperiment.focus()
     await user.keyboard('{Alt>}{ArrowRight}{/Alt}')
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-      'Experiment',
-      'Structure',
-      'RecordedData',
-    ])
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['RecordedData', 'Experiment', 'Notes'])
 
-    await user.click(screen.getByRole('button', { name: 'Structure 탭 닫기' }))
-    expect(close).toHaveBeenCalledWith('structure')
+    await user.click(screen.getByRole('button', { name: 'Experiment 탭 닫기' }))
+    expect(close).toHaveBeenCalledWith('experiment')
   })
 })
 

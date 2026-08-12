@@ -3,8 +3,8 @@ from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import EmailStr, Field, field_serializer, field_validator, model_validator
-from utils.datetime_utils import serialize_datetime_utc, to_utc_datetime
+from pydantic import ConfigDict, EmailStr, Field, field_serializer, field_validator, model_validator
+from utils.datetime_utils import serialize_datetime_utc
 
 
 class BaseModel(PydanticBaseModel):
@@ -110,12 +110,10 @@ class GeometryBase(CodeEntityBase):
     pass
 
 
-class StructureBase(CodeEntityBase):
-    pass
-
-
 class ExperimentSourceBundle(BaseModel):
-    formatVersion: Literal[1]
+    model_config = ConfigDict(extra="forbid")
+
+    formatVersion: Literal[2]
     files: Dict[str, str]
 
     @model_validator(mode="after")
@@ -156,126 +154,36 @@ class ExperimentBase(OwnedTimestampFields):
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
     source_bundle: ExperimentSourceBundle
-
-
-class SaveCodeEntityRequest(BaseModel):
-    id: Optional[int] = None
-    name: str = Field(..., min_length=1)
-    description: Optional[str] = None
-    code: str = Field(..., min_length=1)
-    rawCodeHash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
-    semanticHash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
-    semanticHashVersion: Literal[1]
-    baseRawCodeHash: Optional[str] = Field(
-        default=None,
-        pattern=r"^[0-9a-f]{64}$",
-    )
-    baseSemanticHash: Optional[str] = Field(
-        default=None,
-        pattern=r"^[0-9a-f]{64}$",
-    )
+    source_hash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
 
 
 class SaveExperimentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: Optional[int] = None
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
     sourceBundle: ExperimentSourceBundle
     bundleHash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
-    semanticHash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
-    semanticHashVersion: Literal[2]
     baseBundleHash: Optional[str] = Field(
         default=None,
         pattern=r"^[0-9a-f]{64}$",
     )
-    baseSemanticHash: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class SaveCodeEntityResponse(BaseModel):
     id: int
     action: Literal["created", "updated", "forked"]
     parentId: Optional[int] = None
-
-
-class SampleBase(OwnedTimestampFields):
-    structure_id: int
-    vars: Dict[str, Any] = Field(default_factory=dict)
-    material_parameters: Dict[str, Any] = Field(default_factory=dict)
-
-
-class SetupBase(OwnedTimestampFields):
-    experiment_id: int
-    vars: Dict[str, Any] = Field(default_factory=dict)
-    material_parameters: Dict[str, Any] = Field(default_factory=dict)
+    sourceHash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
 
 
 class MeasurementBase(OwnedTimestampFields):
-    sample_id: int
-    setup_id: int
-
-
-class MeasurementContextListRequest(GetListRequestBase):
-    structure_id: int
+    user_id: str
     experiment_id: int
-    sort: Optional[List[str]] = Field(
-        default_factory=lambda: ["updated_at", "desc"]
-    )
-
-
-class MeasurementPairListRequest(BaseModel):
-    offset: int = Field(default=0, ge=0)
-    limit: Optional[int] = Field(default=20, ge=1, le=100)
-    search_text: Optional[str] = None
-    structure_id: Optional[int] = Field(default=None, gt=0)
-    experiment_id: Optional[int] = Field(default=None, gt=0)
-    exclude_structure_id: Optional[int] = Field(default=None, gt=0)
-    exclude_experiment_id: Optional[int] = Field(default=None, gt=0)
-    structure_scope: Literal["visible", "mine", "public"] = "visible"
-    experiment_scope: Literal["visible", "mine", "public"] = "visible"
-    measured_from: Optional[datetime] = None
-    measured_to: Optional[datetime] = None
-    sort: Optional[List[str]] = None
-
-    @field_validator("measured_from", "measured_to")
-    @classmethod
-    def normalize_measured_at(cls, value: Optional[datetime]) -> Optional[datetime]:
-        return to_utc_datetime(value) if value is not None else None
-
-    @model_validator(mode="after")
-    def validate_pair_list(self):
-        allowed_sort_fields = {
-            "latest_measurement_at",
-            "measurement_count",
-            "structure_name",
-            "experiment_name",
-        }
-        if self.sort:
-            if len(self.sort) > 2 or self.sort[0] not in allowed_sort_fields:
-                raise ValueError("Unsupported Measurement pair sort.")
-            if len(self.sort) == 2 and self.sort[1].lower() not in {"asc", "desc"}:
-                raise ValueError("Measurement pair sort direction must be asc or desc.")
-        if self.measured_from and self.measured_to and self.measured_from > self.measured_to:
-            raise ValueError("measured_from must not be after measured_to.")
-        return self
-
-
-class MeasurementPairSummary(BaseModel):
-    structure_id: int
-    structure_name: str
-    structure_description: Optional[str] = None
-    structure_user_id: Optional[str] = None
-    experiment_id: int
-    experiment_name: str
-    experiment_description: Optional[str] = None
-    experiment_user_id: Optional[str] = None
-    measurement_count: int
-    latest_measurement_id: int
-    latest_measurement_at: datetime
-
-
-class MeasurementPairListResponse(BaseModel):
-    total: int
-    items: List[MeasurementPairSummary]
+    vars: Dict[str, Any]
+    material_parameters: Dict[str, Any]
+    recorded_at: Optional[datetime] = None
 
 
 class CodeEntityHistoryRequest(BaseModel):
@@ -296,6 +204,8 @@ class CodeEntityHistoryResponse(BaseModel):
 
 
 class MeasurementSaveRecordedData(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(..., min_length=1)
     quantity_kind: Optional[str] = Field(default=None, min_length=1)
     tensor_order: int = Field(..., ge=0)
@@ -304,11 +214,58 @@ class MeasurementSaveRecordedData(BaseModel):
     data: Any
 
 
-class MeasurementSaveRequest(BaseModel):
-    sample_id: int
-    setup_id: int
-    overwrite: bool = False
+class MeasurementCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    experiment_id: int = Field(..., gt=0)
+    experiment_source_hash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    vars: Dict[str, Any]
+    material_parameters: Dict[str, Any]
+
+    @field_validator("material_parameters")
+    @classmethod
+    def validate_material_parameters(cls, value: Dict[str, Any]):
+        if set(value) != {"schemaVersion", "experiment", "tasks"}:
+            raise ValueError(
+                "material_parameters must contain exactly schemaVersion, experiment, and tasks."
+            )
+        if value["schemaVersion"] != 2:
+            raise ValueError("material_parameters.schemaVersion must be 2.")
+        def validate_frozen(snapshot: Any, path: str):
+            if not isinstance(snapshot, dict) or set(snapshot) not in (
+                {"schemaVersion", "materials"},
+                {"schemaVersion", "materials", "materialColors"},
+            ):
+                raise ValueError(f"{path} must be a frozen Material snapshot.")
+            if snapshot["schemaVersion"] != 1 or not isinstance(snapshot["materials"], dict):
+                raise ValueError(f"{path} must use frozen Material schemaVersion 1.")
+            if "materialColors" in snapshot and not isinstance(snapshot["materialColors"], dict):
+                raise ValueError(f"{path}.materialColors must be an object.")
+
+        validate_frozen(value["experiment"], "material_parameters.experiment")
+        if not isinstance(value["tasks"], dict) or any(
+            not isinstance(task_name, str)
+            or not task_name.strip()
+            or not isinstance(parameters, dict)
+            for task_name, parameters in value["tasks"].items()
+        ):
+            raise ValueError("material_parameters.tasks must map Task names to objects.")
+        for task_name, parameters in value["tasks"].items():
+            validate_frozen(parameters, f"material_parameters.tasks.{task_name}")
+        return value
+
+
+class MeasurementRecordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     recorded_data: List[MeasurementSaveRecordedData] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_recorded_data_names(self):
+        names = [item.name for item in self.recorded_data]
+        if len(names) != len(set(names)):
+            raise ValueError("RecordedData names must be unique within a Measurement.")
+        return self
 
 
 class MeasurementSaveResponse(BaseModel):
@@ -316,6 +273,7 @@ class MeasurementSaveResponse(BaseModel):
 
 
 class RecordedDataBase(OwnedTimestampFields):
+    user_id: str
     measurement_id: int
     name: str = Field(..., min_length=1)
     quantity_kind: Optional[str] = Field(default=None, min_length=1)
@@ -328,7 +286,6 @@ class RecordedDataBase(OwnedTimestampFields):
 
 
 class ModelArtifactBase(OwnedTimestampFields):
-    structure_id: int
     experiment_id: int
     model_url: Optional[str] = None
     file_size: Optional[int] = Field(default=None, ge=0)

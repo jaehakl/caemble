@@ -1,6 +1,6 @@
 export const fiberBundleCode = `import {
   Material,
-  structure,
+  experiment,
   type FiberFourierMode,
   type Geometry,
   type Vec3,
@@ -91,7 +91,7 @@ const Bundle: Geometry<{
   </>
 )
 
-export default structure({
+export default experiment({
   lengthUnit: 'mm',
   geometry: ({ vars }) => {
     const fourier = vars.fourierModes.map(([amplitude, phase]) => ({
@@ -141,5 +141,6 @@ export default structure({
   surfaceGroup: {
     starts: ['bundle.1/surface-1', 'bundle.2/surface-1', 'bundle.3/surface-1'],
   },
+  recordedData: {},
 })
 `

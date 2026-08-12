@@ -1,22 +1,24 @@
 import { createExperimentSourceBundle } from '../../cad/source/document'
 import type { CaembleProgramExample } from './types'
 
-export const electroThermalUniformBarStructureCode = `import {
+export const electroThermalUniformBarExperimentCode = `import {
   Mat,
   Material,
-  structure,
+  experiment,
   type Geometry,
   type Vec3,
 } from '@caemble/core'
 
 const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />
 
-export default structure({
+export default experiment({
   lengthUnit: 'mm',
   varsSchema: {
     conductorSize: { min: [100, 5, 5], max: [100, 5, 5] },
     electricalConductivity: { min: 5.96e7, max: 5.96e7 },
     thermalConductivity: { min: 401, max: 401 },
+    sourceVoltage: { min: 1, max: 1 },
+    fixedTemperature: { min: 293.15, max: 293.15 },
   },
   geometry: ({ vars }) => (
     <Conductor
@@ -44,16 +46,6 @@ export default structure({
   surfaceGroup: {
     sourceTerminal: ['conductor/surface-1'],
     referenceTerminal: ['conductor/surface-2'],
-  },
-})
-`
-
-export const electroThermalUniformBarExperimentCode = `import { experiment } from '@caemble/core'
-
-export default experiment({
-  varsSchema: {
-    sourceVoltage: { min: 1, max: 1 },
-    fixedTemperature: { min: 293.15, max: 293.15 },
   },
   recordedData: {
     totalCurrent: {
@@ -87,7 +79,7 @@ function ElectricProbe() {
 }
 
 export default defineTask({
-  kernel: { name: 'dc-current-density', version: '0.0.0' },
+  kernel: { name: 'dc-current-density', version: '0.1.0' },
   lengthUnit: 'mm',
   geometry: () => <ElectricProbe id="electric-probe" pos={[0, -10, 0]} />,
   config: ({ vars }) => ({
@@ -96,18 +88,18 @@ export default defineTask({
       maxIterations: 1000,
     },
     initializations: [{
-      target: ['structure.geometry.conductor'],
+      target: ['experiment.geometry.conductor'],
       methodId: 'dc.voxel-grid',
       parameters: { gridShape: { dtype: 'int32', axes: [{ length: 3 }], value: [20, 11, 11] } },
     }],
     boundaryConditions: [
       {
-        target: ['structure.surface.sourceTerminal'],
+        target: ['experiment.surface.sourceTerminal'],
         methodId: 'dc.source-potential',
         parameters: { voltage: { dtype: 'float64', value: vars.sourceVoltage, unit: 'mV', quantityKind: 'electromagnetism.Voltage' } },
       },
       {
-        target: ['structure.surface.referenceTerminal'],
+        target: ['experiment.surface.referenceTerminal'],
         methodId: 'dc.reference-potential',
         parameters: { voltage: { dtype: 'float64', value: 0, unit: 'mV', quantityKind: 'electromagnetism.Voltage' } },
       },
@@ -115,11 +107,11 @@ export default defineTask({
     outputs: [
       {
         key: 'totalCurrent',
-        target: ['structure.geometry.conductor'],
+        target: ['experiment.geometry.conductor'],
         methodId: 'dc.total-current',
         parameters: { crossSectionPosition: { dtype: 'float64', value: 0.5, unit: '{fraction}', quantityKind: 'DimensionlessRatio' } },
       },
-      { key: 'jouleHeating', target: ['structure.geometry.conductor'], methodId: 'dc.joule-heating', parameters: {} },
+      { key: 'jouleHeating', target: ['experiment.geometry.conductor'], methodId: 'dc.joule-heating', parameters: {} },
     ],
   }),
 })
@@ -132,7 +124,7 @@ function ThermalProbe() {
 }
 
 export default defineTask({
-  kernel: { name: 'steady-state-heat', version: '0.0.0' },
+  kernel: { name: 'steady-state-heat', version: '0.1.0' },
   lengthUnit: 'mm',
   geometry: () => <ThermalProbe id="thermal-probe" pos={[0, -14, 0]} />,
   config: ({ vars }) => ({
@@ -141,25 +133,25 @@ export default defineTask({
       maxIterations: 1000,
     },
     initializations: [{
-      target: ['structure.geometry.conductor'],
+      target: ['experiment.geometry.conductor'],
       methodId: 'heat.voxel-grid',
       parameters: { gridShape: { dtype: 'int32', axes: [{ length: 3 }], value: [20, 11, 11] } },
     }],
     boundaryConditions: [
       {
-        target: ['structure.surface.sourceTerminal'],
+        target: ['experiment.surface.sourceTerminal'],
         methodId: 'heat.fixed-temperature',
         parameters: { temperature: { dtype: 'float64', value: vars.fixedTemperature, unit: 'K', quantityKind: 'thermodynamics.Temperature' } },
       },
       {
-        target: ['structure.surface.referenceTerminal'],
+        target: ['experiment.surface.referenceTerminal'],
         methodId: 'heat.fixed-temperature',
         parameters: { temperature: { dtype: 'float64', value: vars.fixedTemperature, unit: 'K', quantityKind: 'thermodynamics.Temperature' } },
       },
     ],
     outputs: [
-      { key: 'temperature', target: ['structure.geometry.conductor'], methodId: 'heat.temperature', parameters: {} },
-      { key: 'maximumTemperature', target: ['structure.geometry.conductor'], methodId: 'heat.maximum-temperature', parameters: {} },
+      { key: 'temperature', target: ['experiment.geometry.conductor'], methodId: 'heat.temperature', parameters: {} },
+      { key: 'maximumTemperature', target: ['experiment.geometry.conductor'], methodId: 'heat.maximum-temperature', parameters: {} },
     ],
   }),
 })
@@ -198,7 +190,6 @@ export const electroThermalUniformBarExample = Object.freeze({
     'Joule heating을 이용한 단방향 전기-열 결합',
     '3D temperature RecordedData와 maximum temperature',
   ]),
-  structureCode: electroThermalUniformBarStructureCode,
   experimentSourceBundle: electroThermalUniformBarExperimentSourceBundle,
   verification: Object.freeze({
     kernelTasks: Object.freeze(['electric', 'thermal']),

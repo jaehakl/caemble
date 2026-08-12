@@ -1,28 +1,18 @@
 import { dbTables, getListRequest } from '@/api'
-import { deserializeCadScene, type EvaluatedDocumentSnapshot, type TaskMaterialResolution } from '@/lib/cad'
+import { deserializeCadScene, type EvaluatedExperimentSnapshot } from '@/lib/cad'
 import {
-  readFrozenMaterialParameters,
   resolveMaterialParameters,
-  sourceOnlyMaterialParameters,
   type FrozenMaterialParameters,
   type MaterialResolution,
 } from '@/lib/material'
+import { readMeasurementMaterialParameters } from './contracts'
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function readStoredTaskMaterials(value: unknown, taskNames: readonly string[]) {
-  if (!isRecord(value) || value.schemaVersion !== 1 || !isRecord(value.tasks)) return null
-  const tasks = value.tasks
-  if (
-    Object.keys(tasks).length !== taskNames.length ||
-    taskNames.some((name) => !readFrozenMaterialParameters(tasks[name]))
-  ) {
-    return null
-  }
-  return tasks as Readonly<Record<string, FrozenMaterialParameters>>
-}
+export type MeasurementMaterialResolution = Readonly<{
+  materialParameters: FrozenMaterialParameters
+  warnings: readonly string[]
+  taskMaterialParameters: Readonly<Record<string, FrozenMaterialParameters>>
+  taskMaterialWarnings: Readonly<Record<string, readonly string[]>>
+}>
 
 export function createDocumentMaterialResolver(storedSnapshot: unknown | null) {
   const materialNameQueries = new Map<string, ReturnType<typeof dbTables.MaterialName.listRows>>()
@@ -31,7 +21,6 @@ export function createDocumentMaterialResolver(storedSnapshot: unknown | null) {
 
   const resolveOne = async (
     materials: Parameters<typeof resolveMaterialParameters>[0],
-    seed: number,
     frozen: FrozenMaterialParameters | null,
   ): Promise<MaterialResolution> => {
     if (frozen) return Object.freeze({ materialParameters: frozen, warnings: Object.freeze([]) })
@@ -53,7 +42,7 @@ export function createDocumentMaterialResolver(storedSnapshot: unknown | null) {
     }
     const names = (await materialNameQuery).items
     const materialIds = [...new Set(names.map((row) => row.material_id))].sort((left, right) => left - right)
-    if (materialIds.length === 0) return resolveMaterialParameters(materials, names, [], { seed })
+    if (materialIds.length === 0) return resolveMaterialParameters(materials, names, [])
 
     const materialIdKey = JSON.stringify(materialIds)
     let materialQuery = materialQueries.get(materialIdKey)
@@ -81,52 +70,39 @@ export function createDocumentMaterialResolver(storedSnapshot: unknown | null) {
       })
     }
     const [databaseMaterials, parameters] = await Promise.all([materialQuery, parameterQuery])
-    return resolveMaterialParameters(materials, names, parameters.items, {
-      materials: databaseMaterials.items,
-      seed,
-    })
+    return resolveMaterialParameters(materials, names, parameters.items, { materials: databaseMaterials.items })
   }
 
-  return async (snapshot: EvaluatedDocumentSnapshot): Promise<MaterialResolution | TaskMaterialResolution> => {
-    const storedIsEmpty = isRecord(storedSnapshot) && Object.keys(storedSnapshot).length === 0
-    if (snapshot.kind === 'structure') {
-      const scene = deserializeCadScene(snapshot.scene)
-      const materials = scene.parts.flatMap((part) => (part.material ? [part.material] : []))
-      if (storedSnapshot !== null && !storedIsEmpty) {
-        const frozen = readFrozenMaterialParameters(storedSnapshot)
-        if (!frozen) throw new Error('저장된 Sample Material snapshot이 올바르지 않습니다.')
-        return resolveOne(materials, snapshot.seed, frozen)
-      }
-      return storedIsEmpty ? sourceOnlyMaterialParameters(materials) : resolveOne(materials, snapshot.seed, null)
+  return async (snapshot: EvaluatedExperimentSnapshot): Promise<MeasurementMaterialResolution> => {
+    const taskNames = Object.keys(snapshot.taskScenes).sort()
+    const stored = storedSnapshot === null ? null : readMeasurementMaterialParameters(storedSnapshot, taskNames)
+    if (storedSnapshot !== null && !stored) {
+      throw new Error('저장된 Measurement Material snapshot이 올바르지 않습니다.')
     }
 
-    const taskNames = Object.keys(snapshot.taskScenes).sort()
-    let storedTasks: Readonly<Record<string, FrozenMaterialParameters>> | null = null
-    if (storedSnapshot !== null && !storedIsEmpty) {
-      storedTasks = readStoredTaskMaterials(storedSnapshot, taskNames)
-      if (!storedTasks) throw new Error('저장된 Setup Task Material snapshot이 올바르지 않습니다.')
-    }
-    const entries = await Promise.all(
+    const commonScene = deserializeCadScene(snapshot.scene)
+    const commonMaterials = commonScene.parts.flatMap((part) => (part.material ? [part.material] : []))
+    const common = await resolveOne(commonMaterials, stored?.experiment ?? null)
+    const tasks = await Promise.all(
       taskNames.map(async (name) => {
         const scene = deserializeCadScene(snapshot.taskScenes[name])
         const materials = scene.parts.flatMap((part) => (part.material ? [part.material] : []))
-        const resolution = storedIsEmpty
-          ? sourceOnlyMaterialParameters(materials)
-          : await resolveOne(materials, snapshot.seed, storedTasks?.[name] ?? null)
-        return [name, resolution] as const
+        return [name, await resolveOne(materials, stored?.tasks[name] ?? null)] as const
       }),
     )
     return Object.freeze({
+      materialParameters: common.materialParameters,
+      warnings: Object.freeze([...common.warnings]),
       taskMaterialParameters: Object.freeze(
-        Object.fromEntries(entries.map(([name, resolution]) => [name, resolution.materialParameters])),
+        Object.fromEntries(tasks.map(([name, resolution]) => [name, resolution.materialParameters])),
       ),
       taskMaterialWarnings: Object.freeze(
-        Object.fromEntries(entries.map(([name, resolution]) => [name, Object.freeze([...resolution.warnings])])),
+        Object.fromEntries(tasks.map(([name, resolution]) => [name, Object.freeze([...resolution.warnings])])),
       ),
     })
   }
 }
 
-export function resolveDocumentMaterials(snapshot: EvaluatedDocumentSnapshot, storedSnapshot: unknown | null) {
+export function resolveDocumentMaterials(snapshot: EvaluatedExperimentSnapshot, storedSnapshot: unknown | null) {
   return createDocumentMaterialResolver(storedSnapshot)(snapshot)
 }

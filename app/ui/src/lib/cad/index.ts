@@ -15,21 +15,19 @@ export {
   defineTask,
   experiment,
   ExperimentDefinition,
-  structure,
-  StructureDefinition,
   TaskDefinition,
-} from './model/v4'
+} from './model/v5'
 export type {
   CadDefinition,
   ExperimentDefinitionOptions,
   ExternalVars,
   InferVars,
   ModelContext,
-  StructureDefinitionOptions,
   TaskDefinitionOptions,
   TaskModelContext,
   VarsSchemaDefinition,
-} from './model/v4'
+} from './model/v5'
+export { generateRandomVars } from './model/vars'
 export { assertUcumUnitComparable, convertUcumValue, normalizeUcumUnit } from './model/units'
 export { normalizeDataValueDescriptor } from './model/core'
 export type {
@@ -70,7 +68,7 @@ export type {
   ResolvedMaterialVariables,
   ScalarQuantityKindName,
   ScalarValue,
-  StructureGroupMap,
+  GeometryGroupMap,
   TensorQuantityKindName,
   VarsSchemaEntry,
 } from './model/core'
@@ -102,12 +100,10 @@ export {
   cadSourceHash,
   createCadSourceDocument,
   createExperimentSourceBundle,
-  createRealizationSeed,
   experimentSourceFile,
   experimentTaskName,
   experimentTaskPaths,
   removeExperimentTask,
-  rerollCadSourceDocument,
   updateCadSource,
   updateExperimentSourceFile,
 } from './source/document'
@@ -117,24 +113,26 @@ export type {
   CadSourceDocument,
   ExperimentSourceBundle,
   ExperimentSourceDocument,
-  StructureSourceDocument,
 } from './source/document'
-export { CadDocumentEvaluationError, evaluateDocument } from './execution/evaluateDocument'
-export type { EvaluateDocumentOptions } from './execution/evaluateDocument'
+export { CadDocumentEvaluationError, evaluateDocument, inspectDocument } from './execution/evaluateDocument'
+export type { CadDocumentInspection, EvaluateDocumentOptions } from './execution/evaluateDocument'
 export { assertEvaluatedDocumentSnapshot, serializeEvaluatedDocumentSnapshot } from './execution/snapshot'
 export type {
   EvaluatedDocumentSnapshot,
   EvaluatedExperimentSnapshot,
   EvaluatedRuntimeDocumentSnapshot,
-  EvaluatedStructureSnapshot,
 } from './execution/snapshot'
 export {
   applyFrozenMaterialParameters,
-  assertBuiltRealization,
-  buildRealization,
-  buildSourceOnlyRealization,
-} from './execution/realization'
-export type { BuiltRealization, BuiltSample, BuiltSetup, TaskMaterialResolution } from './execution/realization'
+  assertBuiltMeasurement,
+  buildMeasurement,
+  buildSourceOnlyMeasurement,
+} from './execution/measurement'
+export type {
+  BuiltMeasurement,
+  MeasurementMaterialResolution,
+  TaskMaterialResolution,
+} from './execution/measurement'
 export { assertSerializableCadScene, deserializeCadScene, serializeCadScene } from './execution/mesh'
 export type { SerializableCadMesh, SerializableCadScene, SerializableCadScenePart } from './execution/mesh'
 export { normalizeRecordedData, normalizeRecordedDataTensor } from './model/recordedData'
@@ -162,7 +160,7 @@ export {
   compiledCadSemanticHash,
   rawCodeHash,
 } from './compiler/semanticHash'
-export { evaluateInIsolatedRunner } from './runner/client'
+export { evaluateInIsolatedRunner, inspectInIsolatedRunner } from './runner/client'
 export type { ArrayAttributes } from './elements/operations/array/definition'
 export type { BooleanAttributes } from './elements/operations/booleans/definition'
 export type { ShellAttributes } from './elements/operations/shell/definition'
@@ -184,5 +182,7 @@ export type {
   CadDiagnosticPhase,
   CadEvaluationRequest,
   CadEvaluationResponse,
+  CadInspectionRequest,
+  CadInspectionResponse,
   CadWorkerErrorType,
 } from './worker/protocol'

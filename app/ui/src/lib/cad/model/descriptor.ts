@@ -14,7 +14,7 @@ import type {
 import { CadModelError } from './errors'
 import type { UcumUnit } from './units'
 
-export type ExperimentTarget = `${'experiment' | 'structure'}.${'geometry' | 'surface'}.${string}`
+export type ExperimentTarget = `${'experiment' | 'task'}.${'geometry' | 'surface'}.${string}`
 export type DataDType =
   | 'bool'
   | 'string'
@@ -118,7 +118,9 @@ export type NormalizedMaterialVariables = Readonly<
   }
 >
 export type ResolvedMaterialVariables = Readonly<
-  { color?: string } & { [Key in MaterialPropertyKey]?: DataValueDescriptor } & {
+  { color?: string } & {
+    [Key in MaterialPropertyKey]?: DataValueDescriptor & Readonly<{ errorRate?: number }>
+  } & {
     [Key in MaterialModelKey]?: MaterialSampledRelation<Key>
   }
 >

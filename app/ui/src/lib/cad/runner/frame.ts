@@ -1,10 +1,10 @@
-import {
-  assertRunnerCancelEvaluationEnvelope,
-  assertRunnerEvaluationEnvelope,
-  assertRunnerEvaluationResultEnvelope,
-  type RunnerEvaluationEnvelope,
-} from './protocol'
 import { cadSnapshotTransferables } from '../execution/meshValidation'
+import {
+  assertRunnerCancelOperationEnvelope,
+  assertRunnerOperationEnvelope,
+  assertRunnerOperationResultEnvelope,
+  type RunnerOperationEnvelope,
+} from './protocol'
 
 const configuredHostOrigin = import.meta.env.VITE_CAEMBLE_HOST_ORIGIN?.trim()
 const runnerPort = Number(window.location.port)
@@ -20,19 +20,20 @@ const allowedHostOrigins = configuredHostOrigin
     : new Set<string>()
 const activeWorkers = new Map<string, Worker>()
 
-function handleEvaluation(event: MessageEvent<unknown>, envelope: RunnerEvaluationEnvelope) {
-  const { nonce, request } = envelope
+function handleOperation(event: MessageEvent<unknown>, envelope: RunnerOperationEnvelope) {
+  const { nonce, request, type: operation } = envelope
   if (activeWorkers.has(nonce)) return
   const port = event.ports[0]
   const postRuntimeError = (message: string) => {
     port.postMessage({
-      type: 'evaluation-result',
+      type: 'operation-result',
+      operation,
       nonce,
       response: {
-        type: 'evaluation-error',
+        type: operation === 'inspect' ? 'inspection-error' : 'evaluation-error',
         requestId: request.requestId,
         revision: request.revision,
-        documentType: request.document.kind,
+        documentType: 'experiment',
         errorType: 'runtime',
         message,
       },
@@ -42,12 +43,11 @@ function handleEvaluation(event: MessageEvent<unknown>, envelope: RunnerEvaluati
   try {
     worker = new Worker(new URL('./evaluation.worker.ts', import.meta.url), { type: 'module' })
   } catch (error) {
-    postRuntimeError(error instanceof Error ? error.message : 'The evaluation Worker could not be created.')
+    postRuntimeError(error instanceof Error ? error.message : 'The CAD runner Worker could not be created.')
     port.close()
     return
   }
   activeWorkers.set(nonce, worker)
-
   let finished = false
   let started = false
   const finish = () => {
@@ -68,54 +68,53 @@ function handleEvaluation(event: MessageEvent<unknown>, envelope: RunnerEvaluati
           !('type' in workerEvent.data) ||
           workerEvent.data.type !== 'runner-worker-ready' ||
           Object.keys(workerEvent.data).length !== 1
-        ) {
-          throw new Error('The evaluation Worker did not send a valid ready signal.')
-        }
+        ) throw new Error('The CAD runner Worker did not send a valid ready signal.')
         started = true
         port.postMessage({
-          type: 'evaluation-started',
+          type: 'operation-started',
+          operation,
           nonce,
           requestId: request.requestId,
           revision: request.revision,
-          documentType: request.document.kind,
+          documentType: 'experiment',
         })
         worker.postMessage(envelope)
         keepWorker = true
         return
       }
-      assertRunnerEvaluationResultEnvelope(workerEvent.data)
+      assertRunnerOperationResultEnvelope(workerEvent.data)
       if (
+        workerEvent.data.operation !== operation ||
         workerEvent.data.nonce !== nonce ||
         workerEvent.data.response.requestId !== request.requestId ||
-        workerEvent.data.response.revision !== request.revision ||
-        workerEvent.data.response.documentType !== request.document.kind
-      ) {
-        throw new Error('The evaluation Worker response identity is invalid.')
-      }
+        workerEvent.data.response.revision !== request.revision
+      ) throw new Error('The CAD runner Worker response identity is invalid.')
+      const response = workerEvent.data.response
       port.postMessage(
         workerEvent.data,
-        workerEvent.data.response.type === 'evaluation-success'
-          ? workerEvent.data.response.snapshot.kind === 'structure'
-            ? cadSnapshotTransferables(workerEvent.data.response.snapshot.scene)
-            : Object.values(workerEvent.data.response.snapshot.taskScenes).flatMap(cadSnapshotTransferables)
+        response.type === 'evaluation-success'
+          ? [
+              ...cadSnapshotTransferables(response.snapshot.scene),
+              ...Object.values(response.snapshot.taskScenes).flatMap(cadSnapshotTransferables),
+            ]
           : [],
       )
     } catch (error) {
-      postRuntimeError(error instanceof Error ? error.message : 'The evaluation Worker returned an invalid response.')
+      postRuntimeError(error instanceof Error ? error.message : 'The CAD runner Worker returned an invalid response.')
     } finally {
       if (!keepWorker) finish()
     }
   }
   worker.onerror = (workerError) => {
-    postRuntimeError(workerError.message || 'The evaluation Worker failed.')
+    postRuntimeError(workerError.message || 'The CAD runner Worker failed.')
     finish()
   }
   port.onmessage = (portEvent: MessageEvent<unknown>) => {
     try {
-      assertRunnerCancelEvaluationEnvelope(portEvent.data)
+      assertRunnerCancelOperationEnvelope(portEvent.data)
       if (portEvent.data.nonce === nonce && portEvent.data.requestId === request.requestId) finish()
     } catch {
-      // Invalid control messages cannot affect the evaluation Worker.
+      // Invalid control messages cannot affect the Worker.
     }
   }
   port.start()
@@ -124,8 +123,8 @@ function handleEvaluation(event: MessageEvent<unknown>, envelope: RunnerEvaluati
 window.addEventListener('message', (event: MessageEvent<unknown>) => {
   if (event.ports.length !== 1 || !allowedHostOrigins.has(event.origin)) return
   try {
-    assertRunnerEvaluationEnvelope(event.data)
-    handleEvaluation(event, event.data)
+    assertRunnerOperationEnvelope(event.data)
+    handleOperation(event, event.data)
   } catch {
     // Invalid cross-origin messages are ignored.
   }

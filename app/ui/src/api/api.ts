@@ -115,26 +115,9 @@ const jobSummarySchema = z.object({
   created_at: z.string().nullable().optional(),
   updated_at: z.string().nullable().optional(),
 })
-const saveCodeEntityRequestSchema = z.object({
-  id: z.number().int().optional(),
-  name: z.string().min(1),
-  description: z.string().nullable(),
-  code: z.string().min(1),
-  rawCodeHash: z.string().regex(/^[0-9a-f]{64}$/),
-  semanticHash: z.string().regex(/^[0-9a-f]{64}$/),
-  semanticHashVersion: z.literal(1),
-  baseRawCodeHash: z
-    .string()
-    .regex(/^[0-9a-f]{64}$/)
-    .optional(),
-  baseSemanticHash: z
-    .string()
-    .regex(/^[0-9a-f]{64}$/)
-    .optional(),
-})
 const experimentSourceBundleSchema = z
   .object({
-    formatVersion: z.literal(1),
+    formatVersion: z.literal(2),
     files: z.record(z.string(), z.string()),
   })
   .strict()
@@ -144,13 +127,7 @@ const saveExperimentRequestSchema = z.object({
   description: z.string().nullable(),
   sourceBundle: experimentSourceBundleSchema,
   bundleHash: z.string().regex(/^[0-9a-f]{64}$/),
-  semanticHash: z.string().regex(/^[0-9a-f]{64}$/),
-  semanticHashVersion: z.literal(2),
   baseBundleHash: z
-    .string()
-    .regex(/^[0-9a-f]{64}$/)
-    .optional(),
-  baseSemanticHash: z
     .string()
     .regex(/^[0-9a-f]{64}$/)
     .optional(),
@@ -159,55 +136,7 @@ const saveCodeEntityResponseSchema = z.object({
   id: z.number().int(),
   action: z.enum(['created', 'updated', 'forked']),
   parentId: z.number().int().nullable(),
-})
-const measurementContextRequestSchema = z.object({
-  scope: z.enum(['visible', 'mine', 'public']).optional(),
-  offset: z.number().int().nonnegative(),
-  limit: z.number().int().nonnegative().nullable(),
-  selected_ids: z.array(z.number().int()),
-  search_text: z.string().nullable(),
-  text_filter: z.record(z.string(), z.array(z.string())),
-  filter: z.record(z.string(), z.array(z.unknown())),
-  sort: z.tuple([z.string(), z.enum(['asc', 'desc'])]).nullable(),
-  random: z.boolean().optional(),
-  structure_id: z.number().int().positive(),
-  experiment_id: z.number().int().positive(),
-})
-const definitionScopeSchema = z.enum(['visible', 'mine', 'public'])
-const measurementPairSortSchema = z.tuple([
-  z.enum(['latest_measurement_at', 'measurement_count', 'structure_name', 'experiment_name']),
-  z.enum(['asc', 'desc']),
-])
-const measurementPairListRequestSchema = z.object({
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().positive().max(100).nullable().default(20),
-  search_text: z.string().nullable().optional(),
-  structure_id: z.number().int().positive().optional(),
-  experiment_id: z.number().int().positive().optional(),
-  exclude_structure_id: z.number().int().positive().optional(),
-  exclude_experiment_id: z.number().int().positive().optional(),
-  structure_scope: definitionScopeSchema.default('visible'),
-  experiment_scope: definitionScopeSchema.default('visible'),
-  measured_from: z.iso.datetime({ offset: true }).nullable().optional(),
-  measured_to: z.iso.datetime({ offset: true }).nullable().optional(),
-  sort: measurementPairSortSchema.nullable().optional(),
-})
-const measurementPairListItemSchema = z.object({
-  structure_id: z.number().int().positive(),
-  structure_name: z.string(),
-  structure_description: z.string().nullable(),
-  structure_user_id: z.string().nullable(),
-  experiment_id: z.number().int().positive(),
-  experiment_name: z.string(),
-  experiment_description: z.string().nullable(),
-  experiment_user_id: z.string().nullable(),
-  measurement_count: z.number().int().nonnegative(),
-  latest_measurement_id: z.number().int().positive(),
-  latest_measurement_at: z.string(),
-})
-const measurementPairListResponseSchema = z.object({
-  total: z.number().int().nonnegative(),
-  items: z.array(measurementPairListItemSchema),
+  sourceHash: z.string().regex(/^[0-9a-f]{64}$/),
 })
 const codeEntityHistoryItemSchema = z.object({
   id: z.number().int().positive(),
@@ -265,37 +194,52 @@ const dataSchemaSchema = z
     axes: z.array(dataSchemaAxisSchema).min(1).readonly().optional(),
   })
   .strict()
-const measurementSaveRequestSchema = z.object({
-  sample_id: z.number().int(),
-  setup_id: z.number().int(),
-  overwrite: z.boolean().default(false),
-  recorded_data: z.array(
-    z.object({
-      name: z.string().min(1),
-      quantity_kind: z.string().min(1).nullable(),
-      tensor_order: z.number().int().nonnegative(),
-      dtype: z.string().min(1),
-      data_schema: dataSchemaSchema,
-      data: z.unknown(),
-    }),
-  ),
-})
-const measurementSaveResponseSchema = z.object({ id: z.number().int() })
+const frozenMaterialParametersSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    materials: z.record(z.string(), z.record(z.string(), z.unknown())),
+    materialColors: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict()
+const measurementMaterialParametersSchema = z
+  .object({
+    schemaVersion: z.literal(2),
+    experiment: frozenMaterialParametersSchema,
+    tasks: z.record(z.string(), frozenMaterialParametersSchema),
+  })
+  .strict()
+const measurementCreateRequestSchema = z
+  .object({
+    experiment_id: z.number().int().positive(),
+    experiment_source_hash: z.string().regex(/^[0-9a-f]{64}$/),
+    vars: z.record(z.string(), z.unknown()),
+    material_parameters: measurementMaterialParametersSchema,
+  })
+  .strict()
+const measurementRecordRequestSchema = z
+  .object({
+    recorded_data: z.array(
+      z
+        .object({
+          name: z.string().min(1),
+          quantity_kind: z.string().min(1).nullable(),
+          tensor_order: z.number().int().nonnegative(),
+          dtype: z.string().min(1),
+          data_schema: dataSchemaSchema,
+          data: z.unknown(),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+const measurementMutationResponseSchema = z.object({ id: z.number().int().positive() })
 
 export type GetListRequest = z.infer<typeof getListRequestSchema>
 export type UpsertResponse = z.infer<typeof upsertResponseSchema>
-export type SaveCodeEntityRequest = z.infer<typeof saveCodeEntityRequestSchema>
 export type SaveExperimentRequest = z.infer<typeof saveExperimentRequestSchema>
 export type SaveCodeEntityResponse = z.infer<typeof saveCodeEntityResponseSchema>
-export type MeasurementSaveRequest = z.input<typeof measurementSaveRequestSchema>
-export type DefinitionScope = z.infer<typeof definitionScopeSchema>
-export type MeasurementContextListRequest = Partial<GetListRequest> & {
-  structure_id: number
-  experiment_id: number
-}
-export type MeasurementPairListRequest = z.input<typeof measurementPairListRequestSchema>
-export type MeasurementPairListItem = z.infer<typeof measurementPairListItemSchema>
-export type MeasurementPairListResponse = z.infer<typeof measurementPairListResponseSchema>
+export type MeasurementCreateRequest = z.input<typeof measurementCreateRequestSchema>
+export type MeasurementRecordRequest = z.input<typeof measurementRecordRequestSchema>
 export type CodeEntityHistoryItem = z.infer<typeof codeEntityHistoryItemSchema>
 export type CodeEntityHistoryResponse = z.infer<typeof codeEntityHistoryResponseSchema>
 export type GetListResponse<TItem> = { items: TItem[]; total: number }
@@ -559,40 +503,6 @@ export const dbTables = {
     },
   },
 
-  Structure: {
-    rowSchema: z.object({
-      id: z.number().int().optional(),
-      created_at: z.string().nullable().optional(),
-      updated_at: z.string().nullable().optional(),
-      user_id: z.string().nullable().optional(),
-      parent_id: z.number().int().nullable().optional(),
-      name: z.string(),
-      description: z.string().nullable().optional(),
-      code: z.string(),
-    }),
-    async listRows(listRequest: GetListRequest = getListRequest()) {
-      const payload = getListRequestSchema.parse(listRequest)
-      const listResponseSchema = z.object({ total: z.number().int().nonnegative(), items: z.array(this.rowSchema) })
-      return listResponseSchema.parse(await request<unknown>('post', '/structure/list', payload))
-    },
-    async upsertRow(items: readonly z.infer<(typeof this)['rowSchema']>[]) {
-      const payload = z.array(this.rowSchema).parse(items)
-      return z.array(upsertResponseSchema).parse(await request<unknown>('post', '/structure/upsert', payload))
-    },
-    async save(item: SaveCodeEntityRequest) {
-      const payload = saveCodeEntityRequestSchema.parse(item)
-      return saveCodeEntityResponseSchema.parse(await request<unknown>('post', '/structure/save', payload))
-    },
-    async history(id: number) {
-      const payload = z.object({ id: z.number().int().positive() }).parse({ id })
-      return codeEntityHistoryResponseSchema.parse(await request<unknown>('post', '/structure/history', payload))
-    },
-    async deleteRows(ids: readonly number[]) {
-      const payload = z.array(z.number().int()).parse(ids)
-      deleteResponseSchema.parse(await request<unknown>('delete', '/structure/', payload))
-    },
-  },
-
   Experiment: {
     rowSchema: z.object({
       id: z.number().int().optional(),
@@ -603,15 +513,12 @@ export const dbTables = {
       name: z.string(),
       description: z.string().nullable().optional(),
       source_bundle: experimentSourceBundleSchema,
+      source_hash: z.string().regex(/^[0-9a-f]{64}$/),
     }),
     async listRows(listRequest: GetListRequest = getListRequest()) {
       const payload = getListRequestSchema.parse(listRequest)
       const listResponseSchema = z.object({ total: z.number().int().nonnegative(), items: z.array(this.rowSchema) })
       return listResponseSchema.parse(await request<unknown>('post', '/experiment/list', payload))
-    },
-    async upsertRow(items: readonly z.infer<(typeof this)['rowSchema']>[]) {
-      const payload = z.array(this.rowSchema).parse(items)
-      return z.array(upsertResponseSchema).parse(await request<unknown>('post', '/experiment/upsert', payload))
     },
     async save(item: SaveExperimentRequest) {
       const payload = saveExperimentRequestSchema.parse(item)
@@ -627,100 +534,32 @@ export const dbTables = {
     },
   },
 
-  Sample: {
-    rowSchema: z.object({
-      id: z.number().int().optional(),
-      created_at: z.string().nullable().optional(),
-      updated_at: z.string().nullable().optional(),
-      user_id: z.string().nullable().optional(),
-      structure_id: z.number().int(),
-      vars: z.record(z.string(), z.unknown()),
-      material_parameters: z.record(z.string(), z.unknown()),
-    }),
-    async listRows(listRequest: GetListRequest = getListRequest()) {
-      const payload = getListRequestSchema.parse(listRequest)
-      const listResponseSchema = z.object({ total: z.number().int().nonnegative(), items: z.array(this.rowSchema) })
-      return listResponseSchema.parse(await request<unknown>('post', '/sample/list', payload))
-    },
-    async upsertRow(items: readonly z.infer<(typeof this)['rowSchema']>[]) {
-      const payload = z.array(this.rowSchema).parse(items)
-      return z.array(upsertResponseSchema).parse(await request<unknown>('post', '/sample/upsert', payload))
-    },
-    async deleteRows(ids: readonly number[]) {
-      const payload = z.array(z.number().int()).parse(ids)
-      deleteResponseSchema.parse(await request<unknown>('delete', '/sample/', payload))
-    },
-  },
-
-  Setup: {
-    rowSchema: z.object({
-      id: z.number().int().optional(),
-      created_at: z.string().nullable().optional(),
-      updated_at: z.string().nullable().optional(),
-      user_id: z.string().nullable().optional(),
-      experiment_id: z.number().int(),
-      vars: z.record(z.string(), z.unknown()),
-      material_parameters: z.record(z.string(), z.unknown()),
-    }),
-    async listRows(listRequest: GetListRequest = getListRequest()) {
-      const payload = getListRequestSchema.parse(listRequest)
-      const listResponseSchema = z.object({ total: z.number().int().nonnegative(), items: z.array(this.rowSchema) })
-      return listResponseSchema.parse(await request<unknown>('post', '/setup/list', payload))
-    },
-    async upsertRow(items: readonly z.infer<(typeof this)['rowSchema']>[]) {
-      const payload = z.array(this.rowSchema).parse(items)
-      return z.array(upsertResponseSchema).parse(await request<unknown>('post', '/setup/upsert', payload))
-    },
-    async deleteRows(ids: readonly number[]) {
-      const payload = z.array(z.number().int()).parse(ids)
-      deleteResponseSchema.parse(await request<unknown>('delete', '/setup/', payload))
-    },
-  },
-
   Measurement: {
     rowSchema: z.object({
       id: z.number().int().optional(),
       created_at: z.string().nullable().optional(),
       updated_at: z.string().nullable().optional(),
       user_id: z.string().nullable().optional(),
-      sample_id: z.number().int(),
-      setup_id: z.number().int(),
+      experiment_id: z.number().int().positive(),
+      vars: z.record(z.string(), z.unknown()),
+      material_parameters: measurementMaterialParametersSchema,
+      recorded_at: z.string().nullable(),
     }),
     async listRows(listRequest: GetListRequest = getListRequest()) {
       const payload = getListRequestSchema.parse(listRequest)
       const listResponseSchema = z.object({ total: z.number().int().nonnegative(), items: z.array(this.rowSchema) })
       return listResponseSchema.parse(await request<unknown>('post', '/measurement/list', payload))
     },
-    async listContextPage(item: MeasurementContextListRequest) {
-      const payload = measurementContextRequestSchema.parse({
-        ...getListRequest(),
-        limit: null,
-        ...item,
-      })
-      const listResponseSchema = z.object({ total: z.number().int().nonnegative(), items: z.array(this.rowSchema) })
-      return listResponseSchema.parse(await request<unknown>('post', '/measurement/context-list', payload))
+    async create(item: MeasurementCreateRequest) {
+      const payload = measurementCreateRequestSchema.parse(item)
+      return measurementMutationResponseSchema.parse(await request<unknown>('post', '/measurement/create', payload))
     },
-    async listContext(structureId: number, experimentId: number) {
-      const payload = z
-        .object({ structure_id: z.number().int().positive(), experiment_id: z.number().int().positive() })
-        .parse({
-          structure_id: structureId,
-          experiment_id: experimentId,
-        })
-      const listResponseSchema = z.object({ total: z.number().int().nonnegative(), items: z.array(this.rowSchema) })
-      return listResponseSchema.parse(await request<unknown>('post', '/measurement/context-list', payload))
-    },
-    async listPairs(item: MeasurementPairListRequest = {}) {
-      const payload = measurementPairListRequestSchema.parse(item)
-      return measurementPairListResponseSchema.parse(await request<unknown>('post', '/measurement/pair-list', payload))
-    },
-    async save(item: MeasurementSaveRequest) {
-      const payload = measurementSaveRequestSchema.parse(item)
-      return measurementSaveResponseSchema.parse(await request<unknown>('post', '/measurement/save', payload))
-    },
-    async upsertRow(items: readonly z.infer<(typeof this)['rowSchema']>[]) {
-      const payload = z.array(this.rowSchema).parse(items)
-      return z.array(upsertResponseSchema).parse(await request<unknown>('post', '/measurement/upsert', payload))
+    async record(id: number, item: MeasurementRecordRequest) {
+      const measurementId = z.number().int().positive().parse(id)
+      const payload = measurementRecordRequestSchema.parse(item)
+      return measurementMutationResponseSchema.parse(
+        await request<unknown>('post', `/measurement/${measurementId}/record`, payload),
+      )
     },
     async deleteRows(ids: readonly number[]) {
       const payload = z.array(z.number().int()).parse(ids)
@@ -749,14 +588,6 @@ export const dbTables = {
       const listResponseSchema = z.object({ total: z.number().int().nonnegative(), items: z.array(this.rowSchema) })
       return listResponseSchema.parse(await request<unknown>('post', '/recorded_data/list', payload))
     },
-    async upsertRow(items: readonly z.infer<(typeof this)['rowSchema']>[]) {
-      const payload = z.array(this.rowSchema).parse(items)
-      return z.array(upsertResponseSchema).parse(await request<unknown>('post', '/recorded_data/upsert', payload))
-    },
-    async deleteRows(ids: readonly number[]) {
-      const payload = z.array(z.number().int()).parse(ids)
-      deleteResponseSchema.parse(await request<unknown>('delete', '/recorded_data/', payload))
-    },
   },
 
   DesignerModel: {
@@ -765,7 +596,6 @@ export const dbTables = {
       created_at: z.string().nullable().optional(),
       updated_at: z.string().nullable().optional(),
       user_id: z.string().nullable().optional(),
-      structure_id: z.number().int(),
       experiment_id: z.number().int(),
       model_url: z.string().nullable().optional(),
       file_size: z.number().int().nullable().optional(),
@@ -791,7 +621,6 @@ export const dbTables = {
       created_at: z.string().nullable().optional(),
       updated_at: z.string().nullable().optional(),
       user_id: z.string().nullable().optional(),
-      structure_id: z.number().int(),
       experiment_id: z.number().int(),
       model_url: z.string().nullable().optional(),
       file_size: z.number().int().nullable().optional(),

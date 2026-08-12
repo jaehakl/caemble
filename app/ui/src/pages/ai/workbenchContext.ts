@@ -25,6 +25,7 @@ export type WorkbenchEvaluationContext = Readonly<{
     message: string
   }>[]
   error?: Readonly<{ title?: string; message: string }> | null
+  materialParameters?: unknown
   vars?: unknown
   varsSchema?: unknown
   materialWarnings?: readonly string[]
@@ -32,17 +33,9 @@ export type WorkbenchEvaluationContext = Readonly<{
 
 export type WorkbenchContextInput = Readonly<{
   focus?: Readonly<{
-    activeTab?: 'structure' | 'experiment' | 'recorded-data' | null
+    activeTab?: 'experiment' | 'recorded-data' | null
     activeExperimentFile?: string | null
   }>
-  structure?: Readonly<{
-    source: string
-    dirty: boolean
-    revision: number
-    successfulRevision: number
-    status: string
-    evaluation?: WorkbenchEvaluationContext
-  }> | null
   experiment?: Readonly<{
     files: Readonly<Record<string, string>>
     dirty: boolean
@@ -52,9 +45,13 @@ export type WorkbenchContextInput = Readonly<{
     evaluation?: WorkbenchEvaluationContext
   }> | null
   selection?: Readonly<{
-    sample?: Readonly<{ selected: boolean; applied: boolean }>
-    setup?: Readonly<{ selected: boolean; applied: boolean }>
-    measurement?: Readonly<{ selected: boolean; applied: boolean }>
+    measurement?: Readonly<{
+      id: number | null
+      state: 'candidate' | 'prepared' | 'recorded' | 'record-save-pending'
+      selected: boolean
+      applied: boolean
+      recorded: boolean
+    }>
   }>
   run?: Readonly<{
     operation?: string | null
@@ -288,10 +285,7 @@ function sourceCandidate(id: string, title: string, path: string, source: string
   )
 }
 
-function documentCandidate(
-  kind: 'structure' | 'experiment',
-  document: NonNullable<WorkbenchContextInput['structure'] | WorkbenchContextInput['experiment']>,
-) {
+function documentCandidate(document: NonNullable<WorkbenchContextInput['experiment']>) {
   const matchingEvaluation = document.evaluation?.revision === document.revision ? document.evaluation : undefined
   const currentError = document.status === 'Error' ? matchingEvaluation : undefined
   const currentSuccess =
@@ -326,11 +320,12 @@ function documentCandidate(
       ? {
           vars: currentSuccess.vars,
           varsSchema: currentSuccess.varsSchema,
+          materialParameters: currentSuccess.materialParameters,
           materialWarnings: currentSuccess.materialWarnings?.map(withoutStack),
         }
       : {}),
   }
-  return candidate(`${kind}-state`, `${kind === 'structure' ? 'Structure' : 'Experiment'} current state`, json(details))
+  return candidate('experiment-state', 'Experiment current state', json(details))
 }
 
 function fitCandidates(
@@ -393,8 +388,7 @@ export function buildWorkbenchReferenceContext(input: WorkbenchContextInput, max
   const candidates: ReturnType<typeof candidate>[] = []
 
   candidates.push(candidate('focus', 'Current focus', json(input.focus ?? {})))
-  if (input.structure) candidates.push(documentCandidate('structure', input.structure))
-  if (input.experiment) candidates.push(documentCandidate('experiment', input.experiment))
+  if (input.experiment) candidates.push(documentCandidate(input.experiment))
   if (input.selection) candidates.push(candidate('selection', 'Selection state', json(input.selection)))
   if (input.run) {
     candidates.push(
@@ -412,17 +406,6 @@ export function buildWorkbenchReferenceContext(input: WorkbenchContextInput, max
   }
 
   const sources: ReturnType<typeof candidate>[] = []
-  if (input.structure) {
-    sources.push(
-      sourceCandidate(
-        'structure-source',
-        'Structure source',
-        'structure.tsx',
-        input.structure.source,
-        input.structure.dirty,
-      ),
-    )
-  }
   if (input.experiment) {
     Object.entries(input.experiment.files)
       .sort(([left], [right]) => {
@@ -444,9 +427,7 @@ export function buildWorkbenchReferenceContext(input: WorkbenchContextInput, max
       })
   }
 
-  if (input.focus?.activeTab === 'structure')
-    candidates.splice(1, 0, ...sources.filter((item) => item.id === 'structure-source'))
-  else if (input.focus?.activeTab === 'experiment') {
+  if (input.focus?.activeTab === 'experiment') {
     candidates.splice(1, 0, ...sources.filter((item) => item.id.startsWith('experiment-source:')))
   }
   const includedSourceIds = new Set(candidates.map((item) => item.id))

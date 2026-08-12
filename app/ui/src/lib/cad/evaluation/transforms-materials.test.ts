@@ -1,6 +1,6 @@
 import { measurements } from '@jscad/modeling'
 import { describe, expect, it } from 'vitest'
-import { evaluateWithVars, Material, Structure } from '../model/core'
+import { evaluateWithVars, Material } from '../model/core'
 import { Fragment, evaluateCad, evaluateCadScene, h } from '../index'
 
 const size = [2, 2, 2]
@@ -196,14 +196,20 @@ describe('CAD transforms-materials', () => {
       source: 'Kittel_1988',
       errorRate: 0.001,
       variables: {
-        'general.mass_density': { dtype: 'float64', value: 2.7, unit: 'g.cm-3', quantityKind: 'MassDensity' },
+        'general.mass_density': {
+          dtype: 'float64',
+          value: 2.7,
+          errorRate: 0,
+          unit: 'g.cm-3',
+          quantityKind: 'MassDensity',
+        },
         color: '#2563eb',
       },
     })
     expect(cloned[0].material).toBe(cloned[1].material)
   })
 
-  it('shares one realization per Material instance and samples distinct instances independently', () => {
+  it('preserves uncertainty metadata and shared Material identity until material resolution', () => {
     const shared = new Material('Shared', {
       'general.mass_density': {
         dtype: 'float64',
@@ -228,9 +234,8 @@ describe('CAD transforms-materials', () => {
         unit: 'kg.m-3',
       },
     })
-    const structure = new Structure({
-      lengthUnit: 'mm',
-      geometry: () =>
+    const scene = evaluateWithVars({}, () =>
+      evaluateCadScene(
         h(
           Fragment,
           null,
@@ -239,14 +244,15 @@ describe('CAD transforms-materials', () => {
           h(Box, { id: 'separate-first', pos: [6, 0, 0], materials: [first] }),
           h(Box, { id: 'separate-second', pos: [9, 0, 0], materials: [second] }),
         ),
-      varsSchema: {},
-    })
-    const scene = evaluateWithVars({}, () => evaluateCadScene(structure.geometry()), 0)
-    const applied = scene.parts.map((part) => part.material?.variables['general.mass_density'] as { value: number })
+      ),
+    )
+    const applied = scene.parts.map(
+      (part) => part.material?.variables['general.mass_density'] as { value: number; errorRate: number },
+    )
 
     expect(scene.parts[0].material).toBe(scene.parts[1].material)
     expect(applied[0]).toEqual(applied[1])
-    expect(applied[2].value).not.toBe(applied[3].value)
-    applied.forEach((density) => expect(density).not.toHaveProperty('errorRate'))
+    expect(applied[2].value).toBe(applied[3].value)
+    applied.forEach((density) => expect(density.errorRate).toBe(0.2))
   })
 })

@@ -1,14 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight, LoaderCircle, Search } from 'lucide-react'
-import {
-  dbTables,
-  getListRequest,
-  type ExperimentRecord,
-  type GetListRequest,
-  type GetListResponse,
-  type StructureRecord,
-} from '@/api'
+import { dbTables, getListRequest, type ExperimentRecord, type GetListRequest, type GetListResponse } from '@/api'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -20,22 +13,20 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import type { SavedExperiment, SavedStructure } from '../types'
+import type { SavedExperiment } from '../types'
 
 const pageSize = 10
 
 export function DefinitionPickerDialog({
   authenticated = true,
-  kind,
   onOpenChange,
   onSelect,
   open,
   selectedId,
 }: {
   authenticated?: boolean
-  kind: 'structure' | 'experiment'
   onOpenChange: (open: boolean) => void
-  onSelect: (row: SavedStructure | SavedExperiment) => void
+  onSelect: (row: SavedExperiment) => void
   open: boolean
   selectedId?: number | null
 }) {
@@ -61,15 +52,12 @@ export function DefinitionPickerDialog({
       sort: sort === 'updated' ? ['updated_at', 'desc'] : ['name', 'asc'],
     }
   }, [page, scope, search, sort])
-  const query = useQuery<GetListResponse<StructureRecord | ExperimentRecord>>({
-    queryKey: ['cae-workbench', kind, request],
-    queryFn: async () =>
-      (kind === 'structure'
-        ? await dbTables.Structure.listRows(request)
-        : await dbTables.Experiment.listRows(request)) as GetListResponse<StructureRecord | ExperimentRecord>,
+  const query = useQuery<GetListResponse<ExperimentRecord>>({
+    queryKey: ['cae-workbench', 'experiment', request],
+    queryFn: () => dbTables.Experiment.listRows(request),
     enabled: open,
   })
-  const title = kind === 'structure' ? 'Structure 불러오기' : 'Experiment 불러오기'
+  const title = 'Experiment 불러오기'
   const total = query.data?.total ?? 0
   const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1)
 
@@ -131,12 +119,12 @@ export function DefinitionPickerDialog({
                     type="button"
                     onDoubleClick={() => {
                       if (!row.id) return
-                      onSelect(row as SavedStructure | SavedExperiment)
+                      onSelect(row as SavedExperiment)
                       onOpenChange(false)
                     }}
                     onClick={() => {
                       if (!row.id) return
-                      onSelect(row as SavedStructure | SavedExperiment)
+                      onSelect(row as SavedExperiment)
                       onOpenChange(false)
                     }}
                   >

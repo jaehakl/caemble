@@ -33,7 +33,8 @@ describe('CAE Workbench와 문서 라우팅', () => {
 
   it('카탈로그 수와 독립 Experiment 예제를 유지한다', () => {
     expect(catalogCounts).toEqual({ cad: 11, materials: 260, quantityKinds: 1_216, solvers: 1 })
-    expect(defaultExperimentCode).toContain("import { experiment } from '@caemble/core'")
+    expect(defaultExperimentCode).toContain('experiment,')
+    expect(defaultExperimentCode).toContain("from '@caemble/core'")
     expect(defaultExperimentTaskCode).toContain("import { defineTask } from '@caemble/core'")
     expect(defaultExperimentTaskCode).toContain("kernel: { name: 'dc-current-density'")
     expect(defaultExperimentTaskCode).toContain("methodId: 'dc.voxel-grid'")

@@ -5,60 +5,54 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CadDocumentController, SimulationController } from '@/features/viewer/workspace/useCadWorkspace'
-import { useCaeMeasurementActions } from './useCaeMeasurementActions'
+import type { SavedMeasurement } from '../types'
 import type { CaeDataSelection } from './useCaeDataSelection'
+import { useCaeMeasurementActions } from './useCaeMeasurementActions'
 
 const mocks = vi.hoisted(() => ({
-  measurementSave: vi.fn(),
-  sampleUpsert: vi.fn(),
-  setupUpsert: vi.fn(),
+  create: vi.fn(),
+  record: vi.fn(),
   toastError: vi.fn(),
-  toastInfo: vi.fn(),
   toastSuccess: vi.fn(),
 }))
 
 vi.mock('@/api', () => ({
-  dbTables: {
-    Measurement: { save: mocks.measurementSave },
-    Sample: { upsertRow: mocks.sampleUpsert },
-    Setup: { upsertRow: mocks.setupUpsert },
-  },
+  dbTables: { Measurement: { create: mocks.create, record: mocks.record } },
 }))
+vi.mock('sonner', () => ({ toast: { error: mocks.toastError, success: mocks.toastSuccess } }))
 
-vi.mock('sonner', () => ({
-  toast: {
-    error: mocks.toastError,
-    info: mocks.toastInfo,
-    success: mocks.toastSuccess,
+const sourceHash = 'a'.repeat(64)
+const prepared: SavedMeasurement = {
+  id: 11,
+  experiment_id: 7,
+  vars: { width: 2 },
+  material_parameters: {
+    schemaVersion: 2,
+    experiment: { schemaVersion: 1, materials: {} },
+    tasks: { main: { schemaVersion: 1, materials: {} } },
   },
-}))
-
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  let reject!: (cause: unknown) => void
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise
-    reject = rejectPromise
-  })
-  return { promise, reject, resolve }
+  recorded_at: null,
 }
 
-function createDocument(overrides: Partial<CadDocumentController> = {}): CadDocumentController {
+function documentController(overrides: Partial<CadDocumentController> = {}) {
   return {
-    handleReroll: vi.fn(),
-    materialParameters: {},
-    revision: 1,
+    materialParameters: {
+      schemaVersion: 2,
+      experiment: { schemaVersion: 1, materials: {} },
+      tasks: { main: { schemaVersion: 1, materials: {} } },
+    },
+    revision: 2,
     runIsBusy: false,
     status: 'Ready',
-    successfulRevision: 1,
-    variables: { value: 1 },
+    successfulRevision: 2,
+    variables: { width: 2 },
     ...overrides,
   } as CadDocumentController
 }
 
-function createSimulation(overrides: Partial<SimulationController> = {}): SimulationController {
+function simulationController(overrides: Partial<SimulationController> = {}) {
   return {
-    canRun: false,
+    canRun: true,
     cancel: vi.fn(),
     process: {
       engine: null,
@@ -70,182 +64,237 @@ function createSimulation(overrides: Partial<SimulationController> = {}): Simula
       status: 'idle',
     },
     recordedData: null,
-    run: vi.fn(),
+    run: vi.fn(() => 'run-1'),
     stale: false,
     ...overrides,
-  }
+  } as SimulationController
 }
 
-function createSelection(overrides: Partial<CaeDataSelection> = {}): CaeDataSelection {
+function selection(overrides: Partial<CaeDataSelection> = {}) {
   return {
     clearAll: vi.fn(),
     clearMeasurement: vi.fn(),
-    clearSample: vi.fn(),
-    clearSetup: vi.fn(),
-    experimentMaterialSnapshot: null,
-    experimentVars: undefined,
-    loadMeasurement: vi.fn(),
+    loadMeasurement: vi.fn().mockResolvedValue(prepared),
     loading: false,
+    materialSnapshot: null,
     measurement: null,
     recordedData: null,
     recordedRows: [],
     recordedRules: [],
-    sample: null,
-    selectSample: vi.fn(),
-    selectSetup: vi.fn(),
-    setGeneratedSample: vi.fn(),
-    setGeneratedSetup: vi.fn(),
-    setup: null,
-    structureMaterialSnapshot: null,
-    structureVars: undefined,
+    variables: undefined,
     ...overrides,
   } as CaeDataSelection
 }
 
-function createWrapper() {
+function wrapper() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   )
 }
 
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => {
+  vi.clearAllMocks()
+  mocks.record.mockReset()
+  mocks.create.mockResolvedValue({ id: 12 })
+})
 
-describe('CAE Measurement 비동기 단계', () => {
-  it('평가 중에는 취소 가능하지만 저장이 시작되면 취소할 수 없다', async () => {
-    const save = deferred<[{ id: number }]>()
-    mocks.sampleUpsert.mockReturnValue(save.promise)
-    const selection = createSelection()
-    const initialStructure = createDocument()
-    const experimentDocument = createDocument()
-    const simulation = createSimulation()
-    const hook = renderHook(
-      ({ structureDocument }) =>
+describe('useCaeMeasurementActions', () => {
+  it('saves the current evaluated condition without running a solver', async () => {
+    const simulation = simulationController()
+    const currentSelection = selection()
+    const { result } = renderHook(
+      () =>
         useCaeMeasurementActions({
           authenticated: true,
           experimentClean: true,
-          experimentDocument,
-          experimentId: 20,
-          pairClean: true,
-          selection,
+          experimentDocument: documentController(),
+          experimentId: 7,
+          experimentSourceHash: sourceHash,
+          onGenerateCandidate: vi.fn(),
+          selection: currentSelection,
           simulation,
-          structureClean: true,
-          structureDocument,
-          structureId: 10,
         }),
-      {
-        initialProps: { structureDocument: initialStructure },
-        wrapper: createWrapper(),
-      },
+      { wrapper: wrapper() },
     )
 
-    act(() => hook.result.current.generateSample())
+    await act(async () => void (await result.current.saveCurrent()))
 
-    expect(hook.result.current.busy).toBe(true)
-    expect(hook.result.current.cancelable).toBe(true)
-    expect(hook.result.current.stage).toBe('Structure 평가 중')
-    expect(initialStructure.handleReroll).toHaveBeenCalledOnce()
-
-    hook.rerender({
-      structureDocument: createDocument({ revision: 2, successfulRevision: 2 }),
+    expect(mocks.create).toHaveBeenCalledWith({
+      experiment_id: 7,
+      experiment_source_hash: sourceHash,
+      vars: { width: 2 },
+      material_parameters: {
+        schemaVersion: 2,
+        experiment: { schemaVersion: 1, materials: {} },
+        tasks: { main: { schemaVersion: 1, materials: {} } },
+      },
     })
-    await waitFor(() => expect(hook.result.current.stage).toBe('Sample 저장 중'))
-    expect(hook.result.current.busy).toBe(true)
-    expect(hook.result.current.cancelable).toBe(false)
-
-    await act(async () => save.resolve([{ id: 101 }]))
-    await waitFor(() => expect(hook.result.current.busy).toBe(false))
+    expect(simulation.run).not.toHaveBeenCalled()
+    expect(currentSelection.loadMeasurement).toHaveBeenCalledWith(12, 7)
   })
 
-  it('Measurement 평가와 실행 단계는 모두 취소 가능하다', async () => {
-    const selection = createSelection({
-      sample: { id: 101, structure_id: 10, vars: {}, material_parameters: {} },
-      setup: { id: 202, experiment_id: 20, vars: {}, material_parameters: {} },
-    })
-    const structureDocument = createDocument()
-    const experimentDocument = createDocument()
-    const waitingSimulation = createSimulation()
-    const run = vi.fn(() => 'run-1')
-    const cancel = vi.fn()
-    const hook = renderHook(
-      ({ simulation }) =>
+  it('runs only a selected prepared Measurement', () => {
+    const simulation = simulationController()
+    const { result } = renderHook(
+      () =>
         useCaeMeasurementActions({
           authenticated: true,
           experimentClean: true,
-          experimentDocument,
-          experimentId: 20,
-          pairClean: true,
-          selection,
+          experimentDocument: documentController(),
+          experimentId: 7,
+          experimentSourceHash: sourceHash,
+          onGenerateCandidate: vi.fn(),
+          selection: selection({ measurement: prepared }),
           simulation,
-          structureClean: true,
-          structureDocument,
-          structureId: 10,
         }),
-      {
-        initialProps: { simulation: waitingSimulation },
-        wrapper: createWrapper(),
-      },
+      { wrapper: wrapper() },
     )
 
-    act(() => hook.result.current.performMeasurement())
-    expect(hook.result.current.stage).toBe('선택 실현값 평가 중')
-    expect(hook.result.current.cancelable).toBe(true)
-
-    hook.rerender({
-      simulation: createSimulation({
-        canRun: true,
-        cancel,
-        process: {
-          engine: null,
-          error: null,
-          finishedAt: null,
-          runId: 'run-1',
-          stage: 'Solving',
-          startedAt: null,
-          status: 'running',
-        },
-        run,
-      }),
-    })
-    await waitFor(() => expect(hook.result.current.stage).toBe('Solving'))
-    expect(run).toHaveBeenCalledOnce()
-    expect(hook.result.current.cancelable).toBe(true)
-
-    act(() => hook.result.current.cancel())
-    expect(cancel).toHaveBeenCalledOnce()
-    expect(hook.result.current.busy).toBe(false)
+    act(() => expect(result.current.runSelected()).toBe('run-1'))
+    expect(simulation.run).toHaveBeenCalledOnce()
+    expect(mocks.create).not.toHaveBeenCalled()
   })
 
-  it('controller가 busy이면 Generate Measurement를 대기 상태로 남기지 않고 오류로 종료한다', () => {
-    const selection = createSelection()
-    const structureDocument = createDocument({ runIsBusy: true })
-    const experimentDocument = createDocument()
-    const hook = renderHook(
+  it('refuses to rerun a recorded Measurement', async () => {
+    const simulation = simulationController()
+    const recorded = { ...prepared, recorded_at: '2026-08-12T00:00:00Z' }
+    const { result } = renderHook(
+      () =>
+        useCaeMeasurementActions({
+          authenticated: true,
+          experimentClean: true,
+          experimentDocument: documentController(),
+          experimentId: 7,
+          experimentSourceHash: sourceHash,
+          onGenerateCandidate: vi.fn(),
+          selection: selection({ measurement: recorded }),
+          simulation,
+        }),
+      { wrapper: wrapper() },
+    )
+
+    act(() => expect(result.current.runSelected()).toBeNull())
+    await waitFor(() =>
+      expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining('다시 실행할 수 없습니다')),
+    )
+    expect(simulation.run).not.toHaveBeenCalled()
+  })
+
+  it('delegates candidate generation without creating a Measurement', () => {
+    const generate = vi.fn()
+    const { result } = renderHook(
+      () =>
+        useCaeMeasurementActions({
+          authenticated: true,
+          experimentClean: true,
+          experimentDocument: documentController(),
+          experimentId: 7,
+          experimentSourceHash: sourceHash,
+          onGenerateCandidate: generate,
+          selection: selection(),
+          simulation: simulationController(),
+        }),
+      { wrapper: wrapper() },
+    )
+
+    act(() => result.current.generateCandidate())
+    expect(generate).toHaveBeenCalledOnce()
+    expect(mocks.create).not.toHaveBeenCalled()
+  })
+
+  it('keeps a completed session result available for record retry', async () => {
+    mocks.record.mockRejectedValueOnce(new Error('response was lost')).mockRejectedValueOnce({ status: 409 })
+    const currentSelection = selection({
+      measurement: prepared,
+      loadMeasurement: vi.fn().mockResolvedValue({ ...prepared, recorded_at: '2026-08-12T00:00:00Z' }),
+    })
+    const simulation = simulationController({
+      process: {
+        engine: { name: 'caemble-cae', version: '1' },
+        error: null,
+        finishedAt: Date.now(),
+        runId: 'run-1',
+        stage: null,
+        startedAt: Date.now(),
+        status: 'succeeded',
+      },
+      recordedData: { temperature: { value: 300 } },
+    })
+    const experimentDocument = documentController({
+      simulationProgram: {
+        recordedData: { temperature: { dtype: 'float64', tensorOrder: 0 } },
+      } as never,
+    })
+    const { result } = renderHook(
       () =>
         useCaeMeasurementActions({
           authenticated: true,
           experimentClean: true,
           experimentDocument,
-          experimentId: 20,
-          pairClean: true,
-          selection,
-          simulation: createSimulation(),
-          structureClean: true,
-          structureDocument,
-          structureId: 10,
+          experimentId: 7,
+          experimentSourceHash: sourceHash,
+          onGenerateCandidate: vi.fn(),
+          selection: currentSelection,
+          simulation,
         }),
-      { wrapper: createWrapper() },
+      { wrapper: wrapper() },
     )
 
-    act(() => hook.result.current.generateMeasurement())
+    act(() => result.current.runSelected())
+    await waitFor(() => expect(result.current.pendingRecordMeasurementId).toBe(11))
+    expect(simulation.recordedData).toEqual({ temperature: { value: 300 } })
 
-    expect(hook.result.current.busy).toBe(false)
-    expect(hook.result.current.cancelable).toBe(false)
-    expect(hook.result.current.stage).toBeNull()
-    expect(hook.result.current.error).toBe('Structure와 Experiment source 평가가 끝난 뒤 다시 실행하세요.')
-    expect(mocks.toastError).toHaveBeenCalledWith('Structure와 Experiment source 평가가 끝난 뒤 다시 실행하세요.')
-    expect(selection.clearAll).not.toHaveBeenCalled()
-    expect(structureDocument.handleReroll).not.toHaveBeenCalled()
-    expect(experimentDocument.handleReroll).not.toHaveBeenCalled()
+    await act(async () => void (await result.current.retryRecord()))
+    await waitFor(() => expect(result.current.pendingRecordMeasurementId).toBeNull())
+    expect(mocks.record).toHaveBeenCalledTimes(2)
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(expect.stringContaining('이미 저장'))
+  })
+
+  it('does not ask for another record when only the post-save refresh fails', async () => {
+    mocks.record.mockResolvedValueOnce({ id: 11 })
+    const currentSelection = selection({
+      measurement: prepared,
+      loadMeasurement: vi.fn().mockRejectedValue(new Error('refresh failed')),
+    })
+    const simulation = simulationController({
+      process: {
+        engine: { name: 'caemble-cae', version: '1' },
+        error: null,
+        finishedAt: Date.now(),
+        runId: 'run-1',
+        stage: null,
+        startedAt: Date.now(),
+        status: 'succeeded',
+      },
+      recordedData: { temperature: { value: 300 } },
+    })
+    const experimentDocument = documentController({
+      simulationProgram: {
+        recordedData: { temperature: { dtype: 'float64', tensorOrder: 0 } },
+      } as never,
+    })
+    const { result } = renderHook(
+      () =>
+        useCaeMeasurementActions({
+          authenticated: true,
+          experimentClean: true,
+          experimentDocument,
+          experimentId: 7,
+          experimentSourceHash: sourceHash,
+          onGenerateCandidate: vi.fn(),
+          selection: currentSelection,
+          simulation,
+        }),
+      { wrapper: wrapper() },
+    )
+
+    act(() => result.current.runSelected())
+    await waitFor(() => expect(mocks.record).toHaveBeenCalledOnce())
+    await waitFor(() => expect(result.current.busy).toBe(false))
+
+    expect(result.current.pendingRecordMeasurementId).toBeNull()
+    expect(currentSelection.clearMeasurement).toHaveBeenCalledOnce()
+    expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining('서버에 저장되었지만'))
   })
 })

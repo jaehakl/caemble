@@ -81,7 +81,7 @@ export function WorkbenchShell({
               <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12">
                 <DialogTitle>3D Viewer</DialogTitle>
                 <DialogDescription className="sr-only">
-                  현재 Structure와 Experiment 형상을 표시합니다.
+                  현재 Experiment의 공통 형상과 Task별 형상을 표시합니다.
                 </DialogDescription>
               </DialogHeader>
               <div className="min-h-0 overflow-hidden">{viewer}</div>

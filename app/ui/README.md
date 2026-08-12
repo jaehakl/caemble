@@ -1,6 +1,6 @@
 # Caemble UI
 
-Caemble UI는 React 19, React Router Data Mode, Tailwind CSS v4로 구성된 CAE Workbench SPA다. 공개 Structure/Experiment와 읽기 전용 카탈로그는 로그인 없이 열람할 수 있고 저장 및 Runtime 기능은 Google OAuth 로그인이 필요하다. TSX는 Structure/Experiment 정의의 source of truth이며 preview는 격리된 runner가 만든 immutable snapshot을, simulation은 Caemble Launcher와 CAE slave를 사용한다.
+Caemble UI는 React 19, React Router Data Mode, Tailwind CSS v4로 구성된 CAE Workbench SPA다. 공개 Experiment와 읽기 전용 카탈로그는 로그인 없이 열람할 수 있고 저장 및 Runtime 기능은 Google OAuth 로그인이 필요하다. Experiment source bundle이 authoring의 source of truth이며 preview는 격리된 runner가 만든 immutable snapshot을, simulation은 Caemble Launcher와 CAE slave를 사용한다.
 
 유일한 제품 URL은 `/`이다. Source, Data, AI Chat, Material Manager, Analysis, Launchers, Jobs, Account, Manual과 모든 카탈로그는 Workbench의 Menubar 또는 Toolbar에서 모달로 연다. 과거 제품 URL과 legacy hash는 리다이렉트하지 않고 Not Found로 처리한다.
 
@@ -54,50 +54,50 @@ manifest 사본이나 generated catalog를 두지 않는다. Vite는 이 파일�
 
 The CAD generator reads the element registry, local TypeScript catalogs, and
 `src/lib/cad/api/authoring-manifest.json`. It generates the element
-catalog/registry, JSX intrinsic types, and the pinned CAD authoring API v4.
+catalog/registry, JSX intrinsic types, and the pinned CAD authoring API v5.
 Commit all generated changes. CI should run `npm run check:generated`; a
 non-empty regeneration diff is an error.
 
 ## Experiment source bundle
 
-An Experiment is stored atomically as `{ formatVersion: 1, files }`. The bundle
+An Experiment is stored atomically as `{ formatVersion: 2, files }`. The bundle
 contains exactly `experiment.tsx`, `simulate.py`, and one or more independent
 `tasks/<taskName>.tsx` files. Every TSX file may import only `@caemble/core`;
 relative imports, Task-to-Task imports, dynamic imports, and `require()` are
 rejected before execution.
 
-`experiment.tsx` defines only the common `varsSchema` and `recordedData`.
-Each Task file default-exports `defineTask({ kernel, lengthUnit, geometry,
-geometryGroup, surfaceGroup, config })`, and its filename registers the Task
-name. `geometry: () => null` and `lengthUnit` remain mandatory for Tasks without
-visible geometry. `simulate.py` uses `async def simulate(*, sim, tasks, vars)`.
+`experiment.tsx` owns the common `lengthUnit`, complete `varsSchema`, physical
+`geometry`, `geometryGroup`, `surfaceGroup`, and `recordedData`. Each Task file
+default-exports `defineTask({ kernel, config, ...optionalTaskGeometry })`; its
+filename registers the Task name. A Task may add its own solver-local geometry,
+groups, and length unit. `simulate.py` uses
+`async def simulate(*, sim, tasks, vars)`.
 
 The Program tab shows `experiment.tsx` and `simulate.py` together. Sorted Task
 tabs edit and preview independent scenes, while the Program preview overlays all
 Task scenes after unit conversion. See [the Experiment Program guide](../../docs/experiment-program.md)
 for the complete authoring and execution contract.
 
-## External vars and deterministic evaluation
+## Candidate vars and deterministic evaluation
 
-Source definition and realization values are separate:
+Source and candidate values are separate. Evaluation accepts a complete `vars`
+object and never fills missing entries:
 
 ```ts
 await evaluateDocument({
   document,
-  seed: 100,
   vars: { conductorSize: [20, 20, 20] },
 })
 
 await evaluateDocument({
   document,
-  seed: 100,
   vars: { conductorSize: [80, 30, 10] },
 })
 ```
 
-The compiler caches emitted modules by SHA-256 source-project hash and compiler/API version. A new isolated evaluation reuses that emit without changing or recompiling Source. Explicit values are validated and preserved; missing schema entries are generated deterministically from `seed`. Unknown keys, tensor-shape mismatches, non-finite values, and out-of-range components fail before any model callback runs.
+The compiler caches emitted modules by SHA-256 source-project hash and compiler/API version. A new isolated evaluation reuses that emit without changing or recompiling Source. Missing or unknown keys, tensor-shape mismatches, non-finite values, and out-of-range components fail before any model callback runs. Authoring source cannot use hidden nondeterminism such as `Math.random`, `Date`, or `crypto`.
 
-The same Source, external vars, and seed produce the same snapshot. Normal edits preserve the realization seed. **Reroll** changes only the seed and reevaluates the current compiled definition.
+The same immutable Experiment revision and complete vars produce the same scene and simulation program. **Reroll** samples a new in-range candidate from `varsSchema` and freezes fresh Material values without changing or dirtying Source. `min === max` produces the fixed value. No random seed or generation provenance is persisted; sweep, optimization, and inverse-design workflows will submit the same complete-value contract.
 
 ## Compilation and diagnostics
 
@@ -105,7 +105,7 @@ The lazily loaded Monaco TypeScript Worker is the only browser compiler path. It
 
 Every diagnostic carries `file`, `range`, `code`, `severity`, and `phase`. Monaco markers and the document footer use the same diagnostics.
 
-The editor maintains two Monaco models and one active editor instance. Monaco core and the TypeScript Worker are Vite-generated, hashed first-party assets loaded only when the Source screen is entered. No jsDelivr loader or `esbuild-wasm` runtime is used.
+The editor maintains one Monaco model per bundle source file and one active editor instance. Monaco core and the TypeScript Worker are Vite-generated, hashed first-party assets loaded only when the Source screen is entered. No jsDelivr loader or `esbuild-wasm` runtime is used.
 
 ## Evaluation isolation
 
@@ -128,21 +128,27 @@ The runner itself needs `'unsafe-eval'` because the isolated evaluation Worker e
 JSCAD instances do not cross the untrusted evaluation boundary. Each solid is
 normalized into validated `Float64Array` vertex positions plus `Uint32Array`
 polygon offsets. The UI then resolves variables, Material values, geometry,
-DataSchema and task config into complete `BuiltSample` and
-`BuiltSetup` values.
+DataSchema and task config into one complete `BuiltMeasurement` value. Its
+common and Task-local Material parameters are already frozen.
 
 Simulation callers use only the thin client in `src/features/cae/client.ts`:
 
 ```ts
-simulate(sample, setup, { signal, onStatus, onProgress, onRecord })
+simulate(measurement, { signal, onStatus, onProgress, onRecord })
 ```
 
-The client preserves author-supplied units, sends only `{ sample, setup }`,
+The client preserves author-supplied units, sends only `{ measurement }`,
 and hides the JobSession, attachments, `start/next`,
 record ACK and kill handling. Browser-local solver,
 Python/TS simulation runtime and fallback execution do not exist. Only declared
 and actually recorded `DataTensor` values are returned; failed or cancelled runs
 discard every provisional record.
+
+Saving a candidate first creates a prepared Measurement containing immutable
+vars and Material snapshots. Running is a separate operation. A successful run
+attaches its complete RecordedData set once and changes the Measurement to
+recorded; failed or cancelled runs leave it prepared and retryable. Repeating an
+already recorded condition requires duplicating the Measurement.
 
 ## Visual round-trip editing
 
@@ -188,6 +194,6 @@ Do not place cookies, credentials, user data, service-worker scope, analytics, o
 - Compiler initialization/operation timeout: 5 seconds after initialization.
 - Preview evaluation: 3 seconds by default; explicit 10- and 30-second heavy modes.
 - Snapshot binary payload: 128 MiB, with finite-value, depth, node-count, and protocol-size checks.
-- BuiltSample/BuiltSetup request: 256 MiB total.
+- BuiltMeasurement request: 256 MiB total.
 - One run's RecordedData: 64 MiB raw bytes, with 16 MiB attachment shards.
 - Physics kernels execute only in the Caemble `cae` slave.

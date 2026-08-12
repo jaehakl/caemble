@@ -69,8 +69,8 @@ describe('CAD registry contracts', () => {
     expect(coreDeclarations).not.toContain('tasks: (context: ModelContext<Schema>) => Tasks')
     expect(coreDeclarations).toContain('config: (context: TaskModelContext) => Config')
     expect(coreDeclarations).toContain("readonly documentType: 'task'")
-    expect(coreDeclarations).toContain('formatVersion: 4')
-    expect(coreDeclarations).toContain('simulationApiVersion: 2')
+    expect(coreDeclarations).toContain('formatVersion: 5')
+    expect(coreDeclarations).toContain('simulationApiVersion: 3')
     expect(coreDeclarations).toContain('recordedData: Recorded')
     expect(coreDeclarations).not.toContain('simulate?: (')
     expect(coreDeclarations).not.toContain('ExperimentRule')
@@ -114,7 +114,6 @@ describe('CAD registry contracts', () => {
       experiment: expect.any(Function),
       Mat: expect.any(Function),
       Material: expect.any(Function),
-      structure: expect.any(Function),
       evaluateCad: expect.any(Function),
       evaluateCadScene: expect.any(Function),
       applyCadSceneGroups: expect.any(Function),

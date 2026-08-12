@@ -62,7 +62,7 @@ const descriptor = Object.freeze({
         minimumOccurrences: 1,
         maximumOccurrences: 1,
         target: {
-          source: 'structure',
+          source: 'experiment',
           kind: 'geometry',
           minimumTargets: 1,
           maximumTargets: 1,
@@ -80,7 +80,7 @@ const descriptor = Object.freeze({
         minimumOccurrences: 0,
         maximumOccurrences: 10,
         target: {
-          source: 'structure',
+          source: 'experiment',
           kind: 'geometry',
           minimumTargets: 1,
           maximumTargets: 1,
@@ -111,7 +111,7 @@ const config = Object.freeze({
   initializations: [
     {
       methodId: 'test.initialize',
-      target: ['structure.geometry.conductor'],
+      target: ['experiment.geometry.conductor'],
       parameters: {},
     },
   ],
@@ -120,7 +120,7 @@ const config = Object.freeze({
     {
       key: 'voltage',
       methodId: 'test.value',
-      target: ['structure.geometry.conductor'],
+      target: ['experiment.geometry.conductor'],
       parameters: {},
     },
   ],

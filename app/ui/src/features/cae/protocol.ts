@@ -1,4 +1,4 @@
-import type { BuiltSample, BuiltSetup, DataTensor } from '../../lib/cad'
+import type { BuiltMeasurement, DataTensor } from '../../lib/cad'
 
 export type CaeSimulationStatus = 'validating' | 'running' | 'finalizing'
 
@@ -13,8 +13,7 @@ export type CaeSimulationProgress = Readonly<{
 }>
 
 export type CaeStartRequest = Readonly<{
-  sample: BuiltSample
-  setup: BuiltSetup
+  measurement: BuiltMeasurement
 }>
 
 export type CaeNextRequest = Readonly<{

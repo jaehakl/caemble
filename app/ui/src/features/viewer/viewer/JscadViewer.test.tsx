@@ -9,8 +9,8 @@ describe('geometry-only Viewer toolbar', () => {
     const onToggleSource = vi.fn()
     const markup = renderToStaticMarkup(
       <ViewerToolbar
-        availableSources={['structure', 'experiment']}
-        visibleSources={['structure']}
+        availableSources={['experiment', 'task']}
+        visibleSources={['experiment']}
         onSetCameraView={() => undefined}
         onToggleSource={onToggleSource}
       />,
@@ -18,8 +18,8 @@ describe('geometry-only Viewer toolbar', () => {
 
     expect(markup).toContain('aria-label="Camera views"')
     expect(markup).toContain('aria-label="Set default camera view"')
-    expect(markup).toContain('aria-label="Toggle structure"')
     expect(markup).toContain('aria-label="Toggle experiment"')
+    expect(markup).toContain('aria-label="Toggle task"')
     expect(markup).not.toContain('role="tab"')
     expect(markup).not.toContain('Material Grid')
     expect(markup).not.toContain('Results')
@@ -43,8 +43,8 @@ describe('JscadViewer source layers', () => {
 
   it('preserves source Material colors when Geometry IDs collide', () => {
     const parts = createLayerRenderParts([
-      { documentType: 'experiment', lengthUnit: 'mm', parts: [experimentPart] },
-      { documentType: 'structure', lengthUnit: 'mm', parts: [structurePart] },
+      { source: 'task', lengthUnit: 'mm', parts: [experimentPart] },
+      { source: 'experiment', lengthUnit: 'mm', parts: [structurePart] },
     ])
 
     expect(parts[0].color).toEqual([220 / 255, 38 / 255, 38 / 255, 1])
@@ -56,12 +56,12 @@ describe('JscadViewer source layers', () => {
     const experimentGeometry = primitives.cuboid({ size: [0.1, 0.01, 0.01] })
     const layers = [
       {
-        documentType: 'structure' as const,
+        source: 'experiment' as const,
         lengthUnit: 'mm',
         parts: [{ id: 'structure', geometry: structureGeometry, surfaces: [] }],
       },
       {
-        documentType: 'experiment' as const,
+        source: 'task' as const,
         lengthUnit: 'm',
         parts: [{ id: 'experiment', geometry: experimentGeometry, surfaces: [] }],
       },
@@ -85,7 +85,7 @@ describe('JscadViewer Material legend', () => {
         lengthUnit="mm"
         layers={[
           {
-            documentType: 'structure',
+            source: 'experiment',
             lengthUnit: 'mm',
             parts: [
               { id: 'core-1', geometry: {}, material: core, surfaces: [] },

@@ -10,10 +10,10 @@ from app.solver_framework.units import convert_ucum_value
 
 MAXIMUM_VOXEL_COUNT = 250_000
 
-def structure_scene(world: dict[str, Any]) -> dict[str, Any]:
-    scene = world.get("structure")
+def experiment_scene(world: dict[str, Any]) -> dict[str, Any]:
+    scene = world.get("experiment")
     if not isinstance(scene, dict):
-        raise CaeError("invalid_input", "BuiltSample Structure scene is missing")
+        raise CaeError("invalid_input", "BuiltMeasurement Experiment scene is missing")
     return scene
 
 
@@ -30,7 +30,7 @@ def single_method(config: dict[str, Any], category: str, method: str) -> dict[st
 
 def target_group(rule: dict[str, Any], kind: str) -> str:
     target = rule.get("target")
-    prefix = f"structure.{kind}."
+    prefix = f"experiment.{kind}."
     if not isinstance(target, list) or len(target) != 1 or not isinstance(target[0], str) or not target[0].startswith(prefix):
         raise CaeError("invalid_task", f"target must match {prefix}<group>")
     return target[0][len(prefix) :]
@@ -106,8 +106,9 @@ def material_scalar(
 ) -> float:
     material = part.get("material")
     material_name = material.get("name") if isinstance(material, dict) else None
-    sample = world.get("sample")
-    frozen = sample.get("materialParameters") if isinstance(sample, dict) else None
+    materials_by_target = world.get("materials")
+    experiment_materials = materials_by_target.get("experiment") if isinstance(materials_by_target, dict) else None
+    frozen = experiment_materials.get("parameters") if isinstance(experiment_materials, dict) else None
     materials = frozen.get("materials") if isinstance(frozen, dict) else None
     entry = materials.get(material_name, {}).get(property_name) if isinstance(materials, dict) else None
     descriptor = entry.get("value") if isinstance(entry, dict) else None

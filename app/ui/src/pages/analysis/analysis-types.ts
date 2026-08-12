@@ -4,7 +4,7 @@ export type AnalysisColumnDescriptor = Readonly<{
   key: string
   label: string
   kind: AnalysisColumnKind
-  source: 'sample-material' | 'sample-vars' | 'setup-material' | 'setup-vars' | 'recorded-data'
+  source: 'measurement-material' | 'measurement-vars' | 'recorded-data'
   count: number
   distinctCount: number
   missingRatio: number
@@ -27,11 +27,10 @@ export type AnalysisColumnDescriptor = Readonly<{
 
 export type AnalysisProfile = Readonly<{
   fingerprint: string
-  structureId: number
   experimentId: number
   rowCount: number
-  sampleCount: number
-  setupCount: number
+  preparedCount: number
+  recordedMeasurementCount: number
   recordedDataCount: number
   columns: readonly AnalysisColumnDescriptor[]
   categoricalSummaries: readonly Readonly<{
@@ -54,8 +53,7 @@ export type AnalysisMiningResult = Readonly<{
   loadings: readonly Readonly<{ key: string; pc1: number; pc2: number }>[]
   points: readonly Readonly<{
     measurementId: number
-    sampleId: number
-    setupId: number
+    inputFingerprint: string
     pc1: number
     pc2: number
     cluster: number
@@ -83,8 +81,7 @@ export type AnalysisPredictionResult = Readonly<{
   importances: readonly Readonly<{ key: string; value: number }>[]
   rows: readonly Readonly<{
     measurementId: number
-    sampleId: number
-    setupId: number
+    inputFingerprint: string
     observed: number
     predicted: number
     residual: number
@@ -102,8 +99,7 @@ export type AnalysisTablePage = Readonly<{
   columns: readonly string[]
   rows: readonly Readonly<{
     measurementId: number
-    sampleId: number
-    setupId: number
+    inputFingerprint: string
     values: readonly (number | null)[]
   }>[]
 }>
@@ -115,7 +111,6 @@ export type AnalysisWorkerRequest =
   | Readonly<{
       type: 'load-context'
       requestId: string
-      structureId: number
       experimentId: number
     }>
   | Readonly<{

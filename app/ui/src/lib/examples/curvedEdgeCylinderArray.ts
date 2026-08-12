@@ -1,6 +1,6 @@
 export const curvedEdgeCylinderArrayCode = `import {
   Material,
-  structure,
+  experiment,
   type Geometry,
 } from '@caemble/core'
 
@@ -50,7 +50,7 @@ const CurvedCell: Geometry<{
   />
 )
 
-export default structure({
+export default experiment({
   lengthUnit: 'mm',
   geometry: ({ vars }) => (
     <array
@@ -125,5 +125,6 @@ export default structure({
       max: cellTensor(0.005),
     },
   },
+  recordedData: {},
 })
 `

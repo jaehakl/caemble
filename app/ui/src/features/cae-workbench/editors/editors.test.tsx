@@ -12,12 +12,11 @@ vi.mock('@/features/viewer/editor/CadEditor', () => ({
 }))
 
 const document: ExperimentSourceDocument = {
-  apiVersion: 4,
-  formatVersion: 1,
+  apiVersion: 5,
+  formatVersion: 2,
   kind: 'experiment',
-  realizationSeed: 1,
   sourceBundle: {
-    formatVersion: 1,
+    formatVersion: 2,
     files: {
       'experiment.tsx': 'experiment source',
       'simulate.py': 'simulation source',
@@ -87,10 +86,16 @@ describe('ExperimentEditor', () => {
 
 describe('RecordedDataEditor', () => {
   it('distinguishes an empty selection from a Measurement without RecordedData', () => {
-    const { rerender } = render(<RecordedDataEditor measurementId={null} rules={[]} />)
+    const { rerender } = render(<RecordedDataEditor measurementId={null} recordedAt={null} rules={[]} />)
     expect(screen.getByText('Measurement를 선택하세요')).toBeInTheDocument()
 
-    rerender(<RecordedDataEditor measurementId={7} rules={[]} />)
+    rerender(<RecordedDataEditor measurementId={7} recordedAt={null} rules={[]} />)
+    expect(screen.getByText('실행되지 않은 Measurement입니다')).toBeInTheDocument()
+
+    rerender(<RecordedDataEditor measurementId={7} recordedAt="2026-08-12T00:00:00Z" rules={[]} />)
     expect(screen.getByText('RecordedData가 없습니다')).toBeInTheDocument()
+
+    rerender(<RecordedDataEditor measurementId={7} pendingSave recordedAt={null} rules={[]} />)
+    expect(screen.getByText('세션 결과 저장을 다시 시도하세요')).toBeInTheDocument()
   })
 })

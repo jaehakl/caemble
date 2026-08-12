@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { readFrozenMaterialParameters, resolveMaterialParameters, sourceOnlyMaterialParameters } from './resolution'
 import type { CadSceneMaterial } from '../cad/evaluation/types'
-import { applyFrozenMaterialParameters } from '../cad/execution/realization'
+import { applyFrozenMaterialParameters } from '../cad/execution/measurement'
 
 const sourceMaterial: CadSceneMaterial = {
   name: 'Copper',
@@ -115,7 +115,6 @@ describe('Material resolution', () => {
           user_id: null,
         },
       ],
-      { seed: 7 },
     )
     expect(result.materialParameters.materials.Copper['general.mass_density'].value).toEqual({
       dtype: 'float32',
@@ -143,7 +142,7 @@ describe('Material resolution', () => {
     ).toThrow('conflicting parameter sets')
   })
 
-  it('realizes database scalar and tensor properties deterministically from the snapshot seed', () => {
+  it('samples database scalar and tensor properties afresh with the material error rate', () => {
     const material: CadSceneMaterial = { name: 'Copper', errorRate: 0.1, variables: {} }
     const names = [{ id: 1, material_id: 7, name: 'Copper', user_id: null }]
     const parameters = [
@@ -170,11 +169,12 @@ describe('Material resolution', () => {
         user_id: null,
       },
     ]
-    const first = resolveMaterialParameters([material], names, parameters, { seed: 41 })
-    const replay = resolveMaterialParameters([material], names, [...parameters].reverse(), { seed: 41 })
-    const reroll = resolveMaterialParameters([material], names, parameters, { seed: 42 })
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0)
+    const first = resolveMaterialParameters([material], names, parameters)
+    random.mockReturnValue(1)
+    const reroll = resolveMaterialParameters([material], names, [...parameters].reverse())
+    random.mockRestore()
 
-    expect(first.materialParameters).toEqual(replay.materialParameters)
     expect(first.materialParameters).not.toEqual(reroll.materialParameters)
     const tensor = first.materialParameters.materials.Copper['electrical.conductivity'].value as {
       value: readonly (readonly number[])[]
@@ -183,7 +183,36 @@ describe('Material resolution', () => {
     expect(tensor.value[1][1] / 20).toBe(tensor.value[2][2] / 30)
   })
 
-  it('does not vary sampled relations and rejects DB realization outside the dtype range', () => {
+  it('uses each explicit source property error rate and leaves zero-rate values exact', () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0)
+    const varying = {
+      ...sourceMaterial,
+      errorRate: 0.99,
+      variables: {
+        ...sourceMaterial.variables,
+        'general.mass_density': {
+          dtype: 'float32',
+          value: 9000,
+          unit: 'kg.m-3',
+          quantityKind: 'MassDensity',
+          errorRate: 0.5,
+        },
+      },
+    } satisfies CadSceneMaterial
+    const low = resolveMaterialParameters([varying], [], [])
+    random.mockReturnValue(1)
+    const high = resolveMaterialParameters([varying], [], [])
+    random.mockClear()
+    const exact = resolveMaterialParameters([sourceMaterial], [], [])
+    expect(random).not.toHaveBeenCalled()
+    random.mockRestore()
+
+    expect(low.materialParameters.materials.Copper['general.mass_density'].value).toMatchObject({ value: 4500 })
+    expect(high.materialParameters.materials.Copper['general.mass_density'].value).toMatchObject({ value: 13_500 })
+    expect(exact.materialParameters.materials.Copper['general.mass_density'].value).toMatchObject({ value: 9000 })
+  })
+
+  it('does not vary sampled relations and rejects resolved DB values outside the dtype range', () => {
     const names = [{ id: 1, material_id: 7, name: 'Copper', user_id: null }]
     const relation = {
       kind: 'sampled_relation',
@@ -194,10 +223,10 @@ describe('Material resolution', () => {
       [{ name: 'Copper', errorRate: 0.5, variables: {} }],
       names,
       [{ id: 22, material_id: 7, name: 'model.sorption.isotherm', value: relation, user_id: null }],
-      { seed: 7 },
     )
     expect(relationResult.materialParameters.materials.Copper['model.sorption.isotherm'].value).toEqual(relation)
 
+    const random = vi.spyOn(Math, 'random').mockReturnValue(1)
     expect(() =>
       resolveMaterialParameters(
         [{ name: 'Copper', errorRate: 0.5, variables: {} }],
@@ -211,9 +240,9 @@ describe('Material resolution', () => {
             user_id: null,
           },
         ],
-        { seed: 0 },
       ),
     ).toThrow('must be a finite float16 value in [-65504, 65504]')
+    random.mockRestore()
   })
 
   it('freezes database color separately and keeps source color as the runtime override', () => {
@@ -221,7 +250,6 @@ describe('Material resolution', () => {
     const names = [{ id: 1, material_id: 7, name: 'Copper', user_id: null }]
     const resolution = resolveMaterialParameters([uncolored], names, [], {
       materials: [{ id: 7, color: '#A1B2C3' }],
-      seed: 1,
     })
     expect(resolution.materialParameters.materialColors).toEqual({
       Copper: { color: '#a1b2c3', materialId: 7 },

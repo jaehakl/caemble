@@ -171,7 +171,7 @@ def decode_attachment_tensors(value: Any, attachments: list[DataChannelAttachmen
         raise CaeError("invalid_input", "start payload must contain finite JSON values") from exc
     total_bytes = json_bytes + sum(len(data) for data in files.values())
     if total_bytes > MAX_INPUT_BYTES:
-        raise CaeError("resource_limit", "BuiltSample/BuiltSetup input exceeds 256 MiB")
+        raise CaeError("resource_limit", "BuiltMeasurement input exceeds 256 MiB")
     used: set[str] = set()
     if isinstance(value, dict) and value.get("kind") == "cae.start.payload-attachments":
         if (

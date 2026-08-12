@@ -116,8 +116,8 @@ describe('AiChatWorkspace', () => {
   it('adds an ephemeral reference context only when a reference provider is configured', async () => {
     const user = userEvent.setup()
     const referenceProvider = vi.fn().mockResolvedValue({
-      text: '[REFERENCE]\nStructure 작성 가이드',
-      sources: [{ href: '/docs?section=structure', title: 'Structure Authoring' }],
+      text: '[REFERENCE]\nExperiment 작성 가이드',
+      sources: [{ href: '/docs?section=program', title: 'Experiment Authoring' }],
     })
     render(
       <ChatWorkspace
@@ -139,7 +139,7 @@ describe('AiChatWorkspace', () => {
         'ai.chat',
         expect.objectContaining({
           prompt: 'box를 만들어 줘',
-          reference_context: '[REFERENCE]\nStructure 작성 가이드',
+          reference_context: '[REFERENCE]\nExperiment 작성 가이드',
           system_prompt: 'Fixed CAE helper instructions.',
         }),
         expect.objectContaining({ autoFinish: false, slaveAppId: 'ai' }),
@@ -150,7 +150,7 @@ describe('AiChatWorkspace', () => {
       prompt: 'box를 만들어 줘',
       recentUserPrompts: [],
     })
-    expect(screen.getByRole('link', { name: 'Structure Authoring' })).toHaveAttribute('href', '/docs?section=structure')
+    expect(screen.getByRole('link', { name: 'Experiment Authoring' })).toHaveAttribute('href', '/docs?section=program')
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
     await user.click(screen.getByRole('button', { name: '코드 복사' }))

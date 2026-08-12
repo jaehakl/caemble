@@ -1,15 +1,15 @@
-// @caemble/core declaration version: 0.0.0
+// @caemble/core declaration version: 0.1.0
 export type Tensor = number | readonly Tensor[]
 export type Vars = Readonly<Record<string, Tensor>>
 export type Vec3 = readonly [number, number, number]
 export type CartesianBasis = readonly [Vec3, Vec3, Vec3]
 export type Rotation = Readonly<{ axis: Vec3; angle: number }>
-export type StructureGroupMap = Readonly<Record<string, readonly string[]>>
+export type GeometryGroupMap = Readonly<Record<string, readonly string[]>>
 export type VarsSchemaEntry = Readonly<{
   min: Tensor
   max: Tensor
 }>
-export type ExperimentTarget = `${'experiment' | 'structure'}.${'geometry' | 'surface'}.${string}`
+export type ExperimentTarget = `${'experiment' | 'task'}.${'geometry' | 'surface'}.${string}`
 export type DataDType =
   | 'bool'
   | 'string'
@@ -3216,22 +3216,6 @@ export class Material {
   readonly variables: NormalizedMaterialVariables
 }
 
-export class Structure {
-  constructor(options: {
-    geometry: () => unknown
-    lengthUnit: UcumUnit
-    varsSchema: Record<string, VarsSchemaEntry>
-    geometryGroup?: StructureGroupMap
-    surfaceGroup?: StructureGroupMap
-  })
-  readonly geometry: () => unknown
-  readonly lengthUnit: UcumUnit
-  readonly varsSchema: Readonly<Record<string, VarsSchemaEntry>>
-  readonly geometryGroup: StructureGroupMap
-  readonly surfaceGroup: StructureGroupMap
-  randomVars(seed?: number): Vars
-}
-
 export type VarsSchemaDefinition = Readonly<Record<string, Readonly<VarsSchemaEntry>>>
 
 type ShapeSource<Entry extends VarsSchemaEntry> = Entry['min'] extends readonly unknown[] ? Entry['min'] : Entry['max']
@@ -3254,14 +3238,6 @@ export type TaskModelContext = Readonly<{
   vars: Readonly<Vars>
 }>
 
-export type StructureDefinitionOptions<Schema extends VarsSchemaDefinition> = Readonly<{
-  geometry: (context: ModelContext<Schema>) => unknown
-  lengthUnit: UcumUnit
-  varsSchema: Schema
-  geometryGroup?: StructureGroupMap
-  surfaceGroup?: StructureGroupMap
-}>
-
 export type KernelIdentity = Readonly<{
   name: string
   version: string
@@ -3271,47 +3247,46 @@ export type ExperimentDefinitionOptions<
   Schema extends VarsSchemaDefinition,
   Recorded extends Readonly<Record<string, RecordedDataSpec>>,
 > = Readonly<{
+  geometry: (context: ModelContext<Schema>) => unknown
+  lengthUnit: UcumUnit
   varsSchema: Schema
+  geometryGroup?: GeometryGroupMap
+  surfaceGroup?: GeometryGroupMap
   recordedData: Recorded
 }>
 
 export type TaskDefinitionOptions<Config> = Readonly<{
   kernel: KernelIdentity
-  lengthUnit: UcumUnit
-  geometry: (context: TaskModelContext) => unknown
-  geometryGroup?: StructureGroupMap
-  surfaceGroup?: StructureGroupMap
+  lengthUnit?: UcumUnit
+  geometry?: (context: TaskModelContext) => unknown
+  geometryGroup?: GeometryGroupMap
+  surfaceGroup?: GeometryGroupMap
   config: (context: TaskModelContext) => Config
 }>
-
-export class StructureDefinition<Schema extends VarsSchemaDefinition = VarsSchemaDefinition> extends Structure {
-  constructor(options: StructureDefinitionOptions<Schema>)
-  readonly apiVersion: 4
-  readonly documentType: 'structure'
-  readonly varsSchema: Schema
-}
 
 export class ExperimentDefinition<
   Schema extends VarsSchemaDefinition = VarsSchemaDefinition,
   Recorded extends Readonly<Record<string, RecordedDataSpec>> = Readonly<Record<string, RecordedDataSpec>>,
-> extends Structure {
+> {
   constructor(options: ExperimentDefinitionOptions<Schema, Recorded>)
-  readonly apiVersion: 4
+  readonly apiVersion: 5
   readonly documentType: 'experiment'
   readonly varsSchema: Schema
+  readonly lengthUnit: UcumUnit
+  readonly geometryGroup: GeometryGroupMap
+  readonly surfaceGroup: GeometryGroupMap
   readonly recordedData: Recorded
 }
 
-export class TaskDefinition<Config = unknown> extends Structure {
+export class TaskDefinition<Config = unknown> {
   constructor(options: TaskDefinitionOptions<Config>)
-  readonly apiVersion: 4
+  readonly apiVersion: 5
   readonly documentType: 'task'
   readonly kernel: KernelIdentity
+  readonly lengthUnit?: UcumUnit
+  readonly geometryGroup: GeometryGroupMap
+  readonly surfaceGroup: GeometryGroupMap
 }
-
-export declare function structure<const Schema extends VarsSchemaDefinition>(
-  options: StructureDefinitionOptions<Schema>,
-): StructureDefinition<Schema>
 
 export declare function experiment<
   const Schema extends VarsSchemaDefinition,
@@ -3321,8 +3296,8 @@ export declare function experiment<
 export declare function defineTask<const Config>(options: TaskDefinitionOptions<Config>): TaskDefinition<Config>
 
 export type SimulationProgramManifest = Readonly<{
-  formatVersion: 4
-  simulationApiVersion: 2
+  formatVersion: 5
+  simulationApiVersion: 3
   pythonSource: string
   tasks: Readonly<
     Record<

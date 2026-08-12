@@ -1,7 +1,7 @@
 import { createStore, del, get, set } from 'idb-keyval'
 import type { WorkbenchDraft } from '../types'
 
-export const WORKBENCH_DRAFT_VERSION = 1 as const
+export const WORKBENCH_DRAFT_VERSION = 2 as const
 export const ANONYMOUS_WORKBENCH_USER = 'anonymous'
 
 const draftsStore = createStore('caemble', 'cae-workbench-drafts')
@@ -22,7 +22,7 @@ function isWorkbenchDraft(value: unknown, userKey: string): value is WorkbenchDr
     draft.version === WORKBENCH_DRAFT_VERSION &&
     draft.userKey === userKey &&
     typeof draft.savedAt === 'number' &&
-    Boolean(draft.structure && draft.experiment && draft.selection && draft.layout)
+    Boolean(draft.experiment && draft.candidate && draft.selection && draft.layout)
   )
 }
 

@@ -83,7 +83,7 @@ contract and [deployment](deployment/deployment.md) for the production setup.
 - Third-party SDK requests use bearer tokens and `/v1`.
 - Job payloads and attachments move over WebRTC between client and slave; the API
   stores orchestration state rather than solver data.
-- CAE receives built `{sample, setup}` values and returns progress, cancellation,
+- CAE receives one built `{ measurement: BuiltMeasurement }` value and returns progress, cancellation,
   and recorded data.
 - The default ICE configuration uses Google STUN. No managed TURN service is
   included.

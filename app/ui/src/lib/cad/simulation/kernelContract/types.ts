@@ -24,7 +24,7 @@ export type KernelParameterDescriptor = Readonly<{
 }>
 
 export type KernelTargetDescriptor = Readonly<{
-  source: 'structure' | 'experiment'
+  source: 'experiment' | 'task'
   kind: 'geometry' | 'surface'
   minimumTargets: number
   maximumTargets: number
@@ -108,8 +108,8 @@ export type KernelTaskConfig = Readonly<{
 
 export type KernelWorld = Readonly<{
   scenes: Readonly<{
-    structure: CadScene
     experiment: CadScene
+    task: CadScene
   }>
 }>
 

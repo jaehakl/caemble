@@ -12,7 +12,7 @@ import { CaeSimulationError } from './errors'
 import { serializeCaeRequest } from './request'
 import { API_URL } from '@/api'
 import { request as apiRequest } from '@/api/http'
-import type { BuiltSample, BuiltSetup, DataTensor, RecordedData } from '../../lib/cad'
+import type { BuiltMeasurement, DataTensor, RecordedData } from '../../lib/cad'
 import { createDataTensorAccessor, registerDataTensorAttachment, releaseDataTensorAttachments } from '../../lib/cad'
 
 const RECORDED_LIMIT_BYTES = 64 * 1024 * 1024
@@ -33,8 +33,7 @@ type NextPayload = CaeRecordPayload | CaeCompletePayload | CaeFailedPayload
 export { CaeSimulationError } from './errors'
 
 export function simulate(
-  sample: BuiltSample,
-  setup: BuiltSetup,
+  measurement: BuiltMeasurement,
   options: CaeSimulationOptions = {},
 ): Promise<RecordedData> {
   let cancelled = options.signal?.aborted ?? false
@@ -62,11 +61,11 @@ export function simulate(
 
   const promise = (async () => {
     if (cancelled) throw abortError()
-    const manifest = setup.experiment.simulationProgram
-    if (!manifest || manifest.formatVersion !== 4) {
-      throw new CaeSimulationError('program_required', 'Python simulationProgram v4가 필요합니다.')
+    const manifest = measurement.experiment.simulationProgram
+    if (!manifest || manifest.formatVersion !== 5) {
+      throw new CaeSimulationError('program_required', 'Python simulationProgram v5가 필요합니다.')
     }
-    const request = serializeCaeRequest(sample, setup)
+    const request = serializeCaeRequest(measurement)
     const requestAttachments = request.attachments.map(({ bytes, ...attachment }) => ({
       ...attachment,
       blob: new Blob([bytes.slice().buffer as ArrayBuffer], { type: attachment.mimeType }),

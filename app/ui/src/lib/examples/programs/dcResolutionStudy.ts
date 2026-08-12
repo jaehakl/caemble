@@ -1,12 +1,44 @@
-import { dcUniformBarStructureCode } from './dcUniformBar'
 import { createExperimentSourceBundle } from '../../cad/source/document'
 import type { CaembleProgramExample } from './types'
 
-export const dcResolutionStudyExperimentCode = `import { experiment } from '@caemble/core'
+export const dcResolutionStudyExperimentCode = `import {
+  Mat,
+  Material,
+  experiment,
+  type Geometry,
+  type Vec3,
+} from '@caemble/core'
+
+const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />
 
 export default experiment({
+  lengthUnit: 'mm',
   varsSchema: {
+    conductorSize: { min: [100, 5, 5], max: [100, 5, 5] },
+    electricalConductivity: { min: 5.96e7, max: 5.96e7 },
     sourceVoltage: { min: 1, max: 1 },
+  },
+  geometry: ({ vars }) => (
+    <Conductor
+      id="conductor"
+      size={vars.conductorSize}
+      materials={[
+        new Material('Copper', 'reference', {
+          errorRate: 0,
+          'electrical.conductivity': {
+            dtype: 'float64',
+            value: Mat(vars.electricalConductivity),
+            unit: 'S.m-1',
+          },
+          color: '#d97706',
+        }),
+      ]}
+    />
+  ),
+  geometryGroup: { conductor: ['conductor'] },
+  surfaceGroup: {
+    sourceTerminal: ['conductor/surface-1'],
+    referenceTerminal: ['conductor/surface-2'],
   },
   recordedData: {
     coarseTotalCurrent: {
@@ -31,7 +63,7 @@ function ConvergenceProbe() {
 }
 
 export default defineTask({
-  kernel: { name: 'dc-current-density', version: '0.0.0' },
+  kernel: { name: 'dc-current-density', version: '0.1.0' },
   lengthUnit: 'mm',
   geometry: () => <ConvergenceProbe id="convergence-probe" pos={[0, ${probePosition}, 0]} />,
   config: ({ vars }) => ({
@@ -47,7 +79,7 @@ export default defineTask({
 
     initializations: [
       {
-        target: ['structure.geometry.conductor'],
+        target: ['experiment.geometry.conductor'],
         methodId: 'dc.voxel-grid',
         parameters: {
           gridShape: {
@@ -61,7 +93,7 @@ export default defineTask({
 
     boundaryConditions: [
       {
-        target: ['structure.surface.sourceTerminal'],
+        target: ['experiment.surface.sourceTerminal'],
         methodId: 'dc.source-potential',
         parameters: {
           voltage: {
@@ -73,7 +105,7 @@ export default defineTask({
         },
       },
       {
-        target: ['structure.surface.referenceTerminal'],
+        target: ['experiment.surface.referenceTerminal'],
         methodId: 'dc.reference-potential',
         parameters: {
           voltage: {
@@ -89,7 +121,7 @@ export default defineTask({
     outputs: [
       {
         key: '${outputKey}',
-        target: ['structure.geometry.conductor'],
+        target: ['experiment.geometry.conductor'],
         methodId: 'dc.total-current',
         parameters: {
           crossSectionPosition: {
@@ -139,7 +171,6 @@ export const dcResolutionStudyExample = Object.freeze({
     '이전 result.state를 다음 sim.run()에 전달',
     '여러 task의 RecordedData와 trace 비교',
   ]),
-  structureCode: dcUniformBarStructureCode,
   experimentSourceBundle: dcResolutionStudyExperimentSourceBundle,
   verification: Object.freeze({
     kernelTasks: Object.freeze(['solveCoarse', 'solveFine']),

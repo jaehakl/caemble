@@ -1,6 +1,6 @@
 export const shellCutawaysCode = `import {
   Material,
-  structure,
+  experiment,
   type BoxAttributes,
   type CurvedEdgeCylinderAttributes,
   type CurvedSurfaceSphereAttributes,
@@ -110,7 +110,7 @@ const layer1Material = new Material('Layer 1', { color: '#0ea5e9' })
 const layer2Material = new Material('Layer 2', { color: '#f59e0b' })
 const layer3Material = new Material('Layer 3', { color: '#d946ef' })
 
-export default structure({
+export default experiment({
   lengthUnit: 'mm',
   geometry: () => (
     <>
@@ -137,5 +137,6 @@ export default structure({
     </>
   ),
   varsSchema: {},
+  recordedData: {},
 })
 `

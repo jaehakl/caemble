@@ -3,7 +3,7 @@
   "implementation": "app.solvers.dc_current_density.solver:run",
   "descriptor": {
     "name": "dc-current-density",
-    "version": "0.0.0",
+    "version": "0.1.0",
     "description": "Solves steady-state electric potential and requested current outputs in one conductor.",
     "referenceLengthUnit": "m",
     "minimumOutputs": 1,
@@ -86,7 +86,7 @@
           "minimumOccurrences": 1,
           "maximumOccurrences": 1,
           "target": {
-            "source": "structure",
+            "source": "experiment",
             "kind": "geometry",
             "minimumTargets": 1,
             "maximumTargets": 1,
@@ -117,7 +117,7 @@
           "minimumOccurrences": 1,
           "maximumOccurrences": 1,
           "target": {
-            "source": "structure",
+            "source": "experiment",
             "kind": "surface",
             "minimumTargets": 1,
             "maximumTargets": 1,
@@ -142,7 +142,7 @@
           "minimumOccurrences": 1,
           "maximumOccurrences": 1,
           "target": {
-            "source": "structure",
+            "source": "experiment",
             "kind": "surface",
             "minimumTargets": 1,
             "maximumTargets": 1,
@@ -169,7 +169,7 @@
           "minimumOccurrences": 0,
           "maximumOccurrences": 9007199254740991,
           "target": {
-            "source": "structure",
+            "source": "experiment",
             "kind": "geometry",
             "minimumTargets": 1,
             "maximumTargets": 1,
@@ -234,7 +234,7 @@
           "minimumOccurrences": 0,
           "maximumOccurrences": 9007199254740991,
           "target": {
-            "source": "structure",
+            "source": "experiment",
             "kind": "geometry",
             "minimumTargets": 1,
             "maximumTargets": 1,
@@ -270,7 +270,7 @@
           "minimumOccurrences": 0,
           "maximumOccurrences": 1,
           "target": {
-            "source": "structure",
+            "source": "experiment",
             "kind": "geometry",
             "minimumTargets": 1,
             "maximumTargets": 1,

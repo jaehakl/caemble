@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { dbTables, getListRequest } from '@/api'
-import type { ExperimentRecord, StructureRecord } from '@/api'
+import type { ExperimentRecord } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -36,13 +36,11 @@ import type {
 export type AnalysisTab = 'overview' | 'relationships' | 'mining' | 'prediction' | 'data'
 
 export type AnalysisWorkspaceProps = {
-  structureId: number | null
   experimentId: number | null
   embedded?: boolean
   initialTargetKey?: string | null
   onRequestLogin?: () => void
   onExperimentIdChange?: (id: number) => void
-  onStructureIdChange?: (id: number) => void
   onTabChange?: (tab: AnalysisTab) => void
   onTargetKeyChange?: (key: string | null) => void
   showContextSelectors?: boolean
@@ -247,13 +245,11 @@ function MetricCard({ label, value }: { label: string; value: number }) {
 }
 
 export function AnalysisWorkspace({
-  structureId: selectedStructureId,
   experimentId: selectedExperimentId,
   embedded = false,
   initialTargetKey = null,
   onRequestLogin,
   onExperimentIdChange,
-  onStructureIdChange,
   onTabChange,
   onTargetKeyChange,
   showContextSelectors = false,
@@ -290,23 +286,11 @@ export function AnalysisWorkspace({
   const targetQueryRef = useRef(initialTargetKey)
   targetQueryRef.current = initialTargetKey
 
-  const structuresQuery = useQuery({
-    queryKey: ['analysis', 'structures'],
-    queryFn: () => dbTables.Structure.listRows({ ...getListRequest('visible'), limit: null }),
-    enabled: auth.isAuthenticated && showContextSelectors,
-  })
   const experimentsQuery = useQuery({
     queryKey: ['analysis', 'experiments'],
     queryFn: () => dbTables.Experiment.listRows({ ...getListRequest('visible'), limit: null }),
     enabled: auth.isAuthenticated && showContextSelectors,
   })
-  const structures = useMemo(
-    () =>
-      (structuresQuery.data?.items ?? []).filter(
-        (row): row is StructureRecord & { id: number } => row.id !== undefined,
-      ),
-    [structuresQuery.data?.items],
-  )
   const experiments = useMemo(
     () =>
       (experimentsQuery.data?.items ?? []).filter(
@@ -325,7 +309,7 @@ export function AnalysisWorkspace({
   }, [onTargetKeyChange, profile, selectedTargetKey])
 
   useEffect(() => {
-    if (!auth.isAuthenticated || selectedStructureId === null || selectedExperimentId === null) return
+    if (!auth.isAuthenticated || selectedExperimentId === null) return
     const worker = new Worker(new URL('./analysis.worker.ts', import.meta.url), { type: 'module' })
     workerRef.current = worker
     setProfile(null)
@@ -429,14 +413,13 @@ export function AnalysisWorkspace({
     worker.postMessage({
       type: 'load-context',
       requestId,
-      structureId: selectedStructureId,
       experimentId: selectedExperimentId,
     } satisfies AnalysisWorkerRequest)
     return () => {
       worker.terminate()
       if (workerRef.current === worker) workerRef.current = null
     }
-  }, [auth.isAuthenticated, nextRequestId, selectedExperimentId, selectedStructureId, workerGeneration])
+  }, [auth.isAuthenticated, nextRequestId, selectedExperimentId, workerGeneration])
 
   const dataColumnKeys = useMemo(
     () => [...selectedFeatureKeys, ...(selectedTargetKey ? [selectedTargetKey] : [])],
@@ -487,7 +470,7 @@ export function AnalysisWorkspace({
   const predictionReady = Boolean(
     profile &&
     profile.rowCount >= 20 &&
-    profile.sampleCount >= 5 &&
+    profile.recordedMeasurementCount >= 5 &&
     selectedTarget &&
     selectedTarget.distinctCount >= 5 &&
     selectedFeatureKeys.length > 0,
@@ -579,8 +562,8 @@ export function AnalysisWorkspace({
           <p className="text-sm font-medium text-primary">Browser analysis workspace</p>
           <h2 className="mt-1 text-2xl font-semibold tracking-tight">Analysis</h2>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            같은 Structure와 Experiment 조합의 Measurement를 통계·마이닝하고 예측 모델을 학습합니다. 데이터와 모델은 이
-            브라우저 탭의 Worker 메모리에만 유지됩니다.
+            같은 Experiment의 Measurement를 통계·마이닝하고 예측 모델을 학습합니다. 데이터와 모델은 이 브라우저 탭의
+            Worker 메모리에만 유지됩니다.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -597,28 +580,7 @@ export function AnalysisWorkspace({
 
       {showContextSelectors ? (
         <Card>
-          <CardContent className="grid gap-4 pt-6 md:grid-cols-2">
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium">Structure</span>
-              <Select
-                onValueChange={(value) => {
-                  const id = Number(value)
-                  onStructureIdChange?.(id)
-                }}
-                value={selectedStructureId ? String(selectedStructureId) : undefined}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Structure 선택" />
-                </SelectTrigger>
-                <SelectContent>
-                  {structures.map((structure) => (
-                    <SelectItem key={structure.id} value={String(structure.id)}>
-                      {structure.name} · #{structure.id}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </label>
+          <CardContent className="pt-6">
             <label className="space-y-1.5 text-sm">
               <span className="font-medium">Experiment</span>
               <Select
@@ -657,10 +619,10 @@ export function AnalysisWorkspace({
         </div>
       ) : null}
 
-      {selectedStructureId === null || selectedExperimentId === null ? (
+      {selectedExperimentId === null ? (
         <Card>
           <CardContent className="py-14 text-center text-sm text-muted-foreground">
-            분석할 Structure와 Experiment를 선택하세요.
+            분석할 Experiment를 선택하세요.
           </CardContent>
         </Card>
       ) : null}
@@ -713,15 +675,15 @@ export function AnalysisWorkspace({
 
           <TabsContent className="space-y-4" value="overview">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <MetricCard label="Measurement" value={profile.rowCount} />
-              <MetricCard label="Samples" value={profile.sampleCount} />
-              <MetricCard label="Setups" value={profile.setupCount} />
+              <MetricCard label="Prepared" value={profile.preparedCount} />
+              <MetricCard label="Recorded" value={profile.recordedMeasurementCount} />
+              <MetricCard label="All Measurements" value={profile.rowCount} />
               <MetricCard label="Recorded Data rows" value={profile.recordedDataCount} />
             </div>
             {profile.rowCount === 0 ? (
               <Card>
                 <CardContent className="py-12 text-center text-sm text-muted-foreground">
-                  이 조합에 Measurement가 없습니다.
+                  이 Experiment에 Measurement가 없습니다.
                 </CardContent>
               </Card>
             ) : null}
@@ -1037,8 +999,7 @@ export function AnalysisWorkspace({
                       <TableHeader>
                         <TableRow>
                           <TableHead>Measurement</TableHead>
-                          <TableHead>Sample</TableHead>
-                          <TableHead>Setup</TableHead>
+                          <TableHead>Input</TableHead>
                           <TableHead>Cluster</TableHead>
                           <TableHead>Anomaly score</TableHead>
                           <TableHead>상태</TableHead>
@@ -1051,8 +1012,9 @@ export function AnalysisWorkspace({
                           .map((point) => (
                             <TableRow key={point.measurementId}>
                               <TableCell>#{point.measurementId}</TableCell>
-                              <TableCell>#{point.sampleId}</TableCell>
-                              <TableCell>#{point.setupId}</TableCell>
+                              <TableCell className="max-w-44 truncate" title={point.inputFingerprint}>
+                                {point.inputFingerprint}
+                              </TableCell>
                               <TableCell>{point.cluster}</TableCell>
                               <TableCell>{formatNumber(point.anomalyScore)}</TableCell>
                               <TableCell>
@@ -1077,8 +1039,8 @@ export function AnalysisWorkspace({
               <CardHeader>
                 <CardTitle>Data-based Prediction</CardTitle>
                 <CardDescription>
-                  Sample 단위 최대 5-fold 검증으로 Ridge와 Random Forest를 비교합니다. 최소 20행·5개 Sample·5개 target
-                  값이 필요합니다.
+                  동일 입력 조건을 fold 사이에 분리한 최대 5-fold 검증으로 Ridge와 Random Forest를 비교합니다. 최소
+                  20행·5개 입력·5개 target 값이 필요합니다.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -1233,7 +1195,7 @@ export function AnalysisWorkspace({
                   <CardHeader>
                     <CardTitle>Out-of-fold 결과</CardTitle>
                     <CardDescription>
-                      동일 Sample이 학습·검증에 섞이지 않은 관측값, 예측값과 잔차입니다.
+                      동일 입력 조건이 학습·검증에 섞이지 않은 관측값, 예측값과 잔차입니다.
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
@@ -1241,7 +1203,7 @@ export function AnalysisWorkspace({
                       <TableHeader>
                         <TableRow>
                           <TableHead>Measurement</TableHead>
-                          <TableHead>Sample</TableHead>
+                          <TableHead>Input</TableHead>
                           <TableHead>Fold</TableHead>
                           <TableHead>관측</TableHead>
                           <TableHead>예측</TableHead>
@@ -1252,7 +1214,9 @@ export function AnalysisWorkspace({
                         {prediction.rows.slice(0, 100).map((row) => (
                           <TableRow key={row.measurementId}>
                             <TableCell>#{row.measurementId}</TableCell>
-                            <TableCell>#{row.sampleId}</TableCell>
+                            <TableCell className="max-w-44 truncate" title={row.inputFingerprint}>
+                              {row.inputFingerprint}
+                            </TableCell>
                             <TableCell>{row.fold + 1}</TableCell>
                             <TableCell>{formatNumber(row.observed)}</TableCell>
                             <TableCell>{formatNumber(row.predicted)}</TableCell>
@@ -1287,8 +1251,7 @@ export function AnalysisWorkspace({
                       <TableHeader>
                         <TableRow>
                           <TableHead>Measurement</TableHead>
-                          <TableHead>Sample</TableHead>
-                          <TableHead>Setup</TableHead>
+                          <TableHead>Input</TableHead>
                           {tablePage.columns.map((column) => (
                             <TableHead key={column}>{column}</TableHead>
                           ))}
@@ -1298,8 +1261,9 @@ export function AnalysisWorkspace({
                         {tablePage.rows.map((row) => (
                           <TableRow key={row.measurementId}>
                             <TableCell>#{row.measurementId}</TableCell>
-                            <TableCell>#{row.sampleId}</TableCell>
-                            <TableCell>#{row.setupId}</TableCell>
+                            <TableCell className="max-w-44 truncate" title={row.inputFingerprint}>
+                              {row.inputFingerprint}
+                            </TableCell>
                             {row.values.map((value, index) => (
                               <TableCell key={tablePage.columns[index]}>{formatNumber(value ?? undefined)}</TableCell>
                             ))}

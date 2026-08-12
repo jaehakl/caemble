@@ -92,14 +92,54 @@ def test_source_migration_graph_continues_to_cae_workbench_indexes():
     root = Path(__file__).resolve().parents[1]
     scripts = ScriptDirectory.from_config(Config(root / "alembic.ini"))
 
-    assert scripts.get_heads() == ["e91f6b3a2c7d"]
+    assert scripts.get_heads() == ["f6a8c1d2e3b4"]
     assert scripts.get_revision("f24a6b91d3ce").down_revision == "e7b2c5d91a40"
     assert scripts.get_revision("9d31a6f7c2e4").down_revision == "f24a6b91d3ce"
     assert scripts.get_revision("a4c8e2f19b73").down_revision == "9d31a6f7c2e4"
     assert scripts.get_revision("b17d4c2e8a90").down_revision == "a4c8e2f19b73"
     assert scripts.get_revision("d2f7a1c9e4b6").down_revision == "b17d4c2e8a90"
     assert scripts.get_revision("e91f6b3a2c7d").down_revision == "d2f7a1c9e4b6"
+    assert scripts.get_revision("f6a8c1d2e3b4").down_revision == "e91f6b3a2c7d"
     assert not any(root.joinpath("alembic", "versions").glob("*_measurement_contract_metadata.py"))
+
+
+def test_unified_research_revision_resets_only_research_data_and_replaces_split_schema():
+    revision = next(
+        (Path(__file__).resolve().parents[1] / "alembic" / "versions").glob(
+            "*_unify_research_entities.py"
+        )
+    )
+    source = revision.read_text(encoding="utf-8")
+    upgrade = source.split("def downgrade()", 1)[0]
+    for table in (
+        "recorded_data",
+        "measurements",
+        "designer_models",
+        "predictor_models",
+        "samples",
+        "setups",
+        "structures",
+        "experiments",
+    ):
+        assert f'DELETE FROM {table}' in upgrade
+    for table in ("samples", "setups", "structures"):
+        assert f'op.drop_table("{table}")' in upgrade
+    for untouched in ("geometries", "materials", "jobs"):
+        assert f'DELETE FROM {untouched}' not in upgrade
+        assert f'op.drop_table("{untouched}")' not in upgrade
+    assert '"source_hash"' in upgrade
+    assert '"recorded_at"' in upgrade
+    assert '"user_id"' in upgrade
+    assert "nullable=False" in upgrade
+    assert 'ondelete="RESTRICT"' in upgrade
+    assert '"uq_recorded_data_measurement_id_name"' in upgrade
+    for constraint in (
+        "ck_experiments_source_hash_sha256",
+        "ck_measurements_vars_object",
+        "ck_measurements_material_parameters_object",
+        "ck_measurements_material_parameters_v2",
+    ):
+        assert f'op.f("{constraint}")' in source
 
 
 def test_cae_workbench_query_index_revision_is_non_destructive_and_reversible():
@@ -262,6 +302,22 @@ async def test_configured_database_has_seeded_roles_and_required_extensions(db_s
         "allowed_origins",
         "expires_at",
     } <= access_key_columns
+    owned_result_nullability = dict(
+        (
+            await db_session.execute(
+                text(
+                    """
+                    SELECT table_name, is_nullable
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name IN ('measurements', 'recorded_data')
+                      AND column_name = 'user_id'
+                    """
+                )
+            )
+        ).all()
+    )
+    assert owned_result_nullability == {"measurements": "NO", "recorded_data": "NO"}
 
 
 @pytest.mark.asyncio

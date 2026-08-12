@@ -15,7 +15,6 @@ import {
 export type HistoryDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
-  kind: 'structure' | 'experiment'
   id: number | null
   onSelect: (id: number) => void
 }
@@ -43,12 +42,12 @@ function orderHistory(items: CodeEntityHistoryItem[], rootId: number) {
   return ordered
 }
 
-export function HistoryDialog({ open, onOpenChange, kind, id, onSelect }: HistoryDialogProps) {
+export function HistoryDialog({ open, onOpenChange, id, onSelect }: HistoryDialogProps) {
   const [selectedId, setSelectedId] = useState<number | null>(null)
-  const label = kind === 'structure' ? 'Structure' : 'Experiment'
+  const label = 'Experiment'
   const historyQuery = useQuery({
-    queryKey: ['cae-workbench', kind, 'history', id],
-    queryFn: () => (kind === 'structure' ? dbTables.Structure.history(id!) : dbTables.Experiment.history(id!)),
+    queryKey: ['cae-workbench', 'experiment', 'history', id],
+    queryFn: () => dbTables.Experiment.history(id!),
     enabled: open && id !== null,
   })
 

@@ -28,7 +28,7 @@ function readBlobText(blob: Blob): Promise<string> {
   })
 }
 
-function realization() {
+function measurementFixture() {
   const recordedData = {
     values: {
       dtype: 'float64' as const,
@@ -57,15 +57,27 @@ function realization() {
     surfaceGroups: [],
   }
   return {
-    sample: {
-      kind: 'sample',
-      structure: {
-        kind: 'structure',
-        sourceHash: 'a'.repeat(64),
-        seed: 1,
+    measurement: {
+      kind: 'measurement',
+      experiment: {
+        kind: 'experiment',
+        sourceHash: 'b'.repeat(64),
         variables: {},
         varsSchema: {},
         scene,
+        taskScenes: { electric: scene },
+        simulationProgram: {
+          formatVersion: 5,
+          simulationApiVersion: 3,
+          pythonSource: 'async def simulate(*, sim, tasks, vars):\n    return None\n',
+          tasks: {
+            electric: {
+              kernel: { name: 'dc-current-density', version: '0.1.0' },
+              config: {},
+            },
+          },
+          recordedData,
+        },
       },
       materialParameters: {
         schemaVersion: 1,
@@ -91,29 +103,6 @@ function realization() {
         },
       },
       materialWarnings: [],
-    },
-    setup: {
-      kind: 'setup',
-      experiment: {
-        kind: 'experiment',
-        sourceHash: 'b'.repeat(64),
-        seed: 2,
-        variables: {},
-        varsSchema: {},
-        taskScenes: { electric: scene },
-        simulationProgram: {
-          formatVersion: 4,
-          simulationApiVersion: 2,
-          pythonSource: 'async def simulate(*, sim, tasks, vars):\n    return None\n',
-          tasks: {
-            electric: {
-              kernel: { name: 'dc-current-density', version: '0.0.0' },
-              config: {},
-            },
-          },
-          recordedData,
-        },
-      },
       taskMaterialParameters: { electric: { schemaVersion: 1, materials: {} } },
       taskMaterialWarnings: { electric: [] },
     },
@@ -129,8 +118,8 @@ describe('CAE session client', () => {
     api.request.mockResolvedValue({ ok: true })
   })
 
-  it('sends only sample/setup, ACKs one record at a time, and returns RecordedData only', async () => {
-    const fixture = realization()
+  it('sends only the built Measurement, ACKs one record at a time, and returns RecordedData only', async () => {
+    const fixture = measurementFixture()
     const bytes = new Float64Array([1.25, 2.5]).buffer
     const call = vi
       .fn()
@@ -166,11 +155,11 @@ describe('CAE session client', () => {
     })
     const onRecord = vi.fn()
 
-    const result = await simulate(fixture.sample as never, fixture.setup as never, { onRecord })
+    const result = await simulate(fixture.measurement as never, { onRecord })
 
     expect(sdk.runJob).toHaveBeenCalledWith(
       'cae.simulation.start',
-      expect.objectContaining({ sample: expect.any(Object), setup: expect.any(Object) }),
+      expect.objectContaining({ measurement: expect.any(Object) }),
       expect.objectContaining({ autoFinish: false, slaveAppId: 'cae' }),
     )
     expect(sdk.clientOptions).toHaveBeenCalledWith({
@@ -178,10 +167,10 @@ describe('CAE session client', () => {
       authMode: 'cookie',
       jobApiPrefix: '/web/jobs',
     })
-    expect(Object.keys(sdk.runJob.mock.calls[0][1]).sort()).toEqual(['sample', 'setup'])
+    expect(Object.keys(sdk.runJob.mock.calls[0][1])).toEqual(['measurement'])
     const startPayload = sdk.runJob.mock.calls[0][1]
-    expect(startPayload.sample.structure.scene.lengthUnit).toBe('mm')
-    expect(startPayload.sample.materialParameters.materials.Copper['electrical.conductivity'].value).toMatchObject({
+    expect(startPayload.measurement.experiment.scene.lengthUnit).toBe('mm')
+    expect(startPayload.measurement.materialParameters.materials.Copper['electrical.conductivity'].value).toMatchObject({
       dtype: 'float64',
       unit: 'S.cm-1',
       value: [
@@ -203,7 +192,7 @@ describe('CAE session client', () => {
   })
 
   it('finishes transport and rejects a simulation domain failure', async () => {
-    const fixture = realization()
+    const fixture = measurementFixture()
     const finish = vi.fn().mockResolvedValue(undefined)
     sdk.runJob.mockResolvedValue({
       payload: { kind: 'started', runId: 'run-2', maxRunSeconds: 10 },
@@ -224,7 +213,7 @@ describe('CAE session client', () => {
       },
     })
 
-    await expect(simulate(fixture.sample as never, fixture.setup as never)).rejects.toMatchObject({
+    await expect(simulate(fixture.measurement as never)).rejects.toMatchObject({
       code: 'solver_convergence',
       message: '수렴하지 않았습니다.',
     })
@@ -232,8 +221,8 @@ describe('CAE session client', () => {
   })
 
   it('moves a large UTF-8 start payload into request attachments', async () => {
-    const fixture = realization()
-    fixture.setup.experiment.simulationProgram.pythonSource = `# ${'한'.repeat(300_000)}`
+    const fixture = measurementFixture()
+    fixture.measurement.experiment.simulationProgram.pythonSource = `# ${'한'.repeat(300_000)}`
     sdk.runJob.mockResolvedValue({
       payload: { kind: 'started', runId: 'run-large-start', maxRunSeconds: 10 },
       files: [],
@@ -249,7 +238,7 @@ describe('CAE session client', () => {
       },
     })
 
-    await simulate(fixture.sample as never, fixture.setup as never)
+    await simulate(fixture.measurement as never)
 
     expect(sdk.runJob.mock.calls[0][1]).toMatchObject({
       kind: 'cae.start.payload-attachments',
@@ -262,11 +251,11 @@ describe('CAE session client', () => {
         attachments.find((item: { mimeType: string }) => item.mimeType.startsWith('application/json')).blob,
       ),
     )
-    expect(Object.keys(payload).sort()).toEqual(['sample', 'setup'])
+    expect(Object.keys(payload)).toEqual(['measurement'])
   })
 
   it('rejects malformed or obsolete terminal payload fields', async () => {
-    const fixture = realization()
+    const fixture = measurementFixture()
     sdk.runJob.mockResolvedValue({
       payload: { kind: 'started', runId: 'run-malformed', maxRunSeconds: 10 },
       files: [],
@@ -287,13 +276,13 @@ describe('CAE session client', () => {
       },
     })
 
-    await expect(simulate(fixture.sample as never, fixture.setup as never)).rejects.toMatchObject({
+    await expect(simulate(fixture.measurement as never)).rejects.toMatchObject({
       code: 'protocol_error',
     })
   })
 
   it('uses AbortSignal to kill and close an active session', async () => {
-    const fixture = realization()
+    const fixture = measurementFixture()
     const controller = new AbortController()
     const close = vi.fn()
     const call = vi.fn(
@@ -316,7 +305,7 @@ describe('CAE session client', () => {
       }
     })
     await expect(
-      simulate(fixture.sample as never, fixture.setup as never, {
+      simulate(fixture.measurement as never, {
         signal: controller.signal,
       }),
     ).rejects.toMatchObject({ name: 'AbortError' })

@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
 import { dbTables, getListRequest } from '@/api'
-import type { MeasurementRecord, RecordedDataRecord, SampleRecord, SetupRecord } from '@/api'
+import type { MeasurementRecord, RecordedDataRecord } from '@/api'
 import {
   ANALYSIS_MAX_ROWS,
   buildAnalysisDataset,
@@ -16,8 +16,6 @@ import type { AnalysisProgressStage, AnalysisWorkerRequest, AnalysisWorkerRespon
 
 type ContextRows = Readonly<{
   measurements: readonly MeasurementRecord[]
-  samples: readonly SampleRecord[]
-  setups: readonly SetupRecord[]
 }>
 
 type LoadedContext = Readonly<{
@@ -28,7 +26,6 @@ type LoadedContext = Readonly<{
 }>
 
 let dataset: ReturnType<typeof buildAnalysisDataset> | null = null
-let structureId: number | null = null
 let experimentId: number | null = null
 let measurementSignature = ''
 
@@ -46,31 +43,18 @@ function postProgress(requestId: string, stage: AnalysisProgressStage, completed
   })
 }
 
-async function loadContextRows(selectedStructureId: number, selectedExperimentId: number): Promise<ContextRows> {
-  const sampleRequest = {
-    ...getListRequest('mine'),
-    limit: null,
-    filter: { structure_id: [selectedStructureId, selectedStructureId] },
-  }
-  const setupRequest = {
+async function loadContextRows(selectedExperimentId: number): Promise<ContextRows> {
+  const measurementRequest = {
     ...getListRequest('mine'),
     limit: null,
     filter: { experiment_id: [selectedExperimentId, selectedExperimentId] },
   }
-  const [measurementResponse, sampleResponse, setupResponse] = await Promise.all([
-    dbTables.Measurement.listContext(selectedStructureId, selectedExperimentId),
-    dbTables.Sample.listRows(sampleRequest),
-    dbTables.Setup.listRows(setupRequest),
-  ])
-  return {
-    measurements: measurementResponse.items,
-    samples: sampleResponse.items.filter((sample) => sample.structure_id === selectedStructureId),
-    setups: setupResponse.items.filter((setup) => setup.experiment_id === selectedExperimentId),
-  }
+  const response = await dbTables.Measurement.listRows(measurementRequest)
+  return { measurements: response.items.filter((row) => row.experiment_id === selectedExperimentId) }
 }
 
 function rowsSignature(rows: ContextRows) {
-  return [stableSignature(rows.measurements), stableSignature(rows.samples), stableSignature(rows.setups)].join(':')
+  return stableSignature(rows.measurements)
 }
 
 async function loadRecordedData(
@@ -115,27 +99,18 @@ async function loadRecordedData(
   return responses.flat()
 }
 
-async function loadStableContext(
-  requestId: string,
-  selectedStructureId: number,
-  selectedExperimentId: number,
-): Promise<LoadedContext> {
+async function loadStableContext(requestId: string, selectedExperimentId: number): Promise<LoadedContext> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     postProgress(requestId, 'Measurement 조회')
-    const before = await loadContextRows(selectedStructureId, selectedExperimentId)
+    const before = await loadContextRows(selectedExperimentId)
     if (before.measurements.length > ANALYSIS_MAX_ROWS) {
       throw new Error(`Analysis는 최대 ${ANALYSIS_MAX_ROWS.toLocaleString()}개 Measurement까지 지원합니다.`)
     }
     const recordedData = await loadRecordedData(requestId, before.measurements)
-    const after = await loadContextRows(selectedStructureId, selectedExperimentId)
+    const after = await loadContextRows(selectedExperimentId)
     if (rowsSignature(before) === rowsSignature(after)) {
       const currentMeasurementSignature = stableSignature(after.measurements)
-      const fingerprint = [
-        currentMeasurementSignature,
-        stableSignature(after.samples),
-        stableSignature(after.setups),
-        stableSignature(recordedData),
-      ].join(':')
+      const fingerprint = [currentMeasurementSignature, stableSignature(recordedData)].join(':')
       return {
         rows: after,
         recordedData,
@@ -148,22 +123,18 @@ async function loadStableContext(
 }
 
 function requireDataset() {
-  if (!dataset) throw new Error('먼저 Structure와 Experiment 데이터를 불러오세요.')
+  if (!dataset) throw new Error('먼저 Experiment 데이터를 불러오세요.')
   return dataset
 }
 
 async function handleRequest(request: AnalysisWorkerRequest) {
   if (request.type === 'load-context') {
-    structureId = request.structureId
     experimentId = request.experimentId
-    const loaded = await loadStableContext(request.requestId, request.structureId, request.experimentId)
+    const loaded = await loadStableContext(request.requestId, request.experimentId)
     postProgress(request.requestId, '데이터셋 구성')
     dataset = buildAnalysisDataset({
-      structureId: request.structureId,
       experimentId: request.experimentId,
       measurements: loaded.rows.measurements,
-      samples: loaded.rows.samples,
-      setups: loaded.rows.setups,
       recordedData: loaded.recordedData,
       fingerprint: loaded.fingerprint,
     })
@@ -173,11 +144,15 @@ async function handleRequest(request: AnalysisWorkerRequest) {
   }
 
   if (request.type === 'check-stale') {
-    if (structureId === null || experimentId === null) {
+    if (experimentId === null) {
       postResponse({ type: 'stale', requestId: request.requestId, stale: false })
       return
     }
-    const response = await dbTables.Measurement.listContext(structureId, experimentId)
+    const response = await dbTables.Measurement.listRows({
+      ...getListRequest('mine'),
+      limit: null,
+      filter: { experiment_id: [experimentId, experimentId] },
+    })
     postResponse({
       type: 'stale',
       requestId: request.requestId,

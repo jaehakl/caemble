@@ -66,34 +66,33 @@ describe('unversioned CAD authoring declarations', () => {
     expect(jsxTypes).not.toContain('const Fragment: unknown')
   })
 
-  it('type-checks the v4 Structure, Experiment, and Task defaults', () => {
+  it('type-checks the v5 Experiment and Task defaults', () => {
     expect(defaultExperimentCode).toBe(defaultExperimentProgramCode)
     expect(diagnosticsFor(defaultCode)).toEqual([])
     expect(diagnosticsFor(defaultExperimentCode)).toEqual([])
     expect(diagnosticsFor(defaultExperimentTaskCode)).toEqual([])
   })
 
-  it('allows an orchestration-only Experiment without global geometry', () => {
+  it('requires the common Experiment geometry contract', () => {
     expect(
       diagnosticsFor(`import { experiment } from '@caemble/core'
       export default experiment({ varsSchema: {}, recordedData: {} })`),
-    ).toEqual([])
+    ).toContainEqual(expect.stringContaining('geometry, lengthUnit'))
   })
 
   it.each(caembleExamples)('type-checks the $title example', ({ code }) => {
     expect(diagnosticsFor(code)).toEqual([])
   })
 
-  it.each(caembleProgramExamples)('type-checks the $title Structure–Experiment pair', (example) => {
-    expect(diagnosticsFor(example.structureCode)).toEqual([])
+  it.each(caembleProgramExamples)('type-checks the $title Experiment bundle', (example) => {
     Object.entries(example.experimentSourceBundle.files)
       .filter(([path]) => path.endsWith('.tsx'))
       .forEach(([, source]) => expect(diagnosticsFor(source)).toEqual([]))
   })
 
-  it('type-checks the complete Structure and Experiment sources in the standalone guide', () => {
+  it('type-checks the complete Experiment sources in the standalone guide', () => {
     const sources = [...experimentProgramDoc.matchAll(/```tsx\r?\n([\s\S]*?)```/g)].map((match) => match[1])
-    expect(sources).toHaveLength(3)
+    expect(sources).toHaveLength(2)
     sources.forEach((source) => expect(diagnosticsFor(source)).toEqual([]))
   })
 

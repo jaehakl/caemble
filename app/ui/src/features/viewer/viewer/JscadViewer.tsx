@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import * as reglRenderer from '@jscad/regl-renderer'
-import type { CadDocumentType, CadScenePart, UcumUnit } from '@/lib/cad'
+import type { CadScenePart, UcumUnit } from '@/lib/cad'
 import { materialColor, unassignedGeometryColor } from './materialColor'
 import { createWireframeGeometries } from './renderParts'
-import { createLayerRenderParts, scaleViewerLayers, type JscadViewerLayer } from './sourceLayers'
+import {
+  createLayerRenderParts,
+  scaleViewerLayers,
+  type CadViewerSource,
+  type JscadViewerLayer,
+} from './sourceLayers'
 
 type RendererEntity = Record<string, unknown>
 type RendererOptions = Record<string, unknown> & {
@@ -58,15 +63,15 @@ type ReglRendererApi = {
 type CameraView = 'default' | 'x' | 'y' | 'z'
 
 type JscadViewerProps = {
-  availableSources?: readonly CadDocumentType[]
+  availableSources?: readonly CadViewerSource[]
   emptyMessage?: string
   layers: readonly JscadViewerLayer[]
   lengthUnit: UcumUnit
   onRenderEnd: () => void
   onRenderError: (message: string) => void
   onRenderStart: () => void
-  onToggleSource?: (documentType: CadDocumentType) => void
-  visibleSources?: readonly CadDocumentType[]
+  onToggleSource?: (source: CadViewerSource) => void
+  visibleSources?: readonly CadViewerSource[]
 }
 
 const renderer = reglRenderer as unknown as ReglRendererApi
@@ -83,10 +88,10 @@ export function ViewerToolbar({
   onToggleSource,
   visibleSources = [],
 }: {
-  availableSources?: readonly CadDocumentType[]
+  availableSources?: readonly CadViewerSource[]
   onSetCameraView: (view: CameraView) => void
-  onToggleSource?: (documentType: CadDocumentType) => void
-  visibleSources?: readonly CadDocumentType[]
+  onToggleSource?: (source: CadViewerSource) => void
+  visibleSources?: readonly CadViewerSource[]
 }) {
   return (
     <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-200 bg-white px-2 py-1">
@@ -106,12 +111,12 @@ export function ViewerToolbar({
 
       {onToggleSource ? (
         <div aria-label="Viewer sources" className="flex items-center gap-1 border-l border-slate-200 pl-3">
-          {(['structure', 'experiment'] as const).map((documentType) => {
-            const available = availableSources.includes(documentType)
-            const visible = visibleSources.includes(documentType)
+          {(['experiment', 'task'] as const).map((source) => {
+            const available = availableSources.includes(source)
+            const visible = visibleSources.includes(source)
             return (
               <button
-                aria-label={`Toggle ${documentType}`}
+                aria-label={`Toggle ${source}`}
                 aria-pressed={available && visible}
                 className={`rounded border px-2 py-1 text-[11px] font-medium transition-colors ${
                   available && visible
@@ -119,11 +124,11 @@ export function ViewerToolbar({
                     : 'border-slate-200 bg-white text-slate-400'
                 } disabled:cursor-not-allowed disabled:opacity-50`}
                 disabled={!available}
-                key={documentType}
+                key={source}
                 type="button"
-                onClick={() => onToggleSource(documentType)}
+                onClick={() => onToggleSource(source)}
               >
-                {documentType === 'structure' ? 'Structure' : 'Experiment'}
+                {source === 'experiment' ? 'Experiment' : 'Task'}
               </button>
             )
           })}
@@ -305,7 +310,7 @@ function JscadViewer({
         ? JSON.stringify({
             lengthUnit,
             scenes: displayLayers.map((layer) => [
-              layer.documentType,
+              layer.source,
               layer.taskName ?? null,
               layer.sceneHash,
               layer.parts.map((part) => [part.id, part.material?.name ?? null, materialColor(part.material) ?? null]),

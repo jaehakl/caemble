@@ -1,10 +1,10 @@
 import { createExperimentSourceBundle } from '../../cad/source/document'
 import type { CaembleProgramExample } from './types'
 
-export const dcNotchedCurrentDensityStructureCode = `import {
+export const dcNotchedCurrentDensityExperimentCode = `import {
   Mat,
   Material,
-  structure,
+  experiment,
   type Geometry,
   type Vec3,
 } from '@caemble/core'
@@ -20,7 +20,7 @@ const NotchedConductor: Geometry<{
   </subtract>
 )
 
-export default structure({
+export default experiment({
   lengthUnit: 'mm',
 
   varsSchema: {
@@ -28,6 +28,7 @@ export default structure({
     notchPosition: { min: [0, 4.5, 3], max: [0, 4.5, 3] },
     notchSize: { min: [30, 5, 6], max: [30, 5, 6] },
     electricalConductivity: { min: 5.96e7, max: 5.96e7 },
+    sourceVoltage: { min: 1, max: 1 },
   },
 
   geometry: ({ vars }) => (
@@ -57,15 +58,6 @@ export default structure({
   surfaceGroup: {
     sourceTerminal: ['conductor/surface-1'],
     referenceTerminal: ['conductor/surface-2'],
-  },
-})
-`
-
-export const dcNotchedCurrentDensityExperimentCode = `import { experiment } from '@caemble/core'
-
-export default experiment({
-  varsSchema: {
-    sourceVoltage: { min: 1, max: 1 },
   },
   recordedData: {
     currentDensity: {
@@ -98,7 +90,7 @@ function FieldProbe() {
 }
 
 export default defineTask({
-  kernel: { name: 'dc-current-density', version: '0.0.0' },
+  kernel: { name: 'dc-current-density', version: '0.1.0' },
   lengthUnit: 'mm',
   geometry: () => <FieldProbe id="field-probe" pos={[0, -15, 0]} />,
   config: ({ vars }) => ({
@@ -114,7 +106,7 @@ export default defineTask({
 
   initializations: [
     {
-      target: ['structure.geometry.conductor'],
+      target: ['experiment.geometry.conductor'],
       methodId: 'dc.voxel-grid',
       parameters: {
         gridShape: {
@@ -128,7 +120,7 @@ export default defineTask({
 
   boundaryConditions: [
     {
-      target: ['structure.surface.sourceTerminal'],
+      target: ['experiment.surface.sourceTerminal'],
       methodId: 'dc.source-potential',
       parameters: {
         voltage: {
@@ -140,7 +132,7 @@ export default defineTask({
       },
     },
     {
-      target: ['structure.surface.referenceTerminal'],
+      target: ['experiment.surface.referenceTerminal'],
       methodId: 'dc.reference-potential',
       parameters: {
         voltage: {
@@ -156,7 +148,7 @@ export default defineTask({
   outputs: [
     {
       key: 'currentDensity',
-      target: ['structure.geometry.conductor'],
+      target: ['experiment.geometry.conductor'],
       methodId: 'dc.current-density',
       parameters: {
         crossSectionPosition: {
@@ -169,7 +161,7 @@ export default defineTask({
     },
     {
       key: 'totalCurrent',
-      target: ['structure.geometry.conductor'],
+      target: ['experiment.geometry.conductor'],
       methodId: 'dc.total-current',
       parameters: {
         crossSectionPosition: {
@@ -207,7 +199,6 @@ export const dcNotchedCurrentDensityExample = Object.freeze({
     '한 task에서 여러 artifact handle 요청',
     '동적 2D axes와 vector Quantity RecordedData',
   ]),
-  structureCode: dcNotchedCurrentDensityStructureCode,
   experimentSourceBundle: dcNotchedCurrentDensityExperimentSourceBundle,
   verification: Object.freeze({
     kernelTasks: Object.freeze(['solveField']),

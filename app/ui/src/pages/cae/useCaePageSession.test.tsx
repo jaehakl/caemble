@@ -1,216 +1,161 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
-import { StrictMode } from 'react'
-import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import type { ReactNode } from 'react'
+import { MemoryRouter } from 'react-router'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { dbTables } from '@/api'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
-import type { WorkbenchDraft } from '@/features/cae-workbench/types'
 import { useCaePageSession } from './useCaePageSession'
 
 const mocks = vi.hoisted(() => ({
-  loadDraft: vi.fn(),
-  saveDraft: vi.fn(),
-  structureRows: vi.fn(),
-  experimentRows: vi.fn(),
-  measurementRows: vi.fn(),
-}))
-
-vi.mock('@/api', () => ({
-  dbTables: {
-    Structure: { listRows: mocks.structureRows },
-    Experiment: { listRows: mocks.experimentRows },
-    Measurement: { listRows: mocks.measurementRows },
-  },
-  getListRequest: () => ({ offset: 0, limit: null }),
+  loadDraft: vi.fn(async () => null),
+  saveDraft: vi.fn(async () => undefined),
+  toastError: vi.fn(),
 }))
 
 vi.mock('@/features/cae-workbench/storage/draftStorage', () => ({
   loadWorkbenchDraft: mocks.loadDraft,
   saveWorkbenchDraft: mocks.saveDraft,
-  workbenchDraftUserKey: (userId: string | null | undefined) => `user:${userId ?? 'anonymous'}`,
+  workbenchDraftUserKey: (value?: string | null) => value || 'anonymous',
 }))
+vi.mock('sonner', () => ({ toast: { error: mocks.toastError } }))
 
-vi.mock('sonner', () => ({
-  toast: { error: vi.fn() },
-}))
-
-function savedDraft(): WorkbenchDraft {
-  const sourceBundle = {
-    formatVersion: 1 as const,
-    files: {
-      'experiment.tsx': 'experiment source',
-      'simulate.py': 'simulation source',
-    },
-  }
+function workbench(overrides: Record<string, unknown> = {}) {
   return {
-    version: 1,
-    savedAt: 1,
-    userKey: 'user:tester',
-    structure: {
-      record: { id: 10, user_id: 'tester', name: 'Beam', code: 'structure source' },
-      baselineCode: 'structure source',
-      document: null,
-      name: 'Beam',
-      description: '',
-    },
-    experiment: {
-      record: { id: 20, user_id: 'tester', name: 'Compression', source_bundle: sourceBundle },
-      baselineBundle: sourceBundle,
-      document: null,
-      name: 'Compression',
-      description: '',
-    },
-    selection: { sampleId: null, setupId: null, measurementId: null },
-    layout: {
-      openTabs: [],
-      activeTab: null,
-      experimentFile: 'experiment.tsx',
-      splitPercent: 50,
-    },
-  }
-}
-
-function fakeWorkbench() {
-  const draft = savedDraft()
-  return {
-    structureId: 10,
-    experimentId: 20,
-    structureDirty: false,
+    applyExperiment: vi.fn(),
+    draft: vi.fn(() => ({ version: 2 })),
     experimentDirty: false,
-    pairDirty: false,
-    selectionIds: { sampleId: null, setupId: null, measurementId: null },
-    selectionRestoring: false,
-    selection: {
-      sample: null,
-      setup: null,
-      measurement: null,
-      clearAll: vi.fn(),
-    },
+    experimentId: null,
+    loadExperiment: vi.fn().mockResolvedValue(undefined),
     measurementActions: {
       busy: false,
-      performMeasurement: vi.fn(),
+      error: null,
+      pendingRecordMeasurementId: null,
+      runSelected: vi.fn(() => 'run-1'),
     },
-    restoreDraft: vi.fn(),
-    restoreStaleDraft: vi.fn(),
-    restoreSelection: vi.fn(),
-    loadResearch: vi.fn().mockResolvedValue(undefined),
-    loadStructure: vi.fn().mockResolvedValue(undefined),
-    loadExperiment: vi.fn().mockResolvedValue(undefined),
-    applyStructure: vi.fn(),
-    applyExperiment: vi.fn(),
-    newStructure: vi.fn(),
     newExperiment: vi.fn(),
-    draft: vi.fn(() => draft),
+    restoreDraft: vi.fn(),
+    restoreSelection: vi.fn(),
+    restoreStaleDraft: vi.fn(),
+    saving: null,
+    selection: {
+      clearMeasurement: vi.fn(),
+      loadMeasurement: vi.fn().mockResolvedValue(undefined),
+    },
+    selectionIds: { measurementId: null },
+    selectionRestoring: false,
+    ...overrides,
   } as unknown as CaeWorkbenchState
 }
 
-function SessionStatus({ workbench }: { workbench: CaeWorkbenchState }) {
-  const session = useCaePageSession(false, 'tester', workbench)
-  return <span>{session.initialized ? 'ready' : 'loading'}</span>
+function wrapper(initialEntry = '/') {
+  return ({ children }: { children: ReactNode }) => (
+    <MemoryRouter initialEntries={[initialEntry]}>{children}</MemoryRouter>
+  )
 }
 
 beforeEach(() => {
+  vi.restoreAllMocks()
   vi.clearAllMocks()
-  vi.spyOn(window, 'confirm').mockReturnValue(true)
   mocks.loadDraft.mockResolvedValue(null)
   mocks.saveDraft.mockResolvedValue(undefined)
-  mocks.structureRows.mockResolvedValue({ total: 0, items: [] })
-  mocks.experimentRows.mockResolvedValue({ total: 0, items: [] })
-  mocks.measurementRows.mockResolvedValue({ total: 0, items: [] })
 })
 
-afterEach(() => {
-  cleanup()
-  vi.restoreAllMocks()
-})
+describe('useCaePageSession', () => {
+  it('restores only Experiment and Measurement from the URL', async () => {
+    const state = workbench()
+    const { result } = renderHook(() => useCaePageSession(false, 'user-1', state), {
+      wrapper: wrapper('/?experiment=7&measurement=11&structure=2&sample=3&setup=4'),
+    })
 
-describe('CAE page session recovery', () => {
-  it('finishes initialization in StrictMode but never autosaves when IndexedDB cannot be read', async () => {
-    const workbench = fakeWorkbench()
-    mocks.loadDraft.mockRejectedValue(new Error('IndexedDB unavailable'))
-    render(
-      <StrictMode>
-        <MemoryRouter initialEntries={['/']}>
-          <SessionStatus workbench={workbench} />
-        </MemoryRouter>
-      </StrictMode>,
-    )
-
-    expect(await screen.findByText('ready')).toBeInTheDocument()
-    await new Promise((resolve) => window.setTimeout(resolve, 550))
-    expect(mocks.saveDraft).not.toHaveBeenCalled()
+    await waitFor(() => expect(result.current.initialized).toBe(true))
+    expect(state.loadExperiment).toHaveBeenCalledWith(7, 11)
+    expect(state.restoreSelection).not.toHaveBeenCalledWith(expect.objectContaining({ sampleId: 3 }))
   })
 
-  it('restores an already-read draft when URL loading fails instead of autosaving empty state', async () => {
-    const workbench = fakeWorkbench()
-    const draft = savedDraft()
-    mocks.loadDraft.mockResolvedValue(draft)
-    vi.mocked(workbench.loadResearch).mockRejectedValue(new Error('network unavailable'))
-    render(
-      <MemoryRouter initialEntries={['/?structure=30&experiment=40']}>
-        <SessionStatus workbench={workbench} />
-      </MemoryRouter>,
-    )
-
-    expect(await screen.findByText('ready')).toBeInTheDocument()
-    expect(workbench.restoreDraft).toHaveBeenLastCalledWith(draft)
-  })
-
-  it('keeps a same-pair draft and applies only the URL selection', async () => {
-    const workbench = fakeWorkbench()
-    const draft = savedDraft()
-    mocks.loadDraft.mockResolvedValue(draft)
-    mocks.structureRows.mockResolvedValue({ total: 1, items: [draft.structure.record] })
-    mocks.experimentRows.mockResolvedValue({
+  it('opens the associated Experiment for a Measurement-only deep link', async () => {
+    vi.spyOn(dbTables.Measurement, 'listRows').mockResolvedValue({
       total: 1,
       items: [
         {
-          ...draft.experiment.record,
-          source_bundle: {
-            formatVersion: 1,
-            files: {
-              'simulate.py': 'simulation source',
-              'experiment.tsx': 'experiment source',
-            },
+          id: 11,
+          experiment_id: 7,
+          vars: {},
+          material_parameters: {
+            schemaVersion: 2,
+            experiment: { schemaVersion: 1, materials: {} },
+            tasks: { main: { schemaVersion: 1, materials: {} } },
           },
+          recorded_at: null,
         },
       ],
     })
-    render(
-      <MemoryRouter initialEntries={['/?structure=10&experiment=20&measurement=33']}>
-        <SessionStatus workbench={workbench} />
-      </MemoryRouter>,
-    )
+    const state = workbench()
+    const { result } = renderHook(() => useCaePageSession(false, 'user-1', state), {
+      wrapper: wrapper('/?measurement=11'),
+    })
 
-    expect(await screen.findByText('ready')).toBeInTheDocument()
-    expect(workbench.loadResearch).not.toHaveBeenCalled()
-    expect(workbench.restoreDraft).toHaveBeenLastCalledWith(draft)
-    expect(workbench.restoreSelection).toHaveBeenCalledWith(
-      { sampleId: null, setupId: null, measurementId: 33 },
-      { structureId: 10, experimentId: 20 },
-    )
+    await waitFor(() => expect(result.current.initialized).toBe(true))
+    expect(state.loadExperiment).toHaveBeenCalledWith(7, 11)
   })
 
-  it('applies an external selection-only URL change without reloading clean source files', async () => {
-    const workbench = fakeWorkbench()
-    const router = createMemoryRouter([{ path: '/', element: <SessionStatus workbench={workbench} /> }], {
-      initialEntries: ['/?structure=10&experiment=20'],
-    })
-    render(<RouterProvider router={router} />)
-    expect(await screen.findByText('ready')).toBeInTheDocument()
-    vi.mocked(workbench.loadResearch).mockClear()
+  it('initializes an empty v2 draft with Experiment as the active tab', async () => {
+    const state = workbench()
+    const { result } = renderHook(() => useCaePageSession(false, 'user-1', state), { wrapper: wrapper() })
 
-    await act(async () => {
-      await router.navigate('/?structure=10&experiment=20&measurement=33')
-    })
-
-    await waitFor(() =>
-      expect(workbench.restoreSelection).toHaveBeenCalledWith(
-        { sampleId: null, setupId: null, measurementId: 33 },
-        { structureId: 10, experimentId: 20 },
-      ),
+    await waitFor(() => expect(result.current.initialized).toBe(true))
+    expect(state.restoreDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        version: 2,
+        candidate: { vars: null, materialParameters: null },
+        selection: { measurementId: null },
+        layout: expect.objectContaining({ activeTab: 'experiment' }),
+      }),
     )
-    expect(workbench.loadResearch).not.toHaveBeenCalled()
+    expect(result.current.activeTab).toBe('experiment')
+  })
+
+  it('guards replacement when the Experiment source is dirty', async () => {
+    const state = workbench({ experimentDirty: true })
+    const { result } = renderHook(() => useCaePageSession(false, 'user-1', state), { wrapper: wrapper() })
+    await waitFor(() => expect(result.current.initialized).toBe(true))
+    const replace = vi.fn()
+
+    act(() => result.current.guardReplacement(replace))
+
+    expect(replace).not.toHaveBeenCalled()
+    expect(result.current.confirmation?.title).toContain('저장하지 않은 편집')
+  })
+
+  it('keeps a session result in place until its RecordedData save is retried', async () => {
+    const state = workbench({
+      measurementActions: {
+        busy: false,
+        error: 'record failed',
+        pendingRecordMeasurementId: 11,
+        runSelected: vi.fn(),
+      },
+    })
+    const { result } = renderHook(() => useCaePageSession(false, 'user-1', state), { wrapper: wrapper() })
+    await waitFor(() => expect(result.current.initialized).toBe(true))
+    const replace = vi.fn()
+
+    act(() => result.current.guardReplacement(replace))
+
+    expect(replace).not.toHaveBeenCalled()
+    expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining('결과 저장을 다시 시도'))
+  })
+
+  it('runs the selected prepared Measurement without overwrite preflight', async () => {
+    const runSelected = vi.fn(() => 'run-1')
+    const state = workbench({
+      measurementActions: { busy: false, error: null, pendingRecordMeasurementId: null, runSelected },
+    })
+    const { result } = renderHook(() => useCaePageSession(false, 'user-1', state), { wrapper: wrapper() })
+    await waitFor(() => expect(result.current.initialized).toBe(true))
+
+    act(() => result.current.requestRunSelected())
+    expect(runSelected).toHaveBeenCalledOnce()
   })
 })

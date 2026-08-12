@@ -1,4 +1,4 @@
-import { Box, FlaskConical, Microscope } from 'lucide-react'
+import { FlaskConical } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -11,26 +11,21 @@ import {
 import { caembleProgramExamples, type CaembleProgramExample } from '@/lib/examples'
 
 export function ExamplePickerDialog({
-  kind,
   onOpenChange,
   onSelect,
   open,
 }: {
-  kind: 'research' | 'structure' | 'experiment'
   onOpenChange: (open: boolean) => void
   onSelect: (example: CaembleProgramExample) => void
   open: boolean
 }) {
-  const label = kind === 'research' ? 'Research' : kind === 'structure' ? 'Structure' : 'Experiment'
-  const Icon = kind === 'research' ? Microscope : kind === 'structure' ? Box : FlaskConical
+  const Icon = FlaskConical
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="max-h-[85dvh] overflow-hidden sm:max-w-4xl">
         <DialogHeader>
-          <DialogTitle>New {label}</DialogTitle>
-          <DialogDescription>
-            검증된 예제에서 {kind === 'research' ? 'Structure + Experiment pair' : label} source를 시작합니다.
-          </DialogDescription>
+          <DialogTitle>New Experiment</DialogTitle>
+          <DialogDescription>검증된 예제에서 완전한 Experiment source를 시작합니다.</DialogDescription>
         </DialogHeader>
         <div className="grid min-h-0 gap-3 overflow-y-auto sm:grid-cols-2">
           {caembleProgramExamples.map((example) => (

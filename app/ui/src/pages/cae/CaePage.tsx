@@ -1,4 +1,5 @@
 import { Badge } from '@/components/ui/badge'
+import { useMemo } from 'react'
 import { useLocation } from 'react-router'
 import { useAuth } from '@/features/auth/use-auth'
 import {
@@ -9,10 +10,11 @@ import {
   WorkbenchToolbar,
 } from '@/features/cae-workbench/chrome'
 import { ConfirmWorkbenchDialog } from '@/features/cae-workbench/dialogs'
-import { ExperimentEditor, RecordedDataEditor, StructureEditor } from '@/features/cae-workbench/editors'
+import { ExperimentEditor, RecordedDataEditor } from '@/features/cae-workbench/editors'
 import { useCaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { WorkbenchTabId } from '@/features/cae-workbench/types'
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
+import type { RecordedDataRule } from '@/lib/cad'
 import { NotFoundPage } from '@/pages/not-found/NotFoundPage'
 import { CaeWorkbenchDialogs } from './CaeWorkbenchDialogs'
 import { useCaePageChrome } from './useCaePageChrome'
@@ -31,38 +33,44 @@ function AuthenticatedCaePage() {
 
 function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const workbench = useCaeWorkbenchState(auth.user, auth.isAuthenticated)
-  const page = useCaePageSession(
-    auth.isLoading,
-    auth.user?.id,
-    workbench,
-    auth.user?.roles.includes('admin') ? 'visible' : 'mine',
-  )
+  const page = useCaePageSession(auth.isLoading, auth.user?.id, workbench)
   const chrome = useCaePageChrome({
     authenticated: auth.isAuthenticated,
     openTab: page.openTab,
-    requestPerformMeasurement: page.requestPerformMeasurement,
+    requestRunSelected: page.requestRunSelected,
     runSafely: page.runSafely,
     setDialog: page.setDialog,
     workbench,
   })
+  const sessionRecordedRules = useMemo(
+    () =>
+      Object.entries(workbench.experimentDocument.simulationProgram?.recordedData ?? {}).map(
+        ([label, result]) =>
+          ({
+            target: Object.freeze([]),
+            label,
+            methodId: 'measurement.session-recorded-data',
+            parameters: Object.freeze({}),
+            result,
+          }) satisfies RecordedDataRule,
+      ),
+    [workbench.experimentDocument.simulationProgram],
+  )
+  const pendingResult = workbench.measurementActions.pendingRecordMeasurementId !== null
 
   const tabs = caeWorkbenchTabs
     .filter((tab) => page.openTabs.includes(tab))
     .sort((left, right) => page.openTabs.indexOf(left) - page.openTabs.indexOf(right))
     .map((tab) => ({
       id: tab,
-      label: tab === 'structure' ? 'Structure' : tab === 'experiment' ? 'Experiment' : 'RecordedData',
+      label: tab === 'experiment' ? 'Experiment' : 'RecordedData',
       content:
-        tab === 'structure' ? (
-          <StructureEditor
-            controller={workbench.structureDocument}
-            disabled={!page.initialized || workbench.measurementActions.busy || workbench.saving !== null}
-            document={workbench.structure?.kind === 'structure' ? workbench.structure : null}
-          />
-        ) : tab === 'experiment' ? (
+        tab === 'experiment' ? (
           <ExperimentEditor
             controller={workbench.experimentDocument}
-            disabled={!page.initialized || workbench.measurementActions.busy || workbench.saving !== null}
+            disabled={
+              !page.initialized || pendingResult || workbench.measurementActions.busy || workbench.saving !== null
+            }
             document={workbench.experiment?.kind === 'experiment' ? workbench.experiment : null}
             initialActiveFile={page.activeExperimentFile}
             onActiveFileChange={page.setActiveExperimentFile}
@@ -70,8 +78,10 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         ) : (
           <RecordedDataEditor
             measurementId={workbench.selection.measurement?.id ?? null}
-            recordedData={workbench.selection.recordedData}
-            rules={workbench.selection.recordedRules}
+            pendingSave={pendingResult}
+            recordedAt={workbench.selection.measurement?.recorded_at ?? null}
+            recordedData={pendingResult ? workbench.simulation.recordedData : workbench.selection.recordedData}
+            rules={pendingResult ? sessionRecordedRules : workbench.selection.recordedRules}
           />
         ),
     }))
@@ -79,7 +89,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const closeTab = (tabId: string) => {
     const next = page.openTabs.filter((tab) => tab !== tabId)
     page.setOpenTabs(next)
-    if (page.activeTab === tabId) page.setActiveTab(next[0] ?? 'structure')
+    if (page.activeTab === tabId) page.setActiveTab(next[0] ?? 'experiment')
   }
 
   return (
@@ -110,8 +120,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               activeExperimentTaskName={page.activeExperimentFile}
               experiment={workbench.experiment}
               experimentDocument={workbench.experimentDocument}
-              structure={workbench.structure}
-              structureDocument={workbench.structureDocument}
             />
           }
           viewerPercent={page.viewerPercent}
@@ -130,20 +138,23 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       </div>
       <footer className="flex h-7 shrink-0 items-center justify-between gap-3 border-t bg-muted/35 px-3 text-[11px] text-muted-foreground">
         <span className="flex min-w-0 items-center gap-2 truncate">
-          <Badge className={`h-5 rounded-sm px-1.5 ${workbench.structureDirty ? 'bg-destructive text-white' : ''}`}>
-            Structure{' '}
-            {workbench.structureDirty ? 'edited' : workbench.structureId ? `#${workbench.structureId}` : 'none'}
-          </Badge>
           <Badge className={`h-5 rounded-sm px-1.5 ${workbench.experimentDirty ? 'bg-destructive text-white' : ''}`}>
             Experiment{' '}
             {workbench.experimentDirty ? 'edited' : workbench.experimentId ? `#${workbench.experimentId}` : 'none'}
+          </Badge>
+          <Badge className="h-5 rounded-sm px-1.5">
+            {workbench.measurementActions.pendingRecordMeasurementId
+              ? `Measurement #${workbench.measurementActions.pendingRecordMeasurementId} · 결과 저장 재시도 필요`
+              : workbench.selection.measurement
+                ? `Measurement #${workbench.selection.measurement.id} · ${workbench.selection.measurement.recorded_at ? 'Recorded' : 'Prepared'}`
+                : 'Candidate preview'}
           </Badge>
           <span>{page.initialized ? 'Draft 자동 저장' : '작업 복원 중…'}</span>
         </span>
         {workbench.measurementActions.busy ? (
           <span className="flex items-center gap-2">
             {workbench.measurementActions.stage}
-            {workbench.measurementActions.cancelable && workbench.measurementActions.operation !== 'measurement' ? (
+            {workbench.measurementActions.cancelable ? (
               <button
                 className="font-medium text-destructive"
                 type="button"

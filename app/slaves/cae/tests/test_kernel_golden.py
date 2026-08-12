@@ -50,10 +50,11 @@ def box_world():
         ],
     }
     return {
-        "structure": scene,
-        "experiment": {},
-        "sample": {
-            "materialParameters": {
+        "experiment": scene,
+        "task": {},
+        "materials": {
+            "experiment": {
+                "parameters": {
                 "schemaVersion": 1,
                 "materials": {
                     "Copper": {
@@ -73,9 +74,11 @@ def box_world():
                         },
                     }
                 },
-            }
+                },
+                "warnings": [],
+            },
+            "task": {"parameters": {"schemaVersion": 1, "materials": {}}, "warnings": []},
         },
-        "setup": {},
     }
 
 
@@ -90,7 +93,7 @@ def descriptor(value, unit=None, quantity_kind=None):
 
 def dc_task():
     return {
-        "kernel": {"name": "dc-current-density", "version": "0.0.0"},
+        "kernel": {"name": "dc-current-density", "version": "0.1.0"},
         "config": {
             "parameters": {
                 "relativeTolerance": descriptor(1e-10, "{fraction}", "DimensionlessRatio"),
@@ -98,7 +101,7 @@ def dc_task():
             },
             "initializations": [
                 {
-                    "target": ["structure.geometry.conductor"],
+                    "target": ["experiment.geometry.conductor"],
                     "methodId": "dc.voxel-grid",
                     "parameters": {
                         "gridShape": {"dtype": "int32", "axes": [{"length": 3}], "value": [20, 11, 11]}
@@ -107,12 +110,12 @@ def dc_task():
             ],
             "boundaryConditions": [
                 {
-                    "target": ["structure.surface.sourceTerminal"],
+                    "target": ["experiment.surface.sourceTerminal"],
                     "methodId": "dc.source-potential",
                     "parameters": {"voltage": descriptor(0.001, "V", "electromagnetism.Voltage")},
                 },
                 {
-                    "target": ["structure.surface.referenceTerminal"],
+                    "target": ["experiment.surface.referenceTerminal"],
                     "methodId": "dc.reference-potential",
                     "parameters": {"voltage": descriptor(0.0, "V", "electromagnetism.Voltage")},
                 },
@@ -120,7 +123,7 @@ def dc_task():
             "outputs": [
                 {
                     "key": "totalCurrent",
-                    "target": ["structure.geometry.conductor"],
+                    "target": ["experiment.geometry.conductor"],
                     "methodId": "dc.total-current",
                     "parameters": {
                         "crossSectionPosition": descriptor(0.5, "{fraction}", "DimensionlessRatio")
@@ -128,7 +131,7 @@ def dc_task():
                 },
                 {
                     "key": "jouleHeating",
-                    "target": ["structure.geometry.conductor"],
+                    "target": ["experiment.geometry.conductor"],
                     "methodId": "dc.joule-heating",
                     "parameters": {},
                 },
@@ -139,7 +142,7 @@ def dc_task():
 
 def heat_task():
     return {
-        "kernel": {"name": "steady-state-heat", "version": "0.0.0"},
+        "kernel": {"name": "steady-state-heat", "version": "0.1.0"},
         "config": {
             "parameters": {
                 "relativeTolerance": descriptor(1e-10, "{fraction}", "DimensionlessRatio"),
@@ -147,7 +150,7 @@ def heat_task():
             },
             "initializations": [
                 {
-                    "target": ["structure.geometry.conductor"],
+                    "target": ["experiment.geometry.conductor"],
                     "methodId": "heat.voxel-grid",
                     "parameters": {
                         "gridShape": {"dtype": "int32", "axes": [{"length": 3}], "value": [20, 11, 11]}
@@ -156,14 +159,14 @@ def heat_task():
             ],
             "boundaryConditions": [
                 {
-                    "target": ["structure.surface.sourceTerminal"],
+                    "target": ["experiment.surface.sourceTerminal"],
                     "methodId": "heat.fixed-temperature",
                     "parameters": {
                         "temperature": descriptor(293.15, "K", "thermodynamics.Temperature")
                     },
                 },
                 {
-                    "target": ["structure.surface.referenceTerminal"],
+                    "target": ["experiment.surface.referenceTerminal"],
                     "methodId": "heat.fixed-temperature",
                     "parameters": {
                         "temperature": descriptor(293.15, "K", "thermodynamics.Temperature")
@@ -173,13 +176,13 @@ def heat_task():
             "outputs": [
                 {
                     "key": "temperature",
-                    "target": ["structure.geometry.conductor"],
+                    "target": ["experiment.geometry.conductor"],
                     "methodId": "heat.temperature",
                     "parameters": {},
                 },
                 {
                     "key": "maximumTemperature",
-                    "target": ["structure.geometry.conductor"],
+                    "target": ["experiment.geometry.conductor"],
                     "methodId": "heat.maximum-temperature",
                     "parameters": {},
                 },
@@ -220,8 +223,8 @@ async def test_solver_converts_geometry_from_declared_ucum_length_unit():
         return None
 
     world = box_world()
-    world["structure"]["parts"][0]["geometry"]["positions"] /= 0.3048006096012192
-    world["structure"]["lengthUnit"] = "[ft_us]"
+    world["experiment"]["parts"][0]["geometry"]["positions"] /= 0.3048006096012192
+    world["experiment"]["lengthUnit"] = "[ft_us]"
 
     result = await run_kernel(dc_task(), None, {}, world, report)
 
@@ -233,7 +236,7 @@ async def test_geometry_views_can_use_different_solver_reference_units():
     async def report(_value):
         return None
 
-    scene = box_world()["structure"]
+    scene = box_world()["experiment"]
     part = scene["parts"][0]
     source = surface(scene, "sourceTerminal", "conductor")
     reference = surface(scene, "referenceTerminal", "conductor")
@@ -305,7 +308,7 @@ async def test_dc_rejects_noncanonical_material_descriptor(descriptor, expected)
         return None
 
     world = box_world()
-    world["sample"]["materialParameters"]["materials"]["Copper"]["electrical.conductivity"]["value"] = descriptor
+    world["materials"]["experiment"]["parameters"]["materials"]["Copper"]["electrical.conductivity"]["value"] = descriptor
 
     with pytest.raises(CaeError, match=expected) as error:
         await run_kernel(dc_task(), None, {}, world, report)
@@ -318,7 +321,7 @@ async def test_dc_converts_material_unit_on_access():
         return None
 
     world = box_world()
-    world["sample"]["materialParameters"]["materials"]["Copper"]["electrical.conductivity"]["value"] = {
+    world["materials"]["experiment"]["parameters"]["materials"]["Copper"]["electrical.conductivity"]["value"] = {
         "dtype": "float64",
         "value": (np.eye(3) * 596000).tolist(),
         "unit": "S.cm-1",

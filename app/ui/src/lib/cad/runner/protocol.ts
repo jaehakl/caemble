@@ -1,30 +1,33 @@
 import { assertCompiledCadDocument } from '../compiler/types'
 import { assertEvaluatedDocumentSnapshot } from '../execution/snapshotValidation'
 import { CadModelError } from '../model/errors'
-import type { CadEvaluationRequest, CadEvaluationResponse } from '../worker/protocol'
+import { normalizeVarsSchema } from '../model/vars'
+import type { CadWorkerRequest, CadWorkerResponse } from '../worker/protocol'
 
-export type RunnerEvaluationEnvelope = Readonly<{
-  type: 'evaluate'
+export type RunnerOperationEnvelope = Readonly<{
+  type: 'inspect' | 'evaluate'
   nonce: string
-  request: CadEvaluationRequest
+  request: CadWorkerRequest
 }>
 
-export type RunnerEvaluationStartedEnvelope = Readonly<{
-  type: 'evaluation-started'
+export type RunnerOperationStartedEnvelope = Readonly<{
+  type: 'operation-started'
+  operation: 'inspect' | 'evaluate'
   nonce: string
   requestId: string
   revision: number
-  documentType: 'structure' | 'experiment'
+  documentType: 'experiment'
 }>
 
-export type RunnerEvaluationResultEnvelope = Readonly<{
-  type: 'evaluation-result'
+export type RunnerOperationResultEnvelope = Readonly<{
+  type: 'operation-result'
+  operation: 'inspect' | 'evaluate'
   nonce: string
-  response: CadEvaluationResponse
+  response: CadWorkerResponse
 }>
 
-export type RunnerCancelEvaluationEnvelope = Readonly<{
-  type: 'cancel-evaluation'
+export type RunnerCancelOperationEnvelope = Readonly<{
+  type: 'cancel-operation'
   nonce: string
   requestId: string
 }>
@@ -46,7 +49,7 @@ function assertOnlyKeys(value: object, allowed: readonly string[], path: string)
 }
 
 function assertNonce(value: unknown) {
-  if (typeof value !== 'string' || !/^[a-zA-Z0-9-]{16,128}$/.test(value)) {
+  if (typeof value !== 'string' || !/^[a-zA-Z0-9-]{16,128}$/u.test(value)) {
     throw new CadModelError('Runner message nonce is invalid.')
   }
 }
@@ -63,106 +66,121 @@ function assertIdentity(requestId: unknown, revision: unknown, path: string) {
   }
 }
 
-function assertEvaluationVars(vars: unknown) {
-  if (vars === undefined) return
+function assertVars(vars: unknown) {
   assertPlainObject(vars, 'request.vars')
-  if (Object.keys(vars).length > 4096) {
-    throw new CadModelError('CAD evaluation vars exceed the key-count limit.')
-  }
+  if (Object.keys(vars).length > 4096) throw new CadModelError('CAD evaluation vars exceed the key-count limit.')
 }
 
-export function assertCadEvaluationRequest(value: unknown): asserts value is CadEvaluationRequest {
+export function assertCadWorkerRequest(value: unknown): asserts value is CadWorkerRequest {
   assertPlainObject(value, 'request')
-  assertOnlyKeys(value, ['type', 'requestId', 'revision', 'document', 'compiledDocument', 'vars'], 'request')
-  if (value.type !== 'evaluate') throw new CadModelError('CAD evaluation request type is invalid.')
-  assertIdentity(value.requestId, value.revision, 'CAD evaluation request')
-  assertPlainObject(value.document, 'request.document')
-  assertOnlyKeys(value.document, ['kind', 'realizationSeed', 'pythonSource'], 'request.document')
-  if (
-    (value.document.kind !== 'structure' && value.document.kind !== 'experiment') ||
-    !Number.isSafeInteger(value.document.realizationSeed) ||
-    (value.document.realizationSeed as number) < 0
-  ) {
-    throw new CadModelError('CAD evaluation request document is invalid.')
-  }
-  if (value.document.kind === 'experiment') {
-    if (typeof value.document.pythonSource !== 'string' || !value.document.pythonSource.trim()) {
-      throw new CadModelError('Experiment evaluation requires Python simulation source.')
-    }
-  } else if (value.document.pythonSource !== undefined) {
-    throw new CadModelError('Structure evaluation cannot contain Python simulation code.')
-  }
+  assertIdentity(value.requestId, value.revision, 'CAD runner request')
   assertCompiledCadDocument(value.compiledDocument)
-  if (!value.compiledDocument.sources[`${value.document.kind}.tsx`]) {
-    throw new CadModelError('Compiled CAD document does not match the requested document kind.')
+  if (!value.compiledDocument.sources['experiment.tsx']) {
+    throw new CadModelError('Compiled CAD document must contain experiment.tsx.')
   }
-  assertEvaluationVars(value.vars)
-}
-
-export function assertRunnerEvaluationEnvelope(value: unknown): asserts value is RunnerEvaluationEnvelope {
-  assertPlainObject(value, 'evaluation')
-  assertOnlyKeys(value, ['type', 'nonce', 'request'], 'evaluation')
-  if (value.type !== 'evaluate') throw new CadModelError('Runner evaluation type is invalid.')
-  assertNonce(value.nonce)
-  assertCadEvaluationRequest(value.request)
-}
-
-export function assertRunnerEvaluationStartedEnvelope(
-  value: unknown,
-): asserts value is RunnerEvaluationStartedEnvelope {
-  assertPlainObject(value, 'evaluationStarted')
-  assertOnlyKeys(value, ['type', 'nonce', 'requestId', 'revision', 'documentType'], 'evaluationStarted')
-  if (
-    value.type !== 'evaluation-started' ||
-    (value.documentType !== 'structure' && value.documentType !== 'experiment')
-  ) {
-    throw new CadModelError('Runner evaluation started envelope is invalid.')
-  }
-  assertNonce(value.nonce)
-  assertIdentity(value.requestId, value.revision, 'Runner evaluation started')
-}
-
-export function assertRunnerEvaluationResultEnvelope(value: unknown): asserts value is RunnerEvaluationResultEnvelope {
-  assertPlainObject(value, 'evaluationResult')
-  assertOnlyKeys(value, ['type', 'nonce', 'response'], 'evaluationResult')
-  if (value.type !== 'evaluation-result') throw new CadModelError('Runner evaluation result type is invalid.')
-  assertNonce(value.nonce)
-  assertPlainObject(value.response, 'evaluationResult.response')
-  const response = value.response
-  assertIdentity(response.requestId, response.revision, 'Runner evaluation result')
-  if (response.documentType !== 'structure' && response.documentType !== 'experiment') {
-    throw new CadModelError('Runner evaluation result document type is invalid.')
-  }
-  if (response.type === 'evaluation-success') {
-    assertOnlyKeys(response, ['type', 'requestId', 'revision', 'documentType', 'snapshot'], 'evaluationResult.response')
-    assertEvaluatedDocumentSnapshot(response.snapshot)
-    if (response.snapshot.kind !== response.documentType) {
-      throw new CadModelError('Runner evaluation snapshot kind does not match the response.')
-    }
+  if (value.type === 'inspect') {
+    assertOnlyKeys(value, ['type', 'requestId', 'revision', 'compiledDocument'], 'request')
     return
   }
+  if (value.type !== 'evaluate') throw new CadModelError('CAD runner request type is invalid.')
+  assertOnlyKeys(value, ['type', 'requestId', 'revision', 'compiledDocument', 'pythonSource', 'vars'], 'request')
+  if (typeof value.pythonSource !== 'string' || !value.pythonSource.trim()) {
+    throw new CadModelError('Experiment evaluation requires Python simulation source.')
+  }
+  assertVars(value.vars)
+}
+
+export function assertCadInspectionRequest(value: unknown): asserts value is Extract<CadWorkerRequest, { type: 'inspect' }> {
+  assertCadWorkerRequest(value)
+  if (value.type !== 'inspect') throw new CadModelError('CAD inspection request type is invalid.')
+}
+
+export function assertCadEvaluationRequest(value: unknown): asserts value is Extract<CadWorkerRequest, { type: 'evaluate' }> {
+  assertCadWorkerRequest(value)
+  if (value.type !== 'evaluate') throw new CadModelError('CAD evaluation request type is invalid.')
+}
+
+export function assertRunnerOperationEnvelope(value: unknown): asserts value is RunnerOperationEnvelope {
+  assertPlainObject(value, 'operation')
+  assertOnlyKeys(value, ['type', 'nonce', 'request'], 'operation')
+  if (value.type !== 'inspect' && value.type !== 'evaluate') throw new CadModelError('Runner operation type is invalid.')
+  assertNonce(value.nonce)
+  assertCadWorkerRequest(value.request)
+  if (value.type !== value.request.type) throw new CadModelError('Runner operation does not match its request.')
+}
+
+export function assertRunnerOperationStartedEnvelope(value: unknown): asserts value is RunnerOperationStartedEnvelope {
+  assertPlainObject(value, 'operationStarted')
+  assertOnlyKeys(value, ['type', 'operation', 'nonce', 'requestId', 'revision', 'documentType'], 'operationStarted')
   if (
-    response.type !== 'evaluation-error' ||
+    value.type !== 'operation-started' ||
+    (value.operation !== 'inspect' && value.operation !== 'evaluate') ||
+    value.documentType !== 'experiment'
+  ) {
+    throw new CadModelError('Runner operation started envelope is invalid.')
+  }
+  assertNonce(value.nonce)
+  assertIdentity(value.requestId, value.revision, 'Runner operation started')
+}
+
+function assertErrorResponse(response: Record<string, unknown>, errorType: 'inspection-error' | 'evaluation-error') {
+  if (
+    response.type !== errorType ||
     !['compile', 'type', 'policy', 'runtime', 'model'].includes(String(response.errorType)) ||
     typeof response.message !== 'string' ||
     response.message.length > 65_536 ||
     (response.stack !== undefined && typeof response.stack !== 'string') ||
     (response.diagnostics !== undefined && !Array.isArray(response.diagnostics))
   ) {
-    throw new CadModelError('Runner evaluation error response is invalid.')
+    throw new CadModelError('Runner operation error response is invalid.')
   }
   assertOnlyKeys(
     response,
     ['type', 'requestId', 'revision', 'documentType', 'errorType', 'message', 'diagnostics', 'stack'],
-    'evaluationResult.response',
+    'operationResult.response',
   )
 }
 
-export function assertRunnerCancelEvaluationEnvelope(value: unknown): asserts value is RunnerCancelEvaluationEnvelope {
-  assertPlainObject(value, 'cancelEvaluation')
-  assertOnlyKeys(value, ['type', 'nonce', 'requestId'], 'cancelEvaluation')
-  if (value.type !== 'cancel-evaluation' || typeof value.requestId !== 'string' || !value.requestId) {
-    throw new CadModelError('Runner evaluation cancellation is invalid.')
+export function assertRunnerOperationResultEnvelope(value: unknown): asserts value is RunnerOperationResultEnvelope {
+  assertPlainObject(value, 'operationResult')
+  assertOnlyKeys(value, ['type', 'operation', 'nonce', 'response'], 'operationResult')
+  if (value.type !== 'operation-result' || (value.operation !== 'inspect' && value.operation !== 'evaluate')) {
+    throw new CadModelError('Runner operation result type is invalid.')
+  }
+  assertNonce(value.nonce)
+  assertPlainObject(value.response, 'operationResult.response')
+  const response = value.response
+  assertIdentity(response.requestId, response.revision, 'Runner operation result')
+  if (response.documentType !== 'experiment') throw new CadModelError('Runner result document type is invalid.')
+  if (value.operation === 'inspect') {
+    if (response.type === 'inspection-success') {
+      assertOnlyKeys(
+        response,
+        ['type', 'requestId', 'revision', 'documentType', 'sourceHash', 'varsSchema'],
+        'operationResult.response',
+      )
+      if (typeof response.sourceHash !== 'string' || !/^[0-9a-f]{64}$/u.test(response.sourceHash)) {
+        throw new CadModelError('Runner inspection source provenance is invalid.')
+      }
+      normalizeVarsSchema(response.varsSchema, 'Runner inspection')
+      return
+    }
+    assertErrorResponse(response, 'inspection-error')
+    return
+  }
+  if (response.type === 'evaluation-success') {
+    assertOnlyKeys(response, ['type', 'requestId', 'revision', 'documentType', 'snapshot'], 'operationResult.response')
+    assertEvaluatedDocumentSnapshot(response.snapshot)
+    return
+  }
+  assertErrorResponse(response, 'evaluation-error')
+}
+
+export function assertRunnerCancelOperationEnvelope(value: unknown): asserts value is RunnerCancelOperationEnvelope {
+  assertPlainObject(value, 'cancelOperation')
+  assertOnlyKeys(value, ['type', 'nonce', 'requestId'], 'cancelOperation')
+  if (value.type !== 'cancel-operation' || typeof value.requestId !== 'string' || !value.requestId) {
+    throw new CadModelError('Runner operation cancellation is invalid.')
   }
   assertNonce(value.nonce)
 }

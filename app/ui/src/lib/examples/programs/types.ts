@@ -5,7 +5,6 @@ export type CaembleProgramExample = Readonly<{
   title: string
   description: string
   concepts: readonly string[]
-  structureCode: string
   experimentSourceBundle: ExperimentSourceBundle
   verification: Readonly<{
     kernelTasks: readonly string[]

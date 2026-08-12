@@ -26,15 +26,15 @@ import {
 
 function makeDraft(userKey: string, savedAt: number): WorkbenchDraft {
   return {
-    version: 1,
+    version: 2,
     savedAt,
     userKey,
-    structure: { record: null, baselineCode: null, document: null, name: '', description: '' },
     experiment: { record: null, baselineBundle: null, document: null, name: '', description: '' },
-    selection: { sampleId: null, setupId: null, measurementId: null },
+    candidate: { vars: null, materialParameters: null },
+    selection: { measurementId: null },
     layout: {
-      openTabs: ['structure'],
-      activeTab: 'structure',
+      openTabs: ['experiment'],
+      activeTab: 'experiment',
       experimentFile: null,
       splitPercent: 50,
     },
@@ -72,7 +72,7 @@ describe('CAE workbench draft storage', () => {
   it('rejects and removes an incompatible stored version', async () => {
     await saveWorkbenchDraft(makeDraft('alice', 1))
     const [key] = indexedDb.values.keys()
-    indexedDb.values.set(key, { ...makeDraft('alice', 1), version: 2 })
+    indexedDb.values.set(key, { ...makeDraft('alice', 1), version: 1 })
 
     await expect(loadWorkbenchDraft('alice')).resolves.toBeNull()
     expect(indexedDb.del).toHaveBeenCalledWith(key, expect.anything())

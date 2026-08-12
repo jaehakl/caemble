@@ -24,7 +24,7 @@ describe('documentation knowledge registry', () => {
       ]),
     )
     expect(new Set(manualDocsKnowledge.map(({ section }) => section))).toEqual(
-      new Set(['workbench', 'structure', 'program', 'reference', 'troubleshooting']),
+      new Set(['workbench', 'program', 'reference', 'troubleshooting']),
     )
     const everyChunkHasContentAndLink = manualDocsKnowledge.every(
       ({ content, href }) => content.length > 0 && href.startsWith('/docs?section='),
@@ -89,7 +89,7 @@ describe('documentation knowledge registry', () => {
   it('builds solver knowledge directly from the deployed manifests', async () => {
     const manifests = await fetchCaeSolverManifests()
     const solverChunks = buildSolverDocsKnowledge(manifests)
-    const dc = solverChunks.find(({ id }) => id === 'solvers:dc-current-density@0.0.0')
+    const dc = solverChunks.find(({ id }) => id === 'solvers:dc-current-density@0.1.0')
 
     expect(dc?.content).toContain('dc.current-density')
     expect(dc?.content).toContain('Material role')

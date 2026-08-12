@@ -3,16 +3,15 @@ import {
   Beaker,
   Bot,
   BookOpenText,
-  Box,
   Boxes,
   ChartNoAxesCombined,
   CircleUserRound,
+  Copy,
   Database,
-  FilePlus2,
   FlaskConical,
   FolderOpen,
-  GitBranch,
   Gauge,
+  GitBranch,
   Layers3,
   ListChecks,
   MessageCircle,
@@ -37,115 +36,35 @@ function openDocsWindow(href: string) {
 export function useCaePageChrome({
   authenticated,
   openTab,
-  requestPerformMeasurement,
+  requestRunSelected,
   runSafely,
   setDialog,
   workbench,
 }: {
   authenticated: boolean
   openTab: (tab: WorkbenchTabId) => void
-  requestPerformMeasurement: () => Promise<void>
+  requestRunSelected: () => void
   runSafely: (run: () => unknown | Promise<unknown>) => void
   setDialog: Dispatch<SetStateAction<WorkbenchDialog>>
   workbench: CaeWorkbenchState
 }) {
   const actions = useMemo<Record<string, WorkbenchAction>>(() => {
     const loginReason = '로그인 후 사용할 수 있습니다.'
-    const pairReason = '저장되고 편집되지 않은 Structure + Experiment가 필요합니다.'
-    const structureReason = '저장되고 편집되지 않은 Structure가 필요합니다.'
-    const experimentReason = '저장되고 편집되지 않은 Experiment가 필요합니다.'
+    const savedReason = '저장되고 편집되지 않은 Experiment가 필요합니다.'
     const busyReason = workbench.measurementActions.busy ? '다른 CAE 작업이 진행 중입니다.' : undefined
-    const sourceLockReason = busyReason ?? (workbench.saving ? 'Definition 저장이 진행 중입니다.' : undefined)
-    const structureBusyReason = workbench.structureDocument.runIsBusy ? 'Structure 평가가 진행 중입니다.' : busyReason
-    const experimentBusyReason = workbench.experimentDocument.runIsBusy
+    const pendingResultReason = workbench.measurementActions.pendingRecordMeasurementId
+      ? '실행 결과 저장을 먼저 다시 시도하세요.'
+      : undefined
+    const sourceLockReason =
+      busyReason ?? pendingResultReason ?? (workbench.saving ? 'Experiment 저장이 진행 중입니다.' : undefined)
+    const evaluationBusyReason = workbench.experimentDocument.runIsBusy
       ? 'Experiment 평가가 진행 중입니다.'
       : busyReason
-    const pairBusyReason = workbench.structureDocument.runIsBusy
-      ? 'Structure 평가가 진행 중입니다.'
-      : workbench.experimentDocument.runIsBusy
-        ? 'Experiment 평가가 진행 중입니다.'
-        : busyReason
-    const cancellingMeasurement =
+    const selected = workbench.selection.measurement
+    const cancellingRun =
       workbench.measurementActions.operation === 'measurement' && workbench.measurementActions.cancelable
+
     const defined: Record<string, WorkbenchAction> = {
-      newResearch: {
-        id: 'new-research',
-        label: 'New Research',
-        icon: <FilePlus2 className="size-4" />,
-        onSelect: () => setDialog('new-research'),
-      },
-      loadResearch: {
-        id: 'load-research',
-        label: 'Load Research',
-        icon: <FolderOpen className="size-4" />,
-        disabled: !authenticated,
-        disabledReason: !authenticated ? loginReason : undefined,
-        onSelect: () => setDialog('load-research'),
-      },
-      newStructure: {
-        id: 'new-structure',
-        label: 'New Structure',
-        icon: <Box className="size-4" />,
-        onSelect: () => setDialog('new-structure'),
-      },
-      loadStructure: {
-        id: 'load-structure',
-        label: 'Load Structure',
-        icon: <FolderOpen className="size-4" />,
-        onSelect: () => setDialog('load-structure'),
-      },
-      otherStructures: {
-        id: 'other-structures',
-        label: 'Other Structures',
-        icon: <Layers3 className="size-4" />,
-        disabled: !authenticated || !workbench.experimentId,
-        disabledReason: !authenticated ? loginReason : !workbench.experimentId ? 'Experiment가 필요합니다.' : undefined,
-        onSelect: () => setDialog('other-structures'),
-      },
-      structureHistory: {
-        id: 'structure-history',
-        label: 'Structure History',
-        icon: <GitBranch className="size-4" />,
-        disabled: !authenticated || !workbench.structureId,
-        disabledReason: !authenticated
-          ? loginReason
-          : !workbench.structureId
-            ? '저장된 Structure가 필요합니다.'
-            : undefined,
-        onSelect: () => setDialog('structure-history'),
-      },
-      saveStructure: {
-        id: 'save-structure',
-        label: 'Save Structure',
-        icon: <Save className="size-4" />,
-        disabled:
-          !authenticated ||
-          !workbench.structure ||
-          Boolean(workbench.structureRecord && !workbench.structureManageable) ||
-          workbench.saving !== null,
-        disabledReason: !authenticated
-          ? loginReason
-          : !workbench.structure
-            ? 'Structure source가 없습니다.'
-            : workbench.structureRecord && !workbench.structureManageable
-              ? '다른 사용자의 정의는 Save As로 저장하세요.'
-              : workbench.saving
-                ? '저장 중입니다.'
-                : undefined,
-        onSelect: () => setDialog('save-structure'),
-      },
-      saveStructureAs: {
-        id: 'save-structure-as',
-        label: 'Save Structure As',
-        icon: <SaveAll className="size-4" />,
-        disabled: !authenticated || !workbench.structure || workbench.saving !== null,
-        disabledReason: !authenticated
-          ? loginReason
-          : !workbench.structure
-            ? 'Structure source가 없습니다.'
-            : undefined,
-        onSelect: () => setDialog('save-structure-as'),
-      },
       newExperiment: {
         id: 'new-experiment',
         label: 'New Experiment',
@@ -156,15 +75,9 @@ export function useCaePageChrome({
         id: 'load-experiment',
         label: 'Load Experiment',
         icon: <FolderOpen className="size-4" />,
+        disabled: !authenticated,
+        disabledReason: !authenticated ? loginReason : undefined,
         onSelect: () => setDialog('load-experiment'),
-      },
-      otherExperiments: {
-        id: 'other-experiments',
-        label: 'Other Experiments',
-        icon: <Layers3 className="size-4" />,
-        disabled: !authenticated || !workbench.structureId,
-        disabledReason: !authenticated ? loginReason : !workbench.structureId ? 'Structure가 필요합니다.' : undefined,
-        onSelect: () => setDialog('other-experiments'),
       },
       experimentHistory: {
         id: 'experiment-history',
@@ -193,9 +106,7 @@ export function useCaePageChrome({
             ? 'Experiment source가 없습니다.'
             : workbench.experimentRecord && !workbench.experimentManageable
               ? '다른 사용자의 정의는 Save As로 저장하세요.'
-              : workbench.saving
-                ? '저장 중입니다.'
-                : undefined,
+              : sourceLockReason,
         onSelect: () => setDialog('save-experiment'),
       },
       saveExperimentAs: {
@@ -207,8 +118,136 @@ export function useCaePageChrome({
           ? loginReason
           : !workbench.experiment
             ? 'Experiment source가 없습니다.'
-            : undefined,
+            : sourceLockReason,
         onSelect: () => setDialog('save-experiment-as'),
+      },
+      generateCandidate: {
+        id: 'generate-candidate',
+        label: 'Generate Candidate',
+        icon: <RotateCw className="size-4" />,
+        disabled:
+          !workbench.experiment ||
+          workbench.experimentDocument.runIsBusy ||
+          workbench.measurementActions.busy ||
+          Boolean(workbench.measurementActions.pendingRecordMeasurementId),
+        disabledReason: !workbench.experiment
+          ? 'Experiment source가 없습니다.'
+          : (pendingResultReason ?? evaluationBusyReason),
+        onSelect: workbench.measurementActions.generateCandidate,
+      },
+      saveCurrentMeasurement: {
+        id: 'save-current-measurement',
+        label: 'Save Current Measurement',
+        icon: <Beaker className="size-4" />,
+        disabled:
+          !authenticated ||
+          !workbench.experimentClean ||
+          workbench.experimentDocument.status !== 'Ready' ||
+          !workbench.experimentDocument.variables ||
+          !workbench.experimentDocument.materialParameters ||
+          workbench.measurementActions.busy ||
+          Boolean(workbench.measurementActions.pendingRecordMeasurementId),
+        disabledReason: !authenticated
+          ? loginReason
+          : !workbench.experimentClean
+            ? savedReason
+            : (pendingResultReason ?? evaluationBusyReason),
+        onSelect: () => runSafely(workbench.measurementActions.saveCurrent),
+      },
+      selectMeasurement: {
+        id: 'select-measurement',
+        label: 'Select Measurement',
+        icon: <TableProperties className="size-4" />,
+        disabled:
+          !authenticated ||
+          !workbench.experimentClean ||
+          workbench.measurementActions.busy ||
+          Boolean(workbench.measurementActions.pendingRecordMeasurementId),
+        disabledReason: !authenticated
+          ? loginReason
+          : !workbench.experimentClean
+            ? savedReason
+            : (pendingResultReason ?? busyReason),
+        onSelect: () => setDialog('measurement'),
+      },
+      duplicateMeasurement: {
+        id: 'duplicate-measurement',
+        label: 'Duplicate Measurement',
+        icon: <Copy className="size-4" />,
+        disabled:
+          !authenticated ||
+          !workbench.experimentClean ||
+          !selected ||
+          workbench.measurementActions.busy ||
+          Boolean(workbench.measurementActions.pendingRecordMeasurementId),
+        disabledReason: !authenticated
+          ? loginReason
+          : !workbench.experimentClean
+            ? savedReason
+            : !selected
+              ? '복제할 Measurement를 선택하세요.'
+              : (pendingResultReason ?? busyReason),
+        onSelect: () => {
+          if (selected) runSafely(() => workbench.measurementActions.duplicateMeasurement(selected))
+        },
+      },
+      runSelected: {
+        id: 'run-selected',
+        label: cancellingRun ? 'Cancel Run' : 'Run Selected',
+        icon: cancellingRun ? <Square className="size-4" /> : <Play className="size-4" />,
+        disabled:
+          !cancellingRun &&
+          (!authenticated ||
+            !workbench.experimentClean ||
+            !selected ||
+            Boolean(selected?.recorded_at) ||
+            Boolean(workbench.measurementActions.pendingRecordMeasurementId) ||
+            !workbench.simulation.canRun ||
+            workbench.measurementActions.busy),
+        disabledReason: cancellingRun
+          ? undefined
+          : !authenticated
+            ? loginReason
+            : !workbench.experimentClean
+              ? savedReason
+              : !selected
+                ? 'Prepared Measurement를 선택하세요.'
+                : selected.recorded_at
+                  ? '이미 RecordedData가 있는 Measurement는 다시 실행할 수 없습니다.'
+                  : workbench.measurementActions.pendingRecordMeasurementId
+                    ? '실행 결과 저장을 먼저 다시 시도하세요.'
+                    : evaluationBusyReason,
+        onSelect: cancellingRun ? workbench.measurementActions.cancel : () => runSafely(requestRunSelected),
+      },
+      retryRecord: {
+        id: 'retry-record',
+        label: 'Retry Saving Results',
+        icon: <Save className="size-4" />,
+        disabled: !workbench.measurementActions.pendingRecordMeasurementId || workbench.measurementActions.busy,
+        disabledReason: !workbench.measurementActions.pendingRecordMeasurementId
+          ? '다시 저장할 session 결과가 없습니다.'
+          : busyReason,
+        onSelect: () => runSafely(workbench.measurementActions.retryRecord),
+      },
+      analyzeMeasurements: {
+        id: 'analyze-measurements',
+        label: 'Analyze Measurements',
+        icon: <ChartNoAxesCombined className="size-4" />,
+        disabled: !authenticated || !workbench.experimentClean,
+        disabledReason: !authenticated ? loginReason : !workbench.experimentClean ? savedReason : undefined,
+        onSelect: () => setDialog('analysis'),
+      },
+      experimentTab: {
+        id: 'tab-experiment',
+        label: 'Experiment Editor',
+        icon: <FlaskConical className="size-4" />,
+        onSelect: () => openTab('experiment'),
+      },
+      recordedDataTab: {
+        id: 'tab-recorded-data',
+        label: 'RecordedData',
+        icon: <ChartNoAxesCombined className="size-4" />,
+        onSelect: () => openTab('recorded-data'),
       },
       materialManager: {
         id: 'material-manager',
@@ -276,172 +315,17 @@ export function useCaePageChrome({
         icon: <FlaskConical className="size-4" />,
         onSelect: () => openDocsWindow('/docs?section=solvers'),
       },
-      generateSample: {
-        id: 'generate-sample',
-        label: 'Generate Sample',
-        icon: <Box className="size-4" />,
-        disabled:
-          !authenticated ||
-          !workbench.structureClean ||
-          workbench.structureDocument.runIsBusy ||
-          workbench.measurementActions.busy,
-        disabledReason: !authenticated
-          ? loginReason
-          : !workbench.structureClean
-            ? structureReason
-            : structureBusyReason,
-        onSelect: workbench.measurementActions.generateSample,
-      },
-      selectSample: {
-        id: 'select-sample',
-        label: 'Select Sample',
-        icon: <TableProperties className="size-4" />,
-        disabled: !authenticated || !workbench.structureClean || workbench.measurementActions.busy,
-        disabledReason: !authenticated ? loginReason : !workbench.structureClean ? structureReason : busyReason,
-        onSelect: () => setDialog('sample'),
-      },
-      generateSetup: {
-        id: 'generate-setup',
-        label: 'Generate Setup',
-        icon: <FlaskConical className="size-4" />,
-        disabled:
-          !authenticated ||
-          !workbench.experimentClean ||
-          workbench.experimentDocument.runIsBusy ||
-          workbench.measurementActions.busy,
-        disabledReason: !authenticated
-          ? loginReason
-          : !workbench.experimentClean
-            ? experimentReason
-            : experimentBusyReason,
-        onSelect: workbench.measurementActions.generateSetup,
-      },
-      selectSetup: {
-        id: 'select-setup',
-        label: 'Select Setup',
-        icon: <TableProperties className="size-4" />,
-        disabled: !authenticated || !workbench.experimentClean || workbench.measurementActions.busy,
-        disabledReason: !authenticated ? loginReason : !workbench.experimentClean ? experimentReason : busyReason,
-        onSelect: () => setDialog('setup'),
-      },
-      performMeasurement: {
-        id: 'perform-measurement',
-        label: cancellingMeasurement ? 'Cancel Measurement' : 'Perform Measurement',
-        icon: cancellingMeasurement ? <Square className="size-4" /> : <Play className="size-4" />,
-        disabled:
-          !cancellingMeasurement &&
-          (!authenticated ||
-            !workbench.pairClean ||
-            !workbench.selection.sample ||
-            !workbench.selection.setup ||
-            workbench.measurementActions.busy),
-        disabledReason: cancellingMeasurement
-          ? undefined
-          : !authenticated
-            ? loginReason
-            : !workbench.pairClean
-              ? pairReason
-              : !workbench.selection.sample || !workbench.selection.setup
-                ? 'Sample과 Setup을 선택하세요.'
-                : busyReason,
-        onSelect: cancellingMeasurement
-          ? workbench.measurementActions.cancel
-          : () => runSafely(requestPerformMeasurement),
-      },
-      generateMeasurement: {
-        id: 'generate-measurement',
-        label: 'Generate Measurement',
-        icon: <Beaker className="size-4" />,
-        disabled:
-          !authenticated ||
-          !workbench.pairClean ||
-          workbench.structureDocument.runIsBusy ||
-          workbench.experimentDocument.runIsBusy ||
-          workbench.measurementActions.busy,
-        disabledReason: !authenticated ? loginReason : !workbench.pairClean ? pairReason : pairBusyReason,
-        onSelect: workbench.measurementActions.generateMeasurement,
-      },
-      selectMeasurement: {
-        id: 'select-measurement',
-        label: 'Select Measurement',
-        icon: <TableProperties className="size-4" />,
-        disabled: !authenticated || !workbench.pairClean || workbench.measurementActions.busy,
-        disabledReason: !authenticated ? loginReason : !workbench.pairClean ? pairReason : busyReason,
-        onSelect: () => setDialog('measurement'),
-      },
-      analyzeMeasurements: {
-        id: 'analyze-measurements',
-        label: 'Analyze Measurements',
-        icon: <ChartNoAxesCombined className="size-4" />,
-        disabled: !authenticated || !workbench.pairClean,
-        disabledReason: !authenticated ? loginReason : !workbench.pairClean ? pairReason : undefined,
-        onSelect: () => setDialog('analysis'),
-      },
-      structureTab: {
-        id: 'tab-structure',
-        label: 'Structure Editor',
-        icon: <Box className="size-4" />,
-        onSelect: () => openTab('structure'),
-      },
-      experimentTab: {
-        id: 'tab-experiment',
-        label: 'Experiment Editor',
-        icon: <FlaskConical className="size-4" />,
-        onSelect: () => openTab('experiment'),
-      },
-      recordedDataTab: {
-        id: 'tab-recorded-data',
-        label: 'RecordedData',
-        icon: <ChartNoAxesCombined className="size-4" />,
-        onSelect: () => openTab('recorded-data'),
-      },
-      rerollStructure: {
-        id: 'reroll-structure',
-        label: 'Reroll',
-        icon: <RotateCw className="size-4" />,
-        disabled: !workbench.structure || workbench.structureDocument.runIsBusy,
-        onSelect: () => {
-          workbench.selection.clearSample()
-          workbench.structureDocument.handleReroll()
-        },
-      },
-      rerollExperiment: {
-        id: 'reroll-experiment',
-        label: 'Reroll',
-        icon: <RotateCw className="size-4" />,
-        disabled: !workbench.experiment || workbench.experimentDocument.runIsBusy,
-        onSelect: () => {
-          workbench.selection.clearSetup()
-          workbench.experimentDocument.handleReroll()
-        },
-      },
     }
+
     if (!sourceLockReason) return defined
-    const locked = [
-      'newResearch',
-      'loadResearch',
-      'newStructure',
-      'loadStructure',
-      'otherStructures',
-      'structureHistory',
-      'saveStructure',
-      'saveStructureAs',
-      'newExperiment',
-      'loadExperiment',
-      'otherExperiments',
-      'experimentHistory',
-      'saveExperiment',
-      'saveExperimentAs',
-      'rerollStructure',
-      'rerollExperiment',
-    ]
+    const locked = ['newExperiment', 'loadExperiment', 'experimentHistory', 'saveExperiment', 'saveExperimentAs']
     return Object.fromEntries(
       Object.entries(defined).map(([key, action]) => [
         key,
         locked.includes(key) ? { ...action, disabled: true, disabledReason: sourceLockReason } : action,
       ]),
     )
-  }, [authenticated, openTab, requestPerformMeasurement, runSafely, setDialog, workbench])
+  }, [authenticated, openTab, requestRunSelected, runSafely, setDialog, workbench])
 
   const menus = useMemo<readonly WorkbenchMenuDefinition[]>(
     () => [
@@ -449,43 +333,12 @@ export function useCaePageChrome({
         id: 'source',
         label: 'Source',
         items: [
-          {
-            type: 'submenu',
-            id: 'research',
-            label: 'Research',
-            items: [
-              { type: 'action', action: actions.newResearch },
-              { type: 'action', action: actions.loadResearch },
-            ],
-          },
-          {
-            type: 'submenu',
-            id: 'structure',
-            label: 'Structure',
-            items: [
-              { type: 'action', action: actions.newStructure },
-              { type: 'action', action: actions.loadStructure },
-              { type: 'action', action: actions.otherStructures },
-              { type: 'separator', id: 'structure-history-separator' },
-              { type: 'action', action: actions.structureHistory },
-              { type: 'action', action: actions.saveStructure },
-              { type: 'action', action: actions.saveStructureAs },
-            ],
-          },
-          {
-            type: 'submenu',
-            id: 'experiment',
-            label: 'Experiment',
-            items: [
-              { type: 'action', action: actions.newExperiment },
-              { type: 'action', action: actions.loadExperiment },
-              { type: 'action', action: actions.otherExperiments },
-              { type: 'separator', id: 'experiment-history-separator' },
-              { type: 'action', action: actions.experimentHistory },
-              { type: 'action', action: actions.saveExperiment },
-              { type: 'action', action: actions.saveExperimentAs },
-            ],
-          },
+          { type: 'action', action: actions.newExperiment },
+          { type: 'action', action: actions.loadExperiment },
+          { type: 'action', action: actions.experimentHistory },
+          { type: 'separator', id: 'source-save-separator' },
+          { type: 'action', action: actions.saveExperiment },
+          { type: 'action', action: actions.saveExperimentAs },
           { type: 'separator', id: 'material-separator' },
           { type: 'action', action: actions.materialManager },
         ],
@@ -494,52 +347,26 @@ export function useCaePageChrome({
         id: 'data',
         label: 'Data',
         items: [
-          {
-            type: 'submenu',
-            id: 'sample',
-            label: 'Sample',
-            items: [
-              { type: 'action', action: actions.generateSample },
-              { type: 'action', action: actions.selectSample },
-            ],
-          },
-          {
-            type: 'submenu',
-            id: 'setup',
-            label: 'Setup',
-            items: [
-              { type: 'action', action: actions.generateSetup },
-              { type: 'action', action: actions.selectSetup },
-            ],
-          },
-          {
-            type: 'submenu',
-            id: 'measurement',
-            label: 'Measurement',
-            items: [
-              { type: 'action', action: actions.performMeasurement },
-              { type: 'action', action: actions.generateMeasurement },
-              { type: 'action', action: actions.selectMeasurement },
-              { type: 'separator', id: 'analysis-separator' },
-              { type: 'action', action: actions.analyzeMeasurements },
-            ],
-          },
+          { type: 'action', action: actions.saveCurrentMeasurement },
+          { type: 'action', action: actions.selectMeasurement },
+          { type: 'action', action: actions.duplicateMeasurement },
+          { type: 'separator', id: 'run-separator' },
+          { type: 'action', action: actions.runSelected },
+          ...(workbench.measurementActions.pendingRecordMeasurementId
+            ? ([{ type: 'action', action: actions.retryRecord }] as const)
+            : []),
+          { type: 'action', action: actions.analyzeMeasurements },
         ],
       },
       {
         id: 'view',
         label: 'View',
         items: [
-          { type: 'action', action: actions.structureTab },
           { type: 'action', action: actions.experimentTab },
           { type: 'action', action: actions.recordedDataTab },
         ],
       },
-      {
-        id: 'lab',
-        label: 'Lab',
-        items: [{ type: 'action', action: actions.aiChat }],
-      },
+      { id: 'lab', label: 'Lab', items: [{ type: 'action', action: actions.aiChat }] },
       {
         id: 'settings',
         label: 'Settings',
@@ -565,44 +392,22 @@ export function useCaePageChrome({
         ],
       },
     ],
-    [actions],
+    [actions, workbench.measurementActions.pendingRecordMeasurementId],
   )
 
   const toolbar = [
-    actions.newResearch,
-    actions.loadResearch,
-    actions.saveStructure,
+    actions.newExperiment,
+    actions.loadExperiment,
     actions.saveExperiment,
-    actions.generateSample,
-    actions.generateSetup,
-    actions.performMeasurement,
-    actions.generateMeasurement,
-    actions.launchers,
+    actions.generateCandidate,
+    actions.saveCurrentMeasurement,
+    actions.selectMeasurement,
+    actions.runSelected,
+    ...(workbench.measurementActions.pendingRecordMeasurementId ? [actions.retryRecord] : []),
     actions.jobs,
   ]
 
   const ribbonPanels = [
-    {
-      tabId: 'structure',
-      label: 'Structure',
-      content: (
-        <RibbonActions
-          actions={[
-            actions.newStructure,
-            actions.loadStructure,
-            actions.structureHistory,
-            actions.saveStructure,
-            actions.saveStructureAs,
-            actions.rerollStructure,
-          ]}
-        >
-          <span className="truncate text-sm font-semibold">{workbench.structureName}</span>
-          <span className="mt-1 text-xs text-muted-foreground">
-            {workbench.structureId ? `#${workbench.structureId}` : 'DB에 저장되지 않음'} · {workbench.structureStatus}
-          </span>
-        </RibbonActions>
-      ),
-    },
     {
       tabId: 'experiment',
       label: 'Experiment',
@@ -614,7 +419,8 @@ export function useCaePageChrome({
             actions.experimentHistory,
             actions.saveExperiment,
             actions.saveExperimentAs,
-            actions.rerollExperiment,
+            actions.generateCandidate,
+            actions.saveCurrentMeasurement,
           ]}
         >
           <span className="truncate text-sm font-semibold">{workbench.experimentName}</span>
@@ -631,22 +437,25 @@ export function useCaePageChrome({
       content: (
         <RibbonActions
           actions={[
-            actions.selectSample,
-            actions.selectSetup,
             actions.selectMeasurement,
-            actions.performMeasurement,
-            actions.generateMeasurement,
+            actions.runSelected,
+            ...(workbench.measurementActions.pendingRecordMeasurementId ? [actions.retryRecord] : []),
+            actions.generateCandidate,
+            actions.saveCurrentMeasurement,
             actions.analyzeMeasurements,
           ]}
         >
           <span className="text-sm font-semibold">
             {workbench.selection.measurement
               ? `Measurement #${workbench.selection.measurement.id}`
-              : 'Measurement 없음'}
+              : 'Candidate preview'}
           </span>
           <span className="mt-1 text-xs text-muted-foreground">
-            Sample {workbench.selection.sample ? `#${workbench.selection.sample.id}` : '—'} · Setup{' '}
-            {workbench.selection.setup ? `#${workbench.selection.setup.id}` : '—'}
+            {workbench.selection.measurement?.recorded_at
+              ? 'Recorded · 실행 완료'
+              : workbench.selection.measurement
+                ? 'Prepared · 실행 가능'
+                : '저장되지 않은 현재 조건'}
           </span>
         </RibbonActions>
       ),

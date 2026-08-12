@@ -1,6 +1,5 @@
 import { parse } from '@babel/parser'
 import type { Expression, File, ObjectExpression, Statement } from '@babel/types'
-import type { CadDocumentType } from './document'
 
 export class SourceAnalysisError extends Error {
   constructor(message: string) {
@@ -12,7 +11,7 @@ export class SourceAnalysisError extends Error {
 export type SourceAnalysis = Readonly<{
   ast: File
   bindings: ReadonlyMap<string, Expression>
-  factoryName: 'defineTask' | 'experiment' | 'structure'
+  factoryName: 'defineTask' | 'experiment'
   options: ObjectExpression
 }>
 
@@ -73,7 +72,7 @@ export function resolveSourceBinding(
 
 function importedFactoryNames(
   statements: readonly Statement[],
-  factoryName: 'defineTask' | 'experiment' | 'structure',
+  factoryName: 'defineTask' | 'experiment',
 ) {
   return new Set(
     statements.flatMap((statement) => {
@@ -121,6 +120,55 @@ function assertImportPolicy(ast: File) {
     ) {
       throw new SourceAnalysisError('Source-level require() is not supported in Caemble CAD sources.')
     }
+    if (
+      (node.type === 'CallExpression' || node.type === 'NewExpression') &&
+      (node.callee as { type?: string; name?: string })?.type === 'Identifier' &&
+      ['Date', 'Function', 'eval', 'fetch', 'queueMicrotask', 'setInterval', 'setTimeout'].includes(
+        (node.callee as { name: string }).name,
+      )
+    ) {
+      throw new SourceAnalysisError(
+        `Hidden nondeterminism is not supported in Caemble sources: ${(node.callee as { name: string }).name}.`,
+      )
+    }
+    if (node.type === 'MemberExpression') {
+      const object = node.object as { type?: string; name?: string }
+      const property = node.property as { type?: string; name?: string; value?: unknown }
+      const propertyName = property.type === 'Identifier' ? property.name : property.value
+      if (['__proto__', 'constructor', 'prototype'].includes(String(propertyName))) {
+        throw new SourceAnalysisError(`Prototype access is not supported in Caemble sources: ${String(propertyName)}.`)
+      }
+      if (object.type === 'Identifier' && object.name === 'Math' && propertyName === 'random') {
+        throw new SourceAnalysisError('Hidden nondeterminism is not supported in Caemble sources: Math.random.')
+      }
+      if (
+        object.type === 'Identifier' &&
+        ['Date', 'crypto', 'performance'].includes(object.name ?? '')
+      ) {
+        throw new SourceAnalysisError(`Hidden nondeterminism is not supported in Caemble sources: ${object.name}.`)
+      }
+    }
+    if (
+      node.type === 'Identifier' &&
+      ['Date', 'crypto', 'globalThis', 'performance', 'process', 'self', 'window'].includes(String(node.name))
+    ) {
+      throw new SourceAnalysisError(`Global runtime access is not supported in Caemble sources: ${node.name}.`)
+    }
+    if (
+      node.type === 'VariableDeclarator' &&
+      (node.id as { type?: string }).type !== 'Identifier' &&
+      (node.init as { type?: string; name?: string } | null)?.type === 'Identifier' &&
+      ['Math', 'Date', 'crypto', 'performance'].includes((node.init as { name: string }).name)
+    ) {
+      throw new SourceAnalysisError('Destructuring runtime globals is not supported in Caemble sources.')
+    }
+    if (
+      node.type === 'VariableDeclarator' &&
+      (node.init as { type?: string; name?: string } | null)?.type === 'Identifier' &&
+      (node.init as { name: string }).name === 'Math'
+    ) {
+      throw new SourceAnalysisError('Aliasing Math is not supported in Caemble sources; call deterministic Math members directly.')
+    }
     Object.entries(node).forEach(([key, child]) => {
       if (key !== 'loc' && key !== 'start' && key !== 'end') visit(child)
     })
@@ -152,7 +200,7 @@ export function staticCadSourceImports(source: string) {
   })
 }
 
-function analyzeFactorySource(source: string, factoryName: 'defineTask' | 'experiment' | 'structure'): SourceAnalysis {
+function analyzeFactorySource(source: string, factoryName: 'defineTask' | 'experiment'): SourceAnalysis {
   const ast = parseCadSource(source)
 
   const statements = ast.program.body
@@ -194,8 +242,8 @@ function analyzeFactorySource(source: string, factoryName: 'defineTask' | 'exper
   return { ast, bindings, factoryName, options }
 }
 
-export function analyzeCadSource(source: string, documentType: CadDocumentType): SourceAnalysis {
-  return analyzeFactorySource(source, documentType === 'structure' ? 'structure' : 'experiment')
+export function analyzeCadSource(source: string): SourceAnalysis {
+  return analyzeFactorySource(source, 'experiment')
 }
 
 export function analyzeTaskSource(source: string): SourceAnalysis {

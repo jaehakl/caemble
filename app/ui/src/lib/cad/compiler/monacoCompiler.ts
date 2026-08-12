@@ -26,7 +26,6 @@ export class CadCompilationError extends Error {
 }
 
 function documentSources(document: CadSourceDocument) {
-  if (document.kind === 'structure') return { 'structure.tsx': document.source }
   return Object.fromEntries(
     [EXPERIMENT_ENTRY_PATH, ...experimentTaskPaths(document.sourceBundle)].map((path) => [
       path,
@@ -35,9 +34,8 @@ function documentSources(document: CadSourceDocument) {
   )
 }
 
-function assertSourcePolicy(document: CadSourceDocument, path: string, source: string) {
-  if (document.kind === 'structure') analyzeCadSource(source, 'structure')
-  else if (path === EXPERIMENT_ENTRY_PATH) analyzeCadSource(source, 'experiment')
+function assertSourcePolicy(path: string, source: string) {
+  if (path === EXPERIMENT_ENTRY_PATH) analyzeCadSource(source)
   else analyzeTaskSource(source)
 }
 
@@ -100,7 +98,7 @@ async function compile(document: CadSourceDocument, sourceHash: string): Promise
   const sources = documentSources(document)
   for (const [path, source] of Object.entries(sources)) {
     try {
-      assertSourcePolicy(document, path, source)
+      assertSourcePolicy(path, source)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       throw new CadCompilationError('policy', message, [
@@ -160,7 +158,7 @@ async function compile(document: CadSourceDocument, sourceHash: string): Promise
           }
           const executableCode = emittedCode.replace(/\r?\n\/\/# sourceMappingURL=.*?(?:\r?\n)?$/u, '')
           const compiledSource: CompiledCadSource = Object.freeze({
-            apiVersion: 4,
+            apiVersion: 5,
             compilerVersion: CAD_COMPILER_VERSION,
             entryFile: path,
             code: `${executableCode}\n//# sourceURL=caemble://${sourceHash}/${path}`,
@@ -171,7 +169,7 @@ async function compile(document: CadSourceDocument, sourceHash: string): Promise
         }),
       )
       return Object.freeze({
-        apiVersion: 4 as const,
+        apiVersion: 5 as const,
         compilerVersion: CAD_COMPILER_VERSION,
         sourceHash,
         sources: Object.freeze(Object.fromEntries(compiledEntries)),

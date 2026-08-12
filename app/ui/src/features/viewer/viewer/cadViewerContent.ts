@@ -10,53 +10,42 @@ export type CadViewerDocument = Readonly<{
 }>
 
 export function resolveCadViewerContent(
-  structure: CadViewerDocument | null,
   experiment: CadViewerDocument | null,
-  structureVisible: boolean,
   experimentVisible: boolean,
+  taskVisible: boolean,
   activeExperimentTaskName: string | null = null,
 ) {
   const availableSources = [
-    ...(structure ? ['structure' as const] : []),
-    ...(experiment ? ['experiment' as const] : []),
+    ...(experiment?.scene ? ['experiment' as const] : []),
+    ...(Object.keys(experiment?.taskScenes ?? {}).length > 0 ? ['task' as const] : []),
   ]
   const visibleSources = [
-    ...(structure && structureVisible ? ['structure' as const] : []),
-    ...(experiment && experimentVisible ? ['experiment' as const] : []),
+    ...(experiment?.scene && experimentVisible ? ['experiment' as const] : []),
+    ...(Object.keys(experiment?.taskScenes ?? {}).length > 0 && taskVisible ? ['task' as const] : []),
   ]
   const visibleExperimentScenes = Object.entries(experiment?.taskScenes ?? {}).filter(
     ([name]) => activeExperimentTaskName === null || name === activeExperimentTaskName,
   )
-  const lengthUnit =
-    structure?.scene?.lengthUnit ?? visibleExperimentScenes[0]?.[1].lengthUnit ?? experiment?.scene?.lengthUnit ?? 'm'
+  const lengthUnit = experiment?.scene?.lengthUnit ?? visibleExperimentScenes[0]?.[1].lengthUnit ?? 'm'
   const layers = [
-    ...(experiment && experimentVisible
-      ? visibleExperimentScenes.length > 0
-        ? visibleExperimentScenes.map(([taskName, scene]) => ({
-            documentType: 'experiment' as const,
-            taskName,
-            lengthUnit: scene.lengthUnit,
-            parts: scene.parts,
-            sceneHash: experiment.taskSceneHashes?.[taskName] ?? null,
-          }))
-        : [
-            {
-              documentType: 'experiment' as const,
-              lengthUnit: experiment.scene?.lengthUnit ?? lengthUnit,
-              parts: experiment.scene?.parts ?? [],
-              sceneHash: experiment.sceneHash ?? null,
-            },
-          ]
-      : []),
-    ...(structure && structureVisible
+    ...(experiment?.scene && experimentVisible
       ? [
           {
-            documentType: 'structure' as const,
-            lengthUnit: structure.scene?.lengthUnit ?? lengthUnit,
-            parts: structure.scene?.parts ?? [],
-            sceneHash: structure.sceneHash ?? null,
+            source: 'experiment' as const,
+            lengthUnit: experiment.scene.lengthUnit,
+            parts: experiment.scene.parts,
+            sceneHash: experiment.sceneHash ?? null,
           },
         ]
+      : []),
+    ...(experiment && taskVisible
+      ? visibleExperimentScenes.map(([taskName, scene]) => ({
+          source: 'task' as const,
+          taskName,
+          lengthUnit: scene.lengthUnit,
+          parts: scene.parts,
+          sceneHash: experiment.taskSceneHashes?.[taskName] ?? null,
+        }))
       : []),
   ] satisfies JscadViewerLayer[]
 
@@ -64,9 +53,9 @@ export function resolveCadViewerContent(
     availableSources,
     emptyMessage:
       availableSources.length === 0
-        ? 'No Structure or Experiment source is available.'
+        ? 'No Experiment geometry is available.'
         : visibleSources.length === 0
-          ? 'All Structure and Experiment sources are hidden.'
+          ? 'All Experiment geometry layers are hidden.'
           : 'Waiting for model...',
     layers,
     lengthUnit,

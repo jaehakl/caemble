@@ -59,7 +59,7 @@ async def test_dc_uniform_bar_ui_fixture_runs_through_cae_handlers():
     expected = load_json("expected.json")
     assert expected["formatVersion"] == 1
     expected_records = expected["records"]
-    recorded_schemas = payload["setup"]["experiment"]["simulationProgram"]["recordedData"]
+    recorded_schemas = payload["measurement"]["experiment"]["simulationProgram"]["recordedData"]
     events = []
 
     async def send_event(event_type, event_payload):

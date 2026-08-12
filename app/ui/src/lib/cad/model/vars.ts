@@ -140,29 +140,25 @@ export function normalizeVars(schema: NormalizedVarsSchema, rawVars: unknown, va
   return Object.freeze(normalized)
 }
 
-export function createRandom(seed?: number) {
-  if (seed === undefined) return Math.random
-  if (!Number.isInteger(seed) || !Number.isSafeInteger(seed)) {
-    throw new CadModelError('randomVars seed must be a safe integer.')
-  }
-  let state = seed >>> 0
-  return () => {
-    state += 0x6d2b79f5
-    let value = state
-    value = Math.imul(value ^ (value >>> 15), value | 1)
-    value ^= value + Math.imul(value ^ (value >>> 7), value | 61)
-    return ((value ^ (value >>> 14)) >>> 0) / 4294967296
-  }
-}
-
-export function randomTensor(shape: readonly number[], min: Tensor, max: Tensor, random: () => number): Tensor {
+function randomTensor(shape: readonly number[], min: Tensor, max: Tensor): Tensor {
   if (shape.length === 0) {
     const minimum = min as number
     const maximum = max as number
     if (minimum === maximum) return minimum
-    return minimum + random() * (maximum - minimum)
+    return minimum + Math.random() * (maximum - minimum)
   }
   return Array.from({ length: shape[0] }, (_, index) =>
-    randomTensor(shape.slice(1), boundAt(min, index), boundAt(max, index), random),
+    randomTensor(shape.slice(1), boundAt(min, index), boundAt(max, index)),
   )
+}
+
+export function generateRandomVars(rawSchema: Readonly<Record<string, VarsSchemaEntry>>) {
+  const schema = normalizeVarsSchema(rawSchema, 'Experiment')
+  const generated = Object.fromEntries(
+    Object.entries(schema.normalized).map(([key, entry]) => [
+      key,
+      randomTensor(entry.shape, entry.min, entry.max),
+    ]),
+  )
+  return normalizeVars(schema.normalized, generated, 'Experiment')
 }

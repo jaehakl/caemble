@@ -1,4 +1,4 @@
-import type { BuiltSample, BuiltSetup } from '../../lib/cad'
+import type { BuiltMeasurement } from '../../lib/cad'
 import type { CaeStartRequest } from './protocol'
 import { CaeSimulationError } from './errors'
 
@@ -14,7 +14,7 @@ export type SerializedCaeAttachment = Readonly<{
   bytes: Uint8Array
 }>
 
-export function serializeCaeRequest(sample: BuiltSample, setup: BuiltSetup) {
+export function serializeCaeRequest(measurement: BuiltMeasurement) {
   const attachments: SerializedCaeAttachment[] = []
   let totalBytes = 0
   const visit = (value: unknown, path: string): unknown => {
@@ -51,11 +51,11 @@ export function serializeCaeRequest(sample: BuiltSample, setup: BuiltSetup) {
     }
     return value
   }
-  const payload = visit({ sample, setup }, 'cae') as CaeStartRequest
+  const payload = visit({ measurement }, 'cae') as CaeStartRequest
   const payloadBytes = new TextEncoder().encode(JSON.stringify(payload))
   totalBytes += payloadBytes.byteLength
   if (totalBytes > INPUT_LIMIT_BYTES) {
-    throw new CaeSimulationError('resource_limit', 'BuiltSample/BuiltSetup이 256 MiB를 초과했습니다.')
+    throw new CaeSimulationError('resource_limit', 'BuiltMeasurement가 256 MiB를 초과했습니다.')
   }
   if (payloadBytes.byteLength > INLINE_CALL_PAYLOAD_BYTES) {
     const ids: string[] = []

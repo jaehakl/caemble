@@ -5,8 +5,7 @@ import { manualDocsKnowledge, type DocsKnowledgeChunk } from './docsKnowledge'
 
 const manualSectionTitles = {
   workbench: ['Workbench Quickstart', '처음 실행부터 결과 확인까지'],
-  structure: ['Structure Authoring', '형상, 변수, Material과 안정적인 solver target 작성'],
-  program: ['Experiment Program', 'named task와 Python orchestration으로 계산 과정 구성'],
+  program: ['Experiment Authoring', '형상, 변수, Material, named task와 Python orchestration 구성'],
   reference: ['API / CAD Reference', '공개 source, DataSchema와 실행 경계'],
   troubleshooting: ['Troubleshooting', '오류가 발생한 단계에서 원인을 빠르게 좁히기'],
 } as const
@@ -14,7 +13,7 @@ const manualSectionTitles = {
 export function ManualDocsPage({
   section,
 }: {
-  section: Extract<DocsSectionId, 'workbench' | 'structure' | 'program' | 'reference' | 'troubleshooting'>
+  section: Extract<DocsSectionId, 'workbench' | 'program' | 'reference' | 'troubleshooting'>
 }) {
   const [title, description] = manualSectionTitles[section]
   const chunks = manualDocsKnowledge.filter((chunk) => chunk.section === section)

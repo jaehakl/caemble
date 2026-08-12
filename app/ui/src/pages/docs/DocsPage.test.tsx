@@ -24,18 +24,17 @@ function renderDocs(entry = '/docs') {
 }
 
 describe('integrated documentation page', () => {
-  it('uses Experiment Program by default and normalizes an unknown section', () => {
+  it('uses Experiment Authoring by default and normalizes an unknown section', () => {
     renderDocs('/docs?section=unknown')
 
-    expect(screen.getByRole('heading', { name: 'Experiment Program' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Experiment Authoring' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Experiment Program의 파일과 책임' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Experiment Program' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('button', { name: 'Experiment Authoring' })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('searchbox', { name: '문서 전체 검색' })).toBeInTheDocument()
   })
 
   it.each([
-    ['structure', 'Structure Authoring', 'Structure Source의 책임'],
-    ['program', 'Experiment Program', 'Experiment Program의 파일과 책임'],
+    ['program', 'Experiment Authoring', 'Experiment Program의 파일과 책임'],
     ['reference', 'API / CAD Reference', '공개 Source와 import 경계'],
     ['troubleshooting', 'Troubleshooting', '문서가 Ready가 되지 않을 때'],
   ])('opens the %s Manual deep link', (section, navigationLabel, articleTitle) => {
@@ -103,8 +102,8 @@ describe('integrated documentation page', () => {
       'electromagnetism.ElectricCurrent',
     ],
     [
-      'dc-current-density@0.0.0',
-      'Physics Catalog: dc-current-density@0.0.0',
+      'dc-current-density@0.1.0',
+      'Physics Catalog: dc-current-density@0.1.0',
       'Simulations & Analysis',
       'dc-current-density',
     ],

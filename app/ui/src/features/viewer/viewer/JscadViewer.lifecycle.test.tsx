@@ -43,7 +43,7 @@ vi.mock('@jscad/regl-renderer', () => ({
 }))
 
 const coloredLayer = {
-  documentType: 'structure' as const,
+  source: 'experiment' as const,
   lengthUnit: 'mm' as const,
   parts: [
     {
@@ -171,10 +171,10 @@ describe('JscadViewer geometry lifecycle', () => {
     const onToggleSource = vi.fn()
     render(
       <JscadViewer
-        availableSources={['structure']}
+        availableSources={['experiment']}
         layers={[coloredLayer]}
         lengthUnit="mm"
-        visibleSources={['structure']}
+        visibleSources={['experiment']}
         {...callbacks}
         onToggleSource={onToggleSource}
       />,
@@ -189,8 +189,8 @@ describe('JscadViewer geometry lifecycle', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Set x camera view' }))
     expect(rendererMocks.renderScene.mock.calls.length).toBeGreaterThan(rendersBeforeCameraChange)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Toggle structure' }))
-    expect(onToggleSource).toHaveBeenCalledWith('structure')
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle experiment' }))
+    expect(onToggleSource).toHaveBeenCalledWith('experiment')
   })
 
   it('invalidates cached Geometry when only the resolved Material color changes', async () => {

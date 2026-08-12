@@ -1,14 +1,21 @@
-import type { CadEvaluationRequest, CadEvaluationResponse } from '../worker/protocol'
+import type {
+  CadEvaluationRequest,
+  CadEvaluationResponse,
+  CadInspectionRequest,
+  CadInspectionResponse,
+  CadWorkerRequest,
+  CadWorkerResponse,
+} from '../worker/protocol'
 import {
-  assertRunnerEvaluationResultEnvelope,
-  assertRunnerEvaluationStartedEnvelope,
-  type RunnerCancelEvaluationEnvelope,
-  type RunnerEvaluationEnvelope,
+  assertRunnerOperationResultEnvelope,
+  assertRunnerOperationStartedEnvelope,
+  type RunnerCancelOperationEnvelope,
+  type RunnerOperationEnvelope,
 } from './protocol'
 
-type EvaluationCallbacks = Readonly<{
+type RunnerCallbacks<Response> = Readonly<{
   onFailure: (message: string) => void
-  onResponse: (response: CadEvaluationResponse) => void
+  onResponse: (response: Response) => void
   onStart: () => void
 }>
 
@@ -18,9 +25,7 @@ const runnerStartupTimeoutMs = 10_000
 function runnerLocation() {
   const configuredOrigin = import.meta.env.VITE_CAEMBLE_RUNNER_ORIGIN?.trim()
   if (!configuredOrigin) {
-    if (import.meta.env.PROD) {
-      throw new Error('VITE_CAEMBLE_RUNNER_ORIGIN must identify a separate runner origin in production.')
-    }
+    if (import.meta.env.PROD) throw new Error('VITE_CAEMBLE_RUNNER_ORIGIN must identify a separate runner origin in production.')
     const hostPort = Number(window.location.port)
     if (!Number.isInteger(hostPort) || hostPort < 1 || hostPort >= 65_535) {
       throw new Error('The development CAD runner requires an explicit host port.')
@@ -31,9 +36,7 @@ function runnerLocation() {
     return url
   }
   const url = new URL('/runner.html', configuredOrigin)
-  if (url.origin === window.location.origin) {
-    throw new Error('The CAD runner must use an origin different from the host application.')
-  }
+  if (url.origin === window.location.origin) throw new Error('The CAD runner must use an origin different from the host application.')
   return url
 }
 
@@ -71,9 +74,7 @@ function loadRunnerFrame() {
         !('type' in event.data) ||
         event.data.type !== 'caemble-runner-frame-ready' ||
         Object.keys(event.data).length !== 1
-      ) {
-        return
-      }
+      ) return
       cleanup()
       resolve(Object.freeze({ frame, origin: url.origin }))
     }
@@ -92,7 +93,10 @@ function loadRunnerFrame() {
   return runnerFrame
 }
 
-export function evaluateInIsolatedRunner(request: CadEvaluationRequest, callbacks: EvaluationCallbacks) {
+function runInIsolatedRunner<Request extends CadWorkerRequest, Response extends CadWorkerResponse>(
+  request: Request,
+  callbacks: RunnerCallbacks<Response>,
+) {
   const nonce = crypto.randomUUID()
   let cancelled = false
   let port: MessagePort | null = null
@@ -101,11 +105,7 @@ export function evaluateInIsolatedRunner(request: CadEvaluationRequest, callback
     if (cancelled || started) return
     cancelled = true
     if (port) {
-      const cancel: RunnerCancelEvaluationEnvelope = {
-        type: 'cancel-evaluation',
-        nonce,
-        requestId: request.requestId,
-      }
+      const cancel: RunnerCancelOperationEnvelope = { type: 'cancel-operation', nonce, requestId: request.requestId }
       port.postMessage(cancel)
       port.close()
       port = null
@@ -129,51 +129,41 @@ export function evaluateInIsolatedRunner(request: CadEvaluationRequest, callback
             typeof event.data === 'object' &&
             event.data !== null &&
             'type' in event.data &&
-            event.data.type === 'evaluation-started'
+            event.data.type === 'operation-started'
           ) {
-            assertRunnerEvaluationStartedEnvelope(event.data)
+            assertRunnerOperationStartedEnvelope(event.data)
             if (
               started ||
+              event.data.operation !== request.type ||
               event.data.nonce !== nonce ||
               event.data.requestId !== request.requestId ||
-              event.data.revision !== request.revision ||
-              event.data.documentType !== request.document.kind
-            ) {
-              throw new Error('The isolated CAD runner start identity is invalid.')
-            }
+              event.data.revision !== request.revision
+            ) throw new Error('The isolated CAD runner start identity is invalid.')
             started = true
             window.clearTimeout(startupTimeout)
             callbacks.onStart()
             keepPortOpen = true
             return
           }
-          assertRunnerEvaluationResultEnvelope(event.data)
+          assertRunnerOperationResultEnvelope(event.data)
           if (
+            event.data.operation !== request.type ||
             event.data.nonce !== nonce ||
             event.data.response.requestId !== request.requestId ||
             event.data.response.revision !== request.revision ||
-            event.data.response.documentType !== request.document.kind ||
+            (event.data.response.type === 'inspection-success' &&
+              event.data.response.sourceHash !== request.compiledDocument.sourceHash) ||
             (event.data.response.type === 'evaluation-success' &&
-              (event.data.response.snapshot.sourceHash !== request.compiledDocument.sourceHash ||
-                event.data.response.snapshot.seed !== request.document.realizationSeed))
-          ) {
-            throw new Error('The isolated CAD runner response identity is invalid.')
-          }
-          callbacks.onResponse(event.data.response)
+              event.data.response.snapshot.sourceHash !== request.compiledDocument.sourceHash)
+          ) throw new Error('The isolated CAD runner response identity is invalid.')
+          callbacks.onResponse(event.data.response as Response)
         } catch (error) {
           failed = true
           callbacks.onFailure(error instanceof Error ? error.message : String(error))
         } finally {
           if (!keepPortOpen) {
             window.clearTimeout(startupTimeout)
-            if (failed) {
-              const cancel: RunnerCancelEvaluationEnvelope = {
-                type: 'cancel-evaluation',
-                nonce,
-                requestId: request.requestId,
-              }
-              channel.port1.postMessage(cancel)
-            }
+            if (failed) channel.port1.postMessage({ type: 'cancel-operation', nonce, requestId: request.requestId })
             channel.port1.close()
             port = null
           }
@@ -182,17 +172,12 @@ export function evaluateInIsolatedRunner(request: CadEvaluationRequest, callback
       channel.port1.onmessageerror = () => {
         window.clearTimeout(startupTimeout)
         callbacks.onFailure('The isolated CAD runner response could not be decoded.')
-        const cancel: RunnerCancelEvaluationEnvelope = {
-          type: 'cancel-evaluation',
-          nonce,
-          requestId: request.requestId,
-        }
-        channel.port1.postMessage(cancel)
+        channel.port1.postMessage({ type: 'cancel-operation', nonce, requestId: request.requestId })
         channel.port1.close()
         port = null
       }
       channel.port1.start()
-      const envelope: RunnerEvaluationEnvelope = { type: 'evaluate', nonce, request }
+      const envelope: RunnerOperationEnvelope = { type: request.type, nonce, request }
       targetWindow.postMessage(envelope, origin, [channel.port2])
     })
     .catch((error: unknown) => {
@@ -207,13 +192,16 @@ export function evaluateInIsolatedRunner(request: CadEvaluationRequest, callback
     cancelled = true
     window.clearTimeout(startupTimeout)
     if (!port) return
-    const cancel: RunnerCancelEvaluationEnvelope = {
-      type: 'cancel-evaluation',
-      nonce,
-      requestId: request.requestId,
-    }
-    port.postMessage(cancel)
+    port.postMessage({ type: 'cancel-operation', nonce, requestId: request.requestId })
     port.close()
     port = null
   }
+}
+
+export function inspectInIsolatedRunner(request: CadInspectionRequest, callbacks: RunnerCallbacks<CadInspectionResponse>) {
+  return runInIsolatedRunner(request, callbacks)
+}
+
+export function evaluateInIsolatedRunner(request: CadEvaluationRequest, callbacks: RunnerCallbacks<CadEvaluationResponse>) {
+  return runInIsolatedRunner(request, callbacks)
 }

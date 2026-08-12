@@ -1,51 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { dbTables, type MeasurementSaveRequest } from '@/api'
-import { createSampleRecord, createSetupRecord } from '@/features/viewer/persistence/contracts'
+import { dbTables, type MeasurementRecordRequest } from '@/api'
 import type { CadDocumentController, SimulationController } from '@/features/viewer/workspace/useCadWorkspace'
 import { createDataTensorAccessor, MAX_RECORDED_DATA_BYTES, persistDataSchema, persistDataTensor } from '@/lib/cad'
 import type { CaeDataSelection } from './useCaeDataSelection'
-import type { SavedSample, SavedSetup } from '../types'
+import type { SavedMeasurement } from '../types'
 
-type RealizationState = Readonly<{
-  kind: 'sample' | 'setup'
-  minimumRevision: number
-  stage: 'evaluate' | 'saving'
-}>
-
-type GenerateMeasurementState = Readonly<{
-  minimumExperimentRevision: number
-  minimumStructureRevision: number
-  stage: 'evaluate' | 'saving'
-}>
-
-type MeasurementRunState = Readonly<{
-  mode: 'generated' | 'perform'
-  overwrite: boolean
-  sampleId: number
-  setupId: number
-  minimumExperimentRevision: number
-  minimumStructureRevision: number
-  stage: 'evaluate' | 'running' | 'saving'
-  startedAt: number | null
-}>
-
-function readyAt(document: CadDocumentController, minimumRevision: number) {
-  return (
-    document.revision >= minimumRevision &&
-    document.status === 'Ready' &&
-    document.successfulRevision === document.revision
-  )
-}
-
-function measurementRequest(
-  sampleId: number,
-  setupId: number,
+function recordRequest(
   experimentDocument: CadDocumentController,
   simulation: SimulationController,
-  overwrite: boolean,
-): MeasurementSaveRequest {
+): MeasurementRecordRequest {
   const result = simulation.recordedData
   const schemas = experimentDocument.simulationProgram?.recordedData
   if (!result || !schemas || simulation.stale) throw new Error('저장 가능한 최신 RecordedData가 없습니다.')
@@ -69,383 +34,312 @@ function measurementRequest(
       data: persistDataTensor(spec, data, `RecordedData ${JSON.stringify(name)}`),
     }
   })
-  return { sample_id: sampleId, setup_id: setupId, overwrite, recorded_data: recordedData }
+  return { recorded_data: recordedData }
 }
 
 export function useCaeMeasurementActions({
   authenticated,
-  experimentDocument,
   experimentClean,
+  experimentDocument,
   experimentId,
-  pairClean,
+  experimentSourceHash,
+  onGenerateCandidate,
   selection,
   simulation,
-  structureDocument,
-  structureClean,
-  structureId,
 }: {
   authenticated: boolean
-  experimentDocument: CadDocumentController
   experimentClean: boolean
+  experimentDocument: CadDocumentController
   experimentId: number | null
-  pairClean: boolean
+  experimentSourceHash: string | null
+  onGenerateCandidate: () => void
   selection: CaeDataSelection
   simulation: SimulationController
-  structureDocument: CadDocumentController
-  structureClean: boolean
-  structureId: number | null
 }) {
   const queryClient = useQueryClient()
-  const [realization, setRealization] = useState<RealizationState | null>(null)
-  const [generation, setGeneration] = useState<GenerateMeasurementState | null>(null)
-  const [run, setRun] = useState<MeasurementRunState | null>(null)
+  const [operation, setOperation] = useState<'candidate' | 'duplicate' | 'measurement' | 'record' | 'save' | null>(null)
+  const [stage, setStage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const operationSequence = useRef(0)
+  const [pendingRecordMeasurementId, setPendingRecordMeasurementId] = useState<number | null>(null)
+  const activeMeasurementId = useRef<number | null>(null)
+  const pendingRecordRequest = useRef<MeasurementRecordRequest | null>(null)
+  const experimentDocumentRef = useRef(experimentDocument)
+  const simulationRef = useRef(simulation)
+  experimentDocumentRef.current = experimentDocument
+  simulationRef.current = simulation
 
-  const fail = useCallback((message: string) => {
+  const fail = useCallback((cause: unknown, fallback: string) => {
+    const message = cause instanceof Error ? cause.message : fallback
     setError(message)
     toast.error(message)
   }, [])
 
-  const requireCleanPair = useCallback(() => {
-    if (!authenticated) throw new Error('로그인이 필요합니다.')
-    if (!pairClean || !structureId || !experimentId) {
-      throw new Error('Structure와 Experiment를 먼저 저장한 뒤 실행하세요.')
-    }
-  }, [authenticated, experimentId, pairClean, structureId])
-
-  const requireCleanDefinition = useCallback(
-    (kind: 'sample' | 'setup') => {
-      if (!authenticated) throw new Error('로그인이 필요합니다.')
-      if (kind === 'sample' ? !structureClean || !structureId : !experimentClean || !experimentId) {
-        throw new Error(`${kind === 'sample' ? 'Structure' : 'Experiment'}를 먼저 저장한 뒤 실행하세요.`)
-      }
+  const invalidate = useCallback(
+    async (measurementId?: number) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'measurements'] }),
+        queryClient.invalidateQueries({ queryKey: ['analysis', experimentId] }),
+        ...(measurementId
+          ? [queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'recorded-data', measurementId] })]
+          : []),
+      ])
     },
-    [authenticated, experimentClean, experimentId, structureClean, structureId],
+    [experimentId, queryClient],
   )
 
-  const startRealization = useCallback(
-    (kind: 'sample' | 'setup') => {
+  const refreshPersistedMeasurement = useCallback(
+    async (measurementId: number, selectedExperimentId: number | null) => {
+      await invalidate(measurementId).catch(() => undefined)
       try {
-        requireCleanDefinition(kind)
-        if (realization || generation || run) return
-        setError(null)
-        const document = kind === 'sample' ? structureDocument : experimentDocument
-        if (document.runIsBusy) throw new Error('현재 source 평가가 끝난 뒤 다시 실행하세요.')
-        if (kind === 'sample') selection.clearSample()
-        else selection.clearSetup()
-        setRealization({ kind, minimumRevision: document.revision + 1, stage: 'evaluate' })
-        document.handleReroll()
-      } catch (cause) {
-        fail(cause instanceof Error ? cause.message : String(cause))
+        const row = await selection.loadMeasurement(measurementId, selectedExperimentId)
+        if (!row) throw new Error('Measurement refresh was superseded.')
+        return row
+      } catch {
+        selection.clearMeasurement()
+        toast.error(
+          `Measurement #${measurementId}은 서버에 저장되었지만 화면을 새로 고치지 못했습니다. 목록에서 다시 선택하세요.`,
+        )
+        return null
       }
     },
-    [experimentDocument, fail, generation, realization, requireCleanDefinition, run, selection, structureDocument],
+    [invalidate, selection],
   )
 
-  const startGenerateMeasurement = useCallback(() => {
+  const requireSavableCandidate = useCallback(() => {
+    if (!authenticated) throw new Error('로그인이 필요합니다.')
+    if (!experimentClean || !experimentId || !experimentSourceHash) {
+      throw new Error('저장되고 편집되지 않은 Experiment가 필요합니다.')
+    }
+    if (
+      experimentDocument.status !== 'Ready' ||
+      experimentDocument.successfulRevision !== experimentDocument.revision ||
+      !experimentDocument.variables ||
+      !experimentDocument.materialParameters
+    ) {
+      throw new Error('저장할 Candidate 평가가 완료되지 않았습니다.')
+    }
+    return {
+      experiment_id: experimentId,
+      experiment_source_hash: experimentSourceHash,
+      vars: experimentDocument.variables,
+      material_parameters: experimentDocument.materialParameters,
+    }
+  }, [authenticated, experimentClean, experimentDocument, experimentId, experimentSourceHash])
+
+  const generateCandidate = useCallback(() => {
+    if (operation || pendingRecordMeasurementId || experimentDocument.runIsBusy) return
+    setError(null)
+    setOperation('candidate')
+    setStage('Candidate 생성')
     try {
-      requireCleanPair()
-      if (realization || generation || run) return
-      if (structureDocument.runIsBusy || experimentDocument.runIsBusy) {
-        throw new Error('Structure와 Experiment source 평가가 끝난 뒤 다시 실행하세요.')
+      onGenerateCandidate()
+    } catch (cause) {
+      fail(cause, 'Candidate를 생성하지 못했습니다.')
+    } finally {
+      setOperation(null)
+      setStage(null)
+    }
+  }, [experimentDocument.runIsBusy, fail, onGenerateCandidate, operation, pendingRecordMeasurementId])
+
+  const saveCurrent = useCallback(async () => {
+    if (operation || pendingRecordMeasurementId) return null
+    setError(null)
+    setOperation('save')
+    setStage('Measurement 저장')
+    try {
+      const request = requireSavableCandidate()
+      const { id } = await dbTables.Measurement.create(request)
+      if (await refreshPersistedMeasurement(id, request.experiment_id)) {
+        toast.success(`Measurement #${id}을 준비했습니다.`)
+      }
+      return id
+    } catch (cause) {
+      fail(cause, 'Measurement를 저장하지 못했습니다.')
+      return null
+    } finally {
+      setOperation(null)
+      setStage(null)
+    }
+  }, [fail, operation, pendingRecordMeasurementId, refreshPersistedMeasurement, requireSavableCandidate])
+
+  const duplicateMeasurement = useCallback(
+    async (row: SavedMeasurement) => {
+      if (operation || pendingRecordMeasurementId) return null
+      if (!experimentClean || !experimentId || !experimentSourceHash || row.experiment_id !== experimentId) {
+        fail(new Error('현재 저장된 Experiment의 Measurement만 복제할 수 있습니다.'), '')
+        return null
       }
       setError(null)
-      selection.clearAll()
-      setGeneration({
-        minimumExperimentRevision: experimentDocument.revision + 1,
-        minimumStructureRevision: structureDocument.revision + 1,
-        stage: 'evaluate',
-      })
-      structureDocument.handleReroll()
-      experimentDocument.handleReroll()
-    } catch (cause) {
-      fail(cause instanceof Error ? cause.message : String(cause))
-    }
-  }, [experimentDocument, fail, generation, realization, requireCleanPair, run, selection, structureDocument])
-
-  const startPerformMeasurement = useCallback(
-    (
-      overwrite = false,
-      expected?: Readonly<{
-        sampleId: number
-        setupId: number
-      }>,
-    ) => {
+      setOperation('duplicate')
+      setStage('Measurement 복제')
       try {
-        requireCleanPair()
-        if (realization || generation || run) return
-        if (!selection.sample || !selection.setup) throw new Error('Sample과 Setup을 선택하세요.')
-        if (expected && (selection.sample.id !== expected.sampleId || selection.setup.id !== expected.setupId)) {
-          throw new Error('Sample 또는 Setup 선택이 바뀌었습니다. 다시 확인한 뒤 실행하세요.')
-        }
-        setError(null)
-        setRun({
-          mode: 'perform',
-          overwrite,
-          sampleId: selection.sample.id,
-          setupId: selection.setup.id,
-          minimumExperimentRevision: experimentDocument.revision,
-          minimumStructureRevision: structureDocument.revision,
-          stage: 'evaluate',
-          startedAt: null,
+        const { id } = await dbTables.Measurement.create({
+          experiment_id: experimentId,
+          experiment_source_hash: experimentSourceHash,
+          vars: row.vars,
+          material_parameters: row.material_parameters,
         })
+        if (await refreshPersistedMeasurement(id, experimentId)) {
+          toast.success(`Measurement #${row.id}을 #${id}으로 복제했습니다.`)
+        }
+        return id
       } catch (cause) {
-        fail(cause instanceof Error ? cause.message : String(cause))
+        fail(cause, 'Measurement를 복제하지 못했습니다.')
+        return null
+      } finally {
+        setOperation(null)
+        setStage(null)
       }
     },
     [
-      experimentDocument.revision,
+      experimentClean,
+      experimentId,
+      experimentSourceHash,
       fail,
-      generation,
-      realization,
-      requireCleanPair,
-      run,
-      selection,
-      structureDocument.revision,
+      operation,
+      pendingRecordMeasurementId,
+      refreshPersistedMeasurement,
     ],
   )
 
-  useEffect(() => {
-    if (!realization || realization.stage !== 'evaluate') return
-    const document = realization.kind === 'sample' ? structureDocument : experimentDocument
-    if (document.status === 'Error') {
-      setRealization(null)
-      fail(`${realization.kind === 'sample' ? 'Sample' : 'Setup'} 생성 평가에 실패했습니다.`)
-      return
+  const runSelected = useCallback(() => {
+    const measurement = selection.measurement
+    if (operation || pendingRecordMeasurementId || !measurement) return null
+    if (measurement.recorded_at) {
+      fail(new Error('이미 RecordedData가 있는 Measurement는 다시 실행할 수 없습니다.'), '')
+      return null
     }
-    if (!readyAt(document, realization.minimumRevision)) return
-    const sequence = ++operationSequence.current
-    setRealization({ ...realization, stage: 'saving' })
-    void (async () => {
-      if (realization.kind === 'sample') {
-        if (!structureId || !structureDocument.variables || !structureDocument.materialParameters) {
-          throw new Error('Ready 상태의 Structure 실현값이 필요합니다.')
-        }
-        const record = createSampleRecord(
-          structureId,
-          structureDocument.variables,
-          structureDocument.materialParameters as never,
-        )
-        const [saved] = await dbTables.Sample.upsertRow([record])
-        const row = { ...record, id: saved.id, updated_at: new Date().toISOString() } as SavedSample
-        selection.setGeneratedSample(row)
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['cae', 'samples', structureId] }),
-          queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'sample'] }),
-        ])
-      } else {
-        if (!experimentId || !experimentDocument.variables || !experimentDocument.materialParameters) {
-          throw new Error('Ready 상태의 Experiment 실현값이 필요합니다.')
-        }
-        const record = createSetupRecord(
-          experimentId,
-          experimentDocument.variables,
-          experimentDocument.materialParameters as never,
-        )
-        const [saved] = await dbTables.Setup.upsertRow([record])
-        const row = { ...record, id: saved.id, updated_at: new Date().toISOString() } as SavedSetup
-        selection.setGeneratedSetup(row)
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['cae', 'setups', experimentId] }),
-          queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'setup'] }),
-        ])
+    if (!experimentClean || measurement.experiment_id !== experimentId) {
+      fail(new Error('Measurement와 현재 Experiment revision이 일치하지 않습니다.'), '')
+      return null
+    }
+    if (!simulation.canRun) {
+      fail(new Error('선택한 Measurement 평가가 완료된 뒤 실행하세요.'), '')
+      return null
+    }
+    setError(null)
+    pendingRecordRequest.current = null
+    activeMeasurementId.current = measurement.id
+    setOperation('measurement')
+    setStage('Simulation 실행')
+    const runId = simulation.run()
+    if (!runId) {
+      activeMeasurementId.current = null
+      setOperation(null)
+      setStage(null)
+      fail(new Error('Simulation을 시작하지 못했습니다.'), '')
+    }
+    return runId
+  }, [
+    experimentClean,
+    experimentId,
+    fail,
+    operation,
+    pendingRecordMeasurementId,
+    selection.measurement,
+    simulation,
+  ])
+
+  const persistRecordedData = useCallback(
+    async (measurementId: number, request: MeasurementRecordRequest) => {
+      try {
+        await dbTables.Measurement.record(measurementId, request)
+      } catch (cause) {
+        if ((cause as { status?: unknown })?.status !== 409) throw cause
+        const row = await selection.loadMeasurement(measurementId, experimentId).catch(() => null)
+        if (!row?.recorded_at) throw cause
+        setPendingRecordMeasurementId(null)
+        pendingRecordRequest.current = null
+        await invalidate(measurementId).catch(() => undefined)
+        toast.success(`Measurement #${measurementId}의 RecordedData는 이미 저장되어 있었습니다.`)
+        return
       }
-      if (sequence !== operationSequence.current) return
-      setRealization(null)
-      toast.success(`${realization.kind === 'sample' ? 'Sample' : 'Setup'}을 생성했습니다.`)
-    })().catch((cause: unknown) => {
-      if (sequence !== operationSequence.current) return
-      setRealization(null)
-      fail(cause instanceof Error ? cause.message : '실현값을 저장하지 못했습니다.')
-    })
-  }, [experimentDocument, experimentId, fail, queryClient, realization, selection, structureDocument, structureId])
+      setPendingRecordMeasurementId(null)
+      pendingRecordRequest.current = null
+      if (await refreshPersistedMeasurement(measurementId, experimentId)) {
+        toast.success(`Measurement #${measurementId}의 RecordedData를 저장했습니다.`)
+      }
+    },
+    [experimentId, invalidate, refreshPersistedMeasurement, selection],
+  )
 
-  useEffect(() => {
-    if (!generation || generation.stage !== 'evaluate') return
-    if (structureDocument.status === 'Error' || experimentDocument.status === 'Error') {
-      setGeneration(null)
-      fail('Sample 또는 Setup 생성 평가에 실패했습니다.')
-      return
-    }
-    if (
-      !readyAt(structureDocument, generation.minimumStructureRevision) ||
-      !readyAt(experimentDocument, generation.minimumExperimentRevision)
-    )
-      return
-    if (
-      !structureId ||
-      !experimentId ||
-      !structureDocument.variables ||
-      !experimentDocument.variables ||
-      !structureDocument.materialParameters ||
-      !experimentDocument.materialParameters
-    ) {
-      setGeneration(null)
-      fail('저장 가능한 Sample과 Setup 실현값이 없습니다.')
-      return
-    }
-
-    const sequence = ++operationSequence.current
-    setGeneration({ ...generation, stage: 'saving' })
-    void (async () => {
-      const sampleRecord = createSampleRecord(
-        structureId,
-        structureDocument.variables!,
-        structureDocument.materialParameters as never,
-      )
-      const [savedSample] = await dbTables.Sample.upsertRow([sampleRecord])
-      const sample = { ...sampleRecord, id: savedSample.id, updated_at: new Date().toISOString() } as SavedSample
-      selection.setGeneratedSample(sample)
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['cae', 'samples', structureId] }),
-        queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'sample'] }),
-      ])
-
-      const setupRecord = createSetupRecord(
-        experimentId,
-        experimentDocument.variables!,
-        experimentDocument.materialParameters as never,
-      )
-      const [savedSetup] = await dbTables.Setup.upsertRow([setupRecord])
-      const setup = { ...setupRecord, id: savedSetup.id, updated_at: new Date().toISOString() } as SavedSetup
-      selection.setGeneratedSetup(setup)
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['cae', 'setups', experimentId] }),
-        queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'setup'] }),
-      ])
-      if (sequence !== operationSequence.current) return
-      setGeneration(null)
-      setRun({
-        mode: 'generated',
-        overwrite: false,
-        sampleId: sample.id,
-        setupId: setup.id,
-        minimumExperimentRevision: experimentDocument.revision + 1,
-        minimumStructureRevision: structureDocument.revision + 1,
-        stage: 'evaluate',
-        startedAt: null,
-      })
-    })().catch((cause: unknown) => {
-      if (sequence !== operationSequence.current) return
-      setGeneration(null)
-      fail(cause instanceof Error ? cause.message : 'Sample과 Setup을 저장하지 못했습니다.')
-    })
-  }, [experimentDocument, experimentId, fail, generation, queryClient, selection, structureDocument, structureId])
-
-  useEffect(() => {
-    if (!run || run.stage !== 'evaluate') return
-    if (structureDocument.status === 'Error' || experimentDocument.status === 'Error') {
-      setRun(null)
-      fail('선택한 Sample 또는 Setup 평가에 실패했습니다.')
-      return
-    }
-    if (
-      !readyAt(structureDocument, run.minimumStructureRevision) ||
-      !readyAt(experimentDocument, run.minimumExperimentRevision)
-    )
-      return
-    if (!simulation.canRun) return
-    const startedAt = Date.now()
-    if (!simulation.run()) {
-      setRun(null)
-      fail('CAE 실행을 시작하지 못했습니다.')
-      return
-    }
-    setRun({ ...run, stage: 'running', startedAt })
-  }, [experimentDocument, fail, run, simulation, structureDocument])
-
-  useEffect(() => {
-    if (!run || run.stage !== 'running' || run.startedAt === null) return
-    if (simulation.process.startedAt !== null && simulation.process.startedAt < run.startedAt - 10) return
-    if (simulation.process.status === 'failed' || simulation.process.status === 'cancelled') {
-      setRun(null)
-      fail(simulation.process.error ?? 'CAE 실행을 완료하지 못했습니다.')
-      return
-    }
-    if (simulation.process.status !== 'succeeded' || !simulation.recordedData || simulation.stale) return
-
-    let request: MeasurementSaveRequest
+  const retryRecord = useCallback(async () => {
+    const measurementId = pendingRecordMeasurementId
+    const request = pendingRecordRequest.current
+    if (!measurementId || !request || operation) return false
+    setError(null)
+    setOperation('record')
+    setStage('RecordedData 다시 저장')
     try {
-      request = measurementRequest(run.sampleId, run.setupId, experimentDocument, simulation, run.overwrite)
+      await persistRecordedData(measurementId, request)
+      return true
     } catch (cause) {
-      setRun(null)
-      fail(cause instanceof Error ? cause.message : String(cause))
+      fail(cause, 'RecordedData를 다시 저장하지 못했습니다.')
+      return false
+    } finally {
+      setOperation(null)
+      setStage(null)
+    }
+  }, [fail, operation, pendingRecordMeasurementId, persistRecordedData])
+
+  useEffect(() => {
+    if (operation !== 'measurement') return
+    const measurementId = activeMeasurementId.current
+    if (!measurementId) return
+    if (simulation.process.status === 'preparing' || simulation.process.status === 'running') {
+      setStage(simulation.process.stage ?? 'Simulation 실행')
       return
     }
-    const sequence = ++operationSequence.current
-    setRun({ ...run, stage: 'saving' })
-    void dbTables.Measurement.save(request)
-      .then(async ({ id }) => {
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['cae', 'measurements', structureId, experimentId] }),
-          queryClient.invalidateQueries({ queryKey: ['analysis', structureId, experimentId] }),
-          queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'measurements'] }),
-          queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'measurement-pairs'] }),
-        ])
-        await selection.loadMeasurement(id, structureId && experimentId ? { structureId, experimentId } : null)
-        if (sequence !== operationSequence.current) return
-        setRun(null)
-        toast.success(
-          run.mode === 'generated'
-            ? 'Sample, Setup, Measurement와 RecordedData를 생성했습니다.'
-            : 'Measurement와 RecordedData를 저장했습니다.',
-        )
-      })
-      .catch((cause: unknown) => {
-        if (sequence !== operationSequence.current) return
-        setRun(null)
-        fail(cause instanceof Error ? cause.message : 'Measurement를 저장하지 못했습니다.')
-      })
-  }, [experimentDocument, experimentId, fail, queryClient, run, selection, simulation, structureId])
-
-  const cancelable =
-    realization?.stage === 'evaluate' ||
-    generation?.stage === 'evaluate' ||
-    run?.stage === 'evaluate' ||
-    run?.stage === 'running'
+    if (simulation.process.status === 'succeeded') {
+      activeMeasurementId.current = null
+      setStage('RecordedData 저장')
+      void (async () => {
+        try {
+          const request = recordRequest(experimentDocumentRef.current, simulationRef.current)
+          pendingRecordRequest.current = request
+          await persistRecordedData(measurementId, request)
+        } catch (cause) {
+          if (pendingRecordRequest.current) setPendingRecordMeasurementId(measurementId)
+          fail(cause, 'RecordedData를 저장하지 못했습니다.')
+        } finally {
+          setOperation(null)
+          setStage(null)
+        }
+      })()
+      return
+    }
+    if (simulation.process.status === 'failed' || simulation.process.status === 'cancelled') {
+      activeMeasurementId.current = null
+      fail(simulation.process.error ?? 'Simulation이 완료되지 않았습니다.', 'Simulation이 완료되지 않았습니다.')
+      setOperation(null)
+      setStage(null)
+    }
+  }, [
+    fail,
+    operation,
+    persistRecordedData,
+    simulation.process.error,
+    simulation.process.stage,
+    simulation.process.status,
+  ])
 
   const cancel = useCallback(() => {
-    if (!cancelable) return
-    operationSequence.current += 1
-    if (run?.stage === 'running') simulation.cancel()
-    setRealization(null)
-    setGeneration(null)
-    setRun(null)
-    toast.info('현재 CAE 작업을 취소했습니다.')
-  }, [cancelable, run?.stage, simulation])
-
-  const busy = realization !== null || generation !== null || run !== null
-  const operation = realization?.kind ?? (generation || run ? 'measurement' : null)
-  const stage = realization
-    ? realization.stage === 'saving'
-      ? `${realization.kind === 'sample' ? 'Sample' : 'Setup'} 저장 중`
-      : `${realization.kind === 'sample' ? 'Structure' : 'Experiment'} 평가 중`
-    : generation
-      ? generation.stage === 'saving'
-        ? 'Sample과 Setup 저장 중'
-        : 'Structure와 Experiment 실현 중'
-      : run
-        ? run.stage === 'evaluate'
-          ? '선택 실현값 평가 중'
-          : run.stage === 'running'
-            ? (simulation.process.stage ?? 'CAE 실행 중')
-            : 'Measurement 저장 중'
-        : null
+    if (operation !== 'measurement') return
+    simulation.cancel()
+  }, [operation, simulation])
 
   return {
-    busy,
-    cancelable,
-    error,
-    operation,
-    stage,
+    busy: operation !== null,
     cancel,
-    clearError: () => setError(null),
-    generateMeasurement: startGenerateMeasurement,
-    generateSample: () => startRealization('sample'),
-    generateSetup: () => startRealization('setup'),
-    performMeasurement: startPerformMeasurement,
+    cancelable: operation === 'measurement' && ['preparing', 'running'].includes(simulation.process.status),
+    duplicateMeasurement,
+    error,
+    generateCandidate,
+    operation,
+    pendingRecordMeasurementId,
+    retryRecord,
+    runSelected,
+    saveCurrent,
+    stage,
   }
 }
-
-export type CaeMeasurementActions = ReturnType<typeof useCaeMeasurementActions>

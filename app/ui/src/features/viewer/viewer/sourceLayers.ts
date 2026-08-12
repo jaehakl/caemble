@@ -1,9 +1,11 @@
 import { transforms } from '@jscad/modeling'
-import { convertUcumValue, type CadDocumentType, type CadScenePart, type UcumUnit } from '@/lib/cad'
+import { convertUcumValue, type CadScenePart, type UcumUnit } from '@/lib/cad'
 import { createRenderParts } from './renderParts'
 
+export type CadViewerSource = 'experiment' | 'task'
+
 export type JscadViewerLayer = Readonly<{
-  documentType: CadDocumentType
+  source: CadViewerSource
   taskName?: string
   lengthUnit: UcumUnit
   parts: CadScenePart[]
@@ -19,7 +21,7 @@ export function scaleViewerLayers(
     geometry: unknown,
   ) => unknown
   return layers.map((layer) => {
-    const factor = convertUcumValue(1, layer.lengthUnit, displayLengthUnit, `${layer.documentType} viewer lengthUnit`)
+    const factor = convertUcumValue(1, layer.lengthUnit, displayLengthUnit, `${layer.source} viewer lengthUnit`)
     if (factor === 1) return layer
     return {
       ...layer,

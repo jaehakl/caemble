@@ -47,7 +47,7 @@ describe('CAD scene identity and evaluated tree', () => {
     )
     expect(nodes.map((node) => node.label)).toEqual(
       expect.arrayContaining([
-        'Structure',
+        'Experiment',
         'Root',
         '<array>',
         'Cell [0, 0, 0]',

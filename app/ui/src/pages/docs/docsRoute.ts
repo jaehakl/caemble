@@ -1,6 +1,5 @@
 export const docsSectionIds = [
   'workbench',
-  'structure',
   'program',
   'reference',
   'troubleshooting',

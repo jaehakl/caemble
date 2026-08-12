@@ -1,17 +1,16 @@
 import { useCallback, useMemo, useState } from 'react'
-import type { CadDocumentType } from '@/lib/cad'
 import { resolveCadViewerContent, type CadViewerDocument } from './cadViewerContent'
 import JscadViewer from './JscadViewer'
+import type { CadViewerSource } from './sourceLayers'
 
 export type { CadViewerDocument } from './cadViewerContent'
 
 export type CadViewerProps = {
-  structure: CadViewerDocument | null
   experiment: CadViewerDocument | null
   activeExperimentTaskName?: string | null
-  onRenderEnd: (sources: readonly CadDocumentType[]) => void
-  onRenderError: (message: string, sources: readonly CadDocumentType[]) => void
-  onRenderStart: (sources: readonly CadDocumentType[]) => void
+  onRenderEnd: (sources: readonly CadViewerSource[]) => void
+  onRenderError: (message: string, sources: readonly CadViewerSource[]) => void
+  onRenderStart: (sources: readonly CadViewerSource[]) => void
 }
 
 export function CadViewer({
@@ -20,13 +19,12 @@ export function CadViewer({
   onRenderEnd,
   onRenderError,
   onRenderStart,
-  structure,
 }: CadViewerProps) {
-  const [structureVisible, setStructureVisible] = useState(true)
   const [experimentVisible, setExperimentVisible] = useState(true)
+  const [taskVisible, setTaskVisible] = useState(true)
   const content = useMemo(
-    () => resolveCadViewerContent(structure, experiment, structureVisible, experimentVisible, activeExperimentTaskName),
-    [activeExperimentTaskName, experiment, experimentVisible, structure, structureVisible],
+    () => resolveCadViewerContent(experiment, experimentVisible, taskVisible, activeExperimentTaskName),
+    [activeExperimentTaskName, experiment, experimentVisible, taskVisible],
   )
   const handleRenderStart = useCallback(
     () => onRenderStart(content.visibleSources),
@@ -49,9 +47,9 @@ export function CadViewer({
         onRenderEnd={handleRenderEnd}
         onRenderError={handleRenderError}
         onRenderStart={handleRenderStart}
-        onToggleSource={(documentType) => {
-          if (documentType === 'structure') setStructureVisible((current) => !current)
-          else setExperimentVisible((current) => !current)
+        onToggleSource={(source) => {
+          if (source === 'experiment') setExperimentVisible((current) => !current)
+          else setTaskVisible((current) => !current)
         }}
       />
     </section>

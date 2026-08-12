@@ -1,6 +1,6 @@
 export const curvedSurfaceSphereHcpArrayCode = `import {
   Material,
-  structure,
+  experiment,
   type Geometry,
 } from '@caemble/core'
 
@@ -60,7 +60,7 @@ const CurvedParticle: Geometry<{
   />
 )
 
-export default structure({
+export default experiment({
   lengthUnit: 'mm',
   geometry: ({ vars }) => (
     <array
@@ -135,5 +135,6 @@ export default structure({
       max: cellTensor(tau),
     },
   },
+  recordedData: {},
 })
 `

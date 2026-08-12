@@ -14,7 +14,7 @@ const decoder = new TextDecoder('utf-8', { fatal: true })
 
 const AI_HELPER_SYSTEM_PROMPT = [
   'You are Caemble AI Helper for the CAE Workbench.',
-  'Help users write and debug current Structure, Experiment TSX, and simulate.py code.',
+  'Help users write and debug current Experiment TSX and simulate.py code.',
   'Ground answers in the per-turn reference packet and current Workbench state, and cite the supplied /docs links when relevant.',
   'Never invent APIs, catalog keys, units, targets, solver identities, methods, or parameters.',
   'If the supplied references are insufficient, say so clearly and recommend validation in the Workbench.',
@@ -128,37 +128,13 @@ function workbenchContextInput(
   activeTab: WorkbenchTabId,
   activeExperimentFile: string | null,
 ): WorkbenchContextInput {
-  const structureController = workbench.structureDocument
   const experimentController = workbench.experimentDocument
-  const structureSucceeded = structureController.successfulRevision === structureController.revision
   const experimentSucceeded = experimentController.successfulRevision === experimentController.revision
   const process = workbench.simulation.process
   const actions = workbench.measurementActions
 
   return {
     focus: { activeTab, activeExperimentFile },
-    structure:
-      workbench.structure?.kind === 'structure'
-        ? {
-            source: workbench.structure.source,
-            dirty: workbench.structureDirty,
-            revision: structureController.revision,
-            successfulRevision: structureController.successfulRevision,
-            status: structureController.status,
-            evaluation: {
-              revision: structureController.revision,
-              diagnostics: structureController.diagnostics,
-              error: structureController.error,
-              ...(structureSucceeded
-                ? {
-                    vars: structureController.variables,
-                    varsSchema: structureController.varsSchema,
-                    materialWarnings: structureController.materialWarnings,
-                  }
-                : {}),
-            },
-          }
-        : null,
     experiment:
       workbench.experiment?.kind === 'experiment'
         ? {
@@ -175,6 +151,7 @@ function workbenchContextInput(
                 ? {
                     vars: experimentController.variables,
                     varsSchema: experimentController.varsSchema,
+                    materialParameters: experimentController.materialParameters,
                     materialWarnings: experimentController.materialWarnings,
                   }
                 : {}),
@@ -182,17 +159,18 @@ function workbenchContextInput(
           }
         : null,
     selection: {
-      sample: {
-        selected: Boolean(workbench.selection.sample),
-        applied: Boolean(workbench.selection.sample && workbench.structureClean),
-      },
-      setup: {
-        selected: Boolean(workbench.selection.setup),
-        applied: Boolean(workbench.selection.setup && workbench.experimentClean),
-      },
       measurement: {
+        id: workbench.selection.measurement?.id ?? null,
+        state: actions.pendingRecordMeasurementId
+          ? 'record-save-pending'
+          : workbench.selection.measurement?.recorded_at
+            ? 'recorded'
+            : workbench.selection.measurement
+              ? 'prepared'
+              : 'candidate',
         selected: Boolean(workbench.selection.measurement),
-        applied: Boolean(workbench.selection.measurement && workbench.pairClean),
+        applied: Boolean(workbench.selection.measurement && workbench.experimentClean),
+        recorded: Boolean(workbench.selection.measurement?.recorded_at),
       },
     },
     run: {

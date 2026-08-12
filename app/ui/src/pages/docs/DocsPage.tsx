@@ -3,7 +3,6 @@ import {
   BookOpenText,
   Boxes,
   CircleAlert,
-  Code2,
   ExternalLink,
   FlaskConical,
   Gauge,
@@ -29,8 +28,7 @@ import { ManualDocsPage } from './ManualDocsPage'
 
 const docsSections = [
   { id: 'workbench' as const, group: 'Manual' as const, label: 'Workbench Quickstart', icon: Home },
-  { id: 'structure' as const, group: 'Manual' as const, label: 'Structure Authoring', icon: Code2 },
-  { id: 'program' as const, group: 'Manual' as const, label: 'Experiment Program', icon: Workflow },
+  { id: 'program' as const, group: 'Manual' as const, label: 'Experiment Authoring', icon: Workflow },
   { id: 'reference' as const, group: 'Manual' as const, label: 'API / CAD Reference', icon: BookOpenText },
   { id: 'troubleshooting' as const, group: 'Manual' as const, label: 'Troubleshooting', icon: CircleAlert },
   { id: 'geometry' as const, group: 'Catalogs' as const, label: 'Geometry Catalog', icon: Boxes },
@@ -214,7 +212,6 @@ export function DocsPage() {
               ) : null}
             </section>
           ) : section === 'workbench' ||
-            section === 'structure' ||
             section === 'program' ||
             section === 'reference' ||
             section === 'troubleshooting' ? (
