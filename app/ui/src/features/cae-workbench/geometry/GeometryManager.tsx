@@ -25,7 +25,7 @@ import { useAuth } from '@/features/auth/use-auth'
 import CadEditor from '@/features/viewer/editor/CadEditor'
 import { cn } from '@/lib/utils'
 import { GeometryUsageDialog } from './GeometryUsageDialog'
-import { suggestGeometryRootAlias, type GeometryWorkspaceState } from './useGeometryWorkspaceState'
+import type { GeometryWorkspaceState } from './useGeometryWorkspaceState'
 
 const PAGE_SIZES = [12, 24, 48] as const
 
@@ -38,7 +38,7 @@ export function GeometryManager({
   initialPackageId = null,
   initialVersionId = null,
   onEdit,
-  onOpenExperimentSource,
+  onOpenGeometrySource,
   onOpenExperiment,
   onUse,
 }: {
@@ -46,9 +46,9 @@ export function GeometryManager({
   initialPackageId?: number | null
   initialVersionId?: number | null
   onEdit: (versionId: number, repositoryId: number, packageId: number) => void | Promise<void>
-  onOpenExperimentSource: () => void
+  onOpenGeometrySource: () => void
   onOpenExperiment: (experimentId: number) => void | Promise<void>
-  onUse: (versionId: number, alias: string) => unknown | Promise<unknown>
+  onUse: (versionId: number, exportName: string, alias: string) => string | Promise<string>
 }) {
   const auth = useAuth()
   const isAdmin = Boolean(auth.user?.roles.includes('admin'))
@@ -597,15 +597,19 @@ export function GeometryManager({
                   disabled={!selectedVersion || Boolean(selectedVersion.archived_at)}
                   onClick={() => {
                     if (!selectedVersion) return
-                    const aliases = new Set([
-                      ...geometry.currentSnapshot.roots.map((root) => root.alias),
-                      ...Object.values(geometry.drafts).flatMap((draft) => (draft.rootAlias ? [draft.rootAlias] : [])),
-                    ])
-                    const suggested = suggestGeometryRootAlias(selectedPackage.name, aliases)
-                    const alias = window.prompt('Experiment-local root alias', suggested)?.trim()
+                    const exports = resolvedQuery.data?.root.exports ?? []
+                    const exportName =
+                      exports.length === 1
+                        ? exports[0]
+                        : window.prompt(`사용할 named export를 입력하세요.\n${exports.join(', ')}`, exports[0])?.trim()
+                    if (!exportName || !exports.includes(exportName)) {
+                      toast.error('Published Geometry의 named export를 선택하세요.')
+                      return
+                    }
+                    const alias = window.prompt('geometry.tsx에서 사용할 local alias', exportName)?.trim()
                     if (!alias) return
-                    void Promise.resolve(onUse(selectedVersion.id, alias))
-                      .then(() => setUsageExample(alias))
+                    void Promise.resolve(onUse(selectedVersion.id, exportName, alias))
+                      .then((snippet) => setUsageExample(snippet))
                       .catch((cause: unknown) => toast.error(message(cause)))
                   }}
                 >
@@ -852,8 +856,8 @@ export function GeometryManager({
                               {item.description || '설명 없음'}
                             </p>
                           </div>
-                          <Badge className={item.root_alias ? 'bg-blue-100 text-blue-900' : 'bg-muted'}>
-                            {item.root_alias ? `Root · ${item.root_alias}` : 'Indirect'}
+                          <Badge className={item.entry_alias ? 'bg-blue-100 text-blue-900' : 'bg-muted'}>
+                            {item.entry_alias ? `Entry · ${item.entry_alias}` : 'Indirect'}
                           </Badge>
                         </button>
                       ))}
@@ -892,9 +896,9 @@ export function GeometryManager({
         )}
       </main>
       <GeometryUsageDialog
-        alias={usageExample ?? ''}
+        snippet={usageExample ?? ''}
         onOpenChange={(open) => !open && setUsageExample(null)}
-        onOpenExperimentSource={onOpenExperimentSource}
+        onOpenGeometrySource={onOpenGeometrySource}
         open={usageExample !== null}
       />
     </div>

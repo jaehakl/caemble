@@ -68,6 +68,8 @@ class GeometryNamespaceRequest(BaseModel):
 class GeometrySnapshotImport(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    exportName: str
+    alias: str
     geometryVersionId: int = Field(..., gt=0)
     coordinate: str
     moduleHash: str
@@ -78,7 +80,7 @@ class GeometryModuleSnapshot(BaseModel):
 
     geometryVersionId: int = Field(..., gt=0)
     coordinate: str
-    moduleFormatVersion: Literal[2]
+    moduleFormatVersion: Literal[3]
     cadApiVersion: Literal[5]
     description: Optional[str]
     source: str = Field(..., min_length=1)
@@ -87,20 +89,11 @@ class GeometryModuleSnapshot(BaseModel):
     imports: List[GeometrySnapshotImport] = Field(default_factory=list, max_length=64)
 
 
-class GeometryRootBinding(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    alias: str
-    geometryVersionId: int = Field(..., gt=0)
-    coordinate: str
-    moduleHash: str
-
-
 class GeometrySnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schemaVersion: Literal[1]
-    roots: List[GeometryRootBinding] = Field(default_factory=list, max_length=64)
+    schemaVersion: Literal[2]
+    entryImports: List[GeometrySnapshotImport] = Field(default_factory=list, max_length=64)
     modules: List[GeometryModuleSnapshot] = Field(default_factory=list, max_length=256)
 
 
@@ -137,7 +130,7 @@ class GeometryVersionRow(TimestampFields):
     source: str
     source_hash: str
     module_hash: str
-    module_format_version: Literal[2]
+    module_format_version: Literal[3]
     cad_api_version: Literal[5]
     archived_at: Optional[datetime] = None
     repository_id: Optional[int] = None
@@ -152,7 +145,7 @@ class GeometryExperimentReferenceRow(OwnedTimestampFields):
     parent_id: Optional[int] = None
     name: str
     description: Optional[str] = None
-    root_alias: Optional[str] = None
+    entry_alias: Optional[str] = None
 
 
 class GeometryPublishDraft(BaseModel):
@@ -169,21 +162,11 @@ class GeometryPublishDraft(BaseModel):
     source: str = Field(..., min_length=1)
 
 
-class GeometryPublishRootInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    alias: str
-    geometryVersionId: Optional[int] = Field(default=None, gt=0)
-    draftId: Optional[str] = Field(default=None, min_length=1, max_length=128)
-
-
 class GeometryPublishPlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    mode: Literal["publish-only", "publish-and-apply"]
     targetDraftId: str = Field(..., min_length=1, max_length=128)
     drafts: List[GeometryPublishDraft] = Field(..., min_length=1, max_length=256)
-    currentRoots: List[GeometryPublishRootInput] = Field(default_factory=list, max_length=64)
 
 
 class GeometryPublishRequest(GeometryPublishPlanRequest):
@@ -222,12 +205,9 @@ class MaterialParameterQualifierBase(TimestampFields):
 class ExperimentSourceBundle(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    formatVersion: Literal[2, 3]
+    formatVersion: Literal[4]
     files: Dict[str, str]
-    geometrySnapshot: Optional[GeometrySnapshot] = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
+    geometrySnapshot: GeometrySnapshot
 
 
 class ExperimentBase(OwnedTimestampFields):

@@ -1,4 +1,4 @@
-from service.geometry.graph import build_snapshot, validate_snapshot
+from service.geometry.graph import build_snapshot, build_snapshot_from_entry_source
 from service.geometry.manager import (
     archive_repository,
     archive_version,
@@ -29,6 +29,7 @@ __all__ = [
     "archive_repository",
     "archive_version",
     "build_snapshot",
+    "build_snapshot_from_entry_source",
     "change_geometry_namespace",
     "create_repository",
     "delete_geometry_packages",
@@ -46,6 +47,4 @@ __all__ = [
     "source_hash",
     "update_repository_description",
     "validate_experiment_tsx_imports",
-    "validate_snapshot",
 ]
-

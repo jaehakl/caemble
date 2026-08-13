@@ -12,7 +12,7 @@ function canonicalBundle(bundle: ExperimentSourceBundle) {
   const value = {
     files: Object.fromEntries(Object.entries(bundle.files).sort(([left], [right]) => compareText(left, right))),
     formatVersion: bundle.formatVersion,
-    ...(bundle.formatVersion === 3 ? { geometrySnapshot: canonicalizeGeometrySnapshot(bundle.geometrySnapshot) } : {}),
+    geometrySnapshot: canonicalizeGeometrySnapshot(bundle.geometrySnapshot),
   }
   const stable = (item: unknown): unknown =>
     Array.isArray(item)

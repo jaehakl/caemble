@@ -25,7 +25,7 @@ describe('CompiledCadSource', () => {
   })
 
   it('rejects project modules, version drift, and extra fields', () => {
-    expect(() => assertCompiledCadSource({ ...compiled(), modules: {} })).toThrow('modules is not allowed')
+    expect(() => assertCompiledCadSource({ ...compiled(), modules: {} })).toThrow('provenance is invalid')
     expect(() => assertCompiledCadSource({ ...compiled(), apiVersion: 2 })).toThrow('provenance is invalid')
     expect(() => assertCompiledCadSource({ ...compiled(), entryFile: 'helper.ts' })).toThrow('provenance is invalid')
     const coordinate = 'caemble:geometry/jlee/demo/block@1.0.0'
@@ -53,7 +53,11 @@ describe('CompiledCadSource', () => {
           sourceHash,
           geometrySourceHash: 'c'.repeat(64),
           moduleHash,
-          imports: index === coordinates.length - 1 ? [] : [coordinates[index + 1]],
+          exports: ['Part'],
+          imports:
+            index === coordinates.length - 1
+              ? []
+              : [{ exportName: 'Part', alias: 'Child', coordinate: coordinates[index + 1] }],
         },
       ]),
     )
@@ -69,9 +73,9 @@ describe('CompiledCadSource', () => {
         sources: { 'experiment.tsx': compiled() },
         geometryGraph: {
           graphHash: 'd'.repeat(64),
-          roots: [
-            { alias: 'Shallow', coordinate: coordinates[63], moduleHash },
-            { alias: 'Long', coordinate: coordinates[1], moduleHash },
+          entryImports: [
+            { exportName: 'Part', alias: 'Shallow', coordinate: coordinates[63], moduleHash },
+            { exportName: 'Part', alias: 'Long', coordinate: coordinates[1], moduleHash },
           ],
           modules: validModules,
         },
@@ -86,9 +90,9 @@ describe('CompiledCadSource', () => {
         sources: { 'experiment.tsx': compiled() },
         geometryGraph: {
           graphHash: 'd'.repeat(64),
-          roots: [
-            { alias: 'Shallow', coordinate: coordinates[63], moduleHash },
-            { alias: 'Long', coordinate: coordinates[0], moduleHash },
+          entryImports: [
+            { exportName: 'Part', alias: 'Shallow', coordinate: coordinates[63], moduleHash },
+            { exportName: 'Part', alias: 'Long', coordinate: coordinates[0], moduleHash },
           ],
           modules,
         },

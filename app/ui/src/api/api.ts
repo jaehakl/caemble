@@ -142,20 +142,27 @@ const geometryCoordinateSchema = z
     'Geometry SemVer components must not exceed 2147483647',
   )
   .transform((value) => value as ApiGeometryCoordinate)
+const geometryComponentNameSchema = z.string().regex(/^[A-Z][A-Za-z0-9_]*$/)
+const geometryLocalCoordinateSchema = z
+  .string()
+  .regex(
+    /^caemble:geometry\/[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])\/[a-z0-9](?:(?:[a-z0-9-]{0,62})[a-z0-9])?\/[a-z0-9](?:(?:[a-z0-9-]{0,62})[a-z0-9])?@local$/,
+  )
 const geometrySnapshotImportSchema = z
   .object({
+    exportName: geometryComponentNameSchema,
+    alias: geometryComponentNameSchema,
     geometryVersionId: z.number().int().positive(),
     coordinate: geometryCoordinateSchema,
     moduleHash: geometryHashSchema,
   })
   .strict()
   .readonly()
-const geometryRootAliasSchema = z.string().regex(/^[A-Z][A-Za-z0-9_]*$/)
 const geometrySnapshotModuleSchema = z
   .object({
     geometryVersionId: z.number().int().positive(),
     coordinate: geometryCoordinateSchema,
-    moduleFormatVersion: z.literal(2),
+    moduleFormatVersion: z.literal(3),
     cadApiVersion: z.literal(5),
     description: z.string().nullable(),
     source: z.string().min(1),
@@ -165,33 +172,21 @@ const geometrySnapshotModuleSchema = z
   })
   .strict()
   .readonly()
-const geometrySnapshotRootSchema = z
-  .object({
-    alias: geometryRootAliasSchema,
-    geometryVersionId: z.number().int().positive(),
-    coordinate: geometryCoordinateSchema,
-    moduleHash: geometryHashSchema,
-  })
-  .strict()
-  .readonly()
 export const geometrySnapshotSchema = z
   .object({
-    schemaVersion: z.literal(1),
-    roots: z.array(geometrySnapshotRootSchema).max(64).readonly(),
+    schemaVersion: z.literal(2),
+    entryImports: z.array(geometrySnapshotImportSchema).max(64).readonly(),
     modules: z.array(geometrySnapshotModuleSchema).max(256).readonly(),
   })
   .strict()
   .readonly()
-export const experimentSourceBundleSchema = z.discriminatedUnion('formatVersion', [
-  z.object({ formatVersion: z.literal(2), files: z.record(z.string(), z.string()) }).strict(),
-  z
-    .object({
-      formatVersion: z.literal(3),
-      files: z.record(z.string(), z.string()),
-      geometrySnapshot: geometrySnapshotSchema,
-    })
-    .strict(),
-])
+export const experimentSourceBundleSchema = z
+  .object({
+    formatVersion: z.literal(4),
+    files: z.record(z.string(), z.string()),
+    geometrySnapshot: geometrySnapshotSchema,
+  })
+  .strict()
 const saveExperimentRequestSchema = z.object({
   id: z.number().int().optional(),
   name: z.string().min(1),
@@ -266,7 +261,7 @@ const geometryVersionRowSchema = z.object({
   source: z.string(),
   source_hash: geometryHashSchema,
   module_hash: geometryHashSchema,
-  module_format_version: z.literal(2),
+  module_format_version: z.literal(3),
   cad_api_version: z.literal(5),
   archived_at: z.string().nullable(),
   repository_id: z.number().int().positive(),
@@ -284,7 +279,7 @@ const geometryExperimentReferenceSchema = z.object({
   parent_id: z.number().int().positive().nullable(),
   name: z.string(),
   description: z.string().nullable(),
-  root_alias: z.string().nullable(),
+  entry_alias: z.string().nullable(),
   created_at: z.string().nullable(),
   updated_at: z.string().nullable(),
 })
@@ -296,17 +291,18 @@ const geometryVersionSummarySchema = z.object({
   description: z.string().nullable(),
   sourceHash: geometryHashSchema,
   moduleHash: geometryHashSchema,
-  moduleFormatVersion: z.literal(2),
+  moduleFormatVersion: z.literal(3),
   cadApiVersion: z.literal(5),
   archivedAt: z.string().nullable(),
   createdAt: z.string(),
 })
 const geometryResolvedVersionSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   root: z.object({
     geometryVersionId: z.number().int().positive(),
     coordinate: geometryCoordinateSchema,
     moduleHash: geometryHashSchema,
+    exports: z.array(geometryComponentNameSchema),
   }),
   modules: z.array(geometrySnapshotModuleSchema),
 })
@@ -322,18 +318,12 @@ const geometryPublishDraftSchema = z.object({
   source: z.string(),
 })
 const geometryPublishRequestSchema = z.object({
-  mode: z.enum(['publish-only', 'publish-and-apply']),
   targetDraftId: z.string().min(1),
   drafts: z.array(geometryPublishDraftSchema).min(1),
-  currentRoots: z.array(
-    z.object({
-      alias: geometryRootAliasSchema,
-      geometryVersionId: z.number().int().positive().nullable().optional(),
-      draftId: z.string().nullable().optional(),
-    }),
-  ),
 })
 const geometryPlanImportSchema = z.object({
+  exportName: geometryComponentNameSchema,
+  alias: geometryComponentNameSchema,
   geometryVersionId: z.number().int().positive().optional(),
   draftId: z.string().optional(),
   coordinate: geometryCoordinateSchema,
@@ -341,37 +331,28 @@ const geometryPlanImportSchema = z.object({
 })
 const geometryPublishPlanSchema = z.object({
   planHash: geometryHashSchema,
-  mode: z.enum(['publish-only', 'publish-and-apply']),
   steps: z.array(
     z.object({
       draftId: z.string(),
       baseGeometryVersionId: z.number().int().positive().nullable(),
+      repositoryId: z.number().int().positive().nullable(),
       repository: z.string(),
       package: z.string(),
       version: z.string(),
       coordinate: geometryCoordinateSchema,
+      localCoordinate: geometryLocalCoordinateSchema,
       description: z.string().nullable(),
       source: z.string(),
       sourceHash: geometryHashSchema,
       moduleHash: geometryHashSchema,
+      exports: z.array(geometryComponentNameSchema),
       imports: z.array(geometryPlanImportSchema),
-      generated: z.boolean(),
-    }),
-  ),
-  roots: z.array(
-    z.object({
-      alias: geometryRootAliasSchema,
-      geometryVersionId: z.number().int().positive().optional(),
-      draftId: z.string().optional(),
-      coordinate: geometryCoordinateSchema,
-      moduleHash: geometryHashSchema,
     }),
   ),
   replacements: z.array(
     z.object({
-      alias: geometryRootAliasSchema,
-      fromGeometryVersionId: z.number().int().positive().optional(),
-      toDraftId: z.string(),
+      draftId: z.string(),
+      localCoordinate: geometryLocalCoordinateSchema,
       coordinate: geometryCoordinateSchema,
     }),
   ),
@@ -379,8 +360,7 @@ const geometryPublishPlanSchema = z.object({
 const geometryPublishResponseSchema = z.object({
   planHash: geometryHashSchema,
   published: z.array(geometryVersionSummarySchema),
-  roots: z.array(geometrySnapshotRootSchema),
-  geometrySnapshot: geometrySnapshotSchema,
+  replacements: geometryPublishPlanSchema.shape.replacements,
 })
 const geometryPublishConflictSchema = z.object({
   code: z.literal('geometry_version_conflict'),

@@ -2,7 +2,8 @@ import type { ExperimentRecord, MeasurementRecord, RecordedDataRecord } from '@/
 import type {
   ExperimentSourceBundle,
   ExperimentSourceDocument,
-  GeometryCoordinate,
+  GeometryModuleCoordinate,
+  LocalGeometryCoordinate,
   GeometrySnapshotModule,
   Vars,
 } from '@/lib/cad'
@@ -16,7 +17,7 @@ export type WorkbenchTabId = 'experiment' | 'geometry' | 'recorded-data'
 
 export type GeometryLocalDraft = Readonly<{
   draftId: string
-  coordinate: GeometryCoordinate
+  coordinate: LocalGeometryCoordinate
   source: string
   description: string
   baseGeometryVersionId: number | null
@@ -26,12 +27,11 @@ export type GeometryLocalDraft = Readonly<{
   packageId: number | null
   version: string
   bump: 'major' | 'minor' | 'patch'
-  rootAlias: string | null
   standalonePreview: boolean
 }>
 
 export type WorkbenchDraft = Readonly<{
-  version: 5
+  version: 7
   savedAt: number
   userKey: string
   experiment: Readonly<{
@@ -51,7 +51,8 @@ export type WorkbenchDraft = Readonly<{
   geometry: Readonly<{
     drafts: Readonly<Record<string, GeometryLocalDraft>>
     stagedModules: readonly GeometrySnapshotModule[]
-    selectedCoordinate: GeometryCoordinate | null
+    selectedCoordinate: GeometryModuleCoordinate | 'geometry.tsx' | null
+    selectedExport: string | null
     expandedPaths: readonly string[]
   }>
   layout: Readonly<{

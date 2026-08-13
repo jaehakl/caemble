@@ -5,11 +5,8 @@ export const dcResolutionStudyExperimentCode = `import {
   Mat,
   Material,
   experiment,
-  type Geometry,
-  type Vec3,
 } from '@caemble/core'
-
-const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />
+import { Conductor } from './geometry'
 
 export default experiment({
   lengthUnit: 'mm',
@@ -55,12 +52,16 @@ export default experiment({
 })
 `
 
+export const dcResolutionStudyGeometryCode = `import { type Geometry, type Vec3 } from '@caemble/core'
+
+export const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />
+
+export const ConvergenceProbe: Geometry = () => <box size={[2, 2, 2]} />
+`
+
 function resolutionTaskCode(gridShape: string, outputKey: string, probePosition: number) {
   return `import { defineTask } from '@caemble/core'
-
-function ConvergenceProbe() {
-  return <box size={[2, 2, 2]} />
-}
+import { ConvergenceProbe } from '../geometry'
 
 export default defineTask({
   kernel: { name: 'dc-current-density', version: '0.1.0' },
@@ -157,6 +158,7 @@ export const dcResolutionStudySimulationCode = `async def simulate(*, sim, tasks
 
 export const dcResolutionStudyExperimentSourceBundle = createExperimentSourceBundle({
   'experiment.tsx': dcResolutionStudyExperimentCode,
+  'geometry.tsx': dcResolutionStudyGeometryCode,
   'simulate.py': dcResolutionStudySimulationCode,
   'tasks/solveCoarse.tsx': dcResolutionStudyCoarseTaskCode,
   'tasks/solveFine.tsx': dcResolutionStudyFineTaskCode,

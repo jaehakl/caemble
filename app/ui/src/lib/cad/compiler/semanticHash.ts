@@ -62,7 +62,7 @@ export async function compiledCadDocumentSemanticHash(
       sources: sourceHashes,
       pythonSource,
       geometryGraph: {
-        roots: compiled.geometryGraph.roots,
+        entryImports: compiled.geometryGraph.entryImports,
         modules: geometryModules,
       },
     }),

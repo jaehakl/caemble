@@ -7,29 +7,21 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import GeometryImport, GeometryPackage, GeometryRepository, GeometryVersion
-from models import (
-    GeometryModuleSnapshot,
-    GeometryRootBinding,
-    GeometrySnapshot,
-    GeometrySnapshotImport,
-)
+from models import GeometryModuleSnapshot, GeometrySnapshot, GeometrySnapshotImport
 from service.geometry.source import (
-    COORDINATE_RE,
     MAX_DEPTH,
+    MAX_ENTRY_IMPORTS,
     MAX_GRAPH_SOURCE_BYTES,
     MAX_IMPORTS,
     MAX_MODULES,
-    MAX_MODULE_SOURCE_BYTES,
-    MAX_ROOTS,
     _bad,
     _coordinate_version_is_bounded,
     _row_coordinate,
     _validate_alias,
-    _validate_coordinate,
-    _validate_sha256,
     analyze_geometry_source,
     module_hash,
     source_hash,
+    COORDINATE_RE,
 )
 
 
@@ -50,19 +42,17 @@ async def _version_rows(
     if lock:
         statement = statement.with_for_update(of=GeometryVersion)
     rows = (await db.execute(statement)).all()
-    result = {}
-    for version, package, repository, namespace in rows:
-        if namespace is None:
-            raise _bad("Geometry owner has no namespace.", code=status.HTTP_409_CONFLICT)
-        result[version.id] = (version, package, repository, namespace)
-    return result
+    return {
+        version.id: (version, package, repository, namespace)
+        for version, package, repository, namespace in rows
+    }
 
 
 async def _resolve_coordinate(
     db: AsyncSession,
     coordinate: str,
     *,
-    owner_id: str,
+    owner_id: str | None,
 ) -> tuple[GeometryVersion, GeometryPackage, GeometryRepository, str] | None:
     match = COORDINATE_RE.fullmatch(coordinate)
     if match is None or not _coordinate_version_is_bounded(coordinate):
@@ -72,7 +62,6 @@ async def _resolve_coordinate(
         .join(GeometryPackage, GeometryVersion.package_id == GeometryPackage.id)
         .join(GeometryRepository, GeometryPackage.repository_id == GeometryRepository.id)
         .where(
-            GeometryRepository.user_id == owner_id,
             GeometryRepository.namespace == match.group("namespace"),
             GeometryRepository.slug == match.group("repository"),
             GeometryPackage.name == match.group("package"),
@@ -81,6 +70,8 @@ async def _resolve_coordinate(
             GeometryVersion.version_patch == int(match.group("patch")),
         )
     )
+    if owner_id is not None:
+        statement = statement.where(GeometryRepository.user_id == owner_id)
     row = (await db.execute(statement)).first()
     return tuple(row) if row is not None else None
 
@@ -93,13 +84,15 @@ async def _load_graph(
 ) -> tuple[
     dict[int, tuple[GeometryVersion, GeometryPackage, GeometryRepository, str]],
     dict[int, list[int]],
+    dict[int, list[tuple[str, str, int]]],
 ]:
-    if len(root_ids) > MAX_ROOTS:
-        raise _bad(f"Geometry graph may contain at most {MAX_ROOTS} roots.")
-    depths = {version_id: 0 for version_id in root_ids}
+    if len(root_ids) > MAX_ENTRY_IMPORTS:
+        raise _bad(f"Geometry entry may import at most {MAX_ENTRY_IMPORTS} modules.")
     edges: dict[int, list[int]] = {}
+    bindings: dict[int, list[tuple[str, str, int]]] = {}
     frontier = set(root_ids)
     queried: set[int] = set()
+    all_ids = set(root_ids)
     while frontier:
         current = frontier - queried
         if not current:
@@ -110,45 +103,47 @@ async def _load_graph(
                 select(
                     GeometryImport.importer_geometry_version_id,
                     GeometryImport.imported_geometry_version_id,
+                    GeometryImport.export_name,
+                    GeometryImport.alias,
                 ).where(GeometryImport.importer_geometry_version_id.in_(current))
             )
         ).all()
         next_frontier: set[int] = set()
-        for importer_id, imported_id in edge_rows:
+        for importer_id, imported_id, export_name, alias in edge_rows:
             edges.setdefault(importer_id, []).append(imported_id)
-            depth = depths[importer_id] + 1
-            if depth > MAX_DEPTH:
-                raise _bad(f"Geometry graph depth exceeds {MAX_DEPTH}.")
-            if imported_id not in depths or depth < depths[imported_id]:
-                depths[imported_id] = depth
+            bindings.setdefault(importer_id, []).append((export_name, alias, imported_id))
             next_frontier.add(imported_id)
+            all_ids.add(imported_id)
         frontier = next_frontier
-        if len(depths) > MAX_MODULES:
+        if len(all_ids) > MAX_MODULES:
             raise _bad(f"Geometry graph may contain at most {MAX_MODULES} modules.")
 
-    rows = await _version_rows(db, set(depths))
-    if len(rows) != len(depths):
+    rows = await _version_rows(db, all_ids)
+    if len(rows) != len(all_ids):
         raise _bad("Geometry dependency graph contains an unresolved version.")
     if any(row[2].user_id != owner_id for row in rows.values()):
         raise _bad("Geometry dependencies must have the same owner.")
-    if len({row[2].namespace for row in rows.values()}) > 1:
-        raise _bad("Geometry dependencies must have the same owner namespace.")
-    for importer_id in rows:
-        edges.setdefault(importer_id, [])
-        if len(edges[importer_id]) > MAX_IMPORTS:
-            raise _bad(f"Geometry modules may import at most {MAX_IMPORTS} modules.")
+    for version_id in rows:
+        edges.setdefault(version_id, [])
+        bindings.setdefault(version_id, [])
+        if len(bindings[version_id]) > MAX_IMPORTS:
+            raise _bad(f"Geometry modules may import at most {MAX_IMPORTS} bindings.")
     _assert_acyclic(edges)
     _assert_max_depth(edges, root_ids)
-    return rows, edges
+    return rows, edges, bindings
 
 
-def _assert_acyclic(edges: dict[Any, list[Any]]) -> None:
+def _assert_acyclic(
+    edges: dict[Any, list[Any]],
+    *,
+    error_code: int = status.HTTP_400_BAD_REQUEST,
+) -> None:
     visiting: set[Any] = set()
     visited: set[Any] = set()
 
     def visit(node: Any) -> None:
         if node in visiting:
-            raise _bad("Geometry dependency graph contains a cycle.")
+            raise _bad("Geometry dependency graph contains a cycle.", code=error_code)
         if node in visited:
             return
         visiting.add(node)
@@ -161,7 +156,12 @@ def _assert_acyclic(edges: dict[Any, list[Any]]) -> None:
         visit(node)
 
 
-def _assert_max_depth(edges: dict[Any, list[Any]], roots: set[Any]) -> None:
+def _assert_max_depth(
+    edges: dict[Any, list[Any]],
+    roots: set[Any],
+    *,
+    error_code: int = status.HTTP_400_BAD_REQUEST,
+) -> None:
     memo: dict[Any, int] = {}
     visiting: set[Any] = set()
 
@@ -170,13 +170,13 @@ def _assert_max_depth(edges: dict[Any, list[Any]], roots: set[Any]) -> None:
         if cached is not None:
             return cached
         if node in visiting:
-            raise _bad("Geometry dependency graph contains a cycle.")
+            raise _bad("Geometry dependency graph contains a cycle.", code=error_code)
         visiting.add(node)
         depth = 1
         for child in edges.get(node, []):
             depth = max(depth, 1 + longest_path(child))
             if depth > MAX_DEPTH:
-                raise _bad(f"Geometry graph depth exceeds {MAX_DEPTH}.")
+                raise _bad(f"Geometry graph depth exceeds {MAX_DEPTH}.", code=error_code)
         visiting.remove(node)
         memo[node] = depth
         return depth
@@ -188,33 +188,61 @@ def _assert_max_depth(edges: dict[Any, list[Any]], roots: set[Any]) -> None:
 def _snapshot_modules(
     rows: dict[int, tuple[GeometryVersion, GeometryPackage, GeometryRepository, str]],
     edges: dict[int, list[int]],
+    bindings: dict[int, list[tuple[str, str, int]]],
 ) -> list[GeometryModuleSnapshot]:
     total_bytes = sum(len(row[0].source.encode("utf-8")) for row in rows.values())
     if total_bytes > MAX_GRAPH_SOURCE_BYTES:
         raise _bad("Geometry graph source exceeds 8 MiB.")
-    modules = []
+    analyses = {
+        version_id: analyze_geometry_source(row[0].source)
+        for version_id, row in rows.items()
+    }
+    modules: list[GeometryModuleSnapshot] = []
     for version_id, row in rows.items():
         version = row[0]
         coordinate = _row_coordinate(row)
-        source_digest = source_hash(version.source)
-        if source_digest != version.source_hash:
+        digest = source_hash(version.source)
+        if digest != version.source_hash:
             raise _bad(f"Stored Geometry source hash is invalid: {coordinate}")
-        analyzed = [item[0] for item in analyze_geometry_source(version.source)]
-        projected = sorted(_row_coordinate(rows[child_id]) for child_id in edges[version_id])
-        if sorted(analyzed) != projected:
-            raise _bad(f"Stored Geometry import projection is invalid: {coordinate}")
-        imports = [
-            GeometrySnapshotImport(
-                geometryVersionId=child_id,
-                coordinate=_row_coordinate(rows[child_id]),
-                moduleHash=rows[child_id][0].module_hash,
-            )
-            for child_id in sorted(edges[version_id], key=lambda item: _row_coordinate(rows[item]))
+        projected = sorted(
+            bindings[version_id],
+            key=lambda item: (item[1], item[0], _row_coordinate(rows[item[2]])),
+        )
+        source_bindings = [
+            (item["exportName"], item["alias"], item["coordinate"])
+            for item in analyses[version_id]["imports"]
         ]
+        projected_bindings = [
+            (export_name, alias, _row_coordinate(rows[child_id]))
+            for export_name, alias, child_id in projected
+        ]
+        if source_bindings != projected_bindings:
+            raise _bad(f"Stored Geometry import projection is invalid: {coordinate}")
+        imports = []
+        for export_name, alias, child_id in projected:
+            if export_name not in analyses[child_id]["exports"]:
+                raise _bad(f"Imported Geometry export does not exist: {export_name}")
+            imports.append(
+                GeometrySnapshotImport(
+                    exportName=export_name,
+                    alias=alias,
+                    geometryVersionId=child_id,
+                    coordinate=_row_coordinate(rows[child_id]),
+                    moduleHash=rows[child_id][0].module_hash,
+                )
+            )
         expected_hash = module_hash(
             coordinate,
-            source_digest,
-            [{"coordinate": item.coordinate, "moduleHash": item.moduleHash} for item in imports],
+            digest,
+            [
+                {
+                    "exportName": item.exportName,
+                    "alias": item.alias,
+                    "coordinate": item.coordinate,
+                    "moduleHash": item.moduleHash,
+                }
+                for item in imports
+            ],
         )
         if expected_hash != version.module_hash:
             raise _bad(f"Stored Geometry module hash is invalid: {coordinate}")
@@ -222,11 +250,11 @@ def _snapshot_modules(
             GeometryModuleSnapshot(
                 geometryVersionId=version_id,
                 coordinate=coordinate,
-                moduleFormatVersion=2,
+                moduleFormatVersion=3,
                 cadApiVersion=5,
                 description=version.description,
                 source=version.source,
-                sourceHash=source_digest,
+                sourceHash=digest,
                 moduleHash=expected_hash,
                 imports=imports,
             )
@@ -236,121 +264,65 @@ def _snapshot_modules(
 
 async def build_snapshot(
     db: AsyncSession,
-    roots: list[tuple[str, int]],
-    *,
-    owner_id: str,
-) -> GeometrySnapshot:
-    rows, edges = await _load_graph(db, {version_id for _, version_id in roots}, owner_id=owner_id)
-    bindings = [
-        GeometryRootBinding(
-            alias=alias,
-            geometryVersionId=version_id,
-            coordinate=_row_coordinate(rows[version_id]),
-            moduleHash=rows[version_id][0].module_hash,
-        )
-        for alias, version_id in sorted(roots)
-    ]
-    return GeometrySnapshot(
-        schemaVersion=1,
-        roots=bindings,
-        modules=_snapshot_modules(rows, edges),
-    )
-
-
-async def validate_snapshot(
-    db: AsyncSession,
-    snapshot: GeometrySnapshot,
+    entry_imports: list[tuple[str, str, int]],
     *,
     owner_id: str | None,
-) -> None:
-    for root in snapshot.roots:
-        _validate_alias(root.alias)
-        _validate_coordinate(root.coordinate)
-        _validate_sha256(root.moduleHash, "root moduleHash")
-    aliases = [root.alias for root in snapshot.roots]
-    if aliases != sorted(aliases):
-        raise _bad(
-            "Geometry roots must be sorted by alias.",
-            code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
+) -> GeometrySnapshot:
+    aliases = [alias for _, alias, _ in entry_imports]
     if len(aliases) != len(set(aliases)):
-        raise _bad(
-            "Geometry root aliases must be unique.",
-            code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
-    root_ids = [root.geometryVersionId for root in snapshot.roots]
-    if len(root_ids) != len(set(root_ids)):
-        raise _bad(
-            "Geometry roots must reference unique Geometry versions.",
-            code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
-    root_coordinates = [root.coordinate for root in snapshot.roots]
-    if len(root_coordinates) != len(set(root_coordinates)):
-        raise _bad(
-            "Geometry root coordinates must be unique.",
-            code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
-
-    coordinates = [module.coordinate for module in snapshot.modules]
-    if coordinates != sorted(coordinates):
-        raise _bad(
-            "Geometry modules must be sorted by coordinate.",
-            code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
-    if len(coordinates) != len(set(coordinates)):
-        raise _bad(
-            "Geometry modules must be unique by coordinate.",
-            code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
-    module_ids = [module.geometryVersionId for module in snapshot.modules]
-    if len(module_ids) != len(set(module_ids)):
-        raise _bad(
-            "Geometry modules must be unique by geometryVersionId.",
-            code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
-
-    total_source_bytes = 0
-    for module in snapshot.modules:
-        _validate_coordinate(module.coordinate)
-        _validate_sha256(module.sourceHash, "sourceHash")
-        _validate_sha256(module.moduleHash, "moduleHash")
-        try:
-            source_bytes = len(module.source.encode("utf-8"))
-        except UnicodeEncodeError as error:
-            raise _bad(
-                "Geometry module source must contain valid UTF-8 text.",
-                code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            ) from error
-        if source_bytes > MAX_MODULE_SOURCE_BYTES:
-            raise _bad(
-                "Geometry module source exceeds 1 MiB.",
-                code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise _bad("Experiment geometry.tsx import aliases must be unique.")
+    root_ids = {version_id for _, _, version_id in entry_imports}
+    rows, edges, bindings = await _load_graph(db, root_ids, owner_id=owner_id)
+    modules = _snapshot_modules(rows, edges, bindings)
+    exports_by_id = {
+        version_id: set(analyze_geometry_source(row[0].source)["exports"])
+        for version_id, row in rows.items()
+    }
+    result = []
+    for export_name, alias, version_id in sorted(
+        entry_imports,
+        key=lambda item: (item[1], item[0], _row_coordinate(rows[item[2]])),
+    ):
+        _validate_alias(export_name)
+        _validate_alias(alias)
+        if export_name not in exports_by_id[version_id]:
+            raise _bad(f"Imported Geometry export does not exist: {export_name}")
+        result.append(
+            GeometrySnapshotImport(
+                exportName=export_name,
+                alias=alias,
+                geometryVersionId=version_id,
+                coordinate=_row_coordinate(rows[version_id]),
+                moduleHash=rows[version_id][0].module_hash,
             )
-        total_source_bytes += source_bytes
-        for imported in module.imports:
-            _validate_coordinate(imported.coordinate)
-            _validate_sha256(imported.moduleHash, "import moduleHash")
-        imported_coordinates = [item.coordinate for item in module.imports]
-        if imported_coordinates != sorted(imported_coordinates):
-            raise _bad(
-                "Geometry module imports must be sorted by coordinate.",
-                code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            )
-        if len(imported_coordinates) != len(set(imported_coordinates)):
-            raise _bad(
-                "Geometry module imports must be unique by coordinate.",
-                code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            )
-    if total_source_bytes > MAX_GRAPH_SOURCE_BYTES:
-        raise _bad(
-            "Geometry graph source exceeds 8 MiB.",
-            code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
+    return GeometrySnapshot(schemaVersion=2, entryImports=result, modules=modules)
 
-    expected = await build_snapshot(
+
+async def build_snapshot_from_entry_source(
+    db: AsyncSession,
+    source: str,
+    *,
+    owner_id: str | None,
+) -> GeometrySnapshot:
+    analysis = analyze_geometry_source(source, allow_empty=True)
+    resolved: dict[str, tuple[GeometryVersion, GeometryPackage, GeometryRepository, str]] = {}
+    for imported in analysis["imports"]:
+        coordinate = imported["coordinate"]
+        if coordinate not in resolved:
+            row = await _resolve_coordinate(db, coordinate, owner_id=owner_id)
+            if row is None:
+                raise _bad(f"Geometry import was not found: {coordinate}", code=status.HTTP_404_NOT_FOUND)
+            resolved[coordinate] = row
+    return await build_snapshot(
         db,
-        [(root.alias, root.geometryVersionId) for root in snapshot.roots],
+        [
+            (
+                imported["exportName"],
+                imported["alias"],
+                resolved[imported["coordinate"]][0].id,
+            )
+            for imported in analysis["imports"]
+        ],
         owner_id=owner_id,
     )
-    if expected.model_dump(mode="json") != snapshot.model_dump(mode="json"):
-        raise _bad("geometrySnapshot does not match the published Geometry graph.")

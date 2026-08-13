@@ -92,7 +92,7 @@ def test_source_migration_graph_continues_to_cae_workbench_indexes():
     root = Path(__file__).resolve().parents[1]
     scripts = ScriptDirectory.from_config(Config(root / "alembic.ini"))
 
-    assert scripts.get_heads() == ["8d4e2f6a1b30"]
+    assert scripts.get_heads() == ["b31f7d9a4c20"]
     assert scripts.get_revision("f24a6b91d3ce").down_revision == "e7b2c5d91a40"
     assert scripts.get_revision("9d31a6f7c2e4").down_revision == "f24a6b91d3ce"
     assert scripts.get_revision("a4c8e2f19b73").down_revision == "9d31a6f7c2e4"
@@ -103,6 +103,7 @@ def test_source_migration_graph_continues_to_cae_workbench_indexes():
     assert scripts.get_revision("4c91e2a7b5d8").down_revision == "f6a8c1d2e3b4"
     assert scripts.get_revision("7b2d8f4a6c10").down_revision == "4c91e2a7b5d8"
     assert scripts.get_revision("8d4e2f6a1b30").down_revision == "7b2d8f4a6c10"
+    assert scripts.get_revision("b31f7d9a4c20").down_revision == "8d4e2f6a1b30"
     assert not any(root.joinpath("alembic", "versions").glob("*_measurement_contract_metadata.py"))
 
 
@@ -262,6 +263,25 @@ def test_function_geometry_revision_discards_v1_data_and_sets_module_format_v2()
         assert f'DELETE FROM {table}' in source
     assert "_set_module_format(2)" in source
     assert "_set_module_format(1)" in source
+
+
+def test_source_geometry_revision_uses_bundle_v4_snapshot_v2_and_module_v3():
+    revision = next(
+        (Path(__file__).resolve().parents[1] / "alembic" / "versions").glob(
+            "*_source_geometry_module_v3.py"
+        )
+    )
+    source = revision.read_text(encoding="utf-8")
+    assert 'down_revision: str | None = "8d4e2f6a1b30"' in source
+    assert '"formatVersion": 4' in source
+    assert 'files["geometry.tsx"] = "export {}\\n"' in source
+    assert '"schemaVersion": 2' in source
+    assert '"entryImports": []' in source
+    assert "_set_module_format(3)" in source
+    assert '"experiment_geometry_imports"' in source
+    assert 'sa.Column("export_name"' in source
+    assert 'sa.Column("alias"' in source
+    assert "_discard_geometry_experiments" in source
 
 
 def test_deployment_preflights_legacy_geometry_before_stopping_api():

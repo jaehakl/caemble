@@ -121,7 +121,7 @@ describe('useCadWorkspace unified Experiment', () => {
   it('keeps the last successful Scene when a same-session edit fails', async () => {
     const edited = updateExperimentSourceFile(document, 'experiment.tsx', 'broken source')
     const render = renderHook(
-      ({ source }) => useCadWorkspace(source, vi.fn(), { fixed: 4, width: 2 }, null, true, undefined, undefined, 1),
+      ({ source }) => useCadWorkspace(source, vi.fn(), { fixed: 4, width: 2 }, null, true, undefined, 1),
       { initialProps: { source: document } },
     )
     await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))

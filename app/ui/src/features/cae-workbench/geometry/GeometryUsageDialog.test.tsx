@@ -4,30 +4,21 @@ import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { GeometryUsageDialog } from './GeometryUsageDialog'
-import { geometryUsageCode } from './geometryUsage'
 
 afterEach(cleanup)
 
 describe('GeometryUsageDialog', () => {
-  it('shows a copyable direct root JSX example and opens experiment.tsx', async () => {
+  it('copies an exact geometry.tsx import and opens geometry.tsx', async () => {
     const user = userEvent.setup()
+    const snippet = 'import { Part as Child } from "caemble:geometry/jlee/common/part@1.0.0"'
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
-    const onOpenExperimentSource = vi.fn()
-    render(
-      <GeometryUsageDialog
-        alias="NotchedConductor"
-        onOpenChange={vi.fn()}
-        onOpenExperimentSource={onOpenExperimentSource}
-        open
-      />,
-    )
-
-    expect(screen.getByText(/<NotchedConductor/)).toBeInTheDocument()
-    expect(screen.getByText(/기본값 없는 필수 props는 Monaco 자동완성/)).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'JSX 복사' }))
-    expect(writeText).toHaveBeenCalledWith(geometryUsageCode('NotchedConductor'))
-    await user.click(screen.getByRole('button', { name: 'experiment.tsx 열기' }))
-    expect(onOpenExperimentSource).toHaveBeenCalledOnce()
+    const open = vi.fn()
+    render(<GeometryUsageDialog snippet={snippet} onOpenChange={vi.fn()} onOpenGeometrySource={open} open />)
+    expect(screen.getByText(snippet)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '코드 복사' }))
+    expect(writeText).toHaveBeenCalledWith(snippet)
+    await user.click(screen.getByRole('button', { name: 'geometry.tsx 열기' }))
+    expect(open).toHaveBeenCalledOnce()
   })
 })

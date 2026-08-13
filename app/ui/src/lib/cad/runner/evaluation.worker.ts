@@ -47,7 +47,12 @@ function handleOperation(value: unknown) {
         documentType: 'geometry',
         sourceHash: request.compiledDocument.sourceHash,
         scene: serializeCadScene(
-          evaluateCompiledGeometryModule(request.compiledDocument, request.coordinate, request.lengthUnit),
+          evaluateCompiledGeometryModule(
+            request.compiledDocument,
+            request.coordinate,
+            request.exportName,
+            request.lengthUnit,
+          ),
         ),
       }
     }

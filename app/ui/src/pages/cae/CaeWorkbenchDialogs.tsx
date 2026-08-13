@@ -23,7 +23,7 @@ export function CaeWorkbenchDialogs({
   authenticated,
   dialog,
   guardReplacement,
-  openExperimentSource,
+  openGeometrySource,
   openTab,
   runSafely,
   setDialog,
@@ -34,7 +34,7 @@ export function CaeWorkbenchDialogs({
   authenticated: boolean
   dialog: WorkbenchDialog
   guardReplacement: (run: () => unknown | Promise<unknown>) => void
-  openExperimentSource: () => void
+  openGeometrySource: () => void
   openTab: (tab: WorkbenchTabId) => void
   runSafely: (run: () => unknown | Promise<unknown>) => void
   setDialog: Dispatch<SetStateAction<WorkbenchDialog>>
@@ -148,9 +148,9 @@ export function CaeWorkbenchDialogs({
                   openTab('geometry')
                 })
               }
-              onOpenExperimentSource={() => {
+              onOpenGeometrySource={() => {
                 setDialog(null)
-                openExperimentSource()
+                openGeometrySource()
               }}
               onOpenExperiment={(experimentId) =>
                 guardReplacement(async () => {
@@ -158,7 +158,9 @@ export function CaeWorkbenchDialogs({
                   setDialog(null)
                 })
               }
-              onUse={(versionId, alias) => workbench.geometry.addRoot(versionId, alias)}
+              onUse={(versionId, exportName, alias) =>
+                workbench.geometry.usePublishedExport(versionId, exportName, alias)
+              }
             />
           </div>
         </DialogContent>

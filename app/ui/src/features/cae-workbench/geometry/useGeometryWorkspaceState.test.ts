@@ -1,367 +1,289 @@
-import { describe, expect, it } from 'vitest'
-import type { GeometryCoordinate } from '@/lib/cad'
-import type { GeometryLocalDraft } from '../types'
+// @vitest-environment jsdom
+
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { createElement, type ReactNode } from 'react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  attachGeometryImportSource,
-  createGeometryPublishRequest,
-  geometryDraftImporters,
-  rebaseNewGeometryDraftConflict,
-  reconcileGeometryDraftNamespace,
-  retainReferencedStagedModules,
-  relatedGeometryRootDrafts,
-  rewriteGeometryRootAliasFiles,
-  suggestGeometryRootAlias,
-} from './useGeometryWorkspaceState'
+  createGeometrySnapshot,
+  geometryModuleHash,
+  geometrySourceHash,
+  type GeometryCoordinate,
+  type LocalGeometryCoordinate,
+} from '@/lib/cad'
+import type { WorkbenchDraft } from '../types'
+import { useGeometryWorkspaceState } from './useGeometryWorkspaceState'
 
-function draft(
-  draftId: string,
-  coordinate: GeometryCoordinate,
-  source: string,
-  baseGeometryVersionId: number | null = null,
-): GeometryLocalDraft {
-  const [, repository, packageAndVersion] = coordinate.split('/').slice(1)
-  const [packageName, version] = packageAndVersion.split('@')
+const api = vi.hoisted(() => ({
+  listRows: vi.fn(async () => ({ total: 0, items: [] })),
+  planPublish: vi.fn(async () => ({
+    planHash: 'a'.repeat(64),
+    steps: [] as { draftId: string }[],
+    replacements: [] as { draftId: string; localCoordinate: string; coordinate: string }[],
+  })),
+  publish: vi.fn(async () => ({
+    planHash: 'a'.repeat(64),
+    published: [],
+    replacements: [] as { draftId: string; localCoordinate: string; coordinate: string }[],
+  })),
+  setNamespace: vi.fn(async (namespace: string) => ({ geometry_namespace: namespace })),
+}))
+
+vi.mock('@/api', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/api')>()
   return {
-    draftId,
-    coordinate,
-    source,
-    description: '',
-    baseGeometryVersionId,
-    repository,
-    packageName,
-    repositoryId: null,
-    packageId: null,
-    version,
-    bump: 'patch',
-    rootAlias: null,
-    standalonePreview: false,
+    ...original,
+    dbTables: {
+      ...original.dbTables,
+      GeometryRepository: { ...original.dbTables.GeometryRepository, listRows: api.listRows },
+    },
+    geometryApi: {
+      ...original.geometryApi,
+      planPublish: api.planPublish,
+      publish: api.publish,
+      setNamespace: api.setNamespace,
+    },
   }
-}
-
-describe('Geometry root aliases', () => {
-  it('rewrites all TSX sources atomically and ignores simulation Python', () => {
-    const result = rewriteGeometryRootAliasFiles(
-      {
-        'experiment.tsx': 'const Main = () => <Block id="main" />',
-        'tasks/solve.tsx': 'const TaskGeometry = Block',
-        'simulate.py': "root = 'Block'",
-      },
-      'Block',
-      'Conductor',
-    )
-    expect(result.references).toBe(2)
-    expect(result.files['experiment.tsx']).toContain('<Conductor')
-    expect(result.files['tasks/solve.tsx']).toContain('= Conductor')
-    expect(result.files['simulate.py']).toBe("root = 'Block'")
-  })
-
-  it('suggests a valid non-conflicting PascalCase alias', () => {
-    expect(suggestGeometryRootAlias('notched-conductor', new Set())).toBe('NotchedConductor')
-    expect(suggestGeometryRootAlias('notched-conductor', new Set(['NotchedConductor', 'NotchedConductor2']))).toBe(
-      'NotchedConductor3',
-    )
-  })
 })
 
-describe('rebaseNewGeometryDraftConflict', () => {
-  it('rekeys a new draft and rewrites only exact import specifiers', () => {
-    const previous = 'caemble:geometry/test-user/common/child@1.0.0' as GeometryCoordinate
-    const next = 'caemble:geometry/test-user/common/child@1.0.1' as GeometryCoordinate
-    const parent = 'caemble:geometry/test-user/common/parent@1.0.0' as GeometryCoordinate
-    const result = rebaseNewGeometryDraftConflict(
-      {
-        [previous]: draft('child', previous, 'const Child = () => <box size={[1, 1, 1]} />; export default Child;'),
-        [parent]: draft(
-          'parent',
-          parent,
-          `import Child from "${previous}";\nconst note = "${previous}";\nconst Parent = () => <Child id="child" />;\nexport default Parent;`,
-        ),
-      },
-      'child',
-      '1.0.1',
-    )
-
-    expect(result?.nextCoordinate).toBe(next)
-    expect(result?.nextVersion).toBe('1.0.1')
-    expect(result?.drafts[previous]).toBeUndefined()
-    expect(result?.drafts[next]?.version).toBe('1.0.1')
-    expect(result?.drafts[parent]?.source).toBe(
-      `import Child from "${next}";\nconst note = "${previous}";\nconst Parent = () => <Child id="child" />;\nexport default Parent;`,
-    )
-  })
-
-  it('skips a suggested coordinate already occupied by another local draft', () => {
-    const previous = 'caemble:geometry/test-user/common/child@1.0.0' as GeometryCoordinate
-    const occupied = 'caemble:geometry/test-user/common/child@1.0.1' as GeometryCoordinate
-    const result = rebaseNewGeometryDraftConflict(
-      {
-        [previous]: draft('child', previous, 'const Child = () => <box size={[1, 1, 1]} />; export default Child;'),
-        [occupied]: draft('other', occupied, 'const Other = () => <box size={[2, 2, 2]} />; export default Other;'),
-      },
-      'child',
-      '1.0.1',
-    )
-
-    expect(result?.nextVersion).toBe('1.0.2')
-    expect(result?.drafts['caemble:geometry/test-user/common/child@1.0.2']).toBeDefined()
-    expect(result?.drafts[occupied]?.draftId).toBe('other')
-  })
-
-  it('keeps an existing-version overlay keyed by its published base coordinate', () => {
-    const coordinate = 'caemble:geometry/test-user/common/child@1.0.0' as GeometryCoordinate
-    expect(
-      rebaseNewGeometryDraftConflict(
-        {
-          [coordinate]: draft(
-            'child-next',
-            coordinate,
-            'const Child = () => <box size={[1, 1, 1]} />; export default Child;',
-            7,
-          ),
-        },
-        'child-next',
-        '1.0.2',
-      ),
-    ).toBeNull()
-  })
-
-  it('preserves an unrelated malformed draft while rebasing valid references', () => {
-    const previous = 'caemble:geometry/test-user/common/child@1.0.0' as GeometryCoordinate
-    const parent = 'caemble:geometry/test-user/common/parent@1.0.0' as GeometryCoordinate
-    const malformed = 'caemble:geometry/test-user/common/broken@1.0.0' as GeometryCoordinate
-    const result = rebaseNewGeometryDraftConflict(
-      {
-        [previous]: draft('child', previous, 'const Child = () => <box size={[1, 1, 1]} />; export default Child;'),
-        [parent]: draft(
-          'parent',
-          parent,
-          `import Child from "${previous}";\nconst Parent = () => <Child id="child" />;\nexport default Parent;`,
-        ),
-        [malformed]: draft('broken', malformed, 'export default <box>'),
-      },
-      'child',
-      '1.0.1',
-    )
-
-    expect(result?.drafts[malformed]?.source).toBe('export default <box>')
-    expect(result?.drafts[parent]?.source).toContain('child@1.0.1')
-  })
-})
-
-describe('Geometry local draft relationships', () => {
-  it('rekeys only drafts for a not-yet-created repository when the default namespace changes', () => {
-    const fresh = 'caemble:geometry/old-default/common/fresh@1.0.0' as GeometryCoordinate
-    const importer = 'caemble:geometry/old-default/common/importer@1.0.0' as GeometryCoordinate
-    const repositoryDraft = 'caemble:geometry/history/common/history@1.0.0' as GeometryCoordinate
-    const versionDraft = 'caemble:geometry/history/common/versioned@1.0.0' as GeometryCoordinate
-    const inputs = {
-      [fresh]: draft('fresh', fresh, 'const Fresh = () => <box />; export default Fresh;'),
-      [importer]: draft(
-        'importer',
-        importer,
-        `import Fresh from "${fresh}";\nconst Importer = () => <Fresh id="fresh" />;\nexport default Importer;`,
-      ),
-      [repositoryDraft]: {
-        ...draft('repository', repositoryDraft, 'const History = () => <box />; export default History;'),
-        repositoryId: 11,
-      },
-      [versionDraft]: draft('version', versionDraft, 'const Versioned = () => <box />; export default Versioned;', 17),
-    }
-
-    const result = reconcileGeometryDraftNamespace(inputs, 'new-default')
-
-    const nextFresh = 'caemble:geometry/new-default/common/fresh@1.0.0'
-    const nextImporter = 'caemble:geometry/new-default/common/importer@1.0.0'
-    expect(result.drafts[nextFresh]?.draftId).toBe('fresh')
-    expect(result.drafts[nextImporter]?.source).toContain(nextFresh)
-    expect(result.drafts[repositoryDraft]?.repositoryId).toBe(11)
-    expect(result.drafts[versionDraft]?.baseGeometryVersionId).toBe(17)
-  })
-
-  it('rejects namespace reconciliation before mutation when an exact target is reserved', () => {
-    const coordinate = 'caemble:geometry/old-default/common/fresh@1.0.0' as GeometryCoordinate
-    expect(() =>
-      reconcileGeometryDraftNamespace(
-        { [coordinate]: draft('fresh', coordinate, 'const Fresh = () => <box />; export default Fresh;') },
-        'new-default',
-        new Set(['caemble:geometry/new-default/common/fresh@1.0.0']),
-      ),
-    ).toThrow('new-default')
-  })
-
-  it('finds exact AST importers of a new draft without treating text literals as imports', () => {
-    const child = 'caemble:geometry/test-user/common/child@1.0.0' as GeometryCoordinate
-    const parent = 'caemble:geometry/test-user/common/parent@1.0.0' as GeometryCoordinate
-    const note = 'caemble:geometry/test-user/common/note@1.0.0' as GeometryCoordinate
-    const drafts = {
-      [child]: draft('child', child, 'const Child = () => <box size={[1, 1, 1]} />; export default Child;'),
-      [parent]: draft(
-        'parent',
-        parent,
-        `import Child from "${child}";\nconst Parent = () => <Child id="child" />;\nexport default Parent;`,
-      ),
-      [note]: draft(
-        'note',
-        note,
-        `const note = "${child}";\nconst Note = () => <box size={[1, 1, 1]} />;\nexport default Note;`,
-      ),
-    }
-
-    expect(geometryDraftImporters(drafts, child).map((item) => item.draftId)).toEqual(['parent'])
-  })
-
-  it('selects only local roots whose dependency path reaches the publish target', () => {
-    const child = 'caemble:geometry/test-user/common/child@1.0.0' as GeometryCoordinate
-    const parent = 'caemble:geometry/test-user/common/parent@1.0.0' as GeometryCoordinate
-    const relatedRoot = 'caemble:geometry/test-user/common/assembly@1.0.0' as GeometryCoordinate
-    const unrelatedRoot = 'caemble:geometry/test-user/common/other@1.0.0' as GeometryCoordinate
-    const drafts = {
-      [child]: draft('child', child, 'const Child = () => <box size={[1, 1, 1]} />; export default Child;'),
-      [parent]: draft(
-        'parent',
-        parent,
-        `import Child from "${child}";\nconst Parent = () => <Child id="child" />;\nexport default Parent;`,
-      ),
-      [relatedRoot]: {
-        ...draft(
-          'related-root',
-          relatedRoot,
-          `import Parent from "${parent}";\nconst Assembly = () => <Parent id="parent" />;\nexport default Assembly;`,
-        ),
-        rootAlias: 'Assembly',
-      },
-      [unrelatedRoot]: {
-        ...draft(
-          'unrelated-root',
-          unrelatedRoot,
-          'const Other = () => <box size={[2, 2, 2]} />; export default Other;',
-        ),
-        rootAlias: 'Other',
-      },
-    }
-
-    expect(relatedGeometryRootDrafts(drafts, 'child').map((item) => item.draftId)).toEqual(['related-root'])
-    expect(relatedGeometryRootDrafts(drafts, 'unrelated-root').map((item) => item.draftId)).toEqual(['unrelated-root'])
-  })
-
-  it('adds an exact import and combines the previous export with lowercase union', () => {
-    const child = 'caemble:geometry/test-user/common/child@1.0.0' as GeometryCoordinate
-
-    expect(
-      attachGeometryImportSource(
-        'const Parent = () => <box />;\nexport default Parent;',
-        child,
-        'GeometryChild',
-        '<GeometryChild id="child" />',
-      ),
-    ).toBe(
-      `import GeometryChild from "${child}";\nconst Parent = () => <union>{<box />}<GeometryChild id="child" /></union>;\nexport default Parent;`,
-    )
-  })
-
-  it('composes one top-level block return and rejects conditional returns', () => {
-    const child = 'caemble:geometry/test-user/common/child@1.0.0' as GeometryCoordinate
-    const source = `const Parent = () => {
-  const size = [1, 1, 1] as const
-  return <box size={size} />
+function wrapper({ children }: { children: ReactNode }) {
+  return createElement(QueryClientProvider, { client: new QueryClient() }, children)
 }
-export default Parent`
 
-    expect(attachGeometryImportSource(source, child, 'Child', '<Child id="child" />')).toContain(
-      'return <union>{<box size={size} />}<Child id="child" /></union>',
+const emptySnapshot = { schemaVersion: 2 as const, entryImports: [], modules: [] }
+const sourceFiles = {
+  'experiment.tsx': 'export default 1',
+  'geometry.tsx': 'export {}\n',
+  'simulate.py': 'pass',
+  'tasks/main.tsx': 'export default 1',
+}
+
+describe('source-based Geometry workspace state', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('creates a standalone @local draft with a named multi-export compatible template', () => {
+    const { result } = renderHook(
+      () =>
+        useGeometryWorkspaceState({
+          initialNamespace: 'jlee',
+          onExperimentChange: vi.fn(),
+          snapshot: emptySnapshot,
+          sourceFiles,
+        }),
+      { wrapper },
     )
-    expect(() =>
-      attachGeometryImportSource(
-        'const Parent = () => { if (true) return <box /> }\nexport default Parent',
-        child,
-        'Child',
-        '<Child id="child" />',
-      ),
-    ).toThrow('one top-level return')
-  })
-
-  it('blocks publish-only for an imported new draft and excludes unrelated local roots from apply', () => {
-    const child = 'caemble:geometry/test-user/common/child@1.0.0' as GeometryCoordinate
-    const parent = 'caemble:geometry/test-user/common/parent@1.0.0' as GeometryCoordinate
-    const other = 'caemble:geometry/test-user/common/other@1.0.0' as GeometryCoordinate
-    const inputs = {
-      [child]: draft('child', child, 'const Child = () => <box />; export default Child;'),
-      [parent]: {
-        ...draft(
-          'parent',
-          parent,
-          `import Child from "${child}";\nconst Parent = () => <Child id="child" />;\nexport default Parent;`,
-        ),
-        rootAlias: 'Parent',
-      },
-      [other]: { ...draft('other', other, 'const Other = () => <box />; export default Other;'), rootAlias: 'Other' },
-    }
-
-    expect(() => createGeometryPublishRequest(inputs, [], child, false)).toThrow('Publish & Apply')
-    expect(createGeometryPublishRequest(inputs, [], child, true).currentRoots).toEqual([
-      { alias: 'Parent', draftId: 'parent' },
-    ])
-  })
-
-  it('keeps repository identity in publish input and blocks apply for a standalone preview', () => {
-    const coordinate = 'caemble:geometry/history/common/part@1.0.0' as GeometryCoordinate
-    const standalone = {
-      ...draft('standalone', coordinate, 'const Standalone = () => <box />; export default Standalone;'),
-      repositoryId: 21,
-      standalonePreview: true,
-    }
-
-    expect(createGeometryPublishRequest({ [coordinate]: standalone }, [], coordinate, false).drafts[0]).toMatchObject({
-      draftId: 'standalone',
-      repositoryId: 21,
-      repository: 'common',
+    act(() => {
+      result.current.createDraft({ repository: 'common', packageName: 'notched-conductor' })
     })
-    expect(() => createGeometryPublishRequest({ [coordinate]: standalone }, [], coordinate, true)).toThrow(
-      'Publish only',
+    const draft = Object.values(result.current.drafts)[0]
+    expect(draft.coordinate).toBe('caemble:geometry/jlee/common/notched-conductor@local')
+    expect(draft.source).toContain('export const NotchedConductor')
+    expect(draft.source).not.toContain('export default')
+    expect(draft.standalonePreview).toBe(true)
+  })
+
+  it('rekeys only new-repository local coordinates before changing namespace', async () => {
+    const onExperimentChange = vi.fn()
+    const { result } = renderHook(
+      () =>
+        useGeometryWorkspaceState({
+          initialNamespace: 'old-user',
+          onExperimentChange,
+          snapshot: emptySnapshot,
+          sourceFiles,
+        }),
+      { wrapper },
+    )
+    act(() => {
+      result.current.createDraft({ repository: 'common', packageName: 'part' })
+      result.current.setSelectedCoordinate('geometry.tsx')
+      result.current.updateSource(
+        'import { Part } from "caemble:geometry/old-user/common/part@local"\nexport { Part }\n',
+      )
+    })
+    await act(() => result.current.setNamespace('new-user'))
+    expect(api.setNamespace).toHaveBeenCalledWith('new-user')
+    expect(result.current.drafts['caemble:geometry/new-user/common/part@local']).toBeDefined()
+    expect(result.current.entrySource).toContain('caemble:geometry/new-user/common/part@local')
+    expect(onExperimentChange).toHaveBeenCalled()
+  })
+
+  it('promotes the selected published occurrence and its importer path on the first source edit', async () => {
+    const coordinate = 'caemble:geometry/jlee/common/part@1.0.0' as GeometryCoordinate
+    const publishedSource = `import { type Geometry } from '@caemble/core'\nexport const Part: Geometry = () => <box size={[1, 1, 1]} />\n`
+    const sourceHash = await geometrySourceHash(publishedSource)
+    const module = {
+      geometryVersionId: 9,
+      coordinate,
+      moduleFormatVersion: 3 as const,
+      cadApiVersion: 5 as const,
+      description: null,
+      source: publishedSource,
+      sourceHash,
+      moduleHash: '',
+      imports: [],
+    }
+    module.moduleHash = await geometryModuleHash(module)
+    const snapshot = createGeometrySnapshot(
+      [{ exportName: 'Part', alias: 'Part', geometryVersionId: 9, coordinate, moduleHash: module.moduleHash }],
+      [module],
+    )
+    const files = {
+      ...sourceFiles,
+      'geometry.tsx': `import { Part } from "${coordinate}"\nexport { Part }\n`,
+    }
+    const { result } = renderHook(
+      () =>
+        useGeometryWorkspaceState({
+          initialNamespace: 'jlee',
+          onExperimentChange: vi.fn(),
+          snapshot,
+          sourceFiles: files,
+        }),
+      { wrapper },
+    )
+    await waitFor(() => expect(result.current.effectiveGraph).not.toBeNull())
+    act(() => {
+      result.current.selectOccurrence(coordinate, [{ parent: 'geometry.tsx', alias: 'Part', coordinate }], 'Part')
+    })
+    act(() => {
+      result.current.updateSource(publishedSource.replace('[1, 1, 1]', '[2, 2, 2]'))
+    })
+    const local = 'caemble:geometry/jlee/common/part@local'
+    expect(result.current.drafts[local]?.source).toContain('[2, 2, 2]')
+    expect(result.current.entrySource).toContain(local)
+    expect(result.current.selectedCoordinate).toBe(local)
+    expect(result.current.hasReachableDrafts).toBe(true)
+  })
+
+  it('publishes only the target local closure and ignores an unrelated invalid standalone draft', async () => {
+    const { result } = renderHook(
+      () =>
+        useGeometryWorkspaceState({
+          initialNamespace: 'jlee',
+          onExperimentChange: vi.fn(),
+          snapshot: emptySnapshot,
+          sourceFiles,
+        }),
+      { wrapper },
+    )
+    let target = '' as LocalGeometryCoordinate
+    act(() => {
+      target = result.current.createDraft({ repository: 'common', packageName: 'target' })
+      result.current.createDraft({ repository: 'common', packageName: 'unrelated' })
+    })
+    act(() => {
+      result.current.updateSource('export const Broken = <box />')
+    })
+    await act(() => result.current.requestPublish(target))
+    expect(api.planPublish).toHaveBeenCalledWith(
+      expect.objectContaining({ drafts: [expect.objectContaining({ package: 'target' })] }),
     )
   })
 
-  it('keeps the full immutable staging closure while a draft references its root', () => {
-    const parent = 'caemble:geometry/test-user/common/parent@1.0.0' as GeometryCoordinate
-    const stagedRoot = 'caemble:geometry/test-user/common/staged@1.0.0' as GeometryCoordinate
-    const stagedChild = 'caemble:geometry/test-user/common/staged-child@1.0.0' as GeometryCoordinate
-    const hash = 'a'.repeat(64)
-    const modules = [
-      {
-        geometryVersionId: 7,
-        coordinate: stagedRoot,
-        moduleFormatVersion: 2 as const,
-        cadApiVersion: 5 as const,
-        description: null,
-        source: `import Child from "${stagedChild}";\nconst Staged = () => <Child id="child" />;\nexport default Staged;`,
-        sourceHash: hash,
-        moduleHash: hash,
-        imports: [{ geometryVersionId: 8, coordinate: stagedChild, moduleHash: hash }],
-      },
-      {
-        geometryVersionId: 8,
-        coordinate: stagedChild,
-        moduleFormatVersion: 2 as const,
-        cadApiVersion: 5 as const,
-        description: null,
-        source: 'const StagedChild = () => <box />; export default StagedChild;',
-        sourceHash: hash,
-        moduleHash: hash,
-        imports: [],
-      },
-    ]
-    const inputs = {
-      [parent]: draft(
-        'parent',
-        parent,
-        `import Staged from "${stagedRoot}";\nconst Parent = () => <Staged id="staged" />;\nexport default Parent;`,
-      ),
-    }
+  it('keeps an unrelated syntactically invalid draft when applying a completed publish', async () => {
+    const { result } = renderHook(
+      () =>
+        useGeometryWorkspaceState({
+          initialNamespace: 'jlee',
+          onExperimentChange: vi.fn(),
+          snapshot: emptySnapshot,
+          sourceFiles,
+        }),
+      { wrapper },
+    )
+    let target = '' as LocalGeometryCoordinate
+    act(() => {
+      target = result.current.createDraft({ repository: 'common', packageName: 'target' })
+      result.current.createDraft({ repository: 'common', packageName: 'unrelated' })
+    })
+    act(() => {
+      result.current.updateSource('export const Broken = <box />')
+    })
+    const targetDraft = result.current.drafts[target]
+    const exact = 'caemble:geometry/jlee/common/target@0.1.0'
+    const replacements = [{ draftId: targetDraft.draftId, localCoordinate: target, coordinate: exact }]
+    api.planPublish.mockResolvedValueOnce({
+      planHash: 'b'.repeat(64),
+      steps: [{ draftId: targetDraft.draftId }],
+      replacements,
+    })
+    api.publish.mockResolvedValueOnce({ planHash: 'b'.repeat(64), published: [], replacements })
 
-    expect(retainReferencedStagedModules(inputs, modules)).toEqual(modules)
-    expect(retainReferencedStagedModules({}, modules)).toEqual([])
-    expect(
-      retainReferencedStagedModules({ [parent]: draft('parent', parent, 'export default <union>') }, modules),
-    ).toEqual(modules)
+    await act(() => result.current.requestPublish(target))
+    await act(() => result.current.confirmPublish())
+
+    expect(api.publish).toHaveBeenCalled()
+    expect(result.current.drafts[target]).toBeUndefined()
+    expect(Object.values(result.current.drafts)[0]?.source).toBe('export const Broken = <box />')
+  })
+
+  it('refreshes the publish plan instead of publishing source changed behind the dialog', async () => {
+    const { result } = renderHook(
+      () =>
+        useGeometryWorkspaceState({
+          initialNamespace: 'jlee',
+          onExperimentChange: vi.fn(),
+          snapshot: emptySnapshot,
+          sourceFiles,
+        }),
+      { wrapper },
+    )
+    let target = '' as LocalGeometryCoordinate
+    act(() => {
+      target = result.current.createDraft({ repository: 'common', packageName: 'target' })
+    })
+    await act(() => result.current.requestPublish(target))
+    act(() =>
+      result.current.updateSource(result.current.drafts[target].source.replace('[100, 12, 10]', '[50, 12, 10]')),
+    )
+    await act(() => result.current.confirmPublish())
+
+    expect(api.planPublish).toHaveBeenCalledTimes(2)
+    expect(api.publish).not.toHaveBeenCalled()
+    expect(result.current.publishPlan?.request.drafts[0].source).toContain('[50, 12, 10]')
+  })
+
+  it('reconciles restored new-repository drafts to the current namespace without changing based drafts', () => {
+    const { result } = renderHook(
+      () =>
+        useGeometryWorkspaceState({
+          initialNamespace: 'new-user',
+          onExperimentChange: vi.fn(),
+          snapshot: emptySnapshot,
+          sourceFiles,
+        }),
+      { wrapper },
+    )
+    const previous = 'caemble:geometry/old-user/common/part@local' as LocalGeometryCoordinate
+    const restored = {
+      drafts: {
+        [previous]: {
+          draftId: 'draft-1',
+          coordinate: previous,
+          source: `import { type Geometry } from '@caemble/core'\nexport const Part: Geometry = () => <box />`,
+          description: '',
+          baseGeometryVersionId: null,
+          repository: 'common',
+          packageName: 'part',
+          repositoryId: null,
+          packageId: null,
+          version: '0.1.0',
+          bump: 'patch' as const,
+          standalonePreview: false,
+        },
+      },
+      stagedModules: [],
+      selectedCoordinate: previous,
+      selectedExport: 'Part',
+      expandedPaths: [`Part:${previous}`],
+    } satisfies WorkbenchDraft['geometry']
+    act(() => {
+      result.current.restore(restored, `import { Part } from "${previous}"\nexport { Part }\n`)
+    })
+    const current = 'caemble:geometry/new-user/common/part@local'
+    expect(result.current.drafts[current]).toBeDefined()
+    expect(result.current.entrySource).toContain(current)
+    expect(result.current.selectedCoordinate).toBe(current)
   })
 })

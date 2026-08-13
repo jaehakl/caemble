@@ -1,5 +1,5 @@
 export { evaluateCad, evaluateCadScene } from './evaluation/evaluator'
-export { setGeometryAuthoringGraph, setGeometryAuthoringRootsEnabled } from './compiler/geometryTypeEnvironment'
+export { setGeometryAuthoringGraph } from './compiler/geometryTypeEnvironment'
 export type { GeometryTypeGraph } from './compiler/geometryTypes'
 export { cadElementCatalog } from './catalog'
 export { applyCadSceneGroups } from './evaluation/groups'
@@ -88,9 +88,9 @@ export {
   CAD_SOURCE_FORMAT_VERSION,
   MAX_CAD_SOURCE_BYTES,
   EXPERIMENT_ENTRY_PATH,
+  EXPERIMENT_GEOMETRY_PATH,
   EXPERIMENT_SIMULATION_PATH,
   EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION,
-  EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION,
   addExperimentTask,
   assertCadSourceDocument,
   assertExperimentSourceBundle,
@@ -98,22 +98,18 @@ export {
   cadSourceHash,
   createCadSourceDocument,
   createExperimentSourceBundle,
-  createExperimentSourceBundleV3,
   experimentSourceFile,
   experimentTaskName,
   experimentTaskPaths,
   removeExperimentTask,
   updateCadSource,
   updateExperimentSourceFile,
-  upgradeExperimentSourceBundleV3,
 } from './source/document'
 export type {
   CadDocumentType,
   CadEvaluationInput,
   CadSourceDocument,
   ExperimentSourceBundle,
-  ExperimentSourceBundleV2,
-  ExperimentSourceBundleV3,
   ExperimentSourceDocument,
 } from './source/document'
 export {
@@ -125,7 +121,7 @@ export {
   MAX_GEOMETRY_IMPORTS_PER_MODULE,
   MAX_GEOMETRY_MODULES,
   MAX_GEOMETRY_MODULE_SOURCE_BYTES,
-  MAX_GEOMETRY_ROOTS,
+  MAX_GEOMETRY_ENTRY_IMPORTS,
   MAX_GEOMETRY_SEMVER_COMPONENT,
   assertGeometryCoordinate,
   assertGeometrySnapshot,
@@ -135,30 +131,25 @@ export {
   geometryCoordinateNamespace,
   geometrySourceHash,
   isGeometryCoordinate,
-  isGeometryRootAlias,
+  isGeometryComponentName,
   validateGeometrySnapshotHashes,
 } from './source/geometrySnapshot'
 export type {
   GeometryCoordinate,
+  LocalGeometryCoordinate,
   GeometrySnapshot,
   GeometrySnapshotImport,
   GeometrySnapshotModule,
-  GeometrySnapshotRoot,
 } from './source/geometrySnapshot'
 export { createEffectiveGeometryGraph } from './source/effectiveGeometryGraph'
 export type {
   EffectiveGeometryGraph,
   EffectiveGeometryModule,
   GeometryDraftOverlay,
-  GeometryDraftRoot,
+  GeometryModuleCoordinate,
   GeometryModuleDraft,
 } from './source/effectiveGeometryGraph'
-export {
-  analyzeGeometrySource,
-  rewriteGeometryImportCoordinates,
-  rewriteGeometryRootAlias,
-  validateGeometryUsage,
-} from './source/sourceAnalysis'
+export { analyzeGeometrySource } from './source/sourceAnalysis'
 export {
   CadDocumentEvaluationError,
   evaluateDocument,

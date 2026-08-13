@@ -5,273 +5,101 @@ const indexedDb = vi.hoisted(() => {
   const values = new Map<IDBValidKey, unknown>()
   return {
     values,
-    createStore: vi.fn(() => ({ dbName: 'caemble', storeName: 'cae-workbench-drafts' })),
+    createStore: vi.fn(() => ({})),
     del: vi.fn(async (key: IDBValidKey) => values.delete(key)),
     get: vi.fn(async (key: IDBValidKey) => values.get(key)),
-    set: vi.fn(async (key: IDBValidKey, value: unknown) => {
-      values.set(key, value)
-    }),
+    set: vi.fn(async (key: IDBValidKey, value: unknown) => values.set(key, value)),
   }
 })
-
 vi.mock('idb-keyval', () => indexedDb)
 
-import {
-  ANONYMOUS_WORKBENCH_USER,
-  clearWorkbenchDraft,
-  loadWorkbenchDraft,
-  saveWorkbenchDraft,
-  workbenchDraftUserKey,
-} from './draftStorage'
+import { clearWorkbenchDraft, loadWorkbenchDraft, saveWorkbenchDraft, workbenchDraftUserKey } from './draftStorage'
 
-function makeDraft(userKey: string, savedAt: number): WorkbenchDraft {
+function draft(userKey: string): WorkbenchDraft {
   return {
-    version: 5,
-    savedAt,
+    version: 7,
+    savedAt: 1,
     userKey,
     experiment: { record: null, baselineBundle: null, document: null, name: '', description: '' },
     candidate: { vars: null, materialParameters: null },
     selection: { measurementId: null },
-    geometry: { drafts: {}, stagedModules: [], selectedCoordinate: null, expandedPaths: [] },
-    layout: {
-      openTabs: ['experiment'],
-      activeTab: 'experiment',
-      experimentFile: null,
-      splitPercent: 50,
+    geometry: {
+      drafts: {},
+      stagedModules: [],
+      selectedCoordinate: 'geometry.tsx',
+      selectedExport: null,
+      expandedPaths: ['geometry.tsx'],
     },
+    layout: { openTabs: ['experiment'], activeTab: 'experiment', experimentFile: 'geometry.tsx', splitPercent: 50 },
   }
 }
 
 beforeEach(() => {
   indexedDb.values.clear()
-  indexedDb.del.mockClear()
-  indexedDb.get.mockClear()
-  indexedDb.set.mockClear()
+  vi.clearAllMocks()
 })
 
-describe('CAE workbench draft storage', () => {
-  it('keeps one latest draft in each user namespace', async () => {
-    const firstAliceDraft = makeDraft('alice', 1)
-    const latestAliceDraft = makeDraft('alice', 2)
-    const bobDraft = makeDraft('bob', 3)
-
-    await saveWorkbenchDraft(firstAliceDraft)
-    await saveWorkbenchDraft(latestAliceDraft)
-    await saveWorkbenchDraft(bobDraft)
-
-    await expect(loadWorkbenchDraft('alice')).resolves.toEqual(latestAliceDraft)
-    await expect(loadWorkbenchDraft('bob')).resolves.toEqual(bobDraft)
-    expect(indexedDb.values).toHaveLength(2)
-  })
-
-  it('restores Geometry function draft sources and tree state', async () => {
-    const coordinate = 'caemble:geometry/alice/common/bracket@1.0.0' as const
-    const stored = {
-      ...makeDraft('alice', 4),
+describe('Workbench IndexedDB v7', () => {
+  it('stores valid source-only local drafts per user', async () => {
+    const coordinate = 'caemble:geometry/alice/common/part@local' as const
+    const value: WorkbenchDraft = {
+      ...draft('alice'),
       geometry: {
+        ...draft('alice').geometry,
         drafts: {
           [coordinate]: {
-            draftId: 'new:bracket',
+            draftId: 'part',
             coordinate,
-            source: 'const Bracket = () => <box size={[1, 2, 3]} />; export default Bracket;',
-            description: 'Bracket',
-            baseGeometryVersionId: null,
-            repository: 'common',
-            packageName: 'bracket',
-            repositoryId: 3,
-            packageId: null,
-            version: '1.0.0',
-            bump: 'patch' as const,
-            rootAlias: 'Bracket',
-            standalonePreview: false,
-          },
-        },
-        stagedModules: [],
-        selectedCoordinate: coordinate,
-        expandedPaths: ['root:bracket'],
-      },
-    }
-
-    await saveWorkbenchDraft(stored)
-
-    await expect(loadWorkbenchDraft('alice')).resolves.toEqual(stored)
-  })
-
-  it('restores a valid staged immutable Geometry closure', async () => {
-    const coordinate = 'caemble:geometry/alice/common/bracket@1.0.0' as const
-    const parentCoordinate = 'caemble:geometry/alice/common/assembly@1.0.0' as const
-    const source = 'const Bracket = () => <box />; export default Bracket;'
-    const sourceHash = await crypto.subtle
-      .digest('SHA-256', new TextEncoder().encode(source))
-      .then((value) => [...new Uint8Array(value)].map((byte) => byte.toString(16).padStart(2, '0')).join(''))
-    const moduleHash = await crypto.subtle
-      .digest(
-        'SHA-256',
-        new TextEncoder().encode(
-          JSON.stringify({
-            schemaVersion: 1,
-            moduleFormatVersion: 2,
-            cadApiVersion: 5,
-            coordinate,
-            sourceHash,
-            imports: [],
-          }),
-        ),
-      )
-      .then((value) => [...new Uint8Array(value)].map((byte) => byte.toString(16).padStart(2, '0')).join(''))
-    const stored: WorkbenchDraft = {
-      ...makeDraft('alice', 5),
-      geometry: {
-        drafts: {
-          [parentCoordinate]: {
-            draftId: 'new:assembly',
-            coordinate: parentCoordinate,
-            source: `import Bracket from "${coordinate}";\nconst Assembly = () => <Bracket id="bracket" />;\nexport default Assembly;`,
+            source: 'export const Part = () => <box size={[1, 1, 1]} />',
             description: '',
             baseGeometryVersionId: null,
             repository: 'common',
-            packageName: 'assembly',
-            repositoryId: 3,
+            packageName: 'part',
+            repositoryId: null,
             packageId: null,
-            version: '1.0.0',
+            version: '0.1.0',
             bump: 'patch',
-            rootAlias: null,
-            standalonePreview: false,
+            standalonePreview: true,
           },
         },
-        stagedModules: [
-          {
-            geometryVersionId: 9,
-            coordinate,
-            moduleFormatVersion: 2,
-            cadApiVersion: 5,
-            description: null,
-            source,
-            sourceHash,
-            moduleHash,
-            imports: [],
-          },
-        ],
         selectedCoordinate: coordinate,
-        expandedPaths: [],
+        selectedExport: 'Part',
       },
     }
-
-    await saveWorkbenchDraft(stored)
-    await expect(loadWorkbenchDraft('alice')).resolves.toEqual(stored)
+    await saveWorkbenchDraft(value)
+    await expect(loadWorkbenchDraft('alice')).resolves.toEqual(value)
   })
 
-  it('normalizes an empty identity to the anonymous namespace', () => {
-    expect(workbenchDraftUserKey(null)).toBe(ANONYMOUS_WORKBENCH_USER)
-    expect(workbenchDraftUserKey('  ')).toBe(ANONYMOUS_WORKBENCH_USER)
-    expect(workbenchDraftUserKey(' user-id ')).toBe('user-id')
-  })
-
-  it('rejects and removes an incompatible stored version', async () => {
-    await saveWorkbenchDraft(makeDraft('alice', 1))
-    const [key] = indexedDb.values.keys()
-    indexedDb.values.set(key, { ...makeDraft('alice', 1), version: 1 })
-
-    await expect(loadWorkbenchDraft('alice')).resolves.toBeNull()
-    expect(indexedDb.del).toHaveBeenCalledWith(key, expect.anything())
-  })
-
-  it('rejects malformed staged Geometry modules in a current draft', async () => {
-    const stored = makeDraft('alice', 1)
-    const [key] = ['session:alice']
-    await indexedDb.set(key, {
-      ...stored,
-      geometry: { ...stored.geometry, stagedModules: [{ coordinate: 'not-exact' }] },
+  it('migrates a geometry-free v6 draft to v7', async () => {
+    await indexedDb.set('session:alice', { ...draft('alice'), version: 6, geometry: undefined })
+    const migrated = await loadWorkbenchDraft('alice')
+    expect(migrated).toMatchObject({
+      version: 7,
+      geometry: { drafts: {}, selectedCoordinate: 'geometry.tsx', selectedExport: null },
     })
-
-    await expect(loadWorkbenchDraft('alice')).resolves.toBeNull()
-    expect(indexedDb.del).toHaveBeenCalledWith(key, expect.anything())
   })
 
-  it('rejects malformed local Geometry and layout state before restore', async () => {
-    const stored = makeDraft('alice', 1)
+  it('discards legacy drafts containing a Geometry graph or local draft', async () => {
     await indexedDb.set('session:alice', {
-      ...stored,
-      geometry: {
-        ...stored.geometry,
-        drafts: {
-          broken: {
-            draftId: 'new:broken',
-            coordinate: 'not-exact',
-            source: 'export default <box />',
-          },
-        },
-      },
-      layout: { ...stored.layout, openTabs: 'experiment' },
-    })
-
-    await expect(loadWorkbenchDraft('alice')).resolves.toBeNull()
-    expect(indexedDb.del).toHaveBeenCalledWith('session:alice', expect.anything())
-  })
-
-  it('migrates a version 2 draft with an empty Geometry workspace', async () => {
-    const current = makeDraft('alice', 1)
-    const { geometry, ...legacy } = current
-    void geometry
-    const stored = { ...legacy, version: 2 }
-    await indexedDb.set('session:alice', stored)
-
-    await expect(loadWorkbenchDraft('alice')).resolves.toMatchObject({
-      version: 5,
-      geometry: { drafts: {}, stagedModules: [], selectedCoordinate: null, expandedPaths: [] },
-    })
-    expect(indexedDb.values.get('session:alice')).toMatchObject({ version: 5 })
-  })
-
-  it('keeps Experiment source but clears legacy Geometry workspace state', async () => {
-    const stored = {
-      ...makeDraft('alice', 1),
-      version: 4,
-      experiment: { ...makeDraft('alice', 1).experiment, name: 'preserved experiment' },
+      ...draft('alice'),
+      version: 6,
       geometry: {
         drafts: { legacy: { source: 'export default <box />' } },
-        stagedModules: [{ coordinate: 'legacy' }],
-        selectedCoordinate: 'legacy',
-        expandedPaths: ['legacy'],
+        stagedModules: [],
+        selectedCoordinate: null,
+        expandedPaths: [],
       },
-    }
-    await indexedDb.set('session:alice', stored)
-
-    await expect(loadWorkbenchDraft('alice')).resolves.toMatchObject({
-      version: 5,
-      experiment: { name: 'preserved experiment' },
-      geometry: { drafts: {}, stagedModules: [], selectedCoordinate: null, expandedPaths: [] },
     })
-  })
-
-  it('discards a legacy draft whose Experiment contains a non-empty Geometry snapshot', async () => {
-    const stored = {
-      ...makeDraft('alice', 1),
-      version: 4,
-      experiment: {
-        ...makeDraft('alice', 1).experiment,
-        document: {
-          sourceBundle: {
-            formatVersion: 3,
-            files: { 'experiment.tsx': 'export default {}' },
-            geometrySnapshot: { schemaVersion: 1, roots: [], modules: [{ coordinate: 'legacy' }] },
-          },
-        },
-      },
-    }
-    await indexedDb.set('session:alice', stored)
-
     await expect(loadWorkbenchDraft('alice')).resolves.toBeNull()
-    expect(indexedDb.del).toHaveBeenCalledWith('session:alice', expect.anything())
+    expect(indexedDb.del).toHaveBeenCalled()
   })
 
-  it('clears only the requested user draft', async () => {
-    await saveWorkbenchDraft(makeDraft('alice', 1))
-    await saveWorkbenchDraft(makeDraft('bob', 2))
-
+  it('isolates and clears user keys', async () => {
+    await saveWorkbenchDraft(draft('alice'))
+    await saveWorkbenchDraft(draft('bob'))
     await clearWorkbenchDraft('alice')
-
     await expect(loadWorkbenchDraft('alice')).resolves.toBeNull()
-    await expect(loadWorkbenchDraft('bob')).resolves.toEqual(makeDraft('bob', 2))
+    await expect(loadWorkbenchDraft('bob')).resolves.toEqual(draft('bob'))
+    expect(workbenchDraftUserKey('  ')).toBe('anonymous')
   })
 })

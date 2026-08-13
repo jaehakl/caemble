@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type * as Monaco from 'monaco-editor'
 import {
   EXPERIMENT_ENTRY_PATH,
+  EXPERIMENT_GEOMETRY_PATH,
   EXPERIMENT_SIMULATION_PATH,
   experimentTaskName,
   experimentTaskPaths,
@@ -19,6 +21,83 @@ export type ExperimentEditorProps = {
   onActiveFileChange?: (path: string) => void
 }
 
+function synchronizeExperimentModels(
+  monaco: typeof Monaco,
+  models: Map<string, Monaco.editor.ITextModel>,
+  files: Readonly<Record<string, string>>,
+  activePath: string | null,
+) {
+  const paths = new Set(Object.keys(files))
+  Object.entries(files).forEach(([path, source]) => {
+    const uri = monaco.Uri.parse(`file:///${path}`)
+    const existing = monaco.editor.getModel(uri)
+    const model = existing ?? monaco.editor.createModel(source, path.endsWith('.py') ? 'python' : 'typescript', uri)
+    if (existing && path !== activePath && model.getValue() !== source) model.setValue(source)
+    models.set(path, model)
+  })
+  models.forEach((model, path) => {
+    if (paths.has(path)) return
+    monaco.editor.setModelMarkers(model, 'caemble-cad', [])
+    model.dispose()
+    models.delete(path)
+  })
+}
+
+function useExperimentMonacoModels(files: Readonly<Record<string, string>> | null, activePath: string | null) {
+  const filesRef = useRef(files)
+  const activePathRef = useRef(activePath)
+  const monacoRef = useRef<typeof Monaco | null>(null)
+  const modelsRef = useRef(new Map<string, Monaco.editor.ITextModel>())
+  const [ready, setReady] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const hasFiles = files !== null
+  filesRef.current = files
+  activePathRef.current = activePath
+
+  useEffect(() => {
+    if (!hasFiles) {
+      setReady(false)
+      return
+    }
+    const models = modelsRef.current
+    let cancelled = false
+    setReady(false)
+    setLoadError(null)
+    void import('@/lib/cad/authoring')
+      .then(({ loadMonaco }) => loadMonaco())
+      .then((monaco) => {
+        if (cancelled || filesRef.current === null) return
+        monacoRef.current = monaco
+        synchronizeExperimentModels(monaco, models, filesRef.current, activePathRef.current)
+        setReady(true)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setLoadError(error instanceof Error ? error.message : String(error))
+      })
+
+    return () => {
+      cancelled = true
+      const monaco = monacoRef.current
+      if (monaco) {
+        models.forEach((model) => {
+          monaco.editor.setModelMarkers(model, 'caemble-cad', [])
+          model.dispose()
+        })
+      }
+      models.clear()
+      monacoRef.current = null
+    }
+  }, [hasFiles])
+
+  useEffect(() => {
+    const monaco = monacoRef.current
+    if (!monaco || files === null) return
+    synchronizeExperimentModels(monaco, modelsRef.current, files, activePath)
+  }, [activePath, files])
+
+  return { loadError, ready }
+}
+
 export function ExperimentEditor({
   controller,
   disabled = false,
@@ -29,13 +108,19 @@ export function ExperimentEditor({
   const filePaths = useMemo(
     () =>
       document
-        ? [EXPERIMENT_ENTRY_PATH, EXPERIMENT_SIMULATION_PATH, ...experimentTaskPaths(document.sourceBundle)]
+        ? [
+            EXPERIMENT_ENTRY_PATH,
+            EXPERIMENT_GEOMETRY_PATH,
+            EXPERIMENT_SIMULATION_PATH,
+            ...experimentTaskPaths(document.sourceBundle),
+          ]
         : [],
     [document],
   )
   const [selectedFile, setSelectedFile] = useState(initialActiveFile ?? EXPERIMENT_ENTRY_PATH)
   const appliedInitialFile = useRef(initialActiveFile)
   const activeFile = filePaths.includes(selectedFile) ? selectedFile : (filePaths[0] ?? null)
+  const editorModels = useExperimentMonacoModels(document?.sourceBundle.files ?? null, activeFile)
 
   useEffect(() => {
     if (initialActiveFile === appliedInitialFile.current) return
@@ -143,15 +228,25 @@ export function ExperimentEditor({
         </div>
       </header>
       <div className="min-h-0 flex-1" role="tabpanel">
-        <CadEditor
-          diagnostics={controller.diagnostics.filter((diagnostic) => diagnostic.file === activeFile)}
-          key={activeFile}
-          language={activeFile === EXPERIMENT_SIMULATION_PATH ? 'python' : 'typescript'}
-          modelPath={`file:///${activeFile}`}
-          readOnly={controller.sourceReadOnly || disabled}
-          value={document.sourceBundle.files[activeFile]}
-          onChange={(source) => controller.handleExperimentFileChange(activeFile, source)}
-        />
+        {editorModels.loadError ? (
+          <div className="grid h-full place-items-center bg-rose-50 p-6 text-sm text-rose-700">
+            Monaco could not be loaded: {editorModels.loadError}
+          </div>
+        ) : editorModels.ready ? (
+          <CadEditor
+            diagnostics={controller.diagnostics.filter((diagnostic) => diagnostic.file === activeFile)}
+            key={activeFile}
+            language={activeFile === EXPERIMENT_SIMULATION_PATH ? 'python' : 'typescript'}
+            modelPath={`file:///${activeFile}`}
+            readOnly={controller.sourceReadOnly || disabled}
+            value={document.sourceBundle.files[activeFile]}
+            onChange={(source) => controller.handleExperimentFileChange(activeFile, source)}
+          />
+        ) : (
+          <div className="grid h-full place-items-center bg-slate-50 text-sm text-slate-500" role="status">
+            Editor preparing…
+          </div>
+        )}
       </div>
       <DocumentFeedback controller={controller} />
     </section>

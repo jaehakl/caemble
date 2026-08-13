@@ -31,7 +31,7 @@ function validTabs(value: readonly WorkbenchTabId[]) {
 
 function emptyDraft(userKey: string): WorkbenchDraft {
   return {
-    version: 5,
+    version: 7,
     savedAt: Date.now(),
     userKey,
     experiment: {
@@ -43,7 +43,13 @@ function emptyDraft(userKey: string): WorkbenchDraft {
     },
     candidate: { vars: null, materialParameters: null },
     selection: { measurementId: null },
-    geometry: { drafts: {}, stagedModules: [], selectedCoordinate: null, expandedPaths: [] },
+    geometry: {
+      drafts: {},
+      stagedModules: [],
+      selectedCoordinate: 'geometry.tsx',
+      selectedExport: null,
+      expandedPaths: ['geometry.tsx'],
+    },
     layout: {
       openTabs: caeWorkbenchTabs,
       activeTab: 'experiment',

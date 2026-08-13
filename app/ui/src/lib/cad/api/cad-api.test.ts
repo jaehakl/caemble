@@ -3,9 +3,13 @@ import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { defaultCode } from '../../defaultCode'
 import { defaultExperimentCode } from '../../defaultExperimentCode'
-import { defaultExperimentProgramCode, defaultExperimentTaskCode } from '../../defaultExperimentProgramCode'
+import {
+  defaultExperimentGeometryCode,
+  defaultExperimentProgramCode,
+  defaultExperimentTaskCode,
+} from '../../defaultExperimentProgramCode'
 import { caembleExamples, caembleProgramExamples } from '../../examples'
-import { geometryCoordinateTypes, geometryRootTypes } from '../compiler/geometryTypes'
+import { geometryCoordinateTypes } from '../compiler/geometryTypes'
 import type { EffectiveGeometryGraph } from '../source/effectiveGeometryGraph'
 import type { GeometryCoordinate } from '../source/geometrySnapshot'
 import coreTypes from './caemble-core.d.ts?raw'
@@ -16,8 +20,15 @@ const experimentProgramDoc = readFileSync(
   'utf8',
 )
 
-function diagnosticsFor(source: string, additionalFiles: Readonly<Record<string, string>> = {}) {
-  const sourcePath = 'C:/caemble-source/hash/experiment.tsx'
+const defaultGeometryFiles = {
+  'C:/caemble-source/hash/geometry.tsx': defaultExperimentGeometryCode,
+}
+
+function diagnosticsFor(
+  source: string,
+  additionalFiles: Readonly<Record<string, string>> = defaultGeometryFiles,
+  sourcePath = 'C:/caemble-source/hash/experiment.tsx',
+) {
   const virtualFiles = new Map<string, string>([
     [sourcePath, source],
     ['C:/node_modules/@caemble/core/index.d.ts', coreTypes],
@@ -79,8 +90,9 @@ describe('unversioned CAD authoring declarations', () => {
   it('type-checks the v5 Experiment and Task defaults', () => {
     expect(defaultExperimentCode).toBe(defaultExperimentProgramCode)
     expect(diagnosticsFor(defaultCode)).toEqual([])
-    expect(diagnosticsFor(defaultExperimentCode)).toEqual([])
-    expect(diagnosticsFor(defaultExperimentTaskCode)).toEqual([])
+    expect(
+      diagnosticsFor(defaultExperimentTaskCode, defaultGeometryFiles, 'C:/caemble-source/hash/tasks/electric.tsx'),
+    ).toEqual([])
   })
 
   it('requires the common Experiment geometry contract', () => {
@@ -94,16 +106,16 @@ describe('unversioned CAD authoring declarations', () => {
     const coordinate = 'caemble:geometry/jlee/common/notched@1.0.0' as GeometryCoordinate
     const graph = {
       graphHash: 'a'.repeat(64),
-      roots: [{ alias: 'Notched', coordinate, moduleHash: 'b'.repeat(64) }],
+      entryImports: [{ exportName: 'Notched', alias: 'Notched', coordinate, moduleHash: 'b'.repeat(64) }],
       modules: [
         {
           coordinate,
           sourceHash: 'c'.repeat(64),
           moduleHash: 'b'.repeat(64),
+          exports: ['Notched'],
           imports: [],
           source: `import { type Geometry, type Vec3 } from '@caemble/core'
-const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1, 2, 3], thickness }) => <box size={size} scale={[thickness, 1, 1]} />
-export default Notched`,
+export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1, 2, 3], thickness }) => <box size={size} scale={[thickness, 1, 1]} />`,
         },
       ],
     } satisfies EffectiveGeometryGraph
@@ -111,13 +123,12 @@ export default Notched`,
     const files = {
       [`${prefix}/geometry-coordinates.d.ts`]: geometryCoordinateTypes(graph),
       [`${prefix}/geometries/${encodeURIComponent(coordinate)}.tsx`]: graph.modules[0].source,
-      [`${prefix}/geometry-roots.d.ts`]: geometryRootTypes(graph),
+      [`${prefix}/geometry.tsx`]: `import { Notched } from "${coordinate}"\nexport { Notched }`,
     }
-    const valid = `import Exact from '${coordinate}'
-export default <union><Exact id="exact" thickness={1} /><Notched id="root" thickness={2} /></union>`
+    const valid = 'import { Notched } from "./geometry"\nexport default <Notched id="root" thickness={2} />'
 
     expect(diagnosticsFor(valid, files)).toEqual([])
-    expect(diagnosticsFor(valid.replace('thickness={1}', ''), files).join('\n')).toContain(
+    expect(diagnosticsFor(valid.replace('thickness={2}', ''), files).join('\n')).toContain(
       "Property 'thickness' is missing",
     )
     expect(diagnosticsFor(valid.replace('id="root" ', ''), files).join('\n')).toContain("Property 'id' is missing")
@@ -131,15 +142,24 @@ export default <union><Exact id="exact" thickness={1} /><Notched id="root" thick
   })
 
   it.each(caembleProgramExamples)('type-checks the $title Experiment bundle', (example) => {
+    const prefix = 'C:/caemble-source/hash'
+    const files = Object.fromEntries(
+      Object.entries(example.experimentSourceBundle.files)
+        .filter(([path]) => path.endsWith('.tsx'))
+        .map(([path, source]) => [`${prefix}/${path}`, source]),
+    )
     Object.entries(example.experimentSourceBundle.files)
       .filter(([path]) => path.endsWith('.tsx'))
-      .forEach(([, source]) => expect(diagnosticsFor(source)).toEqual([]))
+      .forEach(([path, source]) => expect(diagnosticsFor(source, files, `${prefix}/${path}`)).toEqual([]))
   })
 
   it('type-checks the complete Experiment sources in the standalone guide', () => {
     const sources = [...experimentProgramDoc.matchAll(/```tsx\r?\n([\s\S]*?)```/g)].map((match) => match[1])
-    expect(sources).toHaveLength(2)
-    sources.forEach((source) => expect(diagnosticsFor(source)).toEqual([]))
+    expect(sources).toHaveLength(3)
+    const prefix = 'C:/caemble-source/hash'
+    const paths = ['geometry.tsx', 'experiment.tsx', 'tasks/electric.tsx']
+    const files = Object.fromEntries(paths.map((path, index) => [`${prefix}/${path}`, sources[index]]))
+    sources.forEach((source, index) => expect(diagnosticsFor(source, files, `${prefix}/${paths[index]}`)).toEqual([]))
   })
 
   it('rejects unknown vars and tuple shapes', () => {

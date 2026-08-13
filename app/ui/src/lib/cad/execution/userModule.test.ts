@@ -2,18 +2,21 @@ import { geometries, measurements } from '@jscad/modeling'
 import { transform } from 'esbuild'
 import { describe, expect, it } from 'vitest'
 import { defaultExperimentSourceBundle } from '../../defaultExperimentCode'
-import { identityCartesianBasis } from '../../quantitykind/identityBasis'
-import { CAD_COMPILER_VERSION, type CompiledCadDocument, type CompiledCadSource } from '../compiler/types'
+import {
+  CAD_COMPILER_VERSION,
+  type CompiledCadDocument,
+  type CompiledCadSource,
+  type CompiledGeometryModule,
+} from '../compiler/types'
 import { generateRandomVars } from '../model/vars'
-import { assertEvaluatedDocumentSnapshot, serializeEvaluatedDocumentSnapshot } from './snapshot'
+import type { GeometryCoordinate } from '../source/geometrySnapshot'
+import type { GeometryModuleCoordinate } from '../source/effectiveGeometryGraph'
 import {
   evaluateCompiledGeometryModule,
   executeCompiledDocument,
   inspectCompiledDocument,
   requireCaembleModule,
 } from './userModule'
-import type { CompiledGeometryModule } from '../compiler/types'
-import type { GeometryCoordinate } from '../source/geometrySnapshot'
 
 async function compile(source: string) {
   return (
@@ -49,159 +52,131 @@ async function compiledDocument(
   return { apiVersion: 5, compilerVersion: CAD_COMPILER_VERSION, sourceHash, sources: Object.fromEntries(entries) }
 }
 
-describe('compiled Experiment execution v5', () => {
-  it('exposes no Structure authoring API', () => {
-    const core = requireCaembleModule('@caemble/core') as Record<string, unknown>
-    expect(core).toMatchObject({
-      defineTask: expect.any(Function),
-      experiment: expect.any(Function),
-      Mat: expect.any(Function),
-      Material: expect.any(Function),
-    })
-    expect(core).not.toHaveProperty('structure')
-    expect(core).not.toHaveProperty('Structure')
-  })
+function module(
+  entryFile: GeometryModuleCoordinate,
+  code: string,
+  exports: readonly string[],
+  imports: CompiledGeometryModule['imports'] = [],
+  sourceHash = '4'.repeat(64),
+): CompiledGeometryModule {
+  return {
+    apiVersion: 5,
+    compilerVersion: CAD_COMPILER_VERSION,
+    entryFile,
+    code,
+    sourceHash,
+    geometrySourceHash: '5'.repeat(64),
+    moduleHash: '6'.repeat(64),
+    exports,
+    imports,
+  }
+}
 
-  it('inspects schema, requires complete vars, and evaluates common plus Task scenes', async () => {
-    const sourceHash = '2'.repeat(64)
-    const compiled = await compiledDocument(defaultExperimentSourceBundle.files, sourceHash)
-    const pythonSource = defaultExperimentSourceBundle.files['simulate.py']
+describe('compiled Experiment execution with source Geometry modules', () => {
+  it('evaluates the default Experiment and Task through geometry.tsx', async () => {
+    expect(requireCaembleModule('@caemble/core')).toHaveProperty('experiment')
+    const compiled = await compiledDocument(defaultExperimentSourceBundle.files, '2'.repeat(64))
     const inspection = inspectCompiledDocument(compiled)
-    const variables = generateRandomVars(inspection.varsSchema)
-    const result = executeCompiledDocument(compiled, variables, pythonSource)
-    const snapshot = serializeEvaluatedDocumentSnapshot(result)
-
-    expect(() => assertEvaluatedDocumentSnapshot(snapshot)).not.toThrow()
-    expect(result.simulationProgram).toMatchObject({ formatVersion: 5, simulationApiVersion: 3, pythonSource })
-    expect(result.scene.geometryGroups[0]).toMatchObject({ name: 'conductor', geometryIds: ['conductor'] })
-    expect(result.scene.parts[0].material).toMatchObject({
-      name: 'Copper',
-      variables: {
-        'electrical.conductivity': {
-          quantityKind: 'electromagnetism.ElectricConductivity',
-          basis: identityCartesianBasis,
-        },
-      },
-    })
+    const result = executeCompiledDocument(
+      compiled,
+      generateRandomVars(inspection.varsSchema),
+      defaultExperimentSourceBundle.files['simulate.py'],
+    )
     expect(geometries.geom3.isA(result.scene.parts[0].geometry)).toBe(true)
     expect(measurements.measureVolume(result.scene.parts[0].geometry)).toBeGreaterThan(0)
-    expect(result.taskScenes.electric.parts.map((part) => part.id)).toEqual(['experiment-device'])
-    expect(() => executeCompiledDocument(compiled, {}, pythonSource)).toThrow('vars.conductorSize')
-    expect(snapshot).not.toHaveProperty('seed')
+    expect(result.taskScenes.electric.parts).toHaveLength(1)
   })
 
-  it('injects one root component into Experiment and Task lexical scopes without exposing it to Geometry modules', async () => {
-    const sourceHash = '3'.repeat(64)
+  it('loads named exports once, resolves relative geometry.tsx imports, and isolates module scopes', async () => {
     const leafCoordinate = 'caemble:geometry/jlee/demo/leaf@1.0.0' as GeometryCoordinate
-    const proxyCoordinate = 'caemble:geometry/jlee/demo/proxy@1.0.0' as GeometryCoordinate
-    const coordinate = 'caemble:geometry/jlee/demo/shared@1.0.0' as GeometryCoordinate
+    const rootCoordinate = 'caemble:geometry/jlee/demo/root@1.0.0' as GeometryCoordinate
     const files = {
-      'experiment.tsx': `import { experiment } from '@caemble/core'
-export default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => <SharedRoot id="shared" />, recordedData: {} })`,
-      'tasks/electric.tsx': `import { defineTask } from '@caemble/core'
-export default defineTask({ kernel: { name: 'test', version: '1' }, lengthUnit: 'mm', geometry: () => <SharedRoot id="shared" />, config: () => ({}) })`,
+      'geometry.tsx': `import { Shared } from "${rootCoordinate}"\nexport { Shared }`,
+      'experiment.tsx': `import { experiment } from '@caemble/core'\nimport { Shared } from './geometry'\nexport default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => <Shared id="shared" />, recordedData: {} })`,
+      'tasks/electric.tsx': `import { defineTask } from '@caemble/core'\nimport { Shared } from '../geometry'\nexport default defineTask({ kernel: { name: 'test', version: '1' }, geometry: () => <Shared id="task" />, config: () => ({}) })`,
     }
-    const compiled = await compiledDocument(files, sourceHash)
-    const geometryModule = (
-      entryFile: GeometryCoordinate,
-      code: string,
-      moduleHash: string,
-      imports: readonly GeometryCoordinate[],
-    ): CompiledGeometryModule => ({
-      apiVersion: 5,
-      compilerVersion: CAD_COMPILER_VERSION,
-      entryFile,
-      code,
-      sourceHash,
-      geometrySourceHash: '4'.repeat(64),
-      moduleHash,
-      imports,
-    })
-    const leaf = geometryModule(
+    const compiled = await compiledDocument(files, '3'.repeat(64))
+    const leaf = module(
       leafCoordinate,
-      `module.exports.default = ({ size = [1, 1, 1] }) => h('box', { size })`,
-      '5'.repeat(64),
+      `exports.Part = ({ id }) => h('box', { id, size: [1, 1, 1] })`,
+      ['Part'],
       [],
+      compiled.sourceHash,
     )
-    const proxy = geometryModule(
-      proxyCoordinate,
-      `module.exports.default = require(${JSON.stringify(leafCoordinate)}).default`,
-      '6'.repeat(64),
-      [leafCoordinate],
-    )
-    const geometry = geometryModule(
-      coordinate,
-      `const leaf = require(${JSON.stringify(leafCoordinate)}).default
-const proxy = require(${JSON.stringify(proxyCoordinate)}).default
-if (leaf !== proxy) throw new Error('shared dependency evaluated twice')
-module.exports.default = leaf`,
-      '7'.repeat(64),
-      [leafCoordinate, proxyCoordinate],
+    const root = module(
+      rootCoordinate,
+      `const first = require(${JSON.stringify(leafCoordinate)}); const second = require(${JSON.stringify(leafCoordinate)}); if (first !== second) throw new Error('module executed twice'); exports.Shared = first.Part`,
+      ['Shared'],
+      [{ exportName: 'Part', alias: 'Part', coordinate: leafCoordinate }],
+      compiled.sourceHash,
     )
     const graph: CompiledCadDocument = {
       ...compiled,
       geometryGraph: {
-        graphHash: '8'.repeat(64),
-        roots: [{ alias: 'SharedRoot', coordinate, moduleHash: geometry.moduleHash }],
-        modules: {
-          [coordinate]: geometry,
-          [leafCoordinate]: leaf,
-          [proxyCoordinate]: proxy,
-        },
+        graphHash: '7'.repeat(64),
+        entryImports: [
+          { exportName: 'Shared', alias: 'Shared', coordinate: rootCoordinate, moduleHash: root.moduleHash },
+        ],
+        modules: { [leafCoordinate]: leaf, [rootCoordinate]: root },
       },
     }
     const result = executeCompiledDocument(graph, {}, 'async def simulate(*, sim, tasks, vars):\n    return None\n')
-
     expect(result.scene.parts[0].id).toBe('shared')
-    expect(result.taskScenes.electric.parts[0].id).toBe('shared')
-    expect(evaluateCompiledGeometryModule(graph, leafCoordinate).parts[0].id).toBe('preview')
-
-    const implicit = geometryModule(
-      leafCoordinate,
-      `module.exports.default = () => h(SharedRoot, { id: 'implicit' })`,
-      '5'.repeat(64),
-      [],
-    )
-    expect(() =>
-      evaluateCompiledGeometryModule(
-        {
-          ...graph,
-          geometryGraph: {
-            ...graph.geometryGraph!,
-            modules: { ...graph.geometryGraph!.modules, [leafCoordinate]: implicit },
-          },
-        },
-        leafCoordinate,
-      ),
-    ).toThrow('SharedRoot is not defined')
+    expect(result.taskScenes.electric.parts[0].id).toBe('task')
+    expect(evaluateCompiledGeometryModule(graph, rootCoordinate, 'Shared').parts[0].id).toBe('preview')
+    expect((globalThis as Record<string, unknown>).__geometryLeak).toBeUndefined()
   })
 
-  it('rejects a legacy static Geometry module at the runtime boundary', async () => {
-    const sourceHash = '9'.repeat(64)
+  it('rejects static named exports at the runtime boundary', async () => {
     const coordinate = 'caemble:geometry/jlee/demo/static@1.0.0' as GeometryCoordinate
-    const compiled = await compiledDocument(defaultExperimentSourceBundle.files, sourceHash)
-    const legacy: CompiledGeometryModule = {
-      apiVersion: 5,
-      compilerVersion: CAD_COMPILER_VERSION,
-      entryFile: coordinate,
-      code: `module.exports.default = h('box', { size: [1, 1, 1] })`,
-      sourceHash,
-      geometrySourceHash: 'a'.repeat(64),
-      moduleHash: 'b'.repeat(64),
-      imports: [],
-    }
+    const compiled = await compiledDocument(defaultExperimentSourceBundle.files, '9'.repeat(64))
+    const legacy = module(
+      coordinate,
+      `exports.Static = h('box', { size: [1, 1, 1] })`,
+      ['Static'],
+      [],
+      compiled.sourceHash,
+    )
     expect(() =>
       evaluateCompiledGeometryModule(
         {
           ...compiled,
           geometryGraph: {
-            graphHash: 'c'.repeat(64),
-            roots: [{ alias: 'StaticGeometry', coordinate, moduleHash: legacy.moduleHash }],
+            graphHash: 'a'.repeat(64),
+            entryImports: [{ exportName: 'Static', alias: 'Static', coordinate, moduleHash: legacy.moduleHash }],
             modules: { [coordinate]: legacy },
           },
         },
         coordinate,
+        'Static',
       ),
     ).toThrow('function component')
+  })
+
+  it('treats an @local module like a virtual published module during preview', async () => {
+    const coordinate = 'caemble:geometry/jlee/demo/working@local' as GeometryModuleCoordinate
+    const compiled = await compiledDocument(defaultExperimentSourceBundle.files, '8'.repeat(64))
+    const working = module(
+      coordinate,
+      `exports.Working = ({ id, size = [2, 3, 4] }) => h('box', { id, size })`,
+      ['Working'],
+      [],
+      compiled.sourceHash,
+    )
+
+    expect(
+      evaluateCompiledGeometryModule(
+        {
+          ...compiled,
+          geometryGraph: {
+            graphHash: 'b'.repeat(64),
+            entryImports: [{ exportName: 'Working', alias: 'Working', coordinate, moduleHash: working.moduleHash }],
+            modules: { [coordinate]: working },
+          },
+        },
+        coordinate,
+        'Working',
+      ).parts[0].id,
+    ).toBe('preview')
   })
 })

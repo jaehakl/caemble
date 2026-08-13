@@ -1,8 +1,8 @@
 import { CadModelError } from '../model/errors'
 
-export const GEOMETRY_SNAPSHOT_SCHEMA_VERSION = 1 as const
-export const GEOMETRY_MODULE_FORMAT_VERSION = 2 as const
-export const MAX_GEOMETRY_ROOTS = 64
+export const GEOMETRY_SNAPSHOT_SCHEMA_VERSION = 2 as const
+export const GEOMETRY_MODULE_FORMAT_VERSION = 3 as const
+export const MAX_GEOMETRY_ENTRY_IMPORTS = 64
 export const MAX_GEOMETRY_MODULES = 256
 export const MAX_GEOMETRY_IMPORTS_PER_MODULE = 64
 export const MAX_GEOMETRY_GRAPH_DEPTH = 64
@@ -13,7 +13,7 @@ export const MAX_GEOMETRY_SEMVER_COMPONENT = 2_147_483_647
 
 const hashPattern = /^[0-9a-f]{64}$/u
 const aliasPattern = /^[A-Z][A-Za-z0-9_]*$/u
-const reservedRootAliases = new Set(
+const reservedAliases = new Set(
   'Array ArrayBuffer Atomics BigInt Blob Boolean DataView Date Document Element Error Event File FinalizationRegistry Float32Array Float64Array FormData Fragment Function Headers History Image Int16Array Int32Array Int8Array Intl JSON Location Map Math Node Number Object Promise Proxy Reflect RegExp Request Response Set SharedArrayBuffer SharedWorker String Symbol Uint16Array Uint32Array Uint8Array Uint8ClampedArray URL URLSearchParams WeakMap WeakRef WeakSet WebAssembly WebSocket Worker XMLHttpRequest'.split(
     ' ',
   ),
@@ -26,8 +26,11 @@ function compareCanonicalText(left: string, right: string) {
 }
 
 export type GeometryCoordinate = `caemble:geometry/${string}/${string}/${string}@${number}.${number}.${number}`
+export type LocalGeometryCoordinate = `caemble:geometry/${string}/${string}/${string}@local`
 
 export type GeometrySnapshotImport = Readonly<{
+  exportName: string
+  alias: string
   geometryVersionId: number
   coordinate: GeometryCoordinate
   moduleHash: string
@@ -45,16 +48,9 @@ export type GeometrySnapshotModule = Readonly<{
   imports: readonly GeometrySnapshotImport[]
 }>
 
-export type GeometrySnapshotRoot = Readonly<{
-  alias: string
-  geometryVersionId: number
-  coordinate: GeometryCoordinate
-  moduleHash: string
-}>
-
 export type GeometrySnapshot = Readonly<{
   schemaVersion: typeof GEOMETRY_SNAPSHOT_SCHEMA_VERSION
-  roots: readonly GeometrySnapshotRoot[]
+  entryImports: readonly GeometrySnapshotImport[]
   modules: readonly GeometrySnapshotModule[]
 }>
 
@@ -83,7 +79,7 @@ function assertVersionId(value: unknown, path: string) {
 export function isGeometryCoordinate(value: unknown): value is GeometryCoordinate {
   if (typeof value !== 'string') return false
   const match = coordinatePattern.exec(value)
-  return Boolean(match && match.slice(1).every((component) => Number(component) <= MAX_GEOMETRY_SEMVER_COMPONENT))
+  return Boolean(match && match.slice(1).every((part) => Number(part) <= MAX_GEOMETRY_SEMVER_COMPONENT))
 }
 
 export function assertGeometryCoordinate(
@@ -95,40 +91,23 @@ export function assertGeometryCoordinate(
   }
 }
 
-export function isGeometryRootAlias(value: unknown): value is string {
-  return typeof value === 'string' && aliasPattern.test(value) && !reservedRootAliases.has(value)
+export function isGeometryComponentName(value: unknown): value is string {
+  return typeof value === 'string' && aliasPattern.test(value) && !reservedAliases.has(value)
 }
 
 export function geometryCoordinateNamespace(coordinate: GeometryCoordinate) {
   return coordinate.split('/')[1]
 }
 
-function sourceBytes(source: string) {
-  return new TextEncoder().encode(source).byteLength
-}
-
-function assertRoot(value: unknown, index: number): asserts value is GeometrySnapshotRoot {
-  const path = `Geometry snapshot roots[${index}]`
+function assertImport(value: unknown, path: string): asserts value is GeometrySnapshotImport {
   plainObject(value, path)
-  onlyKeys(value, ['alias', 'geometryVersionId', 'coordinate', 'moduleHash'], path)
-  if (!isGeometryRootAlias(value.alias)) {
+  onlyKeys(value, ['exportName', 'alias', 'geometryVersionId', 'coordinate', 'moduleHash'], path)
+  if (!isGeometryComponentName(value.exportName)) {
+    throw new CadModelError(`${path}.exportName must be a non-reserved PascalCase identifier.`)
+  }
+  if (!isGeometryComponentName(value.alias)) {
     throw new CadModelError(`${path}.alias must be a non-reserved PascalCase identifier.`)
   }
-  assertVersionId(value.geometryVersionId, `${path}.geometryVersionId`)
-  assertGeometryCoordinate(value.coordinate, `${path}.coordinate`)
-  if (typeof value.moduleHash !== 'string' || !hashPattern.test(value.moduleHash)) {
-    throw new CadModelError(`${path}.moduleHash must be a lowercase SHA-256 hash.`)
-  }
-}
-
-function assertImport(
-  value: unknown,
-  moduleIndex: number,
-  importIndex: number,
-): asserts value is GeometrySnapshotImport {
-  const path = `Geometry snapshot modules[${moduleIndex}].imports[${importIndex}]`
-  plainObject(value, path)
-  onlyKeys(value, ['geometryVersionId', 'coordinate', 'moduleHash'], path)
   assertVersionId(value.geometryVersionId, `${path}.geometryVersionId`)
   assertGeometryCoordinate(value.coordinate, `${path}.coordinate`)
   if (typeof value.moduleHash !== 'string' || !hashPattern.test(value.moduleHash)) {
@@ -157,17 +136,17 @@ function assertModule(value: unknown, index: number): asserts value is GeometryS
   assertVersionId(value.geometryVersionId, `${path}.geometryVersionId`)
   assertGeometryCoordinate(value.coordinate, `${path}.coordinate`)
   if (value.moduleFormatVersion !== GEOMETRY_MODULE_FORMAT_VERSION || value.cadApiVersion !== 5) {
-    throw new CadModelError(`${path} must use Geometry module format version 1 and CAD API version 5.`)
+    throw new CadModelError(`${path} must use Geometry module format version 3 and CAD API version 5.`)
   }
   if (value.description !== null && typeof value.description !== 'string') {
     throw new CadModelError(`${path}.description must be text or null.`)
   }
   if (typeof value.source !== 'string' || !value.source) throw new CadModelError(`${path}.source must contain text.`)
-  const encodedSource = new TextEncoder().encode(value.source)
-  if (new TextDecoder('utf-8', { fatal: true }).decode(encodedSource) !== value.source) {
+  const encoded = new TextEncoder().encode(value.source)
+  if (new TextDecoder('utf-8', { fatal: true }).decode(encoded) !== value.source) {
     throw new CadModelError(`${path}.source must contain valid UTF-8 text.`)
   }
-  if (encodedSource.byteLength > MAX_GEOMETRY_MODULE_SOURCE_BYTES) {
+  if (encoded.byteLength > MAX_GEOMETRY_MODULE_SOURCE_BYTES) {
     throw new CadModelError(`${path}.source exceeds ${MAX_GEOMETRY_MODULE_SOURCE_BYTES} bytes.`)
   }
   if (typeof value.sourceHash !== 'string' || !hashPattern.test(value.sourceHash)) {
@@ -180,7 +159,7 @@ function assertModule(value: unknown, index: number): asserts value is GeometryS
   if (value.imports.length > MAX_GEOMETRY_IMPORTS_PER_MODULE) {
     throw new CadModelError(`${path}.imports exceeds ${MAX_GEOMETRY_IMPORTS_PER_MODULE} entries.`)
   }
-  value.imports.forEach((item, importIndex) => assertImport(item, index, importIndex))
+  value.imports.forEach((item, importIndex) => assertImport(item, `${path}.imports[${importIndex}]`))
 }
 
 function assertGraph(snapshot: GeometrySnapshot) {
@@ -189,14 +168,8 @@ function assertGraph(snapshot: GeometrySnapshot) {
   if (new Set(snapshot.modules.map((module) => module.geometryVersionId)).size !== snapshot.modules.length) {
     throw new CadModelError('Geometry snapshot module version IDs must be unique.')
   }
-  if (new Set(snapshot.roots.map((root) => root.alias)).size !== snapshot.roots.length) {
-    throw new CadModelError('Geometry snapshot root aliases must be unique.')
-  }
-  if (new Set(snapshot.roots.map((root) => root.coordinate)).size !== snapshot.roots.length) {
-    throw new CadModelError('Geometry snapshot root coordinates must be unique.')
-  }
-  if (new Set(snapshot.modules.map((module) => geometryCoordinateNamespace(module.coordinate))).size > 1) {
-    throw new CadModelError('Geometry snapshot modules must belong to one owner namespace.')
+  if (new Set(snapshot.entryImports.map((item) => item.alias)).size !== snapshot.entryImports.length) {
+    throw new CadModelError('Geometry entry import aliases must be unique.')
   }
 
   const reachable = new Set<GeometryCoordinate>()
@@ -210,12 +183,12 @@ function assertGraph(snapshot: GeometrySnapshot) {
     if (!module) throw new CadModelError(`Geometry snapshot dependency is unresolved: ${coordinate}`)
     visiting.add(coordinate)
     try {
-      const seenImports = new Set<string>()
+      const aliases = new Set<string>()
       module.imports.forEach((imported) => {
-        if (seenImports.has(imported.coordinate)) {
-          throw new CadModelError(`Geometry module ${coordinate} imports ${imported.coordinate} more than once.`)
+        if (aliases.has(imported.alias)) {
+          throw new CadModelError(`Geometry module ${coordinate} uses import alias ${imported.alias} more than once.`)
         }
-        seenImports.add(imported.coordinate)
+        aliases.add(imported.alias)
         const target = modules.get(imported.coordinate)
         if (
           !target ||
@@ -234,51 +207,57 @@ function assertGraph(snapshot: GeometrySnapshot) {
     }
   }
 
-  snapshot.roots.forEach((root) => {
-    const module = modules.get(root.coordinate)
-    if (!module || module.geometryVersionId !== root.geometryVersionId || module.moduleHash !== root.moduleHash) {
-      throw new CadModelError(`Geometry snapshot root projection does not match ${root.coordinate}.`)
+  snapshot.entryImports.forEach((imported) => {
+    const module = modules.get(imported.coordinate)
+    if (
+      !module ||
+      module.geometryVersionId !== imported.geometryVersionId ||
+      module.moduleHash !== imported.moduleHash
+    ) {
+      throw new CadModelError(`Geometry entry import projection does not match ${imported.coordinate}.`)
     }
-    visit(root.coordinate, [])
+    visit(imported.coordinate, [])
   })
   const orphan = snapshot.modules.find((module) => !reachable.has(module.coordinate))
-  if (orphan) throw new CadModelError(`Geometry snapshot module is not reachable from a root: ${orphan.coordinate}`)
+  if (orphan)
+    throw new CadModelError(`Geometry snapshot module is not reachable from geometry.tsx: ${orphan.coordinate}`)
 
-  const longestDepthByCoordinate = new Map<GeometryCoordinate, number>()
+  const memo = new Map<GeometryCoordinate, number>()
   const longestDepth = (coordinate: GeometryCoordinate): number => {
-    const cached = longestDepthByCoordinate.get(coordinate)
+    const cached = memo.get(coordinate)
     if (cached !== undefined) return cached
-    const module = modules.get(coordinate)!
-    const depth = module.imports.reduce(
-      (longest, imported) => Math.max(longest, 1 + longestDepth(imported.coordinate)),
-      1,
-    )
-    longestDepthByCoordinate.set(coordinate, depth)
+    const depth = modules
+      .get(coordinate)!
+      .imports.reduce((longest, imported) => Math.max(longest, 1 + longestDepth(imported.coordinate)), 1)
+    memo.set(coordinate, depth)
     return depth
   }
-  if (snapshot.roots.some((root) => longestDepth(root.coordinate) > MAX_GEOMETRY_GRAPH_DEPTH)) {
+  if (snapshot.entryImports.some((item) => longestDepth(item.coordinate) > MAX_GEOMETRY_GRAPH_DEPTH)) {
     throw new CadModelError(`Geometry snapshot exceeds dependency depth ${MAX_GEOMETRY_GRAPH_DEPTH}.`)
   }
 }
 
 export function assertGeometrySnapshot(value: unknown): asserts value is GeometrySnapshot {
   plainObject(value, 'Geometry snapshot')
-  onlyKeys(value, ['schemaVersion', 'roots', 'modules'], 'Geometry snapshot')
+  onlyKeys(value, ['schemaVersion', 'entryImports', 'modules'], 'Geometry snapshot')
   if (value.schemaVersion !== GEOMETRY_SNAPSHOT_SCHEMA_VERSION) {
-    throw new CadModelError('Only Geometry snapshot schema version 1 is supported.')
+    throw new CadModelError('Only Geometry snapshot schema version 2 is supported.')
   }
-  if (!Array.isArray(value.roots) || !Array.isArray(value.modules)) {
-    throw new CadModelError('Geometry snapshot roots and modules must be arrays.')
+  if (!Array.isArray(value.entryImports) || !Array.isArray(value.modules)) {
+    throw new CadModelError('Geometry snapshot entryImports and modules must be arrays.')
   }
-  if (value.roots.length > MAX_GEOMETRY_ROOTS) {
-    throw new CadModelError(`Geometry snapshot exceeds ${MAX_GEOMETRY_ROOTS} roots.`)
+  if (value.entryImports.length > MAX_GEOMETRY_ENTRY_IMPORTS) {
+    throw new CadModelError(`Geometry snapshot exceeds ${MAX_GEOMETRY_ENTRY_IMPORTS} entry imports.`)
   }
   if (value.modules.length > MAX_GEOMETRY_MODULES) {
     throw new CadModelError(`Geometry snapshot exceeds ${MAX_GEOMETRY_MODULES} modules.`)
   }
-  value.roots.forEach(assertRoot)
+  value.entryImports.forEach((item, index) => assertImport(item, `Geometry snapshot entryImports[${index}]`))
   value.modules.forEach(assertModule)
-  const totalBytes = value.modules.reduce((total, module) => total + sourceBytes(module.source), 0)
+  const totalBytes = value.modules.reduce(
+    (total, module) => total + new TextEncoder().encode(module.source).byteLength,
+    0,
+  )
   if (totalBytes > MAX_GEOMETRY_GRAPH_SOURCE_BYTES) {
     throw new CadModelError(`Geometry snapshot sources exceed ${MAX_GEOMETRY_GRAPH_SOURCE_BYTES} bytes.`)
   }
@@ -287,50 +266,45 @@ export function assertGeometrySnapshot(value: unknown): asserts value is Geometr
 
 export function assertCanonicalGeometrySnapshot(snapshot: GeometrySnapshot) {
   assertGeometrySnapshot(snapshot)
-  const aliases = snapshot.roots.map((root) => root.alias)
-  const coordinates = snapshot.modules.map((module) => module.coordinate)
-  if ([...aliases].sort(compareCanonicalText).some((alias, index) => alias !== aliases[index])) {
-    throw new CadModelError('Geometry snapshot roots must be sorted by alias.')
+  const entryKeys = snapshot.entryImports.map((item) => `${item.alias}\0${item.exportName}\0${item.coordinate}`)
+  if ([...entryKeys].sort(compareCanonicalText).some((item, index) => item !== entryKeys[index])) {
+    throw new CadModelError('Geometry entry imports must be canonically sorted.')
   }
-  if ([...coordinates].sort(compareCanonicalText).some((coordinate, index) => coordinate !== coordinates[index])) {
+  const coordinates = snapshot.modules.map((module) => module.coordinate)
+  if ([...coordinates].sort(compareCanonicalText).some((item, index) => item !== coordinates[index])) {
     throw new CadModelError('Geometry snapshot modules must be sorted by coordinate.')
   }
   snapshot.modules.forEach((module) => {
-    const imports = module.imports.map((item) => item.coordinate)
-    if ([...imports].sort(compareCanonicalText).some((coordinate, index) => coordinate !== imports[index])) {
-      throw new CadModelError(`Geometry module imports must be sorted by coordinate: ${module.coordinate}`)
+    const keys = module.imports.map((item) => `${item.alias}\0${item.exportName}\0${item.coordinate}`)
+    if ([...keys].sort(compareCanonicalText).some((item, index) => item !== keys[index])) {
+      throw new CadModelError(`Geometry module imports must be canonically sorted: ${module.coordinate}`)
     }
   })
 }
 
+function canonicalImports(imports: readonly GeometrySnapshotImport[]) {
+  return Object.freeze(
+    [...imports]
+      .sort(
+        (left, right) =>
+          compareCanonicalText(left.alias, right.alias) ||
+          compareCanonicalText(left.exportName, right.exportName) ||
+          compareCanonicalText(left.coordinate, right.coordinate),
+      )
+      .map((item) => Object.freeze({ ...item })),
+  )
+}
+
 export function canonicalizeGeometrySnapshot(snapshot: GeometrySnapshot): GeometrySnapshot {
   assertGeometrySnapshot(snapshot)
-  const modules = snapshot.modules
-    .map((module) =>
-      Object.freeze({
-        geometryVersionId: module.geometryVersionId,
-        coordinate: module.coordinate,
-        moduleFormatVersion: module.moduleFormatVersion,
-        cadApiVersion: module.cadApiVersion,
-        description: module.description,
-        source: module.source,
-        sourceHash: module.sourceHash,
-        moduleHash: module.moduleHash,
-        imports: Object.freeze(
-          [...module.imports]
-            .sort((left, right) => compareCanonicalText(left.coordinate, right.coordinate))
-            .map((item) => Object.freeze({ ...item })),
-        ),
-      }),
-    )
-    .sort((left, right) => compareCanonicalText(left.coordinate, right.coordinate))
-  const roots = snapshot.roots
-    .map((root) => Object.freeze({ ...root }))
-    .sort((left, right) => compareCanonicalText(left.alias, right.alias))
   return Object.freeze({
     schemaVersion: GEOMETRY_SNAPSHOT_SCHEMA_VERSION,
-    roots: Object.freeze(roots),
-    modules: Object.freeze(modules),
+    entryImports: canonicalImports(snapshot.entryImports),
+    modules: Object.freeze(
+      snapshot.modules
+        .map((module) => Object.freeze({ ...module, imports: canonicalImports(module.imports) }))
+        .sort((left, right) => compareCanonicalText(left.coordinate, right.coordinate)),
+    ),
   })
 }
 
@@ -363,8 +337,13 @@ export function geometryModuleHash(
       coordinate: module.coordinate,
       sourceHash: module.sourceHash,
       imports: [...module.imports]
-        .sort((left, right) => compareCanonicalText(left.coordinate, right.coordinate))
-        .map(({ coordinate, moduleHash }) => ({ coordinate, moduleHash })),
+        .sort(
+          (left, right) =>
+            compareCanonicalText(left.alias, right.alias) ||
+            compareCanonicalText(left.exportName, right.exportName) ||
+            compareCanonicalText(left.coordinate, right.coordinate),
+        )
+        .map(({ exportName, alias, coordinate, moduleHash }) => ({ exportName, alias, coordinate, moduleHash })),
     }),
   )
 }
@@ -382,12 +361,12 @@ export async function validateGeometrySnapshotHashes(snapshot: GeometrySnapshot)
 }
 
 export function createGeometrySnapshot(
-  roots: readonly GeometrySnapshotRoot[],
+  entryImports: readonly GeometrySnapshotImport[],
   modules: readonly GeometrySnapshotModule[],
 ) {
   return canonicalizeGeometrySnapshot({
     schemaVersion: GEOMETRY_SNAPSHOT_SCHEMA_VERSION,
-    roots: [...roots],
+    entryImports: [...entryImports],
     modules: modules.map((module) => ({ ...module, imports: [...module.imports] })),
   })
 }

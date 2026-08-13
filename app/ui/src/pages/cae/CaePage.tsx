@@ -1,5 +1,5 @@
 import { Badge } from '@/components/ui/badge'
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 import { useLocation } from 'react-router'
 import { useAuth } from '@/features/auth/use-auth'
 import {
@@ -15,7 +15,7 @@ import { GeometryWorkspaceContainer } from '@/features/cae-workbench/geometry'
 import { useCaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { WorkbenchTabId } from '@/features/cae-workbench/types'
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
-import { EXPERIMENT_ENTRY_PATH, setGeometryAuthoringRootsEnabled, type RecordedDataRule } from '@/lib/cad'
+import { EXPERIMENT_GEOMETRY_PATH, type RecordedDataRule } from '@/lib/cad'
 import { NotFoundPage } from '@/pages/not-found/NotFoundPage'
 import { CaeWorkbenchDialogs } from './CaeWorkbenchDialogs'
 import { useCaePageChrome } from './useCaePageChrome'
@@ -58,12 +58,8 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     [workbench.experimentDocument.simulationProgram],
   )
   const pendingResult = workbench.measurementActions.pendingRecordMeasurementId !== null
-  useEffect(() => {
-    setGeometryAuthoringRootsEnabled(page.activeTab === 'experiment')
-    return () => setGeometryAuthoringRootsEnabled(false)
-  }, [page.activeTab])
-  const openExperimentSource = () => {
-    page.setActiveExperimentFile(EXPERIMENT_ENTRY_PATH)
+  const openGeometrySource = () => {
+    page.setActiveExperimentFile(EXPERIMENT_GEOMETRY_PATH)
     page.openTab('experiment')
   }
 
@@ -88,7 +84,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           <GeometryWorkspaceContainer
             diagnostics={workbench.geometry.previewDiagnostics}
             geometry={workbench.geometry}
-            onOpenExperimentSource={openExperimentSource}
             onOpenManager={() => page.setDialog('geometry-manager')}
           />
         ) : (
@@ -206,7 +201,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         authenticated={auth.isAuthenticated}
         dialog={page.dialog}
         guardReplacement={page.guardReplacement}
-        openExperimentSource={openExperimentSource}
+        openGeometrySource={openGeometrySource}
         openTab={page.openTab}
         runSafely={page.runSafely}
         setDialog={page.setDialog}

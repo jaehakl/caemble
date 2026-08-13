@@ -2,7 +2,6 @@ import { assertCompiledCadDocument } from '../compiler/types'
 import { assertEvaluatedDocumentSnapshot } from '../execution/snapshotValidation'
 import { CadModelError } from '../model/errors'
 import { normalizeVarsSchema } from '../model/vars'
-import { isGeometryCoordinate } from '../source/geometrySnapshot'
 import { assertSerializableCadScene } from '../execution/meshValidation'
 import type { CadWorkerRequest, CadWorkerResponse } from '../worker/protocol'
 
@@ -85,11 +84,23 @@ export function assertCadWorkerRequest(value: unknown): asserts value is CadWork
     return
   }
   if (value.type === 'preview-geometry') {
-    assertOnlyKeys(value, ['type', 'requestId', 'revision', 'compiledDocument', 'coordinate', 'lengthUnit'], 'request')
+    assertOnlyKeys(
+      value,
+      ['type', 'requestId', 'revision', 'compiledDocument', 'coordinate', 'exportName', 'lengthUnit'],
+      'request',
+    )
+    const module =
+      typeof value.coordinate === 'string'
+        ? Object.entries(value.compiledDocument.geometryGraph?.modules ?? {}).find(
+            ([coordinate]) => coordinate === value.coordinate,
+          )?.[1]
+        : undefined
     if (
       !value.compiledDocument.geometryGraph ||
-      !isGeometryCoordinate(value.coordinate) ||
-      !value.compiledDocument.geometryGraph.modules[value.coordinate] ||
+      typeof value.coordinate !== 'string' ||
+      !module ||
+      typeof value.exportName !== 'string' ||
+      !module.exports.includes(value.exportName) ||
       typeof value.lengthUnit !== 'string' ||
       !value.lengthUnit
     ) {

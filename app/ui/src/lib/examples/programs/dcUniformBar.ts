@@ -5,11 +5,8 @@ export const dcUniformBarExperimentCode = `import {
   Mat,
   Material,
   experiment,
-  type Geometry,
-  type Vec3,
 } from '@caemble/core'
-
-const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />
+import { Conductor } from './geometry'
 
 export default experiment({
   lengthUnit: 'mm',
@@ -57,11 +54,15 @@ export default experiment({
 })
 `
 
-export const dcUniformBarTaskCode = `import { defineTask } from '@caemble/core'
+export const dcUniformBarGeometryCode = `import { type Geometry, type Vec3 } from '@caemble/core'
 
-function Probe() {
-  return <box size={[2, 2, 2]} />
-}
+export const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />
+
+export const Probe: Geometry = () => <box size={[2, 2, 2]} />
+`
+
+export const dcUniformBarTaskCode = `import { defineTask } from '@caemble/core'
+import { Probe } from '../geometry'
 
 export default defineTask({
   kernel: { name: 'dc-current-density', version: '0.1.0' },
@@ -146,6 +147,7 @@ export const dcUniformBarSimulationCode = `async def simulate(*, sim, tasks, var
 
 export const dcUniformBarExperimentSourceBundle = createExperimentSourceBundle({
   'experiment.tsx': dcUniformBarExperimentCode,
+  'geometry.tsx': dcUniformBarGeometryCode,
   'simulate.py': dcUniformBarSimulationCode,
   'tasks/solveCurrent.tsx': dcUniformBarTaskCode,
 })

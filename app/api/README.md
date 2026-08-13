@@ -83,12 +83,14 @@ RecordedData는 `/list`만 제공하며 직접 upsert/delete할 수 없다.
 Repository의 불변 namespace와 Published Geometry 좌표는 바뀌지 않는다.
 Geometry 좌표는
 `caemble:geometry/<namespace>/<repository>/<package>@<major>.<minor>.<patch>`이고
-prerelease, range, `latest`, 상대 경로 import는 허용하지 않는다. 모든 dependency는
-같은 owner의 Repository 안에 있어야 하며 published version의 source는 수정하지 않는다.
-Module format v2 source는 `Geometry<Props>` 함수 component로 정적으로 해석되는 default
-export만 허용한다. exact coordinate import도 함수 component를 반환하므로 importer가
-JSX에서 명시적인 `id`와 props를 전달한다. props 계약은 TypeScript source에만 있고
-별도 DB metadata로 저장하지 않는다.
+prerelease, range와 `latest`는 허용하지 않는다. 모든 dependency는 같은 owner의
+Repository 안에 있어야 하며 published version의 source는 수정하지 않는다. Module
+format v3 source는 PascalCase named `Geometry<Props>` 함수 component를 하나 이상
+export하고, 여러 component를 함께 export할 수 있다. default/static/helper value export는
+허용하지 않는다. Geometry dependency는 source의 named exact-coordinate import가 유일한
+원본이며 서버가 `geometry_imports` projection을 source에 맞춰 생성한다. Workbench draft만
+`@local` coordinate를 사용할 수 있고 Published source에는 exact SemVer만 저장된다. props
+계약은 TypeScript source에만 있고 별도 DB metadata로 저장하지 않는다.
 참조가 없는 Version과 Package만 검증된 정리 API로 삭제할 수 있다.
 사용자가 삭제되면 repository는 owner FK만 `NULL`로 바뀌고 namespace와 좌표를
 보존한 채 자동 archive된다. 이 orphan graph는 admin만 조회할 수 있고 namespace는
@@ -103,22 +105,24 @@ JSX에서 명시적인 `id`와 props를 전달한다. props 계약은 TypeScript
 - `POST /geometry/versions/{id}/experiments/list`, `POST /geometry/versions/usage`
 - `POST /geometry/publish/plan`, `POST /geometry/publish`
 
-publish 요청은 local draft, 선택 target, 현재 root를 보내고 서버가 Tree-sitter TSX
-분석, exact import resolve, cycle/크기 제한, child-first Merkle hash와 필요한 patch
-ancestor를 다시 계산한다. `publish`는 사용자가 확인한 `planHash`를 재검증한 뒤 한
+publish 요청은 local draft source와 선택 target을 보내고 서버가 Tree-sitter TSX 분석으로
+도달 가능한 local dependency closure, named import projection, cycle/깊이/크기 제한과
+child-first Merkle hash를 다시 계산한다. plan은 `@local`을 최종 exact coordinate로 바꾼
+source와 replacement를 반환한다. `publish`는 사용자가 확인한 `planHash`를 재검증한 뒤 한
 transaction으로 version과 import projection을 만든다. `repositoryId`가 있는 draft는
 해당 기존 Repository의 namespace를 사용하고, 없는 새 Repository draft만 사용자의
 현재 기본 namespace를 사용한다. 새 draft의 repository/package가 없으면 publish
 transaction 안에서 함께 생성한다. SemVer 충돌은
 `geometry_version_conflict` 409와 suggested version을 반환한다. resolve/publish snapshot의
-`moduleFormatVersion`은 2이고 CAD API version은 5다.
+`moduleFormatVersion`은 3이고 CAD API version은 5다.
 
-Experiment source bundle v2는 그대로 유지한다. Geometry가 적용된 bundle v3는
-`geometrySnapshot.schemaVersion=1` 아래 exact root와 전체 reachable module source,
-hash, import projection을 canonical order로 보존한다. 저장 시 API가 DB의 immutable
-version graph와 snapshot 전체를 검증하고 `experiment_geometry_roots` 및 전체 reachable
-module을 담는 `experiment_geometry_modules` projection을 갱신한다. 한번 v3인 Experiment는
-v2로 downgrade할 수 없다.
+Experiment source bundle v4는 `geometry.tsx`를 항상 포함한다. Experiment는
+`./geometry`, Task는 `../geometry`에서 필요한 named component를 import한다.
+`geometry.tsx`는 exact Geometry coordinate에서 named component를 import하고 여러 이름을
+export할 수 있다. `geometrySnapshot.schemaVersion=2`는 `entryImports`와 전체 reachable
+module source/hash/import projection을 canonical order로 보존한다. 저장 시 API가
+`geometry.tsx`에서 snapshot을 독립 재생성해 요청 값과 대조하고
+`experiment_geometry_imports` 및 `experiment_geometry_modules` projection을 갱신한다.
 
 ## 도메인 테이블
 

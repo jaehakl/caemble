@@ -71,6 +71,7 @@ fail()
       sourceHash,
       geometrySourceHash: 'd'.repeat(64),
       moduleHash: 'e'.repeat(64),
+      exports: ['Block'],
       imports: [],
     }
     const error = new Error('geometry boom')

@@ -12,7 +12,7 @@ import tree_sitter_typescript
 from db import GeometryPackage, GeometryRepository, GeometryVersion
 
 
-MAX_ROOTS = 64
+MAX_ENTRY_IMPORTS = 64
 MAX_MODULES = 256
 MAX_IMPORTS = 64
 MAX_DEPTH = 64
@@ -39,6 +39,12 @@ COORDINATE_RE = re.compile(
     r"(?P<package>[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)@"
     r"(?P<major>0|[1-9][0-9]*)\.(?P<minor>0|[1-9][0-9]*)\.(?P<patch>0|[1-9][0-9]*)$"
 )
+LOCAL_COORDINATE_RE = re.compile(
+    r"^caemble:geometry/"
+    r"(?P<namespace>[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9]))/"
+    r"(?P<repository>[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)/"
+    r"(?P<package>[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)@local$"
+)
 TSX_LANGUAGE = Language(tree_sitter_typescript.language_tsx())
 SEMVER_COMPONENT_MAX_TEXT = str(GEOMETRY_SEMVER_COMPONENT_MAX)
 
@@ -49,24 +55,18 @@ def _bad(message: str, *, code: int = status.HTTP_400_BAD_REQUEST) -> HTTPExcept
 
 def _validate_namespace(namespace: str) -> None:
     if NAMESPACE_RE.fullmatch(namespace) is None:
-        raise _bad(
-            "Geometry namespace format is invalid.",
-            code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
+        raise _bad("Geometry namespace format is invalid.", code=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
 
 def _validate_slug(value: str, field_name: str) -> None:
     if SLUG_RE.fullmatch(value) is None:
-        raise _bad(
-            f"Geometry {field_name} format is invalid.",
-            code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
+        raise _bad(f"Geometry {field_name} format is invalid.", code=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
 
 def _validate_alias(alias: str) -> None:
     if ALIAS_RE.fullmatch(alias) is None or alias in RESERVED_ALIASES:
         raise _bad(
-            "Geometry root alias must be a non-reserved PascalCase identifier.",
+            "Geometry names and aliases must be non-reserved PascalCase identifiers.",
             code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
 
@@ -81,10 +81,7 @@ def _validate_sha256(value: str, field_name: str) -> None:
 
 def _validate_coordinate(coordinate: str) -> None:
     if COORDINATE_RE.fullmatch(coordinate) is None:
-        raise _bad(
-            "Geometry coordinate format is invalid.",
-            code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
+        raise _bad("Geometry coordinate format is invalid.", code=status.HTTP_422_UNPROCESSABLE_ENTITY)
     if not _coordinate_version_is_bounded(coordinate):
         raise _bad(
             f"Geometry version components must not exceed {GEOMETRY_SEMVER_COMPONENT_MAX}.",
@@ -99,12 +96,23 @@ def source_hash(source: str) -> str:
 def module_hash(coordinate: str, source_digest: str, imports: list[dict[str, str]]) -> str:
     canonical = json.dumps(
         {
-            "schemaVersion": 1,
-            "moduleFormatVersion": 2,
+            "schemaVersion": 2,
+            "moduleFormatVersion": 3,
             "cadApiVersion": 5,
             "coordinate": coordinate,
             "sourceHash": source_digest,
-            "imports": sorted(imports, key=lambda item: item["coordinate"]),
+            "imports": [
+                {
+                    "exportName": item["exportName"],
+                    "alias": item["alias"],
+                    "coordinate": item["coordinate"],
+                    "moduleHash": item["moduleHash"],
+                }
+                for item in sorted(
+                    imports,
+                    key=lambda item: (item["alias"], item["exportName"], item["coordinate"]),
+                )
+            ],
         },
         ensure_ascii=False,
         separators=(",", ":"),
@@ -112,8 +120,19 @@ def module_hash(coordinate: str, source_digest: str, imports: list[dict[str, str
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def analyze_geometry_source(source: str) -> list[tuple[str, int, int]]:
-    encoded = source.encode("utf-8")
+def analyze_geometry_source(
+    source: str,
+    *,
+    allow_empty: bool = False,
+    allow_local: bool = False,
+) -> dict[str, Any]:
+    try:
+        encoded = source.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise _bad(
+            "Geometry module source must contain valid UTF-8 text.",
+            code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        ) from error
     if len(encoded) > MAX_MODULE_SOURCE_BYTES:
         raise _bad("Geometry module source exceeds 1 MiB.")
     tree = Parser(TSX_LANGUAGE).parse(encoded)
@@ -123,26 +142,17 @@ def analyze_geometry_source(source: str) -> list[tuple[str, int, int]]:
         row, column = error.start_point
         raise _bad(f"Geometry TSX syntax error at {row + 1}:{column + 1}.")
 
-    imports: list[tuple[str, int, int]] = []
-    default_exports = 0
-    default_value = None
-    bindings: dict[bytes, Any] = {}
+    bindings: dict[str, Any] = {}
+    imported_components: set[str] = set()
+    imports: list[dict[str, Any]] = []
+    export_specs: list[tuple[str, str]] = []
+
     for node in root.named_children:
-        if node.type == "lexical_declaration" and any(child.type == "const" for child in node.children):
-            for declarator in (child for child in node.named_children if child.type == "variable_declarator"):
-                name = declarator.child_by_field_name("name")
-                value = declarator.child_by_field_name("value")
-                if name is not None and name.type == "identifier" and value is not None:
-                    bindings[encoded[name.start_byte : name.end_byte]] = value
-        elif node.type == "function_declaration":
-            name = node.child_by_field_name("name")
-            if name is not None:
-                bindings[encoded[name.start_byte : name.end_byte]] = node
         if node.type == "import_statement":
             source_node = node.child_by_field_name("source")
             clause = next((child for child in node.named_children if child.type == "import_clause"), None)
             if source_node is None or source_node.type != "string" or clause is None:
-                raise _bad("Geometry imports must use a static import clause and string specifier.")
+                raise _bad("Geometry imports must use a static named import and string specifier.")
             raw = encoded[source_node.start_byte : source_node.end_byte]
             if len(raw) < 2 or raw[:1] not in {b"'", b'"'} or raw[-1:] != raw[:1]:
                 raise _bad("Geometry imports must use a plain string specifier.")
@@ -151,70 +161,223 @@ def analyze_geometry_source(source: str) -> list[tuple[str, int, int]]:
             except UnicodeDecodeError as error:
                 raise _bad("Geometry import specifier must be valid UTF-8.") from error
             named = clause.named_children
+            if len(named) != 1 or named[0].type != "named_imports":
+                raise _bad("Geometry imports must use named imports.")
+            specifiers = [child for child in named[0].named_children if child.type == "import_specifier"]
             if specifier == "@caemble/core":
-                if len(named) != 1 or named[0].type != "named_imports":
-                    raise _bad("@caemble/core must use named or type imports in Geometry modules.")
                 continue
-            if COORDINATE_RE.fullmatch(specifier) is None:
+            exact = COORDINATE_RE.fullmatch(specifier)
+            local = LOCAL_COORDINATE_RE.fullmatch(specifier)
+            if exact is None and (not allow_local or local is None):
+                suffix = " or @local while editing" if allow_local else ""
                 raise _bad(
-                    f"Geometry import must use an exact same-owner coordinate: {specifier}",
+                    f"Geometry imports must use an exact Geometry coordinate{suffix}.",
                     code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 )
-            if not _coordinate_version_is_bounded(specifier):
+            if exact is not None and not _coordinate_version_is_bounded(specifier):
                 raise _bad(
                     f"Geometry version components must not exceed {GEOMETRY_SEMVER_COMPONENT_MAX}.",
                     code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 )
-            if len(named) != 1 or named[0].type != "identifier":
-                raise _bad("Geometry dependencies must use one default import.")
-            if any(child.type == "type" for child in node.children):
-                raise _bad("Geometry dependencies cannot be type-only imports.")
-            imports.append((specifier, source_node.start_byte + 1, source_node.end_byte - 1))
-        elif node.type == "export_statement":
-            if any(child.type == "default" for child in node.children):
-                default_exports += 1
-                default_value = node.child_by_field_name("value") or node.child_by_field_name("declaration")
-            else:
-                raise _bad("Geometry modules may only export one default value.")
+            if not specifiers:
+                raise _bad("Geometry coordinate imports must import at least one named component.")
+            for item in specifiers:
+                if any(child.type == "type" for child in item.children):
+                    raise _bad("Geometry coordinate imports must import runtime components, not types.")
+                names = [
+                    encoded[child.start_byte : child.end_byte].decode("utf-8")
+                    for child in item.named_children
+                    if child.type == "identifier"
+                ]
+                if not names:
+                    raise _bad("Geometry coordinate import is malformed.")
+                export_name = names[0]
+                alias = names[-1]
+                _validate_alias(export_name)
+                _validate_alias(alias)
+                if alias in imported_components or alias in bindings:
+                    raise _bad(f"Geometry import alias is duplicated: {alias}")
+                imported_components.add(alias)
+                imports.append(
+                    {
+                        "exportName": export_name,
+                        "alias": alias,
+                        "coordinate": specifier,
+                        "specifierStart": source_node.start_byte + 1,
+                        "specifierEnd": source_node.end_byte - 1,
+                    }
+                )
+            continue
 
+        declaration = node.child_by_field_name("declaration") if node.type == "export_statement" else node
+        if declaration is not None and declaration.type == "lexical_declaration":
+            if not any(child.type == "const" for child in declaration.children):
+                if node.type == "export_statement":
+                    raise _bad("Exported Geometry bindings must be const functions.")
+                continue
+            for declarator in (
+                child for child in declaration.named_children if child.type == "variable_declarator"
+            ):
+                name_node = declarator.child_by_field_name("name")
+                value = declarator.child_by_field_name("value")
+                if name_node is not None and name_node.type == "identifier" and value is not None:
+                    name = encoded[name_node.start_byte : name_node.end_byte].decode("utf-8")
+                    bindings[name] = value
+                    if node.type == "export_statement":
+                        export_specs.append((name, name))
+            continue
+        if declaration is not None and declaration.type == "function_declaration":
+            name_node = declaration.child_by_field_name("name")
+            if name_node is not None:
+                name = encoded[name_node.start_byte : name_node.end_byte].decode("utf-8")
+                bindings[name] = declaration
+                if node.type == "export_statement":
+                    export_specs.append((name, name))
+            continue
+        if node.type != "export_statement":
+            continue
+        if any(child.type == "default" for child in node.children):
+            raise _bad("Geometry modules do not support default exports.")
+        if node.child_by_field_name("source") is not None:
+            raise _bad("Geometry re-exports must use an imported local binding.")
+        clause = next((child for child in node.named_children if child.type == "export_clause"), None)
+        if clause is None:
+            raise _bad("Geometry modules may only export named function components.")
+        for item in (child for child in clause.named_children if child.type == "export_specifier"):
+            names = [
+                encoded[child.start_byte : child.end_byte].decode("utf-8")
+                for child in item.named_children
+                if child.type == "identifier"
+            ]
+            if not names:
+                continue
+            export_specs.append((names[0], names[-1]))
+
+    aliases = [item["alias"] for item in imports]
+    if len(aliases) != len(set(aliases)):
+        raise _bad("Geometry import aliases must be unique within a module.")
+    if len(imports) > MAX_IMPORTS:
+        raise _bad(f"Geometry modules may import at most {MAX_IMPORTS} bindings.")
+
+    exports: list[str] = []
+    for local_name, export_name in export_specs:
+        _validate_alias(export_name)
+        if local_name not in imported_components and not _binding_is_function(
+            local_name,
+            bindings,
+            encoded,
+            set(),
+        ):
+            raise _bad(f"Geometry export must resolve to a function component: {export_name}")
+        exports.append(export_name)
+    if len(exports) != len(set(exports)):
+        raise _bad("Geometry export names must be unique.")
+    if not exports and not allow_empty:
+        raise _bad("Published Geometry modules must export at least one named component.")
+
+    _validate_runtime_policy(root, encoded)
+    return {
+        "exports": sorted(exports),
+        "imports": sorted(
+            imports,
+            key=lambda item: (item["alias"], item["exportName"], item["coordinate"]),
+        ),
+    }
+
+
+def rewrite_geometry_imports(source: str, replacements: dict[str, str]) -> str:
+    analysis = analyze_geometry_source(source, allow_empty=True, allow_local=True)
+    ranges = {
+        (item["specifierStart"], item["specifierEnd"], item["coordinate"])
+        for item in analysis["imports"]
+        if item["coordinate"] in replacements
+    }
+    encoded = source.encode("utf-8")
+    for start, end, coordinate in sorted(ranges, reverse=True):
+        encoded = encoded[:start] + replacements[coordinate].encode("utf-8") + encoded[end:]
+    return encoded.decode("utf-8")
+
+
+def validate_experiment_tsx_imports(source: str, *, path: str) -> None:
+    encoded = source.encode("utf-8")
+    tree = Parser(TSX_LANGUAGE).parse(encoded)
+    root = tree.root_node
+    if root.has_error:
+        error = next((node for node in _walk(root) if node.is_error or node.is_missing), root)
+        row, column = error.start_point
+        raise _bad(f"Experiment TSX syntax error at {row + 1}:{column + 1}.")
+    expected_geometry = "./geometry" if path == "experiment.tsx" else "../geometry"
+    for node in root.named_children:
+        if node.type != "import_statement":
+            continue
+        source_node = node.child_by_field_name("source")
+        clause = next((child for child in node.named_children if child.type == "import_clause"), None)
+        if source_node is None or source_node.type != "string" or clause is None:
+            raise _bad("Experiment imports must use a static import clause and string specifier.")
+        raw = encoded[source_node.start_byte : source_node.end_byte]
+        if len(raw) < 2 or raw[:1] not in {b"'", b'"'} or raw[-1:] != raw[:1]:
+            raise _bad("Experiment imports must use a plain string specifier.")
+        specifier = raw[1:-1].decode("utf-8")
+        if specifier not in {"@caemble/core", expected_geometry}:
+            raise _bad(f"Experiment import is not allowed in {path}: {specifier}")
     for node in _walk(root):
         if node.type == "call_expression":
             function = node.child_by_field_name("function")
-            if function is not None:
-                name = encoded[function.start_byte : function.end_byte]
-                if name in {b"import", b"require"}:
-                    raise _bad("Dynamic import and require() are not allowed in Geometry modules.")
-                if name in {
-                    b"Date",
-                    b"Function",
-                    b"SharedWorker",
-                    b"WebSocket",
-                    b"Worker",
-                    b"XMLHttpRequest",
-                    b"clearInterval",
-                    b"clearTimeout",
-                    b"eval",
-                    b"fetch",
-                    b"queueMicrotask",
-                    b"setInterval",
-                    b"setTimeout",
-                }:
-                    raise _bad(f"Hidden nondeterminism is not supported in Geometry modules: {name.decode()}.")
+            if function is not None and encoded[function.start_byte : function.end_byte] in {
+                b"import",
+                b"require",
+            }:
+                raise _bad("Dynamic import and require() are not allowed in Experiment sources.")
+
+
+def _binding_is_function(
+    name: str,
+    bindings: dict[str, Any],
+    encoded: bytes,
+    visiting: set[str],
+) -> bool:
+    if name in visiting:
+        return False
+    value = bindings.get(name)
+    while value is not None and value.type in {
+        "as_expression",
+        "parenthesized_expression",
+        "satisfies_expression",
+        "type_assertion",
+    }:
+        value = next(iter(value.named_children), None)
+    if value is None:
+        return False
+    if value.type in {"arrow_function", "function_declaration", "function_expression"}:
+        return True
+    if value.type != "identifier":
+        return False
+    target = encoded[value.start_byte : value.end_byte].decode("utf-8")
+    return _binding_is_function(target, bindings, encoded, visiting | {name})
+
+
+def _validate_runtime_policy(root: Any, encoded: bytes) -> None:
+    for node in _walk(root):
+        if node.type == "call_expression":
+            function = node.child_by_field_name("function")
+            if function is None:
+                continue
+            name = encoded[function.start_byte : function.end_byte]
+            if name in {b"import", b"require"}:
+                raise _bad("Dynamic import and require() are not allowed in Geometry modules.")
+            if name in {
+                b"Date", b"Function", b"SharedWorker", b"WebSocket", b"Worker", b"XMLHttpRequest",
+                b"clearInterval", b"clearTimeout", b"eval", b"fetch", b"queueMicrotask",
+                b"setInterval", b"setTimeout",
+            }:
+                raise _bad(f"Hidden nondeterminism is not supported in Geometry modules: {name.decode()}.")
         elif node.type == "new_expression":
             constructor = node.child_by_field_name("constructor") or next(
-                (child for child in node.named_children if child.type == "identifier"),
-                None,
+                (child for child in node.named_children if child.type == "identifier"), None
             )
             if constructor is not None:
                 name = encoded[constructor.start_byte : constructor.end_byte]
-                if name in {
-                    b"Date",
-                    b"Function",
-                    b"WebSocket",
-                    b"Worker",
-                    b"SharedWorker",
-                    b"XMLHttpRequest",
-                }:
+                if name in {b"Date", b"Function", b"WebSocket", b"Worker", b"SharedWorker", b"XMLHttpRequest"}:
                     raise _bad(f"Hidden nondeterminism is not supported in Geometry modules: {name.decode()}.")
         elif node.type in {"member_expression", "subscript_expression"}:
             object_node = node.child_by_field_name("object")
@@ -230,24 +393,12 @@ def analyze_geometry_source(source: str) -> list[tuple[str, int, int]]:
             if object_name == b"Math" and property_name == b"random":
                 raise _bad("Hidden nondeterminism is not supported in Geometry modules: Math.random.")
             if object_name in {b"Date", b"crypto", b"performance"}:
-                raise _bad(
-                    f"Hidden nondeterminism is not supported in Geometry modules: {object_name.decode()}."
-                )
+                raise _bad(f"Hidden nondeterminism is not supported in Geometry modules: {object_name.decode()}.")
         elif node.type in {"identifier", "shorthand_property_identifier"}:
             name = encoded[node.start_byte : node.end_byte]
             if name in {
-                b"Date",
-                b"SharedWorker",
-                b"WebSocket",
-                b"Worker",
-                b"XMLHttpRequest",
-                b"crypto",
-                b"global",
-                b"globalThis",
-                b"performance",
-                b"process",
-                b"self",
-                b"window",
+                b"Date", b"SharedWorker", b"WebSocket", b"Worker", b"XMLHttpRequest", b"crypto",
+                b"global", b"globalThis", b"performance", b"process", b"self", b"window",
             }:
                 raise _bad(f"Global runtime access is not supported in Geometry modules: {name.decode()}.")
         elif node.type == "variable_declarator":
@@ -255,88 +406,10 @@ def analyze_geometry_source(source: str) -> list[tuple[str, int, int]]:
             if value_node is not None and value_node.type == "identifier":
                 name = encoded[value_node.start_byte : value_node.end_byte]
                 if name == b"Math":
-                    raise _bad(
-                        "Aliasing Math is not supported in Geometry modules; "
-                        "call deterministic Math members directly."
-                    )
-    if default_exports != 1:
-        raise _bad("Geometry modules must contain exactly one direct default export.")
-    visited: set[bytes] = set()
-    while default_value is not None and default_value.type in {
-        "as_expression",
-        "parenthesized_expression",
-        "satisfies_expression",
-        "type_assertion",
-    }:
-        default_value = next(iter(default_value.named_children), None)
-    while default_value is not None and default_value.type == "identifier":
-        name = encoded[default_value.start_byte : default_value.end_byte]
-        if name in visited:
-            raise _bad("Geometry default export binding is circular.", code=status.HTTP_422_UNPROCESSABLE_ENTITY)
-        visited.add(name)
-        default_value = bindings.get(name)
-        while default_value is not None and default_value.type in {
-            "as_expression",
-            "parenthesized_expression",
-            "satisfies_expression",
-            "type_assertion",
-        }:
-            default_value = next(iter(default_value.named_children), None)
-    if default_value is None or default_value.type not in {
-        "arrow_function",
-        "function_declaration",
-        "function_expression",
-    }:
-        raise _bad(
-            "Geometry default export must resolve to a function component.",
-            code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
-    coordinates = [item[0] for item in imports]
-    if len(coordinates) > MAX_IMPORTS:
-        raise _bad(f"Geometry modules may import at most {MAX_IMPORTS} Geometry modules.")
-    if len(coordinates) != len(set(coordinates)):
-        raise _bad("Geometry dependency coordinates must be unique within a module.")
-    return imports
+                    raise _bad("Aliasing Math is not supported in Geometry modules; call members directly.")
 
 
-def validate_experiment_tsx_imports(source: str) -> None:
-    encoded = source.encode("utf-8")
-    tree = Parser(TSX_LANGUAGE).parse(encoded)
-    root = tree.root_node
-    if root.has_error:
-        error = next((node for node in _walk(root) if node.is_error or node.is_missing), root)
-        row, column = error.start_point
-        raise _bad(f"Experiment TSX syntax error at {row + 1}:{column + 1}.")
-    for node in root.named_children:
-        if node.type != "import_statement":
-            continue
-        source_node = node.child_by_field_name("source")
-        clause = next((child for child in node.named_children if child.type == "import_clause"), None)
-        if source_node is None or source_node.type != "string" or clause is None:
-            raise _bad("Experiment imports must use a static import clause and string specifier.")
-        raw = encoded[source_node.start_byte : source_node.end_byte]
-        if len(raw) < 2 or raw[:1] not in {b"'", b'"'} or raw[-1:] != raw[:1]:
-            raise _bad("Experiment imports must use a plain string specifier.")
-        specifier = raw[1:-1].decode("utf-8")
-        if specifier == "@caemble/core":
-            continue
-        if specifier == "@caemble/geometries":
-            raise _bad(
-                "@caemble/geometries has been removed; use a PascalCase Geometry root alias directly.",
-                code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            )
-        raise _bad(f"Experiment import is not allowed: {specifier}")
-    for node in _walk(root):
-        if node.type == "call_expression":
-            function = node.child_by_field_name("function")
-            if function is not None and encoded[function.start_byte : function.end_byte] in {
-                b"import",
-                b"require",
-            }:
-                raise _bad("Dynamic import and require() are not allowed in Experiment sources.")
-
-
-def _walk(node):
+def _walk(node: Any):
     pending = [node]
     while pending:
         current = pending.pop()
@@ -350,6 +423,10 @@ def _semver(version: GeometryVersion) -> str:
 
 def _coordinate(namespace: str, repository: str, package: str, version: str) -> str:
     return f"caemble:geometry/{namespace}/{repository}/{package}@{version}"
+
+
+def _local_coordinate(namespace: str, repository: str, package: str) -> str:
+    return f"caemble:geometry/{namespace}/{repository}/{package}@local"
 
 
 def _row_coordinate(row: tuple[GeometryVersion, GeometryPackage, GeometryRepository, str]) -> str:
@@ -371,10 +448,10 @@ def _bump(version: tuple[int, int, int], kind: str) -> tuple[int, int, int]:
 
 
 def _version_tuple(value: str) -> tuple[int, int, int]:
-    match = re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", value)
+    match = SEMVER_RE.fullmatch(value)
     if match is None:
         raise _bad("Geometry version must be a release-only SemVer value.")
-    version = tuple(int(part) for part in match.groups())
+    version = tuple(int(part) for part in value.split("."))
     if any(component > GEOMETRY_SEMVER_COMPONENT_MAX for component in version):
         raise _bad(f"Geometry version components must not exceed {GEOMETRY_SEMVER_COMPONENT_MAX}.")
     return version

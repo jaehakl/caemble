@@ -102,7 +102,7 @@ class TestCodeEntityContract(unittest.TestCase):
                 "source_hash": "a" * 64,
             }
         )
-        self.assertEqual(value.source_bundle.formatVersion, 2)
+        self.assertEqual(value.source_bundle.formatVersion, 4)
         self.assertEqual(
             value.model_dump(mode="json")["source_bundle"],
             experiment_source_bundle(),

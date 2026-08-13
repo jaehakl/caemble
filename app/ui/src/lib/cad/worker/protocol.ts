@@ -4,7 +4,7 @@ import type { Tensor } from '../model/types'
 import type { UcumUnit } from '../model/units'
 import type { VarsSchemaEntry } from '../model/vars'
 import type { SerializableCadScene } from '../execution/meshValidation'
-import type { GeometryCoordinate } from '../source/geometrySnapshot'
+import type { GeometryModuleCoordinate } from '../source/effectiveGeometryGraph'
 
 export type CadDocumentType = 'experiment'
 export type CadWorkerErrorType = 'compile' | 'type' | 'policy' | 'runtime' | 'model'
@@ -42,7 +42,8 @@ export type CadEvaluationRequest = CadRequestIdentity &
 export type CadGeometryPreviewRequest = CadRequestIdentity &
   Readonly<{
     type: 'preview-geometry'
-    coordinate: GeometryCoordinate
+    coordinate: GeometryModuleCoordinate
+    exportName: string
     lengthUnit: UcumUnit
   }>
 

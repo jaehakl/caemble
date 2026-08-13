@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { CAD_COMPILER_VERSION, type CompiledCadDocument, type CompiledCadSource } from '../../cad/compiler/types'
 import { executeCompiledDocument, inspectCompiledDocument } from '../../cad/execution/userModule'
 import { generateRandomVars } from '../../cad/model/vars'
-import { analyzeCadSource, analyzeTaskSource } from '../../cad/source/sourceAnalysis'
+import { analyzeCadSource, analyzeGeometrySource, analyzeTaskSource } from '../../cad/source/sourceAnalysis'
 import { assertSimulationProgramManifest } from '../../cad/simulation'
 import type { CaembleProgramExample } from './types'
 import { caembleProgramExamples } from '.'
@@ -28,6 +28,7 @@ async function prepareExample(example: CaembleProgramExample) {
       .filter(([path]) => path.endsWith('.tsx'))
       .map(async ([entryFile, source]) => {
         if (entryFile === 'experiment.tsx') analyzeCadSource(source)
+        else if (entryFile === 'geometry.tsx') analyzeGeometrySource(source, { allowEmpty: true })
         else analyzeTaskSource(source)
         const compiled: CompiledCadSource = {
           apiVersion: 5,

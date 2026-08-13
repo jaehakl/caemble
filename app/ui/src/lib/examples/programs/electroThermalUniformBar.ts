@@ -5,11 +5,8 @@ export const electroThermalUniformBarExperimentCode = `import {
   Mat,
   Material,
   experiment,
-  type Geometry,
-  type Vec3,
 } from '@caemble/core'
-
-const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />
+import { Conductor } from './geometry'
 
 export default experiment({
   lengthUnit: 'mm',
@@ -72,11 +69,17 @@ export default experiment({
 })
 `
 
-export const electroThermalUniformBarElectricTaskCode = `import { defineTask } from '@caemble/core'
+export const electroThermalUniformBarGeometryCode = `import { type Geometry, type Vec3 } from '@caemble/core'
 
-function ElectricProbe() {
-  return <box size={[2, 2, 2]} />
-}
+export const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />
+
+export const ElectricProbe: Geometry = () => <box size={[2, 2, 2]} />
+
+export const ThermalProbe: Geometry = () => <box size={[2, 2, 2]} />
+`
+
+export const electroThermalUniformBarElectricTaskCode = `import { defineTask } from '@caemble/core'
+import { ElectricProbe } from '../geometry'
 
 export default defineTask({
   kernel: { name: 'dc-current-density', version: '0.1.0' },
@@ -118,10 +121,7 @@ export default defineTask({
 `
 
 export const electroThermalUniformBarThermalTaskCode = `import { defineTask } from '@caemble/core'
-
-function ThermalProbe() {
-  return <box size={[2, 2, 2]} />
-}
+import { ThermalProbe } from '../geometry'
 
 export default defineTask({
   kernel: { name: 'steady-state-heat', version: '0.1.0' },
@@ -176,6 +176,7 @@ export const electroThermalUniformBarSimulationCode = `async def simulate(*, sim
 
 export const electroThermalUniformBarExperimentSourceBundle = createExperimentSourceBundle({
   'experiment.tsx': electroThermalUniformBarExperimentCode,
+  'geometry.tsx': electroThermalUniformBarGeometryCode,
   'simulate.py': electroThermalUniformBarSimulationCode,
   'tasks/electric.tsx': electroThermalUniformBarElectricTaskCode,
   'tasks/thermal.tsx': electroThermalUniformBarThermalTaskCode,

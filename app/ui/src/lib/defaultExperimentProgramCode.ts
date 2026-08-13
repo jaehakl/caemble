@@ -2,20 +2,8 @@ export const defaultExperimentProgramCode = `import {
   Mat,
   Material,
   experiment,
-  type Geometry,
-  type Vec3,
 } from '@caemble/core'
-
-const Conductor: Geometry<{
-  notchPosition: Vec3
-  notchSize: Vec3
-  size: Vec3
-}> = ({ notchPosition, notchSize, size }) => (
-  <subtract>
-    <box size={size} />
-    <box pos={notchPosition} size={notchSize} />
-  </subtract>
-)
+import { Conductor } from './geometry'
 
 export default experiment({
   lengthUnit: 'mm',
@@ -61,11 +49,24 @@ export default experiment({
 })
 `
 
-export const defaultExperimentTaskCode = `import { defineTask } from '@caemble/core'
+export const defaultExperimentGeometryCode = `import { type Geometry, type Vec3 } from '@caemble/core'
 
-function ExperimentDevice() {
-  return <box size={[1, 1, 1]} />
-}
+export const Conductor: Geometry<{
+  notchPosition: Vec3
+  notchSize: Vec3
+  size: Vec3
+}> = ({ notchPosition, notchSize, size }) => (
+  <subtract>
+    <box size={size} />
+    <box pos={notchPosition} size={notchSize} />
+  </subtract>
+)
+
+export const ExperimentDevice: Geometry = () => <box size={[1, 1, 1]} />
+`
+
+export const defaultExperimentTaskCode = `import { defineTask } from '@caemble/core'
+import { ExperimentDevice } from '../geometry'
 
 export default defineTask({
   kernel: { name: 'dc-current-density', version: '0.1.0' },

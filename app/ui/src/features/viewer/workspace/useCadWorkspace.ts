@@ -7,7 +7,6 @@ import {
   buildMeasurement,
   CadCompilationError,
   CadDocumentEvaluationError,
-  createCadSourceDocument,
   deserializeCadScene,
   evaluateDocument,
   generateRandomVars,
@@ -15,14 +14,12 @@ import {
   removeExperimentTask,
   updateCadSource,
   updateExperimentSourceFile,
-  upgradeExperimentSourceBundleV3,
   type BuiltMeasurement,
   type CadDiagnostic,
   type CadScene,
   type EvaluatedExperimentSnapshot,
   type ExperimentSourceDocument,
   type GeometryDraftOverlay,
-  type GeometryDraftRoot,
   type RecordedData,
   type Vars,
 } from '@/lib/cad'
@@ -112,7 +109,6 @@ export function useCadWorkspace(
   frozenMaterialSnapshot: unknown | null = null,
   runtimeEnabled = true,
   geometryDrafts?: GeometryDraftOverlay,
-  geometryRoots?: readonly GeometryDraftRoot[],
   resetKey: string | number = 'default',
 ) {
   const [diagnostics, setDiagnostics] = useState<readonly CadDiagnostic[]>([])
@@ -221,10 +217,7 @@ export function useCadWorkspace(
       return
     }
 
-    const evaluationDocument =
-      experiment.sourceBundle.formatVersion === 2 && (geometryDrafts || geometryRoots)
-        ? createCadSourceDocument('experiment', upgradeExperimentSourceBundleV3(experiment.sourceBundle))
-        : experiment
+    const evaluationDocument = experiment
 
     const abort = new AbortController()
     activeEvaluationRef.current = abort
@@ -234,7 +227,6 @@ export function useCadWorkspace(
 
     void inspectDocument(evaluationDocument, {
       geometryDrafts,
-      geometryRoots,
       signal: abort.signal,
       timeoutMs: evaluationTimeoutRef.current,
     })
@@ -246,7 +238,7 @@ export function useCadWorkspace(
         updateStatus('Evaluating')
         const snapshot = await evaluateDocument(
           { document: evaluationDocument, vars: nextVars },
-          { geometryDrafts, geometryRoots, signal: abort.signal, timeoutMs: evaluationTimeoutRef.current },
+          { geometryDrafts, signal: abort.signal, timeoutMs: evaluationTimeoutRef.current },
         )
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
         updateStatus('Resolving Materials')
@@ -312,17 +304,7 @@ export function useCadWorkspace(
     }
     // Canonical keys deliberately avoid reevaluating when parent state reuses the same persisted values.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    experiment,
-    generation,
-    geometryDrafts,
-    geometryRoots,
-    invalidateSimulation,
-    materialsKey,
-    resetKey,
-    updateStatus,
-    varsKey,
-  ])
+  }, [experiment, generation, geometryDrafts, invalidateSimulation, materialsKey, resetKey, updateStatus, varsKey])
 
   useEffect(
     () => () => {

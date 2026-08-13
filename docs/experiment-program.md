@@ -5,16 +5,21 @@
 하나의 Experiment revision은 다음 source bundle을 원자적으로 소유한다.
 
 ```text
-{ formatVersion: 2, files: {
-  "experiment.tsx": string,
-  "simulate.py": string,
-  "tasks/<taskName>.tsx": string,
-  ...
-} }
+{
+  formatVersion: 4,
+  files: {
+    "experiment.tsx": string,
+    "geometry.tsx": string,
+    "simulate.py": string,
+    "tasks/<taskName>.tsx": string,
+    ...
+  },
+  geometrySnapshot: { schemaVersion: 2, entryImports: [...], modules: [...] }
+}
 ```
 
-`experiment.tsx`, `simulate.py`, 하나 이상의 Task 파일이 필수다. CAD document format은 2,
-CAD authoring API는 5, Simulation manifest는 5, Python simulation API는 3이다. 구형
+`experiment.tsx`, `geometry.tsx`, `simulate.py`, 하나 이상의 Task 파일이 필수다. CAD document format은 2,
+CAD authoring API는 5, Geometry module format은 3, Simulation manifest는 5, Python simulation API는 3이다. 구형
 Structure document와 `{ sample, setup }` 실행 payload는 받지 않는다.
 
 ```text
@@ -33,14 +38,29 @@ Measurement 생성과 solver 실행은 별개다. 실패하거나 취소된 실�
 
 ## 공개 import와 결정론
 
-각 TSX 파일의 공개 import는 `@caemble/core` 하나뿐이다. 상대 import, Task 간 import,
-동적 import, `require()`, 버전 경로가 붙은 package import는 지원하지 않는다.
+`geometry.tsx`와 Published Geometry source는 `@caemble/core`와 exact
+`caemble:geometry/<namespace>/<repository>/<package>@X.Y.Z` named import만 사용한다.
+`experiment.tsx`는 `./geometry`, Task는 `../geometry`에서 named component를 가져온다. Task 간 import,
+동적 import, `require()`, 그 밖의 package import는 지원하지 않는다.
 `Math.random`, `Date`, `crypto` 같은 숨은 비결정성도 authoring source에서 금지한다.
 
 평가기는 `varsSchema`의 모든 key가 포함된 vars만 받는다. 누락·초과 key, 잘못된 tensor
 shape, 비유한 값, 범위 밖 값은 geometry나 config callback을 실행하기 전에 거부한다. Reroll은
 스키마 범위에서 새 candidate와 frozen Material 값을 만들 뿐 source를 변경하거나 저장·실행하지
 않는다. `min === max`인 항목은 고정값이다. seed와 생성 provenance는 저장하지 않는다.
+
+## 공통 Geometry Source (`geometry.tsx`)
+
+`geometry.tsx`는 Experiment와 모든 Task가 공유할 named Geometry component를 여러 개 export한다.
+Published Geometry를 사용할 때도 이 파일의 exact import가 그래프의 유일한 시작점이다.
+
+```tsx
+import { type Geometry, type Vec3 } from "@caemble/core";
+
+export const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />;
+
+export const Probe: Geometry = () => <box size={[2, 2, 2]} />;
+```
 
 ## 공통 Experiment Source (`experiment.tsx`)
 
@@ -52,11 +72,8 @@ import {
   Mat,
   Material,
   experiment,
-  type Geometry,
-  type Vec3,
 } from "@caemble/core";
-
-const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />;
+import { Conductor } from "./geometry";
 
 export default experiment({
   lengthUnit: "mm",
@@ -105,9 +122,12 @@ Task 이름은 파일명에서 등록된다. Task는 고정된 solver `name/vers
 
 ```tsx
 import { defineTask } from "@caemble/core";
+import { Probe } from "../geometry";
 
 export default defineTask({
   kernel: { name: "dc-current-density", version: "0.1.0" },
+  lengthUnit: "mm",
+  geometry: () => <Probe id="probe" />,
   config: ({ vars }) => ({
     parameters: {
       relativeTolerance: {

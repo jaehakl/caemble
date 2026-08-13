@@ -101,17 +101,23 @@ describe('useCaePageSession', () => {
     expect(state.loadExperiment).toHaveBeenCalledWith(7, 11)
   })
 
-  it('initializes an empty v4 draft with Experiment as the active tab', async () => {
+  it('initializes an empty v7 draft with Experiment as the active tab', async () => {
     const state = workbench()
     const { result } = renderHook(() => useCaePageSession(false, 'user-1', state), { wrapper: wrapper() })
 
     await waitFor(() => expect(result.current.initialized).toBe(true))
     expect(state.restoreDraft).toHaveBeenCalledWith(
       expect.objectContaining({
-        version: 5,
+        version: 7,
         candidate: { vars: null, materialParameters: null },
         selection: { measurementId: null },
-        geometry: { drafts: {}, stagedModules: [], selectedCoordinate: null, expandedPaths: [] },
+        geometry: {
+          drafts: {},
+          stagedModules: [],
+          selectedCoordinate: 'geometry.tsx',
+          selectedExport: null,
+          expandedPaths: ['geometry.tsx'],
+        },
         layout: expect.objectContaining({ activeTab: 'experiment' }),
       }),
     )

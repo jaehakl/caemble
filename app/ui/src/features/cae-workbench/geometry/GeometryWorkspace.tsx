@@ -4,59 +4,35 @@ import {
   ChevronRight,
   CirclePlus,
   FileCode2,
-  GitBranch,
   PanelRightOpen,
   Pencil,
-  Plus,
   RotateCcw,
   Upload,
-  X,
 } from 'lucide-react'
 import { useMemo } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import CadEditor from '@/features/viewer/editor/CadEditor'
-import type {
-  CadDiagnostic,
-  EffectiveGeometryGraph,
-  GeometryCoordinate,
-  GeometrySnapshot,
-  GeometrySnapshotModule,
-} from '@/lib/cad'
+import { analyzeGeometrySource, type CadDiagnostic, type GeometryModuleCoordinate } from '@/lib/cad'
 import { cn } from '@/lib/utils'
 import type { GeometryLocalDraft } from '../types'
+import type { GeometryWorkspaceState } from './useGeometryWorkspaceState'
+
+type Occurrence = Readonly<{
+  parent: 'geometry.tsx' | GeometryModuleCoordinate
+  alias: string
+  coordinate: GeometryModuleCoordinate
+}>
 
 type GeometryWorkspaceProps = Readonly<{
-  busy: boolean
   diagnostics: readonly CadDiagnostic[]
-  drafts: Readonly<Record<string, GeometryLocalDraft>>
-  effectiveGraph: EffectiveGeometryGraph | null
-  expandedPaths: readonly string[]
-  previewError: string | null
-  publishReady: boolean
-  previewStale: boolean
-  namespace: string | null
-  selectedCoordinate: GeometryCoordinate | null
-  snapshot: GeometrySnapshot | null
-  onAddRoot: () => void
-  onAddImport: () => void
-  onCreate: () => void
-  onCheckLatest: (coordinate: GeometryCoordinate) => void
-  onConnectRoot: (coordinate: GeometryCoordinate) => void
-  onBumpChange: (coordinate: GeometryCoordinate, bump: GeometryLocalDraft['bump']) => void
-  onDescriptionChange: (coordinate: GeometryCoordinate, description: string) => void
-  onDiscardDraft: (coordinate: GeometryCoordinate) => void
-  onEditAsNewVersion: (coordinate: GeometryCoordinate) => void
-  onPublish: (coordinate: GeometryCoordinate, apply: boolean) => void
-  onRemoveRoot: (alias: string) => void
-  onRenameRoot: (previousAlias: string, nextAlias: string) => void
-  onShowUsage: (alias: string) => void
-  onManageRepositories: () => void
+  geometry: GeometryWorkspaceState
   onChangeNamespace: () => void
-  onSelect: (coordinate: GeometryCoordinate) => void
-  onSourceChange: (coordinate: GeometryCoordinate, source: string) => void
-  onTogglePath: (path: string) => void
+  onCreate: () => void
+  onEditAsNewVersion: (coordinate: GeometryModuleCoordinate) => void
+  onManage: () => void
+  onPublish: (coordinate: GeometryModuleCoordinate) => void
 }>
 
 function coordinateLabel(coordinate: string) {
@@ -64,75 +40,70 @@ function coordinateLabel(coordinate: string) {
   return parts[parts.length - 1] ?? coordinate
 }
 
+function safeAnalysis(source: string, allowEmpty = false) {
+  try {
+    return analyzeGeometrySource(source, { allowEmpty, allowLocal: true })
+  } catch {
+    return null
+  }
+}
+
 function Metadata({
   draft,
-  effectiveModule,
-  effectiveImports,
   module,
   onDescriptionChange,
-  onRenameRoot,
-  rootAliases,
+  onBumpChange,
 }: {
   draft: GeometryLocalDraft | null
-  effectiveModule: EffectiveGeometryGraph['modules'][number] | null
-  effectiveImports: readonly GeometryCoordinate[] | null
-  module: GeometrySnapshotModule | null
-  onDescriptionChange: (coordinate: GeometryCoordinate, description: string) => void
-  onRenameRoot: (previousAlias: string, nextAlias: string) => void
-  rootAliases: readonly string[]
+  module: NonNullable<GeometryWorkspaceState['effectiveGraph']>['modules'][number] | null
+  onDescriptionChange: (value: string) => void
+  onBumpChange: (value: GeometryLocalDraft['bump']) => void
 }) {
-  if (!draft && !module && !effectiveModule) {
-    return <p className="text-sm text-muted-foreground">Tree에서 Geometry를 선택하세요.</p>
-  }
-  const imports = effectiveImports ?? module?.imports.map((item) => item.coordinate) ?? []
+  if (!draft && !module)
+    return <p className="text-sm text-muted-foreground">Tree에서 파일이나 Geometry를 선택하세요.</p>
+  const analysis = safeAnalysis(draft?.source ?? module?.source ?? '')
   return (
     <div className="space-y-5 text-xs">
       <section className="space-y-1.5">
         <h3 className="font-semibold text-foreground">Coordinate</h3>
-        <p className="font-mono break-all text-muted-foreground">
-          {draft?.coordinate ?? module?.coordinate ?? effectiveModule?.coordinate}
-        </p>
+        <p className="font-mono break-all text-muted-foreground">{draft?.coordinate ?? module?.coordinate}</p>
       </section>
       <section className="space-y-1.5">
-        <h3 className="font-semibold text-foreground">Version</h3>
+        <h3 className="font-semibold text-foreground">Named exports</h3>
+        <div className="flex flex-wrap gap-1">
+          {(analysis?.exports ?? []).map((item) => (
+            <Badge className="rounded-sm" key={item.name}>
+              {item.name}
+            </Badge>
+          ))}
+          {!analysis?.exports.length ? (
+            <span className="text-muted-foreground">분석 가능한 export가 없습니다.</span>
+          ) : null}
+        </div>
+      </section>
+      <section className="space-y-2">
+        <h3 className="font-semibold text-foreground">Imports from source</h3>
+        {analysis?.imports.length ? (
+          <ul className="space-y-2">
+            {analysis.imports.map((item) => (
+              <li
+                className="rounded border bg-muted/25 p-2"
+                key={`${item.alias}:${item.coordinate}:${item.exportName}`}
+              >
+                <p className="font-mono font-semibold">{item.alias}</p>
+                <p className="font-mono break-all text-muted-foreground">
+                  {item.exportName} · {item.coordinate}
+                </p>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-muted-foreground">Import가 없습니다.</p>
+        )}
         <p className="text-muted-foreground">
-          {draft
-            ? `${draft.version} (${draft.bump})`
-            : (module?.coordinate ?? effectiveModule?.coordinate)?.split('@')[1]}
+          Import 관계는 TSX source에서만 편집하며 Tree와 preview가 자동 갱신됩니다.
         </p>
       </section>
-      {rootAliases.length ? (
-        <section className="space-y-1.5">
-          <h3 className="font-semibold text-foreground">Root aliases</h3>
-          <p className="text-muted-foreground">
-            Experiment와 Task에서 <code>&lt;Alias /&gt;</code>처럼 바로 사용하는 Geometry component 이름이며 component의
-            id와는 별개입니다.
-          </p>
-          <div className="grid gap-2">
-            {rootAliases.map((alias) => (
-              <form
-                className="flex gap-1"
-                key={alias}
-                onSubmit={(event) => {
-                  event.preventDefault()
-                  onRenameRoot(alias, String(new FormData(event.currentTarget).get('alias') ?? ''))
-                }}
-              >
-                <input
-                  aria-label={`${alias} root alias`}
-                  className="h-8 min-w-0 flex-1 rounded-md border bg-background px-2 font-mono text-xs"
-                  defaultValue={alias}
-                  key={alias}
-                  name="alias"
-                />
-                <Button size="sm" type="submit" variant="outline">
-                  변경
-                </Button>
-              </form>
-            ))}
-          </div>
-        </section>
-      ) : null}
       <section className="space-y-1.5">
         <h3 className="font-semibold text-foreground">Description</h3>
         {draft ? (
@@ -140,166 +111,142 @@ function Metadata({
             aria-label="Geometry description"
             className="min-h-20 w-full rounded-md border bg-background p-2 text-xs"
             maxLength={2_000}
-            onChange={(event) => onDescriptionChange(draft.coordinate, event.target.value)}
+            onChange={(event) => onDescriptionChange(event.target.value)}
             value={draft.description}
           />
         ) : (
-          <>
-            <p className="whitespace-pre-wrap text-muted-foreground">
-              {module?.description || (effectiveModule ? 'Preview staging' : '설명 없음')}
-            </p>
-            {module ? (
-              <p className="text-muted-foreground">Published description은 새 Version draft에서 수정합니다.</p>
-            ) : null}
-          </>
+          <p className="whitespace-pre-wrap text-muted-foreground">Published Version의 설명은 읽기 전용입니다.</p>
         )}
       </section>
-      <section className="space-y-2">
-        <h3 className="font-semibold text-foreground">Exact imports</h3>
-        {imports.length ? (
-          <ul className="space-y-2">
-            {imports.map((coordinate) => (
-              <li className="rounded border bg-muted/25 p-2 font-mono break-all" key={coordinate}>
-                {coordinate}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-muted-foreground">Import 없음</p>
-        )}
-        {draft ? (
-          <p className="text-muted-foreground">
-            import 추가·교체·제거는 TSX source의 exact coordinate import를 편집해 수행합니다.
-          </p>
-        ) : null}
-      </section>
+      {draft?.baseGeometryVersionId ? (
+        <label className="grid gap-1.5">
+          Version bump
+          <select
+            className="h-8 rounded-md border bg-background px-2"
+            onChange={(event) => onBumpChange(event.target.value as GeometryLocalDraft['bump'])}
+            value={draft.bump}
+          >
+            <option value="patch">patch</option>
+            <option value="minor">minor</option>
+            <option value="major">major</option>
+          </select>
+        </label>
+      ) : null}
     </div>
   )
 }
 
-export function GeometryWorkspace(props: GeometryWorkspaceProps) {
+export function GeometryWorkspace({
+  diagnostics,
+  geometry,
+  onChangeNamespace,
+  onCreate,
+  onEditAsNewVersion,
+  onManage,
+  onPublish,
+}: GeometryWorkspaceProps) {
   const modules = useMemo(
-    () => new Map((props.snapshot?.modules ?? []).map((module) => [module.coordinate, module])),
-    [props.snapshot?.modules],
+    () => new Map(geometry.effectiveGraph?.modules.map((module) => [module.coordinate, module]) ?? []),
+    [geometry.effectiveGraph?.modules],
   )
-  const occurrenceCounts = useMemo(() => {
-    const counts = new Map<string, number>()
-    const effectiveModules = new Map(props.effectiveGraph?.modules.map((module) => [module.coordinate, module]))
-    const visit = (coordinate: GeometryCoordinate) => {
-      const current = counts.get(coordinate) ?? 0
-      if (current >= 2) return
-      counts.set(coordinate, current + 1)
-      const effective = effectiveModules.get(coordinate)
-      if (effective) effective.imports.forEach(visit)
-      else modules.get(coordinate)?.imports.forEach((item) => visit(item.coordinate))
-    }
-    ;(props.effectiveGraph?.roots ?? props.snapshot?.roots ?? []).forEach((root) => visit(root.coordinate))
-    return counts
-  }, [modules, props.effectiveGraph, props.snapshot?.roots])
-  const selectedModule = props.selectedCoordinate ? (modules.get(props.selectedCoordinate) ?? null) : null
-  const selectedDraft = props.selectedCoordinate ? (props.drafts[props.selectedCoordinate] ?? null) : null
-  const selectedEffectiveModule = props.selectedCoordinate
-    ? (props.effectiveGraph?.modules.find((module) => module.coordinate === props.selectedCoordinate) ?? null)
-    : null
-  const diagnosticCoordinates = new Set(props.diagnostics.map((diagnostic) => diagnostic.file))
-  const rootAliases = (props.effectiveGraph?.roots ?? props.snapshot?.roots ?? [])
-    .filter((root) => root.coordinate === props.selectedCoordinate)
-    .map((root) => root.alias)
-  const selectedSource = selectedDraft?.source ?? selectedModule?.source ?? selectedEffectiveModule?.source ?? ''
-  const renderedChildren = new Map<GeometryCoordinate, number>()
+  const selectedDraft =
+    geometry.selectedCoordinate && geometry.selectedCoordinate !== 'geometry.tsx'
+      ? (geometry.drafts[geometry.selectedCoordinate] ?? null)
+      : null
+  const selectedModule =
+    geometry.selectedCoordinate && geometry.selectedCoordinate !== 'geometry.tsx'
+      ? (modules.get(geometry.selectedCoordinate) ?? null)
+      : null
+  const selectedSource =
+    geometry.selectedCoordinate === 'geometry.tsx'
+      ? geometry.entrySource
+      : (selectedDraft?.source ?? selectedModule?.source ?? '')
+  const entryAnalysis = safeAnalysis(geometry.entrySource, true)
+  const reachable = new Set(geometry.effectiveGraph?.modules.map((module) => module.coordinate) ?? [])
+  const standaloneDrafts = Object.values(geometry.drafts).filter((draft) => !reachable.has(draft.coordinate))
 
-  const renderOccurrence = (coordinate: GeometryCoordinate, path: string, depth: number) => {
-    const module = modules.get(coordinate)
-    const draft = props.drafts[coordinate]
-    const effective = props.effectiveGraph?.modules.find((item) => item.coordinate === coordinate)
-    if (!module && !draft && !effective) return null
-    const expanded = props.expandedPaths.includes(path)
-    const children = effective?.imports ?? module?.imports.map((item) => item.coordinate) ?? []
-    const previousRenderCount = renderedChildren.get(coordinate) ?? 0
-    const traverseChildren = previousRenderCount < 2
-    renderedChildren.set(coordinate, previousRenderCount + 1)
-    const label = coordinateLabel(coordinate)
+  const renderOccurrence = (
+    imported: Readonly<{ exportName: string; alias: string; coordinate: GeometryModuleCoordinate }>,
+    parent: 'geometry.tsx' | GeometryModuleCoordinate,
+    path: readonly Occurrence[],
+    depth: number,
+  ): React.ReactNode => {
+    const edge: Occurrence = { parent, alias: imported.alias, coordinate: imported.coordinate }
+    const nextPath = [...path, edge]
+    const pathKey = nextPath.map((item) => `${item.alias}:${item.coordinate}`).join('/')
+    const module = modules.get(imported.coordinate)
+    const children = module?.imports ?? []
+    const expanded = geometry.expandedPaths.includes(pathKey)
+    const selected =
+      geometry.selectedCoordinate === imported.coordinate &&
+      geometry.selectedPath.map((item) => `${item.alias}:${item.coordinate}`).join('/') === pathKey
     return (
-      <li key={path} role="treeitem" aria-expanded={children.length ? expanded : undefined}>
+      <li aria-expanded={children.length ? expanded : undefined} key={pathKey} role="treeitem">
         <div
           className={cn(
-            'group flex min-w-0 items-center gap-1 rounded-sm py-1 pr-1 text-xs hover:bg-accent',
-            props.selectedCoordinate === coordinate && 'bg-accent text-accent-foreground',
+            'flex min-w-0 items-center gap-1 rounded py-1 pr-1 text-xs hover:bg-accent',
+            selected && 'bg-accent',
           )}
           style={{ paddingLeft: `${depth * 12 + 4}px` }}
         >
           <button
-            aria-label={expanded ? `${label} 접기` : `${label} 펼치기`}
+            aria-label={expanded ? `${imported.alias} 접기` : `${imported.alias} 펼치기`}
             className={cn('grid size-5 shrink-0 place-items-center', !children.length && 'invisible')}
-            onClick={() => props.onTogglePath(path)}
+            onClick={() => geometry.togglePath(pathKey)}
             type="button"
           >
             {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
           </button>
           <button
-            className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-            onClick={() => props.onSelect(coordinate)}
+            className="min-w-0 flex-1 text-left"
+            onClick={() => geometry.selectOccurrence(imported.coordinate, nextPath, imported.exportName)}
             type="button"
           >
-            <FileCode2 className="size-3.5 shrink-0" />
-            <span className="truncate font-mono" title={coordinate}>
-              {label}
+            <span className="block truncate font-mono font-semibold">{imported.alias}</span>
+            <span className="block truncate text-[10px] text-muted-foreground" title={imported.coordinate}>
+              {imported.exportName} · {coordinateLabel(imported.coordinate)}
             </span>
-            {draft ? <Badge className="h-4 rounded-sm px-1 text-[9px]">draft</Badge> : null}
-            {draft?.standalonePreview ? (
-              <Badge className="h-4 rounded-sm bg-blue-100 px-1 text-[9px] text-blue-900">standalone</Badge>
-            ) : null}
-            {diagnosticCoordinates.has(coordinate) ||
-            (draft && props.selectedCoordinate === coordinate && props.previewError) ? (
-              <Badge className="text-destructive-foreground h-4 rounded-sm bg-destructive px-1 text-[9px]">error</Badge>
-            ) : null}
-            {(occurrenceCounts.get(coordinate) ?? 0) > 1 ? (
-              <Badge className="h-4 rounded-sm bg-muted px-1 text-[9px]">shared</Badge>
-            ) : null}
           </button>
+          {geometry.drafts[imported.coordinate] ? (
+            <Badge className="h-4 rounded-sm px-1 text-[9px]">local</Badge>
+          ) : null}
         </div>
-        {children.length && expanded && traverseChildren ? (
+        {expanded && children.length ? (
           <ul role="group">
-            {children.map((item, index) => renderOccurrence(item, `${path}/${index}:${item}`, depth + 1))}
+            {children.map((child) => renderOccurrence(child, imported.coordinate, nextPath, depth + 1))}
           </ul>
         ) : null}
       </li>
     )
   }
 
-  const effectiveCoordinates = new Set(props.effectiveGraph?.modules.map((module) => module.coordinate) ?? [])
-  const unresolvedDrafts = Object.values(props.drafts).filter(
-    (draft) => !modules.has(draft.coordinate) && !effectiveCoordinates.has(draft.coordinate),
-  )
   const metadata = (
     <Metadata
       draft={selectedDraft}
-      effectiveModule={selectedEffectiveModule}
-      effectiveImports={selectedEffectiveModule?.imports ?? null}
       module={selectedModule}
-      onDescriptionChange={props.onDescriptionChange}
-      onRenameRoot={props.onRenameRoot}
-      rootAliases={rootAliases}
+      onBumpChange={(value) => {
+        if (selectedDraft) geometry.setBump(selectedDraft.coordinate, value)
+      }}
+      onDescriptionChange={(value) => {
+        if (selectedDraft) geometry.updateDescription(selectedDraft.coordinate, value)
+      }}
     />
   )
 
   return (
-    <section className="flex h-full min-h-[28rem] min-w-0 flex-col" aria-label="Geometry workspace">
+    <section aria-label="Geometry workspace" className="flex h-full min-h-[28rem] min-w-0 flex-col">
       <header className="flex min-h-11 shrink-0 flex-wrap items-center gap-2 border-b bg-muted/20 px-2 py-1.5">
-        <Button onClick={props.onAddRoot} size="sm" variant="outline">
-          <Plus className="size-3.5" /> Published Geometry 사용
-        </Button>
-        <Button onClick={props.onCreate} size="sm" variant="outline">
+        <Button onClick={onCreate} size="sm" variant="outline">
           <CirclePlus className="size-3.5" /> 새 Geometry
         </Button>
-        <Button onClick={props.onManageRepositories} size="sm" variant="ghost">
+        <Button onClick={onManage} size="sm" variant="ghost">
           Geometry Manager
         </Button>
-        <Button onClick={props.onChangeNamespace} size="sm" variant="ghost">
-          기본 namespace: <span className="font-mono">{props.namespace ?? '설정 안 됨'}</span>
+        <Button onClick={onChangeNamespace} size="sm" variant="ghost">
+          기본 namespace: <span className="font-mono">{geometry.namespace ?? '설정 필요'}</span>
         </Button>
         <span className="ml-auto flex items-center gap-2 text-xs">
-          {props.previewStale ? (
+          {geometry.previewStale ? (
             <Badge className="gap-1 rounded-sm bg-amber-500 text-white">
               <AlertTriangle className="size-3" /> Preview stale
             </Badge>
@@ -315,62 +262,62 @@ export function GeometryWorkspace(props: GeometryWorkspaceProps) {
             <SheetContent>
               <SheetHeader>
                 <SheetTitle>Geometry metadata</SheetTitle>
-                <SheetDescription>선택한 module의 coordinate와 exact import 목록입니다.</SheetDescription>
+                <SheetDescription>Named exports와 source에서 파생된 import 관계입니다.</SheetDescription>
               </SheetHeader>
               <div className="min-h-0 flex-1 overflow-auto pt-2">{metadata}</div>
             </SheetContent>
           </Sheet>
         </span>
       </header>
-      {props.previewError ? (
+      {geometry.graphError || geometry.previewError ? (
         <div className="shrink-0 border-b border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="alert">
-          마지막 정상 프리뷰를 유지합니다. {props.previewError}
+          마지막 정상 Tree와 Viewer를 유지합니다. {geometry.graphError ?? geometry.previewError}
         </div>
       ) : null}
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(11rem,28%)_minmax(0,1fr)] 2xl:grid-cols-[minmax(12rem,22%)_minmax(0,1fr)_minmax(13rem,24%)]">
-        <aside className="min-h-0 overflow-auto border-r bg-muted/10 py-2" aria-label="Geometry dependency tree">
-          {(props.effectiveGraph?.roots.length ?? props.snapshot?.roots.length) ? (
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(12rem,28%)_minmax(0,1fr)] 2xl:grid-cols-[minmax(13rem,22%)_minmax(0,1fr)_minmax(14rem,24%)]">
+        <aside aria-label="Geometry dependency tree" className="min-h-0 overflow-auto border-r bg-muted/10 py-2">
+          <button
+            className={cn(
+              'flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-accent',
+              geometry.selectedCoordinate === 'geometry.tsx' && 'bg-accent',
+            )}
+            onClick={() => geometry.selectOccurrence('geometry.tsx')}
+            type="button"
+          >
+            <FileCode2 className="size-4" /> <span className="font-mono font-semibold">geometry.tsx</span>
+          </button>
+          {entryAnalysis?.exports.length ? (
+            <div className="px-7 pb-1 text-[10px] text-muted-foreground">
+              exports: {entryAnalysis.exports.map((item) => item.name).join(', ')}
+            </div>
+          ) : null}
+          {geometry.effectiveGraph?.entryImports.length ? (
             <ul role="tree">
-              {(props.effectiveGraph?.roots ?? props.snapshot?.roots ?? []).map((root) => (
-                <li key={root.alias} className="mb-1" role="none">
-                  <div className="flex items-center justify-between gap-1 px-2 py-1 text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
-                    <span className="truncate">Root · {root.alias}</span>
-                    {props.snapshot?.roots.some((savedRoot) => savedRoot.alias === root.alias) ||
-                    Object.values(props.drafts).some((draft) => draft.rootAlias === root.alias) ? (
-                      <button
-                        aria-label={`${root.alias} root 제거`}
-                        className="rounded p-0.5 hover:bg-destructive/10 hover:text-destructive"
-                        onClick={() => props.onRemoveRoot(root.alias)}
-                        type="button"
-                      >
-                        <X className="size-3" />
-                      </button>
-                    ) : null}
-                  </div>
-                  <ul role="tree">{renderOccurrence(root.coordinate, `root:${root.alias}`, 0)}</ul>
-                </li>
-              ))}
+              {geometry.effectiveGraph.entryImports.map((item) => renderOccurrence(item, 'geometry.tsx', [], 0))}
             </ul>
           ) : (
-            <p className="px-3 py-6 text-center text-xs text-muted-foreground">등록된 root Geometry가 없습니다.</p>
+            <p className="px-3 py-5 text-center text-xs text-muted-foreground">
+              geometry.tsx에 import된 Geometry가 없습니다.
+            </p>
           )}
-          {unresolvedDrafts.length ? (
+          {standaloneDrafts.length ? (
             <section className="mt-2 border-t pt-2">
-              <h3 className="px-2 py-1 text-[10px] font-semibold tracking-wide text-amber-700 uppercase">
-                Unresolved drafts
+              <h3 className="px-3 py-1 text-[10px] font-semibold text-muted-foreground uppercase">
+                Standalone local drafts
               </h3>
-              {unresolvedDrafts.map((draft) => (
+              {standaloneDrafts.map((draft) => (
                 <button
                   className={cn(
-                    'flex w-full min-w-0 items-center gap-1.5 px-3 py-1.5 text-left text-xs hover:bg-accent',
-                    props.selectedCoordinate === draft.coordinate && 'bg-accent',
+                    'flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-accent',
+                    geometry.selectedCoordinate === draft.coordinate && 'bg-accent',
                   )}
                   key={draft.coordinate}
-                  onClick={() => props.onSelect(draft.coordinate)}
+                  onClick={() => geometry.selectOccurrence(draft.coordinate)}
                   type="button"
                 >
-                  <AlertTriangle className="size-3.5 shrink-0 text-amber-600" />
+                  <FileCode2 className="size-3.5" />{' '}
                   <span className="truncate font-mono">{coordinateLabel(draft.coordinate)}</span>
+                  <Badge className="ml-auto h-4 rounded-sm px-1 text-[9px]">local</Badge>
                 </button>
               ))}
             </section>
@@ -378,118 +325,75 @@ export function GeometryWorkspace(props: GeometryWorkspaceProps) {
         </aside>
         <div className="flex min-h-0 min-w-0 flex-col">
           <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-2 border-b px-2 py-1">
-            <span className="min-w-0 flex-1 truncate font-mono text-xs" title={props.selectedCoordinate ?? undefined}>
-              {props.selectedCoordinate ?? 'Geometry를 선택하세요'}
+            <span className="min-w-0 flex-1 truncate font-mono text-xs">
+              {geometry.selectedCoordinate ?? 'Geometry를 선택하세요.'}
             </span>
-            {selectedModule && !selectedDraft ? (
-              <>
-                <Button
-                  disabled={props.busy}
-                  onClick={() => props.onCheckLatest(selectedModule.coordinate)}
-                  size="sm"
-                  variant="ghost"
-                >
-                  최신 version 확인
-                </Button>
-                <Button
-                  disabled={props.busy}
-                  onClick={() => props.onEditAsNewVersion(selectedModule.coordinate)}
-                  size="sm"
-                  variant="outline"
-                >
-                  <Pencil className="size-3.5" /> Edit as New Version
-                </Button>
-              </>
+            {geometry.selectedExports.length > 1 ? (
+              <select
+                aria-label="Preview export"
+                className="h-8 rounded-md border bg-background px-2 text-xs"
+                onChange={(event) => geometry.setSelectedExport(event.target.value)}
+                value={geometry.selectedExport ?? ''}
+              >
+                {geometry.selectedExports.map((name) => (
+                  <option key={name}>{name}</option>
+                ))}
+              </select>
             ) : null}
-            {props.selectedCoordinate && !rootAliases.length && !selectedDraft?.standalonePreview ? (
+            {selectedModule && !selectedDraft ? (
               <Button
-                disabled={props.busy}
-                onClick={() => props.onConnectRoot(props.selectedCoordinate!)}
+                disabled={geometry.busy}
+                onClick={() => onEditAsNewVersion(selectedModule.coordinate)}
                 size="sm"
                 variant="outline"
               >
-                Experiment에서 사용
-              </Button>
-            ) : null}
-            {props.selectedCoordinate && rootAliases.length ? (
-              <Button disabled={props.busy} onClick={() => props.onShowUsage(rootAliases[0])} size="sm" variant="ghost">
-                사용 예시
+                <Pencil className="size-3.5" /> Edit as New Version
               </Button>
             ) : null}
             {selectedDraft ? (
               <>
-                <Button disabled={props.busy} onClick={props.onAddImport} size="sm" variant="outline">
-                  <Plus className="size-3.5" /> Import 추가
-                </Button>
-                {selectedDraft.baseGeometryVersionId ? (
-                  <select
-                    aria-label="Version bump"
-                    className="h-8 rounded-md border bg-background px-2 text-xs"
-                    disabled={props.busy}
-                    onChange={(event) =>
-                      props.onBumpChange(selectedDraft.coordinate, event.target.value as GeometryLocalDraft['bump'])
-                    }
-                    value={selectedDraft.bump}
-                  >
-                    <option value="patch">patch</option>
-                    <option value="minor">minor</option>
-                    <option value="major">major</option>
-                  </select>
-                ) : null}
                 <Button
-                  disabled={props.busy}
-                  onClick={() => props.onDiscardDraft(selectedDraft.coordinate)}
+                  disabled={geometry.busy}
+                  onClick={() => geometry.discardDraft(selectedDraft.coordinate)}
                   size="sm"
                   variant="ghost"
                 >
-                  <RotateCcw className="size-3.5" /> 폐기
+                  <RotateCcw className="size-3.5" /> 되돌리기
                 </Button>
                 <Button
-                  disabled={props.busy || !props.publishReady}
-                  onClick={() => props.onPublish(selectedDraft.coordinate, false)}
+                  disabled={geometry.busy || !geometry.publishReady}
+                  onClick={() => onPublish(selectedDraft.coordinate)}
                   size="sm"
-                  title={!props.publishReady ? '현재 Geometry preview가 성공한 뒤 발행할 수 있습니다.' : undefined}
-                  variant="outline"
+                  title={!geometry.publishReady ? '현재 graph의 preview가 성공해야 발행할 수 있습니다.' : undefined}
                 >
-                  <Upload className="size-3.5" /> Publish only
-                </Button>
-                <Button
-                  disabled={props.busy || !props.publishReady || selectedDraft.standalonePreview}
-                  onClick={() => props.onPublish(selectedDraft.coordinate, true)}
-                  size="sm"
-                  title={
-                    selectedDraft.standalonePreview
-                      ? 'Standalone draft는 Publish only로 발행합니다.'
-                      : !props.publishReady
-                        ? '현재 Geometry preview가 성공한 뒤 발행할 수 있습니다.'
-                        : undefined
-                  }
-                >
-                  <GitBranch className="size-3.5" /> Publish &amp; Apply
+                  <Upload className="size-3.5" /> Geometry 저장
                 </Button>
               </>
             ) : null}
           </div>
           <div className="min-h-0 flex-1">
-            {props.selectedCoordinate ? (
+            {geometry.selectedCoordinate ? (
               <CadEditor
-                diagnostics={props.diagnostics.filter((diagnostic) => diagnostic.file === props.selectedCoordinate)}
-                disposeModelOnUnmount
-                modelPath={`file:///caemble-geometry/${encodeURIComponent(props.selectedCoordinate)}.tsx`}
-                onChange={(source) => props.onSourceChange(props.selectedCoordinate!, source)}
-                readOnly={!selectedDraft || props.busy}
+                diagnostics={diagnostics.filter(
+                  (item) =>
+                    item.file === geometry.selectedCoordinate ||
+                    (geometry.selectedCoordinate === 'geometry.tsx' && item.file === 'geometry.tsx'),
+                )}
+                modelPath={
+                  geometry.selectedCoordinate === 'geometry.tsx'
+                    ? 'file:///caemble-workbench/geometry.tsx'
+                    : `file:///geometries/${encodeURIComponent(geometry.selectedCoordinate)}.tsx`
+                }
+                onChange={geometry.updateSource}
+                readOnly={geometry.busy}
                 value={selectedSource}
               />
-            ) : (
-              <div className="grid h-full place-items-center p-8 text-center text-sm text-muted-foreground">
-                Tree에서 Geometry를 선택하거나 새 Geometry를 만드세요.
-              </div>
-            )}
+            ) : null}
           </div>
         </div>
         <aside
-          className="hidden min-h-0 overflow-auto border-l bg-muted/10 p-4 2xl:block"
           aria-label="Geometry metadata"
+          className="hidden min-h-0 overflow-auto border-l bg-muted/10 p-4 2xl:block"
         >
           {metadata}
         </aside>

@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
+import { createHash } from 'node:crypto'
 
 const user = {
   id: 'd7929429-84f8-4d92-865d-dc638d8e64e0',
@@ -158,7 +159,21 @@ test('opens authenticated Launchers from Settings and Jobs from the shared Toolb
 test('manages paged Geometry packages, exact versions, references, and the default namespace', async ({ page }) => {
   const timestamp = '2026-08-13T00:00:00Z'
   const coordinate = 'caemble:geometry/designer/common/plate@1.2.3'
-  const hash = 'a'.repeat(64)
+  const geometrySource =
+    "import { type Geometry } from '@caemble/core'\nexport const Plate: Geometry = () => <box size={[1, 1, 1]} />\n"
+  const sourceHash = createHash('sha256').update(geometrySource).digest('hex')
+  const moduleHash = createHash('sha256')
+    .update(
+      JSON.stringify({
+        schemaVersion: 2,
+        moduleFormatVersion: 3,
+        cadApiVersion: 5,
+        coordinate,
+        sourceHash,
+        imports: [],
+      }),
+    )
+    .digest('hex')
   const repository = {
     id: 1,
     user_id: user.id,
@@ -189,11 +204,10 @@ test('manages paged Geometry packages, exact versions, references, and the defau
     version_minor: 2,
     version_patch: 3,
     description: 'Stable plate',
-    source:
-      "import { type Geometry } from '@caemble/core'; const Plate: Geometry = () => <box size={[1, 1, 1]} />; export default Plate;",
-    source_hash: hash,
-    module_hash: hash,
-    module_format_version: 2,
+    source: geometrySource,
+    source_hash: sourceHash,
+    module_hash: moduleHash,
+    module_format_version: 3,
     cad_api_version: 5,
     archived_at: null,
     repository_id: repository.id,
@@ -221,18 +235,18 @@ test('manages paged Geometry packages, exact versions, references, and the defau
     if (path === '/geometry/versions/list') return json(route, { total: 1, items: [version] })
     if (path === `/geometry/versions/${version.id}/resolve`) {
       return json(route, {
-        schemaVersion: 1,
-        root: { geometryVersionId: version.id, coordinate, moduleHash: hash },
+        schemaVersion: 2,
+        root: { geometryVersionId: version.id, coordinate, moduleHash, exports: ['Plate'] },
         modules: [
           {
             geometryVersionId: version.id,
             coordinate,
-            moduleFormatVersion: 2,
+            moduleFormatVersion: 3,
             cadApiVersion: 5,
             description: version.description,
             source: version.source,
-            sourceHash: hash,
-            moduleHash: hash,
+            sourceHash,
+            moduleHash,
             imports: [],
           },
         ],
@@ -265,7 +279,7 @@ test('manages paged Geometry packages, exact versions, references, and the defau
             parent_id: null,
             name: 'Bracket study',
             description: 'Uses the plate indirectly',
-            root_alias: null,
+            entry_alias: null,
             created_at: timestamp,
             updated_at: timestamp,
           },
@@ -285,6 +299,15 @@ test('manages paged Geometry packages, exact versions, references, and the defau
     .getByRole('dialog', { name: 'New Experiment' })
     .getByRole('button', { name: /DC Uniform Bar/ })
     .click()
+  await expect(page.getByRole('tab', { name: 'experiment.tsx' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('Conductor')
+  await page.waitForTimeout(1_000)
+  await expect(page.locator('.monaco-editor:visible .squiggly-error')).toHaveCount(0)
+  await page.getByRole('tab', { name: 'tasks/solveCurrent.tsx' }).click()
+  await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('Probe')
+  await page.waitForTimeout(1_000)
+  await expect(page.locator('.monaco-editor:visible .squiggly-error')).toHaveCount(0)
+  await page.getByRole('tab', { name: 'experiment.tsx' }).click()
   await page.getByRole('menuitem', { name: 'Source' }).click()
   await page.getByRole('menuitem', { name: 'Geometry Manager' }).click()
   const manager = page.getByRole('dialog', { name: 'Geometry Manager' })
@@ -295,9 +318,22 @@ test('manages paged Geometry packages, exact versions, references, and the defau
   page.once('dialog', (prompt) => prompt.accept('PlateRoot'))
   await manager.getByRole('button', { name: 'Experiment에서 사용' }).click()
   const usageDialog = page.getByRole('dialog', { name: 'Experiment에서 Geometry 사용' })
-  await expect(usageDialog).toContainText('<PlateRoot')
-  await page.keyboard.press('Escape')
+  await expect(usageDialog).toContainText(`import { Plate as PlateRoot } from "${coordinate}"`)
+  await usageDialog.getByRole('button', { name: 'geometry.tsx 열기' }).click()
   await expect(usageDialog).toBeHidden()
+  await expect(manager).toBeHidden()
+
+  const geometryEditor = page.locator('.monaco-editor:visible .view-lines')
+  await expect(page.getByRole('tab', { name: 'geometry.tsx' })).toHaveAttribute('aria-selected', 'true')
+  await geometryEditor.click({ position: { x: 100, y: 30 } })
+  await page.keyboard.press('Control+A')
+  await page.keyboard.insertText(`import { Plate as PlateRoot } from "${coordinate}"
+export { PlateRoot }
+`)
+  await expect(page.locator('.monaco-editor .squiggly-error')).toHaveCount(0, { timeout: 10_000 })
+
+  await page.getByRole('menuitem', { name: 'Source' }).click()
+  await page.getByRole('menuitem', { name: 'Geometry Manager' }).click()
   await expect(manager).toBeVisible()
 
   await manager.getByRole('tab', { name: 'References' }).click()
@@ -315,10 +351,12 @@ test('manages paged Geometry packages, exact versions, references, and the defau
   await expect(manager).toContainText(coordinate)
 
   await manager.getByRole('button', { name: '닫기' }).click()
-  const experimentEditor = page.getByRole('textbox', { name: 'Editor content' })
-  await experimentEditor.click({ force: true })
+  await page.getByRole('tab', { name: 'experiment.tsx' }).click()
+  const experimentEditor = page.locator('.monaco-editor:visible .view-lines')
+  await experimentEditor.click({ position: { x: 100, y: 30 } })
   await page.keyboard.press('Control+A')
   await page.keyboard.insertText(`import { experiment } from '@caemble/core'
+import { PlateRoot } from './geometry'
 
 export default experiment({
   lengthUnit: 'mm',

@@ -5,20 +5,8 @@ export const dcNotchedCurrentDensityExperimentCode = `import {
   Mat,
   Material,
   experiment,
-  type Geometry,
-  type Vec3,
 } from '@caemble/core'
-
-const NotchedConductor: Geometry<{
-  notchPosition: Vec3
-  notchSize: Vec3
-  size: Vec3
-}> = ({ notchPosition, notchSize, size }) => (
-  <subtract>
-    <box size={size} />
-    <box pos={notchPosition} size={notchSize} />
-  </subtract>
-)
+import { NotchedConductor } from './geometry'
 
 export default experiment({
   lengthUnit: 'mm',
@@ -83,11 +71,24 @@ export default experiment({
 })
 `
 
-export const dcNotchedCurrentDensityTaskCode = `import { defineTask } from '@caemble/core'
+export const dcNotchedCurrentDensityGeometryCode = `import { type Geometry, type Vec3 } from '@caemble/core'
 
-function FieldProbe() {
-  return <box size={[3, 3, 3]} />
-}
+export const NotchedConductor: Geometry<{
+  notchPosition: Vec3
+  notchSize: Vec3
+  size: Vec3
+}> = ({ notchPosition, notchSize, size }) => (
+  <subtract>
+    <box size={size} />
+    <box pos={notchPosition} size={notchSize} />
+  </subtract>
+)
+
+export const FieldProbe: Geometry = () => <box size={[3, 3, 3]} />
+`
+
+export const dcNotchedCurrentDensityTaskCode = `import { defineTask } from '@caemble/core'
+import { FieldProbe } from '../geometry'
 
 export default defineTask({
   kernel: { name: 'dc-current-density', version: '0.1.0' },
@@ -186,6 +187,7 @@ export const dcNotchedCurrentDensitySimulationCode = `async def simulate(*, sim,
 
 export const dcNotchedCurrentDensityExperimentSourceBundle = createExperimentSourceBundle({
   'experiment.tsx': dcNotchedCurrentDensityExperimentCode,
+  'geometry.tsx': dcNotchedCurrentDensityGeometryCode,
   'simulate.py': dcNotchedCurrentDensitySimulationCode,
   'tasks/solveField.tsx': dcNotchedCurrentDensityTaskCode,
 })

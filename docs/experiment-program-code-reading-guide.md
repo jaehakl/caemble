@@ -3,7 +3,7 @@
 현재 실행 경계는 한 방향이다.
 
 ```text
-Experiment bundle v2 + complete vars
+Experiment bundle v4 + complete vars
 → UI compile/evaluate + frozen Material snapshot
 → prepared Measurement
 → { measurement: BuiltMeasurement }
@@ -14,8 +14,9 @@ Experiment bundle v2 + complete vars
 → Viewer와 Analysis
 ```
 
-브라우저 로컬 solver와 fallback은 없다. API는 geometry나 물리 데이터를 해석하지 않고
-immutable Experiment revision, Measurement 조건, RecordedData를 저장한다.
+브라우저 로컬 solver와 fallback은 없다. API는 Geometry import/export source graph와 snapshot을
+검증하지만 CAD 형상이나 물리 데이터를 실행하지 않으며, immutable Experiment revision,
+Measurement 조건, RecordedData를 저장한다.
 
 ## 책임 경계
 
@@ -33,7 +34,7 @@ immutable Experiment revision, Measurement 조건, RecordedData를 저장한다.
 먼저 다음 순서로 읽는다.
 
 1. [`document.ts`](../app/ui/src/lib/cad/source/document.ts): document format 2, CAD API 5,
-   bundle format 2와 허용 파일 검증
+   bundle format 4와 필수 `geometry.tsx`를 포함한 허용 파일 검증
 2. [`sourceAnalysis.ts`](../app/ui/src/lib/cad/source/sourceAnalysis.ts): import와 숨은 비결정성 정책
 3. [`evaluateDocument.ts`](../app/ui/src/lib/cad/execution/evaluateDocument.ts): 별도-origin runner의
    inspect/evaluate 호출

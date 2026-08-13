@@ -86,7 +86,7 @@ function wrapper() {
 beforeEach(() => vi.clearAllMocks())
 
 describe('useCaeWorkbenchState', () => {
-  it('owns a single Experiment and emits a v3 draft', () => {
+  it('owns a single Experiment and emits a v7 draft', () => {
     const { result } = renderHook(() => useCaeWorkbenchState({ id: 'user-1', roles: ['user'] } as never, true), {
       wrapper: wrapper(),
     })
@@ -105,11 +105,17 @@ describe('useCaeWorkbenchState', () => {
         splitPercent: 50,
       }),
     ).toMatchObject({
-      version: 5,
+      version: 7,
       experiment: { record: { id: 7 } },
       candidate: { vars: null, materialParameters: null },
       selection: { measurementId: null },
-      geometry: { drafts: {}, stagedModules: [], selectedCoordinate: null, expandedPaths: [] },
+      geometry: {
+        drafts: {},
+        stagedModules: [],
+        selectedCoordinate: 'geometry.tsx',
+        selectedExport: 'Conductor',
+        expandedPaths: ['geometry.tsx'],
+      },
     })
   })
 

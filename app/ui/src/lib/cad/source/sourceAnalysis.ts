@@ -1,6 +1,5 @@
 import { parse } from '@babel/parser'
 import type { Expression, File, FunctionDeclaration, ObjectExpression, ReturnStatement, Statement } from '@babel/types'
-import { isGeometryCoordinate, type GeometryCoordinate } from './geometrySnapshot'
 
 export class SourceAnalysisError extends Error {
   constructor(message: string) {
@@ -16,20 +15,23 @@ export type SourceAnalysis = Readonly<{
   options: ObjectExpression
 }>
 
-export type GeometrySourceImport = Readonly<{
-  coordinate: GeometryCoordinate
-  localName: string
-}>
-
 export type GeometrySourceAnalysis = Readonly<{
   ast: File
-  componentName: string | null
-  defaultedProps: readonly string[]
-  renderExpression: Expression
-  imports: readonly GeometrySourceImport[]
+  exports: readonly Readonly<{
+    name: string
+    defaultedProps: readonly string[]
+    renderExpression: Expression | null
+  }>[]
+  imports: readonly Readonly<{
+    exportName: string
+    alias: string
+    coordinate: string
+    specifierStart: number
+    specifierEnd: number
+  }>[]
 }>
 
-type CadSourcePolicy = 'experiment' | 'geometry'
+type CadSourcePolicy = 'experiment' | 'task' | 'geometry'
 
 export function unwrapSourceExpression(expression: Expression): Expression {
   if (
@@ -115,27 +117,24 @@ function assertStaticImport(statement: Extract<Statement, { type: 'ImportDeclara
     }
     return
   }
-  if (source === '@caemble/geometries') {
-    throw new SourceAnalysisError(
-      '@caemble/geometries has been removed; use a PascalCase Geometry root alias directly.',
-    )
-  }
-  if (isGeometryCoordinate(source)) {
-    if (policy !== 'geometry') {
-      throw new SourceAnalysisError(`Exact Geometry imports are only allowed in Geometry modules: ${source}`)
-    }
+  if (policy === 'geometry' && /^caemble:geometry\/.+@(?:local|\d+\.\d+\.\d+)$/u.test(source)) {
     if (
-      statement.importKind === 'type' ||
-      statement.specifiers.length !== 1 ||
-      statement.specifiers[0].type !== 'ImportDefaultSpecifier'
+      statement.specifiers.length === 0 ||
+      statement.specifiers.some((specifier) => specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type')
     ) {
-      throw new SourceAnalysisError(`Geometry coordinate imports must use exactly one default import: ${source}`)
+      throw new SourceAnalysisError('Geometry dependencies must use named runtime imports.')
+    }
+    return
+  }
+  if ((policy === 'experiment' && source === './geometry') || (policy === 'task' && source === '../geometry')) {
+    if (statement.specifiers.length === 0 || statement.specifiers.some((item) => item.type !== 'ImportSpecifier')) {
+      throw new SourceAnalysisError('geometry.tsx must be used through named imports.')
     }
     return
   }
   const message =
     policy === 'geometry'
-      ? `Geometry import must be @caemble/core or an exact caemble:geometry coordinate: ${source}`
+      ? `Geometry modules may only import @caemble/core or named Geometry coordinates: ${source}`
       : `Import is not allowed in an independent Caemble TSX source: ${source}`
   throw new SourceAnalysisError(message)
 }
@@ -265,169 +264,6 @@ export function parseCadSource(source: string, policy: CadSourcePolicy = 'experi
   return ast
 }
 
-export function rewriteGeometryRootAlias(source: string, previousAlias: string, nextAlias: string) {
-  const ast = parseCadSource(source)
-  type AstNode = Record<string, unknown> & { type: string; start?: number | null; end?: number | null }
-  const isNode = (value: unknown): value is AstNode =>
-    Boolean(value && typeof value === 'object' && typeof (value as { type?: unknown }).type === 'string')
-  const children = (node: AstNode) =>
-    Object.entries(node).flatMap(([key, value]) => {
-      if (key === 'loc' || key === 'start' || key === 'end' || key === 'extra') return []
-      return Array.isArray(value) ? value.filter(isNode) : isNode(value) ? [value] : []
-    })
-  const bindingNames = (value: unknown): string[] => {
-    if (!isNode(value)) return []
-    if (value.type === 'Identifier') return [String(value.name)]
-    if (value.type === 'RestElement' || value.type === 'AssignmentPattern' || value.type === 'TSParameterProperty') {
-      return bindingNames(value.argument ?? value.left ?? value.parameter)
-    }
-    if (value.type === 'ObjectPattern') {
-      return ((value.properties as unknown[]) ?? []).flatMap((property) => {
-        if (!isNode(property)) return []
-        return bindingNames(property.type === 'RestElement' ? property.argument : property.value)
-      })
-    }
-    if (value.type === 'ArrayPattern') {
-      return ((value.elements as unknown[]) ?? []).flatMap(bindingNames)
-    }
-    return []
-  }
-  const isFunction = (node: AstNode) =>
-    node.type === 'FunctionDeclaration' ||
-    node.type === 'FunctionExpression' ||
-    node.type === 'ArrowFunctionExpression' ||
-    node.type === 'ObjectMethod' ||
-    node.type === 'ClassMethod' ||
-    node.type === 'ClassPrivateMethod'
-
-  const scopeBindings = new WeakMap<object, Set<string>>()
-  const addBindings = (scope: AstNode, value: unknown) => {
-    const names = bindingNames(value)
-    if (names.length === 0) return
-    const bindings = scopeBindings.get(scope) ?? new Set<string>()
-    names.forEach((name) => bindings.add(name))
-    scopeBindings.set(scope, bindings)
-  }
-  const collectBindings = (node: AstNode, scopes: AstNode[]) => {
-    let activeScopes = scopes
-    if (node.type === 'Program' || node.type === 'BlockStatement' || node.type === 'CatchClause') {
-      scopeBindings.set(node, scopeBindings.get(node) ?? new Set())
-      activeScopes = [...scopes, node]
-    }
-    const currentScope = activeScopes[activeScopes.length - 1]
-    if (node.type === 'ImportDeclaration' && currentScope) {
-      ;((node.specifiers as unknown[]) ?? []).forEach((specifier) => {
-        if (isNode(specifier)) addBindings(currentScope, specifier.local)
-      })
-    }
-    if (node.type === 'VariableDeclaration' && currentScope) {
-      const target =
-        node.kind === 'var'
-          ? ([...activeScopes].reverse().find((scope) => scope.type === 'Program' || isFunction(scope)) ?? currentScope)
-          : currentScope
-      ;((node.declarations as unknown[]) ?? []).forEach((declaration) => {
-        if (isNode(declaration)) addBindings(target, declaration.id)
-      })
-    }
-    if ((node.type === 'FunctionDeclaration' || node.type === 'ClassDeclaration') && currentScope) {
-      addBindings(currentScope, node.id)
-    }
-    if (isFunction(node)) {
-      scopeBindings.set(node, scopeBindings.get(node) ?? new Set())
-      if (node.type === 'FunctionExpression') addBindings(node, node.id)
-      ;((node.params as unknown[]) ?? []).forEach((parameter) => addBindings(node, parameter))
-      activeScopes = [...activeScopes, node]
-    }
-    if (node.type === 'CatchClause') addBindings(node, node.param)
-    children(node).forEach((child) => collectBindings(child, activeScopes))
-  }
-  collectBindings(ast.program as unknown as AstNode, [])
-
-  const replacements: { start: number; end: number }[] = []
-  const referenceRanges = new Set<string>()
-  let references = 0
-  const addReference = (start: number | null | undefined, end: number | null | undefined) => {
-    const range = `${start}:${end}`
-    if (referenceRanges.has(range)) return
-    referenceRanges.add(range)
-    references += 1
-    if (previousAlias === nextAlias || start === null || start === undefined || end === null || end === undefined)
-      return
-    replacements.push({ start, end })
-  }
-  const isIdentifierReference = (node: AstNode, parent: AstNode | null, key: string | null) => {
-    if (node.type !== 'Identifier' || !parent) return false
-    if (parent.type.startsWith('TS') && parent.type !== 'TSAsExpression' && parent.type !== 'TSSatisfiesExpression') {
-      return false
-    }
-    if (
-      (parent.type === 'VariableDeclarator' && key === 'id') ||
-      (isFunction(parent) && (key === 'id' || key === 'params')) ||
-      ((parent.type === 'FunctionDeclaration' || parent.type === 'ClassDeclaration') && key === 'id') ||
-      parent.type.startsWith('Import') ||
-      parent.type === 'ExportSpecifier' ||
-      parent.type === 'LabeledStatement' ||
-      parent.type === 'BreakStatement' ||
-      parent.type === 'ContinueStatement'
-    ) {
-      return false
-    }
-    if (
-      (parent.type === 'MemberExpression' || parent.type === 'OptionalMemberExpression') &&
-      key === 'property' &&
-      !parent.computed
-    ) {
-      return false
-    }
-    if (
-      (parent.type === 'ObjectProperty' ||
-        parent.type === 'ObjectMethod' ||
-        parent.type === 'ClassMethod' ||
-        parent.type === 'ClassProperty') &&
-      key === 'key' &&
-      !parent.computed
-    ) {
-      return false
-    }
-    return true
-  }
-  const visitReferences = (node: AstNode, scopes: AstNode[], parent: AstNode | null, key: string | null) => {
-    const activeScopes = scopeBindings.has(node) ? [...scopes, node] : scopes
-    const isShadowed = (name: string) => activeScopes.some((scope) => Boolean(scopeBindings.get(scope)?.has(name)))
-    const matchesJsxTag =
-      node.type === 'JSXIdentifier' &&
-      node.name === previousAlias &&
-      (parent?.type === 'JSXOpeningElement' || parent?.type === 'JSXClosingElement') &&
-      parent.name === node
-    const matchesIdentifier = node.name === previousAlias && isIdentifierReference(node, parent, key)
-    if ((matchesJsxTag || matchesIdentifier) && !isShadowed(previousAlias)) {
-      if (previousAlias !== nextAlias && isShadowed(nextAlias)) {
-        throw new SourceAnalysisError(
-          `Root alias ${nextAlias}와 충돌하는 지역 binding이 있어 source를 안전하게 변경할 수 없습니다.`,
-        )
-      }
-      addReference(node.start, node.end)
-    }
-    Object.entries(node).forEach(([childKey, value]) => {
-      if (childKey === 'loc' || childKey === 'start' || childKey === 'end' || childKey === 'extra') return
-      if (Array.isArray(value)) {
-        value.forEach((child) => {
-          if (isNode(child)) visitReferences(child, activeScopes, node, childKey)
-        })
-      } else if (isNode(value)) {
-        visitReferences(value, activeScopes, node, childKey)
-      }
-    })
-  }
-  visitReferences(ast.program as unknown as AstNode, [], null, null)
-  const rewritten = replacements
-    .sort((left, right) => right.start - left.start)
-    .reduce((current, replacement) => {
-      return `${current.slice(0, replacement.start)}${nextAlias}${current.slice(replacement.end)}`
-    }, source)
-  return { source: rewritten, references }
-}
-
 export function staticCadSourceImports(source: string, policy: CadSourcePolicy = 'experiment') {
   const ast = parseCadSource(source, policy)
   return ast.program.body.flatMap((statement) => {
@@ -442,7 +278,7 @@ export function staticCadSourceImports(source: string, policy: CadSourcePolicy =
 }
 
 function analyzeFactorySource(source: string, factoryName: 'defineTask' | 'experiment'): SourceAnalysis {
-  const ast = parseCadSource(source)
+  const ast = parseCadSource(source, factoryName === 'defineTask' ? 'task' : 'experiment')
 
   const statements = ast.program.body
   const factoryNames = importedFactoryNames(statements, factoryName)
@@ -491,165 +327,173 @@ export function analyzeTaskSource(source: string): SourceAnalysis {
   return analyzeFactorySource(source, 'defineTask')
 }
 
-export function analyzeGeometrySource(source: string): GeometrySourceAnalysis {
+export function analyzeGeometrySource(
+  source: string,
+  options: Readonly<{ allowEmpty?: boolean; allowLocal?: boolean }> = {},
+): GeometrySourceAnalysis {
   const ast = parseCadSource(source, 'geometry')
-  if (
-    ast.program.body.some(
-      (statement) => statement.type === 'ExportAllDeclaration' || statement.type === 'ExportNamedDeclaration',
-    )
-  ) {
-    throw new SourceAnalysisError('Geometry modules may only export one default value.')
+  const coordinatePattern =
+    /^caemble:geometry\/[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])\/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?@(local|\d+\.\d+\.\d+)$/u
+  const componentNamePattern = /^[A-Z][A-Za-z0-9_]*$/u
+  const imports: {
+    exportName: string
+    alias: string
+    coordinate: string
+    specifierStart: number
+    specifierEnd: number
+  }[] = []
+  const importedBindings = new Set<string>()
+  ast.program.body.forEach((statement) => {
+    if (statement.type !== 'ImportDeclaration' || statement.source.value === '@caemble/core') return
+    const match = coordinatePattern.exec(statement.source.value)
+    if (!match || (match[1] === 'local' && !options.allowLocal)) {
+      throw new SourceAnalysisError(`Geometry import must use an exact coordinate: ${statement.source.value}`)
+    }
+    statement.specifiers.forEach((specifier) => {
+      if (specifier.type !== 'ImportSpecifier') {
+        throw new SourceAnalysisError('Geometry dependencies must use named imports.')
+      }
+      const exportName = specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value
+      const alias = specifier.local.name
+      if (!componentNamePattern.test(exportName) || !componentNamePattern.test(alias)) {
+        throw new SourceAnalysisError('Geometry export names and aliases must be PascalCase identifiers.')
+      }
+      importedBindings.add(alias)
+      imports.push({
+        exportName,
+        alias,
+        coordinate: statement.source.value,
+        specifierStart: statement.source.start! + 1,
+        specifierEnd: statement.source.end! - 1,
+      })
+    })
+  })
+  if (new Set(imports.map((item) => item.alias)).size !== imports.length) {
+    throw new SourceAnalysisError('Geometry import aliases must be unique within a module.')
   }
-  const defaultExports = ast.program.body.filter((statement) => statement.type === 'ExportDefaultDeclaration')
-  if (defaultExports.length !== 1) throw new SourceAnalysisError('Exactly one default export is required.')
-  const declaration = defaultExports[0].declaration
+
   const bindings = collectSourceBindings(ast.program.body)
   const functions = new Map(
-    ast.program.body.flatMap((statement) =>
-      statement.type === 'FunctionDeclaration' && statement.id ? [[statement.id.name, statement] as const] : [],
-    ),
+    ast.program.body.flatMap((statement) => {
+      const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement
+      return declaration?.type === 'FunctionDeclaration' && declaration.id
+        ? [[declaration.id.name, declaration] as const]
+        : []
+    }),
   )
-  let component: Expression | FunctionDeclaration
-  let componentName: string | null = null
-  if (declaration.type === 'FunctionDeclaration') {
-    component = declaration
-    componentName = declaration.id?.name ?? null
-  } else if (declaration.type === 'ClassDeclaration' || declaration.type === 'TSDeclareFunction') {
-    throw new SourceAnalysisError('Geometry default export must resolve to a function component.')
-  } else {
-    const exported = sourceExpression(declaration, 'Geometry default export')
-    componentName = exported.type === 'Identifier' ? exported.name : null
-    const resolved = resolveSourceBinding(exported, bindings).expression
-    component =
-      resolved.type === 'Identifier' && functions.has(resolved.name) ? functions.get(resolved.name)! : resolved
-  }
-  if (
-    component.type !== 'ArrowFunctionExpression' &&
-    component.type !== 'FunctionExpression' &&
-    component.type !== 'FunctionDeclaration'
-  ) {
-    throw new SourceAnalysisError('Geometry default export must resolve to a function component.')
-  }
-  if (!componentName && component.type !== 'ArrowFunctionExpression') componentName = component.id?.name ?? null
-  let renderExpression: Expression
-  const body = component.body
-  if (body.type !== 'BlockStatement') {
-    renderExpression = sourceExpression(body, 'Geometry component body')
-  } else {
-    const returns: ReturnStatement[] = []
-    const collectReturns = (value: unknown) => {
-      if (!value || typeof value !== 'object') return
-      if (Array.isArray(value)) {
-        value.forEach(collectReturns)
-        return
+  ast.program.body.forEach((statement) => {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : null
+    if (declaration?.type !== 'VariableDeclaration' || declaration.kind !== 'const') return
+    declaration.declarations.forEach((item) => {
+      if (item.id.type === 'Identifier' && item.init) {
+        bindings.set(item.id.name, sourceExpression(item.init, item.id.name))
       }
-      const node = value as Record<string, unknown>
-      if (node.type === 'ReturnStatement') {
-        returns.push(value as ReturnStatement)
-        return
-      }
-      if (
-        node.type === 'ArrowFunctionExpression' ||
-        node.type === 'FunctionExpression' ||
-        node.type === 'FunctionDeclaration'
-      ) {
-        return
-      }
-      Object.entries(node).forEach(([key, child]) => {
-        if (key !== 'loc' && key !== 'start' && key !== 'end') collectReturns(child)
-      })
-    }
-    body.body.forEach(collectReturns)
-    const topLevelReturns = body.body.filter(
-      (statement): statement is ReturnStatement => statement.type === 'ReturnStatement',
-    )
-    if (
-      returns.length !== 1 ||
-      topLevelReturns.length !== 1 ||
-      returns[0] !== topLevelReturns[0] ||
-      !returns[0].argument
-    ) {
-      throw new SourceAnalysisError(
-        'Geometry component must use an expression body or one top-level return expression for automatic composition.',
-      )
-    }
-    renderExpression = sourceExpression(returns[0].argument, 'Geometry component return value')
-  }
-  const imports = ast.program.body.flatMap((statement) => {
-    if (statement.type !== 'ImportDeclaration' || !isGeometryCoordinate(statement.source.value)) return []
-    const specifier = statement.specifiers[0]
-    return [{ coordinate: statement.source.value, localName: specifier.local.name }]
+    })
   })
-  if (new Set(imports.map(({ coordinate }) => coordinate)).size !== imports.length) {
-    throw new SourceAnalysisError('A Geometry coordinate may only be imported once per module.')
+
+  const exported: { localName: string; name: string }[] = []
+  ast.program.body.forEach((statement) => {
+    if (statement.type === 'ExportDefaultDeclaration' || statement.type === 'ExportAllDeclaration') {
+      throw new SourceAnalysisError('Geometry modules only support named Geometry component exports.')
+    }
+    if (statement.type !== 'ExportNamedDeclaration') return
+    if (statement.source) throw new SourceAnalysisError('Geometry re-exports must use an imported local binding.')
+    if (statement.declaration?.type === 'VariableDeclaration') {
+      if (statement.declaration.kind !== 'const') {
+        throw new SourceAnalysisError('Exported Geometry bindings must be const functions.')
+      }
+      statement.declaration.declarations.forEach((item) => {
+        if (item.id.type !== 'Identifier') {
+          throw new SourceAnalysisError('Exported Geometry bindings must use identifier names.')
+        }
+        exported.push({ localName: item.id.name, name: item.id.name })
+      })
+    } else if (statement.declaration?.type === 'FunctionDeclaration') {
+      if (!statement.declaration.id) throw new SourceAnalysisError('Exported Geometry functions must be named.')
+      exported.push({ localName: statement.declaration.id.name, name: statement.declaration.id.name })
+    } else if (statement.declaration) {
+      throw new SourceAnalysisError('Geometry modules only export function components.')
+    }
+    statement.specifiers.forEach((specifier) => {
+      if (specifier.type !== 'ExportSpecifier') {
+        throw new SourceAnalysisError('Geometry modules only support named local exports.')
+      }
+      const localName = specifier.local.name
+      const name = specifier.exported.type === 'Identifier' ? specifier.exported.name : specifier.exported.value
+      exported.push({ localName, name })
+    })
+  })
+  if (new Set(exported.map((item) => item.name)).size !== exported.length) {
+    throw new SourceAnalysisError('Geometry export names must be unique.')
   }
-  const firstParameter = component.params[0]
-  const parameter = firstParameter?.type === 'AssignmentPattern' ? firstParameter.left : firstParameter
-  const defaultedProps =
-    parameter?.type === 'ObjectPattern'
-      ? parameter.properties.flatMap((property) => {
-          if (property.type !== 'ObjectProperty' || property.computed || property.value.type !== 'AssignmentPattern') {
-            return []
-          }
-          const key =
-            property.key.type === 'Identifier'
-              ? property.key.name
-              : property.key.type === 'StringLiteral'
-                ? property.key.value
-                : null
-          return key && key !== 'id' ? [key] : []
-        })
-      : []
+  if (exported.length === 0 && !options.allowEmpty) {
+    throw new SourceAnalysisError('Published Geometry modules must export at least one named component.')
+  }
+
+  const exports = exported.map(({ localName, name }) => {
+    if (!componentNamePattern.test(name)) {
+      throw new SourceAnalysisError(`Geometry export must be PascalCase: ${name}`)
+    }
+    if (importedBindings.has(localName)) {
+      return Object.freeze({ name, defaultedProps: Object.freeze([]), renderExpression: null })
+    }
+    let component: Expression | FunctionDeclaration
+    if (functions.has(localName)) component = functions.get(localName)!
+    else {
+      const bound = bindings.get(localName)
+      if (!bound) throw new SourceAnalysisError(`Geometry export is unresolved: ${name}`)
+      const resolved = resolveSourceBinding(bound, bindings).expression
+      component =
+        resolved.type === 'Identifier' && functions.has(resolved.name) ? functions.get(resolved.name)! : resolved
+    }
+    if (
+      component.type !== 'ArrowFunctionExpression' &&
+      component.type !== 'FunctionExpression' &&
+      component.type !== 'FunctionDeclaration'
+    ) {
+      throw new SourceAnalysisError(`Geometry export must resolve to a function component: ${name}`)
+    }
+    let renderExpression: Expression | null = null
+    if (component.body.type !== 'BlockStatement') {
+      renderExpression = sourceExpression(component.body, `${name} body`)
+    } else {
+      const topLevelReturns = component.body.body.filter(
+        (statement): statement is ReturnStatement => statement.type === 'ReturnStatement',
+      )
+      if (topLevelReturns.length === 1 && topLevelReturns[0].argument) {
+        renderExpression = sourceExpression(topLevelReturns[0].argument, `${name} return value`)
+      }
+    }
+    const firstParameter = component.params[0]
+    const parameter = firstParameter?.type === 'AssignmentPattern' ? firstParameter.left : firstParameter
+    const defaultedProps =
+      parameter?.type === 'ObjectPattern'
+        ? parameter.properties.flatMap((property) => {
+            if (
+              property.type !== 'ObjectProperty' ||
+              property.computed ||
+              property.value.type !== 'AssignmentPattern'
+            ) {
+              return []
+            }
+            const key =
+              property.key.type === 'Identifier'
+                ? property.key.name
+                : property.key.type === 'StringLiteral'
+                  ? property.key.value
+                  : null
+            return key && key !== 'id' ? [key] : []
+          })
+        : []
+    return Object.freeze({
+      name,
+      defaultedProps: Object.freeze([...new Set(defaultedProps)].sort()),
+      renderExpression,
+    })
+  })
   return Object.freeze({
     ast,
-    componentName,
-    defaultedProps: Object.freeze([...new Set(defaultedProps)].sort()),
-    renderExpression,
-    imports: Object.freeze(imports),
+    exports: Object.freeze(exports),
+    imports: Object.freeze(imports.map((item) => Object.freeze(item))),
   })
-}
-
-export function validateGeometryUsage(usage: string, identifier: string) {
-  const ast = parseCadSource(`const __geometryUsage = (${usage.trim()})`, 'geometry')
-  const statement = ast.program.body[0]
-  const declaration = statement?.type === 'VariableDeclaration' ? statement.declarations[0] : undefined
-  const expression = declaration?.init
-    ? unwrapSourceExpression(sourceExpression(declaration.init, 'Geometry usage'))
-    : null
-  if (
-    !expression ||
-    expression.type !== 'JSXElement' ||
-    expression.openingElement.name.type !== 'JSXIdentifier' ||
-    expression.openingElement.name.name !== identifier
-  ) {
-    throw new SourceAnalysisError(`Geometry usage must be one <${identifier} ... /> JSX element.`)
-  }
-  const hasId = expression.openingElement.attributes.some(
-    (attribute) =>
-      attribute.type === 'JSXAttribute' && attribute.name.type === 'JSXIdentifier' && attribute.name.name === 'id',
-  )
-  if (!hasId) throw new SourceAnalysisError('Geometry usage must include an explicit id prop.')
-  return usage.trim()
-}
-
-export function rewriteGeometryImportCoordinates(
-  source: string,
-  replacements: Readonly<Partial<Record<GeometryCoordinate, GeometryCoordinate>>>,
-) {
-  const analysis = analyzeGeometrySource(source)
-  const edits = analysis.ast.program.body.flatMap((statement) => {
-    if (statement.type !== 'ImportDeclaration' || !isGeometryCoordinate(statement.source.value)) return []
-    const replacement = replacements[statement.source.value]
-    const start = statement.source.start
-    const end = statement.source.end
-    if (!replacement || start === null || start === undefined || end === null || end === undefined) return []
-    const quote = source[start]
-    if (quote !== "'" && quote !== '"') {
-      throw new SourceAnalysisError(`Geometry import quote could not be preserved: ${statement.source.value}`)
-    }
-    return [{ start, end, text: `${quote}${replacement}${quote}` }]
-  })
-  return edits
-    .sort((left, right) => right.start - left.start)
-    .reduce((current, edit) => `${current.slice(0, edit.start)}${edit.text}${current.slice(edit.end)}`, source)
 }

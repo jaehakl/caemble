@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 from db import (
     Experiment,
     ExperimentGeometryModule,
-    ExperimentGeometryRoot,
+    ExperimentGeometryImport,
     GeometryImport,
     GeometryPackage,
     GeometryRepository,
@@ -34,6 +34,7 @@ from service.geometry.source import (
     _semver,
     _validate_namespace,
     _validate_slug,
+    analyze_geometry_source,
 )
 from user_auth.db import User, UserRole
 from utils.crud import CrudSpec, get_list_response, get_scope_owner_ids, normalize_int_ids
@@ -220,7 +221,7 @@ def _version_response(
         "description": version.description,
         "sourceHash": version.source_hash,
         "moduleHash": version.module_hash,
-        "moduleFormatVersion": 2,
+        "moduleFormatVersion": 3,
         "cadApiVersion": 5,
         "archivedAt": version.archived_at,
         "createdAt": version.created_at,
@@ -373,20 +374,21 @@ async def _enrich_experiment_reference_list_response(
 ) -> dict[str, Any]:
     items = [item.model_dump(mode="json") for item in response.items]
     experiment_ids = [item["id"] for item in items if item.get("id")]
-    aliases = {
-        experiment_id: alias
-        for experiment_id, alias in (
-            await db.execute(
-                select(ExperimentGeometryRoot.experiment_id, ExperimentGeometryRoot.alias).where(
-                    ExperimentGeometryRoot.experiment_id.in_(experiment_ids),
-                    ExperimentGeometryRoot.geometry_version_id == geometry_version_id,
-                )
+    aliases: dict[int, str] = {}
+    for experiment_id, alias in (
+        await db.execute(
+            select(ExperimentGeometryImport.experiment_id, ExperimentGeometryImport.alias)
+            .where(
+                ExperimentGeometryImport.experiment_id.in_(experiment_ids),
+                ExperimentGeometryImport.geometry_version_id == geometry_version_id,
             )
-        ).all()
-    }
+            .order_by(ExperimentGeometryImport.alias)
+        )
+    ).all():
+        aliases.setdefault(experiment_id, alias)
     return {
         "total": response.total,
-        "items": [{**item, "root_alias": aliases.get(item["id"])} for item in items],
+        "items": [{**item, "entry_alias": aliases.get(item["id"])} for item in items],
     }
 
 
@@ -510,7 +512,7 @@ async def geometry_version_usage(
     rows = await _version_rows(db, set(normalized_ids))
     if len(rows) != len(normalized_ids):
         raise _bad("Geometry version not found.", code=status.HTTP_404_NOT_FOUND)
-    dependents: dict[int, list[int]] = {version_id: [] for version_id in normalized_ids}
+    dependents: dict[int, set[int]] = {version_id: set() for version_id in normalized_ids}
     for imported_id, importer_id in (
         await db.execute(
             select(
@@ -519,7 +521,7 @@ async def geometry_version_usage(
             ).where(GeometryImport.imported_geometry_version_id.in_(normalized_ids))
         )
     ).all():
-        dependents[imported_id].append(importer_id)
+        dependents[imported_id].add(importer_id)
     experiment_counts = {
         version_id: count
         for version_id, count in (
@@ -679,16 +681,18 @@ async def resolve_version(db: AsyncSession, version_id: int, *, user: Any) -> di
     row = rows.get(version_id)
     if row is None or (not is_admin_user(user) and row[2].user_id != user.id):
         raise _bad("Geometry version not found.", code=status.HTTP_404_NOT_FOUND)
-    graph_rows, edges = await _load_graph(db, {version_id}, owner_id=row[2].user_id)
+    graph_rows, edges, bindings = await _load_graph(db, {version_id}, owner_id=row[2].user_id)
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "root": {
             "geometryVersionId": version_id,
             "coordinate": _row_coordinate(row),
             "moduleHash": row[0].module_hash,
+            "exports": analyze_geometry_source(row[0].source)["exports"],
         },
         "modules": [
-            module.model_dump(mode="json") for module in _snapshot_modules(graph_rows, edges)
+            module.model_dump(mode="json")
+            for module in _snapshot_modules(graph_rows, edges, bindings)
         ],
     }
 

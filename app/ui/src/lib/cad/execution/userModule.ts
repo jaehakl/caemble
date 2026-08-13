@@ -11,8 +11,13 @@ import { CadModelError, evaluateWithVars, isFloatDType, Mat, Material } from '..
 import { defineTask, experiment, ExperimentDefinition, TaskDefinition, type ExternalVars } from '../model/v5'
 import { assertUcumUnitComparable, convertUcumValue, normalizeUcumUnit, type UcumUnit } from '../model/units'
 import type { VarsSchemaEntry } from '../model/vars'
-import { EXPERIMENT_ENTRY_PATH, EXPERIMENT_SIMULATION_PATH, experimentTaskName } from '../source/document'
-import type { GeometryCoordinate } from '../source/geometrySnapshot'
+import {
+  EXPERIMENT_ENTRY_PATH,
+  EXPERIMENT_GEOMETRY_PATH,
+  EXPERIMENT_SIMULATION_PATH,
+  experimentTaskName,
+} from '../source/document'
+import type { GeometryModuleCoordinate } from '../source/effectiveGeometryGraph'
 import type { EvaluatedRuntimeDocumentSnapshot } from './snapshot'
 
 const coreModule = Object.freeze({
@@ -48,16 +53,10 @@ export function requireCaembleModule(specifier: string) {
   throw new CadModelError(`Unsupported Caemble runtime import: ${specifier}`)
 }
 
-function executeCompiledModule(
-  jsCode: string,
-  requireModule: (specifier: string) => unknown,
-  rootBindings: Readonly<Record<string, unknown>> = {},
-) {
+function executeCompiledModule(jsCode: string, requireModule: (specifier: string) => unknown) {
   const exports: Record<string, unknown> = {}
   const module = { exports }
-  const entries = Object.entries(rootBindings)
   const createRunner = new Function(
-    ...entries.map(([name]) => name),
     `return function(
       h,
       Fragment,
@@ -84,9 +83,9 @@ function executeCompiledModule(
       SharedWorker,
       process,
       global
-    ) { "use strict";\n${jsCode}\nreturn module.exports; }`,
+  ) { "use strict";\n${jsCode}\nreturn module.exports; }`,
   )
-  const runner = createRunner(...entries.map(([, value]) => value)) as (...parameters: unknown[]) => unknown
+  const runner = createRunner() as (...parameters: unknown[]) => unknown
   const moduleExports = runner(
     h,
     Fragment,
@@ -129,42 +128,35 @@ export function loadCompiledSource(compiledSource: CompiledCadSource) {
 }
 
 type CompiledGeometryRuntime = Readonly<{
-  roots: Readonly<Record<string, unknown>>
-  load: (coordinate: GeometryCoordinate) => unknown
+  geometryExports: Readonly<Record<string, unknown>>
+  load: (coordinate: GeometryModuleCoordinate) => Readonly<Record<string, unknown>>
 }>
 
 function compiledGeometryRuntime(compiled: CompiledCadDocument): CompiledGeometryRuntime {
   const graph = compiled.geometryGraph
-  if (!graph) {
-    return Object.freeze({
-      roots: Object.freeze({}),
-      load: (coordinate: GeometryCoordinate) => {
-        throw new CadModelError(`Compiled Geometry dependency is unavailable: ${coordinate}`)
-      },
-    })
-  }
-  const cache = new Map<GeometryCoordinate, { state: 'loading' | 'loaded'; value?: unknown }>()
-  const load = (coordinate: GeometryCoordinate): unknown => {
+  const cache = new Map<
+    GeometryModuleCoordinate,
+    { state: 'loading' | 'loaded'; value?: Readonly<Record<string, unknown>> }
+  >()
+  const load = (coordinate: GeometryModuleCoordinate): Readonly<Record<string, unknown>> => {
+    if (!graph) throw new CadModelError(`Compiled Geometry dependency is unavailable: ${coordinate}`)
     const cached = cache.get(coordinate)
     if (cached?.state === 'loading')
       throw new CadModelError(`Geometry module dependency cycle detected at ${coordinate}.`)
-    if (cached?.state === 'loaded') return cached.value
+    if (cached?.state === 'loaded') return cached.value!
     const module = graph.modules[coordinate]
     if (!module) throw new CadModelError(`Geometry module dependency is unresolved: ${coordinate}`)
     cache.set(coordinate, { state: 'loading' })
     try {
-      const allowed = new Set(module.imports)
-      const exports = executeCompiledModule(module.code, (specifier) => {
-        if (specifier === '@caemble/core') return coreModule
-        if (!allowed.has(specifier as GeometryCoordinate)) {
-          throw new CadModelError(`Geometry module ${coordinate} attempted an undeclared import: ${specifier}`)
+      const exports = executeCompiledModule(module.code, (specifier) =>
+        specifier === '@caemble/core' ? coreModule : load(specifier as GeometryModuleCoordinate),
+      )
+      for (const name of module.exports) {
+        if (typeof exports[name] !== 'function') {
+          throw new CadModelError(`Geometry module ${coordinate} export ${name} must be a function component.`)
         }
-        return Object.freeze({ __esModule: true, default: load(specifier as GeometryCoordinate) })
-      })
-      const value = exports.default
-      if (typeof value !== 'function') {
-        throw new CadModelError(`Geometry module ${coordinate} must export one function component.`)
       }
+      const value = Object.freeze({ ...exports })
       cache.set(coordinate, { state: 'loaded', value })
       return value
     } catch (error) {
@@ -172,8 +164,14 @@ function compiledGeometryRuntime(compiled: CompiledCadDocument): CompiledGeometr
       throw error
     }
   }
-  const roots = Object.freeze(Object.fromEntries(graph.roots.map((root) => [root.alias, load(root.coordinate)])))
-  return Object.freeze({ roots, load })
+  const geometrySource = compiled.sources[EXPERIMENT_GEOMETRY_PATH]
+  if (!geometrySource) throw new CadModelError(`Compiled Experiment is missing ${EXPERIMENT_GEOMETRY_PATH}.`)
+  const geometryExports = Object.freeze(
+    executeCompiledModule(geometrySource.code, (specifier) =>
+      specifier === '@caemble/core' ? coreModule : load(specifier as GeometryModuleCoordinate),
+    ),
+  )
+  return Object.freeze({ geometryExports, load })
 }
 
 function taskDefinitionsFromCompiled(compiled: CompiledCadDocument, geometryRuntime: CompiledGeometryRuntime) {
@@ -183,7 +181,11 @@ function taskDefinitionsFromCompiled(compiled: CompiledCadDocument, geometryRunt
         .flatMap(([path, source]) => {
           const taskName = experimentTaskName(path)
           if (taskName === null) return []
-          const task = executeCompiledModule(source.code, requireCaembleModule, geometryRuntime.roots).default
+          const task = executeCompiledModule(source.code, (specifier) => {
+            if (specifier === '@caemble/core') return coreModule
+            if (specifier === '../geometry') return geometryRuntime.geometryExports
+            throw new CadModelError(`Unsupported Task runtime import: ${specifier}`)
+          }).default
           if (!(task instanceof TaskDefinition)) {
             throw new CadModelError(`Task Source ${path} must export default defineTask({...}) from @caemble/core.`)
           }
@@ -200,7 +202,11 @@ function compiledExperimentEntry(compiled: CompiledCadDocument, geometryRuntime:
   assertCompiledCadDocument(compiled)
   const entrySource = compiled.sources[EXPERIMENT_ENTRY_PATH]
   if (!entrySource) throw new CadModelError(`Compiled Experiment is missing ${EXPERIMENT_ENTRY_PATH}.`)
-  const entry = executeCompiledModule(entrySource.code, requireCaembleModule, geometryRuntime.roots).default
+  const entry = executeCompiledModule(entrySource.code, (specifier) => {
+    if (specifier === '@caemble/core') return coreModule
+    if (specifier === './geometry') return geometryRuntime.geometryExports
+    throw new CadModelError(`Unsupported Experiment runtime import: ${specifier}`)
+  }).default
   if (!(entry instanceof ExperimentDefinition)) {
     throw new CadModelError('Experiment Source must export default experiment({...}) from @caemble/core.')
   }
@@ -304,13 +310,14 @@ export function executeCompiledDocument(compiled: CompiledCadDocument, vars: Ext
 
 export function evaluateCompiledGeometryModule(
   compiled: CompiledCadDocument,
-  coordinate: GeometryCoordinate,
+  coordinate: GeometryModuleCoordinate,
+  exportName: string,
   lengthUnit: UcumUnit = 'mm',
 ) {
   assertCompiledCadDocument(compiled)
   const runtime = compiledGeometryRuntime(compiled)
   return evaluateCadScene(
-    h(runtime.load(coordinate) as (props: Record<string, unknown>) => unknown, { id: 'preview' }),
+    h(runtime.load(coordinate)[exportName] as (props: Record<string, unknown>) => unknown, { id: 'preview' }),
     {},
     `Geometry ${coordinate}`,
     lengthUnit,

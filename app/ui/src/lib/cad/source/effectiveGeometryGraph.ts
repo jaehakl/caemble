@@ -1,46 +1,61 @@
 import { CadModelError } from '../model/errors'
 import { analyzeGeometrySource } from './sourceAnalysis'
 import {
+  GEOMETRY_MODULE_FORMAT_VERSION,
+  GEOMETRY_SNAPSHOT_SCHEMA_VERSION,
   MAX_GEOMETRY_GRAPH_DEPTH,
   MAX_GEOMETRY_GRAPH_SOURCE_BYTES,
   MAX_GEOMETRY_IMPORTS_PER_MODULE,
   MAX_GEOMETRY_MODULES,
   MAX_GEOMETRY_MODULE_SOURCE_BYTES,
-  MAX_GEOMETRY_ROOTS,
-  assertGeometryCoordinate,
+  MAX_GEOMETRY_ENTRY_IMPORTS,
   assertGeometrySnapshot,
-  geometryCoordinateNamespace,
-  isGeometryRootAlias,
   geometryModuleHash,
   geometrySourceHash,
+  isGeometryCoordinate,
+  isGeometryComponentName,
   validateGeometrySnapshotHashes,
   type GeometryCoordinate,
   type GeometrySnapshot,
+  type LocalGeometryCoordinate,
 } from './geometrySnapshot'
 
+export type GeometryModuleCoordinate = GeometryCoordinate | LocalGeometryCoordinate
 export type GeometryModuleDraft = Readonly<{ source: string }>
-export type GeometryDraftOverlay = Readonly<Partial<Record<GeometryCoordinate, GeometryModuleDraft>>>
-export type GeometryDraftRoot = Readonly<{ alias: string; coordinate: GeometryCoordinate }>
+export type GeometryDraftOverlay = Readonly<Partial<Record<GeometryModuleCoordinate, GeometryModuleDraft>>>
 
 export type EffectiveGeometryModule = Readonly<{
-  coordinate: GeometryCoordinate
+  coordinate: GeometryModuleCoordinate
   source: string
   sourceHash: string
   moduleHash: string
-  imports: readonly GeometryCoordinate[]
+  exports: readonly string[]
+  imports: readonly Readonly<{
+    exportName: string
+    alias: string
+    coordinate: GeometryModuleCoordinate
+  }>[]
 }>
 
 export type EffectiveGeometryGraph = Readonly<{
-  roots: readonly Readonly<{ alias: string; coordinate: GeometryCoordinate; moduleHash: string }>[]
+  entryImports: readonly Readonly<{
+    exportName: string
+    alias: string
+    coordinate: GeometryModuleCoordinate
+    moduleHash: string
+  }>[]
   modules: readonly EffectiveGeometryModule[]
   graphHash: string
 }>
 
-function sourceBytes(source: string) {
-  return new TextEncoder().encode(source).byteLength
+const localCoordinatePattern =
+  /^caemble:geometry\/[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])\/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?@local$/u
+
+function isModuleCoordinate(value: string): value is GeometryModuleCoordinate {
+  return isGeometryCoordinate(value) || localCoordinatePattern.test(value)
 }
 
-function compareCanonicalText(left: string, right: string) {
+function compareText(left: string, right: string) {
   return left < right ? -1 : left > right ? 1 : 0
 }
 
@@ -52,33 +67,60 @@ async function sha256(value: string) {
 export async function createEffectiveGeometryGraph(
   snapshot: GeometrySnapshot,
   drafts: GeometryDraftOverlay = {},
-  rootOverrides?: readonly GeometryDraftRoot[],
+  entrySource?: string,
 ): Promise<EffectiveGeometryGraph> {
   assertGeometrySnapshot(snapshot)
   await validateGeometrySnapshotHashes(snapshot)
-  const sources = new Map<GeometryCoordinate, string>(
+  const sources = new Map<GeometryModuleCoordinate, string>(
     snapshot.modules.map((module) => [module.coordinate, module.source]),
   )
   Object.entries(drafts).forEach(([coordinate, draft]) => {
-    assertGeometryCoordinate(coordinate, 'Geometry draft coordinate')
-    if (!draft || typeof draft !== 'object' || Array.isArray(draft) || typeof draft.source !== 'string') {
+    if (!isModuleCoordinate(coordinate)) throw new CadModelError(`Geometry draft coordinate is invalid: ${coordinate}`)
+    if (!draft || typeof draft.source !== 'string') {
       throw new CadModelError(`Geometry draft ${coordinate} must contain source text.`)
     }
-    const encodedSource = new TextEncoder().encode(draft.source)
-    if (new TextDecoder('utf-8', { fatal: true }).decode(encodedSource) !== draft.source) {
+    const bytes = new TextEncoder().encode(draft.source)
+    if (new TextDecoder('utf-8', { fatal: true }).decode(bytes) !== draft.source) {
       throw new CadModelError(`Geometry draft ${coordinate} must contain valid UTF-8 text.`)
     }
-    if (encodedSource.byteLength > MAX_GEOMETRY_MODULE_SOURCE_BYTES) {
+    if (bytes.byteLength > MAX_GEOMETRY_MODULE_SOURCE_BYTES) {
       throw new CadModelError(`Geometry draft ${coordinate} exceeds ${MAX_GEOMETRY_MODULE_SOURCE_BYTES} bytes.`)
     }
     sources.set(coordinate, draft.source)
   })
-  const persisted = new Map(snapshot.modules.map((module) => [module.coordinate, module]))
-  const modules = new Map<GeometryCoordinate, EffectiveGeometryModule>()
-  const visiting = new Set<GeometryCoordinate>()
-  let totalSourceBytes = 0
-  let ownerNamespace: string | undefined
-  const build = async (coordinate: GeometryCoordinate, chain: readonly string[]) => {
+
+  const entryAnalysis = entrySource
+    ? analyzeGeometrySource(entrySource, { allowEmpty: true, allowLocal: true })
+    : {
+        exports: [],
+        imports: snapshot.entryImports.map((item) => ({
+          exportName: item.exportName,
+          alias: item.alias,
+          coordinate: item.coordinate,
+        })),
+      }
+  if (entryAnalysis.imports.length > MAX_GEOMETRY_ENTRY_IMPORTS) {
+    throw new CadModelError(`geometry.tsx exceeds ${MAX_GEOMETRY_ENTRY_IMPORTS} imports.`)
+  }
+  const entryAliases = new Set<string>()
+  entryAnalysis.imports.forEach((item) => {
+    if (!isGeometryComponentName(item.exportName) || !isGeometryComponentName(item.alias)) {
+      throw new CadModelError('geometry.tsx imports must use PascalCase component names.')
+    }
+    if (!isModuleCoordinate(item.coordinate)) {
+      throw new CadModelError(`geometry.tsx import coordinate is invalid: ${item.coordinate}`)
+    }
+    if (entryAliases.has(item.alias)) throw new CadModelError(`geometry.tsx import alias is duplicated: ${item.alias}`)
+    entryAliases.add(item.alias)
+  })
+
+  const modules = new Map<GeometryModuleCoordinate, EffectiveGeometryModule>()
+  const visiting = new Set<GeometryModuleCoordinate>()
+  let totalBytes = 0
+  const build = async (
+    coordinate: GeometryModuleCoordinate,
+    chain: readonly string[],
+  ): Promise<EffectiveGeometryModule> => {
     const ready = modules.get(coordinate)
     if (ready) return ready
     if (visiting.has(coordinate)) {
@@ -88,47 +130,55 @@ export async function createEffectiveGeometryGraph(
     }
     const source = sources.get(coordinate)
     if (source === undefined) throw new CadModelError(`Effective Geometry dependency is unresolved: ${coordinate}`)
-    if (ownerNamespace && geometryCoordinateNamespace(coordinate) !== ownerNamespace) {
-      throw new CadModelError(`Effective Geometry dependency crosses owner namespaces: ${coordinate}`)
-    }
     if (modules.size >= MAX_GEOMETRY_MODULES) {
       throw new CadModelError(`Effective Geometry graph exceeds ${MAX_GEOMETRY_MODULES} modules.`)
     }
-    totalSourceBytes += sourceBytes(source)
-    if (totalSourceBytes > MAX_GEOMETRY_GRAPH_SOURCE_BYTES) {
+    totalBytes += new TextEncoder().encode(source).byteLength
+    if (totalBytes > MAX_GEOMETRY_GRAPH_SOURCE_BYTES) {
       throw new CadModelError(`Effective Geometry graph sources exceed ${MAX_GEOMETRY_GRAPH_SOURCE_BYTES} bytes.`)
     }
-    const imports = analyzeGeometrySource(source)
-      .imports.map((item) => item.coordinate)
-      .sort(compareCanonicalText)
-    if (imports.length > MAX_GEOMETRY_IMPORTS_PER_MODULE) {
-      throw new CadModelError(`Geometry module ${coordinate} exceeds ${MAX_GEOMETRY_IMPORTS_PER_MODULE} imports.`)
-    }
-    const persistedModule = persisted.get(coordinate)
-    const changesPersistedSource =
-      Object.prototype.hasOwnProperty.call(drafts, coordinate) && source !== persistedModule?.source
-    if (persistedModule && !changesPersistedSource) {
-      const projected = [...persistedModule.imports].map((item) => item.coordinate).sort(compareCanonicalText)
-      if (projected.length !== imports.length || projected.some((item, index) => item !== imports[index])) {
-        throw new CadModelError(`Geometry module source imports do not match its snapshot projection: ${coordinate}`)
-      }
+    const analysis = analyzeGeometrySource(source, { allowLocal: true })
+    if (analysis.imports.length > MAX_GEOMETRY_IMPORTS_PER_MODULE) {
+      throw new CadModelError(`Geometry module ${coordinate} has too many imports.`)
     }
     visiting.add(coordinate)
     try {
-      const imported: EffectiveGeometryModule[] = []
-      for (const child of imports) {
-        imported.push(await build(child, [...chain, coordinate]))
+      const imports = []
+      for (const imported of analysis.imports) {
+        if (!isModuleCoordinate(imported.coordinate)) {
+          throw new CadModelError(`Geometry module ${coordinate} import is invalid: ${imported.coordinate}`)
+        }
+        const child = await build(imported.coordinate, [...chain, coordinate])
+        if (!child.exports.includes(imported.exportName)) {
+          throw new CadModelError(
+            `Geometry module ${coordinate} imports missing export ${imported.exportName} from ${imported.coordinate}.`,
+          )
+        }
+        imports.push({
+          exportName: imported.exportName,
+          alias: imported.alias,
+          coordinate: imported.coordinate,
+          moduleHash: child.moduleHash,
+        })
       }
+      imports.sort(
+        (left, right) =>
+          compareText(left.alias, right.alias) ||
+          compareText(left.exportName, right.exportName) ||
+          compareText(left.coordinate, right.coordinate),
+      )
       const sourceHash = await geometrySourceHash(source)
       const moduleHash = await geometryModuleHash({
-        moduleFormatVersion: 2,
+        moduleFormatVersion: GEOMETRY_MODULE_FORMAT_VERSION,
         cadApiVersion: 5,
-        coordinate,
+        coordinate: coordinate as GeometryCoordinate,
         sourceHash,
-        imports: imported.map((child) => ({
+        imports: imports.map((item) => ({
+          exportName: item.exportName,
+          alias: item.alias,
           geometryVersionId: 1,
-          coordinate: child.coordinate,
-          moduleHash: child.moduleHash,
+          coordinate: item.coordinate as GeometryCoordinate,
+          moduleHash: item.moduleHash,
         })),
       })
       const module = Object.freeze({
@@ -136,7 +186,12 @@ export async function createEffectiveGeometryGraph(
         source,
         sourceHash,
         moduleHash,
-        imports: Object.freeze(imports),
+        exports: Object.freeze(analysis.exports.map((item) => item.name).sort(compareText)),
+        imports: Object.freeze(
+          imports.map(({ exportName, alias, coordinate: importedCoordinate }) =>
+            Object.freeze({ exportName, alias, coordinate: importedCoordinate }),
+          ),
+        ),
       })
       modules.set(coordinate, module)
       return module
@@ -145,62 +200,56 @@ export async function createEffectiveGeometryGraph(
     }
   }
 
-  const requestedRoots = rootOverrides ?? snapshot.roots
-  if (requestedRoots.length > MAX_GEOMETRY_ROOTS) {
-    throw new CadModelError(`Effective Geometry graph exceeds ${MAX_GEOMETRY_ROOTS} roots.`)
+  const entryImports = []
+  for (const imported of entryAnalysis.imports) {
+    const module = await build(imported.coordinate as GeometryModuleCoordinate, [])
+    if (!module.exports.includes(imported.exportName)) {
+      throw new CadModelError(`geometry.tsx imports missing export ${imported.exportName} from ${imported.coordinate}.`)
+    }
+    entryImports.push(
+      Object.freeze({
+        exportName: imported.exportName,
+        alias: imported.alias,
+        coordinate: imported.coordinate as GeometryModuleCoordinate,
+        moduleHash: module.moduleHash,
+      }),
+    )
   }
-  const aliases = new Set<string>()
-  const coordinates = new Set<string>()
-  requestedRoots.forEach((root) => {
-    if (!root || typeof root !== 'object' || !isGeometryRootAlias(root.alias)) {
-      throw new CadModelError('Effective Geometry root alias must be a non-reserved PascalCase identifier.')
-    }
-    assertGeometryCoordinate(root.coordinate, 'Effective Geometry root coordinate')
-    ownerNamespace ??= geometryCoordinateNamespace(root.coordinate)
-    if (geometryCoordinateNamespace(root.coordinate) !== ownerNamespace) {
-      throw new CadModelError('Effective Geometry roots must belong to one owner namespace.')
-    }
-    if (aliases.has(root.alias)) throw new CadModelError(`Effective Geometry root alias is duplicated: ${root.alias}`)
-    if (coordinates.has(root.coordinate)) {
-      throw new CadModelError(`Effective Geometry root coordinate is duplicated: ${root.coordinate}`)
-    }
-    aliases.add(root.alias)
-    coordinates.add(root.coordinate)
-  })
-  const roots: { alias: string; coordinate: GeometryCoordinate; moduleHash: string }[] = []
-  for (const root of requestedRoots) {
-    const module = await build(root.coordinate, [])
-    roots.push(Object.freeze({ alias: root.alias, coordinate: root.coordinate, moduleHash: module.moduleHash }))
-  }
-  const longestDepthByCoordinate = new Map<GeometryCoordinate, number>()
-  const longestDepth = (coordinate: GeometryCoordinate): number => {
-    const cached = longestDepthByCoordinate.get(coordinate)
+  const memo = new Map<GeometryModuleCoordinate, number>()
+  const depth = (coordinate: GeometryModuleCoordinate): number => {
+    const cached = memo.get(coordinate)
     if (cached !== undefined) return cached
-    const module = modules.get(coordinate)!
-    const depth = module.imports.reduce((longest, child) => Math.max(longest, 1 + longestDepth(child)), 1)
-    longestDepthByCoordinate.set(coordinate, depth)
-    return depth
+    const value = modules
+      .get(coordinate)!
+      .imports.reduce((longest, imported) => Math.max(longest, 1 + depth(imported.coordinate)), 1)
+    memo.set(coordinate, value)
+    return value
   }
-  if (requestedRoots.some((root) => longestDepth(root.coordinate) > MAX_GEOMETRY_GRAPH_DEPTH)) {
+  if (entryImports.some((item) => depth(item.coordinate) > MAX_GEOMETRY_GRAPH_DEPTH)) {
     throw new CadModelError(`Effective Geometry graph exceeds dependency depth ${MAX_GEOMETRY_GRAPH_DEPTH}.`)
   }
-  const sortedModules = [...modules.values()].sort((left, right) =>
-    compareCanonicalText(left.coordinate, right.coordinate),
+  const sortedModules = [...modules.values()].sort((left, right) => compareText(left.coordinate, right.coordinate))
+  entryImports.sort(
+    (left, right) =>
+      compareText(left.alias, right.alias) ||
+      compareText(left.exportName, right.exportName) ||
+      compareText(left.coordinate, right.coordinate),
   )
-  const sortedRoots = roots.sort((left, right) => compareCanonicalText(left.alias, right.alias))
   const graphHash = await sha256(
     JSON.stringify({
-      roots: sortedRoots,
-      modules: sortedModules.map(({ coordinate, sourceHash, moduleHash, imports }) => ({
+      schemaVersion: GEOMETRY_SNAPSHOT_SCHEMA_VERSION,
+      entryImports,
+      modules: sortedModules.map(({ coordinate, sourceHash, moduleHash, exports, imports }) => ({
         coordinate,
         sourceHash,
         moduleHash,
+        exports,
         imports,
       })),
     }),
   )
   return Object.freeze({
-    roots: Object.freeze(sortedRoots),
+    entryImports: Object.freeze(entryImports),
     modules: Object.freeze(sortedModules),
     graphHash,
   })

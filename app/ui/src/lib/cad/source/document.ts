@@ -10,28 +10,21 @@ import {
 
 export const CAD_SOURCE_FORMAT_VERSION = 2 as const
 export const CAD_SOURCE_API_VERSION = 5 as const
-export const EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION = 2 as const
-export const EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION = 3 as const
+export const EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION = 4 as const
 export const MAX_CAD_SOURCE_BYTES = 1024 * 1024
 
 export const EXPERIMENT_ENTRY_PATH = 'experiment.tsx' as const
+export const EXPERIMENT_GEOMETRY_PATH = 'geometry.tsx' as const
 export const EXPERIMENT_SIMULATION_PATH = 'simulate.py' as const
 export const EXPERIMENT_TASK_PATH = /^tasks\/([A-Za-z][A-Za-z0-9_-]*)\.tsx$/u
 
 export type CadDocumentType = 'experiment'
 
-export type ExperimentSourceBundleV2 = Readonly<{
+export type ExperimentSourceBundle = Readonly<{
   formatVersion: typeof EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION
-  files: Readonly<Record<string, string>>
-}>
-
-export type ExperimentSourceBundleV3 = Readonly<{
-  formatVersion: typeof EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION
   files: Readonly<Record<string, string>>
   geometrySnapshot: GeometrySnapshot
 }>
-
-export type ExperimentSourceBundle = ExperimentSourceBundleV2 | ExperimentSourceBundleV3
 
 export type ExperimentSourceDocument = Readonly<{
   kind: 'experiment'
@@ -90,13 +83,10 @@ export function assertExperimentSourceBundle(value: unknown): asserts value is E
     files?: unknown
     geometrySnapshot?: unknown
   }>
-  const isV3 = bundle.formatVersion === EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION
-  const unknownKey = Object.keys(value).find(
-    (key) => !(isV3 ? ['files', 'formatVersion', 'geometrySnapshot'] : ['files', 'formatVersion']).includes(key),
-  )
+  const unknownKey = Object.keys(value).find((key) => !['files', 'formatVersion', 'geometrySnapshot'].includes(key))
   if (unknownKey) throw new CadModelError(`Experiment source bundle.${unknownKey} is not allowed.`)
-  if (bundle.formatVersion !== EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION && !isV3) {
-    throw new CadModelError('Only Experiment source bundle format versions 2 and 3 are supported.')
+  if (bundle.formatVersion !== EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION) {
+    throw new CadModelError('Only Experiment source bundle format version 4 is supported.')
   }
   if (
     typeof bundle.files !== 'object' ||
@@ -109,11 +99,18 @@ export function assertExperimentSourceBundle(value: unknown): asserts value is E
   const paths = Object.keys(bundle.files)
   const invalidPath = paths.find(
     (path) =>
-      path !== EXPERIMENT_ENTRY_PATH && path !== EXPERIMENT_SIMULATION_PATH && experimentTaskName(path) === null,
+      path !== EXPERIMENT_ENTRY_PATH &&
+      path !== EXPERIMENT_GEOMETRY_PATH &&
+      path !== EXPERIMENT_SIMULATION_PATH &&
+      experimentTaskName(path) === null,
   )
   if (invalidPath) throw new CadModelError(`Experiment source file path is not allowed: ${invalidPath}`)
-  if (!paths.includes(EXPERIMENT_ENTRY_PATH) || !paths.includes(EXPERIMENT_SIMULATION_PATH)) {
-    throw new CadModelError('Experiment source bundle requires experiment.tsx and simulate.py.')
+  if (
+    !paths.includes(EXPERIMENT_ENTRY_PATH) ||
+    !paths.includes(EXPERIMENT_GEOMETRY_PATH) ||
+    !paths.includes(EXPERIMENT_SIMULATION_PATH)
+  ) {
+    throw new CadModelError('Experiment source bundle requires experiment.tsx, geometry.tsx, and simulate.py.')
   }
   if (paths.every((path) => experimentTaskName(path) === null)) {
     throw new CadModelError('Experiment source bundle requires at least one Task file.')
@@ -129,9 +126,7 @@ export function assertExperimentSourceBundle(value: unknown): asserts value is E
   if (!(files[EXPERIMENT_SIMULATION_PATH] as string).trim()) {
     throw new CadModelError('Experiment source simulate.py must not be empty.')
   }
-  if (isV3) {
-    assertCanonicalGeometrySnapshot(bundle.geometrySnapshot as GeometrySnapshot)
-  }
+  assertCanonicalGeometrySnapshot(bundle.geometrySnapshot as GeometrySnapshot)
 }
 
 function canonicalFiles(files: Readonly<Record<string, string>>) {
@@ -140,45 +135,25 @@ function canonicalFiles(files: Readonly<Record<string, string>>) {
   )
 }
 
-export function createExperimentSourceBundle(files: Readonly<Record<string, string>>): ExperimentSourceBundleV2 {
+export function createExperimentSourceBundle(
+  files: Readonly<Record<string, string>>,
+  geometrySnapshot: GeometrySnapshot = {
+    schemaVersion: GEOMETRY_SNAPSHOT_SCHEMA_VERSION,
+    entryImports: [],
+    modules: [],
+  },
+): ExperimentSourceBundle {
   const bundle = Object.freeze({
     formatVersion: EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION,
-    files: canonicalFiles(files),
-  })
-  assertExperimentSourceBundle(bundle)
-  return bundle
-}
-
-export function createExperimentSourceBundleV3(
-  files: Readonly<Record<string, string>>,
-  geometrySnapshot: GeometrySnapshot,
-): ExperimentSourceBundleV3 {
-  const bundle = Object.freeze({
-    formatVersion: EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION,
-    files: canonicalFiles(files),
+    files: canonicalFiles({ ...files, [EXPERIMENT_GEOMETRY_PATH]: files[EXPERIMENT_GEOMETRY_PATH] ?? 'export {}\n' }),
     geometrySnapshot: canonicalizeGeometrySnapshot(geometrySnapshot),
   })
   assertExperimentSourceBundle(bundle)
   return bundle
 }
 
-export function upgradeExperimentSourceBundleV3(
-  bundle: ExperimentSourceBundle,
-  geometrySnapshot: GeometrySnapshot = bundle.formatVersion === EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION
-    ? bundle.geometrySnapshot
-    : {
-        schemaVersion: GEOMETRY_SNAPSHOT_SCHEMA_VERSION,
-        roots: [],
-        modules: [],
-      },
-) {
-  return createExperimentSourceBundleV3(bundle.files, geometrySnapshot)
-}
-
 function replaceBundleFiles(bundle: ExperimentSourceBundle, files: Readonly<Record<string, string>>) {
-  return bundle.formatVersion === EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION
-    ? createExperimentSourceBundleV3(files, bundle.geometrySnapshot)
-    : createExperimentSourceBundle(files)
+  return createExperimentSourceBundle(files, bundle.geometrySnapshot)
 }
 
 export function assertCadSourceDocument(value: unknown): asserts value is ExperimentSourceDocument {
@@ -272,24 +247,14 @@ export function removeExperimentTask(document: ExperimentSourceDocument, taskNam
 
 export async function cadSourceHash(document: ExperimentSourceDocument) {
   assertCadSourceDocument(document)
-  if (document.sourceBundle.formatVersion === EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION) {
-    await validateGeometrySnapshotHashes(document.sourceBundle.geometrySnapshot)
+  await validateGeometrySnapshotHashes(document.sourceBundle.geometrySnapshot)
+  const sourceBundle = {
+    formatVersion: document.sourceBundle.formatVersion,
+    files: Object.fromEntries(
+      Object.entries(document.sourceBundle.files).sort(([left], [right]) => compareCanonicalText(left, right)),
+    ),
+    geometrySnapshot: canonicalizeGeometrySnapshot(document.sourceBundle.geometrySnapshot),
   }
-  const sourceBundle =
-    document.sourceBundle.formatVersion === EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION
-      ? {
-          formatVersion: document.sourceBundle.formatVersion,
-          files: Object.fromEntries(
-            Object.entries(document.sourceBundle.files).sort(([left], [right]) => compareCanonicalText(left, right)),
-          ),
-          geometrySnapshot: canonicalizeGeometrySnapshot(document.sourceBundle.geometrySnapshot),
-        }
-      : {
-          formatVersion: document.sourceBundle.formatVersion,
-          files: Object.fromEntries(
-            Object.entries(document.sourceBundle.files).sort(([left], [right]) => compareCanonicalText(left, right)),
-          ),
-        }
   const input = JSON.stringify({
     apiVersion: document.apiVersion,
     formatVersion: document.formatVersion,

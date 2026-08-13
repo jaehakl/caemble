@@ -1,14 +1,65 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ExperimentSourceDocument } from '@/lib/cad'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
 import { ExperimentEditor } from './ExperimentEditor'
 import { RecordedDataEditor } from './RecordedDataEditor'
 
+const monacoMocks = vi.hoisted(() => {
+  const models = new Map<
+    string,
+    {
+      dispose: ReturnType<typeof vi.fn>
+      getValue: ReturnType<typeof vi.fn>
+      language: string
+      setValue: ReturnType<typeof vi.fn>
+      uri: { toString: () => string }
+    }
+  >()
+  const parse = vi.fn((value: string) => ({ toString: () => value }))
+  const createModel = vi.fn((initialValue: string, language: string, uri: { toString: () => string }) => {
+    let value = initialValue
+    const key = uri.toString()
+    const model = {
+      dispose: vi.fn(() => {
+        if (models.get(key) === model) models.delete(key)
+      }),
+      getValue: vi.fn(() => value),
+      language,
+      setValue: vi.fn((next: string) => {
+        value = next
+      }),
+      uri,
+    }
+    models.set(key, model)
+    return model
+  })
+  const getModel = vi.fn((uri: { toString: () => string }) => models.get(uri.toString()) ?? null)
+  return {
+    createModel,
+    getModel,
+    loadMonaco: vi.fn(async () => ({
+      Uri: { parse },
+      editor: { createModel, getModel, setModelMarkers: vi.fn() },
+    })),
+    models,
+    renderCadEditor: vi.fn(),
+  }
+})
+
+vi.mock('@/lib/cad/authoring', () => ({ loadMonaco: monacoMocks.loadMonaco }))
+
 vi.mock('@/features/viewer/editor/CadEditor', () => ({
-  default: ({ modelPath }: { modelPath: string }) => <div data-testid="cad-editor">{modelPath}</div>,
+  default: ({ modelPath }: { modelPath: string }) => {
+    monacoMocks.renderCadEditor(modelPath)
+    return (
+      <div data-geometry-ready={monacoMocks.models.has('file:///geometry.tsx')} data-testid="cad-editor">
+        {modelPath}
+      </div>
+    )
+  },
 }))
 
 const document: ExperimentSourceDocument = {
@@ -16,13 +67,15 @@ const document: ExperimentSourceDocument = {
   formatVersion: 2,
   kind: 'experiment',
   sourceBundle: {
-    formatVersion: 2,
+    formatVersion: 4,
     files: {
       'experiment.tsx': 'experiment source',
+      'geometry.tsx': 'export {}',
       'simulate.py': 'simulation source',
       'tasks/zeta.tsx': 'zeta task',
       'tasks/alpha.tsx': 'alpha task',
     },
+    geometrySnapshot: { schemaVersion: 2, entryImports: [], modules: [] },
   },
 }
 
@@ -40,29 +93,72 @@ function controller(overrides: Partial<CadDocumentController> = {}) {
   } as CadDocumentController
 }
 
+beforeEach(() => {
+  monacoMocks.models.clear()
+  vi.clearAllMocks()
+})
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
 })
 
 describe('ExperimentEditor', () => {
-  it('shows required files first, then sorted Task files, and reports file focus', () => {
+  it('registers every bundle model before showing required files and reports file focus', async () => {
     const onActiveFileChange = vi.fn()
     render(<ExperimentEditor controller={controller()} document={document} onActiveFileChange={onActiveFileChange} />)
 
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
       'experiment.tsx',
+      'geometry.tsx',
       'simulate.py',
       'tasks/alpha.tsx',
       'tasks/zeta.tsx',
     ])
+    expect(await screen.findByTestId('cad-editor')).toHaveAttribute('data-geometry-ready', 'true')
+    expect([...monacoMocks.models.keys()].sort()).toEqual([
+      'file:///experiment.tsx',
+      'file:///geometry.tsx',
+      'file:///simulate.py',
+      'file:///tasks/alpha.tsx',
+      'file:///tasks/zeta.tsx',
+    ])
 
     fireEvent.click(screen.getByRole('tab', { name: 'tasks/alpha.tsx' }))
     expect(onActiveFileChange).toHaveBeenLastCalledWith('tasks/alpha.tsx')
-    expect(screen.getByTestId('cad-editor')).toHaveTextContent('file:///tasks/alpha.tsx')
+    expect(await screen.findByTestId('cad-editor')).toHaveTextContent('file:///tasks/alpha.tsx')
   })
 
-  it('adds and deletes Tasks through the document controller', () => {
+  it('synchronizes inactive models, removes deleted files, and disposes the session', async () => {
+    const { rerender, unmount } = render(<ExperimentEditor controller={controller()} document={document} />)
+    await screen.findByTestId('cad-editor')
+    const geometryModel = monacoMocks.models.get('file:///geometry.tsx')!
+    const removedTaskModel = monacoMocks.models.get('file:///tasks/alpha.tsx')!
+    const remainingFiles = { ...document.sourceBundle.files }
+    delete remainingFiles['tasks/alpha.tsx']
+    const nextDocument = {
+      ...document,
+      sourceBundle: {
+        ...document.sourceBundle,
+        files: {
+          ...remainingFiles,
+          'geometry.tsx': 'export const Updated = () => <box />',
+          'tasks/thermal.tsx': 'thermal task',
+        },
+      },
+    }
+
+    rerender(<ExperimentEditor controller={controller()} document={nextDocument} />)
+    await waitFor(() => expect(geometryModel.getValue()).toBe('export const Updated = () => <box />'))
+    expect(removedTaskModel.dispose).toHaveBeenCalledOnce()
+    expect(monacoMocks.models.has('file:///tasks/thermal.tsx')).toBe(true)
+
+    unmount()
+    expect(geometryModel.dispose).toHaveBeenCalledOnce()
+    expect(monacoMocks.models.size).toBe(0)
+  })
+
+  it('adds and deletes Tasks through the document controller', async () => {
     const handleAddExperimentTask = vi.fn()
     const handleRemoveExperimentTask = vi.fn()
     vi.spyOn(window, 'prompt').mockReturnValue('thermal')
@@ -74,6 +170,7 @@ describe('ExperimentEditor', () => {
         document={document}
       />,
     )
+    await screen.findByTestId('cad-editor')
 
     fireEvent.click(screen.getByRole('button', { name: '+ Task' }))
     expect(handleAddExperimentTask).toHaveBeenCalledWith('thermal', expect.stringContaining('defineTask'))

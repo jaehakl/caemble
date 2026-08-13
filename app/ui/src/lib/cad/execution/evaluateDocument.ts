@@ -9,12 +9,12 @@ import {
   EXPERIMENT_SIMULATION_PATH,
   assertCadSourceDocument,
   createCadSourceDocument,
-  createExperimentSourceBundleV3,
+  createExperimentSourceBundle,
   type CadEvaluationInput,
   type ExperimentSourceDocument,
 } from '../source/document'
-import type { GeometryDraftOverlay, GeometryDraftRoot } from '../source/effectiveGeometryGraph'
-import type { GeometryCoordinate, GeometrySnapshot } from '../source/geometrySnapshot'
+import type { GeometryDraftOverlay, GeometryModuleCoordinate } from '../source/effectiveGeometryGraph'
+import type { GeometrySnapshot } from '../source/geometrySnapshot'
 import type { UcumUnit } from '../model/units'
 import { deserializeCadScene } from './mesh'
 import type { CadScene } from '../evaluation/types'
@@ -34,7 +34,6 @@ export type EvaluateDocumentOptions = Readonly<{
   signal?: AbortSignal
   timeoutMs?: 3000 | 10000 | 30000
   geometryDrafts?: GeometryDraftOverlay
-  geometryRoots?: readonly GeometryDraftRoot[]
 }>
 
 export type GeometryModuleEvaluationOptions = Readonly<{
@@ -45,7 +44,8 @@ export type GeometryModuleEvaluationOptions = Readonly<{
 }>
 
 export type GeometryModulePreview = Readonly<{
-  coordinate: GeometryCoordinate
+  coordinate: GeometryModuleCoordinate
+  exportName: string
   sourceHash: string
   scene: CadScene
 }>
@@ -175,18 +175,23 @@ export default defineTask({ kernel: { name: 'preview', version: '1.0.0' }, confi
 
 export async function evaluateGeometryModule(
   snapshot: GeometrySnapshot,
-  coordinate: GeometryCoordinate,
+  coordinate: GeometryModuleCoordinate,
+  exportName: string,
   options: GeometryModuleEvaluationOptions = {},
 ): Promise<GeometryModulePreview> {
-  const document = createCadSourceDocument('experiment', createExperimentSourceBundleV3(geometryPreviewFiles, snapshot))
+  const files = {
+    ...geometryPreviewFiles,
+    'geometry.tsx': `import { ${exportName} } from ${JSON.stringify(coordinate)}\nexport { ${exportName} }\n`,
+  }
+  const document = createCadSourceDocument('experiment', createExperimentSourceBundle(files, snapshot))
   const compiledDocument = await compileCadDocument(document, {
     geometryDrafts: options.geometryDrafts,
-    geometryRoots: [{ alias: 'StandalonePreview', coordinate }],
   })
   const request: CadGeometryPreviewRequest = {
     type: 'preview-geometry',
     compiledDocument,
     coordinate,
+    exportName,
     lengthUnit: options.lengthUnit ?? 'mm',
     requestId: `preview-geometry-${crypto.randomUUID()}`,
     revision: 0,
@@ -200,6 +205,7 @@ export async function evaluateGeometryModule(
         resolve(
           Object.freeze({
             coordinate,
+            exportName,
             sourceHash: response.sourceHash,
             scene: deserializeCadScene(response.scene),
           }),

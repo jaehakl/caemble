@@ -29,10 +29,12 @@ def auth_headers(user: User) -> dict[str, str]:
 
 def experiment_source_bundle(label: str = "experiment") -> dict:
     return {
-        "formatVersion": 2,
+        "formatVersion": 4,
         "files": {
             "experiment.tsx": label,
+            "geometry.tsx": "export {}\n",
             "simulate.py": "async def simulate(*, sim, tasks, vars):\n    return None\n",
             "tasks/main.tsx": "task",
         },
+        "geometrySnapshot": {"schemaVersion": 2, "entryImports": [], "modules": []},
     }
