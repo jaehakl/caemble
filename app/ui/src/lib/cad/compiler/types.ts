@@ -1,9 +1,19 @@
 import { CAD_API_DECLARATION_FINGERPRINT, CAEMBLE_MONACO_VERSION } from '../api/generatedVersions'
 import { CadModelError } from '../model/errors'
 import { EXPERIMENT_ENTRY_PATH, experimentTaskName } from '../source/document'
+import {
+  MAX_COMPILED_GEOMETRY_GRAPH_BYTES,
+  MAX_GEOMETRY_GRAPH_DEPTH,
+  MAX_GEOMETRY_IMPORTS_PER_MODULE,
+  MAX_GEOMETRY_MODULES,
+  MAX_GEOMETRY_ROOTS,
+  geometryCoordinateNamespace,
+  isGeometryCoordinate,
+  type GeometryCoordinate,
+} from '../source/geometrySnapshot'
 
 export const CAD_COMPILER_VERSION =
-  `monaco-${CAEMBLE_MONACO_VERSION}-api-5-${CAD_API_DECLARATION_FINGERPRINT}-multi-source-v2` as const
+  `monaco-${CAEMBLE_MONACO_VERSION}-api-5-${CAD_API_DECLARATION_FINGERPRINT}-geometry-graph-v3` as const
 
 export type CadDiagnostic = Readonly<{
   code: number | string
@@ -33,13 +43,36 @@ export type CompiledCadDocument = Readonly<{
   compilerVersion: typeof CAD_COMPILER_VERSION
   sourceHash: string
   sources: Readonly<Record<string, CompiledCadSource>>
+  geometryGraph?: CompiledGeometryGraph
 }>
 
-function validEntryFile(entryFile: string) {
-  return entryFile === EXPERIMENT_ENTRY_PATH || experimentTaskName(entryFile) !== null
+export type CompiledGeometryModule = CompiledCadSource &
+  Readonly<{
+    entryFile: GeometryCoordinate
+    geometrySourceHash: string
+    moduleHash: string
+    imports: readonly GeometryCoordinate[]
+  }>
+
+export type CompiledGeometryGraph = Readonly<{
+  graphHash: string
+  roots: readonly Readonly<{ alias: string; coordinate: GeometryCoordinate; moduleHash: string }>[]
+  modules: Readonly<Record<GeometryCoordinate, CompiledGeometryModule>>
+}>
+
+function validEntryFile(entryFile: string, allowGeometry: boolean) {
+  return (
+    entryFile === EXPERIMENT_ENTRY_PATH ||
+    experimentTaskName(entryFile) !== null ||
+    (allowGeometry && isGeometryCoordinate(entryFile))
+  )
 }
 
-export function assertCompiledCadSource(value: unknown): asserts value is CompiledCadSource {
+function assertCompiledSource(
+  value: unknown,
+  extraKeys: readonly string[] = [],
+  allowGeometry = false,
+): asserts value is CompiledCadSource {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new CadModelError('Compiled CAD source must be an object.')
   }
@@ -47,7 +80,8 @@ export function assertCompiledCadSource(value: unknown): asserts value is Compil
     throw new CadModelError('Compiled CAD source must be a plain object.')
   }
   const unknownKey = Object.keys(value).find(
-    (key) => !['apiVersion', 'compilerVersion', 'entryFile', 'code', 'sourceMap', 'sourceHash'].includes(key),
+    (key) =>
+      !['apiVersion', 'compilerVersion', 'entryFile', 'code', 'sourceMap', 'sourceHash', ...extraKeys].includes(key),
   )
   if (unknownKey) throw new CadModelError(`Compiled CAD source.${unknownKey} is not allowed.`)
 
@@ -56,7 +90,7 @@ export function assertCompiledCadSource(value: unknown): asserts value is Compil
     compiled.apiVersion !== 5 ||
     compiled.compilerVersion !== CAD_COMPILER_VERSION ||
     typeof compiled.entryFile !== 'string' ||
-    !validEntryFile(compiled.entryFile) ||
+    !validEntryFile(compiled.entryFile, allowGeometry) ||
     typeof compiled.code !== 'string' ||
     typeof compiled.sourceHash !== 'string' ||
     !/^[0-9a-f]{64}$/u.test(compiled.sourceHash)
@@ -71,13 +105,133 @@ export function assertCompiledCadSource(value: unknown): asserts value is Compil
   }
 }
 
+export function assertCompiledCadSource(value: unknown): asserts value is CompiledCadSource {
+  assertCompiledSource(value)
+}
+
+function assertCompiledGeometryGraph(value: unknown, documentHash: string): asserts value is CompiledGeometryGraph {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Object.prototype
+  ) {
+    throw new CadModelError('Compiled Geometry graph must be a plain object.')
+  }
+  const graph = value as Partial<CompiledGeometryGraph>
+  const unknownKey = Object.keys(value).find((key) => !['graphHash', 'roots', 'modules'].includes(key))
+  if (
+    unknownKey ||
+    typeof graph.graphHash !== 'string' ||
+    !/^[0-9a-f]{64}$/u.test(graph.graphHash) ||
+    !Array.isArray(graph.roots) ||
+    graph.roots.length > MAX_GEOMETRY_ROOTS ||
+    typeof graph.modules !== 'object' ||
+    graph.modules === null ||
+    Array.isArray(graph.modules) ||
+    Object.getPrototypeOf(graph.modules) !== Object.prototype
+  ) {
+    throw new CadModelError('Compiled Geometry graph provenance is invalid.')
+  }
+  const modules = Object.entries(graph.modules)
+  if (modules.length > MAX_GEOMETRY_MODULES) throw new CadModelError('Compiled Geometry graph has too many modules.')
+  let compiledBytes = 0
+  modules.forEach(([coordinate, module]) => {
+    assertCompiledSource(module, ['geometrySourceHash', 'moduleHash', 'imports'], true)
+    if (
+      !isGeometryCoordinate(coordinate) ||
+      module.entryFile !== coordinate ||
+      module.sourceHash !== documentHash ||
+      typeof (module as Partial<CompiledGeometryModule>).geometrySourceHash !== 'string' ||
+      !/^[0-9a-f]{64}$/u.test((module as CompiledGeometryModule).geometrySourceHash) ||
+      typeof (module as Partial<CompiledGeometryModule>).moduleHash !== 'string' ||
+      !/^[0-9a-f]{64}$/u.test((module as CompiledGeometryModule).moduleHash) ||
+      !Array.isArray((module as Partial<CompiledGeometryModule>).imports) ||
+      (module as CompiledGeometryModule).imports.length > MAX_GEOMETRY_IMPORTS_PER_MODULE ||
+      (module as CompiledGeometryModule).imports.some((item) => !isGeometryCoordinate(item))
+    ) {
+      throw new CadModelError(`Compiled Geometry module provenance is invalid: ${coordinate}`)
+    }
+    compiledBytes += new TextEncoder().encode(`${module.code}${module.sourceMap ?? ''}`).byteLength
+  })
+  if (compiledBytes > MAX_COMPILED_GEOMETRY_GRAPH_BYTES) {
+    throw new CadModelError('Compiled Geometry graph exceeds 32 MiB.')
+  }
+  const moduleMap = graph.modules as CompiledGeometryGraph['modules']
+  const aliases = new Set<string>()
+  const rootCoordinates = new Set<string>()
+  let ownerNamespace: string | undefined
+  const reachable = new Set<string>()
+  const visiting = new Set<string>()
+  const visit = (coordinate: GeometryCoordinate) => {
+    if (visiting.has(coordinate)) {
+      throw new CadModelError(`Compiled Geometry graph contains a cycle at ${coordinate}.`)
+    }
+    if (reachable.has(coordinate)) return
+    const module = moduleMap[coordinate]
+    if (!module) throw new CadModelError(`Compiled Geometry dependency is unresolved: ${coordinate}`)
+    ownerNamespace ??= geometryCoordinateNamespace(coordinate)
+    if (geometryCoordinateNamespace(coordinate) !== ownerNamespace) {
+      throw new CadModelError(`Compiled Geometry dependency crosses owner namespaces: ${coordinate}`)
+    }
+    visiting.add(coordinate)
+    try {
+      const imports = new Set<string>()
+      module.imports.forEach((child) => {
+        if (imports.has(child)) throw new CadModelError(`Compiled Geometry module imports ${child} more than once.`)
+        imports.add(child)
+        visit(child)
+      })
+      reachable.add(coordinate)
+    } finally {
+      visiting.delete(coordinate)
+    }
+  }
+  graph.roots.forEach((root) => {
+    if (
+      !root ||
+      typeof root !== 'object' ||
+      Array.isArray(root) ||
+      Object.getPrototypeOf(root) !== Object.prototype ||
+      Object.keys(root).some((key) => !['alias', 'coordinate', 'moduleHash'].includes(key)) ||
+      typeof root.alias !== 'string' ||
+      !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(root.alias) ||
+      aliases.has(root.alias) ||
+      !isGeometryCoordinate(root.coordinate) ||
+      rootCoordinates.has(root.coordinate) ||
+      typeof root.moduleHash !== 'string' ||
+      moduleMap[root.coordinate]?.moduleHash !== root.moduleHash
+    ) {
+      throw new CadModelError('Compiled Geometry root provenance is invalid.')
+    }
+    aliases.add(root.alias)
+    rootCoordinates.add(root.coordinate)
+    visit(root.coordinate)
+  })
+  const orphan = modules.find(([coordinate]) => !reachable.has(coordinate))
+  if (orphan) throw new CadModelError(`Compiled Geometry module is unreachable: ${orphan[0]}`)
+
+  const longestDepthByCoordinate = new Map<GeometryCoordinate, number>()
+  const longestDepth = (coordinate: GeometryCoordinate): number => {
+    const cached = longestDepthByCoordinate.get(coordinate)
+    if (cached !== undefined) return cached
+    const module = moduleMap[coordinate]!
+    const depth = module.imports.reduce((longest, child) => Math.max(longest, 1 + longestDepth(child)), 1)
+    longestDepthByCoordinate.set(coordinate, depth)
+    return depth
+  }
+  if (graph.roots.some((root) => longestDepth(root.coordinate) > MAX_GEOMETRY_GRAPH_DEPTH)) {
+    throw new CadModelError(`Compiled Geometry graph exceeds dependency depth ${MAX_GEOMETRY_GRAPH_DEPTH}.`)
+  }
+}
+
 export function assertCompiledCadDocument(value: unknown): asserts value is CompiledCadDocument {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new CadModelError('Compiled CAD document must be an object.')
   }
   const compiled = value as Partial<CompiledCadDocument>
   const unknownKey = Object.keys(value).find(
-    (key) => !['apiVersion', 'compilerVersion', 'sourceHash', 'sources'].includes(key),
+    (key) => !['apiVersion', 'compilerVersion', 'sourceHash', 'sources', 'geometryGraph'].includes(key),
   )
   if (
     unknownKey ||
@@ -99,4 +253,5 @@ export function assertCompiledCadDocument(value: unknown): asserts value is Comp
       throw new CadModelError('Compiled CAD document source provenance does not match.')
     }
   })
+  if (compiled.geometryGraph !== undefined) assertCompiledGeometryGraph(compiled.geometryGraph, compiled.sourceHash)
 }

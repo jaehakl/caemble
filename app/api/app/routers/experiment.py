@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from gpstation.utils.csrf import require_web_csrf
 
 from db import Experiment
 from models import (
@@ -28,7 +29,7 @@ CRUD_SPEC = CrudSpec(
 )
 
 
-@router.post("/save", response_model=SaveCodeEntityResponse)
+@router.post("/save", response_model=SaveCodeEntityResponse, dependencies=[Depends(require_web_csrf)])
 async def save_experiment(
     request: SaveExperimentRequest,
     db: AsyncSession = Depends(get_db),

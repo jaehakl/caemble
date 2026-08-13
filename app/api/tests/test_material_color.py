@@ -16,5 +16,13 @@ async def test_material_color_is_validated_and_normalized(client, db_session, mo
     material = await db_session.get(Material, response.json()[0]["id"])
     assert material.color == "#a1b2c3"
 
+    listed = await client.post(
+        "/material/list",
+        headers=headers,
+        json={"scope": "mine", "selected_ids": [material.id]},
+    )
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["created_at"].endswith("Z")
+
     invalid = await client.post("/material/upsert", headers=headers, json=[{"color": "blue"}])
     assert invalid.status_code == 422

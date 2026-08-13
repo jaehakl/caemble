@@ -18,6 +18,25 @@ async function loadClient() {
 }
 
 describe('native fetch API client', () => {
+  it('protects every state-changing cookie request with a CSRF token', async () => {
+    let csrfCalls = 0
+    server.use(
+      http.get('http://api.test/web/auth/csrf', () => {
+        csrfCalls += 1
+        return HttpResponse.json({ csrf_token: 'csrf-value' })
+      }),
+      http.post('http://api.test/geometry/publish/plan', ({ request }) =>
+        request.headers.get('x-csrf-token') === 'csrf-value'
+          ? HttpResponse.json({ ok: true })
+          : HttpResponse.json({ detail: 'CSRF token required' }, { status: 403 }),
+      ),
+    )
+
+    const { request } = await loadClient()
+    await expect(request<{ ok: boolean }>('post', '/geometry/publish/plan', {})).resolves.toEqual({ ok: true })
+    expect(csrfCalls).toBe(1)
+  })
+
   it('refreshes once and retries the original request once after a 401', async () => {
     let resourceCalls = 0
     let refreshCalls = 0

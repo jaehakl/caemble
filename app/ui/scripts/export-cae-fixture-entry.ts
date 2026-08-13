@@ -3,16 +3,23 @@ import { mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { buildSourceOnlyMeasurement } from '../src/lib/cad/execution/measurement'
 import { serializeEvaluatedDocumentSnapshot } from '../src/lib/cad/execution/snapshot'
-import { evaluateDocumentEntry, loadCompiledCode, loadCompiledTaskCode } from '../src/lib/cad/execution/userModule'
+import { executeCompiledDocument, inspectCompiledDocument } from '../src/lib/cad/execution/userModule'
 import { generateRandomVars } from '../src/lib/cad/model/vars'
+import {
+  CAD_COMPILER_VERSION,
+  type CompiledCadDocument,
+  type CompiledCadSource,
+  type CompiledGeometryModule,
+} from '../src/lib/cad/compiler/types'
 import {
   cadSourceHash,
   createCadSourceDocument,
   EXPERIMENT_ENTRY_PATH,
   EXPERIMENT_SIMULATION_PATH,
-  experimentTaskName,
+  EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION,
   experimentTaskPaths,
 } from '../src/lib/cad/source/document'
+import { createEffectiveGeometryGraph } from '../src/lib/cad/source/effectiveGeometryGraph'
 import { caembleProgramExamples, type CaembleProgramExample } from '../src/lib/examples/programs'
 import { serializeCaeRequest } from '../src/features/cae/request'
 
@@ -36,25 +43,55 @@ async function compileSource(source: string) {
 
 async function buildMeasurement(example: CaembleProgramExample) {
   const experimentDocument = createCadSourceDocument('experiment', example.experimentSourceBundle)
-  const taskDefinitions = Object.fromEntries(
+  const sourceHash = await cadSourceHash(experimentDocument)
+  const sourcePaths = [EXPERIMENT_ENTRY_PATH, ...experimentTaskPaths(example.experimentSourceBundle)]
+  const sources = Object.fromEntries(
     await Promise.all(
-      experimentTaskPaths(example.experimentSourceBundle).map(async (taskPath) => [
-        experimentTaskName(taskPath)!,
-        loadCompiledTaskCode(await compileSource(example.experimentSourceBundle.files[taskPath])),
-      ]),
+      sourcePaths.map(async (entryFile) => {
+        const source: CompiledCadSource = {
+          apiVersion: 5,
+          compilerVersion: CAD_COMPILER_VERSION,
+          entryFile,
+          code: await compileSource(example.experimentSourceBundle.files[entryFile]),
+          sourceHash,
+        }
+        return [entryFile, source] as const
+      }),
     ),
   )
-  const experimentSource = example.experimentSourceBundle.files[EXPERIMENT_ENTRY_PATH]
+  let geometryGraph: CompiledCadDocument['geometryGraph']
+  if (example.experimentSourceBundle.formatVersion === EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION) {
+    const effective = await createEffectiveGeometryGraph(example.experimentSourceBundle.geometrySnapshot)
+    const modules = Object.fromEntries(
+      await Promise.all(
+        effective.modules.map(async (module) => {
+          const compiled: CompiledGeometryModule = {
+            apiVersion: 5,
+            compilerVersion: CAD_COMPILER_VERSION,
+            entryFile: module.coordinate,
+            code: await compileSource(module.source),
+            sourceHash,
+            geometrySourceHash: module.sourceHash,
+            moduleHash: module.moduleHash,
+            imports: module.imports,
+          }
+          return [module.coordinate, compiled] as const
+        }),
+      ),
+    )
+    geometryGraph = { graphHash: effective.graphHash, roots: effective.roots, modules }
+  }
+  const compiled: CompiledCadDocument = {
+    apiVersion: 5,
+    compilerVersion: CAD_COMPILER_VERSION,
+    sourceHash,
+    sources,
+    ...(geometryGraph ? { geometryGraph } : {}),
+  }
   const simulationSource = example.experimentSourceBundle.files[EXPERIMENT_SIMULATION_PATH]
-  const entry = loadCompiledCode(await compileSource(experimentSource))
+  const inspection = inspectCompiledDocument(compiled)
   const experiment = serializeEvaluatedDocumentSnapshot(
-    evaluateDocumentEntry(
-      entry,
-      await cadSourceHash(experimentDocument),
-      generateRandomVars(entry.varsSchema),
-      simulationSource,
-      taskDefinitions,
-    ),
+    executeCompiledDocument(compiled, generateRandomVars(inspection.varsSchema), simulationSource),
   )
   return buildSourceOnlyMeasurement(experiment)
 }

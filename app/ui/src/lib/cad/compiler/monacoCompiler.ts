@@ -1,17 +1,34 @@
 import type * as Monaco from 'monaco-editor'
 import {
   EXPERIMENT_ENTRY_PATH,
+  EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION,
   assertCadSourceDocument,
   cadSourceHash,
   experimentTaskPaths,
   type CadSourceDocument,
 } from '../source/document'
-import { analyzeCadSource, analyzeTaskSource } from '../source/sourceAnalysis'
-import { CAD_COMPILER_VERSION, type CadDiagnostic, type CompiledCadDocument, type CompiledCadSource } from './types'
+import {
+  createEffectiveGeometryGraph,
+  type EffectiveGeometryGraph,
+  type GeometryDraftOverlay,
+  type GeometryDraftRoot,
+} from '../source/effectiveGeometryGraph'
+import { analyzeCadSource, analyzeGeometrySource, analyzeTaskSource } from '../source/sourceAnalysis'
+import {
+  CAD_COMPILER_VERSION,
+  type CadDiagnostic,
+  type CompiledCadDocument,
+  type CompiledCadSource,
+  type CompiledGeometryModule,
+} from './types'
 
 const compilationCache = new Map<string, Promise<CompiledCadDocument>>()
 const maximumCompilationCacheEntries = 32
 const compilationTimeoutMs = 15_000
+
+function compareCanonicalText(left: string, right: string) {
+  return left < right ? -1 : left > right ? 1 : 0
+}
 
 export class CadCompilationError extends Error {
   readonly diagnostics: readonly CadDiagnostic[]
@@ -34,9 +51,19 @@ function documentSources(document: CadSourceDocument) {
   )
 }
 
-function assertSourcePolicy(path: string, source: string) {
-  if (path === EXPERIMENT_ENTRY_PATH) analyzeCadSource(source)
-  else analyzeTaskSource(source)
+function assertSourcePolicy(path: string, source: string, allowGeometryRegistry: boolean) {
+  if (path === EXPERIMENT_ENTRY_PATH) analyzeCadSource(source, allowGeometryRegistry)
+  else analyzeTaskSource(source, allowGeometryRegistry)
+}
+
+function geometryRegistryTypes(graph: EffectiveGeometryGraph) {
+  const properties = graph.roots.map(({ alias }) => `  readonly ${JSON.stringify(alias)}: unknown`).join('\n')
+  return `declare const geometries: Readonly<{\n${properties}\n}>\nexport default geometries\n`
+}
+
+async function sha256(value: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
 function diagnosticMessage(message: string | { messageText: string; next?: readonly unknown[] }): string {
@@ -94,11 +121,16 @@ async function getTypeScriptWorker(monaco: typeof Monaco) {
   throw registrationError
 }
 
-async function compile(document: CadSourceDocument, sourceHash: string): Promise<CompiledCadDocument> {
+async function compile(
+  document: CadSourceDocument,
+  sourceHash: string,
+  geometryGraph: EffectiveGeometryGraph | undefined,
+): Promise<CompiledCadDocument> {
   const sources = documentSources(document)
+  const allowGeometryRegistry = document.sourceBundle.formatVersion === EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION
   for (const [path, source] of Object.entries(sources)) {
     try {
-      assertSourcePolicy(path, source)
+      assertSourcePolicy(path, source, allowGeometryRegistry)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       throw new CadCompilationError('policy', message, [
@@ -113,21 +145,54 @@ async function compile(document: CadSourceDocument, sourceHash: string): Promise
       ])
     }
   }
+  for (const module of geometryGraph?.modules ?? []) {
+    try {
+      analyzeGeometrySource(module.source)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new CadCompilationError('policy', message, [
+        {
+          code: 'GEOMETRY_POLICY',
+          file: module.coordinate,
+          message,
+          phase: 'policy',
+          range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 },
+          severity: 'error',
+        },
+      ])
+    }
+  }
 
   const { loadMonaco } = await import('./monacoRuntime')
   const monaco = await loadMonaco()
-  const models = Object.fromEntries(
+  const sourceModels = Object.fromEntries(
     Object.entries(sources).map(([path, source]) => {
       const uri = monaco.Uri.parse(`file:///caemble-source/${sourceHash}/${path}`)
       return [path, monaco.editor.createModel(source, 'typescript', uri)]
     }),
   )
+  const geometryModels = Object.fromEntries(
+    (geometryGraph?.modules ?? []).map((module) => {
+      const uri = monaco.Uri.parse(
+        `file:///caemble-source/${sourceHash}/geometries/${encodeURIComponent(module.coordinate)}.tsx`,
+      )
+      return [module.coordinate, monaco.editor.createModel(module.source, 'typescript', uri)]
+    }),
+  )
+  const registryModel =
+    geometryGraph === undefined
+      ? undefined
+      : monaco.editor.createModel(
+          geometryRegistryTypes(geometryGraph),
+          'typescript',
+          monaco.Uri.parse(`file:///caemble-source/${sourceHash}/node_modules/@caemble/geometries/index.d.ts`),
+        )
   let timeout = 0
   try {
     const compilation = async () => {
       const workerFactory = await getTypeScriptWorker(monaco)
       const compiledEntries = await Promise.all(
-        Object.entries(models).map(async ([path, model]) => {
+        Object.entries(sourceModels).map(async ([path, model]) => {
           const worker = await workerFactory(model.uri)
           const [syntactic, semantic] = await Promise.all([
             worker.getSyntacticDiagnostics(model.uri.toString()),
@@ -168,11 +233,70 @@ async function compile(document: CadSourceDocument, sourceHash: string): Promise
           return [path, compiledSource] as const
         }),
       )
+      const compiledGeometryEntries = await Promise.all(
+        Object.entries(geometryModels).map(async ([coordinate, model]) => {
+          const worker = await workerFactory(model.uri)
+          const [syntactic, semantic] = await Promise.all([
+            worker.getSyntacticDiagnostics(model.uri.toString()),
+            worker.getSemanticDiagnostics(model.uri.toString()),
+          ])
+          const diagnostics = [
+            ...syntactic.map((diagnostic) => convertDiagnostic(diagnostic, model, coordinate, 'syntax')),
+            ...semantic.map((diagnostic) => convertDiagnostic(diagnostic, model, coordinate, 'semantic')),
+          ]
+          const errors = diagnostics.filter((diagnostic) => diagnostic.severity === 'error')
+          if (errors.length > 0) {
+            throw new CadCompilationError(
+              'type',
+              errors
+                .map(
+                  (diagnostic) =>
+                    `${diagnostic.file}:${diagnostic.range.startLineNumber}:${diagnostic.range.startColumn} ${diagnostic.message}`,
+                )
+                .join('\n'),
+              diagnostics,
+            )
+          }
+          const output = await worker.getEmitOutput(model.uri.toString())
+          const emittedCode = output.outputFiles.find((file) => file.name.endsWith('.js'))?.text
+          const sourceMap = output.outputFiles.find((file) => file.name.endsWith('.js.map'))?.text
+          if (output.emitSkipped || emittedCode === undefined) {
+            throw new CadCompilationError(
+              'compile',
+              `TypeScript did not emit JavaScript for ${coordinate}.`,
+              diagnostics,
+            )
+          }
+          const executableCode = emittedCode.replace(/\r?\n\/\/# sourceMappingURL=.*?(?:\r?\n)?$/u, '')
+          const graphModule = geometryGraph!.modules.find((item) => item.coordinate === coordinate)!
+          const compiledModule: CompiledGeometryModule = Object.freeze({
+            apiVersion: 5,
+            compilerVersion: CAD_COMPILER_VERSION,
+            entryFile: graphModule.coordinate,
+            code: `${executableCode}\n//# sourceURL=caemble://${sourceHash}/geometry/${encodeURIComponent(coordinate)}`,
+            ...(sourceMap === undefined ? {} : { sourceMap }),
+            sourceHash,
+            geometrySourceHash: graphModule.sourceHash,
+            moduleHash: graphModule.moduleHash,
+            imports: graphModule.imports,
+          })
+          return [coordinate, compiledModule] as const
+        }),
+      )
       return Object.freeze({
         apiVersion: 5 as const,
         compilerVersion: CAD_COMPILER_VERSION,
         sourceHash,
         sources: Object.freeze(Object.fromEntries(compiledEntries)),
+        ...(geometryGraph === undefined
+          ? {}
+          : {
+              geometryGraph: Object.freeze({
+                graphHash: geometryGraph.graphHash,
+                roots: geometryGraph.roots,
+                modules: Object.freeze(Object.fromEntries(compiledGeometryEntries)),
+              }),
+            }),
       })
     }
     const timedOut = new Promise<never>((_resolve, reject) => {
@@ -183,17 +307,59 @@ async function compile(document: CadSourceDocument, sourceHash: string): Promise
     return await Promise.race([compilation(), timedOut])
   } finally {
     window.clearTimeout(timeout)
-    Object.values(models).forEach((model) => model.dispose())
+    Object.values(sourceModels).forEach((model) => model.dispose())
+    Object.values(geometryModels).forEach((model) => model.dispose())
+    registryModel?.dispose()
   }
 }
 
-export async function compileCadDocument(document: CadSourceDocument) {
+export type CompileCadDocumentOptions = Readonly<{
+  geometryDrafts?: GeometryDraftOverlay
+  geometryRoots?: readonly GeometryDraftRoot[]
+}>
+
+export async function compileCadDocument(document: CadSourceDocument, options: CompileCadDocumentOptions = {}) {
   assertCadSourceDocument(document)
-  const sourceHash = await cadSourceHash(document)
+  if (
+    document.sourceBundle.formatVersion !== EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION &&
+    (options.geometryDrafts || options.geometryRoots)
+  ) {
+    throw new CadCompilationError('policy', 'Geometry drafts require Experiment source bundle format version 3.')
+  }
+  const persistedSourceHash = await cadSourceHash(document)
+  const geometryGraph =
+    document.sourceBundle.formatVersion === EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION
+      ? await createEffectiveGeometryGraph(
+          document.sourceBundle.geometrySnapshot,
+          options.geometryDrafts,
+          options.geometryRoots,
+        )
+      : undefined
+  const persistedRoots =
+    document.sourceBundle.formatVersion === EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION
+      ? document.sourceBundle.geometrySnapshot.roots
+          .map(({ alias, coordinate }) => ({ alias, coordinate }))
+          .sort((left, right) => compareCanonicalText(left.alias, right.alias))
+      : []
+  const requestedRoots = options.geometryRoots
+    ? [...options.geometryRoots].sort((left, right) => compareCanonicalText(left.alias, right.alias))
+    : persistedRoots
+  const persistedGeometrySources = new Map<string, string>(
+    document.sourceBundle.formatVersion === EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION
+      ? document.sourceBundle.geometrySnapshot.modules.map((module) => [module.coordinate, module.source])
+      : [],
+  )
+  const hasSourceOverride = Object.entries(options.geometryDrafts ?? {}).some(
+    ([coordinate, draft]) => draft?.source !== persistedGeometrySources.get(coordinate),
+  )
+  const hasEffectiveOverride = hasSourceOverride || JSON.stringify(requestedRoots) !== JSON.stringify(persistedRoots)
+  const sourceHash = hasEffectiveOverride
+    ? await sha256(JSON.stringify({ persistedSourceHash, geometryGraphHash: geometryGraph?.graphHash }))
+    : persistedSourceHash
   const cacheKey = `${CAD_COMPILER_VERSION}:${sourceHash}`
   let cached = compilationCache.get(cacheKey)
   if (!cached) {
-    cached = compile(document, sourceHash).catch((error) => {
+    cached = compile(document, sourceHash, geometryGraph).catch((error) => {
       compilationCache.delete(cacheKey)
       throw error
     })

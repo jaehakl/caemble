@@ -44,7 +44,7 @@ function stableJson(value: unknown): string {
       const normalized = Object.fromEntries(
         Object.entries(current)
           .filter(([, item]) => item !== undefined)
-          .sort(([left], [right]) => left.localeCompare(right))
+          .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
           .map(([key, item]) => [key, normalize(item)]),
       )
       ancestors.delete(current)

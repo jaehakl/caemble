@@ -2,26 +2,28 @@ import { assertCompiledCadDocument } from '../compiler/types'
 import { assertEvaluatedDocumentSnapshot } from '../execution/snapshotValidation'
 import { CadModelError } from '../model/errors'
 import { normalizeVarsSchema } from '../model/vars'
+import { isGeometryCoordinate } from '../source/geometrySnapshot'
+import { assertSerializableCadScene } from '../execution/meshValidation'
 import type { CadWorkerRequest, CadWorkerResponse } from '../worker/protocol'
 
 export type RunnerOperationEnvelope = Readonly<{
-  type: 'inspect' | 'evaluate'
+  type: 'inspect' | 'evaluate' | 'preview-geometry'
   nonce: string
   request: CadWorkerRequest
 }>
 
 export type RunnerOperationStartedEnvelope = Readonly<{
   type: 'operation-started'
-  operation: 'inspect' | 'evaluate'
+  operation: 'inspect' | 'evaluate' | 'preview-geometry'
   nonce: string
   requestId: string
   revision: number
-  documentType: 'experiment'
+  documentType: 'experiment' | 'geometry'
 }>
 
 export type RunnerOperationResultEnvelope = Readonly<{
   type: 'operation-result'
-  operation: 'inspect' | 'evaluate'
+  operation: 'inspect' | 'evaluate' | 'preview-geometry'
   nonce: string
   response: CadWorkerResponse
 }>
@@ -82,6 +84,19 @@ export function assertCadWorkerRequest(value: unknown): asserts value is CadWork
     assertOnlyKeys(value, ['type', 'requestId', 'revision', 'compiledDocument'], 'request')
     return
   }
+  if (value.type === 'preview-geometry') {
+    assertOnlyKeys(value, ['type', 'requestId', 'revision', 'compiledDocument', 'coordinate', 'lengthUnit'], 'request')
+    if (
+      !value.compiledDocument.geometryGraph ||
+      !isGeometryCoordinate(value.coordinate) ||
+      !value.compiledDocument.geometryGraph.modules[value.coordinate] ||
+      typeof value.lengthUnit !== 'string' ||
+      !value.lengthUnit
+    ) {
+      throw new CadModelError('Geometry preview request is invalid.')
+    }
+    return
+  }
   if (value.type !== 'evaluate') throw new CadModelError('CAD runner request type is invalid.')
   assertOnlyKeys(value, ['type', 'requestId', 'revision', 'compiledDocument', 'pythonSource', 'vars'], 'request')
   if (typeof value.pythonSource !== 'string' || !value.pythonSource.trim()) {
@@ -90,20 +105,33 @@ export function assertCadWorkerRequest(value: unknown): asserts value is CadWork
   assertVars(value.vars)
 }
 
-export function assertCadInspectionRequest(value: unknown): asserts value is Extract<CadWorkerRequest, { type: 'inspect' }> {
+export function assertCadInspectionRequest(
+  value: unknown,
+): asserts value is Extract<CadWorkerRequest, { type: 'inspect' }> {
   assertCadWorkerRequest(value)
   if (value.type !== 'inspect') throw new CadModelError('CAD inspection request type is invalid.')
 }
 
-export function assertCadEvaluationRequest(value: unknown): asserts value is Extract<CadWorkerRequest, { type: 'evaluate' }> {
+export function assertCadEvaluationRequest(
+  value: unknown,
+): asserts value is Extract<CadWorkerRequest, { type: 'evaluate' }> {
   assertCadWorkerRequest(value)
   if (value.type !== 'evaluate') throw new CadModelError('CAD evaluation request type is invalid.')
+}
+
+export function assertCadGeometryPreviewRequest(
+  value: unknown,
+): asserts value is Extract<CadWorkerRequest, { type: 'preview-geometry' }> {
+  assertCadWorkerRequest(value)
+  if (value.type !== 'preview-geometry') throw new CadModelError('CAD Geometry preview request type is invalid.')
 }
 
 export function assertRunnerOperationEnvelope(value: unknown): asserts value is RunnerOperationEnvelope {
   assertPlainObject(value, 'operation')
   assertOnlyKeys(value, ['type', 'nonce', 'request'], 'operation')
-  if (value.type !== 'inspect' && value.type !== 'evaluate') throw new CadModelError('Runner operation type is invalid.')
+  if (value.type !== 'inspect' && value.type !== 'evaluate' && value.type !== 'preview-geometry') {
+    throw new CadModelError('Runner operation type is invalid.')
+  }
   assertNonce(value.nonce)
   assertCadWorkerRequest(value.request)
   if (value.type !== value.request.type) throw new CadModelError('Runner operation does not match its request.')
@@ -114,16 +142,23 @@ export function assertRunnerOperationStartedEnvelope(value: unknown): asserts va
   assertOnlyKeys(value, ['type', 'operation', 'nonce', 'requestId', 'revision', 'documentType'], 'operationStarted')
   if (
     value.type !== 'operation-started' ||
-    (value.operation !== 'inspect' && value.operation !== 'evaluate') ||
-    value.documentType !== 'experiment'
+    (value.operation !== 'inspect' && value.operation !== 'evaluate' && value.operation !== 'preview-geometry') ||
+    (value.documentType !== 'experiment' && value.documentType !== 'geometry')
   ) {
     throw new CadModelError('Runner operation started envelope is invalid.')
   }
   assertNonce(value.nonce)
   assertIdentity(value.requestId, value.revision, 'Runner operation started')
+  const expectedDocumentType = value.operation === 'preview-geometry' ? 'geometry' : 'experiment'
+  if (value.documentType !== expectedDocumentType) {
+    throw new CadModelError('Runner operation started document type does not match its operation.')
+  }
 }
 
-function assertErrorResponse(response: Record<string, unknown>, errorType: 'inspection-error' | 'evaluation-error') {
+function assertErrorResponse(
+  response: Record<string, unknown>,
+  errorType: 'inspection-error' | 'evaluation-error' | 'geometry-preview-error',
+) {
   if (
     response.type !== errorType ||
     !['compile', 'type', 'policy', 'runtime', 'model'].includes(String(response.errorType)) ||
@@ -144,15 +179,21 @@ function assertErrorResponse(response: Record<string, unknown>, errorType: 'insp
 export function assertRunnerOperationResultEnvelope(value: unknown): asserts value is RunnerOperationResultEnvelope {
   assertPlainObject(value, 'operationResult')
   assertOnlyKeys(value, ['type', 'operation', 'nonce', 'response'], 'operationResult')
-  if (value.type !== 'operation-result' || (value.operation !== 'inspect' && value.operation !== 'evaluate')) {
+  if (
+    value.type !== 'operation-result' ||
+    (value.operation !== 'inspect' && value.operation !== 'evaluate' && value.operation !== 'preview-geometry')
+  ) {
     throw new CadModelError('Runner operation result type is invalid.')
   }
   assertNonce(value.nonce)
   assertPlainObject(value.response, 'operationResult.response')
   const response = value.response
   assertIdentity(response.requestId, response.revision, 'Runner operation result')
-  if (response.documentType !== 'experiment') throw new CadModelError('Runner result document type is invalid.')
+  if (response.documentType !== 'experiment' && response.documentType !== 'geometry') {
+    throw new CadModelError('Runner result document type is invalid.')
+  }
   if (value.operation === 'inspect') {
+    if (response.documentType !== 'experiment') throw new CadModelError('Runner inspection document type is invalid.')
     if (response.type === 'inspection-success') {
       assertOnlyKeys(
         response,
@@ -168,6 +209,25 @@ export function assertRunnerOperationResultEnvelope(value: unknown): asserts val
     assertErrorResponse(response, 'inspection-error')
     return
   }
+  if (value.operation === 'preview-geometry') {
+    if (response.documentType !== 'geometry')
+      throw new CadModelError('Runner Geometry preview document type is invalid.')
+    if (response.type === 'geometry-preview-success') {
+      assertOnlyKeys(
+        response,
+        ['type', 'requestId', 'revision', 'documentType', 'sourceHash', 'scene'],
+        'operationResult.response',
+      )
+      if (typeof response.sourceHash !== 'string' || !/^[0-9a-f]{64}$/u.test(response.sourceHash)) {
+        throw new CadModelError('Runner Geometry preview source provenance is invalid.')
+      }
+      assertSerializableCadScene(response.scene)
+      return
+    }
+    assertErrorResponse(response, 'geometry-preview-error')
+    return
+  }
+  if (response.documentType !== 'experiment') throw new CadModelError('Runner evaluation document type is invalid.')
   if (response.type === 'evaluation-success') {
     assertOnlyKeys(response, ['type', 'requestId', 'revision', 'documentType', 'snapshot'], 'operationResult.response')
     assertEvaluatedDocumentSnapshot(response.snapshot)

@@ -24,8 +24,9 @@ vi.mock('sonner', () => ({ toast: { error: mocks.toastError } }))
 function workbench(overrides: Record<string, unknown> = {}) {
   return {
     applyExperiment: vi.fn(),
-    draft: vi.fn(() => ({ version: 2 })),
+    draft: vi.fn(() => ({ version: 3 })),
     experimentDirty: false,
+    hasUnsavedWork: false,
     experimentId: null,
     loadExperiment: vi.fn().mockResolvedValue(undefined),
     measurementActions: {
@@ -100,16 +101,17 @@ describe('useCaePageSession', () => {
     expect(state.loadExperiment).toHaveBeenCalledWith(7, 11)
   })
 
-  it('initializes an empty v2 draft with Experiment as the active tab', async () => {
+  it('initializes an empty v4 draft with Experiment as the active tab', async () => {
     const state = workbench()
     const { result } = renderHook(() => useCaePageSession(false, 'user-1', state), { wrapper: wrapper() })
 
     await waitFor(() => expect(result.current.initialized).toBe(true))
     expect(state.restoreDraft).toHaveBeenCalledWith(
       expect.objectContaining({
-        version: 2,
+        version: 4,
         candidate: { vars: null, materialParameters: null },
         selection: { measurementId: null },
+        geometry: { drafts: {}, stagedModules: [], selectedCoordinate: null, expandedPaths: [] },
         layout: expect.objectContaining({ activeTab: 'experiment' }),
       }),
     )
@@ -117,7 +119,7 @@ describe('useCaePageSession', () => {
   })
 
   it('guards replacement when the Experiment source is dirty', async () => {
-    const state = workbench({ experimentDirty: true })
+    const state = workbench({ experimentDirty: true, hasUnsavedWork: true })
     const { result } = renderHook(() => useCaePageSession(false, 'user-1', state), { wrapper: wrapper() })
     await waitFor(() => expect(result.current.initialized).toBe(true))
     const replace = vi.fn()

@@ -30,10 +30,15 @@ function handleOperation(event: MessageEvent<unknown>, envelope: RunnerOperation
       operation,
       nonce,
       response: {
-        type: operation === 'inspect' ? 'inspection-error' : 'evaluation-error',
+        type:
+          operation === 'inspect'
+            ? 'inspection-error'
+            : operation === 'evaluate'
+              ? 'evaluation-error'
+              : 'geometry-preview-error',
         requestId: request.requestId,
         revision: request.revision,
-        documentType: 'experiment',
+        documentType: operation === 'preview-geometry' ? 'geometry' : 'experiment',
         errorType: 'runtime',
         message,
       },
@@ -68,7 +73,8 @@ function handleOperation(event: MessageEvent<unknown>, envelope: RunnerOperation
           !('type' in workerEvent.data) ||
           workerEvent.data.type !== 'runner-worker-ready' ||
           Object.keys(workerEvent.data).length !== 1
-        ) throw new Error('The CAD runner Worker did not send a valid ready signal.')
+        )
+          throw new Error('The CAD runner Worker did not send a valid ready signal.')
         started = true
         port.postMessage({
           type: 'operation-started',
@@ -76,7 +82,7 @@ function handleOperation(event: MessageEvent<unknown>, envelope: RunnerOperation
           nonce,
           requestId: request.requestId,
           revision: request.revision,
-          documentType: 'experiment',
+          documentType: operation === 'preview-geometry' ? 'geometry' : 'experiment',
         })
         worker.postMessage(envelope)
         keepWorker = true
@@ -88,7 +94,8 @@ function handleOperation(event: MessageEvent<unknown>, envelope: RunnerOperation
         workerEvent.data.nonce !== nonce ||
         workerEvent.data.response.requestId !== request.requestId ||
         workerEvent.data.response.revision !== request.revision
-      ) throw new Error('The CAD runner Worker response identity is invalid.')
+      )
+        throw new Error('The CAD runner Worker response identity is invalid.')
       const response = workerEvent.data.response
       port.postMessage(
         workerEvent.data,
@@ -97,7 +104,9 @@ function handleOperation(event: MessageEvent<unknown>, envelope: RunnerOperation
               ...cadSnapshotTransferables(response.snapshot.scene),
               ...Object.values(response.snapshot.taskScenes).flatMap(cadSnapshotTransferables),
             ]
-          : [],
+          : response.type === 'geometry-preview-success'
+            ? cadSnapshotTransferables(response.scene)
+            : [],
       )
     } catch (error) {
       postRuntimeError(error instanceof Error ? error.message : 'The CAD runner Worker returned an invalid response.')

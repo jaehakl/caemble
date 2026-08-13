@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createCadSourceDocument, createExperimentSourceBundle } from '@/lib/cad'
+import { createCadSourceDocument, createExperimentSourceBundle, createExperimentSourceBundleV3 } from '@/lib/cad'
 import { experimentSourceBundleHash, saveCadDefinition } from './saveDefinition'
 
 const mocks = vi.hoisted(() => ({ experimentSave: vi.fn() }))
@@ -73,5 +73,33 @@ describe('saveCadDefinition', () => {
       sourceBundle,
       bundleHash: await experimentSourceBundleHash(sourceBundle),
     })
+  })
+
+  it('matches the recursively sorted Python API hash for a v3 bundle', async () => {
+    const bundle = createExperimentSourceBundleV3(
+      {
+        'tasks/main.tsx': 'task',
+        'simulate.py': 'async def simulate(*, sim, tasks, vars):\n    return None\n',
+        'experiment.tsx': 'experiment source',
+      },
+      { schemaVersion: 1, roots: [], modules: [] },
+    )
+
+    await expect(experimentSourceBundleHash(bundle)).resolves.toBe(
+      '63afac457936fbea2406f09f3d61695ed9ec07bed5fc6a911f4201bd6a3919ac',
+    )
+  })
+
+  it('matches Python Unicode code-point ordering for mixed-case Task paths', async () => {
+    const bundle = createExperimentSourceBundle({
+      'tasks/a.tsx': 'lower task',
+      'tasks/Z.tsx': 'upper task',
+      'simulate.py': 'async def simulate(*, sim, tasks, vars):\n    return None\n',
+      'experiment.tsx': 'experiment source',
+    })
+
+    await expect(experimentSourceBundleHash(bundle)).resolves.toBe(
+      '8d2ca7babb3abc218f9990f61625a56ea59b4fc1b3908f072412fa51b7f72117',
+    )
   })
 })

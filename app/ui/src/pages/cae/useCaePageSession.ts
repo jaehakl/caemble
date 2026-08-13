@@ -9,9 +9,10 @@ import {
 } from '@/features/cae-workbench/storage/draftStorage'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { SavedExperiment, WorkbenchDraft, WorkbenchTabId } from '@/features/cae-workbench/types'
+import { experimentSourceBundleHash } from '@/features/viewer/persistence/saveDefinition'
 import type { PendingConfirmation, WorkbenchDialog } from './caePageTypes'
 
-export const caeWorkbenchTabs: readonly WorkbenchTabId[] = ['experiment', 'recorded-data']
+export const caeWorkbenchTabs: readonly WorkbenchTabId[] = ['experiment', 'geometry', 'recorded-data']
 
 function positiveId(value: string | null) {
   const parsed = Number(value)
@@ -30,7 +31,7 @@ function validTabs(value: readonly WorkbenchTabId[]) {
 
 function emptyDraft(userKey: string): WorkbenchDraft {
   return {
-    version: 2,
+    version: 4,
     savedAt: Date.now(),
     userKey,
     experiment: {
@@ -42,6 +43,7 @@ function emptyDraft(userKey: string): WorkbenchDraft {
     },
     candidate: { vars: null, materialParameters: null },
     selection: { measurementId: null },
+    geometry: { drafts: {}, stagedModules: [], selectedCoordinate: null, expandedPaths: [] },
     layout: {
       openTabs: caeWorkbenchTabs,
       activeTab: 'experiment',
@@ -51,23 +53,21 @@ function emptyDraft(userKey: string): WorkbenchDraft {
   }
 }
 
-function sameExperimentBundle(left: SavedExperiment['source_bundle'], right: SavedExperiment['source_bundle'] | null) {
-  if (!right || left.formatVersion !== right.formatVersion) return false
-  const paths = [...new Set([...Object.keys(left.files), ...Object.keys(right.files)])].sort()
-  return paths.every((path) => left.files[path] === right.files[path])
-}
-
 async function databaseDraftDiffers(draft: WorkbenchDraft) {
   const experiment = draft.experiment.record?.id
     ? await dbTables.Experiment.listRows(getListRequest('visible', [draft.experiment.record.id])).then(
         (response) => response.items[0] ?? null,
       )
     : null
+  const sameBaseline =
+    experiment && draft.experiment.baselineBundle
+      ? await Promise.all([
+          experimentSourceBundleHash(experiment.source_bundle),
+          experimentSourceBundleHash(draft.experiment.baselineBundle),
+        ]).then(([left, right]) => left === right)
+      : false
   return {
-    differs: Boolean(
-      draft.experiment.record &&
-      (!experiment || !sameExperimentBundle(experiment.source_bundle, draft.experiment.baselineBundle)),
-    ),
+    differs: Boolean(draft.experiment.record && (!experiment || !sameBaseline)),
     experiment: experiment?.id ? (experiment as SavedExperiment) : null,
   }
 }
@@ -136,21 +136,21 @@ export function useCaePageSession(
         toast.error(workbench.saving ? '저장이 끝난 뒤 source를 바꾸세요.' : 'CAE 작업이 끝난 뒤 source를 바꾸세요.')
         return
       }
-      if (!workbench.experimentDirty) {
+      if (!workbench.hasUnsavedWork) {
         runSafely(run)
         return
       }
       setConfirmation({
         title: '저장하지 않은 편집을 바꿀까요?',
         description:
-          'Experiment의 로컬 편집 내용이 새 선택으로 대체됩니다. IndexedDB draft에는 마지막 상태가 남지만 현재 작업에서는 되돌릴 수 없습니다.',
+          'Experiment와 Geometry의 로컬 편집 내용이 새 선택으로 대체됩니다. IndexedDB draft에는 마지막 상태가 남지만 현재 작업에서는 되돌릴 수 없습니다.',
         confirmLabel: '편집 내용 바꾸기',
         run,
       })
     },
     [
       runSafely,
-      workbench.experimentDirty,
+      workbench.hasUnsavedWork,
       workbench.measurementActions.busy,
       workbench.measurementActions.pendingRecordMeasurementId,
       workbench.saving,
@@ -288,8 +288,8 @@ export function useCaePageSession(
         const experimentChanges = experimentId !== currentWorkbench.experimentId
         if (
           experimentChanges &&
-          currentWorkbench.experimentDirty &&
-          !window.confirm('저장하지 않은 편집을 바꾸고 URL의 Experiment를 열까요?')
+          currentWorkbench.hasUnsavedWork &&
+          !window.confirm('저장하지 않은 Experiment/Geometry 편집을 바꾸고 URL의 Experiment를 열까요?')
         ) {
           syncSelectionToUrl()
           return
@@ -326,20 +326,23 @@ export function useCaePageSession(
           experimentFile: activeExperimentFile,
           splitPercent: viewerPercent,
         }),
-      ).catch(() => undefined)
+      ).catch((cause: unknown) => {
+        setPersistenceAvailable(false)
+        toast.error(cause instanceof Error ? cause.message : 'CAE draft를 IndexedDB에 저장하지 못했습니다.')
+      })
     }, 500)
     return () => window.clearTimeout(timeout)
   }, [activeExperimentFile, activeTab, openTabs, persistenceAvailable, readyUserKey, userKey, viewerPercent, workbench])
 
   useEffect(() => {
-    if (!workbench.experimentDirty && !workbench.measurementActions.pendingRecordMeasurementId) return
+    if (!workbench.hasUnsavedWork && !workbench.measurementActions.pendingRecordMeasurementId) return
     const beforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault()
       event.returnValue = ''
     }
     window.addEventListener('beforeunload', beforeUnload)
     return () => window.removeEventListener('beforeunload', beforeUnload)
-  }, [workbench.experimentDirty, workbench.measurementActions.pendingRecordMeasurementId])
+  }, [workbench.hasUnsavedWork, workbench.measurementActions.pendingRecordMeasurementId])
 
   const requestRunSelected = useCallback(() => {
     const runId = workbenchRef.current.measurementActions.runSelected()

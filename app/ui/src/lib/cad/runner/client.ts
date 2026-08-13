@@ -3,6 +3,8 @@ import type {
   CadEvaluationResponse,
   CadInspectionRequest,
   CadInspectionResponse,
+  CadGeometryPreviewRequest,
+  CadGeometryPreviewResponse,
   CadWorkerRequest,
   CadWorkerResponse,
 } from '../worker/protocol'
@@ -25,7 +27,8 @@ const runnerStartupTimeoutMs = 10_000
 function runnerLocation() {
   const configuredOrigin = import.meta.env.VITE_CAEMBLE_RUNNER_ORIGIN?.trim()
   if (!configuredOrigin) {
-    if (import.meta.env.PROD) throw new Error('VITE_CAEMBLE_RUNNER_ORIGIN must identify a separate runner origin in production.')
+    if (import.meta.env.PROD)
+      throw new Error('VITE_CAEMBLE_RUNNER_ORIGIN must identify a separate runner origin in production.')
     const hostPort = Number(window.location.port)
     if (!Number.isInteger(hostPort) || hostPort < 1 || hostPort >= 65_535) {
       throw new Error('The development CAD runner requires an explicit host port.')
@@ -36,7 +39,8 @@ function runnerLocation() {
     return url
   }
   const url = new URL('/runner.html', configuredOrigin)
-  if (url.origin === window.location.origin) throw new Error('The CAD runner must use an origin different from the host application.')
+  if (url.origin === window.location.origin)
+    throw new Error('The CAD runner must use an origin different from the host application.')
   return url
 }
 
@@ -74,7 +78,8 @@ function loadRunnerFrame() {
         !('type' in event.data) ||
         event.data.type !== 'caemble-runner-frame-ready' ||
         Object.keys(event.data).length !== 1
-      ) return
+      )
+        return
       cleanup()
       resolve(Object.freeze({ frame, origin: url.origin }))
     }
@@ -138,7 +143,8 @@ function runInIsolatedRunner<Request extends CadWorkerRequest, Response extends 
               event.data.nonce !== nonce ||
               event.data.requestId !== request.requestId ||
               event.data.revision !== request.revision
-            ) throw new Error('The isolated CAD runner start identity is invalid.')
+            )
+              throw new Error('The isolated CAD runner start identity is invalid.')
             started = true
             window.clearTimeout(startupTimeout)
             callbacks.onStart()
@@ -154,8 +160,11 @@ function runInIsolatedRunner<Request extends CadWorkerRequest, Response extends 
             (event.data.response.type === 'inspection-success' &&
               event.data.response.sourceHash !== request.compiledDocument.sourceHash) ||
             (event.data.response.type === 'evaluation-success' &&
-              event.data.response.snapshot.sourceHash !== request.compiledDocument.sourceHash)
-          ) throw new Error('The isolated CAD runner response identity is invalid.')
+              event.data.response.snapshot.sourceHash !== request.compiledDocument.sourceHash) ||
+            (event.data.response.type === 'geometry-preview-success' &&
+              event.data.response.sourceHash !== request.compiledDocument.sourceHash)
+          )
+            throw new Error('The isolated CAD runner response identity is invalid.')
           callbacks.onResponse(event.data.response as Response)
         } catch (error) {
           failed = true
@@ -198,10 +207,23 @@ function runInIsolatedRunner<Request extends CadWorkerRequest, Response extends 
   }
 }
 
-export function inspectInIsolatedRunner(request: CadInspectionRequest, callbacks: RunnerCallbacks<CadInspectionResponse>) {
+export function inspectInIsolatedRunner(
+  request: CadInspectionRequest,
+  callbacks: RunnerCallbacks<CadInspectionResponse>,
+) {
   return runInIsolatedRunner(request, callbacks)
 }
 
-export function evaluateInIsolatedRunner(request: CadEvaluationRequest, callbacks: RunnerCallbacks<CadEvaluationResponse>) {
+export function evaluateInIsolatedRunner(
+  request: CadEvaluationRequest,
+  callbacks: RunnerCallbacks<CadEvaluationResponse>,
+) {
+  return runInIsolatedRunner(request, callbacks)
+}
+
+export function previewGeometryInIsolatedRunner(
+  request: CadGeometryPreviewRequest,
+  callbacks: RunnerCallbacks<CadGeometryPreviewResponse>,
+) {
   return runInIsolatedRunner(request, callbacks)
 }

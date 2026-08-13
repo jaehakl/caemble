@@ -2,6 +2,7 @@ from utils.crud.common import (
     CrudSpec,
     RelationValueSpec,
     computed,
+    get_scope_owner_ids,
     normalize_int_ids,
 )
 from utils.crud.delete import delete_items
@@ -13,6 +14,7 @@ __all__ = [
     "RelationValueSpec",
     "computed",
     "delete_items",
+    "get_scope_owner_ids",
     "get_list_response",
     "normalize_int_ids",
     "upsert_items",

@@ -4,6 +4,7 @@ import type { CadDiagnostic } from '@/lib/cad'
 
 type CadEditorProps = {
   diagnostics?: readonly CadDiagnostic[]
+  disposeModelOnUnmount?: boolean
   language?: 'python' | 'typescript'
   modelPath: string
   onChange: (value: string) => void
@@ -28,6 +29,7 @@ function markerData(monaco: typeof Monaco, diagnostics: readonly CadDiagnostic[]
 
 function CadEditor({
   diagnostics = [],
+  disposeModelOnUnmount = false,
   language = 'typescript',
   modelPath,
   onChange,
@@ -50,6 +52,7 @@ function CadEditor({
   useEffect(() => {
     let disposed = false
     let subscription: Monaco.IDisposable | null = null
+    let editorModel: Monaco.editor.ITextModel | null = null
 
     void import('@/lib/cad/authoring')
       .then(({ loadMonaco }) => loadMonaco())
@@ -57,6 +60,7 @@ function CadEditor({
         if (disposed || !containerRef.current) return
         const uri = monaco.Uri.parse(modelPath)
         const model = monaco.editor.getModel(uri) ?? monaco.editor.createModel(valueRef.current, language, uri)
+        editorModel = model
         if (model.getValue() !== valueRef.current) model.setValue(valueRef.current)
         const editor = monaco.editor.create(containerRef.current, {
           automaticLayout: true,
@@ -90,10 +94,11 @@ function CadEditor({
       disposed = true
       subscription?.dispose()
       editorRef.current?.dispose()
+      if (disposeModelOnUnmount) editorModel?.dispose()
       editorRef.current = null
       monacoRef.current = null
     }
-  }, [language, modelPath])
+  }, [disposeModelOnUnmount, language, modelPath])
 
   useEffect(() => {
     valueRef.current = value

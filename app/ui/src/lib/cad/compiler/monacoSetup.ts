@@ -2,6 +2,11 @@ import type * as Monaco from 'monaco-editor'
 import coreTypes from '../api/caemble-core.d.ts?raw'
 import jsxTypes from '../api/cad-jsx.d.ts?raw'
 
+const geometryCoordinateTypes = `declare module "caemble:geometry/*" {
+  const geometry: unknown
+  export default geometry
+}`
+
 let didSetup = false
 
 export function setupMonaco(monaco: typeof Monaco) {
@@ -27,5 +32,9 @@ export function setupMonaco(monaco: typeof Monaco) {
 
   typescript.typescriptDefaults.addExtraLib(coreTypes, 'file:///node_modules/@caemble/core/index.d.ts')
   typescript.typescriptDefaults.addExtraLib(jsxTypes, 'file:///node_modules/@caemble/core/cad-jsx.d.ts')
+  typescript.typescriptDefaults.addExtraLib(
+    geometryCoordinateTypes,
+    'file:///node_modules/@caemble/geometries/coordinate.d.ts',
+  )
   didSetup = true
 }

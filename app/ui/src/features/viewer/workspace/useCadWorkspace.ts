@@ -7,6 +7,7 @@ import {
   buildMeasurement,
   CadCompilationError,
   CadDocumentEvaluationError,
+  createCadSourceDocument,
   deserializeCadScene,
   evaluateDocument,
   generateRandomVars,
@@ -14,11 +15,14 @@ import {
   removeExperimentTask,
   updateCadSource,
   updateExperimentSourceFile,
+  upgradeExperimentSourceBundleV3,
   type BuiltMeasurement,
   type CadDiagnostic,
   type CadScene,
   type EvaluatedExperimentSnapshot,
   type ExperimentSourceDocument,
+  type GeometryDraftOverlay,
+  type GeometryDraftRoot,
   type RecordedData,
   type Vars,
 } from '@/lib/cad'
@@ -28,14 +32,7 @@ import { resolveDocumentMaterials } from '../persistence/resolveMaterials'
 import type { SimulationProcess } from './simulationUiTypes'
 
 export type AppStatus =
-  | 'Dirty'
-  | 'Checking'
-  | 'Compiling'
-  | 'Evaluating'
-  | 'Resolving Materials'
-  | 'Ready'
-  | 'Rendering'
-  | 'Error'
+  'Dirty' | 'Checking' | 'Compiling' | 'Evaluating' | 'Resolving Materials' | 'Ready' | 'Rendering' | 'Error'
 export type EvaluationTimeoutMs = 3000 | 10000 | 30000
 
 export type RunError = Readonly<{
@@ -82,6 +79,7 @@ export type CadDocumentController = Readonly<{
   materialParameters: MeasurementMaterialParameters | null
   materialWarnings: readonly string[]
   readOnly: boolean
+  previewStale: boolean
   measurement: BuiltMeasurement | null
   revision: number
   runIsBusy: boolean
@@ -113,6 +111,9 @@ export function useCadWorkspace(
   candidateVars?: Readonly<Vars>,
   frozenMaterialSnapshot: unknown | null = null,
   runtimeEnabled = true,
+  geometryDrafts?: GeometryDraftOverlay,
+  geometryRoots?: readonly GeometryDraftRoot[],
+  resetKey: string | number = 'default',
 ) {
   const [diagnostics, setDiagnostics] = useState<readonly CadDiagnostic[]>([])
   const [error, setError] = useState<RunError | null>(null)
@@ -148,6 +149,7 @@ export function useCadWorkspace(
   const revisionRef = useRef(0)
   const statusRef = useRef<AppStatus>('Ready')
   const successfulRevisionRef = useRef(-1)
+  const resetKeyRef = useRef<string | number>(resetKey)
 
   builtMeasurementRef.current = builtMeasurement
   evaluationTimeoutRef.current = evaluationTimeoutMs
@@ -183,6 +185,10 @@ export function useCadWorkspace(
   const materialsKey = stableInput(frozenMaterialSnapshot)
 
   useEffect(() => {
+    if (!runtimeEnabled) invalidateSimulation()
+  }, [invalidateSimulation, runtimeEnabled])
+
+  useEffect(() => {
     activeEvaluationRef.current?.abort()
     invalidateSimulation()
     const requestRevision = revisionRef.current + 1
@@ -192,21 +198,33 @@ export function useCadWorkspace(
     successfulRevisionRef.current = -1
     setDiagnostics([])
     setError(null)
-    setEvaluatedSnapshot(null)
+    const resetPreview = resetKeyRef.current !== resetKey
+    resetKeyRef.current = resetKey
+    if (resetPreview) setEvaluatedSnapshot(null)
     setBuiltMeasurement(null)
     builtMeasurementRef.current = null
     setMaterialParameters(null)
     setMaterialWarnings([])
-    setScene(null)
-    setTaskScenes(Object.freeze({}))
+    if (resetPreview) {
+      setScene(null)
+      setTaskScenes(Object.freeze({}))
+    }
     setSimulationProgram(null)
     setVariables(null)
 
     if (!experiment) {
+      setEvaluatedSnapshot(null)
+      setScene(null)
+      setTaskScenes(Object.freeze({}))
       setVarsSchema(null)
       updateStatus('Ready')
       return
     }
+
+    const evaluationDocument =
+      experiment.sourceBundle.formatVersion === 2 && (geometryDrafts || geometryRoots)
+        ? createCadSourceDocument('experiment', upgradeExperimentSourceBundleV3(experiment.sourceBundle))
+        : experiment
 
     const abort = new AbortController()
     activeEvaluationRef.current = abort
@@ -214,17 +232,21 @@ export function useCadWorkspace(
     const explicitGeneration = generation !== lastHandledGenerationRef.current
     if (explicitGeneration) lastHandledGenerationRef.current = generation
 
-    void inspectDocument(experiment, { signal: abort.signal, timeoutMs: evaluationTimeoutRef.current })
+    void inspectDocument(evaluationDocument, {
+      geometryDrafts,
+      geometryRoots,
+      signal: abort.signal,
+      timeoutMs: evaluationTimeoutRef.current,
+    })
       .then(async (inspection) => {
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
         setVarsSchema(inspection.varsSchema)
-        const nextVars = explicitGeneration || candidateVars === undefined
-          ? generateRandomVars(inspection.varsSchema)
-          : candidateVars
+        const nextVars =
+          explicitGeneration || candidateVars === undefined ? generateRandomVars(inspection.varsSchema) : candidateVars
         updateStatus('Evaluating')
         const snapshot = await evaluateDocument(
-          { document: experiment, vars: nextVars },
-          { signal: abort.signal, timeoutMs: evaluationTimeoutRef.current },
+          { document: evaluationDocument, vars: nextVars },
+          { geometryDrafts, geometryRoots, signal: abort.signal, timeoutMs: evaluationTimeoutRef.current },
         )
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
         updateStatus('Resolving Materials')
@@ -290,7 +312,17 @@ export function useCadWorkspace(
     }
     // Canonical keys deliberately avoid reevaluating when parent state reuses the same persisted values.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [experiment, generation, invalidateSimulation, materialsKey, updateStatus, varsKey])
+  }, [
+    experiment,
+    generation,
+    geometryDrafts,
+    geometryRoots,
+    invalidateSimulation,
+    materialsKey,
+    resetKey,
+    updateStatus,
+    varsKey,
+  ])
 
   useEffect(
     () => () => {
@@ -356,11 +388,11 @@ export function useCadWorkspace(
   const processActive = process.status === 'preparing' || process.status === 'running'
   const canRun = Boolean(
     runtimeEnabled &&
-      !processActive &&
-      status === 'Ready' &&
-      successfulRevision === revision &&
-      builtMeasurement &&
-      simulationProgram,
+    !processActive &&
+    status === 'Ready' &&
+    successfulRevision === revision &&
+    builtMeasurement &&
+    simulationProgram,
   )
 
   const run = useCallback(() => {
@@ -499,7 +531,12 @@ export function useCadWorkspace(
   }, [])
 
   const taskSceneHashes = useMemo(
-    () => Object.freeze(Object.fromEntries(Object.entries(evaluatedSnapshot?.taskScenes ?? {}).map(([name, value]) => [name, value.sceneHash]))),
+    () =>
+      Object.freeze(
+        Object.fromEntries(
+          Object.entries(evaluatedSnapshot?.taskScenes ?? {}).map(([name, value]) => [name, value.sceneHash]),
+        ),
+      ),
     [evaluatedSnapshot],
   )
   const runIsBusy = ['Checking', 'Compiling', 'Evaluating', 'Resolving Materials', 'Rendering'].includes(status)
@@ -522,6 +559,7 @@ export function useCadWorkspace(
     materialParameters,
     materialWarnings,
     readOnly: sourceReadOnly,
+    previewStale: Boolean(scene && successfulRevision !== revision),
     measurement: builtMeasurement,
     revision,
     runIsBusy,

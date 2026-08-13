@@ -1,5 +1,6 @@
 import { parse } from '@babel/parser'
 import type { Expression, File, ObjectExpression, Statement } from '@babel/types'
+import { isGeometryCoordinate, type GeometryCoordinate } from './geometrySnapshot'
 
 export class SourceAnalysisError extends Error {
   constructor(message: string) {
@@ -14,6 +15,19 @@ export type SourceAnalysis = Readonly<{
   factoryName: 'defineTask' | 'experiment'
   options: ObjectExpression
 }>
+
+export type GeometrySourceImport = Readonly<{
+  coordinate: GeometryCoordinate
+  localName: string
+}>
+
+export type GeometrySourceAnalysis = Readonly<{
+  ast: File
+  defaultExport: Expression
+  imports: readonly GeometrySourceImport[]
+}>
+
+type CadSourcePolicy = 'experiment-v2' | 'experiment-v3' | 'geometry'
 
 export function unwrapSourceExpression(expression: Expression): Expression {
   if (
@@ -70,10 +84,7 @@ export function resolveSourceBinding(
   }
 }
 
-function importedFactoryNames(
-  statements: readonly Statement[],
-  factoryName: 'defineTask' | 'experiment',
-) {
+function importedFactoryNames(statements: readonly Statement[], factoryName: 'defineTask' | 'experiment') {
   return new Set(
     statements.flatMap((statement) => {
       if (statement.type !== 'ImportDeclaration' || statement.source.value !== '@caemble/core') return []
@@ -86,17 +97,66 @@ function importedFactoryNames(
   )
 }
 
-function assertImportPolicy(ast: File) {
+function assertStaticImport(statement: Extract<Statement, { type: 'ImportDeclaration' }>, policy: CadSourcePolicy) {
+  const source = statement.source.value
+  const raw = statement.source.extra?.raw
+  if (raw !== JSON.stringify(source) && raw !== `'${source}'`) {
+    throw new SourceAnalysisError(`Import specifiers must use plain, unescaped string literals: ${source}`)
+  }
+  if (source === '@caemble/core') {
+    if (
+      policy === 'geometry' &&
+      (statement.specifiers.length === 0 ||
+        statement.specifiers.some((specifier) => specifier.type !== 'ImportSpecifier'))
+    ) {
+      throw new SourceAnalysisError('Geometry modules may only use named or type imports from @caemble/core.')
+    }
+    return
+  }
+  if (source === '@caemble/geometries') {
+    if (policy !== 'experiment-v3') {
+      throw new SourceAnalysisError('@caemble/geometries is only available in Experiment source bundle v3.')
+    }
+    if (
+      statement.importKind === 'type' ||
+      statement.specifiers.length !== 1 ||
+      statement.specifiers[0].type !== 'ImportDefaultSpecifier'
+    ) {
+      throw new SourceAnalysisError('@caemble/geometries must use exactly one default import.')
+    }
+    return
+  }
+  if (isGeometryCoordinate(source)) {
+    if (policy !== 'geometry') {
+      throw new SourceAnalysisError(`Exact Geometry imports are only allowed in Geometry modules: ${source}`)
+    }
+    if (
+      statement.importKind === 'type' ||
+      statement.specifiers.length !== 1 ||
+      statement.specifiers[0].type !== 'ImportDefaultSpecifier'
+    ) {
+      throw new SourceAnalysisError(`Geometry coordinate imports must use exactly one default import: ${source}`)
+    }
+    return
+  }
+  const message =
+    policy === 'geometry'
+      ? `Geometry import must be @caemble/core or an exact caemble:geometry coordinate: ${source}`
+      : `Import is not allowed in an independent Caemble TSX source: ${source}`
+  throw new SourceAnalysisError(message)
+}
+
+function assertImportPolicy(ast: File, policy: CadSourcePolicy) {
   ast.program.body.forEach((statement) => {
-    const source =
-      statement.type === 'ImportDeclaration' ||
-      statement.type === 'ExportAllDeclaration' ||
-      statement.type === 'ExportNamedDeclaration'
-        ? statement.source?.value
-        : undefined
-    if (source === undefined) return
-    if (source !== '@caemble/core') {
-      throw new SourceAnalysisError(`Import is not allowed in an independent Caemble TSX source: ${source}`)
+    if (statement.type === 'ImportDeclaration') {
+      assertStaticImport(statement, policy)
+      return
+    }
+    if (
+      (statement.type === 'ExportAllDeclaration' || statement.type === 'ExportNamedDeclaration') &&
+      statement.source
+    ) {
+      throw new SourceAnalysisError(`Re-export is not supported in Caemble sources: ${statement.source.value}`)
     }
   })
 
@@ -123,9 +183,21 @@ function assertImportPolicy(ast: File) {
     if (
       (node.type === 'CallExpression' || node.type === 'NewExpression') &&
       (node.callee as { type?: string; name?: string })?.type === 'Identifier' &&
-      ['Date', 'Function', 'eval', 'fetch', 'queueMicrotask', 'setInterval', 'setTimeout'].includes(
-        (node.callee as { name: string }).name,
-      )
+      [
+        'Date',
+        'Function',
+        'SharedWorker',
+        'WebSocket',
+        'Worker',
+        'XMLHttpRequest',
+        'clearInterval',
+        'clearTimeout',
+        'eval',
+        'fetch',
+        'queueMicrotask',
+        'setInterval',
+        'setTimeout',
+      ].includes((node.callee as { name: string }).name)
     ) {
       throw new SourceAnalysisError(
         `Hidden nondeterminism is not supported in Caemble sources: ${(node.callee as { name: string }).name}.`,
@@ -141,16 +213,26 @@ function assertImportPolicy(ast: File) {
       if (object.type === 'Identifier' && object.name === 'Math' && propertyName === 'random') {
         throw new SourceAnalysisError('Hidden nondeterminism is not supported in Caemble sources: Math.random.')
       }
-      if (
-        object.type === 'Identifier' &&
-        ['Date', 'crypto', 'performance'].includes(object.name ?? '')
-      ) {
+      if (object.type === 'Identifier' && ['Date', 'crypto', 'performance'].includes(object.name ?? '')) {
         throw new SourceAnalysisError(`Hidden nondeterminism is not supported in Caemble sources: ${object.name}.`)
       }
     }
     if (
       node.type === 'Identifier' &&
-      ['Date', 'crypto', 'globalThis', 'performance', 'process', 'self', 'window'].includes(String(node.name))
+      [
+        'Date',
+        'SharedWorker',
+        'WebSocket',
+        'Worker',
+        'XMLHttpRequest',
+        'crypto',
+        'global',
+        'globalThis',
+        'performance',
+        'process',
+        'self',
+        'window',
+      ].includes(String(node.name))
     ) {
       throw new SourceAnalysisError(`Global runtime access is not supported in Caemble sources: ${node.name}.`)
     }
@@ -167,7 +249,9 @@ function assertImportPolicy(ast: File) {
       (node.init as { type?: string; name?: string } | null)?.type === 'Identifier' &&
       (node.init as { name: string }).name === 'Math'
     ) {
-      throw new SourceAnalysisError('Aliasing Math is not supported in Caemble sources; call deterministic Math members directly.')
+      throw new SourceAnalysisError(
+        'Aliasing Math is not supported in Caemble sources; call deterministic Math members directly.',
+      )
     }
     Object.entries(node).forEach(([key, child]) => {
       if (key !== 'loc' && key !== 'start' && key !== 'end') visit(child)
@@ -176,19 +260,19 @@ function assertImportPolicy(ast: File) {
   visit(ast.program)
 }
 
-export function parseCadSource(source: string) {
+export function parseCadSource(source: string, policy: CadSourcePolicy = 'experiment-v2') {
   let ast: File
   try {
     ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] })
   } catch (error) {
     throw new SourceAnalysisError(error instanceof Error ? error.message : 'The CAD source could not be parsed.')
   }
-  assertImportPolicy(ast)
+  assertImportPolicy(ast, policy)
   return ast
 }
 
-export function staticCadSourceImports(source: string) {
-  const ast = parseCadSource(source)
+export function staticCadSourceImports(source: string, policy: CadSourcePolicy = 'experiment-v2') {
+  const ast = parseCadSource(source, policy)
   return ast.program.body.flatMap((statement) => {
     if (
       statement.type !== 'ImportDeclaration' &&
@@ -200,8 +284,12 @@ export function staticCadSourceImports(source: string) {
   })
 }
 
-function analyzeFactorySource(source: string, factoryName: 'defineTask' | 'experiment'): SourceAnalysis {
-  const ast = parseCadSource(source)
+function analyzeFactorySource(
+  source: string,
+  factoryName: 'defineTask' | 'experiment',
+  allowGeometryRegistry = false,
+): SourceAnalysis {
+  const ast = parseCadSource(source, allowGeometryRegistry ? 'experiment-v3' : 'experiment-v2')
 
   const statements = ast.program.body
   const factoryNames = importedFactoryNames(statements, factoryName)
@@ -242,10 +330,66 @@ function analyzeFactorySource(source: string, factoryName: 'defineTask' | 'exper
   return { ast, bindings, factoryName, options }
 }
 
-export function analyzeCadSource(source: string): SourceAnalysis {
-  return analyzeFactorySource(source, 'experiment')
+export function analyzeCadSource(source: string, allowGeometryRegistry = false): SourceAnalysis {
+  return analyzeFactorySource(source, 'experiment', allowGeometryRegistry)
 }
 
-export function analyzeTaskSource(source: string): SourceAnalysis {
-  return analyzeFactorySource(source, 'defineTask')
+export function analyzeTaskSource(source: string, allowGeometryRegistry = false): SourceAnalysis {
+  return analyzeFactorySource(source, 'defineTask', allowGeometryRegistry)
+}
+
+export function analyzeGeometrySource(source: string): GeometrySourceAnalysis {
+  const ast = parseCadSource(source, 'geometry')
+  if (
+    ast.program.body.some(
+      (statement) => statement.type === 'ExportAllDeclaration' || statement.type === 'ExportNamedDeclaration',
+    )
+  ) {
+    throw new SourceAnalysisError('Geometry modules may only export one default value.')
+  }
+  const defaultExports = ast.program.body.filter((statement) => statement.type === 'ExportDefaultDeclaration')
+  if (defaultExports.length !== 1) throw new SourceAnalysisError('Exactly one default export is required.')
+  const declaration = defaultExports[0].declaration
+  if (
+    declaration.type === 'FunctionDeclaration' ||
+    declaration.type === 'ClassDeclaration' ||
+    declaration.type === 'TSDeclareFunction'
+  ) {
+    throw new SourceAnalysisError('Geometry default export must be a Geometry-compatible value.')
+  }
+  const imports = ast.program.body.flatMap((statement) => {
+    if (statement.type !== 'ImportDeclaration' || !isGeometryCoordinate(statement.source.value)) return []
+    const specifier = statement.specifiers[0]
+    return [{ coordinate: statement.source.value, localName: specifier.local.name }]
+  })
+  if (new Set(imports.map(({ coordinate }) => coordinate)).size !== imports.length) {
+    throw new SourceAnalysisError('A Geometry coordinate may only be imported once per module.')
+  }
+  return Object.freeze({
+    ast,
+    defaultExport: sourceExpression(declaration, 'Geometry default export'),
+    imports: Object.freeze(imports),
+  })
+}
+
+export function rewriteGeometryImportCoordinates(
+  source: string,
+  replacements: Readonly<Partial<Record<GeometryCoordinate, GeometryCoordinate>>>,
+) {
+  const analysis = analyzeGeometrySource(source)
+  const edits = analysis.ast.program.body.flatMap((statement) => {
+    if (statement.type !== 'ImportDeclaration' || !isGeometryCoordinate(statement.source.value)) return []
+    const replacement = replacements[statement.source.value]
+    const start = statement.source.start
+    const end = statement.source.end
+    if (!replacement || start === null || start === undefined || end === null || end === undefined) return []
+    const quote = source[start]
+    if (quote !== "'" && quote !== '"') {
+      throw new SourceAnalysisError(`Geometry import quote could not be preserved: ${statement.source.value}`)
+    }
+    return [{ start, end, text: `${quote}${replacement}${quote}` }]
+  })
+  return edits
+    .sort((left, right) => right.start - left.start)
+    .reduce((current, edit) => `${current.slice(0, edit.start)}${edit.text}${current.slice(edit.end)}`, source)
 }

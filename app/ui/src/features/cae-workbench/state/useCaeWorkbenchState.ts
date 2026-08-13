@@ -6,8 +6,17 @@ import { useCurrentCadSelection } from '@/features/viewer/current-cad-selection'
 import type { DefinitionFormValues } from '@/features/viewer/persistence/SaveDefinitionDialog'
 import { saveCadDefinition } from '@/features/viewer/persistence/saveDefinition'
 import { useCadWorkspace } from '@/features/viewer/workspace/useCadWorkspace'
-import { createCadSourceDocument, type ExperimentSourceDocument, type Vars } from '@/lib/cad'
+import {
+  canonicalizeGeometrySnapshot,
+  createCadSourceDocument,
+  createExperimentSourceBundleV3,
+  type ExperimentSourceBundle,
+  type ExperimentSourceDocument,
+  type GeometrySnapshot,
+  type Vars,
+} from '@/lib/cad'
 import { defaultExperimentSourceBundle } from '@/lib/defaultExperimentCode'
+import { useGeometryWorkspaceState } from '../geometry'
 import { useCaeDataSelection } from '../measurement/useCaeDataSelection'
 import { useCaeMeasurementActions } from '../measurement/useCaeMeasurementActions'
 import type { DefinitionStatus, SavedExperiment, SavedMeasurement, WorkbenchDraft, WorkbenchTabId } from '../types'
@@ -22,10 +31,20 @@ function definitionStatus(
   return dirty ? 'saved-dirty' : 'saved-clean'
 }
 
-function sourceBundlesEqual(left: SavedExperiment['source_bundle'], right: SavedExperiment['source_bundle'] | null) {
-  if (!right || left.formatVersion !== right.formatVersion) return false
+function sourceFilesEqual(left: SavedExperiment['source_bundle'], right: SavedExperiment['source_bundle'] | null) {
+  if (!right) return false
   const paths = [...new Set([...Object.keys(left.files), ...Object.keys(right.files)])]
   return paths.every((path) => left.files[path] === right.files[path])
+}
+
+function geometrySnapshotsEqual(
+  left: SavedExperiment['source_bundle'],
+  right: SavedExperiment['source_bundle'] | null,
+) {
+  if (!right || left.formatVersion !== right.formatVersion) return false
+  if (left.formatVersion === 2 || right.formatVersion === 2) return true
+  const normalize = (snapshot: GeometrySnapshot) => JSON.stringify(canonicalizeGeometrySnapshot(snapshot))
+  return normalize(left.geometrySnapshot) === normalize(right.geometrySnapshot)
 }
 
 function createExperimentDocument(sourceBundle: SavedExperiment['source_bundle']) {
@@ -57,13 +76,12 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
   const [saving, setSaving] = useState<'experiment' | null>(null)
   const [pendingMeasurementId, setPendingMeasurementId] = useState<number | null>(null)
   const [selectionRestoreStatus, setSelectionRestoreStatus] = useState<'idle' | 'restoring' | 'failed'>('idle')
+  const [workspaceSession, setWorkspaceSession] = useState(0)
   const requestSequence = useRef(0)
   const experimentRef = useRef(experiment)
   experimentRef.current = experiment
 
   const experimentId = experimentRecord?.id ?? null
-  const experimentDirty = Boolean(experiment && !sourceBundlesEqual(experiment.sourceBundle, baselineExperimentBundle))
-  const experimentClean = Boolean(experimentId && !experimentDirty)
   const baseSelection = useCaeDataSelection(experimentId, user?.roles.includes('admin') ? 'visible' : 'mine')
   const { clearMeasurement: clearBaseMeasurement, loadMeasurement: loadBaseMeasurement } = baseSelection
 
@@ -72,6 +90,38 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
     setSelectionRestoreStatus('idle')
     clearBaseMeasurement()
   }, [clearBaseMeasurement])
+
+  const handleGeometrySnapshotChange = useCallback(
+    (snapshot: GeometrySnapshot) => {
+      setExperiment((current) =>
+        current
+          ? createExperimentDocument(createExperimentSourceBundleV3(current.sourceBundle.files, snapshot))
+          : current,
+      )
+      clearMeasurement()
+      setCandidateMaterialParameters(null)
+    },
+    [clearMeasurement],
+  )
+
+  const geometry = useGeometryWorkspaceState({
+    initialNamespace: user?.geometry_namespace,
+    onSnapshotChange: handleGeometrySnapshotChange,
+    snapshot: experiment?.sourceBundle.formatVersion === 3 ? experiment.sourceBundle.geometrySnapshot : null,
+  })
+  const resetGeometry = geometry.reset
+  const restoreGeometry = geometry.restore
+  const createGeometryDraftState = geometry.draftState
+  const experimentSourceDirty = Boolean(
+    experiment && !sourceFilesEqual(experiment.sourceBundle, baselineExperimentBundle),
+  )
+  const geometryGraphDirty = Boolean(
+    experiment && !geometrySnapshotsEqual(experiment.sourceBundle, baselineExperimentBundle),
+  )
+  const geometryLocalDraftDirty = Object.keys(geometry.drafts).length > 0 || geometry.stagedModules.length > 0
+  const experimentDirty = experimentSourceDirty || geometryGraphDirty
+  const hasUnsavedWork = experimentDirty || geometryLocalDraftDirty
+  const experimentClean = Boolean(experimentId && !experimentDirty && !geometryLocalDraftDirty)
 
   const loadMeasurement = useCallback(
     async (value: number | SavedMeasurement, expectedExperimentId: number | null = experimentId) => {
@@ -105,7 +155,10 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
     authenticated ? handleExperimentChange : undefined,
     candidateVars ?? undefined,
     candidateMaterialParameters,
-    authenticated,
+    authenticated && !geometryLocalDraftDirty,
+    geometry.previewDraftActive ? geometry.draftOverlay : undefined,
+    geometry.previewDraftActive ? geometry.effectiveRoots : undefined,
+    workspaceSession,
   )
 
   const generateCandidate = useCallback(() => {
@@ -165,6 +218,7 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
 
   const applyExperimentState = useCallback(
     (row: SavedExperiment) => {
+      setWorkspaceSession((current) => current + 1)
       clearMeasurement()
       setExperiment(createExperimentDocument(row.source_bundle))
       setExperimentRecord(row)
@@ -173,8 +227,9 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
       setExperimentDescription(row.description ?? '')
       setCandidateVars(null)
       setCandidateMaterialParameters(null)
+      resetGeometry(row.source_bundle.formatVersion === 3 ? row.source_bundle.geometrySnapshot : null)
     },
-    [clearMeasurement],
+    [clearMeasurement, resetGeometry],
   )
 
   const applyExperiment = useCallback(
@@ -207,8 +262,13 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
   )
 
   const newExperiment = useCallback(
-    (sourceBundle = defaultExperimentSourceBundle, name = 'Untitled Experiment', description = '') => {
+    (
+      sourceBundle: ExperimentSourceBundle = defaultExperimentSourceBundle,
+      name = 'Untitled Experiment',
+      description = '',
+    ) => {
       requestSequence.current += 1
+      setWorkspaceSession((current) => current + 1)
       clearMeasurement()
       setExperiment(createExperimentDocument(sourceBundle))
       setExperimentRecord(null)
@@ -217,8 +277,9 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
       setExperimentDescription(description)
       setCandidateVars(null)
       setCandidateMaterialParameters(null)
+      resetGeometry(sourceBundle.formatVersion === 3 ? sourceBundle.geometrySnapshot : null)
     },
-    [clearMeasurement],
+    [clearMeasurement, resetGeometry],
   )
 
   const invalidate = useCallback(async () => {
@@ -233,6 +294,9 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
     async (values: DefinitionFormValues, forceRoot: boolean) => {
       if (!authenticated || !user) throw new Error('로그인이 필요합니다.')
       if (!experiment) throw new Error('저장할 Experiment source가 없습니다.')
+      if (geometryLocalDraftDirty) {
+        throw new Error('Geometry local draft를 Publish & Apply하거나 폐기한 뒤 Experiment를 저장하세요.')
+      }
       if (!forceRoot && experimentRecord && experimentRecord.user_id !== user.id && !user.roles.includes('admin')) {
         throw new Error('이 Experiment는 Save As로 새 계보에 저장하세요.')
       }
@@ -271,34 +335,53 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
         setSaving(null)
       }
     },
-    [authenticated, baselineExperimentBundle, experiment, experimentId, experimentRecord, invalidate, user],
+    [
+      authenticated,
+      baselineExperimentBundle,
+      experiment,
+      experimentId,
+      experimentRecord,
+      geometryLocalDraftDirty,
+      invalidate,
+      user,
+    ],
   )
 
-  const restoreDraft = useCallback((draft: WorkbenchDraft) => {
-    requestSequence.current += 1
-    setExperiment(draft.experiment.document)
-    setExperimentRecord(draft.experiment.record)
-    setBaselineExperimentBundle(draft.experiment.baselineBundle)
-    setExperimentName(draft.experiment.name)
-    setExperimentDescription(draft.experiment.description)
-    setCandidateVars(draft.candidate.vars)
-    setCandidateMaterialParameters(draft.candidate.materialParameters)
-    setPendingMeasurementId(draft.selection.measurementId)
-    setSelectionRestoreStatus(draft.selection.measurementId ? 'restoring' : 'idle')
-  }, [])
+  const restoreDraft = useCallback(
+    (draft: WorkbenchDraft) => {
+      requestSequence.current += 1
+      setWorkspaceSession((current) => current + 1)
+      setExperiment(draft.experiment.document)
+      setExperimentRecord(draft.experiment.record)
+      setBaselineExperimentBundle(draft.experiment.baselineBundle)
+      setExperimentName(draft.experiment.name)
+      setExperimentDescription(draft.experiment.description)
+      setCandidateVars(draft.candidate.vars)
+      setCandidateMaterialParameters(draft.candidate.materialParameters)
+      setPendingMeasurementId(draft.selection.measurementId)
+      setSelectionRestoreStatus(draft.selection.measurementId ? 'restoring' : 'idle')
+      restoreGeometry(draft.geometry)
+    },
+    [restoreGeometry],
+  )
 
-  const restoreStaleDraft = useCallback((savedDraft: WorkbenchDraft, database: SavedExperiment | null) => {
-    requestSequence.current += 1
-    setExperiment(savedDraft.experiment.document)
-    setExperimentRecord(database)
-    setBaselineExperimentBundle(database?.source_bundle ?? null)
-    setExperimentName(savedDraft.experiment.name)
-    setExperimentDescription(savedDraft.experiment.description)
-    setCandidateVars(savedDraft.candidate.vars)
-    setCandidateMaterialParameters(savedDraft.candidate.materialParameters)
-    setPendingMeasurementId(savedDraft.selection.measurementId)
-    setSelectionRestoreStatus(savedDraft.selection.measurementId ? 'restoring' : 'idle')
-  }, [])
+  const restoreStaleDraft = useCallback(
+    (savedDraft: WorkbenchDraft, database: SavedExperiment | null) => {
+      requestSequence.current += 1
+      setWorkspaceSession((current) => current + 1)
+      setExperiment(savedDraft.experiment.document)
+      setExperimentRecord(database)
+      setBaselineExperimentBundle(database?.source_bundle ?? null)
+      setExperimentName(savedDraft.experiment.name)
+      setExperimentDescription(savedDraft.experiment.description)
+      setCandidateVars(savedDraft.candidate.vars)
+      setCandidateMaterialParameters(savedDraft.candidate.materialParameters)
+      setPendingMeasurementId(savedDraft.selection.measurementId)
+      setSelectionRestoreStatus(savedDraft.selection.measurementId ? 'restoring' : 'idle')
+      restoreGeometry(savedDraft.geometry)
+    },
+    [restoreGeometry],
+  )
 
   const selectionIds = useMemo(
     () => ({ measurementId: pendingMeasurementId ?? selection.measurement?.id ?? null }),
@@ -315,7 +398,7 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
         splitPercent: number
       }>,
     ): WorkbenchDraft => ({
-      version: 2,
+      version: 4,
       savedAt: Date.now(),
       userKey,
       experiment: {
@@ -330,6 +413,7 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
         materialParameters: candidateMaterialParameters,
       },
       selection: selectionIds,
+      geometry: createGeometryDraftState(),
       layout,
     }),
     [
@@ -340,6 +424,7 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
       experimentDescription,
       experimentName,
       experimentRecord,
+      createGeometryDraftState,
       selectionIds,
     ],
   )
@@ -355,6 +440,10 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
     experimentName,
     experimentDescription,
     experimentDirty,
+    experimentSourceDirty,
+    geometryGraphDirty,
+    geometryLocalDraftDirty,
+    hasUnsavedWork,
     experimentClean,
     experimentStatus: definitionStatus(experiment, experimentRecord, experimentDirty),
     experimentManageable,
@@ -367,6 +456,7 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
     measurementActions,
     experimentDocument,
     simulation,
+    geometry,
     applyExperiment,
     loadExperiment,
     restoreSelection,

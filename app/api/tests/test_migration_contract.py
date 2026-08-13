@@ -92,7 +92,7 @@ def test_source_migration_graph_continues_to_cae_workbench_indexes():
     root = Path(__file__).resolve().parents[1]
     scripts = ScriptDirectory.from_config(Config(root / "alembic.ini"))
 
-    assert scripts.get_heads() == ["f6a8c1d2e3b4"]
+    assert scripts.get_heads() == ["7b2d8f4a6c10"]
     assert scripts.get_revision("f24a6b91d3ce").down_revision == "e7b2c5d91a40"
     assert scripts.get_revision("9d31a6f7c2e4").down_revision == "f24a6b91d3ce"
     assert scripts.get_revision("a4c8e2f19b73").down_revision == "9d31a6f7c2e4"
@@ -100,6 +100,8 @@ def test_source_migration_graph_continues_to_cae_workbench_indexes():
     assert scripts.get_revision("d2f7a1c9e4b6").down_revision == "b17d4c2e8a90"
     assert scripts.get_revision("e91f6b3a2c7d").down_revision == "d2f7a1c9e4b6"
     assert scripts.get_revision("f6a8c1d2e3b4").down_revision == "e91f6b3a2c7d"
+    assert scripts.get_revision("4c91e2a7b5d8").down_revision == "f6a8c1d2e3b4"
+    assert scripts.get_revision("7b2d8f4a6c10").down_revision == "4c91e2a7b5d8"
     assert not any(root.joinpath("alembic", "versions").glob("*_measurement_contract_metadata.py"))
 
 
@@ -184,6 +186,74 @@ def test_experiment_source_bundle_revision_guards_non_empty_tables():
     assert 'sa.Column("source_bundle", postgresql.JSONB' in source
     assert 'op.drop_column("experiments", "code")' in source
     assert 'op.drop_column("experiments", "simulation_code")' in source
+
+
+def test_geometry_module_revision_guards_legacy_rows_and_creates_immutable_schema():
+    revision = next(
+        (Path(__file__).resolve().parents[1] / "alembic" / "versions").glob(
+            "*_add_immutable_geometry_modules.py"
+        )
+    )
+    source = revision.read_text(encoding="utf-8")
+    assert "SELECT count(*) FROM geometries" in source
+    assert "Export the legacy rows as JSON" in source
+    assert "manual repository/package/version mapping" in source
+    assert 'op.drop_table("geometries")' in source
+    assert 'op.add_column("users", sa.Column("geometry_namespace"' in source
+    for table in (
+        "geometry_repositories",
+        "geometry_packages",
+        "geometry_versions",
+        "geometry_imports",
+        "experiment_geometry_roots",
+    ):
+        assert f'"{table}"' in source
+    assert "uq_geometry_versions_package_id_semver" in source
+    assert "module_format_version = 1" in source
+    assert "cad_api_version = 5" in source
+    assert 'sa.Column("namespace", sa.Text(), nullable=False)' in source
+    assert "uq_geometry_repositories_namespace_slug" in source
+    assert 'ondelete="SET NULL"' in source
+    assert "archive_geometry_repositories_before_user_delete" in source
+    assert "guard_geometry_namespace_reservation" in source
+    assert "validate_geometry_repository_owner_namespace" in source
+    assert "protect_geometry_repository_identity" in source
+    assert "protect_geometry_package_identity" in source
+    assert "protect_geometry_version" in source
+    assert "protect_geometry_import" in source
+
+
+def test_geometry_manager_revision_projects_all_modules_and_allows_controlled_cleanup():
+    revision = next(
+        (Path(__file__).resolve().parents[1] / "alembic" / "versions").glob(
+            "*_add_geometry_manager_projection.py"
+        )
+    )
+    source = revision.read_text(encoding="utf-8")
+    upgrade = source.split("def downgrade()", 1)[0]
+    assert '"experiment_geometry_modules"' in source
+    assert "jsonb_array_elements" in source
+    assert "geometrySnapshot" in source
+    assert "ON CONFLICT DO NOTHING" in source
+    assert "namespace_mutable=True" in upgrade
+    assert "controlled_delete=True" in upgrade
+    assert "caemble.geometry_delete" in source
+    assert 'ondelete="RESTRICT"' in source
+    assert 'op.drop_table("experiment_geometry_modules")' in source
+
+
+def test_deployment_preflights_legacy_geometry_before_stopping_api():
+    script = (Path(__file__).resolve().parents[3] / "deployment" / "update.sh").read_text(
+        encoding="utf-8"
+    )
+    preflight = script.index("SELECT count(*) FROM geometries")
+    stop_api = script.index('sudo systemctl stop "$API_SERVICE"')
+    migration = script.index("poetry run alembic upgrade head")
+
+    assert preflight < stop_api < migration
+    assert "migration_succeeded=false" in script
+    assert "migration_succeeded=true" in script
+    assert "leaving the API stopped to avoid running new code on the old schema" in script
 
 
 def test_runtime_revision_removes_legacy_connection_and_expands_audit_contract():

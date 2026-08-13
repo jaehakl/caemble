@@ -25,6 +25,58 @@ class MeasurementService:
         db: AsyncSession,
         user: UserData,
     ) -> MeasurementSaveResponse:
+        material_parameters = request.material_parameters
+        if set(material_parameters) != {"schemaVersion", "experiment", "tasks"}:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "material_parameters must contain exactly schemaVersion, "
+                    "experiment, and tasks."
+                ),
+            )
+        if material_parameters["schemaVersion"] != 2:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="material_parameters.schemaVersion must be 2.",
+            )
+        task_snapshots = material_parameters["tasks"]
+        if not isinstance(task_snapshots, dict) or any(
+            not isinstance(task_name, str)
+            or not task_name.strip()
+            or not isinstance(snapshot, dict)
+            for task_name, snapshot in task_snapshots.items()
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="material_parameters.tasks must map Task names to objects.",
+            )
+        snapshots = [
+            ("material_parameters.experiment", material_parameters["experiment"]),
+            *(
+                (f"material_parameters.tasks.{task_name}", snapshot)
+                for task_name, snapshot in task_snapshots.items()
+            ),
+        ]
+        for path, snapshot in snapshots:
+            if not isinstance(snapshot, dict) or set(snapshot) not in (
+                {"schemaVersion", "materials"},
+                {"schemaVersion", "materials", "materialColors"},
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"{path} must be a frozen Material snapshot.",
+                )
+            if snapshot["schemaVersion"] != 1 or not isinstance(snapshot["materials"], dict):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"{path} must use frozen Material schemaVersion 1.",
+                )
+            if "materialColors" in snapshot and not isinstance(snapshot["materialColors"], dict):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"{path}.materialColors must be an object.",
+                )
+
         experiment = await db.scalar(
             select(Experiment).where(Experiment.id == request.experiment_id)
         )
@@ -44,7 +96,7 @@ class MeasurementService:
             for path in files
             if path.startswith("tasks/") and path.endswith(".tsx")
         }
-        if set(request.material_parameters["tasks"]) != task_names:
+        if set(task_snapshots) != task_names:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Measurement Material Task snapshots must exactly match the Experiment bundle.",
@@ -73,6 +125,13 @@ class MeasurementService:
         db: AsyncSession,
         user: UserData,
     ) -> MeasurementSaveResponse:
+        names = [item.name for item in request.recorded_data]
+        if len(names) != len(set(names)):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="RecordedData names must be unique within a Measurement.",
+            )
+
         measurement = await db.scalar(
             select(Measurement)
             .where(Measurement.id == measurement_id)

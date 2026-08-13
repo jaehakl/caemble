@@ -20,6 +20,9 @@ UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 def require_web_csrf(request: Request) -> None:
     if request.method.upper() not in UNSAFE_METHODS:
         return
+    authorization = request.headers.get("authorization", "")
+    if not request.cookies.get("access_token") and authorization.lower().startswith("bearer "):
+        return
     refresh_token = request.cookies.get("refresh_token")
     csrf_token = request.headers.get(CSRF_HEADER_NAME)
     if not refresh_token or not csrf_token:

@@ -10,10 +10,37 @@ import {
   cadSourceHash,
   createCadSourceDocument,
   createExperimentSourceBundle,
+  createExperimentSourceBundleV3,
   removeExperimentTask,
   updateCadSource,
   updateExperimentSourceFile,
+  upgradeExperimentSourceBundleV3,
 } from './document'
+import {
+  createGeometrySnapshot,
+  geometryModuleHash,
+  geometrySourceHash,
+  type GeometryCoordinate,
+  type GeometrySnapshotModule,
+} from './geometrySnapshot'
+
+const coordinate = 'caemble:geometry/jlee/demo/block@1.0.0' as GeometryCoordinate
+
+async function geometryModule(): Promise<GeometrySnapshotModule> {
+  const source = 'export default <box size={[1, 1, 1]} />\n'
+  const sourceHash = await geometrySourceHash(source)
+  const module = {
+    geometryVersionId: 1,
+    coordinate,
+    moduleFormatVersion: 1 as const,
+    cadApiVersion: 5 as const,
+    description: null,
+    source,
+    sourceHash,
+    imports: [],
+  }
+  return { ...module, moduleHash: await geometryModuleHash(module) }
+}
 
 function bundle() {
   return createExperimentSourceBundle({
@@ -28,11 +55,29 @@ describe('ExperimentSourceDocument v2', () => {
     const document = createCadSourceDocument('experiment', bundle())
     const hash = await cadSourceHash(document)
 
-    expect(hash).toMatch(/^[0-9a-f]{64}$/u)
+    expect(hash).toBe('87780356d57442238c72e0107bf0591b0e4a4c2ed3eda68c453b3f2e0930b2ab')
     await expect(cadSourceHash(updateExperimentSourceFile(document, 'simulate.py', 'changed'))).resolves.not.toBe(hash)
     expect(() => assertCadSourceDocument({ ...document, generationMetadata: { method: 'random' } })).toThrow(
       'generationMetadata',
     )
+  })
+
+  it('adds canonical Geometry snapshot data only in v3 and preserves it across source edits', async () => {
+    const module = await geometryModule()
+    const snapshot = createGeometrySnapshot(
+      [{ alias: 'block', geometryVersionId: 1, coordinate, moduleHash: module.moduleHash }],
+      [module],
+    )
+    const v2 = bundle()
+    const v3 = createExperimentSourceBundleV3(v2.files, snapshot)
+    const document = createCadSourceDocument('experiment', v3)
+    const edited = updateCadSource(document, 'changed experiment')
+
+    expect(v3.formatVersion).toBe(3)
+    expect(upgradeExperimentSourceBundleV3(v3).geometrySnapshot).toEqual(snapshot)
+    expect(edited.sourceBundle).toMatchObject({ formatVersion: 3, geometrySnapshot: snapshot })
+    await expect(cadSourceHash(document)).resolves.toMatch(/^[0-9a-f]{64}$/u)
+    expect(await cadSourceHash(document)).not.toBe(await cadSourceHash(createCadSourceDocument('experiment', v2)))
   })
 
   it('adds and removes independent Task files but keeps the last Task', () => {

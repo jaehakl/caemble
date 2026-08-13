@@ -141,6 +141,15 @@ async def test_create_rejects_non_v2_material_snapshot_and_seed_fields(client, d
     missing_task["material_parameters"]["tasks"] = {}
     assert (await client.post("/measurement/create", headers=headers, json=missing_task)).status_code == 422
 
+    malformed_task = create_payload(experiment)
+    malformed_task["material_parameters"]["tasks"]["main"] = {
+        "schemaVersion": 1,
+        "materials": [],
+    }
+    assert (
+        await client.post("/measurement/create", headers=headers, json=malformed_task)
+    ).status_code == 422
+
     unknown_field = create_payload(experiment, generation_metadata={"method": "random"})
     assert (await client.post("/measurement/create", headers=headers, json=unknown_field)).status_code == 422
 

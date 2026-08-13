@@ -17,6 +17,7 @@ def _to_user_data(user: User) -> UserData:
         is_active=user.is_active,
         created_at=user.created_at,
         updated_at=user.updated_at,
+        geometry_namespace=user.geometry_namespace,
         roles=[user_role.role.name for user_role in user.user_roles],
     )
 
@@ -60,11 +61,11 @@ class UserService:
                 print(f"User not found: {id}")
                 return False
             
-            # 사용자 삭제 (CASCADE 설정으로 인해 연관된 모든 데이터가 자동 삭제됨)
+            # 사용자 삭제. 각 연관 데이터는 DB의 CASCADE/SET NULL 보존 정책을 따른다.
             await db.delete(user)
             await db.commit()
             
-            print(f"User and all related data deleted successfully: {id}")
+            print(f"User deleted successfully: {id}")
             return True
             
         except Exception as e:

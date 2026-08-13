@@ -8,6 +8,7 @@ const user = {
   is_active: true,
   created_at: '2026-07-21T00:00:00Z',
   updated_at: '2026-07-21T00:00:00Z',
+  geometry_namespace: 'designer',
   roles: ['user'],
 }
 const apiPattern = /^http:\/\/127\.0\.0\.1:\d+\/api\//
@@ -35,8 +36,7 @@ test('uses the root Workbench and opens integrated documentation in a new window
 
   await expect(page.getByRole('menubar', { name: 'CAE 워크벤치 메뉴' })).toBeVisible()
   const toolbar = page.getByRole('toolbar', { name: 'CAE 빠른 작업' })
-  await expect(toolbar.getByRole('button')).toHaveCount(10)
-  await expect(toolbar.getByRole('button', { name: 'Launchers' })).toBeVisible()
+  await expect(toolbar.getByRole('button')).toHaveCount(8)
   await expect(toolbar.getByRole('button', { name: 'Jobs' })).toBeVisible()
 
   await page.getByRole('menuitem', { name: 'Help' }).click()
@@ -88,7 +88,7 @@ test('uses the root Workbench and opens integrated documentation in a new window
   }
 })
 
-test('opens authenticated Launchers and Jobs from the shared Toolbar actions', async ({ page }) => {
+test('opens authenticated Launchers from Settings and Jobs from the shared Toolbar actions', async ({ page }) => {
   const launcher = {
     id: 'launcher-1',
     user_id: user.id,
@@ -146,10 +146,156 @@ test('opens authenticated Launchers and Jobs from the shared Toolbar actions', a
 
   await page.goto('/')
   const toolbar = page.getByRole('toolbar', { name: 'CAE 빠른 작업' })
-  await toolbar.getByRole('button', { name: 'Launchers' }).click()
+  await page.getByRole('menuitem', { name: 'Settings' }).click()
+  await page.getByRole('menuitem', { name: 'Launchers' }).click()
   await expect(page.getByRole('dialog', { name: 'Launchers' })).toContainText('gpu-workstation')
   await page.getByRole('button', { name: '닫기' }).click()
 
   await toolbar.getByRole('button', { name: 'Jobs' }).click()
   await expect(page.getByRole('dialog', { name: 'Jobs' })).toContainText('cae.simulation.start')
+})
+
+test('manages paged Geometry packages, exact versions, references, and the default namespace', async ({ page }) => {
+  const timestamp = '2026-08-13T00:00:00Z'
+  const coordinate = 'caemble:geometry/designer/common/plate@1.2.3'
+  const hash = 'a'.repeat(64)
+  const repository = {
+    id: 1,
+    user_id: user.id,
+    namespace: 'designer',
+    slug: 'common',
+    description: 'Reusable parts',
+    archived_at: null,
+    created_at: timestamp,
+    updated_at: timestamp,
+  }
+  const geometryPackage = {
+    id: 2,
+    repository_id: repository.id,
+    name: 'plate',
+    user_id: user.id,
+    namespace: repository.namespace,
+    repository: repository.slug,
+    repository_archived_at: null,
+    version_count: 1,
+    latest_version: '1.2.3',
+    created_at: timestamp,
+    updated_at: timestamp,
+  }
+  const version = {
+    id: 3,
+    package_id: geometryPackage.id,
+    version_major: 1,
+    version_minor: 2,
+    version_patch: 3,
+    description: 'Stable plate',
+    source: 'export default <box size={[1, 1, 1]} />;',
+    source_hash: hash,
+    module_hash: hash,
+    module_format_version: 1,
+    cad_api_version: 5,
+    archived_at: null,
+    repository_id: repository.id,
+    namespace: repository.namespace,
+    repository: repository.slug,
+    package_name: geometryPackage.name,
+    coordinate,
+    version: '1.2.3',
+    created_at: timestamp,
+    updated_at: timestamp,
+  }
+  let experimentSearch: string | null = null
+
+  await page.route(apiPattern, async (route) => {
+    const path = new URL(route.request().url()).pathname.replace(/^\/api/, '')
+    if (path === '/auth/me') return json(route, user)
+    if (path === '/auth/refresh') return json(route, { detail: 'Unexpected refresh' }, 401)
+    if (path === '/web/auth/csrf') return json(route, { csrf_token: 'csrf-geometry-manager' })
+    if (path === '/auth/geometry-namespace') {
+      const body = route.request().postDataJSON() as { namespace: string }
+      return json(route, { ...user, geometry_namespace: body.namespace })
+    }
+    if (path === '/geometry/repositories/list') return json(route, { total: 1, items: [repository] })
+    if (path === '/geometry/packages/list') return json(route, { total: 1, items: [geometryPackage] })
+    if (path === '/geometry/versions/list') return json(route, { total: 1, items: [version] })
+    if (path === `/geometry/versions/${version.id}/resolve`) {
+      return json(route, {
+        schemaVersion: 1,
+        root: { geometryVersionId: version.id, coordinate, moduleHash: hash },
+        modules: [
+          {
+            geometryVersionId: version.id,
+            coordinate,
+            moduleFormatVersion: 1,
+            cadApiVersion: 5,
+            description: version.description,
+            source: version.source,
+            sourceHash: hash,
+            moduleHash: hash,
+            imports: [],
+          },
+        ],
+      })
+    }
+    if (path === '/geometry/versions/usage') {
+      return json(route, {
+        items: [
+          {
+            versionId: version.id,
+            dependentVersionIds: [],
+            dependentVersionCount: 0,
+            experimentCount: 1,
+            deletable: false,
+          },
+        ],
+      })
+    }
+    if (path === `/geometry/versions/${version.id}/dependents/list`) {
+      return json(route, { total: 0, items: [] })
+    }
+    if (path === `/geometry/versions/${version.id}/experiments/list`) {
+      experimentSearch = (route.request().postDataJSON() as { search_text: string | null }).search_text
+      return json(route, {
+        total: 1,
+        items: [
+          {
+            id: 7,
+            user_id: user.id,
+            parent_id: null,
+            name: 'Bracket study',
+            description: 'Uses the plate indirectly',
+            root_alias: null,
+            created_at: timestamp,
+            updated_at: timestamp,
+          },
+        ],
+      })
+    }
+    if (path === '/web/jobs') return json(route, [])
+    if (path === '/web/launchers/runtime') return json(route, [])
+    if (path.endsWith('/list')) return json(route, { total: 0, items: [] })
+    return json(route, { detail: `Unexpected mocked endpoint: ${path}` }, 404)
+  })
+
+  await page.goto('/')
+  await page.getByRole('menuitem', { name: 'Source' }).click()
+  await page.getByRole('menuitem', { name: 'Geometry Manager' }).click()
+  const manager = page.getByRole('dialog', { name: 'Geometry Manager' })
+  await expect(manager).toBeVisible()
+  await expect(manager).toContainText('designer/common/plate')
+  await expect(manager).toContainText(coordinate)
+
+  await manager.getByRole('tab', { name: 'References' }).click()
+  await expect(manager).toContainText('Bracket study')
+  await expect(manager).toContainText('Indirect')
+  const referenceSearch = manager.getByRole('textbox', { name: /Experiment/ })
+  await referenceSearch.fill('plate study')
+  await expect.poll(() => experimentSearch).toBe('plate study')
+
+  const namespaceInput = manager.locator('input[name="namespace"]')
+  await expect(namespaceInput).toHaveValue('designer')
+  await namespaceInput.fill('designer-next')
+  await namespaceInput.locator('xpath=..').getByRole('button').click()
+  await expect(manager.locator('input[name="namespace"]')).toHaveValue('designer-next')
+  await expect(manager).toContainText(coordinate)
 })

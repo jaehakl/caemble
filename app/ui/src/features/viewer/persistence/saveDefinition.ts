@@ -1,12 +1,30 @@
 import { dbTables, type SaveCodeEntityResponse } from '@/api'
-import { rawCodeHash, type CadSourceDocument, type ExperimentSourceBundle } from '@/lib/cad'
+import {
+  canonicalizeGeometrySnapshot,
+  rawCodeHash,
+  type CadSourceDocument,
+  type ExperimentSourceBundle,
+} from '@/lib/cad'
 import type { DefinitionFormValues } from './SaveDefinitionDialog'
 
 function canonicalBundle(bundle: ExperimentSourceBundle) {
-  return JSON.stringify({
-    files: Object.fromEntries(Object.entries(bundle.files).sort(([left], [right]) => left.localeCompare(right))),
+  const compareText = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0)
+  const value = {
+    files: Object.fromEntries(Object.entries(bundle.files).sort(([left], [right]) => compareText(left, right))),
     formatVersion: bundle.formatVersion,
-  })
+    ...(bundle.formatVersion === 3 ? { geometrySnapshot: canonicalizeGeometrySnapshot(bundle.geometrySnapshot) } : {}),
+  }
+  const stable = (item: unknown): unknown =>
+    Array.isArray(item)
+      ? item.map(stable)
+      : item && typeof item === 'object'
+        ? Object.fromEntries(
+            Object.entries(item)
+              .sort(([left], [right]) => compareText(left, right))
+              .map(([key, child]) => [key, stable(child)]),
+          )
+        : item
+  return JSON.stringify(stable(value))
 }
 
 export async function experimentSourceBundleHash(bundle: ExperimentSourceBundle) {

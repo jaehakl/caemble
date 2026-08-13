@@ -22,7 +22,7 @@ function canonicalAstValue(value: unknown): unknown {
   return Object.fromEntries(
     Object.entries(value)
       .filter(([key]) => !ignoredAstFields.has(key))
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
       .map(([key, item]) => [key, canonicalAstValue(item)]),
   )
 }
@@ -48,10 +48,25 @@ export async function compiledCadDocumentSemanticHash(
 ) {
   const sourceHashes = await Promise.all(
     Object.entries(compiled.sources)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
       .map(async ([path, source]) => [path, await compiledCadSemanticHash(source)] as const),
   )
-  return sha256(JSON.stringify({ sources: sourceHashes, pythonSource }))
+  if (!compiled.geometryGraph) return sha256(JSON.stringify({ sources: sourceHashes, pythonSource }))
+  const geometryModules = await Promise.all(
+    Object.entries(compiled.geometryGraph.modules)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(async ([coordinate, source]) => [coordinate, await compiledCadSemanticHash(source)] as const),
+  )
+  return sha256(
+    JSON.stringify({
+      sources: sourceHashes,
+      pythonSource,
+      geometryGraph: {
+        roots: compiled.geometryGraph.roots,
+        modules: geometryModules,
+      },
+    }),
+  )
 }
 
 export async function cadSemanticHash(document: CadSourceDocument) {

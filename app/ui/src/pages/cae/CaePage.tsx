@@ -11,6 +11,7 @@ import {
 } from '@/features/cae-workbench/chrome'
 import { ConfirmWorkbenchDialog } from '@/features/cae-workbench/dialogs'
 import { ExperimentEditor, RecordedDataEditor } from '@/features/cae-workbench/editors'
+import { GeometryWorkspaceContainer } from '@/features/cae-workbench/geometry'
 import { useCaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { WorkbenchTabId } from '@/features/cae-workbench/types'
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
@@ -63,7 +64,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     .sort((left, right) => page.openTabs.indexOf(left) - page.openTabs.indexOf(right))
     .map((tab) => ({
       id: tab,
-      label: tab === 'experiment' ? 'Experiment' : 'RecordedData',
+      label: tab === 'experiment' ? 'Experiment' : tab === 'geometry' ? 'Geometry' : 'RecordedData',
       content:
         tab === 'experiment' ? (
           <ExperimentEditor
@@ -74,6 +75,12 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             document={workbench.experiment?.kind === 'experiment' ? workbench.experiment : null}
             initialActiveFile={page.activeExperimentFile}
             onActiveFileChange={page.setActiveExperimentFile}
+          />
+        ) : tab === 'geometry' ? (
+          <GeometryWorkspaceContainer
+            diagnostics={workbench.geometry.previewDiagnostics}
+            geometry={workbench.geometry}
+            onOpenManager={() => page.setDialog('geometry-manager')}
           />
         ) : (
           <RecordedDataEditor
@@ -118,8 +125,16 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           viewer={
             <WorkbenchViewer
               activeExperimentTaskName={page.activeExperimentFile}
+              activeTab={page.activeTab}
               experiment={workbench.experiment}
               experimentDocument={workbench.experimentDocument}
+              geometryPreview={{
+                busy: workbench.geometry.previewBusy,
+                error: workbench.geometry.previewError,
+                scene: workbench.geometry.previewScene,
+                sceneHash: workbench.geometry.previewSceneHash,
+                stale: workbench.geometry.previewStale,
+              }}
             />
           }
           viewerPercent={page.viewerPercent}
@@ -142,6 +157,13 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             Experiment{' '}
             {workbench.experimentDirty ? 'edited' : workbench.experimentId ? `#${workbench.experimentId}` : 'none'}
           </Badge>
+          {workbench.geometryLocalDraftDirty ? (
+            <Badge className="h-5 rounded-sm bg-amber-500 px-1.5 text-white">
+              Geometry draft · 영구 저장/Simulation 차단
+            </Badge>
+          ) : workbench.geometryGraphDirty ? (
+            <Badge className="h-5 rounded-sm bg-muted px-1.5">Geometry graph edited</Badge>
+          ) : null}
           <Badge className="h-5 rounded-sm px-1.5">
             {workbench.measurementActions.pendingRecordMeasurementId
               ? `Measurement #${workbench.measurementActions.pendingRecordMeasurementId} · 결과 저장 재시도 필요`

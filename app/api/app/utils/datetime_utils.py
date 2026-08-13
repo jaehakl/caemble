@@ -45,22 +45,3 @@ def parse_api_datetime_to_utc(value: Any) -> datetime | None:
 
 def db_datetime_to_utc(value: datetime) -> datetime:
     return to_utc_datetime(value, naive_timezone=timezone.utc)
-
-
-def utc_isoformat(value: datetime) -> str:
-    return db_datetime_to_utc(value).isoformat().replace("+00:00", "Z")
-
-
-def serialize_datetime_utc(value: Any) -> Any:
-    if isinstance(value, datetime):
-        return utc_isoformat(value)
-    if isinstance(value, list):
-        return [serialize_datetime_utc(item) for item in value]
-    if isinstance(value, tuple):
-        return [serialize_datetime_utc(item) for item in value]
-    if isinstance(value, dict):
-        return {
-            key: serialize_datetime_utc(item)
-            for key, item in value.items()
-        }
-    return value

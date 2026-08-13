@@ -50,7 +50,7 @@ token API이며, `/web`은 Caemble 쿠키와 CSRF 보호를 사용하는 관리 
 
 ## CRUD 계약
 
-카탈로그, Geometry와 model artifact router는 공통 `utils/crud`를 사용해 다음
+카탈로그와 model artifact router는 공통 `utils/crud`를 사용해 다음
 경로를 제공한다.
 
 - `POST /<table>/list`
@@ -58,7 +58,7 @@ token API이며, `/web`은 Caemble 쿠키와 CSRF 보호를 사용하는 관리 
 - `DELETE /<table>/`
 
 대상 table 경로는 `material`, `material_name`, `material_parameter`,
-`material_parameter_qualifier`, `geometry`, `designer_model`,
+`material_parameter_qualifier`, `designer_model`,
 `predictor_model`이다. Experiment는 `/list`, `/save`, `/history`, `DELETE /`를,
 Measurement는 `/list`, `/create`, `/{id}/record`, `DELETE /`를 사용한다.
 RecordedData는 `/list`만 제공하며 직접 upsert/delete할 수 없다.
@@ -73,13 +73,52 @@ RecordedData는 `/list`만 제공하며 직접 upsert/delete할 수 없다.
 `public`은 공개 행만 반환한다.
 
 공개 행의 FK는 공개 행만 가리킬 수 있다. 사용자 행의 FK는 공개 행 또는 같은
-사용자의 행을 가리킬 수 있다. Geometry, Experiment의 parent 관계는
-순환을 허용하지 않으며, 부모 삭제 시 자식은 가장 가까운 생존 조상으로 이동한다.
+사용자의 행을 가리킬 수 있다. Experiment의 parent 관계는 순환을 허용하지 않으며,
+부모 삭제 시 자식은 가장 가까운 생존 조상으로 이동한다.
+
+## 불변 Geometry module 계약
+
+사용자는 `PUT /auth/geometry-namespace`로 새 Repository에 사용할 기본 namespace를
+설정하고 언제든 다른 사용자가 예약하지 않은 값으로 변경할 수 있다. 변경해도 기존
+Repository의 불변 namespace와 Published Geometry 좌표는 바뀌지 않는다.
+Geometry 좌표는
+`caemble:geometry/<namespace>/<repository>/<package>@<major>.<minor>.<patch>`이고
+prerelease, range, `latest`, 상대 경로 import는 허용하지 않는다. 모든 dependency는
+같은 owner의 Repository 안에 있어야 하며 published version의 source는 수정하지 않는다.
+참조가 없는 Version과 Package만 검증된 정리 API로 삭제할 수 있다.
+사용자가 삭제되면 repository는 owner FK만 `NULL`로 바뀌고 namespace와 좌표를
+보존한 채 자동 archive된다. 이 orphan graph는 admin만 조회할 수 있고 namespace는
+재사용할 수 없다.
+
+- `POST /geometry/repositories/list`, `POST /geometry/repositories`
+- `PUT /geometry/repositories/{id}`, `POST /geometry/repositories/{id}/archive`
+- `POST /geometry/packages/list`, `DELETE /geometry/packages/`
+- `POST /geometry/versions/list`, `DELETE /geometry/versions/`
+- `GET /geometry/versions/{id}/resolve`, `POST /geometry/versions/{id}/archive`
+- `POST /geometry/versions/{id}/dependents/list`
+- `POST /geometry/versions/{id}/experiments/list`, `POST /geometry/versions/usage`
+- `POST /geometry/publish/plan`, `POST /geometry/publish`
+
+publish 요청은 local draft, 선택 target, 현재 root를 보내고 서버가 Tree-sitter TSX
+분석, exact import resolve, cycle/크기 제한, child-first Merkle hash와 필요한 patch
+ancestor를 다시 계산한다. `publish`는 사용자가 확인한 `planHash`를 재검증한 뒤 한
+transaction으로 version과 import projection을 만든다. `repositoryId`가 있는 draft는
+해당 기존 Repository의 namespace를 사용하고, 없는 새 Repository draft만 사용자의
+현재 기본 namespace를 사용한다. 새 draft의 repository/package가 없으면 publish
+transaction 안에서 함께 생성한다. SemVer 충돌은
+`geometry_version_conflict` 409와 suggested version을 반환한다.
+
+Experiment source bundle v2는 그대로 유지한다. Geometry가 적용된 bundle v3는
+`geometrySnapshot.schemaVersion=1` 아래 exact root와 전체 reachable module source,
+hash, import projection을 canonical order로 보존한다. 저장 시 API가 DB의 immutable
+version graph와 snapshot 전체를 검증하고 `experiment_geometry_roots` 및 전체 reachable
+module을 담는 `experiment_geometry_modules` projection을 갱신한다. 한번 v3인 Experiment는
+v2로 downgrade할 수 없다.
 
 ## 도메인 테이블
 
 - Material, MaterialName, MaterialParameter, MaterialParameterQualifier
-- Geometry, Experiment
+- GeometryRepository, GeometryPackage, GeometryVersion, GeometryImport, Experiment
 - Measurement, RecordedData
 - DesignerModel, PredictorModel
 

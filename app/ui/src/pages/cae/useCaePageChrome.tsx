@@ -51,6 +51,9 @@ export function useCaePageChrome({
   const actions = useMemo<Record<string, WorkbenchAction>>(() => {
     const loginReason = '로그인 후 사용할 수 있습니다.'
     const savedReason = '저장되고 편집되지 않은 Experiment가 필요합니다.'
+    const geometryDraftReason = workbench.geometryLocalDraftDirty
+      ? 'Geometry local draft를 Publish & Apply하거나 폐기해야 합니다.'
+      : undefined
     const busyReason = workbench.measurementActions.busy ? '다른 CAE 작업이 진행 중입니다.' : undefined
     const pendingResultReason = workbench.measurementActions.pendingRecordMeasurementId
       ? '실행 결과 저장을 먼저 다시 시도하세요.'
@@ -99,6 +102,7 @@ export function useCaePageChrome({
           !authenticated ||
           !workbench.experiment ||
           Boolean(workbench.experimentRecord && !workbench.experimentManageable) ||
+          workbench.geometryLocalDraftDirty ||
           workbench.saving !== null,
         disabledReason: !authenticated
           ? loginReason
@@ -106,19 +110,20 @@ export function useCaePageChrome({
             ? 'Experiment source가 없습니다.'
             : workbench.experimentRecord && !workbench.experimentManageable
               ? '다른 사용자의 정의는 Save As로 저장하세요.'
-              : sourceLockReason,
+              : (geometryDraftReason ?? sourceLockReason),
         onSelect: () => setDialog('save-experiment'),
       },
       saveExperimentAs: {
         id: 'save-experiment-as',
         label: 'Save Experiment As',
         icon: <SaveAll className="size-4" />,
-        disabled: !authenticated || !workbench.experiment || workbench.saving !== null,
+        disabled:
+          !authenticated || !workbench.experiment || workbench.geometryLocalDraftDirty || workbench.saving !== null,
         disabledReason: !authenticated
           ? loginReason
           : !workbench.experiment
             ? 'Experiment source가 없습니다.'
-            : sourceLockReason,
+            : (geometryDraftReason ?? sourceLockReason),
         onSelect: () => setDialog('save-experiment-as'),
       },
       generateCandidate: {
@@ -249,11 +254,25 @@ export function useCaePageChrome({
         icon: <ChartNoAxesCombined className="size-4" />,
         onSelect: () => openTab('recorded-data'),
       },
+      geometryTab: {
+        id: 'tab-geometry',
+        label: 'Geometry Workspace',
+        icon: <Boxes className="size-4" />,
+        onSelect: () => openTab('geometry'),
+      },
       materialManager: {
         id: 'material-manager',
         label: 'Material Manager',
         icon: <Database className="size-4" />,
         onSelect: () => setDialog('material'),
+      },
+      geometryManager: {
+        id: 'geometry-manager',
+        label: 'Geometry Manager',
+        icon: <Boxes className="size-4" />,
+        disabled: !authenticated,
+        disabledReason: !authenticated ? loginReason : undefined,
+        onSelect: () => setDialog('geometry-manager'),
       },
       aiChat: {
         id: 'ai-chat',
@@ -340,6 +359,7 @@ export function useCaePageChrome({
           { type: 'action', action: actions.saveExperiment },
           { type: 'action', action: actions.saveExperimentAs },
           { type: 'separator', id: 'material-separator' },
+          { type: 'action', action: actions.geometryManager },
           { type: 'action', action: actions.materialManager },
         ],
       },
@@ -363,6 +383,7 @@ export function useCaePageChrome({
         label: 'View',
         items: [
           { type: 'action', action: actions.experimentTab },
+          { type: 'action', action: actions.geometryTab },
           { type: 'action', action: actions.recordedDataTab },
         ],
       },
@@ -427,6 +448,22 @@ export function useCaePageChrome({
           <span className="mt-1 text-xs text-muted-foreground">
             {workbench.experimentId ? `#${workbench.experimentId}` : 'DB에 저장되지 않음'} ·{' '}
             {workbench.experimentStatus}
+          </span>
+        </RibbonActions>
+      ),
+    },
+    {
+      tabId: 'geometry',
+      label: 'Geometry',
+      content: (
+        <RibbonActions actions={[actions.geometryManager]}>
+          <span className="text-sm font-semibold">Geometry modules</span>
+          <span className="mt-1 text-xs text-muted-foreground">
+            {workbench.geometryLocalDraftDirty
+              ? `${Object.keys(workbench.geometry.drafts).length} local draft · Simulation/영구 저장 차단`
+              : workbench.geometryGraphDirty
+                ? 'Published graph 변경 · Experiment 저장 필요'
+                : 'Exact published graph'}
           </span>
         </RibbonActions>
       ),

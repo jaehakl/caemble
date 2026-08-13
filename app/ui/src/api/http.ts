@@ -50,7 +50,12 @@ async function ensureCsrfToken() {
 }
 
 async function send<T>(method: HttpMethod, url: string, data?: unknown, retryCsrf = true): Promise<T> {
-  const csrfProtected = method !== 'get' && url.startsWith('/web/')
+  const csrfProtected =
+    method !== 'get' &&
+    (url.startsWith('/web/') ||
+      url.startsWith('/geometry/') ||
+      url === '/auth/geometry-namespace' ||
+      url === '/experiment/save')
   const headers = new Headers(data === undefined ? undefined : { 'content-type': 'application/json' })
   if (csrfProtected) headers.set('X-CSRF-Token', await ensureCsrfToken())
   const response = await fetch(`${API_URL}${url}`, {

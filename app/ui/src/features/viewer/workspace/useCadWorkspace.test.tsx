@@ -8,6 +8,7 @@ import {
   evaluateDocument,
   inspectDocument,
   serializeCadScene,
+  updateExperimentSourceFile,
 } from '@/lib/cad'
 import { resolveDocumentMaterials } from '../persistence/resolveMaterials'
 import { useCadWorkspace } from './useCadWorkspace'
@@ -99,7 +100,12 @@ describe('useCadWorkspace unified Experiment', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.75)
     const onChange = vi.fn()
     const render = renderHook(() =>
-      useCadWorkspace(document, onChange, { fixed: 4, width: 2 }, { schemaVersion: 2, experiment: emptyMaterials, tasks: { electric: emptyMaterials } }),
+      useCadWorkspace(
+        document,
+        onChange,
+        { fixed: 4, width: 2 },
+        { schemaVersion: 2, experiment: emptyMaterials, tasks: { electric: emptyMaterials } },
+      ),
     )
     await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
 
@@ -109,6 +115,25 @@ describe('useCadWorkspace unified Experiment', () => {
     expect(vi.mocked(evaluateDocument).mock.calls[1][0].vars).toEqual({ fixed: 4, width: 7.75 })
     expect(resolveDocumentMaterials).toHaveBeenLastCalledWith(expect.anything(), null)
     expect(onChange).not.toHaveBeenCalled()
+    render.unmount()
+  })
+
+  it('keeps the last successful Scene when a same-session edit fails', async () => {
+    const edited = updateExperimentSourceFile(document, 'experiment.tsx', 'broken source')
+    const render = renderHook(
+      ({ source }) => useCadWorkspace(source, vi.fn(), { fixed: 4, width: 2 }, null, true, undefined, undefined, 1),
+      { initialProps: { source: document } },
+    )
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
+    const lastScene = render.result.current.experimentDocument.scene
+    expect(lastScene).not.toBeNull()
+
+    vi.mocked(inspectDocument).mockRejectedValueOnce(new Error('syntax failed'))
+    render.rerender({ source: edited })
+
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Error'))
+    expect(render.result.current.experimentDocument.scene).toBe(lastScene)
+    expect(render.result.current.experimentDocument.previewStale).toBe(true)
     render.unmount()
   })
 })

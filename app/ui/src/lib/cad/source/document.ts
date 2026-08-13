@@ -1,9 +1,17 @@
 import { CadModelError } from '../model/core'
 import type { Tensor } from '../model/types'
+import {
+  GEOMETRY_SNAPSHOT_SCHEMA_VERSION,
+  assertCanonicalGeometrySnapshot,
+  canonicalizeGeometrySnapshot,
+  validateGeometrySnapshotHashes,
+  type GeometrySnapshot,
+} from './geometrySnapshot'
 
 export const CAD_SOURCE_FORMAT_VERSION = 2 as const
 export const CAD_SOURCE_API_VERSION = 5 as const
 export const EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION = 2 as const
+export const EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION = 3 as const
 export const MAX_CAD_SOURCE_BYTES = 1024 * 1024
 
 export const EXPERIMENT_ENTRY_PATH = 'experiment.tsx' as const
@@ -12,10 +20,18 @@ export const EXPERIMENT_TASK_PATH = /^tasks\/([A-Za-z][A-Za-z0-9_-]*)\.tsx$/u
 
 export type CadDocumentType = 'experiment'
 
-export type ExperimentSourceBundle = Readonly<{
+export type ExperimentSourceBundleV2 = Readonly<{
   formatVersion: typeof EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION
   files: Readonly<Record<string, string>>
 }>
+
+export type ExperimentSourceBundleV3 = Readonly<{
+  formatVersion: typeof EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION
+  files: Readonly<Record<string, string>>
+  geometrySnapshot: GeometrySnapshot
+}>
+
+export type ExperimentSourceBundle = ExperimentSourceBundleV2 | ExperimentSourceBundleV3
 
 export type ExperimentSourceDocument = Readonly<{
   kind: 'experiment'
@@ -33,6 +49,10 @@ export type CadEvaluationInput = Readonly<{
 
 function sourceBytes(source: string) {
   return new TextEncoder().encode(source).byteLength
+}
+
+function compareCanonicalText(left: string, right: string) {
+  return left < right ? -1 : left > right ? 1 : 0
 }
 
 function assertSourceText(source: unknown, path: string) {
@@ -53,7 +73,7 @@ export function experimentTaskName(path: string) {
 export function experimentTaskPaths(bundle: ExperimentSourceBundle) {
   return Object.keys(bundle.files)
     .filter((path) => experimentTaskName(path) !== null)
-    .sort((left, right) => left.localeCompare(right))
+    .sort(compareCanonicalText)
 }
 
 export function assertExperimentSourceBundle(value: unknown): asserts value is ExperimentSourceBundle {
@@ -65,11 +85,18 @@ export function assertExperimentSourceBundle(value: unknown): asserts value is E
   ) {
     throw new CadModelError('Experiment source bundle must be a plain object.')
   }
-  const bundle = value as Partial<ExperimentSourceBundle>
-  const unknownKey = Object.keys(value).find((key) => !['files', 'formatVersion'].includes(key))
+  const bundle = value as Readonly<{
+    formatVersion?: unknown
+    files?: unknown
+    geometrySnapshot?: unknown
+  }>
+  const isV3 = bundle.formatVersion === EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION
+  const unknownKey = Object.keys(value).find(
+    (key) => !(isV3 ? ['files', 'formatVersion', 'geometrySnapshot'] : ['files', 'formatVersion']).includes(key),
+  )
   if (unknownKey) throw new CadModelError(`Experiment source bundle.${unknownKey} is not allowed.`)
-  if (bundle.formatVersion !== EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION) {
-    throw new CadModelError('Only Experiment source bundle format version 2 is supported.')
+  if (bundle.formatVersion !== EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION && !isV3) {
+    throw new CadModelError('Only Experiment source bundle format versions 2 and 3 are supported.')
   }
   if (
     typeof bundle.files !== 'object' ||
@@ -81,7 +108,8 @@ export function assertExperimentSourceBundle(value: unknown): asserts value is E
   }
   const paths = Object.keys(bundle.files)
   const invalidPath = paths.find(
-    (path) => path !== EXPERIMENT_ENTRY_PATH && path !== EXPERIMENT_SIMULATION_PATH && experimentTaskName(path) === null,
+    (path) =>
+      path !== EXPERIMENT_ENTRY_PATH && path !== EXPERIMENT_SIMULATION_PATH && experimentTaskName(path) === null,
   )
   if (invalidPath) throw new CadModelError(`Experiment source file path is not allowed: ${invalidPath}`)
   if (!paths.includes(EXPERIMENT_ENTRY_PATH) || !paths.includes(EXPERIMENT_SIMULATION_PATH)) {
@@ -90,25 +118,67 @@ export function assertExperimentSourceBundle(value: unknown): asserts value is E
   if (paths.every((path) => experimentTaskName(path) === null)) {
     throw new CadModelError('Experiment source bundle requires at least one Task file.')
   }
-  paths.forEach((path) => assertSourceText(bundle.files![path], `Experiment source ${path}`))
-  if (paths.reduce((total, path) => total + sourceBytes(bundle.files![path]), 0) > MAX_CAD_SOURCE_BYTES) {
+  const files = bundle.files as Record<string, unknown>
+  paths.forEach((path) => assertSourceText(files[path], `Experiment source ${path}`))
+  if (paths.reduce((total, path) => total + sourceBytes(files[path] as string), 0) > MAX_CAD_SOURCE_BYTES) {
     throw new CadModelError(`Experiment source bundle exceeds ${MAX_CAD_SOURCE_BYTES} bytes.`)
   }
-  if (!bundle.files[EXPERIMENT_ENTRY_PATH].trim()) {
+  if (!(files[EXPERIMENT_ENTRY_PATH] as string).trim()) {
     throw new CadModelError('Experiment source experiment.tsx must not be empty.')
   }
-  if (!bundle.files[EXPERIMENT_SIMULATION_PATH].trim()) {
+  if (!(files[EXPERIMENT_SIMULATION_PATH] as string).trim()) {
     throw new CadModelError('Experiment source simulate.py must not be empty.')
+  }
+  if (isV3) {
+    assertCanonicalGeometrySnapshot(bundle.geometrySnapshot as GeometrySnapshot)
   }
 }
 
-export function createExperimentSourceBundle(files: Readonly<Record<string, string>>): ExperimentSourceBundle {
+function canonicalFiles(files: Readonly<Record<string, string>>) {
+  return Object.freeze(
+    Object.fromEntries(Object.entries(files).sort(([left], [right]) => compareCanonicalText(left, right))),
+  )
+}
+
+export function createExperimentSourceBundle(files: Readonly<Record<string, string>>): ExperimentSourceBundleV2 {
   const bundle = Object.freeze({
     formatVersion: EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION,
-    files: Object.freeze(Object.fromEntries(Object.entries(files).sort(([left], [right]) => left.localeCompare(right)))),
+    files: canonicalFiles(files),
   })
   assertExperimentSourceBundle(bundle)
   return bundle
+}
+
+export function createExperimentSourceBundleV3(
+  files: Readonly<Record<string, string>>,
+  geometrySnapshot: GeometrySnapshot,
+): ExperimentSourceBundleV3 {
+  const bundle = Object.freeze({
+    formatVersion: EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION,
+    files: canonicalFiles(files),
+    geometrySnapshot: canonicalizeGeometrySnapshot(geometrySnapshot),
+  })
+  assertExperimentSourceBundle(bundle)
+  return bundle
+}
+
+export function upgradeExperimentSourceBundleV3(
+  bundle: ExperimentSourceBundle,
+  geometrySnapshot: GeometrySnapshot = bundle.formatVersion === EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION
+    ? bundle.geometrySnapshot
+    : {
+        schemaVersion: GEOMETRY_SNAPSHOT_SCHEMA_VERSION,
+        roots: [],
+        modules: [],
+      },
+) {
+  return createExperimentSourceBundleV3(bundle.files, geometrySnapshot)
+}
+
+function replaceBundleFiles(bundle: ExperimentSourceBundle, files: Readonly<Record<string, string>>) {
+  return bundle.formatVersion === EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION
+    ? createExperimentSourceBundleV3(files, bundle.geometrySnapshot)
+    : createExperimentSourceBundle(files)
 }
 
 export function assertCadSourceDocument(value: unknown): asserts value is ExperimentSourceDocument {
@@ -175,7 +245,7 @@ export function updateExperimentSourceFile(
   }
   return createCadSourceDocument(
     'experiment',
-    createExperimentSourceBundle({ ...document.sourceBundle.files, [path]: source }),
+    replaceBundleFiles(document.sourceBundle, { ...document.sourceBundle.files, [path]: source }),
   )
 }
 
@@ -185,7 +255,7 @@ export function addExperimentTask(document: ExperimentSourceDocument, taskName: 
   if (path in document.sourceBundle.files) throw new CadModelError(`Task already exists: ${taskName}`)
   return createCadSourceDocument(
     'experiment',
-    createExperimentSourceBundle({ ...document.sourceBundle.files, [path]: source }),
+    replaceBundleFiles(document.sourceBundle, { ...document.sourceBundle.files, [path]: source }),
   )
 }
 
@@ -197,20 +267,33 @@ export function removeExperimentTask(document: ExperimentSourceDocument, taskNam
   }
   const files = { ...document.sourceBundle.files }
   delete files[path]
-  return createCadSourceDocument('experiment', createExperimentSourceBundle(files))
+  return createCadSourceDocument('experiment', replaceBundleFiles(document.sourceBundle, files))
 }
 
 export async function cadSourceHash(document: ExperimentSourceDocument) {
   assertCadSourceDocument(document)
+  if (document.sourceBundle.formatVersion === EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION) {
+    await validateGeometrySnapshotHashes(document.sourceBundle.geometrySnapshot)
+  }
+  const sourceBundle =
+    document.sourceBundle.formatVersion === EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION
+      ? {
+          formatVersion: document.sourceBundle.formatVersion,
+          files: Object.fromEntries(
+            Object.entries(document.sourceBundle.files).sort(([left], [right]) => compareCanonicalText(left, right)),
+          ),
+          geometrySnapshot: canonicalizeGeometrySnapshot(document.sourceBundle.geometrySnapshot),
+        }
+      : {
+          formatVersion: document.sourceBundle.formatVersion,
+          files: Object.fromEntries(
+            Object.entries(document.sourceBundle.files).sort(([left], [right]) => compareCanonicalText(left, right)),
+          ),
+        }
   const input = JSON.stringify({
     apiVersion: document.apiVersion,
     formatVersion: document.formatVersion,
-    sourceBundle: {
-      formatVersion: document.sourceBundle.formatVersion,
-      files: Object.fromEntries(
-        Object.entries(document.sourceBundle.files).sort(([left], [right]) => left.localeCompare(right)),
-      ),
-    },
+    sourceBundle,
   })
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input))
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')

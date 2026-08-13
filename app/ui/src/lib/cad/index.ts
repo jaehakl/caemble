@@ -11,12 +11,7 @@ export type {
   CadSceneTreeNode,
 } from './evaluation/types'
 export { CadModelError, isFloatDType, Mat, Material } from './model/core'
-export {
-  defineTask,
-  experiment,
-  ExperimentDefinition,
-  TaskDefinition,
-} from './model/v5'
+export { defineTask, experiment, ExperimentDefinition, TaskDefinition } from './model/v5'
 export type {
   CadDefinition,
   ExperimentDefinitionOptions,
@@ -93,6 +88,7 @@ export {
   EXPERIMENT_ENTRY_PATH,
   EXPERIMENT_SIMULATION_PATH,
   EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION,
+  EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION,
   addExperimentTask,
   assertCadSourceDocument,
   assertExperimentSourceBundle,
@@ -100,22 +96,73 @@ export {
   cadSourceHash,
   createCadSourceDocument,
   createExperimentSourceBundle,
+  createExperimentSourceBundleV3,
   experimentSourceFile,
   experimentTaskName,
   experimentTaskPaths,
   removeExperimentTask,
   updateCadSource,
   updateExperimentSourceFile,
+  upgradeExperimentSourceBundleV3,
 } from './source/document'
 export type {
   CadDocumentType,
   CadEvaluationInput,
   CadSourceDocument,
   ExperimentSourceBundle,
+  ExperimentSourceBundleV2,
+  ExperimentSourceBundleV3,
   ExperimentSourceDocument,
 } from './source/document'
-export { CadDocumentEvaluationError, evaluateDocument, inspectDocument } from './execution/evaluateDocument'
-export type { CadDocumentInspection, EvaluateDocumentOptions } from './execution/evaluateDocument'
+export {
+  GEOMETRY_MODULE_FORMAT_VERSION,
+  GEOMETRY_SNAPSHOT_SCHEMA_VERSION,
+  MAX_COMPILED_GEOMETRY_GRAPH_BYTES,
+  MAX_GEOMETRY_GRAPH_DEPTH,
+  MAX_GEOMETRY_GRAPH_SOURCE_BYTES,
+  MAX_GEOMETRY_IMPORTS_PER_MODULE,
+  MAX_GEOMETRY_MODULES,
+  MAX_GEOMETRY_MODULE_SOURCE_BYTES,
+  MAX_GEOMETRY_ROOTS,
+  MAX_GEOMETRY_SEMVER_COMPONENT,
+  assertGeometryCoordinate,
+  assertGeometrySnapshot,
+  canonicalizeGeometrySnapshot,
+  createGeometrySnapshot,
+  geometryModuleHash,
+  geometryCoordinateNamespace,
+  geometrySourceHash,
+  isGeometryCoordinate,
+  validateGeometrySnapshotHashes,
+} from './source/geometrySnapshot'
+export type {
+  GeometryCoordinate,
+  GeometrySnapshot,
+  GeometrySnapshotImport,
+  GeometrySnapshotModule,
+  GeometrySnapshotRoot,
+} from './source/geometrySnapshot'
+export { createEffectiveGeometryGraph } from './source/effectiveGeometryGraph'
+export type {
+  EffectiveGeometryGraph,
+  EffectiveGeometryModule,
+  GeometryDraftOverlay,
+  GeometryDraftRoot,
+  GeometryModuleDraft,
+} from './source/effectiveGeometryGraph'
+export { analyzeGeometrySource, rewriteGeometryImportCoordinates } from './source/sourceAnalysis'
+export {
+  CadDocumentEvaluationError,
+  evaluateDocument,
+  evaluateGeometryModule,
+  inspectDocument,
+} from './execution/evaluateDocument'
+export type {
+  CadDocumentInspection,
+  EvaluateDocumentOptions,
+  GeometryModuleEvaluationOptions,
+  GeometryModulePreview,
+} from './execution/evaluateDocument'
 export { assertEvaluatedDocumentSnapshot, serializeEvaluatedDocumentSnapshot } from './execution/snapshot'
 export type {
   EvaluatedDocumentSnapshot,
@@ -128,11 +175,7 @@ export {
   buildMeasurement,
   buildSourceOnlyMeasurement,
 } from './execution/measurement'
-export type {
-  BuiltMeasurement,
-  MeasurementMaterialResolution,
-  TaskMaterialResolution,
-} from './execution/measurement'
+export type { BuiltMeasurement, MeasurementMaterialResolution, TaskMaterialResolution } from './execution/measurement'
 export { assertSerializableCadScene, deserializeCadScene, serializeCadScene } from './execution/mesh'
 export type { SerializableCadMesh, SerializableCadScene, SerializableCadScenePart } from './execution/mesh'
 export { normalizeRecordedData, normalizeRecordedDataTensor } from './model/recordedData'
@@ -153,14 +196,21 @@ export {
 } from './model/dataTensor'
 export type { DataTensorAccessor } from './model/dataTensor'
 export { CadCompilationError, compileCadDocument } from './compiler/monacoCompiler'
-export type { CadDiagnostic as CompilerDiagnostic, CompiledCadDocument, CompiledCadSource } from './compiler/types'
+export type { CompileCadDocumentOptions } from './compiler/monacoCompiler'
+export type {
+  CadDiagnostic as CompilerDiagnostic,
+  CompiledCadDocument,
+  CompiledCadSource,
+  CompiledGeometryGraph,
+  CompiledGeometryModule,
+} from './compiler/types'
 export {
   cadSemanticHash,
   compiledCadDocumentSemanticHash,
   compiledCadSemanticHash,
   rawCodeHash,
 } from './compiler/semanticHash'
-export { evaluateInIsolatedRunner, inspectInIsolatedRunner } from './runner/client'
+export { evaluateInIsolatedRunner, inspectInIsolatedRunner, previewGeometryInIsolatedRunner } from './runner/client'
 export type { ArrayAttributes } from './elements/operations/array/definition'
 export type { BooleanAttributes } from './elements/operations/booleans/definition'
 export type { ShellAttributes } from './elements/operations/shell/definition'
@@ -184,5 +234,7 @@ export type {
   CadEvaluationResponse,
   CadInspectionRequest,
   CadInspectionResponse,
+  CadGeometryPreviewRequest,
+  CadGeometryPreviewResponse,
   CadWorkerErrorType,
 } from './worker/protocol'

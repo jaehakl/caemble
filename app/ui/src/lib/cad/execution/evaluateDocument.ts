@@ -1,18 +1,31 @@
 import { compileCadDocument } from '../compiler/monacoCompiler'
-import { evaluateInIsolatedRunner, inspectInIsolatedRunner } from '../runner/client'
-import { assertCadEvaluationRequest, assertCadInspectionRequest } from '../runner/protocol'
+import { evaluateInIsolatedRunner, inspectInIsolatedRunner, previewGeometryInIsolatedRunner } from '../runner/client'
+import {
+  assertCadEvaluationRequest,
+  assertCadGeometryPreviewRequest,
+  assertCadInspectionRequest,
+} from '../runner/protocol'
 import {
   EXPERIMENT_SIMULATION_PATH,
   assertCadSourceDocument,
+  createCadSourceDocument,
+  createExperimentSourceBundleV3,
   type CadEvaluationInput,
   type ExperimentSourceDocument,
 } from '../source/document'
+import type { GeometryDraftOverlay, GeometryDraftRoot } from '../source/effectiveGeometryGraph'
+import type { GeometryCoordinate, GeometrySnapshot } from '../source/geometrySnapshot'
+import type { UcumUnit } from '../model/units'
+import { deserializeCadScene } from './mesh'
+import type { CadScene } from '../evaluation/types'
 import type {
   CadDiagnostic,
   CadEvaluationRequest,
   CadEvaluationResponse,
   CadInspectionRequest,
   CadInspectionResponse,
+  CadGeometryPreviewRequest,
+  CadGeometryPreviewResponse,
 } from '../worker/protocol'
 import type { EvaluatedExperimentSnapshot } from './snapshot'
 import type { VarsSchemaEntry } from '../model/vars'
@@ -20,6 +33,21 @@ import type { VarsSchemaEntry } from '../model/vars'
 export type EvaluateDocumentOptions = Readonly<{
   signal?: AbortSignal
   timeoutMs?: 3000 | 10000 | 30000
+  geometryDrafts?: GeometryDraftOverlay
+  geometryRoots?: readonly GeometryDraftRoot[]
+}>
+
+export type GeometryModuleEvaluationOptions = Readonly<{
+  signal?: AbortSignal
+  timeoutMs?: 3000 | 10000 | 30000
+  geometryDrafts?: GeometryDraftOverlay
+  lengthUnit?: UcumUnit
+}>
+
+export type GeometryModulePreview = Readonly<{
+  coordinate: GeometryCoordinate
+  sourceHash: string
+  scene: CadScene
 }>
 
 export type CadDocumentInspection = Readonly<{
@@ -58,10 +86,11 @@ function timeoutPromise<Response, Result>(
       options.signal?.removeEventListener('abort', abort)
       callback()
     }
-    const abort = () => finish(() => {
-      cancel()
-      reject(new DOMException('The CAD operation was aborted.', 'AbortError'))
-    })
+    const abort = () =>
+      finish(() => {
+        cancel()
+        reject(new DOMException('The CAD operation was aborted.', 'AbortError'))
+      })
     options.signal?.addEventListener('abort', abort, { once: true })
     cancel = run({
       onFailure(message) {
@@ -69,10 +98,14 @@ function timeoutPromise<Response, Result>(
       },
       onStart() {
         if (settled) return
-        timeout = window.setTimeout(() => finish(() => {
-          cancel()
-          reject(new CadDocumentEvaluationError(`CAD operation timed out after ${timeoutMs / 1000} seconds.`))
-        }), timeoutMs)
+        timeout = window.setTimeout(
+          () =>
+            finish(() => {
+              cancel()
+              reject(new CadDocumentEvaluationError(`CAD operation timed out after ${timeoutMs / 1000} seconds.`))
+            }),
+          timeoutMs,
+        )
       },
       onResponse(response) {
         finish(() => settle(response, resolve, reject))
@@ -86,7 +119,7 @@ export async function inspectDocument(
   options: EvaluateDocumentOptions = {},
 ): Promise<CadDocumentInspection> {
   assertCadSourceDocument(document)
-  const compiledDocument = await compileCadDocument(document)
+  const compiledDocument = await compileCadDocument(document, options)
   const request: CadInspectionRequest = {
     type: 'inspect',
     compiledDocument,
@@ -94,11 +127,15 @@ export async function inspectDocument(
     revision: 0,
   }
   assertCadInspectionRequest(request)
-  return timeoutPromise<CadInspectionResponse, CadDocumentInspection>(options, (callbacks) => inspectInIsolatedRunner(request, callbacks), (response, resolve, reject) => {
-    if (response.type === 'inspection-success') {
-      resolve(Object.freeze({ sourceHash: response.sourceHash, varsSchema: response.varsSchema }))
-    } else reject(new CadDocumentEvaluationError(response.message, response.diagnostics))
-  })
+  return timeoutPromise<CadInspectionResponse, CadDocumentInspection>(
+    options,
+    (callbacks) => inspectInIsolatedRunner(request, callbacks),
+    (response, resolve, reject) => {
+      if (response.type === 'inspection-success') {
+        resolve(Object.freeze({ sourceHash: response.sourceHash, varsSchema: response.varsSchema }))
+      } else reject(new CadDocumentEvaluationError(response.message, response.diagnostics))
+    },
+  )
 }
 
 export async function evaluateDocument(
@@ -106,7 +143,7 @@ export async function evaluateDocument(
   options: EvaluateDocumentOptions = {},
 ): Promise<EvaluatedExperimentSnapshot> {
   assertCadSourceDocument(input.document)
-  const compiledDocument = await compileCadDocument(input.document)
+  const compiledDocument = await compileCadDocument(input.document, options)
   const request: CadEvaluationRequest = {
     type: 'evaluate',
     compiledDocument,
@@ -116,8 +153,58 @@ export async function evaluateDocument(
     vars: input.vars,
   }
   assertCadEvaluationRequest(request)
-  return timeoutPromise<CadEvaluationResponse, EvaluatedExperimentSnapshot>(options, (callbacks) => evaluateInIsolatedRunner(request, callbacks), (response, resolve, reject) => {
-    if (response.type === 'evaluation-success') resolve(response.snapshot)
-    else reject(new CadDocumentEvaluationError(response.message, response.diagnostics))
+  return timeoutPromise<CadEvaluationResponse, EvaluatedExperimentSnapshot>(
+    options,
+    (callbacks) => evaluateInIsolatedRunner(request, callbacks),
+    (response, resolve, reject) => {
+      if (response.type === 'evaluation-success') resolve(response.snapshot)
+      else reject(new CadDocumentEvaluationError(response.message, response.diagnostics))
+    },
+  )
+}
+
+const geometryPreviewFiles = Object.freeze({
+  'experiment.tsx': `import { experiment } from '@caemble/core'
+export default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => null, recordedData: {} })
+`,
+  'simulate.py': 'async def simulate(*, sim, tasks, vars):\n    return None\n',
+  'tasks/preview.tsx': `import { defineTask } from '@caemble/core'
+export default defineTask({ kernel: { name: 'preview', version: '1.0.0' }, config: () => ({}) })
+`,
+})
+
+export async function evaluateGeometryModule(
+  snapshot: GeometrySnapshot,
+  coordinate: GeometryCoordinate,
+  options: GeometryModuleEvaluationOptions = {},
+): Promise<GeometryModulePreview> {
+  const document = createCadSourceDocument('experiment', createExperimentSourceBundleV3(geometryPreviewFiles, snapshot))
+  const compiledDocument = await compileCadDocument(document, {
+    geometryDrafts: options.geometryDrafts,
+    geometryRoots: [{ alias: 'preview', coordinate }],
   })
+  const request: CadGeometryPreviewRequest = {
+    type: 'preview-geometry',
+    compiledDocument,
+    coordinate,
+    lengthUnit: options.lengthUnit ?? 'mm',
+    requestId: `preview-geometry-${crypto.randomUUID()}`,
+    revision: 0,
+  }
+  assertCadGeometryPreviewRequest(request)
+  return timeoutPromise<CadGeometryPreviewResponse, GeometryModulePreview>(
+    options,
+    (callbacks) => previewGeometryInIsolatedRunner(request, callbacks),
+    (response, resolve, reject) => {
+      if (response.type === 'geometry-preview-success') {
+        resolve(
+          Object.freeze({
+            coordinate,
+            sourceHash: response.sourceHash,
+            scene: deserializeCadScene(response.scene),
+          }),
+        )
+      } else reject(new CadDocumentEvaluationError(response.message, response.diagnostics))
+    },
+  )
 }

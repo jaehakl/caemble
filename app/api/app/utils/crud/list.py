@@ -200,19 +200,38 @@ def _build_where_clause(
         if filter_clause is not None:
             filter_conditions.append(filter_clause)
 
+    for field_name, operation in (getattr(request, "null_filter", None) or {}).items():
+        column = spec.model.__table__.columns.get(field_name)
+        if column is None:
+            continue
+        filter_conditions.append(
+            column.is_(None) if operation == "is_null" else column.is_not(None)
+        )
+
     scoped_clause = _combine_clauses(and_, [*search_conditions, *filter_conditions])
     where_clause = _combine_clauses(or_, (selected_clause, scoped_clause))
     return _combine_clauses(and_, (base_clause, where_clause))
 
 
 def _get_sort_request(request: Any) -> tuple[str | None, str]:
-    if not request.sort:
+    sort_requests = _get_sort_requests(request)
+    if not sort_requests:
         return None, "asc"
+    return sort_requests[0]
 
-    field_name = request.sort[0] if len(request.sort) > 0 else None
-    direction = (request.sort[1] if len(request.sort) > 1 else "asc").lower()
-    direction = "desc" if direction == "desc" else "asc"
-    return field_name, direction
+
+def _get_sort_requests(request: Any) -> list[tuple[str, str]]:
+    raw_sort = getattr(request, "sort", None)
+    if not raw_sort:
+        return []
+    entries = raw_sort if isinstance(raw_sort[0], list) else [raw_sort]
+    normalized: list[tuple[str, str]] = []
+    for entry in entries:
+        if not entry or not isinstance(entry[0], str):
+            continue
+        direction = str(entry[1] if len(entry) > 1 else "asc").lower()
+        normalized.append((entry[0], "desc" if direction == "desc" else "asc"))
+    return normalized
 
 
 def get_list_sort_request(request: Any) -> tuple[str | None, str]:
@@ -233,16 +252,23 @@ def _build_column_order_by(
 ) -> list[Any]:
     is_random = bool(getattr(request, "random", False))
     order_by_clauses = [func.random()] if is_random else [spec.model.id.desc()]
-    field_name, direction = _get_sort_request(request)
+    sort_requests = _get_sort_requests(request)
 
-    if is_random or not field_name:
+    if is_random or not sort_requests:
         return order_by_clauses
 
-    column = spec.model.__table__.columns.get(field_name)
-    if column is not None:
-        order_by_clauses = [column.desc() if direction == "desc" else column.asc()]
-        if column is not spec.model.__table__.columns.get("id"):
-            order_by_clauses.append(spec.model.id.desc())
+    order_by_clauses = []
+    sorted_id = False
+    for field_name, direction in sort_requests:
+        column = spec.model.__table__.columns.get(field_name)
+        if column is None:
+            continue
+        order_by_clauses.append(column.desc() if direction == "desc" else column.asc())
+        sorted_id = sorted_id or column is spec.model.__table__.columns.get("id")
+    if not order_by_clauses:
+        return [spec.model.id.desc()]
+    if not sorted_id:
+        order_by_clauses.append(spec.model.id.desc())
 
     return order_by_clauses
 

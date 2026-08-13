@@ -1,7 +1,10 @@
 import type { CompiledCadDocument } from '../compiler/types'
 import type { EvaluatedExperimentSnapshot } from '../execution/snapshot'
 import type { Tensor } from '../model/types'
+import type { UcumUnit } from '../model/units'
 import type { VarsSchemaEntry } from '../model/vars'
+import type { SerializableCadScene } from '../execution/meshValidation'
+import type { GeometryCoordinate } from '../source/geometrySnapshot'
 
 export type CadDocumentType = 'experiment'
 export type CadWorkerErrorType = 'compile' | 'type' | 'policy' | 'runtime' | 'model'
@@ -36,10 +39,17 @@ export type CadEvaluationRequest = CadRequestIdentity &
     vars: Readonly<Record<string, Tensor>>
   }>
 
+export type CadGeometryPreviewRequest = CadRequestIdentity &
+  Readonly<{
+    type: 'preview-geometry'
+    coordinate: GeometryCoordinate
+    lengthUnit: UcumUnit
+  }>
+
 type CadResponseIdentity = Readonly<{
   requestId: string
   revision: number
-  documentType: 'experiment'
+  documentType: 'experiment' | 'geometry'
 }>
 
 export type CadInspectionResponse =
@@ -59,6 +69,15 @@ export type CadEvaluationResponse =
       }>)
   | (CadResponseIdentity & CadErrorResponse<'evaluation-error'>)
 
+export type CadGeometryPreviewResponse =
+  | (CadResponseIdentity &
+      Readonly<{
+        type: 'geometry-preview-success'
+        sourceHash: string
+        scene: SerializableCadScene
+      }>)
+  | (CadResponseIdentity & CadErrorResponse<'geometry-preview-error'>)
+
 type CadErrorResponse<Type extends string> = Readonly<{
   type: Type
   errorType: CadWorkerErrorType
@@ -67,5 +86,5 @@ type CadErrorResponse<Type extends string> = Readonly<{
   stack?: string
 }>
 
-export type CadWorkerRequest = CadInspectionRequest | CadEvaluationRequest
-export type CadWorkerResponse = CadInspectionResponse | CadEvaluationResponse
+export type CadWorkerRequest = CadInspectionRequest | CadEvaluationRequest | CadGeometryPreviewRequest
+export type CadWorkerResponse = CadInspectionResponse | CadEvaluationResponse | CadGeometryPreviewResponse

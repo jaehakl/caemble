@@ -33,7 +33,7 @@ export type WorkbenchEvaluationContext = Readonly<{
 
 export type WorkbenchContextInput = Readonly<{
   focus?: Readonly<{
-    activeTab?: 'experiment' | 'recorded-data' | null
+    activeTab?: 'experiment' | 'geometry' | 'recorded-data' | null
     activeExperimentFile?: string | null
   }>
   experiment?: Readonly<{
