@@ -92,7 +92,7 @@ def test_source_migration_graph_continues_to_cae_workbench_indexes():
     root = Path(__file__).resolve().parents[1]
     scripts = ScriptDirectory.from_config(Config(root / "alembic.ini"))
 
-    assert scripts.get_heads() == ["7b2d8f4a6c10"]
+    assert scripts.get_heads() == ["8d4e2f6a1b30"]
     assert scripts.get_revision("f24a6b91d3ce").down_revision == "e7b2c5d91a40"
     assert scripts.get_revision("9d31a6f7c2e4").down_revision == "f24a6b91d3ce"
     assert scripts.get_revision("a4c8e2f19b73").down_revision == "9d31a6f7c2e4"
@@ -102,6 +102,7 @@ def test_source_migration_graph_continues_to_cae_workbench_indexes():
     assert scripts.get_revision("f6a8c1d2e3b4").down_revision == "e91f6b3a2c7d"
     assert scripts.get_revision("4c91e2a7b5d8").down_revision == "f6a8c1d2e3b4"
     assert scripts.get_revision("7b2d8f4a6c10").down_revision == "4c91e2a7b5d8"
+    assert scripts.get_revision("8d4e2f6a1b30").down_revision == "7b2d8f4a6c10"
     assert not any(root.joinpath("alembic", "versions").glob("*_measurement_contract_metadata.py"))
 
 
@@ -240,6 +241,27 @@ def test_geometry_manager_revision_projects_all_modules_and_allows_controlled_cl
     assert "caemble.geometry_delete" in source
     assert 'ondelete="RESTRICT"' in source
     assert 'op.drop_table("experiment_geometry_modules")' in source
+
+
+def test_function_geometry_revision_discards_v1_data_and_sets_module_format_v2():
+    revision = next(
+        (Path(__file__).resolve().parents[1] / "alembic" / "versions").glob(
+            "*_function_geometry_module_v2.py"
+        )
+    )
+    source = revision.read_text(encoding="utf-8")
+    assert "discarded_geometry_experiments" in source
+    assert "DELETE FROM measurements" in source
+    assert "DELETE FROM experiments" in source
+    for table in (
+        "geometry_imports",
+        "geometry_versions",
+        "geometry_packages",
+        "geometry_repositories",
+    ):
+        assert f'DELETE FROM {table}' in source
+    assert "_set_module_format(2)" in source
+    assert "_set_module_format(1)" in source
 
 
 def test_deployment_preflights_legacy_geometry_before_stopping_api():

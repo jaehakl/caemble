@@ -2,23 +2,24 @@ import { createStore, del, get, set } from 'idb-keyval'
 import {
   MAX_GEOMETRY_MODULE_SOURCE_BYTES,
   MAX_GEOMETRY_MODULES,
+  analyzeGeometrySource,
   assertCadSourceDocument,
   assertExperimentSourceBundle,
   assertGeometryCoordinate,
   createGeometrySnapshot,
+  isGeometryRootAlias,
   validateGeometrySnapshotHashes,
   type GeometrySnapshotModule,
 } from '@/lib/cad'
 import { retainReferencedStagedModules } from '../geometry/useGeometryWorkspaceState'
 import type { GeometryLocalDraft, WorkbenchDraft } from '../types'
 
-export const WORKBENCH_DRAFT_VERSION = 4 as const
+export const WORKBENCH_DRAFT_VERSION = 5 as const
 export const ANONYMOUS_WORKBENCH_USER = 'anonymous'
 
 const draftsStore = createStore('caemble', 'cae-workbench-drafts')
 const slugPattern = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/u
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u
-const aliasPattern = /^[A-Za-z_][A-Za-z0-9_]*$/u
 
 function plainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(
@@ -50,6 +51,7 @@ function validGeometryDrafts(value: unknown): value is WorkbenchDraft['geometry'
         !draft.draftId ||
         draft.draftId.length > 128 ||
         draftIds.has(draft.draftId) ||
+        typeof draft.source !== 'string' ||
         !validUtf8Text(draft.source, MAX_GEOMETRY_MODULE_SOURCE_BYTES) ||
         typeof draft.description !== 'string' ||
         !validOptionalId(draft.baseGeometryVersionId) ||
@@ -64,8 +66,7 @@ function validGeometryDrafts(value: unknown): value is WorkbenchDraft['geometry'
         draft.version.split('.').some((part) => Number(part) > 2_147_483_647) ||
         !['major', 'minor', 'patch'].includes(String(draft.bump)) ||
         typeof draft.standalonePreview !== 'boolean' ||
-        (draft.rootAlias !== null &&
-          (typeof draft.rootAlias !== 'string' || !aliasPattern.test(draft.rootAlias) || aliases.has(draft.rootAlias)))
+        (draft.rootAlias !== null && (!isGeometryRootAlias(draft.rootAlias) || aliases.has(draft.rootAlias)))
       ) {
         return false
       }
@@ -75,6 +76,7 @@ function validGeometryDrafts(value: unknown): value is WorkbenchDraft['geometry'
       }
       draftIds.add(draft.draftId)
       if (draft.rootAlias) aliases.add(draft.rootAlias)
+      analyzeGeometrySource(draft.source)
       return true
     })
   } catch {
@@ -87,7 +89,7 @@ function stagedSnapshot(modules: readonly GeometrySnapshotModule[]) {
   const roots = modules
     .filter((module) => !imported.has(module.coordinate))
     .map((module, index) => ({
-      alias: `staged_${index}`,
+      alias: `Staged${index}`,
       geometryVersionId: module.geometryVersionId,
       coordinate: module.coordinate,
       moduleHash: module.moduleHash,
@@ -193,7 +195,7 @@ function migrateWorkbenchDraft(value: unknown, userKey: string): WorkbenchDraft 
   if (!value || typeof value !== 'object') return null
   const draft = value as Record<string, unknown>
   if (
-    ![2, 3].includes(Number(draft.version)) ||
+    ![2, 3, 4].includes(Number(draft.version)) ||
     draft.userKey !== userKey ||
     typeof draft.savedAt !== 'number' ||
     !draft.experiment ||
@@ -203,21 +205,20 @@ function migrateWorkbenchDraft(value: unknown, userKey: string): WorkbenchDraft 
   ) {
     return null
   }
-  if (draft.version === 3 && plainObject(draft.geometry)) {
-    const geometry = draft.geometry as unknown as WorkbenchDraft['geometry']
-    return {
-      ...(draft as unknown as Omit<WorkbenchDraft, 'version' | 'geometry'>),
-      version: WORKBENCH_DRAFT_VERSION,
-      geometry: {
-        ...geometry,
-        drafts: Object.fromEntries(
-          Object.entries(geometry.drafts).map(([coordinate, item]) => [
-            coordinate,
-            { ...item, standalonePreview: false },
-          ]),
-        ),
-      },
-    }
+  const experiment = draft.experiment as Record<string, unknown>
+  const document = plainObject(experiment.document) ? experiment.document : null
+  const record = plainObject(experiment.record) ? experiment.record : null
+  const bundles = [document?.sourceBundle, experiment.baselineBundle, record?.source_bundle]
+  if (
+    bundles.some(
+      (bundle) =>
+        plainObject(bundle) &&
+        plainObject(bundle.geometrySnapshot) &&
+        ((Array.isArray(bundle.geometrySnapshot.modules) && bundle.geometrySnapshot.modules.length > 0) ||
+          (Array.isArray(bundle.geometrySnapshot.roots) && bundle.geometrySnapshot.roots.length > 0)),
+    )
+  ) {
+    return null
   }
   return {
     ...(draft as unknown as Omit<WorkbenchDraft, 'version' | 'geometry'>),

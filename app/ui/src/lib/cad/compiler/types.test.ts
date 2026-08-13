@@ -70,8 +70,8 @@ describe('CompiledCadSource', () => {
         geometryGraph: {
           graphHash: 'd'.repeat(64),
           roots: [
-            { alias: 'shallow', coordinate: coordinates[63], moduleHash },
-            { alias: 'long', coordinate: coordinates[1], moduleHash },
+            { alias: 'Shallow', coordinate: coordinates[63], moduleHash },
+            { alias: 'Long', coordinate: coordinates[1], moduleHash },
           ],
           modules: validModules,
         },
@@ -87,8 +87,8 @@ describe('CompiledCadSource', () => {
         geometryGraph: {
           graphHash: 'd'.repeat(64),
           roots: [
-            { alias: 'shallow', coordinate: coordinates[63], moduleHash },
-            { alias: 'long', coordinate: coordinates[0], moduleHash },
+            { alias: 'Shallow', coordinate: coordinates[63], moduleHash },
+            { alias: 'Long', coordinate: coordinates[0], moduleHash },
           ],
           modules,
         },

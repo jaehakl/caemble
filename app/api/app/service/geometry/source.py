@@ -22,7 +22,15 @@ GEOMETRY_SEMVER_COMPONENT_MAX = 2_147_483_647
 NAMESPACE_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$")
 SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 SEMVER_RE = re.compile(r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$")
-ALIAS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+ALIAS_RE = re.compile(r"^[A-Z][A-Za-z0-9_]*$")
+RESERVED_ALIASES = frozenset(
+    "Array ArrayBuffer Atomics BigInt Blob Boolean DataView Date Document Element Error Event File "
+    "FinalizationRegistry Float32Array Float64Array FormData Fragment Function Headers History Image "
+    "Int16Array Int32Array Int8Array Intl JSON Location Map Math Node Number Object Promise Proxy Reflect "
+    "RegExp Request Response Set SharedArrayBuffer SharedWorker String Symbol Uint16Array Uint32Array "
+    "Uint8Array Uint8ClampedArray URL URLSearchParams WeakMap WeakRef WeakSet WebAssembly WebSocket Worker "
+    "XMLHttpRequest".split()
+)
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COORDINATE_RE = re.compile(
     r"^caemble:geometry/"
@@ -56,9 +64,9 @@ def _validate_slug(value: str, field_name: str) -> None:
 
 
 def _validate_alias(alias: str) -> None:
-    if ALIAS_RE.fullmatch(alias) is None:
+    if ALIAS_RE.fullmatch(alias) is None or alias in RESERVED_ALIASES:
         raise _bad(
-            "Geometry root alias format is invalid.",
+            "Geometry root alias must be a non-reserved PascalCase identifier.",
             code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
 
@@ -92,7 +100,7 @@ def module_hash(coordinate: str, source_digest: str, imports: list[dict[str, str
     canonical = json.dumps(
         {
             "schemaVersion": 1,
-            "moduleFormatVersion": 1,
+            "moduleFormatVersion": 2,
             "cadApiVersion": 5,
             "coordinate": coordinate,
             "sourceHash": source_digest,
@@ -117,7 +125,19 @@ def analyze_geometry_source(source: str) -> list[tuple[str, int, int]]:
 
     imports: list[tuple[str, int, int]] = []
     default_exports = 0
+    default_value = None
+    bindings: dict[bytes, Any] = {}
     for node in root.named_children:
+        if node.type == "lexical_declaration" and any(child.type == "const" for child in node.children):
+            for declarator in (child for child in node.named_children if child.type == "variable_declarator"):
+                name = declarator.child_by_field_name("name")
+                value = declarator.child_by_field_name("value")
+                if name is not None and name.type == "identifier" and value is not None:
+                    bindings[encoded[name.start_byte : name.end_byte]] = value
+        elif node.type == "function_declaration":
+            name = node.child_by_field_name("name")
+            if name is not None:
+                bindings[encoded[name.start_byte : name.end_byte]] = node
         if node.type == "import_statement":
             source_node = node.child_by_field_name("source")
             clause = next((child for child in node.named_children if child.type == "import_clause"), None)
@@ -153,20 +173,7 @@ def analyze_geometry_source(source: str) -> list[tuple[str, int, int]]:
         elif node.type == "export_statement":
             if any(child.type == "default" for child in node.children):
                 default_exports += 1
-                declaration = next(
-                    (
-                        child
-                        for child in node.named_children
-                        if child.type not in {"identifier"} or encoded[child.start_byte : child.end_byte] != b"default"
-                    ),
-                    None,
-                )
-                if declaration is not None and declaration.type in {
-                    "function_declaration",
-                    "class_declaration",
-                    "abstract_class_declaration",
-                }:
-                    raise _bad("Geometry default export must be a Geometry-compatible value.")
+                default_value = node.child_by_field_name("value") or node.child_by_field_name("declaration")
             else:
                 raise _bad("Geometry modules may only export one default value.")
 
@@ -254,6 +261,36 @@ def analyze_geometry_source(source: str) -> list[tuple[str, int, int]]:
                     )
     if default_exports != 1:
         raise _bad("Geometry modules must contain exactly one direct default export.")
+    visited: set[bytes] = set()
+    while default_value is not None and default_value.type in {
+        "as_expression",
+        "parenthesized_expression",
+        "satisfies_expression",
+        "type_assertion",
+    }:
+        default_value = next(iter(default_value.named_children), None)
+    while default_value is not None and default_value.type == "identifier":
+        name = encoded[default_value.start_byte : default_value.end_byte]
+        if name in visited:
+            raise _bad("Geometry default export binding is circular.", code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        visited.add(name)
+        default_value = bindings.get(name)
+        while default_value is not None and default_value.type in {
+            "as_expression",
+            "parenthesized_expression",
+            "satisfies_expression",
+            "type_assertion",
+        }:
+            default_value = next(iter(default_value.named_children), None)
+    if default_value is None or default_value.type not in {
+        "arrow_function",
+        "function_declaration",
+        "function_expression",
+    }:
+        raise _bad(
+            "Geometry default export must resolve to a function component.",
+            code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
     coordinates = [item[0] for item in imports]
     if len(coordinates) > MAX_IMPORTS:
         raise _bad(f"Geometry modules may import at most {MAX_IMPORTS} Geometry modules.")
@@ -262,7 +299,7 @@ def analyze_geometry_source(source: str) -> list[tuple[str, int, int]]:
     return imports
 
 
-def validate_experiment_tsx_imports(source: str, *, allow_geometry_registry: bool) -> None:
+def validate_experiment_tsx_imports(source: str) -> None:
     encoded = source.encode("utf-8")
     tree = Parser(TSX_LANGUAGE).parse(encoded)
     root = tree.root_node
@@ -283,11 +320,11 @@ def validate_experiment_tsx_imports(source: str, *, allow_geometry_registry: boo
         specifier = raw[1:-1].decode("utf-8")
         if specifier == "@caemble/core":
             continue
-        if specifier == "@caemble/geometries" and allow_geometry_registry:
-            named = clause.named_children
-            if len(named) != 1 or named[0].type != "identifier":
-                raise _bad("@caemble/geometries must use one default import.")
-            continue
+        if specifier == "@caemble/geometries":
+            raise _bad(
+                "@caemble/geometries has been removed; use a PascalCase Geometry root alias directly.",
+                code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
         raise _bad(f"Experiment import is not allowed: {specifier}")
     for node in _walk(root):
         if node.type == "call_expression":

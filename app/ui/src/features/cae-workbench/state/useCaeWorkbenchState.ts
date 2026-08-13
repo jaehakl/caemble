@@ -91,11 +91,11 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
     clearBaseMeasurement()
   }, [clearBaseMeasurement])
 
-  const handleGeometrySnapshotChange = useCallback(
-    (snapshot: GeometrySnapshot) => {
+  const handleGeometryExperimentChange = useCallback(
+    (snapshot: GeometrySnapshot, files?: Readonly<Record<string, string>>) => {
       setExperiment((current) =>
         current
-          ? createExperimentDocument(createExperimentSourceBundleV3(current.sourceBundle.files, snapshot))
+          ? createExperimentDocument(createExperimentSourceBundleV3(files ?? current.sourceBundle.files, snapshot))
           : current,
       )
       clearMeasurement()
@@ -106,8 +106,9 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
 
   const geometry = useGeometryWorkspaceState({
     initialNamespace: user?.geometry_namespace,
-    onSnapshotChange: handleGeometrySnapshotChange,
+    onExperimentChange: handleGeometryExperimentChange,
     snapshot: experiment?.sourceBundle.formatVersion === 3 ? experiment.sourceBundle.geometrySnapshot : null,
+    sourceFiles: experiment?.sourceBundle.files ?? {},
   })
   const resetGeometry = geometry.reset
   const restoreGeometry = geometry.restore
@@ -398,7 +399,7 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
         splitPercent: number
       }>,
     ): WorkbenchDraft => ({
-      version: 4,
+      version: 5,
       savedAt: Date.now(),
       userKey,
       experiment: {

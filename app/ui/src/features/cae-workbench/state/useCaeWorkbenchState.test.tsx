@@ -105,7 +105,7 @@ describe('useCaeWorkbenchState', () => {
         splitPercent: 50,
       }),
     ).toMatchObject({
-      version: 4,
+      version: 5,
       experiment: { record: { id: 7 } },
       candidate: { vars: null, materialParameters: null },
       selection: { measurementId: null },

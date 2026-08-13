@@ -189,10 +189,11 @@ test('manages paged Geometry packages, exact versions, references, and the defau
     version_minor: 2,
     version_patch: 3,
     description: 'Stable plate',
-    source: 'export default <box size={[1, 1, 1]} />;',
+    source:
+      "import { type Geometry } from '@caemble/core'; const Plate: Geometry = () => <box size={[1, 1, 1]} />; export default Plate;",
     source_hash: hash,
     module_hash: hash,
-    module_format_version: 1,
+    module_format_version: 2,
     cad_api_version: 5,
     archived_at: null,
     repository_id: repository.id,
@@ -226,7 +227,7 @@ test('manages paged Geometry packages, exact versions, references, and the defau
           {
             geometryVersionId: version.id,
             coordinate,
-            moduleFormatVersion: 1,
+            moduleFormatVersion: 2,
             cadApiVersion: 5,
             description: version.description,
             source: version.source,
@@ -279,11 +280,25 @@ test('manages paged Geometry packages, exact versions, references, and the defau
 
   await page.goto('/')
   await page.getByRole('menuitem', { name: 'Source' }).click()
+  await page.getByRole('menuitem', { name: 'New Experiment' }).click()
+  await page
+    .getByRole('dialog', { name: 'New Experiment' })
+    .getByRole('button', { name: /DC Uniform Bar/ })
+    .click()
+  await page.getByRole('menuitem', { name: 'Source' }).click()
   await page.getByRole('menuitem', { name: 'Geometry Manager' }).click()
   const manager = page.getByRole('dialog', { name: 'Geometry Manager' })
   await expect(manager).toBeVisible()
   await expect(manager).toContainText('designer/common/plate')
   await expect(manager).toContainText(coordinate)
+
+  page.once('dialog', (prompt) => prompt.accept('PlateRoot'))
+  await manager.getByRole('button', { name: 'Experiment에서 사용' }).click()
+  const usageDialog = page.getByRole('dialog', { name: 'Experiment에서 Geometry 사용' })
+  await expect(usageDialog).toContainText('<PlateRoot')
+  await page.keyboard.press('Escape')
+  await expect(usageDialog).toBeHidden()
+  await expect(manager).toBeVisible()
 
   await manager.getByRole('tab', { name: 'References' }).click()
   await expect(manager).toContainText('Bracket study')
@@ -298,4 +313,18 @@ test('manages paged Geometry packages, exact versions, references, and the defau
   await namespaceInput.locator('xpath=..').getByRole('button').click()
   await expect(manager.locator('input[name="namespace"]')).toHaveValue('designer-next')
   await expect(manager).toContainText(coordinate)
+
+  await manager.getByRole('button', { name: '닫기' }).click()
+  const experimentEditor = page.getByRole('textbox', { name: 'Editor content' })
+  await experimentEditor.click({ force: true })
+  await page.keyboard.press('Control+A')
+  await page.keyboard.insertText(`import { experiment } from '@caemble/core'
+
+export default experiment({
+  lengthUnit: 'mm',
+  varsSchema: {},
+  geometry: () => <PlateRoot id="plate" />,
+  recordedData: {},
+})`)
+  await expect(page.locator('.monaco-editor .squiggly-error')).toHaveCount(0, { timeout: 10_000 })
 })

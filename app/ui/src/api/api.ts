@@ -150,11 +150,12 @@ const geometrySnapshotImportSchema = z
   })
   .strict()
   .readonly()
+const geometryRootAliasSchema = z.string().regex(/^[A-Z][A-Za-z0-9_]*$/)
 const geometrySnapshotModuleSchema = z
   .object({
     geometryVersionId: z.number().int().positive(),
     coordinate: geometryCoordinateSchema,
-    moduleFormatVersion: z.literal(1),
+    moduleFormatVersion: z.literal(2),
     cadApiVersion: z.literal(5),
     description: z.string().nullable(),
     source: z.string().min(1),
@@ -166,7 +167,7 @@ const geometrySnapshotModuleSchema = z
   .readonly()
 const geometrySnapshotRootSchema = z
   .object({
-    alias: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+    alias: geometryRootAliasSchema,
     geometryVersionId: z.number().int().positive(),
     coordinate: geometryCoordinateSchema,
     moduleHash: geometryHashSchema,
@@ -265,7 +266,7 @@ const geometryVersionRowSchema = z.object({
   source: z.string(),
   source_hash: geometryHashSchema,
   module_hash: geometryHashSchema,
-  module_format_version: z.literal(1),
+  module_format_version: z.literal(2),
   cad_api_version: z.literal(5),
   archived_at: z.string().nullable(),
   repository_id: z.number().int().positive(),
@@ -295,7 +296,7 @@ const geometryVersionSummarySchema = z.object({
   description: z.string().nullable(),
   sourceHash: geometryHashSchema,
   moduleHash: geometryHashSchema,
-  moduleFormatVersion: z.literal(1),
+  moduleFormatVersion: z.literal(2),
   cadApiVersion: z.literal(5),
   archivedAt: z.string().nullable(),
   createdAt: z.string(),
@@ -326,7 +327,7 @@ const geometryPublishRequestSchema = z.object({
   drafts: z.array(geometryPublishDraftSchema).min(1),
   currentRoots: z.array(
     z.object({
-      alias: z.string(),
+      alias: geometryRootAliasSchema,
       geometryVersionId: z.number().int().positive().nullable().optional(),
       draftId: z.string().nullable().optional(),
     }),
@@ -359,7 +360,7 @@ const geometryPublishPlanSchema = z.object({
   ),
   roots: z.array(
     z.object({
-      alias: z.string(),
+      alias: geometryRootAliasSchema,
       geometryVersionId: z.number().int().positive().optional(),
       draftId: z.string().optional(),
       coordinate: geometryCoordinateSchema,
@@ -368,7 +369,7 @@ const geometryPublishPlanSchema = z.object({
   ),
   replacements: z.array(
     z.object({
-      alias: z.string(),
+      alias: geometryRootAliasSchema,
       fromGeometryVersionId: z.number().int().positive().optional(),
       toDraftId: z.string(),
       coordinate: geometryCoordinateSchema,

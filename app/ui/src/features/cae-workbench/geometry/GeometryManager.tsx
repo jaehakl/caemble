@@ -24,7 +24,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuth } from '@/features/auth/use-auth'
 import CadEditor from '@/features/viewer/editor/CadEditor'
 import { cn } from '@/lib/utils'
-import type { GeometryWorkspaceState } from './useGeometryWorkspaceState'
+import { GeometryUsageDialog } from './GeometryUsageDialog'
+import { suggestGeometryRootAlias, type GeometryWorkspaceState } from './useGeometryWorkspaceState'
 
 const PAGE_SIZES = [12, 24, 48] as const
 
@@ -37,13 +38,17 @@ export function GeometryManager({
   initialPackageId = null,
   initialVersionId = null,
   onEdit,
+  onOpenExperimentSource,
   onOpenExperiment,
+  onUse,
 }: {
   geometry: GeometryWorkspaceState
   initialPackageId?: number | null
   initialVersionId?: number | null
   onEdit: (versionId: number, repositoryId: number, packageId: number) => void | Promise<void>
+  onOpenExperimentSource: () => void
   onOpenExperiment: (experimentId: number) => void | Promise<void>
+  onUse: (versionId: number, alias: string) => unknown | Promise<unknown>
 }) {
   const auth = useAuth()
   const isAdmin = Boolean(auth.user?.roles.includes('admin'))
@@ -63,6 +68,7 @@ export function GeometryManager({
   const [experimentSearch, setExperimentSearch] = useState('')
   const [experimentPage, setExperimentPage] = useState(0)
   const [repositoryDescription, setRepositoryDescription] = useState('')
+  const [usageExample, setUsageExample] = useState<string | null>(null)
 
   const repositoriesQuery = useQuery({
     queryKey: ['geometry', 'manager', 'repositories', listScope],
@@ -588,6 +594,24 @@ export function GeometryManager({
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button
+                  disabled={!selectedVersion || Boolean(selectedVersion.archived_at)}
+                  onClick={() => {
+                    if (!selectedVersion) return
+                    const aliases = new Set([
+                      ...geometry.currentSnapshot.roots.map((root) => root.alias),
+                      ...Object.values(geometry.drafts).flatMap((draft) => (draft.rootAlias ? [draft.rootAlias] : [])),
+                    ])
+                    const suggested = suggestGeometryRootAlias(selectedPackage.name, aliases)
+                    const alias = window.prompt('Experiment-local root alias', suggested)?.trim()
+                    if (!alias) return
+                    void Promise.resolve(onUse(selectedVersion.id, alias))
+                      .then(() => setUsageExample(alias))
+                      .catch((cause: unknown) => toast.error(message(cause)))
+                  }}
+                >
+                  <Plus /> Experiment에서 사용
+                </Button>
+                <Button
                   disabled={!selectedVersion || selectedPackage.repository_archived_at !== null}
                   onClick={() => {
                     if (!selectedVersion) return
@@ -867,6 +891,12 @@ export function GeometryManager({
           </div>
         )}
       </main>
+      <GeometryUsageDialog
+        alias={usageExample ?? ''}
+        onOpenChange={(open) => !open && setUsageExample(null)}
+        onOpenExperimentSource={onOpenExperimentSource}
+        open={usageExample !== null}
+      />
     </div>
   )
 }

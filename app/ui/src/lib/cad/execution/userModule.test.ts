@@ -90,18 +90,16 @@ describe('compiled Experiment execution v5', () => {
     expect(snapshot).not.toHaveProperty('seed')
   })
 
-  it('shares Geometry modules across Experiment and Task registry imports with CommonJS default interop', async () => {
+  it('injects one root component into Experiment and Task lexical scopes without exposing it to Geometry modules', async () => {
     const sourceHash = '3'.repeat(64)
     const leafCoordinate = 'caemble:geometry/jlee/demo/leaf@1.0.0' as GeometryCoordinate
     const proxyCoordinate = 'caemble:geometry/jlee/demo/proxy@1.0.0' as GeometryCoordinate
     const coordinate = 'caemble:geometry/jlee/demo/shared@1.0.0' as GeometryCoordinate
     const files = {
       'experiment.tsx': `import { experiment } from '@caemble/core'
-import geometries from '@caemble/geometries'
-export default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => geometries.shared, recordedData: {} })`,
+export default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => <SharedRoot id="shared" />, recordedData: {} })`,
       'tasks/electric.tsx': `import { defineTask } from '@caemble/core'
-import geometries from '@caemble/geometries'
-export default defineTask({ kernel: { name: 'test', version: '1' }, lengthUnit: 'mm', geometry: () => geometries.shared, config: () => ({}) })`,
+export default defineTask({ kernel: { name: 'test', version: '1' }, lengthUnit: 'mm', geometry: () => <SharedRoot id="shared" />, config: () => ({}) })`,
     }
     const compiled = await compiledDocument(files, sourceHash)
     const geometryModule = (
@@ -121,7 +119,7 @@ export default defineTask({ kernel: { name: 'test', version: '1' }, lengthUnit: 
     })
     const leaf = geometryModule(
       leafCoordinate,
-      `module.exports.default = h('box', { size: [1, 1, 1] })`,
+      `module.exports.default = ({ size = [1, 1, 1] }) => h('box', { size })`,
       '5'.repeat(64),
       [],
     )
@@ -144,7 +142,7 @@ module.exports.default = leaf`,
       ...compiled,
       geometryGraph: {
         graphHash: '8'.repeat(64),
-        roots: [{ alias: 'shared', coordinate, moduleHash: geometry.moduleHash }],
+        roots: [{ alias: 'SharedRoot', coordinate, moduleHash: geometry.moduleHash }],
         modules: {
           [coordinate]: geometry,
           [leafCoordinate]: leaf,
@@ -157,5 +155,53 @@ module.exports.default = leaf`,
     expect(result.scene.parts[0].id).toBe('shared')
     expect(result.taskScenes.electric.parts[0].id).toBe('shared')
     expect(evaluateCompiledGeometryModule(graph, leafCoordinate).parts[0].id).toBe('preview')
+
+    const implicit = geometryModule(
+      leafCoordinate,
+      `module.exports.default = () => h(SharedRoot, { id: 'implicit' })`,
+      '5'.repeat(64),
+      [],
+    )
+    expect(() =>
+      evaluateCompiledGeometryModule(
+        {
+          ...graph,
+          geometryGraph: {
+            ...graph.geometryGraph!,
+            modules: { ...graph.geometryGraph!.modules, [leafCoordinate]: implicit },
+          },
+        },
+        leafCoordinate,
+      ),
+    ).toThrow('SharedRoot is not defined')
+  })
+
+  it('rejects a legacy static Geometry module at the runtime boundary', async () => {
+    const sourceHash = '9'.repeat(64)
+    const coordinate = 'caemble:geometry/jlee/demo/static@1.0.0' as GeometryCoordinate
+    const compiled = await compiledDocument(defaultExperimentSourceBundle.files, sourceHash)
+    const legacy: CompiledGeometryModule = {
+      apiVersion: 5,
+      compilerVersion: CAD_COMPILER_VERSION,
+      entryFile: coordinate,
+      code: `module.exports.default = h('box', { size: [1, 1, 1] })`,
+      sourceHash,
+      geometrySourceHash: 'a'.repeat(64),
+      moduleHash: 'b'.repeat(64),
+      imports: [],
+    }
+    expect(() =>
+      evaluateCompiledGeometryModule(
+        {
+          ...compiled,
+          geometryGraph: {
+            graphHash: 'c'.repeat(64),
+            roots: [{ alias: 'StaticGeometry', coordinate, moduleHash: legacy.moduleHash }],
+            modules: { [coordinate]: legacy },
+          },
+        },
+        coordinate,
+      ),
+    ).toThrow('function component')
   })
 })

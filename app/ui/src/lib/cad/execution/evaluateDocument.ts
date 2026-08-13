@@ -181,7 +181,7 @@ export async function evaluateGeometryModule(
   const document = createCadSourceDocument('experiment', createExperimentSourceBundleV3(geometryPreviewFiles, snapshot))
   const compiledDocument = await compileCadDocument(document, {
     geometryDrafts: options.geometryDrafts,
-    geometryRoots: [{ alias: 'preview', coordinate }],
+    geometryRoots: [{ alias: 'StandalonePreview', coordinate }],
   })
   const request: CadGeometryPreviewRequest = {
     type: 'preview-geometry',

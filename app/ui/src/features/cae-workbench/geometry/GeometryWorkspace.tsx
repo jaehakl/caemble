@@ -34,6 +34,7 @@ type GeometryWorkspaceProps = Readonly<{
   effectiveGraph: EffectiveGeometryGraph | null
   expandedPaths: readonly string[]
   previewError: string | null
+  publishReady: boolean
   previewStale: boolean
   namespace: string | null
   selectedCoordinate: GeometryCoordinate | null
@@ -42,11 +43,15 @@ type GeometryWorkspaceProps = Readonly<{
   onAddImport: () => void
   onCreate: () => void
   onCheckLatest: (coordinate: GeometryCoordinate) => void
+  onConnectRoot: (coordinate: GeometryCoordinate) => void
   onBumpChange: (coordinate: GeometryCoordinate, bump: GeometryLocalDraft['bump']) => void
+  onDescriptionChange: (coordinate: GeometryCoordinate, description: string) => void
   onDiscardDraft: (coordinate: GeometryCoordinate) => void
   onEditAsNewVersion: (coordinate: GeometryCoordinate) => void
   onPublish: (coordinate: GeometryCoordinate, apply: boolean) => void
   onRemoveRoot: (alias: string) => void
+  onRenameRoot: (previousAlias: string, nextAlias: string) => void
+  onShowUsage: (alias: string) => void
   onManageRepositories: () => void
   onChangeNamespace: () => void
   onSelect: (coordinate: GeometryCoordinate) => void
@@ -64,12 +69,16 @@ function Metadata({
   effectiveModule,
   effectiveImports,
   module,
+  onDescriptionChange,
+  onRenameRoot,
   rootAliases,
 }: {
   draft: GeometryLocalDraft | null
   effectiveModule: EffectiveGeometryGraph['modules'][number] | null
   effectiveImports: readonly GeometryCoordinate[] | null
   module: GeometrySnapshotModule | null
+  onDescriptionChange: (coordinate: GeometryCoordinate, description: string) => void
+  onRenameRoot: (previousAlias: string, nextAlias: string) => void
   rootAliases: readonly string[]
 }) {
   if (!draft && !module && !effectiveModule) {
@@ -95,20 +104,55 @@ function Metadata({
       {rootAliases.length ? (
         <section className="space-y-1.5">
           <h3 className="font-semibold text-foreground">Root aliases</h3>
-          <div className="flex flex-wrap gap-1">
+          <p className="text-muted-foreground">
+            Experiment와 Task에서 <code>&lt;Alias /&gt;</code>처럼 바로 사용하는 Geometry component 이름이며 component의
+            id와는 별개입니다.
+          </p>
+          <div className="grid gap-2">
             {rootAliases.map((alias) => (
-              <Badge className="rounded-sm bg-muted" key={alias}>
-                {alias}
-              </Badge>
+              <form
+                className="flex gap-1"
+                key={alias}
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  onRenameRoot(alias, String(new FormData(event.currentTarget).get('alias') ?? ''))
+                }}
+              >
+                <input
+                  aria-label={`${alias} root alias`}
+                  className="h-8 min-w-0 flex-1 rounded-md border bg-background px-2 font-mono text-xs"
+                  defaultValue={alias}
+                  key={alias}
+                  name="alias"
+                />
+                <Button size="sm" type="submit" variant="outline">
+                  변경
+                </Button>
+              </form>
             ))}
           </div>
         </section>
       ) : null}
       <section className="space-y-1.5">
         <h3 className="font-semibold text-foreground">Description</h3>
-        <p className="whitespace-pre-wrap text-muted-foreground">
-          {draft?.description || module?.description || (effectiveModule ? 'Preview staging' : '설명 없음')}
-        </p>
+        {draft ? (
+          <textarea
+            aria-label="Geometry description"
+            className="min-h-20 w-full rounded-md border bg-background p-2 text-xs"
+            maxLength={2_000}
+            onChange={(event) => onDescriptionChange(draft.coordinate, event.target.value)}
+            value={draft.description}
+          />
+        ) : (
+          <>
+            <p className="whitespace-pre-wrap text-muted-foreground">
+              {module?.description || (effectiveModule ? 'Preview staging' : '설명 없음')}
+            </p>
+            {module ? (
+              <p className="text-muted-foreground">Published description은 새 Version draft에서 수정합니다.</p>
+            ) : null}
+          </>
+        )}
       </section>
       <section className="space-y-2">
         <h3 className="font-semibold text-foreground">Exact imports</h3>
@@ -233,6 +277,8 @@ export function GeometryWorkspace(props: GeometryWorkspaceProps) {
       effectiveModule={selectedEffectiveModule}
       effectiveImports={selectedEffectiveModule?.imports ?? null}
       module={selectedModule}
+      onDescriptionChange={props.onDescriptionChange}
+      onRenameRoot={props.onRenameRoot}
       rootAliases={rootAliases}
     />
   )
@@ -241,7 +287,7 @@ export function GeometryWorkspace(props: GeometryWorkspaceProps) {
     <section className="flex h-full min-h-[28rem] min-w-0 flex-col" aria-label="Geometry workspace">
       <header className="flex min-h-11 shrink-0 flex-wrap items-center gap-2 border-b bg-muted/20 px-2 py-1.5">
         <Button onClick={props.onAddRoot} size="sm" variant="outline">
-          <Plus className="size-3.5" /> Root 추가
+          <Plus className="size-3.5" /> Published Geometry 사용
         </Button>
         <Button onClick={props.onCreate} size="sm" variant="outline">
           <CirclePlus className="size-3.5" /> 새 Geometry
@@ -289,7 +335,8 @@ export function GeometryWorkspace(props: GeometryWorkspaceProps) {
                 <li key={root.alias} className="mb-1" role="none">
                   <div className="flex items-center justify-between gap-1 px-2 py-1 text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
                     <span className="truncate">Root · {root.alias}</span>
-                    {props.snapshot?.roots.some((savedRoot) => savedRoot.alias === root.alias) ? (
+                    {props.snapshot?.roots.some((savedRoot) => savedRoot.alias === root.alias) ||
+                    Object.values(props.drafts).some((draft) => draft.rootAlias === root.alias) ? (
                       <button
                         aria-label={`${root.alias} root 제거`}
                         className="rounded p-0.5 hover:bg-destructive/10 hover:text-destructive"
@@ -354,6 +401,21 @@ export function GeometryWorkspace(props: GeometryWorkspaceProps) {
                 </Button>
               </>
             ) : null}
+            {props.selectedCoordinate && !rootAliases.length && !selectedDraft?.standalonePreview ? (
+              <Button
+                disabled={props.busy}
+                onClick={() => props.onConnectRoot(props.selectedCoordinate!)}
+                size="sm"
+                variant="outline"
+              >
+                Experiment에서 사용
+              </Button>
+            ) : null}
+            {props.selectedCoordinate && rootAliases.length ? (
+              <Button disabled={props.busy} onClick={() => props.onShowUsage(rootAliases[0])} size="sm" variant="ghost">
+                사용 예시
+              </Button>
+            ) : null}
             {selectedDraft ? (
               <>
                 <Button disabled={props.busy} onClick={props.onAddImport} size="sm" variant="outline">
@@ -383,18 +445,25 @@ export function GeometryWorkspace(props: GeometryWorkspaceProps) {
                   <RotateCcw className="size-3.5" /> 폐기
                 </Button>
                 <Button
-                  disabled={props.busy}
+                  disabled={props.busy || !props.publishReady}
                   onClick={() => props.onPublish(selectedDraft.coordinate, false)}
                   size="sm"
+                  title={!props.publishReady ? '현재 Geometry preview가 성공한 뒤 발행할 수 있습니다.' : undefined}
                   variant="outline"
                 >
                   <Upload className="size-3.5" /> Publish only
                 </Button>
                 <Button
-                  disabled={props.busy || selectedDraft.standalonePreview}
+                  disabled={props.busy || !props.publishReady || selectedDraft.standalonePreview}
                   onClick={() => props.onPublish(selectedDraft.coordinate, true)}
                   size="sm"
-                  title={selectedDraft.standalonePreview ? 'Standalone draft는 Publish only로 발행합니다.' : undefined}
+                  title={
+                    selectedDraft.standalonePreview
+                      ? 'Standalone draft는 Publish only로 발행합니다.'
+                      : !props.publishReady
+                        ? '현재 Geometry preview가 성공한 뒤 발행할 수 있습니다.'
+                        : undefined
+                  }
                 >
                   <GitBranch className="size-3.5" /> Publish &amp; Apply
                 </Button>

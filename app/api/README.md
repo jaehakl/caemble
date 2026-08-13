@@ -85,6 +85,10 @@ Geometry 좌표는
 `caemble:geometry/<namespace>/<repository>/<package>@<major>.<minor>.<patch>`이고
 prerelease, range, `latest`, 상대 경로 import는 허용하지 않는다. 모든 dependency는
 같은 owner의 Repository 안에 있어야 하며 published version의 source는 수정하지 않는다.
+Module format v2 source는 `Geometry<Props>` 함수 component로 정적으로 해석되는 default
+export만 허용한다. exact coordinate import도 함수 component를 반환하므로 importer가
+JSX에서 명시적인 `id`와 props를 전달한다. props 계약은 TypeScript source에만 있고
+별도 DB metadata로 저장하지 않는다.
 참조가 없는 Version과 Package만 검증된 정리 API로 삭제할 수 있다.
 사용자가 삭제되면 repository는 owner FK만 `NULL`로 바뀌고 namespace와 좌표를
 보존한 채 자동 archive된다. 이 orphan graph는 admin만 조회할 수 있고 namespace는
@@ -106,7 +110,8 @@ transaction으로 version과 import projection을 만든다. `repositoryId`가 �
 해당 기존 Repository의 namespace를 사용하고, 없는 새 Repository draft만 사용자의
 현재 기본 namespace를 사용한다. 새 draft의 repository/package가 없으면 publish
 transaction 안에서 함께 생성한다. SemVer 충돌은
-`geometry_version_conflict` 409와 suggested version을 반환한다.
+`geometry_version_conflict` 409와 suggested version을 반환한다. resolve/publish snapshot의
+`moduleFormatVersion`은 2이고 CAD API version은 5다.
 
 Experiment source bundle v2는 그대로 유지한다. Geometry가 적용된 bundle v3는
 `geometrySnapshot.schemaVersion=1` 아래 exact root와 전체 reachable module source,

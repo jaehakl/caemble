@@ -31,7 +31,7 @@ export type GeometryLocalDraft = Readonly<{
 }>
 
 export type WorkbenchDraft = Readonly<{
-  version: 4
+  version: 5
   savedAt: number
   userKey: string
   experiment: Readonly<{

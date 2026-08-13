@@ -107,13 +107,9 @@ async def save_experiment(
     if source_hash != request.bundleHash:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bundleHash does not match sourceBundle.")
 
-    allow_geometry_registry = bundle.formatVersion == 3
     for path, source in request.sourceBundle.files.items():
         if path.endswith(".tsx"):
-            validate_experiment_tsx_imports(
-                source,
-                allow_geometry_registry=allow_geometry_registry,
-            )
+            validate_experiment_tsx_imports(source)
 
     existing = None
     if request.id is not None:

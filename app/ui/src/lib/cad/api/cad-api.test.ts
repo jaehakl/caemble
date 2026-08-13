@@ -5,6 +5,9 @@ import { defaultCode } from '../../defaultCode'
 import { defaultExperimentCode } from '../../defaultExperimentCode'
 import { defaultExperimentProgramCode, defaultExperimentTaskCode } from '../../defaultExperimentProgramCode'
 import { caembleExamples, caembleProgramExamples } from '../../examples'
+import { geometryCoordinateTypes, geometryRootTypes } from '../compiler/geometryTypes'
+import type { EffectiveGeometryGraph } from '../source/effectiveGeometryGraph'
+import type { GeometryCoordinate } from '../source/geometrySnapshot'
 import coreTypes from './caemble-core.d.ts?raw'
 import jsxTypes from './cad-jsx.d.ts?raw'
 
@@ -13,12 +16,13 @@ const experimentProgramDoc = readFileSync(
   'utf8',
 )
 
-function diagnosticsFor(source: string) {
-  const sourcePath = 'C:/caemble-source/source.tsx'
+function diagnosticsFor(source: string, additionalFiles: Readonly<Record<string, string>> = {}) {
+  const sourcePath = 'C:/caemble-source/hash/experiment.tsx'
   const virtualFiles = new Map<string, string>([
     [sourcePath, source],
     ['C:/node_modules/@caemble/core/index.d.ts', coreTypes],
     ['C:/node_modules/@caemble/core/cad-jsx.d.ts', jsxTypes],
+    ...Object.entries(additionalFiles),
   ])
   const options: ts.CompilerOptions = {
     allowNonTsExtensions: true,
@@ -43,14 +47,20 @@ function diagnosticsFor(source: string) {
   const defaultDirectoryExists = host.directoryExists?.bind(host)
   host.fileExists = (path) => virtualFiles.has(path.replace(/\\/g, '/')) || defaultFileExists(path)
   host.readFile = (path) => virtualFiles.get(path.replace(/\\/g, '/')) ?? defaultReadFile(path)
-  host.directoryExists = (path) =>
-    path.replace(/\\/g, '/').startsWith('C:/node_modules/@caemble') || defaultDirectoryExists?.(path) || false
+  host.directoryExists = (path) => {
+    const normalized = path.replace(/\\/g, '/')
+    return (
+      [...virtualFiles.keys()].some((filename) => filename.startsWith(`${normalized}/`)) ||
+      defaultDirectoryExists?.(path) ||
+      false
+    )
+  }
   host.getSourceFile = (path, languageVersion) => {
     const text = host.readFile(path)
     return text === undefined ? undefined : ts.createSourceFile(path, text, languageVersion, true)
   }
   const program = ts.createProgram({
-    rootNames: [sourcePath, 'C:/node_modules/@caemble/core/cad-jsx.d.ts'],
+    rootNames: [sourcePath, 'C:/node_modules/@caemble/core/cad-jsx.d.ts', ...Object.keys(additionalFiles)],
     options,
     host,
   })
@@ -78,6 +88,42 @@ describe('unversioned CAD authoring declarations', () => {
       diagnosticsFor(`import { experiment } from '@caemble/core'
       export default experiment({ varsSchema: {}, recordedData: {} })`),
     ).toContainEqual(expect.stringContaining('geometry, lengthUnit'))
+  })
+
+  it('makes destructuring defaults optional while preserving id and props without defaults', () => {
+    const coordinate = 'caemble:geometry/jlee/common/notched@1.0.0' as GeometryCoordinate
+    const graph = {
+      graphHash: 'a'.repeat(64),
+      roots: [{ alias: 'Notched', coordinate, moduleHash: 'b'.repeat(64) }],
+      modules: [
+        {
+          coordinate,
+          sourceHash: 'c'.repeat(64),
+          moduleHash: 'b'.repeat(64),
+          imports: [],
+          source: `import { type Geometry, type Vec3 } from '@caemble/core'
+const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1, 2, 3], thickness }) => <box size={size} scale={[thickness, 1, 1]} />
+export default Notched`,
+        },
+      ],
+    } satisfies EffectiveGeometryGraph
+    const prefix = 'C:/caemble-source/hash'
+    const files = {
+      [`${prefix}/geometry-coordinates.d.ts`]: geometryCoordinateTypes(graph),
+      [`${prefix}/geometries/${encodeURIComponent(coordinate)}.tsx`]: graph.modules[0].source,
+      [`${prefix}/geometry-roots.d.ts`]: geometryRootTypes(graph),
+    }
+    const valid = `import Exact from '${coordinate}'
+export default <union><Exact id="exact" thickness={1} /><Notched id="root" thickness={2} /></union>`
+
+    expect(diagnosticsFor(valid, files)).toEqual([])
+    expect(diagnosticsFor(valid.replace('thickness={1}', ''), files).join('\n')).toContain(
+      "Property 'thickness' is missing",
+    )
+    expect(diagnosticsFor(valid.replace('id="root" ', ''), files).join('\n')).toContain("Property 'id' is missing")
+    expect(diagnosticsFor(valid.replace('thickness={2}', 'size="large" thickness={2}'), files).join('\n')).toContain(
+      "Type 'string' is not assignable",
+    )
   })
 
   it.each(caembleExamples)('type-checks the $title example', ({ code }) => {

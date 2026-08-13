@@ -1,4 +1,6 @@
 export { evaluateCad, evaluateCadScene } from './evaluation/evaluator'
+export { setGeometryAuthoringGraph, setGeometryAuthoringRootsEnabled } from './compiler/geometryTypeEnvironment'
+export type { GeometryTypeGraph } from './compiler/geometryTypes'
 export { cadElementCatalog } from './catalog'
 export { applyCadSceneGroups } from './evaluation/groups'
 export { Fragment, h } from './evaluation/jsx'
@@ -133,6 +135,7 @@ export {
   geometryCoordinateNamespace,
   geometrySourceHash,
   isGeometryCoordinate,
+  isGeometryRootAlias,
   validateGeometrySnapshotHashes,
 } from './source/geometrySnapshot'
 export type {
@@ -150,7 +153,12 @@ export type {
   GeometryDraftRoot,
   GeometryModuleDraft,
 } from './source/effectiveGeometryGraph'
-export { analyzeGeometrySource, rewriteGeometryImportCoordinates } from './source/sourceAnalysis'
+export {
+  analyzeGeometrySource,
+  rewriteGeometryImportCoordinates,
+  rewriteGeometryRootAlias,
+  validateGeometryUsage,
+} from './source/sourceAnalysis'
 export {
   CadDocumentEvaluationError,
   evaluateDocument,

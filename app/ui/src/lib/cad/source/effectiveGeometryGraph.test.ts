@@ -16,12 +16,12 @@ const rightCoordinate = 'caemble:geometry/jlee/demo/right@1.0.0' as GeometryCoor
 const rootCoordinate = 'caemble:geometry/jlee/demo/root@1.0.0' as GeometryCoordinate
 
 async function publishedModule(): Promise<GeometrySnapshotModule> {
-  const source = 'export default <box size={[1, 1, 1]} />\n'
+  const source = 'const Block = () => <box size={[1, 1, 1]} />\nexport default Block\n'
   const sourceHash = await geometrySourceHash(source)
   const input = {
     geometryVersionId: 1,
     coordinate,
-    moduleFormatVersion: 1 as const,
+    moduleFormatVersion: 2 as const,
     cadApiVersion: 5 as const,
     description: null,
     source,
@@ -35,12 +35,12 @@ describe('Effective Geometry graph', () => {
   it('overlays every occurrence of an exact coordinate and invalidates graph hashes', async () => {
     const module = await publishedModule()
     const snapshot = createGeometrySnapshot(
-      [{ alias: 'block', geometryVersionId: 1, coordinate, moduleHash: module.moduleHash }],
+      [{ alias: 'Block', geometryVersionId: 1, coordinate, moduleHash: module.moduleHash }],
       [module],
     )
     const persisted = await createEffectiveGeometryGraph(snapshot)
     const draft = await createEffectiveGeometryGraph(snapshot, {
-      [coordinate]: { source: 'export default <box size={[2, 2, 2]} />\n' },
+      [coordinate]: { source: 'const Block = () => <box size={[2, 2, 2]} />\nexport default Block\n' },
     })
 
     expect(draft.modules[0].source).toContain('[2, 2, 2]')
@@ -51,12 +51,16 @@ describe('Effective Geometry graph', () => {
   it('builds a standalone draft-only root without a synthetic persisted module', async () => {
     const graph = await createEffectiveGeometryGraph(
       createGeometrySnapshot([], []),
-      { [draftCoordinate]: { source: 'export default <box size={[1, 1, 1]} />\n' } },
-      [{ alias: 'preview', coordinate: draftCoordinate }],
+      {
+        [draftCoordinate]: {
+          source: 'const Draft = () => <box size={[1, 1, 1]} />\nexport default Draft\n',
+        },
+      },
+      [{ alias: 'Preview', coordinate: draftCoordinate }],
     )
 
     expect(graph.roots).toEqual([
-      { alias: 'preview', coordinate: draftCoordinate, moduleHash: graph.modules[0].moduleHash },
+      { alias: 'Preview', coordinate: draftCoordinate, moduleHash: graph.modules[0].moduleHash },
     ])
     expect(graph.modules[0].coordinate).toBe(draftCoordinate)
   })
@@ -65,14 +69,18 @@ describe('Effective Geometry graph', () => {
     const graph = await createEffectiveGeometryGraph(
       createGeometrySnapshot([], []),
       {
-        [coordinate]: { source: 'export default <box size={[1, 1, 1]} />\n' },
-        [leftCoordinate]: { source: `import shared from '${coordinate}'\nexport default shared\n` },
-        [rightCoordinate]: { source: `import shared from '${coordinate}'\nexport default shared\n` },
+        [coordinate]: { source: 'const Shared = () => <box size={[1, 1, 1]} />\nexport default Shared\n' },
+        [leftCoordinate]: {
+          source: `import Shared from '${coordinate}'\nconst Left = () => <Shared id="shared" />\nexport default Left\n`,
+        },
+        [rightCoordinate]: {
+          source: `import Shared from '${coordinate}'\nconst Right = () => <Shared id="shared" />\nexport default Right\n`,
+        },
         [rootCoordinate]: {
-          source: `import left from '${leftCoordinate}'\nimport right from '${rightCoordinate}'\nexport default <union>{left}{right}</union>\n`,
+          source: `import Left from '${leftCoordinate}'\nimport Right from '${rightCoordinate}'\nconst Root = () => <union><Left id="left" /><Right id="right" /></union>\nexport default Root\n`,
         },
       },
-      [{ alias: 'root', coordinate: rootCoordinate }],
+      [{ alias: 'Root', coordinate: rootCoordinate }],
     )
 
     expect(graph.modules.map((module) => module.coordinate)).toEqual([
@@ -85,13 +93,17 @@ describe('Effective Geometry graph', () => {
     const twoRoots = await createEffectiveGeometryGraph(
       createGeometrySnapshot([], []),
       {
-        [coordinate]: { source: 'export default <box size={[1, 1, 1]} />\n' },
-        [leftCoordinate]: { source: `import shared from '${coordinate}'\nexport default shared\n` },
-        [rightCoordinate]: { source: `import shared from '${coordinate}'\nexport default shared\n` },
+        [coordinate]: { source: 'const Shared = () => <box size={[1, 1, 1]} />\nexport default Shared\n' },
+        [leftCoordinate]: {
+          source: `import Shared from '${coordinate}'\nconst Left = () => <Shared id="shared" />\nexport default Left\n`,
+        },
+        [rightCoordinate]: {
+          source: `import Shared from '${coordinate}'\nconst Right = () => <Shared id="shared" />\nexport default Right\n`,
+        },
       },
       [
-        { alias: 'left', coordinate: leftCoordinate },
-        { alias: 'right', coordinate: rightCoordinate },
+        { alias: 'Left', coordinate: leftCoordinate },
+        { alias: 'Right', coordinate: rightCoordinate },
       ],
     )
     expect(twoRoots.modules).toHaveLength(3)
@@ -103,24 +115,33 @@ describe('Effective Geometry graph', () => {
         createGeometrySnapshot([], []),
         {
           [draftCoordinate]: {
-            source: "import value from 'caemble:geometry/jlee/demo/leaf@latest'\nexport default value",
+            source:
+              'import Value from \'caemble:geometry/jlee/demo/leaf@latest\'\nconst Draft = () => <Value id="value" />\nexport default Draft',
           },
         },
-        [{ alias: 'preview', coordinate: draftCoordinate }],
+        [{ alias: 'Preview', coordinate: draftCoordinate }],
       ),
     ).rejects.toThrow('exact caemble:geometry coordinate')
     await expect(
       createEffectiveGeometryGraph(
         createGeometrySnapshot([], []),
-        { [draftCoordinate]: { source: `import value from '${coordinate}'\nexport default value` } },
-        [{ alias: 'preview', coordinate: draftCoordinate }],
+        {
+          [draftCoordinate]: {
+            source: `import Value from '${coordinate}'\nconst Draft = () => <Value id="value" />\nexport default Draft`,
+          },
+        },
+        [{ alias: 'Preview', coordinate: draftCoordinate }],
       ),
     ).rejects.toThrow('unresolved')
     await expect(
       createEffectiveGeometryGraph(
         createGeometrySnapshot([], []),
-        { [draftCoordinate]: { source: `import value from '${draftCoordinate}'\nexport default value` } },
-        [{ alias: 'preview', coordinate: draftCoordinate }],
+        {
+          [draftCoordinate]: {
+            source: `import Value from '${draftCoordinate}'\nconst Draft = () => <Value id="value" />\nexport default Draft`,
+          },
+        },
+        [{ alias: 'Preview', coordinate: draftCoordinate }],
       ),
     ).rejects.toThrow('dependency cycle')
     await expect(
@@ -128,11 +149,13 @@ describe('Effective Geometry graph', () => {
         createGeometrySnapshot([], []),
         {
           [draftCoordinate]: {
-            source: `import value from '${foreignCoordinate}'\nexport default value`,
+            source: `import Value from '${foreignCoordinate}'\nconst Draft = () => <Value id="value" />\nexport default Draft`,
           },
-          [foreignCoordinate]: { source: 'export default <box size={[1, 1, 1]} />' },
+          [foreignCoordinate]: {
+            source: 'const Foreign = () => <box size={[1, 1, 1]} />\nexport default Foreign',
+          },
         },
-        [{ alias: 'preview', coordinate: draftCoordinate }],
+        [{ alias: 'Preview', coordinate: draftCoordinate }],
       ),
     ).rejects.toThrow('crosses owner namespaces')
   })
@@ -148,22 +171,22 @@ describe('Effective Geometry graph', () => {
         {
           source:
             index === coordinates.length - 1
-              ? 'export default <box size={[1, 1, 1]} />\n'
-              : `import next from '${coordinates[index + 1]}'\nexport default next\n`,
+              ? 'const Leaf = () => <box size={[1, 1, 1]} />\nexport default Leaf\n'
+              : `import Next from '${coordinates[index + 1]}'\nconst Node = () => <Next id="next" />\nexport default Node\n`,
         },
       ]),
     )
 
     const valid = await createEffectiveGeometryGraph(createGeometrySnapshot([], []), drafts, [
-      { alias: 'shallow', coordinate: coordinates[63] },
-      { alias: 'long', coordinate: coordinates[1] },
+      { alias: 'Shallow', coordinate: coordinates[63] },
+      { alias: 'Long', coordinate: coordinates[1] },
     ])
     expect(valid.modules).toHaveLength(64)
 
     await expect(
       createEffectiveGeometryGraph(createGeometrySnapshot([], []), drafts, [
-        { alias: 'shallow', coordinate: coordinates[63] },
-        { alias: 'long', coordinate: coordinates[0] },
+        { alias: 'Shallow', coordinate: coordinates[63] },
+        { alias: 'Long', coordinate: coordinates[0] },
       ]),
     ).rejects.toThrow('dependency depth 64')
   })

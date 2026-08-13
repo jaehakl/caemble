@@ -901,7 +901,7 @@ async def publish(
                 source=step["source"],
                 source_hash=step["sourceHash"],
                 module_hash=step["moduleHash"],
-                module_format_version=1,
+                module_format_version=2,
                 cad_api_version=5,
             )
             db.add(version)

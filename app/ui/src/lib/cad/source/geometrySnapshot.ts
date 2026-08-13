@@ -1,7 +1,7 @@
 import { CadModelError } from '../model/errors'
 
 export const GEOMETRY_SNAPSHOT_SCHEMA_VERSION = 1 as const
-export const GEOMETRY_MODULE_FORMAT_VERSION = 1 as const
+export const GEOMETRY_MODULE_FORMAT_VERSION = 2 as const
 export const MAX_GEOMETRY_ROOTS = 64
 export const MAX_GEOMETRY_MODULES = 256
 export const MAX_GEOMETRY_IMPORTS_PER_MODULE = 64
@@ -12,7 +12,12 @@ export const MAX_COMPILED_GEOMETRY_GRAPH_BYTES = 32 * 1024 * 1024
 export const MAX_GEOMETRY_SEMVER_COMPONENT = 2_147_483_647
 
 const hashPattern = /^[0-9a-f]{64}$/u
-const aliasPattern = /^[A-Za-z_][A-Za-z0-9_]*$/u
+const aliasPattern = /^[A-Z][A-Za-z0-9_]*$/u
+const reservedRootAliases = new Set(
+  'Array ArrayBuffer Atomics BigInt Blob Boolean DataView Date Document Element Error Event File FinalizationRegistry Float32Array Float64Array FormData Fragment Function Headers History Image Int16Array Int32Array Int8Array Intl JSON Location Map Math Node Number Object Promise Proxy Reflect RegExp Request Response Set SharedArrayBuffer SharedWorker String Symbol Uint16Array Uint32Array Uint8Array Uint8ClampedArray URL URLSearchParams WeakMap WeakRef WeakSet WebAssembly WebSocket Worker XMLHttpRequest'.split(
+    ' ',
+  ),
+)
 const coordinatePattern =
   /^caemble:geometry\/[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])\/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?@(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u
 
@@ -90,6 +95,10 @@ export function assertGeometryCoordinate(
   }
 }
 
+export function isGeometryRootAlias(value: unknown): value is string {
+  return typeof value === 'string' && aliasPattern.test(value) && !reservedRootAliases.has(value)
+}
+
 export function geometryCoordinateNamespace(coordinate: GeometryCoordinate) {
   return coordinate.split('/')[1]
 }
@@ -102,8 +111,8 @@ function assertRoot(value: unknown, index: number): asserts value is GeometrySna
   const path = `Geometry snapshot roots[${index}]`
   plainObject(value, path)
   onlyKeys(value, ['alias', 'geometryVersionId', 'coordinate', 'moduleHash'], path)
-  if (typeof value.alias !== 'string' || !aliasPattern.test(value.alias)) {
-    throw new CadModelError(`${path}.alias must be an ASCII JavaScript identifier.`)
+  if (!isGeometryRootAlias(value.alias)) {
+    throw new CadModelError(`${path}.alias must be a non-reserved PascalCase identifier.`)
   }
   assertVersionId(value.geometryVersionId, `${path}.geometryVersionId`)
   assertGeometryCoordinate(value.coordinate, `${path}.coordinate`)

@@ -108,7 +108,7 @@ describe('useCaePageSession', () => {
     await waitFor(() => expect(result.current.initialized).toBe(true))
     expect(state.restoreDraft).toHaveBeenCalledWith(
       expect.objectContaining({
-        version: 4,
+        version: 5,
         candidate: { vars: null, materialParameters: null },
         selection: { measurementId: null },
         geometry: { drafts: {}, stagedModules: [], selectedCoordinate: null, expandedPaths: [] },

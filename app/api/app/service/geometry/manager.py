@@ -220,7 +220,7 @@ def _version_response(
         "description": version.description,
         "sourceHash": version.source_hash,
         "moduleHash": version.module_hash,
-        "moduleFormatVersion": 1,
+        "moduleFormatVersion": 2,
         "cadApiVersion": 5,
         "archivedAt": version.archived_at,
         "createdAt": version.created_at,
@@ -711,4 +711,3 @@ async def archive_version(
     row[0].archived_at = row[0].archived_at or datetime.now(timezone.utc)
     await db.commit()
     return _version_response(row)
-

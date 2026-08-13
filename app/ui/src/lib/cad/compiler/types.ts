@@ -8,12 +8,13 @@ import {
   MAX_GEOMETRY_MODULES,
   MAX_GEOMETRY_ROOTS,
   geometryCoordinateNamespace,
+  isGeometryRootAlias,
   isGeometryCoordinate,
   type GeometryCoordinate,
 } from '../source/geometrySnapshot'
 
 export const CAD_COMPILER_VERSION =
-  `monaco-${CAEMBLE_MONACO_VERSION}-api-5-${CAD_API_DECLARATION_FINGERPRINT}-geometry-graph-v3` as const
+  `monaco-${CAEMBLE_MONACO_VERSION}-api-5-${CAD_API_DECLARATION_FINGERPRINT}-geometry-roots-v1` as const
 
 export type CadDiagnostic = Readonly<{
   code: number | string
@@ -194,8 +195,7 @@ function assertCompiledGeometryGraph(value: unknown, documentHash: string): asse
       Array.isArray(root) ||
       Object.getPrototypeOf(root) !== Object.prototype ||
       Object.keys(root).some((key) => !['alias', 'coordinate', 'moduleHash'].includes(key)) ||
-      typeof root.alias !== 'string' ||
-      !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(root.alias) ||
+      !isGeometryRootAlias(root.alias) ||
       aliases.has(root.alias) ||
       !isGeometryCoordinate(root.coordinate) ||
       rootCoordinates.has(root.coordinate) ||

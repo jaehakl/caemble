@@ -4,8 +4,10 @@ import {
   analyzeGeometrySource,
   analyzeTaskSource,
   parseCadSource,
+  rewriteGeometryRootAlias,
   rewriteGeometryImportCoordinates,
   staticCadSourceImports,
+  validateGeometryUsage,
 } from './sourceAnalysis'
 
 describe('CAD source policy', () => {
@@ -43,28 +45,44 @@ export default defineTask({ kernel: { name: 'solver', version: '1.0.0' }, config
     expect(analyzeTaskSource(task).factoryName).toBe('defineTask')
   })
 
-  it('allows one default Geometry registry import in v3 Experiment and Task sources', () => {
+  it('rejects the retired Geometry registry import in Experiment and Task sources', () => {
     const experiment = `import { experiment } from '@caemble/core'
 import geometries from '@caemble/geometries'
 export default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => geometries.block, recordedData: {} })`
     const task = `import { defineTask } from '@caemble/core'
 import geometries from '@caemble/geometries'
 export default defineTask({ kernel: { name: 'solver', version: '1' }, geometry: () => geometries.block, config: () => ({}) })`
-    expect(() => analyzeCadSource(experiment)).toThrow('only available')
-    expect(analyzeCadSource(experiment, true).factoryName).toBe('experiment')
-    expect(analyzeTaskSource(task, true).factoryName).toBe('defineTask')
-    expect(() => analyzeCadSource(experiment.replace('import geometries', 'import { block }'), true)).toThrow(
-      'exactly one default import',
-    )
+    expect(() => analyzeCadSource(experiment)).toThrow('has been removed')
+    expect(() => analyzeTaskSource(task)).toThrow('has been removed')
+  })
+
+  it('rewrites free Geometry root identifiers without changing locally bound names', () => {
+    const source = `const First = () => <OldRoot id="first" />
+const Second = OldRoot
+function local(OldRoot: () => unknown) { return <OldRoot /> }`
+    expect(rewriteGeometryRootAlias(source, 'OldRoot', 'NewRoot')).toEqual({
+      references: 2,
+      source: `const First = () => <NewRoot id="first" />
+const Second = NewRoot
+function local(OldRoot: () => unknown) { return <OldRoot /> }`,
+    })
+    expect(() =>
+      rewriteGeometryRootAlias(
+        'function local() { const NewRoot = () => null; return <OldRoot id="root" /> }',
+        'OldRoot',
+        'NewRoot',
+      ),
+    ).toThrow('충돌하는 지역 binding')
   })
 
   it('extracts exact default Geometry imports and rejects floating or named imports', () => {
     const coordinate = 'caemble:geometry/jlee/demo/block@1.2.3'
     const source = `import { type Geometry } from '@caemble/core'
-import child from '${coordinate}'
-const value: Geometry = () => <union>{child}</union>
-export default value({ id: 'nested' })`
-    expect(analyzeGeometrySource(source).imports).toEqual([{ coordinate, localName: 'child' }])
+import Child from '${coordinate}'
+const Value: Geometry = () => <union><Child id="nested" /></union>
+export default Value`
+    expect(analyzeGeometrySource(source).imports).toEqual([{ coordinate, localName: 'Child' }])
+    expect(analyzeGeometrySource(source).componentName).toBe('Value')
     expect(() =>
       analyzeGeometrySource("import child from 'caemble:geometry/jlee/demo/block@latest'\nexport default child"),
     ).toThrow('exact caemble:geometry coordinate')
@@ -99,10 +117,34 @@ export default value({ id: 'nested' })`
   it('rewrites only exact static Geometry imports and preserves quote style', () => {
     const previous = 'caemble:geometry/alice/common/plate@1.0.0' as const
     const next = 'caemble:geometry/alice/common/plate@1.0.1' as const
-    const source = `import plate from '${previous}'\nconst note = ${JSON.stringify(previous)}\nexport default plate`
+    const source = `import Plate from '${previous}'\nconst note = ${JSON.stringify(previous)}\nconst Assembly = () => <Plate id="plate" />\nexport default Assembly`
 
     expect(rewriteGeometryImportCoordinates(source, { [previous]: next })).toBe(
-      `import plate from '${next}'\nconst note = ${JSON.stringify(previous)}\nexport default plate`,
+      `import Plate from '${next}'\nconst note = ${JSON.stringify(previous)}\nconst Assembly = () => <Plate id="plate" />\nexport default Assembly`,
     )
+  })
+
+  it('requires function Geometry exports and validates one explicit-id JSX usage', () => {
+    expect(() => analyzeGeometrySource('export default <box />')).toThrow('function component')
+    expect(analyzeGeometrySource('export default () => <box />').renderExpression.type).toBe('JSXElement')
+    expect(analyzeGeometrySource('function Block() { return <box /> }\nexport default Block').componentName).toBe(
+      'Block',
+    )
+    expect(
+      analyzeGeometrySource(
+        'const Block = ({ size = [1, 1, 1], position: localPosition = [0, 0, 0], id = "ignored" }) => <box size={size} pos={localPosition} />\nexport default Block',
+      ).defaultedProps,
+    ).toEqual(['position', 'size'])
+    expect(validateGeometryUsage('<Block id="block" size={[1, 1, 1]} />', 'Block')).toContain('id="block"')
+    expect(() => validateGeometryUsage('<Block />', 'Block')).toThrow('explicit id')
+    expect(() => validateGeometryUsage('<Other id="block" />', 'Block')).toThrow('<Block')
+    expect(() =>
+      analyzeGeometrySource(
+        'const Block = () => { if (true) return <box />; return <sphere /> }\nexport default Block',
+      ),
+    ).toThrow('one top-level return')
+    expect(() =>
+      analyzeGeometrySource('const Block = () => { if (true) return <box /> }\nexport default Block'),
+    ).toThrow('one top-level return')
   })
 })

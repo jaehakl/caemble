@@ -11,9 +11,31 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import type { CadDiagnostic } from '@/lib/cad'
-import type { GeometryWorkspaceState } from './useGeometryWorkspaceState'
+import type { CadDiagnostic, GeometryCoordinate } from '@/lib/cad'
+import { GeometryUsageDialog } from './GeometryUsageDialog'
+import { geometryComponentName } from './geometryUsage'
+import { suggestGeometryRootAlias, type GeometryWorkspaceState } from './useGeometryWorkspaceState'
 import { GeometryWorkspace } from './GeometryWorkspace'
+
+const defaultGeometrySource = `import { type Geometry, type Vec3 } from '@caemble/core'
+
+const NotchedConductor: Geometry<{
+  notchPosition: Vec3
+  notchSize: Vec3
+  size: Vec3
+}> = ({
+  notchPosition = [0, 4, 2.5],
+  notchSize = [30, 5, 6],
+  size = [100, 12, 10],
+}) => (
+  <subtract>
+    <box size={size} />
+    <box pos={notchPosition} size={notchSize} />
+  </subtract>
+)
+
+export default NotchedConductor
+`
 
 function value(form: FormData, name: string) {
   return String(form.get(name) ?? '').trim()
@@ -26,19 +48,27 @@ function sourceValue(form: FormData) {
 export function GeometryWorkspaceContainer({
   diagnostics,
   geometry,
+  onOpenExperimentSource,
   onOpenManager,
 }: {
   diagnostics: readonly CadDiagnostic[]
   geometry: GeometryWorkspaceState
+  onOpenExperimentSource: () => void
   onOpenManager: () => void
 }) {
-  const [dialog, setDialog] = useState<'namespace' | 'create' | 'add-root' | 'add-import' | null>(null)
+  const [dialog, setDialog] = useState<
+    'namespace' | 'create' | 'add-root' | 'add-import' | 'connect-root' | 'usage' | null
+  >(null)
   const [namespaceNext, setNamespaceNext] = useState<'create' | 'add-root' | 'add-import' | null>(null)
   const [packages, setPackages] = useState<GeometryPackageRecord[]>([])
   const [versions, setVersions] = useState<GeometryVersionRecord[]>([])
   const [selectedRepositoryId, setSelectedRepositoryId] = useState<number | null>(null)
   const [selectedPackageId, setSelectedPackageId] = useState<number | null>(null)
   const [selectedVersionId, setSelectedVersionId] = useState<number | null>(null)
+  const [importKind, setImportKind] = useState<'published' | 'draft'>('published')
+  const [selectedLocalImport, setSelectedLocalImport] = useState<GeometryCoordinate | null>(null)
+  const [connectCoordinate, setConnectCoordinate] = useState<GeometryCoordinate | null>(null)
+  const [usage, setUsage] = useState<string | null>(null)
   const [pickerBusy, setPickerBusy] = useState(false)
   const refreshRepositories = geometry.refreshRepositories
   const ownRepositories = geometry.repositories
@@ -125,13 +155,6 @@ export function GeometryWorkspaceContainer({
   const handleCreate = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
-    const entry = value(form, 'entry')
-    const rootAlias = entry === 'root' ? value(form, 'alias') : null
-    if (entry === 'root' && !rootAlias) {
-      toast.error('Experiment root alias를 입력하세요.')
-      return
-    }
-    const parentCoordinate = geometry.selectedCoordinate
     const repositoryId = Number(value(form, 'repositoryId')) || null
     setPickerBusy(true)
     void geometry
@@ -142,20 +165,9 @@ export function GeometryWorkspaceContainer({
         version: value(form, 'version'),
         description: value(form, 'description'),
         source: sourceValue(form),
-        rootAlias,
+        rootAlias: null,
       })
-      .then((draft) => {
-        if (entry === 'import') {
-          try {
-            if (!parentCoordinate) throw new Error('새 Geometry를 연결할 importer를 먼저 선택하세요.')
-            geometry.attachDraftImport(parentCoordinate, draft.coordinate)
-          } catch (cause) {
-            geometry.discardDraft(draft.coordinate)
-            throw cause
-          }
-        }
-        setDialog(null)
-      })
+      .then(() => setDialog(null))
       .catch((cause: unknown) => toast.error(cause instanceof Error ? cause.message : String(cause)))
       .finally(() => setPickerBusy(false))
   }
@@ -170,24 +182,85 @@ export function GeometryWorkspaceContainer({
     setPickerBusy(true)
     void geometry
       .addRoot(selectedVersionId, alias)
+      .then(() => {
+        setUsage(alias)
+        setDialog('usage')
+      })
+      .catch((cause: unknown) => toast.error(cause instanceof Error ? cause.message : String(cause)))
+      .finally(() => setPickerBusy(false))
+  }
+
+  const handleConnectRoot = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!connectCoordinate) return
+    const alias = value(new FormData(event.currentTarget), 'alias')
+    try {
+      geometry.connectRoot(connectCoordinate, alias)
+      setUsage(alias)
+      setConnectCoordinate(null)
+      setDialog('usage')
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
+  const handleAddImport = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    if (!geometry.selectedCoordinate || !geometry.drafts[geometry.selectedCoordinate]) {
+      toast.error('import를 추가할 Geometry draft를 선택하세요.')
+      return
+    }
+    if (importKind === 'draft') {
+      if (!selectedLocalImport) {
+        toast.error('연결할 local draft를 선택하세요.')
+        return
+      }
+      try {
+        geometry.attachDraftImport(
+          geometry.selectedCoordinate,
+          selectedLocalImport,
+          value(form, 'importName'),
+          value(form, 'usage'),
+        )
+        setDialog(null)
+      } catch (cause) {
+        toast.error(cause instanceof Error ? cause.message : String(cause))
+      }
+      return
+    }
+    if (!selectedVersionId) {
+      toast.error('연결할 exact Geometry version을 선택하세요.')
+      return
+    }
+    setPickerBusy(true)
+    void geometry
+      .addPublishedImport(
+        geometry.selectedCoordinate,
+        selectedVersionId,
+        value(form, 'importName'),
+        value(form, 'usage'),
+      )
       .then(() => setDialog(null))
       .catch((cause: unknown) => toast.error(cause instanceof Error ? cause.message : String(cause)))
       .finally(() => setPickerBusy(false))
   }
 
-  const handleAddImport = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!selectedVersionId || !geometry.selectedCoordinate || !geometry.drafts[geometry.selectedCoordinate]) {
-      toast.error('import를 추가할 Geometry draft와 exact version을 선택하세요.')
-      return
-    }
-    setPickerBusy(true)
-    void geometry
-      .addPublishedImport(geometry.selectedCoordinate, selectedVersionId)
-      .then(() => setDialog(null))
-      .catch((cause: unknown) => toast.error(cause instanceof Error ? cause.message : String(cause)))
-      .finally(() => setPickerBusy(false))
-  }
+  const connectPackageName = connectCoordinate?.split('/').slice(-1)[0]?.split('@')[0] ?? 'geometry'
+  const localImportDrafts = Object.values(geometry.drafts).filter(
+    (draft) => draft.coordinate !== geometry.selectedCoordinate,
+  )
+  const importPackageName =
+    importKind === 'draft'
+      ? (selectedLocalImport?.split('/').slice(-1)[0]?.split('@')[0] ?? '')
+      : (packages.find((item) => item.id === selectedPackageId)?.name ?? '')
+  const suggestedConnectAlias = suggestGeometryRootAlias(
+    connectPackageName,
+    new Set([
+      ...geometry.currentSnapshot.roots.map((root) => root.alias),
+      ...Object.values(geometry.drafts).flatMap((draft) => (draft.rootAlias ? [draft.rootAlias] : [])),
+    ]),
+  )
 
   return (
     <>
@@ -198,6 +271,7 @@ export function GeometryWorkspaceContainer({
         effectiveGraph={geometry.effectiveGraph}
         expandedPaths={geometry.expandedPaths}
         previewError={geometry.previewError}
+        publishReady={geometry.publishReady}
         previewStale={geometry.previewStale}
         namespace={geometry.namespace}
         selectedCoordinate={geometry.selectedCoordinate}
@@ -216,6 +290,11 @@ export function GeometryWorkspaceContainer({
             })
             .catch((cause: unknown) => toast.error(cause instanceof Error ? cause.message : String(cause)))
         }}
+        onConnectRoot={(coordinate) => {
+          setConnectCoordinate(coordinate)
+          setDialog('connect-root')
+        }}
+        onDescriptionChange={geometry.updateDescription}
         onDiscardDraft={geometry.discardDraft}
         onEditAsNewVersion={geometry.editAsNewVersion}
         onPublish={(coordinate, apply) => {
@@ -223,7 +302,25 @@ export function GeometryWorkspaceContainer({
             .requestPublish(coordinate, apply)
             .catch((cause: unknown) => toast.error(cause instanceof Error ? cause.message : String(cause)))
         }}
-        onRemoveRoot={geometry.removeRoot}
+        onRemoveRoot={(alias) => {
+          try {
+            geometry.removeRoot(alias)
+          } catch (cause) {
+            toast.error(cause instanceof Error ? cause.message : String(cause))
+          }
+        }}
+        onRenameRoot={(previousAlias, nextAlias) => {
+          try {
+            geometry.renameRootAlias(previousAlias, nextAlias)
+            toast.success(`Root alias를 ${nextAlias.trim()}(으)로 변경했습니다.`)
+          } catch (cause) {
+            toast.error(cause instanceof Error ? cause.message : String(cause))
+          }
+        }}
+        onShowUsage={(alias) => {
+          setUsage(alias)
+          setDialog('usage')
+        }}
         onManageRepositories={onOpenManager}
         onChangeNamespace={() => {
           setNamespaceNext(null)
@@ -280,7 +377,8 @@ export function GeometryWorkspaceContainer({
             <DialogHeader>
               <DialogTitle>새 Geometry draft</DialogTitle>
               <DialogDescription>
-                publish 전까지 source와 연결 정보는 이 Workbench와 IndexedDB에만 남습니다.
+                publish 전까지 source는 이 Workbench와 IndexedDB에만 남습니다. Experiment 연결은 생성 후 별도로
+                선택합니다.
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -308,19 +406,6 @@ export function GeometryWorkspaceContainer({
                 <Input defaultValue="0.1.0" name="version" required />
               </label>
               <label className="grid gap-1 text-sm">
-                연결 위치
-                <select className="h-9 rounded-md border bg-background px-3 text-sm" defaultValue="root" name="entry">
-                  <option value="root">Experiment root</option>
-                  <option disabled={!geometry.selectedCoordinate} value="import">
-                    선택한 Geometry의 import
-                  </option>
-                </select>
-              </label>
-              <label className="grid gap-1 text-sm">
-                Root alias
-                <Input defaultValue="newGeometry" name="alias" />
-              </label>
-              <label className="grid gap-1 text-sm">
                 Description
                 <Input name="description" />
               </label>
@@ -329,7 +414,7 @@ export function GeometryWorkspaceContainer({
               TSX source
               <textarea
                 className="min-h-40 rounded-md border bg-background p-3 font-mono text-xs"
-                defaultValue={'export default <box size={[10, 10, 10]} />;'}
+                defaultValue={defaultGeometrySource}
                 name="source"
                 required
               />
@@ -347,7 +432,7 @@ export function GeometryWorkspaceContainer({
         <DialogContent className="sm:max-w-xl">
           <form className="grid w-[min(34rem,calc(100vw-4rem))] gap-4" onSubmit={handleAddRoot}>
             <DialogHeader>
-              <DialogTitle>Published Geometry root 추가</DialogTitle>
+              <DialogTitle>Published Geometry를 Experiment에서 사용</DialogTitle>
               <DialogDescription>
                 내 repository의 exact version을 현재 Experiment snapshot에 고정합니다.
               </DialogDescription>
@@ -439,7 +524,7 @@ export function GeometryWorkspaceContainer({
             </label>
             <DialogFooter>
               <Button disabled={pickerBusy || !selectedVersionId} type="submit">
-                Root 추가
+                연결하고 예시 보기
               </Button>
             </DialogFooter>
           </form>
@@ -450,67 +535,165 @@ export function GeometryWorkspaceContainer({
         <DialogContent className="w-fit min-w-[min(92vw,32rem)] sm:max-w-xl">
           <form className="space-y-4" onSubmit={handleAddImport}>
             <DialogHeader>
-              <DialogTitle>Published Geometry import 추가</DialogTitle>
+              <DialogTitle>Geometry import 추가</DialogTitle>
               <DialogDescription>
-                선택한 draft source에 exact version import를 추가하고 preview에만 staging합니다.
+                선택한 draft source에 local draft 또는 Published exact version component 호출을 합성합니다.
               </DialogDescription>
             </DialogHeader>
             <label className="grid gap-1 text-sm">
-              Repository
+              연결 대상
               <select
                 className="h-9 rounded-md border bg-background px-2"
-                onChange={(event) => setSelectedRepositoryId(Number(event.target.value) || null)}
-                value={selectedRepositoryId ?? ''}
+                onChange={(event) => setImportKind(event.target.value as 'published' | 'draft')}
+                value={importKind}
               >
-                <option value="">선택</option>
-                {ownRepositories.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.namespace}/{item.slug}
-                  </option>
-                ))}
+                <option value="published">Published exact version</option>
+                <option disabled={!localImportDrafts.length} value="draft">
+                  Local draft
+                </option>
               </select>
             </label>
+            {importKind === 'draft' ? (
+              <label className="grid gap-1 text-sm">
+                Local draft
+                <select
+                  className="h-9 rounded-md border bg-background px-2"
+                  onChange={(event) =>
+                    setSelectedLocalImport((event.target.value || null) as GeometryCoordinate | null)
+                  }
+                  value={selectedLocalImport ?? ''}
+                >
+                  <option value="">선택</option>
+                  {localImportDrafts.map((draft) => (
+                    <option key={draft.coordinate} value={draft.coordinate}>
+                      {draft.coordinate}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <>
+                <label className="grid gap-1 text-sm">
+                  Repository
+                  <select
+                    className="h-9 rounded-md border bg-background px-2"
+                    onChange={(event) => setSelectedRepositoryId(Number(event.target.value) || null)}
+                    value={selectedRepositoryId ?? ''}
+                  >
+                    <option value="">선택</option>
+                    {ownRepositories.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.namespace}/{item.slug}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-sm">
+                  Package
+                  <select
+                    className="h-9 rounded-md border bg-background px-2"
+                    onChange={(event) => setSelectedPackageId(Number(event.target.value) || null)}
+                    value={selectedPackageId ?? ''}
+                  >
+                    <option value="">선택</option>
+                    {packages.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-sm">
+                  Exact version
+                  <select
+                    className="h-9 rounded-md border bg-background px-2"
+                    onChange={(event) => setSelectedVersionId(Number(event.target.value) || null)}
+                    value={selectedVersionId ?? ''}
+                  >
+                    <option value="">선택</option>
+                    {versions.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.version}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            )}
             <label className="grid gap-1 text-sm">
-              Package
-              <select
-                className="h-9 rounded-md border bg-background px-2"
-                onChange={(event) => setSelectedPackageId(Number(event.target.value) || null)}
-                value={selectedPackageId ?? ''}
-              >
-                <option value="">선택</option>
-                {packages.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
+              Import component name
+              <Input
+                defaultValue={geometryComponentName(importPackageName)}
+                key={`import-name:${importKind}:${importPackageName}`}
+                name="importName"
+                required
+              />
             </label>
             <label className="grid gap-1 text-sm">
-              Exact version
-              <select
-                className="h-9 rounded-md border bg-background px-2"
-                onChange={(event) => setSelectedVersionId(Number(event.target.value) || null)}
-                value={selectedVersionId ?? ''}
-              >
-                <option value="">선택</option>
-                {versions.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.version}
-                  </option>
-                ))}
-              </select>
+              Import usage JSX
+              <Input
+                defaultValue={`<${geometryComponentName(importPackageName)} id="geometry" />`}
+                key={`import-usage:${importKind}:${importPackageName}`}
+                name="usage"
+                required
+              />
             </label>
             <DialogFooter>
               <Button onClick={() => setDialog(null)} type="button" variant="outline">
                 취소
               </Button>
-              <Button disabled={pickerBusy || !selectedVersionId} type="submit">
+              <Button
+                disabled={pickerBusy || (importKind === 'published' ? !selectedVersionId : !selectedLocalImport)}
+                type="submit"
+              >
                 Import 추가
               </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={dialog === 'connect-root'}
+        onOpenChange={(open) => {
+          if (open) return
+          setConnectCoordinate(null)
+          setDialog(null)
+        }}
+      >
+        <DialogContent>
+          <form className="grid w-[min(28rem,calc(100vw-4rem))] gap-4" onSubmit={handleConnectRoot}>
+            <DialogHeader>
+              <DialogTitle>Experiment에서 사용</DialogTitle>
+              <DialogDescription>
+                선택한 Geometry를 현재 Experiment에 연결합니다. PascalCase alias는 Experiment와 Task에서 바로 JSX
+                component로 사용하며 JSX id와는 별개입니다.
+              </DialogDescription>
+            </DialogHeader>
+            <label className="grid gap-1.5 text-sm">
+              Root alias
+              <Input autoFocus defaultValue={suggestedConnectAlias} key={connectCoordinate} name="alias" required />
+            </label>
+            <DialogFooter>
+              <Button onClick={() => setDialog(null)} type="button" variant="outline">
+                취소
+              </Button>
+              <Button type="submit">연결하고 예시 보기</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <GeometryUsageDialog
+        alias={usage ?? ''}
+        onOpenChange={(open) => {
+          if (open) return
+          setUsage(null)
+          setDialog(null)
+        }}
+        onOpenExperimentSource={onOpenExperimentSource}
+        open={dialog === 'usage' && usage !== null}
+      />
 
       <Dialog open={geometry.publishPlan !== null} onOpenChange={(open) => !open && geometry.setPublishPlan(null)}>
         <DialogContent className="sm:max-w-2xl">

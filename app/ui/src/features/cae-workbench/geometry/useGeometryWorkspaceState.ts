@@ -9,7 +9,11 @@ import {
   createEffectiveGeometryGraph,
   createGeometrySnapshot,
   evaluateGeometryModule,
+  isGeometryRootAlias,
+  rewriteGeometryRootAlias,
   rewriteGeometryImportCoordinates,
+  setGeometryAuthoringGraph,
+  validateGeometryUsage,
   validateGeometrySnapshotHashes,
   type CadDiagnostic,
   type CadScene,
@@ -130,15 +134,27 @@ export function retainReferencedStagedModules(
   return stagedModules.filter((module) => retained.has(module.coordinate))
 }
 
-export function attachGeometryImportSource(source: string, coordinate: GeometryCoordinate, identifier: string) {
+export function attachGeometryImportSource(
+  source: string,
+  coordinate: GeometryCoordinate,
+  identifier: string,
+  usage: string,
+) {
+  if (!/^[A-Z][A-Za-z0-9_]*$/u.test(identifier)) {
+    throw new Error('Geometry import 이름은 대문자로 시작하는 JavaScript identifier여야 합니다.')
+  }
+  if (new RegExp(`\\b${identifier}\\b`, 'u').test(source)) {
+    throw new Error(`Geometry import 이름 ${identifier}가 source에서 이미 사용 중입니다.`)
+  }
   const analysis = analyzeGeometrySource(source)
   if (analysis.imports.some((item) => item.coordinate === coordinate)) return source
-  const start = analysis.defaultExport.start
-  const end = analysis.defaultExport.end
+  const validatedUsage = validateGeometryUsage(usage, identifier)
+  const start = analysis.renderExpression.start
+  const end = analysis.renderExpression.end
   if (start === null || start === undefined || end === null || end === undefined) {
-    throw new Error('Geometry default export 위치를 찾을 수 없습니다.')
+    throw new Error('Geometry component 반환식 위치를 찾을 수 없습니다.')
   }
-  const combined = `<union>{${source.slice(start, end)}}{${identifier}}</union>`
+  const combined = `<union>{${source.slice(start, end)}}${validatedUsage}</union>`
   const nextSource = `${source.slice(0, start)}${combined}${source.slice(end)}`
   return `import ${identifier} from ${JSON.stringify(coordinate)};\n${nextSource}`
 }
@@ -263,14 +279,50 @@ export function reconcileGeometryDraftNamespace(
   return { drafts: nextDrafts, replacements }
 }
 
+export function rewriteGeometryRootAliasFiles(
+  files: Readonly<Record<string, string>>,
+  previousAlias: string,
+  nextAlias: string,
+) {
+  let references = 0
+  const rewritten = Object.fromEntries(
+    Object.entries(files).map(([path, source]) => {
+      if (!path.endsWith('.tsx')) return [path, source]
+      const result = rewriteGeometryRootAlias(source, previousAlias, nextAlias)
+      references += result.references
+      return [path, result.source]
+    }),
+  )
+  return { files: rewritten, references }
+}
+
+export function suggestGeometryRootAlias(packageName: string, aliases: ReadonlySet<string>) {
+  const pascal = packageName
+    .split(/[^A-Za-z0-9]+/u)
+    .filter(Boolean)
+    .map((part) => `${part[0]?.toUpperCase() ?? ''}${part.slice(1)}`)
+    .join('')
+  const candidate = isGeometryRootAlias(pascal)
+    ? pascal
+    : isGeometryRootAlias(`${pascal}Geometry`)
+      ? `${pascal}Geometry`
+      : 'SelectedGeometry'
+  if (!aliases.has(candidate)) return candidate
+  let suffix = 2
+  while (aliases.has(`${candidate}${suffix}`)) suffix += 1
+  return `${candidate}${suffix}`
+}
+
 export function useGeometryWorkspaceState({
   initialNamespace,
-  onSnapshotChange,
+  onExperimentChange,
   snapshot,
+  sourceFiles,
 }: {
   initialNamespace: string | null | undefined
-  onSnapshotChange: (snapshot: GeometrySnapshot) => void
+  onExperimentChange: (snapshot: GeometrySnapshot, files?: Readonly<Record<string, string>>) => void
   snapshot: GeometrySnapshot | null
+  sourceFiles: Readonly<Record<string, string>>
 }) {
   const queryClient = useQueryClient()
   const [namespace, setNamespaceState] = useState(initialNamespace ?? null)
@@ -286,6 +338,7 @@ export function useGeometryWorkspaceState({
   const [effectiveGraph, setEffectiveGraph] = useState<EffectiveGeometryGraph | null>(null)
   const [previewScene, setPreviewScene] = useState<CadScene | null>(null)
   const [previewSceneHash, setPreviewSceneHash] = useState<string | null>(null)
+  const [previewCoordinate, setPreviewCoordinate] = useState<GeometryCoordinate | null>(null)
   const [previewDiagnostics, setPreviewDiagnostics] = useState<readonly CadDiagnostic[]>([])
   const [previewBusy, setPreviewBusy] = useState(false)
   const [repositories, setRepositories] = useState<GeometryRepositoryRecord[]>([])
@@ -334,10 +387,33 @@ export function useGeometryWorkspaceState({
         .map((draft) => ({ alias: draft.rootAlias!, coordinate: draft.coordinate as GeometryCoordinate })),
       ...Object.values(previewDrafts)
         .filter((draft) => draft.standalonePreview)
-        .map((draft, index) => ({ alias: `standalone_${index}`, coordinate: draft.coordinate as GeometryCoordinate })),
+        .map((draft, index) => ({
+          alias: `StandalonePreview${index}`,
+          coordinate: draft.coordinate as GeometryCoordinate,
+        })),
     ],
     [currentSnapshot.roots, previewDrafts],
   )
+  const geometryTypeGraph = useMemo(() => {
+    const modules = new Map<string, { coordinate: string; source: string }>(
+      [...currentSnapshot.modules, ...stagedModules].map((module) => [module.coordinate, module] as const),
+    )
+    Object.values(drafts).forEach((draft) => modules.set(draft.coordinate, draft))
+    return {
+      roots: [
+        ...currentSnapshot.roots.map(({ alias, coordinate }) => ({ alias, coordinate })),
+        ...Object.values(drafts)
+          .filter((draft) => draft.rootAlias)
+          .map((draft) => ({ alias: draft.rootAlias!, coordinate: draft.coordinate })),
+      ],
+      modules: [...modules.values()].map(({ coordinate, source }) => ({ coordinate, source })),
+    }
+  }, [currentSnapshot.modules, currentSnapshot.roots, drafts, stagedModules])
+
+  useEffect(() => {
+    setGeometryAuthoringGraph(geometryTypeGraph)
+    return () => setGeometryAuthoringGraph(null)
+  }, [geometryTypeGraph])
 
   useEffect(() => {
     if (stagingConflict) {
@@ -372,6 +448,7 @@ export function useGeometryWorkspaceState({
     if (!selectedCoordinate) {
       setPreviewScene(null)
       setPreviewSceneHash(null)
+      setPreviewCoordinate(null)
       setPreviewDiagnostics([])
       setPreviewBusy(false)
       setPreviewStale(false)
@@ -393,6 +470,7 @@ export function useGeometryWorkspaceState({
         if (abort.signal.aborted) return
         setPreviewScene(preview.scene)
         setPreviewSceneHash(preview.sourceHash)
+        setPreviewCoordinate(coordinate)
         setPreviewDiagnostics([])
         setPreviewError(null)
         setPreviewStale(false)
@@ -420,6 +498,7 @@ export function useGeometryWorkspaceState({
     setEffectiveGraph(null)
     setPreviewScene(null)
     setPreviewSceneHash(null)
+    setPreviewCoordinate(null)
     setPreviewDiagnostics([])
     setPublishPlan(null)
     setSelectedCoordinate(nextSnapshot?.roots[0]?.coordinate ?? null)
@@ -517,7 +596,7 @@ export function useGeometryWorkspaceState({
       }
       const resolved = await geometryApi.resolveVersion(versionId)
       await validateGeometrySnapshotHashes(
-        createGeometrySnapshot([{ alias: 'standalone', ...resolved.root }], resolved.modules),
+        createGeometrySnapshot([{ alias: 'StandalonePreview', ...resolved.root }], resolved.modules),
       )
       const parsed = coordinateParts(resolved.root.coordinate)
       const staged = new Map(stagedModules.map((module) => [module.coordinate, module]))
@@ -638,8 +717,8 @@ export function useGeometryWorkspaceState({
       if (version.split('.').some((part) => Number(part) > MAX_SEMVER_COMPONENT)) {
         throw new Error(`SemVer component는 ${MAX_SEMVER_COMPONENT} 이하여야 합니다.`)
       }
-      if (rootAlias && !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(rootAlias)) {
-        throw new Error('Root alias는 JavaScript identifier여야 합니다.')
+      if (rootAlias && !isGeometryRootAlias(rootAlias)) {
+        throw new Error('Root alias는 예약어가 아닌 PascalCase identifier여야 합니다.')
       }
       if (
         rootAlias &&
@@ -678,17 +757,13 @@ export function useGeometryWorkspaceState({
   )
 
   const attachDraftImport = useCallback(
-    (parentCoordinate: GeometryCoordinate, childCoordinate: GeometryCoordinate) => {
+    (parentCoordinate: GeometryCoordinate, childCoordinate: GeometryCoordinate, identifier: string, usage: string) => {
       const existingDraft = drafts[parentCoordinate]
       const module = currentSnapshot.modules.find((item) => item.coordinate === parentCoordinate)
       const source = existingDraft?.source ?? module?.source
       if (source === undefined) throw new Error(`${parentCoordinate} importer source를 찾을 수 없습니다.`)
       if (analyzeGeometrySource(source).imports.some((item) => item.coordinate === childCoordinate)) return
-      const identifierBase = `geometry_${coordinateParts(childCoordinate).packageName.replace(/-/gu, '_')}`
-      let identifier = identifierBase
-      let suffix = 2
-      while (new RegExp(`\\b${identifier}\\b`, 'u').test(source)) identifier = `${identifierBase}_${suffix++}`
-      const nextSource = attachGeometryImportSource(source, childCoordinate, identifier)
+      const nextSource = attachGeometryImportSource(source, childCoordinate, identifier, usage)
       setDrafts((current) => {
         const draft = current[parentCoordinate]
         if (draft) return { ...current, [parentCoordinate]: { ...draft, source: nextSource } }
@@ -721,7 +796,7 @@ export function useGeometryWorkspaceState({
 
   const addRoot = useCallback(
     async (versionId: number, alias: string) => {
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(alias)) throw new Error('Root alias는 JavaScript identifier여야 합니다.')
+      if (!isGeometryRootAlias(alias)) throw new Error('Root alias는 예약어가 아닌 PascalCase identifier여야 합니다.')
       if (
         currentSnapshot.roots.some((root) => root.alias === alias) ||
         Object.values(drafts).some((draft) => draft.rootAlias === alias)
@@ -743,21 +818,98 @@ export function useGeometryWorkspaceState({
         [...currentSnapshot.roots, { alias, ...resolved.root }],
         [...modules.values()],
       )
-      onSnapshotChange(next)
+      onExperimentChange(next)
       setSelectedCoordinate(resolved.root.coordinate)
       setExpandedPaths((current) => [...current, `root:${alias}`])
       return next
     },
-    [currentSnapshot.modules, currentSnapshot.roots, drafts, onSnapshotChange],
+    [currentSnapshot.modules, currentSnapshot.roots, drafts, onExperimentChange],
+  )
+
+  const connectRoot = useCallback(
+    (coordinate: GeometryCoordinate, alias: string) => {
+      if (!isGeometryRootAlias(alias)) throw new Error('Root alias는 예약어가 아닌 PascalCase identifier여야 합니다.')
+      if (
+        currentSnapshot.roots.some((root) => root.alias === alias) ||
+        Object.values(drafts).some((draft) => draft.rootAlias === alias)
+      ) {
+        throw new Error(`Root alias ${alias}는 이미 있습니다.`)
+      }
+      const draft = drafts[coordinate]
+      if (draft) {
+        setDrafts((current) => ({ ...current, [coordinate]: { ...draft, rootAlias: alias } }))
+        setPreviewDrafts((current) =>
+          current[coordinate] ? { ...current, [coordinate]: { ...current[coordinate], rootAlias: alias } } : current,
+        )
+        onExperimentChange(currentSnapshot, sourceFiles)
+        setExpandedPaths((current) => [...current, `root:${alias}`])
+        setPreviewStale(true)
+        return
+      }
+      const module = currentSnapshot.modules.find((item) => item.coordinate === coordinate)
+      if (!module) throw new Error(`${coordinate}를 현재 Experiment graph에서 찾을 수 없습니다.`)
+      if (currentSnapshot.roots.some((root) => root.coordinate === coordinate)) {
+        throw new Error(`${coordinate}는 이미 root입니다.`)
+      }
+      const next = createGeometrySnapshot(
+        [
+          ...currentSnapshot.roots,
+          { alias, geometryVersionId: module.geometryVersionId, coordinate, moduleHash: module.moduleHash },
+        ],
+        currentSnapshot.modules,
+      )
+      onExperimentChange(next)
+      setExpandedPaths((current) => [...current, `root:${alias}`])
+    },
+    [currentSnapshot, drafts, onExperimentChange, sourceFiles],
+  )
+
+  const renameRootAlias = useCallback(
+    (previousAlias: string, nextValue: string) => {
+      const nextAlias = nextValue.trim()
+      if (!isGeometryRootAlias(nextAlias))
+        throw new Error('Root alias는 예약어가 아닌 PascalCase identifier여야 합니다.')
+      if (previousAlias === nextAlias) return
+      if (
+        currentSnapshot.roots.some((root) => root.alias === nextAlias) ||
+        Object.values(drafts).some((draft) => draft.rootAlias === nextAlias)
+      ) {
+        throw new Error(`Root alias ${nextAlias}는 이미 있습니다.`)
+      }
+      const rewritten = rewriteGeometryRootAliasFiles(sourceFiles, previousAlias, nextAlias)
+      const savedRoot = currentSnapshot.roots.find((root) => root.alias === previousAlias)
+      if (savedRoot) {
+        const next = createGeometrySnapshot(
+          currentSnapshot.roots.map((root) => (root.alias === previousAlias ? { ...root, alias: nextAlias } : root)),
+          currentSnapshot.modules,
+        )
+        onExperimentChange(next, rewritten.files)
+      } else {
+        const draft = Object.values(drafts).find((item) => item.rootAlias === previousAlias)
+        if (!draft) throw new Error(`Root alias ${previousAlias}를 찾을 수 없습니다.`)
+        setDrafts((current) => ({ ...current, [draft.coordinate]: { ...draft, rootAlias: nextAlias } }))
+        setPreviewDrafts((current) =>
+          current[draft.coordinate]
+            ? { ...current, [draft.coordinate]: { ...current[draft.coordinate], rootAlias: nextAlias } }
+            : current,
+        )
+        onExperimentChange(currentSnapshot, rewritten.files)
+        setPreviewStale(true)
+      }
+      setExpandedPaths((current) =>
+        current.map((path) => (path === `root:${previousAlias}` ? `root:${nextAlias}` : path)),
+      )
+    },
+    [currentSnapshot, drafts, onExperimentChange, sourceFiles],
   )
 
   const addPublishedImport = useCallback(
-    async (parentCoordinate: GeometryCoordinate, versionId: number) => {
+    async (parentCoordinate: GeometryCoordinate, versionId: number, identifier: string, usage: string) => {
       const parent = drafts[parentCoordinate]
       if (!parent) throw new Error('먼저 import를 추가할 Geometry draft를 선택하세요.')
       const resolved = await geometryApi.resolveVersion(versionId)
       await validateGeometrySnapshotHashes(
-        createGeometrySnapshot([{ alias: 'staging', ...resolved.root }], resolved.modules),
+        createGeometrySnapshot([{ alias: 'StagingPreview', ...resolved.root }], resolved.modules),
       )
       if (resolved.root.coordinate === parentCoordinate) throw new Error('Geometry는 자기 자신을 import할 수 없습니다.')
       const snapshotModules = new Map(currentSnapshot.modules.map((module) => [module.coordinate, module]))
@@ -775,12 +927,7 @@ export function useGeometryWorkspaceState({
       })
       const latestParent = draftsRef.current[parentCoordinate]
       if (!latestParent) throw new Error('선택한 Geometry draft가 더 이상 존재하지 않습니다.')
-      const identifierBase = `geometry_${coordinateParts(resolved.root.coordinate).packageName.replace(/-/gu, '_')}`
-      let identifier = identifierBase
-      let suffix = 2
-      while (new RegExp(`\\b${identifier}\\b`, 'u').test(latestParent.source))
-        identifier = `${identifierBase}_${suffix++}`
-      const nextSource = attachGeometryImportSource(latestParent.source, resolved.root.coordinate, identifier)
+      const nextSource = attachGeometryImportSource(latestParent.source, resolved.root.coordinate, identifier, usage)
       setStagedModules([...staged.values()])
       setDrafts((current) => ({ ...current, [parentCoordinate]: { ...latestParent, source: nextSource } }))
       setSelectedCoordinate(parentCoordinate)
@@ -793,17 +940,43 @@ export function useGeometryWorkspaceState({
 
   const removeRoot = useCallback(
     (alias: string) => {
-      const roots = currentSnapshot.roots.filter((root) => root.alias !== alias)
-      if (roots.length === currentSnapshot.roots.length) return
-      const next = retainReachableModules(currentSnapshot, roots)
-      onSnapshotChange(next)
-      setExpandedPaths((current) => current.filter((path) => path !== `root:${alias}`))
-      if (selectedCoordinate && !next.modules.some((module) => module.coordinate === selectedCoordinate)) {
-        setSelectedCoordinate(next.roots[0]?.coordinate ?? null)
+      const referenced = rewriteGeometryRootAliasFiles(sourceFiles, alias, alias)
+      if (referenced.references > 0) {
+        throw new Error(`<${alias}> 또는 ${alias} 참조가 Experiment source에 남아 있어 root를 제거할 수 없습니다.`)
       }
+      const roots = currentSnapshot.roots.filter((root) => root.alias !== alias)
+      if (roots.length === currentSnapshot.roots.length) {
+        const draft = Object.values(drafts).find((item) => item.rootAlias === alias)
+        if (!draft) return
+        setDrafts((current) => ({ ...current, [draft.coordinate]: { ...draft, rootAlias: null } }))
+        setPreviewDrafts((current) =>
+          current[draft.coordinate]
+            ? { ...current, [draft.coordinate]: { ...current[draft.coordinate], rootAlias: null } }
+            : current,
+        )
+        setPreviewStale(true)
+      } else {
+        const next = retainReachableModules(currentSnapshot, roots)
+        onExperimentChange(next)
+        if (selectedCoordinate && !next.modules.some((module) => module.coordinate === selectedCoordinate)) {
+          setSelectedCoordinate(next.roots[0]?.coordinate ?? null)
+        }
+      }
+      setExpandedPaths((current) => current.filter((path) => path !== `root:${alias}`))
     },
-    [currentSnapshot, onSnapshotChange, selectedCoordinate],
+    [currentSnapshot, drafts, onExperimentChange, selectedCoordinate, sourceFiles],
   )
+
+  const updateDescription = useCallback((coordinate: GeometryCoordinate, description: string) => {
+    setDrafts((current) => {
+      const draft = current[coordinate]
+      return draft ? { ...current, [coordinate]: { ...draft, description } } : current
+    })
+    setPreviewDrafts((current) => {
+      const draft = current[coordinate]
+      return draft ? { ...current, [coordinate]: { ...draft, description } } : current
+    })
+  }, [])
 
   const refreshRepositories = useCallback(async () => {
     const response = await dbTables.GeometryRepository.listRows({
@@ -987,6 +1160,9 @@ export function useGeometryWorkspaceState({
 
   const requestPublish = useCallback(
     async (coordinate: GeometryCoordinate, apply: boolean) => {
+      if (previewCoordinate !== coordinate || !previewSceneHash || previewBusy || previewStale || previewError) {
+        throw new Error('현재 source와 dependency graph의 Geometry preview가 성공한 뒤 발행할 수 있습니다.')
+      }
       setBusy(true)
       try {
         const request = publishRequest(coordinate, apply)
@@ -1007,7 +1183,15 @@ export function useGeometryWorkspaceState({
         setBusy(false)
       }
     },
-    [publishRequest, recoverPublishConflict],
+    [
+      previewBusy,
+      previewCoordinate,
+      previewError,
+      previewSceneHash,
+      previewStale,
+      publishRequest,
+      recoverPublishConflict,
+    ],
   )
 
   const confirmPublish = useCallback(async () => {
@@ -1044,7 +1228,7 @@ export function useGeometryWorkspaceState({
         Object.fromEntries(Object.entries(current).filter(([, draft]) => !publishedDraftIds.has(draft.draftId))),
       )
       if (publishPlan.request.mode === 'publish-and-apply') {
-        onSnapshotChange(result.geometrySnapshot)
+        onExperimentChange(result.geometrySnapshot)
         const targetStep = publishPlan.value.steps.find(
           (step) => step.draftId === publishPlan.request.targetDraftId && !step.generated,
         )
@@ -1069,7 +1253,7 @@ export function useGeometryWorkspaceState({
   }, [
     currentSnapshot.modules,
     currentSnapshot.roots,
-    onSnapshotChange,
+    onExperimentChange,
     publishPlan,
     queryClient,
     recoverPublishConflict,
@@ -1088,6 +1272,7 @@ export function useGeometryWorkspaceState({
     createDraft,
     currentSnapshot,
     checkLatestVersion,
+    connectRoot,
     discardDraft,
     draftOverlay,
     drafts,
@@ -1104,6 +1289,13 @@ export function useGeometryWorkspaceState({
     previewDraftActive,
     previewScene,
     previewSceneHash,
+    publishReady:
+      selectedCoordinate !== null &&
+      previewCoordinate === selectedCoordinate &&
+      Boolean(previewSceneHash) &&
+      !previewBusy &&
+      !previewStale &&
+      !previewError,
     previewStale,
     publishPlan,
     refreshRepositories,
@@ -1112,6 +1304,7 @@ export function useGeometryWorkspaceState({
     reset,
     restore,
     removeRoot,
+    renameRootAlias,
     selectedCoordinate,
     setBump,
     setNamespace,
@@ -1122,6 +1315,7 @@ export function useGeometryWorkspaceState({
     stagedModules,
     togglePath,
     updateSource,
+    updateDescription,
   }
 }
 

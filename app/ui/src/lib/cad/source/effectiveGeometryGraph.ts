@@ -10,6 +10,7 @@ import {
   assertGeometryCoordinate,
   assertGeometrySnapshot,
   geometryCoordinateNamespace,
+  isGeometryRootAlias,
   geometryModuleHash,
   geometrySourceHash,
   validateGeometrySnapshotHashes,
@@ -120,7 +121,7 @@ export async function createEffectiveGeometryGraph(
       }
       const sourceHash = await geometrySourceHash(source)
       const moduleHash = await geometryModuleHash({
-        moduleFormatVersion: 1,
+        moduleFormatVersion: 2,
         cadApiVersion: 5,
         coordinate,
         sourceHash,
@@ -151,8 +152,8 @@ export async function createEffectiveGeometryGraph(
   const aliases = new Set<string>()
   const coordinates = new Set<string>()
   requestedRoots.forEach((root) => {
-    if (!root || typeof root !== 'object' || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(root.alias)) {
-      throw new CadModelError('Effective Geometry root alias must be an ASCII JavaScript identifier.')
+    if (!root || typeof root !== 'object' || !isGeometryRootAlias(root.alias)) {
+      throw new CadModelError('Effective Geometry root alias must be a non-reserved PascalCase identifier.')
     }
     assertGeometryCoordinate(root.coordinate, 'Effective Geometry root coordinate')
     ownerNamespace ??= geometryCoordinateNamespace(root.coordinate)

@@ -37,13 +37,19 @@ def bundle_hash(bundle: dict) -> str:
 
 
 def geometry_source(*imports: str, label: str = "plate") -> str:
-    lines = ['import { box } from "@caemble/core";']
+    lines = ['import { type Geometry } from "@caemble/core";']
     lines.extend(
-        f'import dependency{index} from "{coordinate}";'
+        f'import Dependency{index} from "{coordinate}";'
         for index, coordinate in enumerate(imports)
     )
-    children = "".join(f"{{dependency{index}}}" for index in range(len(imports)))
-    lines.append(f'export default <geometry id="{label}"><box size={{[1, 1, 1]}} />{children}</geometry>;')
+    children = "".join(
+        f'<Dependency{index} id="dependency-{index}" />'
+        for index in range(len(imports))
+    )
+    lines.append(
+        f'const GeometryModule: Geometry = () => <union><box size={{[1, 1, 1]}} />{children}</union>;'
+    )
+    lines.append("export default GeometryModule;")
     return "\n".join(lines)
 
 
@@ -123,7 +129,7 @@ async def test_namespace_change_preserves_history_and_repository_id_selects_old_
                 "version": "1.0.0",
                 "source": geometry_source(label="base"),
             }],
-            "currentRoots": [{"alias": "base", "draftId": "base"}],
+            "currentRoots": [{"alias": "Base", "draftId": "base"}],
         },
     )
     original_version = initial["published"][0]
@@ -417,7 +423,7 @@ def test_tree_sitter_geometry_analysis_and_hash_contract():
         json.dumps(
             {
                 "schemaVersion": 1,
-                "moduleFormatVersion": 1,
+                "moduleFormatVersion": 2,
                 "cadApiVersion": 5,
                 "coordinate": "caemble:geometry/test-user/common/bracket@2.0.0",
                 "sourceHash": digest,
@@ -445,7 +451,7 @@ def test_tree_sitter_geometry_analysis_and_hash_contract():
                 "moduleHash": "a" * 64,
             },
         ],
-    ) == "9c7fd9aa3ebdaa0e32c81e8e6479de0dfed0a80a34c31370f84df3ee8dfb792b"
+    ) == "8ac018cced8bc8f9ee9bd4d57c7038432ae651aa2d602d37ac860446d4f306fc"
     with pytest.raises(Exception, match="exact same-owner coordinate"):
         analyze_geometry_source('import x from "./x"; export default x;')
     with pytest.raises(Exception, match="Dynamic import"):
@@ -474,7 +480,7 @@ def test_tree_sitter_geometry_analysis_and_hash_contract():
         ('export default Function("return 1")();', "nondeterminism"),
         ('export default ({})["constructor"];', "Prototype access"),
         ('export default {Date};', "Global runtime access"),
-        ('export default function build() { return null; }', "Geometry-compatible"),
+        ('export default <box />;', "function component"),
     ],
 )
 def test_tree_sitter_geometry_analysis_rejects_unsupported_module_forms(source, message):
@@ -490,7 +496,16 @@ def test_tree_sitter_geometry_analysis_rejects_unbounded_coordinate_without_inte
 
 def test_tree_sitter_geometry_walk_handles_deep_valid_ast_without_python_recursion():
     nested = "[" * 2_000 + "0" + "]" * 2_000
-    assert analyze_geometry_source(f"const nested = {nested}; export default null;") == []
+    assert analyze_geometry_source(
+        f"const nested = {nested}; const GeometryModule = () => <box />; export default GeometryModule;"
+    ) == []
+
+
+def test_tree_sitter_geometry_analysis_accepts_direct_and_bound_functions():
+    assert analyze_geometry_source("export default function build() { return <box />; }") == []
+    assert analyze_geometry_source(
+        "const Build = () => <box />; const Selected = Build; export default Selected;"
+    ) == []
 
 
 def test_geometry_depth_counts_nodes_and_dense_shared_dag_is_memoized():
@@ -563,7 +578,7 @@ def test_publish_cross_field_rules_are_validated_by_the_service():
                 "drafts": [{**draft, "version": "1.0.0"}],
                 "currentRoots": [
                     {
-                        "alias": "root",
+                        "alias": "Root",
                         "geometryVersionId": 1,
                         "draftId": "draft",
                     }
@@ -576,7 +591,7 @@ def test_publish_cross_field_rules_are_validated_by_the_service():
                 "mode": "publish-only",
                 "targetDraftId": "draft",
                 "drafts": [{**draft, "version": "1.0.0"}],
-                "currentRoots": [{"alias": "root", "draftId": "draft"}],
+                "currentRoots": [{"alias": "Root", "draftId": "draft"}],
             },
             "publish-only roots",
         ),
@@ -585,7 +600,7 @@ def test_publish_cross_field_rules_are_validated_by_the_service():
                 "mode": "publish-and-apply",
                 "targetDraftId": "draft",
                 "drafts": [{**draft, "version": "1.0.0"}],
-                "currentRoots": [{"alias": "root", "draftId": "missing"}],
+                "currentRoots": [{"alias": "Root", "draftId": "missing"}],
             },
             "root draftId must identify",
         ),
@@ -648,10 +663,30 @@ async def test_geometry_formats_are_rejected_by_service_entrypoints(
         },
         {
             **base_request,
+            "mode": "publish-and-apply",
+            "currentRoots": [{"alias": "lowerCamel", "draftId": "draft"}],
+        },
+        {
+            **base_request,
+            "mode": "publish-and-apply",
+            "currentRoots": [{"alias": "Date", "draftId": "draft"}],
+        },
+        {
+            **base_request,
             "drafts": [
                 {
                     **base_draft,
                     "source": geometry_source("caemble:geometry/format-owner/common/part@latest"),
+                }
+            ],
+        },
+        {**base_request, "drafts": [{**base_draft, "source": "export default <box />;"}]},
+        {
+            **base_request,
+            "drafts": [
+                {
+                    **base_draft,
+                    "source": "const StaticGeometry = <box />; export default StaticGeometry;",
                 }
             ],
         },
@@ -679,13 +714,13 @@ async def test_snapshot_canonical_rules_are_validated_before_database_access(db_
             "schemaVersion": 1,
             "roots": [
                 {
-                    "alias": "second",
+                    "alias": "Second",
                     "geometryVersionId": 2,
                     "coordinate": "caemble:geometry/abc/repo/pkg@2.0.0",
                     "moduleHash": "2" * 64,
                 },
                 {
-                    "alias": "first",
+                    "alias": "First",
                     "geometryVersionId": 1,
                     "coordinate": "caemble:geometry/abc/repo/pkg@1.0.0",
                     "moduleHash": "1" * 64,
@@ -702,7 +737,7 @@ async def test_snapshot_canonical_rules_are_validated_before_database_access(db_
                 {
                     "geometryVersionId": 3,
                     "coordinate": "caemble:geometry/abc/repo/root@1.0.0",
-                    "moduleFormatVersion": 1,
+                    "moduleFormatVersion": 2,
                     "cadApiVersion": 5,
                     "description": None,
                     "source": geometry_source(),
@@ -827,7 +862,7 @@ async def test_publish_resolve_archive_and_v3_experiment_projection(
                 "source": geometry_source(label="plate"),
             }
         ],
-        "currentRoots": [{"alias": "plate", "draftId": "new-plate"}],
+        "currentRoots": [{"alias": "Plate", "draftId": "new-plate"}],
     }
     result = await plan_and_publish(client, owner, payload)
     version = result["published"][0]
@@ -904,7 +939,7 @@ async def test_publish_resolve_archive_and_v3_experiment_projection(
             ExperimentGeometryRoot.experiment_id == saved.json()["id"]
         )
     )
-    assert projection.alias == "plate"
+    assert projection.alias == "Plate"
     assert projection.geometry_version_id == version["id"]
     module_projection = await db_session.scalar(
         select(ExperimentGeometryModule).where(
@@ -1018,7 +1053,7 @@ async def test_manager_lists_direct_and_indirect_usage_and_revalidates_delete(
                 "version": "1.0.0",
                 "source": geometry_source(child_version["coordinate"], label="parent"),
             }],
-            "currentRoots": [{"alias": "assembly", "draftId": "parent"}],
+            "currentRoots": [{"alias": "Assembly", "draftId": "parent"}],
         },
     )
     parent_version = parent["published"][0]
@@ -1061,7 +1096,7 @@ async def test_manager_lists_direct_and_indirect_usage_and_revalidates_delete(
     )
     assert child_experiments.status_code == 200
     assert child_experiments.json()["items"][0]["root_alias"] is None
-    assert parent_experiments.json()["items"][0]["root_alias"] == "assembly"
+    assert parent_experiments.json()["items"][0]["root_alias"] == "Assembly"
     assert [item["id"] for item in dependents.json()["items"]] == [parent_version["id"]]
 
     usage = await client.post(
@@ -1237,7 +1272,7 @@ async def test_publish_and_apply_generates_unique_patch_ancestors(
             "bump": "patch",
             "source": geometry_source(label="c-next"),
         }],
-        "currentRoots": [{"alias": "assembly", "geometryVersionId": a_version["id"]}],
+        "currentRoots": [{"alias": "Assembly", "geometryVersionId": a_version["id"]}],
     }
     plan = await client.post("/geometry/publish/plan", headers=auth_headers(owner), json=payload)
     assert plan.status_code == 200, plan.text
@@ -1393,7 +1428,7 @@ async def test_publish_and_apply_includes_only_root_reachable_local_draft_import
                 "source": geometry_source(child_coordinate, label="unrelated-next"),
             },
         ],
-        "currentRoots": [{"alias": "assembly", "geometryVersionId": parent_version["id"]}],
+        "currentRoots": [{"alias": "Assembly", "geometryVersionId": parent_version["id"]}],
     }
 
     plan = await client.post("/geometry/publish/plan", headers=auth_headers(owner), json=payload)
@@ -1504,8 +1539,8 @@ async def test_publish_and_apply_allocates_mixed_bumps_across_two_versions_of_on
             },
         ],
         "currentRoots": [
-            {"alias": "legacy", "geometryVersionId": parent_versions[0]["id"]},
-            {"alias": "current", "geometryVersionId": parent_versions[1]["id"]},
+            {"alias": "Legacy", "geometryVersionId": parent_versions[0]["id"]},
+            {"alias": "Current", "geometryVersionId": parent_versions[1]["id"]},
         ],
     }
 
@@ -1531,8 +1566,8 @@ async def test_publish_and_apply_allocates_mixed_bumps_across_two_versions_of_on
         "caemble:geometry/multi-version/common/parent@2.1.1",
     ]
     assert {root["alias"]: root["coordinate"] for root in plan.json()["roots"]} == {
-        "current": "caemble:geometry/multi-version/common/parent@2.1.1",
-        "legacy": "caemble:geometry/multi-version/common/parent@2.1.0",
+        "Current": "caemble:geometry/multi-version/common/parent@2.1.1",
+        "Legacy": "caemble:geometry/multi-version/common/parent@2.1.0",
     }
 
     published = await client.post(
@@ -1618,8 +1653,8 @@ async def test_publish_request_rejects_duplicate_root_geometry_targets(client, d
             "source": geometry_source(label="root"),
         }],
         "currentRoots": [
-            {"alias": "first", "draftId": "root"},
-            {"alias": "second", "draftId": "root"},
+            {"alias": "First", "draftId": "root"},
+            {"alias": "Second", "draftId": "root"},
         ],
     }
 
@@ -1958,7 +1993,7 @@ async def test_experiment_v3_cannot_be_downgraded_to_v2(client, db_session, monk
 
 
 @pytest.mark.asyncio
-async def test_experiment_registry_import_requires_v3_and_one_default_binding(
+async def test_experiment_registry_import_is_rejected_for_v2_and_v3(
     client,
     db_session,
     monkeypatch,
@@ -1973,20 +2008,21 @@ async def test_experiment_registry_import_requires_v3_and_one_default_binding(
         headers=auth_headers(owner),
         json={"name": "v2", "sourceBundle": v2, "bundleHash": bundle_hash(v2)},
     )
-    assert rejected_v2.status_code == 400
-    assert "not allowed" in rejected_v2.json()["detail"]
+    assert rejected_v2.status_code == 422
+    assert "has been removed" in rejected_v2.json()["detail"]
 
     v3 = {
         **v2,
         "formatVersion": 3,
         "geometrySnapshot": {"schemaVersion": 1, "roots": [], "modules": []},
     }
-    accepted_v3 = await client.post(
+    rejected_v3 = await client.post(
         "/experiment/save",
         headers=auth_headers(owner),
         json={"name": "v3", "sourceBundle": v3, "bundleHash": bundle_hash(v3)},
     )
-    assert accepted_v3.status_code == 200
+    assert rejected_v3.status_code == 422
+    assert "has been removed" in rejected_v3.json()["detail"]
 
     named = json.loads(json.dumps(v3))
     named["files"]["experiment.tsx"] = (
@@ -1997,8 +2033,8 @@ async def test_experiment_registry_import_requires_v3_and_one_default_binding(
         headers=auth_headers(owner),
         json={"name": "named", "sourceBundle": named, "bundleHash": bundle_hash(named)},
     )
-    assert rejected_named.status_code == 400
-    assert "one default import" in rejected_named.json()["detail"]
+    assert rejected_named.status_code == 422
+    assert "has been removed" in rejected_named.json()["detail"]
 
 
 def test_experiment_bundle_v2_and_v3_share_one_exact_wire_contract():

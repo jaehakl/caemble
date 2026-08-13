@@ -9,6 +9,8 @@ import {
   reconcileGeometryDraftNamespace,
   retainReferencedStagedModules,
   relatedGeometryRootDrafts,
+  rewriteGeometryRootAliasFiles,
+  suggestGeometryRootAlias,
 } from './useGeometryWorkspaceState'
 
 function draft(
@@ -36,6 +38,31 @@ function draft(
   }
 }
 
+describe('Geometry root aliases', () => {
+  it('rewrites all TSX sources atomically and ignores simulation Python', () => {
+    const result = rewriteGeometryRootAliasFiles(
+      {
+        'experiment.tsx': 'const Main = () => <Block id="main" />',
+        'tasks/solve.tsx': 'const TaskGeometry = Block',
+        'simulate.py': "root = 'Block'",
+      },
+      'Block',
+      'Conductor',
+    )
+    expect(result.references).toBe(2)
+    expect(result.files['experiment.tsx']).toContain('<Conductor')
+    expect(result.files['tasks/solve.tsx']).toContain('= Conductor')
+    expect(result.files['simulate.py']).toBe("root = 'Block'")
+  })
+
+  it('suggests a valid non-conflicting PascalCase alias', () => {
+    expect(suggestGeometryRootAlias('notched-conductor', new Set())).toBe('NotchedConductor')
+    expect(suggestGeometryRootAlias('notched-conductor', new Set(['NotchedConductor', 'NotchedConductor2']))).toBe(
+      'NotchedConductor3',
+    )
+  })
+})
+
 describe('rebaseNewGeometryDraftConflict', () => {
   it('rekeys a new draft and rewrites only exact import specifiers', () => {
     const previous = 'caemble:geometry/test-user/common/child@1.0.0' as GeometryCoordinate
@@ -43,11 +70,11 @@ describe('rebaseNewGeometryDraftConflict', () => {
     const parent = 'caemble:geometry/test-user/common/parent@1.0.0' as GeometryCoordinate
     const result = rebaseNewGeometryDraftConflict(
       {
-        [previous]: draft('child', previous, 'export default <box size={[1, 1, 1]} />;'),
+        [previous]: draft('child', previous, 'const Child = () => <box size={[1, 1, 1]} />; export default Child;'),
         [parent]: draft(
           'parent',
           parent,
-          `import child from "${previous}";\nconst note = "${previous}";\nexport default child;`,
+          `import Child from "${previous}";\nconst note = "${previous}";\nconst Parent = () => <Child id="child" />;\nexport default Parent;`,
         ),
       },
       'child',
@@ -59,7 +86,7 @@ describe('rebaseNewGeometryDraftConflict', () => {
     expect(result?.drafts[previous]).toBeUndefined()
     expect(result?.drafts[next]?.version).toBe('1.0.1')
     expect(result?.drafts[parent]?.source).toBe(
-      `import child from "${next}";\nconst note = "${previous}";\nexport default child;`,
+      `import Child from "${next}";\nconst note = "${previous}";\nconst Parent = () => <Child id="child" />;\nexport default Parent;`,
     )
   })
 
@@ -68,8 +95,8 @@ describe('rebaseNewGeometryDraftConflict', () => {
     const occupied = 'caemble:geometry/test-user/common/child@1.0.1' as GeometryCoordinate
     const result = rebaseNewGeometryDraftConflict(
       {
-        [previous]: draft('child', previous, 'export default <box size={[1, 1, 1]} />;'),
-        [occupied]: draft('other', occupied, 'export default <box size={[2, 2, 2]} />;'),
+        [previous]: draft('child', previous, 'const Child = () => <box size={[1, 1, 1]} />; export default Child;'),
+        [occupied]: draft('other', occupied, 'const Other = () => <box size={[2, 2, 2]} />; export default Other;'),
       },
       'child',
       '1.0.1',
@@ -84,7 +111,14 @@ describe('rebaseNewGeometryDraftConflict', () => {
     const coordinate = 'caemble:geometry/test-user/common/child@1.0.0' as GeometryCoordinate
     expect(
       rebaseNewGeometryDraftConflict(
-        { [coordinate]: draft('child-next', coordinate, 'export default <box size={[1, 1, 1]} />;', 7) },
+        {
+          [coordinate]: draft(
+            'child-next',
+            coordinate,
+            'const Child = () => <box size={[1, 1, 1]} />; export default Child;',
+            7,
+          ),
+        },
         'child-next',
         '1.0.2',
       ),
@@ -97,8 +131,12 @@ describe('rebaseNewGeometryDraftConflict', () => {
     const malformed = 'caemble:geometry/test-user/common/broken@1.0.0' as GeometryCoordinate
     const result = rebaseNewGeometryDraftConflict(
       {
-        [previous]: draft('child', previous, 'export default <box size={[1, 1, 1]} />;'),
-        [parent]: draft('parent', parent, `import child from "${previous}";\nexport default child;`),
+        [previous]: draft('child', previous, 'const Child = () => <box size={[1, 1, 1]} />; export default Child;'),
+        [parent]: draft(
+          'parent',
+          parent,
+          `import Child from "${previous}";\nconst Parent = () => <Child id="child" />;\nexport default Parent;`,
+        ),
         [malformed]: draft('broken', malformed, 'export default <box>'),
       },
       'child',
@@ -117,13 +155,17 @@ describe('Geometry local draft relationships', () => {
     const repositoryDraft = 'caemble:geometry/history/common/history@1.0.0' as GeometryCoordinate
     const versionDraft = 'caemble:geometry/history/common/versioned@1.0.0' as GeometryCoordinate
     const inputs = {
-      [fresh]: draft('fresh', fresh, 'export default <box />;'),
-      [importer]: draft('importer', importer, `import fresh from "${fresh}";\nexport default fresh;`),
+      [fresh]: draft('fresh', fresh, 'const Fresh = () => <box />; export default Fresh;'),
+      [importer]: draft(
+        'importer',
+        importer,
+        `import Fresh from "${fresh}";\nconst Importer = () => <Fresh id="fresh" />;\nexport default Importer;`,
+      ),
       [repositoryDraft]: {
-        ...draft('repository', repositoryDraft, 'export default <box />;'),
+        ...draft('repository', repositoryDraft, 'const History = () => <box />; export default History;'),
         repositoryId: 11,
       },
-      [versionDraft]: draft('version', versionDraft, 'export default <box />;', 17),
+      [versionDraft]: draft('version', versionDraft, 'const Versioned = () => <box />; export default Versioned;', 17),
     }
 
     const result = reconcileGeometryDraftNamespace(inputs, 'new-default')
@@ -140,7 +182,7 @@ describe('Geometry local draft relationships', () => {
     const coordinate = 'caemble:geometry/old-default/common/fresh@1.0.0' as GeometryCoordinate
     expect(() =>
       reconcileGeometryDraftNamespace(
-        { [coordinate]: draft('fresh', coordinate, 'export default <box />;') },
+        { [coordinate]: draft('fresh', coordinate, 'const Fresh = () => <box />; export default Fresh;') },
         'new-default',
         new Set(['caemble:geometry/new-default/common/fresh@1.0.0']),
       ),
@@ -152,9 +194,17 @@ describe('Geometry local draft relationships', () => {
     const parent = 'caemble:geometry/test-user/common/parent@1.0.0' as GeometryCoordinate
     const note = 'caemble:geometry/test-user/common/note@1.0.0' as GeometryCoordinate
     const drafts = {
-      [child]: draft('child', child, 'export default <box size={[1, 1, 1]} />;'),
-      [parent]: draft('parent', parent, `import child from "${child}";\nexport default child;`),
-      [note]: draft('note', note, `const note = "${child}";\nexport default <box size={[1, 1, 1]} />;`),
+      [child]: draft('child', child, 'const Child = () => <box size={[1, 1, 1]} />; export default Child;'),
+      [parent]: draft(
+        'parent',
+        parent,
+        `import Child from "${child}";\nconst Parent = () => <Child id="child" />;\nexport default Parent;`,
+      ),
+      [note]: draft(
+        'note',
+        note,
+        `const note = "${child}";\nconst Note = () => <box size={[1, 1, 1]} />;\nexport default Note;`,
+      ),
     }
 
     expect(geometryDraftImporters(drafts, child).map((item) => item.draftId)).toEqual(['parent'])
@@ -166,15 +216,27 @@ describe('Geometry local draft relationships', () => {
     const relatedRoot = 'caemble:geometry/test-user/common/assembly@1.0.0' as GeometryCoordinate
     const unrelatedRoot = 'caemble:geometry/test-user/common/other@1.0.0' as GeometryCoordinate
     const drafts = {
-      [child]: draft('child', child, 'export default <box size={[1, 1, 1]} />;'),
-      [parent]: draft('parent', parent, `import child from "${child}";\nexport default child;`),
+      [child]: draft('child', child, 'const Child = () => <box size={[1, 1, 1]} />; export default Child;'),
+      [parent]: draft(
+        'parent',
+        parent,
+        `import Child from "${child}";\nconst Parent = () => <Child id="child" />;\nexport default Parent;`,
+      ),
       [relatedRoot]: {
-        ...draft('related-root', relatedRoot, `import parent from "${parent}";\nexport default parent;`),
-        rootAlias: 'assembly',
+        ...draft(
+          'related-root',
+          relatedRoot,
+          `import Parent from "${parent}";\nconst Assembly = () => <Parent id="parent" />;\nexport default Assembly;`,
+        ),
+        rootAlias: 'Assembly',
       },
       [unrelatedRoot]: {
-        ...draft('unrelated-root', unrelatedRoot, 'export default <box size={[2, 2, 2]} />;'),
-        rootAlias: 'other',
+        ...draft(
+          'unrelated-root',
+          unrelatedRoot,
+          'const Other = () => <box size={[2, 2, 2]} />; export default Other;',
+        ),
+        rootAlias: 'Other',
       },
     }
 
@@ -185,9 +247,37 @@ describe('Geometry local draft relationships', () => {
   it('adds an exact import and combines the previous export with lowercase union', () => {
     const child = 'caemble:geometry/test-user/common/child@1.0.0' as GeometryCoordinate
 
-    expect(attachGeometryImportSource('const body = <box />;\nexport default body;', child, 'geometry_child')).toBe(
-      `import geometry_child from "${child}";\nconst body = <box />;\nexport default <union>{body}{geometry_child}</union>;`,
+    expect(
+      attachGeometryImportSource(
+        'const Parent = () => <box />;\nexport default Parent;',
+        child,
+        'GeometryChild',
+        '<GeometryChild id="child" />',
+      ),
+    ).toBe(
+      `import GeometryChild from "${child}";\nconst Parent = () => <union>{<box />}<GeometryChild id="child" /></union>;\nexport default Parent;`,
     )
+  })
+
+  it('composes one top-level block return and rejects conditional returns', () => {
+    const child = 'caemble:geometry/test-user/common/child@1.0.0' as GeometryCoordinate
+    const source = `const Parent = () => {
+  const size = [1, 1, 1] as const
+  return <box size={size} />
+}
+export default Parent`
+
+    expect(attachGeometryImportSource(source, child, 'Child', '<Child id="child" />')).toContain(
+      'return <union>{<box size={size} />}<Child id="child" /></union>',
+    )
+    expect(() =>
+      attachGeometryImportSource(
+        'const Parent = () => { if (true) return <box /> }\nexport default Parent',
+        child,
+        'Child',
+        '<Child id="child" />',
+      ),
+    ).toThrow('one top-level return')
   })
 
   it('blocks publish-only for an imported new draft and excludes unrelated local roots from apply', () => {
@@ -195,24 +285,28 @@ describe('Geometry local draft relationships', () => {
     const parent = 'caemble:geometry/test-user/common/parent@1.0.0' as GeometryCoordinate
     const other = 'caemble:geometry/test-user/common/other@1.0.0' as GeometryCoordinate
     const inputs = {
-      [child]: draft('child', child, 'export default <box />;'),
+      [child]: draft('child', child, 'const Child = () => <box />; export default Child;'),
       [parent]: {
-        ...draft('parent', parent, `import child from "${child}";\nexport default child;`),
-        rootAlias: 'parent',
+        ...draft(
+          'parent',
+          parent,
+          `import Child from "${child}";\nconst Parent = () => <Child id="child" />;\nexport default Parent;`,
+        ),
+        rootAlias: 'Parent',
       },
-      [other]: { ...draft('other', other, 'export default <box />;'), rootAlias: 'other' },
+      [other]: { ...draft('other', other, 'const Other = () => <box />; export default Other;'), rootAlias: 'Other' },
     }
 
     expect(() => createGeometryPublishRequest(inputs, [], child, false)).toThrow('Publish & Apply')
     expect(createGeometryPublishRequest(inputs, [], child, true).currentRoots).toEqual([
-      { alias: 'parent', draftId: 'parent' },
+      { alias: 'Parent', draftId: 'parent' },
     ])
   })
 
   it('keeps repository identity in publish input and blocks apply for a standalone preview', () => {
     const coordinate = 'caemble:geometry/history/common/part@1.0.0' as GeometryCoordinate
     const standalone = {
-      ...draft('standalone', coordinate, 'export default <box />;'),
+      ...draft('standalone', coordinate, 'const Standalone = () => <box />; export default Standalone;'),
       repositoryId: 21,
       standalonePreview: true,
     }
@@ -236,10 +330,10 @@ describe('Geometry local draft relationships', () => {
       {
         geometryVersionId: 7,
         coordinate: stagedRoot,
-        moduleFormatVersion: 1 as const,
+        moduleFormatVersion: 2 as const,
         cadApiVersion: 5 as const,
         description: null,
-        source: `import child from "${stagedChild}";\nexport default child;`,
+        source: `import Child from "${stagedChild}";\nconst Staged = () => <Child id="child" />;\nexport default Staged;`,
         sourceHash: hash,
         moduleHash: hash,
         imports: [{ geometryVersionId: 8, coordinate: stagedChild, moduleHash: hash }],
@@ -247,17 +341,21 @@ describe('Geometry local draft relationships', () => {
       {
         geometryVersionId: 8,
         coordinate: stagedChild,
-        moduleFormatVersion: 1 as const,
+        moduleFormatVersion: 2 as const,
         cadApiVersion: 5 as const,
         description: null,
-        source: 'export default <box />;',
+        source: 'const StagedChild = () => <box />; export default StagedChild;',
         sourceHash: hash,
         moduleHash: hash,
         imports: [],
       },
     ]
     const inputs = {
-      [parent]: draft('parent', parent, `import staged from "${stagedRoot}";\nexport default staged;`),
+      [parent]: draft(
+        'parent',
+        parent,
+        `import Staged from "${stagedRoot}";\nconst Parent = () => <Staged id="staged" />;\nexport default Parent;`,
+      ),
     }
 
     expect(retainReferencedStagedModules(inputs, modules)).toEqual(modules)

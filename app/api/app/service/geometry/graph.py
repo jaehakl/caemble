@@ -222,7 +222,7 @@ def _snapshot_modules(
             GeometryModuleSnapshot(
                 geometryVersionId=version_id,
                 coordinate=coordinate,
-                moduleFormatVersion=1,
+                moduleFormatVersion=2,
                 cadApiVersion=5,
                 description=version.description,
                 source=version.source,
@@ -354,4 +354,3 @@ async def validate_snapshot(
     )
     if expected.model_dump(mode="json") != snapshot.model_dump(mode="json"):
         raise _bad("geometrySnapshot does not match the published Geometry graph.")
-

@@ -25,7 +25,7 @@ async function module(
   const input = {
     geometryVersionId,
     coordinate,
-    moduleFormatVersion: 1 as const,
+    moduleFormatVersion: 2 as const,
     cadApiVersion: 5 as const,
     description: null,
     source,
@@ -48,7 +48,7 @@ describe('Geometry snapshot v1', () => {
     const left = { geometryVersionId: 2, coordinate: rootCoordinate, moduleHash: 'b'.repeat(64) }
     const right = { geometryVersionId: 1, coordinate: leafCoordinate, moduleHash: 'a'.repeat(64) }
     const input = {
-      moduleFormatVersion: 1 as const,
+      moduleFormatVersion: 2 as const,
       cadApiVersion: 5 as const,
       description: null,
       coordinate: rootCoordinate,
@@ -56,31 +56,31 @@ describe('Geometry snapshot v1', () => {
       imports: [left, right],
     }
     await expect(geometryModuleHash(input)).resolves.toBe(
-      '9c7fd9aa3ebdaa0e32c81e8e6479de0dfed0a80a34c31370f84df3ee8dfb792b',
+      '8ac018cced8bc8f9ee9bd4d57c7038432ae651aa2d602d37ac860446d4f306fc',
     )
     await expect(geometryModuleHash({ ...input, imports: [right, left] })).resolves.toBe(
-      '9c7fd9aa3ebdaa0e32c81e8e6479de0dfed0a80a34c31370f84df3ee8dfb792b',
+      '8ac018cced8bc8f9ee9bd4d57c7038432ae651aa2d602d37ac860446d4f306fc',
     )
   })
 
   it('canonicalizes roots, modules, and imports and validates their hashes', async () => {
-    const leaf = await module(1, leafCoordinate, 'export default <box size={[1, 1, 1]} />\n')
+    const leaf = await module(1, leafCoordinate, 'const Leaf = () => <box size={[1, 1, 1]} />\nexport default Leaf\n')
     const imported = { geometryVersionId: 1, coordinate: leafCoordinate, moduleHash: leaf.moduleHash }
     const root = await module(
       2,
       rootCoordinate,
-      `import leaf from '${leafCoordinate}'\nexport default <union>{leaf}</union>\n`,
+      `import Leaf from '${leafCoordinate}'\nconst Root = () => <union><Leaf id="leaf" /></union>\nexport default Root\n`,
       [imported],
     )
     const snapshot = createGeometrySnapshot(
       [
-        { alias: 'zRoot', geometryVersionId: 2, coordinate: rootCoordinate, moduleHash: root.moduleHash },
+        { alias: 'ZRoot', geometryVersionId: 2, coordinate: rootCoordinate, moduleHash: root.moduleHash },
         { alias: 'ARoot', geometryVersionId: 1, coordinate: leafCoordinate, moduleHash: leaf.moduleHash },
       ],
       [root, leaf],
     )
 
-    expect(snapshot.roots.map((item) => item.alias)).toEqual(['ARoot', 'zRoot'])
+    expect(snapshot.roots.map((item) => item.alias)).toEqual(['ARoot', 'ZRoot'])
     expect(snapshot.modules.map((item) => item.coordinate)).toEqual([leafCoordinate, rootCoordinate])
     expect(() => assertCanonicalGeometrySnapshot({ ...snapshot, roots: [...snapshot.roots].reverse() })).toThrow(
       'sorted by alias',
@@ -100,7 +100,7 @@ describe('Geometry snapshot v1', () => {
     const leaf = {
       geometryVersionId: 1,
       coordinate: leafCoordinate,
-      moduleFormatVersion: 1 as const,
+      moduleFormatVersion: 2 as const,
       cadApiVersion: 5 as const,
       description: null,
       source: 'x',
@@ -111,7 +111,7 @@ describe('Geometry snapshot v1', () => {
     expect(() =>
       assertGeometrySnapshot({
         schemaVersion: 1,
-        roots: [{ alias: 'root', geometryVersionId: 1, coordinate: leafCoordinate, moduleHash: 'c'.repeat(64) }],
+        roots: [{ alias: 'Root', geometryVersionId: 1, coordinate: leafCoordinate, moduleHash: 'c'.repeat(64) }],
         modules: [leaf],
       }),
     ).toThrow('root projection')
@@ -120,8 +120,8 @@ describe('Geometry snapshot v1', () => {
       assertGeometrySnapshot({
         schemaVersion: 1,
         roots: [
-          { alias: 'same', geometryVersionId: 1, coordinate: leafCoordinate, moduleHash: leaf.moduleHash },
-          { alias: 'same', geometryVersionId: 1, coordinate: leafCoordinate, moduleHash: leaf.moduleHash },
+          { alias: 'Same', geometryVersionId: 1, coordinate: leafCoordinate, moduleHash: leaf.moduleHash },
+          { alias: 'Same', geometryVersionId: 1, coordinate: leafCoordinate, moduleHash: leaf.moduleHash },
         ],
         modules: [leaf],
       }),
@@ -133,7 +133,7 @@ describe('Geometry snapshot v1', () => {
     expect(() =>
       assertGeometrySnapshot({
         schemaVersion: 1,
-        roots: [{ alias: 'root', geometryVersionId: 1, coordinate: leafCoordinate, moduleHash: leaf.moduleHash }],
+        roots: [{ alias: 'Root', geometryVersionId: 1, coordinate: leafCoordinate, moduleHash: leaf.moduleHash }],
         modules: [cyclic],
       }),
     ).toThrow('dependency cycle')
@@ -147,7 +147,7 @@ describe('Geometry snapshot v1', () => {
     const modules = coordinates.map((coordinate, index) => ({
       geometryVersionId: index + 1,
       coordinate,
-      moduleFormatVersion: 1 as const,
+      moduleFormatVersion: 2 as const,
       cadApiVersion: 5 as const,
       description: null,
       source: 'x',
@@ -170,13 +170,13 @@ describe('Geometry snapshot v1', () => {
         schemaVersion: 1,
         roots: [
           {
-            alias: 'shallow',
+            alias: 'Shallow',
             geometryVersionId: modules[63].geometryVersionId,
             coordinate: coordinates[63],
             moduleHash: 'b'.repeat(64),
           },
           {
-            alias: 'long',
+            alias: 'Long',
             geometryVersionId: modules[1].geometryVersionId,
             coordinate: coordinates[1],
             moduleHash: 'b'.repeat(64),
@@ -190,8 +190,8 @@ describe('Geometry snapshot v1', () => {
       assertGeometrySnapshot({
         schemaVersion: 1,
         roots: [
-          { alias: 'shallow', geometryVersionId: 64, coordinate: coordinates[63], moduleHash: 'b'.repeat(64) },
-          { alias: 'long', geometryVersionId: 1, coordinate: coordinates[0], moduleHash: 'b'.repeat(64) },
+          { alias: 'Shallow', geometryVersionId: 64, coordinate: coordinates[63], moduleHash: 'b'.repeat(64) },
+          { alias: 'Long', geometryVersionId: 1, coordinate: coordinates[0], moduleHash: 'b'.repeat(64) },
         ],
         modules,
       }),

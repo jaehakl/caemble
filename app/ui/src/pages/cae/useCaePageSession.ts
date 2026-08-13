@@ -31,7 +31,7 @@ function validTabs(value: readonly WorkbenchTabId[]) {
 
 function emptyDraft(userKey: string): WorkbenchDraft {
   return {
-    version: 4,
+    version: 5,
     savedAt: Date.now(),
     userKey,
     experiment: {

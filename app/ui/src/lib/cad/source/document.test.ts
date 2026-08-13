@@ -27,12 +27,12 @@ import {
 const coordinate = 'caemble:geometry/jlee/demo/block@1.0.0' as GeometryCoordinate
 
 async function geometryModule(): Promise<GeometrySnapshotModule> {
-  const source = 'export default <box size={[1, 1, 1]} />\n'
+  const source = 'const Block = () => <box size={[1, 1, 1]} />\nexport default Block\n'
   const sourceHash = await geometrySourceHash(source)
   const module = {
     geometryVersionId: 1,
     coordinate,
-    moduleFormatVersion: 1 as const,
+    moduleFormatVersion: 2 as const,
     cadApiVersion: 5 as const,
     description: null,
     source,
@@ -65,7 +65,7 @@ describe('ExperimentSourceDocument v2', () => {
   it('adds canonical Geometry snapshot data only in v3 and preserves it across source edits', async () => {
     const module = await geometryModule()
     const snapshot = createGeometrySnapshot(
-      [{ alias: 'block', geometryVersionId: 1, coordinate, moduleHash: module.moduleHash }],
+      [{ alias: 'Block', geometryVersionId: 1, coordinate, moduleHash: module.moduleHash }],
       [module],
     )
     const v2 = bundle()
