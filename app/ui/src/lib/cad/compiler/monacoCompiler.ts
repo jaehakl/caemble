@@ -164,7 +164,9 @@ async function compile(
   )
   const geometryModels = Object.fromEntries(
     (geometryGraph?.modules ?? []).map((module) => {
-      const uri = monaco.Uri.parse(`file:///geometries/${encodeURIComponent(module.coordinate)}.tsx`)
+      const uri = monaco.Uri.parse(
+        `file:///caemble-source/${sourceHash}/geometries/${encodeURIComponent(module.coordinate)}.tsx`,
+      )
       return [module.coordinate, monaco.editor.createModel(module.source, 'typescript', uri)]
     }),
   )

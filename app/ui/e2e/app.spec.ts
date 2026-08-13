@@ -156,7 +156,7 @@ test('opens authenticated Launchers from Settings and Jobs from the shared Toolb
   await expect(page.getByRole('dialog', { name: 'Jobs' })).toContainText('cae.simulation.start')
 })
 
-test('manages paged Geometry packages, exact versions, references, and the default namespace', async ({ page }) => {
+test('manages Geometry packages and previews an editable Geometry without Monaco model conflicts', async ({ page }) => {
   const timestamp = '2026-08-13T00:00:00Z'
   const coordinate = 'caemble:geometry/designer/common/plate@1.2.3'
   const geometrySource =
@@ -365,4 +365,22 @@ export default experiment({
   recordedData: {},
 })`)
   await expect(page.locator('.monaco-editor .squiggly-error')).toHaveCount(0, { timeout: 10_000 })
+
+  await page.getByRole('tab', { name: 'Geometry', exact: true }).click()
+  const workspace = page.locator('section[aria-label="Geometry workspace"]')
+  await expect(workspace).toBeVisible()
+  await workspace.getByRole('treeitem').getByRole('button').filter({ hasText: 'PlateRoot' }).click()
+  await workspace.getByRole('button', { name: 'Edit as New Version' }).click()
+
+  const saveGeometry = workspace.getByRole('button', { name: 'Geometry 저장' })
+  await expect(saveGeometry).toBeEnabled({ timeout: 15_000 })
+  await expect(workspace.getByText('Preview current', { exact: true })).toBeVisible()
+  await expect(workspace.getByRole('alert')).toHaveCount(0)
+
+  const draftEditor = workspace.locator('.monaco-editor:visible .view-lines')
+  await draftEditor.click({ position: { x: 100, y: 30 } })
+  await page.keyboard.press('Control+A')
+  await page.keyboard.insertText('export const Broken = (')
+  await expect(workspace.getByRole('alert')).toContainText('마지막 정상 Tree와 Viewer를 유지합니다.')
+  await expect(saveGeometry).toBeDisabled()
 })
