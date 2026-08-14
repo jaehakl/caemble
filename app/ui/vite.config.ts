@@ -33,6 +33,9 @@ export default defineConfig(({ mode }) => ({
   },
   build: {
     target: 'es2022',
+    commonjsOptions: {
+      strictRequires: ['**/node_modules/@babel/**'],
+    },
     rollupOptions: {
       input: {
         main: 'index.html',
