@@ -37,10 +37,12 @@ function formValue(form: FormData, name: string) {
 }
 
 export function GeometryWorkspaceContainer({
+  authenticated,
   diagnostics,
   geometry,
   onOpenManager,
 }: {
+  authenticated: boolean
   diagnostics: readonly CadDiagnostic[]
   geometry: GeometryWorkspaceState
   onOpenManager: () => void
@@ -102,6 +104,7 @@ export function GeometryWorkspaceContainer({
   return (
     <>
       <GeometryWorkspace
+        authenticated={authenticated}
         diagnostics={diagnostics}
         geometry={geometry}
         onChangeNamespace={() => {

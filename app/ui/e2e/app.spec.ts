@@ -42,8 +42,10 @@ test('uses the root Workbench and opens integrated documentation in a new window
 
   await page.getByRole('menuitem', { name: 'Help' }).click()
   await page.getByRole('menuitem', { name: 'AI Helper' }).click()
-  await expect(page.getByRole('dialog', { name: 'AI Helper' })).toBeVisible()
-  await page.getByRole('button', { name: '닫기' }).click()
+  await expect(page.getByRole('tab', { name: 'AI Helper' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByText('AI Helper을 사용하려면 Account에서 로그인하세요.')).toBeVisible()
+  await expect(page.getByRole('dialog', { name: 'AI Helper' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'AI Helper 탭 닫기' }).click()
 
   await page.getByRole('menuitem', { name: 'Help' }).click()
   const manualPagePromise = page.waitForEvent('popup')
@@ -87,6 +89,58 @@ test('uses the root Workbench and opens integrated documentation in a new window
     await expect(page.getByRole('heading', { name: '페이지를 찾을 수 없습니다' })).toBeVisible()
     await expect(page).toHaveURL(new RegExp(`/${hash}$`))
   }
+})
+
+test('keeps an anonymous Starter editable offline and restores the session draft', async ({ page }) => {
+  await page.route(apiPattern, (route) => route.abort('failed'))
+  await page.goto('/')
+
+  await expect(page.getByRole('tab', { name: 'Experiment', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByText('Local editing · 서버 기능은 로그인 필요')).toBeVisible()
+  await expect(page.getByText('현재 브라우저 세션에 Draft 자동 저장')).toBeVisible()
+  await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('StarterStructure')
+  await expect(page.getByRole('button', { name: 'Toggle Experiment' })).toBeVisible({ timeout: 15_000 })
+
+  await page.getByRole('tab', { name: 'geometry.tsx' }).click()
+  const editor = page.locator('.monaco-editor:visible .view-lines')
+  await editor.click({ position: { x: 120, y: 45 } })
+  await page.keyboard.press('Control+A')
+  await page.keyboard.insertText(`import { type Geometry, type Vec3 } from '@caemble/core'
+
+export const StarterStructure: Geometry<{ size: Vec3 }> = () => (
+  <box size={[18, 12, 6]} />
+)
+// offline-edit
+`)
+  await expect(page.locator('.monaco-editor:visible .squiggly-error')).toHaveCount(0, { timeout: 10_000 })
+  await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 15_000 })
+
+  await page.getByRole('menuitem', { name: 'Source' }).click()
+  await page.getByRole('menuitem', { name: 'New Experiment' }).click()
+  await page
+    .getByRole('dialog', { name: 'New Experiment' })
+    .getByRole('button', { name: /Blank Experiment/ })
+    .click()
+  const confirmation = page.getByRole('dialog', { name: '저장하지 않은 편집을 바꿀까요?' })
+  await confirmation.getByRole('button', { name: '편집 내용 바꾸기' }).click()
+  await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('EmptyStructure')
+  await expect(page.getByText('Waiting for model...', { exact: true })).toBeVisible({ timeout: 15_000 })
+
+  const blankEditor = page.locator('.monaco-editor:visible .view-lines')
+  await blankEditor.click({ position: { x: 120, y: 45 } })
+  await page.keyboard.press('Control+A')
+  await page.keyboard.insertText(`import { type Geometry } from '@caemble/core'
+
+export const EmptyStructure: Geometry = () => <></>
+// session-restored
+`)
+  await expect
+    .poll(() => page.evaluate(() => sessionStorage.getItem('caemble:cae-workbench-draft')))
+    .toContain('session-restored')
+
+  await page.reload()
+  await expect(page.getByRole('tab', { name: 'geometry.tsx' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('session-restored')
 })
 
 test('opens authenticated Launchers from Settings and Jobs from the shared Toolbar actions', async ({ page }) => {

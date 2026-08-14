@@ -26,6 +26,10 @@ const api = vi.hoisted(() => ({
     published: [],
     replacements: [] as { draftId: string; localCoordinate: string; coordinate: string }[],
   })),
+  resolveVersion: vi.fn(),
+  createRepository: vi.fn(),
+  archiveRepository: vi.fn(),
+  archiveVersion: vi.fn(),
   setNamespace: vi.fn(async (namespace: string) => ({ geometry_namespace: namespace })),
 }))
 
@@ -41,6 +45,10 @@ vi.mock('@/api', async (importOriginal) => {
       ...original.geometryApi,
       planPublish: api.planPublish,
       publish: api.publish,
+      resolveVersion: api.resolveVersion,
+      createRepository: api.createRepository,
+      archiveRepository: api.archiveRepository,
+      archiveVersion: api.archiveVersion,
       setNamespace: api.setNamespace,
     },
   }
@@ -80,6 +88,75 @@ describe('source-based Geometry workspace state', () => {
     expect(draft.source).toContain('export const NotchedConductor')
     expect(draft.source).not.toContain('export default')
     expect(draft.standalonePreview).toBe(true)
+  })
+
+  it('provides a local anonymous namespace without calling repository or publish APIs', async () => {
+    const { result } = renderHook(
+      () =>
+        useGeometryWorkspaceState({
+          authenticated: false,
+          initialNamespace: 'local',
+          onExperimentChange: vi.fn(),
+          snapshot: emptySnapshot,
+          sourceFiles,
+        }),
+      { wrapper },
+    )
+
+    let coordinate = '' as LocalGeometryCoordinate
+    act(() => {
+      coordinate = result.current.createDraft({ repository: 'common', packageName: 'offline-part' })
+    })
+    act(() =>
+      result.current.updateSource(result.current.drafts[coordinate].source.replace('[100, 12, 10]', '[20, 10, 5]')),
+    )
+
+    expect(coordinate).toBe('caemble:geometry/local/common/offline-part@local')
+    expect(result.current.drafts[coordinate].source).toContain('[20, 10, 5]')
+    expect(api.listRows).not.toHaveBeenCalled()
+    await expect(result.current.requestPublish(coordinate)).rejects.toThrow('로그인')
+    await expect(result.current.setNamespace('designer')).rejects.toThrow('로그인')
+    await expect(result.current.editPublishedVersion(1)).rejects.toThrow('로그인')
+    await expect(result.current.usePublishedExport(1, 'Part')).rejects.toThrow('로그인')
+    await expect(result.current.createRepository('repo')).rejects.toThrow('로그인')
+    await expect(result.current.prepareExperimentSave()).rejects.toThrow('로그인')
+    expect(api.planPublish).not.toHaveBeenCalled()
+    expect(api.resolveVersion).not.toHaveBeenCalled()
+    expect(api.createRepository).not.toHaveBeenCalled()
+  })
+
+  it('rekeys unbased local drafts and imports after the signed-in namespace becomes known', async () => {
+    const onExperimentChange = vi.fn()
+    const { result, rerender } = renderHook(
+      ({ authenticated, initialNamespace }: { authenticated: boolean; initialNamespace: string | null }) =>
+        useGeometryWorkspaceState({
+          authenticated,
+          initialNamespace,
+          onExperimentChange,
+          snapshot: emptySnapshot,
+          sourceFiles,
+        }),
+      { initialProps: { authenticated: false, initialNamespace: 'local' }, wrapper },
+    )
+    const previous = 'caemble:geometry/local/common/part@local' as LocalGeometryCoordinate
+    act(() => {
+      result.current.createDraft({ repository: 'common', packageName: 'part' })
+      result.current.setSelectedCoordinate('geometry.tsx')
+      result.current.updateSource(`import { Part } from "${previous}"\nexport { Part }\n`)
+    })
+    act(() => result.current.setSelectedCoordinate(previous))
+
+    rerender({ authenticated: true, initialNamespace: 'designer' })
+
+    const current = 'caemble:geometry/designer/common/part@local'
+    await waitFor(() => expect(result.current.drafts[current]).toBeDefined())
+    expect(result.current.drafts[previous]).toBeUndefined()
+    expect(result.current.entrySource).toContain(current)
+    expect(result.current.selectedCoordinate).toBe(current)
+    expect(onExperimentChange).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ 'geometry.tsx': expect.stringContaining(current) }),
+    )
   })
 
   it('rekeys only new-repository local coordinates before changing namespace', async () => {

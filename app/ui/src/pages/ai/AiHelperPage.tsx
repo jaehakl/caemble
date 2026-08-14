@@ -65,6 +65,7 @@ export function AiHelperWorkspace({
       description="Docs와 현재 Workbench 상태를 근거로 CAE 사용, 코드 작성과 오류 해결을 돕습니다."
       emptyDescription="질문마다 관련 Docs와 최신 편집 상태를 일회성 참고자료로 첨부합니다."
       emptyTitle="CAE 작업에 대해 질문하세요."
+      embedded
       fixedSystemPrompt
       onRequestLogin={onRequestLogin}
       questionLabel="AI Helper 질문"

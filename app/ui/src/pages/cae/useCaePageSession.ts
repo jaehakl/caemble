@@ -2,17 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { dbTables, getListRequest } from '@/api'
-import {
-  loadWorkbenchDraft,
-  saveWorkbenchDraft,
-  workbenchDraftUserKey,
-} from '@/features/cae-workbench/storage/draftStorage'
+import { loadWorkbenchDraft, saveWorkbenchDraft } from '@/features/cae-workbench/storage/draftStorage'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
-import type { SavedExperiment, WorkbenchDraft, WorkbenchTabId } from '@/features/cae-workbench/types'
-import { experimentSourceBundleHash } from '@/features/viewer/persistence/saveDefinition'
+import type { WorkbenchDraft, WorkbenchTabId } from '@/features/cae-workbench/types'
+import { createCadSourceDocument } from '@/lib/cad'
+import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 import type { PendingConfirmation, WorkbenchDialog } from './caePageTypes'
 
-export const caeWorkbenchTabs: readonly WorkbenchTabId[] = ['experiment', 'geometry', 'recorded-data']
+export const caeWorkbenchTabs: readonly WorkbenchTabId[] = ['experiment', 'geometry', 'recorded-data', 'ai-helper']
+export const defaultCaeWorkbenchTabs: readonly WorkbenchTabId[] = ['experiment', 'geometry', 'recorded-data']
 
 function positiveId(value: string | null) {
   const parsed = Number(value)
@@ -29,17 +27,16 @@ function validTabs(value: readonly WorkbenchTabId[]) {
   return value.filter((tab, index) => caeWorkbenchTabs.includes(tab) && value.indexOf(tab) === index)
 }
 
-function emptyDraft(userKey: string): WorkbenchDraft {
+function starterDraft(): WorkbenchDraft {
   return {
-    version: 7,
+    version: 8,
     savedAt: Date.now(),
-    userKey,
     experiment: {
       record: null,
-      baselineBundle: null,
-      document: null,
-      name: 'Untitled Experiment',
-      description: '',
+      baselineBundle: starterExperimentSourceBundle,
+      document: createCadSourceDocument('experiment', starterExperimentSourceBundle),
+      name: 'Starter Experiment',
+      description: '브라우저에서 바로 편집하고 렌더링할 수 있는 로컬 Starter입니다.',
     },
     candidate: { vars: null, materialParameters: null },
     selection: { measurementId: null },
@@ -51,7 +48,7 @@ function emptyDraft(userKey: string): WorkbenchDraft {
       expandedPaths: ['geometry.tsx'],
     },
     layout: {
-      openTabs: caeWorkbenchTabs,
+      openTabs: defaultCaeWorkbenchTabs,
       activeTab: 'experiment',
       experimentFile: 'experiment.tsx',
       splitPercent: 50,
@@ -59,64 +56,23 @@ function emptyDraft(userKey: string): WorkbenchDraft {
   }
 }
 
-async function databaseDraftDiffers(draft: WorkbenchDraft) {
-  const experiment = draft.experiment.record?.id
-    ? await dbTables.Experiment.listRows(getListRequest('visible', [draft.experiment.record.id])).then(
-        (response) => response.items[0] ?? null,
-      )
-    : null
-  const sameBaseline =
-    experiment && draft.experiment.baselineBundle
-      ? await Promise.all([
-          experimentSourceBundleHash(experiment.source_bundle),
-          experimentSourceBundleHash(draft.experiment.baselineBundle),
-        ]).then(([left, right]) => left === right)
-      : false
-  return {
-    differs: Boolean(draft.experiment.record && (!experiment || !sameBaseline)),
-    experiment: experiment?.id ? (experiment as SavedExperiment) : null,
-  }
-}
-
-async function restoreDraftAgainstDatabase(draft: WorkbenchDraft, workbench: CaeWorkbenchState) {
-  const current = await databaseDraftDiffers(draft)
-  if (!current.differs) {
-    workbench.restoreDraft(draft)
-    return
-  }
-  if (window.confirm('저장된 DB 기준이 마지막 작업 이후 바뀌었습니다. 로컬 draft를 복원할까요?')) {
-    workbench.restoreStaleDraft(draft, current.experiment)
-    return
-  }
-  if (current.experiment) workbench.applyExperiment(current.experiment)
-  else if (draft.experiment.document) {
-    workbench.newExperiment(draft.experiment.document.sourceBundle, draft.experiment.name, draft.experiment.description)
-  }
-}
-
-export function useCaePageSession(
-  authLoading: boolean,
-  userId: string | null | undefined,
-  workbench: CaeWorkbenchState,
-) {
+export function useCaePageSession(workbench: CaeWorkbenchState) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [dialog, setDialog] = useState<WorkbenchDialog>(null)
   const [confirmation, setConfirmation] = useState<PendingConfirmation | null>(null)
-  const [openTabs, setOpenTabs] = useState<readonly WorkbenchTabId[]>(caeWorkbenchTabs)
+  const [openTabs, setOpenTabs] = useState<readonly WorkbenchTabId[]>(defaultCaeWorkbenchTabs)
   const [activeTab, setActiveTab] = useState<WorkbenchTabId>('experiment')
   const [activeExperimentFile, setActiveExperimentFile] = useState<string | null>('experiment.tsx')
   const [viewerPercent, setViewerPercent] = useState(50)
   const [mobileViewerOpen, setMobileViewerOpen] = useState(false)
   const [initialized, setInitialized] = useState(false)
   const [persistenceAvailable, setPersistenceAvailable] = useState(true)
-  const [readyUserKey, setReadyUserKey] = useState<string | null>(null)
-  const initializingUserKeyRef = useRef<string | null>(null)
+  const initializingRef = useRef(false)
   const lastSyncedSearchRef = useRef<string | null>(null)
   const externalNavigationRef = useRef(false)
   const externalNavigationSequenceRef = useRef(0)
   const searchParamsRef = useRef(searchParams)
   const workbenchRef = useRef(workbench)
-  const userKey = workbenchDraftUserKey(userId)
   const searchKey = searchParams.toString()
   searchParamsRef.current = searchParams
   workbenchRef.current = workbench
@@ -149,7 +105,7 @@ export function useCaePageSession(
       setConfirmation({
         title: '저장하지 않은 편집을 바꿀까요?',
         description:
-          'Experiment와 Geometry의 로컬 편집 내용이 새 선택으로 대체됩니다. IndexedDB draft에는 마지막 상태가 남지만 현재 작업에서는 되돌릴 수 없습니다.',
+          'Experiment와 Geometry의 로컬 편집 내용이 새 선택으로 대체됩니다. 현재 브라우저 세션의 draft도 새 작업으로 바뀝니다.',
         confirmLabel: '편집 내용 바꾸기',
         run,
       })
@@ -164,28 +120,27 @@ export function useCaePageSession(
   )
 
   useEffect(() => {
-    if (authLoading || initializingUserKeyRef.current === userKey) return
+    if (initializingRef.current) return
     const initialSearchParams = searchParamsRef.current
     const initialSearchKey = initialSearchParams.toString()
     const currentWorkbench = workbenchRef.current
-    initializingUserKeyRef.current = userKey
+    initializingRef.current = true
     setInitialized(false)
     setPersistenceAvailable(true)
-    setReadyUserKey(null)
     externalNavigationRef.current = true
     lastSyncedSearchRef.current = initialSearchKey
-    setOpenTabs(caeWorkbenchTabs)
+    setOpenTabs(defaultCaeWorkbenchTabs)
     setActiveTab('experiment')
     setActiveExperimentFile('experiment.tsx')
     setViewerPercent(50)
-    currentWorkbench.restoreDraft(emptyDraft(userKey))
+    currentWorkbench.restoreDraft(starterDraft())
 
     let cancelled = false
     void (async () => {
       let draft: WorkbenchDraft | null = null
       try {
         try {
-          draft = await loadWorkbenchDraft(userKey)
+          draft = await loadWorkbenchDraft()
         } catch (cause: unknown) {
           if (cancelled) return
           setPersistenceAvailable(false)
@@ -200,7 +155,7 @@ export function useCaePageSession(
 
         if (draft) {
           const restoredTabs = validTabs(draft.layout.openTabs)
-          setOpenTabs(restoredTabs.length ? restoredTabs : caeWorkbenchTabs)
+          setOpenTabs(restoredTabs.length ? restoredTabs : defaultCaeWorkbenchTabs)
           if (draft.layout.activeTab && restoredTabs.includes(draft.layout.activeTab))
             setActiveTab(draft.layout.activeTab)
           setActiveExperimentFile(draft.layout.experimentFile)
@@ -214,15 +169,15 @@ export function useCaePageSession(
             urlExperimentId !== draftExperimentId &&
             !window.confirm('URL의 Experiment와 마지막 로컬 작업이 다릅니다. 확인을 누르면 URL 선택을 엽니다.')
           ) {
-            await restoreDraftAgainstDatabase(draft, currentWorkbench)
+            currentWorkbench.restoreDraft(draft)
           } else if (draft && urlExperimentId === draftExperimentId) {
-            await restoreDraftAgainstDatabase(draft, currentWorkbench)
+            currentWorkbench.restoreDraft(draft)
             if (urlMeasurementId) currentWorkbench.restoreSelection(urlMeasurementId)
           } else {
             await currentWorkbench.loadExperiment(urlExperimentId, urlMeasurementId)
           }
         } else if (draft) {
-          await restoreDraftAgainstDatabase(draft, currentWorkbench)
+          currentWorkbench.restoreDraft(draft)
         }
       } catch (cause: unknown) {
         if (draft) currentWorkbench.restoreDraft(draft)
@@ -230,15 +185,14 @@ export function useCaePageSession(
       }
       if (cancelled) return
       externalNavigationRef.current = false
-      setReadyUserKey(userKey)
       setInitialized(true)
     })()
 
     return () => {
       cancelled = true
-      if (initializingUserKeyRef.current === userKey) initializingUserKeyRef.current = null
+      initializingRef.current = false
     }
-  }, [authLoading, userKey])
+  }, [])
 
   const syncSelectionToUrl = useCallback(() => {
     setSearchParams(
@@ -262,7 +216,7 @@ export function useCaePageSession(
   }, [setSearchParams, workbench.experimentId, workbench.selectionIds.measurementId])
 
   useEffect(() => {
-    if (readyUserKey !== userKey || searchKey === lastSyncedSearchRef.current) return
+    if (!initialized || searchKey === lastSyncedSearchRef.current) return
     const requested = new URLSearchParams(searchParams)
     const currentWorkbench = workbenchRef.current
     const requestedExperimentId = positiveId(requested.get('experiment'))
@@ -305,7 +259,7 @@ export function useCaePageSession(
           else if (measurementId) await currentWorkbench.selection.loadMeasurement(measurementId, experimentId)
           else currentWorkbench.selection.clearMeasurement()
         } else {
-          currentWorkbench.restoreDraft(emptyDraft(userKey))
+          currentWorkbench.restoreDraft(starterDraft())
         }
       } catch (cause: unknown) {
         if (navigationSequence !== externalNavigationSequenceRef.current) return
@@ -315,18 +269,18 @@ export function useCaePageSession(
         if (navigationSequence === externalNavigationSequenceRef.current) externalNavigationRef.current = false
       }
     })()
-  }, [readyUserKey, searchKey, searchParams, syncSelectionToUrl, userKey])
+  }, [initialized, searchKey, searchParams, syncSelectionToUrl])
 
   useEffect(() => {
-    if (readyUserKey !== userKey || externalNavigationRef.current || workbench.selectionRestoring) return
+    if (!initialized || externalNavigationRef.current || workbench.selectionRestoring) return
     syncSelectionToUrl()
-  }, [readyUserKey, syncSelectionToUrl, userKey, workbench.selectionRestoring])
+  }, [initialized, syncSelectionToUrl, workbench.selectionRestoring])
 
   useEffect(() => {
-    if (readyUserKey !== userKey || !persistenceAvailable) return
+    if (!initialized || !persistenceAvailable) return
     const timeout = window.setTimeout(() => {
       void saveWorkbenchDraft(
-        workbench.draft(userKey, {
+        workbench.draft({
           openTabs,
           activeTab: openTabs.includes(activeTab) ? activeTab : null,
           experimentFile: activeExperimentFile,
@@ -334,11 +288,11 @@ export function useCaePageSession(
         }),
       ).catch((cause: unknown) => {
         setPersistenceAvailable(false)
-        toast.error(cause instanceof Error ? cause.message : 'CAE draft를 IndexedDB에 저장하지 못했습니다.')
+        toast.error(cause instanceof Error ? cause.message : 'CAE draft를 sessionStorage에 저장하지 못했습니다.')
       })
     }, 500)
     return () => window.clearTimeout(timeout)
-  }, [activeExperimentFile, activeTab, openTabs, persistenceAvailable, readyUserKey, userKey, viewerPercent, workbench])
+  }, [activeExperimentFile, activeTab, initialized, openTabs, persistenceAvailable, viewerPercent, workbench])
 
   useEffect(() => {
     if (!workbench.hasUnsavedWork && !workbench.measurementActions.pendingRecordMeasurementId) return

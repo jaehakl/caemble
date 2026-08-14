@@ -198,11 +198,13 @@ type OccurrenceEdge = Readonly<{
 }>
 
 export function useGeometryWorkspaceState({
+  authenticated = true,
   initialNamespace,
   onExperimentChange,
   snapshot,
   sourceFiles,
 }: {
+  authenticated?: boolean
   initialNamespace?: string | null
   onExperimentChange: (snapshot: GeometrySnapshot, files?: Readonly<Record<string, string>>) => void
   snapshot: GeometrySnapshot | null
@@ -241,13 +243,25 @@ export function useGeometryWorkspaceState({
   const snapshotRef = useRef(currentSnapshot)
   const entryRef = useRef(entrySource)
   const filesRef = useRef(sourceFiles)
+  const initialNamespaceRef = useRef(initialNamespace)
+  const authenticatedRef = useRef(authenticated)
   draftsRef.current = drafts
   stagedRef.current = stagedModules
   snapshotRef.current = currentSnapshot
   entryRef.current = entrySource
   filesRef.current = sourceFiles
 
-  useEffect(() => setNamespaceState(initialNamespace ?? null), [initialNamespace])
+  useEffect(() => {
+    if (!authenticated) {
+      setNamespaceState('local')
+      return
+    }
+    if (!initialNamespace) {
+      setNamespaceState(null)
+      return
+    }
+    if (Object.keys(draftsRef.current).length === 0) setNamespaceState(initialNamespace)
+  }, [authenticated, initialNamespace])
   useEffect(() => {
     const source = sourceFiles['geometry.tsx'] ?? 'export {}\n'
     entryRef.current = source
@@ -353,6 +367,10 @@ export function useGeometryWorkspaceState({
   }, [currentSnapshot, draftOverlay, effectiveGraph, previewInput, selectedCoordinate, selectedExport])
 
   const refreshRepositories = useCallback(async () => {
+    if (!authenticated) {
+      setRepositories([])
+      return []
+    }
     const response = await dbTables.GeometryRepository.listRows({
       ...getListRequest('mine'),
       limit: null,
@@ -363,7 +381,7 @@ export function useGeometryWorkspaceState({
     })
     setRepositories(response.items)
     return response.items
-  }, [])
+  }, [authenticated])
 
   useEffect(() => {
     void refreshRepositories().catch(() => undefined)
@@ -381,6 +399,76 @@ export function useGeometryWorkspaceState({
     },
     [onExperimentChange],
   )
+
+  const applyNamespace = useCallback(
+    (nextNamespace: string) => {
+      const replacements: Record<string, string> = {}
+      Object.values(draftsRef.current).forEach((draft) => {
+        if (draft.baseGeometryVersionId !== null || draft.repositoryId !== null) return
+        const parts = coordinateParts(draft.coordinate)
+        if (parts.namespace !== nextNamespace) {
+          replacements[draft.coordinate] =
+            `caemble:geometry/${nextNamespace}/${draft.repository}/${draft.packageName}@local`
+        }
+      })
+      const nextEntry = rewriteCoordinates(entryRef.current, replacements)
+      const targetCoordinates = Object.values(draftsRef.current).map(
+        (draft) => replacements[draft.coordinate] ?? draft.coordinate,
+      )
+      if (targetCoordinates.length !== new Set(targetCoordinates).size) {
+        throw new Error('namespace 변경 후 local Geometry coordinate가 충돌합니다.')
+      }
+      const nextDrafts = Object.fromEntries(
+        Object.values(draftsRef.current).map((draft) => {
+          const coordinate = (replacements[draft.coordinate] ?? draft.coordinate) as LocalGeometryCoordinate
+          return [coordinate, { ...draft, coordinate, source: rewriteCoordinates(draft.source, replacements) }]
+        }),
+      ) as Readonly<Record<string, GeometryLocalDraft>>
+      setNamespaceState(nextNamespace)
+      draftsRef.current = nextDrafts
+      setDrafts(nextDrafts)
+      setSelectedCoordinateState((current) =>
+        current && current !== 'geometry.tsx'
+          ? ((replacements[current] ?? current) as GeometryModuleCoordinate)
+          : current,
+      )
+      setSelectedPath((current) =>
+        current.map((edge) => ({
+          ...edge,
+          parent:
+            edge.parent === 'geometry.tsx'
+              ? edge.parent
+              : ((replacements[edge.parent] ?? edge.parent) as GeometryModuleCoordinate),
+          coordinate: (replacements[edge.coordinate] ?? edge.coordinate) as GeometryModuleCoordinate,
+        })),
+      )
+      setExpandedPaths((current) =>
+        current.map((path) =>
+          Object.entries(replacements).reduce(
+            (rewritten, [previous, next]) => rewritten.split(previous).join(next),
+            path,
+          ),
+        ),
+      )
+      if (Object.keys(replacements).length > 0) applyExperimentSource(nextEntry)
+    },
+    [applyExperimentSource],
+  )
+
+  useEffect(() => {
+    const wasAuthenticated = authenticatedRef.current
+    const previousNamespace = initialNamespaceRef.current
+    authenticatedRef.current = authenticated
+    initialNamespaceRef.current = initialNamespace
+    if (!authenticated || !initialNamespace || (wasAuthenticated && previousNamespace === initialNamespace)) return
+    try {
+      applyNamespace(initialNamespace)
+    } catch (cause) {
+      setGraphError(
+        `local Geometry를 로그인 namespace로 조정하지 못했습니다. 충돌하는 draft를 정리한 뒤 다시 적용하세요. ${cause instanceof Error ? cause.message : String(cause)}`,
+      )
+    }
+  }, [applyNamespace, authenticated, initialNamespace])
 
   const moduleByCoordinate = useCallback(
     (coordinate: string) =>
@@ -535,13 +623,17 @@ export function useGeometryWorkspaceState({
     [namespace, repositories],
   )
 
-  const stageResolved = useCallback(async (versionId: number) => {
-    const resolved = await geometryApi.resolveVersion(versionId)
-    const next = mergedModules(stagedRef.current, resolved.modules)
-    stagedRef.current = next
-    setStagedModules(next)
-    return resolved
-  }, [])
+  const stageResolved = useCallback(
+    async (versionId: number) => {
+      if (!authenticated) throw new Error('Published Geometry 조회는 로그인 후 사용할 수 있습니다.')
+      const resolved = await geometryApi.resolveVersion(versionId)
+      const next = mergedModules(stagedRef.current, resolved.modules)
+      stagedRef.current = next
+      setStagedModules(next)
+      return resolved
+    },
+    [authenticated],
+  )
 
   const editPublishedVersion = useCallback(
     async (versionId: number, repositoryId?: number, packageId?: number) => {
@@ -657,29 +749,34 @@ export function useGeometryWorkspaceState({
     [applyPublished],
   )
 
-  const requestPublish = useCallback(async (coordinate: GeometryModuleCoordinate) => {
-    const request = geometryPublishRequest(draftsRef.current, coordinate)
-    setBusy(true)
-    try {
-      const value = await geometryApi.planPublish(request)
-      assertReplacementsApplicable(value.replacements, entryRef.current, draftsRef.current)
-      setPublishPlan({ request, value })
-      return value
-    } catch (cause) {
-      const parsed =
-        cause instanceof ApiError && cause.status === 409 ? geometryApi.parsePublishConflict(cause.body) : null
-      if (parsed?.success && parsed.data.revisedPlan) {
-        assertReplacementsApplicable(parsed.data.revisedPlan.replacements, entryRef.current, draftsRef.current)
-        setPublishPlan({ request, value: parsed.data.revisedPlan })
-        return parsed.data.revisedPlan
+  const requestPublish = useCallback(
+    async (coordinate: GeometryModuleCoordinate) => {
+      if (!authenticated) throw new Error('Geometry 저장은 로그인 후 사용할 수 있습니다.')
+      const request = geometryPublishRequest(draftsRef.current, coordinate)
+      setBusy(true)
+      try {
+        const value = await geometryApi.planPublish(request)
+        assertReplacementsApplicable(value.replacements, entryRef.current, draftsRef.current)
+        setPublishPlan({ request, value })
+        return value
+      } catch (cause) {
+        const parsed =
+          cause instanceof ApiError && cause.status === 409 ? geometryApi.parsePublishConflict(cause.body) : null
+        if (parsed?.success && parsed.data.revisedPlan) {
+          assertReplacementsApplicable(parsed.data.revisedPlan.replacements, entryRef.current, draftsRef.current)
+          setPublishPlan({ request, value: parsed.data.revisedPlan })
+          return parsed.data.revisedPlan
+        }
+        throw cause
+      } finally {
+        setBusy(false)
       }
-      throw cause
-    } finally {
-      setBusy(false)
-    }
-  }, [])
+    },
+    [authenticated],
+  )
 
   const confirmPublish = useCallback(async () => {
+    if (!authenticated) throw new Error('Geometry 저장은 로그인 후 사용할 수 있습니다.')
     if (!publishPlan) return null
     setBusy(true)
     try {
@@ -716,9 +813,10 @@ export function useGeometryWorkspaceState({
     } finally {
       setBusy(false)
     }
-  }, [applyPublished, publishPlan])
+  }, [applyPublished, authenticated, publishPlan])
 
   const prepareExperimentSave = useCallback(async () => {
+    if (!authenticated) throw new Error('Experiment 저장은 로그인 후 사용할 수 있습니다.')
     setBusy(true)
     try {
       while (true) {
@@ -733,40 +831,17 @@ export function useGeometryWorkspaceState({
     } finally {
       setBusy(false)
     }
-  }, [publishNow])
+  }, [authenticated, publishNow])
 
   const setNamespace = useCallback(
     async (nextNamespace: string) => {
-      const replacements: Record<string, string> = {}
-      Object.values(draftsRef.current).forEach((draft) => {
-        if (draft.baseGeometryVersionId !== null || draft.repositoryId !== null) return
-        const parts = coordinateParts(draft.coordinate)
-        if (parts.namespace !== nextNamespace) {
-          replacements[draft.coordinate] =
-            `caemble:geometry/${nextNamespace}/${draft.repository}/${draft.packageName}@local`
-        }
-      })
-      const nextEntry = rewriteCoordinates(entryRef.current, replacements)
-      const targetCoordinates = Object.values(draftsRef.current).map(
-        (draft) => replacements[draft.coordinate] ?? draft.coordinate,
-      )
-      if (targetCoordinates.length !== new Set(targetCoordinates).size) {
-        throw new Error('namespace 변경 후 local Geometry coordinate가 충돌합니다.')
-      }
-      const nextDrafts = Object.fromEntries(
-        Object.values(draftsRef.current).map((draft) => {
-          const coordinate = (replacements[draft.coordinate] ?? draft.coordinate) as LocalGeometryCoordinate
-          return [coordinate, { ...draft, coordinate, source: rewriteCoordinates(draft.source, replacements) }]
-        }),
-      ) as Readonly<Record<string, GeometryLocalDraft>>
+      if (!authenticated) throw new Error('Geometry namespace 변경은 로그인 후 사용할 수 있습니다.')
       const user = await geometryApi.setNamespace(nextNamespace)
-      setNamespaceState(user.geometry_namespace)
-      draftsRef.current = nextDrafts
-      setDrafts(nextDrafts)
-      applyExperimentSource(nextEntry)
+      if (!user.geometry_namespace) throw new Error('Geometry namespace를 설정하지 못했습니다.')
+      applyNamespace(user.geometry_namespace)
       return user.geometry_namespace
     },
-    [applyExperimentSource],
+    [applyNamespace, authenticated],
   )
 
   const discardDraft = useCallback(
@@ -956,16 +1031,19 @@ export function useGeometryWorkspaceState({
     setNamespace,
     refreshRepositories,
     createRepository: async (slug: string, description?: string | null) => {
+      if (!authenticated) throw new Error('Geometry Repository 관리는 로그인 후 사용할 수 있습니다.')
       const result = await geometryApi.createRepository({ slug, description })
       await refreshRepositories()
       return result
     },
     archiveRepository: async (id: number) => {
+      if (!authenticated) throw new Error('Geometry Repository 관리는 로그인 후 사용할 수 있습니다.')
       const result = await geometryApi.archiveRepository(id)
       await refreshRepositories()
       return result
     },
     archiveVersion: async (id: number) => {
+      if (!authenticated) throw new Error('Published Geometry 관리는 로그인 후 사용할 수 있습니다.')
       const result = await geometryApi.archiveVersion(id)
       await queryClient.invalidateQueries({ queryKey: ['geometry'] })
       return result
@@ -973,6 +1051,7 @@ export function useGeometryWorkspaceState({
     createDraft,
     editPublishedVersion,
     editAsNewVersion: async (coordinate: GeometryModuleCoordinate) => {
+      if (!authenticated) throw new Error('Published Geometry 편집은 로그인 후 사용할 수 있습니다.')
       const module = moduleByCoordinate(coordinate)
       if (!module) throw new Error('Geometry module을 찾을 수 없습니다.')
       return editPublishedVersion(module.geometryVersionId)

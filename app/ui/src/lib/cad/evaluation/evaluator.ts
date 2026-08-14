@@ -224,7 +224,6 @@ export function evaluateCadScene(
     rootLabel,
   }
   const evaluatedParts = evaluateNode(root, undefined, state, tree, `${rootKey}/root`, '', undefined)
-  if (evaluatedParts.length === 0) throw new CadModelError(`${rootLabel} geometry did not return any CAD geometry.`)
 
   const ownerIds = evaluatedParts.map((part) => {
     if (!part.ownerNodeKey) {

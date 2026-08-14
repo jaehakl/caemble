@@ -212,6 +212,12 @@ export function resolveMaterialParameters(
     }
     declarations.set(material.name, declaration)
 
+    if (options.sourceOnly) {
+      warnings.push(
+        `Material ${material.name}: database catalog values are unavailable in source-only mode; only explicit source parameters are used.`,
+      )
+    }
+
     const explicit = new Map<string, MaterialPropertyValue | MaterialRelationValue>()
     Object.entries(material.variables).forEach(([name, value]) => {
       if (name === 'color') return
@@ -225,7 +231,11 @@ export function resolveMaterialParameters(
       explicit.set(
         name,
         Object.prototype.hasOwnProperty.call(materialParameterByKey, name)
-          ? sampleProperty(normalized as MaterialPropertyValue, errorRate, `Material ${material.name} source parameter ${name}`)
+          ? sampleProperty(
+              normalized as MaterialPropertyValue,
+              errorRate,
+              `Material ${material.name} source parameter ${name}`,
+            )
           : normalized,
       )
     })

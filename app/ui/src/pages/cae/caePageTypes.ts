@@ -2,7 +2,6 @@ export type WorkbenchDialog =
   | 'account'
   | 'analysis'
   | 'ai-chat'
-  | 'ai-helper'
   | 'experiment-history'
   | 'geometry-manager'
   | 'jobs'

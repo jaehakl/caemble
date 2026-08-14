@@ -1,5 +1,5 @@
 import { Badge } from '@/components/ui/badge'
-import { useMemo } from 'react'
+import { lazy, Suspense, useMemo } from 'react'
 import { useLocation } from 'react-router'
 import { useAuth } from '@/features/auth/use-auth'
 import {
@@ -21,6 +21,10 @@ import { CaeWorkbenchDialogs } from './CaeWorkbenchDialogs'
 import { useCaePageChrome } from './useCaePageChrome'
 import { caeWorkbenchTabs, useCaePageSession } from './useCaePageSession'
 
+const AiHelperWorkspace = lazy(() =>
+  import('@/pages/ai/AiHelperPage').then((module) => ({ default: module.AiHelperWorkspace })),
+)
+
 export function CaePage() {
   const location = useLocation()
   if (location.hash) return <NotFoundPage />
@@ -29,12 +33,12 @@ export function CaePage() {
 
 function AuthenticatedCaePage() {
   const auth = useAuth()
-  return <CaeWorkbenchPage auth={auth} key={auth.user?.id ?? 'anonymous'} />
+  return <CaeWorkbenchPage auth={auth} />
 }
 
 function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const workbench = useCaeWorkbenchState(auth.user, auth.isAuthenticated)
-  const page = useCaePageSession(auth.isLoading, auth.user?.id, workbench)
+  const page = useCaePageSession(workbench)
   const chrome = useCaePageChrome({
     authenticated: auth.isAuthenticated,
     openTab: page.openTab,
@@ -68,7 +72,14 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     .sort((left, right) => page.openTabs.indexOf(left) - page.openTabs.indexOf(right))
     .map((tab) => ({
       id: tab,
-      label: tab === 'experiment' ? 'Experiment' : tab === 'geometry' ? 'Geometry' : 'RecordedData',
+      label:
+        tab === 'experiment'
+          ? 'Experiment'
+          : tab === 'geometry'
+            ? 'Geometry'
+            : tab === 'recorded-data'
+              ? 'RecordedData'
+              : 'AI Helper',
       content:
         tab === 'experiment' ? (
           <ExperimentEditor
@@ -82,11 +93,12 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           />
         ) : tab === 'geometry' ? (
           <GeometryWorkspaceContainer
+            authenticated={auth.isAuthenticated}
             diagnostics={workbench.geometry.previewDiagnostics}
             geometry={workbench.geometry}
             onOpenManager={() => page.setDialog('geometry-manager')}
           />
-        ) : (
+        ) : tab === 'recorded-data' ? (
           <RecordedDataEditor
             measurementId={workbench.selection.measurement?.id ?? null}
             pendingSave={pendingResult}
@@ -94,6 +106,17 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             recordedData={pendingResult ? workbench.simulation.recordedData : workbench.selection.recordedData}
             rules={pendingResult ? sessionRecordedRules : workbench.selection.recordedRules}
           />
+        ) : (
+          <Suspense
+            fallback={<div className="grid h-full place-items-center text-sm">AI Helper를 불러오는 중입니다.</div>}
+          >
+            <AiHelperWorkspace
+              activeExperimentFile={page.activeExperimentFile}
+              activeTab={page.activeTab}
+              workbench={workbench}
+              onRequestLogin={() => page.setDialog('account')}
+            />
+          </Suspense>
         ),
     }))
 
@@ -159,7 +182,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         <span className="flex min-w-0 items-center gap-2 truncate">
           <Badge className={`h-5 rounded-sm px-1.5 ${workbench.experimentDirty ? 'bg-destructive text-white' : ''}`}>
             Experiment{' '}
-            {workbench.experimentDirty ? 'edited' : workbench.experimentId ? `#${workbench.experimentId}` : 'none'}
+            {workbench.experimentDirty ? 'edited' : workbench.experimentId ? `#${workbench.experimentId}` : 'local'}
           </Badge>
           {workbench.geometryLocalDraftDirty ? (
             <Badge className="h-5 rounded-sm bg-amber-500 px-1.5 text-white">
@@ -175,7 +198,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 ? `Measurement #${workbench.selection.measurement.id} · ${workbench.selection.measurement.recorded_at ? 'Recorded' : 'Prepared'}`
                 : 'Candidate preview'}
           </Badge>
-          <span>{page.initialized ? 'Draft 자동 저장' : '작업 복원 중…'}</span>
+          <span>{page.initialized ? '현재 브라우저 세션에 Draft 자동 저장' : '작업 복원 중…'}</span>
         </span>
         {workbench.measurementActions.busy ? (
           <span className="flex items-center gap-2">
@@ -191,13 +214,15 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             ) : null}
           </span>
         ) : (
-          <span>{auth.isAuthenticated ? auth.user?.display_name || auth.user?.email || 'Signed in' : 'Read only'}</span>
+          <span>
+            {auth.isAuthenticated
+              ? auth.user?.display_name || auth.user?.email || 'Signed in'
+              : 'Local editing · 서버 기능은 로그인 필요'}
+          </span>
         )}
       </footer>
 
       <CaeWorkbenchDialogs
-        activeExperimentFile={page.activeExperimentFile}
-        activeTab={page.activeTab}
         authenticated={auth.isAuthenticated}
         dialog={page.dialog}
         guardReplacement={page.guardReplacement}

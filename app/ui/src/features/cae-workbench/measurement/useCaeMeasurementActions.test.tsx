@@ -181,13 +181,13 @@ describe('useCaeMeasurementActions', () => {
     expect(simulation.run).not.toHaveBeenCalled()
   })
 
-  it('delegates candidate generation without creating a Measurement', () => {
+  it('generates an anonymous local Candidate without creating a Measurement', () => {
     const generate = vi.fn()
     const { result } = renderHook(
       () =>
         useCaeMeasurementActions({
-          authenticated: true,
-          experimentClean: true,
+          authenticated: false,
+          experimentClean: false,
           experimentDocument: documentController(),
           experimentId: 7,
           experimentSourceHash: sourceHash,

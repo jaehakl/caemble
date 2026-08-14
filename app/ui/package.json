@@ -49,7 +49,6 @@
     "@tanstack/react-table": "^8.21.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "idb-keyval": "^6.3.0",
     "katex": "^0.17.0",
     "lucide-react": "^1.25.0",
     "ml-kmeans": "^7.0.1",

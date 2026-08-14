@@ -26,6 +26,7 @@ type Occurrence = Readonly<{
 }>
 
 type GeometryWorkspaceProps = Readonly<{
+  authenticated: boolean
   diagnostics: readonly CadDiagnostic[]
   geometry: GeometryWorkspaceState
   onChangeNamespace: () => void
@@ -137,6 +138,7 @@ function Metadata({
 }
 
 export function GeometryWorkspace({
+  authenticated,
   diagnostics,
   geometry,
   onChangeNamespace,
@@ -239,10 +241,22 @@ export function GeometryWorkspace({
         <Button onClick={onCreate} size="sm" variant="outline">
           <CirclePlus className="size-3.5" /> 새 Geometry
         </Button>
-        <Button onClick={onManage} size="sm" variant="ghost">
+        <Button
+          disabled={!authenticated}
+          onClick={onManage}
+          size="sm"
+          variant="ghost"
+          title={!authenticated ? '로그인 후 사용할 수 있습니다.' : undefined}
+        >
           Geometry Manager
         </Button>
-        <Button onClick={onChangeNamespace} size="sm" variant="ghost">
+        <Button
+          disabled={!authenticated}
+          onClick={onChangeNamespace}
+          size="sm"
+          variant="ghost"
+          title={!authenticated ? '로컬 작업은 local namespace를 사용합니다.' : undefined}
+        >
           기본 namespace: <span className="font-mono">{geometry.namespace ?? '설정 필요'}</span>
         </Button>
         <span className="ml-auto flex items-center gap-2 text-xs">
@@ -342,7 +356,7 @@ export function GeometryWorkspace({
             ) : null}
             {selectedModule && !selectedDraft ? (
               <Button
-                disabled={geometry.busy}
+                disabled={!authenticated || geometry.busy}
                 onClick={() => onEditAsNewVersion(selectedModule.coordinate)}
                 size="sm"
                 variant="outline"
@@ -361,10 +375,16 @@ export function GeometryWorkspace({
                   <RotateCcw className="size-3.5" /> 되돌리기
                 </Button>
                 <Button
-                  disabled={geometry.busy || !geometry.publishReady}
+                  disabled={!authenticated || geometry.busy || !geometry.publishReady}
                   onClick={() => onPublish(selectedDraft.coordinate)}
                   size="sm"
-                  title={!geometry.publishReady ? '현재 graph의 preview가 성공해야 발행할 수 있습니다.' : undefined}
+                  title={
+                    !authenticated
+                      ? 'Geometry 저장은 로그인 후 사용할 수 있습니다.'
+                      : !geometry.publishReady
+                        ? '현재 graph의 preview가 성공해야 발행할 수 있습니다.'
+                        : undefined
+                  }
                 >
                   <Upload className="size-3.5" /> Geometry 저장
                 </Button>

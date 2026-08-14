@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defaultExperimentSourceBundle } from '@/lib/defaultExperimentCode'
 import type { SavedExperiment } from '../types'
 import { useCaeWorkbenchState } from './useCaeWorkbenchState'
+import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 
 const mocks = vi.hoisted(() => ({
   experimentList: vi.fn(),
@@ -86,7 +87,7 @@ function wrapper() {
 beforeEach(() => vi.clearAllMocks())
 
 describe('useCaeWorkbenchState', () => {
-  it('owns a single Experiment and emits a v7 draft', () => {
+  it('owns a single Experiment and emits a v8 session draft', () => {
     const { result } = renderHook(() => useCaeWorkbenchState({ id: 'user-1', roles: ['user'] } as never, true), {
       wrapper: wrapper(),
     })
@@ -98,14 +99,14 @@ describe('useCaeWorkbenchState', () => {
     expect(result.current).not.toHaveProperty('structureId')
     expect(result.current).not.toHaveProperty('pairClean')
     expect(
-      result.current.draft('user-1', {
+      result.current.draft({
         openTabs: ['experiment', 'recorded-data'],
         activeTab: 'experiment',
         experimentFile: 'experiment.tsx',
         splitPercent: 50,
       }),
     ).toMatchObject({
-      version: 7,
+      version: 8,
       experiment: { record: { id: 7 } },
       candidate: { vars: null, materialParameters: null },
       selection: { measurementId: null },
@@ -141,5 +142,17 @@ describe('useCaeWorkbenchState', () => {
       await oldLoad
     })
     expect(result.current.experimentId).toBe(2)
+  })
+
+  it('treats a newly opened local template as the clean baseline and becomes dirty after editing', () => {
+    const { result } = renderHook(() => useCaeWorkbenchState(null, false), { wrapper: wrapper() })
+
+    act(() => result.current.newExperiment(starterExperimentSourceBundle, 'Starter Experiment'))
+    expect(result.current.experimentDirty).toBe(false)
+    expect(result.current.hasUnsavedWork).toBe(false)
+
+    act(() => result.current.geometry.updateSource(`${starterExperimentSourceBundle.files['geometry.tsx']}\n// edited`))
+    expect(result.current.experimentDirty).toBe(true)
+    expect(result.current.hasUnsavedWork).toBe(true)
   })
 })

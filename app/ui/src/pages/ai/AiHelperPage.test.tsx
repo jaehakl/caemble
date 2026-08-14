@@ -37,6 +37,7 @@ describe('AiHelperWorkspace', () => {
     render(<AiHelperWorkspace activeExperimentFile="tasks/thermal.tsx" activeTab="experiment" workbench={workbench} />)
 
     expect(mocks.chatProps).toMatchObject({
+      embedded: true,
       fixedSystemPrompt: true,
       questionLabel: 'AI Helper 질문',
       showCodeCopy: true,

@@ -3,7 +3,7 @@
 import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Beaker } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EditorDock, type EditorDockTab } from './EditorDock'
 import { ResizableWorkbenchSplit } from './ResizableWorkbenchSplit'
@@ -124,6 +124,48 @@ describe('EditorDock', () => {
 
     await user.click(screen.getByRole('button', { name: 'Experiment 탭 닫기' }))
     expect(close).toHaveBeenCalledWith('experiment')
+  })
+
+  it('keeps an inactive AI panel mounted and cleans it up only when its tab closes', async () => {
+    const user = userEvent.setup()
+    const cleanupPanel = vi.fn()
+
+    function StatefulAiPanel() {
+      const [messages, setMessages] = useState(0)
+      useEffect(() => cleanupPanel, [])
+      return <button onClick={() => setMessages((count) => count + 1)}>AI messages {messages}</button>
+    }
+
+    function DockHarness() {
+      const [tabs, setTabs] = useState<readonly EditorDockTab[]>(() => [
+        { id: 'experiment', label: 'Experiment', content: <div>Experiment editor</div> },
+        { id: 'ai-helper', label: 'AI Helper', content: <StatefulAiPanel /> },
+      ])
+      const [activeTab, setActiveTab] = useState('ai-helper')
+      return (
+        <EditorDock
+          activeTabId={activeTab}
+          onActiveTabChange={setActiveTab}
+          onTabClose={(id) => {
+            setTabs((current) => current.filter((tab) => tab.id !== id))
+            if (activeTab === id) setActiveTab('experiment')
+          }}
+          onTabsReorder={(ids) => setTabs((current) => ids.map((id) => current.find((tab) => tab.id === id)!))}
+          tabs={tabs}
+        />
+      )
+    }
+
+    render(<DockHarness />)
+    await user.click(screen.getByRole('button', { name: 'AI messages 0' }))
+    await user.click(screen.getByRole('tab', { name: 'Experiment' }))
+    expect(cleanupPanel).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('tab', { name: 'AI Helper' }))
+    expect(screen.getByRole('button', { name: 'AI messages 1' })).toBeVisible()
+
+    await user.click(screen.getByRole('tab', { name: 'Experiment' }))
+    await user.click(screen.getByRole('button', { name: 'AI Helper 탭 닫기' }))
+    expect(cleanupPanel).toHaveBeenCalledOnce()
   })
 })
 

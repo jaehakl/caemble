@@ -1,7 +1,5 @@
 import { lazy, Suspense, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
-import type { WorkbenchTabId } from '@/features/cae-workbench/types'
 import type { WorkbenchDialog } from './caePageTypes'
 
 const AccountWorkspace = lazy(() =>
@@ -10,45 +8,21 @@ const AccountWorkspace = lazy(() =>
 const AiChatWorkspace = lazy(() =>
   import('@/pages/ai/AiChatPage').then((module) => ({ default: module.AiChatWorkspace })),
 )
-const AiHelperWorkspace = lazy(() =>
-  import('@/pages/ai/AiHelperPage').then((module) => ({ default: module.AiHelperWorkspace })),
-)
 const JobsWorkspace = lazy(() => import('@/pages/jobs/JobsPage').then((module) => ({ default: module.JobsWorkspace })))
 const LaunchersWorkspace = lazy(() =>
   import('@/pages/launchers/LaunchersPage').then((module) => ({ default: module.LaunchersWorkspace })),
 )
 
 export function CaeUtilityDialogs({
-  activeExperimentFile,
-  activeTab,
   dialog,
   setDialog,
-  workbench,
 }: {
-  activeExperimentFile: string | null
-  activeTab: WorkbenchTabId
   dialog: WorkbenchDialog
   setDialog: Dispatch<SetStateAction<WorkbenchDialog>>
-  workbench: CaeWorkbenchState
 }) {
   const requestLogin = () => setDialog('account')
   return (
     <>
-      <UtilityDialog
-        contentClassName="sm:max-w-4xl"
-        description="Docs와 현재 Workbench를 바탕으로 CAE 작업을 도와줍니다."
-        dialog={dialog}
-        id="ai-helper"
-        title="AI Helper"
-        setDialog={setDialog}
-      >
-        <AiHelperWorkspace
-          activeExperimentFile={activeExperimentFile}
-          activeTab={activeTab}
-          workbench={workbench}
-          onRequestLogin={requestLogin}
-        />
-      </UtilityDialog>
       <UtilityDialog
         contentClassName="sm:max-w-4xl"
         description="로컬 LLM과 대화합니다."

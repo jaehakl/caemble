@@ -13,7 +13,7 @@ export type SavedMeasurement = MeasurementRecord & { id: number }
 export type SavedRecordedData = RecordedDataRecord & { id?: number }
 
 export type DefinitionStatus = 'empty' | 'new' | 'saved-clean' | 'saved-dirty'
-export type WorkbenchTabId = 'experiment' | 'geometry' | 'recorded-data'
+export type WorkbenchTabId = 'experiment' | 'geometry' | 'recorded-data' | 'ai-helper'
 
 export type GeometryLocalDraft = Readonly<{
   draftId: string
@@ -31,9 +31,8 @@ export type GeometryLocalDraft = Readonly<{
 }>
 
 export type WorkbenchDraft = Readonly<{
-  version: 7
+  version: 8
   savedAt: number
-  userKey: string
   experiment: Readonly<{
     record: SavedExperiment | null
     baselineBundle: ExperimentSourceBundle | null

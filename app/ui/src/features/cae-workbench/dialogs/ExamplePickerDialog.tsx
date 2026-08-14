@@ -9,6 +9,23 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { caembleProgramExamples, type CaembleProgramExample } from '@/lib/examples'
+import { blankExperimentSourceBundle } from '@/lib/localExperimentCode'
+
+type ExperimentTemplate = Pick<
+  CaembleProgramExample,
+  'concepts' | 'description' | 'experimentSourceBundle' | 'id' | 'title'
+>
+
+const experimentTemplates: readonly ExperimentTemplate[] = Object.freeze([
+  Object.freeze({
+    id: 'blank-experiment',
+    title: 'Blank Experiment',
+    description: '필수 import와 실행 가능한 최소 골격만 있는 빈 Experiment로 돌아갑니다.',
+    concepts: Object.freeze(['experiment.tsx', 'geometry.tsx', 'simulate.py', 'tasks/main.tsx']),
+    experimentSourceBundle: blankExperimentSourceBundle,
+  }),
+  ...caembleProgramExamples,
+])
 
 export function ExamplePickerDialog({
   onOpenChange,
@@ -16,7 +33,7 @@ export function ExamplePickerDialog({
   open,
 }: {
   onOpenChange: (open: boolean) => void
-  onSelect: (example: CaembleProgramExample) => void
+  onSelect: (example: ExperimentTemplate) => void
   open: boolean
 }) {
   const Icon = FlaskConical
@@ -28,7 +45,7 @@ export function ExamplePickerDialog({
           <DialogDescription>검증된 예제에서 완전한 Experiment source를 시작합니다.</DialogDescription>
         </DialogHeader>
         <div className="grid min-h-0 gap-3 overflow-y-auto sm:grid-cols-2">
-          {caembleProgramExamples.map((example) => (
+          {experimentTemplates.map((example) => (
             <button
               className="group rounded-lg border p-4 text-left transition-colors hover:border-primary hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
               key={example.id}

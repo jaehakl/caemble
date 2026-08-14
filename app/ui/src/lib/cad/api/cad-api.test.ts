@@ -9,6 +9,7 @@ import {
   defaultExperimentTaskCode,
 } from '../../defaultExperimentProgramCode'
 import { caembleExamples, caembleProgramExamples } from '../../examples'
+import { blankExperimentSourceBundle, starterExperimentSourceBundle } from '../../localExperimentCode'
 import { geometryCoordinateTypes } from '../compiler/geometryTypes'
 import type { EffectiveGeometryGraph } from '../source/effectiveGeometryGraph'
 import type { GeometryCoordinate } from '../source/geometrySnapshot'
@@ -151,6 +152,20 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
     Object.entries(example.experimentSourceBundle.files)
       .filter(([path]) => path.endsWith('.tsx'))
       .forEach(([path, source]) => expect(diagnosticsFor(source, files, `${prefix}/${path}`)).toEqual([]))
+  })
+
+  it('type-checks the local Starter and Blank Experiment bundles', () => {
+    for (const bundle of [starterExperimentSourceBundle, blankExperimentSourceBundle]) {
+      const prefix = 'C:/caemble-source/hash'
+      const files = Object.fromEntries(
+        Object.entries(bundle.files)
+          .filter(([path]) => path.endsWith('.tsx'))
+          .map(([path, source]) => [`${prefix}/${path}`, source]),
+      )
+      Object.entries(bundle.files)
+        .filter(([path]) => path.endsWith('.tsx'))
+        .forEach(([path, source]) => expect(diagnosticsFor(source, files, `${prefix}/${path}`)).toEqual([]))
+    }
   })
 
   it('type-checks the complete Experiment sources in the standalone guide', () => {

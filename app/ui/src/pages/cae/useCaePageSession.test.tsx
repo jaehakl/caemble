@@ -17,14 +17,13 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/features/cae-workbench/storage/draftStorage', () => ({
   loadWorkbenchDraft: mocks.loadDraft,
   saveWorkbenchDraft: mocks.saveDraft,
-  workbenchDraftUserKey: (value?: string | null) => value || 'anonymous',
 }))
 vi.mock('sonner', () => ({ toast: { error: mocks.toastError } }))
 
 function workbench(overrides: Record<string, unknown> = {}) {
   return {
     applyExperiment: vi.fn(),
-    draft: vi.fn(() => ({ version: 3 })),
+    draft: vi.fn(() => ({ version: 8 })),
     experimentDirty: false,
     hasUnsavedWork: false,
     experimentId: null,
@@ -38,7 +37,6 @@ function workbench(overrides: Record<string, unknown> = {}) {
     newExperiment: vi.fn(),
     restoreDraft: vi.fn(),
     restoreSelection: vi.fn(),
-    restoreStaleDraft: vi.fn(),
     saving: null,
     selection: {
       clearMeasurement: vi.fn(),
@@ -66,7 +64,7 @@ beforeEach(() => {
 describe('useCaePageSession', () => {
   it('restores only Experiment and Measurement from the URL', async () => {
     const state = workbench()
-    const { result } = renderHook(() => useCaePageSession(false, 'user-1', state), {
+    const { result } = renderHook(() => useCaePageSession(state), {
       wrapper: wrapper('/?experiment=7&measurement=11&structure=2&sample=3&setup=4'),
     })
 
@@ -93,7 +91,7 @@ describe('useCaePageSession', () => {
       ],
     })
     const state = workbench()
-    const { result } = renderHook(() => useCaePageSession(false, 'user-1', state), {
+    const { result } = renderHook(() => useCaePageSession(state), {
       wrapper: wrapper('/?measurement=11'),
     })
 
@@ -101,14 +99,19 @@ describe('useCaePageSession', () => {
     expect(state.loadExperiment).toHaveBeenCalledWith(7, 11)
   })
 
-  it('initializes an empty v7 draft with Experiment as the active tab', async () => {
+  it('initializes the local Starter immediately with Experiment as the active tab', async () => {
     const state = workbench()
-    const { result } = renderHook(() => useCaePageSession(false, 'user-1', state), { wrapper: wrapper() })
+    const { result } = renderHook(() => useCaePageSession(state), { wrapper: wrapper() })
 
     await waitFor(() => expect(result.current.initialized).toBe(true))
     expect(state.restoreDraft).toHaveBeenCalledWith(
       expect.objectContaining({
-        version: 7,
+        version: 8,
+        experiment: expect.objectContaining({
+          name: 'Starter Experiment',
+          baselineBundle: expect.objectContaining({ files: expect.any(Object) }),
+          document: expect.objectContaining({ sourceBundle: expect.any(Object) }),
+        }),
         candidate: { vars: null, materialParameters: null },
         selection: { measurementId: null },
         geometry: {
@@ -126,7 +129,7 @@ describe('useCaePageSession', () => {
 
   it('guards replacement when the Experiment source is dirty', async () => {
     const state = workbench({ experimentDirty: true, hasUnsavedWork: true })
-    const { result } = renderHook(() => useCaePageSession(false, 'user-1', state), { wrapper: wrapper() })
+    const { result } = renderHook(() => useCaePageSession(state), { wrapper: wrapper() })
     await waitFor(() => expect(result.current.initialized).toBe(true))
     const replace = vi.fn()
 
@@ -145,7 +148,7 @@ describe('useCaePageSession', () => {
         runSelected: vi.fn(),
       },
     })
-    const { result } = renderHook(() => useCaePageSession(false, 'user-1', state), { wrapper: wrapper() })
+    const { result } = renderHook(() => useCaePageSession(state), { wrapper: wrapper() })
     await waitFor(() => expect(result.current.initialized).toBe(true))
     const replace = vi.fn()
 
@@ -160,10 +163,28 @@ describe('useCaePageSession', () => {
     const state = workbench({
       measurementActions: { busy: false, error: null, pendingRecordMeasurementId: null, runSelected },
     })
-    const { result } = renderHook(() => useCaePageSession(false, 'user-1', state), { wrapper: wrapper() })
+    const { result } = renderHook(() => useCaePageSession(state), { wrapper: wrapper() })
     await waitFor(() => expect(result.current.initialized).toBe(true))
 
     act(() => result.current.requestRunSelected())
     expect(runSelected).toHaveBeenCalledOnce()
+  })
+
+  it('keeps layout and the current draft mounted when authentication state changes above it', async () => {
+    const anonymousState = workbench()
+    const signedInState = workbench()
+    const { result, rerender } = renderHook(({ state }: { state: CaeWorkbenchState }) => useCaePageSession(state), {
+      initialProps: { state: anonymousState },
+      wrapper: wrapper(),
+    })
+    await waitFor(() => expect(result.current.initialized).toBe(true))
+    act(() => result.current.openTab('ai-helper'))
+
+    rerender({ state: signedInState })
+
+    expect(result.current.activeTab).toBe('ai-helper')
+    expect(result.current.openTabs).toContain('ai-helper')
+    expect(mocks.loadDraft).toHaveBeenCalledOnce()
+    expect(signedInState.restoreDraft).not.toHaveBeenCalled()
   })
 })

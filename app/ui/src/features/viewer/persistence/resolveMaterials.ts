@@ -1,10 +1,6 @@
 import { dbTables, getListRequest } from '@/api'
 import { deserializeCadScene, type EvaluatedExperimentSnapshot } from '@/lib/cad'
-import {
-  resolveMaterialParameters,
-  type FrozenMaterialParameters,
-  type MaterialResolution,
-} from '@/lib/material'
+import { resolveMaterialParameters, type FrozenMaterialParameters, type MaterialResolution } from '@/lib/material'
 import { readMeasurementMaterialParameters } from './contracts'
 
 export type MeasurementMaterialResolution = Readonly<{
@@ -14,7 +10,7 @@ export type MeasurementMaterialResolution = Readonly<{
   taskMaterialWarnings: Readonly<Record<string, readonly string[]>>
 }>
 
-export function createDocumentMaterialResolver(storedSnapshot: unknown | null) {
+export function createDocumentMaterialResolver(storedSnapshot: unknown | null, sourceOnly = false) {
   const materialNameQueries = new Map<string, ReturnType<typeof dbTables.MaterialName.listRows>>()
   const materialQueries = new Map<string, ReturnType<typeof dbTables.Material.listRows>>()
   const parameterQueries = new Map<string, ReturnType<typeof dbTables.MaterialParameter.listRows>>()
@@ -23,6 +19,7 @@ export function createDocumentMaterialResolver(storedSnapshot: unknown | null) {
     materials: Parameters<typeof resolveMaterialParameters>[0],
     frozen: FrozenMaterialParameters | null,
   ): Promise<MaterialResolution> => {
+    if (sourceOnly) return resolveMaterialParameters(materials, [], [], { sourceOnly: true })
     if (frozen) return Object.freeze({ materialParameters: frozen, warnings: Object.freeze([]) })
     const materialNames = [...new Set(materials.map((material) => material.name))].sort()
     if (materialNames.length === 0) return resolveMaterialParameters([], [], [])
@@ -103,6 +100,10 @@ export function createDocumentMaterialResolver(storedSnapshot: unknown | null) {
   }
 }
 
-export function resolveDocumentMaterials(snapshot: EvaluatedExperimentSnapshot, storedSnapshot: unknown | null) {
-  return createDocumentMaterialResolver(storedSnapshot)(snapshot)
+export function resolveDocumentMaterials(
+  snapshot: EvaluatedExperimentSnapshot,
+  storedSnapshot: unknown | null,
+  sourceOnly = false,
+) {
+  return createDocumentMaterialResolver(storedSnapshot, sourceOnly)(snapshot)
 }

@@ -61,6 +61,7 @@ export function ChatWorkspace({
   description = 'Caemble Launcher의 로컬 LLM과 지속적인 streaming 대화를 시작합니다.',
   emptyDescription = '대화가 열리면 같은 JobSession에서 문맥을 유지합니다.',
   emptyTitle = '무엇이든 물어보세요.',
+  embedded = false,
   fixedSystemPrompt = false,
   onRequestLogin,
   questionLabel = 'AI 질문',
@@ -74,6 +75,7 @@ export function ChatWorkspace({
   description?: string
   emptyDescription?: string
   emptyTitle?: string
+  embedded?: boolean
   fixedSystemPrompt?: boolean
   onRequestLogin?: () => void
   questionLabel?: string
@@ -352,7 +354,13 @@ export function ChatWorkspace({
   }
 
   return (
-    <div className="mx-auto flex h-[calc(100dvh-4rem)] min-h-[680px] max-w-6xl flex-col gap-5 px-5 py-8">
+    <div
+      className={
+        embedded
+          ? 'mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col gap-3 p-4'
+          : 'mx-auto flex h-[calc(100dvh-4rem)] min-h-[680px] max-w-6xl flex-col gap-5 px-5 py-8'
+      }
+    >
       <div className="flex items-start justify-between gap-4">
         <PageHeader description={description} eyebrow="AI" title={title} />
         <Button onClick={() => setSettingsOpen(true)} variant="outline">

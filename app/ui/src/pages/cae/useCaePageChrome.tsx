@@ -264,6 +264,8 @@ export function useCaePageChrome({
         id: 'material-manager',
         label: 'Material Manager',
         icon: <Database className="size-4" />,
+        disabled: !authenticated,
+        disabledReason: !authenticated ? loginReason : undefined,
         onSelect: () => setDialog('material'),
       },
       geometryManager: {
@@ -284,18 +286,22 @@ export function useCaePageChrome({
         id: 'ai-helper',
         label: 'AI Helper',
         icon: <Bot className="size-4" />,
-        onSelect: () => setDialog('ai-helper'),
+        onSelect: () => openTab('ai-helper'),
       },
       launchers: {
         id: 'launchers',
         label: 'Launchers',
         icon: <Server className="size-4" />,
+        disabled: !authenticated,
+        disabledReason: !authenticated ? loginReason : undefined,
         onSelect: () => setDialog('launchers'),
       },
       jobs: {
         id: 'jobs',
         label: 'Jobs',
         icon: <ListChecks className="size-4" />,
+        disabled: !authenticated,
+        disabledReason: !authenticated ? loginReason : undefined,
         onSelect: () => setDialog('jobs'),
       },
       account: {
@@ -464,6 +470,18 @@ export function useCaePageChrome({
               : workbench.geometryGraphDirty
                 ? 'Published graph 변경 · Experiment 저장 필요'
                 : 'Exact published graph'}
+          </span>
+        </RibbonActions>
+      ),
+    },
+    {
+      tabId: 'ai-helper',
+      label: 'AI Helper',
+      content: (
+        <RibbonActions actions={[actions.aiHelper]}>
+          <span className="text-sm font-semibold">AI Helper</span>
+          <span className="mt-1 text-xs text-muted-foreground">
+            Docs와 현재 Workbench 문맥을 참고합니다. AI 응답은 로그인과 GPStation이 필요합니다.
           </span>
         </RibbonActions>
       ),

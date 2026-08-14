@@ -110,6 +110,7 @@ export function useCadWorkspace(
   runtimeEnabled = true,
   geometryDrafts?: GeometryDraftOverlay,
   resetKey: string | number = 'default',
+  sourceOnlyMaterials = false,
 ) {
   const [diagnostics, setDiagnostics] = useState<readonly CadDiagnostic[]>([])
   const [error, setError] = useState<RunError | null>(null)
@@ -242,7 +243,11 @@ export function useCadWorkspace(
         )
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
         updateStatus('Resolving Materials')
-        const resolution = await resolveDocumentMaterials(snapshot, explicitGeneration ? null : frozenMaterialSnapshot)
+        const resolution = await resolveDocumentMaterials(
+          snapshot,
+          explicitGeneration ? null : frozenMaterialSnapshot,
+          sourceOnlyMaterials,
+        )
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
         const built = buildMeasurement(snapshot, resolution)
         const commonScene = applyFrozenMaterialParameters(deserializeCadScene(snapshot.scene), built.materialParameters)
@@ -304,7 +309,17 @@ export function useCadWorkspace(
     }
     // Canonical keys deliberately avoid reevaluating when parent state reuses the same persisted values.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [experiment, generation, geometryDrafts, invalidateSimulation, materialsKey, resetKey, updateStatus, varsKey])
+  }, [
+    experiment,
+    generation,
+    geometryDrafts,
+    invalidateSimulation,
+    materialsKey,
+    resetKey,
+    sourceOnlyMaterials,
+    updateStatus,
+    varsKey,
+  ])
 
   useEffect(
     () => () => {

@@ -22,4 +22,11 @@ describe('integrated CAE page surface', () => {
     }
     expect(chromeSource).not.toContain('overwrite')
   })
+
+  it('opens AI Helper as a persistent Editor Dock tab instead of a utility dialog', () => {
+    expect(pageSource).toContain('<AiHelperWorkspace')
+    expect(chromeSource).toContain("onSelect: () => openTab('ai-helper')")
+    expect(dialogSource).not.toContain('AiHelperWorkspace')
+    expect(dialogSource).not.toContain('ai-helper')
+  })
 })

@@ -113,7 +113,7 @@ describe('useCadWorkspace unified Experiment', () => {
     await waitFor(() => expect(evaluateDocument).toHaveBeenCalledTimes(2))
     expect(vi.mocked(evaluateDocument).mock.calls[1][0].document).toBe(document)
     expect(vi.mocked(evaluateDocument).mock.calls[1][0].vars).toEqual({ fixed: 4, width: 7.75 })
-    expect(resolveDocumentMaterials).toHaveBeenLastCalledWith(expect.anything(), null)
+    expect(resolveDocumentMaterials).toHaveBeenLastCalledWith(expect.anything(), null, false)
     expect(onChange).not.toHaveBeenCalled()
     render.unmount()
   })

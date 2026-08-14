@@ -1,25 +1,18 @@
+// @vitest-environment jsdom
+
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkbenchDraft } from '../types'
+import {
+  clearWorkbenchDraft,
+  loadWorkbenchDraft,
+  saveWorkbenchDraft,
+  WORKBENCH_DRAFT_STORAGE_KEY,
+} from './draftStorage'
 
-const indexedDb = vi.hoisted(() => {
-  const values = new Map<IDBValidKey, unknown>()
+function draft(): WorkbenchDraft {
   return {
-    values,
-    createStore: vi.fn(() => ({})),
-    del: vi.fn(async (key: IDBValidKey) => values.delete(key)),
-    get: vi.fn(async (key: IDBValidKey) => values.get(key)),
-    set: vi.fn(async (key: IDBValidKey, value: unknown) => values.set(key, value)),
-  }
-})
-vi.mock('idb-keyval', () => indexedDb)
-
-import { clearWorkbenchDraft, loadWorkbenchDraft, saveWorkbenchDraft, workbenchDraftUserKey } from './draftStorage'
-
-function draft(userKey: string): WorkbenchDraft {
-  return {
-    version: 7,
+    version: 8,
     savedAt: 1,
-    userKey,
     experiment: { record: null, baselineBundle: null, document: null, name: '', description: '' },
     candidate: { vars: null, materialParameters: null },
     selection: { measurementId: null },
@@ -35,22 +28,23 @@ function draft(userKey: string): WorkbenchDraft {
 }
 
 beforeEach(() => {
-  indexedDb.values.clear()
-  vi.clearAllMocks()
+  sessionStorage.clear()
+  vi.restoreAllMocks()
 })
 
-describe('Workbench IndexedDB v7', () => {
-  it('stores valid source-only local drafts per user', async () => {
-    const coordinate = 'caemble:geometry/alice/common/part@local' as const
+describe('Workbench sessionStorage v8', () => {
+  it('stores and restores the single session draft, including local Geometry', async () => {
+    const coordinate = 'caemble:geometry/local/common/part@local' as const
     const value: WorkbenchDraft = {
-      ...draft('alice'),
+      ...draft(),
       geometry: {
-        ...draft('alice').geometry,
+        ...draft().geometry,
         drafts: {
           [coordinate]: {
             draftId: 'part',
             coordinate,
-            source: 'export const Part = () => <box size={[1, 1, 1]} />',
+            source:
+              "import { type Geometry } from '@caemble/core'\nexport const Part: Geometry = () => <box size={[1, 1, 1]} />",
             description: '',
             baseGeometryVersionId: null,
             repository: 'common',
@@ -65,41 +59,45 @@ describe('Workbench IndexedDB v7', () => {
         selectedCoordinate: coordinate,
         selectedExport: 'Part',
       },
-    }
-    await saveWorkbenchDraft(value)
-    await expect(loadWorkbenchDraft('alice')).resolves.toEqual(value)
-  })
-
-  it('migrates a geometry-free v6 draft to v7', async () => {
-    await indexedDb.set('session:alice', { ...draft('alice'), version: 6, geometry: undefined })
-    const migrated = await loadWorkbenchDraft('alice')
-    expect(migrated).toMatchObject({
-      version: 7,
-      geometry: { drafts: {}, selectedCoordinate: 'geometry.tsx', selectedExport: null },
-    })
-  })
-
-  it('discards legacy drafts containing a Geometry graph or local draft', async () => {
-    await indexedDb.set('session:alice', {
-      ...draft('alice'),
-      version: 6,
-      geometry: {
-        drafts: { legacy: { source: 'export default <box />' } },
-        stagedModules: [],
-        selectedCoordinate: null,
-        expandedPaths: [],
+      layout: {
+        ...draft().layout,
+        openTabs: ['experiment', 'ai-helper'],
+        activeTab: 'ai-helper',
       },
-    })
-    await expect(loadWorkbenchDraft('alice')).resolves.toBeNull()
-    expect(indexedDb.del).toHaveBeenCalled()
+    }
+
+    await saveWorkbenchDraft(value)
+
+    expect(sessionStorage).toHaveLength(1)
+    await expect(loadWorkbenchDraft()).resolves.toEqual(value)
   })
 
-  it('isolates and clears user keys', async () => {
-    await saveWorkbenchDraft(draft('alice'))
-    await saveWorkbenchDraft(draft('bob'))
-    await clearWorkbenchDraft('alice')
-    await expect(loadWorkbenchDraft('alice')).resolves.toBeNull()
-    await expect(loadWorkbenchDraft('bob')).resolves.toEqual(draft('bob'))
-    expect(workbenchDraftUserKey('  ')).toBe('anonymous')
+  it('removes malformed JSON instead of restoring it', async () => {
+    sessionStorage.setItem(WORKBENCH_DRAFT_STORAGE_KEY, '{not-json')
+
+    await expect(loadWorkbenchDraft()).resolves.toBeNull()
+    expect(sessionStorage.getItem(WORKBENCH_DRAFT_STORAGE_KEY)).toBeNull()
+  })
+
+  it('does not read or migrate an older draft version', async () => {
+    sessionStorage.setItem(WORKBENCH_DRAFT_STORAGE_KEY, JSON.stringify({ ...draft(), version: 7 }))
+
+    await expect(loadWorkbenchDraft()).resolves.toBeNull()
+    expect(sessionStorage.getItem(WORKBENCH_DRAFT_STORAGE_KEY)).toBeNull()
+  })
+
+  it('surfaces session quota failures to the caller', async () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota exceeded', 'QuotaExceededError')
+    })
+
+    await expect(saveWorkbenchDraft(draft())).rejects.toThrow('quota exceeded')
+  })
+
+  it('clears the one fixed session key', async () => {
+    await saveWorkbenchDraft(draft())
+    await clearWorkbenchDraft()
+
+    await expect(loadWorkbenchDraft()).resolves.toBeNull()
   })
 })

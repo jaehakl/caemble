@@ -207,15 +207,19 @@ export function EditorDock({
         </SortableContext>
       </DndContext>
       {activeTab ? (
-        <div
-          aria-labelledby={tabDomId(activeTab.id)}
-          className="min-h-0 flex-1 overflow-auto outline-none"
-          id={panelDomId(activeTab.id)}
-          role="tabpanel"
-          tabIndex={0}
-        >
-          {activeTab.content}
-        </div>
+        tabs.map((tab) => (
+          <div
+            aria-labelledby={tabDomId(tab.id)}
+            className="min-h-0 flex-1 overflow-auto outline-none"
+            hidden={tab.id !== activeTab.id}
+            id={panelDomId(tab.id)}
+            key={tab.id}
+            role="tabpanel"
+            tabIndex={tab.id === activeTab.id ? 0 : -1}
+          >
+            {tab.content}
+          </div>
+        ))
       ) : (
         <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
           {emptyContent}
