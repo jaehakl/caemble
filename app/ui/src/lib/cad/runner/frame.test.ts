@@ -18,8 +18,8 @@ class FakeWorker {
 
 const sourceHash = 'a'.repeat(64)
 const compiled: CompiledCadDocument = {
-  apiVersion: 5, compilerVersion: CAD_COMPILER_VERSION, sourceHash,
-  sources: { 'experiment.tsx': { apiVersion: 5, compilerVersion: CAD_COMPILER_VERSION, entryFile: 'experiment.tsx', code: '', sourceHash } },
+  apiVersion: 6, compilerVersion: CAD_COMPILER_VERSION, sourceHash,
+  sources: { 'experiment.tsx': { apiVersion: 6, compilerVersion: CAD_COMPILER_VERSION, entryFile: 'experiment.tsx', code: '', sourceHash } },
 }
 const inspection: RunnerOperationEnvelope = {
   type: 'inspect', nonce: '12345678-1234-1234-1234-123456789abc',

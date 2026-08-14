@@ -6,10 +6,11 @@
 
 ```text
 {
-  formatVersion: 4,
+  formatVersion: 5,
   files: {
     "experiment.tsx": string,
     "geometry.tsx": string,
+    "material.tsx": string,
     "simulate.py": string,
     "tasks/<taskName>.tsx": string,
     ...
@@ -18,14 +19,14 @@
 }
 ```
 
-`experiment.tsx`, `geometry.tsx`, `simulate.py`, 하나 이상의 Task 파일이 필수다. CAD document format은 2,
-CAD authoring API는 5, Geometry module format은 3, Simulation manifest는 5, Python simulation API는 3이다. 구형
+`experiment.tsx`, `geometry.tsx`, `material.tsx`, `simulate.py`, 하나 이상의 Task 파일이 필수다. CAD document format은 2,
+CAD authoring API는 6, Geometry module format은 4, Simulation manifest는 5, Python simulation API는 3이다. 구형
 Structure document와 `{ sample, setup }` 실행 payload는 받지 않는다.
 
 ```text
 Experiment revision + complete vars
 → 공통 scene과 Task-local scenes 결정론적 평가
-→ 공통/Task-local Material 값을 한 번 생성해 동결
+→ 모든 scene의 같은 Material 선언을 Candidate 전체에서 한 번 생성해 동결
 → prepared Measurement 저장
 → 원하는 시점에 BuiltMeasurement를 CAE slave로 실행
 → 성공한 RecordedData 전체를 한 번에 부착
@@ -40,12 +41,13 @@ Measurement 생성과 solver 실행은 별개다. 실패하거나 취소된 실�
 
 `geometry.tsx`와 Published Geometry source는 `@caemble/core`와 exact
 `caemble:geometry/<namespace>/<repository>/<package>@X.Y.Z` named import만 사용한다.
-`experiment.tsx`는 `./geometry`, Task는 `../geometry`에서 named component를 가져온다. Task 간 import,
+`material.tsx`는 `@caemble/core`만 정적으로 import한다. `experiment.tsx`는 `./geometry`와
+`./material`, Task는 `../geometry`와 `../material`에서 named export를 가져온다. Task 간 import,
 동적 import, `require()`, 그 밖의 package import는 지원하지 않는다.
 `Math.random`, `Date`, `crypto` 같은 숨은 비결정성도 authoring source에서 금지한다.
 
 평가기는 `varsSchema`의 모든 key가 포함된 vars만 받는다. 누락·초과 key, 잘못된 tensor
-shape, 비유한 값, 범위 밖 값은 geometry나 config callback을 실행하기 전에 거부한다. Reroll은
+shape, 비유한 값, 범위 밖 값은 geometry나 config callback을 실행하기 전에 거부한다. Candidate 생성은
 스키마 범위에서 새 candidate와 frozen Material 값을 만들 뿐 source를 변경하거나 저장·실행하지
 않는다. `min === max`인 항목은 고정값이다. seed와 생성 provenance는 저장하지 않는다.
 
@@ -60,7 +62,21 @@ import { type Geometry, type Vec3 } from "@caemble/core";
 export const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />;
 
 export const Probe: Geometry = () => <box size={[2, 2, 2]} />;
+
+const TireLeaf: Geometry = () => <cylinder radius={20} height={8} />;
+const HubLeaf: Geometry = () => <cylinder radius={8} height={8} />;
+
+export const WheelParts: Geometry = ({ materials }) => (
+  <union>
+    <TireLeaf id="tire" materials={{ body: materials?.tire }} />
+    <HubLeaf id="hub" materials={{ body: materials?.wheel }} />
+  </union>
+);
 ```
+
+Geometry의 `materials`는 배열이 아니라 역할 이름을 key로 쓰는 map이다. primitive는 `body` 역할을
+암묵적으로 소비한다. child에서 `materials`를 생략하면 현재 map 전체를 상속하고, 명시하면 map을
+교체하며 `{}`는 상속을 지운다. 중간 component는 역할을 바꾸어 전달할 수 있다.
 
 ## 공통 Experiment Source (`experiment.tsx`)
 
@@ -68,12 +84,9 @@ export const Probe: Geometry = () => <box size={[2, 2, 2]} />;
 계약을 함께 소유한다.
 
 ```tsx
-import {
-  Mat,
-  Material,
-  experiment,
-} from "@caemble/core";
+import { experiment } from "@caemble/core";
 import { Conductor } from "./geometry";
+import { Copper } from "./material";
 
 export default experiment({
   lengthUnit: "mm",
@@ -86,15 +99,7 @@ export default experiment({
     <Conductor
       id="conductor"
       size={vars.size}
-      materials={[
-        new Material("Copper", "reference", {
-          "electrical.conductivity": {
-            dtype: "float64",
-            value: Mat(vars.conductivity),
-            unit: "S.m-1",
-          },
-        }),
-      ]}
+      materials={{ body: Copper(vars.conductivity as number) }}
     />
   ),
   geometryGroup: {
@@ -114,6 +119,30 @@ export default experiment({
 });
 ```
 
+## 공통 Material Source (`material.tsx`)
+
+Material은 Geometry 배열 위치가 아니라 역할 이름으로 연결한다. `material.tsx`는 직접 정의한
+Material 객체 또는 factory를 export하고 Experiment/Task가 이를 import해 root Geometry의 역할
+map에 주입한다. `new Material(...)`은 다른 source 파일에서 사용할 수 없다.
+
+```tsx
+import { Mat, Material } from "@caemble/core";
+
+export const Copper = (conductivity: number) =>
+  new Material("Copper", "reference", {
+    "electrical.conductivity": {
+      dtype: "float64",
+      value: Mat(conductivity),
+      unit: "S.m-1",
+    },
+    color: "#d97706",
+  });
+```
+
+Viewer는 실제 Material이나 color가 빠져도 canonical 역할 이름의 안정적인 hash 색으로 서로 다른
+역할을 구분한다. 이 상태의 preview와 Experiment 저장은 허용하지만, 최종 part에 unresolved 역할이
+남아 있으면 Measurement 생성과 solver 실행은 거부한다.
+
 ## Task Source (`tasks/electric.tsx`)
 
 Task 이름은 파일명에서 등록된다. Task는 고정된 solver `name/version`과 config를 소유하며,
@@ -123,11 +152,14 @@ Task 이름은 파일명에서 등록된다. Task는 고정된 solver `name/vers
 ```tsx
 import { defineTask } from "@caemble/core";
 import { Probe } from "../geometry";
+import { Copper } from "../material";
 
 export default defineTask({
   kernel: { name: "dc-current-density", version: "0.1.0" },
   lengthUnit: "mm",
-  geometry: () => <Probe id="probe" />,
+  geometry: ({ vars }) => (
+    <Probe id="probe" materials={{ body: Copper(vars.conductivity as number) }} />
+  ),
   config: ({ vars }) => ({
     parameters: {
       relativeTolerance: {
@@ -225,6 +257,10 @@ prepared Measurement는 immutable Experiment ID, complete vars, 다음 Material 
   }
 }
 ```
+
+Candidate를 만들 때 Experiment와 모든 Task의 Material을 합쳐 resolve한다. 이름과 선언이 모두
+같은 Material은 한 번만 noise를 적용하므로 scene이 달라도 같은 frozen 값을 공유하고, 같은 이름의
+선언이 서로 다르면 Candidate 생성을 거부한다. 각 scene snapshot에는 자신이 사용하는 subset만 남긴다.
 
 같은 Experiment, vars, Material 값으로 Measurement를 여러 개 만들 수 있다. 생성 방식이나
 seed는 Measurement에 포함하지 않는다. CAE wire payload는 정확히

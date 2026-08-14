@@ -61,7 +61,7 @@ function normalizeLengthUnit(value: unknown, objectName: string) {
 }
 
 export class TaskDefinition<Config = unknown> {
-  readonly apiVersion = 5 as const
+  readonly apiVersion = 6 as const
   readonly documentType = 'task' as const
   readonly kernel: KernelIdentity
   readonly lengthUnit?: UcumUnit
@@ -117,7 +117,7 @@ export class ExperimentDefinition<
   Schema extends VarsSchemaDefinition = VarsSchemaDefinition,
   Recorded extends Readonly<Record<string, RecordedDataSpec>> = Readonly<Record<string, RecordedDataSpec>>,
 > {
-  readonly apiVersion = 5 as const
+  readonly apiVersion = 6 as const
   readonly documentType = 'experiment' as const
   readonly lengthUnit: UcumUnit
   readonly varsSchema: Readonly<Record<string, VarsSchemaEntry>>

@@ -1,6 +1,7 @@
 import { createExperimentSourceBundle } from './cad'
 import {
   defaultExperimentGeometryCode,
+  defaultExperimentMaterialCode,
   defaultExperimentProgramCode,
   defaultExperimentTaskCode,
 } from './defaultExperimentProgramCode'
@@ -9,6 +10,7 @@ import { defaultExperimentSimulationCode } from './defaultExperimentSimulationCo
 export const defaultExperimentSourceBundle = createExperimentSourceBundle({
   'experiment.tsx': defaultExperimentProgramCode,
   'geometry.tsx': defaultExperimentGeometryCode,
+  'material.tsx': defaultExperimentMaterialCode,
   'simulate.py': defaultExperimentSimulationCode,
   'tasks/electric.tsx': defaultExperimentTaskCode,
 })

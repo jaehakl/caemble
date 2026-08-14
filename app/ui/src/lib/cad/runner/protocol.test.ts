@@ -12,12 +12,12 @@ import {
 const sourceHash = 'b'.repeat(64)
 const nonce = '12345678-1234-1234-1234-123456789abc'
 const compiledExperiment: CompiledCadDocument = {
-  apiVersion: 5,
+  apiVersion: 6,
   compilerVersion: CAD_COMPILER_VERSION,
   sourceHash,
   sources: {
     'experiment.tsx': {
-      apiVersion: 5,
+      apiVersion: 6,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'experiment.tsx',
       code: 'module.exports.default = {}',

@@ -75,7 +75,7 @@ describe('saveCadDefinition', () => {
     })
   })
 
-  it('matches the recursively sorted Python API hash for a v4 bundle', async () => {
+  it('matches the recursively sorted Python API hash for a v5 bundle', async () => {
     const bundle = createExperimentSourceBundle({
       'tasks/main.tsx': 'task',
       'simulate.py': 'async def simulate(*, sim, tasks, vars):\n    return None\n',
@@ -83,7 +83,7 @@ describe('saveCadDefinition', () => {
     })
 
     await expect(experimentSourceBundleHash(bundle)).resolves.toBe(
-      '20b882b660c14fff4f13b7ea8537c8ac3f594c6b52b7f8dec12d99973b19500c',
+      '54c79cdb2aef16e11084bb9563bdbccbef1c408682ce711f343dde1e24485733',
     )
   })
 
@@ -96,7 +96,7 @@ describe('saveCadDefinition', () => {
     })
 
     await expect(experimentSourceBundleHash(bundle)).resolves.toBe(
-      'a855a8dd45dc9f41b8d57aa9eea4b940948459d359f6544a56d959f472c2469b',
+      '7a1f2b4093055ae3009d896186672c2cd1823352211adf889c72fcfa2cb09b20',
     )
   })
 })

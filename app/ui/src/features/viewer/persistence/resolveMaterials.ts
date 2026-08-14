@@ -1,6 +1,11 @@
 import { dbTables, getListRequest } from '@/api'
 import { deserializeCadScene, type EvaluatedExperimentSnapshot } from '@/lib/cad'
-import { resolveMaterialParameters, type FrozenMaterialParameters, type MaterialResolution } from '@/lib/material'
+import {
+  projectMaterialResolution,
+  resolveMaterialParameters,
+  type FrozenMaterialParameters,
+  type MaterialResolution,
+} from '@/lib/material'
 import { readMeasurementMaterialParameters } from './contracts'
 
 export type MeasurementMaterialResolution = Readonly<{
@@ -79,14 +84,24 @@ export function createDocumentMaterialResolver(storedSnapshot: unknown | null, s
 
     const commonScene = deserializeCadScene(snapshot.scene)
     const commonMaterials = commonScene.parts.flatMap((part) => (part.material ? [part.material] : []))
-    const common = await resolveOne(commonMaterials, stored?.experiment ?? null)
-    const tasks = await Promise.all(
-      taskNames.map(async (name) => {
+    const taskMaterials = Object.fromEntries(
+      taskNames.map((name) => {
         const scene = deserializeCadScene(snapshot.taskScenes[name])
-        const materials = scene.parts.flatMap((part) => (part.material ? [part.material] : []))
-        return [name, await resolveOne(materials, stored?.tasks[name] ?? null)] as const
+        return [name, scene.parts.flatMap((part) => (part.material ? [part.material] : []))]
       }),
     )
+    let common: MaterialResolution
+    let tasks: readonly (readonly [string, MaterialResolution])[]
+    if (!stored || sourceOnly) {
+      const shared = await resolveOne([...commonMaterials, ...taskNames.flatMap((name) => taskMaterials[name])], null)
+      common = projectMaterialResolution(shared, commonMaterials)
+      tasks = taskNames.map((name) => [name, projectMaterialResolution(shared, taskMaterials[name])] as const)
+    } else {
+      common = await resolveOne(commonMaterials, stored.experiment)
+      tasks = await Promise.all(
+        taskNames.map(async (name) => [name, await resolveOne(taskMaterials[name], stored.tasks[name])] as const),
+      )
+    }
     return Object.freeze({
       materialParameters: common.materialParameters,
       warnings: Object.freeze([...common.warnings]),

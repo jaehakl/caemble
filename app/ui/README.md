@@ -54,18 +54,22 @@ manifest 사본이나 generated catalog를 두지 않는다. Vite는 이 파일�
 
 The CAD generator reads the element registry, local TypeScript catalogs, and
 `src/lib/cad/api/authoring-manifest.json`. It generates the element
-catalog/registry, JSX intrinsic types, and the pinned CAD authoring API v5.
+catalog/registry, JSX intrinsic types, and the pinned CAD authoring API v6.
 Commit all generated changes. CI should run `npm run check:generated`; a
 non-empty regeneration diff is an error.
 
 ## Experiment source bundle
 
-An Experiment is stored atomically as `{ formatVersion: 2, files }`. The bundle
-contains exactly `experiment.tsx`, `simulate.py`, and one or more independent
-`tasks/<taskName>.tsx` files. Every TSX file may import only `@caemble/core`;
-relative imports, Task-to-Task imports, dynamic imports, and `require()` are
-rejected before execution.
+An Experiment is stored atomically as `{ formatVersion: 5, files, geometrySnapshot }`.
+The bundle contains `experiment.tsx`, `geometry.tsx`, `material.tsx`, `simulate.py`,
+and one or more independent `tasks/<taskName>.tsx` files. Geometry source may use
+`@caemble/core` and exact Geometry coordinates. Material source may use only
+`@caemble/core`. Experiment and Task source may additionally use their respective
+`./geometry`/`../geometry` and `./material`/`../material` named imports. Task-to-Task
+imports, dynamic imports, and `require()` are rejected before execution.
 
+`material.tsx` owns named Material objects and factories; Experiment and Task roots
+inject them by role through `materials={{ body: Copper, shell: Steel }}` maps.
 `experiment.tsx` owns the common `lengthUnit`, complete `varsSchema`, physical
 `geometry`, `geometryGroup`, `surfaceGroup`, and `recordedData`. Each Task file
 default-exports `defineTask({ kernel, config, ...optionalTaskGeometry })`; its
@@ -73,9 +77,9 @@ filename registers the Task name. A Task may add its own solver-local geometry,
 groups, and length unit. `simulate.py` uses
 `async def simulate(*, sim, tasks, vars)`.
 
-The Program tab shows `experiment.tsx` and `simulate.py` together. Sorted Task
-tabs edit and preview independent scenes, while the Program preview overlays all
-Task scenes after unit conversion. See [the Experiment Program guide](../../docs/experiment-program.md)
+The Program tab exposes `experiment.tsx`, `geometry.tsx`, `material.tsx`, and
+`simulate.py`. Sorted Task tabs edit and preview independent scenes, while the
+Program preview overlays all Task scenes after unit conversion. See [the Experiment Program guide](../../docs/experiment-program.md)
 for the complete authoring and execution contract.
 
 ## Candidate vars and deterministic evaluation
@@ -97,7 +101,7 @@ await evaluateDocument({
 
 The compiler caches emitted modules by SHA-256 source-project hash and compiler/API version. A new isolated evaluation reuses that emit without changing or recompiling Source. Missing or unknown keys, tensor-shape mismatches, non-finite values, and out-of-range components fail before any model callback runs. Authoring source cannot use hidden nondeterminism such as `Math.random`, `Date`, or `crypto`.
 
-The same immutable Experiment revision and complete vars produce the same scene and simulation program. **Reroll** samples a new in-range candidate from `varsSchema` and freezes fresh Material values without changing or dirtying Source. `min === max` produces the fixed value. No random seed or generation provenance is persisted; sweep, optimization, and inverse-design workflows will submit the same complete-value contract.
+The same immutable Experiment revision and complete vars produce the same scene and simulation program. **Generate Candidate** samples a new in-range candidate from `varsSchema` and freezes fresh Material values without changing or dirtying Source. `min === max` produces the fixed value. No random seed or generation provenance is persisted; sweep, optimization, and inverse-design workflows will submit the same complete-value contract.
 
 ## Compilation and diagnostics
 

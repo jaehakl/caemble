@@ -2,6 +2,7 @@ import type * as Monaco from 'monaco-editor'
 import {
   EXPERIMENT_ENTRY_PATH,
   EXPERIMENT_GEOMETRY_PATH,
+  EXPERIMENT_MATERIAL_PATH,
   assertCadSourceDocument,
   cadSourceHash,
   experimentTaskPaths,
@@ -12,7 +13,7 @@ import {
   type EffectiveGeometryGraph,
   type GeometryDraftOverlay,
 } from '../source/effectiveGeometryGraph'
-import { analyzeCadSource, analyzeGeometrySource, analyzeTaskSource } from '../source/sourceAnalysis'
+import { analyzeCadSource, analyzeGeometrySource, analyzeMaterialSource, analyzeTaskSource } from '../source/sourceAnalysis'
 import {
   CAD_COMPILER_VERSION,
   type CadDiagnostic,
@@ -40,16 +41,19 @@ export class CadCompilationError extends Error {
 
 function documentSources(document: CadSourceDocument) {
   return Object.fromEntries(
-    [EXPERIMENT_ENTRY_PATH, EXPERIMENT_GEOMETRY_PATH, ...experimentTaskPaths(document.sourceBundle)].map((path) => [
-      path,
-      document.sourceBundle.files[path],
-    ]),
+    [
+      EXPERIMENT_ENTRY_PATH,
+      EXPERIMENT_GEOMETRY_PATH,
+      EXPERIMENT_MATERIAL_PATH,
+      ...experimentTaskPaths(document.sourceBundle),
+    ].map((path) => [path, document.sourceBundle.files[path]]),
   )
 }
 
 function assertSourcePolicy(path: string, source: string) {
   if (path === EXPERIMENT_ENTRY_PATH) analyzeCadSource(source)
   else if (path === EXPERIMENT_GEOMETRY_PATH) analyzeGeometrySource(source, { allowEmpty: true, allowLocal: true })
+  else if (path === EXPERIMENT_MATERIAL_PATH) analyzeMaterialSource(source)
   else analyzeTaskSource(source)
 }
 
@@ -212,7 +216,7 @@ async function compile(
             const emitted = await emitModel(model, coordinate)
             const graphModule = geometryGraph!.modules.find((item) => item.coordinate === coordinate)!
             const compiledModule: CompiledGeometryModule = Object.freeze({
-              apiVersion: 5,
+              apiVersion: 6,
               compilerVersion: CAD_COMPILER_VERSION,
               entryFile: graphModule.coordinate,
               code: `${emitted.code}\n//# sourceURL=caemble://${sourceHash}/geometry/${encodeURIComponent(coordinate)}`,
@@ -232,7 +236,7 @@ async function compile(
           Object.entries(sourceModels).map(async ([path, model]) => {
             const emitted = await emitModel(model, path)
             const compiledSource: CompiledCadSource = Object.freeze({
-              apiVersion: 5,
+              apiVersion: 6,
               compilerVersion: CAD_COMPILER_VERSION,
               entryFile: path,
               code: `${emitted.code}\n//# sourceURL=caemble://${sourceHash}/${path}`,
@@ -244,7 +248,7 @@ async function compile(
         ),
       )
       return Object.freeze({
-        apiVersion: 5 as const,
+        apiVersion: 6 as const,
         compilerVersion: CAD_COMPILER_VERSION,
         sourceHash,
         sources: Object.freeze(Object.fromEntries(compiledEntries)),

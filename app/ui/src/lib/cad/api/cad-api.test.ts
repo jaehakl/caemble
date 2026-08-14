@@ -5,10 +5,11 @@ import { defaultCode } from '../../defaultCode'
 import { defaultExperimentCode } from '../../defaultExperimentCode'
 import {
   defaultExperimentGeometryCode,
+  defaultExperimentMaterialCode,
   defaultExperimentProgramCode,
   defaultExperimentTaskCode,
 } from '../../defaultExperimentProgramCode'
-import { caembleExamples, caembleProgramExamples } from '../../examples'
+import { caembleExamples, caembleProgramExamples, wheelAssemblyExample } from '../../examples'
 import { blankExperimentSourceBundle, starterExperimentSourceBundle } from '../../localExperimentCode'
 import { geometryCoordinateTypes } from '../compiler/geometryTypes'
 import type { EffectiveGeometryGraph } from '../source/effectiveGeometryGraph'
@@ -23,6 +24,7 @@ const experimentProgramDoc = readFileSync(
 
 const defaultGeometryFiles = {
   'C:/caemble-source/hash/geometry.tsx': defaultExperimentGeometryCode,
+  'C:/caemble-source/hash/material.tsx': defaultExperimentMaterialCode,
 }
 
 function diagnosticsFor(
@@ -31,10 +33,10 @@ function diagnosticsFor(
   sourcePath = 'C:/caemble-source/hash/experiment.tsx',
 ) {
   const virtualFiles = new Map<string, string>([
+    ...Object.entries(additionalFiles),
     [sourcePath, source],
     ['C:/node_modules/@caemble/core/index.d.ts', coreTypes],
     ['C:/node_modules/@caemble/core/cad-jsx.d.ts', jsxTypes],
-    ...Object.entries(additionalFiles),
   ])
   const options: ts.CompilerOptions = {
     allowNonTsExtensions: true,
@@ -88,7 +90,7 @@ describe('unversioned CAD authoring declarations', () => {
     expect(jsxTypes).not.toContain('const Fragment: unknown')
   })
 
-  it('type-checks the v5 Experiment and Task defaults', () => {
+  it('type-checks the v6 Experiment and Task defaults', () => {
     expect(defaultExperimentCode).toBe(defaultExperimentProgramCode)
     expect(diagnosticsFor(defaultCode)).toEqual([])
     expect(
@@ -142,7 +144,7 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
     expect(diagnosticsFor(code)).toEqual([])
   })
 
-  it.each(caembleProgramExamples)('type-checks the $title Experiment bundle', (example) => {
+  it.each([...caembleProgramExamples, wheelAssemblyExample])('type-checks the $title Experiment bundle', (example) => {
     const prefix = 'C:/caemble-source/hash'
     const files = Object.fromEntries(
       Object.entries(example.experimentSourceBundle.files)
@@ -170,9 +172,9 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
 
   it('type-checks the complete Experiment sources in the standalone guide', () => {
     const sources = [...experimentProgramDoc.matchAll(/```tsx\r?\n([\s\S]*?)```/g)].map((match) => match[1])
-    expect(sources).toHaveLength(3)
+    expect(sources).toHaveLength(4)
     const prefix = 'C:/caemble-source/hash'
-    const paths = ['geometry.tsx', 'experiment.tsx', 'tasks/electric.tsx']
+    const paths = ['geometry.tsx', 'experiment.tsx', 'material.tsx', 'tasks/electric.tsx']
     const files = Object.fromEntries(paths.map((path, index) => [`${prefix}/${path}`, sources[index]]))
     sources.forEach((source, index) => expect(diagnosticsFor(source, files, `${prefix}/${paths[index]}`)).toEqual([]))
   })
@@ -203,15 +205,22 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
     expect(coreTypes).toContain('{ color?: string; errorRate?: number }')
     expect(coreTypes).toContain('readonly errorRate: number')
 
-    const localKey = defaultCode.replace("'electrical.conductivity': {", 'electricalConductivity: {')
-    const arbitraryKey = defaultCode.replace("'electrical.conductivity': {", "'custom.conductivity': {")
-    const manualQuantityKind = defaultCode.replace(
-      "unit: 'S.m-1',",
-      "unit: 'S.m-1',\n            quantityKind: 'electromagnetism.ElectricConductivity',",
+    const localKey = defaultExperimentMaterialCode.replace(
+      "'electrical.conductivity': {",
+      'electricalConductivity: {',
     )
-    expect(diagnosticsFor(localKey).join('\n')).toContain('electricalConductivity')
-    expect(diagnosticsFor(arbitraryKey).join('\n')).toContain('custom.conductivity')
-    expect(diagnosticsFor(manualQuantityKind).join('\n')).toContain(
+    const arbitraryKey = defaultExperimentMaterialCode.replace(
+      "'electrical.conductivity': {",
+      "'custom.conductivity': {",
+    )
+    const manualQuantityKind = defaultExperimentMaterialCode.replace(
+      "unit: 'S.m-1',",
+      "unit: 'S.m-1',\n      quantityKind: 'electromagnetism.ElectricConductivity',",
+    )
+    const materialPath = 'C:/caemble-source/hash/material.tsx'
+    expect(diagnosticsFor(localKey, defaultGeometryFiles, materialPath).join('\n')).toContain('electricalConductivity')
+    expect(diagnosticsFor(arbitraryKey, defaultGeometryFiles, materialPath).join('\n')).toContain('custom.conductivity')
+    expect(diagnosticsFor(manualQuantityKind, defaultGeometryFiles, materialPath).join('\n')).toContain(
       "Type 'string' is not assignable to type 'undefined'",
     )
 

@@ -259,8 +259,8 @@ class GeometryVersion(TimestampMixin, Base):
         CheckConstraint("version_patch >= 0", name="version_patch_nonnegative"),
         CheckConstraint("source_hash ~ '^[0-9a-f]{64}$'", name="source_hash_sha256"),
         CheckConstraint("module_hash ~ '^[0-9a-f]{64}$'", name="module_hash_sha256"),
-        CheckConstraint("module_format_version = 3", name="module_format_version_supported"),
-        CheckConstraint("cad_api_version = 5", name="cad_api_version_supported"),
+        CheckConstraint("module_format_version = 4", name="module_format_version_supported"),
+        CheckConstraint("cad_api_version = 6", name="cad_api_version_supported"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -277,8 +277,8 @@ class GeometryVersion(TimestampMixin, Base):
     source: Mapped[str] = mapped_column(Text, nullable=False)
     source_hash: Mapped[str] = mapped_column(Text, nullable=False)
     module_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    module_format_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="3")
-    cad_api_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="5")
+    module_format_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="4")
+    cad_api_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="6")
     archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     package: Mapped["GeometryPackage"] = relationship(back_populates="versions")

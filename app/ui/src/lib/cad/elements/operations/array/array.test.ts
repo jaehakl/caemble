@@ -21,7 +21,7 @@ describe('CAD array', () => {
       return h('array', { shape: [2, 1, 1], period: [4, 0, 0] }, h(Cell, { id: 'cell' }))
     }
 
-    const centered = evaluateCad(h(Parent, { id: 'parent', materials: [core] }))
+    const centered = evaluateCad(h(Parent, { id: 'parent', materials: { body: core } }))
     const oriented = evaluateCad(
       h(
         'array',
@@ -30,7 +30,7 @@ describe('CAD array', () => {
           period: [4, 2, 0],
           axes: { x: [0, 2, 0], y: [1, 1, 0], z: [0, 0, 3] },
         },
-        h(Cell, { id: 'cell', materials: [core] }),
+        h(Cell, { id: 'cell', materials: { body: core } }),
       ),
     )
 
@@ -96,7 +96,7 @@ describe('CAD array', () => {
           holeRadius: 0,
           label: 'preserved',
           pos: [99, 0, 0],
-          materials: [core],
+          materials: { body: core },
         }),
       ),
     )
@@ -151,7 +151,7 @@ describe('CAD array', () => {
       )
     }
 
-    const parts = evaluateCad(h(Parent, { id: 'parent', pos: [0, 5, 0], materials: [core] }))
+    const parts = evaluateCad(h(Parent, { id: 'parent', pos: [0, 5, 0], materials: { body: core } }))
     const centers = parts.map((part) => {
       const bounds = measurements.measureBoundingBox(part.geometry)
       return bounds[0].map((minimum, axis) => (minimum + bounds[1][axis]) / 2)
@@ -165,7 +165,7 @@ describe('CAD array', () => {
 
   it('rejects invalid array shape, period, and axes', () => {
     const core = new Material('Core', { color: '#2563eb' })
-    const child = h(Box, { id: 'box', materials: [core] })
+    const child = h(Box, { id: 'box', materials: { body: core } })
 
     ;[null, [1, 1], [1, 1, 0], [1, 1, 1.5], [1, 1, Number.NaN]].forEach((shape) => {
       expect(() => evaluateCad(h('array', { shape, period: [1, 1, 1] }, child))).toThrow(
@@ -196,7 +196,7 @@ describe('CAD array', () => {
 
   it('rejects malformed or forbidden array injection tensors', () => {
     const core = new Material('Core', { color: '#2563eb' })
-    const child = h(Box, { id: 'box', materials: [core] })
+    const child = h(Box, { id: 'box', materials: { body: core } })
     const evaluate = (inject: unknown) =>
       evaluateCad(h('array', { shape: [2, 1, 1], period: [2, 0, 0], inject }, child))
 
@@ -223,15 +223,20 @@ describe('CAD array', () => {
     expect(() => evaluateCad(h('array', props))).toThrow('exactly one direct child Geometry')
     expect(() =>
       evaluateCad(
-        h('array', props, h(Box, { id: 'first', materials: [core] }), h(Box, { id: 'second', materials: [core] })),
+        h(
+          'array',
+          props,
+          h(Box, { id: 'first', materials: { body: core } }),
+          h(Box, { id: 'second', materials: { body: core } }),
+        ),
       ),
     ).toThrow('exactly one direct child Geometry')
-    expect(() => evaluateCad(h('array', props, h('box', { size, materials: [core] })))).toThrow(
+    expect(() => evaluateCad(h('array', props, h('box', { size, materials: { body: core } })))).toThrow(
       'exactly one direct child Geometry',
     )
-    expect(() => evaluateCad(h('array', props, h(Fragment, null, h(Box, { id: 'box', materials: [core] }))))).toThrow(
-      'exactly one direct child Geometry',
-    )
+    expect(() =>
+      evaluateCad(h('array', props, h(Fragment, null, h(Box, { id: 'box', materials: { body: core } })))),
+    ).toThrow('exactly one direct child Geometry')
   })
 
   it('keeps array cells independent and preserves existing Material boolean rules', () => {
@@ -239,10 +244,12 @@ describe('CAD array', () => {
     const cladding = new Material('Cladding', { color: '#f59e0b' })
     const arrayProps = { shape: [2, 1, 1], period: [3, 0, 0] }
 
-    expect(evaluateCad(h('array', arrayProps, h(Box, { id: 'box', materials: [core] })))).toHaveLength(2)
+    expect(evaluateCad(h('array', arrayProps, h(Box, { id: 'box', materials: { body: core } })))).toHaveLength(2)
     expect(
       evaluateCad(
-        h(() => h('union', null, h('array', arrayProps, h(Box, { id: 'box', materials: [core] }))), { id: 'result' }),
+        h(() => h('union', null, h('array', arrayProps, h(Box, { id: 'box', materials: { body: core } }))), {
+          id: 'result',
+        }),
       ),
     ).toHaveLength(1)
 
@@ -250,8 +257,8 @@ describe('CAD array', () => {
       return h(
         Fragment,
         null,
-        h(Box, { id: 'core', materials: [core] }),
-        h(Box, { id: 'cladding', pos: [1, 0, 0], materials: [cladding] }),
+        h(Box, { id: 'core', materials: { body: core } }),
+        h(Box, { id: 'cladding', pos: [1, 0, 0], materials: { body: cladding } }),
       )
     }
 
@@ -262,5 +269,23 @@ describe('CAD array', () => {
         }),
       ),
     ).toThrow('cannot combine Geometry with different Materials')
+  })
+
+  it('preserves a remapped canonical Material role in every array cell', () => {
+    const wheel = new Material('Wheel', { color: '#2563eb' })
+
+    function Cell(input: Record<string, unknown>) {
+      const materials = input.materials as Readonly<Record<string, Material>>
+      return h(Box, { id: 'body', materials: { body: materials.wheel_A } })
+    }
+
+    function Parent() {
+      return h('array', { shape: [2, 1, 1], period: [3, 0, 0] }, h(Cell, { id: 'cell' }))
+    }
+
+    const parts = evaluateCad(h(Parent, { id: 'array', materials: { wheel_A: wheel } }))
+
+    expect(parts.map((part) => part.materialRole)).toEqual(['wheel_A', 'wheel_A'])
+    expect(parts.map((part) => part.material?.name)).toEqual(['Wheel', 'Wheel'])
   })
 })

@@ -97,8 +97,8 @@ def module_hash(coordinate: str, source_digest: str, imports: list[dict[str, str
     canonical = json.dumps(
         {
             "schemaVersion": 2,
-            "moduleFormatVersion": 3,
-            "cadApiVersion": 5,
+            "moduleFormatVersion": 4,
+            "cadApiVersion": 6,
             "coordinate": coordinate,
             "sourceHash": source_digest,
             "imports": [
@@ -165,6 +165,25 @@ def analyze_geometry_source(
                 raise _bad("Geometry imports must use named imports.")
             specifiers = [child for child in named[0].named_children if child.type == "import_specifier"]
             if specifier == "@caemble/core":
+                if not specifiers:
+                    raise _bad("Geometry imports from @caemble/core must name at least one binding.")
+                import_is_type_only = any(child.type == "type" for child in node.children)
+                for item in specifiers:
+                    item_is_type_only = any(child.type == "type" for child in item.children)
+                    names = [
+                        encoded[child.start_byte : child.end_byte].decode("utf-8")
+                        for child in item.named_children
+                        if child.type == "identifier"
+                    ]
+                    if (
+                        names
+                        and names[0] == "Material"
+                        and not import_is_type_only
+                        and not item_is_type_only
+                    ):
+                        raise _bad(
+                            "Material instances must be defined in material.tsx and imported from there."
+                        )
                 continue
             exact = COORDINATE_RE.fullmatch(specifier)
             local = LOCAL_COORDINATE_RE.fullmatch(specifier)
@@ -306,20 +325,62 @@ def validate_experiment_tsx_imports(source: str, *, path: str) -> None:
         error = next((node for node in _walk(root) if node.is_error or node.is_missing), root)
         row, column = error.start_point
         raise _bad(f"Experiment TSX syntax error at {row + 1}:{column + 1}.")
-    expected_geometry = "./geometry" if path == "experiment.tsx" else "../geometry"
+    if path == "material.tsx":
+        allowed_imports = {"@caemble/core"}
+    elif path == "experiment.tsx":
+        allowed_imports = {"@caemble/core", "./geometry", "./material"}
+    else:
+        allowed_imports = {"@caemble/core", "../geometry", "../material"}
     for node in root.named_children:
-        if node.type != "import_statement":
+        if node.type not in {"import_statement", "export_statement"}:
             continue
         source_node = node.child_by_field_name("source")
-        clause = next((child for child in node.named_children if child.type == "import_clause"), None)
-        if source_node is None or source_node.type != "string" or clause is None:
+        if node.type == "export_statement":
+            if source_node is None:
+                continue
+            raise _bad("Experiment sources do not support dependency re-exports.")
+        clause = next(
+            (child for child in node.named_children if child.type == "import_clause"),
+            None,
+        )
+        if (
+            source_node is None
+            or source_node.type != "string"
+            or (node.type == "import_statement" and clause is None)
+        ):
             raise _bad("Experiment imports must use a static import clause and string specifier.")
         raw = encoded[source_node.start_byte : source_node.end_byte]
         if len(raw) < 2 or raw[:1] not in {b"'", b'"'} or raw[-1:] != raw[:1]:
             raise _bad("Experiment imports must use a plain string specifier.")
         specifier = raw[1:-1].decode("utf-8")
-        if specifier not in {"@caemble/core", expected_geometry}:
+        if specifier not in allowed_imports:
             raise _bad(f"Experiment import is not allowed in {path}: {specifier}")
+        named = clause.named_children
+        if len(named) != 1 or named[0].type != "named_imports":
+            raise _bad(f"Experiment imports must use named bindings in {path}: {specifier}")
+        specifiers = [
+            child for child in named[0].named_children if child.type == "import_specifier"
+        ]
+        if not specifiers:
+            raise _bad(f"Experiment imports must name at least one binding in {path}: {specifier}")
+        if specifier == "@caemble/core" and path != "material.tsx":
+            import_is_type_only = any(child.type == "type" for child in node.children)
+            for item in specifiers:
+                item_is_type_only = any(child.type == "type" for child in item.children)
+                names = [
+                    encoded[child.start_byte : child.end_byte].decode("utf-8")
+                    for child in item.named_children
+                    if child.type == "identifier"
+                ]
+                if (
+                    names
+                    and names[0] == "Material"
+                    and not import_is_type_only
+                    and not item_is_type_only
+                ):
+                    raise _bad(
+                        "Material instances must be defined in material.tsx and imported from there."
+                    )
     for node in _walk(root):
         if node.type == "call_expression":
             function = node.child_by_field_name("function")

@@ -112,6 +112,15 @@ def test_source_contract_supports_multi_export_alias_and_local_rewrite_boundary(
     assert analyze_geometry_source(local, allow_local=True)["imports"][0]["coordinate"].endswith("@local")
 
 
+def test_geometry_source_rejects_inline_material_construction_imports():
+    with pytest.raises(Exception, match="material.tsx"):
+        analyze_geometry_source(
+            'import { type Geometry, Material as InlineMaterial } from "@caemble/core"\n'
+            "void InlineMaterial\n"
+            "export const Shape: Geometry = () => <box />\n"
+        )
+
+
 def test_module_hash_uses_named_import_provenance_but_not_database_ids():
     coordinate = "caemble:geometry/hash-owner/common/assembly@1.0.0"
     digest = source_hash(source("Assembly"))
@@ -221,13 +230,15 @@ async def test_publish_named_multi_export_and_resolve_snapshot_v2(client, db_ses
     assert step["exports"] == ["Assembly", "Preview"]
     assert step["sourceHash"] == source_hash(step["source"])
     assert step["moduleHash"] == module_hash(step["coordinate"], step["sourceHash"], [])
-    assert version["moduleFormatVersion"] == 3
+    assert version["moduleFormatVersion"] == 4
+    assert version["cadApiVersion"] == 6
 
     resolved = await client.get(f"/geometry/versions/{version['id']}/resolve", headers=auth_headers(owner))
     assert resolved.status_code == 200, resolved.text
     assert resolved.json()["schemaVersion"] == 2
     assert resolved.json()["root"]["exports"] == ["Assembly", "Preview"]
-    assert resolved.json()["modules"][0]["moduleFormatVersion"] == 3
+    assert resolved.json()["modules"][0]["moduleFormatVersion"] == 4
+    assert resolved.json()["modules"][0]["cadApiVersion"] == 6
 
 
 @pytest.mark.asyncio
@@ -401,6 +412,20 @@ async def test_experiment_save_reports_geometry_and_relative_import_policy_error
 ):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
+
+    missing_material = experiment_source_bundle()
+    missing_material["files"].pop("material.tsx")
+    response = await client.post(
+        "/experiment/save",
+        headers=auth_headers(owner),
+        json={
+            "name": "Missing Material source",
+            "sourceBundle": missing_material,
+            "bundleHash": bundle_hash(missing_material),
+        },
+    )
+    assert response.status_code == 422, response.text
+
     invalid_geometry = experiment_source_bundle()
     invalid_geometry["files"]["geometry.tsx"] = "export const Shape = <box />\n"
     response = await client.post(
@@ -428,7 +453,113 @@ async def test_experiment_save_reports_geometry_and_relative_import_policy_error
         },
     )
     assert response.status_code == 422, response.text
+
+    invalid_material_relative = experiment_source_bundle()
+    invalid_material_relative["files"]["material.tsx"] = (
+        "import { Shape } from './geometry'\nvoid Shape\n"
+    )
+    response = await client.post(
+        "/experiment/save",
+        headers=auth_headers(owner),
+        json={
+            "name": "Invalid material import",
+            "sourceBundle": invalid_material_relative,
+            "bundleHash": bundle_hash(invalid_material_relative),
+        },
+    )
+    assert response.status_code == 422, response.text
+
+    invalid_material_reexport = experiment_source_bundle()
+    invalid_material_reexport["files"]["material.tsx"] = (
+        "export { Shape } from './geometry'\n"
+    )
+    response = await client.post(
+        "/experiment/save",
+        headers=auth_headers(owner),
+        json={
+            "name": "Invalid material re-export",
+            "sourceBundle": invalid_material_reexport,
+            "bundleHash": bundle_hash(invalid_material_reexport),
+        },
+    )
+    assert response.status_code == 422, response.text
+
+    invalid_inline_material = experiment_source_bundle()
+    invalid_inline_material["files"]["experiment.tsx"] = (
+        'import { Material as InlineMaterial } from "@caemble/core"\n'
+        "void InlineMaterial\n"
+    )
+    response = await client.post(
+        "/experiment/save",
+        headers=auth_headers(owner),
+        json={
+            "name": "Invalid inline Material",
+            "sourceBundle": invalid_inline_material,
+            "bundleHash": bundle_hash(invalid_inline_material),
+        },
+    )
+    assert response.status_code == 422, response.text
+
+    invalid_material_namespace = experiment_source_bundle()
+    invalid_material_namespace["files"]["material.tsx"] = (
+        'import * as core from "@caemble/core"\nvoid core\n'
+    )
+    response = await client.post(
+        "/experiment/save",
+        headers=auth_headers(owner),
+        json={
+            "name": "Invalid Material namespace import",
+            "sourceBundle": invalid_material_namespace,
+            "bundleHash": bundle_hash(invalid_material_namespace),
+        },
+    )
+    assert response.status_code == 422, response.text
+
+    invalid_task_material_relative = experiment_source_bundle()
+    invalid_task_material_relative["files"]["tasks/main.tsx"] = (
+        "import { materials } from './material'\nvoid materials\n"
+    )
+    response = await client.post(
+        "/experiment/save",
+        headers=auth_headers(owner),
+        json={
+            "name": "Invalid Task material import",
+            "sourceBundle": invalid_task_material_relative,
+            "bundleHash": bundle_hash(invalid_task_material_relative),
+        },
+    )
+    assert response.status_code == 422, response.text
     assert await db_session.scalar(select(func.count()).select_from(Experiment)) == 0
+
+
+@pytest.mark.asyncio
+async def test_experiment_save_accepts_static_material_imports(
+    client, db_session, monkeypatch
+):
+    monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
+    owner = await create_user(db_session)
+    bundle = experiment_source_bundle(
+        'import type { Material } from "@caemble/core"\n'
+        "import { Copper } from './material'\n"
+        "void (null as Material | null)\nvoid Copper\n"
+    )
+    bundle["files"]["material.tsx"] = (
+        'import { Material } from "@caemble/core"\n'
+        "export const Copper = new Material('Copper')\n"
+    )
+    bundle["files"]["tasks/main.tsx"] = (
+        "import { Copper } from '../material'\nvoid Copper\n"
+    )
+    response = await client.post(
+        "/experiment/save",
+        headers=auth_headers(owner),
+        json={
+            "name": "Static Material imports",
+            "sourceBundle": bundle,
+            "bundleHash": bundle_hash(bundle),
+        },
+    )
+    assert response.status_code == 200, response.text
 
 
 @pytest.mark.asyncio

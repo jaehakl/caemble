@@ -24,8 +24,8 @@ async function module(
   const value = {
     geometryVersionId: id,
     coordinate,
-    moduleFormatVersion: 3 as const,
-    cadApiVersion: 5 as const,
+    moduleFormatVersion: 4 as const,
+    cadApiVersion: 6 as const,
     description: null,
     source,
     sourceHash,
@@ -106,7 +106,7 @@ describe('Geometry snapshot v2', () => {
     ).toThrow('aliases must be unique')
   })
 
-  it('rejects unresolved, orphaned, cyclic and non-v3 modules', async () => {
+  it('rejects unresolved, orphaned, cyclic and non-v4 modules', async () => {
     const leaf = await module(1, leafCoordinate, 'export const Part = () => <box />')
     const entry = {
       exportName: 'Part',
@@ -127,7 +127,7 @@ describe('Geometry snapshot v2', () => {
         entryImports: [entry],
         modules: [{ ...leaf, moduleFormatVersion: 2 }],
       }),
-    ).toThrow('format version 3')
+    ).toThrow('format version 4')
     expect(() => assertGeometrySnapshot({ schemaVersion: 1, entryImports: [], modules: [] })).toThrow(
       'schema version 2',
     )
@@ -138,8 +138,8 @@ describe('Geometry snapshot v2', () => {
     const left = await geometryModuleHash({
       coordinate: rootCoordinate,
       sourceHash,
-      moduleFormatVersion: 3,
-      cadApiVersion: 5,
+      moduleFormatVersion: 4,
+      cadApiVersion: 6,
       imports: [
         { exportName: 'Part', alias: 'Child', geometryVersionId: 1, coordinate: leafCoordinate, moduleHash: hash },
       ],
@@ -147,8 +147,8 @@ describe('Geometry snapshot v2', () => {
     const right = await geometryModuleHash({
       coordinate: rootCoordinate,
       sourceHash,
-      moduleFormatVersion: 3,
-      cadApiVersion: 5,
+      moduleFormatVersion: 4,
+      cadApiVersion: 6,
       imports: [
         { exportName: 'Part', alias: 'Other', geometryVersionId: 999, coordinate: leafCoordinate, moduleHash: hash },
       ],

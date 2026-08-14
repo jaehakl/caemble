@@ -14,6 +14,7 @@ import type { VarsSchemaEntry } from '../model/vars'
 import {
   EXPERIMENT_ENTRY_PATH,
   EXPERIMENT_GEOMETRY_PATH,
+  EXPERIMENT_MATERIAL_PATH,
   EXPERIMENT_SIMULATION_PATH,
   experimentTaskName,
 } from '../source/document'
@@ -132,6 +133,38 @@ type CompiledGeometryRuntime = Readonly<{
   load: (coordinate: GeometryModuleCoordinate) => Readonly<Record<string, unknown>>
 }>
 
+type CompiledMaterialRuntime = Readonly<Record<string, Material | ((...parameters: unknown[]) => Material)>>
+
+function compiledMaterialRuntime(compiled: CompiledCadDocument): CompiledMaterialRuntime {
+  const materialSource = compiled.sources[EXPERIMENT_MATERIAL_PATH]
+  if (!materialSource) throw new CadModelError(`Compiled Experiment is missing ${EXPERIMENT_MATERIAL_PATH}.`)
+  const exports = executeCompiledModule(materialSource.code, (specifier) => {
+    if (specifier === '@caemble/core') return coreModule
+    throw new CadModelError(`Unsupported Material runtime import: ${specifier}`)
+  })
+  if (Object.prototype.hasOwnProperty.call(exports, 'default')) {
+    throw new CadModelError('material.tsx only supports named Material object or factory exports.')
+  }
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(exports).map(([name, value]) => {
+        if (value instanceof Material) return [name, value]
+        if (typeof value !== 'function' || value === Material) {
+          throw new CadModelError(`Material export ${name} must be a Material instance or factory.`)
+        }
+        const factory = (...parameters: unknown[]) => {
+          const material = value(...parameters)
+          if (!(material instanceof Material)) {
+            throw new CadModelError(`Material factory ${name} must return a Material instance.`)
+          }
+          return material
+        }
+        return [name, factory]
+      }),
+    ),
+  )
+}
+
 function compiledGeometryRuntime(compiled: CompiledCadDocument): CompiledGeometryRuntime {
   const graph = compiled.geometryGraph
   const cache = new Map<
@@ -174,7 +207,11 @@ function compiledGeometryRuntime(compiled: CompiledCadDocument): CompiledGeometr
   return Object.freeze({ geometryExports, load })
 }
 
-function taskDefinitionsFromCompiled(compiled: CompiledCadDocument, geometryRuntime: CompiledGeometryRuntime) {
+function taskDefinitionsFromCompiled(
+  compiled: CompiledCadDocument,
+  geometryRuntime: CompiledGeometryRuntime,
+  materialRuntime: CompiledMaterialRuntime,
+) {
   const definitions = Object.freeze(
     Object.fromEntries(
       Object.entries(compiled.sources)
@@ -184,6 +221,7 @@ function taskDefinitionsFromCompiled(compiled: CompiledCadDocument, geometryRunt
           const task = executeCompiledModule(source.code, (specifier) => {
             if (specifier === '@caemble/core') return coreModule
             if (specifier === '../geometry') return geometryRuntime.geometryExports
+            if (specifier === '../material') return materialRuntime
             throw new CadModelError(`Unsupported Task runtime import: ${specifier}`)
           }).default
           if (!(task instanceof TaskDefinition)) {
@@ -198,13 +236,18 @@ function taskDefinitionsFromCompiled(compiled: CompiledCadDocument, geometryRunt
   return definitions
 }
 
-function compiledExperimentEntry(compiled: CompiledCadDocument, geometryRuntime: CompiledGeometryRuntime) {
+function compiledExperimentEntry(
+  compiled: CompiledCadDocument,
+  geometryRuntime: CompiledGeometryRuntime,
+  materialRuntime: CompiledMaterialRuntime,
+) {
   assertCompiledCadDocument(compiled)
   const entrySource = compiled.sources[EXPERIMENT_ENTRY_PATH]
   if (!entrySource) throw new CadModelError(`Compiled Experiment is missing ${EXPERIMENT_ENTRY_PATH}.`)
   const entry = executeCompiledModule(entrySource.code, (specifier) => {
     if (specifier === '@caemble/core') return coreModule
     if (specifier === './geometry') return geometryRuntime.geometryExports
+    if (specifier === './material') return materialRuntime
     throw new CadModelError(`Unsupported Experiment runtime import: ${specifier}`)
   }).default
   if (!(entry instanceof ExperimentDefinition)) {
@@ -215,9 +258,10 @@ function compiledExperimentEntry(compiled: CompiledCadDocument, geometryRuntime:
 
 export function inspectCompiledDocument(compiled: CompiledCadDocument): CadInspectionResult {
   assertCompiledCadDocument(compiled)
+  const materialRuntime = compiledMaterialRuntime(compiled)
   const geometryRuntime = compiledGeometryRuntime(compiled)
-  const entry = compiledExperimentEntry(compiled, geometryRuntime)
-  taskDefinitionsFromCompiled(compiled, geometryRuntime)
+  const entry = compiledExperimentEntry(compiled, geometryRuntime, materialRuntime)
+  taskDefinitionsFromCompiled(compiled, geometryRuntime, materialRuntime)
   return Object.freeze({ varsSchema: entry.varsSchema })
 }
 
@@ -294,8 +338,9 @@ export function executeCompiledCode(
 
 export function executeCompiledDocument(compiled: CompiledCadDocument, vars: ExternalVars, pythonSource?: string) {
   assertCompiledCadDocument(compiled)
+  const materialRuntime = compiledMaterialRuntime(compiled)
   const geometryRuntime = compiledGeometryRuntime(compiled)
-  const entry = compiledExperimentEntry(compiled, geometryRuntime)
+  const entry = compiledExperimentEntry(compiled, geometryRuntime, materialRuntime)
   if (!pythonSource?.trim()) {
     throw new CadModelError(`Compiled Experiment document is missing ${EXPERIMENT_SIMULATION_PATH}.`)
   }
@@ -304,7 +349,7 @@ export function executeCompiledDocument(compiled: CompiledCadDocument, vars: Ext
     compiled.sourceHash,
     vars,
     pythonSource,
-    taskDefinitionsFromCompiled(compiled, geometryRuntime),
+    taskDefinitionsFromCompiled(compiled, geometryRuntime, materialRuntime),
   )
 }
 

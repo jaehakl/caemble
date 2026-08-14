@@ -4,7 +4,7 @@ import type { Rotation, Vec3 } from './types'
 export type GeometryAttributes<P extends object = object> = Readonly<
   P & {
     id: string
-    materials?: readonly import('./material').Material[]
+    materials?: Readonly<Record<string, import('./material').Material | undefined>>
     pos?: Vec3
     rotate?: Rotation
     scale?: Vec3

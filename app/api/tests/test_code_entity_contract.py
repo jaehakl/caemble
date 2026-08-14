@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from db import Experiment, GeometryPackage, GeometryRepository, GeometryVersion, Measurement
-from models import ExperimentBase, MeasurementBase
+from models import ExperimentBase, GeometryModuleSnapshot, MeasurementBase
 from tests.helpers import experiment_source_bundle
 
 
@@ -94,6 +94,54 @@ class TestCodeEntityContract(unittest.TestCase):
         self.assertNotIn("GeometryRepository", auth_router)
         self.assertIn("change_geometry_namespace", auth_router)
 
+    def test_material_routes_are_consolidated_without_changing_public_urls(self):
+        app_dir = Path(__file__).resolve().parents[1] / "app"
+        router_dir = app_dir / "routers"
+        source = (router_dir / "material.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        routes = {
+            (decorator.func.attr.upper(), ast.literal_eval(decorator.args[0]))
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            for decorator in node.decorator_list
+            if isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Attribute)
+            and decorator.func.attr in {"post", "delete"}
+        }
+
+        self.assertEqual(
+            routes,
+            {
+                (method, f"/{resource}{suffix}")
+                for resource in (
+                    "material",
+                    "material_name",
+                    "material_parameter",
+                    "material_parameter_qualifier",
+                )
+                for method, suffix in (
+                    ("POST", "/list"),
+                    ("POST", "/upsert"),
+                    ("DELETE", "/"),
+                )
+            },
+        )
+        for removed in (
+            "material_name.py",
+            "material_parameter.py",
+            "material_parameter_qualifier.py",
+        ):
+            self.assertFalse((router_dir / removed).exists())
+        self.assertNotIn("from db import", source)
+        self.assertNotIn("CrudSpec", source)
+
+        service_dir = app_dir / "service" / "material"
+        self.assertFalse((app_dir / "service" / "material.py").exists())
+        self.assertEqual(
+            {path.name for path in service_dir.glob("*.py")},
+            {"__init__.py", "manager.py", "source.py"},
+        )
+
     def test_experiment_contract_exposes_server_source_hash(self):
         value = ExperimentBase.model_validate(
             {
@@ -102,7 +150,7 @@ class TestCodeEntityContract(unittest.TestCase):
                 "source_hash": "a" * 64,
             }
         )
-        self.assertEqual(value.source_bundle.formatVersion, 4)
+        self.assertEqual(value.source_bundle.formatVersion, 5)
         self.assertEqual(
             value.model_dump(mode="json")["source_bundle"],
             experiment_source_bundle(),
@@ -110,6 +158,23 @@ class TestCodeEntityContract(unittest.TestCase):
         self.assertEqual(value.source_hash, "a" * 64)
         self.assertNotIn("code_embedding", value.model_dump())
         self.assertFalse(Experiment.__table__.columns.source_hash.nullable)
+
+    def test_current_geometry_contract_uses_module_v4_and_cad_api_v6(self):
+        value = GeometryModuleSnapshot(
+            geometryVersionId=1,
+            coordinate="caemble:geometry/owner/common/shape@1.0.0",
+            moduleFormatVersion=4,
+            cadApiVersion=6,
+            description=None,
+            source="export const Shape = () => <box />",
+            sourceHash="a" * 64,
+            moduleHash="b" * 64,
+        )
+        self.assertEqual(value.moduleFormatVersion, 4)
+        self.assertEqual(value.cadApiVersion, 6)
+        constraints = {str(item.sqltext) for item in GeometryVersion.__table__.constraints if hasattr(item, "sqltext")}
+        self.assertIn("module_format_version = 4", constraints)
+        self.assertIn("cad_api_version = 6", constraints)
 
     def test_removed_split_tables_are_not_mapped(self):
         table_names = set(Experiment.metadata.tables)

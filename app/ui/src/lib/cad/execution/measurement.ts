@@ -1,5 +1,5 @@
 import type { FrozenMaterialParameters, MaterialResolution } from '../../material'
-import { readFrozenMaterialParameters, sourceOnlyMaterialParameters } from '../../material'
+import { projectMaterialResolution, readFrozenMaterialParameters, sourceOnlyMaterialParameters } from '../../material'
 import { materialParameterByKey } from '../../material/data'
 import { QuantityKind } from '../../quantitykind'
 import { identityCartesianBasis } from '../../quantitykind/identityBasis'
@@ -28,10 +28,27 @@ export type BuiltMeasurement = Readonly<{
   taskMaterialWarnings: Readonly<Record<string, readonly string[]>>
 }>
 
+export function unresolvedMeasurementMaterialRoles(snapshot: EvaluatedExperimentSnapshot) {
+  const unresolved = new Set<string>()
+  snapshot.scene.parts.forEach((part) => {
+    if (!part.material) unresolved.add(`Experiment: ${part.materialRole}`)
+  })
+  Object.entries(snapshot.taskScenes).forEach(([taskName, scene]) => {
+    scene.parts.forEach((part) => {
+      if (!part.material) unresolved.add(`Task ${taskName}: ${part.materialRole}`)
+    })
+  })
+  return Object.freeze([...unresolved])
+}
+
 export function buildMeasurement(
   snapshot: EvaluatedExperimentSnapshot,
   resolution: MeasurementMaterialResolution,
 ): BuiltMeasurement {
+  const unresolved = unresolvedMeasurementMaterialRoles(snapshot)
+  if (unresolved.length > 0) {
+    throw new CadModelError(`Measurement requires resolved Material roles: ${unresolved.join(', ')}.`)
+  }
   const measurement = Object.freeze({
     kind: 'measurement' as const,
     experiment: snapshot,
@@ -44,15 +61,26 @@ export function buildMeasurement(
   return measurement
 }
 
-function sourceOnlySceneResolution(scene: EvaluatedExperimentSnapshot['scene']): MaterialResolution {
-  const materials = deserializeCadScene(scene).parts.flatMap((part) => (part.material ? [part.material] : []))
-  return sourceOnlyMaterialParameters(materials)
-}
-
 export function buildSourceOnlyMeasurement(snapshot: EvaluatedExperimentSnapshot) {
-  const experimentResolution = sourceOnlySceneResolution(snapshot.scene)
+  const experimentMaterials = deserializeCadScene(snapshot.scene).parts.flatMap((part) =>
+    part.material ? [part.material] : [],
+  )
+  const taskMaterials = Object.fromEntries(
+    Object.entries(snapshot.taskScenes).map(([name, scene]) => [
+      name,
+      deserializeCadScene(scene).parts.flatMap((part) => (part.material ? [part.material] : [])),
+    ]),
+  )
+  const sharedResolution = sourceOnlyMaterialParameters([
+    ...experimentMaterials,
+    ...Object.values(taskMaterials).flat(),
+  ])
+  const experimentResolution = projectMaterialResolution(sharedResolution, experimentMaterials)
   const taskResolutions = Object.fromEntries(
-    Object.entries(snapshot.taskScenes).map(([name, scene]) => [name, sourceOnlySceneResolution(scene)]),
+    Object.entries(taskMaterials).map(([name, materials]) => [
+      name,
+      projectMaterialResolution(sharedResolution, materials),
+    ]),
   )
   return buildMeasurement(snapshot, {
     materialParameters: experimentResolution.materialParameters,
@@ -90,10 +118,17 @@ export function assertBuiltMeasurement(value: unknown): asserts value is BuiltMe
     throw new CadModelError('Built Measurement kind does not match its Experiment.')
   }
   assertEvaluatedDocumentSnapshot(measurement.experiment)
+  const unresolved = unresolvedMeasurementMaterialRoles(measurement.experiment)
+  if (unresolved.length > 0) {
+    throw new CadModelError(`Built Measurement contains unresolved Material roles: ${unresolved.join(', ')}.`)
+  }
   if (!readFrozenMaterialParameters(measurement.materialParameters)) {
     throw new CadModelError('Built Measurement Experiment Material snapshot is invalid.')
   }
-  if (!Array.isArray(measurement.materialWarnings) || measurement.materialWarnings.some((item) => typeof item !== 'string')) {
+  if (
+    !Array.isArray(measurement.materialWarnings) ||
+    measurement.materialWarnings.some((item) => typeof item !== 'string')
+  ) {
     throw new CadModelError('Built Measurement Experiment Material warnings are invalid.')
   }
   if (!measurement.taskMaterialParameters || !measurement.taskMaterialWarnings) {

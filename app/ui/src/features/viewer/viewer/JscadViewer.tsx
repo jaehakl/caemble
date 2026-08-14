@@ -1,14 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import * as reglRenderer from '@jscad/regl-renderer'
 import type { CadScenePart, UcumUnit } from '@/lib/cad'
-import { materialColor, unassignedGeometryColor } from './materialColor'
+import { scenePartColor, unassignedGeometryColor } from './materialColor'
 import { createWireframeGeometries } from './renderParts'
-import {
-  createLayerRenderParts,
-  scaleViewerLayers,
-  type CadViewerSource,
-  type JscadViewerLayer,
-} from './sourceLayers'
+import { createLayerRenderParts, scaleViewerLayers, type CadViewerSource, type JscadViewerLayer } from './sourceLayers'
 
 type RendererEntity = Record<string, unknown>
 type RendererOptions = Record<string, unknown> & {
@@ -313,7 +308,7 @@ function JscadViewer({
               layer.source,
               layer.taskName ?? null,
               layer.sceneHash,
-              layer.parts.map((part) => [part.id, part.material?.name ?? null, materialColor(part.material) ?? null]),
+              layer.parts.map((part) => [part.id, part.materialRole, scenePartColor(part)]),
             ]),
           })
         : null
@@ -496,11 +491,12 @@ function JscadViewer({
         {parts.length > 0 ? (
           <div className="pointer-events-none absolute top-3 right-3 min-w-32 rounded border border-slate-200 bg-white/90 px-3 py-2 shadow-sm backdrop-blur-sm">
             <div className="mb-1.5 text-[10px] font-semibold tracking-wide text-slate-500 uppercase">Materials</div>
-            {[...new Set(parts.map((part) => part.material))].map((material, index) => {
-              const color = materialColor(material)
+            {[...new Map(parts.map((part) => [part.materialRole, part])).values()].map((part, index) => {
+              const color = scenePartColor(part)
+              const role = typeof part.materialRole === 'string' && part.materialRole.trim() ? part.materialRole : null
               return (
                 <div
-                  key={`${material?.name ?? 'unassigned'}-${index}`}
+                  key={role ?? `unassigned-${index}`}
                   className="flex items-center gap-2 py-0.5 text-xs text-slate-700"
                 >
                   {color ? (
@@ -514,7 +510,9 @@ function JscadViewer({
                       <span className="block border-t-2" style={{ borderColor: unassignedGeometryColor }} />
                     </span>
                   )}
-                  <span>{material?.name ?? 'Unassigned'}</span>
+                  <span>
+                    {role ? (part.material ? `${role}: ${part.material.name}` : `${role} (Unresolved)`) : 'Unassigned'}
+                  </span>
                 </div>
               )
             })}

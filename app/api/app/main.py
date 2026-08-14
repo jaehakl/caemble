@@ -6,9 +6,6 @@ from routers import (
     experiment,
     geometry,
     material,
-    material_name,
-    material_parameter,
-    material_parameter_qualifier,
     measurement,
     predictor_model,
     recorded_data,
@@ -19,9 +16,6 @@ from routers import (
 app = server()
 
 app.include_router(material.router)
-app.include_router(material_name.router)
-app.include_router(material_parameter.router)
-app.include_router(material_parameter_qualifier.router)
 app.include_router(geometry.router)
 app.include_router(experiment.router)
 app.include_router(measurement.router)

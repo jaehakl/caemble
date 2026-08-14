@@ -1,12 +1,9 @@
 import { createExperimentSourceBundle } from '../../cad/source/document'
 import type { CaembleProgramExample } from './types'
 
-export const electroThermalUniformBarExperimentCode = `import {
-  Mat,
-  Material,
-  experiment,
-} from '@caemble/core'
+export const electroThermalUniformBarExperimentCode = `import { experiment } from '@caemble/core'
 import { Conductor } from './geometry'
+import { Copper } from './material'
 
 export default experiment({
   lengthUnit: 'mm',
@@ -21,22 +18,9 @@ export default experiment({
     <Conductor
       id="conductor"
       size={vars.conductorSize}
-      materials={[
-        new Material('Copper', 'reference', {
-          errorRate: 0,
-          'electrical.conductivity': {
-            dtype: 'float64',
-            value: Mat(vars.electricalConductivity),
-            unit: 'S.m-1',
-          },
-          'thermal.conductivity': {
-            dtype: 'float64',
-            value: Mat(vars.thermalConductivity),
-            unit: 'W.m-1.K-1',
-          },
-          color: '#d97706',
-        }),
-      ]}
+      materials={{
+        body: Copper(vars.electricalConductivity as number, vars.thermalConductivity as number),
+      }}
     />
   ),
   geometryGroup: { conductor: ['conductor'] },
@@ -69,6 +53,25 @@ export default experiment({
 })
 `
 
+export const electroThermalUniformBarMaterialCode = `import { Mat, Material } from '@caemble/core'
+
+export const Copper = (electricalConductivity: number, thermalConductivity: number) =>
+  new Material('Copper', 'reference', {
+    errorRate: 0,
+    'electrical.conductivity': {
+      dtype: 'float64',
+      value: Mat(electricalConductivity),
+      unit: 'S.m-1',
+    },
+    'thermal.conductivity': {
+      dtype: 'float64',
+      value: Mat(thermalConductivity),
+      unit: 'W.m-1.K-1',
+    },
+    color: '#d97706',
+  })
+`
+
 export const electroThermalUniformBarGeometryCode = `import { type Geometry, type Vec3 } from '@caemble/core'
 
 export const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />
@@ -80,11 +83,20 @@ export const ThermalProbe: Geometry = () => <box size={[2, 2, 2]} />
 
 export const electroThermalUniformBarElectricTaskCode = `import { defineTask } from '@caemble/core'
 import { ElectricProbe } from '../geometry'
+import { Copper } from '../material'
 
 export default defineTask({
   kernel: { name: 'dc-current-density', version: '0.1.0' },
   lengthUnit: 'mm',
-  geometry: () => <ElectricProbe id="electric-probe" pos={[0, -10, 0]} />,
+  geometry: ({ vars }) => (
+    <ElectricProbe
+      id="electric-probe"
+      pos={[0, -10, 0]}
+      materials={{
+        body: Copper(vars.electricalConductivity as number, vars.thermalConductivity as number),
+      }}
+    />
+  ),
   config: ({ vars }) => ({
     parameters: {
       relativeTolerance: { dtype: 'float64', value: 1e-10, unit: '{fraction}', quantityKind: 'DimensionlessRatio' },
@@ -122,11 +134,20 @@ export default defineTask({
 
 export const electroThermalUniformBarThermalTaskCode = `import { defineTask } from '@caemble/core'
 import { ThermalProbe } from '../geometry'
+import { Copper } from '../material'
 
 export default defineTask({
   kernel: { name: 'steady-state-heat', version: '0.1.0' },
   lengthUnit: 'mm',
-  geometry: () => <ThermalProbe id="thermal-probe" pos={[0, -14, 0]} />,
+  geometry: ({ vars }) => (
+    <ThermalProbe
+      id="thermal-probe"
+      pos={[0, -14, 0]}
+      materials={{
+        body: Copper(vars.electricalConductivity as number, vars.thermalConductivity as number),
+      }}
+    />
+  ),
   config: ({ vars }) => ({
     parameters: {
       relativeTolerance: { dtype: 'float64', value: 1e-10, unit: '{fraction}', quantityKind: 'DimensionlessRatio' },
@@ -177,6 +198,7 @@ export const electroThermalUniformBarSimulationCode = `async def simulate(*, sim
 export const electroThermalUniformBarExperimentSourceBundle = createExperimentSourceBundle({
   'experiment.tsx': electroThermalUniformBarExperimentCode,
   'geometry.tsx': electroThermalUniformBarGeometryCode,
+  'material.tsx': electroThermalUniformBarMaterialCode,
   'simulate.py': electroThermalUniformBarSimulationCode,
   'tasks/electric.tsx': electroThermalUniformBarElectricTaskCode,
   'tasks/thermal.tsx': electroThermalUniformBarThermalTaskCode,

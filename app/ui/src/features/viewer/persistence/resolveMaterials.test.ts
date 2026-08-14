@@ -12,6 +12,7 @@ function scene(materialName: string) {
       {
         id: materialName,
         geometry: primitives.cuboid({ size: [1, 1, 1] }),
+        materialRole: materialName.toLowerCase(),
         material: { name: materialName, variables: { color: '#112233' } },
         surfaces: [],
       },
@@ -48,6 +49,84 @@ describe('createDocumentMaterialResolver', () => {
 
     expect(result.materialParameters.materials).toHaveProperty('Common')
     expect(result.taskMaterialParameters.Heat.materials).toHaveProperty('Task')
+  })
+
+  it('samples one shared Material declaration once across Experiment and Task scenes', async () => {
+    const density = {
+      dtype: 'float64' as const,
+      value: 10,
+      errorRate: 0.2,
+      unit: 'kg.m-3',
+      quantityKind: 'MassDensity' as const,
+    }
+    const sharedScene = serializeCadScene({
+      geometryGroups: [],
+      lengthUnit: 'mm',
+      parts: [
+        {
+          id: 'shared',
+          geometry: primitives.cuboid({ size: [1, 1, 1] }),
+          materialRole: 'body',
+          material: { name: 'Shared', errorRate: 0, variables: { 'general.mass_density': density } },
+          surfaces: [],
+        },
+      ],
+      surfaceGroups: [],
+      tree: { children: [], key: 'shared', label: 'Shared' },
+    })
+    const snapshot = { ...materialSnapshot(), scene: sharedScene, taskScenes: { Heat: sharedScene } }
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.75)
+
+    const result = await createDocumentMaterialResolver(null, true)(snapshot)
+
+    expect(random).toHaveBeenCalledTimes(1)
+    expect(result.materialParameters.materials.Shared).toEqual(result.taskMaterialParameters.Heat.materials.Shared)
+  })
+
+  it('samples one shared database Material once across Experiment and Task scenes', async () => {
+    const sharedScene = serializeCadScene({
+      geometryGroups: [],
+      lengthUnit: 'mm',
+      parts: [
+        {
+          id: 'shared',
+          geometry: primitives.cuboid({ size: [1, 1, 1] }),
+          materialRole: 'body',
+          material: { name: 'Shared', errorRate: 0.2, variables: {} },
+          surfaces: [],
+        },
+      ],
+      surfaceGroups: [],
+      tree: { children: [], key: 'shared', label: 'Shared' },
+    })
+    const snapshot = { ...materialSnapshot(), scene: sharedScene, taskScenes: { Heat: sharedScene } }
+    vi.spyOn(dbTables.MaterialName, 'listRows').mockResolvedValue({
+      items: [{ id: 1, material_id: 7, name: 'Shared', user_id: null }],
+      total: 1,
+    } as never)
+    vi.spyOn(dbTables.Material, 'listRows').mockResolvedValue({
+      items: [{ id: 7, color: null }],
+      total: 1,
+    } as never)
+    vi.spyOn(dbTables.MaterialParameter, 'listRows').mockResolvedValue({
+      items: [
+        {
+          id: 11,
+          material_id: 7,
+          name: 'general.mass_density',
+          value: { dtype: 'float64', value: 10, unit: 'kg.m-3' },
+          user_id: null,
+        },
+      ],
+      total: 1,
+    } as never)
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.75)
+
+    const result = await createDocumentMaterialResolver(null)(snapshot)
+
+    expect(random).toHaveBeenCalledTimes(1)
+    expect(result.materialParameters.materials.Shared).toEqual(result.taskMaterialParameters.Heat.materials.Shared)
+    expect(result.materialParameters.materials.Shared['general.mass_density'].value).toMatchObject({ value: 11 })
   })
 
   it('replays an exact frozen schema-v2 snapshot without catalog queries', async () => {

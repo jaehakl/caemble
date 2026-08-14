@@ -250,8 +250,8 @@ def _snapshot_modules(
             GeometryModuleSnapshot(
                 geometryVersionId=version_id,
                 coordinate=coordinate,
-                moduleFormatVersion=3,
-                cadApiVersion=5,
+                moduleFormatVersion=4,
+                cadApiVersion=6,
                 description=version.description,
                 source=version.source,
                 sourceHash=digest,

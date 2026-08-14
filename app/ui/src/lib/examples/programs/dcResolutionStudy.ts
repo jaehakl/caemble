@@ -1,12 +1,9 @@
 import { createExperimentSourceBundle } from '../../cad/source/document'
 import type { CaembleProgramExample } from './types'
 
-export const dcResolutionStudyExperimentCode = `import {
-  Mat,
-  Material,
-  experiment,
-} from '@caemble/core'
+export const dcResolutionStudyExperimentCode = `import { experiment } from '@caemble/core'
 import { Conductor } from './geometry'
+import { Copper } from './material'
 
 export default experiment({
   lengthUnit: 'mm',
@@ -19,17 +16,7 @@ export default experiment({
     <Conductor
       id="conductor"
       size={vars.conductorSize}
-      materials={[
-        new Material('Copper', 'reference', {
-          errorRate: 0,
-          'electrical.conductivity': {
-            dtype: 'float64',
-            value: Mat(vars.electricalConductivity),
-            unit: 'S.m-1',
-          },
-          color: '#d97706',
-        }),
-      ]}
+      materials={{ body: Copper(vars.electricalConductivity as number) }}
     />
   ),
   geometryGroup: { conductor: ['conductor'] },
@@ -52,6 +39,20 @@ export default experiment({
 })
 `
 
+export const dcResolutionStudyMaterialCode = `import { Mat, Material } from '@caemble/core'
+
+export const Copper = (electricalConductivity: number) =>
+  new Material('Copper', 'reference', {
+    errorRate: 0,
+    'electrical.conductivity': {
+      dtype: 'float64',
+      value: Mat(electricalConductivity),
+      unit: 'S.m-1',
+    },
+    color: '#d97706',
+  })
+`
+
 export const dcResolutionStudyGeometryCode = `import { type Geometry, type Vec3 } from '@caemble/core'
 
 export const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />
@@ -62,11 +63,18 @@ export const ConvergenceProbe: Geometry = () => <box size={[2, 2, 2]} />
 function resolutionTaskCode(gridShape: string, outputKey: string, probePosition: number) {
   return `import { defineTask } from '@caemble/core'
 import { ConvergenceProbe } from '../geometry'
+import { Copper } from '../material'
 
 export default defineTask({
   kernel: { name: 'dc-current-density', version: '0.1.0' },
   lengthUnit: 'mm',
-  geometry: () => <ConvergenceProbe id="convergence-probe" pos={[0, ${probePosition}, 0]} />,
+  geometry: ({ vars }) => (
+    <ConvergenceProbe
+      id="convergence-probe"
+      pos={[0, ${probePosition}, 0]}
+      materials={{ body: Copper(vars.electricalConductivity as number) }}
+    />
+  ),
   config: ({ vars }) => ({
     parameters: {
       relativeTolerance: {
@@ -159,6 +167,7 @@ export const dcResolutionStudySimulationCode = `async def simulate(*, sim, tasks
 export const dcResolutionStudyExperimentSourceBundle = createExperimentSourceBundle({
   'experiment.tsx': dcResolutionStudyExperimentCode,
   'geometry.tsx': dcResolutionStudyGeometryCode,
+  'material.tsx': dcResolutionStudyMaterialCode,
   'simulate.py': dcResolutionStudySimulationCode,
   'tasks/solveCoarse.tsx': dcResolutionStudyCoarseTaskCode,
   'tasks/solveFine.tsx': dcResolutionStudyFineTaskCode,

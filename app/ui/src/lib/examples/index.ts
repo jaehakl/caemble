@@ -11,6 +11,14 @@ export {
   dcUniformBarExample,
 } from './programs'
 export type { CaembleProgramExample } from './programs'
+export {
+  wheelAssemblyExample,
+  wheelAssemblyExperimentCode,
+  wheelAssemblyGeometryCode,
+  wheelAssemblyMaterialCode,
+  wheelAssemblySourceBundle,
+  wheelAssemblyTaskCode,
+} from './wheelAssembly'
 
 export type CaembleExample = Readonly<{
   id: string
@@ -40,7 +48,7 @@ export const caembleExamples: readonly CaembleExample[] = Object.freeze([
     id: 'shell-cutaways',
     title: 'Shell Cutaways',
     description:
-      'Geometry-only Experiment preview. One, two, and three colored shell layers use cutaway procedural geometries.',
+      'Geometry-only Experiment preview. Role-offset maps create one, two, and three auto-colored shell layers.',
     code: shellCutawaysCode,
     mode: 'geometry-preview',
   },

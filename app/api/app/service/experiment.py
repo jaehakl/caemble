@@ -20,6 +20,7 @@ from service.geometry import (
     build_snapshot_from_entry_source,
     validate_experiment_tsx_imports,
 )
+from service.material import validate_material_source_imports
 from service.lineage import get_code_entity_history
 from utils.crud.common import is_admin_user
 
@@ -51,7 +52,7 @@ async def save_experiment(
     invalid_paths = [
         path
         for path in bundle.files
-        if path not in {"experiment.tsx", "geometry.tsx", "simulate.py"}
+        if path not in {"experiment.tsx", "geometry.tsx", "material.tsx", "simulate.py"}
         and allowed_task.fullmatch(path) is None
     ]
     if invalid_paths:
@@ -59,10 +60,15 @@ async def save_experiment(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Experiment source file path is not allowed: {invalid_paths[0]}",
         )
-    if not {"experiment.tsx", "geometry.tsx", "simulate.py"}.issubset(bundle.files):
+    if not {"experiment.tsx", "geometry.tsx", "material.tsx", "simulate.py"}.issubset(
+        bundle.files
+    ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Experiment source bundle requires experiment.tsx, geometry.tsx, and simulate.py.",
+            detail=(
+                "Experiment source bundle requires experiment.tsx, geometry.tsx, "
+                "material.tsx, and simulate.py."
+            ),
         )
     if not any(allowed_task.fullmatch(path) for path in bundle.files):
         raise HTTPException(
@@ -103,6 +109,7 @@ async def save_experiment(
     try:
         analyze_geometry_source(bundle.files["geometry.tsx"], allow_empty=True)
         validate_experiment_tsx_imports(bundle.files["experiment.tsx"], path="experiment.tsx")
+        validate_material_source_imports(bundle.files["material.tsx"])
         for path, source in bundle.files.items():
             if allowed_task.fullmatch(path):
                 validate_experiment_tsx_imports(source, path=path)

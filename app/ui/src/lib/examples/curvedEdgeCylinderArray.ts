@@ -1,5 +1,4 @@
 export const curvedEdgeCylinderArrayCode = `import {
-  Material,
   experiment,
   type Geometry,
 } from '@caemble/core'
@@ -77,17 +76,6 @@ export default experiment({
         mode3Phase={0}
         verticalSlope={0}
         verticalCurvature={0}
-        materials={[
-          new Material('Curved Polymer', {
-            'general.mass_density': {
-              dtype: 'float64',
-              value: 1.12,
-              errorRate: 0,
-              unit: 'g.cm-3',
-            },
-            color: '#0f766e',
-          }),
-        ]}
       />
     </array>
   ),

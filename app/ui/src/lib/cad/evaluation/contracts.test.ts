@@ -62,10 +62,13 @@ describe('CAD registry contracts', () => {
     expect(cylinderDeclaration).toContain('radius_2?: number')
 
     const shellDeclaration = coreDeclarations.match(/export type ShellAttributes = Readonly<\{[\s\S]*?\n\}>/)?.[0]
-    expect(shellDeclaration).toContain('offsets: readonly number[]')
+    expect(shellDeclaration).toContain('offsets: Readonly<Record<string, number>>')
     expect(shellDeclaration).not.toContain('depth')
     expect(jsxDeclarations).toContain('shell: ShellAttributes')
     expect(coreDeclarations).toMatch(/GeometryAttributes[\s\S]*?id: string/)
+    expect(coreDeclarations).toMatch(
+      /GeometryAttributes[\s\S]*?materials\?: Readonly<Record<string, Material \| undefined>>/,
+    )
     expect(coreDeclarations).not.toContain('tasks: (context: ModelContext<Schema>) => Tasks')
     expect(coreDeclarations).toContain('config: (context: TaskModelContext) => Config')
     expect(coreDeclarations).toContain("readonly documentType: 'task'")
@@ -76,7 +79,7 @@ describe('CAD registry contracts', () => {
     expect(coreDeclarations).not.toContain('ExperimentRule')
     expect(cadElementCatalog.find((element) => element.tag === 'shell')).toMatchObject({
       category: 'operation',
-      syntax: '<shell offsets={[-inner, outer]}>Geometry</shell>',
+      syntax: '<shell offsets={{ inner: -1, outer: 1 }}>Geometry</shell>',
     })
   })
 

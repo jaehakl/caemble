@@ -21,10 +21,12 @@ describe('CAD transforms-materials', () => {
         id: 'offset',
         rotate: { axis: [0, 0, 5], angle: Math.PI / 2 },
         pos: [10, 0, 0],
-        materials: [core],
+        materials: { body: core },
       }),
     )[0]
-    const scaled = evaluateCad(h(OffsetBox, { id: 'offset', scale: [2, 1, 1], pos: [10, 0, 0], materials: [core] }))[0]
+    const scaled = evaluateCad(
+      h(OffsetBox, { id: 'offset', scale: [2, 1, 1], pos: [10, 0, 0], materials: { body: core } }),
+    )[0]
 
     expect(measurements.measureBoundingBox(rotated.geometry)).toEqual([
       [9, 1, -1],
@@ -60,8 +62,8 @@ describe('CAD transforms-materials', () => {
       )
     }
 
-    const [primitive] = evaluateCad(h(Primitive, { id: 'primitive', materials: [core] }))
-    const [combined] = evaluateCad(h(Combined, { id: 'combined', materials: [core] }))
+    const [primitive] = evaluateCad(h(Primitive, { id: 'primitive', materials: { body: core } }))
+    const [combined] = evaluateCad(h(Combined, { id: 'combined', materials: { body: core } }))
 
     expect(measurements.measureBoundingBox(primitive.geometry)).toEqual([
       [8, -2, -1],
@@ -76,7 +78,8 @@ describe('CAD transforms-materials', () => {
   it('treats proportional axis vectors as the same rotation', () => {
     const core = new Material('Core', { color: '#2563eb' })
     const evaluate = (axis: number[]) =>
-      evaluateCad(h(OffsetBox, { id: 'offset', rotate: { axis, angle: Math.PI / 2 }, materials: [core] }))[0].geometry
+      evaluateCad(h(OffsetBox, { id: 'offset', rotate: { axis, angle: Math.PI / 2 }, materials: { body: core } }))[0]
+        .geometry
 
     expect(measurements.measureBoundingBox(evaluate([0, 0, 5]))).toEqual(
       measurements.measureBoundingBox(evaluate([0, 0, 1])),
@@ -90,12 +93,90 @@ describe('CAD transforms-materials', () => {
       return h(Box, { id: 'child' })
     }
 
-    const parts = evaluateCad(h(Parent, { id: 'parent', materials: [core] }))
+    const parts = evaluateCad(h(Parent, { id: 'parent', materials: { body: core } }))
 
     expect(parts).toHaveLength(1)
     expect(parts[0]).toMatchObject({
+      materialRole: 'body',
       material: { name: 'Core', variables: { color: '#2563eb' } },
     })
+  })
+
+  it('preserves the canonical root role through omitted inheritance and an explicit body remap', () => {
+    const wheel = new Material('Wheel', { color: '#2563eb' })
+
+    function Branch(input: Record<string, unknown>) {
+      const materials = input.materials as Readonly<Record<string, Material>>
+      return h(Box, { id: 'box', materials: { body: materials.wheel_A } })
+    }
+
+    function Middle() {
+      return h(Branch, { id: 'branch' })
+    }
+
+    function Root() {
+      return h(Middle, { id: 'middle' })
+    }
+
+    const [part] = evaluateCad(h(Root, { id: 'root', materials: { wheel_A: wheel } }))
+
+    expect(part.materialRole).toBe('wheel_A')
+    expect(part.material?.name).toBe('Wheel')
+  })
+
+  it('replaces the binding map when a child explicitly supplies materials', () => {
+    const wheel = new Material('Wheel', { color: '#2563eb' })
+    const shell = new Material('Shell', { color: '#f59e0b' })
+
+    function Leaf(input: Record<string, unknown>) {
+      const materials = input.materials as Readonly<Record<string, Material>>
+      return h(
+        Fragment,
+        null,
+        h(Box, { id: 'wheel' }),
+        h(Box, { id: 'removed-shell', materials: { body: materials.shell } }),
+      )
+    }
+
+    function Root(input: Record<string, unknown>) {
+      const materials = input.materials as Readonly<Record<string, Material>>
+      return h(Leaf, { id: 'leaf', materials: { body: materials.wheel_A } })
+    }
+
+    const parts = evaluateCad(h(Root, { id: 'root', materials: { wheel_A: wheel, shell } }))
+
+    expect(parts.map((part) => part.materialRole)).toEqual(['wheel_A', 'shell'])
+    expect(parts.map((part) => part.material?.name)).toEqual(['Wheel', undefined])
+  })
+
+  it('keeps Material roles exact and case-sensitive and rejects surrounding whitespace', () => {
+    const lower = new Material('Lower', { color: '#2563eb' })
+    const upper = new Material('Upper', { color: '#f59e0b' })
+
+    function Pair(input: Record<string, unknown>) {
+      const materials = input.materials as Readonly<Record<string, Material>>
+      return h(
+        Fragment,
+        null,
+        h(Box, { id: 'lower', materials: { body: materials.wheel } }),
+        h(Box, { id: 'upper', materials: { body: materials.Wheel } }),
+      )
+    }
+
+    const parts = evaluateCad(h(Pair, { id: 'pair', materials: { wheel: lower, Wheel: upper } }))
+    expect(parts.map((part) => part.materialRole)).toEqual(['wheel', 'Wheel'])
+    expect(() => evaluateCad(h(Box, { id: 'leading', materials: { ' wheel': lower } }))).toThrow(
+      'must not have leading or trailing whitespace',
+    )
+    expect(() => evaluateCad(h(Box, { id: 'blank', materials: { ' ': lower } }))).toThrow('must not be blank')
+
+    function BadAccess(input: Record<string, unknown>) {
+      const materials = input.materials as Readonly<Record<string, Material>>
+      return h(Box, { id: 'box', materials: { body: materials[' wheel'] } })
+    }
+    expect(() => evaluateCad(h(BadAccess, { id: 'bad-access' }))).toThrow(
+      'must not have leading or trailing whitespace',
+    )
   })
 
   it('allows a materialless Geometry to group children with their own Materials', () => {
@@ -108,14 +189,14 @@ describe('CAD transforms-materials', () => {
       return h(
         Fragment,
         null,
-        h(Box, { id: 'core', materials: [core] }),
-        h(Box, { id: 'cladding', pos: [3, 0, 0], materials: [cladding] }),
+        h(Box, { id: 'core', materials: { body: core } }),
+        h(Box, { id: 'cladding', pos: [3, 0, 0], materials: { body: cladding } }),
       )
     }
 
     const parts = evaluateCad(h(Group, { id: 'group' }))
 
-    expect(groupMaterials).toBeUndefined()
+    expect(groupMaterials).toEqual({})
     expect(parts.map((part) => part.material?.name)).toEqual(['Core', 'Cladding'])
   })
 
@@ -127,18 +208,19 @@ describe('CAD transforms-materials', () => {
     const [part] = evaluateCad(h(MateriallessBox, { id: 'box' }))
 
     expect(part.id).toBe('box')
+    expect(part.materialRole).toBe('body')
     expect(part).not.toHaveProperty('material')
     expect(part.surfaces.length).toBeGreaterThan(0)
   })
 
-  it('replaces the complete materials array and uses index zero', () => {
+  it('replaces the complete materials map and makes primitives consume body', () => {
     const core = new Material('Core', { color: '#2563eb' })
     const cladding = new Material('Cladding', { color: '#f59e0b' })
     const root = h(
       Fragment,
       null,
-      h(Box, { id: 'core', materials: [core, cladding] }),
-      h(Box, { id: 'cladding', materials: [cladding, core] }),
+      h(Box, { id: 'core', materials: { body: core, alternate: cladding } }),
+      h(Box, { id: 'cladding', materials: { body: cladding, alternate: core } }),
     )
 
     expect(evaluateCad(root).map((part) => part.material?.name)).toEqual(['Core', 'Cladding'])
@@ -150,23 +232,23 @@ describe('CAD transforms-materials', () => {
     const root = h(
       Fragment,
       null,
-      h(Box, { id: 'core', pos: [0, 0, 2], materials: [core] }),
-      h(Box, { id: 'cladding', materials: [cladding] }),
+      h(Box, { id: 'core', pos: [0, 0, 2], materials: { body: core } }),
+      h(Box, { id: 'cladding', materials: { body: cladding } }),
     )
 
     expect(evaluateCad(root).map((part) => part.material?.name)).toEqual(['Core', 'Cladding'])
   })
 
-  it('rejects empty material arrays and allows duplicate name/source instances', () => {
-    expect(() => evaluateCad(h(Box, { id: 'box', materials: [] }))).toThrow('non-empty array of Material instances')
+  it('rejects material arrays and allows duplicate name/source instances', () => {
+    expect(() => evaluateCad(h(Box, { id: 'box', materials: [] }))).toThrow('object mapping roles')
 
     const first = new Material('Core', 'measured', { color: '#2563eb' })
     const second = new Material('Core', 'measured', { color: '#f59e0b' })
     const root = h(
       Fragment,
       null,
-      h(Box, { id: 'first', materials: [first] }),
-      h(Box, { id: 'second', materials: [second] }),
+      h(Box, { id: 'first', materials: { body: first } }),
+      h(Box, { id: 'second', materials: { body: second } }),
     )
 
     const parts = evaluateCad(root)
@@ -186,7 +268,12 @@ describe('CAD transforms-materials', () => {
       color: '#2563eb',
     })
     const parts = evaluateCad(
-      h(Fragment, null, h(Box, { id: 'first', materials: [shared] }), h(Box, { id: 'second', materials: [shared] })),
+      h(
+        Fragment,
+        null,
+        h(Box, { id: 'first', materials: { body: shared } }),
+        h(Box, { id: 'second', materials: { body: shared } }),
+      ),
     )
     const cloned = structuredClone(parts)
 
@@ -239,10 +326,10 @@ describe('CAD transforms-materials', () => {
         h(
           Fragment,
           null,
-          h(Box, { id: 'shared-first', materials: [shared] }),
-          h(Box, { id: 'shared-second', pos: [3, 0, 0], materials: [shared] }),
-          h(Box, { id: 'separate-first', pos: [6, 0, 0], materials: [first] }),
-          h(Box, { id: 'separate-second', pos: [9, 0, 0], materials: [second] }),
+          h(Box, { id: 'shared-first', materials: { body: shared } }),
+          h(Box, { id: 'shared-second', pos: [3, 0, 0], materials: { body: shared } }),
+          h(Box, { id: 'separate-first', pos: [6, 0, 0], materials: { body: first } }),
+          h(Box, { id: 'separate-second', pos: [9, 0, 0], materials: { body: second } }),
         ),
       ),
     )

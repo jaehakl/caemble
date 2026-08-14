@@ -37,6 +37,7 @@ export function serializeCadScene(scene: CadScene): SerializableCadScene {
     return {
       id: part.id,
       geometry: { kind: 'mesh' as const, positions, polygonOffsets },
+      materialRole: part.materialRole,
       ...(part.material ? { material: part.material } : {}),
       surfaces: part.surfaces,
     }
@@ -78,6 +79,7 @@ export function deserializeCadScene(scene: SerializableCadScene): CadScene {
     return {
       id: part.id,
       geometry,
+      materialRole: part.materialRole,
       ...(part.material ? { material: part.material } : {}),
       surfaces: part.surfaces,
     }

@@ -9,10 +9,11 @@ import type { ExperimentRecord, MeasurementRecord } from './types'
 
 const sourceHash = 'a'.repeat(64)
 const sourceBundle = {
-  formatVersion: 4 as const,
+  formatVersion: 5 as const,
   files: {
     'experiment.tsx': 'export default experiment({})',
     'geometry.tsx': 'export {}\n',
+    'material.tsx': 'export {}\n',
     'simulate.py': 'async def simulate(*, sim, tasks, vars): pass',
     'tasks/main.tsx': 'export default defineTask({})',
   },
@@ -54,7 +55,7 @@ describe('integrated Experiment API facade', () => {
     )
   })
 
-  it('saves format v4 bundles with bundle hashes and returns sourceHash', async () => {
+  it('saves format v5 bundles with bundle hashes and returns sourceHash', async () => {
     mocks.request.mockResolvedValueOnce({ id: 7, action: 'forked', parentId: 4, sourceHash })
 
     await expect(

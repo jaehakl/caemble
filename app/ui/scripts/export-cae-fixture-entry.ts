@@ -15,8 +15,9 @@ import {
   cadSourceHash,
   createCadSourceDocument,
   EXPERIMENT_ENTRY_PATH,
+  EXPERIMENT_GEOMETRY_PATH,
+  EXPERIMENT_MATERIAL_PATH,
   EXPERIMENT_SIMULATION_PATH,
-  EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION,
   experimentTaskPaths,
 } from '../src/lib/cad/source/document'
 import { createEffectiveGeometryGraph } from '../src/lib/cad/source/effectiveGeometryGraph'
@@ -44,12 +45,17 @@ async function compileSource(source: string) {
 async function buildMeasurement(example: CaembleProgramExample) {
   const experimentDocument = createCadSourceDocument('experiment', example.experimentSourceBundle)
   const sourceHash = await cadSourceHash(experimentDocument)
-  const sourcePaths = [EXPERIMENT_ENTRY_PATH, ...experimentTaskPaths(example.experimentSourceBundle)]
+  const sourcePaths = [
+    EXPERIMENT_ENTRY_PATH,
+    EXPERIMENT_GEOMETRY_PATH,
+    EXPERIMENT_MATERIAL_PATH,
+    ...experimentTaskPaths(example.experimentSourceBundle),
+  ]
   const sources = Object.fromEntries(
     await Promise.all(
       sourcePaths.map(async (entryFile) => {
         const source: CompiledCadSource = {
-          apiVersion: 5,
+          apiVersion: 6,
           compilerVersion: CAD_COMPILER_VERSION,
           entryFile,
           code: await compileSource(example.experimentSourceBundle.files[entryFile]),
@@ -59,34 +65,36 @@ async function buildMeasurement(example: CaembleProgramExample) {
       }),
     ),
   )
-  let geometryGraph: CompiledCadDocument['geometryGraph']
-  if (example.experimentSourceBundle.formatVersion === EXPERIMENT_SOURCE_BUNDLE_V3_FORMAT_VERSION) {
-    const effective = await createEffectiveGeometryGraph(example.experimentSourceBundle.geometrySnapshot)
-    const modules = Object.fromEntries(
-      await Promise.all(
-        effective.modules.map(async (module) => {
-          const compiled: CompiledGeometryModule = {
-            apiVersion: 5,
-            compilerVersion: CAD_COMPILER_VERSION,
-            entryFile: module.coordinate,
-            code: await compileSource(module.source),
-            sourceHash,
-            geometrySourceHash: module.sourceHash,
-            moduleHash: module.moduleHash,
-            imports: module.imports,
-          }
-          return [module.coordinate, compiled] as const
-        }),
-      ),
-    )
-    geometryGraph = { graphHash: effective.graphHash, roots: effective.roots, modules }
+  const effective = await createEffectiveGeometryGraph(example.experimentSourceBundle.geometrySnapshot)
+  const modules = Object.fromEntries(
+    await Promise.all(
+      effective.modules.map(async (module) => {
+        const compiled: CompiledGeometryModule = {
+          apiVersion: 6,
+          compilerVersion: CAD_COMPILER_VERSION,
+          entryFile: module.coordinate,
+          code: await compileSource(module.source),
+          sourceHash,
+          geometrySourceHash: module.sourceHash,
+          moduleHash: module.moduleHash,
+          exports: module.exports,
+          imports: module.imports,
+        }
+        return [module.coordinate, compiled] as const
+      }),
+    ),
+  )
+  const geometryGraph: NonNullable<CompiledCadDocument['geometryGraph']> = {
+    graphHash: effective.graphHash,
+    entryImports: effective.entryImports,
+    modules,
   }
   const compiled: CompiledCadDocument = {
-    apiVersion: 5,
+    apiVersion: 6,
     compilerVersion: CAD_COMPILER_VERSION,
     sourceHash,
     sources,
-    ...(geometryGraph ? { geometryGraph } : {}),
+    geometryGraph,
   }
   const simulationSource = example.experimentSourceBundle.files[EXPERIMENT_SIMULATION_PATH]
   const inspection = inspectCompiledDocument(compiled)

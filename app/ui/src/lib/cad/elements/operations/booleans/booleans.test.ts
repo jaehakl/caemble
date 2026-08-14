@@ -18,7 +18,7 @@ describe('CAD booleans', () => {
       evaluateCad(
         h(() => h('union', null, h(Box, { id: 'first' }), h(Box, { id: 'second' })), {
           id: 'result',
-          materials: [core],
+          materials: { body: core },
         }),
       ),
     ).toHaveLength(1)
@@ -29,8 +29,8 @@ describe('CAD booleans', () => {
             h(
               'union',
               null,
-              h(Box, { id: 'first', materials: [core] }),
-              h(Box, { id: 'second', materials: [cladding] }),
+              h(Box, { id: 'first', materials: { body: core } }),
+              h(Box, { id: 'second', materials: { body: cladding } }),
             ),
           { id: 'result' },
         ),
@@ -43,8 +43,8 @@ describe('CAD booleans', () => {
             h(
               'intersect',
               null,
-              h(Box, { id: 'first', materials: [core] }),
-              h(Box, { id: 'second', materials: [cladding] }),
+              h(Box, { id: 'first', materials: { body: core } }),
+              h(Box, { id: 'second', materials: { body: cladding } }),
             ),
           { id: 'result' },
         ),
@@ -68,12 +68,28 @@ describe('CAD booleans', () => {
     for (const operation of ['union', 'intersect'] as const) {
       expect(() =>
         evaluateCad(
-          h(() => h(operation, null, h(Box, { id: 'plain' }), h(Box, { id: 'core', materials: [core] })), {
+          h(() => h(operation, null, h(Box, { id: 'plain' }), h(Box, { id: 'core', materials: { body: core } })), {
             id: operation,
           }),
         ),
       ).toThrow('cannot combine Geometry with different Materials')
     }
+  })
+
+  it('does not merge unresolved parts that require different canonical roles', () => {
+    function ByRole(input: Record<string, unknown>) {
+      const materials = input.materials as Readonly<Record<string, Material>>
+      const role = input.role as string
+      return h(Box, { id: 'box', materials: { body: materials[role] } })
+    }
+
+    expect(() =>
+      evaluateCad(
+        h(() => h('union', null, h(ByRole, { id: 'left', role: 'left' }), h(ByRole, { id: 'right', role: 'right' })), {
+          id: 'result',
+        }),
+      ),
+    ).toThrow('cannot combine Geometry with different Materials')
   })
 
   it('subtracts every cutter from each base part while preserving Material and order', () => {
@@ -89,16 +105,17 @@ describe('CAD booleans', () => {
             h(
               Fragment,
               null,
-              h(Box, { id: 'first', pos: [-2, 0, 0], scale: [2, 2, 2], materials: [first] }),
-              h(Box, { id: 'second', pos: [2, 0, 0], scale: [2, 2, 2], materials: [second] }),
+              h(Box, { id: 'first', pos: [-2, 0, 0], scale: [2, 2, 2], materials: { body: first } }),
+              h(Box, { id: 'second', pos: [2, 0, 0], scale: [2, 2, 2], materials: { body: second } }),
             ),
-            h(Box, { id: 'cutter', pos: [0, -2, 0], scale: [6, 2, 3], materials: [cutter] }),
+            h(Box, { id: 'cutter', pos: [0, -2, 0], scale: [6, 2, 3], materials: { body: cutter } }),
           ),
         { id: 'result' },
       ),
     )
 
     expect(parts.map((part) => part.material?.name)).toEqual(['First', 'Second'])
+    expect(parts.map((part) => part.materialRole)).toEqual(['body', 'body'])
     parts.forEach((part) => {
       expect(() => geometries.geom3.validate(part.geometry)).not.toThrow()
       expect(measurements.measureVolume(part.geometry)).toBeCloseTo(32, 6)
@@ -111,7 +128,12 @@ describe('CAD booleans', () => {
     const [part] = evaluateCad(
       h(
         () =>
-          h('subtract', null, h(Box, { id: 'base', scale: [2, 2, 2] }), h(Box, { id: 'cutter', materials: [cutter] })),
+          h(
+            'subtract',
+            null,
+            h(Box, { id: 'base', scale: [2, 2, 2] }),
+            h(Box, { id: 'cutter', materials: { body: cutter } }),
+          ),
         { id: 'result' },
       ),
     )
@@ -135,7 +157,7 @@ describe('CAD booleans', () => {
       return h('subtract', null, h(Base, { id: 'base' }), h(Cutter, { id: 'cutter' }))
     }
 
-    const [part] = evaluateCad(h(Result, { id: 'result', materials: [material] }))
+    const [part] = evaluateCad(h(Result, { id: 'result', materials: { body: material } }))
 
     expect(part.surfaces).toHaveLength(7)
     expect(part.surfaces.map((surface) => surface.name)).toEqual([

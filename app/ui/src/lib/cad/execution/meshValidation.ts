@@ -11,6 +11,7 @@ export type SerializableCadMesh = Readonly<{
 export type SerializableCadScenePart = Readonly<{
   id: string
   geometry: SerializableCadMesh
+  materialRole: string
   material?: CadSceneMaterial
   surfaces: CadSceneSurface[]
 }>
@@ -34,6 +35,7 @@ export function cadSceneHash(scene: Omit<SerializableCadScene, 'sceneHash'>) {
       surfaceGroups: scene.surfaceGroups,
       parts: scene.parts.map((part) => ({
         id: part.id,
+        materialRole: part.materialRole,
         material: part.material,
         surfaces: part.surfaces,
         positionLength: part.geometry.positions.length,
@@ -95,11 +97,17 @@ export function assertSerializableCadScene(value: unknown): asserts value is Ser
     if (typeof part !== 'object' || part === null || Array.isArray(part)) {
       throw new CadModelError(`Snapshot scene part ${partIndex} is invalid.`)
     }
-    const allowedPartKeys = ['id', 'geometry', 'material', 'surfaces']
+    const allowedPartKeys = ['id', 'geometry', 'materialRole', 'material', 'surfaces']
     if (Object.keys(part).some((key) => !allowedPartKeys.includes(key))) {
       throw new CadModelError(`Snapshot scene part ${partIndex} contains an unknown property.`)
     }
-    if (typeof part.id !== 'string' || !Array.isArray(part.surfaces)) {
+    if (
+      typeof part.id !== 'string' ||
+      typeof part.materialRole !== 'string' ||
+      !part.materialRole.trim() ||
+      part.materialRole !== part.materialRole.trim() ||
+      !Array.isArray(part.surfaces)
+    ) {
       throw new CadModelError(`Snapshot scene part ${partIndex} metadata is invalid.`)
     }
     const mesh = part.geometry

@@ -2,20 +2,40 @@ import { describe, expect, it } from 'vitest'
 import {
   analyzeCadSource,
   analyzeGeometrySource,
+  analyzeMaterialSource,
   analyzeTaskSource,
   parseCadSource,
   staticCadSourceImports,
 } from './sourceAnalysis'
 
 describe('CAD source policy', () => {
-  it('accepts only the explicit relative geometry module in Experiment and Task', () => {
-    const experiment = `import { experiment } from '@caemble/core'\nimport { Assembly } from './geometry'\nexport default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => <Assembly id="assembly" />, recordedData: {} })`
-    const task = `import { defineTask } from '@caemble/core'\nimport { Assembly } from '../geometry'\nexport default defineTask({ kernel: { name: 'solver', version: '1.0.0' }, geometry: () => <Assembly id="assembly" />, config: () => ({}) })`
+  it('accepts only the explicit relative geometry and material modules in Experiment and Task', () => {
+    const experiment = `import { experiment } from '@caemble/core'\nimport { Assembly } from './geometry'\nimport { Steel } from './material'\nvoid Steel\nexport default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => <Assembly id="assembly" />, recordedData: {} })`
+    const task = `import { defineTask } from '@caemble/core'\nimport { Assembly } from '../geometry'\nimport { Steel } from '../material'\nvoid Steel\nexport default defineTask({ kernel: { name: 'solver', version: '1.0.0' }, geometry: () => <Assembly id="assembly" />, config: () => ({}) })`
     expect(analyzeCadSource(experiment).factoryName).toBe('experiment')
     expect(analyzeTaskSource(task).factoryName).toBe('defineTask')
-    expect(staticCadSourceImports(experiment)).toEqual(['@caemble/core', './geometry'])
+    expect(staticCadSourceImports(experiment)).toEqual(['@caemble/core', './geometry', './material'])
     expect(() => analyzeCadSource(experiment.replace('./geometry', '../geometry'))).toThrow()
     expect(() => analyzeTaskSource(task.replace('../geometry', './geometry'))).toThrow()
+  })
+
+  it('accepts named Material values and factories only in material.tsx', () => {
+    const source = `import { Material } from '@caemble/core'
+export const Steel = new Material('Steel')
+export function withDensity(value: number) { void value; return new Material('Dynamic') }
+`
+    expect(analyzeMaterialSource(source).exports).toEqual(['Steel', 'withDensity'])
+    expect(() =>
+      analyzeCadSource(
+        `import { Material, experiment } from '@caemble/core'
+export default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => null, recordedData: {} })
+void new Material('Inline')`,
+      ),
+    ).toThrow('material.tsx')
+    expect(() => analyzeMaterialSource("import { Part } from './geometry'\nexport { Part }")).toThrow('@caemble/core')
+    expect(() => analyzeMaterialSource('export default 1')).toThrow('named Material')
+    expect(() => analyzeMaterialSource('const Steel = {}\nexport { Steel as default }')).toThrow('named Material')
+    expect(() => analyzeGeometrySource("import { Steel } from './material'\nexport const Part = () => <box />")).toThrow()
   })
 
   it('derives multiple named function exports and aliased exact/local imports', () => {

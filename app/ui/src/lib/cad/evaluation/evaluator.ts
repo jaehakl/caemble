@@ -4,7 +4,14 @@ import { getCadElementDefinition } from './registry'
 import { flattenValues, Fragment, isCadNode } from './jsx'
 import { applyTransforms, normalizeTransforms } from './transforms'
 import { applyCadSceneGroups, type CadSceneGroupOptions } from './groups'
-import type { CadScene, CadSceneMaterial, CadScenePart, CadSceneTreeNode, EvaluatedPart } from './types'
+import type {
+  CadScene,
+  CadSceneMaterial,
+  CadScenePart,
+  CadSceneTreeNode,
+  EvaluatedPart,
+  MaterialBinding,
+} from './types'
 import { assertUcumUnitComparable, normalizeUcumUnit, type UcumUnit } from '../model/units'
 
 type EvaluationState = {
@@ -15,12 +22,68 @@ type EvaluationState = {
 
 const localGeometryIdPattern = /^[\p{L}\p{N}_-]+$/u
 
-function resolveMaterials(value: unknown, inherited: readonly Material[] | undefined) {
-  if (value === undefined) return inherited === undefined ? undefined : [...inherited]
-  if (!Array.isArray(value) || value.length === 0 || value.some((material) => !(material instanceof Material))) {
-    throw new CadModelError('Geometry materials must be a non-empty array of Material instances.')
+const bindingByExposedMaterial = new WeakMap<Material, MaterialBinding>()
+const exposedMaterialsByBindings = new WeakMap<Map<string, MaterialBinding>, Readonly<Record<string, Material>>>()
+
+function createMaterialBinding(role: string, material?: Material): MaterialBinding {
+  const exposed = new Proxy(material ?? new Material(role), {})
+  const binding = Object.freeze({ role, ...(material === undefined ? {} : { material }), exposed })
+  bindingByExposedMaterial.set(exposed, binding)
+  return binding
+}
+
+function assertMaterialRole(role: string) {
+  if (!role.trim()) throw new CadModelError('Geometry material roles must not be blank.')
+  if (role !== role.trim()) {
+    throw new CadModelError(`Geometry material role "${role}" must not have leading or trailing whitespace.`)
   }
-  return [...value] as Material[]
+}
+
+function materialBinding(bindings: Map<string, MaterialBinding>, role: string) {
+  assertMaterialRole(role)
+  const existing = bindings.get(role)
+  if (existing) return existing
+  const unresolved = createMaterialBinding(role)
+  bindings.set(role, unresolved)
+  return unresolved
+}
+
+function exposeMaterials(bindings: Map<string, MaterialBinding>) {
+  const cached = exposedMaterialsByBindings.get(bindings)
+  if (cached) return cached
+  const target = Object.freeze(
+    Object.fromEntries([...bindings].map(([role, binding]) => [role, binding.exposed])),
+  ) as Record<string, Material>
+  const exposed = new Proxy(target, {
+    get(current, property, receiver) {
+      if (typeof property !== 'string' || Object.prototype.hasOwnProperty.call(current, property)) {
+        return Reflect.get(current, property, receiver)
+      }
+      return materialBinding(bindings, property).exposed
+    },
+  })
+  exposedMaterialsByBindings.set(bindings, exposed)
+  return exposed
+}
+
+function resolveMaterials(value: unknown, inherited: Map<string, MaterialBinding>) {
+  if (value === undefined) return inherited
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new CadModelError('Geometry materials must be an object mapping roles to Material instances.')
+  }
+  const bindings = new Map<string, MaterialBinding>()
+  Object.entries(value).forEach(([role, material]) => {
+    assertMaterialRole(role)
+    if (material === undefined) {
+      bindings.set(role, createMaterialBinding(role))
+      return
+    }
+    if (!(material instanceof Material)) {
+      throw new CadModelError(`Geometry material role "${role}" must contain a Material instance or undefined.`)
+    }
+    bindings.set(role, bindingByExposedMaterial.get(material) ?? createMaterialBinding(role, material))
+  })
+  return bindings
 }
 
 function addTreeNode(state: EvaluationState, parent: CadSceneTreeNode, key: string, label: string, globalId?: string) {
@@ -74,7 +137,7 @@ function resolveGeometryId(value: unknown, label: string, parentId: string, stat
 
 function evaluateNode(
   value: unknown,
-  inheritedMaterials: readonly Material[] | undefined,
+  inheritedMaterials: Map<string, MaterialBinding>,
   state: EvaluationState,
   traceParent: CadSceneTreeNode,
   nodeKey: string,
@@ -126,7 +189,7 @@ function evaluateNode(
       pos: transformValues.pos,
       rotate: transformValues.rotate,
       scale: transformValues.scale,
-      materials,
+      materials: exposeMaterials(materials),
       children,
     })
     return applyTransforms(
@@ -151,13 +214,14 @@ function evaluateNode(
     if (!ownerNodeKey) {
       throw new CadModelError('CAD geometry must be created within a Geometry component with an explicit id.')
     }
-    const materials = resolveMaterials(undefined, inheritedMaterials)
+    const binding = materialBinding(inheritedMaterials, 'body')
 
     const geometry = definition.createGeometry(props)
     parts = [
       {
         geometry,
-        ...(materials === undefined ? {} : { material: materials[0] }),
+        materialRole: binding.role,
+        ...(binding.material === undefined ? {} : { material: binding.material }),
         surfaces: definition.createSurfaces(geometry, props),
         ownerNodeKey,
         resultNodeKey: nodeKey,
@@ -223,7 +287,7 @@ export function evaluateCadScene(
     localIdsByParent: new Map(),
     rootLabel,
   }
-  const evaluatedParts = evaluateNode(root, undefined, state, tree, `${rootKey}/root`, '', undefined)
+  const evaluatedParts = evaluateNode(root, new Map(), state, tree, `${rootKey}/root`, '', undefined)
 
   const ownerIds = evaluatedParts.map((part) => {
     if (!part.ownerNodeKey) {
@@ -282,7 +346,7 @@ export function evaluateCadScene(
     } else {
       resultNode.children.push({
         key: `${part.resultNodeKey}/${id}`,
-        label: `Part ${directPartOrdinal} · ${part.material?.name ?? 'Unassigned'}`,
+        label: `Part ${directPartOrdinal} · ${part.material?.name ?? part.materialRole}`,
         geometryId: id,
         children: surfaceNodes,
       })
@@ -306,6 +370,7 @@ export function evaluateCadScene(
     return {
       id,
       geometry: part.geometry,
+      materialRole: part.materialRole,
       ...(material === undefined ? {} : { material }),
       surfaces,
     }

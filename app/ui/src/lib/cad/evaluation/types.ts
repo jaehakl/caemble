@@ -13,6 +13,7 @@ export type CadNode = {
 
 export type EvaluatedPart = {
   geometry: unknown
+  materialRole: string
   material?: Material
   surfaces?: EvaluatedSurface[]
   ownerNodeKey?: string
@@ -33,6 +34,7 @@ export type CadSceneSurface = {
 export type CadScenePart = {
   id: string
   geometry: unknown
+  materialRole: string
   material?: CadSceneMaterial
   surfaces: CadSceneSurface[]
 }
@@ -88,12 +90,18 @@ export type CadElementManifest<Tag extends string = string> = Readonly<{
 }>
 
 export type CadElementEvaluationContext = Readonly<{
-  inheritedMaterials: readonly Material[] | undefined
+  inheritedMaterials: Map<string, MaterialBinding>
   evaluate: (
     value: unknown,
-    inheritedMaterials?: readonly Material[],
+    inheritedMaterials?: Map<string, MaterialBinding>,
     trace?: Readonly<{ key: string; label: string; identitySegment?: string }>,
   ) => EvaluatedPart[]
+}>
+
+export type MaterialBinding = Readonly<{
+  role: string
+  material?: Material
+  exposed: Material
 }>
 
 export type PrimitiveElementDefinition<Tag extends string = string> = Readonly<{

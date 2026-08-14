@@ -6,7 +6,7 @@ import { resolveCadViewerContent } from './cadViewerContent'
 
 const taskScene: CadScene = {
   lengthUnit: 'mm',
-  parts: [{ id: 'task-part', geometry: {}, surfaces: [] }],
+  parts: [{ id: 'task-part', geometry: {}, materialRole: 'task', surfaces: [] }],
   tree: { key: 'task', label: 'Task', children: [] },
   geometryGroups: [],
   surfaceGroups: [],
@@ -14,7 +14,7 @@ const taskScene: CadScene = {
 
 const experimentScene: CadScene = {
   lengthUnit: 'mm',
-  parts: [{ id: 'experiment-part', geometry: {}, surfaces: [] }],
+  parts: [{ id: 'experiment-part', geometry: {}, materialRole: 'experiment', surfaces: [] }],
   tree: { key: 'experiment', label: 'Experiment', children: [] },
   geometryGroups: [],
   surfaceGroups: [],

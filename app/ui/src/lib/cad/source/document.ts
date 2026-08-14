@@ -9,12 +9,13 @@ import {
 } from './geometrySnapshot'
 
 export const CAD_SOURCE_FORMAT_VERSION = 2 as const
-export const CAD_SOURCE_API_VERSION = 5 as const
-export const EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION = 4 as const
+export const CAD_SOURCE_API_VERSION = 6 as const
+export const EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION = 5 as const
 export const MAX_CAD_SOURCE_BYTES = 1024 * 1024
 
 export const EXPERIMENT_ENTRY_PATH = 'experiment.tsx' as const
 export const EXPERIMENT_GEOMETRY_PATH = 'geometry.tsx' as const
+export const EXPERIMENT_MATERIAL_PATH = 'material.tsx' as const
 export const EXPERIMENT_SIMULATION_PATH = 'simulate.py' as const
 export const EXPERIMENT_TASK_PATH = /^tasks\/([A-Za-z][A-Za-z0-9_-]*)\.tsx$/u
 
@@ -86,7 +87,7 @@ export function assertExperimentSourceBundle(value: unknown): asserts value is E
   const unknownKey = Object.keys(value).find((key) => !['files', 'formatVersion', 'geometrySnapshot'].includes(key))
   if (unknownKey) throw new CadModelError(`Experiment source bundle.${unknownKey} is not allowed.`)
   if (bundle.formatVersion !== EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION) {
-    throw new CadModelError('Only Experiment source bundle format version 4 is supported.')
+    throw new CadModelError('Only Experiment source bundle format version 5 is supported.')
   }
   if (
     typeof bundle.files !== 'object' ||
@@ -101,6 +102,7 @@ export function assertExperimentSourceBundle(value: unknown): asserts value is E
     (path) =>
       path !== EXPERIMENT_ENTRY_PATH &&
       path !== EXPERIMENT_GEOMETRY_PATH &&
+      path !== EXPERIMENT_MATERIAL_PATH &&
       path !== EXPERIMENT_SIMULATION_PATH &&
       experimentTaskName(path) === null,
   )
@@ -108,9 +110,10 @@ export function assertExperimentSourceBundle(value: unknown): asserts value is E
   if (
     !paths.includes(EXPERIMENT_ENTRY_PATH) ||
     !paths.includes(EXPERIMENT_GEOMETRY_PATH) ||
+    !paths.includes(EXPERIMENT_MATERIAL_PATH) ||
     !paths.includes(EXPERIMENT_SIMULATION_PATH)
   ) {
-    throw new CadModelError('Experiment source bundle requires experiment.tsx, geometry.tsx, and simulate.py.')
+    throw new CadModelError('Experiment source bundle requires experiment.tsx, geometry.tsx, material.tsx, and simulate.py.')
   }
   if (paths.every((path) => experimentTaskName(path) === null)) {
     throw new CadModelError('Experiment source bundle requires at least one Task file.')
@@ -145,7 +148,11 @@ export function createExperimentSourceBundle(
 ): ExperimentSourceBundle {
   const bundle = Object.freeze({
     formatVersion: EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION,
-    files: canonicalFiles({ ...files, [EXPERIMENT_GEOMETRY_PATH]: files[EXPERIMENT_GEOMETRY_PATH] ?? 'export {}\n' }),
+    files: canonicalFiles({
+      ...files,
+      [EXPERIMENT_GEOMETRY_PATH]: files[EXPERIMENT_GEOMETRY_PATH] ?? 'export {}\n',
+      [EXPERIMENT_MATERIAL_PATH]: files[EXPERIMENT_MATERIAL_PATH] ?? 'export {}\n',
+    }),
     geometrySnapshot: canonicalizeGeometrySnapshot(geometrySnapshot),
   })
   assertExperimentSourceBundle(bundle)
@@ -175,7 +182,7 @@ export function assertCadSourceDocument(value: unknown): asserts value is Experi
     document.formatVersion !== CAD_SOURCE_FORMAT_VERSION ||
     document.apiVersion !== CAD_SOURCE_API_VERSION
   ) {
-    throw new CadModelError('Only Experiment source format version 2 and API version 5 are supported.')
+    throw new CadModelError('Only Experiment source format version 2 and API version 6 are supported.')
   }
   assertExperimentSourceBundle(document.sourceBundle)
 }

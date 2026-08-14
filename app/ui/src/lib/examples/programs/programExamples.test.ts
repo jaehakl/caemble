@@ -3,7 +3,12 @@ import { describe, expect, it } from 'vitest'
 import { CAD_COMPILER_VERSION, type CompiledCadDocument, type CompiledCadSource } from '../../cad/compiler/types'
 import { executeCompiledDocument, inspectCompiledDocument } from '../../cad/execution/userModule'
 import { generateRandomVars } from '../../cad/model/vars'
-import { analyzeCadSource, analyzeGeometrySource, analyzeTaskSource } from '../../cad/source/sourceAnalysis'
+import {
+  analyzeCadSource,
+  analyzeGeometrySource,
+  analyzeMaterialSource,
+  analyzeTaskSource,
+} from '../../cad/source/sourceAnalysis'
 import { assertSimulationProgramManifest } from '../../cad/simulation'
 import type { CaembleProgramExample } from './types'
 import { caembleProgramExamples } from '.'
@@ -29,9 +34,10 @@ async function prepareExample(example: CaembleProgramExample) {
       .map(async ([entryFile, source]) => {
         if (entryFile === 'experiment.tsx') analyzeCadSource(source)
         else if (entryFile === 'geometry.tsx') analyzeGeometrySource(source, { allowEmpty: true })
+        else if (entryFile === 'material.tsx') analyzeMaterialSource(source)
         else analyzeTaskSource(source)
         const compiled: CompiledCadSource = {
-          apiVersion: 5,
+          apiVersion: 6,
           compilerVersion: CAD_COMPILER_VERSION,
           entryFile,
           code: await compileSource(source),
@@ -41,7 +47,7 @@ async function prepareExample(example: CaembleProgramExample) {
       }),
   )
   const document: CompiledCadDocument = {
-    apiVersion: 5,
+    apiVersion: 6,
     compilerVersion: CAD_COMPILER_VERSION,
     sourceHash,
     sources: Object.fromEntries(sources),

@@ -17,10 +17,11 @@ const cadUnion = booleans.union as (...geometries: unknown[]) => CadGeom3
 function matchingMaterial(parts: EvaluatedPart[], operation: string) {
   if (parts.length === 0) throw new CadModelError(`<${operation}> did not receive any geometry.`)
   const material = parts[0].material
-  if (parts.some((part) => part.material !== material)) {
+  const materialRole = parts[0].materialRole
+  if (parts.some((part) => part.material !== material || part.materialRole !== materialRole)) {
     throw new CadModelError(`<${operation}> cannot combine Geometry with different Materials.`)
   }
-  return material
+  return { material, materialRole }
 }
 
 function createBooleanDefinition<Tag extends 'union' | 'subtract' | 'intersect'>(manifest: CadElementManifest<Tag>) {
@@ -154,6 +155,7 @@ function createBooleanDefinition<Tag extends 'union' | 'subtract' | 'intersect'>
             if (!booleanApplied) {
               return {
                 geometry: subtracted,
+                materialRole: part.materialRole,
                 ...(part.material === undefined ? {} : { material: part.material }),
               }
             }
@@ -209,17 +211,19 @@ function createBooleanDefinition<Tag extends 'union' | 'subtract' | 'intersect'>
             .filter((polygon) => geometries.poly3.measureArea(polygon) > 0)
           return {
             geometry: geometries.geom3.create(finalPolygons),
+            materialRole: part.materialRole,
             ...(part.material === undefined ? {} : { material: part.material }),
           }
         })
       }
 
       const allParts = childParts.flat()
-      const material = matchingMaterial(allParts, manifest.tag)
+      const { material, materialRole } = matchingMaterial(allParts, manifest.tag)
       if (manifest.tag === 'union') {
         return [
           {
             geometry: cadUnion(...allParts.map((part) => part.geometry)),
+            materialRole,
             ...(material === undefined ? {} : { material }),
           },
         ]
@@ -232,6 +236,7 @@ function createBooleanDefinition<Tag extends 'union' | 'subtract' | 'intersect'>
       return [
         {
           geometry: cadIntersect(...childGeometries),
+          materialRole,
           ...(material === undefined ? {} : { material }),
         },
       ]

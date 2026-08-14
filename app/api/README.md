@@ -67,6 +67,8 @@ RecordedData는 `/list`만 제공하며 직접 upsert/delete할 수 없다.
 있고, 로그인 사용자는 공개 행과 본인 행을 조회하며 본인 행만 변경할 수 있다.
 관리자는 모든 범위를 관리할 수 있다. `MaterialParameterQualifier`는 별도
 `user_id` 없이 부모 `MaterialParameter`의 범위를 상속한다.
+네 Material catalog의 기존 12개 URL은 모두 `routers/material.py`에서 제공하며
+URL과 method 계약은 유지한다. CRUD 구현은 `service/material` package에 모은다.
 
 목록 body의 `scope`는 `visible`, `mine`, `public` 중 하나다. 기본값
 `visible`은 기존 공개+본인 동작을 유지하고, `mine`은 로그인 사용자의 행만,
@@ -85,7 +87,7 @@ Geometry 좌표는
 `caemble:geometry/<namespace>/<repository>/<package>@<major>.<minor>.<patch>`이고
 prerelease, range와 `latest`는 허용하지 않는다. 모든 dependency는 같은 owner의
 Repository 안에 있어야 하며 published version의 source는 수정하지 않는다. Module
-format v3 source는 PascalCase named `Geometry<Props>` 함수 component를 하나 이상
+format v4 source는 PascalCase named `Geometry<Props>` 함수 component를 하나 이상
 export하고, 여러 component를 함께 export할 수 있다. default/static/helper value export는
 허용하지 않는다. Geometry dependency는 source의 named exact-coordinate import가 유일한
 원본이며 서버가 `geometry_imports` projection을 source에 맞춰 생성한다. Workbench draft만
@@ -114,15 +116,24 @@ transaction으로 version과 import projection을 만든다. `repositoryId`가 �
 현재 기본 namespace를 사용한다. 새 draft의 repository/package가 없으면 publish
 transaction 안에서 함께 생성한다. SemVer 충돌은
 `geometry_version_conflict` 409와 suggested version을 반환한다. resolve/publish snapshot의
-`moduleFormatVersion`은 3이고 CAD API version은 5다.
+`moduleFormatVersion`은 4이고 CAD API version은 6이다.
 
-Experiment source bundle v4는 `geometry.tsx`를 항상 포함한다. Experiment는
-`./geometry`, Task는 `../geometry`에서 필요한 named component를 import한다.
+Experiment source bundle v5는 `experiment.tsx`, `geometry.tsx`, `material.tsx`,
+`simulate.py`와 하나 이상의 `tasks/*.tsx`를 항상 포함한다. `material.tsx`는 Material
+객체와 역할별 map을 직접 정의해 export하며 정적 `@caemble/core` import만 허용한다.
+Experiment는 `./geometry`, `./material`, Task는 `../geometry`, `../material`에서
+필요한 named export를 import한다. 모든 TSX source에서 dynamic import와 `require()`는
+허용하지 않는다. `Material` runtime import와 instance 생성은 `material.tsx`에만 둔다.
 `geometry.tsx`는 exact Geometry coordinate에서 named component를 import하고 여러 이름을
 export할 수 있다. `geometrySnapshot.schemaVersion=2`는 `entryImports`와 전체 reachable
 module source/hash/import projection을 canonical order로 보존한다. 저장 시 API가
 `geometry.tsx`에서 snapshot을 독립 재생성해 요청 값과 대조하고
 `experiment_geometry_imports` 및 `experiment_geometry_modules` projection을 갱신한다.
+
+Material 역할 map/CAD API v6 전환 migration은 이전 module source와 Experiment 입력
+snapshot을 안전하게 변환할 수 없으므로 Geometry catalog, Experiment, Measurement,
+RecordedData, DesignerModel, PredictorModel 데이터를 upgrade와 downgrade에서 삭제한다.
+Material, MaterialName, MaterialParameter, MaterialParameterQualifier catalog는 보존한다.
 
 ## 도메인 테이블
 

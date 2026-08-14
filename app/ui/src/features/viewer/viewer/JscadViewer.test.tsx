@@ -31,12 +31,14 @@ describe('JscadViewer source layers', () => {
   const structurePart = {
     id: 'shared',
     geometry: {},
+    materialRole: 'structure',
     material: { name: 'Structure', variables: { color: '#2563eb' } },
     surfaces: [],
   }
   const experimentPart = {
     id: 'shared',
     geometry: {},
+    materialRole: 'experiment',
     material: { name: 'Experiment', variables: { color: '#dc2626' } },
     surfaces: [],
   }
@@ -58,12 +60,12 @@ describe('JscadViewer source layers', () => {
       {
         source: 'experiment' as const,
         lengthUnit: 'mm',
-        parts: [{ id: 'structure', geometry: structureGeometry, surfaces: [] }],
+        parts: [{ id: 'structure', geometry: structureGeometry, materialRole: 'structure', surfaces: [] }],
       },
       {
         source: 'task' as const,
         lengthUnit: 'm',
-        parts: [{ id: 'experiment', geometry: experimentGeometry, surfaces: [] }],
+        parts: [{ id: 'experiment', geometry: experimentGeometry, materialRole: 'experiment', surfaces: [] }],
       },
     ]
 
@@ -78,7 +80,7 @@ describe('JscadViewer source layers', () => {
 })
 
 describe('JscadViewer Material legend', () => {
-  it('shows filled, colorless, and unassigned Geometry entries without mode tabs', () => {
+  it('deduplicates roles and shows explicit, automatic, and unresolved Material colors', () => {
     const core = { name: 'Core', variables: { color: '#2563eb' } }
     const markup = renderToStaticMarkup(
       <JscadViewer
@@ -88,10 +90,16 @@ describe('JscadViewer Material legend', () => {
             source: 'experiment',
             lengthUnit: 'mm',
             parts: [
-              { id: 'core-1', geometry: {}, material: core, surfaces: [] },
-              { id: 'core-2', geometry: {}, material: core, surfaces: [] },
-              { id: 'cladding', geometry: {}, material: { name: 'Cladding', variables: {} }, surfaces: [] },
-              { id: 'unassigned', geometry: {}, surfaces: [] },
+              { id: 'core-1', geometry: {}, materialRole: 'core', material: core, surfaces: [] },
+              { id: 'core-2', geometry: {}, materialRole: 'core', material: core, surfaces: [] },
+              {
+                id: 'cladding',
+                geometry: {},
+                materialRole: 'cladding',
+                material: { name: 'Cladding', variables: {} },
+                surfaces: [],
+              },
+              { id: 'unresolved', geometry: {}, materialRole: 'tire', surfaces: [] },
             ],
           },
         ]}
@@ -101,11 +109,11 @@ describe('JscadViewer Material legend', () => {
       />,
     )
 
-    expect(markup.match(/Core/g)).toHaveLength(1)
-    expect(markup.match(/Cladding/g)).toHaveLength(1)
-    expect(markup.match(/Unassigned/g)).toHaveLength(1)
+    expect(markup.match(/core: Core/g)).toHaveLength(1)
+    expect(markup.match(/cladding: Cladding/g)).toHaveLength(1)
+    expect(markup.match(/tire \(Unresolved\)/g)).toHaveLength(1)
     expect(markup).toContain('background-color:#2563eb')
-    expect(markup.match(/data-material-swatch="wireframe"/g)).toHaveLength(2)
+    expect(markup.match(/data-material-swatch="fill"/g)).toHaveLength(3)
     expect(markup).not.toContain('Material Grid')
     expect(markup).not.toContain('Results')
   })

@@ -4,7 +4,13 @@ import { describe, expect, it } from 'vitest'
 import { CAD_COMPILER_VERSION, type CompiledCadDocument, type CompiledCadSource } from './cad/compiler/types'
 import { executeCompiledDocument, inspectCompiledDocument } from './cad/execution/userModule'
 import { generateRandomVars } from './cad/model/vars'
-import { analyzeCadSource, analyzeGeometrySource, analyzeTaskSource } from './cad/source/sourceAnalysis'
+import {
+  analyzeCadSource,
+  analyzeGeometrySource,
+  analyzeMaterialSource,
+  analyzeTaskSource,
+} from './cad/source/sourceAnalysis'
+import { wheelAssemblySourceBundle } from './examples/wheelAssembly'
 import { blankExperimentSourceBundle, starterExperimentSourceBundle } from './localExperimentCode'
 
 async function evaluate(bundle: typeof starterExperimentSourceBundle) {
@@ -15,9 +21,10 @@ async function evaluate(bundle: typeof starterExperimentSourceBundle) {
       .map(async ([entryFile, source]) => {
         if (entryFile === 'experiment.tsx') analyzeCadSource(source)
         else if (entryFile === 'geometry.tsx') analyzeGeometrySource(source, { allowEmpty: true })
+        else if (entryFile === 'material.tsx') analyzeMaterialSource(source)
         else analyzeTaskSource(source)
         const compiled: CompiledCadSource = {
-          apiVersion: 5,
+          apiVersion: 6,
           compilerVersion: CAD_COMPILER_VERSION,
           entryFile,
           code: (
@@ -36,7 +43,7 @@ async function evaluate(bundle: typeof starterExperimentSourceBundle) {
       }),
   )
   const document: CompiledCadDocument = {
-    apiVersion: 5,
+    apiVersion: 6,
     compilerVersion: CAD_COMPILER_VERSION,
     sourceHash,
     sources: Object.fromEntries(sources),
@@ -61,6 +68,7 @@ describe('local Experiment templates', () => {
     expect(Object.keys(blankExperimentSourceBundle.files)).toEqual([
       'experiment.tsx',
       'geometry.tsx',
+      'material.tsx',
       'simulate.py',
       'tasks/main.tsx',
     ])
@@ -68,5 +76,15 @@ describe('local Experiment templates', () => {
     expect(blankExperimentSourceBundle.files['simulate.py']).toContain('Replace this no-op body')
     expect(blankExperimentSourceBundle.files['tasks/main.tsx']).toContain('Replace this placeholder kernel')
     expect(result.scene.parts).toHaveLength(0)
+  })
+
+  it('inherits and remaps the two Wheel Assembly Material roles', async () => {
+    const result = await evaluate(wheelAssemblySourceBundle)
+
+    expect(result.scene.parts.map(({ material, materialRole }) => [materialRole, material?.name])).toEqual([
+      ['tire', 'Rubber'],
+      ['wheel', 'Aluminum'],
+    ])
+    expect(result.scene.parts.every((part) => part.material?.variables.color === undefined)).toBe(true)
   })
 })

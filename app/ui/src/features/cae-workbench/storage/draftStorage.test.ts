@@ -11,7 +11,7 @@ import {
 
 function draft(): WorkbenchDraft {
   return {
-    version: 8,
+    version: 9,
     savedAt: 1,
     experiment: { record: null, baselineBundle: null, document: null, name: '', description: '' },
     candidate: { vars: null, materialParameters: null },
@@ -32,7 +32,7 @@ beforeEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('Workbench sessionStorage v8', () => {
+describe('Workbench sessionStorage v9', () => {
   it('stores and restores the single session draft, including local Geometry', async () => {
     const coordinate = 'caemble:geometry/local/common/part@local' as const
     const value: WorkbenchDraft = {
@@ -80,7 +80,7 @@ describe('Workbench sessionStorage v8', () => {
   })
 
   it('does not read or migrate an older draft version', async () => {
-    sessionStorage.setItem(WORKBENCH_DRAFT_STORAGE_KEY, JSON.stringify({ ...draft(), version: 7 }))
+    sessionStorage.setItem(WORKBENCH_DRAFT_STORAGE_KEY, JSON.stringify({ ...draft(), version: 8 }))
 
     await expect(loadWorkbenchDraft()).resolves.toBeNull()
     expect(sessionStorage.getItem(WORKBENCH_DRAFT_STORAGE_KEY)).toBeNull()

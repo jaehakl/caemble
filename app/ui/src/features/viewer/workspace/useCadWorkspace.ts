@@ -12,6 +12,7 @@ import {
   generateRandomVars,
   inspectDocument,
   removeExperimentTask,
+  unresolvedMeasurementMaterialRoles,
   updateCadSource,
   updateExperimentSourceFile,
   type BuiltMeasurement,
@@ -249,27 +250,49 @@ export function useCadWorkspace(
           sourceOnlyMaterials,
         )
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
-        const built = buildMeasurement(snapshot, resolution)
-        const commonScene = applyFrozenMaterialParameters(deserializeCadScene(snapshot.scene), built.materialParameters)
+        const commonScene = applyFrozenMaterialParameters(
+          deserializeCadScene(snapshot.scene),
+          resolution.materialParameters,
+        )
         const nextTaskScenes = Object.freeze(
           Object.fromEntries(
             Object.entries(snapshot.taskScenes).map(([name, serialized]) => [
               name,
-              applyFrozenMaterialParameters(deserializeCadScene(serialized), built.taskMaterialParameters[name]),
+              applyFrozenMaterialParameters(deserializeCadScene(serialized), resolution.taskMaterialParameters[name]),
             ]),
           ),
         )
+        const resolutionWarnings = Object.freeze([
+          ...resolution.warnings,
+          ...Object.entries(resolution.taskMaterialWarnings).flatMap(([name, items]) =>
+            items.map((item) => `${name}: ${item}`),
+          ),
+        ])
+        const unresolved = unresolvedMeasurementMaterialRoles(snapshot)
+        if (unresolved.length > 0) {
+          setEvaluatedSnapshot(snapshot)
+          setVariables(snapshot.variables)
+          setVarsSchema(snapshot.varsSchema)
+          setScene(commonScene)
+          setTaskScenes(nextTaskScenes)
+          setSimulationProgram(snapshot.simulationProgram)
+          setMaterialWarnings(
+            Object.freeze([
+              ...resolutionWarnings,
+              `Measurement requires resolved Material roles: ${unresolved.join(', ')}.`,
+            ]),
+          )
+          successfulRevisionRef.current = requestRevision
+          setSuccessfulRevision(requestRevision)
+          updateStatus('Ready')
+          return
+        }
+        const built = buildMeasurement(snapshot, resolution)
         const persistedMaterials: MeasurementMaterialParameters = Object.freeze({
           schemaVersion: 2,
           experiment: built.materialParameters,
           tasks: built.taskMaterialParameters,
         })
-        const warnings = Object.freeze([
-          ...built.materialWarnings,
-          ...Object.entries(built.taskMaterialWarnings).flatMap(([name, items]) =>
-            items.map((item) => `${name}: ${item}`),
-          ),
-        ])
         builtMeasurementRef.current = built
         setBuiltMeasurement(built)
         setEvaluatedSnapshot(snapshot)
@@ -279,7 +302,7 @@ export function useCadWorkspace(
         setTaskScenes(nextTaskScenes)
         setSimulationProgram(snapshot.simulationProgram)
         setMaterialParameters(persistedMaterials)
-        setMaterialWarnings(warnings)
+        setMaterialWarnings(resolutionWarnings)
         successfulRevisionRef.current = requestRevision
         setSuccessfulRevision(requestRevision)
         updateStatus('Ready')

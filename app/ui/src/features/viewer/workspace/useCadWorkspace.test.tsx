@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, renderHook, waitFor } from '@testing-library/react'
+import { primitives } from '@jscad/modeling'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createCadSourceDocument,
@@ -25,6 +26,20 @@ const serializedScene = serializeCadScene({
   geometryGroups: [],
   lengthUnit: 'mm',
   parts: [],
+  surfaceGroups: [],
+  tree: { children: [], key: 'root', label: 'Root' },
+})
+const unresolvedScene = serializeCadScene({
+  geometryGroups: [],
+  lengthUnit: 'mm',
+  parts: [
+    {
+      id: 'wheel',
+      geometry: primitives.cuboid({ size: [1, 1, 1] }),
+      materialRole: 'wheel',
+      surfaces: [],
+    },
+  ],
   surfaceGroups: [],
   tree: { children: [], key: 'root', label: 'Root' },
 })
@@ -134,6 +149,36 @@ describe('useCadWorkspace unified Experiment', () => {
     await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Error'))
     expect(render.result.current.experimentDocument.scene).toBe(lastScene)
     expect(render.result.current.experimentDocument.previewStale).toBe(true)
+    render.unmount()
+  })
+
+  it('keeps unresolved Geometry viewable while blocking Measurement and simulation readiness', async () => {
+    vi.mocked(evaluateDocument).mockImplementationOnce(async ({ vars }) => ({
+      kind: 'experiment',
+      scene: unresolvedScene,
+      taskScenes: { electric: serializedScene },
+      simulationProgram: {
+        formatVersion: 5,
+        simulationApiVersion: 3,
+        pythonSource: 'async def simulate(*, sim, tasks, vars):\n    return None\n',
+        tasks: { electric: { kernel: { name: 'test', version: '1' }, config: {} } },
+        recordedData: {},
+      },
+      sourceHash: 'a'.repeat(64),
+      variables: vars,
+      varsSchema,
+    }))
+    const render = renderHook(() => useCadWorkspace(document, vi.fn(), { fixed: 4, width: 2 }))
+
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
+
+    expect(render.result.current.experimentDocument.scene?.parts[0].materialRole).toBe('wheel')
+    expect(render.result.current.experimentDocument.measurement).toBeNull()
+    expect(render.result.current.experimentDocument.materialParameters).toBeNull()
+    expect(render.result.current.experimentDocument.materialWarnings).toContain(
+      'Measurement requires resolved Material roles: Experiment: wheel.',
+    )
+    expect(render.result.current.simulation.canRun).toBe(false)
     render.unmount()
   })
 })

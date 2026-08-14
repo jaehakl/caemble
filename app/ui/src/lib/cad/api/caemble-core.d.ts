@@ -1,4 +1,4 @@
-// @caemble/core declaration version: 0.1.0
+// @caemble/core declaration version: 0.2.0
 export type Tensor = number | readonly Tensor[]
 export type Vars = Readonly<Record<string, Tensor>>
 export type Vec3 = readonly [number, number, number]
@@ -2807,7 +2807,7 @@ export type ArrayAttributes = Readonly<{
 }>
 
 export type ShellAttributes = Readonly<{
-  offsets: readonly number[]
+  offsets: Readonly<Record<string, number>>
   pos?: Vec3
   rotate?: Rotation
   scale?: Vec3
@@ -2817,7 +2817,7 @@ export type ShellAttributes = Readonly<{
 export type GeometryAttributes<P extends object = object> = Readonly<
   P & {
     id: string
-    materials?: readonly Material[]
+    materials?: Readonly<Record<string, Material | undefined>>
     pos?: Vec3
     rotate?: Rotation
     scale?: Vec3
@@ -3269,7 +3269,7 @@ export class ExperimentDefinition<
   Recorded extends Readonly<Record<string, RecordedDataSpec>> = Readonly<Record<string, RecordedDataSpec>>,
 > {
   constructor(options: ExperimentDefinitionOptions<Schema, Recorded>)
-  readonly apiVersion: 5
+  readonly apiVersion: 6
   readonly documentType: 'experiment'
   readonly varsSchema: Schema
   readonly lengthUnit: UcumUnit
@@ -3280,7 +3280,7 @@ export class ExperimentDefinition<
 
 export class TaskDefinition<Config = unknown> {
   constructor(options: TaskDefinitionOptions<Config>)
-  readonly apiVersion: 5
+  readonly apiVersion: 6
   readonly documentType: 'task'
   readonly kernel: KernelIdentity
   readonly lengthUnit?: UcumUnit

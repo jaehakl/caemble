@@ -170,7 +170,7 @@ export async function createEffectiveGeometryGraph(
       const sourceHash = await geometrySourceHash(source)
       const moduleHash = await geometryModuleHash({
         moduleFormatVersion: GEOMETRY_MODULE_FORMAT_VERSION,
-        cadApiVersion: 5,
+        cadApiVersion: 6,
         coordinate: coordinate as GeometryCoordinate,
         sourceHash,
         imports: imports.map((item) => ({

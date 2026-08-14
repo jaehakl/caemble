@@ -2,15 +2,23 @@ import { createExperimentSourceBundle } from './cad'
 
 const starterExperimentCode = `import { experiment } from '@caemble/core'
 import { StarterStructure } from './geometry'
+import { StarterMaterial } from './material'
 
 export default experiment({
   lengthUnit: 'mm',
   varsSchema: {
     size: { min: [36, 24, 12], max: [36, 24, 12] },
   },
-  geometry: ({ vars }) => <StarterStructure id="starter" size={vars.size} />,
+  geometry: ({ vars }) => (
+    <StarterStructure id="starter" size={vars.size} materials={{ body: StarterMaterial }} />
+  ),
   recordedData: {},
 })
+`
+
+const starterMaterialCode = `import { Material } from '@caemble/core'
+
+export const StarterMaterial = new Material('Starter Material')
 `
 
 const starterGeometryCode = `import { type Geometry, type Vec3 } from '@caemble/core'
@@ -36,6 +44,9 @@ const blankGeometryCode = `import { type Geometry } from '@caemble/core'
 export const EmptyStructure: Geometry = () => <></>
 `
 
+const blankMaterialCode = `export {}
+`
+
 const placeholderTaskCode = `import { defineTask } from '@caemble/core'
 
 // Replace this placeholder kernel and config before running the Experiment.
@@ -53,6 +64,7 @@ const placeholderSimulationCode = `async def simulate(*, sim, tasks, vars):
 export const starterExperimentSourceBundle = createExperimentSourceBundle({
   'experiment.tsx': starterExperimentCode,
   'geometry.tsx': starterGeometryCode,
+  'material.tsx': starterMaterialCode,
   'simulate.py': placeholderSimulationCode,
   'tasks/main.tsx': placeholderTaskCode,
 })
@@ -60,6 +72,7 @@ export const starterExperimentSourceBundle = createExperimentSourceBundle({
 export const blankExperimentSourceBundle = createExperimentSourceBundle({
   'experiment.tsx': blankExperimentCode,
   'geometry.tsx': blankGeometryCode,
+  'material.tsx': blankMaterialCode,
   'simulate.py': placeholderSimulationCode,
   'tasks/main.tsx': placeholderTaskCode,
 })

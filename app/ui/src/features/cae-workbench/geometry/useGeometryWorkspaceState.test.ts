@@ -192,8 +192,8 @@ describe('source-based Geometry workspace state', () => {
     const module = {
       geometryVersionId: 9,
       coordinate,
-      moduleFormatVersion: 3 as const,
-      cadApiVersion: 5 as const,
+      moduleFormatVersion: 4 as const,
+      cadApiVersion: 6 as const,
       description: null,
       source: publishedSource,
       sourceHash,

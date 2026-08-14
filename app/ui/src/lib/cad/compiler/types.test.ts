@@ -9,7 +9,7 @@ import {
 
 function compiled(): CompiledCadSource {
   return {
-    apiVersion: 5,
+    apiVersion: 6,
     compilerVersion: CAD_COMPILER_VERSION,
     entryFile: 'experiment.tsx',
     code: '"use strict";',
@@ -32,7 +32,7 @@ describe('CompiledCadSource', () => {
     expect(() => assertCompiledCadSource({ ...compiled(), entryFile: coordinate })).toThrow('provenance is invalid')
     expect(() =>
       assertCompiledCadDocument({
-        apiVersion: 5,
+        apiVersion: 6,
         compilerVersion: CAD_COMPILER_VERSION,
         sourceHash: 'a'.repeat(64),
         sources: { [coordinate]: { ...compiled(), entryFile: coordinate } },
@@ -67,7 +67,7 @@ describe('CompiledCadSource', () => {
 
     expect(() =>
       assertCompiledCadDocument({
-        apiVersion: 5,
+        apiVersion: 6,
         compilerVersion: CAD_COMPILER_VERSION,
         sourceHash,
         sources: { 'experiment.tsx': compiled() },
@@ -84,7 +84,7 @@ describe('CompiledCadSource', () => {
 
     expect(() =>
       assertCompiledCadDocument({
-        apiVersion: 5,
+        apiVersion: 6,
         compilerVersion: CAD_COMPILER_VERSION,
         sourceHash,
         sources: { 'experiment.tsx': compiled() },

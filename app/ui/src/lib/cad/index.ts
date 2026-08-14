@@ -89,6 +89,7 @@ export {
   MAX_CAD_SOURCE_BYTES,
   EXPERIMENT_ENTRY_PATH,
   EXPERIMENT_GEOMETRY_PATH,
+  EXPERIMENT_MATERIAL_PATH,
   EXPERIMENT_SIMULATION_PATH,
   EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION,
   addExperimentTask,
@@ -149,7 +150,7 @@ export type {
   GeometryModuleCoordinate,
   GeometryModuleDraft,
 } from './source/effectiveGeometryGraph'
-export { analyzeGeometrySource } from './source/sourceAnalysis'
+export { analyzeGeometrySource, analyzeMaterialSource } from './source/sourceAnalysis'
 export {
   CadDocumentEvaluationError,
   evaluateDocument,
@@ -173,6 +174,7 @@ export {
   assertBuiltMeasurement,
   buildMeasurement,
   buildSourceOnlyMeasurement,
+  unresolvedMeasurementMaterialRoles,
 } from './execution/measurement'
 export type { BuiltMeasurement, MeasurementMaterialResolution, TaskMaterialResolution } from './execution/measurement'
 export { assertSerializableCadScene, deserializeCadScene, serializeCadScene } from './execution/mesh'

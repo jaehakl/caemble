@@ -1,16 +1,9 @@
 export const fiberBundleCode = `import {
-  Material,
   experiment,
   type FiberFourierMode,
   type Geometry,
   type Vec3,
 } from '@caemble/core'
-
-class Polymer extends Material {
-  toMaterialModel() {
-    return this.variables
-  }
-}
 
 const strandFrom = [0, 0, -45] as const
 const strandTo = [0, 0, 45] as const
@@ -53,7 +46,6 @@ const Strand: Geometry<{
 }
 
 const Bundle: Geometry<{
-  materials: Material[]
   bend: Vec3
   bundleRadius: number
   fiberRadius: number
@@ -107,17 +99,6 @@ export default experiment({
         fiberRadius={vars.fiberRadius}
         fourier={fourier}
         turns={vars.turns}
-        materials={[
-          new Polymer('Tapered Fiber', {
-            'general.mass_density': {
-              dtype: 'float64',
-              value: vars.density,
-              errorRate: 0,
-              unit: 'g.cm-3',
-            },
-            color: '#7c3aed',
-          }),
-        ]}
       />
     )
   },

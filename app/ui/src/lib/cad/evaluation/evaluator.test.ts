@@ -19,14 +19,14 @@ describe('CAD evaluator', () => {
       return h('box', { size })
     }
 
-    const [part] = evaluateCad(h(Positioned, { id: 'positioned', materials: [core] }))
+    const [part] = evaluateCad(h(Positioned, { id: 'positioned', materials: { body: core } }))
     evaluateCad(
       h(Positioned, {
         id: 'positioned',
         pos: [2, 3, 4],
         rotate: { axis: [0, 0, 5], angle: Math.PI / 2 },
         scale: [2, 3, 4],
-        materials: [core],
+        materials: { body: core },
       }),
     )
 
@@ -57,7 +57,7 @@ describe('CAD evaluator', () => {
       return h(Child, { id: 'child', pos: [4, 5, 6] })
     }
 
-    const [part] = evaluateCad(h(Parent, { id: 'parent', pos: [1, 2, 3], materials: [core] }))
+    const [part] = evaluateCad(h(Parent, { id: 'parent', pos: [1, 2, 3], materials: { body: core } }))
 
     expect(measurements.measureBoundingBox(part.geometry)).toEqual([
       [5, 7, 9],
@@ -100,7 +100,7 @@ describe('CAD evaluator', () => {
         scale: [2, 1, 1],
         gap: 1,
         profileScale: 0.5,
-        materials: [core],
+        materials: { body: core },
       }),
     )
 
@@ -124,50 +124,50 @@ describe('CAD evaluator', () => {
 
     ;[null, 1, [1, 2], [1, 2, 3, 4], [1, '2', 3], [1, Number.NaN, 3], [1, Number.POSITIVE_INFINITY, 3]].forEach(
       (pos) => {
-        expect(() => evaluateCad(h('box', { size, pos, materials: [core] }))).toThrow(
+        expect(() => evaluateCad(h('box', { size, pos, materials: { body: core } }))).toThrow(
           'pos must be an array of exactly three finite numbers',
         )
       },
     )
 
-    expect(() => evaluateCad(h(Fragment, { pos: [1, 2, 3] }, h(Box, { id: 'box', materials: [core] })))).toThrow(
-      'Fragment does not accept pos, rotate, or scale',
-    )
+    expect(() =>
+      evaluateCad(h(Fragment, { pos: [1, 2, 3] }, h(Box, { id: 'box', materials: { body: core } }))),
+    ).toThrow('Fragment does not accept pos, rotate, or scale')
 
     ;[null, 1, [1, 2, 3], { axis: [0, 0, 1] }].forEach((rotate) => {
-      expect(() => evaluateCad(h(Box, { id: 'box', rotate, materials: [core] }))).toThrow()
+      expect(() => evaluateCad(h(Box, { id: 'box', rotate, materials: { body: core } }))).toThrow()
     })
     ;[
       [0, 0, 0],
       [1, 2],
       [1, Number.NaN, 0],
     ].forEach((axis) => {
-      expect(() => evaluateCad(h(Box, { id: 'box', rotate: { axis, angle: 1 }, materials: [core] }))).toThrow(
+      expect(() => evaluateCad(h(Box, { id: 'box', rotate: { axis, angle: 1 }, materials: { body: core } }))).toThrow(
         'rotate.axis',
       )
     })
     ;[Number.NaN, Number.POSITIVE_INFINITY, '1'].forEach((angle) => {
-      expect(() => evaluateCad(h(Box, { id: 'box', rotate: { axis: [0, 0, 1], angle }, materials: [core] }))).toThrow(
-        'rotate.angle must be a finite number',
-      )
+      expect(() =>
+        evaluateCad(h(Box, { id: 'box', rotate: { axis: [0, 0, 1], angle }, materials: { body: core } })),
+      ).toThrow('rotate.angle must be a finite number')
     })
     ;[
       [1, 2],
       [1, 2, 3, 4],
       [1, Number.NaN, 1],
     ].forEach((scale) => {
-      expect(() => evaluateCad(h(Box, { id: 'box', scale, materials: [core] }))).toThrow(
+      expect(() => evaluateCad(h(Box, { id: 'box', scale, materials: { body: core } }))).toThrow(
         'scale must be an array of exactly three finite numbers',
       )
     })
 
-    expect(() => evaluateCad(h('translate', { pos: [1, 2, 3], materials: [core] }, h(Box, { id: 'box' })))).toThrow(
-      'Use the relative pos attribute instead',
-    )
-    expect(() => evaluateCad(h('rotate', null, h(Box, { id: 'box', materials: [core] })))).toThrow(
+    expect(() =>
+      evaluateCad(h('translate', { pos: [1, 2, 3], materials: { body: core } }, h(Box, { id: 'box' }))),
+    ).toThrow('Use the relative pos attribute instead')
+    expect(() => evaluateCad(h('rotate', null, h(Box, { id: 'box', materials: { body: core } })))).toThrow(
       'Use the axis-angle rotate attribute instead',
     )
-    expect(() => evaluateCad(h('scale', null, h(Box, { id: 'box', materials: [core] })))).toThrow(
+    expect(() => evaluateCad(h('scale', null, h(Box, { id: 'box', materials: { body: core } })))).toThrow(
       'Use the scale attribute instead',
     )
   })

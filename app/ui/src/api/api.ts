@@ -162,8 +162,8 @@ const geometrySnapshotModuleSchema = z
   .object({
     geometryVersionId: z.number().int().positive(),
     coordinate: geometryCoordinateSchema,
-    moduleFormatVersion: z.literal(3),
-    cadApiVersion: z.literal(5),
+    moduleFormatVersion: z.literal(4),
+    cadApiVersion: z.literal(6),
     description: z.string().nullable(),
     source: z.string().min(1),
     sourceHash: geometryHashSchema,
@@ -182,7 +182,7 @@ export const geometrySnapshotSchema = z
   .readonly()
 export const experimentSourceBundleSchema = z
   .object({
-    formatVersion: z.literal(4),
+    formatVersion: z.literal(5),
     files: z.record(z.string(), z.string()),
     geometrySnapshot: geometrySnapshotSchema,
   })
@@ -261,8 +261,8 @@ const geometryVersionRowSchema = z.object({
   source: z.string(),
   source_hash: geometryHashSchema,
   module_hash: geometryHashSchema,
-  module_format_version: z.literal(3),
-  cad_api_version: z.literal(5),
+  module_format_version: z.literal(4),
+  cad_api_version: z.literal(6),
   archived_at: z.string().nullable(),
   repository_id: z.number().int().positive(),
   namespace: z.string(),
@@ -291,8 +291,8 @@ const geometryVersionSummarySchema = z.object({
   description: z.string().nullable(),
   sourceHash: geometryHashSchema,
   moduleHash: geometryHashSchema,
-  moduleFormatVersion: z.literal(3),
-  cadApiVersion: z.literal(5),
+  moduleFormatVersion: z.literal(4),
+  cadApiVersion: z.literal(6),
   archivedAt: z.string().nullable(),
   createdAt: z.string(),
 })

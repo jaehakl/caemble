@@ -221,8 +221,8 @@ def _version_response(
         "description": version.description,
         "sourceHash": version.source_hash,
         "moduleHash": version.module_hash,
-        "moduleFormatVersion": 3,
-        "cadApiVersion": 5,
+        "moduleFormatVersion": 4,
+        "cadApiVersion": 6,
         "archivedAt": version.archived_at,
         "createdAt": version.created_at,
     }

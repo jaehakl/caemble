@@ -219,28 +219,22 @@ describe('Material resolution', () => {
       input: { unit: '%', values: [0, 100] },
       output: { unit: '{fraction}', values: [0, 0.2] },
     }
-    const relationResult = resolveMaterialParameters(
-      [{ name: 'Copper', errorRate: 0.5, variables: {} }],
-      names,
-      [{ id: 22, material_id: 7, name: 'model.sorption.isotherm', value: relation, user_id: null }],
-    )
+    const relationResult = resolveMaterialParameters([{ name: 'Copper', errorRate: 0.5, variables: {} }], names, [
+      { id: 22, material_id: 7, name: 'model.sorption.isotherm', value: relation, user_id: null },
+    ])
     expect(relationResult.materialParameters.materials.Copper['model.sorption.isotherm'].value).toEqual(relation)
 
     const random = vi.spyOn(Math, 'random').mockReturnValue(1)
     expect(() =>
-      resolveMaterialParameters(
-        [{ name: 'Copper', errorRate: 0.5, variables: {} }],
-        names,
-        [
-          {
-            id: 20,
-            material_id: 7,
-            name: 'general.mass_density',
-            value: { dtype: 'float16', value: 65504, unit: 'kg.m-3' },
-            user_id: null,
-          },
-        ],
-      ),
+      resolveMaterialParameters([{ name: 'Copper', errorRate: 0.5, variables: {} }], names, [
+        {
+          id: 20,
+          material_id: 7,
+          name: 'general.mass_density',
+          value: { dtype: 'float16', value: 65504, unit: 'kg.m-3' },
+          user_id: null,
+        },
+      ]),
     ).toThrow('must be a finite float16 value in [-65504, 65504]')
     random.mockRestore()
   })
@@ -256,7 +250,7 @@ describe('Material resolution', () => {
     })
     const scene = {
       lengthUnit: 'mm' as const,
-      parts: [{ id: 'part', geometry: {}, material: uncolored, surfaces: [] }],
+      parts: [{ id: 'part', geometry: {}, materialRole: 'body', material: uncolored, surfaces: [] }],
       tree: { key: 'root', label: 'Root', children: [] },
       geometryGroups: [],
       surfaceGroups: [],

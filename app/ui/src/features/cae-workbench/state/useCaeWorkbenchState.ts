@@ -391,7 +391,7 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
         splitPercent: number
       }>,
     ): WorkbenchDraft => ({
-      version: 8,
+      version: 9,
       savedAt: Date.now(),
       experiment: {
         record: experimentRecord,

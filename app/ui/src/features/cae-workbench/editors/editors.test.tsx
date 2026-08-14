@@ -63,14 +63,15 @@ vi.mock('@/features/viewer/editor/CadEditor', () => ({
 }))
 
 const document: ExperimentSourceDocument = {
-  apiVersion: 5,
+  apiVersion: 6,
   formatVersion: 2,
   kind: 'experiment',
   sourceBundle: {
-    formatVersion: 4,
+    formatVersion: 5,
     files: {
       'experiment.tsx': 'experiment source',
       'geometry.tsx': 'export {}',
+      'material.tsx': 'export {}',
       'simulate.py': 'simulation source',
       'tasks/zeta.tsx': 'zeta task',
       'tasks/alpha.tsx': 'alpha task',
@@ -111,6 +112,7 @@ describe('ExperimentEditor', () => {
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
       'experiment.tsx',
       'geometry.tsx',
+      'material.tsx',
       'simulate.py',
       'tasks/alpha.tsx',
       'tasks/zeta.tsx',
@@ -119,6 +121,7 @@ describe('ExperimentEditor', () => {
     expect([...monacoMocks.models.keys()].sort()).toEqual([
       'file:///experiment.tsx',
       'file:///geometry.tsx',
+      'file:///material.tsx',
       'file:///simulate.py',
       'file:///tasks/alpha.tsx',
       'file:///tasks/zeta.tsx',

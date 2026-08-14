@@ -49,6 +49,7 @@ const coloredLayer = {
     {
       id: 'part',
       geometry: {},
+      materialRole: 'body',
       material: { name: 'Copper', variables: { color: '#a1b2c3' } },
       surfaces: [],
     },
@@ -224,5 +225,43 @@ describe('JscadViewer geometry lifecycle', () => {
     expect(rendererMocks.entitiesFromSolids.mock.calls[1][0]).toMatchObject({
       color: [217 / 255, 119 / 255, 6 / 255, 1],
     })
+  })
+
+  it('invalidates cached automatic color when only the canonical Material role changes', async () => {
+    const callbacks = {
+      onRenderEnd: vi.fn(),
+      onRenderError: vi.fn(),
+      onRenderStart: vi.fn(),
+    }
+    const automaticLayer = {
+      ...coloredLayer,
+      parts: [
+        {
+          ...coloredLayer.parts[0],
+          materialRole: 'wheel',
+          material: { name: 'Colorless', variables: {} },
+        },
+      ],
+    }
+    const view = render(<JscadViewer layers={[automaticLayer]} lengthUnit="mm" {...callbacks} />)
+    await waitFor(() => expect(rendererMocks.entitiesFromSolids).toHaveBeenCalledTimes(1))
+
+    view.rerender(
+      <JscadViewer
+        layers={[
+          {
+            ...automaticLayer,
+            parts: [{ ...automaticLayer.parts[0], materialRole: 'shell' }],
+          },
+        ]}
+        lengthUnit="mm"
+        {...callbacks}
+      />,
+    )
+
+    await waitFor(() => expect(rendererMocks.entitiesFromSolids).toHaveBeenCalledTimes(2))
+    expect((rendererMocks.entitiesFromSolids.mock.calls[0][0] as { color: unknown }).color).not.toEqual(
+      (rendererMocks.entitiesFromSolids.mock.calls[1][0] as { color: unknown }).color,
+    )
   })
 })

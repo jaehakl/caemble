@@ -32,8 +32,8 @@ describe('CAD scene identity and evaluated tree', () => {
       )
     }
 
-    const first = evaluateCadScene(h(Root, { id: 'root', materials: [material] }))
-    const second = evaluateCadScene(h(Root, { id: 'root', materials: [material] }))
+    const first = evaluateCadScene(h(Root, { id: 'root', materials: { body: material } }))
+    const second = evaluateCadScene(h(Root, { id: 'root', materials: { body: material } }))
     const nodes = flattenTree(first.tree)
 
     expect(first.parts.map((part) => part.id)).toEqual([
@@ -106,7 +106,7 @@ describe('CAD scene identity and evaluated tree', () => {
     expect(second.tree).toEqual(first.tree)
   })
 
-  it('labels materialless scene parts as Unassigned', () => {
+  it('labels unresolved scene parts with their required role', () => {
     function Pair() {
       return h(Fragment, null, h('box', { size: [1, 1, 1] }), h('box', { size: [1, 1, 1], pos: [2, 0, 0] }))
     }
@@ -116,9 +116,8 @@ describe('CAD scene identity and evaluated tree', () => {
 
     expect(scene.parts).toHaveLength(2)
     expect(scene.parts.every((part) => part.material === undefined)).toBe(true)
-    expect(nodes.map((node) => node.label)).toEqual(
-      expect.arrayContaining(['Part 1 · Unassigned', 'Part 2 · Unassigned']),
-    )
+    expect(scene.parts.map((part) => part.materialRole)).toEqual(['body', 'body'])
+    expect(nodes.map((node) => node.label)).toEqual(expect.arrayContaining(['Part 1 · body', 'Part 2 · body']))
   })
 
   it('validates local IDs, sibling uniqueness, and the Geometry ownership boundary', () => {
@@ -128,18 +127,18 @@ describe('CAD scene identity and evaluated tree', () => {
       return h('box', { size: [1, 1, 1] })
     }
 
-    expect(() => evaluateCadScene(h(Box, { materials: [material] }))).toThrow('Geometry Box id')
+    expect(() => evaluateCadScene(h(Box, { materials: { body: material } }))).toThrow('Geometry Box id')
     ;['', 'with space', 'with.dot', '$part-1'].forEach((id) => {
-      expect(() => evaluateCadScene(h(Box, { id, materials: [material] }))).toThrow('Geometry Box id')
+      expect(() => evaluateCadScene(h(Box, { id, materials: { body: material } }))).toThrow('Geometry Box id')
     })
-    expect(() => evaluateCadScene(h(Box, { id: 1, materials: [material] }))).toThrow('Geometry Box id')
-    expect(evaluateCadScene(h(Box, { id: '한글-1', materials: [material] })).parts[0].id).toBe('한글-1')
+    expect(() => evaluateCadScene(h(Box, { id: 1, materials: { body: material } }))).toThrow('Geometry Box id')
+    expect(evaluateCadScene(h(Box, { id: '한글-1', materials: { body: material } })).parts[0].id).toBe('한글-1')
 
     function DuplicateChildren() {
       return h('union', null, h(Box, { id: 'same' }), h(Box, { id: 'same' }))
     }
 
-    expect(() => evaluateCadScene(h(DuplicateChildren, { id: 'root', materials: [material] }))).toThrow(
+    expect(() => evaluateCadScene(h(DuplicateChildren, { id: 'root', materials: { body: material } }))).toThrow(
       'must be unique within parent "root"',
     )
 
@@ -151,12 +150,12 @@ describe('CAD scene identity and evaluated tree', () => {
       h(
         Fragment,
         null,
-        h(Parent, { id: 'left', materials: [material] }),
-        h(Parent, { id: 'right', materials: [material] }),
+        h(Parent, { id: 'left', materials: { body: material } }),
+        h(Parent, { id: 'right', materials: { body: material } }),
       ),
     )
     expect(separateParents.parts.map((part) => part.id)).toEqual(['left.leaf', 'right.leaf'])
-    expect(() => evaluateCadScene(h('box', { size: [1, 1, 1], materials: [material] }))).toThrow(
+    expect(() => evaluateCadScene(h('box', { size: [1, 1, 1], materials: { body: material } }))).toThrow(
       'must be created within a Geometry component',
     )
     expect(() =>
@@ -164,8 +163,8 @@ describe('CAD scene identity and evaluated tree', () => {
         h(
           'union',
           null,
-          h(Box, { id: 'first', materials: [material] }),
-          h(Box, { id: 'second', materials: [material] }),
+          h(Box, { id: 'first', materials: { body: material } }),
+          h(Box, { id: 'second', materials: { body: material } }),
         ),
       ),
     ).toThrow('must be created within a Geometry component')
@@ -187,7 +186,7 @@ describe('CAD scene identity and evaluated tree', () => {
     }
 
     expect(
-      evaluateCadScene(h(Assembly, { id: 'assembly', materials: [material] })).parts.map((part) => part.id),
+      evaluateCadScene(h(Assembly, { id: 'assembly', materials: { body: material } })).parts.map((part) => part.id),
     ).toEqual([
       'assembly.$cell-0-0-0.row.$cell-0-0-0.particle',
       'assembly.$cell-0-0-0.row.$cell-0-1-0.particle',
@@ -207,7 +206,7 @@ describe('CAD scene identity and evaluated tree', () => {
       return h(Fragment, null, h(Leaf, { id: 'left' }), h(Leaf, { id: 'right' }))
     }
 
-    const scene = evaluateCadScene(h(Assembly, { id: 'assembly', materials: [material] }), {
+    const scene = evaluateCadScene(h(Assembly, { id: 'assembly', materials: { body: material } }), {
       geometryGroup: {
         전체: ['assembly', 'assembly.left', 'missing.geometry'],
         empty: [],

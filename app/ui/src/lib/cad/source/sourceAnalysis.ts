@@ -31,7 +31,12 @@ export type GeometrySourceAnalysis = Readonly<{
   }>[]
 }>
 
-type CadSourcePolicy = 'experiment' | 'task' | 'geometry'
+export type MaterialSourceAnalysis = Readonly<{
+  ast: File
+  exports: readonly string[]
+}>
+
+type CadSourcePolicy = 'experiment' | 'task' | 'geometry' | 'material'
 
 export function unwrapSourceExpression(expression: Expression): Expression {
   if (
@@ -109,11 +114,22 @@ function assertStaticImport(statement: Extract<Statement, { type: 'ImportDeclara
   }
   if (source === '@caemble/core') {
     if (
-      policy === 'geometry' &&
-      (statement.specifiers.length === 0 ||
-        statement.specifiers.some((specifier) => specifier.type !== 'ImportSpecifier'))
+      statement.specifiers.length === 0 ||
+      statement.specifiers.some((specifier) => specifier.type !== 'ImportSpecifier')
     ) {
-      throw new SourceAnalysisError('Geometry modules may only use named or type imports from @caemble/core.')
+      throw new SourceAnalysisError(
+        `${policy[0].toUpperCase()}${policy.slice(1)} modules may only use named or type imports from @caemble/core.`,
+      )
+    }
+    if (
+      policy !== 'material' &&
+      statement.importKind !== 'type' &&
+      statement.specifiers.some((specifier) => {
+        if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') return false
+        return (specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value) === 'Material'
+      })
+    ) {
+      throw new SourceAnalysisError('Material instances must be defined in material.tsx and imported from there.')
     }
     return
   }
@@ -126,15 +142,23 @@ function assertStaticImport(statement: Extract<Statement, { type: 'ImportDeclara
     }
     return
   }
-  if ((policy === 'experiment' && source === './geometry') || (policy === 'task' && source === '../geometry')) {
+  const relativeModule =
+    (policy === 'experiment' && source === './geometry') || (policy === 'task' && source === '../geometry')
+      ? 'geometry.tsx'
+      : (policy === 'experiment' && source === './material') || (policy === 'task' && source === '../material')
+        ? 'material.tsx'
+        : null
+  if (relativeModule !== null) {
     if (statement.specifiers.length === 0 || statement.specifiers.some((item) => item.type !== 'ImportSpecifier')) {
-      throw new SourceAnalysisError('geometry.tsx must be used through named imports.')
+      throw new SourceAnalysisError(`${relativeModule} must be used through named imports.`)
     }
     return
   }
   const message =
     policy === 'geometry'
       ? `Geometry modules may only import @caemble/core or named Geometry coordinates: ${source}`
+      : policy === 'material'
+        ? `Material modules may only import @caemble/core: ${source}`
       : `Import is not allowed in an independent Caemble TSX source: ${source}`
   throw new SourceAnalysisError(message)
 }
@@ -325,6 +349,66 @@ export function analyzeCadSource(source: string): SourceAnalysis {
 
 export function analyzeTaskSource(source: string): SourceAnalysis {
   return analyzeFactorySource(source, 'defineTask')
+}
+
+export function analyzeMaterialSource(source: string): MaterialSourceAnalysis {
+  const ast = parseCadSource(source, 'material')
+  const importedBindings = new Set(
+    ast.program.body.flatMap((statement) =>
+      statement.type === 'ImportDeclaration' ? statement.specifiers.map((specifier) => specifier.local.name) : [],
+    ),
+  )
+  const exports: string[] = []
+  ast.program.body.forEach((statement) => {
+    if (statement.type === 'ExportDefaultDeclaration' || statement.type === 'ExportAllDeclaration') {
+      throw new SourceAnalysisError('material.tsx only supports named Material object or factory exports.')
+    }
+    if (statement.type !== 'ExportNamedDeclaration') return
+    if (statement.exportKind === 'type') return
+    const declaration = statement.declaration
+    if (declaration?.type === 'VariableDeclaration') {
+      if (declaration.kind !== 'const') {
+        throw new SourceAnalysisError('Exported Material bindings must be const values or synchronous functions.')
+      }
+      declaration.declarations.forEach((item) => {
+        if (item.id.type !== 'Identifier' || !item.init) {
+          throw new SourceAnalysisError('Exported Material bindings must use initialized identifier names.')
+        }
+        exports.push(item.id.name)
+      })
+    } else if (declaration?.type === 'FunctionDeclaration') {
+      if (!declaration.id || declaration.async || declaration.generator) {
+        throw new SourceAnalysisError('Exported Material factories must be named synchronous functions.')
+      }
+      exports.push(declaration.id.name)
+    } else if (
+      declaration &&
+      declaration.type !== 'TSInterfaceDeclaration' &&
+      declaration.type !== 'TSTypeAliasDeclaration'
+    ) {
+      throw new SourceAnalysisError('material.tsx only supports named Material object or factory exports.')
+    }
+    statement.specifiers.forEach((specifier) => {
+      if (specifier.type !== 'ExportSpecifier') {
+        throw new SourceAnalysisError('material.tsx only supports named local exports.')
+      }
+      if (specifier.exportKind === 'type') return
+      const localName = specifier.local.name
+      const name = specifier.exported.type === 'Identifier' ? specifier.exported.name : null
+      if (!name) throw new SourceAnalysisError('Material exports must use identifier names.')
+      if (name === 'default') {
+        throw new SourceAnalysisError('material.tsx only supports named Material object or factory exports.')
+      }
+      if (importedBindings.has(localName)) {
+        throw new SourceAnalysisError('Material exports must be defined locally in material.tsx.')
+      }
+      exports.push(name)
+    })
+  })
+  if (new Set(exports).size !== exports.length) {
+    throw new SourceAnalysisError('Material export names must be unique.')
+  }
+  return Object.freeze({ ast, exports: Object.freeze(exports) })
 }
 
 export function analyzeGeometrySource(

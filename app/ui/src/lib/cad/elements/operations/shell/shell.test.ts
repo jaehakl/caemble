@@ -161,7 +161,7 @@ describe('shell evaluation', () => {
   const innerMaterial = new Material('Inner shell', { color: '#0ea5e9' })
   const outerMaterial = new Material('Outer shell', { color: '#f97316' })
 
-  it('maps inherited Materials inner-to-outer and applies transforms in the correct order', () => {
+  it('sorts offsets numerically, maps their roles, and applies transforms in the correct order', () => {
     const childMaterial = new Material('Ignored child', { color: '#22c55e' })
 
     function Child() {
@@ -170,13 +170,19 @@ describe('shell evaluation', () => {
 
     const parts = evaluateCad(
       h(
-        () => h('shell', { offsets: [-1, 1], pos: [10, 0, 0] }, h(Child, { id: 'child', materials: [childMaterial] })),
-        { id: 'shell', materials: [innerMaterial, outerMaterial] },
+        () =>
+          h(
+            'shell',
+            { offsets: { outer: 1, inner: -1 }, pos: [10, 0, 0] },
+            h(Child, { id: 'child', materials: { body: childMaterial } }),
+          ),
+        { id: 'shell', materials: { inner: innerMaterial, outer: outerMaterial } },
       ),
     )
 
     expect(parts.map((part) => part.material?.name)).toEqual(['Inner shell', 'Outer shell'])
     expect(parts.map((part) => part.material?.variables.color)).toEqual(['#0ea5e9', '#f97316'])
+    expect(parts.map((part) => part.materialRole)).toEqual(['inner', 'outer'])
     expect(parts.map((part) => part.id)).toEqual(['shell.$part-1', 'shell.$part-2'])
     expectBounds(parts[0].geometry, [
       [9, -3, -4],
@@ -191,9 +197,9 @@ describe('shell evaluation', () => {
   it('allows the same Material instance on multiple layers', () => {
     const shared = new Material('Shared shell', { color: '#a855f7' })
     const parts = evaluateCad(
-      h(() => h('shell', { offsets: [-1, 1] }, h('box', { size: [4, 4, 4] })), {
+      h(() => h('shell', { offsets: { inner: -1, outer: 1 } }, h('box', { size: [4, 4, 4] })), {
         id: 'shell',
-        materials: [shared, shared],
+        materials: { inner: shared, outer: shared },
       }),
     )
 
@@ -203,15 +209,15 @@ describe('shell evaluation', () => {
 
   it('derives sharp box boundaries and smooth sphere boundaries', () => {
     const box = evaluateCad(
-      h(() => h('shell', { offsets: [1] }, h('box', { size: [4, 4, 4] })), {
+      h(() => h('shell', { offsets: { outer: 1 } }, h('box', { size: [4, 4, 4] })), {
         id: 'box-shell',
-        materials: [innerMaterial],
+        materials: { outer: innerMaterial },
       }),
     )[0]
     const sphere = evaluateCad(
-      h(() => h('shell', { offsets: [1] }, h('sphere', { radius: 3, segments: 16 })), {
+      h(() => h('shell', { offsets: { outer: 1 } }, h('sphere', { radius: 3, segments: 16 })), {
         id: 'sphere-shell',
-        materials: [innerMaterial],
+        materials: { outer: innerMaterial },
       }),
     )[0]
 
@@ -224,9 +230,9 @@ describe('shell evaluation', () => {
     const second = new Material('Duplicate shell', { color: '#dc2626' })
 
     const parts = evaluateCad(
-      h(() => h('shell', { offsets: [-1, 1] }, h('box', { size: [4, 4, 4] })), {
+      h(() => h('shell', { offsets: { inner: -1, outer: 1 } }, h('box', { size: [4, 4, 4] })), {
         id: 'shell',
-        materials: [first, second],
+        materials: { inner: first, outer: second },
       }),
     )
 
@@ -235,37 +241,51 @@ describe('shell evaluation', () => {
     expect(parts[0].material).not.toBe(parts[1].material)
   })
 
-  it('allows no Materials or requires exactly one inherited Material for every offset', () => {
-    const shell = h('shell', { offsets: [-1, 1] }, h('box', { size: [4, 4, 4] }))
+  it('keeps unresolved roles and resolves whichever role bindings are available', () => {
+    const shell = h('shell', { offsets: { inner: -1, outer: 1 } }, h('box', { size: [4, 4, 4] }))
 
     const parts = evaluateCad(h(() => shell, { id: 'shell' }))
     expect(parts).toHaveLength(2)
     expect(parts.every((part) => part.material === undefined)).toBe(true)
-    expect(() => evaluateCad(h(() => shell, { id: 'shell', materials: [innerMaterial] }))).toThrow(
-      'requires exactly one inherited Material per offset',
+    expect(parts.map((part) => part.materialRole)).toEqual(['inner', 'outer'])
+
+    const partiallyResolved = evaluateCad(
+      h(() => shell, { id: 'shell', materials: { inner: innerMaterial, unrelated: outerMaterial } }),
     )
+    expect(partiallyResolved.map((part) => part.material?.name)).toEqual(['Inner shell', undefined])
+    expect(partiallyResolved.map((part) => part.materialRole)).toEqual(['inner', 'outer'])
+  })
+
+  it('keeps shell roles exact and case-sensitive and rejects surrounding whitespace', () => {
+    const parts = evaluateCad(
+      h(() => h('shell', { offsets: { Wheel: -1, wheel: 1 } }, h('box', { size: [4, 4, 4] })), {
+        id: 'shell',
+        materials: { Wheel: innerMaterial, wheel: outerMaterial },
+      }),
+    )
+
+    expect(parts.map((part) => part.materialRole)).toEqual(['Wheel', 'wheel'])
     expect(() =>
-      evaluateCad(h(() => shell, { id: 'shell', materials: [innerMaterial, outerMaterial, innerMaterial] })),
-    ).toThrow('requires exactly one inherited Material per offset')
+      evaluateCad(h(() => h('shell', { offsets: { ' wheel': 1 } }, h('box', { size: [4, 4, 4] })), { id: 'shell' })),
+    ).toThrow('must not have leading or trailing whitespace')
   })
 
   it('participates in same-Material CSG with multiple layers', () => {
     const shared = new Material('Unified shell', { color: '#0284c7' })
-    const [combined] = evaluateCad(
-      h(
-        () =>
-          h(
-            'union',
-            null,
-            h(() => h('box', { size: [10, 10, 10] }), { id: 'base', materials: [shared] }),
-            h(() => h('shell', { offsets: [1, 2] }, h('box', { size: [10, 10, 10] })), {
-              id: 'shell',
-              materials: [shared, shared],
-            }),
-          ),
-        { id: 'result' },
-      ),
-    )
+    function Result(input: Record<string, unknown>) {
+      const materials = input.materials as Readonly<Record<string, Material>>
+      return h(
+        'union',
+        null,
+        h(() => h('box', { size: [10, 10, 10] }), { id: 'base' }),
+        h(() => h('shell', { offsets: { inner: 1, outer: 2 } }, h('box', { size: [10, 10, 10] })), {
+          id: 'shell',
+          materials: { inner: materials.body, outer: materials.body },
+        }),
+      )
+    }
+
+    const [combined] = evaluateCad(h(Result, { id: 'result', materials: { body: shared } }))
 
     expect(() => geometries.geom3.validate(combined.geometry)).not.toThrow()
     expect(measurements.measureVolume(combined.geometry)).toBeCloseTo(2744, 4)
@@ -274,15 +294,20 @@ describe('shell evaluation', () => {
 
   it('requires one direct child that evaluates to one valid solid', () => {
     expect(() =>
-      evaluateCad(h(() => h('shell', { offsets: [1] }), { id: 'shell', materials: [outerMaterial] })),
+      evaluateCad(h(() => h('shell', { offsets: { outer: 1 } }), { id: 'shell', materials: { outer: outerMaterial } })),
     ).toThrow('<shell> requires exactly one direct child Geometry')
 
     expect(() =>
       evaluateCad(
         h(
           () =>
-            h('shell', { offsets: [1] }, h('box', { size: [2, 2, 2] }), h('box', { size: [2, 2, 2], pos: [3, 0, 0] })),
-          { id: 'shell', materials: [outerMaterial] },
+            h(
+              'shell',
+              { offsets: { outer: 1 } },
+              h('box', { size: [2, 2, 2] }),
+              h('box', { size: [2, 2, 2], pos: [3, 0, 0] }),
+            ),
+          { id: 'shell', materials: { outer: outerMaterial } },
         ),
       ),
     ).toThrow('<shell> requires exactly one direct child Geometry')
@@ -293,10 +318,10 @@ describe('shell evaluation', () => {
           () =>
             h(
               'shell',
-              { offsets: [1] },
+              { offsets: { outer: 1 } },
               h(Fragment, null, h('box', { size: [2, 2, 2] }), h('box', { size: [2, 2, 2], pos: [3, 0, 0] })),
             ),
-          { id: 'shell', materials: [outerMaterial] },
+          { id: 'shell', materials: { outer: outerMaterial } },
         ),
       ),
     ).toThrow('<shell> child Geometry must evaluate to exactly one solid')

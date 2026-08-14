@@ -3,7 +3,7 @@
 현재 실행 경계는 한 방향이다.
 
 ```text
-Experiment bundle v4 + complete vars
+Experiment bundle v5 + complete vars
 → UI compile/evaluate + frozen Material snapshot
 → prepared Measurement
 → { measurement: BuiltMeasurement }
@@ -33,8 +33,8 @@ Measurement 조건, RecordedData를 저장한다.
 
 먼저 다음 순서로 읽는다.
 
-1. [`document.ts`](../app/ui/src/lib/cad/source/document.ts): document format 2, CAD API 5,
-   bundle format 4와 필수 `geometry.tsx`를 포함한 허용 파일 검증
+1. [`document.ts`](../app/ui/src/lib/cad/source/document.ts): document format 2, CAD API 6,
+   bundle format 5와 필수 `geometry.tsx`/`material.tsx`를 포함한 허용 파일 검증
 2. [`sourceAnalysis.ts`](../app/ui/src/lib/cad/source/sourceAnalysis.ts): import와 숨은 비결정성 정책
 3. [`evaluateDocument.ts`](../app/ui/src/lib/cad/execution/evaluateDocument.ts): 별도-origin runner의
    inspect/evaluate 호출
@@ -45,7 +45,7 @@ Measurement 조건, RecordedData를 저장한다.
 `inspect`는 `varsSchema`를 얻고, `evaluate`는 complete vars를 요구한다. 평가 snapshot은
 `kind: "experiment"` discriminator와 `sourceHash`, `variables`, `varsSchema`, `scene`,
 `taskScenes`, `simulationProgram`만 가진다.
-Reroll은 candidate를 바꿀 뿐 source document를 변경하거나 dirty 처리하지 않는다.
+Candidate 생성은 candidate를 바꿀 뿐 source document를 변경하거나 dirty 처리하지 않는다.
 
 ## 2. CAE manifest와 Solver Catalog
 

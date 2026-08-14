@@ -220,8 +220,8 @@ test('manages Geometry packages and previews an editable Geometry without Monaco
     .update(
       JSON.stringify({
         schemaVersion: 2,
-        moduleFormatVersion: 3,
-        cadApiVersion: 5,
+        moduleFormatVersion: 4,
+        cadApiVersion: 6,
         coordinate,
         sourceHash,
         imports: [],
@@ -261,8 +261,8 @@ test('manages Geometry packages and previews an editable Geometry without Monaco
     source: geometrySource,
     source_hash: sourceHash,
     module_hash: moduleHash,
-    module_format_version: 3,
-    cad_api_version: 5,
+    module_format_version: 4,
+    cad_api_version: 6,
     archived_at: null,
     repository_id: repository.id,
     namespace: repository.namespace,
@@ -295,8 +295,8 @@ test('manages Geometry packages and previews an editable Geometry without Monaco
           {
             geometryVersionId: version.id,
             coordinate,
-            moduleFormatVersion: 3,
-            cadApiVersion: 5,
+            moduleFormatVersion: 4,
+            cadApiVersion: 6,
             description: version.description,
             source: version.source,
             sourceHash,

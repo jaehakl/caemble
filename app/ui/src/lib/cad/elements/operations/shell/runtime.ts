@@ -237,21 +237,42 @@ export const shellDefinition = {
     if (node.children.length !== 1) {
       throw new CadModelError('<shell> requires exactly one direct child Geometry.')
     }
-    if (!Array.isArray(node.props.offsets) || node.props.offsets.length === 0) {
-      throw new CadModelError('<shell> offsets must be a non-empty array.')
+    if (
+      typeof node.props.offsets !== 'object' ||
+      node.props.offsets === null ||
+      Array.isArray(node.props.offsets) ||
+      Object.keys(node.props.offsets).length === 0
+    ) {
+      throw new CadModelError('<shell> offsets must be a non-empty object mapping Material roles to offsets.')
     }
-    if (context.inheritedMaterials !== undefined && context.inheritedMaterials.length !== node.props.offsets.length) {
-      throw new CadModelError('<shell> requires exactly one inherited Material per offset.')
-    }
+    const offsets = Object.entries(node.props.offsets).map(([role, offset]) => {
+      if (!role.trim()) throw new CadModelError('<shell> offset Material roles must not be blank.')
+      if (role !== role.trim()) {
+        throw new CadModelError(`<shell> offset Material role "${role}" must not have leading or trailing whitespace.`)
+      }
+      if (typeof offset !== 'number' || !Number.isFinite(offset) || offset === 0) {
+        throw new CadModelError(`<shell> offset for Material role "${role}" must be a finite non-zero number.`)
+      }
+      return { role, offset }
+    })
+    offsets.sort((left, right) => left.offset - right.offset)
 
     const parts = context.evaluate(node.children[0], context.inheritedMaterials)
     if (parts.length !== 1) {
       throw new CadModelError('<shell> child Geometry must evaluate to exactly one solid.')
     }
 
-    return createShellGeometries(parts[0].geometry, node.props.offsets).map((geometry, index) => ({
-      geometry,
-      ...(context.inheritedMaterials === undefined ? {} : { material: context.inheritedMaterials[index] }),
-    }))
+    return createShellGeometries(
+      parts[0].geometry,
+      offsets.map(({ offset }) => offset),
+    ).map((geometry, index) => {
+      const { role } = offsets[index]
+      const binding = context.inheritedMaterials.get(role)
+      return {
+        geometry,
+        materialRole: binding?.role ?? role,
+        ...(binding?.material === undefined ? {} : { material: binding.material }),
+      }
+    })
   },
 } satisfies GeometryOperationDefinition<'shell'>

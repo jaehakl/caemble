@@ -1,12 +1,9 @@
 import { createExperimentSourceBundle } from '../../cad/source/document'
 import type { CaembleProgramExample } from './types'
 
-export const dcUniformBarExperimentCode = `import {
-  Mat,
-  Material,
-  experiment,
-} from '@caemble/core'
+export const dcUniformBarExperimentCode = `import { experiment } from '@caemble/core'
 import { Conductor } from './geometry'
+import { Copper } from './material'
 
 export default experiment({
   lengthUnit: 'mm',
@@ -22,17 +19,7 @@ export default experiment({
     <Conductor
       id="conductor"
       size={vars.conductorSize}
-      materials={[
-        new Material('Copper', 'reference', {
-          errorRate: 0,
-          'electrical.conductivity': {
-            dtype: 'float64',
-            value: Mat(vars.electricalConductivity),
-            unit: 'S.m-1',
-          },
-          color: '#d97706',
-        }),
-      ]}
+      materials={{ body: Copper(vars.electricalConductivity as number) }}
     />
   ),
 
@@ -54,6 +41,20 @@ export default experiment({
 })
 `
 
+export const dcUniformBarMaterialCode = `import { Mat, Material } from '@caemble/core'
+
+export const Copper = (electricalConductivity: number) =>
+  new Material('Copper', 'reference', {
+    errorRate: 0,
+    'electrical.conductivity': {
+      dtype: 'float64',
+      value: Mat(electricalConductivity),
+      unit: 'S.m-1',
+    },
+    color: '#d97706',
+  })
+`
+
 export const dcUniformBarGeometryCode = `import { type Geometry, type Vec3 } from '@caemble/core'
 
 export const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />
@@ -63,11 +64,18 @@ export const Probe: Geometry = () => <box size={[2, 2, 2]} />
 
 export const dcUniformBarTaskCode = `import { defineTask } from '@caemble/core'
 import { Probe } from '../geometry'
+import { Copper } from '../material'
 
 export default defineTask({
   kernel: { name: 'dc-current-density', version: '0.1.0' },
   lengthUnit: 'mm',
-  geometry: () => <Probe id="probe" pos={[0, -10, 0]} />,
+  geometry: ({ vars }) => (
+    <Probe
+      id="probe"
+      pos={[0, -10, 0]}
+      materials={{ body: Copper(vars.electricalConductivity as number) }}
+    />
+  ),
   config: ({ vars }) => ({
   parameters: {
     relativeTolerance: {
@@ -148,6 +156,7 @@ export const dcUniformBarSimulationCode = `async def simulate(*, sim, tasks, var
 export const dcUniformBarExperimentSourceBundle = createExperimentSourceBundle({
   'experiment.tsx': dcUniformBarExperimentCode,
   'geometry.tsx': dcUniformBarGeometryCode,
+  'material.tsx': dcUniformBarMaterialCode,
   'simulate.py': dcUniformBarSimulationCode,
   'tasks/solveCurrent.tsx': dcUniformBarTaskCode,
 })

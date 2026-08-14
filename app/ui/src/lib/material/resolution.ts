@@ -186,6 +186,33 @@ export function sourceOnlyMaterialParameters(materials: readonly CadSceneMateria
   })
 }
 
+export function projectMaterialResolution(
+  resolution: MaterialResolution,
+  materials: readonly CadSceneMaterial[],
+): MaterialResolution {
+  const names = new Set(materials.map((material) => material.name))
+  const projectedMaterials = Object.freeze(
+    Object.fromEntries(Object.entries(resolution.materialParameters.materials).filter(([name]) => names.has(name))),
+  )
+  const projectedColors = Object.freeze(
+    Object.fromEntries(
+      Object.entries(resolution.materialParameters.materialColors ?? {}).filter(([name]) => names.has(name)),
+    ),
+  )
+  const warnings = resolution.warnings.filter((warning) => {
+    if (!warning.startsWith('Material ')) return true
+    return [...names].some((name) => warning.startsWith(`Material ${name}:`))
+  })
+  return Object.freeze({
+    materialParameters: Object.freeze({
+      schemaVersion: 1,
+      materials: projectedMaterials,
+      ...(resolution.materialParameters.materialColors === undefined ? {} : { materialColors: projectedColors }),
+    }) as FrozenMaterialParameters,
+    warnings: Object.freeze(warnings),
+  })
+}
+
 export function resolveMaterialParameters(
   sceneMaterials: readonly CadSceneMaterial[],
   names: readonly MaterialNameRecord[],

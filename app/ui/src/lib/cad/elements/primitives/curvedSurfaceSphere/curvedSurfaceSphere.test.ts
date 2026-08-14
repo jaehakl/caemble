@@ -58,15 +58,15 @@ describe('curved surface sphere geometry', () => {
       return h('curvedSurfaceSphere', validAttributes)
     }
 
-    const [translated] = evaluateCad(h(CurvedSphere, { id: 'sphere', pos: [3, 0, 0], materials: [material] }))
+    const [translated] = evaluateCad(h(CurvedSphere, { id: 'sphere', pos: [3, 0, 0], materials: { body: material } }))
     const [combined] = evaluateCad(
       h(
         () =>
           h(
             'union',
             null,
-            h(CurvedSphere, { id: 'first', materials: [material] }),
-            h(CurvedSphere, { id: 'second', pos: [1, 0, 0], materials: [material] }),
+            h(CurvedSphere, { id: 'first', materials: { body: material } }),
+            h(CurvedSphere, { id: 'second', pos: [1, 0, 0], materials: { body: material } }),
           ),
         { id: 'combined' },
       ),

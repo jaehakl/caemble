@@ -1,9 +1,6 @@
-export const defaultExperimentProgramCode = `import {
-  Mat,
-  Material,
-  experiment,
-} from '@caemble/core'
+export const defaultExperimentProgramCode = `import { experiment } from '@caemble/core'
 import { Conductor } from './geometry'
+import { Copper } from './material'
 
 export default experiment({
   lengthUnit: 'mm',
@@ -21,17 +18,7 @@ export default experiment({
       size={vars.conductorSize}
       notchPosition={vars.notchPosition}
       notchSize={vars.notchSize}
-      materials={[
-        new Material('Copper', 'reference', {
-          errorRate: 0,
-          'electrical.conductivity': {
-            dtype: 'float64',
-            value: Mat(vars.electricalConductivity),
-            unit: 'S.m-1',
-          },
-          color: '#d97706',
-        }),
-      ]}
+      materials={{ body: Copper(vars.electricalConductivity as number) }}
     />
   ),
   geometryGroup: { conductor: ['conductor'] },
@@ -47,6 +34,20 @@ export default experiment({
     },
   },
 })
+`
+
+export const defaultExperimentMaterialCode = `import { Mat, Material } from '@caemble/core'
+
+export const Copper = (electricalConductivity: number) =>
+  new Material('Copper', 'reference', {
+    errorRate: 0,
+    'electrical.conductivity': {
+      dtype: 'float64',
+      value: Mat(electricalConductivity),
+      unit: 'S.m-1',
+    },
+    color: '#d97706',
+  })
 `
 
 export const defaultExperimentGeometryCode = `import { type Geometry, type Vec3 } from '@caemble/core'
@@ -67,11 +68,17 @@ export const ExperimentDevice: Geometry = () => <box size={[1, 1, 1]} />
 
 export const defaultExperimentTaskCode = `import { defineTask } from '@caemble/core'
 import { ExperimentDevice } from '../geometry'
+import { Copper } from '../material'
 
 export default defineTask({
   kernel: { name: 'dc-current-density', version: '0.1.0' },
   lengthUnit: 'mm',
-  geometry: () => <ExperimentDevice id="experiment-device" />,
+  geometry: ({ vars }) => (
+    <ExperimentDevice
+      id="experiment-device"
+      materials={{ body: Copper(vars.electricalConductivity as number) }}
+    />
+  ),
   config: ({ vars }) => ({
     parameters: {
       relativeTolerance: {

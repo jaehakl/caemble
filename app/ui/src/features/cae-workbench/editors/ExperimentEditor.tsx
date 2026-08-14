@@ -3,6 +3,7 @@ import type * as Monaco from 'monaco-editor'
 import {
   EXPERIMENT_ENTRY_PATH,
   EXPERIMENT_GEOMETRY_PATH,
+  EXPERIMENT_MATERIAL_PATH,
   EXPERIMENT_SIMULATION_PATH,
   experimentTaskName,
   experimentTaskPaths,
@@ -111,6 +112,7 @@ export function ExperimentEditor({
         ? [
             EXPERIMENT_ENTRY_PATH,
             EXPERIMENT_GEOMETRY_PATH,
+            EXPERIMENT_MATERIAL_PATH,
             EXPERIMENT_SIMULATION_PATH,
             ...experimentTaskPaths(document.sourceBundle),
           ]

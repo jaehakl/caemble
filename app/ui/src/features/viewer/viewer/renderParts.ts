@@ -1,5 +1,5 @@
 import type { CadScenePart } from '@/lib/cad'
-import { materialColor, unassignedGeometryColor } from './materialColor'
+import { scenePartColor, unassignedGeometryColor } from './materialColor'
 
 type RenderColor = [number, number, number, number]
 type RenderPolygon = Record<string, unknown> & { color?: number[]; vertices?: number[][] }
@@ -35,7 +35,7 @@ const wireframeColor = colorFromHex(unassignedGeometryColor)
 
 export function createRenderParts(parts: CadScenePart[]): RenderPart[] {
   return parts.map((part) => {
-    const color = materialColor(part.material)
+    const color = scenePartColor(part)
     return {
       geometry: part.geometry,
       color: color === undefined ? wireframeColor : colorFromHex(color),

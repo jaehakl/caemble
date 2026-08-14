@@ -40,7 +40,7 @@ async function compiledDocument(
       .filter(([path]) => path.endsWith('.tsx'))
       .map(async ([entryFile, source]) => {
         const compiled: CompiledCadSource = {
-          apiVersion: 5,
+          apiVersion: 6,
           compilerVersion: CAD_COMPILER_VERSION,
           entryFile,
           code: await compile(source),
@@ -49,7 +49,7 @@ async function compiledDocument(
         return [entryFile, compiled] as const
       }),
   )
-  return { apiVersion: 5, compilerVersion: CAD_COMPILER_VERSION, sourceHash, sources: Object.fromEntries(entries) }
+  return { apiVersion: 6, compilerVersion: CAD_COMPILER_VERSION, sourceHash, sources: Object.fromEntries(entries) }
 }
 
 function module(
@@ -60,7 +60,7 @@ function module(
   sourceHash = '4'.repeat(64),
 ): CompiledGeometryModule {
   return {
-    apiVersion: 5,
+    apiVersion: 6,
     compilerVersion: CAD_COMPILER_VERSION,
     entryFile,
     code,
@@ -92,6 +92,7 @@ describe('compiled Experiment execution with source Geometry modules', () => {
     const rootCoordinate = 'caemble:geometry/jlee/demo/root@1.0.0' as GeometryCoordinate
     const files = {
       'geometry.tsx': `import { Shared } from "${rootCoordinate}"\nexport { Shared }`,
+      'material.tsx': 'export {}',
       'experiment.tsx': `import { experiment } from '@caemble/core'\nimport { Shared } from './geometry'\nexport default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => <Shared id="shared" />, recordedData: {} })`,
       'tasks/electric.tsx': `import { defineTask } from '@caemble/core'\nimport { Shared } from '../geometry'\nexport default defineTask({ kernel: { name: 'test', version: '1' }, geometry: () => <Shared id="task" />, config: () => ({}) })`,
     }
@@ -151,6 +152,42 @@ describe('compiled Experiment execution with source Geometry modules', () => {
         'Static',
       ),
     ).toThrow('function component')
+  })
+
+  it('loads named Material values and validates Material factory results', async () => {
+    const files = {
+      'geometry.tsx': 'export {}',
+      'material.tsx': `import { Material } from '@caemble/core'
+export const Direct = new Material('Direct')
+export const Factory = (name: string) => new Material(name)`,
+      'experiment.tsx': `import { experiment } from '@caemble/core'
+import { Direct, Factory } from './material'
+void Direct
+void Factory('Factory')
+export default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => null, recordedData: {} })`,
+      'tasks/main.tsx': `import { defineTask } from '@caemble/core'
+import { Direct } from '../material'
+void Direct
+export default defineTask({ kernel: { name: 'test', version: '1' }, config: () => ({}) })`,
+    }
+    const valid = await compiledDocument(files, 'c'.repeat(64))
+    expect(() => inspectCompiledDocument(valid)).not.toThrow()
+
+    const invalidValue = await compiledDocument({ ...files, 'material.tsx': 'export const Invalid = 1' }, 'd'.repeat(64))
+    expect(() => inspectCompiledDocument(invalidValue)).toThrow('Material instance or factory')
+
+    const invalidFactory = await compiledDocument(
+      {
+        ...files,
+        'material.tsx': 'export const Invalid = () => 1',
+        'experiment.tsx': `import { experiment } from '@caemble/core'
+import { Invalid } from './material'
+void Invalid()
+export default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => null, recordedData: {} })`,
+      },
+      'e'.repeat(64),
+    )
+    expect(() => inspectCompiledDocument(invalidFactory)).toThrow('must return a Material instance')
   })
 
   it('treats an @local module like a virtual published module during preview', async () => {

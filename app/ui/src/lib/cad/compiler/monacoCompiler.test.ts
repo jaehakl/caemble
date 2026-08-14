@@ -61,8 +61,8 @@ async function document(variant: string) {
   const base = {
     geometryVersionId: 1,
     coordinate,
-    moduleFormatVersion: 3 as const,
-    cadApiVersion: 5 as const,
+    moduleFormatVersion: 4 as const,
+    cadApiVersion: 6 as const,
     description: null,
     source: geometrySource,
     sourceHash,
@@ -112,6 +112,9 @@ describe('Monaco compiler model ownership', () => {
     expect(authoringModel.dispose).not.toHaveBeenCalled()
     expect(monacoMocks.createdUris).toContainEqual(
       expect.stringMatching(/^file:\/\/\/caemble-source\/[0-9a-f]{64}\/geometries\//u),
+    )
+    expect(monacoMocks.createdUris).toContainEqual(
+      expect.stringMatching(/^file:\/\/\/caemble-source\/[0-9a-f]{64}\/material\.tsx$/u),
     )
   })
 

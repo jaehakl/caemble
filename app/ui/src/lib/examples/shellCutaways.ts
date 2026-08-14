@@ -1,5 +1,4 @@
 export const shellCutawaysCode = `import {
-  Material,
   experiment,
   type BoxAttributes,
   type CurvedEdgeCylinderAttributes,
@@ -62,7 +61,7 @@ type ShapeKind = 'curvedCylinder' | 'curvedSphere' | 'fiber' | 'cutaway'
 
 const Shape: Geometry<{
   kind: ShapeKind
-  offsets?: readonly number[]
+  offsets?: Readonly<Record<string, number>>
 }> = ({ kind, offsets }) => {
   const geometry = kind === 'curvedCylinder'
     ? <curvedEdgeCylinder {...curvedCylinderAttributes} />
@@ -79,36 +78,35 @@ const Shape: Geometry<{
 
 const ShellCutaway: Geometry<{
   kind: Exclude<ShapeKind, 'cutaway'>
-  offsets: readonly number[]
+  offsets: Readonly<Record<string, number>>
 }> = ({ kind, materials, offsets }) => {
-  if (!materials || materials.length !== offsets.length + 1) {
-    throw new Error('ShellCutaway requires one core Material and one Material per shell layer.')
-  }
+  const sortedOffsets = Object.entries(offsets).sort((left, right) => left[1] - right[1])
+  const [innerRole, innerOffset] = sortedOffsets[0]
 
-  const core = offsets[0] < 0
+  const core = innerOffset < 0
     ? (
         <subtract>
-          <Shape id="core" kind={kind} materials={[materials[0]]} />
-          <Shape id="inner-shell" kind={kind} offsets={[offsets[0]]} materials={[materials[0]]} />
+          <Shape id="core" kind={kind} materials={{ body: materials?.core }} />
+          <Shape
+            id="inner-shell"
+            kind={kind}
+            offsets={{ [innerRole]: innerOffset }}
+            materials={{ [innerRole]: materials?.core }}
+          />
         </subtract>
       )
-    : <Shape id="core" kind={kind} materials={[materials[0]]} />
+    : <Shape id="core" kind={kind} materials={{ body: materials?.core }} />
 
   return (
     <subtract>
       <>
         {core}
-        <Shape id="shell" kind={kind} offsets={offsets} materials={materials.slice(1)} />
+        <Shape id="shell" kind={kind} offsets={offsets} />
       </>
-      <Shape id="cutaway" kind="cutaway" materials={[materials[0]]} />
+      <Shape id="cutaway" kind="cutaway" materials={{ body: materials?.core }} />
     </subtract>
   )
 }
-
-const coreMaterial = new Material('Core', { color: '#475569' })
-const layer1Material = new Material('Layer 1', { color: '#0ea5e9' })
-const layer2Material = new Material('Layer 2', { color: '#f59e0b' })
-const layer3Material = new Material('Layer 3', { color: '#d946ef' })
 
 export default experiment({
   lengthUnit: 'mm',
@@ -117,22 +115,19 @@ export default experiment({
       <ShellCutaway
         id="cylinder"
         kind="curvedCylinder"
-        offsets={[0.5]}
+        offsets={{ layer1: 0.5 }}
         pos={[-22, 0, 0]}
-        materials={[coreMaterial, layer1Material]}
       />
       <ShellCutaway
         id="sphere"
         kind="curvedSphere"
-        offsets={[0.5, 1]}
-        materials={[coreMaterial, layer1Material, layer2Material]}
+        offsets={{ layer1: 0.5, layer2: 1 }}
       />
       <ShellCutaway
         id="fiber"
         kind="fiber"
-        offsets={[-0.5, 0.5, 1]}
+        offsets={{ inner: -0.5, layer1: 0.5, layer2: 1 }}
         pos={[22, 0, 0]}
-        materials={[coreMaterial, layer1Material, layer2Material, layer3Material]}
       />
     </>
   ),

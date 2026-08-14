@@ -1,12 +1,9 @@
 import { createExperimentSourceBundle } from '../../cad/source/document'
 import type { CaembleProgramExample } from './types'
 
-export const dcNotchedCurrentDensityExperimentCode = `import {
-  Mat,
-  Material,
-  experiment,
-} from '@caemble/core'
+export const dcNotchedCurrentDensityExperimentCode = `import { experiment } from '@caemble/core'
 import { NotchedConductor } from './geometry'
+import { Copper } from './material'
 
 export default experiment({
   lengthUnit: 'mm',
@@ -25,17 +22,7 @@ export default experiment({
       size={vars.conductorSize}
       notchPosition={vars.notchPosition}
       notchSize={vars.notchSize}
-      materials={[
-        new Material('Copper', 'reference', {
-          errorRate: 0,
-          'electrical.conductivity': {
-            dtype: 'float64',
-            value: Mat(vars.electricalConductivity),
-            unit: 'S.m-1',
-          },
-          color: '#c2410c',
-        }),
-      ]}
+      materials={{ body: Copper(vars.electricalConductivity as number) }}
     />
   ),
 
@@ -71,6 +58,20 @@ export default experiment({
 })
 `
 
+export const dcNotchedCurrentDensityMaterialCode = `import { Mat, Material } from '@caemble/core'
+
+export const Copper = (electricalConductivity: number) =>
+  new Material('Copper', 'reference', {
+    errorRate: 0,
+    'electrical.conductivity': {
+      dtype: 'float64',
+      value: Mat(electricalConductivity),
+      unit: 'S.m-1',
+    },
+    color: '#c2410c',
+  })
+`
+
 export const dcNotchedCurrentDensityGeometryCode = `import { type Geometry, type Vec3 } from '@caemble/core'
 
 export const NotchedConductor: Geometry<{
@@ -89,11 +90,18 @@ export const FieldProbe: Geometry = () => <box size={[3, 3, 3]} />
 
 export const dcNotchedCurrentDensityTaskCode = `import { defineTask } from '@caemble/core'
 import { FieldProbe } from '../geometry'
+import { Copper } from '../material'
 
 export default defineTask({
   kernel: { name: 'dc-current-density', version: '0.1.0' },
   lengthUnit: 'mm',
-  geometry: () => <FieldProbe id="field-probe" pos={[0, -15, 0]} />,
+  geometry: ({ vars }) => (
+    <FieldProbe
+      id="field-probe"
+      pos={[0, -15, 0]}
+      materials={{ body: Copper(vars.electricalConductivity as number) }}
+    />
+  ),
   config: ({ vars }) => ({
   parameters: {
     relativeTolerance: {
@@ -188,6 +196,7 @@ export const dcNotchedCurrentDensitySimulationCode = `async def simulate(*, sim,
 export const dcNotchedCurrentDensityExperimentSourceBundle = createExperimentSourceBundle({
   'experiment.tsx': dcNotchedCurrentDensityExperimentCode,
   'geometry.tsx': dcNotchedCurrentDensityGeometryCode,
+  'material.tsx': dcNotchedCurrentDensityMaterialCode,
   'simulate.py': dcNotchedCurrentDensitySimulationCode,
   'tasks/solveField.tsx': dcNotchedCurrentDensityTaskCode,
 })

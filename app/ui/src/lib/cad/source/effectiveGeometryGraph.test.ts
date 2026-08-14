@@ -18,8 +18,8 @@ async function published(): Promise<GeometrySnapshotModule> {
   const base = {
     geometryVersionId: 1,
     coordinate: exact,
-    moduleFormatVersion: 3 as const,
-    cadApiVersion: 5 as const,
+    moduleFormatVersion: 4 as const,
+    cadApiVersion: 6 as const,
     description: null,
     source,
     sourceHash,

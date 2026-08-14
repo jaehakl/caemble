@@ -18,11 +18,13 @@ describe('typed CAD scene snapshots', () => {
     expect(serialized.sceneHash).toMatch(/^[0-9a-f]{64}$/)
     expect(serialized.parts[0].geometry.positions).toBeInstanceOf(Float64Array)
     expect(serialized.parts[0].geometry.polygonOffsets).toBeInstanceOf(Uint32Array)
+    expect(serialized.parts[0].materialRole).toBe('body')
     expect(() => assertSerializableCadScene(serialized)).not.toThrow()
     expect(cadSnapshotTransferables(serialized)).toHaveLength(2)
 
     const restored = deserializeCadScene(serialized)
     expect(geometries.geom3.isA(restored.parts[0].geometry)).toBe(true)
+    expect(restored.parts[0].materialRole).toBe('body')
     expect(
       geometries.geom3.toPolygons(restored.parts[0].geometry as Parameters<typeof geometries.geom3.toPolygons>[0]),
     ).toHaveLength(6)
@@ -36,6 +38,18 @@ describe('typed CAD scene snapshots', () => {
 
     expect(repeated.sceneHash).toBe(first.sceneHash)
     expect(changed.sceneHash).not.toBe(first.sceneHash)
+    expect(() =>
+      assertSerializableCadScene({
+        ...first,
+        parts: [{ ...first.parts[0], materialRole: 'changed' }],
+      }),
+    ).toThrow('does not match its hash')
+    expect(() =>
+      assertSerializableCadScene({
+        ...first,
+        parts: [{ ...first.parts[0], materialRole: ' body' }],
+      }),
+    ).toThrow('metadata is invalid')
     first.parts[0].geometry.positions[0] += 1
     expect(() => assertSerializableCadScene(first)).toThrow('does not match its hash')
   })

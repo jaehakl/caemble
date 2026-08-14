@@ -1,5 +1,4 @@
 export const curvedSurfaceSphereHcpArrayCode = `import {
-  Material,
   experiment,
   type Geometry,
 } from '@caemble/core'
@@ -91,17 +90,6 @@ export default experiment({
         azimuthalMode3Phase={0}
         polarMode2Amplitude={0.015}
         polarMode2Phase={0}
-        materials={[
-          new Material('HCP Particle', {
-            'general.mass_density': {
-              dtype: 'float64',
-              value: 1.05,
-              errorRate: 0,
-              unit: 'g.cm-3',
-            },
-            color: '#7c3aed',
-          }),
-        ]}
       />
     </array>
   ),
