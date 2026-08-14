@@ -1,4 +1,7 @@
+import generate from '@babel/generator'
 import { parse } from '@babel/parser'
+import traverse, { type Binding, type NodePath } from '@babel/traverse'
+import * as t from '@babel/types'
 import type { Expression, File, FunctionDeclaration, ObjectExpression, ReturnStatement, Statement } from '@babel/types'
 
 export class SourceAnalysisError extends Error {
@@ -126,7 +129,9 @@ function assertStaticImport(statement: Extract<Statement, { type: 'ImportDeclara
       statement.importKind !== 'type' &&
       statement.specifiers.some((specifier) => {
         if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') return false
-        return (specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value) === 'Material'
+        return (
+          (specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value) === 'Material'
+        )
       })
     ) {
       throw new SourceAnalysisError('Material instances must be defined in material.tsx and imported from there.')
@@ -159,7 +164,7 @@ function assertStaticImport(statement: Extract<Statement, { type: 'ImportDeclara
       ? `Geometry modules may only import @caemble/core or named Geometry coordinates: ${source}`
       : policy === 'material'
         ? `Material modules may only import @caemble/core: ${source}`
-      : `Import is not allowed in an independent Caemble TSX source: ${source}`
+        : `Import is not allowed in an independent Caemble TSX source: ${source}`
   throw new SourceAnalysisError(message)
 }
 
@@ -580,4 +585,209 @@ export function analyzeGeometrySource(
     exports: Object.freeze(exports),
     imports: Object.freeze(imports.map((item) => Object.freeze(item))),
   })
+}
+
+function exportedIdentifierName(value: t.Identifier | t.StringLiteral) {
+  return value.type === 'Identifier' ? value.name : value.value
+}
+
+function isTopLevelDeclaration(path: NodePath) {
+  return (
+    path.parentPath?.isProgram() ||
+    (path.parentPath?.isExportNamedDeclaration() && path.parentPath.parentPath?.isProgram())
+  )
+}
+
+function assertProjectableTopLevel(ast: File) {
+  ast.program.body.forEach((statement) => {
+    if (
+      statement.type === 'ImportDeclaration' ||
+      statement.type === 'ExportNamedDeclaration' ||
+      statement.type === 'VariableDeclaration' ||
+      statement.type === 'FunctionDeclaration' ||
+      statement.type === 'ClassDeclaration' ||
+      statement.type === 'TSDeclareFunction' ||
+      statement.type === 'TSInterfaceDeclaration' ||
+      statement.type === 'TSTypeAliasDeclaration' ||
+      statement.type === 'TSEnumDeclaration' ||
+      statement.type === 'TSModuleDeclaration' ||
+      statement.type === 'EmptyStatement'
+    ) {
+      return
+    }
+    throw new SourceAnalysisError(
+      'Geometry export projection only supports top-level imports and declarations; move executable setup into the selected component or a helper function.',
+    )
+  })
+}
+
+export function projectGeometryExportSource(source: string, exportName: string) {
+  const analysis = analyzeGeometrySource(source, { allowEmpty: true, allowLocal: true })
+  if (!analysis.exports.some((item) => item.name === exportName)) {
+    throw new SourceAnalysisError(`Geometry export was not found: ${exportName}`)
+  }
+  assertProjectableTopLevel(analysis.ast)
+
+  let localName: string | null = null
+  let selectedDeclaration: t.Node | null = null
+  analysis.ast.program.body.forEach((statement) => {
+    if (statement.type !== 'ExportNamedDeclaration' || statement.exportKind === 'type') return
+    if (statement.declaration?.type === 'VariableDeclaration') {
+      statement.declaration.declarations.forEach((declaration) => {
+        if (declaration.id.type === 'Identifier' && declaration.id.name === exportName) {
+          localName = declaration.id.name
+          selectedDeclaration = declaration
+        }
+      })
+    } else if (statement.declaration?.type === 'FunctionDeclaration' && statement.declaration.id?.name === exportName) {
+      localName = statement.declaration.id.name
+      selectedDeclaration = statement.declaration
+    }
+    statement.specifiers.forEach((specifier) => {
+      if (
+        specifier.type === 'ExportSpecifier' &&
+        specifier.exportKind !== 'type' &&
+        exportedIdentifierName(specifier.exported) === exportName
+      ) {
+        localName = exportedIdentifierName(specifier.local)
+      }
+    })
+  })
+  if (!localName) throw new SourceAnalysisError(`Geometry export binding could not be resolved: ${exportName}`)
+
+  const paths: { program?: NodePath<t.Program> } = {}
+  const extraDeclarations = new Map<string, NodePath>()
+  traverse(analysis.ast, {
+    Program(path) {
+      paths.program = path
+    },
+    TSInterfaceDeclaration(path) {
+      if (isTopLevelDeclaration(path)) extraDeclarations.set(path.node.id.name, path)
+    },
+    TSTypeAliasDeclaration(path) {
+      if (isTopLevelDeclaration(path)) extraDeclarations.set(path.node.id.name, path)
+    },
+    TSEnumDeclaration(path) {
+      if (isTopLevelDeclaration(path)) extraDeclarations.set(path.node.id.name, path)
+    },
+    TSModuleDeclaration(path) {
+      if (isTopLevelDeclaration(path) && path.node.id.type === 'Identifier') {
+        extraDeclarations.set(path.node.id.name, path)
+      }
+    },
+  })
+  const programPath = paths.program
+  if (!programPath) throw new SourceAnalysisError('Geometry source program could not be traversed.')
+
+  const requiredNodes = new Set<t.Node>()
+  const pending: NodePath[] = []
+  const addDeclaration = (path: NodePath, binding?: Binding) => {
+    if (requiredNodes.has(path.node)) return
+    if (binding && (binding.kind === 'let' || binding.kind === 'var' || !binding.constant)) {
+      throw new SourceAnalysisError(
+        `Geometry export projection cannot preserve mutable top-level binding: ${binding.identifier.name}`,
+      )
+    }
+    requiredNodes.add(path.node)
+    pending.push(path)
+  }
+  const targetBinding = programPath.scope.getBinding(localName)
+  if (!targetBinding || targetBinding.scope !== programPath.scope) {
+    throw new SourceAnalysisError(`Geometry export must resolve to a top-level binding: ${exportName}`)
+  }
+  addDeclaration(targetBinding.path, targetBinding)
+
+  const addReference = (path: NodePath<t.Identifier | t.JSXIdentifier>) => {
+    if (!path.isReferencedIdentifier()) return
+    const binding = path.scope.getBinding(path.node.name)
+    if (binding) {
+      if (binding.scope === programPath!.scope) addDeclaration(binding.path, binding)
+      return
+    }
+    const declaration = extraDeclarations.get(path.node.name)
+    if (declaration) addDeclaration(declaration)
+  }
+  while (pending.length) {
+    pending.shift()!.traverse({
+      Identifier: addReference,
+      JSXIdentifier: addReference,
+    })
+  }
+
+  const projectedBody: Statement[] = []
+  analysis.ast.program.body.forEach((statement) => {
+    if (statement.type === 'ImportDeclaration') {
+      const specifiers = statement.specifiers.filter((specifier) => requiredNodes.has(specifier))
+      if (!specifiers.length) return
+      const imported = t.cloneNode(statement, true)
+      imported.specifiers = specifiers.map((specifier) => t.cloneNode(specifier, true))
+      projectedBody.push(imported)
+      return
+    }
+    if (statement.type === 'ExportNamedDeclaration') {
+      const declaration = statement.declaration
+      if (declaration?.type === 'VariableDeclaration') {
+        declaration.declarations.forEach((item) => {
+          if (!requiredNodes.has(item)) return
+          const variable = t.cloneNode(declaration, true)
+          variable.declarations = [t.cloneNode(item, true)]
+          if (item === selectedDeclaration) {
+            const exported = t.cloneNode(statement, true)
+            exported.declaration = variable
+            exported.specifiers = []
+            projectedBody.push(exported)
+          } else {
+            projectedBody.push(variable)
+          }
+        })
+      } else if (declaration && requiredNodes.has(declaration)) {
+        const cloned = t.cloneNode(declaration, true) as Statement
+        if (declaration === selectedDeclaration) {
+          const exported = t.cloneNode(statement, true)
+          exported.declaration = cloned as t.Declaration
+          exported.specifiers = []
+          projectedBody.push(exported)
+        } else {
+          projectedBody.push(cloned)
+        }
+      }
+      const specifiers = statement.specifiers.filter(
+        (specifier) =>
+          specifier.type === 'ExportSpecifier' &&
+          specifier.exportKind !== 'type' &&
+          exportedIdentifierName(specifier.exported) === exportName,
+      )
+      if (specifiers.length) {
+        const exported = t.cloneNode(statement, true)
+        exported.declaration = null
+        exported.specifiers = specifiers.map((specifier) => t.cloneNode(specifier, true))
+        projectedBody.push(exported)
+      }
+      return
+    }
+    if (statement.type === 'VariableDeclaration') {
+      const declarations = statement.declarations.filter((item) => requiredNodes.has(item))
+      if (!declarations.length) return
+      const variable = t.cloneNode(statement, true)
+      variable.declarations = declarations.map((item) => t.cloneNode(item, true))
+      projectedBody.push(variable)
+      return
+    }
+    if (requiredNodes.has(statement)) projectedBody.push(t.cloneNode(statement, true) as Statement)
+  })
+
+  const projectedAst = t.cloneNode(analysis.ast, true)
+  projectedAst.program.body = projectedBody
+  const result = `${generate(projectedAst, { comments: true }).code.trim()}\n`
+  const projected = analyzeGeometrySource(result, { allowLocal: true })
+  if (projected.exports.length !== 1 || projected.exports[0]?.name !== exportName) {
+    throw new SourceAnalysisError(`Projected Geometry source must export only ${exportName}.`)
+  }
+  const localImport = projected.imports.find((item) => item.coordinate.endsWith('@local'))
+  if (localImport) {
+    throw new SourceAnalysisError(
+      `Publish local Geometry dependency first, then retry with an exact import: ${localImport.coordinate}`,
+    )
+  }
+  return result
 }

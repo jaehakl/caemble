@@ -25,7 +25,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@babel/generator": "^7.29.7",
     "@babel/parser": "^7.29.7",
+    "@babel/traverse": "^7.29.7",
+    "@babel/types": "^7.29.7",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",

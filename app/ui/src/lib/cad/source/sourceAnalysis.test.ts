@@ -5,6 +5,7 @@ import {
   analyzeMaterialSource,
   analyzeTaskSource,
   parseCadSource,
+  projectGeometryExportSource,
   staticCadSourceImports,
 } from './sourceAnalysis'
 
@@ -35,7 +36,9 @@ void new Material('Inline')`,
     expect(() => analyzeMaterialSource("import { Part } from './geometry'\nexport { Part }")).toThrow('@caemble/core')
     expect(() => analyzeMaterialSource('export default 1')).toThrow('named Material')
     expect(() => analyzeMaterialSource('const Steel = {}\nexport { Steel as default }')).toThrow('named Material')
-    expect(() => analyzeGeometrySource("import { Steel } from './material'\nexport const Part = () => <box />")).toThrow()
+    expect(() =>
+      analyzeGeometrySource("import { Steel } from './material'\nexport const Part = () => <box />"),
+    ).toThrow()
   })
 
   it('derives multiple named function exports and aliased exact/local imports', () => {
@@ -72,5 +75,77 @@ export function Alternate() { return <Preview id="preview" /> }`
     expect(() => analyzeGeometrySource("import value from '@caemble/geometries'\nexport { value }")).toThrow()
     expect(() => parseCadSource('const value = Math.random()')).toThrow('Math.random')
     expect(() => parseCadSource('const value = Date.now()')).toThrow('Date')
+  })
+
+  it('projects one Geometry export with only its transitive declarations and import specifiers', () => {
+    const coordinate = 'caemble:geometry/jlee/common/child@1.2.3'
+    const source = `import { type Geometry, type Vec3 } from '@caemble/core'
+import { Child, Unused } from "${coordinate}"
+
+const Shared: Geometry<{ size: Vec3 }> = ({ size }) => <Child id="child" size={size} />
+const Unrelated = () => <Unused id="unused" />
+
+export const Assembly: Geometry<{ size: Vec3 }> = ({ size }) => <Shared id="shared" size={size} />
+export const Other: Geometry = () => <Unrelated id="other" />
+`
+    const projected = projectGeometryExportSource(source, 'Assembly')
+    const analysis = analyzeGeometrySource(projected)
+    expect(analysis.exports.map((item) => item.name)).toEqual(['Assembly'])
+    expect(analysis.imports.map((item) => item.exportName)).toEqual(['Child'])
+    expect(projected).toMatch(/import \{\s*type Geometry,\s*type Vec3\s*\} from ['"]@caemble\/core['"]/)
+    expect(projected).toContain('const Shared')
+    expect(projected).not.toContain('Unused')
+    expect(projected).not.toContain('Unrelated')
+    expect(projected).not.toContain('Other')
+  })
+
+  it('keeps a wheel-style private component closure and an aliased public export', () => {
+    const source = `import { type Geometry } from '@caemble/core'
+const Tire: Geometry = () => <cylinder radius={10} height={2} />
+const Hub: Geometry = () => <cylinder radius={4} height={2} />
+const WheelParts: Geometry = () => <><Tire id="tire" /><Hub id="hub" /></>
+const InternalWheel: Geometry = () => <WheelParts id="parts" />
+const Unused: Geometry = () => <box />
+export { InternalWheel as WheelAssembly, Unused }
+`
+    const projected = projectGeometryExportSource(source, 'WheelAssembly')
+    expect(projected).toContain('const Tire')
+    expect(projected).toContain('const Hub')
+    expect(projected).toContain('const WheelParts')
+    expect(projected).toContain('export { InternalWheel as WheelAssembly }')
+    expect(projected).not.toContain('const Unused')
+    expect(analyzeGeometrySource(projected).exports.map((item) => item.name)).toEqual(['WheelAssembly'])
+  })
+
+  it('projects an aliased imported binding re-export', () => {
+    const coordinate = 'caemble:geometry/jlee/common/child@1.2.3'
+    const projected = projectGeometryExportSource(
+      `import { Child as InternalChild, Unused } from "${coordinate}"
+export { InternalChild as PublishedChild, Unused }
+`,
+      'PublishedChild',
+    )
+    expect(projected).toContain('import { Child as InternalChild }')
+    expect(projected).toContain('export { InternalChild as PublishedChild }')
+    expect(projected).not.toContain('Unused')
+    expect(analyzeGeometrySource(projected).exports.map((item) => item.name)).toEqual(['PublishedChild'])
+  })
+
+  it('rejects unsafe mutable projection and selected local Geometry dependencies', () => {
+    expect(() =>
+      projectGeometryExportSource(
+        `let size = 1\nexport const Mutable = () => <box size={[size, size, size]} />`,
+        'Mutable',
+      ),
+    ).toThrow('mutable top-level binding')
+    expect(() =>
+      projectGeometryExportSource(
+        `import { Child } from 'caemble:geometry/jlee/common/child@local'\nexport const Parent = () => <Child id="child" />`,
+        'Parent',
+      ),
+    ).toThrow('Publish local Geometry dependency first')
+    expect(() => projectGeometryExportSource('export const Part = () => <box />', 'Missing')).toThrow(
+      'Geometry export was not found',
+    )
   })
 })

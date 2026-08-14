@@ -4,6 +4,7 @@ export type WorkbenchDialog =
   | 'ai-chat'
   | 'experiment-history'
   | 'geometry-manager'
+  | 'publish-geometry-export'
   | 'jobs'
   | 'launchers'
   | 'load-experiment'

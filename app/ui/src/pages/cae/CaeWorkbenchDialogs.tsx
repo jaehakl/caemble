@@ -10,7 +10,7 @@ import {
 } from '@/features/cae-workbench/dialogs'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { SavedExperiment, WorkbenchTabId } from '@/features/cae-workbench/types'
-import { GeometryManager } from '@/features/cae-workbench/geometry'
+import { GeometryExportPublishDialog, GeometryManager } from '@/features/cae-workbench/geometry'
 import { SaveDefinitionDialog } from '@/features/viewer/persistence/SaveDefinitionDialog'
 import { AnalysisWorkspace } from '@/pages/analysis/AnalysisPage'
 import { MaterialManager } from '@/pages/materials/MaterialManager'
@@ -110,6 +110,11 @@ export function CaeWorkbenchDialogs({
                 : 'Experiment를 저장했습니다.',
           )
         }}
+      />
+      <GeometryExportPublishDialog
+        geometry={workbench.geometry}
+        onOpenChange={closeDialog}
+        open={dialog === 'publish-geometry-export'}
       />
       <Dialog open={dialog === 'material'} onOpenChange={closeDialog}>
         <DialogContent className="grid h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-0 sm:max-w-[calc(100%-2rem)]">

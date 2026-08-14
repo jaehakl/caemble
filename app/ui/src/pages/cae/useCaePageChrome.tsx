@@ -22,6 +22,7 @@ import {
   Server,
   Square,
   TableProperties,
+  Upload,
 } from 'lucide-react'
 import type { WorkbenchAction, WorkbenchMenuDefinition } from '@/features/cae-workbench/chrome'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
@@ -276,6 +277,20 @@ export function useCaePageChrome({
         disabledReason: !authenticated ? loginReason : undefined,
         onSelect: () => setDialog('geometry-manager'),
       },
+      publishGeometryExport: {
+        id: 'publish-geometry-export',
+        label: 'Publish geometry.tsx Export',
+        icon: <Upload className="size-4" />,
+        disabled: !authenticated || workbench.geometry.entryExports.length === 0 || workbench.geometry.busy,
+        disabledReason: !authenticated
+          ? loginReason
+          : workbench.geometry.entryExports.length === 0
+            ? 'geometry.tsx에 분석 가능한 named Geometry export가 없습니다.'
+            : workbench.geometry.busy
+              ? '다른 Geometry 작업이 진행 중입니다.'
+              : undefined,
+        onSelect: () => setDialog('publish-geometry-export'),
+      },
       aiChat: {
         id: 'ai-chat',
         label: 'AI Chat',
@@ -365,6 +380,7 @@ export function useCaePageChrome({
           { type: 'action', action: actions.saveExperiment },
           { type: 'action', action: actions.saveExperimentAs },
           { type: 'separator', id: 'material-separator' },
+          { type: 'action', action: actions.publishGeometryExport },
           { type: 'action', action: actions.geometryManager },
           { type: 'action', action: actions.materialManager },
         ],
@@ -462,7 +478,7 @@ export function useCaePageChrome({
       tabId: 'geometry',
       label: 'Geometry',
       content: (
-        <RibbonActions actions={[actions.geometryManager]}>
+        <RibbonActions actions={[actions.publishGeometryExport, actions.geometryManager]}>
           <span className="text-sm font-semibold">Geometry modules</span>
           <span className="mt-1 text-xs text-muted-foreground">
             {workbench.geometryLocalDraftDirty

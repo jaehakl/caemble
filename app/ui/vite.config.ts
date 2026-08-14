@@ -8,8 +8,9 @@ const sdkRoot = fileURLToPath(new URL('../sdk/master/js', import.meta.url))
 const slavesRoot = fileURLToPath(new URL('../slaves', import.meta.url))
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   cacheDir: 'node_modules/.vite-app',
+  define: mode === 'test' ? {} : { 'process.env.BABEL_TYPES_8_BREAKING': 'false' },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -48,4 +49,4 @@ export default defineConfig({
     exclude: [...configDefaults.exclude, 'e2e/**'],
     setupFiles: ['./src/test/setup.ts'],
   },
-})
+}))

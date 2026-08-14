@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, renderHook, waitFor } from '@testing-library/react'
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from '@/api'
 import {
   createGeometrySnapshot,
   geometryModuleHash,
@@ -68,6 +69,7 @@ const sourceFiles = {
 
 describe('source-based Geometry workspace state', () => {
   beforeEach(() => vi.clearAllMocks())
+  afterEach(cleanup)
 
   it('creates a standalone @local draft with a named multi-export compatible template', () => {
     const { result } = renderHook(
@@ -362,5 +364,209 @@ describe('source-based Geometry workspace state', () => {
     expect(result.current.drafts[current]).toBeDefined()
     expect(result.current.entrySource).toContain(current)
     expect(result.current.selectedCoordinate).toBe(current)
+  })
+
+  it('atomically publishes a projected Geometry and stages the exact Version without changing geometry.tsx', async () => {
+    const files = {
+      ...sourceFiles,
+      'geometry.tsx': `import { type Geometry } from '@caemble/core'\nexport const Part: Geometry = () => <box />\n`,
+    }
+    const coordinate = 'caemble:geometry/jlee/common/part@0.1.0' as GeometryCoordinate
+    const draftId = '00000000-0000-4000-8000-000000000000'
+    vi.spyOn(crypto, 'randomUUID').mockReturnValueOnce(draftId)
+    api.planPublish.mockResolvedValueOnce({
+      planHash: 'a'.repeat(64),
+      steps: [
+        {
+          draftId,
+          baseGeometryVersionId: null,
+          repositoryId: null,
+          repository: 'common',
+          package: 'part',
+          version: '0.1.0',
+          coordinate,
+          localCoordinate: 'caemble:geometry/jlee/common/part@local',
+          description: 'Uploaded part',
+          source: files['geometry.tsx'],
+          sourceHash: 'b'.repeat(64),
+          moduleHash: 'c'.repeat(64),
+          exports: ['Part'],
+          imports: [],
+        },
+      ],
+      replacements: [
+        {
+          draftId,
+          localCoordinate: 'caemble:geometry/jlee/common/part@local',
+          coordinate,
+        },
+      ],
+    } as never)
+    api.publish.mockResolvedValueOnce({
+      planHash: 'a'.repeat(64),
+      published: [{ id: 42, coordinate }],
+      replacements: [
+        {
+          draftId,
+          localCoordinate: 'caemble:geometry/jlee/common/part@local',
+          coordinate,
+        },
+      ],
+    } as never)
+    api.resolveVersion.mockResolvedValueOnce({
+      root: { geometryVersionId: 42, coordinate, moduleHash: 'b'.repeat(64), exports: ['Part'] },
+      modules: [],
+    })
+    const { result } = renderHook(
+      () =>
+        useGeometryWorkspaceState({
+          initialNamespace: 'jlee',
+          onExperimentChange: vi.fn(),
+          snapshot: emptySnapshot,
+          sourceFiles: files,
+        }),
+      { wrapper },
+    )
+
+    let published: Awaited<ReturnType<(typeof result.current)['publishNewGeometry']>> | undefined
+    await act(async () => {
+      published = await result.current.publishNewGeometry({
+        description: 'Uploaded part',
+        exportName: 'Part',
+        packageName: 'part',
+        repository: 'common',
+        repositoryId: null,
+        source: files['geometry.tsx'],
+      })
+    })
+
+    expect(published?.version.coordinate).toBe(coordinate)
+    expect(api.planPublish.mock.invocationCallOrder[0]).toBeLessThan(api.publish.mock.invocationCallOrder[0])
+    expect(api.resolveVersion).toHaveBeenCalledWith(42)
+    expect(result.current.entrySource).toBe(files['geometry.tsx'])
+    expect(result.current.drafts).toEqual({})
+  })
+
+  it('retries one revised plan when the atomic publish request is unchanged', async () => {
+    const source = 'export const Part = () => <box />'
+    const coordinate = 'caemble:geometry/jlee/common/part@0.1.0' as GeometryCoordinate
+    const localCoordinate = 'caemble:geometry/jlee/common/part@local'
+    const draftId = '00000000-0000-4000-8000-000000000001'
+    vi.spyOn(crypto, 'randomUUID').mockReturnValueOnce(draftId)
+    const revisedPlan = {
+      planHash: 'b'.repeat(64),
+      steps: [
+        {
+          draftId,
+          baseGeometryVersionId: null,
+          repositoryId: null,
+          repository: 'common',
+          package: 'part',
+          version: '0.1.0',
+          coordinate,
+          localCoordinate,
+          description: null,
+          source,
+          sourceHash: 'c'.repeat(64),
+          moduleHash: 'd'.repeat(64),
+          exports: ['Part'],
+          imports: [],
+        },
+      ],
+      replacements: [{ draftId, localCoordinate, coordinate }],
+    }
+    api.planPublish.mockResolvedValueOnce({ ...revisedPlan, planHash: 'a'.repeat(64) } as never)
+    api.publish
+      .mockRejectedValueOnce(
+        new ApiError(409, 'conflict', {
+          code: 'geometry_version_conflict',
+          draftId,
+          coordinate,
+          suggestedVersion: '0.1.0',
+          revisedPlan,
+        }),
+      )
+      .mockResolvedValueOnce({
+        planHash: revisedPlan.planHash,
+        published: [{ id: 43, coordinate }],
+        replacements: revisedPlan.replacements,
+      } as never)
+    api.resolveVersion.mockResolvedValueOnce({
+      root: { geometryVersionId: 43, coordinate, moduleHash: 'd'.repeat(64), exports: ['Part'] },
+      modules: [],
+    })
+    const { result } = renderHook(
+      () =>
+        useGeometryWorkspaceState({
+          initialNamespace: 'jlee',
+          onExperimentChange: vi.fn(),
+          snapshot: emptySnapshot,
+          sourceFiles,
+        }),
+      { wrapper },
+    )
+
+    await act(() =>
+      result.current.publishNewGeometry({
+        description: '',
+        exportName: 'Part',
+        packageName: 'part',
+        repository: 'common',
+        repositoryId: null,
+        source,
+      }),
+    )
+
+    expect(api.planPublish).toHaveBeenCalledOnce()
+    expect(api.publish).toHaveBeenCalledTimes(2)
+    expect(api.publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({ planHash: revisedPlan.planHash, drafts: [expect.objectContaining({ source })] }),
+    )
+  })
+
+  it('blocks @local dependencies and reports a fixed-version package conflict without mutating drafts', async () => {
+    const { result } = renderHook(
+      () =>
+        useGeometryWorkspaceState({
+          initialNamespace: 'jlee',
+          onExperimentChange: vi.fn(),
+          snapshot: emptySnapshot,
+          sourceFiles,
+        }),
+      { wrapper },
+    )
+    await expect(
+      result.current.publishNewGeometry({
+        description: '',
+        exportName: 'Parent',
+        packageName: 'parent',
+        repository: 'common',
+        repositoryId: null,
+        source: `import { Child } from 'caemble:geometry/jlee/common/child@local'\nexport const Parent = () => <Child id="child" />`,
+      }),
+    ).rejects.toThrow('@local dependency')
+    expect(api.planPublish).not.toHaveBeenCalled()
+
+    const coordinate = 'caemble:geometry/jlee/common/part@0.1.0'
+    api.planPublish.mockRejectedValueOnce(
+      new ApiError(409, 'conflict', {
+        code: 'geometry_version_conflict',
+        draftId: 'server-draft',
+        coordinate,
+        suggestedVersion: '0.1.1',
+        revisedPlan: null,
+      }),
+    )
+    await expect(
+      result.current.publishNewGeometry({
+        description: '',
+        exportName: 'Part',
+        packageName: 'part',
+        repository: 'common',
+        repositoryId: null,
+        source: 'export const Part = () => <box />',
+      }),
+    ).rejects.toThrow('다른 Package 이름')
+    expect(result.current.drafts).toEqual({})
   })
 })

@@ -306,6 +306,13 @@ export function useGeometryWorkspaceState({
     if (!selectedCoordinate || selectedCoordinate === 'geometry.tsx') return null
     return effectiveGraph?.modules.find((item) => item.coordinate === selectedCoordinate) ?? null
   }, [effectiveGraph, selectedCoordinate])
+  const entryExports = useMemo(() => {
+    try {
+      return analyzeGeometrySource(entrySource, { allowEmpty: true, allowLocal: true }).exports.map((item) => item.name)
+    } catch {
+      return []
+    }
+  }, [entrySource])
   const selectedExports = useMemo(() => {
     const source =
       selectedCoordinate === 'geometry.tsx'
@@ -633,6 +640,143 @@ export function useGeometryWorkspaceState({
       return resolved
     },
     [authenticated],
+  )
+
+  const publishNewGeometry = useCallback(
+    async ({
+      description,
+      exportName,
+      packageName,
+      repository,
+      repositoryId,
+      source,
+    }: {
+      description: string
+      exportName: string
+      packageName: string
+      repository: string
+      repositoryId: number | null
+      source: string
+    }) => {
+      if (!authenticated) throw new Error('Geometry 저장은 로그인 후 사용할 수 있습니다.')
+      if (!namespace) throw new Error('기본 Geometry namespace를 먼저 설정하세요.')
+      const analysis = analyzeGeometrySource(source, { allowLocal: true })
+      if (analysis.exports.length !== 1 || analysis.exports[0]?.name !== exportName) {
+        throw new Error(`업로드 source는 ${exportName} export 하나만 포함해야 합니다.`)
+      }
+      const localImport = analysis.imports.find((item) => localCoordinatePattern.test(item.coordinate))
+      if (localImport) {
+        throw new Error(`@local dependency를 먼저 발행하세요: ${localImport.coordinate}`)
+      }
+      const repositoryRecord = repositories.find((item) => item.id === repositoryId)
+      if (repositoryId !== null && !repositoryRecord) {
+        throw new Error('선택한 Geometry Repository를 더 이상 사용할 수 없습니다.')
+      }
+      const ownerNamespace = repositoryRecord?.namespace ?? namespace
+      const repositorySlug = repositoryRecord?.slug ?? repository
+      const coordinate =
+        `caemble:geometry/${ownerNamespace}/${repositorySlug}/${packageName}@local` as LocalGeometryCoordinate
+      const exactCoordinate = `caemble:geometry/${ownerNamespace}/${repositorySlug}/${packageName}@0.1.0`
+      if (draftsRef.current[coordinate]) {
+        throw new Error('같은 Package의 local draft가 열려 있습니다. 먼저 발행하거나 폐기하세요.')
+      }
+      const draftId = crypto.randomUUID()
+      const request = {
+        targetDraftId: draftId,
+        drafts: [
+          {
+            draftId,
+            baseGeometryVersionId: null,
+            repositoryId,
+            repository: repositorySlug,
+            package: packageName,
+            version: '0.1.0',
+            description: description.trim() || null,
+            source,
+          },
+        ],
+      }
+      const assertSingleStep = (plan: Awaited<ReturnType<typeof geometryApi.planPublish>>) => {
+        const step = plan.steps[0]
+        const replacement = plan.replacements[0]
+        if (
+          plan.steps.length !== 1 ||
+          plan.replacements.length !== 1 ||
+          step?.draftId !== draftId ||
+          step.baseGeometryVersionId !== null ||
+          step.repositoryId !== repositoryId ||
+          step.repository !== repositorySlug ||
+          step.package !== packageName ||
+          step.version !== '0.1.0' ||
+          step.coordinate !== exactCoordinate ||
+          step.localCoordinate !== coordinate ||
+          step.description !== request.drafts[0]?.description ||
+          step.source !== source ||
+          step.exports.length !== 1 ||
+          step.exports[0] !== exportName ||
+          replacement?.draftId !== draftId ||
+          replacement.localCoordinate !== coordinate ||
+          replacement.coordinate !== exactCoordinate
+        ) {
+          throw new Error('새 Geometry 발행 계획이 요청과 일치하지 않습니다.')
+        }
+      }
+      const conflict = (cause: unknown) => {
+        const parsed =
+          cause instanceof ApiError && cause.status === 409 ? geometryApi.parsePublishConflict(cause.body) : null
+        if (!parsed?.success) return null
+        if (!parsed.data.revisedPlan) {
+          return new Error(`${parsed.data.coordinate}가 이미 존재합니다. 다른 Package 이름을 사용하세요.`)
+        }
+        return parsed.data.revisedPlan
+      }
+
+      setBusy(true)
+      try {
+        let plan: Awaited<ReturnType<typeof geometryApi.planPublish>>
+        try {
+          plan = await geometryApi.planPublish(request)
+        } catch (cause) {
+          const parsed = conflict(cause)
+          if (parsed instanceof Error) throw parsed
+          throw cause
+        }
+        assertSingleStep(plan)
+        let result: Awaited<ReturnType<typeof geometryApi.publish>>
+        try {
+          result = await geometryApi.publish({ ...request, planHash: plan.planHash })
+        } catch (cause) {
+          const revised = conflict(cause)
+          if (revised instanceof Error) throw revised
+          if (!revised) throw cause
+          assertSingleStep(revised)
+          result = await geometryApi.publish({ ...request, planHash: revised.planHash })
+        }
+        const version = result.published[0]
+        const replacement = result.replacements[0]
+        if (
+          result.published.length !== 1 ||
+          result.replacements.length !== 1 ||
+          version?.coordinate !== exactCoordinate ||
+          replacement?.draftId !== draftId ||
+          replacement.localCoordinate !== coordinate ||
+          replacement.coordinate !== exactCoordinate
+        ) {
+          throw new Error('발행된 Geometry Version 응답을 확인하지 못했습니다.')
+        }
+        let stageError: string | null = null
+        try {
+          await Promise.all([stageResolved(version.id), refreshRepositories()])
+        } catch (cause) {
+          stageError = cause instanceof Error ? cause.message : String(cause)
+        }
+        await queryClient.invalidateQueries({ queryKey: ['geometry'] })
+        return { stageError, version }
+      } finally {
+        setBusy(false)
+      }
+    },
+    [authenticated, namespace, queryClient, refreshRepositories, repositories, stageResolved],
   )
 
   const editPublishedVersion = useCallback(
@@ -1003,6 +1147,7 @@ export function useGeometryWorkspaceState({
     repositories,
     currentSnapshot,
     entrySource,
+    entryExports,
     drafts,
     stagedModules,
     selectedCoordinate,
@@ -1057,6 +1202,7 @@ export function useGeometryWorkspaceState({
       return editPublishedVersion(module.geometryVersionId)
     },
     usePublishedExport,
+    publishNewGeometry,
     stageResolved,
     updateSource,
     updateDescription: (coordinate: GeometryModuleCoordinate, description: string) => {

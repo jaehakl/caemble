@@ -150,7 +150,7 @@ export type {
   GeometryModuleCoordinate,
   GeometryModuleDraft,
 } from './source/effectiveGeometryGraph'
-export { analyzeGeometrySource, analyzeMaterialSource } from './source/sourceAnalysis'
+export { analyzeGeometrySource, analyzeMaterialSource, projectGeometryExportSource } from './source/sourceAnalysis'
 export {
   CadDocumentEvaluationError,
   evaluateDocument,

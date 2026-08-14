@@ -29,4 +29,12 @@ describe('integrated CAE page surface', () => {
     expect(dialogSource).not.toContain('AiHelperWorkspace')
     expect(dialogSource).not.toContain('ai-helper')
   })
+
+  it('shares the geometry.tsx export publish action between the Source menu and Geometry ribbon', () => {
+    expect(chromeSource).toContain("label: 'Publish geometry.tsx Export'")
+    expect(chromeSource).toContain("setDialog('publish-geometry-export')")
+    expect(chromeSource).toContain("{ type: 'action', action: actions.publishGeometryExport }")
+    expect(chromeSource).toContain('actions={[actions.publishGeometryExport, actions.geometryManager]}')
+    expect(dialogSource).toContain('<GeometryExportPublishDialog')
+  })
 })

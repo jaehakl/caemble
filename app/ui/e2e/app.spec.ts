@@ -24,6 +24,7 @@ async function mockApi(page: Page, authenticated = false) {
     if (path === '/auth/me')
       return json(route, authenticated ? user : { detail: 'Not authenticated' }, authenticated ? 200 : 401)
     if (path === '/auth/refresh') return json(route, { detail: 'No refresh token' }, 401)
+    if (path === '/web/auth/csrf') return json(route, { csrf_token: 'csrf-browser-test' })
     if (path === '/web/jobs') return json(route, [])
     if (path === '/web/launchers/runtime') return json(route, [])
     if (path.endsWith('/list')) return json(route, { total: 0, items: [] })
@@ -141,6 +142,97 @@ export const EmptyStructure: Geometry = () => <></>
   await page.reload()
   await expect(page.getByRole('tab', { name: 'geometry.tsx' })).toHaveAttribute('aria-selected', 'true')
   await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('session-restored')
+})
+
+test('opens Geometry export publishing from the Source menu and Geometry ribbon', async ({ page }) => {
+  await mockApi(page, true)
+  const coordinate = 'caemble:geometry/designer/common/starter-structure@0.1.0'
+  const localCoordinate = 'caemble:geometry/designer/common/starter-structure@local'
+  const sourceHash = 'a'.repeat(64)
+  const moduleHash = 'b'.repeat(64)
+  const planHash = 'c'.repeat(64)
+  await page.route(/\/api\/geometry\/publish\/plan$/, async (route) => {
+    const request = route.request().postDataJSON() as {
+      targetDraftId: string
+      drafts: Array<{
+        description: string | null
+        draftId: string
+        repository: string
+        repositoryId: number | null
+        package: string
+        source: string
+      }>
+    }
+    const draft = request.drafts[0]
+    await json(route, {
+      planHash,
+      steps: [
+        {
+          ...draft,
+          baseGeometryVersionId: null,
+          version: '0.1.0',
+          coordinate,
+          localCoordinate,
+          sourceHash,
+          moduleHash,
+          exports: ['StarterStructure'],
+          imports: [],
+        },
+      ],
+      replacements: [{ draftId: request.targetDraftId, localCoordinate, coordinate }],
+    })
+  })
+  await page.route(/\/api\/geometry\/publish$/, async (route) => {
+    const request = route.request().postDataJSON() as { targetDraftId: string; planHash: string }
+    expect(request.planHash).toBe(planHash)
+    await json(route, {
+      planHash,
+      published: [
+        {
+          id: 42,
+          packageId: 7,
+          coordinate,
+          version: '0.1.0',
+          description: null,
+          sourceHash,
+          moduleHash,
+          moduleFormatVersion: 4,
+          cadApiVersion: 6,
+          archivedAt: null,
+          createdAt: '2026-08-14T00:00:00Z',
+        },
+      ],
+      replacements: [{ draftId: request.targetDraftId, localCoordinate, coordinate }],
+    })
+  })
+  await page.route(/\/api\/geometry\/versions\/42\/resolve$/, (route) =>
+    json(route, {
+      schemaVersion: 2,
+      root: { geometryVersionId: 42, coordinate, moduleHash, exports: ['StarterStructure'] },
+      modules: [],
+    }),
+  )
+  await page.goto('/')
+
+  await page.getByRole('menuitem', { name: 'Source' }).click()
+  await page.getByRole('menuitem', { name: 'Publish geometry.tsx Export' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Publish geometry.tsx Export' })
+  await expect(dialog.getByRole('combobox', { name: 'Export', exact: true })).toHaveValue('StarterStructure')
+  await expect(dialog.getByLabel('Package name')).toHaveValue('starter-structure')
+  await expect(dialog.getByLabel('Reconstructed TSX source')).toHaveValue(/export const StarterStructure/)
+  await dialog.getByRole('button', { name: '취소' }).click()
+
+  await page.getByRole('menuitem', { name: 'View' }).click()
+  await page.getByRole('menuitem', { name: 'Geometry Workspace' }).click()
+  const ribbon = page.getByRole('region', { name: 'Geometry 리본' })
+  await ribbon.getByRole('button', { name: 'Publish geometry.tsx Export' }).click()
+  const ribbonDialog = page.getByRole('dialog', { name: 'Publish geometry.tsx Export' })
+  await ribbonDialog.getByRole('button', { name: 'Geometry 발행' }).click()
+  const publishedDialog = page.getByRole('dialog', { name: 'Geometry 발행 완료' })
+  await expect(publishedDialog).toBeVisible({ timeout: 15_000 })
+  await expect(
+    publishedDialog.getByText(`import { StarterStructure } from "${coordinate}"`, { exact: true }),
+  ).toBeVisible()
 })
 
 test('opens authenticated Launchers from Settings and Jobs from the shared Toolbar actions', async ({ page }) => {
