@@ -1,9 +1,14 @@
 E:\caemble\app\ui
 
 <Revision>
-- [Problem] Reroll 을 해도 똑같은 구조만 계속 나온다.
-- Viewer 에 Material Grid, Results 는 삭제한다. Geometry only, 탭 구분도 필요 없음
-- Run Simulation 도 여기서 직접 하지 않도록 한다. 시뮬레이션 제어는 Toolbar 에서 하도록.
+- 로그인하지 않은 사용자의 첫 화면에서 뭐라도 나와야 한다. 
+- 로그인하지 않은 사용자라도 코드를 수정하고 구조가 바뀌는 걸 볼 수 있어야 한다.
+- 로그인하지 않은 사용자라도 DB, GPStation 등이 없이도 할 수 있는 범위에서는 최대한 많은 기능들을 체험할 수 있어야 한다.
+- 코드에디터의 각 파일들에 필수 모듈들 import, 최소 골격 만 떠 있는 빈 experiment 화면으로 언제든 돌아갈 수 있도록 해야 한다.
+- AI Helper 는 팝업모달이 아니라 작업 탭으로 띄우도록 하자.
+
+
+
 
 <향후 추가할 기능들 (참고 사항)>
 - LLM API 기반 통합 Experiment source bundle 자동 생성
