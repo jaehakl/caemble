@@ -98,15 +98,7 @@ if (assetNames.some((name) => name.endsWith('.wasm'))) {
   throw new Error('The production build contains a WASM asset.')
 }
 
-const quantityAsset = `quantity-kind-data-${authoringManifest.quantityKindDataVersion}.js`
-if (!assetNames.includes(quantityAsset)) throw new Error(`Missing ${quantityAsset}.`)
-const dataCopies = [...contents].filter(([, source]) => source.includes('"applicableUnits":['))
-if (dataCopies.length !== 1 || dataCopies[0][0] !== quantityAsset) {
-  throw new Error('QuantityKind data must exist only in its versioned shared asset.')
-}
-
 const initialAssetNames = new Set([...indexHtml.matchAll(/(?:src|href)="\/assets\/([^"]+)"/g)].map((match) => match[1]))
-initialAssetNames.add(quantityAsset)
 if ([...initialAssetNames].some((name) => /monaco|editor\.api|tsMode|\.worker/i.test(name))) {
   throw new Error('Monaco must not be referenced by the initial HTML entry.')
 }

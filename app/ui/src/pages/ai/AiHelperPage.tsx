@@ -1,8 +1,13 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback } from 'react'
+import { catalogApi } from '@/api/catalog'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { WorkbenchTabId } from '@/features/cae-workbench/types'
-import { fetchCaeSolverManifests } from '@/features/cae/manifests'
-import { getDocsKnowledge, searchDocsKnowledge, type DocsKnowledgeChunk } from '@/pages/docs/docsKnowledge'
+import {
+  catalogSearchKnowledge,
+  getDocsKnowledge,
+  searchDocsKnowledge,
+  type DocsKnowledgeChunk,
+} from '@/pages/docs/docsKnowledge'
 import { ChatWorkspace, type ChatReferenceContext, type ChatReferenceRequest } from './AiChatPage'
 import { buildWorkbenchReferenceContext, type WorkbenchContextInput } from './workbenchContext'
 
@@ -46,17 +51,22 @@ export function AiHelperWorkspace({
   onRequestLogin?: () => void
   workbench: CaeWorkbenchState
 }) {
-  const docsKnowledgePromise = useMemo(
-    () =>
-      fetchCaeSolverManifests()
-        .then((manifests) => getDocsKnowledge(manifests))
-        .catch(() => getDocsKnowledge()),
-    [],
-  )
   const referenceProvider = useCallback(
-    async (request: ChatReferenceRequest) =>
-      buildAiHelperReferenceContext(request, workbench, activeTab, activeExperimentFile, await docsKnowledgePromise),
-    [activeExperimentFile, activeTab, docsKnowledgePromise, workbench],
+    async (request: ChatReferenceRequest) => {
+      const query = [request.prompt, ...request.recentUserPrompts.slice(-2)].join('\n')
+      const catalogKnowledge = await catalogApi
+        .search(query, MAX_DOCS_RESULTS)
+        .then(({ items }) => catalogSearchKnowledge(items))
+        .catch(() => [])
+      return buildAiHelperReferenceContext(
+        request,
+        workbench,
+        activeTab,
+        activeExperimentFile,
+        [...getDocsKnowledge(), ...catalogKnowledge],
+      )
+    },
+    [activeExperimentFile, activeTab, workbench],
   )
 
   return (

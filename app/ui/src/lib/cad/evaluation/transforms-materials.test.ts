@@ -1,7 +1,13 @@
 import { measurements } from '@jscad/modeling'
 import { describe, expect, it } from 'vitest'
+import { installSyntheticCatalog } from '@/test/syntheticCatalog'
 import { evaluateWithVars, Material } from '../model/core'
 import { Fragment, evaluateCad, evaluateCadScene, h } from '../index'
+
+installSyntheticCatalog({
+  quantityKinds: [{ name: 'MassDensity', applicableUnits: ['kg.m-3', 'g.cm-3'] }],
+  materialParameters: [{ key: 'general.mass_density', quantityKind: 'MassDensity' }],
+})
 
 const size = [2, 2, 2]
 

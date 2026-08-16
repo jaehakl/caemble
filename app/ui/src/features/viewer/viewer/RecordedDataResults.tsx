@@ -1,7 +1,8 @@
+import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
+import { catalogApi } from '@/api/catalog'
 import { convertUcumValue, type RecordedDataRule, type UcumUnit } from '@/lib/cad'
-import { QuantityKind } from '@/lib/quantitykind'
 import { identityCartesianBasis } from '@/lib/quantitykind'
 import {
   convertRecordedNumericTicks,
@@ -12,6 +13,7 @@ import {
   type CadViewerRecordedData,
   type RecordedDataDisplayUnits,
   type RecordedDataDisplayUnitTarget,
+  type RecordedQuantityKinds,
   type ResolvedRecordedTensor,
 } from './recordedData'
 import { componentIndexPaths, componentLabel } from './recordedComponents'
@@ -19,6 +21,7 @@ import { componentIndexPaths, componentLabel } from './recordedComponents'
 type RecordedDataResultsProps = {
   displayUnits?: RecordedDataDisplayUnits
   onDisplayUnitChange?: (label: string, target: RecordedDataDisplayUnitTarget, unit: UcumUnit) => void
+  quantityKinds?: RecordedQuantityKinds
   recordedData?: CadViewerRecordedData | null
   rules: readonly RecordedDataRule[]
 }
@@ -482,23 +485,24 @@ function RecordedResultCard({
   displayUnits,
   entry,
   onDisplayUnitChange,
+  quantityKinds,
 }: {
   displayUnits: RecordedDataDisplayUnits[string] | undefined
   entry: ReturnType<typeof resolveCadViewerRecordedData>['entries'][number]
   onDisplayUnitChange: RecordedDataResultsProps['onDisplayUnitChange']
+  quantityKinds: RecordedQuantityKinds
 }) {
   const { error, rule, tensor } = entry
-  const tensorOrder = rule.result.quantityKind ? QuantityKind[rule.result.quantityKind].tensorOrder() : 0
-  const componentShape = rule.result.quantityKind ? QuantityKind[rule.result.quantityKind].componentShape() : []
+  const quantityKind = rule.result.quantityKind ? quantityKinds.get(rule.result.quantityKind) : undefined
+  const tensorOrder = quantityKind?.tensorOrder ?? 0
+  const componentShape = Object.freeze(Array.from({ length: tensorOrder }, () => 3 as const))
   const componentOptions = componentIndexPaths(tensorOrder)
   const identityBasis = JSON.stringify(rule.result.basis) === JSON.stringify(identityCartesianBasis)
   const [componentSelection, setComponentSelection] = useState('norm')
   const display = useMemo(() => {
     const conversionErrors: string[] = []
     const resultUnitOptions =
-      rule.result.quantityKind && rule.result.unit
-        ? recordedDisplayUnitOptions(rule.result.quantityKind, rule.result.unit)
-        : []
+      quantityKind && rule.result.unit ? recordedDisplayUnitOptions(quantityKind, rule.result.unit) : []
     const requestedResultUnit =
       displayUnits?.result && resultUnitOptions.includes(displayUnits.result) ? displayUnits.result : rule.result.unit
     let resultUnit = requestedResultUnit
@@ -525,8 +529,9 @@ function RecordedResultCard({
       const sourceTicks = tensor?.axes[axisIndex].ticks ?? axis.ticks
       const numericTicks =
         sourceTicks !== undefined && sourceTicks.length > 0 && sourceTicks.every((tick) => typeof tick === 'number')
+      const axisQuantityKind = axis.quantityKind ? quantityKinds.get(axis.quantityKind) : undefined
       const unitOptions =
-        numericTicks && axis.quantityKind && axis.unit ? recordedDisplayUnitOptions(axis.quantityKind, axis.unit) : []
+        numericTicks && axisQuantityKind && axis.unit ? recordedDisplayUnitOptions(axisQuantityKind, axis.unit) : []
       const selectedUnit = displayUnits?.axes?.[axisIndex]
       const requestedUnit = selectedUnit && unitOptions.includes(selectedUnit) ? selectedUnit : axis.unit
       let ticks = sourceTicks
@@ -580,7 +585,7 @@ function RecordedResultCard({
       resultUnitOptions,
       tensor: displayedTensor,
     }
-  }, [displayUnits, rule, tensor])
+  }, [displayUnits, quantityKind, quantityKinds, rule, tensor])
 
   return (
     <article className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -702,13 +707,88 @@ function RecordedResultCard({
   )
 }
 
-export function RecordedDataResults({
+function CatalogHydratedRecordedDataResults({
   displayUnits = {},
   onDisplayUnitChange,
   recordedData,
   rules,
-}: RecordedDataResultsProps) {
-  const resolved = useMemo(() => resolveCadViewerRecordedData(rules, recordedData), [recordedData, rules])
+}: Omit<RecordedDataResultsProps, 'quantityKinds'>) {
+  const quantityKindNames = useMemo(
+    () =>
+      Object.freeze(
+        [
+          ...new Set(
+            rules.flatMap((rule) => [
+              ...(rule.result.quantityKind ? [rule.result.quantityKind] : []),
+              ...(rule.result.axes ?? []).flatMap((axis) => (axis.quantityKind ? [axis.quantityKind] : [])),
+            ]),
+          ),
+        ].sort(),
+      ),
+    [rules],
+  )
+  const catalogQuery = useQuery({
+    enabled: quantityKindNames.length > 0,
+    queryKey: ['catalog', 'recorded-data', quantityKindNames],
+    queryFn: () =>
+      catalogApi.runtimeSlice({
+        solvers: [],
+        quantityKinds: quantityKindNames,
+        materialParameters: [],
+        materialModels: [],
+      }),
+  })
+  if (quantityKindNames.length > 0 && catalogQuery.isPending) {
+    return (
+      <section
+        aria-label="Recorded Data Results"
+        className="grid h-full min-h-48 place-items-center bg-slate-50 p-5 text-sm text-slate-500"
+      >
+        <p role="status">Recorded Data Catalog를 불러오는 중입니다.</p>
+      </section>
+    )
+  }
+
+  if (catalogQuery.isError) {
+    return (
+      <section
+        aria-label="Recorded Data Results"
+        className="grid h-full min-h-48 place-items-center bg-slate-50 p-5 text-sm text-rose-700"
+      >
+        <div className="text-center" role="alert">
+          <p>Recorded Data Catalog를 불러오지 못했습니다.</p>
+          <button className="mt-3 rounded border border-rose-300 px-3 py-1.5" onClick={() => catalogQuery.refetch()}>
+            다시 시도
+          </button>
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <RecordedDataResultsContent
+      displayUnits={displayUnits}
+      onDisplayUnitChange={onDisplayUnitChange}
+      quantityKinds={
+        new Map((catalogQuery.data?.quantityKinds ?? []).map((definition) => [definition.name, definition]))
+      }
+      recordedData={recordedData}
+      rules={rules}
+    />
+  )
+}
+
+function RecordedDataResultsContent({
+  displayUnits = {},
+  onDisplayUnitChange,
+  quantityKinds,
+  recordedData,
+  rules,
+}: RecordedDataResultsProps & { quantityKinds: RecordedQuantityKinds }) {
+  const resolved = useMemo(
+    () => resolveCadViewerRecordedData(rules, recordedData, quantityKinds),
+    [quantityKinds, recordedData, rules],
+  )
 
   return (
     <section aria-label="Recorded Data Results" className="h-full overflow-auto bg-slate-50 p-4 sm:p-5">
@@ -738,11 +818,20 @@ export function RecordedDataResults({
               entry={entry}
               key={entry.rule.label}
               onDisplayUnitChange={onDisplayUnitChange}
+              quantityKinds={quantityKinds}
             />
           ))}
         </div>
       </div>
     </section>
+  )
+}
+
+export function RecordedDataResults({ quantityKinds, ...props }: RecordedDataResultsProps) {
+  return quantityKinds ? (
+    <RecordedDataResultsContent {...props} quantityKinds={quantityKinds} />
+  ) : (
+    <CatalogHydratedRecordedDataResults {...props} />
   )
 }
 

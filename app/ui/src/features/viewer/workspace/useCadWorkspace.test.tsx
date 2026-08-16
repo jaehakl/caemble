@@ -11,6 +11,9 @@ import {
   serializeCadScene,
   updateExperimentSourceFile,
 } from '@/lib/cad'
+import { fetchCatalogRuntimeSlice } from '@/lib/catalog/references'
+import { registerSourceCatalogRuntimeSlice } from '@/lib/catalog/runtime'
+import { buildSyntheticCatalog, buildSyntheticSolver } from '@/test/syntheticCatalog'
 import { resolveDocumentMaterials } from '../persistence/resolveMaterials'
 import { useCadWorkspace } from './useCadWorkspace'
 
@@ -18,9 +21,13 @@ vi.mock('@/lib/cad', async (importActual) => {
   const actual = await importActual<typeof import('@/lib/cad')>()
   return { ...actual, evaluateDocument: vi.fn(), inspectDocument: vi.fn() }
 })
+vi.mock('@/lib/catalog/references', () => ({ fetchCatalogRuntimeSlice: vi.fn() }))
 vi.mock('../persistence/resolveMaterials', () => ({ resolveDocumentMaterials: vi.fn() }))
 
+const sourceHash = 'a'.repeat(64)
+const catalog = buildSyntheticCatalog({ solvers: [buildSyntheticSolver('test', '1')] })
 const emptyMaterials = { schemaVersion: 1, materials: {} } as const
+const emptyTaskConfig = { parameters: {}, initializations: [], boundaryConditions: [], outputs: [] } as const
 const varsSchema = { fixed: { min: 4, max: 4 }, width: { min: 1, max: 10 } } as const
 const serializedScene = serializeCadScene({
   geometryGroups: [],
@@ -54,7 +61,9 @@ const document = createCadSourceDocument(
 
 describe('useCadWorkspace unified Experiment', () => {
   beforeEach(() => {
-    vi.mocked(inspectDocument).mockResolvedValue({ sourceHash: 'a'.repeat(64), varsSchema })
+    vi.mocked(fetchCatalogRuntimeSlice).mockResolvedValue(catalog)
+    registerSourceCatalogRuntimeSlice(sourceHash, catalog)
+    vi.mocked(inspectDocument).mockResolvedValue({ sourceHash, varsSchema })
     vi.mocked(evaluateDocument).mockImplementation(async ({ vars }) => ({
       kind: 'experiment',
       scene: serializedScene,
@@ -63,10 +72,10 @@ describe('useCadWorkspace unified Experiment', () => {
         formatVersion: 5,
         simulationApiVersion: 3,
         pythonSource: 'async def simulate(*, sim, tasks, vars):\n    return None\n',
-        tasks: { electric: { kernel: { name: 'test', version: '1' }, config: {} } },
+        tasks: { electric: { kernel: { name: 'test', version: '1' }, config: emptyTaskConfig } },
         recordedData: {},
       },
-      sourceHash: 'a'.repeat(64),
+      sourceHash,
       variables: vars,
       varsSchema,
     }))
@@ -161,10 +170,10 @@ describe('useCadWorkspace unified Experiment', () => {
         formatVersion: 5,
         simulationApiVersion: 3,
         pythonSource: 'async def simulate(*, sim, tasks, vars):\n    return None\n',
-        tasks: { electric: { kernel: { name: 'test', version: '1' }, config: {} } },
+        tasks: { electric: { kernel: { name: 'test', version: '1' }, config: emptyTaskConfig } },
         recordedData: {},
       },
-      sourceHash: 'a'.repeat(64),
+      sourceHash,
       variables: vars,
       varsSchema,
     }))

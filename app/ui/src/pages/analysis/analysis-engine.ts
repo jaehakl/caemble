@@ -7,11 +7,11 @@ import type { MeasurementRecord, RecordedDataRecord } from '@/api'
 import {
   createDataTensorAccessor,
   isDataTensor,
+  type DataTensor,
   type DataDType,
   type DataSchema,
   type DataTensorAccessor,
 } from '@/lib/cad'
-import { getQuantityKindTensorOrder, type QuantityKindName } from '@/lib/quantitykind/runtime'
 import type {
   AnalysisColumnDescriptor,
   AnalysisMiningResult,
@@ -90,8 +90,69 @@ type RecordedTensorView = Readonly<{
 
 const RECORDED_QUANTILE_SAMPLE_LIMIT = 4_096
 
+export type AnalysisQuantityKindTensorOrders = ReadonlyMap<string, number>
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function collectQuantityKindFields(value: unknown, names: Set<string>) {
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectQuantityKindFields(item, names))
+    return
+  }
+  if (!isRecord(value)) return
+  Object.entries(value).forEach(([key, item]) => {
+    if ((key === 'quantityKind' || key === 'quantity_kind') && typeof item === 'string' && item) names.add(item)
+    else collectQuantityKindFields(item, names)
+  })
+}
+
+export function collectAnalysisQuantityKindNames(
+  measurements: readonly MeasurementRecord[],
+  recordedData: readonly RecordedDataRecord[],
+) {
+  const names = new Set<string>()
+  measurements.forEach((measurement) => collectQuantityKindFields(measurement.material_parameters, names))
+  recordedData.forEach((row) => {
+    if (row.quantity_kind) names.add(row.quantity_kind)
+    collectQuantityKindFields(row.data_schema, names)
+  })
+  return Object.freeze([...names].sort())
+}
+
+function quantityKindTensorOrder(name: string, tensorOrders: AnalysisQuantityKindTensorOrders) {
+  const tensorOrder = tensorOrders.get(name)
+  if (tensorOrder === undefined) throw new Error(`QuantityKind ${name}의 Catalog 정의가 없습니다.`)
+  return tensorOrder
+}
+
+function catalogIndependentDataTensor(
+  schema: DataSchema,
+  tensor: DataTensor,
+  tensorOrder: number,
+): Readonly<{ schema: DataSchema; tensor: DataTensor }> {
+  if (!schema.quantityKind) return { schema, tensor }
+  const normalizedSchema = Object.freeze({
+    ...Object.fromEntries(Object.entries(schema).filter(([key]) => key !== 'quantityKind' && key !== 'basis')),
+    axes: Object.freeze([
+      ...(schema.axes ?? []),
+      ...Array.from({ length: tensorOrder }, (_, index) =>
+        Object.freeze({ length: 3, name: `QuantityKind component ${index}` }),
+      ),
+    ]),
+  }) as DataSchema
+  if (!tensor.axes) return { schema: normalizedSchema, tensor }
+  return {
+    schema: normalizedSchema,
+    tensor: Object.freeze({
+      ...tensor,
+      axes: Object.freeze([
+        ...tensor.axes,
+        ...Array.from({ length: tensorOrder }, () => Object.freeze({ ticks: Object.freeze([0, 1, 2]) })),
+      ]),
+    }),
+  }
 }
 
 function finiteNumber(value: unknown): value is number {
@@ -187,7 +248,10 @@ function extractMaterials(
   })
 }
 
-function recordedTargets(row: RecordedDataRecord): Readonly<{
+function recordedTargets(
+  row: RecordedDataRecord,
+  tensorOrders: AnalysisQuantityKindTensorOrders,
+): Readonly<{
   observations: readonly Readonly<{
     key: string
     label: string
@@ -198,7 +262,7 @@ function recordedTargets(row: RecordedDataRecord): Readonly<{
   signature: string
   unit?: string
 }> | null {
-  const tensor = recordedTensor(row)
+  const tensor = recordedTensor(row, tensorOrders)
   if (!tensor || tensor.schema.dtype === 'bool' || tensor.schema.dtype === 'string' || tensor.accessor.size === 0) {
     return null
   }
@@ -280,7 +344,10 @@ function recordedTargets(row: RecordedDataRecord): Readonly<{
   }
 }
 
-function recordedTensor(row: RecordedDataRecord): RecordedTensorView | null {
+function recordedTensor(
+  row: RecordedDataRecord,
+  tensorOrders: AnalysisQuantityKindTensorOrders,
+): RecordedTensorView | null {
   if (!isRecord(row.data)) return null
   if (!isDataTensor(row.data)) {
     const legacy = numericTensor(row.data.value)
@@ -289,7 +356,7 @@ function recordedTensor(row: RecordedDataRecord): RecordedTensorView | null {
     const tensorOrder =
       storedSchema?.quantityKind === undefined
         ? row.tensor_order
-        : getQuantityKindTensorOrder(storedSchema.quantityKind as QuantityKindName)
+        : quantityKindTensorOrder(storedSchema.quantityKind, tensorOrders)
     if (
       storedSchema &&
       (storedSchema.dtype !== row.dtype ||
@@ -322,9 +389,7 @@ function recordedTensor(row: RecordedDataRecord): RecordedTensorView | null {
     if (storedSchema) {
       if (storedSchema.dtype !== row.dtype) return null
       tensorOrder =
-        storedSchema.quantityKind === undefined
-          ? 0
-          : getQuantityKindTensorOrder(storedSchema.quantityKind as QuantityKindName)
+        storedSchema.quantityKind === undefined ? 0 : quantityKindTensorOrder(storedSchema.quantityKind, tensorOrders)
       if (storedSchema.quantityKind !== (row.quantity_kind ?? undefined) || tensorOrder !== row.tensor_order) {
         return null
       }
@@ -336,7 +401,7 @@ function recordedTensor(row: RecordedDataRecord): RecordedTensorView | null {
       const quantityMetadata =
         row.dtype.startsWith('float') && row.quantity_kind
           ? (() => {
-              if (getQuantityKindTensorOrder(row.quantity_kind as QuantityKindName) !== tensorOrder) {
+              if (quantityKindTensorOrder(row.quantity_kind, tensorOrders) !== tensorOrder) {
                 throw new Error('Legacy RecordedData QuantityKind does not match tensor_order.')
               }
               return { quantityKind: row.quantity_kind, unit: '1' }
@@ -348,7 +413,12 @@ function recordedTensor(row: RecordedDataRecord): RecordedTensorView | null {
         axes: row.data.shape.slice(0, outerRank).map((length) => ({ length })),
       } as DataSchema
     }
-    const accessor = createDataTensorAccessor(schema, row.data, `RecordedData ${JSON.stringify(row.name)}`)
+    const catalogIndependent = catalogIndependentDataTensor(schema, row.data, tensorOrder)
+    const accessor = createDataTensorAccessor(
+      catalogIndependent.schema,
+      catalogIndependent.tensor,
+      `RecordedData ${JSON.stringify(row.name)}`,
+    )
     return {
       accessor,
       ...(storedSchema?.quantityKind ? { quantityKind: storedSchema.quantityKind } : {}),
@@ -370,12 +440,16 @@ function categoricalValues(value: unknown): string[] {
   return value.flatMap(categoricalValues)
 }
 
-function forEachRecordedCategoricalValue(row: RecordedDataRecord, visit: (value: string) => void): void {
+function forEachRecordedCategoricalValue(
+  row: RecordedDataRecord,
+  tensorOrders: AnalysisQuantityKindTensorOrders,
+  visit: (value: string) => void,
+): void {
   if (isRecord(row.data) && !isDataTensor(row.data)) {
     categoricalValues(row.data.value).forEach(visit)
     return
   }
-  const tensor = recordedTensor(row)
+  const tensor = recordedTensor(row, tensorOrders)
   if (!tensor) return
   for (let index = 0; index < tensor.accessor.size; index += 1) {
     const value = tensor.accessor.at(index)
@@ -515,11 +589,13 @@ export function buildAnalysisDataset({
   experimentId,
   fingerprint,
   measurements,
+  quantityKindTensorOrders = new Map(),
   recordedData,
 }: {
   experimentId: number
   fingerprint: string
   measurements: readonly MeasurementRecord[]
+  quantityKindTensorOrders?: AnalysisQuantityKindTensorOrders
   recordedData: readonly RecordedDataRecord[]
 }): AnalysisDataset {
   if (measurements.length > ANALYSIS_MAX_ROWS) {
@@ -622,12 +698,12 @@ export function buildAnalysisDataset({
           signatures: new Set<string>(),
         }
         state.signatures.add(schemaSignature)
-        forEachRecordedCategoricalValue(resultRow, (value) => {
+        forEachRecordedCategoricalValue(resultRow, quantityKindTensorOrders, (value) => {
           state.counts.set(value, (state.counts.get(value) ?? 0) + 1)
         })
         categoricalStates.set(resultRow.name, state)
       }
-      const extracted = recordedTargets(resultRow)
+      const extracted = recordedTargets(resultRow, quantityKindTensorOrders)
       if (!extracted) return
       const keys = targetKeysByName.get(resultRow.name) ?? new Set<string>()
       extracted.observations.forEach((target) => {

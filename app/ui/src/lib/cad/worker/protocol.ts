@@ -5,6 +5,7 @@ import type { UcumUnit } from '../model/units'
 import type { VarsSchemaEntry } from '../model/vars'
 import type { SerializableCadScene } from '../execution/meshValidation'
 import type { GeometryModuleCoordinate } from '../source/effectiveGeometryGraph'
+import type { CatalogRuntimeSlice } from '@/contracts/catalog'
 
 export type CadDocumentType = 'experiment'
 export type CadWorkerErrorType = 'compile' | 'type' | 'policy' | 'runtime' | 'model'
@@ -30,11 +31,12 @@ type CadRequestIdentity = Readonly<{
   compiledDocument: CompiledCadDocument
 }>
 
-export type CadInspectionRequest = CadRequestIdentity & Readonly<{ type: 'inspect' }>
+export type CadInspectionRequest = CadRequestIdentity & Readonly<{ type: 'inspect'; catalog: CatalogRuntimeSlice }>
 
 export type CadEvaluationRequest = CadRequestIdentity &
   Readonly<{
     type: 'evaluate'
+    catalog: CatalogRuntimeSlice
     pythonSource: string
     vars: Readonly<Record<string, Tensor>>
   }>

@@ -4,10 +4,98 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { buildSyntheticSolver } from '@/test/syntheticCatalog'
 import { DocsPage } from './DocsPage'
 
+const catalog = vi.hoisted(() => ({
+  getMaterialModel: vi.fn(),
+  getMaterialParameter: vi.fn(),
+  getQuantityKind: vi.fn(),
+  getSolver: vi.fn(),
+  listMaterialModels: vi.fn(),
+  listMaterialParameters: vi.fn(),
+  listQuantityKinds: vi.fn(),
+  listSolvers: vi.fn(),
+  search: vi.fn(),
+}))
+
+vi.mock('@/api/catalog', async (importActual) => {
+  const actual = await importActual<typeof import('@/api/catalog')>()
+  return { ...actual, catalogApi: catalog }
+})
+
 afterEach(cleanup)
+
+beforeEach(() => {
+  Object.values(catalog).forEach((mock) => mock.mockReset())
+  catalog.search.mockImplementation(async (query: string) => {
+    const items = {
+      'electrical.conductivity': [{
+        kind: 'materialParameter', key: query, title: query, subtitle: 'Synthetic Material parameter.',
+      }],
+      'electromagnetism.ElectricCurrent': [{
+        kind: 'quantityKind', key: query, title: query, subtitle: 'Synthetic Quantity Kind.',
+      }],
+      'dc-current-density@0.1.0': [{
+        kind: 'solver', key: query, title: query, subtitle: 'Synthetic Solver.',
+      }],
+    } as const
+    return { items: items[query as keyof typeof items] ?? [] }
+  })
+
+  const quantityKind = {
+    name: 'electromagnetism.ElectricCurrent',
+    domain: 'electromagnetism',
+    tensorOrder: 0,
+    description: 'Synthetic Quantity Kind.',
+    opaque: false,
+    applicableUnits: ['A'],
+  }
+  const materialParameter = {
+    key: 'electrical.conductivity',
+    domain: 'electrical',
+    labelKo: 'synthetic conductivity',
+    quantityKind: 'electromagnetism.ElectricConductivity',
+    specialQualifiers: [],
+  }
+  const solver = buildSyntheticSolver('dc-current-density', '0.1.0')
+
+  catalog.listMaterialParameters.mockResolvedValue({ items: [materialParameter], nextCursor: null, total: 1 })
+  catalog.listMaterialModels.mockResolvedValue({ items: [], nextCursor: null, total: 0 })
+  catalog.getMaterialParameter.mockResolvedValue({
+    ...materialParameter,
+    quantityKindDefinition: {
+      name: materialParameter.quantityKind,
+      domain: 'electromagnetism',
+      tensorOrder: 2,
+      description: 'Synthetic conductivity.',
+      opaque: false,
+      applicableUnits: ['S.m-1'],
+    },
+    solverRequirements: [],
+  })
+  catalog.listQuantityKinds.mockResolvedValue({ items: [quantityKind], nextCursor: null, total: 1 })
+  catalog.getQuantityKind.mockResolvedValue({ ...quantityKind, materialParameters: [], solverUsages: [] })
+  catalog.listSolvers.mockResolvedValue({
+    items: [{
+      name: solver.name,
+      version: solver.version,
+      description: solver.descriptor.description,
+      contractDigest: solver.contractDigest,
+    }],
+    nextCursor: null,
+    total: 1,
+  })
+  catalog.getSolver.mockResolvedValue({
+    ...solver,
+    description: solver.descriptor.description,
+    materialRequirements: [],
+    quantityKindUsages: [],
+    producesArtifacts: [],
+    consumesArtifacts: [],
+  })
+})
 
 function renderDocs(entry = '/docs') {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })

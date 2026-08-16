@@ -18,6 +18,8 @@ dist/
 **/.ruff_cache/
 **/.mypy_cache/
 **/.cache/
+.catalog-work/
+**/.catalog-work/
 .coverage
 **/coverage
 

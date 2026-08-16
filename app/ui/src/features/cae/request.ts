@@ -14,7 +14,10 @@ export type SerializedCaeAttachment = Readonly<{
   bytes: Uint8Array
 }>
 
-export function serializeCaeRequest(measurement: BuiltMeasurement) {
+export function serializeCaeRequest(
+  measurement: BuiltMeasurement,
+  solverContracts: CaeStartRequest['solverContracts'],
+) {
   const attachments: SerializedCaeAttachment[] = []
   let totalBytes = 0
   const visit = (value: unknown, path: string): unknown => {
@@ -51,7 +54,7 @@ export function serializeCaeRequest(measurement: BuiltMeasurement) {
     }
     return value
   }
-  const payload = visit({ measurement }, 'cae') as CaeStartRequest
+  const payload = visit({ measurement, solverContracts }, 'cae') as CaeStartRequest
   const payloadBytes = new TextEncoder().encode(JSON.stringify(payload))
   totalBytes += payloadBytes.byteLength
   if (totalBytes > INPUT_LIMIT_BYTES) {

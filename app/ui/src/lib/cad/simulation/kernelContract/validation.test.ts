@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { installSyntheticCatalog } from '@/test/syntheticCatalog'
 import {
   normalizeKernelTaskConfig,
   resolveKernelInputPort,
@@ -8,6 +9,13 @@ import {
   validateKernelTaskConfig,
 } from '.'
 import type { KernelDescriptor, KernelTaskConfig, KernelValueSpec } from './types'
+
+installSyntheticCatalog({
+  quantityKinds: [
+    { name: 'DimensionlessRatio', applicableUnits: ['{fraction}', '%'] },
+    { name: 'electromagnetism.Voltage', applicableUnits: ['V', 'mV'] },
+  ],
+})
 
 const valueSpecFixture = JSON.parse(
   readFileSync(new URL('../../model/fixtures/data-schema-golden.v1.json', import.meta.url), 'utf8'),

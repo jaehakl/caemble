@@ -1,46 +1,24 @@
 import { CadModelError } from '../cad/model/errors'
 import type { Vec3 } from '../cad/model/types'
 import { convertUcumValue, normalizeUcumUnit, type UcumUnit } from '../cad/model/units'
-import { opaqueQuantityKindNames, quantityKindData } from './runtimeData'
 import { identityCartesianBasis } from './identityBasis'
+import { getRuntimeQuantityKind } from '../catalog/runtime'
 
-type QuantityKindData = typeof quantityKindData
-const opaqueQuantityKinds = new Set<string>(opaqueQuantityKindNames)
+export type QuantityKindName = string
+export type QuantityKindDomain = string
+export type QuantityKindNameForDomain<Domain extends QuantityKindDomain> = string & { readonly __domain?: Domain }
+export type QuantityKindTensorOrder<Name extends QuantityKindName> = number & { readonly __quantityKind?: Name }
 
-export type QuantityKindName = keyof QuantityKindData
+export type QuantityKindComponentShape<Name extends QuantityKindName> = readonly 3[] & {
+  readonly __quantityKind?: Name
+}
 
-export type QuantityKindDomain = QuantityKindData[QuantityKindName]['domain']
+// Runtime catalog slices determine the exact component rank, so it cannot be encoded in the base declaration.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type QuantityKindComponentValue<Name extends QuantityKindName> = any & { readonly __quantityKind?: Name }
 
-export type QuantityKindNameForDomain<Domain extends QuantityKindDomain> = {
-  [Name in QuantityKindName]: QuantityKindData[Name]['domain'] extends Domain ? Name : never
-}[QuantityKindName]
-
-export type QuantityKindTensorOrder<Name extends QuantityKindName> = QuantityKindData[Name]['tensorOrder']
-
-type ComponentShapeForOrder<
-  Order extends number,
-  Result extends readonly 3[] = readonly [],
-> = Result['length'] extends Order ? Result : ComponentShapeForOrder<Order, readonly [...Result, 3]>
-
-export type QuantityKindComponentShape<Name extends QuantityKindName> = ComponentShapeForOrder<
-  QuantityKindTensorOrder<Name>
->
-
-type ComponentValueForShape<Shape extends readonly number[]> = Shape extends readonly []
-  ? number
-  : Shape extends readonly [3, ...infer Rest extends readonly number[]]
-    ? readonly [ComponentValueForShape<Rest>, ComponentValueForShape<Rest>, ComponentValueForShape<Rest>]
-    : never
-
-export type QuantityKindComponentValue<Name extends QuantityKindName> = ComponentValueForShape<
-  QuantityKindComponentShape<Name>
->
-
-export type ScalarQuantityKindName = {
-  [Name in QuantityKindName]: QuantityKindTensorOrder<Name> extends 0 ? Name : never
-}[QuantityKindName]
-
-export type TensorQuantityKindName = Exclude<QuantityKindName, ScalarQuantityKindName>
+export type ScalarQuantityKindName = string
+export type TensorQuantityKindName = string
 
 export type CartesianBasis = readonly [Vec3, Vec3, Vec3]
 
@@ -57,7 +35,7 @@ export function componentShapeForTensorOrder(order: number, path = 'Tensor order
 }
 
 export function getQuantityKindTensorOrder<Name extends QuantityKindName>(name: Name): QuantityKindTensorOrder<Name> {
-  return quantityKindData[name].tensorOrder
+  return getRuntimeQuantityKind(name).tensorOrder as QuantityKindTensorOrder<Name>
 }
 
 export function getQuantityKindComponentShape<Name extends QuantityKindName>(
@@ -196,11 +174,9 @@ export function transformQuantityValue(
   return buildTargetComponents([], 0)
 }
 
-type QuantityBasisMetadata<Name extends QuantityKindName> = [Name] extends [ScalarQuantityKindName]
-  ? Readonly<{ basis?: never }>
-  : [Name] extends [TensorQuantityKindName]
-    ? Readonly<{ basis?: CartesianBasis }>
-    : Readonly<{ basis?: CartesianBasis }>
+type QuantityBasisMetadata<Name extends QuantityKindName> = Readonly<{ basis?: CartesianBasis }> & {
+  readonly __quantityKind?: Name
+}
 
 export type QuantityMetadata<Name extends QuantityKindName = QuantityKindName> = Readonly<{
   unit: UcumUnit
@@ -208,13 +184,13 @@ export type QuantityMetadata<Name extends QuantityKindName = QuantityKindName> =
 }> &
   QuantityBasisMetadata<Name>
 
-export type ApplicableUnit<Name extends QuantityKindName> = QuantityKindData[Name]['applicableUnits'][number]
+export type ApplicableUnit<Name extends QuantityKindName> = UcumUnit & { readonly __quantityKind?: Name }
 
 export interface QuantityKindDefinition<Name extends QuantityKindName> {
   readonly name: Name
-  domain(): QuantityKindData[Name]['domain']
+  domain(): QuantityKindDomain
   description(): string | undefined
-  applicableUnits(): QuantityKindData[Name]['applicableUnits']
+  applicableUnits(): readonly UcumUnit[]
   tensorOrder(): QuantityKindTensorOrder<Name>
   componentShape(): QuantityKindComponentShape<Name>
   transform(
@@ -248,18 +224,19 @@ export function normalizeQuantityMetadata(
 
   if (
     typeof value.quantityKind !== 'string' ||
-    !Object.prototype.hasOwnProperty.call(quantityKindData, value.quantityKind)
+    !value.quantityKind
   ) {
     throw new CadModelError(`${path}.quantityKind must be a known Quantity Kind name.`)
   }
 
   const quantityKind = value.quantityKind as QuantityKindName
   const unit = normalizeUcumUnit(value.unit, `${path}.unit`)
-  if (!(quantityKindData[quantityKind].applicableUnits as readonly string[]).includes(unit)) {
+  const definition = getRuntimeQuantityKind(quantityKind)
+  if (!definition.applicableUnits.includes(unit)) {
     throw new CadModelError(`${path}.unit ${unit} is not applicable to Quantity Kind ${quantityKind}.`)
   }
 
-  const tensorOrder = quantityKindData[quantityKind].tensorOrder
+  const tensorOrder = definition.tensorOrder
   if (scalarOnly && tensorOrder > 0) {
     throw new CadModelError(
       `${path}.quantityKind ${quantityKind} has tensor order ${tensorOrder} and component shape ${JSON.stringify(getQuantityKindComponentShape(quantityKind))}; use a float dtype descriptor without axes, the complete component value, and basis.`,
@@ -290,15 +267,15 @@ export class QuantityKindEntry<Name extends QuantityKindName> implements Quantit
   }
 
   description(): string | undefined {
-    return quantityKindData[this.name].description
+    return getRuntimeQuantityKind(this.name).description ?? undefined
   }
 
-  domain(): QuantityKindData[Name]['domain'] {
-    return quantityKindData[this.name].domain
+  domain(): QuantityKindDomain {
+    return getRuntimeQuantityKind(this.name).domain
   }
 
-  applicableUnits(): QuantityKindData[Name]['applicableUnits'] {
-    return quantityKindData[this.name].applicableUnits as QuantityKindData[Name]['applicableUnits']
+  applicableUnits(): readonly UcumUnit[] {
+    return Object.freeze([...getRuntimeQuantityKind(this.name).applicableUnits])
   }
 
   tensorOrder(): QuantityKindTensorOrder<Name> {
@@ -321,7 +298,7 @@ export class QuantityKindEntry<Name extends QuantityKindName> implements Quantit
     if (!applicableUnits.includes(toUnit)) {
       throw new CadModelError(`QuantityKind ${this.name} does not include target UCUM unit ${toUnit}.`)
     }
-    if (opaqueQuantityKinds.has(this.name) && fromUnit !== toUnit) {
+    if (getRuntimeQuantityKind(this.name).opaque && fromUnit !== toUnit) {
       throw new CadModelError(`QuantityKind ${this.name} does not support unit conversion.`)
     }
 

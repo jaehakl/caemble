@@ -1,6 +1,7 @@
 import { geometries, measurements } from '@jscad/modeling'
 import { transform } from 'esbuild'
 import { describe, expect, it } from 'vitest'
+import { installSyntheticCatalog } from '@/test/syntheticCatalog'
 import { defaultExperimentSourceBundle } from '../../defaultExperimentCode'
 import {
   CAD_COMPILER_VERSION,
@@ -17,6 +18,18 @@ import {
   inspectCompiledDocument,
   requireCaembleModule,
 } from './userModule'
+
+installSyntheticCatalog({
+  quantityKinds: [
+    { name: 'DimensionlessRatio', applicableUnits: ['{fraction}'] },
+    { name: 'electromagnetism.ElectricCurrent', applicableUnits: ['A'] },
+    { name: 'electromagnetism.Voltage', applicableUnits: ['mV'] },
+    { name: 'electromagnetism.ElectricConductivity', tensorOrder: 2, applicableUnits: ['S.m-1'] },
+  ],
+  materialParameters: [
+    { key: 'electrical.conductivity', quantityKind: 'electromagnetism.ElectricConductivity' },
+  ],
+})
 
 async function compile(source: string) {
   return (

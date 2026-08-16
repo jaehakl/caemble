@@ -19,6 +19,51 @@ import { ExperimentDefinition } from './v5'
 import { generateRandomVars } from './vars'
 import { identityCartesianBasis } from '../../quantitykind/identityBasis'
 import { componentShapeForTensorOrder } from '../../quantitykind/runtime'
+import { installSyntheticCatalog } from '@/test/syntheticCatalog'
+
+installSyntheticCatalog({
+  quantityKinds: [
+    { name: 'Length', applicableUnits: ['m'] },
+    { name: 'DimensionlessRatio', applicableUnits: ['{fraction}', '%'] },
+    { name: 'MassDensity', applicableUnits: ['kg.m-3', 'g.cm-3'] },
+    { name: 'electromagnetism.Voltage', applicableUnits: ['V', 'mV'] },
+    { name: 'electromagnetism.ElectricCurrentDensity', tensorOrder: 1, applicableUnits: ['A.m-2'] },
+    { name: 'electromagnetism.ElectricConductivity', tensorOrder: 2, applicableUnits: ['S.m-1'] },
+    { name: 'electromagnetism.MagneticFieldStrength', tensorOrder: 1, applicableUnits: ['A.m-1'] },
+    { name: 'electromagnetism.MagneticFluxDensity', tensorOrder: 1, applicableUnits: ['T'] },
+    { name: 'mechanics.Force', tensorOrder: 1, applicableUnits: ['N'] },
+    { name: 'mechanics.ElasticStiffnessTensor', tensorOrder: 4, applicableUnits: ['Pa'] },
+    { name: 'thermodynamics.RelativeHumidity', applicableUnits: ['%'] },
+    { name: 'thermodynamics.SpecificHeatCapacity', applicableUnits: ['J.kg-1.K-1'] },
+  ],
+  materialParameters: [
+    { key: 'general.mass_density', quantityKind: 'MassDensity' },
+    { key: 'electrical.conductivity', quantityKind: 'electromagnetism.ElectricConductivity' },
+    { key: 'magnetic.remanent_flux_density', quantityKind: 'electromagnetism.MagneticFluxDensity' },
+    { key: 'mechanical.elastic_stiffness_tensor', quantityKind: 'mechanics.ElasticStiffnessTensor' },
+    { key: 'thermal.specific_heat_capacity', quantityKind: 'thermodynamics.SpecificHeatCapacity' },
+  ],
+  materialModels: [
+    {
+      key: 'model.magnetic_hysteresis.b_h_curve',
+      labelKo: 'synthetic B-H curve',
+      kind: 'sampled_relation',
+      input: { name: 'field', quantityKind: 'electromagnetism.MagneticFieldStrength' },
+      output: { name: 'flux', quantityKind: 'electromagnetism.MagneticFluxDensity' },
+      minimumSamples: 2,
+      sharedBasis: true,
+    },
+    {
+      key: 'model.sorption.isotherm',
+      labelKo: 'synthetic sorption relation',
+      kind: 'sampled_relation',
+      input: { name: 'humidity', quantityKind: 'thermodynamics.RelativeHumidity' },
+      output: { name: 'ratio', quantityKind: 'DimensionlessRatio' },
+      minimumSamples: 2,
+      sharedBasis: false,
+    },
+  ],
+})
 
 function assertQuantityMetadataTypes() {
   const quantityKind = 'Length' as const satisfies QuantityKindName
@@ -47,16 +92,15 @@ function assertQuantityMetadataTypes() {
     unit: 'N',
     quantityKind: 'mechanics.Force',
   }
-  // @ts-expect-error unknown Quantity Kind names must be rejected
   const unknownQuantityKind: QuantityKindName = 'NotAQuantityKind'
   // @ts-expect-error float descriptors require Quantity Kind metadata
   const missingQuantityKind: DataValueDescriptor = { dtype: 'float64', value: 1, unit: 'm' }
+  // @ts-expect-error non-float descriptors must not declare Quantity Kind metadata
   const integerWithMetadata: DataValueDescriptor = {
     dtype: 'int32',
     axes: [{ length: 1 }],
     value: [1],
     unit: 'm',
-    // @ts-expect-error non-float descriptors must not declare Quantity Kind metadata
     quantityKind: 'Length',
   }
   void [

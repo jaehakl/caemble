@@ -226,7 +226,7 @@ target은 `<scope>.<kind>.<group>` 형식이다.
 - `experiment.geometry.*`, `experiment.surface.*`: 공통 physical scene
 - `task.geometry.*`, `task.surface.*`: 현재 Task의 solver-local scene
 
-각 method가 solver manifest에 선언한 `source`와 `kind`에 맞는 target만 사용할 수 있다.
+각 method가 SQLite Solver 계약에 선언한 `source`와 `kind`에 맞는 target만 사용할 수 있다.
 
 ## Python `simulate.py`
 
@@ -264,7 +264,9 @@ Candidate를 만들 때 Experiment와 모든 Task의 Material을 합쳐 resolve�
 
 같은 Experiment, vars, Material 값으로 Measurement를 여러 개 만들 수 있다. 생성 방식이나
 seed는 Measurement에 포함하지 않는다. CAE wire payload는 정확히
-`{ measurement: BuiltMeasurement }` 하나다.
+`{ measurement: BuiltMeasurement, solverContracts: [{ name, version, contractDigest }] }`다.
+`solverContracts`는 Experiment가 사용하는 Solver runtime slice에서 가져오며 CAE가 계산 전에
+로컬 SQLite 계약과 대조한다.
 
 ## Multiphysics orchestration
 
@@ -312,10 +314,11 @@ RecordedData 부착은 한 번만 허용하며 빈 결과 세트도 `recorded_at
 
 ## 새 kernel 추가
 
-`app/slaves/cae/app/solvers/<solver_name>/`에 `manifest.json`, `solver.py`, 전용 테스트를
-추가한다. CAE registry는 manifest를 자동 발견한다. UI에는 manifest 사본을 두지 않으며
-Solver Catalog는 같은 manifest를 Vite build 시 직접 포함한다. 변경 후 UI를 다시 빌드하고
-실제 UI `BuiltMeasurement` fixture를 재생성한다.
+[`solver-development.md`](solver-development.md)의 절차를 따른다. Solver 계약은
+`app/catalog/caemble_catalog/catalog.sqlite3`에만 두고, Draft SQLite에서 수정·검증·diff한
+뒤 publish한다. `app/slaves/cae/app/solvers/<solver_package>/solver.py`와 전용 테스트를
+추가하고 실제 UI `BuiltMeasurement` fixture를 재생성한다. UI용 manifest 사본이나
+Solver별 JSON은 만들지 않는다.
 
 ## 검증
 

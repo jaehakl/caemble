@@ -1,9 +1,5 @@
-import {
-  materialModelByKey,
-  materialParameterByKey,
-  type MaterialModelKey,
-  type MaterialPropertyKey,
-} from '../../material/data'
+import type { MaterialModelKey, MaterialPropertyKey } from '../../material/data'
+import { getRuntimeMaterialModel, getRuntimeMaterialParameter } from '../../catalog/runtime'
 import type { MaterialVariables, NormalizedMaterialVariables } from './descriptor'
 import { CadModelError } from './errors'
 import {
@@ -66,7 +62,7 @@ export class Material {
         normalizedVariables.color = value
       } else if (key === 'errorRate') {
         return
-      } else if (Object.prototype.hasOwnProperty.call(materialParameterByKey, key)) {
+      } else if (getRuntimeMaterialParameter(key)) {
         if (!isPlainObject(value)) throw new CadModelError(`${path} must be a Material property descriptor.`)
         normalizedVariables[key] = normalizeMaterialDataValueDescriptor(
           key as MaterialPropertyKey,
@@ -74,7 +70,7 @@ export class Material {
           path,
           errorRate,
         )
-      } else if (Object.prototype.hasOwnProperty.call(materialModelByKey, key)) {
+      } else if (getRuntimeMaterialModel(key)) {
         if (!isPlainObject(value)) throw new CadModelError(`${path} must be a sampled relation.`)
         normalizedVariables[key] = normalizeMaterialSampledRelation(key as MaterialModelKey, value, path)
       } else {

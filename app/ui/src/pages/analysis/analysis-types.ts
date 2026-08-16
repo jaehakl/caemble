@@ -105,7 +105,14 @@ export type AnalysisTablePage = Readonly<{
 }>
 
 export type AnalysisProgressStage =
-  'Measurement 조회' | 'Recorded Data 조회' | '데이터셋 구성' | '통계 계산' | 'PCA·군집' | '교차 검증' | '최종 학습'
+  | 'Measurement 조회'
+  | 'Recorded Data 조회'
+  | 'Catalog 조회'
+  | '데이터셋 구성'
+  | '통계 계산'
+  | 'PCA·군집'
+  | '교차 검증'
+  | '최종 학습'
 
 export type AnalysisWorkerRequest =
   | Readonly<{

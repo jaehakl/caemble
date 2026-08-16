@@ -1,10 +1,32 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import type { ComponentProps } from 'react'
 import { describe, expect, it } from 'vitest'
+import type { CatalogQuantityKind } from '@/api/catalog'
 import type { RecordedDataRule } from '@/lib/cad'
 import { identityCartesianBasis } from '@/lib/quantitykind'
-import RecordedDataResults from './RecordedDataResults'
+import RecordedDataResultsView from './RecordedDataResults'
 import { componentIndexPaths, componentLabel, projectRecordedComponents } from './recordedComponents'
 import { convertRecordedNumericValue } from './recordedData'
+
+const quantityKinds = new Map<string, CatalogQuantityKind>([
+  [
+    'test.Ratio',
+    { name: 'test.Ratio', domain: 'test', tensorOrder: 0, opaque: false, applicableUnits: ['{fraction}'] },
+  ],
+  ['test.Length', { name: 'test.Length', domain: 'test', tensorOrder: 0, opaque: false, applicableUnits: ['m', 'mm'] }],
+  [
+    'test.Current',
+    { name: 'test.Current', domain: 'test', tensorOrder: 0, opaque: false, applicableUnits: ['A', 'mA'] },
+  ],
+  [
+    'test.CurrentDensity',
+    { name: 'test.CurrentDensity', domain: 'test', tensorOrder: 1, opaque: false, applicableUnits: ['A.m-2'] },
+  ],
+])
+
+function RecordedDataResults(props: ComponentProps<typeof RecordedDataResultsView>) {
+  return <RecordedDataResultsView quantityKinds={quantityKinds} {...props} />
+}
 
 function rule(
   label: string,
@@ -15,10 +37,10 @@ function rule(
 ): RecordedDataRule {
   const quantityMetadata = dtype.startsWith('float')
     ? unit === 'A'
-      ? { unit, quantityKind: 'electromagnetism.ElectricCurrent' as const }
+      ? { unit, quantityKind: 'test.Current' as const }
       : unit === 'A.m-2'
-        ? { unit, quantityKind: 'electromagnetism.ElectricCurrentDensity' as const, basis: identityCartesianBasis }
-        : { unit: '{fraction}', quantityKind: 'DimensionlessRatio' as const }
+        ? { unit, quantityKind: 'test.CurrentDensity' as const, basis: identityCartesianBasis }
+        : { unit: '{fraction}', quantityKind: 'test.Ratio' as const }
     : {}
   return {
     target: ['experiment.geometry.domain'],
@@ -34,7 +56,7 @@ function rule(
             axes: shape.map((size, index) => ({
               ...(size === -1 ? {} : { length: size }),
               name: `axis ${index}`,
-              ...(axisUnit ? { unit: axisUnit, quantityKind: 'Length' as const } : {}),
+              ...(axisUnit ? { unit: axisUnit, quantityKind: 'test.Length' as const } : {}),
               ...(size === -1 ? {} : { ticks: Array.from({ length: size }, (_, tick) => `${index}:${tick}`) }),
             })),
           }),
@@ -92,8 +114,8 @@ describe('RecordedDataResults', () => {
       result: {
         dtype: 'float32',
         unit: 'A',
-        quantityKind: 'electromagnetism.ElectricCurrent',
-        axes: [{ length: 3, name: 'position', ticks: [0, 0.5, 1], unit: 'm', quantityKind: 'Length' }],
+        quantityKind: 'test.Current',
+        axes: [{ length: 3, name: 'position', ticks: [0, 0.5, 1], unit: 'm', quantityKind: 'test.Length' }],
       },
     }
     const markup = renderToStaticMarkup(

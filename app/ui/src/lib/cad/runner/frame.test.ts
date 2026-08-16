@@ -23,7 +23,13 @@ const compiled: CompiledCadDocument = {
 }
 const inspection: RunnerOperationEnvelope = {
   type: 'inspect', nonce: '12345678-1234-1234-1234-123456789abc',
-  request: { type: 'inspect', requestId: 'inspect-1', revision: 2, compiledDocument: compiled },
+  request: {
+    type: 'inspect', requestId: 'inspect-1', revision: 2, compiledDocument: compiled,
+    catalog: {
+      schemaVersion: 1, catalogRevision: 'test', solvers: [], quantityKinds: [],
+      materialParameters: [], materialModels: [], materialGlobalQualifiers: [], warnings: [],
+    },
+  },
 }
 
 function createPort() {

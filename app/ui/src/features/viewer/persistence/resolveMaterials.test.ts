@@ -2,7 +2,13 @@ import { primitives } from '@jscad/modeling'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { dbTables } from '@/api'
 import { serializeCadScene, type EvaluatedExperimentSnapshot } from '@/lib/cad'
+import { installSyntheticCatalog } from '@/test/syntheticCatalog'
 import { createDocumentMaterialResolver } from './resolveMaterials'
+
+installSyntheticCatalog({
+  quantityKinds: [{ name: 'MassDensity', applicableUnits: ['kg.m-3'] }],
+  materialParameters: [{ key: 'general.mass_density', quantityKind: 'MassDensity' }],
+})
 
 function scene(materialName: string) {
   return serializeCadScene({

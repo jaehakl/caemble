@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import json
-import re
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
+from caemble_catalog import open_catalog
+
 from app.solver_framework.units import convert_ucum_value
+from app.solver_framework.registry import registry
 
-
-REPO_ROOT = Path(__file__).resolve().parents[4]
-UI_ROOT = REPO_ROOT / "app" / "ui"
 OPAQUE_QUANTITY_KINDS = (
     "LinearLogarithmicRatio",
     "thermodynamics.AreaTimeTemperature",
@@ -22,17 +19,13 @@ OPAQUE_QUANTITY_KINDS = (
 
 
 def _load_catalog() -> tuple[dict[str, Any], tuple[str, ...]]:
-    manifest = json.loads(
-        (UI_ROOT / "src" / "lib" / "cad" / "api" / "authoring-manifest.json").read_text(encoding="utf-8")
+    with open_catalog() as catalog:
+        definitions, total = catalog.list_quantity_kinds(limit=2_000)
+    assert total == len(definitions)
+    return (
+        {definition["name"]: definition for definition in definitions},
+        tuple(definition["name"] for definition in definitions if definition["opaque"]),
     )
-    asset = (
-        UI_ROOT / "public" / "assets" / f"quantity-kind-data-{manifest['quantityKindDataVersion']}.js"
-    ).read_text(encoding="utf-8")
-    data_match = re.search(r"const data=(.*)\nfor\(", asset, re.DOTALL)
-    opaque_match = re.search(r"export const opaqueQuantityKindNames=Object\.freeze\((.*)\)\n", asset)
-    assert data_match is not None
-    assert opaque_match is not None
-    return json.loads(data_match.group(1)), tuple(json.loads(opaque_match.group(1)))
 
 
 @lru_cache(maxsize=None)
@@ -53,12 +46,12 @@ def _quantity_descriptors(value: Any):
             yield from _quantity_descriptors(child)
 
 
-def test_generated_catalog_units_are_supported_by_the_slave_converter() -> None:
+def test_sqlite_catalog_units_are_supported_by_the_slave_converter() -> None:
     catalog, opaque_names = _load_catalog()
 
     assert len(catalog) == 1_216
     assert sum(len(entry["applicableUnits"]) for entry in catalog.values()) == 10_338
-    assert opaque_names == OPAQUE_QUANTITY_KINDS
+    assert set(opaque_names) == set(OPAQUE_QUANTITY_KINDS)
     for name, entry in catalog.items():
         units = entry["applicableUnits"]
         assert units
@@ -73,18 +66,19 @@ def test_generated_catalog_units_are_supported_by_the_slave_converter() -> None:
 def test_solver_manifests_only_reference_convertible_catalog_units() -> None:
     catalog, opaque_names = _load_catalog()
 
-    for manifest_path in (REPO_ROOT / "app" / "slaves" / "cae" / "app" / "solvers").glob("*/manifest.json"):
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for manifest in registry.manifests():
+        descriptor = manifest["descriptor"]
+        identity = f"{descriptor['name']}@{descriptor['version']}"
         for descriptor in _quantity_descriptors(manifest):
             name = descriptor["quantityKind"]
             target = descriptor["unit"]
-            assert name in catalog, f"{manifest_path}: unknown QuantityKind {name}"
-            assert name not in opaque_names, f"{manifest_path}: opaque QuantityKind {name} cannot be a solver contract"
-            assert target in catalog[name]["applicableUnits"], f"{manifest_path}: {name} does not include {target}"
+            assert name in catalog, f"{identity}: unknown QuantityKind {name}"
+            assert name not in opaque_names, f"{identity}: opaque QuantityKind {name} cannot be a solver contract"
+            assert target in catalog[name]["applicableUnits"], f"{identity}: {name} does not include {target}"
             for source in catalog[name]["applicableUnits"]:
-                _assert_bidirectional_conversion(source, target, f"{manifest_path}:{name}")
+                _assert_bidirectional_conversion(source, target, f"{identity}:{name}")
 
         reference_length_unit = manifest["descriptor"]["referenceLengthUnit"]
         assert reference_length_unit in catalog["Length"]["applicableUnits"]
         for source in catalog["Length"]["applicableUnits"]:
-            _assert_bidirectional_conversion(source, reference_length_unit, f"{manifest_path}:referenceLengthUnit")
+            _assert_bidirectional_conversion(source, reference_length_unit, f"{identity}:referenceLengthUnit")

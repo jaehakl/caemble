@@ -4,19 +4,19 @@ Caemble의 fully-built `BuiltMeasurement`만 받아 Python kernel을 실행하�
 RecordedData만 public v1 WebRTC result attachment로 반환한다. Caemble에 포함된 SDK와
 application-level `cae.simulation.start` → `cae.simulation.next` protocol을 사용한다.
 
-CAE에는 전체 QuantityKind나 Material catalog가 없다. 각
-`app/solvers/<solver_name>/manifest.json`이 해당 solver가 실제로 사용하는 kernel identity,
-reference geometry unit, material property, parameter, method,
-input/output/observation spec과 Python implementation 경로를 소유한다. 일반 tensor codec은
-UI가 보낸 `dtype`, `tensorOrder`, shape, ticks와 byte length를 검증한다. solver task,
-geometry, material 값은 manifest 계약에 따라 CAE에서 UCUM 단위로 변환한다.
+QuantityKind, Material, Solver 계약의 단일 원본은 `app/catalog`의 SQLite다. CAE는 worker
+시작 시 `caemble_catalog`로 활성 Solver 계약과 digest를 읽어 메모리에 고정하고 DB를 닫는다.
+각 계약에는 kernel identity, reference geometry unit, material property, parameter, method,
+input/output/observation spec과 Python implementation 경로가 들어 있다. 일반 tensor codec은
+UI가 보낸 `dtype`, `tensorOrder`, shape, ticks와 byte length를 검증한다. Solver task,
+geometry, material 값은 이 계약에 따라 CAE에서 UCUM 단위로 변환한다.
 
 ## Solver framework
 
 - `app/kernels.py`는 기존 runtime 호출부를 보존하는 얇은 facade다.
-- `app/solver_framework/registry.py`는 시작 시 모든 manifest를 schema 검증하고 identity,
-  implementation 경로의 오류와 identity 중복을 확인한다.
-- solver 구현 모듈은 manifest 검증 시 import하지 않으며 해당 kernel의 최초 실행 시
+- `app/solver_framework/registry.py`는 시작 시 SQLite에서 재구성한 계약의 identity, digest,
+  implementation 경로와 identity 중복을 확인한다.
+- Solver 구현 모듈은 계약 검증 시 import하지 않으며 해당 kernel의 최초 실행 시
   import하고 cache한다.
 - `app/solver_framework/world.py`는 target, surface, material, scalar parameter 해석을,
   `app/solver_framework/numerics/`는 voxel domain, scalar finite-volume system, PCG,
@@ -24,12 +24,13 @@ geometry, material 값은 manifest 계약에 따라 CAE에서 UCUM 단위로 변
 - DC와 Heat 고유 계산은 각각 `app/solvers/dc_current_density/solver.py`와
   `app/solvers/steady_state_heat/solver.py`에만 둔다. 공통 physics base class는 사용하지 않는다.
 
-새 solver는 중앙 registry나 validation 코드를 수정하지 않고 다음 순서로 추가한다.
+새 Solver는 중앙 registry나 validation 코드를 수정하지 않고 다음 순서로 추가한다. 세부
+명령과 필수 검증은 [`docs/solver-development.md`](../../../docs/solver-development.md)를 따른다.
 
-1. `app/solvers/<solver_name>/manifest.json`, `solver.py`, 전용 테스트를 추가한다.
-2. UI example을 추가하고 `npm run export:cae-fixture`로 실제 계약 fixture를 갱신한다.
-3. focused fixture test와 전체 `poetry run pytest -q`를 실행한다.
-4. 완료 전에 Caemble generated API check, Vitest, TypeScript, lint, build를 실행한다.
+1. `catalogctl draft create`로 Draft SQLite를 만들고 Solver 계약을 등록한다.
+2. `app/solvers/<solver_package>/solver.py`와 전용 테스트를 추가한다.
+3. Draft를 validate·semantic diff한 뒤 canonical SQLite로 publish한다.
+4. UI example과 실제 계약 fixture를 갱신하고 전체 검증을 실행한다.
 
 ```powershell
 cd app/slaves/cae
@@ -74,14 +75,15 @@ poetry run python -c "import app, numpy, aiortc"
 `poetry env remove --all`로 해당 프로젝트 환경을 제거한 후 `poetry install`을 다시
 실행한다.
 
-UI와 CAE는 함께 배포하지만 별도 contract package나 hash 비교를 사용하지 않는다.
-이 디렉터리의 CAE manifest가 단일 계약 원본이다. Caemble UI는 같은 JSON을 Vite
-build 시 직접 포함하며 사본이나 generated solver catalog를 커밋하지 않는다. 외부 SDK
-호환을 위한 `cae.solvers.manifests` handler는 유지한다.
+UI/API와 CAE는 같은 `caemble_catalog` release를 함께 배포한다. UI는 API에서 Solver별
+runtime slice를 받고 CAE는 패키징된 SQLite를 직접 읽는다. 외부 SDK 호환을 위한
+`cae.solvers.manifests` handler는 SQLite 관계에서 기존 JSON wire를 재구성해 유지한다.
 
-CAE registry는 solver `manifest.json`을 자동 검색한다. start payload는 정확히
-`{ measurement: BuiltMeasurement }`이며 Simulation manifest v5와 Python simulation API v3만
-받는다. 각 kernel world의 `experiment` scope는 공통 physical scene과 frozen materials를,
+start payload는 정확히
+`{ measurement: BuiltMeasurement, solverContracts: [{ name, version, contractDigest }] }`이며
+Simulation manifest v5와 Python simulation API v3만 받는다. `solverContracts`는 Task에서
+참조한 고유 Solver 집합과 정확히 일치해야 한다. CAE의 로컬 digest와 다르면 계산이나 run
+생성 전에 `catalog_mismatch`로 거부한다. 각 kernel world의 `experiment` scope는 공통 physical scene과 frozen materials를,
 `task` scope는 현재 Task-local scene과 frozen materials를 제공한다.
 첫 `next`가 계산을 시작하며 각 record는 다음
 `next`의 `ackSequence`를 받아야 해제된다. 기본 실행 제한은 2시간, 첫 `next` 제한은 30초,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MaterialNameRecord, MaterialRecord } from '@/api'
+import { materialTestCatalog } from './material-test-fixtures'
 import { getQualifierNames, isMaterialCatalogKey, materialDisplayName } from './material-utils'
 
 describe('Material management helpers', () => {
@@ -15,11 +16,11 @@ describe('Material management helpers', () => {
   })
 
   it('accepts only material catalog keys and excludes dedicated qualifiers', () => {
-    expect(isMaterialCatalogKey('electrical.conductivity')).toBe(true)
-    expect(isMaterialCatalogKey('arbitrary.value')).toBe(false)
-    const qualifiers = getQualifierNames('electrical.conductivity')
-    expect(qualifiers).toContain('coordinate_frame')
-    expect(qualifiers).toContain('wavelength')
+    expect(isMaterialCatalogKey('test.matrix_property', materialTestCatalog)).toBe(true)
+    expect(isMaterialCatalogKey('arbitrary.value', materialTestCatalog)).toBe(false)
+    const qualifiers = getQualifierNames('test.matrix_property', materialTestCatalog)
+    expect(qualifiers).toContain('test_frame')
+    expect(qualifiers).toContain('test_condition')
     expect(qualifiers).not.toContain('frequency')
     expect(qualifiers).not.toContain('source')
   })

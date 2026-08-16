@@ -1,28 +1,7 @@
 import type { QuantityKindName } from '../quantitykind/runtime'
 
-export const materialParameterDomains = Object.freeze([
-  'general',
-  'mechanical',
-  'thermal',
-  'thermodynamic',
-  'fluid',
-  'transport',
-  'electrical',
-  'magnetic',
-  'optical',
-  'radiative',
-  'acoustic',
-  'chemical',
-  'combustion',
-  'electrochemical',
-  'semiconductor',
-  'radiation',
-  'microstructure',
-  'coupled',
-  'interface',
-] as const)
-
-export type MaterialParameterDomain = (typeof materialParameterDomains)[number]
+export const materialParameterDomains: readonly string[] = Object.freeze([])
+export type MaterialParameterDomain = string
 
 export interface MaterialParameterDefinition<
   Domain extends MaterialParameterDomain = MaterialParameterDomain,

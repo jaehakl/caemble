@@ -5,9 +5,15 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MaterialDetail } from './MaterialDetailPage'
+import { materialTestCatalog, materialTestRuntimeSlice } from './material-test-fixtures'
 import { getMaterialModel, getMaterialProperty, getQuantityValueConfig, materialFloatDTypes } from './material-value'
 
 const api = vi.hoisted(() => ({
+  getCatalogMaterialModel: vi.fn(),
+  getCatalogMaterialParameter: vi.fn(),
+  listCatalogMaterialModels: vi.fn(),
+  listCatalogMaterialParameters: vi.fn(),
+  runtimeSlice: vi.fn(),
   deleteMaterial: vi.fn(),
   deleteName: vi.fn(),
   deleteParameter: vi.fn(),
@@ -58,6 +64,21 @@ vi.mock('@/features/auth/use-auth', () => ({
   }),
 }))
 
+vi.mock('@/api/catalog', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/catalog')>()
+  return {
+    ...actual,
+    catalogApi: {
+      ...actual.catalogApi,
+      getMaterialModel: api.getCatalogMaterialModel,
+      getMaterialParameter: api.getCatalogMaterialParameter,
+      listMaterialModels: api.listCatalogMaterialModels,
+      listMaterialParameters: api.listCatalogMaterialParameters,
+      runtimeSlice: api.runtimeSlice,
+    },
+  }
+})
+
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 
 function renderPage() {
@@ -91,6 +112,23 @@ beforeEach(() => {
   api.listQualifiers.mockResolvedValue({ items: [], total: 0 })
   api.upsertParameter.mockResolvedValue([{ id: 20 }])
   api.upsertMaterial.mockResolvedValue([{ id: 1 }])
+  api.getCatalogMaterialParameter.mockImplementation(async (key: string) =>
+    materialTestCatalog.materialParameters.find((definition) => definition.key === key),
+  )
+  api.getCatalogMaterialModel.mockImplementation(async (key: string) =>
+    materialTestCatalog.materialModels.find((definition) => definition.key === key),
+  )
+  api.listCatalogMaterialParameters.mockResolvedValue({
+    items: materialTestCatalog.materialParameters,
+    nextCursor: null,
+    total: materialTestCatalog.materialParameters.length,
+  })
+  api.listCatalogMaterialModels.mockResolvedValue({
+    items: materialTestCatalog.materialModels,
+    nextCursor: null,
+    total: materialTestCatalog.materialModels.length,
+  })
+  api.runtimeSlice.mockImplementation(async (request) => materialTestRuntimeSlice(request))
 })
 
 afterEach(() => {
@@ -99,6 +137,43 @@ afterEach(() => {
 })
 
 describe('MaterialDetailPage permissions and solver guidance', () => {
+  it('직접 진입 시 저장된 parameter key의 최소 Catalog slice를 먼저 불러온다', async () => {
+    api.listParameters.mockResolvedValue({
+      items: [
+        {
+          id: 20,
+          material_id: 1,
+          name: 'test.scalar_property',
+          value: { dtype: 'float32', unit: '{test-scalar}', value: 2700 },
+          user_id: 'user-id',
+        },
+      ],
+      total: 1,
+    })
+
+    renderPage()
+
+    expect(await screen.findByRole('heading', { name: 'Copper' })).toBeInTheDocument()
+    expect(screen.getByText('{test-scalar}')).toBeInTheDocument()
+    expect(api.getCatalogMaterialParameter).toHaveBeenCalledWith('test.scalar_property')
+    expect(api.runtimeSlice).toHaveBeenCalledWith({
+      solvers: [],
+      quantityKinds: [],
+      materialParameters: ['test.scalar_property'],
+      materialModels: [],
+    })
+  })
+
+  it('직접 진입 Catalog 조회 실패를 표시하고 다시 시도한다', async () => {
+    api.runtimeSlice.mockRejectedValueOnce(new Error('Catalog unavailable'))
+    renderPage()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Material Catalog를 불러오지 못했습니다.')
+    await userEvent.click(screen.getByRole('button', { name: '다시 시도' }))
+    expect(await screen.findByRole('heading', { name: 'Copper' })).toBeInTheDocument()
+    expect(api.runtimeSlice).toHaveBeenCalledTimes(2)
+  })
+
   it('syncs direct color input with the palette and saves a palette selection', async () => {
     auth.roles = ['admin']
     renderPage()
@@ -148,11 +223,11 @@ describe('MaterialDetailPage permissions and solver guidance', () => {
 
     expect(screen.queryByRole('heading', { name: '사용 가능한 Solver' })).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Parameter 추가' }))
-    await chooseMaterialCatalogEntry('electrical.conductivity')
+    await chooseMaterialCatalogEntry('test.matrix_property')
     const dialog = screen.getByRole('dialog')
-    expect(within(dialog).getByText('electrical.conductivity')).toBeInTheDocument()
+    expect(within(dialog).getByText('test.matrix_property')).toBeInTheDocument()
     expect(within(dialog).getByRole('combobox', { name: 'Dtype' })).toHaveTextContent('float32')
-    expect(within(dialog).getByRole('combobox', { name: 'Unit' })).toHaveTextContent(/^dS\.m-1$/)
+    expect(within(dialog).getByRole('combobox', { name: 'Unit' })).toHaveTextContent(/^\{test-matrix\}$/)
     const conductivity = [
       [59_600_000, 0, 0],
       [0, 59_600_000, 0],
@@ -166,9 +241,9 @@ describe('MaterialDetailPage permissions and solver guidance', () => {
       expect(api.upsertParameter).toHaveBeenCalledWith([
         expect.objectContaining({
           material_id: 1,
-          name: 'electrical.conductivity',
+          name: 'test.matrix_property',
           user_id: 'user-id',
-          value: { dtype: 'float32', value: conductivity, unit: 'dS.m-1' },
+          value: { dtype: 'float32', value: conductivity, unit: '{test-matrix}' },
         }),
       ]),
     )
@@ -178,12 +253,12 @@ describe('MaterialDetailPage permissions and solver guidance', () => {
     renderPage()
     expect(await screen.findByRole('heading', { name: 'Copper' })).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Parameter 추가' }))
-    await chooseMaterialCatalogEntry('model.sorption.isotherm')
+    await chooseMaterialCatalogEntry('model.test.scalar_curve')
 
     const dialog = screen.getByRole('dialog')
-    const definition = getMaterialModel('model.sorption.isotherm')!
-    const inputUnit = getQuantityValueConfig(definition.input.quantity_kind).units[0]
-    const outputUnit = getQuantityValueConfig(definition.output.quantity_kind).units[0]
+    const definition = getMaterialModel('model.test.scalar_curve', materialTestCatalog)!
+    const inputUnit = getQuantityValueConfig(definition.input.quantity_kind, materialTestCatalog).units[0]
+    const outputUnit = getQuantityValueConfig(definition.output.quantity_kind, materialTestCatalog).units[0]
     expect(within(dialog).getByRole('combobox', { name: 'Input unit' })).toHaveTextContent(inputUnit)
     expect(within(dialog).getByRole('combobox', { name: 'Output unit' })).toHaveTextContent(outputUnit)
     const minimumSampleDeleteButtons = within(dialog).getAllByRole('button', { name: /샘플 \d+ 삭제/ })
@@ -201,7 +276,7 @@ describe('MaterialDetailPage permissions and solver guidance', () => {
     await waitFor(() =>
       expect(api.upsertParameter).toHaveBeenCalledWith([
         expect.objectContaining({
-          name: 'model.sorption.isotherm',
+          name: 'model.test.scalar_curve',
           value: {
             kind: 'sampled_relation',
             input: { unit: inputUnit, values: [20, 0] },
@@ -214,12 +289,12 @@ describe('MaterialDetailPage permissions and solver guidance', () => {
 
   it('warns about a legacy value and requires re-entry through the structured form', async () => {
     api.listParameters.mockResolvedValue({
-      items: [{ id: 20, material_id: 1, name: 'general.mass_density', value: 2700, user_id: 'user-id' }],
+      items: [{ id: 20, material_id: 1, name: 'test.scalar_property', value: 2700, user_id: 'user-id' }],
       total: 1,
     })
     renderPage()
     expect(await screen.findByText('구조화 형식과 호환되지 않는 기존 값입니다.')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: 'general.mass_density 편집' }))
+    await userEvent.click(screen.getByRole('button', { name: 'test.scalar_property 편집' }))
 
     const dialog = screen.getByRole('dialog')
     expect(within(dialog).getByRole('alert')).toHaveTextContent('기존 값이 현재 구조화 형식과 호환되지 않습니다.')
@@ -227,13 +302,13 @@ describe('MaterialDetailPage permissions and solver guidance', () => {
     await userEvent.type(within(dialog).getByLabelText('Value'), '2700')
     await userEvent.click(within(dialog).getByRole('button', { name: '저장' }))
 
-    const definition = getMaterialProperty('general.mass_density')!
-    const defaultUnit = getQuantityValueConfig(definition.quantity_kind).units[0]
+    const definition = getMaterialProperty('test.scalar_property', materialTestCatalog)!
+    const defaultUnit = getQuantityValueConfig(definition.quantity_kind, materialTestCatalog).units[0]
     await waitFor(() =>
       expect(api.upsertParameter).toHaveBeenCalledWith([
         expect.objectContaining({
           id: 20,
-          name: 'general.mass_density',
+          name: 'test.scalar_property',
           value: { dtype: 'float32', value: 2700, unit: defaultUnit },
         }),
       ]),
@@ -244,17 +319,17 @@ describe('MaterialDetailPage permissions and solver guidance', () => {
     renderPage()
     expect(await screen.findByRole('heading', { name: 'Copper' })).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Parameter 추가' }))
-    await chooseMaterialCatalogEntry('general.mass_density')
+    await chooseMaterialCatalogEntry('test.scalar_property')
 
     let dialog = screen.getByRole('dialog')
     expect(materialFloatDTypes).toEqual(['float16', 'float32', 'float64'])
     expect(within(dialog).getByRole('combobox', { name: 'Dtype' })).toHaveTextContent('float32')
     await userEvent.type(within(dialog).getByLabelText('Value'), '2700')
 
-    await chooseMaterialCatalogEntry('electrical.conductivity', 'general.mass_density')
+    await chooseMaterialCatalogEntry('test.matrix_property', 'test.scalar_property')
     dialog = screen.getByRole('dialog')
-    const conductivity = getMaterialProperty('electrical.conductivity')!
-    const defaultUnit = getQuantityValueConfig(conductivity.quantity_kind).units[0]
+    const conductivity = getMaterialProperty('test.matrix_property', materialTestCatalog)!
+    const defaultUnit = getQuantityValueConfig(conductivity.quantity_kind, materialTestCatalog).units[0]
     expect(within(dialog).getByRole('combobox', { name: 'Dtype' })).toHaveTextContent('float32')
     await waitFor(() => expect(within(dialog).getByRole('combobox', { name: 'Unit' })).toHaveTextContent(defaultUnit))
     const inputs = within(dialog).getAllByRole('textbox', { name: /^Value \[/ })
@@ -263,7 +338,7 @@ describe('MaterialDetailPage permissions and solver guidance', () => {
     expect(within(dialog).getByRole('button', { name: '저장' })).toBeEnabled()
     expect(within(dialog).getByText('빈 값은 0으로 저장됩니다.')).toBeInTheDocument()
 
-    await chooseMaterialCatalogEntry('mechanical.elastic_stiffness_tensor', 'electrical.conductivity')
+    await chooseMaterialCatalogEntry('test.high_order_property', 'test.matrix_property')
     dialog = screen.getByRole('dialog')
     expect(within(dialog).queryByLabelText('Value Diagonal')).not.toBeInTheDocument()
     expect(within(dialog).queryByLabelText('Value Off diagonal')).not.toBeInTheDocument()
@@ -273,7 +348,7 @@ describe('MaterialDetailPage permissions and solver guidance', () => {
     renderPage()
     expect(await screen.findByRole('heading', { name: 'Copper' })).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Parameter 추가' }))
-    await chooseMaterialCatalogEntry('electrical.conductivity')
+    await chooseMaterialCatalogEntry('test.matrix_property')
 
     const dialog = screen.getByRole('dialog')
     const diagonal = within(dialog).getByLabelText('Value Diagonal')
@@ -307,7 +382,7 @@ describe('MaterialDetailPage permissions and solver guidance', () => {
         expect.objectContaining({
           value: {
             dtype: 'float32',
-            unit: 'dS.m-1',
+            unit: '{test-matrix}',
             value: [
               [0, 2, 2],
               [2, 0, 2],
@@ -325,11 +400,11 @@ describe('MaterialDetailPage permissions and solver guidance', () => {
         {
           id: 20,
           material_id: 1,
-          name: 'electrical.conductivity',
+          name: 'test.matrix_property',
           user_id: 'user-id',
           value: {
             dtype: 'float32',
-            unit: 'dS.m-1',
+            unit: '{test-matrix}',
             value: [
               [4, 1, 1],
               [1, 4, 1],
@@ -341,7 +416,7 @@ describe('MaterialDetailPage permissions and solver guidance', () => {
       total: 1,
     })
     renderPage()
-    await userEvent.click(await screen.findByRole('button', { name: 'electrical.conductivity 편집' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'test.matrix_property 편집' }))
     let dialog = screen.getByRole('dialog')
     expect(within(dialog).getByLabelText('Value Diagonal')).toHaveValue('4')
     expect(within(dialog).getByLabelText('Value Off diagonal')).toHaveValue('1')
@@ -352,11 +427,11 @@ describe('MaterialDetailPage permissions and solver guidance', () => {
         {
           id: 21,
           material_id: 1,
-          name: 'electrical.conductivity',
+          name: 'test.matrix_property',
           user_id: 'user-id',
           value: {
             dtype: 'float32',
-            unit: 'dS.m-1',
+            unit: '{test-matrix}',
             value: [
               [4, 2, 1],
               [1, 4, 1],
@@ -368,7 +443,7 @@ describe('MaterialDetailPage permissions and solver guidance', () => {
       total: 1,
     })
     renderPage()
-    await userEvent.click(await screen.findByRole('button', { name: 'electrical.conductivity 편집' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'test.matrix_property 편집' }))
     dialog = screen.getByRole('dialog')
     expect(within(dialog).getByLabelText('Value Diagonal')).toHaveValue('4')
     expect(within(dialog).getByLabelText('Value Off diagonal')).toHaveValue('')
@@ -380,7 +455,7 @@ describe('MaterialDetailPage permissions and solver guidance', () => {
     renderPage()
     expect(await screen.findByRole('heading', { name: 'Copper' })).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Parameter 추가' }))
-    await chooseMaterialCatalogEntry('general.mass_density')
+    await chooseMaterialCatalogEntry('test.scalar_property')
 
     const dialog = screen.getByRole('dialog')
     const value = within(dialog).getByLabelText('Value')
@@ -392,13 +467,13 @@ describe('MaterialDetailPage permissions and solver guidance', () => {
     expect(save).toBeEnabled()
     await userEvent.click(save)
 
-    const definition = getMaterialProperty('general.mass_density')!
+    const definition = getMaterialProperty('test.scalar_property', materialTestCatalog)!
     await waitFor(() =>
       expect(api.upsertParameter).toHaveBeenCalledWith([
         expect.objectContaining({
           value: {
             dtype: 'float32',
-            unit: getQuantityValueConfig(definition.quantity_kind).units[0],
+            unit: getQuantityValueConfig(definition.quantity_kind, materialTestCatalog).units[0],
             value: 0,
           },
         }),

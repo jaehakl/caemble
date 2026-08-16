@@ -10,6 +10,7 @@ import {
   type MaterialRecord,
   type UserData,
 } from '@/api'
+import { catalogApi, type CatalogRuntimeSlice } from '@/api/catalog'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -22,8 +23,11 @@ import {
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { FloatDataDType } from '@/lib/cad'
-import type { MaterialModelDefinition } from '@/lib/material'
-import { MaterialCatalogPickerDialog, QualifierCatalogPickerDialog } from './CatalogPickerDialog'
+import {
+  MaterialCatalogPickerDialog,
+  QualifierCatalogPickerDialog,
+  type MaterialCatalogEntry,
+} from './CatalogPickerDialog'
 import { MaterialColorField } from './MaterialColorField'
 import {
   createMaterialPropertyValue,
@@ -32,6 +36,7 @@ import {
   getMaterialProperty,
   getQuantityValueConfig,
   materialFloatDTypes,
+  type MaterialModelDefinition,
   readMaterialPropertyValue,
   readMaterialRelationValue,
 } from './material-value'
@@ -362,10 +367,11 @@ function ComponentInputs({
 
 function relationSamples(
   definition: MaterialModelDefinition,
+  catalog: CatalogRuntimeSlice,
   value?: ReturnType<typeof readMaterialRelationValue>,
 ): RelationSampleInput[] {
-  const inputShape = getQuantityValueConfig(definition.input.quantity_kind).shape
-  const outputShape = getQuantityValueConfig(definition.output.quantity_kind).shape
+  const inputShape = getQuantityValueConfig(definition.input.quantity_kind, catalog).shape
+  const outputShape = getQuantityValueConfig(definition.output.quantity_kind, catalog).shape
   if (value) {
     return value.input.values.map((input, index) => ({
       input: componentInputFromValue(input, inputShape),
@@ -379,6 +385,7 @@ function relationSamples(
 }
 
 export function MaterialParameterDialog({
+  catalog,
   initialName,
   material,
   onOpenChange,
@@ -386,6 +393,7 @@ export function MaterialParameterDialog({
   record,
   user,
 }: {
+  catalog: CatalogRuntimeSlice
   initialName?: string
   material: MaterialRecord
   onOpenChange: (open: boolean) => void
@@ -394,6 +402,8 @@ export function MaterialParameterDialog({
   user: UserData
 }) {
   const queryClient = useQueryClient()
+  const [selectedCatalog, setSelectedCatalog] = useState<CatalogRuntimeSlice | null>(null)
+  const activeCatalog = selectedCatalog ?? catalog
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [name, setName] = useState('')
   const [dtype, setDtype] = useState<FloatDataDType>('float32')
@@ -413,9 +423,10 @@ export function MaterialParameterDialog({
   const [formError, setFormError] = useState('')
   useEffect(() => {
     if (!open) return
+    setSelectedCatalog(null)
     const nextName = record?.name ?? initialName ?? ''
-    const property = getMaterialProperty(nextName)
-    const model = getMaterialModel(nextName)
+    const property = getMaterialProperty(nextName, catalog)
+    const model = getMaterialModel(nextName, catalog)
     setName(nextName)
     setDtype('float32')
     setUnit('')
@@ -425,8 +436,8 @@ export function MaterialParameterDialog({
     setSamples([])
     setIncompatibleValue(false)
     if (property) {
-      const config = getQuantityValueConfig(property.quantity_kind)
-      const stored = record ? readMaterialPropertyValue(property, record.value) : null
+      const config = getQuantityValueConfig(property.quantity_kind, catalog)
+      const stored = record ? readMaterialPropertyValue(property, record.value, catalog) : null
       setDtype(stored?.dtype ?? 'float32')
       setUnit(stored?.unit ?? config.units[0] ?? '')
       setComponentValue(
@@ -434,12 +445,12 @@ export function MaterialParameterDialog({
       )
       setIncompatibleValue(Boolean(record && !stored))
     } else if (model) {
-      const inputConfig = getQuantityValueConfig(model.input.quantity_kind)
-      const outputConfig = getQuantityValueConfig(model.output.quantity_kind)
-      const stored = record ? readMaterialRelationValue(model, record.value) : null
+      const inputConfig = getQuantityValueConfig(model.input.quantity_kind, catalog)
+      const outputConfig = getQuantityValueConfig(model.output.quantity_kind, catalog)
+      const stored = record ? readMaterialRelationValue(model, record.value, catalog) : null
       setRelationInputUnit(stored?.input.unit ?? inputConfig.units[0] ?? '')
       setRelationOutputUnit(stored?.output.unit ?? outputConfig.units[0] ?? '')
-      setSamples(relationSamples(model, stored))
+      setSamples(relationSamples(model, catalog, stored))
       setIncompatibleValue(Boolean(record && !stored))
     } else {
       setIncompatibleValue(Boolean(record))
@@ -452,40 +463,65 @@ export function MaterialParameterDialog({
     setFrequency(record?.frequency === null || record?.frequency === undefined ? '' : String(record.frequency))
     setVisibility(defaultVisibility(material, user, record?.user_id))
     setFormError('')
-  }, [initialName, material, open, record, user])
+  }, [catalog, initialName, material, open, record, user])
 
-  const selectCatalogName = (nextName: string) => {
-    const property = getMaterialProperty(nextName)
-    const model = getMaterialModel(nextName)
+  const selectCatalogName = async (entry: MaterialCatalogEntry) => {
+    const slice = await catalogApi.runtimeSlice({
+      solvers: [],
+      quantityKinds: [],
+      materialParameters: entry.kind === 'parameter' ? [entry.key] : [],
+      materialModels: entry.kind === 'model' ? [entry.key] : [],
+    })
+    const mergedCatalog: CatalogRuntimeSlice = {
+      ...slice,
+      solvers: catalog.solvers,
+      quantityKinds: [
+        ...new Map([...catalog.quantityKinds, ...slice.quantityKinds].map((item) => [item.name, item])).values(),
+      ],
+      materialParameters: [
+        ...new Map(
+          [...catalog.materialParameters, ...slice.materialParameters].map((item) => [item.key, item]),
+        ).values(),
+      ],
+      materialModels: [
+        ...new Map([...catalog.materialModels, ...slice.materialModels].map((item) => [item.key, item])).values(),
+      ],
+      materialGlobalQualifiers: [...new Set([...catalog.materialGlobalQualifiers, ...slice.materialGlobalQualifiers])],
+      warnings: [...new Set([...catalog.warnings, ...slice.warnings])],
+    }
+    const nextName = entry.key
+    const property = getMaterialProperty(nextName, mergedCatalog)
+    const model = getMaterialModel(nextName, mergedCatalog)
+    setSelectedCatalog(mergedCatalog)
     setName(nextName)
     setDtype('float32')
     setIncompatibleValue(false)
     if (property) {
-      const config = getQuantityValueConfig(property.quantity_kind)
+      const config = getQuantityValueConfig(property.quantity_kind, mergedCatalog)
       setUnit(config.units[0] ?? '')
       setComponentValue(emptyComponentInput(config.shape))
       setRelationInputUnit('')
       setRelationOutputUnit('')
       setSamples([])
     } else if (model) {
-      const inputConfig = getQuantityValueConfig(model.input.quantity_kind)
-      const outputConfig = getQuantityValueConfig(model.output.quantity_kind)
+      const inputConfig = getQuantityValueConfig(model.input.quantity_kind, mergedCatalog)
+      const outputConfig = getQuantityValueConfig(model.output.quantity_kind, mergedCatalog)
       setUnit('')
       setComponentValue('')
       setRelationInputUnit(inputConfig.units[0] ?? '')
       setRelationOutputUnit(outputConfig.units[0] ?? '')
-      setSamples(relationSamples(model))
+      setSamples(relationSamples(model, mergedCatalog))
     }
   }
 
-  const property = getMaterialProperty(name)
-  const model = getMaterialModel(name)
-  const propertyConfig = property ? getQuantityValueConfig(property.quantity_kind) : null
-  const relationInputConfig = model ? getQuantityValueConfig(model.input.quantity_kind) : null
-  const relationOutputConfig = model ? getQuantityValueConfig(model.output.quantity_kind) : null
+  const property = getMaterialProperty(name, activeCatalog)
+  const model = getMaterialModel(name, activeCatalog)
+  const propertyConfig = property ? getQuantityValueConfig(property.quantity_kind, activeCatalog) : null
+  const relationInputConfig = model ? getQuantityValueConfig(model.input.quantity_kind, activeCatalog) : null
+  const relationOutputConfig = model ? getQuantityValueConfig(model.output.quantity_kind, activeCatalog) : null
   const mutation = useMutation({
     mutationFn: async () => {
-      if (!isMaterialCatalogKey(name)) throw new Error('카탈로그에서 Material parameter를 선택하세요.')
+      if (!isMaterialCatalogKey(name, activeCatalog)) throw new Error('카탈로그에서 Material parameter를 선택하세요.')
       let value: unknown
       if (property && propertyConfig) {
         value = createMaterialPropertyValue(
@@ -493,6 +529,7 @@ export function MaterialParameterDialog({
           dtype,
           parseComponentInput(componentValue, propertyConfig.shape, 'Material parameter'),
           unit,
+          activeCatalog,
         )
       } else if (model && relationInputConfig && relationOutputConfig) {
         if (samples.length < model.minimum_samples) {
@@ -508,6 +545,7 @@ export function MaterialParameterDialog({
           samples.map((sample, index) =>
             parseComponentInput(sample.output, relationOutputConfig.shape, `샘플 ${index + 1} output`),
           ),
+          activeCatalog,
         )
       } else {
         throw new Error('카탈로그에서 Material parameter를 다시 선택하세요.')
@@ -537,7 +575,7 @@ export function MaterialParameterDialog({
       setFormError(error instanceof Error ? error.message : 'Material parameter를 저장하지 못했습니다.'),
   })
   const visibilityDisabled = !isAdmin(user) || material.user_id !== null
-  const validName = isMaterialCatalogKey(name)
+  const validName = isMaterialCatalogKey(name, activeCatalog)
   const valueComplete =
     property && propertyConfig
       ? propertyConfig.units.length > 0 && Boolean(unit) && componentInputValid(componentValue)
@@ -844,11 +882,13 @@ export function MaterialParameterDialog({
 }
 
 export function QualifierDialog({
+  catalog,
   onOpenChange,
   open,
   parameter,
   record,
 }: {
+  catalog: CatalogRuntimeSlice
   onOpenChange: (open: boolean) => void
   open: boolean
   parameter: MaterialParameterRecord
@@ -858,7 +898,7 @@ export function QualifierDialog({
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [name, setName] = useState('')
   const [value, setValue] = useState('')
-  const names = getQualifierNames(parameter.name)
+  const names = getQualifierNames(parameter.name, catalog)
   const validName = names.includes(name)
   const dedicated = isDedicatedQualifierName(name)
   useEffect(() => {

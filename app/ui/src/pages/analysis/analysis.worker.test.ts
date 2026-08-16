@@ -2,8 +2,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { AnalysisWorkerRequest, AnalysisWorkerResponse } from './analysis-types'
 
 const apiMocks = vi.hoisted(() => ({
+  catalogRuntimeSlice: vi.fn(),
   measurementList: vi.fn(),
   recordedDataList: vi.fn(),
+}))
+
+vi.mock('@/api/catalog', () => ({
+  catalogApi: { runtimeSlice: apiMocks.catalogRuntimeSlice },
 }))
 
 vi.mock('@/api', () => ({
@@ -64,6 +69,24 @@ describe('Analysis Worker data loading', () => {
   beforeEach(() => {
     responses.splice(0)
     vi.clearAllMocks()
+    apiMocks.catalogRuntimeSlice.mockImplementation(
+      async ({ quantityKinds }: { quantityKinds: readonly string[] }) => ({
+        schemaVersion: 1,
+        catalogRevision: 'test',
+        solvers: [],
+        quantityKinds: quantityKinds.map((name) => ({
+          name,
+          domain: 'general',
+          tensorOrder: 0,
+          description: null,
+          opaque: false,
+          applicableUnits: ['1'],
+        })),
+        materialParameters: [],
+        materialModels: [],
+        warnings: [],
+      }),
+    )
   })
 
   afterAll(() => vi.unstubAllGlobals())
@@ -109,6 +132,37 @@ describe('Analysis Worker data loading', () => {
         limit: null,
       }),
     )
+    expect(apiMocks.catalogRuntimeSlice).toHaveBeenCalledWith({
+      solvers: [],
+      quantityKinds: ['Dimensionless'],
+      materialParameters: [],
+      materialModels: [],
+    })
+  })
+
+  it('Catalog 조회 실패를 profile 대신 오류로 전달한다', async () => {
+    apiMocks.measurementList.mockResolvedValue({ total: 1, items: [measurement(1, 'a')] })
+    apiMocks.recordedDataList.mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          id: 101,
+          measurement_id: 1,
+          name: 'result',
+          quantity_kind: 'Dimensionless',
+          tensor_order: 0,
+          dtype: 'float64',
+          data: { value: 4 },
+        },
+      ],
+    })
+    apiMocks.catalogRuntimeSlice.mockRejectedValue(new Error('Catalog API를 사용할 수 없습니다.'))
+
+    dispatch({ type: 'load-context', requestId: 'catalog-error', experimentId: 2 })
+    const response = await waitForResponse('error', 'catalog-error')
+
+    expect(response.type === 'error' && response.message).toContain('Catalog API를 사용할 수 없습니다.')
+    expect(responses.some((item) => item.type === 'profile' && item.requestId === 'catalog-error')).toBe(false)
   })
 
   it('전후 signature가 바뀌면 한 번 다시 읽고 안정된 snapshot만 반환한다', async () => {

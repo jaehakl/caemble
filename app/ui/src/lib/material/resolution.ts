@@ -2,7 +2,7 @@ import type { MaterialNameRecord, MaterialParameterRecord, MaterialRecord } from
 import type { CadSceneMaterial } from '../cad/evaluation/types'
 import { applyMaterialErrorMultiplier, normalizeDataValueDescriptor } from '../cad/model/core'
 import { QuantityKind } from '../quantitykind'
-import { materialModelByKey, materialParameterByKey } from './data'
+import { getRuntimeMaterialModel, getRuntimeMaterialParameter } from '../catalog/runtime'
 
 export type MaterialPropertyValue = Readonly<{
   dtype: 'float16' | 'float32' | 'float64'
@@ -46,17 +46,17 @@ function exactKeys(value: Record<string, unknown>, expected: readonly string[]) 
 }
 
 function propertyValue(name: string, value: unknown): MaterialPropertyValue | null {
-  const definition = materialParameterByKey[name as keyof typeof materialParameterByKey]
+  const definition = getRuntimeMaterialParameter(name)
   if (!definition || !isRecord(value) || !exactKeys(value, ['dtype', 'value', 'unit'])) return null
   if (!['float16', 'float32', 'float64'].includes(String(value.dtype)) || typeof value.unit !== 'string') return null
-  if (!(QuantityKind[definition.quantity_kind].applicableUnits() as readonly string[]).includes(value.unit)) return null
+  if (!(QuantityKind[definition.quantityKind].applicableUnits() as readonly string[]).includes(value.unit)) return null
   try {
     const normalized = normalizeDataValueDescriptor(
       {
         dtype: value.dtype as MaterialPropertyValue['dtype'],
         value: value.value as number | readonly unknown[],
         unit: value.unit,
-        quantityKind: definition.quantity_kind,
+        quantityKind: definition.quantityKind,
       },
       `Material parameter ${name}`,
     )
@@ -71,7 +71,7 @@ function propertyValue(name: string, value: unknown): MaterialPropertyValue | nu
 }
 
 function relationValue(name: string, value: unknown): MaterialRelationValue | null {
-  const definition = materialModelByKey[name as keyof typeof materialModelByKey]
+  const definition = getRuntimeMaterialModel(name)
   if (
     !definition ||
     !isRecord(value) ||
@@ -85,10 +85,10 @@ function relationValue(name: string, value: unknown): MaterialRelationValue | nu
     typeof value.output.unit !== 'string' ||
     !Array.isArray(value.input.values) ||
     !Array.isArray(value.output.values) ||
-    value.input.values.length < definition.minimum_samples ||
+    value.input.values.length < definition.minimumSamples ||
     value.input.values.length !== value.output.values.length ||
-    !(QuantityKind[definition.input.quantity_kind].applicableUnits() as readonly string[]).includes(value.input.unit) ||
-    !(QuantityKind[definition.output.quantity_kind].applicableUnits() as readonly string[]).includes(value.output.unit)
+    !(QuantityKind[definition.input.quantityKind].applicableUnits() as readonly string[]).includes(value.input.unit) ||
+    !(QuantityKind[definition.output.quantityKind].applicableUnits() as readonly string[]).includes(value.output.unit)
   )
     return null
   const input = value.input as { unit: string; values: unknown[] }
@@ -101,7 +101,7 @@ function relationValue(name: string, value: unknown): MaterialRelationValue | nu
             dtype: 'float64',
             value: sample as number | readonly unknown[],
             unit: input.unit as string,
-            quantityKind: definition.input.quantity_kind,
+            quantityKind: definition.input.quantityKind,
           },
           `Material model ${name} input[${index}]`,
         ).value,
@@ -113,7 +113,7 @@ function relationValue(name: string, value: unknown): MaterialRelationValue | nu
             dtype: 'float64',
             value: sample as number | readonly unknown[],
             unit: output.unit as string,
-            quantityKind: definition.output.quantity_kind,
+            quantityKind: definition.output.quantityKind,
           },
           `Material model ${name} output[${index}]`,
         ).value,
@@ -133,11 +133,11 @@ function catalogValue(name: string, value: unknown) {
 }
 
 function sourceCatalogValue(name: string, value: unknown) {
-  if (Object.prototype.hasOwnProperty.call(materialParameterByKey, name) && isRecord(value)) {
+  if (getRuntimeMaterialParameter(name) && isRecord(value)) {
     return propertyValue(name, { dtype: value.dtype, value: value.value, unit: value.unit })
   }
   if (
-    Object.prototype.hasOwnProperty.call(materialModelByKey, name) &&
+    getRuntimeMaterialModel(name) &&
     isRecord(value) &&
     isRecord(value.input) &&
     isRecord(value.output)
@@ -257,7 +257,7 @@ export function resolveMaterialParameters(
           : 0
       explicit.set(
         name,
-        Object.prototype.hasOwnProperty.call(materialParameterByKey, name)
+        getRuntimeMaterialParameter(name)
           ? sampleProperty(
               normalized as MaterialPropertyValue,
               errorRate,
@@ -296,8 +296,8 @@ export function resolveMaterialParameters(
       grouped.forEach((candidates, name) => {
         if (explicit.has(name)) return
         if (
-          !Object.prototype.hasOwnProperty.call(materialParameterByKey, name) &&
-          !Object.prototype.hasOwnProperty.call(materialModelByKey, name)
+          !getRuntimeMaterialParameter(name) &&
+          !getRuntimeMaterialModel(name)
         ) {
           warnings.push(`Material ${material.name} parameter ${name} is outside the catalog and was skipped.`)
           return
@@ -316,7 +316,7 @@ export function resolveMaterialParameters(
         )[0]
         const normalized = catalogValue(name, selected.value)
         const value =
-          normalized && Object.prototype.hasOwnProperty.call(materialParameterByKey, name)
+          normalized && getRuntimeMaterialParameter(name)
             ? sampleProperty(
                 normalized as MaterialPropertyValue,
                 material.errorRate ?? 0,

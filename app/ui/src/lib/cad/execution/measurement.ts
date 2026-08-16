@@ -1,6 +1,6 @@
 import type { FrozenMaterialParameters, MaterialResolution } from '../../material'
 import { projectMaterialResolution, readFrozenMaterialParameters, sourceOnlyMaterialParameters } from '../../material'
-import { materialParameterByKey } from '../../material/data'
+import { getRuntimeMaterialParameter } from '../../catalog/runtime'
 import { QuantityKind } from '../../quantitykind'
 import { identityCartesianBasis } from '../../quantitykind/identityBasis'
 import type { CadScene } from '../evaluation/types'
@@ -159,13 +159,13 @@ export function applyFrozenMaterialParameters(scene: CadScene, frozen: FrozenMat
       const color = part.material.variables.color ?? frozen.materialColors?.[part.material.name]?.color
       const variables: Record<string, unknown> = { ...(color === undefined ? {} : { color }) }
       Object.entries(entries).forEach(([name, entry]) => {
-        const definition = materialParameterByKey[name as keyof typeof materialParameterByKey]
+        const definition = getRuntimeMaterialParameter(name)
         variables[name] =
           definition && 'dtype' in entry.value
             ? Object.freeze({
                 ...entry.value,
-                quantityKind: definition.quantity_kind,
-                ...(QuantityKind[definition.quantity_kind].tensorOrder() === 0
+                quantityKind: definition.quantityKind,
+                ...(QuantityKind[definition.quantityKind].tensorOrder() === 0
                   ? {}
                   : { basis: identityCartesianBasis }),
               })

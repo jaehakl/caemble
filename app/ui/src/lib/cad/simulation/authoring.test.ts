@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
+import { installSyntheticCatalog } from '@/test/syntheticCatalog'
 import { identityCartesianBasis } from '../../quantitykind/identityBasis'
 import { simulationProgramManifest } from './authoring'
+
+installSyntheticCatalog({
+  quantityKinds: [
+    { name: 'electromagnetism.ElectricCurrentDensity', tensorOrder: 1, applicableUnits: ['A.m-2'] },
+  ],
+})
 
 describe('simulationProgramManifest', () => {
   it('canonicalizes RecordedData and includes its UI-resolved tensor order', () => {

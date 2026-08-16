@@ -25,6 +25,9 @@ import {
   type Vars,
 } from '@/lib/cad'
 import type { SimulationProgramManifest } from '@/lib/cad/simulation'
+import { fetchCatalogRuntimeSlice } from '@/lib/catalog/references'
+import { sourceCatalogRuntimeSlice } from '@/lib/catalog/runtime'
+import { assertCatalogKernelTasks } from '@/lib/catalog/solverValidation'
 import type { MeasurementMaterialParameters } from '../persistence/contracts'
 import { resolveDocumentMaterials } from '../persistence/resolveMaterials'
 import type { SimulationProcess } from './simulationUiTypes'
@@ -227,12 +230,15 @@ export function useCadWorkspace(
     const explicitGeneration = generation !== lastHandledGenerationRef.current
     if (explicitGeneration) lastHandledGenerationRef.current = generation
 
-    void inspectDocument(evaluationDocument, {
-      geometryDrafts,
-      signal: abort.signal,
-      timeoutMs: evaluationTimeoutRef.current,
-    })
-      .then(async (inspection) => {
+    void fetchCatalogRuntimeSlice(evaluationDocument.sourceBundle)
+      .then(async (catalog) => {
+        if (abort.signal.aborted || revisionRef.current !== requestRevision) return
+        const inspection = await inspectDocument(evaluationDocument, {
+          catalog,
+          geometryDrafts,
+          signal: abort.signal,
+          timeoutMs: evaluationTimeoutRef.current,
+        })
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
         setVarsSchema(inspection.varsSchema)
         const nextVars =
@@ -240,7 +246,7 @@ export function useCadWorkspace(
         updateStatus('Evaluating')
         const snapshot = await evaluateDocument(
           { document: evaluationDocument, vars: nextVars },
-          { geometryDrafts, signal: abort.signal, timeoutMs: evaluationTimeoutRef.current },
+          { catalog, geometryDrafts, signal: abort.signal, timeoutMs: evaluationTimeoutRef.current },
         )
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
         updateStatus('Resolving Materials')
@@ -287,6 +293,10 @@ export function useCadWorkspace(
           updateStatus('Ready')
           return
         }
+        assertCatalogKernelTasks(sourceCatalogRuntimeSlice(snapshot.sourceHash), snapshot.simulationProgram, {
+          experiment: commonScene,
+          tasks: nextTaskScenes,
+        })
         const built = buildMeasurement(snapshot, resolution)
         const persistedMaterials: MeasurementMaterialParameters = Object.freeze({
           schemaVersion: 2,

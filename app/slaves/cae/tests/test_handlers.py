@@ -181,6 +181,14 @@ def task_config(kernel: str, output_method: str, output_key: str):
     }
 
 
+def solver_contract(name, version="0.1.0"):
+    return {
+        "name": name,
+        "version": version,
+        "contractDigest": registry.contract_digest(name, version),
+    }
+
+
 def payload():
     total_current_schema = {
         "dtype": "float64",
@@ -204,6 +212,7 @@ def payload():
         "surfaceGroups": [],
     }
     return {
+        "solverContracts": [solver_contract("dc-current-density")],
         "measurement": {
             "kind": "measurement",
             "materialParameters": {"schemaVersion": 1, "materials": {}},
@@ -265,6 +274,10 @@ def artifact_chain_payload(
             ),
         },
     }
+    request["solverContracts"] = [
+        solver_contract("dc-current-density"),
+        solver_contract("steady-state-heat"),
+    ]
     experiment = request["measurement"]["experiment"]
     scene = experiment["taskScenes"]["electric"]
     experiment["taskScenes"] = {name: scene for name in program["tasks"]}
@@ -320,9 +333,11 @@ async def test_start_rejects_obsolete_contract_metadata_before_run_creation():
 
 
 @pytest.mark.asyncio
-async def test_start_rejects_an_unregistered_kernel_version():
+@pytest.mark.parametrize("contracts", [[], None])
+async def test_start_rejects_missing_solver_contract_before_run_creation(contracts, monkeypatch):
     request = payload()
-    request["measurement"]["experiment"]["simulationProgram"]["tasks"]["electric"]["kernel"]["version"] = "9.9.9"
+    request["solverContracts"] = contracts
+    monkeypatch.setattr("app.runtime.CaeRun", lambda **_kwargs: pytest.fail("run was created"))
 
     response = await cae_simulation_start(
         DataChannelMessage(id="start", type="cae.simulation.start", payload=request),
@@ -331,7 +346,44 @@ async def test_start_rejects_an_unregistered_kernel_version():
     )
 
     assert response.payload["kind"] == "failed"
-    assert response.payload["error"]["code"] == "kernel_not_found"
+    assert response.payload["error"]["code"] == (
+        "catalog_mismatch" if contracts == [] else "invalid_input"
+    )
+
+
+@pytest.mark.asyncio
+async def test_start_rejects_solver_contract_digest_mismatch_before_run_creation(monkeypatch):
+    request = payload()
+    request["solverContracts"][0]["contractDigest"] = "0" * 64
+    monkeypatch.setattr("app.runtime.CaeRun", lambda **_kwargs: pytest.fail("run was created"))
+
+    response = await cae_simulation_start(
+        DataChannelMessage(id="start", type="cae.simulation.start", payload=request),
+        {"runs": {}},
+        SlaveContext(session_id="session", ttl_seconds=10, call_id="start"),
+    )
+
+    assert response.payload["kind"] == "failed"
+    assert response.payload["error"] == {
+        "code": "catalog_mismatch",
+        "message": "solver contract digest differs for dc-current-density@0.1.0",
+    }
+
+
+@pytest.mark.asyncio
+async def test_start_rejects_an_unregistered_kernel_version():
+    request = payload()
+    request["measurement"]["experiment"]["simulationProgram"]["tasks"]["electric"]["kernel"]["version"] = "9.9.9"
+    request["solverContracts"][0]["version"] = "9.9.9"
+
+    response = await cae_simulation_start(
+        DataChannelMessage(id="start", type="cae.simulation.start", payload=request),
+        {"runs": {}},
+        SlaveContext(session_id="session", ttl_seconds=10, call_id="start"),
+    )
+
+    assert response.payload["kind"] == "failed"
+    assert response.payload["error"]["code"] == "catalog_mismatch"
 
 
 @pytest.mark.parametrize(
@@ -781,6 +833,10 @@ async def test_sim_run_forwards_state_and_owned_artifact_to_registered_kernel(
             ),
         },
     }
+    request["solverContracts"] = [
+        solver_contract("dc-current-density"),
+        solver_contract("steady-state-heat"),
+    ]
     experiment = request["measurement"]["experiment"]
     scene = experiment["taskScenes"]["electric"]
     experiment["taskScenes"] = {name: scene for name in program["tasks"]}

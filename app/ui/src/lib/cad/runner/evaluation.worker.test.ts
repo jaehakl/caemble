@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { CatalogRuntimeSlice } from '@/contracts/catalog'
 import { CAD_COMPILER_VERSION, type CompiledCadDocument } from '../compiler/types'
 import type { RunnerOperationEnvelope } from './protocol'
 
@@ -11,6 +12,31 @@ const workerScope = {
 }
 const nonce = '12345678-90ab-cdef-1234-567890abcdef'
 const sourceHash = 'c'.repeat(64)
+const syntheticCatalog = {
+  schemaVersion: 1,
+  catalogRevision: 'synthetic-worker-test',
+  solvers: [{
+    name: 'synthetic-solver',
+    version: 'test-1',
+    contractDigest: 'd'.repeat(64),
+    descriptor: {
+      name: 'synthetic-solver',
+      version: 'test-1',
+      description: 'Synthetic Worker test Solver.',
+      referenceLengthUnit: 'm',
+      parameters: {},
+      materials: [],
+      inputPorts: {},
+      observations: {},
+      methods: { initializations: [], boundaryConditions: [], outputs: [] },
+    },
+  }],
+  quantityKinds: [],
+  materialParameters: [],
+  materialModels: [],
+  materialGlobalQualifiers: [],
+  warnings: [],
+} as const satisfies CatalogRuntimeSlice
 const compiledExperiment: CompiledCadDocument = {
   apiVersion: 6,
   compilerVersion: CAD_COMPILER_VERSION,
@@ -36,9 +62,10 @@ const compiledExperiment: CompiledCadDocument = {
       entryFile: 'experiment.tsx',
       sourceHash,
       code: `const { experiment } = require('@caemble/core')
+const Box = ({ id, size }) => h('box', { id, size })
 module.exports.default = experiment({
   lengthUnit: 'mm', varsSchema: { width: { min: 1, max: 10 } },
-  geometry: ({ vars }) => h('box', { id: 'body', size: [vars.width, 1, 1] }), recordedData: {},
+  geometry: ({ vars }) => h(Box, { id: 'body', size: [vars.width, 1, 1] }), recordedData: {},
 })`,
     },
     'tasks/electric.tsx': {
@@ -47,7 +74,10 @@ module.exports.default = experiment({
       entryFile: 'tasks/electric.tsx',
       sourceHash,
       code: `const { defineTask } = require('@caemble/core')
-module.exports.default = defineTask({ kernel: { name: 'test', version: '1' }, config: () => ({}) })`,
+module.exports.default = defineTask({
+  kernel: { name: 'synthetic-solver', version: 'test-1' },
+  config: () => ({ parameters: {}, initializations: [], boundaryConditions: [], outputs: [] }),
+})`,
     },
   },
 }
@@ -73,7 +103,10 @@ describe('CAD runner Worker', () => {
     dispatch({
       type: 'inspect',
       nonce,
-      request: { type: 'inspect', requestId: 'inspect-1', revision: 2, compiledDocument: compiledExperiment },
+      request: {
+        type: 'inspect', requestId: 'inspect-1', revision: 2,
+        compiledDocument: compiledExperiment, catalog: syntheticCatalog,
+      },
     })
     expect(responses[0]).toMatchObject({
       type: 'operation-result',
@@ -81,5 +114,59 @@ describe('CAD runner Worker', () => {
       nonce,
       response: { type: 'inspection-success', sourceHash, varsSchema: { width: { min: 1, max: 10 } } },
     })
+  })
+
+  it('evaluates against the exact synthetic catalog slice', () => {
+    dispatch({
+      type: 'evaluate',
+      nonce,
+      request: {
+        type: 'evaluate', requestId: 'evaluate-1', revision: 3,
+        compiledDocument: compiledExperiment, catalog: syntheticCatalog,
+        pythonSource: 'async def simulate(*, sim, tasks, vars):\n    return None\n',
+        vars: { width: 2 },
+      },
+    })
+    expect(responses[0]).toMatchObject({
+      type: 'operation-result',
+      operation: 'evaluate',
+      nonce,
+      response: { type: 'evaluation-success', documentType: 'experiment' },
+    })
+  })
+
+  it('rejects missing, extra, and invalid catalog data at the Worker boundary', () => {
+    expect(() =>
+      dispatch({
+        type: 'inspect',
+        nonce,
+        request: { type: 'inspect', requestId: 'missing-1', revision: 4, compiledDocument: compiledExperiment },
+      }),
+    ).toThrow()
+    expect(responses).toHaveLength(0)
+
+    expect(() =>
+      dispatch({
+        type: 'inspect',
+        nonce,
+        request: {
+          type: 'inspect', requestId: 'extra-1', revision: 5, compiledDocument: compiledExperiment,
+          catalog: syntheticCatalog, unexpected: true,
+        },
+      }),
+    ).toThrow('request.unexpected is not allowed')
+    expect(responses).toHaveLength(0)
+
+    expect(() =>
+      dispatch({
+        type: 'inspect',
+        nonce,
+        request: {
+          type: 'inspect', requestId: 'invalid-1', revision: 6, compiledDocument: compiledExperiment,
+          catalog: { ...syntheticCatalog, schemaVersion: 2 },
+        },
+      }),
+    ).toThrow()
+    expect(responses).toHaveLength(0)
   })
 })

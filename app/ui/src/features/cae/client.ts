@@ -14,6 +14,7 @@ import { API_URL } from '@/api'
 import { request as apiRequest } from '@/api/http'
 import type { BuiltMeasurement, DataTensor, RecordedData } from '../../lib/cad'
 import { createDataTensorAccessor, registerDataTensorAttachment, releaseDataTensorAttachments } from '../../lib/cad'
+import { sourceCatalogSolverContracts } from '@/lib/catalog/runtime'
 
 const RECORDED_LIMIT_BYTES = 64 * 1024 * 1024
 const SHARD_BYTES = 16 * 1024 * 1024
@@ -65,7 +66,10 @@ export function simulate(
     if (!manifest || manifest.formatVersion !== 5) {
       throw new CaeSimulationError('program_required', 'Python simulationProgram v5가 필요합니다.')
     }
-    const request = serializeCaeRequest(measurement)
+    const request = serializeCaeRequest(
+      measurement,
+      sourceCatalogSolverContracts(measurement.experiment.sourceHash),
+    )
     const requestAttachments = request.attachments.map(({ bytes, ...attachment }) => ({
       ...attachment,
       blob: new Blob([bytes.slice().buffer as ArrayBuffer], { type: attachment.mimeType }),

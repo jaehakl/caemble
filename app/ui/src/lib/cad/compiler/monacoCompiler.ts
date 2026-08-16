@@ -22,6 +22,8 @@ import {
   type CompiledGeometryModule,
 } from './types'
 import { withGeometryTypeEnvironment } from './geometryTypeEnvironment'
+import { withCatalogTypeEnvironment } from './catalogTypeEnvironment'
+import type { CatalogRuntimeSlice } from '@/contracts/catalog'
 
 const compilationCache = new Map<string, Promise<CompiledCadDocument>>()
 const maximumCompilationCacheEntries = 32
@@ -121,6 +123,7 @@ async function compile(
   document: CadSourceDocument,
   sourceHash: string,
   geometryGraph: EffectiveGeometryGraph | undefined,
+  catalog: CatalogRuntimeSlice | undefined,
 ): Promise<CompiledCadDocument> {
   const sources = documentSources(document)
   for (const [path, source] of Object.entries(sources)) {
@@ -231,20 +234,22 @@ async function compile(
           }),
         )
       }
-      const compiledEntries = await withGeometryTypeEnvironment(monaco, geometryGraph, async () =>
-        Promise.all(
-          Object.entries(sourceModels).map(async ([path, model]) => {
-            const emitted = await emitModel(model, path)
-            const compiledSource: CompiledCadSource = Object.freeze({
-              apiVersion: 6,
-              compilerVersion: CAD_COMPILER_VERSION,
-              entryFile: path,
-              code: `${emitted.code}\n//# sourceURL=caemble://${sourceHash}/${path}`,
-              ...(emitted.sourceMap === undefined ? {} : { sourceMap: emitted.sourceMap }),
-              sourceHash,
-            })
-            return [path, compiledSource] as const
-          }),
+      const compiledEntries = await withCatalogTypeEnvironment(monaco, catalog, () =>
+        withGeometryTypeEnvironment(monaco, geometryGraph, async () =>
+          Promise.all(
+            Object.entries(sourceModels).map(async ([path, model]) => {
+              const emitted = await emitModel(model, path)
+              const compiledSource: CompiledCadSource = Object.freeze({
+                apiVersion: 6,
+                compilerVersion: CAD_COMPILER_VERSION,
+                entryFile: path,
+                code: `${emitted.code}\n//# sourceURL=caemble://${sourceHash}/${path}`,
+                ...(emitted.sourceMap === undefined ? {} : { sourceMap: emitted.sourceMap }),
+                sourceHash,
+              })
+              return [path, compiledSource] as const
+            }),
+          ),
         ),
       )
       return Object.freeze({
@@ -278,6 +283,8 @@ async function compile(
 
 export type CompileCadDocumentOptions = Readonly<{
   geometryDrafts?: GeometryDraftOverlay
+  catalogRevision?: string
+  catalog?: CatalogRuntimeSlice
 }>
 
 export async function compileCadDocument(document: CadSourceDocument, options: CompileCadDocumentOptions = {}) {
@@ -292,10 +299,10 @@ export async function compileCadDocument(document: CadSourceDocument, options: C
     Object.keys(options.geometryDrafts ?? {}).length > 0
       ? await sha256(JSON.stringify({ persistedSourceHash, geometryGraphHash: geometryGraph?.graphHash }))
       : persistedSourceHash
-  const cacheKey = `${CAD_COMPILER_VERSION}:${sourceHash}`
+  const cacheKey = `${CAD_COMPILER_VERSION}:${options.catalogRevision ?? 'geometry-only'}:${sourceHash}`
   let cached = compilationCache.get(cacheKey)
   if (!cached) {
-    cached = compile(document, sourceHash, geometryGraph).catch((error) => {
+    cached = compile(document, sourceHash, geometryGraph, options.catalog).catch((error) => {
       compilationCache.delete(cacheKey)
       throw error
     })

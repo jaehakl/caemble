@@ -165,21 +165,21 @@ export function useCaeMeasurementActions({
   const duplicateMeasurement = useCallback(
     async (row: SavedMeasurement) => {
       if (operation || pendingRecordMeasurementId) return null
-      if (!experimentClean || !experimentId || !experimentSourceHash || row.experiment_id !== experimentId) {
-        fail(new Error('현재 저장된 Experiment의 Measurement만 복제할 수 있습니다.'), '')
-        return null
-      }
       setError(null)
       setOperation('duplicate')
       setStage('Measurement 복제')
       try {
+        const current = requireSavableCandidate()
+        if (row.experiment_id !== current.experiment_id) {
+          throw new Error('현재 저장된 Experiment의 Measurement만 복제할 수 있습니다.')
+        }
         const { id } = await dbTables.Measurement.create({
-          experiment_id: experimentId,
-          experiment_source_hash: experimentSourceHash,
+          experiment_id: current.experiment_id,
+          experiment_source_hash: current.experiment_source_hash,
           vars: row.vars,
           material_parameters: row.material_parameters,
         })
-        if (await refreshPersistedMeasurement(id, experimentId)) {
+        if (await refreshPersistedMeasurement(id, current.experiment_id)) {
           toast.success(`Measurement #${row.id}을 #${id}으로 복제했습니다.`)
         }
         return id
@@ -192,13 +192,11 @@ export function useCaeMeasurementActions({
       }
     },
     [
-      experimentClean,
-      experimentId,
-      experimentSourceHash,
       fail,
       operation,
       pendingRecordMeasurementId,
       refreshPersistedMeasurement,
+      requireSavableCandidate,
     ],
   )
 

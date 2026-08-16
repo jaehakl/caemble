@@ -1,13 +1,44 @@
 import { describe, expect, it } from 'vitest'
+import type { CatalogQuantityKind } from '@/api/catalog'
 import type { RecordedDataRule } from '@/lib/cad'
 import { identityCartesianBasis } from '@/lib/quantitykind'
 import {
   convertRecordedNumericTicks,
   convertRecordedNumericValue,
-  normalizeCadViewerRecordedTensor,
+  normalizeCadViewerRecordedTensor as normalizeRecordedTensor,
   recordedDisplayUnitOptions,
-  resolveCadViewerRecordedData,
+  resolveCadViewerRecordedData as resolveRecordedData,
 } from './recordedData'
+
+const quantityKinds = new Map<string, CatalogQuantityKind>([
+  [
+    'test.Ratio',
+    { name: 'test.Ratio', domain: 'test', tensorOrder: 0, opaque: false, applicableUnits: ['{fraction}'] },
+  ],
+  [
+    'test.Current',
+    { name: 'test.Current', domain: 'test', tensorOrder: 0, opaque: false, applicableUnits: ['A', 'mA'] },
+  ],
+  [
+    'test.CurrentDensity',
+    { name: 'test.CurrentDensity', domain: 'test', tensorOrder: 1, opaque: false, applicableUnits: ['A.m-2'] },
+  ],
+  [
+    'test.AngularAcceleration',
+    {
+      name: 'test.AngularAcceleration',
+      domain: 'test',
+      tensorOrder: 0,
+      opaque: false,
+      applicableUnits: ['{#}.s-2', 'rad.s-2'],
+    },
+  ],
+])
+
+const normalizeCadViewerRecordedTensor = (rule: RecordedDataRule, value: unknown) =>
+  normalizeRecordedTensor(rule, value, quantityKinds)
+const resolveCadViewerRecordedData = (rules: readonly RecordedDataRule[], value: unknown) =>
+  resolveRecordedData(rules, value, quantityKinds)
 
 function createRule(
   label: string,
@@ -36,7 +67,7 @@ function createRule(
               ...axis,
             })),
           }),
-      ...(dtype.startsWith('float') ? { unit: '{fraction}', quantityKind: 'DimensionlessRatio' } : {}),
+      ...(dtype.startsWith('float') ? { unit: '{fraction}', quantityKind: 'test.Ratio' } : {}),
     } as RecordedDataRule['result'],
   }
 }
@@ -61,8 +92,8 @@ describe('CadViewer recordedData normalization', () => {
   })
 
   it('lists the source unit first and removes incompatible Quantity Kind alternatives', () => {
-    const currentUnits = recordedDisplayUnitOptions('electromagnetism.ElectricCurrent', 'A')
-    const angularUnits = recordedDisplayUnitOptions('kinematics.AngularAcceleration', '{#}.s-2')
+    const currentUnits = recordedDisplayUnitOptions(quantityKinds.get('test.Current')!, 'A')
+    const angularUnits = recordedDisplayUnitOptions(quantityKinds.get('test.AngularAcceleration')!, '{#}.s-2')
 
     expect(currentUnits[0]).toBe('A')
     expect(currentUnits).toContain('mA')
@@ -88,7 +119,7 @@ describe('CadViewer recordedData normalization', () => {
       tensorOrder: 0,
       dtype: 'float32',
       unit: '{fraction}',
-      quantityKind: 'DimensionlessRatio',
+      quantityKind: 'test.Ratio',
       axes: [
         { length: 2, name: 'layer', ticks: ['lower', 'upper'] },
         { length: 3, name: 'position', ticks: [0, 0.5, 1] },
@@ -111,7 +142,7 @@ describe('CadViewer recordedData normalization', () => {
       result: {
         dtype: 'float64',
         unit: 'A.m-2',
-        quantityKind: 'electromagnetism.ElectricCurrentDensity',
+        quantityKind: 'test.CurrentDensity',
         basis: identityCartesianBasis,
         axes: [{ name: 'position' }],
       },

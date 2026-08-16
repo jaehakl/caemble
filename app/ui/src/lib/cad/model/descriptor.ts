@@ -56,9 +56,9 @@ export type DataValueDescriptor = Readonly<{
 }> &
   DataTypeMetadata
 export type MatrixValue = readonly (readonly number[])[]
-type MaterialInputBasisMetadata<Name extends QuantityKindName> = Name extends ScalarQuantityKindName
-  ? Readonly<{ basis?: never }>
-  : Readonly<{ basis?: CartesianBasis }>
+type MaterialInputBasisMetadata<Name extends QuantityKindName> = Readonly<{ basis?: CartesianBasis }> & {
+  readonly __quantityKind?: Name
+}
 
 export type MaterialDataValueDescriptor<Key extends MaterialPropertyKey = MaterialPropertyKey> =
   Key extends MaterialPropertyKey
@@ -107,23 +107,13 @@ export type MaterialSampledRelation<Key extends MaterialModelKey = MaterialModel
 
 export type ScalarValue = boolean | string | number
 export type MaterialVariable = string | MaterialDataValueDescriptor | MaterialSampledRelation
-export type MaterialVariables = Readonly<
-  { color?: string; errorRate?: number } & { [Key in MaterialPropertyKey]?: MaterialDataValueDescriptor<Key> } & {
-    [Key in MaterialModelKey]?: MaterialSampledRelation<Key>
-  }
->
-export type NormalizedMaterialVariables = Readonly<
-  { color?: string } & { [Key in MaterialPropertyKey]?: ResolvedMaterialDataValueDescriptor<Key> } & {
-    [Key in MaterialModelKey]?: MaterialSampledRelation<Key>
-  }
->
-export type ResolvedMaterialVariables = Readonly<
-  { color?: string } & {
-    [Key in MaterialPropertyKey]?: DataValueDescriptor & Readonly<{ errorRate?: number }>
-  } & {
-    [Key in MaterialModelKey]?: MaterialSampledRelation<Key>
-  }
->
+// The selected runtime slice supplies exact authoring keys to Monaco; application runtime values are validated.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type MaterialVariables = Readonly<Record<string, any> & { color?: string; errorRate?: number }>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type NormalizedMaterialVariables = Readonly<Record<string, any> & { color?: string }>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type ResolvedMaterialVariables = Readonly<Record<string, any> & { color?: string }>
 export type ExperimentParameter = ScalarValue | DataValueDescriptor
 export type ExperimentParameters = Readonly<Record<string, ExperimentParameter>>
 export type RecordedDataResultAxis = DataSchemaAxis

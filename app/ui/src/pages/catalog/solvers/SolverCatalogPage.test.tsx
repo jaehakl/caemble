@@ -4,29 +4,21 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { CaeManifestError, fetchCaeSolverManifests } from '@/features/cae/manifests'
 import { PhysicsCatalog } from './SolverCatalogPage'
 
-vi.mock('@/features/cae/manifests', async (importActual) => {
-  const actual = await importActual<typeof import('@/features/cae/manifests')>()
-  return { ...actual, fetchCaeSolverManifests: vi.fn() }
+const catalog = vi.hoisted(() => ({ getSolver: vi.fn(), listSolvers: vi.fn() }))
+
+vi.mock('@/api/catalog', async (importActual) => {
+  const actual = await importActual<typeof import('@/api/catalog')>()
+  return { ...actual, catalogApi: { ...actual.catalogApi, ...catalog } }
 })
 
-const manifests = [
+const solvers = [
   {
-    schemaVersion: 1 as const,
-    implementation: 'app.solvers.alpha.solver:run',
-    descriptor: {
-      name: 'alpha',
-      version: '1.0.0',
-      description: 'Alpha solver',
-      referenceLengthUnit: 'm',
-      parameters: {},
-      materials: [],
-      inputPorts: {},
-      observations: {},
-      methods: { initializations: [], boundaryConditions: [], outputs: [] },
-    },
+    name: 'alpha',
+    version: '1.0.0',
+    description: 'Alpha solver',
+    contractDigest: 'a'.repeat(64),
   },
 ]
 
@@ -34,21 +26,22 @@ function Harness({ children, client }: { children: ReactNode; client: QueryClien
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>
 }
 
-describe('bundled Solver Catalog', () => {
+describe('Solver Catalog API', () => {
   beforeEach(() => {
-    vi.mocked(fetchCaeSolverManifests).mockReset()
+    catalog.listSolvers.mockReset()
+    catalog.getSolver.mockReset()
   })
 
-  it('caches the build-time manifest list', async () => {
-    vi.mocked(fetchCaeSolverManifests).mockResolvedValue(manifests)
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  it('caches a typed API list without loading raw manifests', async () => {
+    catalog.listSolvers.mockResolvedValue({ items: solvers, nextCursor: null, total: 1 })
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
     const first = render(
       <Harness client={client}>
         <PhysicsCatalog />
       </Harness>,
     )
     expect(await screen.findByText('alpha')).toBeInTheDocument()
-    expect(fetchCaeSolverManifests).toHaveBeenCalledOnce()
+    expect(catalog.listSolvers).toHaveBeenCalledOnce()
 
     first.unmount()
     render(
@@ -57,35 +50,26 @@ describe('bundled Solver Catalog', () => {
       </Harness>,
     )
     expect(await screen.findByText('alpha')).toBeInTheDocument()
-    expect(fetchCaeSolverManifests).toHaveBeenCalledOnce()
+    expect(catalog.listSolvers).toHaveBeenCalledOnce()
   })
 
-  it('separates empty, load error, and invalid manifest states', async () => {
-    vi.mocked(fetchCaeSolverManifests).mockResolvedValueOnce([])
+  it('separates empty and unavailable API states', async () => {
+    catalog.listSolvers.mockResolvedValueOnce({ items: [], nextCursor: null, total: 0 })
     const empty = render(
       <Harness client={new QueryClient()}>
         <PhysicsCatalog />
       </Harness>,
     )
-    expect(await screen.findByText('등록된 solver가 없습니다.')).toBeInTheDocument()
+    expect(await screen.findByText('등록된 활성 Solver가 없습니다.')).toBeInTheDocument()
     empty.unmount()
 
-    vi.mocked(fetchCaeSolverManifests).mockRejectedValueOnce(new Error('worker unavailable'))
+    catalog.listSolvers.mockRejectedValueOnce(new Error('catalog unavailable'))
     const unavailable = render(
       <Harness client={new QueryClient()}>
         <PhysicsCatalog />
       </Harness>,
     )
-    expect(await screen.findByText('Solver manifest를 읽을 수 없습니다.')).toBeInTheDocument()
+    expect(await screen.findByText('Catalog API를 사용할 수 없습니다.')).toBeInTheDocument()
     unavailable.unmount()
-
-    vi.mocked(fetchCaeSolverManifests).mockRejectedValueOnce(new CaeManifestError('invalid_manifest', 'bad descriptor'))
-    const invalid = render(
-      <Harness client={new QueryClient()}>
-        <PhysicsCatalog />
-      </Harness>,
-    )
-    expect(await screen.findByText('잘못된 solver manifest입니다.')).toBeInTheDocument()
-    invalid.unmount()
   })
 })

@@ -8,6 +8,8 @@ import {
   type MaterialParameterQualifierRecord,
   type MaterialParameterRecord,
 } from '@/api'
+import { catalogApi, type CatalogRuntimeSlice } from '@/api/catalog'
+import { ApiError } from '@/api/http'
 import { PageHeader } from '@/components/PageHeader'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -59,10 +61,16 @@ function ComponentValue({ value }: { value: unknown }) {
   )
 }
 
-function ParameterValueSummary({ parameter }: { parameter: MaterialParameterRecord }) {
-  const property = getMaterialProperty(parameter.name)
+function ParameterValueSummary({
+  catalog,
+  parameter,
+}: {
+  catalog: CatalogRuntimeSlice
+  parameter: MaterialParameterRecord
+}) {
+  const property = getMaterialProperty(parameter.name, catalog)
   if (property) {
-    const value = readMaterialPropertyValue(property, parameter.value)
+    const value = readMaterialPropertyValue(property, parameter.value, catalog)
     if (value) {
       return (
         <div className="grid gap-3 rounded-lg border p-3">
@@ -77,9 +85,9 @@ function ParameterValueSummary({ parameter }: { parameter: MaterialParameterReco
     }
   }
 
-  const model = getMaterialModel(parameter.name)
+  const model = getMaterialModel(parameter.name, catalog)
   if (model) {
-    const value = readMaterialRelationValue(model, parameter.value)
+    const value = readMaterialRelationValue(model, parameter.value, catalog)
     if (value) {
       return (
         <div className="grid gap-3 rounded-lg border p-3">
@@ -164,6 +172,34 @@ export function MaterialDetail({
     queryKey: ['materials', id, 'parameters'],
     queryFn: () => dbTables.MaterialParameter.listRows(relationRowsRequest('material_id', id)),
   })
+  const parameterNames = [...new Set((parametersQuery.data?.items ?? []).map((parameter) => parameter.name))].sort()
+  const catalogQuery = useQuery({
+    enabled: parametersQuery.isSuccess,
+    queryKey: ['catalog', 'material-manager', parameterNames],
+    queryFn: async () => {
+      const materialParameters: string[] = []
+      const materialModels: string[] = []
+      for (const name of parameterNames) {
+        try {
+          if (name.startsWith('model.')) {
+            await catalogApi.getMaterialModel(name)
+            materialModels.push(name)
+          } else {
+            await catalogApi.getMaterialParameter(name)
+            materialParameters.push(name)
+          }
+        } catch (error) {
+          if (!(error instanceof ApiError) || error.status !== 404) throw error
+        }
+      }
+      return catalogApi.runtimeSlice({
+        solvers: [],
+        quantityKinds: [],
+        materialParameters,
+        materialModels,
+      })
+    },
+  })
   const parameterIds = (parametersQuery.data?.items ?? [])
     .map((parameter) => parameter.id)
     .filter((parameterId): parameterId is number => parameterId !== undefined)
@@ -219,7 +255,12 @@ export function MaterialDetail({
 
   const parameterItems = parametersQuery.data?.items ?? []
 
-  const loading = materialQuery.isLoading || namesQuery.isLoading || parametersQuery.isLoading
+  const loading =
+    materialQuery.isLoading ||
+    namesQuery.isLoading ||
+    parametersQuery.isLoading ||
+    qualifiersQuery.isLoading ||
+    (parametersQuery.isSuccess && catalogQuery.isPending)
   if (!validId) return <div className="p-8 text-center text-destructive">유효하지 않은 Material ID입니다.</div>
   if (loading)
     return (
@@ -228,8 +269,17 @@ export function MaterialDetail({
         Material을 불러오는 중입니다.
       </div>
     )
-  if (materialQuery.isError || namesQuery.isError || parametersQuery.isError)
+  if (materialQuery.isError || namesQuery.isError || parametersQuery.isError || qualifiersQuery.isError)
     return <div className="p-8 text-center text-destructive">Material 상세 정보를 불러오지 못했습니다.</div>
+  if (catalogQuery.isError)
+    return (
+      <div className="p-8 text-center text-destructive" role="alert">
+        <p>Material Catalog를 불러오지 못했습니다.</p>
+        <Button className="mt-4" onClick={() => catalogQuery.refetch()} variant="outline">
+          다시 시도
+        </Button>
+      </div>
+    )
   const material = materialQuery.data
   if (!material)
     return (
@@ -243,6 +293,7 @@ export function MaterialDetail({
 
   const names = namesQuery.data?.items ?? []
   const parameters = parameterItems
+  const catalog = catalogQuery.data!
   const qualifiers = qualifiersQuery.data ?? []
   const title = materialDisplayName(material, names)
   const canEditMaterial = Boolean(user && (admin || material.user_id === user.id))
@@ -401,7 +452,7 @@ export function MaterialDetail({
                 (qualifier) => qualifier.material_parameter_id === parameter.id,
               )
               const editable = canEditOwned(parameter.user_id)
-              const catalogKey = isMaterialCatalogKey(parameter.name)
+              const catalogKey = isMaterialCatalogKey(parameter.name, catalog)
               return (
                 <Card key={parameter.id}>
                   <CardHeader className="gap-3 sm:flex sm:flex-row sm:items-start sm:justify-between">
@@ -443,7 +494,7 @@ export function MaterialDetail({
                     )}
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <ParameterValueSummary parameter={parameter} />
+                    <ParameterValueSummary catalog={catalog} parameter={parameter} />
                     <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                       {parameter.source ? <Badge>source · {parameter.source}</Badge> : null}
                       {parameter.version ? <Badge>version · {parameter.version}</Badge> : null}
@@ -472,7 +523,7 @@ export function MaterialDetail({
                       </div>
                       {parameterQualifiers.length ? (
                         parameterQualifiers.map((qualifier) => {
-                          const validQualifier = getQualifierNames(parameter.name).includes(qualifier.name)
+                          const validQualifier = getQualifierNames(parameter.name, catalog).includes(qualifier.name)
                           const dedicated = isDedicatedQualifierName(qualifier.name)
                           return (
                             <div
@@ -559,6 +610,7 @@ export function MaterialDetail({
       ) : null}
       {user && parameterDialog ? (
         <MaterialParameterDialog
+          catalog={catalog}
           initialName={parameterDialog.initialName}
           material={material}
           onOpenChange={(open) => {
@@ -571,6 +623,7 @@ export function MaterialDetail({
       ) : null}
       {qualifierDialog ? (
         <QualifierDialog
+          catalog={catalog}
           onOpenChange={(open) => {
             if (!open) setQualifierDialog(null)
           }}

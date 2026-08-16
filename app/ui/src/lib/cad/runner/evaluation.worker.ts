@@ -11,12 +11,15 @@ import {
 } from '../execution/userModule'
 import { CadModelError } from '../model/core'
 import { assertRunnerOperationEnvelope, type RunnerOperationResultEnvelope } from './protocol'
+import { installCatalogRuntimeSlice } from '@/lib/catalog/runtime'
+import { assertCatalogKernelTasks } from '@/lib/catalog/solverValidation'
 
 function handleOperation(value: unknown) {
   assertRunnerOperationEnvelope(value)
   const { nonce, request, type: operation } = value
   let response: RunnerOperationResultEnvelope['response']
   try {
+    if (request.type !== 'preview-geometry') installCatalogRuntimeSlice(request.catalog)
     if (request.type === 'inspect') {
       const inspection = inspectCompiledDocument(request.compiledDocument)
       response = {
@@ -28,9 +31,9 @@ function handleOperation(value: unknown) {
         varsSchema: inspection.varsSchema,
       }
     } else if (request.type === 'evaluate') {
-      const snapshot = serializeEvaluatedDocumentSnapshot(
-        executeCompiledDocument(request.compiledDocument, request.vars, request.pythonSource),
-      )
+      const evaluated = executeCompiledDocument(request.compiledDocument, request.vars, request.pythonSource)
+      assertCatalogKernelTasks(request.catalog, evaluated.simulationProgram)
+      const snapshot = serializeEvaluatedDocumentSnapshot(evaluated)
       assertEvaluatedDocumentSnapshot(snapshot)
       response = {
         type: 'evaluation-success',

@@ -2,6 +2,5 @@
 export const CAEMBLE_CORE_DECLARATION_VERSION = '0.2.0' as const
 export const CAEMBLE_MONACO_VERSION = '0.56.0' as const
 export const CAEMBLE_TYPESCRIPT_VERSION = '5.9.3' as const
-export const QUANTITY_KIND_DATA_VERSION = '0.0.1' as const
 export const CAD_API_DECLARATION_FINGERPRINT =
-  '13a20566add738dc127a218a02da2a78192529af411577f9a8f81328322ebe5f' as const
+  'b1859b08c184bbdc4001f9552d1dbc59636aac41b29c695a9771692dd6ff4731' as const

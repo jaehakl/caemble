@@ -14,6 +14,7 @@ export type CaeSimulationProgress = Readonly<{
 
 export type CaeStartRequest = Readonly<{
   measurement: BuiltMeasurement
+  solverContracts: readonly Readonly<{ name: string; version: string; contractDigest: string }>[]
 }>
 
 export type CaeNextRequest = Readonly<{

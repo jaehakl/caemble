@@ -29,11 +29,15 @@ import type {
 } from '../worker/protocol'
 import type { EvaluatedExperimentSnapshot } from './snapshot'
 import type { VarsSchemaEntry } from '../model/vars'
+import { fetchCatalogRuntimeSlice } from '@/lib/catalog/references'
+import { installCatalogRuntimeSlice, registerSourceCatalogRuntimeSlice } from '@/lib/catalog/runtime'
+import type { CatalogRuntimeSlice } from '@/contracts/catalog'
 
 export type EvaluateDocumentOptions = Readonly<{
   signal?: AbortSignal
   timeoutMs?: 3000 | 10000 | 30000
   geometryDrafts?: GeometryDraftOverlay
+  catalog?: CatalogRuntimeSlice
 }>
 
 export type GeometryModuleEvaluationOptions = Readonly<{
@@ -119,9 +123,13 @@ export async function inspectDocument(
   options: EvaluateDocumentOptions = {},
 ): Promise<CadDocumentInspection> {
   assertCadSourceDocument(document)
-  const compiledDocument = await compileCadDocument(document, options)
+  const catalog = options.catalog ?? (await fetchCatalogRuntimeSlice(document.sourceBundle))
+  installCatalogRuntimeSlice(catalog)
+  const compiledDocument = await compileCadDocument(document, { ...options, catalogRevision: catalog.catalogRevision, catalog })
+  registerSourceCatalogRuntimeSlice(compiledDocument.sourceHash, catalog)
   const request: CadInspectionRequest = {
     type: 'inspect',
+    catalog,
     compiledDocument,
     requestId: `inspect-${crypto.randomUUID()}`,
     revision: 0,
@@ -143,9 +151,13 @@ export async function evaluateDocument(
   options: EvaluateDocumentOptions = {},
 ): Promise<EvaluatedExperimentSnapshot> {
   assertCadSourceDocument(input.document)
-  const compiledDocument = await compileCadDocument(input.document, options)
+  const catalog = options.catalog ?? (await fetchCatalogRuntimeSlice(input.document.sourceBundle))
+  installCatalogRuntimeSlice(catalog)
+  const compiledDocument = await compileCadDocument(input.document, { ...options, catalogRevision: catalog.catalogRevision, catalog })
+  registerSourceCatalogRuntimeSlice(compiledDocument.sourceHash, catalog)
   const request: CadEvaluationRequest = {
     type: 'evaluate',
+    catalog,
     compiledDocument,
     pythonSource: input.document.sourceBundle.files[EXPERIMENT_SIMULATION_PATH],
     requestId: `evaluate-${crypto.randomUUID()}`,

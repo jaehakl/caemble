@@ -11,6 +11,8 @@ import {
 } from '../../defaultExperimentProgramCode'
 import { caembleExamples, caembleProgramExamples, wheelAssemblyExample } from '../../examples'
 import { blankExperimentSourceBundle, starterExperimentSourceBundle } from '../../localExperimentCode'
+import { buildSyntheticCatalog } from '../../../test/syntheticCatalog'
+import { catalogRuntimeTypes } from '../compiler/catalogTypeEnvironment'
 import { geometryCoordinateTypes } from '../compiler/geometryTypes'
 import type { EffectiveGeometryGraph } from '../source/effectiveGeometryGraph'
 import type { GeometryCoordinate } from '../source/geometrySnapshot'
@@ -31,12 +33,16 @@ function diagnosticsFor(
   source: string,
   additionalFiles: Readonly<Record<string, string>> = defaultGeometryFiles,
   sourcePath = 'C:/caemble-source/hash/experiment.tsx',
+  catalogTypes?: string,
 ) {
   const virtualFiles = new Map<string, string>([
     ...Object.entries(additionalFiles),
     [sourcePath, source],
     ['C:/node_modules/@caemble/core/index.d.ts', coreTypes],
     ['C:/node_modules/@caemble/core/cad-jsx.d.ts', jsxTypes],
+    ...(catalogTypes === undefined
+      ? []
+      : ([['C:/node_modules/@caemble/core/catalog-runtime.d.ts', catalogTypes]] as const)),
   ])
   const options: ts.CompilerOptions = {
     allowNonTsExtensions: true,
@@ -74,7 +80,12 @@ function diagnosticsFor(
     return text === undefined ? undefined : ts.createSourceFile(path, text, languageVersion, true)
   }
   const program = ts.createProgram({
-    rootNames: [sourcePath, 'C:/node_modules/@caemble/core/cad-jsx.d.ts', ...Object.keys(additionalFiles)],
+    rootNames: [
+      sourcePath,
+      'C:/node_modules/@caemble/core/cad-jsx.d.ts',
+      ...Object.keys(additionalFiles),
+      ...(catalogTypes === undefined ? [] : ['C:/node_modules/@caemble/core/catalog-runtime.d.ts']),
+    ],
     options,
     host,
   })
@@ -200,43 +211,97 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
     expect(defaultExperimentProgramCode).not.toContain('sim.run(')
   })
 
-  it('keeps canonical Material property and model authoring types strict', () => {
-    expect(coreTypes).toContain("'model.sorption.isotherm': Readonly<{")
+  it('keeps catalog literals runtime-scoped while preserving strict Material authoring types', () => {
+    const runtimeTypes = catalogRuntimeTypes(
+      buildSyntheticCatalog({
+        quantityKinds: [
+          { name: 'synthetic.Scalar', tensorOrder: 0, applicableUnits: ['{synthetic-scalar}'] },
+          { name: 'synthetic.Vector', tensorOrder: 1, applicableUnits: ['{synthetic-vector}'] },
+        ],
+        materialParameters: [
+          { key: 'synthetic.vector-property', quantityKind: 'synthetic.Vector' },
+        ],
+        materialModels: [
+          {
+            key: 'model.synthetic.relation',
+            labelKo: 'Synthetic relation',
+            kind: 'sampled_relation',
+            input: { name: 'input', quantityKind: 'synthetic.Scalar' },
+            output: { name: 'output', quantityKind: 'synthetic.Vector' },
+            minimumSamples: 2,
+            sharedBasis: false,
+          },
+        ],
+      }),
+    )
+
+    expect(coreTypes).toContain('export interface CatalogQuantityKindMap {}')
+    expect(coreTypes).toContain('export interface MaterialPropertyQuantityKindMap {}')
+    expect(coreTypes).toContain('export interface MaterialModelDefinitionMap {}')
+    expect(coreTypes).not.toContain('synthetic.Scalar')
+    expect(coreTypes).not.toContain('synthetic.vector-property')
+    expect(coreTypes).not.toContain('model.synthetic.relation')
+    expect(runtimeTypes).toContain('"synthetic.Scalar"')
+    expect(runtimeTypes).toContain('"synthetic.Vector"')
+    expect(runtimeTypes).toContain('"synthetic.vector-property"')
+    expect(runtimeTypes).toContain('"model.synthetic.relation"')
+    expect(runtimeTypes).not.toContain('synthetic.Omitted')
     expect(coreTypes).toContain('{ color?: string; errorRate?: number }')
     expect(coreTypes).toContain('readonly errorRate: number')
 
-    const localKey = defaultExperimentMaterialCode.replace(
-      "'electrical.conductivity': {",
-      'electricalConductivity: {',
-    )
-    const arbitraryKey = defaultExperimentMaterialCode.replace(
-      "'electrical.conductivity': {",
-      "'custom.conductivity': {",
-    )
-    const manualQuantityKind = defaultExperimentMaterialCode.replace(
-      "unit: 'S.m-1',",
-      "unit: 'S.m-1',\n      quantityKind: 'electromagnetism.ElectricConductivity',",
-    )
+    const materialSource = `
+      import { Material } from '@caemble/core'
+      new Material('Synthetic', {
+        'synthetic.vector-property': {
+          dtype: 'float64',
+          value: [1, 2, 3],
+          unit: '{synthetic-vector}',
+          basis: [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+        },
+      })
+    `
     const materialPath = 'C:/caemble-source/hash/material.tsx'
-    expect(diagnosticsFor(localKey, defaultGeometryFiles, materialPath).join('\n')).toContain('electricalConductivity')
-    expect(diagnosticsFor(arbitraryKey, defaultGeometryFiles, materialPath).join('\n')).toContain('custom.conductivity')
-    expect(diagnosticsFor(manualQuantityKind, defaultGeometryFiles, materialPath).join('\n')).toContain(
+    expect(diagnosticsFor(materialSource, defaultGeometryFiles, materialPath, runtimeTypes)).toEqual([])
+    expect(
+      diagnosticsFor(
+        materialSource.replace('synthetic.vector-property', 'synthetic.unknown-property'),
+        defaultGeometryFiles,
+        materialPath,
+        runtimeTypes,
+      ).join('\n'),
+    ).toContain('synthetic.unknown-property')
+    expect(
+      diagnosticsFor(
+        materialSource.replace(
+          "unit: '{synthetic-vector}',",
+          "unit: '{synthetic-vector}',\n          quantityKind: 'synthetic.Vector',",
+        ),
+        defaultGeometryFiles,
+        materialPath,
+        runtimeTypes,
+      ).join('\n'),
+    ).toContain(
       "Type 'string' is not assignable to type 'undefined'",
     )
 
     const modelRelation = `
       import { Material } from '@caemble/core'
-      new Material('Sorbent', {
-        'model.sorption.isotherm': {
+      new Material('Synthetic', {
+        'model.synthetic.relation': {
           kind: 'sampled_relation',
-          input: { unit: '%', values: [0, 100] },
-          output: { unit: '{fraction}', values: [0, 0.2] },
+          input: { unit: '{synthetic-scalar}', values: [0, 1] },
+          output: { unit: '{synthetic-vector}', values: [[0, 0, 0], [1, 1, 1]] },
         },
       })
     `
-    expect(diagnosticsFor(modelRelation)).toEqual([])
+    expect(diagnosticsFor(modelRelation, defaultGeometryFiles, materialPath, runtimeTypes)).toEqual([])
     expect(
-      diagnosticsFor(modelRelation.replace('model.sorption.isotherm', 'model.sorption.local_isotherm')).join('\n'),
-    ).toContain('model.sorption.local_isotherm')
+      diagnosticsFor(
+        modelRelation.replace('model.synthetic.relation', 'model.synthetic.omitted'),
+        defaultGeometryFiles,
+        materialPath,
+        runtimeTypes,
+      ).join('\n'),
+    ).toContain('model.synthetic.omitted')
   })
 })

@@ -2,6 +2,8 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDataTensorAccessor } from '../../lib/cad'
+import { installCatalogRuntimeSlice, registerSourceCatalogRuntimeSlice } from '@/lib/catalog/runtime'
+import type { CatalogRuntimeSlice } from '@/contracts/catalog'
 import { releaseRecordedDataAttachments, simulate } from './client'
 
 const sdk = vi.hoisted(() => ({ clientOptions: vi.fn(), runJob: vi.fn() }))
@@ -116,9 +118,26 @@ describe('CAE session client', () => {
     sdk.clientOptions.mockReset()
     api.request.mockReset()
     api.request.mockResolvedValue({ ok: true })
+    const catalog = {
+      schemaVersion: 1,
+      catalogRevision: 'test',
+      solvers: [{
+        name: 'dc-current-density', version: '0.1.0', contractDigest: 'd'.repeat(64), descriptor: {} as never,
+      }],
+      quantityKinds: [{
+        name: 'DimensionlessRatio', domain: 'general', tensorOrder: 0, description: 'Ratio', opaque: false,
+        applicableUnits: ['{fraction}'],
+      }],
+      materialParameters: [],
+      materialModels: [],
+      materialGlobalQualifiers: [],
+      warnings: [],
+    } satisfies CatalogRuntimeSlice
+    installCatalogRuntimeSlice(catalog)
+    registerSourceCatalogRuntimeSlice('b'.repeat(64), catalog)
   })
 
-  it('sends only the built Measurement, ACKs one record at a time, and returns RecordedData only', async () => {
+  it('sends the built Measurement with exact Solver contracts, ACKs records, and returns RecordedData only', async () => {
     const fixture = measurementFixture()
     const bytes = new Float64Array([1.25, 2.5]).buffer
     const call = vi
@@ -167,8 +186,11 @@ describe('CAE session client', () => {
       authMode: 'cookie',
       jobApiPrefix: '/web/jobs',
     })
-    expect(Object.keys(sdk.runJob.mock.calls[0][1])).toEqual(['measurement'])
+    expect(Object.keys(sdk.runJob.mock.calls[0][1])).toEqual(['measurement', 'solverContracts'])
     const startPayload = sdk.runJob.mock.calls[0][1]
+    expect(startPayload.solverContracts).toEqual([{
+      name: 'dc-current-density', version: '0.1.0', contractDigest: 'd'.repeat(64),
+    }])
     expect(startPayload.measurement.experiment.scene.lengthUnit).toBe('mm')
     expect(startPayload.measurement.materialParameters.materials.Copper['electrical.conductivity'].value).toMatchObject({
       dtype: 'float64',
@@ -251,7 +273,7 @@ describe('CAE session client', () => {
         attachments.find((item: { mimeType: string }) => item.mimeType.startsWith('application/json')).blob,
       ),
     )
-    expect(Object.keys(payload)).toEqual(['measurement'])
+    expect(Object.keys(payload)).toEqual(['measurement', 'solverContracts'])
   })
 
   it('rejects malformed or obsolete terminal payload fields', async () => {

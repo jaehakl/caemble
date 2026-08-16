@@ -22,6 +22,7 @@ dependencies = [
     "websockets>=12,<16",
     "tree-sitter (>=0.25,<0.27)",
     "tree-sitter-typescript (>=0.23,<0.24)",
+    "caemble-catalog",
 ]
 
 [tool.poetry]
@@ -29,6 +30,7 @@ package-mode = false
 
 [tool.poetry.dependencies]
 caemble-runtime-sdk = { path = "../sdk", develop = true }
+caemble-catalog = { path = "../catalog", develop = true }
 
 [build-system]
 requires = ["poetry-core"]

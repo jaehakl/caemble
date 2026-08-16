@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest'
 import type { MeasurementRecord, RecordedDataRecord } from '@/api'
 import {
   buildAnalysisDataset,
+  collectAnalysisQuantityKindNames,
   createCsv,
   createMeasurementRanges,
   getTablePage,
   mineDataset,
   predictDataset,
 } from './analysis-engine'
+
+const scalarQuantityKinds = new Map([['Dimensionless', 0]])
 
 function createDataset(targetValue = (width: number, voltage: number) => width * 3 + voltage * 2) {
   const measurements: MeasurementRecord[] = []
@@ -77,6 +80,7 @@ function createDataset(targetValue = (width: number, voltage: number) => width *
     experimentId: 22,
     fingerprint: 'fixture',
     measurements,
+    quantityKindTensorOrders: scalarQuantityKinds,
     recordedData,
   })
 }
@@ -89,6 +93,52 @@ describe('Analysis engine', () => {
     expect(ranges.flatMap((range) => range.ids)).toEqual([...new Set(ids)].sort((left, right) => left - right))
     expect(ranges.every((range) => range.ids.length <= 500)).toBe(true)
     expect(ranges.every((range) => range.max - range.min <= 2_000)).toBe(true)
+  })
+
+  it('저장된 Material과 Recorded Data에서 필요한 QuantityKind 이름만 수집한다', () => {
+    const measurements = [
+      {
+        id: 1,
+        experiment_id: 22,
+        vars: { quantityKind: '사용자 변수는 무시' },
+        material_parameters: {
+          schemaVersion: 2,
+          experiment: {
+            schemaVersion: 1,
+            materials: {
+              Copper: {
+                density: { value: { quantityKind: 'test.MaterialScalar', unit: '{test-material}', value: 1 } },
+              },
+            },
+          },
+          tasks: {},
+        },
+        recorded_at: null,
+      },
+    ] satisfies MeasurementRecord[]
+    const recordedData = [
+      {
+        id: 2,
+        measurement_id: 1,
+        name: 'field',
+        dtype: 'float64',
+        quantity_kind: 'test.RecordedVector',
+        tensor_order: 1,
+        data_schema: {
+          dtype: 'float64',
+          quantityKind: 'test.RecordedVector',
+          unit: '{test-vector}',
+          axes: [{ name: 'position', quantityKind: 'test.Axis', unit: '{test-axis}' }],
+        },
+        data: { value: [] },
+      },
+    ] satisfies RecordedDataRecord[]
+
+    expect(collectAnalysisQuantityKindNames(measurements, recordedData)).toEqual([
+      'test.Axis',
+      'test.MaterialScalar',
+      'test.RecordedVector',
+    ])
   })
 
   it('scalar profile과 categorical 빈도, 100행 이하 table page를 만든다', () => {
@@ -242,6 +292,7 @@ describe('Analysis engine', () => {
           recorded_at: '2026-08-12T00:00:00Z',
         },
       ],
+      quantityKindTensorOrders: scalarQuantityKinds,
       recordedData: [
         {
           id: 2,

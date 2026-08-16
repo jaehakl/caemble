@@ -17,13 +17,13 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
-import { caeSolverManifestsQueryKey, fetchCaeSolverManifests } from '@/features/cae/manifests'
+import { catalogApi, catalogQueryKeys } from '@/api/catalog'
 import { GeometryCatalog } from '@/pages/catalog/cad/CadCatalogPage'
 import { MaterialCatalog } from '@/pages/catalog/materials/MaterialCatalogPage'
 import { QuantityCatalog } from '@/pages/catalog/quantity-kinds/QuantityKindCatalogPage'
 import { PhysicsCatalog } from '@/pages/catalog/solvers/SolverCatalogPage'
 import { defaultDocsSection, docsSectionIds, type DocsSectionId } from './docsRoute'
-import { getDocsKnowledge, searchDocsKnowledge, type DocsKnowledgeChunk } from './docsKnowledge'
+import { catalogSearchKnowledge, getDocsKnowledge, searchDocsKnowledge, type DocsKnowledgeChunk } from './docsKnowledge'
 import { ManualDocsPage } from './ManualDocsPage'
 
 const docsSections = [
@@ -47,17 +47,18 @@ export function DocsPage() {
   const sectionParam = searchParams.get('section')
   const section = docsSectionIds.find((candidate) => candidate === sectionParam) ?? defaultDocsSection
   const selectedItem = searchParams.get('item')
-  const solverManifests = useQuery({
-    queryKey: caeSolverManifestsQueryKey,
-    queryFn: fetchCaeSolverManifests,
+  const searchActive = deferredSearchQuery.trim().length > 0
+  const catalogSearch = useQuery({
+    queryKey: catalogQueryKeys.search(deferredSearchQuery.trim()),
+    queryFn: () => catalogApi.search(deferredSearchQuery.trim(), 100),
+    enabled: searchActive,
     retry: false,
-    staleTime: Infinity,
-    gcTime: Infinity,
+    staleTime: 30_000,
   })
 
   const searchEntries = useMemo<readonly DocsKnowledgeChunk[]>(
-    () => getDocsKnowledge(solverManifests.data),
-    [solverManifests.data],
+    () => [...getDocsKnowledge(), ...catalogSearchKnowledge(catalogSearch.data?.items ?? [])],
+    [catalogSearch.data],
   )
 
   const searchResults = useMemo(() => {
@@ -78,8 +79,6 @@ export function DocsPage() {
         .filter(({ total }) => total > 0),
     }
   }, [deferredSearchQuery, searchEntries])
-
-  const searchActive = deferredSearchQuery.trim().length > 0
 
   useEffect(() => {
     if (!location.hash || searchActive) return
@@ -205,9 +204,9 @@ export function DocsPage() {
                 </div>
               )}
 
-              {solverManifests.isError ? (
+              {catalogSearch.isError ? (
                 <p className="mt-6 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                  Solver manifest를 읽지 못해 Physics Catalog 항목은 검색 결과에서 제외했습니다.
+                  Catalog API를 읽지 못해 Material, QuantityKind와 Solver 항목은 검색 결과에서 제외했습니다.
                 </p>
               ) : null}
             </section>

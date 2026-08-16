@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { installSyntheticCatalog } from '@/test/syntheticCatalog'
 import type { DataDType, DataSchema, DataTensor, LegacyRecordedDataTensor } from './descriptor'
 import {
   DATA_TENSOR_ATTACHMENT_SHARD_BYTES,
@@ -11,6 +12,18 @@ import {
   releaseDataTensorAttachments,
   shardDataTensorBytes,
 } from './dataTensor'
+
+installSyntheticCatalog({
+  quantityKinds: [
+    { name: 'DimensionlessRatio', applicableUnits: ['{fraction}', '%'] },
+    { name: 'Length', applicableUnits: ['m'] },
+    { name: 'Time', applicableUnits: ['s'] },
+    { name: 'thermodynamics.Temperature', applicableUnits: ['K'] },
+    { name: 'electromagnetism.ElectricCurrent', applicableUnits: ['A'] },
+    { name: 'electromagnetism.ElectricCurrentDensity', tensorOrder: 1, applicableUnits: ['A.m-2'] },
+    { name: 'mechanics.StressTensor', tensorOrder: 2, applicableUnits: ['Pa'] },
+  ],
+})
 
 const goldenFixture = JSON.parse(
   readFileSync(new URL('./fixtures/data-schema-golden.v1.json', import.meta.url), 'utf8'),

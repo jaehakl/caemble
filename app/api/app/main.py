@@ -2,6 +2,7 @@ from initserver import server
 from gpstation.routers import v1 as gpstation_v1
 from gpstation.routers import web as gpstation_web
 from routers import (
+    catalog,
     designer_model,
     experiment,
     geometry,
@@ -15,6 +16,7 @@ from routers import (
 
 app = server()
 
+app.include_router(catalog.router)
 app.include_router(material.router)
 app.include_router(geometry.router)
 app.include_router(experiment.router)

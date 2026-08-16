@@ -1,5 +1,6 @@
 import { transform } from 'esbuild'
 import { describe, expect, it } from 'vitest'
+import { installSyntheticCatalog } from '@/test/syntheticCatalog'
 import { CAD_COMPILER_VERSION, type CompiledCadDocument, type CompiledCadSource } from '../../cad/compiler/types'
 import { executeCompiledDocument, inspectCompiledDocument } from '../../cad/execution/userModule'
 import { generateRandomVars } from '../../cad/model/vars'
@@ -12,6 +13,23 @@ import {
 import { assertSimulationProgramManifest } from '../../cad/simulation'
 import type { CaembleProgramExample } from './types'
 import { caembleProgramExamples } from '.'
+
+installSyntheticCatalog({
+  quantityKinds: [
+    { name: 'DimensionlessRatio', applicableUnits: ['{fraction}'] },
+    { name: 'Length', applicableUnits: ['m'] },
+    { name: 'electromagnetism.ElectricCurrent', applicableUnits: ['A'] },
+    { name: 'electromagnetism.ElectricCurrentDensity', tensorOrder: 1, applicableUnits: ['A.m-2'] },
+    { name: 'electromagnetism.Voltage', applicableUnits: ['mV'] },
+    { name: 'electromagnetism.ElectricConductivity', tensorOrder: 2, applicableUnits: ['S.m-1'] },
+    { name: 'synthetic.ThermalConductivity', tensorOrder: 2, applicableUnits: ['W.m-1.K-1'] },
+    { name: 'thermodynamics.Temperature', applicableUnits: ['K'] },
+  ],
+  materialParameters: [
+    { key: 'electrical.conductivity', quantityKind: 'electromagnetism.ElectricConductivity' },
+    { key: 'thermal.conductivity', quantityKind: 'synthetic.ThermalConductivity' },
+  ],
+})
 
 async function compileSource(source: string) {
   return (

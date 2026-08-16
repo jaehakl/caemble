@@ -1,6 +1,13 @@
 {
   "formatVersion": 1,
   "payload": {
+    "solverContracts": [
+      {
+        "name": "dc-current-density",
+        "version": "0.1.0",
+        "contractDigest": "9962cb167fc38f7899ece5578300683d9c226b7054843cce446b24c42b5c59c4"
+      }
+    ],
     "measurement": {
       "kind": "measurement",
       "experiment": {

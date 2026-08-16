@@ -20,6 +20,7 @@ from sdk.slave.runtime import emit
 from app.errors import CaeError, ProtocolError
 from app.kernels import resolve_output_specs, run_kernel, solver_spec, validate_kernel_tasks
 from app.program import SIMULATION_API_VERSION, validate_and_load_simulate
+from app.solver_framework.registry import registry
 from app.tensor import (
     MAX_RECORDED_BYTES,
     MAX_SAFE_INTEGER,
@@ -792,13 +793,15 @@ def create_run(
     job_id: str,
     on_cleanup: Callable[[str], None],
 ) -> CaeRun:
-    if not isinstance(payload, dict) or set(payload) != {"measurement"}:
+    if not isinstance(payload, dict) or set(payload) != {"measurement", "solverContracts"}:
         raise CaeError(
             "invalid_input",
-            "start payload must contain exactly measurement",
+            "start payload must contain exactly measurement and solverContracts",
         )
     measurement = payload.get("measurement")
     _validate_built_measurement(measurement)
+    simulation_program = measurement["experiment"]["simulationProgram"]
+    registry.validate_contracts(payload.get("solverContracts"), simulation_program.get("tasks"))
     return CaeRun(
         measurement=measurement,
         max_run_seconds=DEFAULT_MAX_RUN_SECONDS,

@@ -45,14 +45,12 @@ npm run generate:cad-api
 npm run check:generated
 ```
 
-QuantityKind와 Material 전체 catalog는 각각 `src/lib/quantitykind/data`와
-`src/lib/material/data`의 domain별 TypeScript 파일이 원본이다. CAE kernel descriptor의
-단일 원본은 Caemble의 `../slaves/cae/app/solvers/*/manifest.json`이다. UI에는 solver
-manifest 사본이나 generated catalog를 두지 않는다. Vite는 이 파일들을 build-time에 직접
-읽어 Solver Catalog에 포함하며, Launcher 화면도 `../slaves/*/manifest.json`의 앱 목록을
-같은 방식으로 사용한다.
+QuantityKind, Material, Solver descriptor의 단일 원본은 API가 직접 읽는 공유 SQLite
+catalog다. UI에는 전체 catalog나 Solver manifest 사본을 두지 않는다. Docs 화면은
+`/catalog` API의 검색·관계 조회를 사용하고, Experiment는 source에서 고정 참조만 추출해
+`POST /catalog/runtime-slice`로 받은 최소 불변 slice로 컴파일·검증·실행한다.
 
-The CAD generator reads the element registry, local TypeScript catalogs, and
+The CAD generator reads the element registry and
 `src/lib/cad/api/authoring-manifest.json`. It generates the element
 catalog/registry, JSX intrinsic types, and the pinned CAD authoring API v6.
 Commit all generated changes. CI should run `npm run check:generated`; a
@@ -141,7 +139,8 @@ Simulation callers use only the thin client in `src/features/cae/client.ts`:
 simulate(measurement, { signal, onStatus, onProgress, onRecord })
 ```
 
-The client preserves author-supplied units, sends only `{ measurement }`,
+The client preserves author-supplied units and sends `{ measurement, solverContracts }`, where
+each Solver contract digest comes from the exact runtime slice used to evaluate the Experiment,
 and hides the JobSession, attachments, `start/next`,
 record ACK and kill handling. Browser-local solver,
 Python/TS simulation runtime and fallback execution do not exist. Only declared

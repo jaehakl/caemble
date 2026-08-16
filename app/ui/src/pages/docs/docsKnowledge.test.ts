@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { fetchCaeSolverManifests } from '@/features/cae/manifests'
 import {
-  buildSolverDocsKnowledge,
+  catalogSearchKnowledge,
   catalogDocsKnowledge,
   getDocsKnowledge,
   manualDocsKnowledge,
@@ -43,18 +42,24 @@ describe('documentation knowledge registry', () => {
     )
   })
 
-  it('derives searchable entries from every canonical catalog', () => {
+  it('keeps only non-database Geometry entries in the checked-in catalog knowledge', () => {
     expect(catalogDocsKnowledge.find(({ id }) => id === 'geometry:box')?.content).toContain('<box size=')
-    expect(catalogDocsKnowledge.find(({ id }) => id === 'materials:electrical.conductivity')?.content).toContain(
-      'electromagnetism.ElectricConductivity',
-    )
-    expect(
-      catalogDocsKnowledge.find(({ id }) => id === 'quantity-kinds:electromagnetism.ElectricCurrent')?.content,
-    ).toContain('Applicable UCUM units:')
+    expect(catalogDocsKnowledge.some(({ section }) => section === 'materials')).toBe(false)
+    expect(catalogDocsKnowledge.some(({ section }) => section === 'quantity-kinds')).toBe(false)
   })
 
   it('ranks exact keys first and accepts a combined current and recent prompt query', () => {
-    expect(searchDocsKnowledge('electrical.conductivity')[0]?.id).toBe('materials:electrical.conductivity')
+    const serverResults = catalogSearchKnowledge([
+      {
+        kind: 'materialParameter',
+        key: 'electrical.conductivity',
+        title: 'electrical.conductivity',
+        subtitle: 'electromagnetism.ElectricConductivity',
+      },
+    ])
+    expect(searchDocsKnowledge('electrical.conductivity', [...getDocsKnowledge(), ...serverResults])[0]?.id).toBe(
+      'materialParameter:electrical.conductivity',
+    )
 
     const combinedResults = searchDocsKnowledge('Joule heating 이전 질문은 multiphysics')
     expect(combinedResults.slice(0, 3).map(({ id }) => id)).toContain('program-multiphysics-example')
@@ -86,15 +91,13 @@ describe('documentation knowledge registry', () => {
     expect(searchDocsKnowledge('prefix', chunks)[0]?.id).toBe('later-keyword-prefix')
   })
 
-  it('builds solver knowledge directly from the deployed manifests', async () => {
-    const manifests = await fetchCaeSolverManifests()
-    const solverChunks = buildSolverDocsKnowledge(manifests)
-    const dc = solverChunks.find(({ id }) => id === 'solvers:dc-current-density@0.1.0')
+  it('turns API search rows into stable deep links without copying solver descriptors', () => {
+    const [solver] = catalogSearchKnowledge([
+      { kind: 'solver', key: 'dc-current-density@0.1.0', title: 'DC current density', subtitle: 'Solver' },
+    ])
 
-    expect(dc?.content).toContain('dc.current-density')
-    expect(dc?.content).toContain('Material role')
-    expect(getDocsKnowledge(manifests)).toHaveLength(
-      manualDocsKnowledge.length + catalogDocsKnowledge.length + solverChunks.length,
-    )
+    expect(solver.id).toBe('solver:dc-current-density@0.1.0')
+    expect(solver.href).toBe('/docs?section=solvers&item=dc-current-density%400.1.0')
+    expect(getDocsKnowledge()).toHaveLength(manualDocsKnowledge.length + catalogDocsKnowledge.length)
   })
 })

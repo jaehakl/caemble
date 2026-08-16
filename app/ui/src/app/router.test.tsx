@@ -1,10 +1,22 @@
 // @vitest-environment jsdom
 
 import { cleanup, render, screen } from '@testing-library/react'
+import { transferableAbortController } from 'node:util'
 import { RouterProvider } from 'react-router/dom'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { AppProviders } from './providers'
 import { createAppRouter } from './router'
+
+const nodeAbortController = transferableAbortController()
+
+beforeAll(() => {
+  vi.stubGlobal('AbortController', nodeAbortController.constructor)
+  vi.stubGlobal('AbortSignal', nodeAbortController.signal.constructor)
+})
+
+afterAll(() => {
+  vi.unstubAllGlobals()
+})
 
 afterEach(() => {
   cleanup()

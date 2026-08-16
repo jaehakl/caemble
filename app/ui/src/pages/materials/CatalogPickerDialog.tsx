@@ -1,10 +1,18 @@
-import { Search } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { LoaderCircle, Search } from 'lucide-react'
+import { useState } from 'react'
+import { catalogApi, catalogQueryKeys } from '@/api/catalog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { materialCatalogEntries } from './material-utils'
+
+export type MaterialCatalogEntry = Readonly<{
+  key: string
+  kind: 'parameter' | 'model'
+  label: string
+  quantityKind: string
+}>
 
 export function MaterialCatalogPickerDialog({
   onOpenChange,
@@ -12,16 +20,39 @@ export function MaterialCatalogPickerDialog({
   open,
 }: {
   onOpenChange: (open: boolean) => void
-  onSelect: (key: string) => void
+  onSelect: (entry: MaterialCatalogEntry) => Promise<void>
   open: boolean
 }) {
   const [query, setQuery] = useState('')
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase()
-    return materialCatalogEntries.filter(
-      (entry) => !needle || `${entry.key} ${entry.label} ${entry.quantityKind}`.toLocaleLowerCase().includes(needle),
-    )
-  }, [query])
+  const [selectionError, setSelectionError] = useState('')
+  const [pendingKey, setPendingKey] = useState('')
+  const request = { q: query.trim() || undefined, limit: 100 }
+  const parametersQuery = useQuery({
+    enabled: open,
+    queryKey: catalogQueryKeys.materialParameters(request),
+    queryFn: () => catalogApi.listMaterialParameters(request),
+  })
+  const modelsQuery = useQuery({
+    enabled: open,
+    queryKey: catalogQueryKeys.materialModels(request),
+    queryFn: () => catalogApi.listMaterialModels(request),
+  })
+  const entries: readonly MaterialCatalogEntry[] = [
+    ...(parametersQuery.data?.items ?? []).map((entry) => ({
+      key: entry.key,
+      kind: 'parameter' as const,
+      label: entry.labelKo,
+      quantityKind: entry.quantityKind,
+    })),
+    ...(modelsQuery.data?.items ?? []).map((entry) => ({
+      key: entry.key,
+      kind: 'model' as const,
+      label: entry.labelKo,
+      quantityKind: `${entry.input.quantityKind} → ${entry.output.quantityKind}`,
+    })),
+  ]
+  const loading = parametersQuery.isPending || modelsQuery.isPending
+  const failed = parametersQuery.isError || modelsQuery.isError
 
   return (
     <Dialog
@@ -47,30 +78,66 @@ export function MaterialCatalogPickerDialog({
           />
         </div>
         <div className="max-h-[55dvh] space-y-2 overflow-y-auto pr-1">
-          {filtered.map((entry) => (
-            <Button
-              className="h-auto w-full justify-start p-3 text-left whitespace-normal"
-              key={entry.key}
-              onClick={() => {
-                setQuery('')
-                onSelect(entry.key)
-                onOpenChange(false)
-              }}
-              type="button"
-              variant="outline"
-            >
-              <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-center gap-2">
-                  <code className="text-xs font-semibold break-all text-orange-700">{entry.key}</code>
-                  <Badge>{entry.kind}</Badge>
-                </span>
-                <span className="mt-1 block text-xs text-muted-foreground">
-                  {entry.label} · {entry.quantityKind}
-                </span>
-              </span>
-            </Button>
-          ))}
-          {!filtered.length ? (
+          {loading ? (
+            <p className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground" role="status">
+              <LoaderCircle className="size-4 animate-spin" />
+              Material Catalog를 불러오는 중입니다.
+            </p>
+          ) : failed ? (
+            <div className="py-10 text-center text-sm text-destructive" role="alert">
+              <p>Material Catalog를 불러오지 못했습니다.</p>
+              <Button
+                className="mt-3"
+                onClick={() => Promise.all([parametersQuery.refetch(), modelsQuery.refetch()])}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                다시 시도
+              </Button>
+            </div>
+          ) : null}
+          {!loading && !failed
+            ? entries.map((entry) => (
+                <Button
+                  className="h-auto w-full justify-start p-3 text-left whitespace-normal"
+                  disabled={Boolean(pendingKey)}
+                  key={entry.key}
+                  onClick={async () => {
+                    setPendingKey(entry.key)
+                    setSelectionError('')
+                    try {
+                      await onSelect(entry)
+                      setQuery('')
+                      onOpenChange(false)
+                    } catch (error) {
+                      setSelectionError(error instanceof Error ? error.message : 'Catalog 항목을 불러오지 못했습니다.')
+                    } finally {
+                      setPendingKey('')
+                    }
+                  }}
+                  type="button"
+                  variant="outline"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center gap-2">
+                      <code className="text-xs font-semibold break-all text-orange-700">{entry.key}</code>
+                      <Badge>{entry.kind}</Badge>
+                      {pendingKey === entry.key ? <LoaderCircle className="size-3 animate-spin" /> : null}
+                    </span>
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      {entry.label} · {entry.quantityKind}
+                    </span>
+                  </span>
+                </Button>
+              ))
+            : null}
+          {selectionError ? (
+            <p className="py-2 text-sm text-destructive" role="alert">
+              {selectionError}
+            </p>
+          ) : null}
+          {!loading && !failed && !entries.length ? (
             <p className="py-12 text-center text-sm text-muted-foreground">조건에 맞는 카탈로그 항목이 없습니다.</p>
           ) : null}
         </div>

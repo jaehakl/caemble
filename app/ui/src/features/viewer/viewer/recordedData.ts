@@ -1,19 +1,13 @@
-import type {
-  QuantityKindName,
-  RecordedData,
-  RecordedDataAxis,
-  RecordedDataRule,
-  RecordedDataTensor,
-  UcumUnit,
-} from '@/lib/cad'
-import { convertUcumValue } from '@/lib/cad'
+import type { RecordedData, RecordedDataAxis, RecordedDataRule, RecordedDataTensor, UcumUnit } from '@/lib/cad'
+import { convertUcumValue, isDataTensor } from '@/lib/cad'
 import { normalizeRecordedDataTensor, type ResolvedRecordedTensor } from '@/lib/cad'
-import { QuantityKind } from '@/lib/quantitykind'
+import type { CatalogQuantityKind } from '@/api/catalog'
 
 export type CadViewerRecordedAxis = RecordedDataAxis
 export type CadViewerRecordedTensor = RecordedDataTensor
 export type CadViewerRecordedData = RecordedData
 export type { ResolvedRecordedTensor }
+export type RecordedQuantityKinds = ReadonlyMap<string, CatalogQuantityKind>
 
 export type RecordedDataDisplayUnits = Readonly<
   Record<
@@ -37,7 +31,68 @@ export type ResolvedRecordedData = Readonly<{
   unknownLabels: readonly string[]
 }>
 
-export const normalizeCadViewerRecordedTensor = normalizeRecordedDataTensor
+function quantityKindDefinition(rule: RecordedDataRule, quantityKinds: RecordedQuantityKinds) {
+  if (!rule.result.quantityKind) return undefined
+  const definition = quantityKinds.get(rule.result.quantityKind)
+  if (!definition) throw new Error(`QuantityKind ${rule.result.quantityKind}의 Catalog 정의가 없습니다.`)
+  return definition
+}
+
+function appendComponentAxes(value: unknown, outerAxisCount: number, tensorOrder: number): unknown {
+  if (tensorOrder === 0 || typeof value !== 'object' || value === null || Array.isArray(value)) return value
+  const payload = value as Record<string, unknown>
+  const axes = Array.isArray(payload.axes)
+    ? payload.axes
+    : isDataTensor(value)
+      ? undefined
+      : Array.from({ length: outerAxisCount }, () => ({}))
+  if (!axes) return value
+  return {
+    ...payload,
+    axes: [...axes, ...Array.from({ length: tensorOrder }, () => ({ ticks: [0, 1, 2] }))],
+  }
+}
+
+export function normalizeCadViewerRecordedTensor(
+  rule: RecordedDataRule,
+  value: unknown,
+  quantityKinds: RecordedQuantityKinds = new Map(),
+): ResolvedRecordedTensor {
+  const definition = quantityKindDefinition(rule, quantityKinds)
+  if (!definition) return normalizeRecordedDataTensor(rule, value)
+  const tensorOrder = definition.tensorOrder
+  const componentShape = Object.freeze(Array.from({ length: tensorOrder }, () => 3 as const))
+  const outerAxisCount = rule.result.axes?.length ?? 0
+  const result = Object.fromEntries(
+    Object.entries(rule.result).filter(([key]) => key !== 'quantityKind' && key !== 'basis'),
+  )
+  result.axes = [
+    ...(rule.result.axes ?? []),
+    ...Array.from({ length: tensorOrder }, (_, index) => ({
+      length: 3,
+      name: `QuantityKind component ${index}`,
+    })),
+  ]
+  const normalized = normalizeRecordedDataTensor(
+    { ...rule, result: result as RecordedDataRule['result'] },
+    appendComponentAxes(value, outerAxisCount, tensorOrder),
+  )
+  const resolved = {
+    axes: Object.freeze(normalized.axes.slice(0, outerAxisCount)),
+    componentShape,
+    tensorOrder,
+    dtype: normalized.dtype,
+    ...(normalized.unit === undefined ? {} : { unit: normalized.unit }),
+    quantityKind: rule.result.quantityKind,
+    ...(rule.result.basis === undefined ? {} : { basis: rule.result.basis }),
+  }
+  return Object.freeze(
+    Object.defineProperties(resolved, {
+      accessor: { value: normalized.accessor },
+      value: { enumerable: true, get: () => normalized.value },
+    }),
+  ) as ResolvedRecordedTensor
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return (
@@ -48,7 +103,11 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   )
 }
 
-export function resolveCadViewerRecordedData(rules: readonly RecordedDataRule[], value: unknown): ResolvedRecordedData {
+export function resolveCadViewerRecordedData(
+  rules: readonly RecordedDataRule[],
+  value: unknown,
+  quantityKinds: RecordedQuantityKinds = new Map(),
+): ResolvedRecordedData {
   if (value !== null && value !== undefined && !isPlainObject(value)) {
     return Object.freeze({
       entries: Object.freeze(rules.map((rule) => Object.freeze({ rule, tensor: null, error: null }))),
@@ -68,7 +127,7 @@ export function resolveCadViewerRecordedData(rules: readonly RecordedDataRule[],
       try {
         return Object.freeze({
           rule,
-          tensor: normalizeRecordedDataTensor(rule, data[rule.label]),
+          tensor: normalizeCadViewerRecordedTensor(rule, data[rule.label], quantityKinds),
           error: null,
         })
       } catch (error) {
@@ -88,17 +147,16 @@ export function isNumericRecordedDType(dtype: RecordedDataRule['result']['dtype'
   return dtype !== 'bool' && dtype !== 'string'
 }
 
-export function recordedDisplayUnitOptions(quantityKind: QuantityKindName, sourceUnit: UcumUnit): readonly UcumUnit[] {
-  const definition = QuantityKind[quantityKind]
-  const units = definition.applicableUnits() as readonly UcumUnit[]
-  const tensorOrder = definition.tensorOrder()
+export function recordedDisplayUnitOptions(definition: CatalogQuantityKind, sourceUnit: UcumUnit): readonly UcumUnit[] {
+  const units = definition.applicableUnits as readonly UcumUnit[]
+  const tensorOrder = definition.tensorOrder
   return Object.freeze(
     [sourceUnit, ...units.filter((unit) => unit !== sourceUnit)].filter((unit) => {
       try {
-        if (tensorOrder > 0 && convertUcumValue(0, sourceUnit, unit, `${quantityKind} display unit`) !== 0) {
+        if (tensorOrder > 0 && convertUcumValue(0, sourceUnit, unit, `${definition.name} display unit`) !== 0) {
           return false
         }
-        convertUcumValue(1, sourceUnit, unit, `${quantityKind} display unit`)
+        convertUcumValue(1, sourceUnit, unit, `${definition.name} display unit`)
         return true
       } catch {
         return false

@@ -1,7 +1,34 @@
 import { describe, expect, it, vi } from 'vitest'
+import { installSyntheticCatalog } from '@/test/syntheticCatalog'
 import { readFrozenMaterialParameters, resolveMaterialParameters, sourceOnlyMaterialParameters } from './resolution'
 import type { CadSceneMaterial } from '../cad/evaluation/types'
 import { applyFrozenMaterialParameters } from '../cad/execution/measurement'
+
+installSyntheticCatalog({
+  quantityKinds: [
+    { name: 'MassDensity', applicableUnits: ['kg.m-3'] },
+    { name: 'synthetic.ThermalConductivity', tensorOrder: 2, applicableUnits: ['W.m-1.K-1'] },
+    { name: 'electromagnetism.ElectricConductivity', tensorOrder: 2, applicableUnits: ['S.m-1'] },
+    { name: 'thermodynamics.RelativeHumidity', applicableUnits: ['%'] },
+    { name: 'DimensionlessRatio', applicableUnits: ['{fraction}'] },
+  ],
+  materialParameters: [
+    { key: 'general.mass_density', quantityKind: 'MassDensity' },
+    { key: 'thermal.conductivity', quantityKind: 'synthetic.ThermalConductivity' },
+    { key: 'electrical.conductivity', quantityKind: 'electromagnetism.ElectricConductivity' },
+  ],
+  materialModels: [
+    {
+      key: 'model.sorption.isotherm',
+      labelKo: 'synthetic sorption relation',
+      kind: 'sampled_relation',
+      input: { name: 'humidity', quantityKind: 'thermodynamics.RelativeHumidity' },
+      output: { name: 'ratio', quantityKind: 'DimensionlessRatio' },
+      minimumSamples: 2,
+      sharedBasis: false,
+    },
+  ],
+})
 
 const sourceMaterial: CadSceneMaterial = {
   name: 'Copper',

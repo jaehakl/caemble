@@ -4,6 +4,8 @@ import { CadModelError } from '../model/errors'
 import { normalizeVarsSchema } from '../model/vars'
 import { assertSerializableCadScene } from '../execution/meshValidation'
 import type { CadWorkerRequest, CadWorkerResponse } from '../worker/protocol'
+import { parseCatalogRuntimeSlice } from '@/contracts/catalog'
+import { assertValidKernelDescriptor } from '../simulation'
 
 export type RunnerOperationEnvelope = Readonly<{
   type: 'inspect' | 'evaluate' | 'preview-geometry'
@@ -80,7 +82,8 @@ export function assertCadWorkerRequest(value: unknown): asserts value is CadWork
     throw new CadModelError('Compiled CAD document must contain experiment.tsx.')
   }
   if (value.type === 'inspect') {
-    assertOnlyKeys(value, ['type', 'requestId', 'revision', 'compiledDocument'], 'request')
+    assertOnlyKeys(value, ['type', 'requestId', 'revision', 'compiledDocument', 'catalog'], 'request')
+    parseCatalogRuntimeSlice(value.catalog).solvers.forEach(({ descriptor }) => assertValidKernelDescriptor(descriptor))
     return
   }
   if (value.type === 'preview-geometry') {
@@ -109,7 +112,8 @@ export function assertCadWorkerRequest(value: unknown): asserts value is CadWork
     return
   }
   if (value.type !== 'evaluate') throw new CadModelError('CAD runner request type is invalid.')
-  assertOnlyKeys(value, ['type', 'requestId', 'revision', 'compiledDocument', 'pythonSource', 'vars'], 'request')
+  assertOnlyKeys(value, ['type', 'requestId', 'revision', 'compiledDocument', 'catalog', 'pythonSource', 'vars'], 'request')
+  parseCatalogRuntimeSlice(value.catalog).solvers.forEach(({ descriptor }) => assertValidKernelDescriptor(descriptor))
   if (typeof value.pythonSource !== 'string' || !value.pythonSource.trim()) {
     throw new CadModelError('Experiment evaluation requires Python simulation source.')
   }

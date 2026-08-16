@@ -7,17 +7,19 @@ launcher, and the built-in AI and CAE slave codebases.
 ```text
 app/
   api/       FastAPI, OAuth, access tokens, launchers, and jobs
+  catalog/   shared read-only QuantityKind, Material, and Solver SQLite catalog
   ui/        Caemble browser application
   sdk/       shared protocol plus JavaScript and Python master SDKs
   launcher/  per-user slave process launcher
   slaves/
     ai/      AI worker and local model catalog
-    cae/     CAE worker and solver manifests
+    cae/     CAE worker and solver implementations
 ```
 
-`app/slaves/*/manifest.json` is the canonical executable registry. CAE kernel
-manifests live below `app/slaves/cae/app/solvers`. The API and launcher read these
-files at runtime; the UI includes them directly at build time.
+`app/slaves/*/manifest.json` remains the executable launcher registry. QuantityKind,
+Material, and CAE Solver contracts live in the versioned SQLite file provided by
+`app/catalog`; the API and CAE worker consume that shared package. See
+[Solver development](docs/solver-development.md) before adding or changing a Solver.
 
 ## Local setup
 
@@ -83,7 +85,8 @@ contract and [deployment](deployment/deployment.md) for the production setup.
 - Third-party SDK requests use bearer tokens and `/v1`.
 - Job payloads and attachments move over WebRTC between client and slave; the API
   stores orchestration state rather than solver data.
-- CAE receives one built `{ measurement: BuiltMeasurement }` value and returns progress, cancellation,
+- CAE receives `{ measurement: BuiltMeasurement, solverContracts }`, verifies the selected
+  Solver contract digests against its local catalog, and then returns progress, cancellation,
   and recorded data.
 - The default ICE configuration uses Google STUN. No managed TURN service is
   included.

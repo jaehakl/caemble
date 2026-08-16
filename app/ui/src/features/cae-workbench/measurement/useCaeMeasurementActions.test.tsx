@@ -156,6 +156,55 @@ describe('useCaeMeasurementActions', () => {
     expect(mocks.create).not.toHaveBeenCalled()
   })
 
+  it('duplicates persisted values only after the current catalog-backed evaluation is ready', async () => {
+    const currentSelection = selection()
+    const { result } = renderHook(
+      () =>
+        useCaeMeasurementActions({
+          authenticated: true,
+          experimentClean: true,
+          experimentDocument: documentController(),
+          experimentId: 7,
+          experimentSourceHash: sourceHash,
+          onGenerateCandidate: vi.fn(),
+          selection: currentSelection,
+          simulation: simulationController(),
+        }),
+      { wrapper: wrapper() },
+    )
+
+    await act(async () => void (await result.current.duplicateMeasurement(prepared)))
+
+    expect(mocks.create).toHaveBeenCalledWith({
+      experiment_id: 7,
+      experiment_source_hash: sourceHash,
+      vars: prepared.vars,
+      material_parameters: prepared.material_parameters,
+    })
+  })
+
+  it('blocks duplicate writes when catalog-backed evaluation is unavailable', async () => {
+    const { result } = renderHook(
+      () =>
+        useCaeMeasurementActions({
+          authenticated: true,
+          experimentClean: true,
+          experimentDocument: documentController({ status: 'Error', materialParameters: null }),
+          experimentId: 7,
+          experimentSourceHash: sourceHash,
+          onGenerateCandidate: vi.fn(),
+          selection: selection(),
+          simulation: simulationController(),
+        }),
+      { wrapper: wrapper() },
+    )
+
+    await act(async () => void (await result.current.duplicateMeasurement(prepared)))
+
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.toastError).toHaveBeenCalledWith('저장할 Candidate 평가가 완료되지 않았습니다.')
+  })
+
   it('refuses to rerun a recorded Measurement', async () => {
     const simulation = simulationController()
     const recorded = { ...prepared, recorded_at: '2026-08-12T00:00:00Z' }

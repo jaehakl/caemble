@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import source from './manifests.ts?raw'
 
-describe('bundled CAE solver manifests', () => {
-  it('loads manifests directly from app/slaves at build time', () => {
-    expect(source).toContain("import.meta.glob('../../../../slaves/cae/app/solvers/*/manifest.json'")
-    expect(source).toContain('eager: true')
-    expect(source).not.toContain('GpStationClient')
-    expect(source).not.toContain('cae.solvers.manifests')
+describe('CAE solver catalog adapter', () => {
+  it('loads descriptors from the catalog API without bundling raw manifests', () => {
+    expect(source).toContain('catalogApi.listSolvers')
+    expect(source).toContain('catalogApi.getSolver')
+    expect(source).not.toContain('import.meta.glob')
+    expect(source).not.toContain('manifest.json')
   })
 })

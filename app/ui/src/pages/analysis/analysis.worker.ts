@@ -1,10 +1,12 @@
 /// <reference lib="webworker" />
 
 import { dbTables, getListRequest } from '@/api'
+import { catalogApi } from '@/api/catalog'
 import type { MeasurementRecord, RecordedDataRecord } from '@/api'
 import {
   ANALYSIS_MAX_ROWS,
   buildAnalysisDataset,
+  collectAnalysisQuantityKindNames,
   createCsv,
   createMeasurementRanges,
   getTablePage,
@@ -131,10 +133,23 @@ async function handleRequest(request: AnalysisWorkerRequest) {
   if (request.type === 'load-context') {
     experimentId = request.experimentId
     const loaded = await loadStableContext(request.requestId, request.experimentId)
+    postProgress(request.requestId, 'Catalog 조회')
+    const quantityKindNames = collectAnalysisQuantityKindNames(loaded.rows.measurements, loaded.recordedData)
+    const quantityKindTensorOrders = new Map<string, number>()
+    for (let offset = 0; offset < quantityKindNames.length; offset += 256) {
+      const slice = await catalogApi.runtimeSlice({
+        solvers: [],
+        quantityKinds: quantityKindNames.slice(offset, offset + 256),
+        materialParameters: [],
+        materialModels: [],
+      })
+      slice.quantityKinds.forEach((definition) => quantityKindTensorOrders.set(definition.name, definition.tensorOrder))
+    }
     postProgress(request.requestId, '데이터셋 구성')
     dataset = buildAnalysisDataset({
       experimentId: request.experimentId,
       measurements: loaded.rows.measurements,
+      quantityKindTensorOrders,
       recordedData: loaded.recordedData,
       fingerprint: loaded.fingerprint,
     })

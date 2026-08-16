@@ -6,9 +6,9 @@
 Experiment bundle v5 + complete vars
 → UI compile/evaluate + frozen Material snapshot
 → prepared Measurement
-→ { measurement: BuiltMeasurement }
+→ { measurement: BuiltMeasurement, solverContracts }
 → Caemble CAE slave
-→ manifest validation and UCUM conversion
+→ catalog digest/contract validation and UCUM conversion
 → sim.record()된 DataTensor
 → RecordedData 원자 저장
 → Viewer와 Analysis
@@ -24,10 +24,10 @@ Measurement 조건, RecordedData를 저장한다.
 | --------- | ---- |
 | UI | Experiment authoring, 결정론적 평가, candidate 생성, Material 동결, BuiltMeasurement 구성, live Solver Catalog 표시 |
 | API | source hash가 고정된 Experiment revision, prepared Measurement, 1회성 RecordedData 트랜잭션과 소유권 검증 |
-| CAE slave | solver manifest 소유, 계약 검증과 UCUM 변환, Python `simulate()`와 solver 실행, record streaming |
+| CAE slave | 공용 SQLite snapshot 로드, 계약 검증과 UCUM 변환, Python `simulate()`와 Solver 실행, record streaming |
 
-별도 `contracts/cae` JSON 원본, npm contract package, Python contract wheel과 contract hash
-검사는 없다. UI와 CAE는 같은 배포 단위에서 계약 버전을 함께 올린다.
+별도 `contracts/cae` JSON이나 npm contract package는 없다. API와 CAE가 같은
+`caemble_catalog` SQLite release를 사용하고, 요청의 `contractDigest`로 일치 여부를 검사한다.
 
 ## 1. Experiment authoring과 평가
 
@@ -49,14 +49,14 @@ Candidate 생성은 candidate를 바꿀 뿐 source document를 변경하거나 d
 
 ## 2. CAE manifest와 Solver Catalog
 
-1. [`app/slaves/cae/app/solvers/*/manifest.json`](../app/slaves/cae/app/solvers): solver별 단일 계약 원본
-2. `app/slaves/cae/app/solver_framework/registry.py`: schema 검증, 자동 발견, lazy import
-3. `app/slaves/cae/app/handlers.py`: 외부 SDK용 `cae.solvers.manifests` 응답
-4. [`manifests.ts`](../app/ui/src/features/cae/manifests.ts): 같은 JSON을 Vite build 시 직접 포함하고 검증
-5. [`SolverCatalogPage.tsx`](../app/ui/src/pages/catalog/solvers/SolverCatalogPage.tsx): descriptor 표시
+1. [`app/catalog`](../app/catalog): QuantityKind, Material, Solver 관계를 담은 SQLite와 reader
+2. `app/slaves/cae/app/solver_framework/registry.py`: 계약 snapshot 로드, digest·구현 경로 검증, lazy import
+3. `app/slaves/cae/app/handlers.py`: 외부 SDK용 `cae.solvers.manifests` 호환 응답
+4. [`catalog.ts`](../app/ui/src/api/catalog.ts): Docs와 Experiment용 Catalog API client
+5. [`SolverCatalogPage.tsx`](../app/ui/src/pages/catalog/solvers/SolverCatalogPage.tsx): 관계 기반 descriptor 표시
 
-UI에는 solver manifest 사본이나 solver별 authoring builder가 없다. Task가 고정한 solver
-`name/version`으로 manifest를 찾으므로 solver 구현 변경 시 version도 올려야 한다.
+UI에는 Solver manifest 사본이나 전체 정적 catalog가 없다. Task가 고정한 Solver
+`name/version`으로 runtime slice를 요청하므로 공개된 계약을 변경할 때 version도 올려야 한다.
 
 ## 3. Simulation manifest v5
 
@@ -113,7 +113,7 @@ simulate(measurement, { signal, onStatus, onProgress, onRecord });
 
 client는 다음을 내부 처리한다.
 
-- start payload를 정확히 `{ measurement }`로 구성
+- start payload를 정확히 `{ measurement, solverContracts }`로 구성하고 각 digest를 runtime slice에서 전달
 - 256 MiB input 제한과 16 MiB attachment sharding
 - `cae.simulation.start`와 한 번에 하나인 `cae.simulation.next`
 - record sequence/ACK backpressure
@@ -130,7 +130,7 @@ client는 다음을 내부 처리한다.
 1. `handlers.py`: start/next handler와 request attachment decode
 2. `runtime.py`: BuiltMeasurement 검증, run lifecycle, ACK, orchestration, artifact ownership
 3. `program.py`: Python simulation API v3와 `simulate()` AST allowlist
-4. `solver_framework/registry.py`: manifest 자동 탐색과 lazy solver import
+4. `solver_framework/registry.py`: SQLite 계약 snapshot과 digest 검증, lazy Solver import
 5. `solver_framework/validation.py`, `units.py`, `world.py`: 계약 검증과 단위 변환
 6. `solvers/*/solver.py`: solver별 계산
 7. `tensor.py`: dtype/tensorOrder/shape/ticks/raw bytes 검증과 sharding

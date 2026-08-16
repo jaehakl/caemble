@@ -5,12 +5,8 @@ import {
   normalizeQuantityMetadata,
   type QuantityKindName,
 } from '../../quantitykind/runtime'
-import {
-  materialModelByKey,
-  materialParameterByKey,
-  type MaterialModelKey,
-  type MaterialPropertyKey,
-} from '../../material/data'
+import type { MaterialModelKey, MaterialPropertyKey } from '../../material/data'
+import { getRuntimeMaterialModel, getRuntimeMaterialParameter } from '../../catalog/runtime'
 import { Material } from './material'
 import type {
   DataDType,
@@ -353,7 +349,8 @@ export function normalizeMaterialDataValueDescriptor(
   if (Object.prototype.hasOwnProperty.call(value, 'basis')) descriptorKeys.push('basis')
   assertDescriptorKeys(value, descriptorKeys, path)
   const errorRate = normalizeMaterialErrorRate(value.errorRate, `${path}.errorRate`, defaultErrorRate)
-  const quantityKind = materialParameterByKey[key].quantity_kind
+  const quantityKind = getRuntimeMaterialParameter(key)?.quantityKind
+  if (!quantityKind) throw new CadModelError(`${path} is not a registered Material parameter.`)
   const { storageShape, ...schema } = normalizeDataSchema(
     {
       ...value,
@@ -397,16 +394,17 @@ export function normalizeMaterialSampledRelation(
   if (value.kind !== 'sampled_relation') {
     throw new CadModelError(`${path}.kind must be sampled_relation.`)
   }
-  const definition = materialModelByKey[key]
-  const input = normalizeMaterialQuantitySeries(value.input, definition.input.quantity_kind, `${path}.input`)
-  const output = normalizeMaterialQuantitySeries(value.output, definition.output.quantity_kind, `${path}.output`)
-  if (input.values.length < definition.minimum_samples) {
-    throw new CadModelError(`${path} must contain at least ${definition.minimum_samples} samples.`)
+  const definition = getRuntimeMaterialModel(key)
+  if (!definition) throw new CadModelError(`${path} is not a registered Material model.`)
+  const input = normalizeMaterialQuantitySeries(value.input, definition.input.quantityKind, `${path}.input`)
+  const output = normalizeMaterialQuantitySeries(value.output, definition.output.quantityKind, `${path}.output`)
+  if (input.values.length < definition.minimumSamples) {
+    throw new CadModelError(`${path} must contain at least ${definition.minimumSamples} samples.`)
   }
   if (input.values.length !== output.values.length) {
     throw new CadModelError(`${path} input and output must contain the same number of samples.`)
   }
-  if (definition.shared_basis && JSON.stringify(input.basis) !== JSON.stringify(output.basis)) {
+  if (definition.sharedBasis && JSON.stringify(input.basis) !== JSON.stringify(output.basis)) {
     throw new CadModelError(`${path} input and output must use the same Cartesian basis.`)
   }
   return Object.freeze({ kind: 'sampled_relation', input, output }) as MaterialSampledRelation

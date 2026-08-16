@@ -4,8 +4,6 @@ import jsxDeclarations from '../api/cad-jsx.d.ts?raw'
 import monacoSetupSource from '../compiler/monacoSetup.ts?raw'
 import { cadElementCatalog } from '../catalog'
 import * as cadFacade from '../index'
-import { QuantityKind } from '../../quantitykind'
-import { quantityKindDomains } from '../../quantitykind/data'
 import * as quantityKindFacade from '../../quantitykind'
 import { cadElementDefinitions, createCadElementRegistry } from './registry'
 import type { CadElementDefinition } from './types'
@@ -83,30 +81,12 @@ describe('CAD registry contracts', () => {
     })
   })
 
-  it('keeps the Monaco QuantityKindName union synchronized with the generated facade', () => {
-    const declaration = coreDeclarations.match(
-      /export type QuantityKindName =([\s\S]*?)export type QuantityKindDomain/,
-    )?.[1]
-    const declarationNames = [...(declaration?.matchAll(/\| '([^']+)'/g) ?? [])].map((match) => match[1])
-
-    expect(declarationNames).toHaveLength(1_216)
-    expect(declarationNames.sort()).toEqual(Object.keys(QuantityKind).sort())
-
-    const domainDeclaration = coreDeclarations.match(
-      /export type QuantityKindDomain =([\s\S]*?)export type QuantityKindNameForDomain/,
-    )?.[1]
-    const declarationDomains = [...(domainDeclaration?.matchAll(/\| '([^']+)'/g) ?? [])].map((match) => match[1])
-    expect(declarationDomains).toEqual(quantityKindDomains)
-
-    const tensorDeclaration = coreDeclarations.match(
-      /export type TensorQuantityKindName =([\s\S]*?)export type ScalarQuantityKindName/,
-    )?.[1]
-    const tensorDeclarationNames = [...(tensorDeclaration?.matchAll(/\| '([^']+)'/g) ?? [])].map((match) => match[1])
-    const tensorQuantityKindNames = Object.values(QuantityKind)
-      .filter((entry) => entry.tensorOrder() > 0)
-      .map((entry) => entry.name)
-
-    expect(tensorDeclarationNames.sort()).toEqual(tensorQuantityKindNames.sort())
+  it('derives QuantityKind authoring types from the selected runtime catalog map', () => {
+    expect(coreDeclarations).toContain('export interface CatalogQuantityKindMap {}')
+    expect(coreDeclarations).toContain("CatalogQuantityKindMap[Name]['tensorOrder'] extends 0 ? never : Name")
+    expect(coreDeclarations).toContain("CatalogQuantityKindMap[Name]['tensorOrder'] extends 0 ? Name : never")
+    expect(coreDeclarations).toContain("CatalogQuantityKindMap[Name]['applicableUnits'][number]")
+    expect(coreDeclarations).not.toMatch(/\| 'Length'/)
   })
 
   it('exposes model and evaluation APIs through the CAD facade', () => {

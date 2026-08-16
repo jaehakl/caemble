@@ -1,8 +1,6 @@
-import type { CaeSolverManifest } from '@/features/cae/manifests'
+import type { CatalogSearchItem } from '@/api/catalog'
 import { cadElementCatalog } from '@/lib/cad'
 import { caembleProgramExamples, wheelAssemblyExample } from '@/lib/examples'
-import { materialModelData, materialParameterData } from '@/lib/material'
-import { quantityKindData } from '@/lib/quantitykind'
 import { docsSectionHref, type DocsSectionId } from './docsRoute'
 
 export type DocsKnowledgeChunk = Readonly<{
@@ -525,130 +523,26 @@ export const catalogDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze
       content: [`Category: ${entry.category}`, `Syntax: ${entry.syntax}`, entry.summary].join('\n'),
     }),
   ),
-  ...materialParameterData.map((entry) => {
-    const qualifiers = 'special_qualifiers' in entry ? entry.special_qualifiers : []
-    return Object.freeze({
-      id: `materials:${entry.key}`,
-      section: 'materials' as const,
-      title: entry.key,
-      summary: `${entry.label_ko} · ${entry.quantity_kind}`,
-      item: entry.key,
-      href: docsSectionHref('materials', entry.key),
-      keywords: Object.freeze([entry.key, entry.label_ko, entry.quantity_kind, entry.key.split('.')[0], ...qualifiers]),
-      content: [
-        `한국어명: ${entry.label_ko}`,
-        `QuantityKind: ${entry.quantity_kind}`,
-        ...(qualifiers.length ? [`Special qualifiers: ${qualifiers.join(', ')}`] : []),
-      ].join('\n'),
-    })
-  }),
-  ...materialModelData.map((entry) =>
-    Object.freeze({
-      id: `materials:${entry.key}`,
-      section: 'materials' as const,
-      title: entry.key,
-      summary: `${entry.label_ko} · ${entry.input.quantity_kind} → ${entry.output.quantity_kind}`,
-      item: entry.key,
-      href: docsSectionHref('materials', entry.key),
-      keywords: Object.freeze([
-        entry.key,
-        entry.label_ko,
-        entry.input.name,
-        entry.input.quantity_kind,
-        entry.output.name,
-        entry.output.quantity_kind,
-        'sampled relation',
-      ]),
-      content: [
-        `한국어명: ${entry.label_ko}`,
-        `Kind: ${entry.kind}`,
-        `Input: ${entry.input.name} (${entry.input.quantity_kind})`,
-        `Output: ${entry.output.name} (${entry.output.quantity_kind})`,
-        `Minimum samples: ${entry.minimum_samples}`,
-        `Shared basis: ${entry.shared_basis}`,
-      ].join('\n'),
-    }),
-  ),
-  ...Object.entries(quantityKindData).map(([name, entry]) =>
-    Object.freeze({
-      id: `quantity-kinds:${name}`,
-      section: 'quantity-kinds' as const,
-      title: name,
-      summary: entry.description || `${entry.domain} · tensor order ${entry.tensorOrder}`,
-      item: name,
-      href: docsSectionHref('quantity-kinds', name),
-      keywords: Object.freeze([name, entry.domain, ...entry.applicableUnits]),
-      content: [
-        `Domain: ${entry.domain}`,
-        `Tensor order: ${entry.tensorOrder}`,
-        `Applicable UCUM units: ${entry.applicableUnits.join(', ')}`,
-        entry.description,
-      ]
-        .filter(Boolean)
-        .join('\n'),
-    }),
-  ),
 ])
 
-export function buildSolverDocsKnowledge(manifests: readonly CaeSolverManifest[]): readonly DocsKnowledgeChunk[] {
-  return Object.freeze(
-    manifests.map(({ descriptor }) => {
-      const identity = `${descriptor.name}@${descriptor.version}`
-      const methods = Object.entries(descriptor.methods).flatMap(([category, entries]) =>
-        entries.map((method) =>
-          [
-            `${category}: ${method.methodId}`,
-            method.description,
-            `Target: ${method.target.source}.${method.target.kind}`,
-            `Occurrences: ${method.minimumOccurrences}..${method.maximumOccurrences}`,
-            `Parameters: ${Object.keys(method.parameters).join(', ') || 'none'}`,
-          ].join(' · '),
-        ),
-      )
-      return Object.freeze({
-        id: `solvers:${identity}`,
-        section: 'solvers' as const,
-        title: identity,
-        summary: descriptor.description,
-        item: identity,
-        href: docsSectionHref('solvers', identity),
-        keywords: Object.freeze([
-          descriptor.name,
-          descriptor.version,
-          ...Object.keys(descriptor.parameters),
-          ...Object.values(descriptor.methods).flatMap((entries) => entries.map(({ methodId }) => methodId)),
-          ...descriptor.materials.map(({ role }) => role),
-          ...Object.keys(descriptor.inputPorts),
-          ...Object.keys(descriptor.observations),
-        ]),
-        content: [
-          descriptor.description,
-          `Reference length unit: ${descriptor.referenceLengthUnit}`,
-          `Global parameters: ${
-            Object.entries(descriptor.parameters)
-              .map(([name, parameter]) => `${name}${parameter.required ? ' (required)' : ''}: ${parameter.description}`)
-              .join('; ') || 'none'
-          }`,
-          ...methods,
-          ...descriptor.materials.map(
-            (material) =>
-              `Material role ${material.role}: ${material.description} · ${material.target.category}/${material.target.methodId} · properties ${Object.keys(material.properties).join(', ') || 'none'}`,
-          ),
-          ...Object.entries(descriptor.inputPorts).map(
-            ([name, port]) =>
-              `Input port ${name}: ${port.description} · artifact types ${port.artifactTypes.join(', ')} · occurrences ${port.minimumOccurrences}..${port.maximumOccurrences}`,
-          ),
-          ...Object.entries(descriptor.observations).map(
-            ([name, observation]) => `Observation ${name} (${observation.type}): ${observation.description}`,
-          ),
-        ].join('\n'),
-      })
-    }),
-  )
+export function catalogSearchKnowledge(items: readonly CatalogSearchItem[]): readonly DocsKnowledgeChunk[] {
+  return Object.freeze(items.map((item) => {
+    const section = item.kind === 'quantityKind' ? 'quantity-kinds' : item.kind === 'solver' ? 'solvers' : 'materials'
+    return Object.freeze({
+      id: `${item.kind}:${item.key}`,
+      section,
+      title: item.title,
+      summary: item.subtitle,
+      item: item.key,
+      href: docsSectionHref(section, item.key),
+      keywords: Object.freeze([item.kind, item.key, item.title, item.subtitle]),
+      content: item.subtitle,
+    })
+  }))
 }
 
-export function getDocsKnowledge(manifests: readonly CaeSolverManifest[] = []): readonly DocsKnowledgeChunk[] {
-  return [...manualDocsKnowledge, ...catalogDocsKnowledge, ...buildSolverDocsKnowledge(manifests)]
+export function getDocsKnowledge(): readonly DocsKnowledgeChunk[] {
+  return [...manualDocsKnowledge, ...catalogDocsKnowledge]
 }
 
 export function searchDocsKnowledge(

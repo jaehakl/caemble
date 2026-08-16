@@ -21,7 +21,7 @@ if [[ ! -d "$APP_DIR/.git" ]]; then
     exit 1
 fi
 
-echo "[1/9] Pull latest code and UI artifact"
+echo "[1/10] Pull latest code and UI artifact"
 cd "$APP_DIR"
 git pull --ff-only
 
@@ -47,11 +47,29 @@ if [[ ! -f "$API_DIR/.env" ]]; then
     exit 1
 fi
 
-echo "[2/9] Install API dependencies"
+echo "[2/10] Install API dependencies"
 cd "$API_DIR"
 poetry install --only main
 
-echo "[3/9] Verify that the Geometry migration can start safely"
+echo "[3/10] Validate the versioned SQLite catalog before the maintenance window"
+poetry run python - <<'PY'
+from caemble_catalog import catalog_path, open_catalog
+from caemble_catalog.admin import validate_database
+
+
+validate_database(catalog_path())
+with open_catalog() as catalog:
+    metadata = catalog.meta()
+    print(
+        "Catalog validated: "
+        f"revision={metadata['catalogRevision']} "
+        f"quantityKinds={metadata['quantityKindCount']} "
+        f"materials={metadata['materialParameterCount']} "
+        f"solvers={metadata['solverCount']}"
+    )
+PY
+
+echo "[4/10] Verify that the Geometry migration can start safely"
 poetry run python - <<'PY'
 import asyncio
 import sys
@@ -87,10 +105,10 @@ PY
 api_service_installed=false
 if sudo systemctl cat "$API_SERVICE" >/dev/null 2>&1; then
     api_service_installed=true
-    echo "[4/9] Stop API service for the schema maintenance window"
+    echo "[5/10] Stop API service for the schema maintenance window"
     sudo systemctl stop "$API_SERVICE"
 else
-    echo "[4/9] API service is not installed yet; no maintenance stop is required"
+    echo "[5/10] API service is not installed yet; no maintenance stop is required"
 fi
 
 migration_succeeded=false
@@ -109,11 +127,11 @@ restart_api_on_failure() {
 }
 trap restart_api_on_failure EXIT
 
-echo "[5/9] Apply database migrations"
+echo "[6/10] Apply database migrations"
 poetry run alembic upgrade head
 migration_succeeded=true
 
-echo "[6/9] Publish an atomic static release"
+echo "[7/10] Publish an atomic static release"
 release_name="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "$APP_DIR" rev-parse --short HEAD)"
 releases_dir="$WEB_ROOT/releases"
 release_dir="$releases_dir/$release_name"
@@ -129,14 +147,14 @@ sudo find "$release_dir" -type f -exec chmod 644 {} \;
 sudo ln -s "$release_dir" "$next_link"
 sudo mv -Tf "$next_link" "$WEB_ROOT/current"
 
-echo "[7/9] Start API service"
+echo "[8/10] Start API service"
 if [[ "$api_service_installed" == true ]]; then
     sudo systemctl restart "$API_SERVICE"
 else
     echo "API service is not installed yet; skipping restart: $API_SERVICE"
 fi
 
-echo "[8/9] Install, validate and reload Nginx"
+echo "[9/10] Install, validate and reload Nginx"
 if sudo test -f "$NGINX_CONFIG_TARGET"; then
     sudo install -m 644 "$NGINX_CONFIG_SOURCE" "$NGINX_CONFIG_TARGET"
 else
@@ -145,6 +163,6 @@ fi
 sudo nginx -t
 sudo systemctl reload nginx
 
-echo "[9/9] Keep the tracked UI artifact for the next git pull"
+echo "[10/10] Keep the tracked UI artifact for the next git pull"
 echo "Deployment complete: $release_dir"
 trap - EXIT

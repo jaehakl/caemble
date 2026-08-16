@@ -9,6 +9,20 @@ E:\caemble\app\ui
 
 
 
+다음에 대해 고민해보자.
+
+<AI Helper 의 Agent화>
+- Material Parameters, Quantitykind 카탈로그들을 RAG 로
+    - CODEX 에서 새 Solver 를 제작할 때 참고하기 편리해야 함
+    - (로컬 텍스트 파일, Sqlite 등 로컬 DB 파일, caemble 전체 클라우드 DB 에 통합 중 로컬 CODEX Agent 가 접근하기 가장 효율적인 방식으로)
+- AI Helper 가 Experiment 소스코드 번들을 직접 정확하게 만들 수 있는 RAG 구축
+    - 수백가지 Solver 들의 method, material parameter, quantitykind 등 api 를 정확하게 조회할 수 있도록
+        - (완벽하게 작동이 보장되려면 Solver 소스코드를 직접 보여주는 게 확실하겠지만, 수백가지 소스코드 전체를 직접 검토하기는 아마 무리가 아닐까?)
+    - DB 에 등록된 Material, Geometry, Experiment 들에 대해서도 효율적으로 조회할 수 있도록
+
+
+
+
 
 <향후 추가할 기능들 (참고 사항)>
 - LLM API 기반 통합 Experiment source bundle 자동 생성
