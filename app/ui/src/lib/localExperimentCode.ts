@@ -1,4 +1,5 @@
 import { createExperimentSourceBundle } from './cad'
+import { DRAFT_TASK_KERNEL } from './catalog/draftTask'
 
 const starterExperimentCode = `import { experiment } from '@caemble/core'
 import { StarterStructure } from './geometry'
@@ -49,9 +50,9 @@ const blankMaterialCode = `export {}
 
 const placeholderTaskCode = `import { defineTask } from '@caemble/core'
 
-// Replace this placeholder kernel and config before running the Experiment.
+// Draft preview only: select a compatible Solver and config before creating a Measurement or running CAE.
 export default defineTask({
-  kernel: { name: 'replace-with-solver', version: '1.0.0' },
+  kernel: { name: '${DRAFT_TASK_KERNEL.name}', version: '${DRAFT_TASK_KERNEL.version}' },
   config: () => ({}),
 })
 `

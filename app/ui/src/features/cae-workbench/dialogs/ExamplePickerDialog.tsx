@@ -21,7 +21,7 @@ const experimentTemplates: readonly ExperimentTemplate[] = Object.freeze([
   Object.freeze({
     id: 'blank-experiment',
     title: 'Blank Experiment',
-    description: '필수 import와 실행 가능한 최소 골격만 있는 빈 Experiment로 돌아갑니다.',
+    description: '필수 import와 Solver 미선택 Draft preview 골격만 있는 빈 Experiment로 시작합니다.',
     concepts: Object.freeze(['experiment.tsx', 'material.tsx', 'geometry.tsx', 'tasks/main.tsx']),
     experimentSourceBundle: blankExperimentSourceBundle,
   }),
@@ -44,7 +44,9 @@ export function ExamplePickerDialog({
       <DialogContent className="max-h-[85dvh] overflow-hidden sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>New Experiment</DialogTitle>
-          <DialogDescription>검증된 예제에서 완전한 Experiment source를 시작합니다.</DialogDescription>
+          <DialogDescription>
+            Solver가 연결된 실행 예제 또는 Solver 설정 전 Draft preview에서 Experiment source를 시작합니다.
+          </DialogDescription>
         </DialogHeader>
         <div className="grid min-h-0 gap-3 overflow-y-auto sm:grid-cols-2">
           {experimentTemplates.map((example) => (

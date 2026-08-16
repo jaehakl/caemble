@@ -15,22 +15,24 @@ const sourceHash = 'c'.repeat(64)
 const syntheticCatalog = {
   schemaVersion: 1,
   catalogRevision: 'synthetic-worker-test',
-  solvers: [{
-    name: 'synthetic-solver',
-    version: 'test-1',
-    contractDigest: 'd'.repeat(64),
-    descriptor: {
+  solvers: [
+    {
       name: 'synthetic-solver',
       version: 'test-1',
-      description: 'Synthetic Worker test Solver.',
-      referenceLengthUnit: 'm',
-      parameters: {},
-      materials: [],
-      inputPorts: {},
-      observations: {},
-      methods: { initializations: [], boundaryConditions: [], outputs: [] },
+      contractDigest: 'd'.repeat(64),
+      descriptor: {
+        name: 'synthetic-solver',
+        version: 'test-1',
+        description: 'Synthetic Worker test Solver.',
+        referenceLengthUnit: 'm',
+        parameters: {},
+        materials: [],
+        inputPorts: {},
+        observations: {},
+        methods: { initializations: [], boundaryConditions: [], outputs: [] },
+      },
     },
-  }],
+  ],
   quantityKinds: [],
   materialParameters: [],
   materialModels: [],
@@ -104,8 +106,11 @@ describe('CAD runner Worker', () => {
       type: 'inspect',
       nonce,
       request: {
-        type: 'inspect', requestId: 'inspect-1', revision: 2,
-        compiledDocument: compiledExperiment, catalog: syntheticCatalog,
+        type: 'inspect',
+        requestId: 'inspect-1',
+        revision: 2,
+        compiledDocument: compiledExperiment,
+        catalog: syntheticCatalog,
       },
     })
     expect(responses[0]).toMatchObject({
@@ -121,8 +126,47 @@ describe('CAD runner Worker', () => {
       type: 'evaluate',
       nonce,
       request: {
-        type: 'evaluate', requestId: 'evaluate-1', revision: 3,
-        compiledDocument: compiledExperiment, catalog: syntheticCatalog,
+        type: 'evaluate',
+        requestId: 'evaluate-1',
+        revision: 3,
+        compiledDocument: compiledExperiment,
+        catalog: syntheticCatalog,
+        pythonSource: 'async def simulate(*, sim, tasks, vars):\n    return None\n',
+        vars: { width: 2 },
+      },
+    })
+    expect(responses[0]).toMatchObject({
+      type: 'operation-result',
+      operation: 'evaluate',
+      nonce,
+      response: { type: 'evaluation-success', documentType: 'experiment' },
+    })
+  })
+
+  it('evaluates the reserved Draft Task for preview without a fake Solver descriptor', () => {
+    const draftDocument: CompiledCadDocument = {
+      ...compiledExperiment,
+      sources: {
+        ...compiledExperiment.sources,
+        'tasks/electric.tsx': {
+          ...compiledExperiment.sources['tasks/electric.tsx'],
+          code: `const { defineTask } = require('@caemble/core')
+module.exports.default = defineTask({
+  kernel: { name: 'replace-with-solver', version: '1.0.0' },
+  config: () => ({}),
+})`,
+        },
+      },
+    }
+    dispatch({
+      type: 'evaluate',
+      nonce,
+      request: {
+        type: 'evaluate',
+        requestId: 'evaluate-draft',
+        revision: 4,
+        compiledDocument: draftDocument,
+        catalog: { ...syntheticCatalog, solvers: [] },
         pythonSource: 'async def simulate(*, sim, tasks, vars):\n    return None\n',
         vars: { width: 2 },
       },
@@ -150,8 +194,12 @@ describe('CAD runner Worker', () => {
         type: 'inspect',
         nonce,
         request: {
-          type: 'inspect', requestId: 'extra-1', revision: 5, compiledDocument: compiledExperiment,
-          catalog: syntheticCatalog, unexpected: true,
+          type: 'inspect',
+          requestId: 'extra-1',
+          revision: 5,
+          compiledDocument: compiledExperiment,
+          catalog: syntheticCatalog,
+          unexpected: true,
         },
       }),
     ).toThrow('request.unexpected is not allowed')
@@ -162,7 +210,10 @@ describe('CAD runner Worker', () => {
         type: 'inspect',
         nonce,
         request: {
-          type: 'inspect', requestId: 'invalid-1', revision: 6, compiledDocument: compiledExperiment,
+          type: 'inspect',
+          requestId: 'invalid-1',
+          revision: 6,
+          compiledDocument: compiledExperiment,
           catalog: { ...syntheticCatalog, schemaVersion: 2 },
         },
       }),

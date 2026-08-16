@@ -74,7 +74,7 @@ describe('local Experiment templates', () => {
     ])
     expect(blankExperimentSourceBundle.files['geometry.tsx']).toContain("from '@caemble/core'")
     expect(blankExperimentSourceBundle.files['simulate.py']).toContain('Replace this no-op body')
-    expect(blankExperimentSourceBundle.files['tasks/main.tsx']).toContain('Replace this placeholder kernel')
+    expect(blankExperimentSourceBundle.files['tasks/main.tsx']).toContain('Draft preview only')
     expect(result.scene.parts).toHaveLength(0)
   })
 

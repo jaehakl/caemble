@@ -64,6 +64,10 @@ export function useCaePageChrome({
     const evaluationBusyReason = workbench.experimentDocument.runIsBusy
       ? 'Experiment 평가가 진행 중입니다.'
       : busyReason
+    const draftPreviewReason =
+      workbench.experimentDocument.draftTaskNames.length > 0
+        ? 'Solver가 선택되지 않은 Draft Task가 있어 Measurement 저장과 CAE 실행을 사용할 수 없습니다.'
+        : undefined
     const selected = workbench.selection.measurement
     const cancellingRun =
       workbench.measurementActions.operation === 'measurement' && workbench.measurementActions.cancelable
@@ -148,6 +152,7 @@ export function useCaePageChrome({
         disabled:
           !authenticated ||
           !workbench.experimentClean ||
+          workbench.experimentDocument.draftTaskNames.length > 0 ||
           workbench.experimentDocument.status !== 'Ready' ||
           !workbench.experimentDocument.variables ||
           !workbench.experimentDocument.materialParameters ||
@@ -157,7 +162,7 @@ export function useCaePageChrome({
           ? loginReason
           : !workbench.experimentClean
             ? savedReason
-            : (pendingResultReason ?? evaluationBusyReason),
+            : (draftPreviewReason ?? pendingResultReason ?? evaluationBusyReason),
         onSelect: () => runSafely(workbench.measurementActions.saveCurrent),
       },
       selectMeasurement: {
@@ -184,6 +189,7 @@ export function useCaePageChrome({
           !authenticated ||
           !workbench.experimentClean ||
           !selected ||
+          workbench.experimentDocument.draftTaskNames.length > 0 ||
           workbench.measurementActions.busy ||
           Boolean(workbench.measurementActions.pendingRecordMeasurementId),
         disabledReason: !authenticated
@@ -192,7 +198,7 @@ export function useCaePageChrome({
             ? savedReason
             : !selected
               ? '복제할 Measurement를 선택하세요.'
-              : (pendingResultReason ?? busyReason),
+              : (draftPreviewReason ?? pendingResultReason ?? busyReason),
         onSelect: () => {
           if (selected) runSafely(() => workbench.measurementActions.duplicateMeasurement(selected))
         },
@@ -222,7 +228,7 @@ export function useCaePageChrome({
                   ? '이미 RecordedData가 있는 Measurement는 다시 실행할 수 없습니다.'
                   : workbench.measurementActions.pendingRecordMeasurementId
                     ? '실행 결과 저장을 먼저 다시 시도하세요.'
-                    : evaluationBusyReason,
+                    : (draftPreviewReason ?? evaluationBusyReason),
         onSelect: cancellingRun ? workbench.measurementActions.cancel : () => runSafely(requestRunSelected),
       },
       retryRecord: {

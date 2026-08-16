@@ -97,4 +97,21 @@ describe('native fetch API client', () => {
     await expect(request('get', '/private')).rejects.toEqual(expect.objectContaining({ status: 401 }))
     expect(resourceCalls).toBe(1)
   })
+
+  it('uses a structured API detail message instead of stringifying the object', async () => {
+    server.use(
+      http.post('http://api.test/catalog/runtime-slice', () =>
+        HttpResponse.json(
+          { detail: { code: 'catalog_not_found', message: 'Unknown Solver: missing@1.0.0' } },
+          { status: 404 },
+        ),
+      ),
+    )
+
+    const { request } = await loadClient()
+    await expect(request('post', '/catalog/runtime-slice', {})).rejects.toMatchObject({
+      message: 'Unknown Solver: missing@1.0.0',
+      status: 404,
+    })
+  })
 })

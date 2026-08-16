@@ -83,6 +83,7 @@ const document: ExperimentSourceDocument = {
 function controller(overrides: Partial<CadDocumentController> = {}) {
   return {
     diagnostics: [],
+    draftTaskNames: [],
     error: null,
     handleAddExperimentTask: vi.fn(),
     handleExperimentFileChange: vi.fn(),
@@ -181,6 +182,16 @@ describe('ExperimentEditor', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'tasks/alpha.tsx' }))
     fireEvent.click(screen.getByRole('button', { name: 'Task 삭제' }))
     expect(handleRemoveExperimentTask).toHaveBeenCalledWith('alpha')
+  })
+
+  it('explains that Draft Tasks are preview-only', async () => {
+    render(<ExperimentEditor controller={controller({ draftTaskNames: ['main', 'thermal'] })} document={document} />)
+    await screen.findByTestId('cad-editor')
+
+    expect(screen.getByText('Draft preview · Solver 미선택')).toBeInTheDocument()
+    expect(screen.getByText(/Task: main, thermal/)).toHaveTextContent(
+      'Measurement 저장과 CAE 실행은 사용할 수 없습니다.',
+    )
   })
 })
 

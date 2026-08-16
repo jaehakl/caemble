@@ -36,6 +36,7 @@ const prepared: SavedMeasurement = {
 
 function documentController(overrides: Partial<CadDocumentController> = {}) {
   return {
+    draftTaskNames: [],
     materialParameters: {
       schemaVersion: 2,
       experiment: { schemaVersion: 1, materials: {} },
@@ -203,6 +204,32 @@ describe('useCaeMeasurementActions', () => {
 
     expect(mocks.create).not.toHaveBeenCalled()
     expect(mocks.toastError).toHaveBeenCalledWith('저장할 Candidate 평가가 완료되지 않았습니다.')
+  })
+
+  it('blocks Measurement saves and duplicates for a Solver-less Draft preview', async () => {
+    const { result } = renderHook(
+      () =>
+        useCaeMeasurementActions({
+          authenticated: true,
+          experimentClean: true,
+          experimentDocument: documentController({ draftTaskNames: ['main'] }),
+          experimentId: 7,
+          experimentSourceHash: sourceHash,
+          onGenerateCandidate: vi.fn(),
+          selection: selection(),
+          simulation: simulationController({ canRun: false }),
+        }),
+      { wrapper: wrapper() },
+    )
+
+    await act(async () => void (await result.current.saveCurrent()))
+    await act(async () => void (await result.current.duplicateMeasurement(prepared)))
+
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.toastError).toHaveBeenCalledTimes(2)
+    expect(mocks.toastError).toHaveBeenLastCalledWith(
+      'Solver가 선택되지 않은 Draft Task가 있어 Measurement를 저장할 수 없습니다.',
+    )
   })
 
   it('refuses to rerun a recorded Measurement', async () => {

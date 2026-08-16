@@ -110,6 +110,9 @@ export function useCaeMeasurementActions({
     if (!experimentClean || !experimentId || !experimentSourceHash) {
       throw new Error('저장되고 편집되지 않은 Experiment가 필요합니다.')
     }
+    if (experimentDocument.draftTaskNames.length > 0) {
+      throw new Error('Solver가 선택되지 않은 Draft Task가 있어 Measurement를 저장할 수 없습니다.')
+    }
     if (
       experimentDocument.status !== 'Ready' ||
       experimentDocument.successfulRevision !== experimentDocument.revision ||
@@ -191,13 +194,7 @@ export function useCaeMeasurementActions({
         setStage(null)
       }
     },
-    [
-      fail,
-      operation,
-      pendingRecordMeasurementId,
-      refreshPersistedMeasurement,
-      requireSavableCandidate,
-    ],
+    [fail, operation, pendingRecordMeasurementId, refreshPersistedMeasurement, requireSavableCandidate],
   )
 
   const runSelected = useCallback(() => {
@@ -228,15 +225,7 @@ export function useCaeMeasurementActions({
       fail(new Error('Simulation을 시작하지 못했습니다.'), '')
     }
     return runId
-  }, [
-    experimentClean,
-    experimentId,
-    fail,
-    operation,
-    pendingRecordMeasurementId,
-    selection.measurement,
-    simulation,
-  ])
+  }, [experimentClean, experimentId, fail, operation, pendingRecordMeasurementId, selection.measurement, simulation])
 
   const persistRecordedData = useCallback(
     async (measurementId: number, request: MeasurementRecordRequest) => {

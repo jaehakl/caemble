@@ -1,4 +1,5 @@
 import { createExperimentSourceBundle } from '../cad/source/document'
+import { DRAFT_TASK_KERNEL } from '../catalog/draftTask'
 
 export const wheelAssemblyMaterialCode = `import { Material } from '@caemble/core'
 
@@ -89,7 +90,7 @@ import { WheelAssembly } from '../geometry'
 import { Aluminum, Rubber } from '../material'
 
 export default defineTask({
-  kernel: { name: 'replace-with-solver', version: '1.0.0' },
+  kernel: { name: '${DRAFT_TASK_KERNEL.name}', version: '${DRAFT_TASK_KERNEL.version}' },
   lengthUnit: 'mm',
   geometry: () => (
     <WheelAssembly
@@ -121,7 +122,7 @@ export const wheelAssemblySourceBundle = createExperimentSourceBundle({
 export const wheelAssemblyExample = Object.freeze({
   id: 'two-material-wheel-assembly',
   title: 'Two-material Wheel Assembly',
-  description: 'tire와 wheel 역할의 기본 전달, leaf body remap, color 없는 Material 자동색을 보여줍니다.',
+  description: 'Solver 미선택 Draft preview로 tire/wheel 역할 전달, body remap, Material 자동색을 보여줍니다.',
   concepts: Object.freeze(['material.tsx', 'role map 상속', 'body remap', 'role hash 자동색']),
   experimentSourceBundle: wheelAssemblySourceBundle,
 })

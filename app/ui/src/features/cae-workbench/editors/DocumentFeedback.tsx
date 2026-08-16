@@ -13,6 +13,21 @@ export function DocumentFeedback({ controller }: { controller: CadDocumentContro
     )
   }
 
+  if (controller.draftTaskNames.length > 0) {
+    return (
+      <footer
+        className="max-h-28 shrink-0 overflow-auto border-t border-amber-200 bg-amber-50 px-4 py-2.5"
+        aria-live="polite"
+      >
+        <div className="text-xs font-semibold text-amber-900">Draft preview · Solver 미선택</div>
+        <p className="mt-1 text-xs leading-5 text-amber-800">
+          Task: {controller.draftTaskNames.join(', ')} · 형상 미리보기와 Experiment 저장은 가능하지만 Measurement 저장과
+          CAE 실행은 사용할 수 없습니다.
+        </p>
+      </footer>
+    )
+  }
+
   if (controller.materialWarnings.length > 0) {
     return (
       <footer className="max-h-24 shrink-0 overflow-auto border-t border-amber-200 bg-amber-50 px-4 py-2.5">

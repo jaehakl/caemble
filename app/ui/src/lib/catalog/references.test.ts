@@ -5,7 +5,9 @@ import { extractCatalogSourceReferences, fetchCatalogRuntimeSlice } from './refe
 
 function bundle(overrides: Partial<Record<'experiment.tsx' | 'material.tsx' | 'tasks/main.tsx', string>> = {}) {
   return createExperimentSourceBundle({
-    'experiment.tsx': overrides['experiment.tsx'] ?? `
+    'experiment.tsx':
+      overrides['experiment.tsx'] ??
+      `
 import { experiment } from '@caemble/core'
 const qk = 'geometry.Length'
 const dynamicKey = getKey()
@@ -15,7 +17,9 @@ export default experiment({
   recordedData: { length: { dtype: 'float64', unit: 'm', quantityKind: qk } },
 })
 `,
-    'material.tsx': overrides['material.tsx'] ?? `
+    'material.tsx':
+      overrides['material.tsx'] ??
+      `
 import { Material } from '@caemble/core'
 export const Referenced = new Material('Referenced', 'vendor/2026')
 export const Copper = new Material('Copper', {
@@ -25,7 +29,9 @@ export const Copper = new Material('Copper', {
 })
 `,
     'simulate.py': 'async def simulate(*, sim, tasks, vars):\n    return None\n',
-    'tasks/main.tsx': overrides['tasks/main.tsx'] ?? `
+    'tasks/main.tsx':
+      overrides['tasks/main.tsx'] ??
+      `
 import { defineTask } from '@caemble/core'
 const solverName = 'test-solver'
 const solverVersion = '1.2.3'
@@ -41,10 +47,48 @@ describe('runtime catalog source references', () => {
   it('collects fixed solver, QuantityKind, Material parameter, and model references', () => {
     expect(extractCatalogSourceReferences(bundle())).toEqual({
       solvers: [{ name: 'test-solver', version: '1.2.3' }],
+      draftTaskNames: [],
       quantityKinds: ['geometry.Length'],
       materialParameters: ['electrical.conductivity'],
       materialModels: ['model.magnetic.b_h'],
     })
+  })
+
+  it('omits only the reserved Draft Task kernel from the API request', async () => {
+    const draft = bundle({
+      'tasks/main.tsx': `
+import { defineTask } from '@caemble/core'
+export default defineTask({
+  kernel: { name: 'replace-with-solver', version: '1.0.0' },
+  config: () => ({}),
+})
+`,
+    })
+    expect(extractCatalogSourceReferences(draft)).toMatchObject({
+      solvers: [],
+      draftTaskNames: ['main'],
+    })
+
+    const runtimeSlice = { catalogRevision: 'draft-revision' } as CatalogRuntimeSlice
+    const request = vi.spyOn(catalogApi, 'runtimeSlice').mockResolvedValue(runtimeSlice)
+    await fetchCatalogRuntimeSlice(draft)
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({ solvers: [] }))
+    expect(request.mock.calls[0][0]).not.toHaveProperty('draftTaskNames')
+    request.mockRestore()
+
+    expect(
+      extractCatalogSourceReferences(
+        bundle({
+          'tasks/main.tsx': `
+import { defineTask } from '@caemble/core'
+export default defineTask({
+  kernel: { name: 'replace-with-solver', version: '1.0.1' },
+  config: () => ({}),
+})
+`,
+        }),
+      ).solvers,
+    ).toEqual([{ name: 'replace-with-solver', version: '1.0.1' }])
   })
 
   it('allows a two-argument Material source selector and unrelated computed object keys', () => {

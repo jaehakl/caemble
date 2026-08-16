@@ -26,6 +26,7 @@ vi.mock('../persistence/resolveMaterials', () => ({ resolveDocumentMaterials: vi
 
 const sourceHash = 'a'.repeat(64)
 const catalog = buildSyntheticCatalog({ solvers: [buildSyntheticSolver('test', '1')] })
+const draftCatalog = buildSyntheticCatalog()
 const emptyMaterials = { schemaVersion: 1, materials: {} } as const
 const emptyTaskConfig = { parameters: {}, initializations: [], boundaryConditions: [], outputs: [] } as const
 const varsSchema = { fixed: { min: 4, max: 4 }, width: { min: 1, max: 10 } } as const
@@ -187,6 +188,81 @@ describe('useCadWorkspace unified Experiment', () => {
     expect(render.result.current.experimentDocument.materialWarnings).toContain(
       'Measurement requires resolved Material roles: Experiment: wheel.',
     )
+    expect(render.result.current.simulation.canRun).toBe(false)
+    render.unmount()
+  })
+
+  it('keeps Draft Task geometry viewable while withholding Measurement and CAE execution artifacts', async () => {
+    vi.mocked(fetchCatalogRuntimeSlice).mockResolvedValueOnce(draftCatalog)
+    registerSourceCatalogRuntimeSlice(sourceHash, draftCatalog)
+    vi.mocked(evaluateDocument).mockImplementationOnce(async ({ vars }) => ({
+      kind: 'experiment',
+      scene: serializedScene,
+      taskScenes: { electric: serializedScene },
+      simulationProgram: {
+        formatVersion: 5,
+        simulationApiVersion: 3,
+        pythonSource: 'async def simulate(*, sim, tasks, vars):\n    return None\n',
+        tasks: {
+          electric: {
+            kernel: { name: 'replace-with-solver', version: '1.0.0' },
+            config: {},
+          },
+        },
+        recordedData: {},
+      },
+      sourceHash,
+      variables: vars,
+      varsSchema,
+    }))
+    const render = renderHook(() => useCadWorkspace(document, vi.fn(), { fixed: 4, width: 2 }))
+
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
+
+    expect(render.result.current.experimentDocument.scene).not.toBeNull()
+    expect(render.result.current.experimentDocument.draftTaskNames).toEqual(['electric'])
+    expect(render.result.current.experimentDocument.measurement).toBeNull()
+    expect(render.result.current.experimentDocument.simulationProgram).toBeNull()
+    expect(render.result.current.experimentDocument.materialParameters).toBeNull()
+    expect(render.result.current.experimentDocument.successfulRevision).toBe(
+      render.result.current.experimentDocument.revision,
+    )
+    expect(render.result.current.simulation.canRun).toBe(false)
+    render.unmount()
+  })
+
+  it('blocks the whole Experiment when real and Draft Tasks are mixed', async () => {
+    vi.mocked(evaluateDocument).mockImplementationOnce(async ({ vars }) => ({
+      kind: 'experiment',
+      scene: serializedScene,
+      taskScenes: { electric: serializedScene, draft: serializedScene },
+      simulationProgram: {
+        formatVersion: 5,
+        simulationApiVersion: 3,
+        pythonSource: 'async def simulate(*, sim, tasks, vars):\n    return None\n',
+        tasks: {
+          electric: { kernel: { name: 'test', version: '1' }, config: emptyTaskConfig },
+          draft: { kernel: { name: 'replace-with-solver', version: '1.0.0' }, config: {} },
+        },
+        recordedData: {},
+      },
+      sourceHash,
+      variables: vars,
+      varsSchema,
+    }))
+    vi.mocked(resolveDocumentMaterials).mockResolvedValueOnce({
+      materialParameters: emptyMaterials,
+      warnings: [],
+      taskMaterialParameters: { electric: emptyMaterials, draft: emptyMaterials },
+      taskMaterialWarnings: { electric: [], draft: [] },
+    })
+    const render = renderHook(() => useCadWorkspace(document, vi.fn(), { fixed: 4, width: 2 }))
+
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
+
+    expect(render.result.current.experimentDocument.draftTaskNames).toEqual(['draft'])
+    expect(render.result.current.experimentDocument.measurement).toBeNull()
+    expect(render.result.current.experimentDocument.simulationProgram).toBeNull()
     expect(render.result.current.simulation.canRun).toBe(false)
     render.unmount()
   })

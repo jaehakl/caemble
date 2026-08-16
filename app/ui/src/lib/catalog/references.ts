@@ -13,11 +13,13 @@ import {
 import {
   EXPERIMENT_ENTRY_PATH,
   EXPERIMENT_MATERIAL_PATH,
+  experimentTaskName,
   experimentTaskPaths,
   type ExperimentSourceBundle,
 } from '../cad/source/document'
+import { DRAFT_TASK_KERNEL } from './draftTask'
 
-export type CatalogSourceReferences = CatalogRuntimeSliceRequest
+export type CatalogSourceReferences = CatalogRuntimeSliceRequest & Readonly<{ draftTaskNames: readonly string[] }>
 const sliceCache = new Map<string, Promise<CatalogRuntimeSlice>>()
 
 function deepFreeze<T>(value: T): T {
@@ -85,11 +87,12 @@ function collectFileReferences(source: string, policy: 'experiment' | 'material'
     const node = value as Record<string, unknown>
     if (node.type === 'ObjectProperty') {
       const property = node as unknown as ObjectProperty
-      const directName = !property.computed && property.key.type === 'Identifier'
-        ? property.key.name
-        : property.key.type === 'StringLiteral'
-          ? property.key.value
-          : null
+      const directName =
+        !property.computed && property.key.type === 'Identifier'
+          ? property.key.name
+          : property.key.type === 'StringLiteral'
+            ? property.key.value
+            : null
       if (directName === 'quantityKind') {
         quantityKinds.add(staticString(sourceExpression(property.value, 'quantityKind'), analysis, 'quantityKind'))
       }
@@ -102,15 +105,24 @@ function collectFileReferences(source: string, policy: 'experiment' | 'material'
       const args = node.arguments as unknown[]
       const variables = args.length >= 3 ? args[2] : args.length === 2 ? args[1] : undefined
       if (variables !== undefined) {
-        const expression = resolveSourceBinding(sourceExpression(variables, 'Material variables or source selector'), analysis.bindings).expression
-        if (args.length === 2 && (expression.type === 'StringLiteral' || (expression.type === 'TemplateLiteral' && expression.expressions.length === 0))) {
+        const expression = resolveSourceBinding(
+          sourceExpression(variables, 'Material variables or source selector'),
+          analysis.bindings,
+        ).expression
+        if (
+          args.length === 2 &&
+          (expression.type === 'StringLiteral' ||
+            (expression.type === 'TemplateLiteral' && expression.expressions.length === 0))
+        ) {
           Object.entries(node).forEach(([key, child]) => {
             if (!['loc', 'start', 'end'].includes(key)) visit(child)
           })
           return
         }
         if (expression.type !== 'ObjectExpression') {
-          throw new SourceAnalysisError('Material variables must use an object literal so catalog keys are known before evaluation.')
+          throw new SourceAnalysisError(
+            'Material variables must use an object literal so catalog keys are known before evaluation.',
+          )
         }
         expression.properties.forEach((property) => {
           if (property.type === 'SpreadElement') {
@@ -131,7 +143,16 @@ function collectFileReferences(source: string, policy: 'experiment' | 'material'
 }
 
 export function extractCatalogSourceReferences(bundle: ExperimentSourceBundle): CatalogSourceReferences {
-  const solvers = experimentTaskPaths(bundle).map((path) => taskSolver(analyzeTaskSource(bundle.files[path])))
+  const taskReferences = experimentTaskPaths(bundle).map((path) => ({
+    taskName: experimentTaskName(path)!,
+    solver: taskSolver(analyzeTaskSource(bundle.files[path])),
+  }))
+  const solvers = taskReferences
+    .filter(({ solver }) => solver.name !== DRAFT_TASK_KERNEL.name || solver.version !== DRAFT_TASK_KERNEL.version)
+    .map(({ solver }) => solver)
+  const draftTaskNames = taskReferences
+    .filter(({ solver }) => solver.name === DRAFT_TASK_KERNEL.name && solver.version === DRAFT_TASK_KERNEL.version)
+    .map(({ taskName }) => taskName)
   const quantityKinds = new Set<string>()
   const materialParameters = new Set<string>()
   const materialModels = new Set<string>()
@@ -148,6 +169,7 @@ export function extractCatalogSourceReferences(bundle: ExperimentSourceBundle): 
   })
   return Object.freeze({
     solvers: Object.freeze(solvers),
+    draftTaskNames: Object.freeze(draftTaskNames),
     quantityKinds: Object.freeze([...quantityKinds].sort()),
     materialParameters: Object.freeze([...materialParameters].sort()),
     materialModels: Object.freeze([...materialModels].sort()),
@@ -156,11 +178,17 @@ export function extractCatalogSourceReferences(bundle: ExperimentSourceBundle): 
 
 export async function fetchCatalogRuntimeSlice(bundle: ExperimentSourceBundle): Promise<CatalogRuntimeSlice> {
   const references = extractCatalogSourceReferences(bundle)
-  const key = JSON.stringify(references)
+  const request: CatalogRuntimeSliceRequest = Object.freeze({
+    solvers: references.solvers,
+    quantityKinds: references.quantityKinds,
+    materialParameters: references.materialParameters,
+    materialModels: references.materialModels,
+  })
+  const key = JSON.stringify(request)
   let cached = sliceCache.get(key)
   if (!cached) {
     cached = catalogApi
-      .runtimeSlice(references)
+      .runtimeSlice(request)
       .then(deepFreeze)
       .catch((error) => {
         sliceCache.delete(key)

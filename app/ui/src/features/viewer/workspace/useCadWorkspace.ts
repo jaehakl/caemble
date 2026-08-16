@@ -65,6 +65,7 @@ export type CadDocumentController = Readonly<{
   compiledSource: null
   diagnostics: readonly CadDiagnostic[]
   documentType: 'experiment'
+  draftTaskNames: readonly string[]
   error: RunError | null
   evaluatedSnapshot: EvaluatedExperimentSnapshot | null
   evaluationTimeoutMs: EvaluationTimeoutMs
@@ -117,6 +118,7 @@ export function useCadWorkspace(
   sourceOnlyMaterials = false,
 ) {
   const [diagnostics, setDiagnostics] = useState<readonly CadDiagnostic[]>([])
+  const [draftTaskNames, setDraftTaskNames] = useState<readonly string[]>([])
   const [error, setError] = useState<RunError | null>(null)
   const [evaluatedSnapshot, setEvaluatedSnapshot] = useState<EvaluatedExperimentSnapshot | null>(null)
   const [evaluationTimeoutMs, setEvaluationTimeoutMs] = useState<EvaluationTimeoutMs>(3000)
@@ -198,6 +200,7 @@ export function useCadWorkspace(
     setSuccessfulRevision(-1)
     successfulRevisionRef.current = -1
     setDiagnostics([])
+    setDraftTaskNames([])
     setError(null)
     const resetPreview = resetKeyRef.current !== resetKey
     resetKeyRef.current = resetKey
@@ -275,13 +278,16 @@ export function useCadWorkspace(
           ),
         ])
         const unresolved = unresolvedMeasurementMaterialRoles(snapshot)
+        const registeredCatalog = sourceCatalogRuntimeSlice(snapshot.sourceHash)
         if (unresolved.length > 0) {
+          const nextDraftTaskNames = assertCatalogKernelTasks(registeredCatalog, snapshot.simulationProgram)
           setEvaluatedSnapshot(snapshot)
+          setDraftTaskNames(nextDraftTaskNames)
           setVariables(snapshot.variables)
           setVarsSchema(snapshot.varsSchema)
           setScene(commonScene)
           setTaskScenes(nextTaskScenes)
-          setSimulationProgram(snapshot.simulationProgram)
+          setSimulationProgram(nextDraftTaskNames.length > 0 ? null : snapshot.simulationProgram)
           setMaterialWarnings(
             Object.freeze([
               ...resolutionWarnings,
@@ -293,10 +299,25 @@ export function useCadWorkspace(
           updateStatus('Ready')
           return
         }
-        assertCatalogKernelTasks(sourceCatalogRuntimeSlice(snapshot.sourceHash), snapshot.simulationProgram, {
+        const nextDraftTaskNames = assertCatalogKernelTasks(registeredCatalog, snapshot.simulationProgram, {
           experiment: commonScene,
           tasks: nextTaskScenes,
         })
+        if (nextDraftTaskNames.length > 0) {
+          setEvaluatedSnapshot(snapshot)
+          setDraftTaskNames(nextDraftTaskNames)
+          setVariables(snapshot.variables)
+          setVarsSchema(snapshot.varsSchema)
+          setScene(commonScene)
+          setTaskScenes(nextTaskScenes)
+          setSimulationProgram(null)
+          setMaterialParameters(null)
+          setMaterialWarnings(resolutionWarnings)
+          successfulRevisionRef.current = requestRevision
+          setSuccessfulRevision(requestRevision)
+          updateStatus('Ready')
+          return
+        }
         const built = buildMeasurement(snapshot, resolution)
         const persistedMaterials: MeasurementMaterialParameters = Object.freeze({
           schemaVersion: 2,
@@ -574,6 +595,7 @@ export function useCadWorkspace(
     compiledSource: null,
     diagnostics,
     documentType: 'experiment',
+    draftTaskNames,
     error,
     evaluatedSnapshot,
     evaluationTimeoutMs,
