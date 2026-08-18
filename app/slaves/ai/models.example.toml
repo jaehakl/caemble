@@ -19,6 +19,10 @@ temperature = 0.8
 top_p = 0.9
 enable_thinking = false
 
+[llm.openai]
+# Replace only in the ignored models.toml. Never commit a real API key.
+api_key = "replace-with-openai-api-key"
+
 [[llm.models]]
 name = "Qwen3.6-35B-A3B-Q8"
 path = "/ssd3/llm/Qwen3.6-35B-A3B-Q8_0.gguf"
@@ -45,6 +49,13 @@ path = "/ssd3/llm/supergemma4-26b-uncensored-fast-v2-Q4_K_M.gguf"
 context_size = 131072
 n_batch = 1024
 n_ubatch = 512
+
+[[llm.models]]
+name = "gpt-5.6-luna"
+provider = "openai"
+model_id = "gpt-5.6-luna"
+context_size = 1050000
+max_tokens = 8192
 
 
 [sdxl]

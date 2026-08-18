@@ -34,9 +34,12 @@ type ChatMessage = {
 
 type LlmModel = {
   name: string
+  provider: 'llama_cpp' | 'openai'
   context_size: number
   top_p: number
 }
+
+type LlmModelPayload = Omit<LlmModel, 'provider'> & { provider?: 'llama_cpp' | 'openai' }
 
 export type ChatReferenceContext = Readonly<{
   text: string
@@ -124,6 +127,7 @@ export function ChatWorkspace({
 
   const chatOpen = Boolean(session && !session.closed)
   const selectedModelSettings = models.find((model) => model.name === selectedModel) ?? null
+  const selectedModelLabel = selectedModelSettings?.provider === 'openai' ? `OpenAI · ${selectedModel}` : selectedModel
 
   useEffect(() => {
     sessionRef.current = session
@@ -144,7 +148,9 @@ export function ChatWorkspace({
         if (cancelled) return
         if (!isModelList(result.payload)) throw new Error('LLM 모델 목록 응답이 올바르지 않습니다.')
         const payload = result.payload
-        const nextModels = payload.models.filter(isLlmModel)
+        const nextModels = payload.models
+          .filter(isLlmModel)
+          .map((model) => ({ ...model, provider: model.provider ?? ('llama_cpp' as const) }))
         if (!nextModels.length) throw new Error('사용 가능한 LLM 모델이 없습니다.')
         const nextDefault = nextModels.some((model) => model.name === payload.default_model)
           ? payload.default_model
@@ -356,7 +362,7 @@ export function ChatWorkspace({
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b px-5 py-3">
         <div className="flex min-w-0 items-center gap-2 text-base font-semibold">
           <MessageCircle className="size-4 text-primary" />
-          <span className="truncate">{selectedModel || (modelsLoading ? '모델 조회 중' : '모델 미선택')}</span>
+          <span className="truncate">{selectedModelLabel || (modelsLoading ? '모델 조회 중' : '모델 미선택')}</span>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Badge className={chatOpen ? 'bg-primary text-primary-foreground' : undefined}>{status}</Badge>
@@ -493,7 +499,7 @@ export function ChatWorkspace({
                 ) : null}
                 {models.map((model) => (
                   <option key={model.name} value={model.name}>
-                    {model.name}
+                    {model.provider === 'openai' ? `OpenAI · ${model.name}` : model.name}
                   </option>
                 ))}
               </select>
@@ -616,7 +622,7 @@ function isModelList(value: unknown): value is { default_model: string; models: 
   )
 }
 
-function isLlmModel(value: unknown): value is LlmModel {
+function isLlmModel(value: unknown): value is LlmModelPayload {
   return (
     typeof value === 'object' &&
     value !== null &&
@@ -625,6 +631,7 @@ function isLlmModel(value: unknown): value is LlmModel {
     'context_size' in value &&
     typeof value.context_size === 'number' &&
     'top_p' in value &&
-    typeof value.top_p === 'number'
+    typeof value.top_p === 'number' &&
+    (!('provider' in value) || value.provider === 'llama_cpp' || value.provider === 'openai')
   )
 }

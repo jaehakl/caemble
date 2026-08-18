@@ -39,7 +39,10 @@ describe('AiChatWorkspace', () => {
           return {
             payload: {
               default_model: 'local-llm',
-              models: [{ name: 'local-llm', context_size: 8192, top_p: 0.9 }],
+              models: [
+                { name: 'local-llm', context_size: 8192, top_p: 0.9 },
+                { name: 'luna', provider: 'openai', context_size: 1_050_000, top_p: 0.9 },
+              ],
             },
             files: [],
           }
@@ -130,6 +133,30 @@ describe('AiChatWorkspace', () => {
     )
     const chatPayload = sdk.runJob.mock.calls.find(([handler]) => handler === 'ai.chat')?.[1]
     expect(chatPayload).not.toHaveProperty('reference_context')
+  })
+
+  it('labels OpenAI models while sending the configured alias', async () => {
+    const user = userEvent.setup()
+    render(<AiChatWorkspace />)
+
+    await screen.findByText('local-llm')
+    await user.click(screen.getByRole('button', { name: '설정' }))
+    const modelSelect = screen.getByRole('combobox', { name: /Model/ })
+    expect(screen.getByRole('option', { name: 'OpenAI · luna' })).toHaveValue('luna')
+    await user.selectOptions(modelSelect, 'luna')
+    await user.keyboard('{Escape}')
+
+    expect(await screen.findByText('OpenAI · luna')).toBeVisible()
+    await user.type(screen.getByLabelText('AI 질문'), 'Luna로 답해 줘')
+    await user.click(screen.getByRole('button', { name: '전송' }))
+
+    await waitFor(() =>
+      expect(sdk.runJob).toHaveBeenCalledWith(
+        'ai.chat',
+        expect.objectContaining({ model: 'luna', prompt: 'Luna로 답해 줘' }),
+        expect.objectContaining({ autoFinish: false, slaveAppId: 'ai' }),
+      ),
+    )
   })
 
   it('adds an ephemeral reference context only when a reference provider is configured', async () => {

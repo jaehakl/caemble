@@ -89,6 +89,30 @@ model_name = "org/model"
 local_files_only = true
 """
 
+OPENAI_CATALOG = CATALOG.replace(
+    "enable_thinking = false\n\n[[llm.models]]",
+    """enable_thinking = false
+
+[llm.openai]
+api_key = "test-openai-secret"
+
+[[llm.models]]""",
+    1,
+).replace(
+    "\n[sdxl]",
+    """
+
+[[llm.models]]
+name = "luna"
+provider = "openai"
+model_id = "gpt-5.6-luna"
+context_size = 1050000
+max_tokens = 8192
+
+[sdxl]""",
+    1,
+)
+
 
 class ModelCatalogTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -282,6 +306,74 @@ class ModelCatalogTest(unittest.TestCase):
                 model_catalog.get_model_catalog()
 
         self.assertIn("[[llm.models]].path is required", str(error.exception))
+
+    def test_openai_models_are_resolved_without_exposing_secrets_or_internal_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            catalog_path = root / "models.toml"
+            catalog_path.write_text(OPENAI_CATALOG, encoding="utf-8")
+            with (
+                patch.object(model_catalog, "AI_DIR", root),
+                patch.object(model_catalog, "MODELS_FILE", catalog_path),
+            ):
+                catalog = model_catalog.get_model_catalog()
+                payload = model_catalog.get_model_list_payload("llm")
+                selection = model_catalog.resolve_llm_selection("luna")
+
+        local_model, openai_model = payload["models"][0], payload["models"][2]
+        self.assertEqual(local_model["provider"], "llama_cpp")
+        self.assertEqual(openai_model["provider"], "openai")
+        self.assertEqual(openai_model["context_size"], 1050000)
+        self.assertNotIn("path", openai_model)
+        self.assertNotIn("model_id", openai_model)
+        self.assertNotIn("api_key", openai_model)
+        self.assertNotIn("use_max_gpu", openai_model)
+        self.assertIsInstance(selection.model, model_catalog.OpenAiLlmModelConfig)
+        self.assertEqual(selection.model.model_id, "gpt-5.6-luna")
+        self.assertEqual(selection.api_key.get_secret_value(), "test-openai-secret")
+        self.assertNotIn("test-openai-secret", repr(selection.api_key))
+        self.assertNotIn("test-openai-secret", repr(catalog.models))
+
+    def test_openai_models_require_key_and_model_id_and_forbid_path(self) -> None:
+        missing_key = OPENAI_CATALOG.replace(
+            '[llm.openai]\napi_key = "test-openai-secret"\n\n',
+            "",
+            1,
+        )
+        missing_model_id = OPENAI_CATALOG.replace('model_id = "gpt-5.6-luna"\n', "", 1)
+        forbidden_path = OPENAI_CATALOG.replace(
+            'model_id = "gpt-5.6-luna"\n',
+            'model_id = "gpt-5.6-luna"\npath = "remote.gguf"\n',
+            1,
+        )
+        local_model_id = OPENAI_CATALOG.replace(
+            'path = "llm-a.gguf"\n',
+            'path = "llm-a.gguf"\nmodel_id = "not-local"\n',
+            1,
+        )
+        blank_key = OPENAI_CATALOG.replace('api_key = "test-openai-secret"', 'api_key = "   "', 1)
+        unknown_provider = OPENAI_CATALOG.replace('provider = "openai"', 'provider = "other"', 1)
+        cross_provider_duplicate = OPENAI_CATALOG.replace('name = "luna"', 'name = "llm-a"', 1)
+        cases = (
+            (missing_key, "[llm.openai].api_key is required"),
+            (missing_model_id, "model_id is required for OpenAI models"),
+            (forbidden_path, "path"),
+            (local_model_id, "model_id"),
+            (blank_key, "api_key must not be blank"),
+            (unknown_provider, "provider must be 'llama_cpp' or 'openai'"),
+            (cross_provider_duplicate, "duplicate llm model name"),
+        )
+        for catalog, expected in cases:
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as temp_dir:
+                model_catalog.reset_model_catalog_for_tests()
+                catalog_path = Path(temp_dir) / "models.toml"
+                catalog_path.write_text(catalog, encoding="utf-8")
+                with (
+                    patch.object(model_catalog, "MODELS_FILE", catalog_path),
+                    self.assertRaises((RuntimeError, ValueError)) as error,
+                ):
+                    model_catalog.get_model_catalog()
+                self.assertIn(expected, str(error.exception))
 
 
 if __name__ == "__main__":

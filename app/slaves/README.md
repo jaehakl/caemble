@@ -11,11 +11,12 @@ poetry install
 
 Copy `app/slaves/ai/models.example.toml` to `models.toml`, then register at least one LLM, SDXL, and embedding model and a `default_model` for each family. The real file is local, ignored by git, and is not replaced by the example at runtime. Relative paths are resolved from `app/slaves/ai`, and a successful catalog load is cached until the worker restarts.
 
-- `[llm]` requires the shared GPU/context, batch, attention, and generation values shown in the example. Each model requires only `name` and `path`; optional fields override the shared values. Optional `n_gpu_layers` and `n_threads` may be set at either level.
+- `[llm]` requires the shared llama.cpp GPU/batch/attention values and the generation defaults shown in the example. A model without `provider` remains a backward-compatible `llama_cpp` model and requires `name` plus `path`; optional fields override the shared values. Optional `n_gpu_layers` and `n_threads` may be set at either level.
+- OpenAI models require `provider = "openai"` and `model_id`, must not contain `path`, and inherit only the shared generation defaults. Store the common key in `[llm.openai] api_key`. The worker sends these models through the OpenAI Responses API with server-side response storage disabled.
 - `[sdxl]` requires the shared ControlNet IDs and image/control generation defaults. Each model requires only `name` and `path`; optional fields, including `clip_skip`, override the shared values.
 - Embedding entries contain either a local `path` or a Hugging Face `model_name`. `revision` is optional; when provided it must be an immutable 40-character commit SHA. With `local_files_only=true`, an omitted revision requires the model's default revision to already exist in the local cache.
 
-See `models.example.toml` for the complete schema. AI remains a full bundle: all three model families and their Python dependencies must be configured even when a deployment uses only a subset of handlers. `.env` is used only for optional VOICEVOX runtime settings.
+See `models.example.toml` for the complete schema, including a `gpt-5.6-luna` registration. Put a real OpenAI API key only in the ignored `models.toml`; never commit it or include it in logs, screenshots, or support output. Model configuration is cached after a successful load, so restart the AI worker after changing the catalog or API key. AI remains a full bundle: all three model families and their Python dependencies must be configured even when a deployment uses only a subset of handlers. `.env` is used only for optional VOICEVOX runtime settings.
 
 ## Run
 
@@ -37,7 +38,7 @@ Manifest files require `id`, `name`, and `module`. They may also set `startup_ti
 
 `ai` supports these job handler types:
 
-- `ai.llm.models`, `ai.sdxl.models`, `ai.embeddings.models`: return `default_model` and ordered model details without local filesystem paths.
+- `ai.llm.models`, `ai.sdxl.models`, `ai.embeddings.models`: return `default_model` and ordered model details without local filesystem paths. LLM entries include only the safe provider metadata (`llama_cpp` or `openai`); OpenAI API keys and internal `model_id` values are never returned.
 - `ai.llm`: payload `{"model":"main-llm", "system_prompt":"...", "prompt":"...", "max_tokens":512, "temperature":0.5, "think":true, "thinking_effort":"low", "response_format":"text"}` returns `{"model":"main-llm", "answer":"..."}`.
 - `ai.chat`: accepts the same generation options as `ai.llm`; the first call requires `system_prompt` and may select an LLM with `model`. Follow-up calls in the same open job session require only `prompt`. Results include the selected `model` and stream only final-answer text through `ai.chat.delta` events. Reasoning is discarded before events, responses, and retained message history. The legacy `enable_thinking` input remains an alias for `think`.
 - `ai.embeddings`: payload `{"model":"local-embedding", "text":"..."}` returns `{"model":"local-embedding", "embedding":[...], "dimensions":123}`.
@@ -61,7 +62,7 @@ CLIP uses its standard `~/.cache/clip` cache, while WD14 uses the Hugging Face c
 
 The `model` field is optional on every generation handler. When omitted, the family default is used; explicit request settings override the selected model's TOML defaults. Every result includes the external model name that was actually used.
 
-LLM `thinking_effort` accepts `default` or `low`, while `response_format` accepts `text` or `json`. JSON responses are validated as objects before being returned. When thinking is enabled, Gemma and Qwen reasoning markers are removed and only the final answer is exposed.
+LLM `thinking_effort` accepts `default` or `low`, while `response_format` accepts `text` or `json`. JSON responses are validated as objects before being returned. For llama.cpp, thinking output markers are removed. For OpenAI, `think=false` selects reasoning effort `none`, `low` selects `low`, and the enabled default selects `medium`; reasoning events are not exposed through chat deltas or retained history.
 
 Install the optional CPU VOICEVOX 0.16.4 runtime from the AI project:
 

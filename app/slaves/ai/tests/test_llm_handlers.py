@@ -4,6 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from pydantic import SecretStr
 from sdk.slave import DataChannelMessage, SlaveContext
 
 from app import __main__ as ai_slave
@@ -17,10 +18,15 @@ from app.llm.models import (
     LlmRequest,
     LlmResponse,
 )
+from app.model_catalog import LlmModelSelection, OpenAiLlmModelConfig
 
 
 def context() -> SlaveContext:
     return SlaveContext(session_id="session-1", ttl_seconds=60)
+
+
+def local_selection(name: str):
+    return SimpleNamespace(model=SimpleNamespace(name=name), api_key=None)
 
 
 class LlmHandlerTest(unittest.IsolatedAsyncioTestCase):
@@ -507,7 +513,7 @@ class LlmServiceTest(unittest.IsolatedAsyncioTestCase):
             think=True,
         )
         with (
-            patch.object(llm_service, "get_selected_model_name", return_value="model-a"),
+            patch.object(llm_service, "resolve_llm_selection", return_value=local_selection("model-a")),
             patch.object(llm_service, "ask_llm", ask_llm),
         ):
             response = await llm_service.generate_llm_answer(request)
@@ -528,7 +534,7 @@ class LlmServiceTest(unittest.IsolatedAsyncioTestCase):
             response_format="json",
         )
         with (
-            patch.object(llm_service, "get_selected_model_name", return_value="model-a"),
+            patch.object(llm_service, "resolve_llm_selection", return_value=local_selection("model-a")),
             patch.object(llm_service, "ask_llm", ask_llm),
         ):
             await llm_service.generate_llm_answer(request)
@@ -546,7 +552,7 @@ class LlmServiceTest(unittest.IsolatedAsyncioTestCase):
             thinking_effort="low",
         )
         with (
-            patch.object(llm_service, "get_selected_model_name", return_value="model-a"),
+            patch.object(llm_service, "resolve_llm_selection", return_value=local_selection("model-a")),
             patch.object(llm_service, "ask_llm", ask_llm),
         ):
             await llm_service.generate_llm_answer(request)
@@ -572,7 +578,7 @@ class LlmServiceTest(unittest.IsolatedAsyncioTestCase):
             top_p=0.55,
         )
         with (
-            patch.object(llm_service, "get_selected_model_name", return_value="model-b"),
+            patch.object(llm_service, "resolve_llm_selection", return_value=local_selection("model-b")),
             patch.object(llm_service, "generate_chat_with_llm", generate_chat),
         ):
             response = await llm_service.generate_chat_answer(request, [], AsyncMock())
@@ -581,6 +587,75 @@ class LlmServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(generate_chat.await_args.kwargs["context_size"], 24576)
         self.assertEqual(generate_chat.await_args.kwargs["top_p"], 0.55)
         self.assertEqual(generate_chat.await_args.kwargs["reference_context"], "Product documentation")
+
+    async def test_llm_dispatches_openai_without_calling_local_runtime(self) -> None:
+        model = OpenAiLlmModelConfig(
+            name="luna",
+            provider="openai",
+            model_id="gpt-5.6-luna",
+            context_size=1050000,
+            max_tokens=8192,
+            temperature=0.4,
+            top_p=0.9,
+            enable_thinking=False,
+        )
+        selection = LlmModelSelection(model=model, api_key=SecretStr("sk-test"))
+        ask_openai = AsyncMock(return_value="openai answer")
+        ask_llm = AsyncMock()
+
+        with (
+            patch.object(llm_service, "resolve_llm_selection", return_value=selection),
+            patch.object(llm_service, "ask_openai", ask_openai),
+            patch.object(llm_service, "ask_llm", ask_llm),
+        ):
+            response = await llm_service.generate_llm_answer(
+                LlmRequest(system_prompt="system", prompt="prompt", think=True, thinking_effort="low")
+            )
+
+        self.assertEqual(response, LlmResponse(model="luna", answer="openai answer"))
+        ask_openai.assert_awaited_once()
+        self.assertEqual(ask_openai.await_args.args[:2], (model, selection.api_key))
+        self.assertEqual(ask_openai.await_args.kwargs["thinking_effort"], "low")
+        ask_llm.assert_not_awaited()
+
+    async def test_chat_dispatches_openai_without_calling_local_runtime(self) -> None:
+        model = OpenAiLlmModelConfig(
+            name="luna",
+            provider="openai",
+            model_id="gpt-5.6-luna",
+            context_size=1050000,
+            max_tokens=8192,
+            temperature=0.4,
+            top_p=0.9,
+            enable_thinking=False,
+        )
+        selection = LlmModelSelection(model=model, api_key=SecretStr("sk-test"))
+        openai_chat = AsyncMock(
+            return_value=SimpleNamespace(
+                answer="openai answer",
+                context_window=1050000,
+                prompt_tokens=20,
+                max_response_tokens=8192,
+                remaining_tokens=1049970,
+                cache_enabled=False,
+            )
+        )
+        local_chat = AsyncMock()
+
+        with (
+            patch.object(llm_service, "resolve_llm_selection", return_value=selection),
+            patch.object(llm_service, "generate_chat_with_openai", openai_chat),
+            patch.object(llm_service, "generate_chat_with_llm", local_chat),
+        ):
+            response = await llm_service.generate_chat_answer(
+                ChatRequest(prompt="prompt", reference_context="reference"),
+                [{"role": "user", "content": "prompt"}],
+                AsyncMock(),
+            )
+
+        self.assertEqual(response.model, "luna")
+        self.assertEqual(openai_chat.await_args.kwargs["reference_context"], "reference")
+        local_chat.assert_not_awaited()
 
 
 if __name__ == "__main__":
