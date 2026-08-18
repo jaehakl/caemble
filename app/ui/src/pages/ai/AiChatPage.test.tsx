@@ -74,6 +74,25 @@ describe('AiChatWorkspace', () => {
     )
   })
 
+  it('fills its host with a flat chat layout and keeps settings in the status bar', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<AiChatWorkspace />)
+
+    const modelName = await screen.findByText('local-llm')
+    const workspace = container.firstElementChild
+    const settingsButton = screen.getByRole('button', { name: '설정' })
+
+    expect(workspace).toHaveClass('h-full', 'w-full')
+    expect(workspace).not.toHaveClass('mx-auto', 'max-w-6xl', 'rounded-xl', 'bg-card', 'shadow-xs')
+    expect(container.querySelector('.bg-card')).toBeNull()
+    expect(screen.queryByText('Caemble Launcher의 로컬 LLM과 지속적인 streaming 대화를 시작합니다.')).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'AI Chat' })).toBeNull()
+    expect(modelName.parentElement?.parentElement).toBe(settingsButton.parentElement?.parentElement)
+
+    await user.click(settingsButton)
+    expect(screen.getByRole('heading', { name: 'AI Chat 설정' })).toBeVisible()
+  })
+
   it('uses the cookie job endpoint, discovers models, and renders a streamed chat response', async () => {
     const user = userEvent.setup()
     render(<AiChatWorkspace />)

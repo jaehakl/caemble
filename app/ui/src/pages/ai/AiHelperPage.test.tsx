@@ -44,6 +44,7 @@ describe('AiHelperWorkspace', () => {
       showCodeCopy: true,
       title: 'AI Helper',
     })
+    expect(mocks.chatProps).not.toHaveProperty('description')
     expect(mocks.chatProps?.defaultSystemPrompt).toContain('canonical CAD API v7')
     expect(mocks.chatProps?.defaultSystemPrompt).toContain('complete contents of every file')
     expect(mocks.chatProps?.defaultSystemPrompt).toContain('ordinary Markdown fenced code blocks')

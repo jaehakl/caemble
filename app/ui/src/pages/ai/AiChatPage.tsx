@@ -9,10 +9,8 @@ import 'katex/dist/katex.min.css'
 import { API_URL } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { PageHeader } from '@/components/PageHeader'
 import { useAuth } from '@/features/auth/use-auth'
 import { WorkbenchSignInPrompt } from '@/features/auth/WorkbenchSignInPrompt'
 import { runtimeErrorMessage } from '@/features/runtime/format'
@@ -58,7 +56,6 @@ export function AiChatWorkspace({ onRequestLogin }: { onRequestLogin?: () => voi
 
 export function ChatWorkspace({
   defaultSystemPrompt = 'You are a helpful engineering assistant.',
-  description = 'Caemble Launcher의 로컬 LLM과 지속적인 streaming 대화를 시작합니다.',
   emptyDescription = '대화가 열리면 같은 JobSession에서 문맥을 유지합니다.',
   emptyTitle = '무엇이든 물어보세요.',
   embedded = false,
@@ -73,7 +70,6 @@ export function ChatWorkspace({
   title = 'AI Chat',
 }: {
   defaultSystemPrompt?: string
-  description?: string
   emptyDescription?: string
   emptyTitle?: string
   embedded?: boolean
@@ -356,138 +352,126 @@ export function ChatWorkspace({
   }
 
   return (
-    <div
-      className={
-        embedded
-          ? 'mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col gap-3 p-4'
-          : 'mx-auto flex h-[calc(100dvh-4rem)] min-h-[680px] max-w-6xl flex-col gap-5 px-5 py-8'
-      }
-    >
-      <div className="flex items-start justify-between gap-4">
-        <PageHeader description={description} eyebrow="AI" title={title} />
-        <Button onClick={() => setSettingsOpen(true)} variant="outline">
-          <Settings />
-          설정
-        </Button>
+    <div className={`flex h-full min-h-0 w-full flex-col ${embedded ? 'overflow-hidden' : ''}`}>
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b px-5 py-3">
+        <div className="flex min-w-0 items-center gap-2 text-base font-semibold">
+          <MessageCircle className="size-4 text-primary" />
+          <span className="truncate">{selectedModel || (modelsLoading ? '모델 조회 중' : '모델 미선택')}</span>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Badge className={chatOpen ? 'bg-primary text-primary-foreground' : undefined}>{status}</Badge>
+          {context ? (
+            <span className="text-xs text-muted-foreground">
+              {context.context_window - context.remaining_tokens} / {context.context_window} tokens
+            </span>
+          ) : null}
+          <Button onClick={() => setSettingsOpen(true)} variant="outline">
+            <Settings />
+            설정
+          </Button>
+        </div>
       </div>
-
-      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <CardHeader className="flex-row items-center justify-between gap-3 border-b py-3">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <MessageCircle className="size-4 text-primary" />
-            {selectedModel || (modelsLoading ? '모델 조회 중' : '모델 미선택')}
-          </CardTitle>
-          <div className="flex items-center gap-2">
-            <Badge className={chatOpen ? 'bg-primary text-primary-foreground' : undefined}>{status}</Badge>
-            {context ? (
-              <span className="text-xs text-muted-foreground">
-                {context.context_window - context.remaining_tokens} / {context.context_window} tokens
-              </span>
-            ) : null}
-          </div>
-        </CardHeader>
-        <CardContent className="flex min-h-0 flex-1 flex-col p-0">
-          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-6">
-            {messages.length ? (
-              messages.map((message) => (
-                <div className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'} key={message.id}>
-                  <div
-                    className={
-                      message.role === 'user'
-                        ? 'max-w-[82%] rounded-2xl rounded-br-sm bg-primary px-4 py-3 text-sm whitespace-pre-wrap text-primary-foreground'
-                        : 'max-w-[90%] rounded-2xl rounded-bl-sm border bg-muted/30 px-4 py-3 text-sm'
-                    }
-                  >
-                    {message.role === 'assistant' ? (
-                      <div className="space-y-3 overflow-hidden break-words [&_a]:text-primary [&_a]:underline [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-zinc-950 [&_pre]:p-3 [&_pre]:text-zinc-50 [&_pre_code]:rounded-none [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-inherit [&_table]:block [&_table]:border-collapse [&_table]:overflow-x-auto [&_td]:border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:px-2 [&_th]:py-1 [&_ul]:list-disc [&_ul]:pl-5">
-                        <ReactMarkdown
-                          components={showCodeCopy ? { pre: CopyablePre } : undefined}
-                          rehypePlugins={[[rehypeKatex, { strict: false, throwOnError: false }]]}
-                          remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: true }]]}
-                        >
-                          {message.content || (message.streaming ? '…' : '')}
-                        </ReactMarkdown>
-                      </div>
-                    ) : (
-                      message.content
-                    )}
-                  </div>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-6">
+          {messages.length ? (
+            messages.map((message) => (
+              <div className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'} key={message.id}>
+                <div
+                  className={
+                    message.role === 'user'
+                      ? 'max-w-[82%] rounded-2xl rounded-br-sm bg-primary px-4 py-3 text-sm whitespace-pre-wrap text-primary-foreground'
+                      : 'max-w-[90%] rounded-2xl rounded-bl-sm border bg-muted/30 px-4 py-3 text-sm'
+                  }
+                >
+                  {message.role === 'assistant' ? (
+                    <div className="space-y-3 overflow-hidden break-words [&_a]:text-primary [&_a]:underline [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-zinc-950 [&_pre]:p-3 [&_pre]:text-zinc-50 [&_pre_code]:rounded-none [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-inherit [&_table]:block [&_table]:border-collapse [&_table]:overflow-x-auto [&_td]:border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:px-2 [&_th]:py-1 [&_ul]:list-disc [&_ul]:pl-5">
+                      <ReactMarkdown
+                        components={showCodeCopy ? { pre: CopyablePre } : undefined}
+                        rehypePlugins={[[rehypeKatex, { strict: false, throwOnError: false }]]}
+                        remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: true }]]}
+                      >
+                        {message.content || (message.streaming ? '…' : '')}
+                      </ReactMarkdown>
+                    </div>
+                  ) : (
+                    message.content
+                  )}
                 </div>
-              ))
-            ) : (
-              <div className="flex h-full min-h-48 flex-col items-center justify-center text-center">
-                <MessageCircle className="mb-3 size-9 text-muted-foreground" />
-                <p className="font-medium">{emptyTitle}</p>
-                <p className="mt-1 text-sm text-muted-foreground">{emptyDescription}</p>
               </div>
-            )}
-            <div ref={transcriptEndRef} />
-          </div>
-          <form
-            className="border-t bg-background p-4"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void sendPrompt()
-            }}
-          >
-            {referenceProvider ? (
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                {fixedReference ? (
-                  <span>{referenceLabel}</span>
-                ) : (
-                  <label className="flex items-center gap-2">
-                    <input
-                      checked={referenceEnabled}
-                      disabled={busy}
-                      onChange={(event) => setReferenceEnabled(event.target.checked)}
-                      type="checkbox"
-                    />
-                    {referenceLabel}
-                  </label>
-                )}
-                {referenceContext ? (
-                  <details className="max-w-full">
-                    <summary className="cursor-pointer">
-                      참고자료 {referenceContext.sources.length}개{referenceContext.truncated ? ' · 일부 생략' : ''}
-                    </summary>
-                    <ul className="mt-2 max-h-28 space-y-1 overflow-auto rounded border bg-muted/30 p-2 text-left">
-                      {referenceContext.sources.map((source) => (
-                        <li key={`${source.href}:${source.title}`}>
-                          <a href={source.href} rel="noreferrer" target="_blank" className="text-primary underline">
-                            {source.title}
-                          </a>
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                ) : null}
-              </div>
-            ) : null}
-            {error || modelsError ? <p className="mb-2 text-sm text-destructive">{error ?? modelsError}</p> : null}
-            <textarea
-              aria-label={questionLabel}
-              className="min-h-24 w-full resize-y rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
-              onChange={(event) => setPrompt(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
-                event.preventDefault()
-                if (!busy && selectedModel) void sendPrompt()
-              }}
-              placeholder={questionPlaceholder}
-              value={prompt}
-            />
-            <div className="mt-3 flex justify-end gap-2">
-              <Button disabled={!chatOpen || busy} onClick={() => void endChat()} type="button" variant="outline">
-                <Square />새 대화
-              </Button>
-              <Button disabled={busy || modelsLoading || !selectedModel || !prompt.trim()} type="submit">
-                <Send />
-                전송
-              </Button>
+            ))
+          ) : (
+            <div className="flex h-full min-h-48 flex-col items-center justify-center text-center">
+              <MessageCircle className="mb-3 size-9 text-muted-foreground" />
+              <p className="font-medium">{emptyTitle}</p>
+              <p className="mt-1 text-sm text-muted-foreground">{emptyDescription}</p>
             </div>
-          </form>
-        </CardContent>
-      </Card>
+          )}
+          <div ref={transcriptEndRef} />
+        </div>
+        <form
+          className="border-t bg-background p-4"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void sendPrompt()
+          }}
+        >
+          {referenceProvider ? (
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+              {fixedReference ? (
+                <span>{referenceLabel}</span>
+              ) : (
+                <label className="flex items-center gap-2">
+                  <input
+                    checked={referenceEnabled}
+                    disabled={busy}
+                    onChange={(event) => setReferenceEnabled(event.target.checked)}
+                    type="checkbox"
+                  />
+                  {referenceLabel}
+                </label>
+              )}
+              {referenceContext ? (
+                <details className="max-w-full">
+                  <summary className="cursor-pointer">
+                    참고자료 {referenceContext.sources.length}개{referenceContext.truncated ? ' · 일부 생략' : ''}
+                  </summary>
+                  <ul className="mt-2 max-h-28 space-y-1 overflow-auto rounded border bg-muted/30 p-2 text-left">
+                    {referenceContext.sources.map((source) => (
+                      <li key={`${source.href}:${source.title}`}>
+                        <a href={source.href} rel="noreferrer" target="_blank" className="text-primary underline">
+                          {source.title}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+            </div>
+          ) : null}
+          {error || modelsError ? <p className="mb-2 text-sm text-destructive">{error ?? modelsError}</p> : null}
+          <textarea
+            aria-label={questionLabel}
+            className="min-h-24 w-full resize-y rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
+            onChange={(event) => setPrompt(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+              event.preventDefault()
+              if (!busy && selectedModel) void sendPrompt()
+            }}
+            placeholder={questionPlaceholder}
+            value={prompt}
+          />
+          <div className="mt-3 flex justify-end gap-2">
+            <Button disabled={!chatOpen || busy} onClick={() => void endChat()} type="button" variant="outline">
+              <Square />새 대화
+            </Button>
+            <Button disabled={busy || modelsLoading || !selectedModel || !prompt.trim()} type="submit">
+              <Send />
+              전송
+            </Button>
+          </div>
+        </form>
+      </div>
 
       <Dialog onOpenChange={setSettingsOpen} open={settingsOpen}>
         <DialogContent className="sm:max-w-2xl">
