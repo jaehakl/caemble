@@ -6,7 +6,7 @@ import { CAD_COMPILER_VERSION } from './types'
 
 function compiledSource(code: string): CompiledCadSource {
   return {
-    apiVersion: 6,
+    apiVersion: 7,
     compilerVersion: CAD_COMPILER_VERSION,
     entryFile: 'structure.tsx',
     code: `${code}\n//# sourceURL=caemble://${'a'.repeat(64)}/structure.tsx`,

@@ -76,4 +76,36 @@ describe('buildWorkbenchReferenceContext', () => {
     expect(result.omittedByteLength).toBeGreaterThan(0)
     expect(result.text).not.toContain('\uFFFD')
   })
+
+  it('prioritizes focus, diagnostics, the active source, other sources, and evaluation state in that order', () => {
+    const result = buildWorkbenchReferenceContext({
+      focus: { activeTab: 'ai-helper', activeExperimentFile: 'geometry.tsx' },
+      experiment: {
+        files: {
+          'experiment.tsx': 'export default experiment({})',
+          'geometry.tsx': 'export const Shape = () => <box size={[1, 2, 3]} />',
+        },
+        dirty: true,
+        revision: 2,
+        successfulRevision: 1,
+        status: 'Error',
+        evaluation: {
+          revision: 2,
+          diagnostics: [{ file: 'geometry.tsx', severity: 'error', message: 'Unknown prop' }],
+        },
+      },
+      run: { operation: 'measurement', status: 'failed', error: 'run failed' },
+    })
+
+    const positions = [
+      '## Current focus',
+      '## Current diagnostics',
+      '## Experiment source: geometry.tsx',
+      '## Experiment source: experiment.tsx',
+      '## Experiment current state',
+      '## CAE run state',
+    ].map((heading) => result.text.indexOf(heading))
+    expect(positions.every((position) => position >= 0)).toBe(true)
+    expect(positions).toEqual([...positions].sort((left, right) => left - right))
+  })
 })

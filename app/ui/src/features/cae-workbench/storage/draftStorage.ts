@@ -12,7 +12,7 @@ import {
 } from '@/lib/cad'
 import type { GeometryLocalDraft, WorkbenchDraft } from '../types'
 
-export const WORKBENCH_DRAFT_VERSION = 9 as const
+export const WORKBENCH_DRAFT_VERSION = 10 as const
 export const WORKBENCH_DRAFT_STORAGE_KEY = 'caemble:cae-workbench-draft'
 
 const localCoordinatePattern =

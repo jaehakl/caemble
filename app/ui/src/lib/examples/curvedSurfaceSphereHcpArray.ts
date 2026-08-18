@@ -71,7 +71,7 @@ export default experiment({
         z: [0, 0, 1],
       }}
       inject={{
-        pos: layerOffsets,
+        position: layerOffsets,
         baseRadius: vars.baseRadius,
         azimuthalMode2Amplitude: vars.azimuthalMode2Amplitude,
         azimuthalMode2Phase: vars.azimuthalMode2Phase,

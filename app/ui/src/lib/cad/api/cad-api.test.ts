@@ -13,6 +13,7 @@ import { caembleExamples, caembleProgramExamples, wheelAssemblyExample } from '.
 import { blankExperimentSourceBundle, starterExperimentSourceBundle } from '../../localExperimentCode'
 import { buildSyntheticCatalog } from '../../../test/syntheticCatalog'
 import { catalogRuntimeTypes } from '../compiler/catalogTypeEnvironment'
+import { cadElementCatalog } from '../catalog'
 import { geometryCoordinateTypes } from '../compiler/geometryTypes'
 import type { EffectiveGeometryGraph } from '../source/effectiveGeometryGraph'
 import type { GeometryCoordinate } from '../source/geometrySnapshot'
@@ -101,11 +102,62 @@ describe('unversioned CAD authoring declarations', () => {
     expect(jsxTypes).not.toContain('const Fragment: unknown')
   })
 
-  it('type-checks the v6 Experiment and Task defaults', () => {
+  it('type-checks the v7 Experiment and Task defaults', () => {
     expect(defaultExperimentCode).toBe(defaultExperimentProgramCode)
     expect(diagnosticsFor(defaultCode)).toEqual([])
     expect(
       diagnosticsFor(defaultExperimentTaskCode, defaultGeometryFiles, 'C:/caemble-source/hash/tasks/electric.tsx'),
+    ).toEqual([])
+  })
+
+  it('accepts canonical transforms and legacy compatibility while rejecting mixed or invented transform props', () => {
+    const prefix = `import { type Geometry } from '@caemble/core'\n`
+    const sourcePath = 'C:/caemble-source/hash/geometry.tsx'
+
+    expect(
+      diagnosticsFor(
+        `${prefix}export const Canonical: Geometry = () => <box id="body" size={[1, 2, 3]} position={[4, 5, 6]} rotation={[0.1, 0.2, 0.3]} scale={[2, 2, 2]} />`,
+        {},
+        sourcePath,
+      ),
+    ).toEqual([])
+    expect(
+      diagnosticsFor(
+        `${prefix}export const Legacy: Geometry = () => <box size={[1, 2, 3]} pos={[4, 5, 6]} rotate={{ axis: [0, 0, 1], angle: 1 }} />`,
+        {},
+        sourcePath,
+      ),
+    ).toEqual([])
+    expect(
+      diagnosticsFor(
+        `${prefix}export const Mixed: Geometry = () => <box size={[1, 2, 3]} position={[0, 0, 0]} pos={[0, 0, 0]} />`,
+        {},
+        sourcePath,
+      ).join('\n'),
+    ).toContain('not assignable')
+    expect(
+      diagnosticsFor(
+        `${prefix}export const Invented: Geometry = () => <box size={[1, 2, 3]} translation={[0, 0, 0]} />`,
+        {},
+        sourcePath,
+      ).join('\n'),
+    ).toContain("Property 'translation' does not exist")
+    expect(
+      diagnosticsFor(
+        `${prefix}export const InvalidFragment: Geometry = () => <Fragment id="group"><box size={[1, 1, 1]} /></Fragment>`,
+        {},
+        sourcePath,
+      ).join('\n'),
+    ).toContain("Property 'id' does not exist")
+  })
+
+  it.each(cadElementCatalog)('type-checks the $tag canonical manifest example', (manifest) => {
+    expect(
+      diagnosticsFor(
+        `import { type Geometry } from '@caemble/core'\nexport const Example: Geometry = () => (${manifest.example})`,
+        {},
+        'C:/caemble-source/hash/geometry.tsx',
+      ),
     ).toEqual([])
   })
 
@@ -218,9 +270,7 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
           { name: 'synthetic.Scalar', tensorOrder: 0, applicableUnits: ['{synthetic-scalar}'] },
           { name: 'synthetic.Vector', tensorOrder: 1, applicableUnits: ['{synthetic-vector}'] },
         ],
-        materialParameters: [
-          { key: 'synthetic.vector-property', quantityKind: 'synthetic.Vector' },
-        ],
+        materialParameters: [{ key: 'synthetic.vector-property', quantityKind: 'synthetic.Vector' }],
         materialModels: [
           {
             key: 'model.synthetic.relation',
@@ -280,9 +330,7 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
         materialPath,
         runtimeTypes,
       ).join('\n'),
-    ).toContain(
-      "Type 'string' is not assignable to type 'undefined'",
-    )
+    ).toContain("Type 'string' is not assignable to type 'undefined'")
 
     const modelRelation = `
       import { Material } from '@caemble/core'

@@ -45,6 +45,11 @@ function normalizeInject(value: unknown, shape: Vec3) {
   if (value === undefined) return {}
   if (!isRecord(value)) throw new CadModelError('<array> inject must be an object of Geometry attribute tensors.')
 
+  const keys = new Set(Object.keys(value))
+  if ((keys.has('position') || keys.has('rotation')) && (keys.has('pos') || keys.has('rotate'))) {
+    throw new CadModelError('<array> inject cannot mix position/rotation with deprecated pos/rotate.')
+  }
+
   Object.entries(value).forEach(([key, tensor]) => {
     const path = `<array> inject.${key}`
     if (key === 'id' || key === 'materials' || key === 'children') {
@@ -54,7 +59,7 @@ function normalizeInject(value: unknown, shape: Vec3) {
       if (!isRecord(tensor)) throw new CadModelError(`${path} must be an object with axis and angle tensors.`)
       requireTensorShape(tensor.axis, [...shape, 3], `${path}.axis`)
       requireTensorShape(tensor.angle, shape, `${path}.angle`)
-    } else if (key === 'pos' || key === 'scale') {
+    } else if (key === 'position' || key === 'rotation' || key === 'pos' || key === 'scale') {
       requireTensorShape(tensor, [...shape, 3], path)
     } else {
       const actual = validateDenseTensor(tensor, path)
@@ -92,10 +97,10 @@ export const arrayDefinition = {
     if (
       node.children.length !== 1 ||
       !isCadNode(node.children[0]) ||
-      typeof node.children[0].type !== 'function' ||
-      node.children[0].type === Fragment
+      node.children[0].type === Fragment ||
+      node.children[0].props.id === undefined
     ) {
-      throw new CadModelError('<array> requires exactly one direct child Geometry.')
+      throw new CadModelError('<array> requires exactly one direct identified Geometry or intrinsic CAD element.')
     }
 
     const shapeValue = node.props.shape
@@ -161,9 +166,11 @@ export const arrayDefinition = {
                 identitySegment: `$cell-${x}-${y}-${z}`,
               }),
               {
+                family: 'canonical',
                 scale: unitScale,
+                rotation: undefined,
                 rotate: undefined,
-                pos: offset,
+                position: offset,
               },
             ),
           )

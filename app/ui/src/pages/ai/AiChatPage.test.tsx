@@ -122,6 +122,7 @@ describe('AiChatWorkspace', () => {
     render(
       <ChatWorkspace
         defaultSystemPrompt="Fixed CAE helper instructions."
+        fixedReference
         fixedSystemPrompt
         questionLabel="Helper 질문"
         referenceProvider={referenceProvider}
@@ -150,6 +151,7 @@ describe('AiChatWorkspace', () => {
       prompt: 'box를 만들어 줘',
       recentUserPrompts: [],
     })
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Experiment Authoring' })).toHaveAttribute('href', '/docs?section=program')
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })

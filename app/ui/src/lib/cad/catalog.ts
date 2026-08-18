@@ -1,1 +1,1 @@
-export { cadElementCatalog } from './elements/generated'
+export { cadAuthoringContract, cadElementCatalog } from './elements/generated'

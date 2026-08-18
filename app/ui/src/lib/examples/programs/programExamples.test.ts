@@ -55,7 +55,7 @@ async function prepareExample(example: CaembleProgramExample) {
         else if (entryFile === 'material.tsx') analyzeMaterialSource(source)
         else analyzeTaskSource(source)
         const compiled: CompiledCadSource = {
-          apiVersion: 6,
+          apiVersion: 7,
           compilerVersion: CAD_COMPILER_VERSION,
           entryFile,
           code: await compileSource(source),
@@ -65,7 +65,7 @@ async function prepareExample(example: CaembleProgramExample) {
       }),
   )
   const document: CompiledCadDocument = {
-    apiVersion: 6,
+    apiVersion: 7,
     compilerVersion: CAD_COMPILER_VERSION,
     sourceHash,
     sources: Object.fromEntries(sources),

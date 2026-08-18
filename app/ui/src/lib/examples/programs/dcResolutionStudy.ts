@@ -71,7 +71,7 @@ export default defineTask({
   geometry: ({ vars }) => (
     <ConvergenceProbe
       id="convergence-probe"
-      pos={[0, ${probePosition}, 0]}
+      position={[0, ${probePosition}, 0]}
       materials={{ body: Copper(vars.electricalConductivity as number) }}
     />
   ),

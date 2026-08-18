@@ -62,7 +62,7 @@ async function document(variant: string) {
     geometryVersionId: 1,
     coordinate,
     moduleFormatVersion: 4 as const,
-    cadApiVersion: 6 as const,
+    cadApiVersion: 7 as const,
     description: null,
     source: geometrySource,
     sourceHash,

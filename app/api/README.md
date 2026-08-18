@@ -116,7 +116,7 @@ transaction으로 version과 import projection을 만든다. `repositoryId`가 �
 현재 기본 namespace를 사용한다. 새 draft의 repository/package가 없으면 publish
 transaction 안에서 함께 생성한다. SemVer 충돌은
 `geometry_version_conflict` 409와 suggested version을 반환한다. resolve/publish snapshot의
-`moduleFormatVersion`은 4이고 CAD API version은 6이다.
+`moduleFormatVersion`은 4이고 CAD API version은 7이다.
 
 Experiment source bundle v5는 `experiment.tsx`, `geometry.tsx`, `material.tsx`,
 `simulate.py`와 하나 이상의 `tasks/*.tsx`를 항상 포함한다. `material.tsx`는 Material
@@ -130,10 +130,11 @@ module source/hash/import projection을 canonical order로 보존한다. 저장 
 `geometry.tsx`에서 snapshot을 독립 재생성해 요청 값과 대조하고
 `experiment_geometry_imports` 및 `experiment_geometry_modules` projection을 갱신한다.
 
-Material 역할 map/CAD API v6 전환 migration은 이전 module source와 Experiment 입력
-snapshot을 안전하게 변환할 수 없으므로 Geometry catalog, Experiment, Measurement,
-RecordedData, DesignerModel, PredictorModel 데이터를 upgrade와 downgrade에서 삭제한다.
-Material, MaterialName, MaterialParameter, MaterialParameterQualifier catalog는 보존한다.
+CAD API v7 전환 migration은 이전 module source와 Experiment 입력 snapshot을 안전하게
+변환할 수 없으므로 Geometry Version/Import와 Experiment, Measurement, RecordedData,
+DesignerModel, PredictorModel 데이터를 upgrade와 downgrade에서 삭제한다. 사용자 계정,
+namespace, Geometry Repository/Package와 Material, MaterialName, MaterialParameter,
+MaterialParameterQualifier catalog는 보존한다.
 
 ## 도메인 테이블
 

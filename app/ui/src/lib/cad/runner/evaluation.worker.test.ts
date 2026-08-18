@@ -40,26 +40,26 @@ const syntheticCatalog = {
   warnings: [],
 } as const satisfies CatalogRuntimeSlice
 const compiledExperiment: CompiledCadDocument = {
-  apiVersion: 6,
+  apiVersion: 7,
   compilerVersion: CAD_COMPILER_VERSION,
   sourceHash,
   sources: {
     'geometry.tsx': {
-      apiVersion: 6,
+      apiVersion: 7,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'geometry.tsx',
       sourceHash,
       code: 'module.exports = {}',
     },
     'material.tsx': {
-      apiVersion: 6,
+      apiVersion: 7,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'material.tsx',
       sourceHash,
       code: 'module.exports = {}',
     },
     'experiment.tsx': {
-      apiVersion: 6,
+      apiVersion: 7,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'experiment.tsx',
       sourceHash,
@@ -71,7 +71,7 @@ module.exports.default = experiment({
 })`,
     },
     'tasks/electric.tsx': {
-      apiVersion: 6,
+      apiVersion: 7,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'tasks/electric.tsx',
       sourceHash,

@@ -1,16 +1,36 @@
 import { CadModelError } from './errors'
 import type { Rotation, Vec3 } from './types'
 
+export type CanonicalGeometryTransformAttributes = Readonly<{
+  position?: Vec3
+  rotation?: Vec3
+  pos?: never
+  rotate?: never
+  scale?: Vec3
+}>
+
+export type LegacyGeometryTransformAttributes = Readonly<{
+  position?: never
+  rotation?: never
+  /** @deprecated Use position. */
+  pos?: Vec3
+  /** @deprecated Use rotation with XYZ Euler angles in radians. */
+  rotate?: Rotation
+  scale?: Vec3
+}>
+
+export type GeometryTransformAttributes = CanonicalGeometryTransformAttributes | LegacyGeometryTransformAttributes
+
+export type IntrinsicGeometryAttributes = Readonly<{ id?: string }> & GeometryTransformAttributes
+
 export type GeometryAttributes<P extends object = object> = Readonly<
   P & {
     id: string
     materials?: Readonly<Record<string, import('./material').Material | undefined>>
-    pos?: Vec3
-    rotate?: Rotation
-    scale?: Vec3
     children?: unknown
   }
->
+> &
+  GeometryTransformAttributes
 
 export type Geometry<P extends object = object> = (props: GeometryAttributes<P>) => unknown
 export type GeometryGroupMap = Readonly<Record<string, readonly string[]>>

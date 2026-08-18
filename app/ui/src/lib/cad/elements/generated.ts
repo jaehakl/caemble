@@ -17,7 +17,10 @@ import { fiberDefinition } from './primitives/fiber/runtime'
 import { shellDefinition } from './operations/shell/runtime'
 import { arrayDefinition } from './operations/array/runtime'
 import { unionDefinition, subtractDefinition, intersectDefinition } from './operations/booleans/runtime'
+import { cadAuthoringContract } from './authoringContract'
 import type { CadElementDefinition } from '../evaluation/types'
+
+export { cadAuthoringContract }
 
 export const cadElementCatalog = [
   boxManifest,

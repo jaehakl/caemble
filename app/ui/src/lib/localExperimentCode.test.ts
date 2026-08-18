@@ -24,7 +24,7 @@ async function evaluate(bundle: typeof starterExperimentSourceBundle) {
         else if (entryFile === 'material.tsx') analyzeMaterialSource(source)
         else analyzeTaskSource(source)
         const compiled: CompiledCadSource = {
-          apiVersion: 6,
+          apiVersion: 7,
           compilerVersion: CAD_COMPILER_VERSION,
           entryFile,
           code: (
@@ -43,7 +43,7 @@ async function evaluate(bundle: typeof starterExperimentSourceBundle) {
       }),
   )
   const document: CompiledCadDocument = {
-    apiVersion: 6,
+    apiVersion: 7,
     compilerVersion: CAD_COMPILER_VERSION,
     sourceHash,
     sources: Object.fromEntries(sources),

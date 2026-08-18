@@ -1,12 +1,20 @@
 import type { CadElementManifest } from '../../../evaluation/types'
+import type { IntrinsicGeometryAttributes } from '../../../model/structure'
 
 export type ExampleAttributes = Readonly<{
   value: number
-}>
+}> &
+  IntrinsicGeometryAttributes
 
 export const exampleManifest = {
   tag: 'example',
   category: 'primitive',
   syntax: '<example value={1} />',
   summary: 'Example geometry.',
+  keywords: ['example'],
+  properties: [{ name: 'value', type: 'number', required: true, description: 'Example value.' }],
+  children: { count: 'none', description: 'This primitive does not accept children.' },
+  origin: 'Centered at the origin.',
+  surfaces: ['Outer'],
+  example: '<example id="example" value={1} />',
 } as const satisfies CadElementManifest<'example'>

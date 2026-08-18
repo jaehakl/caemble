@@ -62,6 +62,7 @@ export function ChatWorkspace({
   emptyDescription = '대화가 열리면 같은 JobSession에서 문맥을 유지합니다.',
   emptyTitle = '무엇이든 물어보세요.',
   embedded = false,
+  fixedReference = false,
   fixedSystemPrompt = false,
   onRequestLogin,
   questionLabel = 'AI 질문',
@@ -76,6 +77,7 @@ export function ChatWorkspace({
   emptyDescription?: string
   emptyTitle?: string
   embedded?: boolean
+  fixedReference?: boolean
   fixedSystemPrompt?: boolean
   onRequestLogin?: () => void
   questionLabel?: string
@@ -264,7 +266,7 @@ export function ChatWorkspace({
     }
 
     let nextReferenceContext: ChatReferenceContext | null = null
-    if (referenceProvider && referenceEnabled) {
+    if (referenceProvider && (fixedReference || referenceEnabled)) {
       setStatus('참고자료 준비 중')
       try {
         nextReferenceContext = await referenceProvider({
@@ -430,15 +432,19 @@ export function ChatWorkspace({
           >
             {referenceProvider ? (
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                <label className="flex items-center gap-2">
-                  <input
-                    checked={referenceEnabled}
-                    disabled={busy}
-                    onChange={(event) => setReferenceEnabled(event.target.checked)}
-                    type="checkbox"
-                  />
-                  {referenceLabel}
-                </label>
+                {fixedReference ? (
+                  <span>{referenceLabel}</span>
+                ) : (
+                  <label className="flex items-center gap-2">
+                    <input
+                      checked={referenceEnabled}
+                      disabled={busy}
+                      onChange={(event) => setReferenceEnabled(event.target.checked)}
+                      type="checkbox"
+                    />
+                    {referenceLabel}
+                  </label>
+                )}
                 {referenceContext ? (
                   <details className="max-w-full">
                     <summary className="cursor-pointer">

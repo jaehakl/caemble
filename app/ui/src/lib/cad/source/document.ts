@@ -9,7 +9,7 @@ import {
 } from './geometrySnapshot'
 
 export const CAD_SOURCE_FORMAT_VERSION = 2 as const
-export const CAD_SOURCE_API_VERSION = 6 as const
+export const CAD_SOURCE_API_VERSION = 7 as const
 export const EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION = 5 as const
 export const MAX_CAD_SOURCE_BYTES = 1024 * 1024
 
@@ -113,7 +113,9 @@ export function assertExperimentSourceBundle(value: unknown): asserts value is E
     !paths.includes(EXPERIMENT_MATERIAL_PATH) ||
     !paths.includes(EXPERIMENT_SIMULATION_PATH)
   ) {
-    throw new CadModelError('Experiment source bundle requires experiment.tsx, geometry.tsx, material.tsx, and simulate.py.')
+    throw new CadModelError(
+      'Experiment source bundle requires experiment.tsx, geometry.tsx, material.tsx, and simulate.py.',
+    )
   }
   if (paths.every((path) => experimentTaskName(path) === null)) {
     throw new CadModelError('Experiment source bundle requires at least one Task file.')
@@ -182,7 +184,7 @@ export function assertCadSourceDocument(value: unknown): asserts value is Experi
     document.formatVersion !== CAD_SOURCE_FORMAT_VERSION ||
     document.apiVersion !== CAD_SOURCE_API_VERSION
   ) {
-    throw new CadModelError('Only Experiment source format version 2 and API version 6 are supported.')
+    throw new CadModelError('Only Experiment source format version 2 and API version 7 are supported.')
   }
   assertExperimentSourceBundle(document.sourceBundle)
 }

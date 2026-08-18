@@ -67,7 +67,7 @@ export const ${name}: Geometry<{
 }) => (
   <subtract>
     <box size={size} />
-    <box pos={notchPosition} size={notchSize} />
+    <box position={notchPosition} size={notchSize} />
   </subtract>
 )
 `

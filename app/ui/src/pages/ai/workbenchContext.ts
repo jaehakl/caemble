@@ -264,7 +264,16 @@ function json(value: unknown) {
 }
 
 function candidate(id: string, title: string, content: string, omittedByteLength = 0) {
-  return { id, title, content, omittedByteLength }
+  return {
+    id,
+    title: escapeReferenceControlText(title),
+    content: escapeReferenceControlText(content),
+    omittedByteLength,
+  }
+}
+
+function escapeReferenceControlText(value: string) {
+  return value.replace(/<(?=\/?(?:caemble_|cad_authoring_grammar\b))/giu, '&lt;')
 }
 
 function sourceCandidate(id: string, title: string, path: string, source: string, dirty: boolean) {
@@ -285,37 +294,44 @@ function sourceCandidate(id: string, title: string, path: string, source: string
   )
 }
 
-function documentCandidate(document: NonNullable<WorkbenchContextInput['experiment']>) {
+function currentEvaluation(document: NonNullable<WorkbenchContextInput['experiment']>) {
   const matchingEvaluation = document.evaluation?.revision === document.revision ? document.evaluation : undefined
   const currentError = document.status === 'Error' ? matchingEvaluation : undefined
   const currentSuccess =
     document.status === 'Ready' && document.successfulRevision === document.revision ? matchingEvaluation : undefined
+  return { currentError, currentSuccess }
+}
+
+function diagnosticsCandidate(document: NonNullable<WorkbenchContextInput['experiment']>) {
+  const { currentError } = currentEvaluation(document)
+  if (!currentError?.diagnostics?.length && !currentError?.error) return null
+  return candidate(
+    'experiment-diagnostics',
+    'Current diagnostics',
+    json({
+      diagnostics: currentError.diagnostics?.map((diagnostic) => ({
+        file: diagnostic.file,
+        range: diagnostic.range,
+        code: diagnostic.code,
+        severity: diagnostic.severity,
+        phase: diagnostic.phase,
+        message: withoutStack(diagnostic.message),
+      })),
+      ...(currentError.error
+        ? { error: { title: currentError.error.title, message: withoutStack(currentError.error.message) } }
+        : {}),
+    }),
+  )
+}
+
+function documentCandidate(document: NonNullable<WorkbenchContextInput['experiment']>) {
+  const { currentError, currentSuccess } = currentEvaluation(document)
   const details = {
     dirty: document.dirty,
     status: document.status,
     revision: document.revision,
     successfulRevision: document.successfulRevision,
     evaluationDetailsCurrent: Boolean(currentError || currentSuccess),
-    ...(currentError?.diagnostics?.length
-      ? {
-          diagnostics: currentError.diagnostics.map((diagnostic) => ({
-            file: diagnostic.file,
-            range: diagnostic.range,
-            code: diagnostic.code,
-            severity: diagnostic.severity,
-            phase: diagnostic.phase,
-            message: withoutStack(diagnostic.message),
-          })),
-        }
-      : {}),
-    ...(currentError?.error
-      ? {
-          error: {
-            title: currentError.error.title,
-            message: withoutStack(currentError.error.message),
-          },
-        }
-      : {}),
     ...(currentSuccess
       ? {
           vars: currentSuccess.vars,
@@ -388,21 +404,9 @@ export function buildWorkbenchReferenceContext(input: WorkbenchContextInput, max
   const candidates: ReturnType<typeof candidate>[] = []
 
   candidates.push(candidate('focus', 'Current focus', json(input.focus ?? {})))
-  if (input.experiment) candidates.push(documentCandidate(input.experiment))
-  if (input.selection) candidates.push(candidate('selection', 'Selection state', json(input.selection)))
-  if (input.run) {
-    candidates.push(
-      candidate(
-        'run',
-        'CAE run state',
-        json({
-          operation: input.run.operation,
-          status: input.run.status,
-          stage: input.run.stage,
-          error: input.run.error ? withoutStack(input.run.error) : input.run.error,
-        }),
-      ),
-    )
+  if (input.experiment) {
+    const diagnostics = diagnosticsCandidate(input.experiment)
+    if (diagnostics) candidates.push(diagnostics)
   }
 
   const sources: ReturnType<typeof candidate>[] = []
@@ -427,11 +431,23 @@ export function buildWorkbenchReferenceContext(input: WorkbenchContextInput, max
       })
   }
 
-  if (input.focus?.activeTab === 'experiment') {
-    candidates.splice(1, 0, ...sources.filter((item) => item.id.startsWith('experiment-source:')))
+  candidates.push(...sources)
+  if (input.experiment) candidates.push(documentCandidate(input.experiment))
+  if (input.selection) candidates.push(candidate('selection', 'Selection state', json(input.selection)))
+  if (input.run) {
+    candidates.push(
+      candidate(
+        'run',
+        'CAE run state',
+        json({
+          operation: input.run.operation,
+          status: input.run.status,
+          stage: input.run.stage,
+          error: input.run.error ? withoutStack(input.run.error) : input.run.error,
+        }),
+      ),
+    )
   }
-  const includedSourceIds = new Set(candidates.map((item) => item.id))
-  candidates.push(...sources.filter((item) => !includedSourceIds.has(item.id)))
 
   if (budget <= byteLength(intro)) {
     const truncated = truncateUtf8(intro, budget)

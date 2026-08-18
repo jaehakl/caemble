@@ -55,10 +55,12 @@ describe('CAD booleans', () => {
   it('allows fully materialless booleans and rejects mixed union or intersect inputs', () => {
     const core = new Material('Core', { color: '#2563eb' })
     const materiallessUnion = evaluateCad(
-      h(() => h('union', null, h(Box, { id: 'first' }), h(Box, { id: 'second', pos: [1, 0, 0] })), { id: 'union' }),
+      h(() => h('union', null, h(Box, { id: 'first' }), h(Box, { id: 'second', position: [1, 0, 0] })), {
+        id: 'union',
+      }),
     )[0]
     const materiallessIntersect = evaluateCad(
-      h(() => h('intersect', null, h(Box, { id: 'first' }), h(Box, { id: 'second', pos: [1, 0, 0] })), {
+      h(() => h('intersect', null, h(Box, { id: 'first' }), h(Box, { id: 'second', position: [1, 0, 0] })), {
         id: 'intersect',
       }),
     )[0]
@@ -105,10 +107,10 @@ describe('CAD booleans', () => {
             h(
               Fragment,
               null,
-              h(Box, { id: 'first', pos: [-2, 0, 0], scale: [2, 2, 2], materials: { body: first } }),
-              h(Box, { id: 'second', pos: [2, 0, 0], scale: [2, 2, 2], materials: { body: second } }),
+              h(Box, { id: 'first', position: [-2, 0, 0], scale: [2, 2, 2], materials: { body: first } }),
+              h(Box, { id: 'second', position: [2, 0, 0], scale: [2, 2, 2], materials: { body: second } }),
             ),
-            h(Box, { id: 'cutter', pos: [0, -2, 0], scale: [6, 2, 3], materials: { body: cutter } }),
+            h(Box, { id: 'cutter', position: [0, -2, 0], scale: [6, 2, 3], materials: { body: cutter } }),
           ),
         { id: 'result' },
       ),

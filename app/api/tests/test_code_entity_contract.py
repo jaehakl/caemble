@@ -159,22 +159,22 @@ class TestCodeEntityContract(unittest.TestCase):
         self.assertNotIn("code_embedding", value.model_dump())
         self.assertFalse(Experiment.__table__.columns.source_hash.nullable)
 
-    def test_current_geometry_contract_uses_module_v4_and_cad_api_v6(self):
+    def test_current_geometry_contract_uses_module_v4_and_cad_api_v7(self):
         value = GeometryModuleSnapshot(
             geometryVersionId=1,
             coordinate="caemble:geometry/owner/common/shape@1.0.0",
             moduleFormatVersion=4,
-            cadApiVersion=6,
+            cadApiVersion=7,
             description=None,
             source="export const Shape = () => <box />",
             sourceHash="a" * 64,
             moduleHash="b" * 64,
         )
         self.assertEqual(value.moduleFormatVersion, 4)
-        self.assertEqual(value.cadApiVersion, 6)
+        self.assertEqual(value.cadApiVersion, 7)
         constraints = {str(item.sqltext) for item in GeometryVersion.__table__.constraints if hasattr(item, "sqltext")}
         self.assertIn("module_format_version = 4", constraints)
-        self.assertIn("cad_api_version = 6", constraints)
+        self.assertIn("cad_api_version = 7", constraints)
 
     def test_removed_split_tables_are_not_mapped(self):
         table_names = set(Experiment.metadata.tables)

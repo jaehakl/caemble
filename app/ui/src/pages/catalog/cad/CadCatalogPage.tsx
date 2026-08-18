@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { cadElementCatalog } from '@/lib/cad'
+import { cadAuthoringContract, cadElementCatalog } from '@/lib/cad'
 
 type CadCatalogEntry = (typeof cadElementCatalog)[number]
 
@@ -47,14 +47,19 @@ export function GeometryCatalog({
     return cadElementCatalog.filter(
       (entry) =>
         (category === 'all' || entry.category === category) &&
-        (!needle || `${entry.tag} ${entry.summary} ${entry.syntax}`.toLowerCase().includes(needle)),
+        (!needle ||
+          `${entry.tag} ${entry.summary} ${entry.syntax} ${entry.keywords.join(' ')} ${entry.properties
+            .map(({ description, name, type }) => `${name} ${type} ${description}`)
+            .join(' ')}`
+            .toLowerCase()
+            .includes(needle)),
     )
   }, [category, query])
 
   return (
     <CatalogPageLayout
       count={cadElementCatalog.length}
-      description="Code-to-CAD 문법 기본 요소"
+      description={`CAD API v${cadAuthoringContract.apiVersion} primitive와 operation의 공식 문법·제약·예제`}
       embedded={embedded}
       title="Primitives & Operations"
       filters={
@@ -113,13 +118,133 @@ export function GeometryCatalog({
                   <Clipboard />
                 </Button>
               </div>
+
+              <div className="mt-6 rounded-lg border bg-slate-50 p-4 text-sm text-slate-700">
+                <p className="font-medium text-slate-950">공통 identity와 transform</p>
+                <p className="mt-1 leading-6">
+                  모든 intrinsic element는 선택적 <code>{cadAuthoringContract.identity.name}</code>와 canonical{' '}
+                  <code>position</code>, <code>rotation</code>, <code>scale</code>을 사용합니다. 적용 순서는{' '}
+                  <code>{cadAuthoringContract.transforms.applicationOrder.join(' → ')}</code>입니다.{' '}
+                  {cadAuthoringContract.transforms.rotationConvention} Nested path 예시는{' '}
+                  <code>{cadAuthoringContract.identity.pathExample}</code>입니다.
+                </p>
+                <a
+                  className="mt-2 inline-block font-medium text-orange-700 underline underline-offset-4"
+                  href="/docs?section=reference#cad-reference-geometry-transforms"
+                >
+                  좌표계·identity·migration 계약 보기
+                </a>
+              </div>
+
+              <div className="mt-6">
+                <h3 className="text-sm font-semibold">Properties</h3>
+                <div className="mt-2 overflow-x-auto rounded-lg border">
+                  <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+                    <thead className="bg-slate-50 text-xs text-slate-600">
+                      <tr>
+                        <th className="border-b px-3 py-2 font-medium">이름</th>
+                        <th className="border-b px-3 py-2 font-medium">타입</th>
+                        <th className="border-b px-3 py-2 font-medium">필수</th>
+                        <th className="border-b px-3 py-2 font-medium">기본값</th>
+                        <th className="border-b px-3 py-2 font-medium">설명·제약</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[
+                        {
+                          name: cadAuthoringContract.identity.name,
+                          type: cadAuthoringContract.identity.type,
+                          required: cadAuthoringContract.identity.required,
+                          description: cadAuthoringContract.identity.description,
+                        },
+                        ...cadAuthoringContract.transforms.canonicalProperties,
+                        ...selected.properties,
+                      ].map((property) => (
+                        <tr className="align-top last:[&>td]:border-b-0" key={property.name}>
+                          <td className="border-b px-3 py-2 font-mono font-medium">{property.name}</td>
+                          <td className="border-b px-3 py-2 font-mono text-xs">{property.type}</td>
+                          <td className="border-b px-3 py-2">{property.required ? '필수' : '선택'}</td>
+                          <td className="border-b px-3 py-2 font-mono text-xs">
+                            {'default' in property && property.default !== undefined ? property.default : '—'}
+                          </td>
+                          <td className="border-b px-3 py-2 leading-6 text-muted-foreground">{property.description}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <dl className="mt-6 grid gap-4 text-sm sm:grid-cols-2">
+                <div className="rounded-lg border p-4">
+                  <dt className="font-semibold">Origin</dt>
+                  <dd className="mt-1 leading-6 text-muted-foreground">{selected.origin}</dd>
+                </div>
+                <div className="rounded-lg border p-4">
+                  <dt className="font-semibold">Children</dt>
+                  <dd className="mt-1 leading-6 text-muted-foreground">
+                    <span className="font-mono text-foreground">{selected.children.count}</span> —{' '}
+                    {selected.children.description}
+                  </dd>
+                </div>
+              </dl>
+
+              <div className="mt-6">
+                <h3 className="text-sm font-semibold">Surfaces</h3>
+                {selected.surfaces.length ? (
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-6 text-muted-foreground">
+                    {selected.surfaces.map((surface) => (
+                      <li key={surface}>{surface}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-2 text-sm text-muted-foreground">고정된 surface 계약이 없습니다.</p>
+                )}
+              </div>
+
+              <div className="mt-6">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <h3 className="text-sm font-semibold">공식 예제</h3>
+                  <Button
+                    aria-label="예제 복사"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      navigator.clipboard.writeText(selected.example).then(() => toast.success('예제를 복사했습니다.'))
+                    }
+                  >
+                    <Clipboard />
+                    복사
+                  </Button>
+                </div>
+                <pre className="max-h-96 overflow-auto rounded-lg bg-neutral-950 p-4 text-xs leading-5 text-neutral-100">
+                  <code>{selected.example}</code>
+                </pre>
+              </div>
+
+              <details className="mt-6 rounded-lg border px-4 py-3 text-sm">
+                <summary className="cursor-pointer font-medium">Deprecated v7 호환 props</summary>
+                <p className="mt-2 leading-6 text-muted-foreground">{cadAuthoringContract.transforms.mixing}</p>
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
+                  {cadAuthoringContract.transforms.legacyProperties.map((property) => (
+                    <li key={property.name}>
+                      <code>
+                        {property.name}: {property.type}
+                      </code>{' '}
+                      — {property.description}
+                    </li>
+                  ))}
+                </ul>
+              </details>
             </CardContent>
           </>
         ) : (
           <CardContent className="flex min-h-60 flex-col items-center justify-center p-8 text-center">
             <Check className="mb-3 size-8 text-muted-foreground" />
             <p className="font-medium">요소를 선택하세요</p>
-            <p className="mt-1 text-sm text-muted-foreground">목록의 행을 누르면 문법과 설명을 볼 수 있습니다.</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              목록의 행을 누르면 prop, 기본값, origin, surface와 공식 예제를 볼 수 있습니다.
+            </p>
           </CardContent>
         )
       }

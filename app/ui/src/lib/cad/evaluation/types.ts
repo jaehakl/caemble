@@ -77,16 +77,49 @@ export type CadScene = {
 }
 
 export type NormalizedTransforms = {
-  pos: Vec3
+  family: 'canonical' | 'legacy'
+  position: Vec3
+  rotation: Vec3 | undefined
   rotate: Rotation | undefined
   scale: Vec3
 }
+
+export type CadElementPropertyManifest = Readonly<{
+  name: string
+  type: string
+  required: boolean
+  default?: string
+  description: string
+}>
+
+export type CadElementChildrenManifest = Readonly<{
+  count: 'none' | 'one' | 'many'
+  description: string
+}>
+
+export type CadAuthoringContract = Readonly<{
+  apiVersion: 7
+  identity: CadElementPropertyManifest & Readonly<{ pathExample: string }>
+  transforms: Readonly<{
+    applicationOrder: readonly ['scale', 'rotation', 'position']
+    rotationConvention: string
+    canonicalProperties: readonly CadElementPropertyManifest[]
+    legacyProperties: readonly CadElementPropertyManifest[]
+    mixing: string
+  }>
+}>
 
 export type CadElementManifest<Tag extends string = string> = Readonly<{
   tag: Tag
   category: 'primitive' | 'operation'
   syntax: string
   summary: string
+  keywords: readonly string[]
+  properties: readonly CadElementPropertyManifest[]
+  children: CadElementChildrenManifest
+  origin: string
+  surfaces: readonly string[]
+  example: string
 }>
 
 export type CadElementEvaluationContext = Readonly<{

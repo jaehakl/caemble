@@ -108,7 +108,7 @@ describe('CAD scene identity and evaluated tree', () => {
 
   it('labels unresolved scene parts with their required role', () => {
     function Pair() {
-      return h(Fragment, null, h('box', { size: [1, 1, 1] }), h('box', { size: [1, 1, 1], pos: [2, 0, 0] }))
+      return h(Fragment, null, h('box', { size: [1, 1, 1] }), h('box', { size: [1, 1, 1], position: [2, 0, 0] }))
     }
 
     const scene = evaluateCadScene(h(Pair, { id: 'pair' }))
@@ -141,6 +141,11 @@ describe('CAD scene identity and evaluated tree', () => {
     expect(() => evaluateCadScene(h(DuplicateChildren, { id: 'root', materials: { body: material } }))).toThrow(
       'must be unique within parent "root"',
     )
+    expect(() =>
+      evaluateCadScene(
+        h(Fragment, null, h('box', { id: 'same', size: [1, 1, 1] }), h('sphere', { id: 'same', radius: 1 })),
+      ),
+    ).toThrow('must be unique within parent "Experiment"')
 
     function Parent() {
       return h(Box, { id: 'leaf' })
@@ -156,7 +161,7 @@ describe('CAD scene identity and evaluated tree', () => {
     )
     expect(separateParents.parts.map((part) => part.id)).toEqual(['left.leaf', 'right.leaf'])
     expect(() => evaluateCadScene(h('box', { size: [1, 1, 1], materials: { body: material } }))).toThrow(
-      'must be created within a Geometry component',
+      'requires an explicit id on an intrinsic element or enclosing Geometry',
     )
     expect(() =>
       evaluateCadScene(
@@ -167,7 +172,64 @@ describe('CAD scene identity and evaluated tree', () => {
           h(Box, { id: 'second', materials: { body: material } }),
         ),
       ),
-    ).toThrow('must be created within a Geometry component')
+    ).toThrow('requires an explicit id on itself or an enclosing Geometry')
+  })
+
+  it('assigns intrinsic IDs and makes topology-changing operations own only their final result', () => {
+    function Goal() {
+      return h(
+        Fragment,
+        null,
+        h('cylinder', { id: 'pole', radius: 1, height: 10 }),
+        h('box', { id: 'backboard', size: [6, 1, 4], position: [0, 3, 4] }),
+      )
+    }
+
+    expect(evaluateCadScene(h('box', { id: 'root-box', size: [1, 1, 1] })).parts[0].id).toBe('root-box')
+    expect(evaluateCadScene(h(Goal, { id: 'goal' })).parts.map((part) => part.id)).toEqual([
+      'goal.pole',
+      'goal.backboard',
+    ])
+
+    const operation = evaluateCadScene(
+      h(
+        'subtract',
+        { id: 'cut' },
+        h('box', { id: 'base', size: [4, 4, 4] }),
+        h('box', { id: 'cutter', size: [2, 2, 6], position: [1, 0, 0] }),
+      ),
+    )
+    const operationNodes = flattenTree(operation.tree)
+    expect(operation.parts.map((part) => part.id)).toEqual(['cut'])
+    expect(operationNodes.find((node) => node.globalId === 'cut')).toMatchObject({ geometryId: 'cut' })
+    for (const operandId of ['cut.base', 'cut.cutter']) {
+      const operand = operationNodes.find((node) => node.globalId === operandId)!
+      expect(flattenTree(operand).some((node) => node.geometryId || node.groupId)).toBe(false)
+    }
+
+    function EnclosingResult() {
+      return h('subtract', null, h('box', { size: [4, 4, 4] }), h('box', { size: [2, 2, 6] }))
+    }
+    expect(evaluateCadScene(h(EnclosingResult, { id: 'enclosing' })).parts.map((part) => part.id)).toEqual([
+      'enclosing',
+    ])
+    expect(() =>
+      evaluateCadScene(
+        h('subtract', null, h('box', { id: 'base', size: [4, 4, 4] }), h('box', { id: 'cutter', size: [2, 2, 6] })),
+      ),
+    ).toThrow('requires an explicit id on itself or an enclosing Geometry')
+  })
+
+  it('arrays accept an identified intrinsic child and preserve cell identity', () => {
+    const scene = evaluateCadScene(
+      h(
+        'array',
+        { id: 'posts', shape: [2, 1, 1], period: [3, 0, 0] },
+        h('cylinder', { id: 'post', radius: 0.5, height: 4 }),
+      ),
+    )
+
+    expect(scene.parts.map((part) => part.id)).toEqual(['posts.$cell-0-0-0.post', 'posts.$cell-1-0-0.post'])
   })
 
   it('accumulates reserved cell segments for nested arrays', () => {

@@ -5,6 +5,7 @@ import type { EvaluatedPart, NormalizedTransforms } from './types'
 
 const { scale, transform, translate } = transforms
 const cadCreateMatrix = maths.mat4.create as () => unknown
+const cadFromValues = maths.mat4.fromValues as (...values: number[]) => unknown
 const cadFromRotation = maths.mat4.fromRotation as (
   matrix: unknown,
   angle: number,
@@ -53,28 +54,74 @@ export function normalizeRotation(value: unknown, owner: string): Rotation | und
 }
 
 export function normalizeTransforms(props: Record<string, unknown>, owner: string): NormalizedTransforms {
+  if (props.translation !== undefined) {
+    throw new CadModelError(`${owner} does not support translation. Use position.`)
+  }
+  const usesCanonical = props.position !== undefined || props.rotation !== undefined
+  const usesLegacy = props.pos !== undefined || props.rotate !== undefined
+  if (usesCanonical && usesLegacy) {
+    throw new CadModelError(`${owner} cannot mix position/rotation with deprecated pos/rotate.`)
+  }
+
   return {
-    pos: props.pos === undefined ? origin : normalizeVec3(props.pos, `${owner} pos`),
-    rotate: normalizeRotation(props.rotate, owner),
+    family: usesLegacy ? 'legacy' : 'canonical',
+    position:
+      (usesLegacy ? props.pos : props.position) === undefined
+        ? origin
+        : normalizeVec3(usesLegacy ? props.pos : props.position, `${owner} ${usesLegacy ? 'pos' : 'position'}`),
+    rotation:
+      usesLegacy || props.rotation === undefined ? undefined : normalizeVec3(props.rotation, `${owner} rotation`),
+    rotate: usesLegacy ? normalizeRotation(props.rotate, owner) : undefined,
     scale: props.scale === undefined ? unitScale : normalizeVec3(props.scale, `${owner} scale`),
   }
 }
 
+function xyzEulerMatrix([x, y, z]: Vec3) {
+  const a = Math.cos(x)
+  const b = Math.sin(x)
+  const c = Math.cos(y)
+  const d = Math.sin(y)
+  const e = Math.cos(z)
+  const f = Math.sin(z)
+
+  // Three.js Matrix4.makeRotationFromEuler(..., 'XYZ'): intrinsic X, then Y, then Z.
+  return cadFromValues(
+    c * e,
+    a * f + b * e * d,
+    b * f - a * e * d,
+    0,
+    -c * f,
+    a * e - b * f * d,
+    b * e + a * f * d,
+    0,
+    d,
+    -b * c,
+    a * c,
+    0,
+    0,
+    0,
+    0,
+    1,
+  )
+}
+
 export function applyTransforms(parts: EvaluatedPart[], values: NormalizedTransforms) {
   const shouldScale = values.scale.some((factor) => factor !== 1)
-  const rotationMatrix =
+  const legacyRotationMatrix =
     values.rotate && values.rotate.angle !== 0
       ? cadFromRotation(cadCreateMatrix(), values.rotate.angle, [...values.rotate.axis])
       : undefined
-  const shouldTranslate = values.pos.some((coordinate) => coordinate !== 0)
+  const shouldRotate = values.rotation?.some((angle) => angle !== 0) ?? false
+  const shouldTranslate = values.position.some((coordinate) => coordinate !== 0)
 
-  if (!shouldScale && rotationMatrix === undefined && !shouldTranslate) return parts
+  if (!shouldScale && legacyRotationMatrix === undefined && !shouldRotate && !shouldTranslate) return parts
 
   return parts.map((part) => {
     let geometry = part.geometry
     if (shouldScale) geometry = cadScale([...values.scale], geometry)
-    if (rotationMatrix !== undefined) geometry = cadTransform(rotationMatrix, geometry)
-    if (shouldTranslate) geometry = cadTranslate([...values.pos], geometry)
+    if (shouldRotate) geometry = cadTransform(xyzEulerMatrix(values.rotation!), geometry)
+    if (legacyRotationMatrix !== undefined) geometry = cadTransform(legacyRotationMatrix, geometry)
+    if (shouldTranslate) geometry = cadTranslate([...values.position], geometry)
     return { ...part, geometry }
   })
 }

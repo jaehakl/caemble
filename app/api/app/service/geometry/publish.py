@@ -502,7 +502,7 @@ async def publish(
                 source_hash=step["sourceHash"],
                 module_hash=step["moduleHash"],
                 module_format_version=4,
-                cad_api_version=6,
+                cad_api_version=7,
             )
             db.add(version)
             await db.flush()

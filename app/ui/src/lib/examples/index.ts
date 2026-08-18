@@ -3,6 +3,7 @@ import { fiberBundleCode } from './fiberBundle'
 import { shellCutawaysCode } from './shellCutaways'
 import { curvedEdgeCylinderArrayCode } from './curvedEdgeCylinderArray'
 import { curvedSurfaceSphereHcpArrayCode } from './curvedSurfaceSphereHcpArray'
+import { basketballGoalExample } from './basketballGoal'
 
 export {
   caembleProgramExamples,
@@ -11,6 +12,7 @@ export {
   dcUniformBarExample,
 } from './programs'
 export type { CaembleProgramExample } from './programs'
+export { basketballGoalCode, basketballGoalExample } from './basketballGoal'
 export {
   wheelAssemblyExample,
   wheelAssemblyExperimentCode,
@@ -29,6 +31,7 @@ export type CaembleExample = Readonly<{
 }>
 
 export const caembleExamples: readonly CaembleExample[] = Object.freeze([
+  basketballGoalExample,
   {
     id: 'dc-conductor',
     title: 'DC Conductor',

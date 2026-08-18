@@ -303,7 +303,8 @@ describe('Experiment vars and groups', () => {
       'group names must not be empty',
     )
     expect(
-      () => new ExperimentDefinition({ lengthUnit: 'mm', ...options, geometryGroup: { duplicate: [], ' duplicate ': [] } }),
+      () =>
+        new ExperimentDefinition({ lengthUnit: 'mm', ...options, geometryGroup: { duplicate: [], ' duplicate ': [] } }),
     ).toThrow('duplicated after trimming')
     expect(
       () => new ExperimentDefinition({ lengthUnit: 'mm', ...options, geometryGroup: { invalid: 'assembly' as never } }),
@@ -311,9 +312,9 @@ describe('Experiment vars and groups', () => {
     expect(() => new ExperimentDefinition({ lengthUnit: 'mm', ...options, surfaceGroup: { invalid: [''] } })).toThrow(
       'must be a non-empty string',
     )
-    expect(() => new ExperimentDefinition({ lengthUnit: 'mm', ...options, surfaceGroup: { invalid: [1 as never] } })).toThrow(
-      'must be a non-empty string',
-    )
+    expect(
+      () => new ExperimentDefinition({ lengthUnit: 'mm', ...options, surfaceGroup: { invalid: [1 as never] } }),
+    ).toThrow('must be a non-empty string')
   })
 })
 
@@ -475,11 +476,8 @@ describe('Data values and Experiment units', () => {
       'Experiment lengthUnit',
     )
     expect(
-      () =>
-        new ExperimentDefinition({ lengthUnit: 's', geometry: () => null, varsSchema: {}, recordedData: {} }),
-    ).toThrow(
-      'cannot convert s to m',
-    )
+      () => new ExperimentDefinition({ lengthUnit: 's', geometry: () => null, varsSchema: {}, recordedData: {} }),
+    ).toThrow('cannot convert s to m')
     expect(
       new ExperimentDefinition({ lengthUnit: 'cm', geometry: () => null, varsSchema: {}, recordedData: {} }).lengthUnit,
     ).toBe('cm')
@@ -1261,16 +1259,16 @@ describe('Geometry types', () => {
       id: 'layout',
       gap: 4,
       label: 'core',
-      pos: [1, 2, 3],
-      rotate: { axis: [0, 0, 1], angle: Math.PI / 4 },
+      position: [1, 2, 3],
+      rotation: [0, 0, Math.PI / 4],
       scale: [1, 2, 1],
     }
     const layout: Geometry<LayoutProps> = (input) => ({
       gap: input.gap,
       label: input.label,
-      pos: input.pos,
+      position: input.position,
     })
 
-    expect(layout(attributes)).toEqual({ gap: 4, label: 'core', pos: [1, 2, 3] })
+    expect(layout(attributes)).toEqual({ gap: 4, label: 'core', position: [1, 2, 3] })
   })
 })

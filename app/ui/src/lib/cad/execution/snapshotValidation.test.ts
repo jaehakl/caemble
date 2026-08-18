@@ -33,7 +33,7 @@ describe('Experiment snapshot validation', () => {
         Fragment,
         null,
         h(Box, { id: 'first', materials: { body: material } }),
-        h(Box, { id: 'second', pos: [2, 0, 0], materials: { body: material } }),
+        h(Box, { id: 'second', position: [2, 0, 0], materials: { body: material } }),
       ),
       {},
       'Experiment',

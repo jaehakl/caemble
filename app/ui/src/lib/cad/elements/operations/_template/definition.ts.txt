@@ -1,12 +1,20 @@
 import type { CadElementManifest } from '../../../evaluation/types'
+import type { IntrinsicGeometryAttributes } from '../../../model/structure'
 
 export type ExampleOperationAttributes = Readonly<{
   children?: unknown
-}>
+}> &
+  IntrinsicGeometryAttributes
 
 export const exampleOperationManifest = {
   tag: 'exampleOperation',
   category: 'operation',
   syntax: '<exampleOperation>Geometry</exampleOperation>',
   summary: 'Example geometry operation.',
+  keywords: ['example operation'],
+  properties: [],
+  children: { count: 'one', description: 'Accepts one identified Geometry or CAD element.' },
+  origin: 'Preserves the child coordinate system.',
+  surfaces: ['child-defined'],
+  example: '<exampleOperation id="result"><box size={[1, 1, 1]} /></exampleOperation>',
 } as const satisfies CadElementManifest<'exampleOperation'>

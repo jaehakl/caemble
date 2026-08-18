@@ -26,9 +26,7 @@ installSyntheticCatalog({
     { name: 'electromagnetism.Voltage', applicableUnits: ['mV'] },
     { name: 'electromagnetism.ElectricConductivity', tensorOrder: 2, applicableUnits: ['S.m-1'] },
   ],
-  materialParameters: [
-    { key: 'electrical.conductivity', quantityKind: 'electromagnetism.ElectricConductivity' },
-  ],
+  materialParameters: [{ key: 'electrical.conductivity', quantityKind: 'electromagnetism.ElectricConductivity' }],
 })
 
 async function compile(source: string) {
@@ -53,7 +51,7 @@ async function compiledDocument(
       .filter(([path]) => path.endsWith('.tsx'))
       .map(async ([entryFile, source]) => {
         const compiled: CompiledCadSource = {
-          apiVersion: 6,
+          apiVersion: 7,
           compilerVersion: CAD_COMPILER_VERSION,
           entryFile,
           code: await compile(source),
@@ -62,7 +60,7 @@ async function compiledDocument(
         return [entryFile, compiled] as const
       }),
   )
-  return { apiVersion: 6, compilerVersion: CAD_COMPILER_VERSION, sourceHash, sources: Object.fromEntries(entries) }
+  return { apiVersion: 7, compilerVersion: CAD_COMPILER_VERSION, sourceHash, sources: Object.fromEntries(entries) }
 }
 
 function module(
@@ -73,7 +71,7 @@ function module(
   sourceHash = '4'.repeat(64),
 ): CompiledGeometryModule {
   return {
-    apiVersion: 6,
+    apiVersion: 7,
     compilerVersion: CAD_COMPILER_VERSION,
     entryFile,
     code,
@@ -112,7 +110,7 @@ describe('compiled Experiment execution with source Geometry modules', () => {
     const compiled = await compiledDocument(files, '3'.repeat(64))
     const leaf = module(
       leafCoordinate,
-      `exports.Part = ({ id }) => h('box', { id, size: [1, 1, 1] })`,
+      `exports.Part = () => h('box', { size: [1, 1, 1] })`,
       ['Part'],
       [],
       compiled.sourceHash,
@@ -186,7 +184,10 @@ export default defineTask({ kernel: { name: 'test', version: '1' }, config: () =
     const valid = await compiledDocument(files, 'c'.repeat(64))
     expect(() => inspectCompiledDocument(valid)).not.toThrow()
 
-    const invalidValue = await compiledDocument({ ...files, 'material.tsx': 'export const Invalid = 1' }, 'd'.repeat(64))
+    const invalidValue = await compiledDocument(
+      { ...files, 'material.tsx': 'export const Invalid = 1' },
+      'd'.repeat(64),
+    )
     expect(() => inspectCompiledDocument(invalidValue)).toThrow('Material instance or factory')
 
     const invalidFactory = await compiledDocument(
@@ -208,7 +209,7 @@ export default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => nu
     const compiled = await compiledDocument(defaultExperimentSourceBundle.files, '8'.repeat(64))
     const working = module(
       coordinate,
-      `exports.Working = ({ id, size = [2, 3, 4] }) => h('box', { id, size })`,
+      `exports.Working = ({ size = [2, 3, 4] }) => h('box', { size })`,
       ['Working'],
       [],
       compiled.sourceHash,

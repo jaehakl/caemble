@@ -82,12 +82,9 @@ describe('CAD array', () => {
           inject: {
             size: [[[[2, 2, 2]]], [[[4, 2, 2]]]],
             holeRadius: [[[1]], [[2]]],
-            pos: [[[[1, 0, 0]]], [[[-1, 0, 0]]]],
+            position: [[[[1, 0, 0]]], [[[-1, 0, 0]]]],
             scale: [[[[1, 1, 1]]], [[[0.5, 2, 1]]]],
-            rotate: {
-              axis: [[[[0, 0, 1]]], [[[0, 0, 5]]]],
-              angle: [[[0]], [[Math.PI / 2]]],
-            },
+            rotation: [[[[0, 0, 0]]], [[[0, 0, Math.PI / 2]]]],
           },
         },
         h(Cell, {
@@ -95,7 +92,7 @@ describe('CAD array', () => {
           size: [1, 1, 1],
           holeRadius: 0,
           label: 'preserved',
-          pos: [99, 0, 0],
+          position: [99, 0, 0],
           materials: { body: core },
         }),
       ),
@@ -106,16 +103,16 @@ describe('CAD array', () => {
       size: [2, 2, 2],
       holeRadius: 1,
       label: 'preserved',
-      pos: [1, 0, 0],
+      position: [1, 0, 0],
       scale: [1, 1, 1],
-      rotate: { axis: [0, 0, 1], angle: 0 },
+      rotation: [0, 0, 0],
     })
     expect(received[1]).toMatchObject({
       size: [4, 2, 2],
       holeRadius: 2,
-      pos: [-1, 0, 0],
+      position: [-1, 0, 0],
       scale: [0.5, 2, 1],
-      rotate: { axis: [0, 0, 1], angle: Math.PI / 2 },
+      rotation: [0, 0, Math.PI / 2],
     })
     expect(parts.map((part) => part.material?.name)).toEqual(['Core', 'Core'])
 
@@ -142,16 +139,16 @@ describe('CAD array', () => {
         {
           shape: [2, 1, 1],
           period: [4, 0, 0],
-          inject: { pos: [[[[1, 0, 0]]], [[[1, 0, 0]]]] },
+          inject: { position: [[[[1, 0, 0]]], [[[1, 0, 0]]]] },
           scale: [2, 1, 1],
-          rotate: { axis: [0, 0, 1], angle: Math.PI / 2 },
-          pos: [10, 0, 0],
+          rotation: [0, 0, Math.PI / 2],
+          position: [10, 0, 0],
         },
         h(Cell, { id: 'cell' }),
       )
     }
 
-    const parts = evaluateCad(h(Parent, { id: 'parent', pos: [0, 5, 0], materials: { body: core } }))
+    const parts = evaluateCad(h(Parent, { id: 'parent', position: [0, 5, 0], materials: { body: core } }))
     const centers = parts.map((part) => {
       const bounds = measurements.measureBoundingBox(part.geometry)
       return bounds[0].map((minimum, axis) => (minimum + bounds[1][axis]) / 2)
@@ -207,7 +204,14 @@ describe('CAD array', () => {
     expect(() => evaluate({ radius: [[[1]]] })).toThrow('must start with shape [2, 1, 1]')
     expect(() => evaluate({ radius: [[[1]], [[1, 2]]] })).toThrow('dense rectangular tensor')
     expect(() => evaluate({ radius: [[[1]], [[Number.NaN]]] })).toThrow('finite numbers')
-    expect(() => evaluate({ pos: [[[[0, 0]]], [[[0, 0]]]] })).toThrow('must have shape [2, 1, 1, 3]')
+    expect(() => evaluate({ position: [[[[0, 0]]], [[[0, 0]]]] })).toThrow('must have shape [2, 1, 1, 3]')
+    expect(() => evaluate({ rotation: [[[[0, 0, 0]]]] })).toThrow('must have shape [2, 1, 1, 3]')
+    expect(() =>
+      evaluate({
+        position: [[[[0, 0, 0]]], [[[0, 0, 0]]]],
+        pos: [[[[0, 0, 0]]], [[[0, 0, 0]]]],
+      }),
+    ).toThrow('cannot mix position/rotation with deprecated pos/rotate')
     expect(() => evaluate({ rotate: { axis: [[[[0, 0, 1]]], [[[0, 0, 1]]]], angle: [[[0]]] } })).toThrow(
       'inject.rotate.angle must have shape [2, 1, 1]',
     )
@@ -216,11 +220,11 @@ describe('CAD array', () => {
     )
   })
 
-  it('requires exactly one direct function Geometry child for array', () => {
+  it('requires exactly one direct identified Geometry or intrinsic child for array', () => {
     const core = new Material('Core', { color: '#2563eb' })
     const props = { shape: [1, 1, 1], period: [0, 0, 0] }
 
-    expect(() => evaluateCad(h('array', props))).toThrow('exactly one direct child Geometry')
+    expect(() => evaluateCad(h('array', props))).toThrow('exactly one direct identified Geometry or intrinsic')
     expect(() =>
       evaluateCad(
         h(
@@ -230,13 +234,13 @@ describe('CAD array', () => {
           h(Box, { id: 'second', materials: { body: core } }),
         ),
       ),
-    ).toThrow('exactly one direct child Geometry')
+    ).toThrow('exactly one direct identified Geometry or intrinsic')
     expect(() => evaluateCad(h('array', props, h('box', { size, materials: { body: core } })))).toThrow(
-      'exactly one direct child Geometry',
+      'exactly one direct identified Geometry or intrinsic',
     )
     expect(() =>
       evaluateCad(h('array', props, h(Fragment, null, h(Box, { id: 'box', materials: { body: core } })))),
-    ).toThrow('exactly one direct child Geometry')
+    ).toThrow('exactly one direct identified Geometry or intrinsic')
   })
 
   it('keeps array cells independent and preserves existing Material boolean rules', () => {
@@ -258,7 +262,7 @@ describe('CAD array', () => {
         Fragment,
         null,
         h(Box, { id: 'core', materials: { body: core } }),
-        h(Box, { id: 'cladding', pos: [1, 0, 0], materials: { body: cladding } }),
+        h(Box, { id: 'cladding', position: [1, 0, 0], materials: { body: cladding } }),
       )
     }
 

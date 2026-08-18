@@ -92,7 +92,7 @@ def test_source_migration_graph_continues_to_cae_workbench_indexes():
     root = Path(__file__).resolve().parents[1]
     scripts = ScriptDirectory.from_config(Config(root / "alembic.ini"))
 
-    assert scripts.get_heads() == ["c92e1f4a6b38"]
+    assert scripts.get_heads() == ["d7a3c9e5b1f4"]
     assert scripts.get_revision("f24a6b91d3ce").down_revision == "e7b2c5d91a40"
     assert scripts.get_revision("9d31a6f7c2e4").down_revision == "f24a6b91d3ce"
     assert scripts.get_revision("a4c8e2f19b73").down_revision == "9d31a6f7c2e4"
@@ -105,6 +105,7 @@ def test_source_migration_graph_continues_to_cae_workbench_indexes():
     assert scripts.get_revision("8d4e2f6a1b30").down_revision == "7b2d8f4a6c10"
     assert scripts.get_revision("b31f7d9a4c20").down_revision == "8d4e2f6a1b30"
     assert scripts.get_revision("c92e1f4a6b38").down_revision == "b31f7d9a4c20"
+    assert scripts.get_revision("d7a3c9e5b1f4").down_revision == "c92e1f4a6b38"
     assert not any(root.joinpath("alembic", "versions").glob("*_measurement_contract_metadata.py"))
 
 
@@ -318,6 +319,40 @@ def test_material_role_revision_resets_legacy_cad_but_preserves_material_catalog
     assert "cad_api_version=6" in source
     assert "module_format_version=3" in source
     assert "cad_api_version=5" in source
+
+
+def test_cad_api_v7_revision_preserves_geometry_identity_and_catalog_data():
+    revision = next(
+        (Path(__file__).resolve().parents[1] / "alembic" / "versions").glob(
+            "*_adopt_cad_api_v7.py"
+        )
+    )
+    source = revision.read_text(encoding="utf-8")
+    assert 'down_revision: str | None = "c92e1f4a6b38"' in source
+    for table in (
+        "recorded_data",
+        "measurements",
+        "designer_models",
+        "predictor_models",
+        "experiments",
+        "geometry_imports",
+        "geometry_versions",
+    ):
+        assert f'DELETE FROM {table}' in source
+    for table in (
+        "users",
+        "geometry_repositories",
+        "geometry_packages",
+        "materials",
+        "material_names",
+        "material_parameters",
+        "material_parameter_qualifiers",
+    ):
+        assert f'DELETE FROM {table}' not in source
+        assert f'op.drop_table("{table}")' not in source
+    assert "caemble.geometry_delete" in source
+    assert "_set_cad_api_version(7)" in source
+    assert "_set_cad_api_version(6)" in source
 
 
 def test_deployment_preflights_legacy_geometry_before_stopping_api():

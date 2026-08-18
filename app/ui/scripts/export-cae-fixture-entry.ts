@@ -55,7 +55,7 @@ async function buildMeasurement(example: CaembleProgramExample) {
     await Promise.all(
       sourcePaths.map(async (entryFile) => {
         const source: CompiledCadSource = {
-          apiVersion: 6,
+          apiVersion: 7,
           compilerVersion: CAD_COMPILER_VERSION,
           entryFile,
           code: await compileSource(example.experimentSourceBundle.files[entryFile]),
@@ -70,7 +70,7 @@ async function buildMeasurement(example: CaembleProgramExample) {
     await Promise.all(
       effective.modules.map(async (module) => {
         const compiled: CompiledGeometryModule = {
-          apiVersion: 6,
+          apiVersion: 7,
           compilerVersion: CAD_COMPILER_VERSION,
           entryFile: module.coordinate,
           code: await compileSource(module.source),
@@ -90,7 +90,7 @@ async function buildMeasurement(example: CaembleProgramExample) {
     modules,
   }
   const compiled: CompiledCadDocument = {
-    apiVersion: 6,
+    apiVersion: 7,
     compilerVersion: CAD_COMPILER_VERSION,
     sourceHash,
     sources,

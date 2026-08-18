@@ -21,7 +21,7 @@ const curvedCylinderAttributes = {
   },
   azimuthalSegments: 32,
   verticalSegments: 8,
-  rotate: { axis: [0, 0, 1], angle: Math.PI / 32 },
+  rotation: [0, 0, Math.PI / 32],
 } satisfies CurvedEdgeCylinderAttributes
 
 const curvedSphereAttributes = {
@@ -38,7 +38,7 @@ const curvedSphereAttributes = {
   ],
   azimuthalSegments: 24,
   polarSegments: 12,
-  rotate: { axis: [0, 0, 1], angle: Math.PI / 24 },
+  rotation: [0, 0, Math.PI / 24],
 } satisfies CurvedSurfaceSphereAttributes
 
 const fiberAttributes = {
@@ -49,12 +49,12 @@ const fiberAttributes = {
   up: [0, 1, 0],
   pathSegments: 32,
   radialSegments: 12,
-  rotate: { axis: [0, 0, 1], angle: Math.PI / 128 },
+  rotation: [0, 0, Math.PI / 128],
 } satisfies FiberAttributes
 
 const cutawayAttributes = {
   size: [20, 20, 24],
-  pos: [0, -10, 0],
+  position: [0, -10, 0],
 } satisfies BoxAttributes
 
 type ShapeKind = 'curvedCylinder' | 'curvedSphere' | 'fiber' | 'cutaway'
@@ -116,7 +116,7 @@ export default experiment({
         id="cylinder"
         kind="curvedCylinder"
         offsets={{ layer1: 0.5 }}
-        pos={[-22, 0, 0]}
+        position={[-22, 0, 0]}
       />
       <ShellCutaway
         id="sphere"
@@ -127,7 +127,7 @@ export default experiment({
         id="fiber"
         kind="fiber"
         offsets={{ inner: -0.5, layer1: 0.5, layer2: 1 }}
-        pos={[22, 0, 0]}
+        position={[22, 0, 0]}
       />
     </>
   ),

@@ -16,22 +16,22 @@ function Box() {
 }
 
 function OffsetBox() {
-  return h('box', { size, pos: [2, 0, 0] })
+  return h('box', { size, position: [2, 0, 0] })
 }
 
 describe('CAD transforms-materials', () => {
-  it('applies child geometry, then scale, axis-angle rotate, and pos', () => {
+  it('applies child geometry, then scale, intrinsic XYZ rotation, and position', () => {
     const core = new Material('Core', { color: '#2563eb' })
     const rotated = evaluateCad(
       h(OffsetBox, {
         id: 'offset',
-        rotate: { axis: [0, 0, 5], angle: Math.PI / 2 },
-        pos: [10, 0, 0],
+        rotation: [0, 0, Math.PI / 2],
+        position: [10, 0, 0],
         materials: { body: core },
       }),
     )[0]
     const scaled = evaluateCad(
-      h(OffsetBox, { id: 'offset', scale: [2, 1, 1], pos: [10, 0, 0], materials: { body: core } }),
+      h(OffsetBox, { id: 'offset', scale: [2, 1, 1], position: [10, 0, 0], materials: { body: core } }),
     )[0]
 
     expect(measurements.measureBoundingBox(rotated.geometry)).toEqual([
@@ -44,14 +44,14 @@ describe('CAD transforms-materials', () => {
     ])
   })
 
-  it('applies scale, rotate, and pos to primitive and completed boolean results', () => {
+  it('applies scale, rotation, and position to primitive and completed boolean results', () => {
     const core = new Material('Core', { color: '#2563eb' })
     function Primitive() {
       return h('box', {
         size: [2, 4, 2],
         scale: [2, 1, 1],
-        rotate: { axis: [0, 0, 1], angle: Math.PI / 2 },
-        pos: [10, 0, 0],
+        rotation: [0, 0, Math.PI / 2],
+        position: [10, 0, 0],
       })
     }
 
@@ -60,11 +60,11 @@ describe('CAD transforms-materials', () => {
         'union',
         {
           scale: [2, 1, 1],
-          rotate: { axis: [0, 0, 5], angle: Math.PI / 2 },
-          pos: [5, 0, 0],
+          rotation: [0, 0, Math.PI / 2],
+          position: [5, 0, 0],
         },
         h(Box, { id: 'first' }),
-        h(Box, { id: 'second', pos: [2, 0, 0] }),
+        h(Box, { id: 'second', position: [2, 0, 0] }),
       )
     }
 
@@ -196,7 +196,7 @@ describe('CAD transforms-materials', () => {
         Fragment,
         null,
         h(Box, { id: 'core', materials: { body: core } }),
-        h(Box, { id: 'cladding', pos: [3, 0, 0], materials: { body: cladding } }),
+        h(Box, { id: 'cladding', position: [3, 0, 0], materials: { body: cladding } }),
       )
     }
 
@@ -238,7 +238,7 @@ describe('CAD transforms-materials', () => {
     const root = h(
       Fragment,
       null,
-      h(Box, { id: 'core', pos: [0, 0, 2], materials: { body: core } }),
+      h(Box, { id: 'core', position: [0, 0, 2], materials: { body: core } }),
       h(Box, { id: 'cladding', materials: { body: cladding } }),
     )
 
@@ -333,9 +333,9 @@ describe('CAD transforms-materials', () => {
           Fragment,
           null,
           h(Box, { id: 'shared-first', materials: { body: shared } }),
-          h(Box, { id: 'shared-second', pos: [3, 0, 0], materials: { body: shared } }),
-          h(Box, { id: 'separate-first', pos: [6, 0, 0], materials: { body: first } }),
-          h(Box, { id: 'separate-second', pos: [9, 0, 0], materials: { body: second } }),
+          h(Box, { id: 'shared-second', position: [3, 0, 0], materials: { body: shared } }),
+          h(Box, { id: 'separate-first', position: [6, 0, 0], materials: { body: first } }),
+          h(Box, { id: 'separate-second', position: [9, 0, 0], materials: { body: second } }),
         ),
       ),
     )

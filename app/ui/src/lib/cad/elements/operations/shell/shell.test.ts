@@ -165,7 +165,7 @@ describe('shell evaluation', () => {
     const childMaterial = new Material('Ignored child', { color: '#22c55e' })
 
     function Child() {
-      return h('box', { size: [4, 6, 8], pos: [1, 0, 0] })
+      return h('box', { size: [4, 6, 8], position: [1, 0, 0] })
     }
 
     const parts = evaluateCad(
@@ -173,7 +173,7 @@ describe('shell evaluation', () => {
         () =>
           h(
             'shell',
-            { offsets: { outer: 1, inner: -1 }, pos: [10, 0, 0] },
+            { offsets: { outer: 1, inner: -1 }, position: [10, 0, 0] },
             h(Child, { id: 'child', materials: { body: childMaterial } }),
           ),
         { id: 'shell', materials: { inner: innerMaterial, outer: outerMaterial } },
@@ -305,7 +305,7 @@ describe('shell evaluation', () => {
               'shell',
               { offsets: { outer: 1 } },
               h('box', { size: [2, 2, 2] }),
-              h('box', { size: [2, 2, 2], pos: [3, 0, 0] }),
+              h('box', { size: [2, 2, 2], position: [3, 0, 0] }),
             ),
           { id: 'shell', materials: { outer: outerMaterial } },
         ),
@@ -319,7 +319,7 @@ describe('shell evaluation', () => {
             h(
               'shell',
               { offsets: { outer: 1 } },
-              h(Fragment, null, h('box', { size: [2, 2, 2] }), h('box', { size: [2, 2, 2], pos: [3, 0, 0] })),
+              h(Fragment, null, h('box', { size: [2, 2, 2] }), h('box', { size: [2, 2, 2], position: [3, 0, 0] })),
             ),
           { id: 'shell', materials: { outer: outerMaterial } },
         ),

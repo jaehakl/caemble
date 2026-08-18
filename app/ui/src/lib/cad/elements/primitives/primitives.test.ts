@@ -50,7 +50,7 @@ describe('CAD primitives', () => {
   })
 
   it('assigns deterministic semantic surfaces to basic primitives', () => {
-    const box = evaluate('box', { size: [1, 2, 3], rotate: { axis: [0, 1, 0], angle: 0.4 } })
+    const box = evaluate('box', { size: [1, 2, 3], rotation: [0, 0.4, 0] })
     const cylinder = evaluate('cylinder', { radius: 2, radius_2: 1, height: 4, segments: 8 })
     const startTip = evaluate('cylinder', { radius: 0, radius_2: 2, height: 4, segments: 8 })
     const endTip = evaluate('cylinder', { radius: 2, radius_2: 0, height: 4, segments: 8 })

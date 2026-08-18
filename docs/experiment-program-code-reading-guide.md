@@ -20,11 +20,11 @@ Measurement 조건, RecordedData를 저장한다.
 
 ## 책임 경계
 
-| 계층      | 책임 |
-| --------- | ---- |
-| UI | Experiment authoring, 결정론적 평가, candidate 생성, Material 동결, BuiltMeasurement 구성, live Solver Catalog 표시 |
-| API | source hash가 고정된 Experiment revision, prepared Measurement, 1회성 RecordedData 트랜잭션과 소유권 검증 |
-| CAE slave | 공용 SQLite snapshot 로드, 계약 검증과 UCUM 변환, Python `simulate()`와 Solver 실행, record streaming |
+| 계층      | 책임                                                                                                                |
+| --------- | ------------------------------------------------------------------------------------------------------------------- |
+| UI        | Experiment authoring, 결정론적 평가, candidate 생성, Material 동결, BuiltMeasurement 구성, live Solver Catalog 표시 |
+| API       | source hash가 고정된 Experiment revision, prepared Measurement, 1회성 RecordedData 트랜잭션과 소유권 검증           |
+| CAE slave | 공용 SQLite snapshot 로드, 계약 검증과 UCUM 변환, Python `simulate()`와 Solver 실행, record streaming               |
 
 별도 `contracts/cae` JSON이나 npm contract package는 없다. API와 CAE가 같은
 `caemble_catalog` SQLite release를 사용하고, 요청의 `contractDigest`로 일치 여부를 검사한다.
@@ -33,7 +33,7 @@ Measurement 조건, RecordedData를 저장한다.
 
 먼저 다음 순서로 읽는다.
 
-1. [`document.ts`](../app/ui/src/lib/cad/source/document.ts): document format 2, CAD API 6,
+1. [`document.ts`](../app/ui/src/lib/cad/source/document.ts): document format 2, CAD API 7,
    bundle format 5와 필수 `geometry.tsx`/`material.tsx`를 포함한 허용 파일 검증
 2. [`sourceAnalysis.ts`](../app/ui/src/lib/cad/source/sourceAnalysis.ts): import와 숨은 비결정성 정책
 3. [`evaluateDocument.ts`](../app/ui/src/lib/cad/execution/evaluateDocument.ts): 별도-origin runner의

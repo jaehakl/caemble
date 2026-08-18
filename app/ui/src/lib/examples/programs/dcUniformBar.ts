@@ -72,7 +72,7 @@ export default defineTask({
   geometry: ({ vars }) => (
     <Probe
       id="probe"
-      pos={[0, -10, 0]}
+      position={[0, -10, 0]}
       materials={{ body: Copper(vars.electricalConductivity as number) }}
     />
   ),

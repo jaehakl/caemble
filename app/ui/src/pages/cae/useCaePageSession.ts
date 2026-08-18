@@ -29,7 +29,7 @@ function validTabs(value: readonly WorkbenchTabId[]) {
 
 function starterDraft(): WorkbenchDraft {
   return {
-    version: 9,
+    version: 10,
     savedAt: Date.now(),
     experiment: {
       record: null,

@@ -1,6 +1,6 @@
 import type { CatalogSearchItem } from '@/api/catalog'
 import { cadElementCatalog } from '@/lib/cad'
-import { caembleProgramExamples, wheelAssemblyExample } from '@/lib/examples'
+import { basketballGoalExample, caembleProgramExamples, wheelAssemblyExample } from '@/lib/examples'
 import { docsSectionHref, type DocsSectionId } from './docsRoute'
 
 export type DocsKnowledgeChunk = Readonly<{
@@ -384,6 +384,145 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
     ].join('\n'),
   }),
   manualChunk({
+    id: 'reference-geometry-skeleton',
+    section: 'reference',
+    anchor: 'cad-reference-geometry-skeleton',
+    title: 'Geometry 저작 골격과 좌표계',
+    summary: 'CAD API v7 source의 최소 구조, 길이 단위와 오른손 좌표계를 먼저 고정합니다.',
+    keywords: ['CAD API v7', 'geometry.tsx', 'Geometry', 'coordinate', 'right-handed', 'lengthUnit', '좌표계'],
+    content: [
+      'CAD API v7 Geometry는 JSX를 반환하는 순수 함수 component입니다. `geometry.tsx`에는 재사용할 named `Geometry<Props>`를 두고, `experiment.tsx`의 `geometry` callback에서 호출합니다. 숫자로 된 길이는 모두 해당 scene의 `lengthUnit`으로 해석됩니다.',
+      '',
+      '```tsx',
+      '// geometry.tsx',
+      "import { type Geometry } from '@caemble/core'",
+      '',
+      'export const Bracket: Geometry<{ width: number }> = ({ width }) => (',
+      '  <union id="body">',
+      '    <box size={[width, 20, 4]} />',
+      '    <cylinder radius={4} height={20} position={[0, 0, 10]} />',
+      '  </union>',
+      ')',
+      '```',
+      '',
+      '좌표계는 오른손 좌표계입니다. `+X`, `+Y`, `+Z`와 회전의 양의 방향에는 오른손 법칙을 적용합니다. primitive의 기준축과 원점은 요소마다 다르므로 추측하지 말고 [Geometry Catalog](/docs?section=geometry)의 **Origin / surfaces**를 확인하세요. 예를 들어 기본 cylinder 축은 Z이고, box와 cylinder는 자신의 local origin을 중심으로 생성됩니다.',
+      '',
+      'component는 입력 props와 `vars`만으로 같은 tree를 만들어야 합니다. 시간, 난수, DOM, 네트워크나 변경 가능한 module 상태에 의존하면 같은 source와 Measurement를 재현할 수 없습니다.',
+    ].join('\n'),
+  }),
+  manualChunk({
+    id: 'reference-geometry-transforms',
+    section: 'reference',
+    anchor: 'cad-reference-geometry-transforms',
+    title: 'Transform: position, rotation, scale',
+    summary: 'canonical transform 이름, Euler 의미와 적용 순서를 예측 가능하게 사용합니다.',
+    keywords: ['position', 'rotation', 'scale', 'Euler', 'XYZ', 'radian', 'transform order', 'pos', 'rotate'],
+    content: [
+      '모든 intrinsic CAD element와 `Geometry` component 호출에는 같은 transform 계약을 사용합니다.',
+      '',
+      '| Prop | 형식 | 의미 |',
+      '| --- | --- | --- |',
+      '| `position` | `[x, y, z]` | parent 좌표계에서의 이동 |',
+      '| `rotation` | `[x, y, z]` | radian 단위의 intrinsic XYZ Euler, `THREE.Euler(x, y, z, "XYZ")`와 같은 의미 |',
+      '| `scale` | `[x, y, z]` | 축별 배율. 균일 배율은 세 값을 같게 작성 |',
+      '',
+      '한 node 안에서는 **scale → rotation → position** 순서로 적용됩니다. parent와 child transform은 tree 계층대로 합성됩니다. 각도는 degree가 아니라 radian이므로 `Math.PI / 2`처럼 작성하세요.',
+      '',
+      '```tsx',
+      '<cylinder',
+      '  id="arm"',
+      '  radius={2.5}',
+      '  height={200}',
+      '  position={[0, 100, 298]}',
+      '  rotation={[Math.PI / 2, 0, 0]}',
+      '/>',
+      '```',
+      '',
+      '`pos`와 `{ axis, angle }` 형태의 `rotate`는 v7 안에서 기존 source를 잠시 옮기기 위한 deprecated 호환 문법입니다. 새 코드는 `position`과 `rotation`만 사용하세요. 같은 node에서 canonical family와 deprecated family를 섞을 수 없으며 `translation` prop은 지원하지 않습니다.',
+    ].join('\n'),
+  }),
+  manualChunk({
+    id: 'reference-geometry-identity',
+    section: 'reference',
+    anchor: 'cad-reference-geometry-identity',
+    title: 'ID, group과 surface identity',
+    summary: '안정적인 solver target을 위해 component, primitive와 operation의 소유권을 구분합니다.',
+    keywords: ['id', 'identity', 'geometryGroup', 'surfaceGroup', 'surface-N', 'operation', 'Fragment'],
+    content: [
+      '`id`는 단순한 화면 label이 아니라 Geometry 결과의 identity입니다. custom `Geometry` component를 호출할 때는 `id`가 필수이고, 모든 intrinsic primitive와 operation에는 필요할 때 `id`를 줄 수 있습니다. Fragment(`<>...</>`)에는 `id`나 transform을 줄 수 없습니다.',
+      '',
+      '- primitive의 `id`는 그 primitive가 만든 part를 소유합니다.',
+      '- topology를 바꾸는 `union`, `subtract`, `intersect`, `shell` 같은 operation에 `id`가 있으면 그 operation의 최종 결과가 해당 identity를 소유합니다. 피연산자 ID가 Boolean 결과의 ID라고 가정하지 마세요.',
+      '- component의 `id`는 재사용되는 subtree의 namespace/root identity가 됩니다. 같은 parent 아래의 sibling ID는 서로 달라야 합니다.',
+      '- evaluator가 component 호출의 `id`를 이미 소비하므로 받은 `id`를 leaf intrinsic에 그대로 전달하지 마세요. child에 별도 local segment가 필요할 때만 intrinsic `id`를 부여합니다.',
+      '- `geometryGroup`에는 의도적으로 부여한 결과 ID만 넣고, 실행 전에 Viewer에서 실제 resolve 결과를 확인하세요.',
+      '- surface는 `<partId>/surface-N`으로 참조합니다. topology나 element parameter가 바뀌면 surface 번호도 달라질 수 있으므로 Viewer에서 다시 확인한 뒤 `surfaceGroup`을 갱신하세요.',
+      '',
+      '중간 조립용 Fragment에 억지로 identity를 만들기보다 named `Geometry` component로 추출하세요. 반대로 solver가 최종 Boolean body 하나만 필요하면 operation에 `id`를 주는 편이 소유권이 가장 분명합니다.',
+    ].join('\n'),
+  }),
+  manualChunk({
+    id: 'reference-geometry-elements',
+    section: 'reference',
+    anchor: 'cad-reference-geometry-elements',
+    title: 'Primitive 선택과 operation 규칙',
+    summary: '가장 단순한 primitive에서 시작하고 child cardinality와 순서 계약을 지킵니다.',
+    keywords: ['box', 'cylinder', 'sphere', 'fiber', 'array', 'shell', 'union', 'subtract', 'intersect', 'children'],
+    content: [
+      '표현할 수 있다면 `box`, `cylinder`, `sphere`부터 사용하세요. 곡선 단면·표면이 실제 요구사항일 때만 `curvedEdgeCylinder`, `curvedSurfaceSphere`, `fiber`를 선택하면 parameter와 mesh 비용을 줄일 수 있습니다. 각 prop의 type, 필수 여부, 기본값, 제약, 기준 원점, surface 의미와 실행 가능한 예제는 [Geometry Catalog](/docs?section=geometry)가 공식 원본입니다.',
+      '',
+      '| Operation | child 계약 | 핵심 규칙 |',
+      '| --- | --- | --- |',
+      '| `union` | 1개 이상 | 모든 child를 하나의 결과로 결합 |',
+      '| `subtract` | 2개 이상 | 첫 child가 base, 이후 child는 cutter |',
+      '| `intersect` | 2개 이상 | 모든 child의 공통 체적만 유지 |',
+      '| `shell` | 정확히 1개 | material role별 offset surface 생성 |',
+      '| `array` | 정확히 1개의 identified intrinsic 또는 `Geometry` child | `shape`, `period`, 선택적 `axes`와 canonical `inject`로 instance 생성 |',
+      '',
+      'Boolean child 순서는 source 계약의 일부입니다. ring은 큰 cylinder 하나로 근사하지 말고, 큰 cylinder에서 더 높고 작은 cylinder를 빼서 실제 annular solid를 만드세요. 0 두께, 음수 크기, NaN/Infinity, 퇴화한 축처럼 유효하지 않은 입력은 evaluator가 거부합니다.',
+      '',
+      'Material은 root에서 역할 map으로 주입하고 leaf에서 `body`로 remap합니다. 생략하면 parent map을 상속하고, 명시하면 교체하며, `materials={{}}`는 상속을 지웁니다. 자세한 선언과 sampling 계약은 [Material과 물성값](/docs?section=program#experiment-materials)을 참고하세요.',
+    ].join('\n'),
+  }),
+  manualChunk({
+    id: 'reference-basketball-goal',
+    section: 'reference',
+    anchor: 'cad-reference-basketball-goal',
+    title: `검증 예제: ${basketballGoalExample.title}`,
+    summary: '지지대, 수평 암, 백보드와 실제 annular rim을 canonical v7 문법으로 조립합니다.',
+    keywords: ['basketball', 'goal', 'hoop', 'pole', 'backboard', 'ring', 'verified example', '농구', '골대'],
+    collapsed: true,
+    content: [
+      basketballGoalExample.description,
+      '',
+      '이 예제는 repository의 source-policy·compile·evaluate 회귀 테스트 대상이므로 문서와 실제 문법이 함께 검증됩니다.',
+      '',
+      '```tsx',
+      basketballGoalExample.code.trim(),
+      '```',
+    ].join('\n'),
+  }),
+  manualChunk({
+    id: 'reference-v7-migration',
+    section: 'reference',
+    anchor: 'cad-reference-v7-migration',
+    title: 'CAD API v6에서 v7로 옮기기',
+    summary: '저장 artifact를 섞지 않고 source를 canonical transform과 identity 규칙으로 갱신합니다.',
+    keywords: ['migration', 'CAD API v6', 'CAD API v7', 'pos', 'rotate', 'translation', 'draft'],
+    content: [
+      'CAD API v7은 v6 persisted artifact를 실행하는 혼합 모드가 아닙니다. 개발 DB의 v6 Geometry version과 이에 의존하는 연구 데이터는 migration에서 정리되며, local v6 draft는 새 v7 Starter로 초기화됩니다. repository/package metadata와 사용자·namespace 정보는 유지됩니다.',
+      '',
+      'source를 수동으로 옮길 때는 다음 순서를 권장합니다.',
+      '',
+      '1. `pos={[x, y, z]}`를 `position={[x, y, z]}`로 바꿉니다.',
+      '2. axis-angle `rotate={{ axis, angle }}`를 같은 자세의 intrinsic XYZ `rotation`으로 바꾸고 Viewer에서 방향을 확인합니다. 임의의 axis-angle을 Euler component별로 그대로 복사하면 안 됩니다.',
+      '3. `translation`은 지원 prop이 아니므로 `position`으로 고칩니다.',
+      '4. 새 source에서는 deprecated와 canonical transform family가 한 node에 함께 남지 않았는지 확인합니다.',
+      '5. solver가 참조할 primitive/operation 결과에 의도적인 `id`를 주고 Boolean 결과의 group과 surface를 다시 확인합니다.',
+      '6. Workbench가 `Ready`가 된 뒤 새 revision에서 Candidate와 Measurement를 다시 만듭니다.',
+    ].join('\n'),
+  }),
+  manualChunk({
     id: 'reference-core-api',
     section: 'reference',
     anchor: 'cad-reference-core-api',
@@ -519,26 +658,54 @@ export const catalogDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze
       summary: entry.summary,
       item: entry.tag,
       href: docsSectionHref('geometry', entry.tag),
-      keywords: Object.freeze([entry.tag, entry.category, entry.syntax]),
-      content: [`Category: ${entry.category}`, `Syntax: ${entry.syntax}`, entry.summary].join('\n'),
+      keywords: Object.freeze([
+        entry.tag,
+        entry.category,
+        entry.syntax,
+        ...entry.keywords,
+        ...entry.properties.flatMap(({ name, type }) => [name, type]),
+      ]),
+      content: [
+        `Category: ${entry.category}`,
+        `Syntax: ${entry.syntax}`,
+        `Summary: ${entry.summary}`,
+        `Origin: ${entry.origin}`,
+        `Children (${entry.children.count}): ${entry.children.description}`,
+        '',
+        'Properties:',
+        ...entry.properties.map(
+          (property) =>
+            `- ${property.name}: ${property.type}; ${property.required ? 'required' : 'optional'}${'default' in property && property.default !== undefined ? `; default ${property.default}` : ''}. ${property.description}`,
+        ),
+        '',
+        'Surfaces:',
+        ...(entry.surfaces.length ? entry.surfaces.map((surface) => `- ${surface}`) : ['- No fixed surface contract.']),
+        '',
+        'Example:',
+        '```tsx',
+        entry.example,
+        '```',
+      ].join('\n'),
     }),
   ),
 ])
 
 export function catalogSearchKnowledge(items: readonly CatalogSearchItem[]): readonly DocsKnowledgeChunk[] {
-  return Object.freeze(items.map((item) => {
-    const section = item.kind === 'quantityKind' ? 'quantity-kinds' : item.kind === 'solver' ? 'solvers' : 'materials'
-    return Object.freeze({
-      id: `${item.kind}:${item.key}`,
-      section,
-      title: item.title,
-      summary: item.subtitle,
-      item: item.key,
-      href: docsSectionHref(section, item.key),
-      keywords: Object.freeze([item.kind, item.key, item.title, item.subtitle]),
-      content: item.subtitle,
-    })
-  }))
+  return Object.freeze(
+    items.map((item) => {
+      const section = item.kind === 'quantityKind' ? 'quantity-kinds' : item.kind === 'solver' ? 'solvers' : 'materials'
+      return Object.freeze({
+        id: `${item.kind}:${item.key}`,
+        section,
+        title: item.title,
+        summary: item.subtitle,
+        item: item.key,
+        href: docsSectionHref(section, item.key),
+        keywords: Object.freeze([item.kind, item.key, item.title, item.subtitle]),
+        content: item.subtitle,
+      })
+    }),
+  )
 }
 
 export function getDocsKnowledge(): readonly DocsKnowledgeChunk[] {

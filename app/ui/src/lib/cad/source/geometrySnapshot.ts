@@ -40,7 +40,7 @@ export type GeometrySnapshotModule = Readonly<{
   geometryVersionId: number
   coordinate: GeometryCoordinate
   moduleFormatVersion: typeof GEOMETRY_MODULE_FORMAT_VERSION
-  cadApiVersion: 6
+  cadApiVersion: 7
   description: string | null
   source: string
   sourceHash: string
@@ -135,8 +135,8 @@ function assertModule(value: unknown, index: number): asserts value is GeometryS
   )
   assertVersionId(value.geometryVersionId, `${path}.geometryVersionId`)
   assertGeometryCoordinate(value.coordinate, `${path}.coordinate`)
-  if (value.moduleFormatVersion !== GEOMETRY_MODULE_FORMAT_VERSION || value.cadApiVersion !== 6) {
-    throw new CadModelError(`${path} must use Geometry module format version 4 and CAD API version 6.`)
+  if (value.moduleFormatVersion !== GEOMETRY_MODULE_FORMAT_VERSION || value.cadApiVersion !== 7) {
+    throw new CadModelError(`${path} must use Geometry module format version 4 and CAD API version 7.`)
   }
   if (value.description !== null && typeof value.description !== 'string') {
     throw new CadModelError(`${path}.description must be text or null.`)

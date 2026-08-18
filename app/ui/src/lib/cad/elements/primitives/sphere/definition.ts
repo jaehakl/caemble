@@ -1,17 +1,30 @@
-import type { Rotation, Vec3 } from '../../../model/types'
+import type { IntrinsicGeometryAttributes } from '../../../model/structure'
 import type { CadElementManifest } from '../../../evaluation/types'
 
 export type SphereAttributes = Readonly<{
   radius: number
   segments?: number
-  pos?: Vec3
-  rotate?: Rotation
-  scale?: Vec3
-}>
+}> &
+  IntrinsicGeometryAttributes
 
 export const sphereManifest = {
   tag: 'sphere',
   category: 'primitive',
-  syntax: '<sphere radius={r} segments={32} pos={[x,y,z]} />',
+  syntax: '<sphere radius={r} segments={32} />',
   summary: '원점 중심의 구를 생성합니다.',
+  keywords: ['sphere', 'ball', '구', '구체'],
+  properties: [
+    { name: 'radius', type: 'number', required: true, description: '유한한 양수 구 반지름입니다.' },
+    {
+      name: 'segments',
+      type: 'number',
+      required: false,
+      default: '32',
+      description: '표면 분할 해상도이며 4 이상의 안전한 정수여야 합니다.',
+    },
+  ],
+  children: { count: 'none', description: '자식을 받지 않는 primitive입니다.' },
+  origin: '구의 중심이 원점에 있습니다.',
+  surfaces: ['Outer'],
+  example: '<sphere id="ball" radius={12} position={[0, 0, 12]} />',
 } as const satisfies CadElementManifest<'sphere'>

@@ -19,7 +19,7 @@ async function published(): Promise<GeometrySnapshotModule> {
     geometryVersionId: 1,
     coordinate: exact,
     moduleFormatVersion: 4 as const,
-    cadApiVersion: 6 as const,
+    cadApiVersion: 7 as const,
     description: null,
     source,
     sourceHash,

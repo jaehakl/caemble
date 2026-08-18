@@ -61,7 +61,7 @@ describe('curved edge cylinder geometry', () => {
     }
 
     const [translated] = evaluateCad(
-      h(CurvedCylinder, { id: 'cylinder', pos: [3, 0, 0], materials: { body: material } }),
+      h(CurvedCylinder, { id: 'cylinder', position: [3, 0, 0], materials: { body: material } }),
     )
     const [combined] = evaluateCad(
       h(
@@ -70,7 +70,7 @@ describe('curved edge cylinder geometry', () => {
             'union',
             null,
             h(CurvedCylinder, { id: 'first', materials: { body: material } }),
-            h(CurvedCylinder, { id: 'second', pos: [1, 0, 0], materials: { body: material } }),
+            h(CurvedCylinder, { id: 'second', position: [1, 0, 0], materials: { body: material } }),
           ),
         { id: 'combined' },
       ),

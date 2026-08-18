@@ -1,7 +1,7 @@
 export { evaluateCad, evaluateCadScene } from './evaluation/evaluator'
 export { setGeometryAuthoringGraph } from './compiler/geometryTypeEnvironment'
 export type { GeometryTypeGraph } from './compiler/geometryTypes'
-export { cadElementCatalog } from './catalog'
+export { cadAuthoringContract, cadElementCatalog } from './catalog'
 export { applyCadSceneGroups } from './evaluation/groups'
 export { Fragment, h } from './evaluation/jsx'
 export type {
@@ -11,6 +11,10 @@ export type {
   CadScenePart,
   CadSceneSurface,
   CadSceneTreeNode,
+  CadAuthoringContract,
+  CadElementChildrenManifest,
+  CadElementManifest,
+  CadElementPropertyManifest,
 } from './evaluation/types'
 export { CadModelError, isFloatDType, Mat, Material } from './model/core'
 export { defineTask, experiment, ExperimentDefinition, TaskDefinition } from './model/v5'
@@ -39,10 +43,14 @@ export type {
   ExperimentParameter,
   ExperimentParameters,
   ExperimentTarget,
+  CanonicalGeometryTransformAttributes,
   Geometry,
   GeometryAttributes,
+  GeometryTransformAttributes,
   IntegerDataDType,
+  IntrinsicGeometryAttributes,
   LegacyRecordedDataTensor,
+  LegacyGeometryTransformAttributes,
   MaterialDataValueDescriptor,
   MaterialQuantitySeries,
   MaterialSampledRelation,

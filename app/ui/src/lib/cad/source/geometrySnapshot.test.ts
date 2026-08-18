@@ -25,7 +25,7 @@ async function module(
     geometryVersionId: id,
     coordinate,
     moduleFormatVersion: 4 as const,
-    cadApiVersion: 6 as const,
+    cadApiVersion: 7 as const,
     description: null,
     source,
     sourceHash,
@@ -139,7 +139,7 @@ describe('Geometry snapshot v2', () => {
       coordinate: rootCoordinate,
       sourceHash,
       moduleFormatVersion: 4,
-      cadApiVersion: 6,
+      cadApiVersion: 7,
       imports: [
         { exportName: 'Part', alias: 'Child', geometryVersionId: 1, coordinate: leafCoordinate, moduleHash: hash },
       ],
@@ -148,7 +148,7 @@ describe('Geometry snapshot v2', () => {
       coordinate: rootCoordinate,
       sourceHash,
       moduleFormatVersion: 4,
-      cadApiVersion: 6,
+      cadApiVersion: 7,
       imports: [
         { exportName: 'Part', alias: 'Other', geometryVersionId: 999, coordinate: leafCoordinate, moduleHash: hash },
       ],

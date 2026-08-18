@@ -141,6 +141,28 @@ def test_module_hash_uses_named_import_provenance_but_not_database_ids():
         digest,
         [{**imported, "alias": "Other"}],
     )
+    canonical_v7 = json.dumps(
+        {
+            "schemaVersion": 2,
+            "moduleFormatVersion": 4,
+            "cadApiVersion": 7,
+            "coordinate": coordinate,
+            "sourceHash": digest,
+            "imports": [
+                {
+                    "exportName": "Part",
+                    "alias": "Child",
+                    "coordinate": imported["coordinate"],
+                    "moduleHash": imported["moduleHash"],
+                }
+            ],
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    assert module_hash(coordinate, digest, [imported]) == hashlib.sha256(
+        canonical_v7.encode("utf-8")
+    ).hexdigest()
 
 
 @pytest.mark.asyncio
@@ -231,14 +253,14 @@ async def test_publish_named_multi_export_and_resolve_snapshot_v2(client, db_ses
     assert step["sourceHash"] == source_hash(step["source"])
     assert step["moduleHash"] == module_hash(step["coordinate"], step["sourceHash"], [])
     assert version["moduleFormatVersion"] == 4
-    assert version["cadApiVersion"] == 6
+    assert version["cadApiVersion"] == 7
 
     resolved = await client.get(f"/geometry/versions/{version['id']}/resolve", headers=auth_headers(owner))
     assert resolved.status_code == 200, resolved.text
     assert resolved.json()["schemaVersion"] == 2
     assert resolved.json()["root"]["exports"] == ["Assembly", "Preview"]
     assert resolved.json()["modules"][0]["moduleFormatVersion"] == 4
-    assert resolved.json()["modules"][0]["cadApiVersion"] == 6
+    assert resolved.json()["modules"][0]["cadApiVersion"] == 7
 
 
 @pytest.mark.asyncio

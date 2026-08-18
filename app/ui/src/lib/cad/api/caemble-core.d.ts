@@ -1,9 +1,27 @@
-// @caemble/core declaration version: 0.2.0
+// @caemble/core declaration version: 0.3.0
 export type Tensor = number | readonly Tensor[]
 export type Vars = Readonly<Record<string, Tensor>>
 export type Vec3 = readonly [number, number, number]
 export type CartesianBasis = readonly [Vec3, Vec3, Vec3]
 export type Rotation = Readonly<{ axis: Vec3; angle: number }>
+export type CanonicalGeometryTransformAttributes = Readonly<{
+  position?: Vec3
+  rotation?: Vec3
+  pos?: never
+  rotate?: never
+  scale?: Vec3
+}>
+export type LegacyGeometryTransformAttributes = Readonly<{
+  position?: never
+  rotation?: never
+  /** @deprecated Use position. */
+  pos?: Vec3
+  /** @deprecated Use rotation with XYZ Euler angles in radians. */
+  rotate?: Rotation
+  scale?: Vec3
+}>
+export type GeometryTransformAttributes = CanonicalGeometryTransformAttributes | LegacyGeometryTransformAttributes
+export type IntrinsicGeometryAttributes = Readonly<{ id?: string }> & GeometryTransformAttributes
 export type GeometryGroupMap = Readonly<Record<string, readonly string[]>>
 export type VarsSchemaEntry = Readonly<{
   min: Tensor
@@ -121,26 +139,20 @@ export type ResolvedDataSchema = RecordedDataSpec & Readonly<{ tensorOrder: numb
 
 export type BoxAttributes = Readonly<{
   size: Vec3
-  pos?: Vec3
-  rotate?: Rotation
-  scale?: Vec3
-}>
+}> &
+  IntrinsicGeometryAttributes
 export type BooleanAttributes = Readonly<{
-  pos?: Vec3
-  rotate?: Rotation
-  scale?: Vec3
   children?: unknown
-}>
+}> &
+  IntrinsicGeometryAttributes
 
 export type CylinderAttributes = Readonly<{
   radius: number
   radius_2?: number
   height: number
   segments?: number
-  pos?: Vec3
-  rotate?: Rotation
-  scale?: Vec3
-}>
+}> &
+  IntrinsicGeometryAttributes
 
 export type CurvedEdgeCylinderFourierMode = Readonly<{
   amplitude: number
@@ -156,10 +168,8 @@ export type CurvedEdgeCylinderAttributes = Readonly<{
   verticalCurve: CurvedEdgeCylinderTaylorCurve
   azimuthalSegments?: number
   verticalSegments?: number
-  pos?: Vec3
-  rotate?: Rotation
-  scale?: Vec3
-}>
+}> &
+  IntrinsicGeometryAttributes
 
 export type CurvedSurfaceSphereFourierMode = Readonly<{
   amplitude: number
@@ -170,18 +180,14 @@ export type CurvedSurfaceSphereAttributes = Readonly<{
   polarCurve: readonly CurvedSurfaceSphereFourierMode[]
   azimuthalSegments?: number
   polarSegments?: number
-  pos?: Vec3
-  rotate?: Rotation
-  scale?: Vec3
-}>
+}> &
+  IntrinsicGeometryAttributes
 
 export type SphereAttributes = Readonly<{
   radius: number
   segments?: number
-  pos?: Vec3
-  rotate?: Rotation
-  scale?: Vec3
-}>
+}> &
+  IntrinsicGeometryAttributes
 
 export type FiberFourierMode = Readonly<{ amplitude: number; phase: number }>
 export type FiberHelix = Readonly<{
@@ -200,40 +206,32 @@ export type FiberAttributes = Readonly<{
   up?: Vec3
   pathSegments?: number
   radialSegments?: number
-  pos?: Vec3
-  rotate?: Rotation
-  scale?: Vec3
-}>
+}> &
+  IntrinsicGeometryAttributes
 
 export type ArrayAttributes = Readonly<{
   shape: readonly [number, number, number]
   period: Vec3
   axes?: Readonly<{ x: Vec3; y: Vec3; z: Vec3 }>
   inject?: Readonly<Record<string, Tensor | Readonly<{ axis: Tensor; angle: Tensor }>>>
-  pos?: Vec3
-  rotate?: Rotation
-  scale?: Vec3
   children?: unknown
-}>
+}> &
+  IntrinsicGeometryAttributes
 
 export type ShellAttributes = Readonly<{
   offsets: Readonly<Record<string, number>>
-  pos?: Vec3
-  rotate?: Rotation
-  scale?: Vec3
   children?: unknown
-}>
+}> &
+  IntrinsicGeometryAttributes
 
 export type GeometryAttributes<P extends object = object> = Readonly<
   P & {
     id: string
     materials?: Readonly<Record<string, Material | undefined>>
-    pos?: Vec3
-    rotate?: Rotation
-    scale?: Vec3
     children?: unknown
   }
->
+> &
+  GeometryTransformAttributes
 export type Geometry<P extends object = object> = (props: GeometryAttributes<P>) => unknown
 
 // <generated:material-catalog-types>
@@ -419,7 +417,7 @@ export class ExperimentDefinition<
   Recorded extends Readonly<Record<string, RecordedDataSpec>> = Readonly<Record<string, RecordedDataSpec>>,
 > {
   constructor(options: ExperimentDefinitionOptions<Schema, Recorded>)
-  readonly apiVersion: 6
+  readonly apiVersion: 7
   readonly documentType: 'experiment'
   readonly varsSchema: Schema
   readonly lengthUnit: UcumUnit
@@ -430,7 +428,7 @@ export class ExperimentDefinition<
 
 export class TaskDefinition<Config = unknown> {
   constructor(options: TaskDefinitionOptions<Config>)
-  readonly apiVersion: 6
+  readonly apiVersion: 7
   readonly documentType: 'task'
   readonly kernel: KernelIdentity
   readonly lengthUnit?: UcumUnit

@@ -23,12 +23,12 @@ const syntheticCatalog = {
   warnings: [],
 } as const
 const compiledExperiment: CompiledCadDocument = {
-  apiVersion: 6,
+  apiVersion: 7,
   compilerVersion: CAD_COMPILER_VERSION,
   sourceHash,
   sources: {
     'experiment.tsx': {
-      apiVersion: 6,
+      apiVersion: 7,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'experiment.tsx',
       code: 'module.exports.default = {}',
@@ -44,7 +44,7 @@ const compiledGeometry = {
     entryImports: [{ exportName: 'Box', alias: 'Box', coordinate: geometryCoordinate, moduleHash: 'd'.repeat(64) }],
     modules: {
       [geometryCoordinate]: {
-        apiVersion: 6,
+        apiVersion: 7,
         compilerVersion: CAD_COMPILER_VERSION,
         entryFile: geometryCoordinate,
         code: `exports.Box = ({ id = 'preview' }) => h('box', { id, size: [1, 1, 1] })`,
@@ -81,26 +81,44 @@ describe('isolated runner protocol v5', () => {
     expect(() => assertRunnerOperationEnvelope({ type: 'inspect', nonce, request: inspect })).not.toThrow()
     expect(() =>
       assertRunnerOperationStartedEnvelope({
-        type: 'operation-started', operation: 'inspect', nonce,
-        requestId: inspect.requestId, revision: inspect.revision, documentType: 'experiment',
+        type: 'operation-started',
+        operation: 'inspect',
+        nonce,
+        requestId: inspect.requestId,
+        revision: inspect.revision,
+        documentType: 'experiment',
       }),
     ).not.toThrow()
     expect(() =>
       assertRunnerOperationResultEnvelope({
-        type: 'operation-result', operation: 'inspect', nonce,
+        type: 'operation-result',
+        operation: 'inspect',
+        nonce,
         response: {
-          type: 'inspection-success', requestId: inspect.requestId, revision: inspect.revision,
-          documentType: 'experiment', sourceHash, varsSchema: { width: { min: 1, max: 3 } },
+          type: 'inspection-success',
+          requestId: inspect.requestId,
+          revision: inspect.revision,
+          documentType: 'experiment',
+          sourceHash,
+          varsSchema: { width: { min: 1, max: 3 } },
         },
       }),
     ).not.toThrow()
-    expect(() => assertRunnerCancelOperationEnvelope({ type: 'cancel-operation', nonce, requestId: inspect.requestId })).not.toThrow()
+    expect(() =>
+      assertRunnerCancelOperationEnvelope({ type: 'cancel-operation', nonce, requestId: inspect.requestId }),
+    ).not.toThrow()
   })
 
   it('rejects incomplete vars, extra fields, and mismatched operations', () => {
     const evaluate = {
-      type: 'evaluate', requestId: 'evaluate-1', revision: 2, compiledDocument: compiledExperiment,
-      catalog: syntheticCatalog, pythonSource: 'python', vars: {}, elevated: true,
+      type: 'evaluate',
+      requestId: 'evaluate-1',
+      revision: 2,
+      compiledDocument: compiledExperiment,
+      catalog: syntheticCatalog,
+      pythonSource: 'python',
+      vars: {},
+      elevated: true,
     }
     expect(() => assertCadEvaluationRequest(evaluate)).toThrow('request.elevated is not allowed')
     const { elevated, ...allowed } = evaluate
@@ -108,10 +126,16 @@ describe('isolated runner protocol v5', () => {
     expect(() => assertCadEvaluationRequest({ ...allowed, vars: undefined })).toThrow('request.vars')
     expect(() =>
       assertRunnerOperationEnvelope({
-        type: 'inspect', nonce,
+        type: 'inspect',
+        nonce,
         request: {
-          type: 'evaluate', requestId: 'evaluate-1', revision: 2, compiledDocument: compiledExperiment,
-          catalog: syntheticCatalog, pythonSource: 'x', vars: {},
+          type: 'evaluate',
+          requestId: 'evaluate-1',
+          revision: 2,
+          compiledDocument: compiledExperiment,
+          catalog: syntheticCatalog,
+          pythonSource: 'x',
+          vars: {},
         },
       }),
     ).toThrow('does not match')
@@ -120,18 +144,28 @@ describe('isolated runner protocol v5', () => {
   it('requires a valid catalog slice for inspect and evaluate requests', () => {
     expect(() =>
       assertCadInspectionRequest({
-        type: 'inspect', requestId: 'inspect-1', revision: 1, compiledDocument: compiledExperiment,
+        type: 'inspect',
+        requestId: 'inspect-1',
+        revision: 1,
+        compiledDocument: compiledExperiment,
       }),
     ).toThrow()
     expect(() =>
       assertCadEvaluationRequest({
-        type: 'evaluate', requestId: 'evaluate-1', revision: 2, compiledDocument: compiledExperiment,
-        pythonSource: 'python', vars: {},
+        type: 'evaluate',
+        requestId: 'evaluate-1',
+        revision: 2,
+        compiledDocument: compiledExperiment,
+        pythonSource: 'python',
+        vars: {},
       }),
     ).toThrow()
     expect(() =>
       assertCadInspectionRequest({
-        type: 'inspect', requestId: 'inspect-1', revision: 1, compiledDocument: compiledExperiment,
+        type: 'inspect',
+        requestId: 'inspect-1',
+        revision: 1,
+        compiledDocument: compiledExperiment,
         catalog: { ...syntheticCatalog, schemaVersion: 2 },
       }),
     ).toThrow()
@@ -139,8 +173,13 @@ describe('isolated runner protocol v5', () => {
 
   it('keeps Geometry preview catalog-free', () => {
     const preview = {
-      type: 'preview-geometry', requestId: 'preview-1', revision: 3, compiledDocument: compiledGeometry,
-      coordinate: geometryCoordinate, exportName: 'Box', lengthUnit: 'mm',
+      type: 'preview-geometry',
+      requestId: 'preview-1',
+      revision: 3,
+      compiledDocument: compiledGeometry,
+      coordinate: geometryCoordinate,
+      exportName: 'Box',
+      lengthUnit: 'mm',
     }
     expect(() => assertCadGeometryPreviewRequest(preview)).not.toThrow()
     expect(() => assertCadGeometryPreviewRequest({ ...preview, catalog: syntheticCatalog })).toThrow(

@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import { format } from 'prettier'
+import ts from 'typescript'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const checkOnly = process.argv.includes('--check')
@@ -72,6 +73,31 @@ async function emit(relativePath, content) {
   if (!checkOnly) await writeFile(outputPath, content, 'utf8')
 }
 
+function declaredAttributeProperties(source, typeName, fileName) {
+  const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const properties = new Set()
+  const collect = (node) => {
+    if (ts.isIntersectionTypeNode(node)) {
+      node.types.forEach(collect)
+      return
+    }
+    if (ts.isTypeReferenceNode(node) && node.typeName.getText(sourceFile) === 'Readonly') {
+      node.typeArguments?.forEach(collect)
+      return
+    }
+    if (!ts.isTypeLiteralNode(node)) return
+    node.members.forEach((member) => {
+      if (!ts.isPropertySignature(member) || !member.name) return
+      const name = ts.isIdentifier(member.name) || ts.isStringLiteral(member.name) ? member.name.text : undefined
+      if (name) properties.add(name)
+    })
+  }
+  sourceFile.statements.forEach((statement) => {
+    if (ts.isTypeAliasDeclaration(statement) && statement.name.text === typeName) collect(statement.type)
+  })
+  return [...properties]
+}
+
 async function validateElementManifest() {
   if (elementManifest.version !== 2 || !Array.isArray(elementManifest.elements)) {
     throw new Error('src/lib/cad/elements/manifest.json must use element manifest format version 2.')
@@ -95,6 +121,65 @@ async function validateElementManifest() {
     if (!runtime.includes(`export const ${element.definitionExport}`)) {
       throw new Error(`${element.runtimeModule} does not export ${element.definitionExport}.`)
     }
+
+    const definitionModule = await loadBundledModule(definitionPath)
+    const manifest = definitionModule[element.manifestExport]
+    if (
+      !manifest ||
+      manifest.tag !== element.tag ||
+      !['primitive', 'operation'].includes(manifest.category) ||
+      !manifest.syntax?.trim() ||
+      !manifest.summary?.trim() ||
+      !Array.isArray(manifest.keywords) ||
+      manifest.keywords.length === 0 ||
+      manifest.keywords.some((keyword) => typeof keyword !== 'string' || !keyword.trim()) ||
+      !Array.isArray(manifest.properties) ||
+      !manifest.children ||
+      !['none', 'one', 'many'].includes(manifest.children.count) ||
+      typeof manifest.children.description !== 'string' ||
+      !manifest.children.description.trim() ||
+      typeof manifest.origin !== 'string' ||
+      !manifest.origin.trim() ||
+      !Array.isArray(manifest.surfaces) ||
+      manifest.surfaces.length === 0 ||
+      manifest.surfaces.some((surface) => typeof surface !== 'string' || !surface.trim()) ||
+      typeof manifest.example !== 'string' ||
+      !manifest.example.includes(`<${element.tag}`)
+    ) {
+      throw new Error(`${element.definitionModule} has incomplete CAD authoring metadata.`)
+    }
+
+    const commonProperties = new Set(['id', 'position', 'rotation', 'scale', 'pos', 'rotate'])
+    const documentedProperties = manifest.properties.map((property) => property.name)
+    if (
+      new Set(documentedProperties).size !== documentedProperties.length ||
+      manifest.properties.some(
+        (property) =>
+          !property ||
+          typeof property.name !== 'string' ||
+          !property.name.trim() ||
+          commonProperties.has(property.name) ||
+          typeof property.type !== 'string' ||
+          !property.type.trim() ||
+          typeof property.required !== 'boolean' ||
+          (property.default !== undefined && typeof property.default !== 'string') ||
+          typeof property.description !== 'string' ||
+          !property.description.trim(),
+      )
+    ) {
+      throw new Error(`${element.definitionModule} has invalid or duplicated property metadata.`)
+    }
+    const declaredProperties = declaredAttributeProperties(definition, element.attributes, definitionPath).filter(
+      (property) => property !== 'children',
+    )
+    if (
+      declaredProperties.length !== documentedProperties.length ||
+      declaredProperties.some((property) => !documentedProperties.includes(property))
+    ) {
+      throw new Error(
+        `${element.definitionModule} property metadata must exactly match ${element.attributes}: declared [${declaredProperties.join(', ')}], documented [${documentedProperties.join(', ')}].`,
+      )
+    }
   }
 }
 
@@ -104,7 +189,7 @@ function generatedElementRegistry() {
     elements,
     'definitionModule',
     'manifestExport',
-  )}\n${groupedImports(elements, 'runtimeModule', 'definitionExport')}\nimport type { CadElementDefinition } from '../evaluation/types'\n\nexport const cadElementCatalog = [\n${elements.map((element) => `  ${element.manifestExport},`).join('\n')}\n] as const\n\nexport const cadElementDefinitions = [\n${elements.map((element) => `  ${element.definitionExport},`).join('\n')}\n] as const satisfies readonly CadElementDefinition[]\n`
+  )}\n${groupedImports(elements, 'runtimeModule', 'definitionExport')}\nimport { cadAuthoringContract } from './authoringContract'\nimport type { CadElementDefinition } from '../evaluation/types'\n\nexport { cadAuthoringContract }\n\nexport const cadElementCatalog = [\n${elements.map((element) => `  ${element.manifestExport},`).join('\n')}\n] as const\n\nexport const cadElementDefinitions = [\n${elements.map((element) => `  ${element.definitionExport},`).join('\n')}\n] as const satisfies readonly CadElementDefinition[]\n`
 }
 
 function generatedJsxDeclaration() {

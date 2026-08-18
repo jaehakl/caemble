@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import coreDeclarations from '../api/caemble-core.d.ts?raw'
 import jsxDeclarations from '../api/cad-jsx.d.ts?raw'
 import monacoSetupSource from '../compiler/monacoSetup.ts?raw'
-import { cadElementCatalog } from '../catalog'
+import { cadAuthoringContract, cadElementCatalog } from '../catalog'
 import * as cadFacade from '../index'
 import * as quantityKindFacade from '../../quantitykind'
 import { cadElementDefinitions, createCadElementRegistry } from './registry'
@@ -32,6 +32,42 @@ describe('CAD registry contracts', () => {
     expect(catalogTags).toEqual(registryTags)
     expect(jsxTags).toEqual(registryTags)
     expect(new Set(cadElementCatalog.map((manifest) => manifest.category))).toEqual(new Set(['primitive', 'operation']))
+  })
+
+  it('keeps complete element metadata separate from the shared identity and transform contract', () => {
+    expect(cadAuthoringContract).toMatchObject({
+      apiVersion: 7,
+      identity: { name: 'id', pathExample: 'goal.pole' },
+      transforms: { applicationOrder: ['scale', 'rotation', 'position'] },
+    })
+    const commonProperties = new Set(['id', 'position', 'rotation', 'scale', 'pos', 'rotate'])
+    cadElementCatalog.forEach((manifest) => {
+      expect(manifest.keywords.length).toBeGreaterThan(0)
+      expect(manifest.children.description).not.toBe('')
+      expect(manifest.origin).not.toBe('')
+      expect(manifest.surfaces.length).toBeGreaterThan(0)
+      expect(manifest.example).toContain(`<${manifest.tag}`)
+      expect(manifest.properties.every((property) => !commonProperties.has(property.name))).toBe(true)
+    })
+
+    const defaults = Object.fromEntries(
+      cadElementCatalog.flatMap((manifest) =>
+        manifest.properties.flatMap((property) =>
+          'default' in property && property.default !== undefined
+            ? [[`${manifest.tag}.${property.name}`, property.default]]
+            : [],
+        ),
+      ),
+    )
+    expect(defaults).toMatchObject({
+      'curvedEdgeCylinder.azimuthalSegments': '64',
+      'curvedEdgeCylinder.verticalSegments': '32',
+      'curvedSurfaceSphere.azimuthalSegments': '64',
+      'curvedSurfaceSphere.polarSegments': '32',
+      'fiber.envelopePower': '2',
+      'fiber.pathSegments': '128',
+      'fiber.radialSegments': '12',
+    })
   })
 
   it('uses shared declaration files for public core types and Monaco', () => {

@@ -98,7 +98,7 @@ def module_hash(coordinate: str, source_digest: str, imports: list[dict[str, str
         {
             "schemaVersion": 2,
             "moduleFormatVersion": 4,
-            "cadApiVersion": 6,
+            "cadApiVersion": 7,
             "coordinate": coordinate,
             "sourceHash": source_digest,
             "imports": [

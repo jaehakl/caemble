@@ -20,7 +20,15 @@ import type {
 
 export type { Rotation, Tensor, Vars, Vec3 } from './types'
 export type { VarsSchemaEntry } from './vars'
-export type { Geometry, GeometryAttributes, GeometryGroupMap } from './structure'
+export type {
+  CanonicalGeometryTransformAttributes,
+  Geometry,
+  GeometryAttributes,
+  GeometryGroupMap,
+  GeometryTransformAttributes,
+  IntrinsicGeometryAttributes,
+  LegacyGeometryTransformAttributes,
+} from './structure'
 export { Material } from './material'
 export { CadModelError } from './errors'
 export { Mat } from './descriptor'

@@ -52,9 +52,16 @@ catalog다. UI에는 전체 catalog나 Solver manifest 사본을 두지 않는�
 
 The CAD generator reads the element registry and
 `src/lib/cad/api/authoring-manifest.json`. It generates the element
-catalog/registry, JSX intrinsic types, and the pinned CAD authoring API v6.
+catalog/registry, JSX intrinsic types, and the pinned CAD authoring API v7.
 Commit all generated changes. CI should run `npm run check:generated`; a
 non-empty regeneration diff is an error.
+
+각 element definition의 manifest가 tag별 keyword, prop type/필수값/default/제약,
+child 수, 기준 원점, surface와 예제의 단일 원본이다. 공통 `id`와 transform 계약은
+`cadAuthoringContract`에 한 번만 둔다. Geometry Catalog와 AI Helper의 5 KiB 이하
+영문 grammar core는 이 registry를 소비하고, 사람이 읽는 한국어 설명은 `/docs`의
+API/CAD Reference가 보완한다. 문법을 바꿀 때 declaration, Catalog, AI prompt에 같은
+내용을 따로 복사하지 말고 definition/authoring manifest를 수정한 뒤 재생성한다.
 
 ## Experiment source bundle
 

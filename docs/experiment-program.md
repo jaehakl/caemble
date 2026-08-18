@@ -20,7 +20,7 @@
 ```
 
 `experiment.tsx`, `geometry.tsx`, `material.tsx`, `simulate.py`, 하나 이상의 Task 파일이 필수다. CAD document format은 2,
-CAD authoring API는 6, Geometry module format은 4, Simulation manifest는 5, Python simulation API는 3이다. 구형
+CAD authoring API는 7, Geometry module format은 4, Simulation manifest는 5, Python simulation API는 3이다. 구형
 Structure document와 `{ sample, setup }` 실행 payload는 받지 않는다.
 
 ```text
@@ -59,7 +59,9 @@ Published Geometry를 사용할 때도 이 파일의 exact import가 그래프�
 ```tsx
 import { type Geometry, type Vec3 } from "@caemble/core";
 
-export const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />;
+export const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => (
+  <box size={size} />
+);
 
 export const Probe: Geometry = () => <box size={[2, 2, 2]} />;
 
@@ -77,6 +79,18 @@ export const WheelParts: Geometry = ({ materials }) => (
 Geometry의 `materials`는 배열이 아니라 역할 이름을 key로 쓰는 map이다. primitive는 `body` 역할을
 암묵적으로 소비한다. child에서 `materials`를 생략하면 현재 map 전체를 상속하고, 명시하면 map을
 교체하며 `{}`는 상속을 지운다. 중간 component는 역할을 바꾸어 전달할 수 있다.
+
+CAD API v7의 canonical transform은 `position`, `rotation`, `scale`이다. 좌표계와 회전은 오른손
+규칙을 따르고 `rotation={[x, y, z]}`는 radian 단위 intrinsic XYZ Euler다. 한 node에서는
+scale, rotation, position 순서로 적용한다. `pos`와 axis-angle `rotate`는 v7 migration을 위한
+deprecated 호환 문법일 뿐이며 canonical prop과 같은 node에서 섞을 수 없다. `translation`은
+지원하지 않는다.
+
+custom `Geometry` component 호출에는 `id`가 필요하다. 모든 intrinsic primitive와 operation도
+결과가 solver target이어야 할 때 `id`를 가질 수 있지만 Fragment에는 줄 수 없다. topology를
+바꾸는 operation에 `id`가 있으면 그 operation의 최종 결과가 identity를 소유한다. element별 prop,
+기본값, child 수, 기준 원점과 surface 계약은 Workbench의 **Docs → Geometry Catalog**를 공식
+원본으로 사용한다.
 
 ## 공통 Experiment Source (`experiment.tsx`)
 
@@ -158,7 +172,10 @@ export default defineTask({
   kernel: { name: "dc-current-density", version: "0.1.0" },
   lengthUnit: "mm",
   geometry: ({ vars }) => (
-    <Probe id="probe" materials={{ body: Copper(vars.conductivity as number) }} />
+    <Probe
+      id="probe"
+      materials={{ body: Copper(vars.conductivity as number) }}
+    />
   ),
   config: ({ vars }) => ({
     parameters: {

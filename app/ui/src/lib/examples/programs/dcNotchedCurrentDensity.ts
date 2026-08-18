@@ -81,7 +81,7 @@ export const NotchedConductor: Geometry<{
 }> = ({ notchPosition, notchSize, size }) => (
   <subtract>
     <box size={size} />
-    <box pos={notchPosition} size={notchSize} />
+    <box position={notchPosition} size={notchSize} />
   </subtract>
 )
 
@@ -98,7 +98,7 @@ export default defineTask({
   geometry: ({ vars }) => (
     <FieldProbe
       id="field-probe"
-      pos={[0, -15, 0]}
+      position={[0, -15, 0]}
       materials={{ body: Copper(vars.electricalConductivity as number) }}
     />
   ),

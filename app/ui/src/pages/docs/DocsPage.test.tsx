@@ -31,15 +31,30 @@ beforeEach(() => {
   Object.values(catalog).forEach((mock) => mock.mockReset())
   catalog.search.mockImplementation(async (query: string) => {
     const items = {
-      'electrical.conductivity': [{
-        kind: 'materialParameter', key: query, title: query, subtitle: 'Synthetic Material parameter.',
-      }],
-      'electromagnetism.ElectricCurrent': [{
-        kind: 'quantityKind', key: query, title: query, subtitle: 'Synthetic Quantity Kind.',
-      }],
-      'dc-current-density@0.1.0': [{
-        kind: 'solver', key: query, title: query, subtitle: 'Synthetic Solver.',
-      }],
+      'electrical.conductivity': [
+        {
+          kind: 'materialParameter',
+          key: query,
+          title: query,
+          subtitle: 'Synthetic Material parameter.',
+        },
+      ],
+      'electromagnetism.ElectricCurrent': [
+        {
+          kind: 'quantityKind',
+          key: query,
+          title: query,
+          subtitle: 'Synthetic Quantity Kind.',
+        },
+      ],
+      'dc-current-density@0.1.0': [
+        {
+          kind: 'solver',
+          key: query,
+          title: query,
+          subtitle: 'Synthetic Solver.',
+        },
+      ],
     } as const
     return { items: items[query as keyof typeof items] ?? [] }
   })
@@ -78,12 +93,14 @@ beforeEach(() => {
   catalog.listQuantityKinds.mockResolvedValue({ items: [quantityKind], nextCursor: null, total: 1 })
   catalog.getQuantityKind.mockResolvedValue({ ...quantityKind, materialParameters: [], solverUsages: [] })
   catalog.listSolvers.mockResolvedValue({
-    items: [{
-      name: solver.name,
-      version: solver.version,
-      description: solver.descriptor.description,
-      contractDigest: solver.contractDigest,
-    }],
+    items: [
+      {
+        name: solver.name,
+        version: solver.version,
+        description: solver.descriptor.description,
+        contractDigest: solver.contractDigest,
+      },
+    ],
     nextCursor: null,
     total: 1,
   })
@@ -138,6 +155,11 @@ describe('integrated documentation page', () => {
     expect(screen.getByRole('button', { name: 'Geometry Catalog' })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('heading', { name: 'Primitives & Operations' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '<box />' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Properties' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Surfaces' })).toBeInTheDocument()
+    expect(screen.getByText('Origin')).toBeInTheDocument()
+    expect(screen.getByText('Children')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '예제 복사' })).toBeInTheDocument()
   })
 
   it('navigates between Manual sections from the sidebar', async () => {

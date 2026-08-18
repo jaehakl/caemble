@@ -40,10 +40,16 @@ describe('documentation knowledge registry', () => {
     expect(manualDocsKnowledge.find(({ id }) => id === 'program-verified-examples')?.content).toContain(
       'Electro-Thermal Uniform Bar',
     )
+    const basketballGoal = manualDocsKnowledge.find(({ id }) => id === 'reference-basketball-goal')?.content
+    expect(basketballGoal).toContain('position={[0, 100, 298]}')
+    expect(basketballGoal).toContain('rotation={[Math.PI / 2, 0, 0]}')
+    expect(basketballGoal).toContain('<subtract id="rim"')
   })
 
   it('keeps only non-database Geometry entries in the checked-in catalog knowledge', () => {
     expect(catalogDocsKnowledge.find(({ id }) => id === 'geometry:box')?.content).toContain('<box size=')
+    expect(catalogDocsKnowledge.find(({ id }) => id === 'geometry:box')?.content).toContain('Origin:')
+    expect(catalogDocsKnowledge.find(({ id }) => id === 'geometry:box')?.content).toContain('Properties:')
     expect(catalogDocsKnowledge.some(({ section }) => section === 'materials')).toBe(false)
     expect(catalogDocsKnowledge.some(({ section }) => section === 'quantity-kinds')).toBe(false)
   })

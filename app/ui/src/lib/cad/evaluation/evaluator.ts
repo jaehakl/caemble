@@ -161,8 +161,18 @@ function evaluateNode(
 
   const { children, props, type } = value
   if (type === Fragment) {
-    if (props.pos !== undefined || props.rotate !== undefined || props.scale !== undefined) {
-      throw new CadModelError('Fragment does not accept pos, rotate, or scale. Use a Geometry or CAD element.')
+    if (
+      props.id !== undefined ||
+      props.translation !== undefined ||
+      props.position !== undefined ||
+      props.rotation !== undefined ||
+      props.pos !== undefined ||
+      props.rotate !== undefined ||
+      props.scale !== undefined
+    ) {
+      throw new CadModelError(
+        'Fragment only accepts children. Use a Geometry or CAD element for identity or transforms.',
+      )
     }
     return children.flatMap((child, index) =>
       evaluateNode(
@@ -186,8 +196,9 @@ function evaluateNode(
     const materials = resolveMaterials(props.materials, inheritedMaterials)
     const result = type({
       ...props,
-      pos: transformValues.pos,
-      rotate: transformValues.rotate,
+      ...(transformValues.family === 'legacy'
+        ? { pos: transformValues.position, rotate: transformValues.rotate }
+        : { position: transformValues.position, rotation: transformValues.rotation }),
       scale: transformValues.scale,
       materials: exposeMaterials(materials),
       children,
@@ -199,20 +210,26 @@ function evaluateNode(
   }
 
   if (type === 'translate')
-    throw new CadModelError('<translate> is not supported. Use the relative pos attribute instead.')
+    throw new CadModelError('<translate> is not supported. Use the relative position attribute instead.')
   if (type === 'rotate')
-    throw new CadModelError('<rotate> is not supported. Use the axis-angle rotate attribute instead.')
+    throw new CadModelError('<rotate> is not supported. Use the XYZ Euler rotation attribute instead.')
   if (type === 'scale') throw new CadModelError('<scale> is not supported. Use the scale attribute instead.')
 
   const definition = getCadElementDefinition(type)
   if (!definition) throw new CadModelError(`Unknown CAD element: ${type}`)
-  const traceNode = addTreeNode(state, traceParent, nodeKey, `<${type}>`)
+  const globalId = props.id === undefined ? undefined : resolveGeometryId(props.id, `<${type}>`, identityParent, state)
+  const traceNode = addTreeNode(state, traceParent, nodeKey, `<${type}>`, globalId)
+  const elementIdentityParent = globalId ?? identityParent
+  const elementOwnerNodeKey = globalId === undefined ? ownerNodeKey : traceNode.key
   const transformValues = normalizeTransforms(props, `<${type}>`)
+  if (definition.kind === 'operation' && definition.surfacePolicy === 'derive' && !elementOwnerNodeKey) {
+    throw new CadModelError(`<${type}> requires an explicit id on itself or an enclosing Geometry.`)
+  }
   let parts: EvaluatedPart[]
 
   if (definition.kind === 'primitive') {
-    if (!ownerNodeKey) {
-      throw new CadModelError('CAD geometry must be created within a Geometry component with an explicit id.')
+    if (!elementOwnerNodeKey) {
+      throw new CadModelError('CAD geometry requires an explicit id on an intrinsic element or enclosing Geometry.')
     }
     const binding = materialBinding(inheritedMaterials, 'body')
 
@@ -223,7 +240,7 @@ function evaluateNode(
         materialRole: binding.role,
         ...(binding.material === undefined ? {} : { material: binding.material }),
         surfaces: definition.createSurfaces(geometry, props),
-        ownerNodeKey,
+        ownerNodeKey: elementOwnerNodeKey,
         resultNodeKey: nodeKey,
       },
     ]
@@ -236,8 +253,8 @@ function evaluateNode(
           const wrapperKey = `${nodeKey}/${trace.key}`
           const wrapper = addTreeNode(state, traceNode, wrapperKey, trace.label)
           const childIdentityParent = trace.identitySegment
-            ? `${identityParent ? `${identityParent}.` : ''}${trace.identitySegment}`
-            : identityParent
+            ? `${elementIdentityParent ? `${elementIdentityParent}.` : ''}${trace.identitySegment}`
+            : elementIdentityParent
           return evaluateNode(
             child,
             materials,
@@ -245,13 +262,13 @@ function evaluateNode(
             wrapper,
             `${wrapperKey}/value`,
             childIdentityParent,
-            ownerNodeKey,
+            elementOwnerNodeKey,
           )
         }
 
         const childKey = `${nodeKey}/child-${childIndex}`
         childIndex += 1
-        return evaluateNode(child, materials, state, traceNode, childKey, identityParent, ownerNodeKey)
+        return evaluateNode(child, materials, state, traceNode, childKey, elementIdentityParent, elementOwnerNodeKey)
       },
     })
 
@@ -262,7 +279,7 @@ function evaluateNode(
           ...part,
           geometry: derived.geometry,
           surfaces: derived.surfaces,
-          ownerNodeKey,
+          ownerNodeKey: elementOwnerNodeKey,
           resultNodeKey: nodeKey,
         }
       })
@@ -291,7 +308,7 @@ export function evaluateCadScene(
 
   const ownerIds = evaluatedParts.map((part) => {
     if (!part.ownerNodeKey) {
-      throw new CadModelError('CAD geometry must be created within a Geometry component with an explicit id.')
+      throw new CadModelError('CAD geometry requires an explicit id on an intrinsic element or enclosing Geometry.')
     }
     const owner = state.nodes.get(part.ownerNodeKey)
     if (!owner?.globalId) throw new CadModelError('CAD evaluation lost a Geometry identity owner.')

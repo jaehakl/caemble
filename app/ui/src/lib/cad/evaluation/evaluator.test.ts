@@ -23,23 +23,22 @@ describe('CAD evaluator', () => {
     evaluateCad(
       h(Positioned, {
         id: 'positioned',
-        pos: [2, 3, 4],
-        rotate: { axis: [0, 0, 5], angle: Math.PI / 2 },
+        position: [2, 3, 4],
+        rotation: [0, 0, Math.PI / 2],
         scale: [2, 3, 4],
         materials: { body: core },
       }),
     )
 
-    expect(received[0]).toMatchObject({ pos: [0, 0, 0], rotate: undefined, scale: [1, 1, 1] })
+    expect(received[0]).toMatchObject({ position: [0, 0, 0], rotation: undefined, scale: [1, 1, 1] })
     expect(received[1]).toMatchObject({
-      pos: [2, 3, 4],
-      rotate: { axis: [0, 0, 1], angle: Math.PI / 2 },
+      position: [2, 3, 4],
+      rotation: [0, 0, Math.PI / 2],
       scale: [2, 3, 4],
     })
-    expect(Object.isFrozen(received[0].pos)).toBe(true)
+    expect(Object.isFrozen(received[0].position)).toBe(true)
     expect(Object.isFrozen(received[0].scale)).toBe(true)
-    expect(Object.isFrozen(received[1].rotate)).toBe(true)
-    expect(Object.isFrozen((received[1].rotate as { axis: unknown }).axis)).toBe(true)
+    expect(Object.isFrozen(received[1].rotation)).toBe(true)
     expect(measurements.measureBoundingBox(part.geometry)).toEqual([
       [-1, -1, -1],
       [1, 1, 1],
@@ -50,14 +49,14 @@ describe('CAD evaluator', () => {
     const core = new Material('Core', { color: '#2563eb' })
 
     function Child() {
-      return h('box', { size, pos: [1, 1, 1] })
+      return h('box', { size, position: [1, 1, 1] })
     }
 
     function Parent() {
-      return h(Child, { id: 'child', pos: [4, 5, 6] })
+      return h(Child, { id: 'child', position: [4, 5, 6] })
     }
 
-    const [part] = evaluateCad(h(Parent, { id: 'parent', pos: [1, 2, 3], materials: { body: core } }))
+    const [part] = evaluateCad(h(Parent, { id: 'parent', position: [1, 2, 3], materials: { body: core } }))
 
     expect(measurements.measureBoundingBox(part.geometry)).toEqual([
       [5, 7, 9],
@@ -77,8 +76,8 @@ describe('CAD evaluator', () => {
 
     function Parent(input: Record<string, unknown>) {
       parentInput = input
-      const pos = input.pos as readonly number[]
-      const rotate = input.rotate as { axis: readonly number[]; angle: number }
+      const position = input.position as readonly number[]
+      const rotation = input.rotation as readonly number[]
       const scale = input.scale as readonly number[]
       const gap = input.gap as number
       const profileScale = input.profileScale as number
@@ -86,8 +85,8 @@ describe('CAD evaluator', () => {
       return h(Child, {
         id: 'child',
         size: [2 * scale[0], 2, 2],
-        pos: [gap + pos[0] * 0.1, 0, 0],
-        rotate: { axis: rotate.axis, angle: rotate.angle / 2 },
+        position: [gap + position[0] * 0.1, 0, 0],
+        rotation: [rotation[0] / 2, rotation[1] / 2, rotation[2] / 2],
         scale: [profileScale, 1, 1],
       })
     }
@@ -95,8 +94,8 @@ describe('CAD evaluator', () => {
     const [part] = evaluateCad(
       h(Parent, {
         id: 'parent',
-        pos: [10, 0, 0],
-        rotate: { axis: [0, 0, 1], angle: Math.PI / 2 },
+        position: [10, 0, 0],
+        rotation: [0, 0, Math.PI / 2],
         scale: [2, 1, 1],
         gap: 1,
         profileScale: 0.5,
@@ -107,8 +106,8 @@ describe('CAD evaluator', () => {
     expect(parentInput).toMatchObject({ gap: 1, profileScale: 0.5 })
     expect(childInput).toMatchObject({
       size: [4, 2, 2],
-      pos: [2, 0, 0],
-      rotate: { axis: [0, 0, 1], angle: Math.PI / 4 },
+      position: [2, 0, 0],
+      rotation: [0, 0, Math.PI / 4],
       scale: [0.5, 1, 1],
     })
 
@@ -123,16 +122,23 @@ describe('CAD evaluator', () => {
     const core = new Material('Core', { color: '#2563eb' })
 
     ;[null, 1, [1, 2], [1, 2, 3, 4], [1, '2', 3], [1, Number.NaN, 3], [1, Number.POSITIVE_INFINITY, 3]].forEach(
-      (pos) => {
-        expect(() => evaluateCad(h('box', { size, pos, materials: { body: core } }))).toThrow(
-          'pos must be an array of exactly three finite numbers',
+      (position) => {
+        expect(() => evaluateCad(h('box', { id: 'box', size, position, materials: { body: core } }))).toThrow(
+          'position must be an array of exactly three finite numbers',
         )
       },
     )
 
     expect(() =>
-      evaluateCad(h(Fragment, { pos: [1, 2, 3] }, h(Box, { id: 'box', materials: { body: core } }))),
-    ).toThrow('Fragment does not accept pos, rotate, or scale')
+      evaluateCad(h(Fragment, { position: [1, 2, 3] }, h(Box, { id: 'box', materials: { body: core } }))),
+    ).toThrow('Fragment only accepts children')
+
+    expect(() => evaluateCad(h('box', { id: 'box', size, position: [0, 0, 0], pos: [0, 0, 0] }))).toThrow(
+      'cannot mix position/rotation with deprecated pos/rotate',
+    )
+    expect(() => evaluateCad(h('box', { id: 'box', size, translation: [0, 0, 0] }))).toThrow(
+      'does not support translation. Use position',
+    )
 
     ;[null, 1, [1, 2, 3], { axis: [0, 0, 1] }].forEach((rotate) => {
       expect(() => evaluateCad(h(Box, { id: 'box', rotate, materials: { body: core } }))).toThrow()
@@ -163,12 +169,24 @@ describe('CAD evaluator', () => {
 
     expect(() =>
       evaluateCad(h('translate', { pos: [1, 2, 3], materials: { body: core } }, h(Box, { id: 'box' }))),
-    ).toThrow('Use the relative pos attribute instead')
+    ).toThrow('Use the relative position attribute instead')
     expect(() => evaluateCad(h('rotate', null, h(Box, { id: 'box', materials: { body: core } })))).toThrow(
-      'Use the axis-angle rotate attribute instead',
+      'Use the XYZ Euler rotation attribute instead',
     )
     expect(() => evaluateCad(h('scale', null, h(Box, { id: 'box', materials: { body: core } })))).toThrow(
       'Use the scale attribute instead',
     )
+  })
+
+  it('matches Three/R3F intrinsic XYZ Euler order for a compound rotation', () => {
+    const [part] = evaluateCad(h('box', { id: 'rotated', size: [2, 4, 6], rotation: [0.3, -0.4, 0.5] }))
+    const bounds = measurements.measureBoundingBox(part.geometry)
+
+    expect(bounds[0][0]).toBeCloseTo(-2.8597224199746085)
+    expect(bounds[0][1]).toBeCloseTo(-2.9607148650390913)
+    expect(bounds[0][2]).toBeCloseTo(-3.2699022589285516)
+    expect(bounds[1][0]).toBeCloseTo(2.8597224199746085)
+    expect(bounds[1][1]).toBeCloseTo(2.9607148650390913)
+    expect(bounds[1][2]).toBeCloseTo(3.2699022589285516)
   })
 })
