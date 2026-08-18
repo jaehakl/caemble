@@ -41,12 +41,13 @@ async def ask_openai(
         ],
         "store": False,
         "max_output_tokens": model.max_tokens if max_tokens is None else max_tokens,
-        "temperature": model.temperature if temperature is None else temperature,
-        "top_p": model.top_p if top_p is None else top_p,
         "reasoning": {
             "effort": "none" if not effective_thinking else ("low" if thinking_effort == "low" else "medium")
         },
     }
+    if not effective_thinking:
+        request_kwargs["temperature"] = model.temperature if temperature is None else temperature
+        request_kwargs["top_p"] = model.top_p if top_p is None else top_p
     if response_format_json:
         request_kwargs["text"] = {"format": {"type": "json_object"}}
     try:
@@ -92,12 +93,13 @@ async def generate_chat_with_openai(
         "input": generation_messages,
         "store": False,
         "max_output_tokens": effective_max_tokens,
-        "temperature": model.temperature if temperature is None else temperature,
-        "top_p": model.top_p if top_p is None else top_p,
         "reasoning": {
             "effort": "none" if not effective_thinking else ("low" if thinking_effort == "low" else "medium")
         },
     }
+    if not effective_thinking:
+        request_kwargs["temperature"] = model.temperature if temperature is None else temperature
+        request_kwargs["top_p"] = model.top_p if top_p is None else top_p
     if response_format == "json":
         request_kwargs["text"] = {"format": {"type": "json_object"}}
     parser = GenerationOutputParser(expect_reasoning=False, response_format=response_format)

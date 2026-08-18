@@ -11,6 +11,7 @@ const sdk = vi.hoisted(() => ({
   finish: vi.fn(),
   runJob: vi.fn(),
 }))
+const scrollIntoView = vi.fn()
 
 vi.mock('@gpstation/v1-master-js-sdk', () => ({
   GpStationClient: class {
@@ -29,6 +30,11 @@ afterEach(cleanup)
 
 describe('AiChatWorkspace', () => {
   beforeEach(() => {
+    scrollIntoView.mockReset()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    })
     sdk.call.mockReset()
     sdk.clientOptions.mockReset()
     sdk.finish.mockReset()
@@ -94,6 +100,12 @@ describe('AiChatWorkspace', () => {
 
     await user.click(settingsButton)
     expect(screen.getByRole('heading', { name: 'AI Chat 설정' })).toBeVisible()
+    const temperatureInput = screen.getByLabelText('Temperature')
+    const topPInput = screen.getByLabelText('Top P')
+    await user.click(screen.getByRole('checkbox', { name: 'Thinking' }))
+    expect(temperatureInput).toBeEnabled()
+    expect(topPInput).toBeEnabled()
+    expect(screen.queryByText(/OpenAI Thinking에서는/)).not.toBeInTheDocument()
   })
 
   it('uses the cookie job endpoint, discovers models, and renders a streamed chat response', async () => {
@@ -133,6 +145,7 @@ describe('AiChatWorkspace', () => {
     )
     const chatPayload = sdk.runJob.mock.calls.find(([handler]) => handler === 'ai.chat')?.[1]
     expect(chatPayload).not.toHaveProperty('reference_context')
+    expect(scrollIntoView).not.toHaveBeenCalled()
   })
 
   it('labels OpenAI models while sending the configured alias', async () => {
@@ -144,6 +157,15 @@ describe('AiChatWorkspace', () => {
     const modelSelect = screen.getByRole('combobox', { name: /Model/ })
     expect(screen.getByRole('option', { name: 'OpenAI · luna' })).toHaveValue('luna')
     await user.selectOptions(modelSelect, 'luna')
+    const temperatureInput = screen.getByLabelText('Temperature')
+    const topPInput = screen.getByLabelText('Top P')
+    await user.clear(temperatureInput)
+    await user.type(temperatureInput, '0.6')
+    await user.type(topPInput, '0.7')
+    await user.click(screen.getByRole('checkbox', { name: 'Thinking' }))
+    expect(temperatureInput).toBeDisabled()
+    expect(topPInput).toBeDisabled()
+    expect(screen.getByText('OpenAI Thinking에서는 Temperature와 Top P에 모델 기본값을 사용합니다.')).toBeVisible()
     await user.keyboard('{Escape}')
 
     expect(await screen.findByText('OpenAI · luna')).toBeVisible()
@@ -153,10 +175,21 @@ describe('AiChatWorkspace', () => {
     await waitFor(() =>
       expect(sdk.runJob).toHaveBeenCalledWith(
         'ai.chat',
-        expect.objectContaining({ model: 'luna', prompt: 'Luna로 답해 줘' }),
+        expect.objectContaining({ model: 'luna', prompt: 'Luna로 답해 줘', think: true }),
         expect.objectContaining({ autoFinish: false, slaveAppId: 'ai' }),
       ),
     )
+    const chatPayload = sdk.runJob.mock.calls.find(([handler]) => handler === 'ai.chat')?.[1]
+    expect(chatPayload).not.toHaveProperty('temperature')
+    expect(chatPayload).not.toHaveProperty('top_p')
+
+    expect(await screen.findByText(/안녕하세요/)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '설정' }))
+    expect(screen.getByLabelText('Temperature')).toHaveValue('0.6')
+    expect(screen.getByLabelText('Top P')).toHaveValue('0.7')
+    await user.click(screen.getByRole('checkbox', { name: 'Thinking' }))
+    expect(screen.getByLabelText('Temperature')).toBeEnabled()
+    expect(screen.getByLabelText('Top P')).toBeEnabled()
   })
 
   it('adds an ephemeral reference context only when a reference provider is configured', async () => {

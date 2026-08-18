@@ -140,6 +140,11 @@ class OpenAiRuntimeTest(unittest.IsolatedAsyncioTestCase):
             [request["reasoning"]["effort"] for request in responses.calls],
             ["none", "low", "medium"],
         )
+        self.assertEqual(responses.calls[0]["temperature"], 0.4)
+        self.assertEqual(responses.calls[0]["top_p"], 0.8)
+        for request in responses.calls[1:]:
+            self.assertNotIn("temperature", request)
+            self.assertNotIn("top_p", request)
 
     async def test_chat_streams_only_output_text_and_reports_usage(self) -> None:
         usage = SimpleNamespace(
@@ -167,12 +172,13 @@ class OpenAiRuntimeTest(unittest.IsolatedAsyncioTestCase):
             side_effect=lambda **kwargs: FakeAsyncOpenAI(responses, api_keys, **kwargs),
         ):
             result = await openai_runtime.generate_chat_with_openai(
-                openai_model(),
+                openai_model(enable_thinking=True),
                 SecretStr("sk-test-secret"),
                 [
                     {"role": "system", "content": "system"},
                     {"role": "user", "content": "question"},
                 ],
+                thinking_effort="low",
                 on_delta=on_delta,
             )
 
@@ -184,6 +190,9 @@ class OpenAiRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.remaining_tokens, 850)
         self.assertIs(result.cache_enabled, True)
         self.assertIs(responses.calls[0]["stream"], True)
+        self.assertEqual(responses.calls[0]["reasoning"], {"effort": "low"})
+        self.assertNotIn("temperature", responses.calls[0])
+        self.assertNotIn("top_p", responses.calls[0])
 
     async def test_chat_buffers_json_and_keeps_reference_out_of_retained_messages(self) -> None:
         completed = SimpleNamespace(

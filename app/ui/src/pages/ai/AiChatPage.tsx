@@ -123,19 +123,15 @@ export function ChatWorkspace({
   const activeAssistantIdRef = useRef<number | null>(null)
   const pendingDeltaRef = useRef('')
   const deltaFrameRef = useRef<number | null>(null)
-  const transcriptEndRef = useRef<HTMLDivElement | null>(null)
 
   const chatOpen = Boolean(session && !session.closed)
   const selectedModelSettings = models.find((model) => model.name === selectedModel) ?? null
   const selectedModelLabel = selectedModelSettings?.provider === 'openai' ? `OpenAI · ${selectedModel}` : selectedModel
+  const openAiThinking = selectedModelSettings?.provider === 'openai' && think
 
   useEffect(() => {
     sessionRef.current = session
   }, [session])
-
-  useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView?.({ block: 'end' })
-  }, [messages, busy])
 
   useEffect(() => {
     if (!auth.isAuthenticated) return
@@ -254,9 +250,13 @@ export function ChatWorkspace({
       generationSettings = {
         model: selectedModel,
         max_tokens: optionalNumber(maxTokens, 'Max Tokens', true),
-        temperature: optionalNumber(temperature, 'Temperature'),
         context_size: requestedContextSize,
-        top_p: optionalNumber(topP, 'Top P'),
+        ...(openAiThinking
+          ? {}
+          : {
+              temperature: optionalNumber(temperature, 'Temperature'),
+              top_p: optionalNumber(topP, 'Top P'),
+            }),
         think,
         thinking_effort: thinkingEffort,
         response_format: responseFormat,
@@ -412,7 +412,6 @@ export function ChatWorkspace({
               <p className="mt-1 text-sm text-muted-foreground">{emptyDescription}</p>
             </div>
           )}
-          <div ref={transcriptEndRef} />
         </div>
         <form
           className="border-t bg-background p-4"
@@ -522,10 +521,20 @@ export function ChatWorkspace({
             ) : null}
             <div className="grid gap-3 sm:grid-cols-2">
               <SettingInput label="Max Tokens" onChange={setMaxTokens} value={maxTokens} />
-              <SettingInput label="Temperature" onChange={setTemperature} value={temperature} />
+              <SettingInput
+                disabled={openAiThinking}
+                label="Temperature"
+                onChange={setTemperature}
+                value={temperature}
+              />
               <SettingInput label="Context Size" onChange={setContextSize} value={contextSize} />
-              <SettingInput label="Top P" onChange={setTopP} value={topP} />
+              <SettingInput disabled={openAiThinking} label="Top P" onChange={setTopP} value={topP} />
             </div>
+            {openAiThinking ? (
+              <p className="text-xs text-muted-foreground">
+                OpenAI Thinking에서는 Temperature와 Top P에 모델 기본값을 사용합니다.
+              </p>
+            ) : null}
             <div className="grid gap-3 sm:grid-cols-3">
               <label className="flex items-center gap-2 text-sm">
                 <input checked={think} onChange={(event) => setThink(event.target.checked)} type="checkbox" />
@@ -592,11 +601,21 @@ function markdownText(value: ReactNode): string {
   return ''
 }
 
-function SettingInput({ label, onChange, value }: { label: string; onChange: (value: string) => void; value: string }) {
+function SettingInput({
+  disabled = false,
+  label,
+  onChange,
+  value,
+}: {
+  disabled?: boolean
+  label: string
+  onChange: (value: string) => void
+  value: string
+}) {
   return (
     <label className="grid gap-1 text-sm">
       {label}
-      <Input inputMode="decimal" onChange={(event) => onChange(event.target.value)} value={value} />
+      <Input disabled={disabled} inputMode="decimal" onChange={(event) => onChange(event.target.value)} value={value} />
     </label>
   )
 }
