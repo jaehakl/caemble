@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CAD_COMPILER_VERSION, type CompiledCadDocument } from '../compiler/types'
-import type { RunnerOperationEnvelope } from './protocol'
+import { cadSceneHash } from '../execution/meshValidation'
+import { installCatalogRuntimeSlice } from '@/lib/catalog/runtime'
+import { assertRunnerOperationResultEnvelope, type RunnerOperationEnvelope } from './protocol'
+import { canonicalShapedCatalog } from './catalogProtocol.testFixture'
 
 type MessageHandler = (event: MessageEvent<unknown>) => void
 const handlers: MessageHandler[] = []
@@ -45,16 +48,29 @@ const inspection: RunnerOperationEnvelope = {
     requestId: 'inspect-1',
     revision: 2,
     compiledDocument: compiled,
-    catalog: {
-      schemaVersion: 1,
-      catalogRevision: 'test',
-      solvers: [],
-      quantityKinds: [],
-      materialParameters: [],
-      materialModels: [],
-      materialGlobalQualifiers: [],
-      warnings: [],
-    },
+    catalog: canonicalShapedCatalog,
+  },
+}
+const emptySceneContent = {
+  lengthUnit: 'mm' as const,
+  parts: [],
+  tree: { key: 'root', label: 'Root', children: [] },
+  geometryGroups: [],
+  surfaceGroups: [],
+}
+const emptyScene = { sceneHash: cadSceneHash(emptySceneContent), ...emptySceneContent }
+const pythonSource = 'async def simulate(*, sim, tasks, vars):\n    return None\n'
+const evaluation: RunnerOperationEnvelope = {
+  type: 'evaluate',
+  nonce: 'abcdef12-1234-1234-1234-123456789abc',
+  request: {
+    type: 'evaluate',
+    requestId: 'evaluate-1',
+    revision: 3,
+    compiledDocument: compiled,
+    catalog: canonicalShapedCatalog,
+    pythonSource,
+    vars: {},
   },
 }
 
@@ -109,5 +125,98 @@ describe('isolated runner frame', () => {
     worker.onmessage?.({ data: { type: 'runner-worker-ready' } } as MessageEvent<unknown>)
     expect(messages[0]).toMatchObject({ type: 'operation-started', operation: 'inspect', documentType: 'experiment' })
     expect(worker.messages).toEqual([inspection])
+  })
+
+  it('reinstalls the request catalog before validating a QuantityKind-backed evaluation result', () => {
+    const { messages, port } = createPort()
+    handlers[0]({
+      data: evaluation,
+      origin: 'http://localhost:5173',
+      ports: [port],
+    } as unknown as MessageEvent<unknown>)
+    const worker = FakeWorker.instances[0]
+    worker.onmessage?.({ data: { type: 'runner-worker-ready' } } as MessageEvent<unknown>)
+    installCatalogRuntimeSlice({
+      ...canonicalShapedCatalog,
+      catalogRevision: 'competing-concurrent-request',
+      quantityKinds: canonicalShapedCatalog.quantityKinds.map((entry) =>
+        entry.name === 'electromagnetism.ElectricCurrent' ? { ...entry, applicableUnits: ['mA'] } : entry,
+      ),
+    })
+    worker.onmessage?.({
+      data: {
+        type: 'operation-result',
+        operation: 'evaluate',
+        nonce: evaluation.nonce,
+        response: {
+          type: 'evaluation-success',
+          requestId: evaluation.request.requestId,
+          revision: evaluation.request.revision,
+          documentType: 'experiment',
+          snapshot: {
+            kind: 'experiment',
+            sourceHash,
+            variables: {},
+            varsSchema: {},
+            scene: emptyScene,
+            taskScenes: { electric: emptyScene },
+            simulationProgram: {
+              formatVersion: 5,
+              simulationApiVersion: 3,
+              pythonSource,
+              tasks: {
+                electric: {
+                  kernel: { name: 'dc-current-density', version: '0.1.0' },
+                  config: {},
+                },
+              },
+              recordedData: {
+                current: {
+                  dtype: 'float64',
+                  quantityKind: 'electromagnetism.ElectricCurrent',
+                  unit: 'A',
+                  tensorOrder: 0,
+                },
+              },
+            },
+          },
+        },
+      },
+    } as MessageEvent<unknown>)
+
+    expect(messages).toHaveLength(2)
+    expect(messages[1]).toMatchObject({
+      type: 'operation-result',
+      operation: 'evaluate',
+      response: { type: 'evaluation-success' },
+    })
+    expect(worker.terminated).toBe(true)
+    expect(port.closed).toBe(true)
+  })
+
+  it('returns an immediate model error when a routable operation envelope is invalid', () => {
+    const { messages, port } = createPort()
+    handlers[0]({
+      data: {
+        ...inspection,
+        request: { ...inspection.request, catalog: { ...canonicalShapedCatalog, schemaVersion: 2 } },
+      },
+      origin: 'http://localhost:5173',
+      ports: [port],
+    } as unknown as MessageEvent<unknown>)
+
+    expect(FakeWorker.instances).toHaveLength(0)
+    expect(messages).toHaveLength(1)
+    expect(() => assertRunnerOperationResultEnvelope(messages[0])).not.toThrow()
+    expect(messages[0]).toMatchObject({
+      type: 'operation-result',
+      operation: 'inspect',
+      response: {
+        type: 'inspection-error',
+        errorType: 'model',
+        message: expect.stringContaining('schemaVersion'),
+      },
+    })
+    expect(port.closed).toBe(true)
   })
 })

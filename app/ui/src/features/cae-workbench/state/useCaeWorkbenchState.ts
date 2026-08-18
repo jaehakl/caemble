@@ -5,7 +5,7 @@ import { dbTables, getListRequest, type UserData } from '@/api'
 import { useCurrentCadSelection } from '@/features/viewer/current-cad-selection'
 import type { DefinitionFormValues } from '@/features/viewer/persistence/SaveDefinitionDialog'
 import { saveCadDefinition } from '@/features/viewer/persistence/saveDefinition'
-import { useCadWorkspace } from '@/features/viewer/workspace/useCadWorkspace'
+import { useCadWorkspace, type CandidateVarsRegeneratedEvent } from '@/features/viewer/workspace/useCadWorkspace'
 import {
   canonicalizeGeometrySnapshot,
   createCadSourceDocument,
@@ -158,16 +158,26 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
     [clearMeasurement],
   )
 
-  const { experimentDocument, simulation } = useCadWorkspace(
-    experiment,
-    handleExperimentChange,
-    candidateVars ?? undefined,
-    candidateMaterialParameters,
-    authenticated && !geometry.hasReachableDrafts,
-    geometry.previewDraftActive ? geometry.draftOverlay : undefined,
-    workspaceSession,
-    !authenticated,
-  )
+  const handleCandidateVarsRegenerated = useCallback((event: CandidateVarsRegeneratedEvent) => {
+    setCandidateVars(event.vars)
+    toast.info(
+      event.reason === 'schema-changed'
+        ? 'varsSchema가 변경되어 모든 Candidate 변수를 새로 생성했습니다.'
+        : '현재 Candidate가 varsSchema와 맞지 않아 모든 변수를 새로 생성했습니다.',
+    )
+  }, [])
+
+  const { experimentDocument, simulation } = useCadWorkspace(experiment, handleExperimentChange, {
+    candidateVars: candidateVars ?? undefined,
+    candidateVarsPending: pendingMeasurementId !== null,
+    candidateProvenance: selection.measurement || pendingMeasurementId ? 'persisted-measurement' : 'editable',
+    frozenMaterialSnapshot: candidateMaterialParameters,
+    runtimeEnabled: authenticated && !geometry.hasReachableDrafts,
+    geometryDrafts: geometry.previewDraftActive ? geometry.draftOverlay : undefined,
+    resetKey: workspaceSession,
+    sourceOnlyMaterials: !authenticated,
+    onCandidateVarsRegenerated: handleCandidateVarsRegenerated,
+  })
 
   const generateCandidate = useCallback(() => {
     clearMeasurement()

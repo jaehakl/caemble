@@ -8,7 +8,9 @@ import {
   assertRunnerOperationEnvelope,
   assertRunnerOperationResultEnvelope,
   assertRunnerOperationStartedEnvelope,
+  runnerOperationRejectionEnvelope,
 } from './protocol'
+import { canonicalShapedCatalog } from './catalogProtocol.testFixture'
 
 const sourceHash = 'b'.repeat(64)
 const nonce = '12345678-1234-1234-1234-123456789abc'
@@ -169,6 +171,53 @@ describe('isolated runner protocol v5', () => {
         catalog: { ...syntheticCatalog, schemaVersion: 2 },
       }),
     ).toThrow()
+  })
+
+  it('accepts a canonical-shaped Solver slice before catalog runtime installation', () => {
+    expect(() =>
+      assertCadInspectionRequest({
+        type: 'inspect',
+        requestId: 'inspect-canonical',
+        revision: 1,
+        compiledDocument: compiledExperiment,
+        catalog: canonicalShapedCatalog,
+      }),
+    ).not.toThrow()
+  })
+
+  it('builds an immediate actionable rejection when invalid input still has safe routing identity', () => {
+    const invalid = {
+      type: 'inspect',
+      nonce,
+      request: {
+        type: 'inspect',
+        requestId: 'inspect-invalid',
+        revision: 1,
+        compiledDocument: compiledExperiment,
+        catalog: { ...syntheticCatalog, schemaVersion: 2 },
+      },
+    }
+    let validationError: unknown
+    try {
+      assertRunnerOperationEnvelope(invalid)
+    } catch (error) {
+      validationError = error
+    }
+    const rejection = runnerOperationRejectionEnvelope(invalid, validationError)
+    expect(() => assertRunnerOperationResultEnvelope(rejection)).not.toThrow()
+    expect(rejection).toMatchObject({
+      type: 'operation-result',
+      operation: 'inspect',
+      nonce,
+      response: {
+        type: 'inspection-error',
+        requestId: 'inspect-invalid',
+        revision: 1,
+        errorType: 'model',
+      },
+    })
+    expect(rejection?.response).toMatchObject({ message: expect.stringContaining('schemaVersion') })
+    expect(runnerOperationRejectionEnvelope({ type: 'inspect' }, validationError)).toBeUndefined()
   })
 
   it('keeps Geometry preview catalog-free', () => {

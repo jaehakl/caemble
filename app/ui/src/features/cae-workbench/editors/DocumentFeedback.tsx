@@ -3,12 +3,19 @@ import type { CadDocumentController } from '@/features/viewer/workspace/useCadWo
 export function DocumentFeedback({ controller }: { controller: CadDocumentController }) {
   if (controller.error) {
     return (
-      <footer className="max-h-32 shrink-0 overflow-auto border-t border-rose-200 bg-rose-50 px-4 py-2.5" role="alert">
-        <div className="text-xs font-semibold text-rose-800">{controller.error.title}</div>
-        <pre className="mt-1 text-xs leading-5 whitespace-pre-wrap text-rose-700">
-          {controller.error.message}
-          {controller.error.stack ? `\n\n${controller.error.stack}` : ''}
-        </pre>
+      <footer className="max-h-40 shrink-0 overflow-auto border-t border-rose-200 bg-rose-50 px-4 py-2.5">
+        <div role="alert">
+          <div className="text-xs font-semibold text-rose-800">{controller.error.title}</div>
+          <p className="mt-1 text-xs leading-5 whitespace-pre-wrap text-rose-700">{controller.error.message}</p>
+        </div>
+        {controller.error.stack ? (
+          <details className="mt-2 border-t border-rose-200 pt-2 text-xs text-rose-700">
+            <summary className="cursor-pointer font-medium text-rose-800">Technical details</summary>
+            <pre aria-label="Error stack trace" className="mt-2 overflow-auto leading-5 whitespace-pre-wrap">
+              {controller.error.stack}
+            </pre>
+          </details>
+        ) : null}
       </footer>
     )
   }

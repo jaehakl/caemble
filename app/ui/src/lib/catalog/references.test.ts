@@ -91,6 +91,50 @@ export default defineTask({
     ).toEqual([{ name: 'replace-with-solver', version: '1.0.1' }])
   })
 
+  it('returns one immutable empty slice without an API call for a reference-free Draft-only bundle', async () => {
+    const draft = bundle({
+      'experiment.tsx': `
+import { experiment } from '@caemble/core'
+export default experiment({
+  lengthUnit: 'm', varsSchema: {}, geometry: () => null, recordedData: {},
+})
+`,
+      'material.tsx': 'export {}',
+      'tasks/main.tsx': `
+import { defineTask } from '@caemble/core'
+export default defineTask({
+  kernel: { name: 'replace-with-solver', version: '1.0.0' },
+  config: () => ({}),
+})
+`,
+    })
+    const request = vi.spyOn(catalogApi, 'runtimeSlice')
+
+    const first = await fetchCatalogRuntimeSlice(draft)
+    const second = await fetchCatalogRuntimeSlice(draft)
+
+    expect(request).not.toHaveBeenCalled()
+    expect(first).toBe(second)
+    expect(first).toEqual({
+      schemaVersion: 1,
+      catalogRevision: 'draft-only-empty-v1',
+      solvers: [],
+      quantityKinds: [],
+      materialParameters: [],
+      materialModels: [],
+      materialGlobalQualifiers: [],
+      warnings: [],
+    })
+    expect(Object.isFrozen(first)).toBe(true)
+    expect(Object.isFrozen(first.solvers)).toBe(true)
+    expect(Object.isFrozen(first.quantityKinds)).toBe(true)
+    expect(Object.isFrozen(first.materialParameters)).toBe(true)
+    expect(Object.isFrozen(first.materialModels)).toBe(true)
+    expect(Object.isFrozen(first.materialGlobalQualifiers)).toBe(true)
+    expect(Object.isFrozen(first.warnings)).toBe(true)
+    request.mockRestore()
+  })
+
   it('allows a two-argument Material source selector and unrelated computed object keys', () => {
     expect(() => extractCatalogSourceReferences(bundle())).not.toThrow()
   })

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CatalogRuntimeSlice } from '@/contracts/catalog'
 import { CAD_COMPILER_VERSION, type CompiledCadDocument } from '../compiler/types'
 import type { RunnerOperationEnvelope } from './protocol'
+import { canonicalShapedCatalog } from './catalogProtocol.testFixture'
 
 const responses: unknown[] = []
 const workerScope = {
@@ -12,33 +12,6 @@ const workerScope = {
 }
 const nonce = '12345678-90ab-cdef-1234-567890abcdef'
 const sourceHash = 'c'.repeat(64)
-const syntheticCatalog = {
-  schemaVersion: 1,
-  catalogRevision: 'synthetic-worker-test',
-  solvers: [
-    {
-      name: 'synthetic-solver',
-      version: 'test-1',
-      contractDigest: 'd'.repeat(64),
-      descriptor: {
-        name: 'synthetic-solver',
-        version: 'test-1',
-        description: 'Synthetic Worker test Solver.',
-        referenceLengthUnit: 'm',
-        parameters: {},
-        materials: [],
-        inputPorts: {},
-        observations: {},
-        methods: { initializations: [], boundaryConditions: [], outputs: [] },
-      },
-    },
-  ],
-  quantityKinds: [],
-  materialParameters: [],
-  materialModels: [],
-  materialGlobalQualifiers: [],
-  warnings: [],
-} as const satisfies CatalogRuntimeSlice
 const compiledExperiment: CompiledCadDocument = {
   apiVersion: 7,
   compilerVersion: CAD_COMPILER_VERSION,
@@ -77,7 +50,7 @@ module.exports.default = experiment({
       sourceHash,
       code: `const { defineTask } = require('@caemble/core')
 module.exports.default = defineTask({
-  kernel: { name: 'synthetic-solver', version: 'test-1' },
+  kernel: { name: 'dc-current-density', version: '0.1.0' },
   config: () => ({ parameters: {}, initializations: [], boundaryConditions: [], outputs: [] }),
 })`,
     },
@@ -110,7 +83,7 @@ describe('CAD runner Worker', () => {
         requestId: 'inspect-1',
         revision: 2,
         compiledDocument: compiledExperiment,
-        catalog: syntheticCatalog,
+        catalog: canonicalShapedCatalog,
       },
     })
     expect(responses[0]).toMatchObject({
@@ -130,7 +103,7 @@ describe('CAD runner Worker', () => {
         requestId: 'evaluate-1',
         revision: 3,
         compiledDocument: compiledExperiment,
-        catalog: syntheticCatalog,
+        catalog: canonicalShapedCatalog,
         pythonSource: 'async def simulate(*, sim, tasks, vars):\n    return None\n',
         vars: { width: 2 },
       },
@@ -166,7 +139,7 @@ module.exports.default = defineTask({
         requestId: 'evaluate-draft',
         revision: 4,
         compiledDocument: draftDocument,
-        catalog: { ...syntheticCatalog, solvers: [] },
+        catalog: { ...canonicalShapedCatalog, solvers: [] },
         pythonSource: 'async def simulate(*, sim, tasks, vars):\n    return None\n',
         vars: { width: 2 },
       },
@@ -198,7 +171,7 @@ module.exports.default = defineTask({
           requestId: 'extra-1',
           revision: 5,
           compiledDocument: compiledExperiment,
-          catalog: syntheticCatalog,
+          catalog: canonicalShapedCatalog,
           unexpected: true,
         },
       }),
@@ -214,10 +187,38 @@ module.exports.default = defineTask({
           requestId: 'invalid-1',
           revision: 6,
           compiledDocument: compiledExperiment,
-          catalog: { ...syntheticCatalog, schemaVersion: 2 },
+          catalog: { ...canonicalShapedCatalog, schemaVersion: 2 },
         },
       }),
     ).toThrow()
     expect(responses).toHaveLength(0)
+  })
+
+  it('reports catalog semantic errors after installing the slice', () => {
+    dispatch({
+      type: 'inspect',
+      nonce,
+      request: {
+        type: 'inspect',
+        requestId: 'semantic-invalid',
+        revision: 7,
+        compiledDocument: compiledExperiment,
+        catalog: {
+          ...canonicalShapedCatalog,
+          quantityKinds: canonicalShapedCatalog.quantityKinds.map((entry) =>
+            entry.name === 'DimensionlessRatio' ? { ...entry, applicableUnits: ['%'] } : entry,
+          ),
+        },
+      },
+    })
+    expect(responses[0]).toMatchObject({
+      type: 'operation-result',
+      operation: 'inspect',
+      response: {
+        type: 'inspection-error',
+        errorType: 'model',
+        message: expect.stringContaining('is not applicable to DimensionlessRatio'),
+      },
+    })
   })
 })

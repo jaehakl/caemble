@@ -16,7 +16,7 @@ import {
   type QuantityKindName,
 } from './core'
 import { ExperimentDefinition } from './v5'
-import { generateRandomVars } from './vars'
+import { generateRandomVars, varsSchemaFingerprint } from './vars'
 import { identityCartesianBasis } from '../../quantitykind/identityBasis'
 import { componentShapeForTensorOrder } from '../../quantitykind/runtime'
 import { installSyntheticCatalog } from '@/test/syntheticCatalog'
@@ -271,6 +271,30 @@ describe('Experiment vars and groups', () => {
       [1, 2],
       [3, 4],
     ])
+  })
+
+  it('reports a Candidate key missing from varsSchema validation directly', () => {
+    expect(() => createExperiment().resolveExternal({})).toThrow(
+      'vars.width is required by varsSchema but is missing from the current Candidate.',
+    )
+  })
+
+  it('fingerprints semantic varsSchema content independently of key order and scalar bound broadcasting', () => {
+    const canonical = varsSchemaFingerprint({
+      width: { min: 0, max: 10 },
+      offset: { min: -1, max: [1, 1] },
+    })
+    expect(
+      varsSchemaFingerprint({
+        offset: { min: [-1, -1], max: [1, 1] },
+        width: { min: 0, max: 10 },
+      }),
+    ).toBe(canonical)
+    expect(varsSchemaFingerprint({ width: { min: 0, max: 11 }, offset: { min: -1, max: [1, 1] } })).not.toBe(canonical)
+    expect(varsSchemaFingerprint({ width: { min: 0, max: 10 } })).not.toBe(canonical)
+    expect(varsSchemaFingerprint({ width: { min: [0], max: [10] }, offset: { min: -1, max: [1, 1] } })).not.toBe(
+      canonical,
+    )
   })
 
   it('normalizes, deduplicates, and deeply freezes Experiment groups', () => {

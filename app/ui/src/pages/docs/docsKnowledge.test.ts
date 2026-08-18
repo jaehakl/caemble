@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { geometryAuthoringSkeletonCode } from '@/lib/examples'
 import {
   catalogSearchKnowledge,
   catalogDocsKnowledge,
@@ -44,6 +45,9 @@ describe('documentation knowledge registry', () => {
     expect(basketballGoal).toContain('position={[0, 100, 298]}')
     expect(basketballGoal).toContain('rotation={[Math.PI / 2, 0, 0]}')
     expect(basketballGoal).toContain('<subtract id="rim"')
+    expect(manualDocsKnowledge.find(({ id }) => id === 'reference-geometry-skeleton')?.content).toContain(
+      geometryAuthoringSkeletonCode.trim(),
+    )
   })
 
   it('keeps only non-database Geometry entries in the checked-in catalog knowledge', () => {

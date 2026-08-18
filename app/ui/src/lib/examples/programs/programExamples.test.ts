@@ -1,17 +1,7 @@
-import { transform } from 'esbuild'
 import { describe, expect, it } from 'vitest'
 import { installSyntheticCatalog } from '@/test/syntheticCatalog'
-import { CAD_COMPILER_VERSION, type CompiledCadDocument, type CompiledCadSource } from '../../cad/compiler/types'
-import { executeCompiledDocument, inspectCompiledDocument } from '../../cad/execution/userModule'
-import { generateRandomVars } from '../../cad/model/vars'
-import {
-  analyzeCadSource,
-  analyzeGeometrySource,
-  analyzeMaterialSource,
-  analyzeTaskSource,
-} from '../../cad/source/sourceAnalysis'
+import { evaluatePublicExampleBundle, expectReliablePublicScene } from '@/test/publicExampleHarness'
 import { assertSimulationProgramManifest } from '../../cad/simulation'
-import type { CaembleProgramExample } from './types'
 import { caembleProgramExamples } from '.'
 
 installSyntheticCatalog({
@@ -31,60 +21,13 @@ installSyntheticCatalog({
   ],
 })
 
-async function compileSource(source: string) {
-  return (
-    await transform(source, {
-      format: 'cjs',
-      jsxFactory: 'h',
-      jsxFragment: 'Fragment',
-      loader: 'tsx',
-      platform: 'browser',
-      target: 'es2020',
-    })
-  ).code
-}
-
-async function prepareExample(example: CaembleProgramExample) {
-  const sourceHash = '2'.repeat(64)
-  const sources = await Promise.all(
-    Object.entries(example.experimentSourceBundle.files)
-      .filter(([path]) => path.endsWith('.tsx'))
-      .map(async ([entryFile, source]) => {
-        if (entryFile === 'experiment.tsx') analyzeCadSource(source)
-        else if (entryFile === 'geometry.tsx') analyzeGeometrySource(source, { allowEmpty: true })
-        else if (entryFile === 'material.tsx') analyzeMaterialSource(source)
-        else analyzeTaskSource(source)
-        const compiled: CompiledCadSource = {
-          apiVersion: 7,
-          compilerVersion: CAD_COMPILER_VERSION,
-          entryFile,
-          code: await compileSource(source),
-          sourceHash,
-        }
-        return [entryFile, compiled] as const
-      }),
-  )
-  const document: CompiledCadDocument = {
-    apiVersion: 7,
-    compilerVersion: CAD_COMPILER_VERSION,
-    sourceHash,
-    sources: Object.fromEntries(sources),
-  }
-  const inspection = inspectCompiledDocument(document)
-  const result = executeCompiledDocument(
-    document,
-    generateRandomVars(inspection.varsSchema),
-    example.experimentSourceBundle.files['simulate.py'],
-  )
-  return result.simulationProgram
-}
-
 describe('Python CAE Experiment examples', () => {
   it('keeps unique immutable fixtures with compact manifest v5 tasks', async () => {
     expect(new Set(caembleProgramExamples.map((example) => example.id)).size).toBe(caembleProgramExamples.length)
 
     for (const example of caembleProgramExamples) {
-      const manifest = await prepareExample(example)
+      const result = await evaluatePublicExampleBundle(example.experimentSourceBundle)
+      const manifest = result.simulationProgram
       expect(manifest).toMatchObject({
         formatVersion: 5,
         simulationApiVersion: 3,
@@ -96,6 +39,8 @@ describe('Python CAE Experiment examples', () => {
       expect(
         Object.keys(example.experimentSourceBundle.files).filter((path) => path.startsWith('tasks/')),
       ).toHaveLength(example.verification.kernelTasks.length)
+      expectReliablePublicScene(result.scene)
+      Object.values(result.taskScenes).forEach((scene) => expectReliablePublicScene(scene))
     }
   })
 

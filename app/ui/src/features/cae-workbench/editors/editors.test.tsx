@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ExperimentSourceDocument } from '@/lib/cad'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
+import { DocumentFeedback } from './DocumentFeedback'
 import { ExperimentEditor } from './ExperimentEditor'
 import { RecordedDataEditor } from './RecordedDataEditor'
 
@@ -192,6 +193,53 @@ describe('ExperimentEditor', () => {
     expect(screen.getByText(/Task: main, thermal/)).toHaveTextContent(
       'Measurement 저장과 CAE 실행은 사용할 수 없습니다.',
     )
+  })
+})
+
+describe('DocumentFeedback', () => {
+  it('shows the error cause first and keeps the stack collapsed outside the alert', () => {
+    render(
+      <DocumentFeedback
+        controller={controller({
+          error: {
+            title: 'Experiment Error',
+            message: 'vars.openness must be a finite number.',
+            stack: 'CadDocumentEvaluationError: vars.openness must be a finite number.\n    at minified.js:241:10849',
+          },
+        })}
+      />,
+    )
+
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveTextContent('Experiment Error')
+    expect(alert).toHaveTextContent('vars.openness must be a finite number.')
+    expect(alert).not.toHaveTextContent('at minified.js:241:10849')
+
+    const summary = screen.getByText('Technical details')
+    const details = summary.closest('details')
+    expect(details).not.toBeNull()
+    expect(details).not.toHaveAttribute('open')
+    expect(screen.getByLabelText('Error stack trace')).toHaveTextContent('at minified.js:241:10849')
+
+    fireEvent.click(summary)
+    expect(details).toHaveAttribute('open')
+  })
+
+  it('omits technical details when the error has no stack', () => {
+    render(
+      <DocumentFeedback
+        controller={controller({
+          error: {
+            title: 'Measurement Vars Error',
+            message: 'The current Measurement is missing vars.openness.',
+          },
+        })}
+      />,
+    )
+
+    expect(screen.getByRole('alert')).toHaveTextContent('The current Measurement is missing vars.openness.')
+    expect(screen.queryByText('Technical details')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Error stack trace')).not.toBeInTheDocument()
   })
 })
 

@@ -132,12 +132,32 @@ export function normalizeVars(schema: NormalizedVarsSchema, rawVars: unknown, va
   Object.keys(schema).forEach((key) => {
     const entry = schema[key]
     const rawValue = values[key]
+    if (!Object.prototype.hasOwnProperty.call(values, key) || rawValue === undefined) {
+      throw new CadModelError(`vars.${key} is required by varsSchema but is missing from the current Candidate.`)
+    }
     validateTensor(rawValue, entry.shape, `vars.${key}`)
     const value = freezeTensor(cloneTensor(rawValue))
     validateRange(value, entry.min, entry.max, entry.shape, `vars.${key}`)
     normalized[key] = value
   })
   return Object.freeze(normalized)
+}
+
+function expandBound(bound: Tensor, shape: readonly number[]): Tensor {
+  if (shape.length === 0) return bound as number
+  return Array.from({ length: shape[0] }, (_, index) => expandBound(boundAt(bound, index), shape.slice(1)))
+}
+
+export function varsSchemaFingerprint(rawSchema: Readonly<Record<string, VarsSchemaEntry>>) {
+  const { normalized } = normalizeVarsSchema(rawSchema, 'Experiment')
+  return JSON.stringify(
+    Object.keys(normalized)
+      .sort()
+      .map((key) => {
+        const entry = normalized[key]
+        return [key, expandBound(entry.min, entry.shape), expandBound(entry.max, entry.shape)]
+      }),
+  )
 }
 
 function randomTensor(shape: readonly number[], min: Tensor, max: Tensor): Tensor {
@@ -155,10 +175,7 @@ function randomTensor(shape: readonly number[], min: Tensor, max: Tensor): Tenso
 export function generateRandomVars(rawSchema: Readonly<Record<string, VarsSchemaEntry>>) {
   const schema = normalizeVarsSchema(rawSchema, 'Experiment')
   const generated = Object.fromEntries(
-    Object.entries(schema.normalized).map(([key, entry]) => [
-      key,
-      randomTensor(entry.shape, entry.min, entry.max),
-    ]),
+    Object.entries(schema.normalized).map(([key, entry]) => [key, randomTensor(entry.shape, entry.min, entry.max)]),
   )
   return normalizeVars(schema.normalized, generated, 'Experiment')
 }

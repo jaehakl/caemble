@@ -9,7 +9,12 @@ import {
   defaultExperimentProgramCode,
   defaultExperimentTaskCode,
 } from '../../defaultExperimentProgramCode'
-import { caembleExamples, caembleProgramExamples, wheelAssemblyExample } from '../../examples'
+import {
+  caembleExamples,
+  caembleProgramExamples,
+  geometryAuthoringSkeletonSourceBundle,
+  wheelAssemblyExample,
+} from '../../examples'
 import { blankExperimentSourceBundle, starterExperimentSourceBundle } from '../../localExperimentCode'
 import { buildSyntheticCatalog } from '../../../test/syntheticCatalog'
 import { catalogRuntimeTypes } from '../compiler/catalogTypeEnvironment'
@@ -219,8 +224,12 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
       .forEach(([path, source]) => expect(diagnosticsFor(source, files, `${prefix}/${path}`)).toEqual([]))
   })
 
-  it('type-checks the local Starter and Blank Experiment bundles', () => {
-    for (const bundle of [starterExperimentSourceBundle, blankExperimentSourceBundle]) {
+  it('type-checks the local templates and the AI Helper geometry skeleton bundle', () => {
+    for (const bundle of [
+      starterExperimentSourceBundle,
+      blankExperimentSourceBundle,
+      geometryAuthoringSkeletonSourceBundle,
+    ]) {
       const prefix = 'C:/caemble-source/hash'
       const files = Object.fromEntries(
         Object.entries(bundle.files)

@@ -13,6 +13,7 @@ export {
 } from './programs'
 export type { CaembleProgramExample } from './programs'
 export { basketballGoalCode, basketballGoalExample } from './basketballGoal'
+export { geometryAuthoringSkeletonCode, geometryAuthoringSkeletonSourceBundle } from './geometryAuthoringSkeleton'
 export {
   wheelAssemblyExample,
   wheelAssemblyExperimentCode,
@@ -58,16 +59,14 @@ export const caembleExamples: readonly CaembleExample[] = Object.freeze([
   {
     id: 'random-curved-edge-cylinder-array',
     title: 'Random Curved Cylinder Array',
-    description:
-      'Geometry-only Experiment preview. A 4 × 4 array independently varies its Fourier and Taylor curves.',
+    description: 'Geometry-only Experiment preview. A 4 × 4 array independently varies its Fourier and Taylor curves.',
     code: curvedEdgeCylinderArrayCode,
     mode: 'geometry-preview',
   },
   {
     id: 'random-curved-surface-sphere-hcp-array',
     title: 'Random Curved Sphere HCP Array',
-    description:
-      'Geometry-only Experiment preview. Variable curved spheres form a hexagonal close-packed lattice.',
+    description: 'Geometry-only Experiment preview. Variable curved spheres form a hexagonal close-packed lattice.',
     code: curvedSurfaceSphereHcpArrayCode,
     mode: 'geometry-preview',
   },

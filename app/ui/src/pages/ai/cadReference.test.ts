@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { cadElementCatalog } from '@/lib/cad'
+import { geometryAuthoringSkeletonCode } from '@/lib/examples'
 import { getDocsKnowledge } from '@/pages/docs/docsKnowledge'
 import {
   CAD_GRAMMAR_CORE,
@@ -15,6 +16,7 @@ describe('official AI CAD reference', () => {
     expect(CAD_GRAMMAR_CORE).toContain('position?: Vec3')
     expect(CAD_GRAMMAR_CORE).toContain('rotation?: Vec3')
     expect(CAD_GRAMMAR_CORE).toContain("from '@caemble/core'")
+    expect(CAD_GRAMMAR_CORE).toContain(geometryAuthoringSkeletonCode.trim())
     expect(CAD_GRAMMAR_CORE).toContain('Never generate `translation`')
     expect(CAD_GRAMMAR_CORE).toContain('deprecated v7 compatibility properties for legacy source')
     expect(CAD_GRAMMAR_CORE).not.toContain('migration-only v6 properties')

@@ -1,6 +1,11 @@
 import type { CatalogSearchItem } from '@/api/catalog'
 import { cadElementCatalog } from '@/lib/cad'
-import { basketballGoalExample, caembleProgramExamples, wheelAssemblyExample } from '@/lib/examples'
+import {
+  basketballGoalExample,
+  caembleProgramExamples,
+  geometryAuthoringSkeletonCode,
+  wheelAssemblyExample,
+} from '@/lib/examples'
 import { docsSectionHref, type DocsSectionId } from './docsRoute'
 
 export type DocsKnowledgeChunk = Readonly<{
@@ -362,6 +367,8 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       '',
       'Experiment 정의는 `experiment({...})`, 각 Task는 `defineTask({...})`를 default export합니다. `material.tsx`는 named Material 객체 또는 factory만 export합니다. `geometry.tsx`와 Published Geometry module은 PascalCase named `Geometry<Props>` 함수 component를 여러 개 export할 수 있습니다. Geometry dependency는 exact coordinate의 named import 문이 유일한 원본이며 Tree와 DB projection은 source에서 자동으로 만들어집니다.',
       '',
+      '부분 예시 — 다음 두 fence는 각각 완성 파일이 아니라 import 경계만 보여줍니다.',
+      '',
       '```tsx',
       '// geometry.tsx',
       'import { NotchedConductor as Conductor } from "caemble:geometry/jlee/common/notched-conductor@1.2.3"',
@@ -394,16 +401,10 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       'CAD API v7 Geometry는 JSX를 반환하는 순수 함수 component입니다. `geometry.tsx`에는 재사용할 named `Geometry<Props>`를 두고, `experiment.tsx`의 `geometry` callback에서 호출합니다. 숫자로 된 길이는 모두 해당 scene의 `lengthUnit`으로 해석됩니다.',
       '',
       '```tsx',
-      '// geometry.tsx',
-      "import { type Geometry } from '@caemble/core'",
-      '',
-      'export const Bracket: Geometry<{ width: number }> = ({ width }) => (',
-      '  <union id="body">',
-      '    <box size={[width, 20, 4]} />',
-      '    <cylinder radius={4} height={20} position={[0, 0, 10]} />',
-      '  </union>',
-      ')',
+      geometryAuthoringSkeletonCode.trim(),
       '```',
+      '',
+      '위 `geometry.tsx`는 AI Helper와 같은 source 상수를 사용하며 production과 동일한 TypeScript emit 설정, 별도 declaration type-check와 실제 evaluator 회귀 테스트를 통과합니다.',
       '',
       '좌표계는 오른손 좌표계입니다. `+X`, `+Y`, `+Z`와 회전의 양의 방향에는 오른손 법칙을 적용합니다. primitive의 기준축과 원점은 요소마다 다르므로 추측하지 말고 [Geometry Catalog](/docs?section=geometry)의 **Origin / surfaces**를 확인하세요. 예를 들어 기본 cylinder 축은 Z이고, box와 cylinder는 자신의 local origin을 중심으로 생성됩니다.',
       '',
@@ -427,6 +428,8 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       '| `scale` | `[x, y, z]` | 축별 배율. 균일 배율은 세 값을 같게 작성 |',
       '',
       '한 node 안에서는 **scale → rotation → position** 순서로 적용됩니다. parent와 child transform은 tree 계층대로 합성됩니다. 각도는 degree가 아니라 radian이므로 `Math.PI / 2`처럼 작성하세요.',
+      '',
+      '부분 예시 — 아래 fence는 완성 파일이 아닌 단일 intrinsic element 식입니다.',
       '',
       '```tsx',
       '<cylinder',
@@ -681,7 +684,7 @@ export const catalogDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze
         'Surfaces:',
         ...(entry.surfaces.length ? entry.surfaces.map((surface) => `- ${surface}`) : ['- No fixed surface contract.']),
         '',
-        'Example:',
+        '검증된 부분 TSX 예시 — 완성 파일이 아닌 단일 element 식:',
         '```tsx',
         entry.example,
         '```',

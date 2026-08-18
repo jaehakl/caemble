@@ -11,10 +11,13 @@ import {
   evaluateDocument,
   generateRandomVars,
   inspectDocument,
+  normalizeVars,
+  normalizeVarsSchema,
   removeExperimentTask,
   unresolvedMeasurementMaterialRoles,
   updateCadSource,
   updateExperimentSourceFile,
+  varsSchemaFingerprint,
   type BuiltMeasurement,
   type CadDiagnostic,
   type CadScene,
@@ -107,15 +110,46 @@ export type SimulationController = Readonly<{
   stale: boolean
 }>
 
+export type CandidateProvenance = 'editable' | 'persisted-measurement'
+
+export type CandidateVarsRegeneratedEvent = Readonly<{
+  reason: 'schema-changed' | 'invalid-candidate'
+  vars: Readonly<Vars>
+}>
+
+export type UseCadWorkspaceOptions = Readonly<{
+  candidateVars?: Readonly<Vars>
+  candidateVarsPending?: boolean
+  candidateProvenance?: CandidateProvenance
+  frozenMaterialSnapshot?: unknown | null
+  runtimeEnabled?: boolean
+  geometryDrafts?: GeometryDraftOverlay
+  resetKey?: string | number
+  sourceOnlyMaterials?: boolean
+  onCandidateVarsRegenerated?: (event: CandidateVarsRegeneratedEvent) => void
+}>
+
+class MeasurementVarsError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'MeasurementVarsError'
+  }
+}
+
 export function useCadWorkspace(
   experiment: ExperimentSourceDocument | null | undefined,
   onExperimentChange: ((document: ExperimentSourceDocument) => void) | undefined,
-  candidateVars?: Readonly<Vars>,
-  frozenMaterialSnapshot: unknown | null = null,
-  runtimeEnabled = true,
-  geometryDrafts?: GeometryDraftOverlay,
-  resetKey: string | number = 'default',
-  sourceOnlyMaterials = false,
+  {
+    candidateVars,
+    candidateVarsPending = false,
+    candidateProvenance = 'editable',
+    frozenMaterialSnapshot = null,
+    runtimeEnabled = true,
+    geometryDrafts,
+    resetKey = 'default',
+    sourceOnlyMaterials = false,
+    onCandidateVarsRegenerated,
+  }: UseCadWorkspaceOptions = {},
 ) {
   const [diagnostics, setDiagnostics] = useState<readonly CadDiagnostic[]>([])
   const [draftTaskNames, setDraftTaskNames] = useState<readonly string[]>([])
@@ -146,8 +180,16 @@ export function useCadWorkspace(
     startedAt: number
   }> | null>(null)
   const builtMeasurementRef = useRef<BuiltMeasurement | null>(null)
+  const candidateCacheRef = useRef<Readonly<{
+    fingerprint: string
+    inputKey: string
+    vars: Readonly<Vars>
+    varsKey: string
+  }> | null>(null)
   const evaluationTimeoutRef = useRef<EvaluationTimeoutMs>(evaluationTimeoutMs)
   const lastHandledGenerationRef = useRef(0)
+  const lastSchemaFingerprintRef = useRef<string | null>(null)
+  const onCandidateVarsRegeneratedRef = useRef(onCandidateVarsRegenerated)
   const recordedDataRef = useRef<RecordedData | null>(null)
   const revisionRef = useRef(0)
   const statusRef = useRef<AppStatus>('Ready')
@@ -156,6 +198,7 @@ export function useCadWorkspace(
 
   builtMeasurementRef.current = builtMeasurement
   evaluationTimeoutRef.current = evaluationTimeoutMs
+  onCandidateVarsRegeneratedRef.current = onCandidateVarsRegenerated
   recordedDataRef.current = recordedData
   statusRef.current = status
   successfulRevisionRef.current = successfulRevision
@@ -204,7 +247,11 @@ export function useCadWorkspace(
     setError(null)
     const resetPreview = resetKeyRef.current !== resetKey
     resetKeyRef.current = resetKey
-    if (resetPreview) setEvaluatedSnapshot(null)
+    if (resetPreview) {
+      candidateCacheRef.current = null
+      lastSchemaFingerprintRef.current = null
+      setEvaluatedSnapshot(null)
+    }
     setBuiltMeasurement(null)
     builtMeasurementRef.current = null
     setMaterialParameters(null)
@@ -217,6 +264,8 @@ export function useCadWorkspace(
     setVariables(null)
 
     if (!experiment) {
+      candidateCacheRef.current = null
+      lastSchemaFingerprintRef.current = null
       setEvaluatedSnapshot(null)
       setScene(null)
       setTaskScenes(Object.freeze({}))
@@ -231,7 +280,6 @@ export function useCadWorkspace(
     activeEvaluationRef.current = abort
     updateStatus('Checking')
     const explicitGeneration = generation !== lastHandledGenerationRef.current
-    if (explicitGeneration) lastHandledGenerationRef.current = generation
 
     void fetchCatalogRuntimeSlice(evaluationDocument.sourceBundle)
       .then(async (catalog) => {
@@ -244,8 +292,60 @@ export function useCadWorkspace(
         })
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
         setVarsSchema(inspection.varsSchema)
-        const nextVars =
-          explicitGeneration || candidateVars === undefined ? generateRandomVars(inspection.varsSchema) : candidateVars
+        const fingerprint = varsSchemaFingerprint(inspection.varsSchema)
+        const schemaChanged =
+          lastSchemaFingerprintRef.current !== null && lastSchemaFingerprintRef.current !== fingerprint
+        lastSchemaFingerprintRef.current = fingerprint
+        const cached = candidateCacheRef.current
+        const reusableCachedCandidate =
+          cached?.fingerprint === fingerprint && (cached.inputKey === varsKey || cached.varsKey === varsKey)
+            ? cached.vars
+            : null
+        const generateCandidateVars = (reason?: CandidateVarsRegeneratedEvent['reason']) => {
+          if (reusableCachedCandidate && !explicitGeneration) return reusableCachedCandidate
+          const generated = generateRandomVars(inspection.varsSchema)
+          candidateCacheRef.current = Object.freeze({
+            fingerprint,
+            inputKey: varsKey,
+            vars: generated,
+            varsKey: stableInput(generated),
+          })
+          if (reason) onCandidateVarsRegeneratedRef.current?.(Object.freeze({ reason, vars: generated }))
+          return generated
+        }
+        let nextVars: Readonly<Vars>
+        if (candidateProvenance === 'persisted-measurement' && candidateVarsPending && candidateVars === undefined) {
+          return
+        } else if (explicitGeneration) {
+          lastHandledGenerationRef.current = generation
+          nextVars = generateCandidateVars()
+        } else if (candidateProvenance === 'persisted-measurement') {
+          candidateCacheRef.current = null
+          try {
+            if (candidateVars === undefined) throw new Error('The saved Measurement does not contain Candidate vars.')
+            const normalizedSchema = normalizeVarsSchema(inspection.varsSchema, 'Experiment')
+            nextVars = normalizeVars(normalizedSchema.normalized, candidateVars, 'Measurement')
+          } catch (cause: unknown) {
+            const detail = cause instanceof Error ? cause.message : String(cause)
+            throw new MeasurementVarsError(
+              `Saved Measurement vars do not match the current Experiment varsSchema. ${detail} Open the Experiment revision used to create this Measurement or generate a new editable Candidate.`,
+            )
+          }
+        } else if (schemaChanged) {
+          nextVars = generateCandidateVars('schema-changed')
+        } else if (reusableCachedCandidate) {
+          nextVars = reusableCachedCandidate
+        } else if (candidateVars === undefined) {
+          nextVars = generateCandidateVars()
+        } else {
+          try {
+            const normalizedSchema = normalizeVarsSchema(inspection.varsSchema, 'Experiment')
+            nextVars = normalizeVars(normalizedSchema.normalized, candidateVars, 'Candidate')
+            candidateCacheRef.current = null
+          } catch {
+            nextVars = generateCandidateVars('invalid-candidate')
+          }
+        }
         updateStatus('Evaluating')
         const snapshot = await evaluateDocument(
           { document: evaluationDocument, vars: nextVars },
@@ -342,6 +442,7 @@ export function useCadWorkspace(
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
         const compilation = cause instanceof CadCompilationError ? cause : null
         const evaluation = cause instanceof CadDocumentEvaluationError ? cause : null
+        const measurementVars = cause instanceof MeasurementVarsError
         setDiagnostics(compilation?.diagnostics ?? evaluation?.diagnostics ?? [])
         setError({
           title: compilation
@@ -350,7 +451,9 @@ export function useCadWorkspace(
               : compilation.errorType === 'type'
                 ? 'Type Error'
                 : 'Compile Error'
-            : 'Experiment Error',
+            : measurementVars
+              ? 'Measurement Vars Error'
+              : 'Experiment Error',
           message: cause instanceof Error ? cause.message : String(cause),
           ...(cause instanceof Error && cause.stack ? { stack: cause.stack } : {}),
         })
@@ -365,6 +468,8 @@ export function useCadWorkspace(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     experiment,
+    candidateProvenance,
+    candidateVarsPending,
     generation,
     geometryDrafts,
     invalidateSimulation,

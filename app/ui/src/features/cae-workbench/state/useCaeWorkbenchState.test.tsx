@@ -10,8 +10,10 @@ import { useCaeWorkbenchState } from './useCaeWorkbenchState'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 
 const mocks = vi.hoisted(() => ({
+  cadWorkspace: vi.fn(),
   experimentList: vi.fn(),
   setCurrentExperimentId: vi.fn(),
+  toastInfo: vi.fn(),
 }))
 
 const controller = {
@@ -45,8 +47,12 @@ vi.mock('@/features/viewer/current-cad-selection', () => ({
   useCurrentCadSelection: () => ({ setCurrentExperimentId: mocks.setCurrentExperimentId }),
 }))
 vi.mock('@/features/viewer/workspace/useCadWorkspace', () => ({
-  useCadWorkspace: () => ({ experimentDocument: controller, simulation: {} }),
+  useCadWorkspace: (...args: unknown[]) => {
+    mocks.cadWorkspace(...args)
+    return { experimentDocument: controller, simulation: {} }
+  },
 }))
+vi.mock('sonner', () => ({ toast: { error: vi.fn(), info: mocks.toastInfo } }))
 vi.mock('@/features/cae-workbench/measurement/useCaeMeasurementActions', () => ({
   useCaeMeasurementActions: () => ({
     busy: false,
@@ -154,5 +160,31 @@ describe('useCaeWorkbenchState', () => {
     act(() => result.current.geometry.updateSource(`${starterExperimentSourceBundle.files['geometry.tsx']}\n// edited`))
     expect(result.current.experimentDirty).toBe(true)
     expect(result.current.hasUnsavedWork).toBe(true)
+  })
+
+  it('stores and announces Candidate vars automatically regenerated for an edited schema', () => {
+    const { result } = renderHook(() => useCaeWorkbenchState(null, false), { wrapper: wrapper() })
+    const options = mocks.cadWorkspace.mock.calls[mocks.cadWorkspace.mock.calls.length - 1][2] as {
+      onCandidateVarsRegenerated: (event: { reason: 'schema-changed'; vars: { openness: number } }) => void
+    }
+
+    act(() => options.onCandidateVarsRegenerated({ reason: 'schema-changed', vars: { openness: 0.5 } }))
+
+    expect(result.current.candidateVars).toEqual({ openness: 0.5 })
+    expect(mocks.toastInfo).toHaveBeenCalledWith('varsSchema가 변경되어 모든 Candidate 변수를 새로 생성했습니다.')
+  })
+
+  it('uses the strict vars policy while a persisted Measurement is selected or restoring', () => {
+    const { result } = renderHook(() => useCaeWorkbenchState(null, false), { wrapper: wrapper() })
+    expect(mocks.cadWorkspace.mock.calls[mocks.cadWorkspace.mock.calls.length - 1][2]).toMatchObject({
+      candidateProvenance: 'editable',
+    })
+
+    act(() => result.current.restoreSelection(17))
+
+    expect(mocks.cadWorkspace.mock.calls[mocks.cadWorkspace.mock.calls.length - 1][2]).toMatchObject({
+      candidateVarsPending: true,
+      candidateProvenance: 'persisted-measurement',
+    })
   })
 })

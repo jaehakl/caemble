@@ -5,7 +5,6 @@ import { normalizeVarsSchema } from '../model/vars'
 import { assertSerializableCadScene } from '../execution/meshValidation'
 import type { CadWorkerRequest, CadWorkerResponse } from '../worker/protocol'
 import { parseCatalogRuntimeSlice } from '@/contracts/catalog'
-import { assertValidKernelDescriptor } from '../simulation'
 
 export type RunnerOperationEnvelope = Readonly<{
   type: 'inspect' | 'evaluate' | 'preview-geometry'
@@ -51,7 +50,7 @@ function assertOnlyKeys(value: object, allowed: readonly string[], path: string)
   if (unknown) throw new CadModelError(`${path}.${unknown} is not allowed.`)
 }
 
-function assertNonce(value: unknown) {
+function assertNonce(value: unknown): asserts value is string {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9-]{16,128}$/u.test(value)) {
     throw new CadModelError('Runner message nonce is invalid.')
   }
@@ -83,7 +82,7 @@ export function assertCadWorkerRequest(value: unknown): asserts value is CadWork
   }
   if (value.type === 'inspect') {
     assertOnlyKeys(value, ['type', 'requestId', 'revision', 'compiledDocument', 'catalog'], 'request')
-    parseCatalogRuntimeSlice(value.catalog).solvers.forEach(({ descriptor }) => assertValidKernelDescriptor(descriptor))
+    parseCatalogRuntimeSlice(value.catalog)
     return
   }
   if (value.type === 'preview-geometry') {
@@ -112,8 +111,12 @@ export function assertCadWorkerRequest(value: unknown): asserts value is CadWork
     return
   }
   if (value.type !== 'evaluate') throw new CadModelError('CAD runner request type is invalid.')
-  assertOnlyKeys(value, ['type', 'requestId', 'revision', 'compiledDocument', 'catalog', 'pythonSource', 'vars'], 'request')
-  parseCatalogRuntimeSlice(value.catalog).solvers.forEach(({ descriptor }) => assertValidKernelDescriptor(descriptor))
+  assertOnlyKeys(
+    value,
+    ['type', 'requestId', 'revision', 'compiledDocument', 'catalog', 'pythonSource', 'vars'],
+    'request',
+  )
+  parseCatalogRuntimeSlice(value.catalog)
   if (typeof value.pythonSource !== 'string' || !value.pythonSource.trim()) {
     throw new CadModelError('Experiment evaluation requires Python simulation source.')
   }
@@ -258,4 +261,39 @@ export function assertRunnerCancelOperationEnvelope(value: unknown): asserts val
     throw new CadModelError('Runner operation cancellation is invalid.')
   }
   assertNonce(value.nonce)
+}
+
+export function runnerOperationRejectionEnvelope(
+  value: unknown,
+  error: unknown,
+): RunnerOperationResultEnvelope | undefined {
+  try {
+    assertPlainObject(value, 'operation')
+    if (value.type !== 'inspect' && value.type !== 'evaluate' && value.type !== 'preview-geometry') return undefined
+    assertNonce(value.nonce)
+    assertPlainObject(value.request, 'request')
+    assertIdentity(value.request.requestId, value.request.revision, 'CAD runner request')
+    const reason = error instanceof Error ? error.message : String(error)
+    const message = `The CAD runner rejected the ${value.type} request before it started: ${reason}`.slice(0, 65_536)
+    return {
+      type: 'operation-result',
+      operation: value.type,
+      nonce: value.nonce,
+      response: {
+        type:
+          value.type === 'inspect'
+            ? 'inspection-error'
+            : value.type === 'evaluate'
+              ? 'evaluation-error'
+              : 'geometry-preview-error',
+        requestId: value.request.requestId as string,
+        revision: value.request.revision as number,
+        documentType: value.type === 'preview-geometry' ? 'geometry' : 'experiment',
+        errorType: 'model',
+        message,
+      },
+    }
+  } catch {
+    return undefined
+  }
 }

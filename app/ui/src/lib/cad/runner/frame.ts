@@ -1,8 +1,10 @@
 import { cadSnapshotTransferables } from '../execution/meshValidation'
+import { installCatalogRuntimeSlice } from '@/lib/catalog/runtime'
 import {
   assertRunnerCancelOperationEnvelope,
   assertRunnerOperationEnvelope,
   assertRunnerOperationResultEnvelope,
+  runnerOperationRejectionEnvelope,
   type RunnerOperationEnvelope,
 } from './protocol'
 
@@ -88,6 +90,7 @@ function handleOperation(event: MessageEvent<unknown>, envelope: RunnerOperation
         keepWorker = true
         return
       }
+      if (request.type !== 'preview-geometry') installCatalogRuntimeSlice(request.catalog)
       assertRunnerOperationResultEnvelope(workerEvent.data)
       if (
         workerEvent.data.operation !== operation ||
@@ -134,8 +137,14 @@ window.addEventListener('message', (event: MessageEvent<unknown>) => {
   try {
     assertRunnerOperationEnvelope(event.data)
     handleOperation(event, event.data)
-  } catch {
-    // Invalid cross-origin messages are ignored.
+  } catch (error) {
+    const rejection = runnerOperationRejectionEnvelope(event.data, error)
+    if (!rejection) return
+    try {
+      event.ports[0].postMessage(rejection)
+    } finally {
+      event.ports[0].close()
+    }
   }
 })
 

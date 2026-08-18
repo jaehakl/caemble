@@ -1,5 +1,8 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { delimiter } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const user = {
   id: 'd7929429-84f8-4d92-865d-dc638d8e64e0',
@@ -13,6 +16,51 @@ const user = {
   roles: ['user'],
 }
 const apiPattern = /^http:\/\/127\.0\.0\.1:\d+\/api\//
+const catalogPackageRoot = fileURLToPath(new URL('../../catalog', import.meta.url))
+const catalogSliceScript = `import json, sys
+from caemble_catalog import Catalog
+request = json.load(sys.stdin)
+with Catalog.open_readonly() as catalog:
+    result = catalog.runtime_slice(
+        solvers=[(item["name"], item["version"]) for item in request["solvers"]],
+        quantity_kinds=request["quantityKinds"],
+        material_parameters=request["materialParameters"],
+        material_models=request["materialModels"],
+    )
+json.dump(result, sys.stdout)
+`
+const publicExperimentTemplates = [
+  ['Blank Experiment', 'EmptyStructure', true, true],
+  ['Two-material Wheel Assembly', 'WheelAssembly', false, true],
+  ['DC Uniform Bar', 'referenceVoltage', false, false],
+  ['DC Notched Current Density', 'NotchedConductor', false, false],
+  ['DC Resolution Study', 'sourceVoltage', false, false],
+  ['Electro-Thermal Uniform Bar', 'fixedTemperature', false, false],
+] as const
+
+function canonicalCatalogSlice(request: unknown) {
+  const pythonPath = [catalogPackageRoot, process.env.PYTHONPATH].filter(Boolean).join(delimiter)
+  const output = execFileSync(process.env.PYTHON ?? 'python', ['-c', catalogSliceScript], {
+    encoding: 'utf8',
+    env: { ...process.env, PYTHONPATH: pythonPath },
+    input: JSON.stringify(request),
+  })
+  return JSON.parse(output) as unknown
+}
+
+async function mockCanonicalCatalog(page: Page) {
+  const slices = new Map<string, unknown>()
+  await page.route(/\/api\/catalog\/runtime-slice$/u, async (route) => {
+    const request = route.request().postDataJSON()
+    const key = JSON.stringify(request)
+    let slice = slices.get(key)
+    if (!slice) {
+      slice = canonicalCatalogSlice(request)
+      slices.set(key, slice)
+    }
+    await json(route, slice)
+  })
+}
 
 async function json(route: Route, body: unknown, status = 200) {
   await route.fulfill({ body: JSON.stringify(body), contentType: 'application/json', status })
@@ -114,7 +162,9 @@ export const StarterStructure: Geometry<{ size: Vec3 }> = () => (
 // offline-edit
 `)
   await expect(page.locator('.monaco-editor:visible .squiggly-error')).toHaveCount(0, { timeout: 10_000 })
-  await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByRole('button', { name: 'Toggle Experiment' })).toBeEnabled({ timeout: 15_000 })
+  await expect(page.getByText('Draft preview · Solver 미선택')).toBeVisible()
+  await expect(page.locator('footer [role="alert"]')).toHaveCount(0)
 
   await page.getByRole('menuitem', { name: 'Source' }).click()
   await page.getByRole('menuitem', { name: 'New Experiment' }).click()
@@ -143,6 +193,95 @@ export const EmptyStructure: Geometry = () => <></>
   await expect(page.getByRole('tab', { name: 'geometry.tsx' })).toHaveAttribute('aria-selected', 'true')
   await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('session-restored')
 })
+
+test('regenerates an editable Candidate when varsSchema adds openness', async ({ page }) => {
+  await mockApi(page)
+  await mockCanonicalCatalog(page)
+  await page.goto('/')
+  await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('StarterStructure', {
+    timeout: 30_000,
+  })
+
+  await page.getByRole('menuitem', { name: 'Source' }).click()
+  await page.getByRole('menuitem', { name: 'New Experiment' }).click()
+  await page
+    .getByRole('dialog', { name: 'New Experiment' })
+    .getByRole('button', { name: /Blank Experiment/ })
+    .click()
+  await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('EmptyStructure')
+
+  await page.getByRole('tab', { name: 'geometry.tsx' }).click()
+  const geometryEditor = page.locator('.monaco-editor:visible .view-lines')
+  await geometryEditor.click({ position: { x: 120, y: 45 } })
+  await page.keyboard.press('Control+A')
+  await page.keyboard.insertText(`import { type Geometry } from '@caemble/core'
+
+export const EmptyStructure: Geometry = () => <></>
+
+export const PaperBox: Geometry<{ openness: number }> = ({ openness }) => (
+  <box size={[100, 60, 2 + openness * 38]} />
+)
+`)
+  await expect(page.locator('.monaco-editor:visible .squiggly-error')).toHaveCount(0, { timeout: 10_000 })
+
+  await page.getByRole('tab', { name: 'experiment.tsx' }).click()
+  const experimentEditor = page.locator('.monaco-editor:visible .view-lines')
+  await experimentEditor.click({ position: { x: 120, y: 45 } })
+  await page.keyboard.press('Control+A')
+  await page.keyboard.insertText(`import { experiment } from '@caemble/core'
+import { PaperBox } from './geometry'
+
+export default experiment({
+  lengthUnit: 'mm',
+  varsSchema: {
+    openness: { min: 0, max: 1 },
+  },
+  geometry: ({ vars }) => <PaperBox id="paperBox" openness={vars.openness} />,
+  recordedData: {},
+})
+`)
+
+  await expect(page.getByText('Waiting for model...', { exact: true })).toBeHidden({ timeout: 15_000 })
+  await expect(page.getByRole('button', { name: 'Toggle Experiment' })).toBeEnabled()
+  await expect(page.locator('footer [role="alert"]')).toHaveCount(0)
+  await expect(page.getByText('Draft preview · Solver 미선택')).toBeVisible({ timeout: 15_000 })
+})
+
+for (const [title, sourceMarker, empty, draft] of publicExperimentTemplates) {
+  test(`loads the ${title} template through the Workbench Picker`, async ({ page }) => {
+    test.setTimeout(draft ? 60_000 : 90_000)
+    await mockApi(page)
+    await mockCanonicalCatalog(page)
+    await page.goto('/')
+    await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('StarterStructure', {
+      timeout: 30_000,
+    })
+
+    await page.getByRole('menuitem', { name: 'Source' }).click()
+    await page.getByRole('menuitem', { name: 'New Experiment' }).click()
+    await page
+      .getByRole('dialog', { name: 'New Experiment' })
+      .getByRole('button', { name: new RegExp(`^${title}`) })
+      .click()
+
+    await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText(sourceMarker)
+    if (empty) {
+      await expect(page.getByText('Waiting for model...', { exact: true })).toBeVisible({ timeout: 15_000 })
+    } else {
+      await expect(page.getByText('Waiting for model...', { exact: true })).toBeHidden({ timeout: 30_000 })
+    }
+    if (draft) {
+      await expect(page.getByText('Draft preview · Solver 미선택')).toBeVisible({ timeout: 30_000 })
+    } else {
+      await expect(page.getByText('Draft preview · Solver 미선택')).toHaveCount(0)
+      await expect(page.getByRole('button', { name: 'Toggle Task' })).toBeEnabled()
+    }
+    if (!empty) {
+      await expect(page.getByRole('button', { name: 'Toggle Experiment' })).toBeEnabled()
+    }
+    await expect(page.locator('footer [role="alert"]')).toHaveCount(0)
+  })
+}
 
 test('opens Geometry export publishing from the Source menu and Geometry ribbon', async ({ page }) => {
   await mockApi(page, true)

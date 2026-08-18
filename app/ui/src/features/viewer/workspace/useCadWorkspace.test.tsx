@@ -10,6 +10,7 @@ import {
   inspectDocument,
   serializeCadScene,
   updateExperimentSourceFile,
+  type VarsSchemaEntry,
 } from '@/lib/cad'
 import { fetchCatalogRuntimeSlice } from '@/lib/catalog/references'
 import { registerSourceCatalogRuntimeSlice } from '@/lib/catalog/runtime'
@@ -30,6 +31,7 @@ const draftCatalog = buildSyntheticCatalog()
 const emptyMaterials = { schemaVersion: 1, materials: {} } as const
 const emptyTaskConfig = { parameters: {}, initializations: [], boundaryConditions: [], outputs: [] } as const
 const varsSchema = { fixed: { min: 4, max: 4 }, width: { min: 1, max: 10 } } as const
+let currentVarsSchema: Readonly<Record<string, VarsSchemaEntry>> = varsSchema
 const serializedScene = serializeCadScene({
   geometryGroups: [],
   lengthUnit: 'mm',
@@ -62,9 +64,10 @@ const document = createCadSourceDocument(
 
 describe('useCadWorkspace unified Experiment', () => {
   beforeEach(() => {
+    currentVarsSchema = varsSchema
     vi.mocked(fetchCatalogRuntimeSlice).mockResolvedValue(catalog)
     registerSourceCatalogRuntimeSlice(sourceHash, catalog)
-    vi.mocked(inspectDocument).mockResolvedValue({ sourceHash, varsSchema })
+    vi.mocked(inspectDocument).mockImplementation(async () => ({ sourceHash, varsSchema: currentVarsSchema }))
     vi.mocked(evaluateDocument).mockImplementation(async ({ vars }) => ({
       kind: 'experiment',
       scene: serializedScene,
@@ -78,7 +81,7 @@ describe('useCadWorkspace unified Experiment', () => {
       },
       sourceHash,
       variables: vars,
-      varsSchema,
+      varsSchema: currentVarsSchema,
     }))
     vi.mocked(resolveDocumentMaterials).mockResolvedValue({
       materialParameters: emptyMaterials,
@@ -92,7 +95,7 @@ describe('useCadWorkspace unified Experiment', () => {
 
   it('updates Program files and adds/removes Task files through whole-document changes', () => {
     const onChange = vi.fn()
-    const render = renderHook(() => useCadWorkspace(document, onChange, { fixed: 4, width: 2 }))
+    const render = renderHook(() => useCadWorkspace(document, onChange, { candidateVars: { fixed: 4, width: 2 } }))
 
     act(() => render.result.current.experimentDocument.handleExperimentFileChange('simulate.py', 'changed'))
     expect(onChange.mock.calls[0][0].sourceBundle.files['simulate.py']).toBe('changed')
@@ -103,7 +106,9 @@ describe('useCadWorkspace unified Experiment', () => {
     const withTwoTasks = onChange.mock.calls[1][0]
     render.unmount()
     const removeChange = vi.fn()
-    const second = renderHook(() => useCadWorkspace(withTwoTasks, removeChange, { fixed: 4, width: 2 }))
+    const second = renderHook(() =>
+      useCadWorkspace(withTwoTasks, removeChange, { candidateVars: { fixed: 4, width: 2 } }),
+    )
     act(() => second.result.current.experimentDocument.handleRemoveExperimentTask('electric'))
     expect(removeChange.mock.calls[0][0].sourceBundle.files).not.toHaveProperty('tasks/electric.tsx')
     second.unmount()
@@ -125,12 +130,14 @@ describe('useCadWorkspace unified Experiment', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.75)
     const onChange = vi.fn()
     const render = renderHook(() =>
-      useCadWorkspace(
-        document,
-        onChange,
-        { fixed: 4, width: 2 },
-        { schemaVersion: 2, experiment: emptyMaterials, tasks: { electric: emptyMaterials } },
-      ),
+      useCadWorkspace(document, onChange, {
+        candidateVars: { fixed: 4, width: 2 },
+        frozenMaterialSnapshot: {
+          schemaVersion: 2,
+          experiment: emptyMaterials,
+          tasks: { electric: emptyMaterials },
+        },
+      }),
     )
     await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
 
@@ -143,10 +150,228 @@ describe('useCadWorkspace unified Experiment', () => {
     render.unmount()
   })
 
+  it('keeps a valid Candidate when varsSchema only changes key order', async () => {
+    const onRegenerated = vi.fn()
+    const random = vi.spyOn(Math, 'random')
+    const render = renderHook(
+      ({ source }) =>
+        useCadWorkspace(source, vi.fn(), {
+          candidateVars: { fixed: 4, width: 2 },
+          onCandidateVarsRegenerated: onRegenerated,
+        }),
+      { initialProps: { source: document } },
+    )
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
+
+    currentVarsSchema = { width: varsSchema.width, fixed: varsSchema.fixed }
+    render.rerender({ source: updateExperimentSourceFile(document, 'experiment.tsx', 'same schema') })
+
+    await waitFor(() => expect(evaluateDocument).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(evaluateDocument).mock.calls[1][0].vars).toEqual({ fixed: 4, width: 2 })
+    expect(onRegenerated).not.toHaveBeenCalled()
+    expect(random).not.toHaveBeenCalled()
+    render.unmount()
+  })
+
+  it('regenerates every editable Candidate var once when varsSchema changes', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    const onRegenerated = vi.fn()
+    const render = renderHook(
+      ({ source }) =>
+        useCadWorkspace(source, vi.fn(), {
+          candidateVars: { fixed: 4, width: 2 },
+          onCandidateVarsRegenerated: onRegenerated,
+        }),
+      { initialProps: { source: document } },
+    )
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
+
+    currentVarsSchema = { ...varsSchema, openness: { min: 0, max: 1 } }
+    render.rerender({ source: updateExperimentSourceFile(document, 'experiment.tsx', 'with openness') })
+
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
+    const generated = vi.mocked(evaluateDocument).mock.calls[1][0].vars
+    expect(generated).toEqual({ fixed: 4, width: 5.5, openness: 0.5 })
+    expect(onRegenerated).toHaveBeenCalledOnce()
+    expect(onRegenerated).toHaveBeenCalledWith({ reason: 'schema-changed', vars: generated })
+    render.unmount()
+  })
+
+  it('reuses automatically generated vars after evaluation fails under the same schema', async () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.25)
+    const onRegenerated = vi.fn()
+    const render = renderHook(
+      ({ source }) =>
+        useCadWorkspace(source, vi.fn(), {
+          candidateVars: { fixed: 4, width: 2 },
+          onCandidateVarsRegenerated: onRegenerated,
+        }),
+      { initialProps: { source: document } },
+    )
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
+
+    currentVarsSchema = { ...varsSchema, openness: { min: 0, max: 1 } }
+    vi.mocked(evaluateDocument).mockRejectedValueOnce(new Error('geometry failed'))
+    render.rerender({ source: updateExperimentSourceFile(document, 'experiment.tsx', 'failing geometry') })
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Error'))
+    const generated = vi.mocked(evaluateDocument).mock.calls[1][0].vars
+
+    render.rerender({ source: updateExperimentSourceFile(document, 'experiment.tsx', 'fixed geometry') })
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
+
+    expect(vi.mocked(evaluateDocument).mock.calls[2][0].vars).toBe(generated)
+    expect(onRegenerated).toHaveBeenCalledOnce()
+    expect(random).toHaveBeenCalledTimes(2)
+    render.unmount()
+  })
+
+  it('clears the generated Candidate cache and schema history when resetKey changes', async () => {
+    const random = vi
+      .spyOn(Math, 'random')
+      .mockReturnValueOnce(0.25)
+      .mockReturnValueOnce(0.25)
+      .mockReturnValueOnce(0.75)
+      .mockReturnValueOnce(0.75)
+    const onRegenerated = vi.fn()
+    const render = renderHook(
+      ({ resetKey, source }) =>
+        useCadWorkspace(source, vi.fn(), {
+          candidateVars: { fixed: 4, width: 2 },
+          onCandidateVarsRegenerated: onRegenerated,
+          resetKey,
+        }),
+      { initialProps: { resetKey: 1, source: document } },
+    )
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
+
+    currentVarsSchema = { ...varsSchema, openness: { min: 0, max: 1 } }
+    const edited = updateExperimentSourceFile(document, 'experiment.tsx', 'failing geometry')
+    vi.mocked(evaluateDocument).mockRejectedValueOnce(new Error('geometry failed'))
+    render.rerender({ resetKey: 1, source: edited })
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Error'))
+    const beforeReset = vi.mocked(evaluateDocument).mock.calls[1][0].vars
+
+    render.rerender({ resetKey: 2, source: edited })
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
+    const afterReset = vi.mocked(evaluateDocument).mock.calls[2][0].vars
+
+    expect(beforeReset).toEqual({ fixed: 4, width: 3.25, openness: 0.25 })
+    expect(afterReset).toEqual({ fixed: 4, width: 7.75, openness: 0.75 })
+    expect(afterReset).not.toBe(beforeReset)
+    expect(onRegenerated.mock.calls.map(([event]) => event.reason)).toEqual(['schema-changed', 'invalid-candidate'])
+    expect(random).toHaveBeenCalledTimes(4)
+    render.unmount()
+  })
+
+  it('repairs an invalid editable Candidate but never rewrites an invalid persisted Measurement', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    const onEditableRegenerated = vi.fn()
+    const editable = renderHook(() =>
+      useCadWorkspace(document, vi.fn(), {
+        candidateVars: {},
+        onCandidateVarsRegenerated: onEditableRegenerated,
+      }),
+    )
+    await waitFor(() => expect(editable.result.current.experimentDocument.status).toBe('Ready'))
+    expect(vi.mocked(evaluateDocument).mock.calls[0][0].vars).toEqual({ fixed: 4, width: 5.5 })
+    expect(onEditableRegenerated).toHaveBeenCalledWith({
+      reason: 'invalid-candidate',
+      vars: { fixed: 4, width: 5.5 },
+    })
+    editable.unmount()
+
+    vi.clearAllMocks()
+    vi.mocked(fetchCatalogRuntimeSlice).mockResolvedValue(catalog)
+    vi.mocked(inspectDocument).mockImplementation(async () => ({ sourceHash, varsSchema: currentVarsSchema }))
+    const onPersistedRegenerated = vi.fn()
+    const persisted = renderHook(() =>
+      useCadWorkspace(document, undefined, {
+        candidateVars: {},
+        candidateProvenance: 'persisted-measurement',
+        onCandidateVarsRegenerated: onPersistedRegenerated,
+      }),
+    )
+    await waitFor(() => expect(persisted.result.current.experimentDocument.status).toBe('Error'))
+
+    expect(persisted.result.current.experimentDocument.error?.title).toBe('Measurement Vars Error')
+    expect(persisted.result.current.experimentDocument.error?.message).toContain(
+      'vars.fixed is required by varsSchema but is missing from the current Candidate',
+    )
+    expect(evaluateDocument).not.toHaveBeenCalled()
+    expect(onPersistedRegenerated).not.toHaveBeenCalled()
+    persisted.unmount()
+  })
+
+  it('waits for pending persisted Measurement vars without evaluating, generating, or reporting an error', async () => {
+    const random = vi.spyOn(Math, 'random')
+    const onRegenerated = vi.fn()
+    const render = renderHook(
+      ({ candidateVars, pending }: { candidateVars: { fixed: number; width: number } | undefined; pending: boolean }) =>
+        useCadWorkspace(document, undefined, {
+          candidateVars,
+          candidateVarsPending: pending,
+          candidateProvenance: 'persisted-measurement',
+          onCandidateVarsRegenerated: onRegenerated,
+        }),
+      {
+        initialProps: {
+          candidateVars: undefined as { fixed: number; width: number } | undefined,
+          pending: true,
+        },
+      },
+    )
+
+    await waitFor(() => expect(render.result.current.experimentDocument.varsSchema).toEqual(varsSchema))
+    expect(render.result.current.experimentDocument.status).toBe('Checking')
+    expect(render.result.current.experimentDocument.error).toBeNull()
+    expect(evaluateDocument).not.toHaveBeenCalled()
+    expect(random).not.toHaveBeenCalled()
+    expect(onRegenerated).not.toHaveBeenCalled()
+
+    render.rerender({ candidateVars: { fixed: 4, width: 2 }, pending: false })
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
+
+    expect(vi.mocked(evaluateDocument).mock.calls[0][0].vars).toEqual({ fixed: 4, width: 2 })
+    expect(random).not.toHaveBeenCalled()
+    expect(onRegenerated).not.toHaveBeenCalled()
+    render.unmount()
+  })
+
+  it('keeps an explicit generation request queued while persisted Measurement vars are pending', async () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    const render = renderHook(
+      ({ candidateVars, pending }: { candidateVars: { fixed: number; width: number } | undefined; pending: boolean }) =>
+        useCadWorkspace(document, undefined, {
+          candidateVars,
+          candidateVarsPending: pending,
+          candidateProvenance: 'persisted-measurement',
+        }),
+      {
+        initialProps: {
+          candidateVars: undefined as { fixed: number; width: number } | undefined,
+          pending: true,
+        },
+      },
+    )
+    await waitFor(() => expect(render.result.current.experimentDocument.varsSchema).toEqual(varsSchema))
+
+    act(() => render.result.current.experimentDocument.generateCandidate())
+    await waitFor(() => expect(inspectDocument).toHaveBeenCalledTimes(2))
+    expect(evaluateDocument).not.toHaveBeenCalled()
+    expect(random).not.toHaveBeenCalled()
+
+    render.rerender({ candidateVars: { fixed: 4, width: 2 }, pending: false })
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
+
+    expect(vi.mocked(evaluateDocument).mock.calls[0][0].vars).toEqual({ fixed: 4, width: 5.5 })
+    expect(random).toHaveBeenCalledOnce()
+    render.unmount()
+  })
+
   it('keeps the last successful Scene when a same-session edit fails', async () => {
     const edited = updateExperimentSourceFile(document, 'experiment.tsx', 'broken source')
     const render = renderHook(
-      ({ source }) => useCadWorkspace(source, vi.fn(), { fixed: 4, width: 2 }, null, true, undefined, 1),
+      ({ source }) => useCadWorkspace(source, vi.fn(), { candidateVars: { fixed: 4, width: 2 }, resetKey: 1 }),
       { initialProps: { source: document } },
     )
     await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
@@ -178,7 +403,7 @@ describe('useCadWorkspace unified Experiment', () => {
       variables: vars,
       varsSchema,
     }))
-    const render = renderHook(() => useCadWorkspace(document, vi.fn(), { fixed: 4, width: 2 }))
+    const render = renderHook(() => useCadWorkspace(document, vi.fn(), { candidateVars: { fixed: 4, width: 2 } }))
 
     await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
 
@@ -215,7 +440,7 @@ describe('useCadWorkspace unified Experiment', () => {
       variables: vars,
       varsSchema,
     }))
-    const render = renderHook(() => useCadWorkspace(document, vi.fn(), { fixed: 4, width: 2 }))
+    const render = renderHook(() => useCadWorkspace(document, vi.fn(), { candidateVars: { fixed: 4, width: 2 } }))
 
     await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
 
@@ -256,7 +481,7 @@ describe('useCadWorkspace unified Experiment', () => {
       taskMaterialParameters: { electric: emptyMaterials, draft: emptyMaterials },
       taskMaterialWarnings: { electric: [], draft: [] },
     })
-    const render = renderHook(() => useCadWorkspace(document, vi.fn(), { fixed: 4, width: 2 }))
+    const render = renderHook(() => useCadWorkspace(document, vi.fn(), { candidateVars: { fixed: 4, width: 2 } }))
 
     await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
 

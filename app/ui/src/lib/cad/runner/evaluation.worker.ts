@@ -13,13 +13,17 @@ import { CadModelError } from '../model/core'
 import { assertRunnerOperationEnvelope, type RunnerOperationResultEnvelope } from './protocol'
 import { installCatalogRuntimeSlice } from '@/lib/catalog/runtime'
 import { assertCatalogKernelTasks } from '@/lib/catalog/solverValidation'
+import { assertValidKernelDescriptor } from '../simulation'
 
 function handleOperation(value: unknown) {
   assertRunnerOperationEnvelope(value)
   const { nonce, request, type: operation } = value
   let response: RunnerOperationResultEnvelope['response']
   try {
-    if (request.type !== 'preview-geometry') installCatalogRuntimeSlice(request.catalog)
+    if (request.type !== 'preview-geometry') {
+      installCatalogRuntimeSlice(request.catalog)
+      request.catalog.solvers.forEach(({ descriptor }) => assertValidKernelDescriptor(descriptor))
+    }
     if (request.type === 'inspect') {
       const inspection = inspectCompiledDocument(request.compiledDocument)
       response = {

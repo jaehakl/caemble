@@ -30,6 +30,17 @@ function deepFreeze<T>(value: T): T {
   return value
 }
 
+const EMPTY_DRAFT_CATALOG_RUNTIME_SLICE: CatalogRuntimeSlice = deepFreeze({
+  schemaVersion: 1,
+  catalogRevision: 'draft-only-empty-v1',
+  solvers: [],
+  quantityKinds: [],
+  materialParameters: [],
+  materialModels: [],
+  materialGlobalQualifiers: [],
+  warnings: [],
+})
+
 function propertyName(property: ObjectProperty | ObjectMethod, analysis: Pick<SourceAnalysis, 'bindings'>) {
   const key = property.key
   if (!property.computed && key.type === 'Identifier') return key.name
@@ -178,6 +189,15 @@ export function extractCatalogSourceReferences(bundle: ExperimentSourceBundle): 
 
 export async function fetchCatalogRuntimeSlice(bundle: ExperimentSourceBundle): Promise<CatalogRuntimeSlice> {
   const references = extractCatalogSourceReferences(bundle)
+  if (
+    references.draftTaskNames.length > 0 &&
+    references.solvers.length === 0 &&
+    references.quantityKinds.length === 0 &&
+    references.materialParameters.length === 0 &&
+    references.materialModels.length === 0
+  ) {
+    return EMPTY_DRAFT_CATALOG_RUNTIME_SLICE
+  }
   const request: CatalogRuntimeSliceRequest = Object.freeze({
     solvers: references.solvers,
     quantityKinds: references.quantityKinds,

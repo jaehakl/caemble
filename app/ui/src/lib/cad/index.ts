@@ -28,7 +28,7 @@ export type {
   TaskModelContext,
   VarsSchemaDefinition,
 } from './model/v5'
-export { generateRandomVars } from './model/vars'
+export { generateRandomVars, normalizeVars, normalizeVarsSchema, varsSchemaFingerprint } from './model/vars'
 export { assertUcumUnitComparable, convertUcumValue, normalizeUcumUnit } from './model/units'
 export { normalizeDataValueDescriptor } from './model/core'
 export type {

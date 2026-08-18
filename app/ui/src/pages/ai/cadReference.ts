@@ -1,4 +1,5 @@
 import { cadAuthoringContract, cadElementCatalog } from '@/lib/cad'
+import { geometryAuthoringSkeletonCode } from '@/lib/examples'
 import { searchDocsKnowledge, type DocsKnowledgeChunk } from '@/pages/docs/docsKnowledge'
 
 export const CAD_GRAMMAR_CORE_MAX_BYTES = 5 * 1024
@@ -58,14 +59,7 @@ const grammarCore = [
   '',
   '## Complete geometry.tsx skeleton',
   '```tsx',
-  "import { type Geometry } from '@caemble/core'",
-  '',
-  'export const Assembly: Geometry = () => (',
-  '  <>',
-  '    <box id="base" size={[100, 60, 10]} position={[0, 0, 5]} />',
-  '    <cylinder id="post" radius={5} height={80} position={[0, 0, 50]} />',
-  '  </>',
-  ')',
+  ...geometryAuthoringSkeletonCode.trim().split('\n'),
   '```',
   '',
   '## Required rules',
