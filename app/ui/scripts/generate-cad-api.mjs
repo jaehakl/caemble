@@ -68,7 +68,7 @@ async function emit(relativePath, content) {
   } catch {
     // New generated file.
   }
-  if (current === content) return
+  if (current.replaceAll('\r\n', '\n') === content) return
   changed.push(relativePath)
   if (!checkOnly) await writeFile(outputPath, content, 'utf8')
 }
