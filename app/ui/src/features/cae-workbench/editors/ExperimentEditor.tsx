@@ -225,7 +225,7 @@ export function ExperimentEditor({
                 <span
                   className={`ml-1 text-[10px] font-semibold ${conflictReview ? 'text-amber-700' : 'text-emerald-700'}`}
                 >
-                  {conflictReview ? 'AI staged' : 'AI'}
+                  {conflictReview ? 'AI staged' : 'AI 미검증'}
                 </span>
               ) : null}
             </button>
@@ -250,7 +250,7 @@ export function ExperimentEditor({
                 </button>
               ) : (
                 <span className="rounded border border-sky-200 bg-sky-50 px-2 py-1 text-xs font-medium text-sky-700">
-                  {conflictReview ? 'Geometry graph staged 충돌' : 'Geometry graph 갱신'}
+                  {conflictReview ? 'Geometry graph staged 충돌' : '미검증 Geometry graph 갱신'}
                 </span>
               )}
               <button

@@ -7,8 +7,14 @@ import pytest
 from cryptography.fernet import Fernet
 
 import ai.workspace as agent_workspace
-from ai.agent import AgentRunner, ClientValidationBridge, PROMPT_TOOL_VERSION, SYSTEM_PROMPT
-from ai.models import ClientToolResult, RunStart
+from ai.agent import (
+    MAX_AGENT_STEPS,
+    MAX_TOOL_CALLS,
+    AgentRunner,
+    PROMPT_TOOL_VERSION,
+    SYSTEM_PROMPT,
+)
+from ai.models import RunStart, parse_client_message
 from ai.provider import ProviderError, ProviderStep, ProviderToolCall, ProviderUsage
 from ai.session import AgentSessionState, SessionEnvelopeCodec, credential_fingerprint
 from ai.tools import ToolExecution
@@ -40,7 +46,7 @@ def run_start(bundle: ExperimentSourceBundle | None = None) -> RunStart:
             "request": {"prompt": "현재 코드를 확인해 줘", "messages": []},
             "provider": "openai",
             "model": "gpt-5.6-luna",
-            "reasoningEffort": "high",
+            "reasoningEffort": "medium",
             "workspace": {
                 "experimentId": 4,
                 "document": {
@@ -64,83 +70,6 @@ class FakeEmitter:
 
     async def emit(self, event_type: str, **payload):
         self.events.append({"type": event_type, **payload})
-
-
-@pytest.mark.asyncio
-async def test_client_validation_bridge_rejects_stale_revision_and_hash():
-    emitter = FakeEmitter()
-    workspace = StagedExperiment(source_bundle())
-    bridge = ClientValidationBridge(
-        run_id="run-1",
-        emitter=emitter,
-        geometry_context_version="geometry-v1",
-        cancel_event=asyncio.Event(),
-    )
-    task = asyncio.create_task(bridge.validate(workspace))
-    while not emitter.events:
-        await asyncio.sleep(0)
-    request = emitter.events[0]
-
-    delivered = bridge.deliver(
-        ClientToolResult(
-            type="client_tool.result",
-            runId="run-1",
-            callId=request["callId"],
-            stagedRevision=1,
-            sourceHash=workspace.source_hash,
-            status="valid",
-            result={
-                "status": "valid",
-                "stagedRevision": 1,
-                "contextVersion": "geometry-v1",
-                "requestedSourceHash": workspace.source_hash,
-                "sourceHash": workspace.source_hash,
-                "catalogFingerprint": "catalog-v1",
-                "varsSchemaFingerprint": "c" * 64,
-                "sceneHash": "d" * 64,
-                "taskSceneHashes": {},
-                "diagnostics": [],
-                "error": None,
-            },
-        )
-    )
-
-    assert delivered is False
-    with pytest.raises(ValueError, match="does not match"):
-        await task
-    assert request["args"]["stagedRevision"] == 0
-    assert request["args"]["stagedBundle"] == workspace.bundle.model_dump(mode="json")
-
-    task = asyncio.create_task(bridge.validate(workspace))
-    while len(emitter.events) < 2:
-        await asyncio.sleep(0)
-    request = emitter.events[1]
-    delivered = bridge.deliver(
-        ClientToolResult(
-            type="client_tool.result",
-            runId="run-1",
-            callId=request["callId"],
-            stagedRevision=0,
-            sourceHash=workspace.source_hash,
-            status="valid",
-            result={
-                "status": "valid",
-                "stagedRevision": 0,
-                "contextVersion": "geometry-v2",
-                "requestedSourceHash": workspace.source_hash,
-                "sourceHash": workspace.source_hash,
-                "catalogFingerprint": "catalog-v1",
-                "varsSchemaFingerprint": "c" * 64,
-                "sceneHash": "d" * 64,
-                "taskSceneHashes": {},
-                "diagnostics": [],
-                "error": None,
-            },
-        )
-    )
-    assert delivered is False
-    with pytest.raises(ValueError, match="Geometry context"):
-        await task
 
 
 class FinalProvider:
@@ -226,9 +155,10 @@ async def test_agent_runner_includes_active_dependencies_and_seals_replay_sessio
     assert any('"path":"material.tsx"' in item["content"] for item in source_context)
     assert provider.instructions == SYSTEM_PROMPT
     assert provider.reasoning_context == "current_turn"
-    assert any('"validation":{"diagnostics":[],"revision":0,"status":"unavailable"}' in item for item in [
-        message.get("content", "") for message in provider.input_items
-    ])
+    assert not any(
+        '"validation"' in message.get("content", "")
+        for message in provider.input_items
+    )
     assert result["baseHash"] == workspace.source_hash
     assert result["finalBundle"] is None
     assert result["contextUsage"]["cachedTokens"] == 10
@@ -273,41 +203,13 @@ async def test_agent_runner_includes_active_dependencies_and_seals_replay_sessio
     assert continued_provider.reasoning_context == "all_turns"
 
 
-def test_final_gate_requires_exact_current_valid_revision_hash_and_python():
-    start = run_start()
-    workspace = StagedExperiment(start.workspace.document.sourceBundle)
-    current = workspace.read_file("experiment.tsx", offset=0, length=24_000)
-    workspace.write_file(
-        "experiment.tsx",
-        "export default () => <Main width={2} />",
-        current.sha256,
-    )
-    runner = AgentRunner(
-        run_id="run-1",
-        user_id="user-1",
-        credential_version=2,
-        permission_fingerprint="p" * 64,
-        start=start,
-        workspace=workspace,
-        provider=FinalProvider(),
-        tools=NoTools(),
-        session_codec=SessionEnvelopeCodec([Fernet.generate_key()]),
-        emitter=FakeEmitter(),
-        cancel_event=asyncio.Event(),
-    )
-
-    workspace.last_validation = {
-        "stagedRevision": workspace.revision - 1,
-        "sourceHash": workspace.source_hash,
-        "status": "valid",
-    }
-    assert runner._current_workspace_is_valid() is False  # noqa: SLF001
-    workspace.last_validation = {
-        "stagedRevision": workspace.revision,
-        "sourceHash": workspace.source_hash,
-        "status": "valid",
-    }
-    assert runner._current_workspace_is_valid() is True  # noqa: SLF001
+def test_agent_generation_policy_and_execution_limits():
+    assert PROMPT_TOOL_VERSION == "caemble-ai-agent-v3"
+    assert MAX_AGENT_STEPS == 12
+    assert MAX_TOOL_CALLS == 24
+    assert "Never compile, evaluate, test, or validate" in SYSTEM_PROMPT
+    assert "finish immediately" in SYSTEM_PROMPT
+    assert run_start().reasoningEffort == "medium"
 
 
 def test_active_file_must_exist_in_bundle():
@@ -562,71 +464,9 @@ async def test_runner_fails_closed_when_evidence_changes_during_the_run():
     assert not any(event["type"] == "message.delta" for event in emitter.events)
 
 
-def test_valid_client_result_requires_all_authoritative_echoes():
-    workspace = StagedExperiment(source_bundle())
-    value = {
-        "type": "client_tool.result",
-        "runId": "run-1",
-        "callId": "call-1",
-        "stagedRevision": 0,
-        "sourceHash": workspace.source_hash,
-        "status": "valid",
-        "result": {
-            "status": "valid",
-            "stagedRevision": 0,
-            "contextVersion": "geometry-v1",
-            "requestedSourceHash": workspace.source_hash,
-            "sourceHash": workspace.source_hash,
-            "catalogFingerprint": "catalog-v1",
-            "varsSchemaFingerprint": "c" * 64,
-            "sceneHash": "d" * 64,
-            "taskSceneHashes": {},
-            "diagnostics": [],
-            "error": None,
-        },
-    }
-    assert ClientToolResult.model_validate(value).status == "valid"
-    for key in value["result"]:
-        invalid = {**value, "result": {**value["result"]}}
-        invalid["result"].pop(key)
-        with pytest.raises(ValueError):
-            ClientToolResult.model_validate(invalid)
-
-
-def test_client_validation_result_rejects_non_diagnostic_payloads_for_every_status():
-    value = {
-        "type": "client_tool.result",
-        "runId": "run-1",
-        "callId": "call-1",
-        "stagedRevision": 0,
-        "sourceHash": "a" * 64,
-        "status": "unavailable",
-        "result": {"compiledJavaScript": "alert(1)"},
-    }
-
-    with pytest.raises(ValueError, match="unsupported fields"):
-        ClientToolResult.model_validate(value)
-
-    value["result"] = {
-        "diagnostics": [
-            {
-                "file": "experiment.tsx",
-                "range": {
-                    "startLineNumber": 1,
-                    "startColumn": 1,
-                    "endLineNumber": 1,
-                    "endColumn": 2,
-                },
-                "code": "type-error",
-                "severity": "error",
-                "phase": "semantic",
-                "message": "bounded diagnostic",
-                "stack": "not allowed",
-            }
-        ]
-    }
-    with pytest.raises(ValueError, match="diagnostic is invalid"):
-        ClientToolResult.model_validate(value)
+def test_client_validation_results_are_not_part_of_the_protocol():
+    with pytest.raises(ValueError, match="Unsupported WebSocket message type"):
+        parse_client_message({"type": "client_tool.result"})
 
 
 def test_workspace_geometry_graph_sources_are_bounded(monkeypatch):

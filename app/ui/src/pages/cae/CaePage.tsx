@@ -129,7 +129,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               workbench={workbench}
               onApplyStagedBundle={applyAgentBundle}
               onRequestLogin={() => page.setDialog('account')}
-              onValidateStagedBundle={workbench.validateAgentBundle}
             />
           </Suspense>
         ),

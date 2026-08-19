@@ -67,14 +67,14 @@ describe('AiHelperWorkspace Agent transport', () => {
     renderWorkspace()
 
     expect(await screen.findByText('OpenAI · gpt-5.6-luna')).toBeVisible()
-    expect(screen.getByText(/Visible DB·카탈로그 데이터와 컴파일 결과/)).toBeVisible()
+    expect(screen.getByText(/Visible DB·카탈로그 데이터가 선택한 외부 AI/)).toBeVisible()
     expect(screen.getByText(/store=false.*최대 30일/)).toBeVisible()
     await user.click(screen.getByRole('button', { name: '설정' }))
 
     expect(screen.getAllByRole('combobox')).toHaveLength(3)
     expect(screen.getByLabelText('AI Provider')).toHaveValue('openai')
     expect(screen.getByLabelText('AI Model')).toHaveValue('gpt-5.6-luna')
-    expect(screen.getByLabelText('Reasoning effort')).toHaveValue('high')
+    expect(screen.getByLabelText('Reasoning effort')).toHaveValue('medium')
     expect(screen.queryByText('Temperature')).not.toBeInTheDocument()
     expect(screen.queryByText('Top P')).not.toBeInTheDocument()
   })
@@ -102,21 +102,10 @@ describe('AiHelperWorkspace Agent transport', () => {
     expect(screen.queryByText('raw provider error')).not.toBeInTheDocument()
   })
 
-  it('runs the WS tool loop, validates staged code, persists only the sealed envelope and applies the final bundle', async () => {
+  it('runs the generation tool loop, persists only the sealed envelope and applies the unvalidated final bundle', async () => {
     const user = userEvent.setup()
-    const validation = vi.fn().mockResolvedValue({
-      status: 'valid',
-      result: {
-        status: 'valid',
-        sourceHash: 'staged-hash',
-        requestedSourceHash: 'staged-hash',
-        stagedRevision: 3,
-        contextVersion: 'geometry-v1',
-        diagnostics: [],
-      },
-    })
     const applyBundle = vi.fn().mockResolvedValue({ status: 'applied' })
-    const { bundle } = renderWorkspace({ onApplyStagedBundle: applyBundle, onValidateStagedBundle: validation })
+    const { bundle } = renderWorkspace({ onApplyStagedBundle: applyBundle })
 
     await screen.findByText('OpenAI · gpt-5.6-luna')
     await user.type(screen.getByLabelText('AI Helper 질문'), '카탈로그를 확인하고 열 해석 Task를 고쳐 줘')
@@ -128,7 +117,7 @@ describe('AiHelperWorkspace Agent transport', () => {
         type: 'run.start',
         provider: 'openai',
         model: 'gpt-5.6-luna',
-        reasoningEffort: 'high',
+        reasoningEffort: 'medium',
         request: { prompt: '카탈로그를 확인하고 열 해석 Task를 고쳐 줘', messages: [] },
         workspace: expect.objectContaining({
           experimentId: 7,
@@ -137,20 +126,12 @@ describe('AiHelperWorkspace Agent transport', () => {
           geometryContextVersion: 'geometry-v1',
           activeFile: 'tasks/thermal.tsx',
           workspaceSession: 11,
-          validation: { status: 'valid', revision: 2, diagnostics: expect.any(Array) },
         }),
         sessionContextEnvelope: 'sealed-before',
       }),
     )
-    const runStart = mocks.send.mock.calls[0][0] as {
-      workspace: { validation: { diagnostics: string[] } }
-    }
-    expect(runStart.workspace.validation.diagnostics).toHaveLength(20)
-    expect(
-      runStart.workspace.validation.diagnostics.every(
-        (diagnostic) => new TextEncoder().encode(JSON.stringify(diagnostic)).byteLength <= 1_024,
-      ),
-    ).toBe(true)
+    const runStart = mocks.send.mock.calls[0][0] as { workspace: Record<string, unknown> }
+    expect(runStart.workspace).not.toHaveProperty('validation')
 
     await emit({ type: 'run.started', runId: 'run-1', sequence: 0, status: '검색 중' })
     await emit({
@@ -177,50 +158,12 @@ describe('AiHelperWorkspace Agent transport', () => {
       sourceHash: 'staged-hash',
       changedFiles: ['tasks/thermal.tsx'],
     })
-    await emit({
-      type: 'client_tool.request',
-      runId: 'run-1',
-      sequence: 4,
-      callId: 'compile-1',
-      name: 'validate_workspace',
-      stagedBundle: bundle,
-      stagedRevision: 3,
-      sourceHash: 'staged-hash',
-      geometryContextVersion: 'geometry-v1',
-    })
-
-    expect(validation).toHaveBeenCalledWith({
-      runId: 'run-1',
-      callId: 'compile-1',
-      stagedBundle: bundle,
-      stagedRevision: 3,
-      sourceHash: 'staged-hash',
-      geometryContextVersion: 'geometry-v1',
-      signal: expect.any(AbortSignal),
-    })
-    expect(mocks.send).toHaveBeenLastCalledWith({
-      type: 'client_tool.result',
-      runId: 'run-1',
-      callId: 'compile-1',
-      stagedRevision: 3,
-      sourceHash: 'staged-hash',
-      status: 'valid',
-      result: {
-        status: 'valid',
-        sourceHash: 'staged-hash',
-        requestedSourceHash: 'staged-hash',
-        stagedRevision: 3,
-        contextVersion: 'geometry-v1',
-        diagnostics: [],
-      },
-    })
-
-    await emit({ type: 'message.delta', runId: 'run-1', sequence: 5, delta: '수정했습니다.' })
+    await emit({ type: 'message.delta', runId: 'run-1', sequence: 4, delta: '수정했습니다.' })
     await emit({
       type: 'run.completed',
       runId: 'run-1',
-      sequence: 6,
-      message: '수정과 검증을 완료했습니다.',
+      sequence: 5,
+      message: '수정했습니다. Workbench에서 결과를 확인해 주세요.',
       finalBundle: bundle,
       baseHash: 'base-hash',
       sourceHash: 'staged-hash',
@@ -244,15 +187,14 @@ describe('AiHelperWorkspace Agent transport', () => {
       }),
       'sealed-after',
     )
-    expect(await screen.findByText('수정과 검증을 완료했습니다.')).toBeVisible()
-    await user.click(screen.getByText(/Agent 작업 5개/))
+    expect(await screen.findByText('수정했습니다. Workbench에서 결과를 확인해 주세요.')).toBeVisible()
+    await user.click(screen.getByText(/Agent 작업 4개/))
     await user.click(screen.getByText(/사용한 데이터와 카탈로그 1개/))
     expect(screen.getByText('카탈로그 검색')).toBeVisible()
-    expect(screen.getByText('Workbench 컴파일·평가')).toBeVisible()
     expect(screen.getByText('Agent 컨텍스트 구성')).toBeVisible()
     expect(screen.getByText('staged source 수정')).toBeVisible()
     expect(screen.getByText('Steady-state heat solver')).toBeVisible()
-    expect(screen.getByText('변경 반영됨')).toBeVisible()
+    expect(screen.getByText('미검증 AI 변경 반영됨')).toBeVisible()
   })
 
   it('keeps the editor unchanged and reports a CAS conflict', async () => {
@@ -260,19 +202,8 @@ describe('AiHelperWorkspace Agent transport', () => {
     const applyBundle = vi
       .fn()
       .mockResolvedValue({ status: 'conflicted', message: 'Experiment가 실행 중 변경되었습니다.' })
-    const validation = vi.fn().mockResolvedValue({
-      status: 'valid',
-      result: {
-        status: 'valid',
-        sourceHash: 'next-hash',
-        requestedSourceHash: 'next-hash',
-        stagedRevision: 1,
-        contextVersion: 'geometry-v1',
-      },
-    })
     const { bundle } = renderWorkspace({
       onApplyStagedBundle: applyBundle,
-      onValidateStagedBundle: validation,
     })
 
     await screen.findByText('OpenAI · gpt-5.6-luna')
@@ -281,20 +212,9 @@ describe('AiHelperWorkspace Agent transport', () => {
     await waitFor(() => expect(mocks.send).toHaveBeenCalled())
     await emit({ type: 'run.started', runId: 'run-2', sequence: 0 })
     await emit({
-      type: 'client_tool.request',
-      runId: 'run-2',
-      sequence: 1,
-      callId: 'compile-2',
-      name: 'validate_workspace',
-      stagedBundle: bundle,
-      stagedRevision: 1,
-      sourceHash: 'next-hash',
-      geometryContextVersion: 'geometry-v1',
-    })
-    await emit({
       type: 'run.completed',
       runId: 'run-2',
-      sequence: 2,
+      sequence: 1,
       message: '수정했습니다.',
       finalBundle: bundle,
       baseHash: 'base-hash',
@@ -312,55 +232,37 @@ describe('AiHelperWorkspace Agent transport', () => {
     expect(mocks.saveSession).not.toHaveBeenCalled()
   })
 
-  it('refuses a completed bundle whose staged revision was not the last browser-validated revision', async () => {
+  it('applies a structurally valid completed bundle without a browser validation round trip', async () => {
     const user = userEvent.setup()
-    const validation = vi.fn().mockResolvedValue({
-      status: 'valid',
-      result: {
-        status: 'valid',
-        sourceHash: 'revision-hash',
-        requestedSourceHash: 'revision-hash',
-        stagedRevision: 1,
-        contextVersion: 'geometry-v1',
-      },
-    })
     const applyBundle = vi.fn().mockResolvedValue({ status: 'applied' })
-    const { bundle } = renderWorkspace({ onApplyStagedBundle: applyBundle, onValidateStagedBundle: validation })
+    const { bundle } = renderWorkspace({ onApplyStagedBundle: applyBundle })
 
     await screen.findByText('OpenAI · gpt-5.6-luna')
-    await user.type(screen.getByLabelText('AI Helper 질문'), 'revision을 검증해 줘')
+    await user.type(screen.getByLabelText('AI Helper 질문'), '문법 확인 없이 source를 수정해 줘')
     await user.click(screen.getByRole('button', { name: '전송' }))
     await waitFor(() => expect(mocks.send).toHaveBeenCalled())
     await emit({ type: 'run.started', runId: 'run-revision', sequence: 0 })
     await emit({
-      type: 'client_tool.request',
-      runId: 'run-revision',
-      sequence: 1,
-      callId: 'compile-revision',
-      name: 'validate_workspace',
-      stagedBundle: bundle,
-      stagedRevision: 1,
-      sourceHash: 'revision-hash',
-      geometryContextVersion: 'geometry-v1',
-    })
-    await emit({
       type: 'run.completed',
       runId: 'run-revision',
-      sequence: 2,
+      sequence: 1,
       message: '완료했습니다.',
       finalBundle: bundle,
       baseHash: 'base-hash',
       sourceHash: 'revision-hash',
-      stagedRevision: 2,
+      stagedRevision: 1,
       geometryContextVersion: 'geometry-v1',
       sessionContextEnvelope: 'must-not-save',
       contextUsage: null,
       provenance: [],
     })
 
-    expect(applyBundle).not.toHaveBeenCalled()
-    expect(mocks.saveSession).not.toHaveBeenCalled()
-    expect(await screen.findByText('검증 불일치')).toBeVisible()
+    await waitFor(() => expect(applyBundle).toHaveBeenCalledOnce())
+    expect(applyBundle).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceHash: 'revision-hash', stagedRevision: 1 }),
+    )
+    expect(mocks.saveSession).toHaveBeenCalled()
+    expect(await screen.findByText('미검증 AI 변경 반영됨')).toBeVisible()
   })
 
   it('sends run.cancel for the active server run', async () => {
@@ -376,55 +278,6 @@ describe('AiHelperWorkspace Agent transport', () => {
 
     expect(mocks.send).toHaveBeenLastCalledWith({ type: 'run.cancel', runId: 'run-cancel' })
     expect(screen.getByText('취소 중')).toBeVisible()
-  })
-
-  it('aborts browser validation and suppresses its late client result when the run is cancelled', async () => {
-    const user = userEvent.setup()
-    let finishValidation: (result: { status: 'valid'; result: { requestedSourceHash: string } }) => void = () =>
-      undefined
-    const validation = vi.fn(
-      (request: unknown) =>
-        new Promise<{ status: 'valid'; result: { requestedSourceHash: string } }>((resolve) => {
-          void request
-          finishValidation = resolve
-        }),
-    )
-    const { bundle } = renderWorkspace({ onValidateStagedBundle: validation })
-
-    await screen.findByText('OpenAI · gpt-5.6-luna')
-    await user.type(screen.getByLabelText('AI Helper 질문'), '검증을 시작해 줘')
-    await user.click(screen.getByRole('button', { name: '전송' }))
-    await waitFor(() => expect(mocks.send).toHaveBeenCalled())
-    await emit({ type: 'run.started', runId: 'run-abort', sequence: 0 })
-
-    let pendingValidation: void | Promise<void>
-    act(() => {
-      pendingValidation = mocks.callbacks?.onEvent({
-        type: 'client_tool.request',
-        runId: 'run-abort',
-        sequence: 1,
-        callId: 'compile-late',
-        name: 'validate_workspace',
-        stagedBundle: bundle,
-        stagedRevision: 1,
-        sourceHash: 'late-hash',
-        geometryContextVersion: 'geometry-v1',
-      })
-    })
-    await waitFor(() => expect(validation).toHaveBeenCalledOnce())
-    const signal = (validation.mock.calls[0]?.[0] as { signal: AbortSignal }).signal
-
-    await user.click(screen.getByRole('button', { name: '중지' }))
-    expect(signal.aborted).toBe(true)
-    finishValidation({ status: 'valid', result: { requestedSourceHash: 'late-hash' } })
-    await act(async () => {
-      await pendingValidation
-    })
-
-    expect(mocks.send).toHaveBeenCalledWith({ type: 'run.cancel', runId: 'run-abort' })
-    expect(mocks.send).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'client_tool.result', callId: 'compile-late' }),
-    )
   })
 
   it('blocks a run until both the provider credential and exact workspace identity are ready', async () => {
@@ -463,13 +316,11 @@ function renderWorkspace({
   geometryContextVersion = 'geometry-v1',
   onApplyStagedBundle,
   onRequestLogin,
-  onValidateStagedBundle,
 }: {
   baseHash?: string | null
   geometryContextVersion?: string | null
   onApplyStagedBundle?: Parameters<typeof AiHelperWorkspace>[0]['onApplyStagedBundle']
   onRequestLogin?: () => void
-  onValidateStagedBundle?: Parameters<typeof AiHelperWorkspace>[0]['onValidateStagedBundle']
 } = {}) {
   const bundle = createExperimentSourceBundle({
     'experiment.tsx': "export default experiment({ lengthUnit: 'mm' })",
@@ -506,7 +357,6 @@ function renderWorkspace({
         geometryContextVersion={geometryContextVersion}
         onApplyStagedBundle={onApplyStagedBundle}
         onRequestLogin={onRequestLogin}
-        onValidateStagedBundle={onValidateStagedBundle}
         workbench={workbench}
       />
     </QueryClientProvider>,

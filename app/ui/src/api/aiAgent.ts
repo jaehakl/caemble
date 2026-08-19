@@ -12,7 +12,7 @@ export type AiAgentSourceDocument = Readonly<{
 export const AI_AGENT_PROVIDER_QUERY_KEY = ['ai-agent', 'providers'] as const
 export const AI_AGENT_PROVIDER = 'openai' as const
 export const AI_AGENT_MODEL = 'gpt-5.6-luna' as const
-export const AI_AGENT_PROMPT_TOOL_VERSION = 'caemble-ai-agent-v2' as const
+export const AI_AGENT_PROMPT_TOOL_VERSION = 'caemble-ai-agent-v3' as const
 export const AI_AGENT_REASONING_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 
 export type AiAgentReasoningEffort = (typeof AI_AGENT_REASONING_EFFORTS)[number]
@@ -68,26 +68,11 @@ export type AiAgentCredentialTestResult = Readonly<{
   ok: true
 }>
 
-export type AiAgentValidationRequest = Readonly<{
-  runId: string
-  callId: string
-  stagedBundle: AiAgentSourceBundle
-  stagedRevision: number
-  sourceHash: string
-  geometryContextVersion: string
-  signal: AbortSignal
-}>
-
-export type AiAgentValidationResult = Readonly<{
-  status: 'valid' | 'invalid' | 'unavailable'
-  result: unknown
-}>
-
 export type AiAgentApplyRequest = Readonly<{
   runId: string
   finalBundle: AiAgentSourceBundle
   baseHash: string
-  sourceHash: string | null
+  sourceHash: string
   stagedRevision: number
   geometryContextVersion: string
   provenance: readonly AiAgentProvenance[]
@@ -116,23 +101,8 @@ export type AiAgentRunStart = Readonly<{
     geometryContextVersion: string
     activeFile: string | null
     workspaceSession: number
-    validation: Readonly<{
-      status: 'valid' | 'invalid' | 'unavailable' | 'stale'
-      revision: number
-      diagnostics: readonly string[]
-    }>
   }>
   sessionContextEnvelope?: string
-}>
-
-export type AiAgentClientToolResult = Readonly<{
-  type: 'client_tool.result'
-  runId: string
-  callId: string
-  stagedRevision: number
-  sourceHash: string
-  status: AiAgentValidationResult['status']
-  result: unknown
 }>
 
 export type AiAgentRunCancel = Readonly<{
@@ -171,16 +141,6 @@ export type AiAgentServerEvent =
         callId: string
         name: string
         summary?: string
-      }>)
-  | (AiAgentEventBase &
-      Readonly<{
-        type: 'client_tool.request'
-        callId: string
-        name: string
-        stagedBundle: AiAgentSourceBundle
-        stagedRevision: number
-        sourceHash: string
-        geometryContextVersion: string
       }>)
   | (AiAgentEventBase &
       Readonly<{
@@ -295,7 +255,7 @@ export function connectAiAgent({
 
   return Object.freeze({
     ready,
-    send(message: AiAgentRunStart | AiAgentClientToolResult | AiAgentRunCancel) {
+    send(message: AiAgentRunStart | AiAgentRunCancel) {
       if (socket.readyState !== WebSocket.OPEN) throw new Error('AI Agent 연결이 열려 있지 않습니다.')
       socket.send(JSON.stringify(message))
     },
@@ -475,18 +435,6 @@ function parseAiAgentServerEvent(value: unknown): AiAgentServerEvent | null {
     const name = stringValue(record.name, record.toolName, record.tool_name)
     if (!callId || !name) return null
     return { ...base, type, callId, name, summary: stringValue(record.summary) || undefined }
-  }
-  if (type === 'client_tool.request') {
-    const args = asRecord(record.args)
-    const callId = stringValue(record.callId, record.call_id)
-    const name = stringValue(record.name)
-    const stagedBundle = (args?.stagedBundle ?? args?.staged_bundle) as AiAgentSourceBundle | undefined
-    const stagedRevision = numberValue(args?.stagedRevision, args?.staged_revision)
-    const sourceHash = stringValue(args?.sourceHash, args?.source_hash)
-    const geometryContextVersion = stringValue(args?.geometryContextVersion, args?.geometry_context_version)
-    if (!callId || !name || !stagedBundle || stagedRevision === null || !sourceHash || !geometryContextVersion)
-      return null
-    return { ...base, type, callId, name, stagedBundle, stagedRevision, sourceHash, geometryContextVersion }
   }
   if (type === 'run.completed') {
     const stagedRevision = numberValue(record.stagedRevision, record.staged_revision)

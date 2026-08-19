@@ -13,15 +13,11 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai.agent import (
-    AgentRunner,
-    ClientValidationBridge,
-    permission_fingerprint,
-)
+from ai.agent import AgentRunner, permission_fingerprint
 from ai.context import ContextBudgetExceeded
 from ai.credentials import get_provider_credential, router as credential_router
 from ai.data_tools import VisibleDataReader
-from ai.models import ClientToolResult, RunCancel, RunStart, parse_client_message
+from ai.models import RunCancel, RunStart, parse_client_message
 from ai.provider import ProviderError, create_provider_adapter
 from ai.session import SessionEnvelopeCodec, SessionEnvelopeError
 from ai.tools import ToolExecutor
@@ -111,7 +107,6 @@ async def run_agent(
         raise
     run_task: asyncio.Task[dict[str, Any]] | None = None
     provider: Any = None
-    bridge: ClientValidationBridge | None = None
     cancel_event = asyncio.Event()
     emitter: WebSocketEventEmitter | None = None
     started_at: float | None = None
@@ -157,17 +152,10 @@ async def run_agent(
             raise RuntimeError("Catalog is unavailable")
         provider = create_provider_adapter(first.provider, first.model, api_key)
         roles = [role.value if hasattr(role, "value") else str(role) for role in user.roles]
-        bridge = ClientValidationBridge(
-            run_id=run_id,
-            emitter=emitter,
-            geometry_context_version=first.workspace.geometryContextVersion,
-            cancel_event=cancel_event,
-        )
         tools = ToolExecutor(
             data=VisibleDataReader(db, user.id),
             catalog=catalog,
             workspace=workspace,
-            validation_bridge=bridge,
         )
         runner = AgentRunner(
             run_id=run_id,
@@ -185,7 +173,7 @@ async def run_agent(
         run_task = asyncio.create_task(
             asyncio.wait_for(runner.run(api_key), timeout=MAX_RUN_SECONDS)
         )
-        result = await _drive_run(websocket, run_task, bridge, cancel_event, run_id)
+        result = await _drive_run(websocket, run_task, cancel_event, run_id)
         await emitter.emit("run.completed", **result)
         context_usage = result["contextUsage"]
         logger.info(
@@ -207,8 +195,6 @@ async def run_agent(
         await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
     except (WebSocketDisconnect, asyncio.CancelledError):
         cancel_event.set()
-        if bridge is not None:
-            bridge.cancel()
         if run_task is not None and not run_task.done():
             run_task.cancel()
         if emitter is not None:
@@ -233,8 +219,6 @@ async def run_agent(
         )
     except Exception as error:
         cancel_event.set()
-        if bridge is not None:
-            bridge.cancel()
         if run_task is not None and not run_task.done():
             run_task.cancel()
         if emitter is not None:
@@ -299,7 +283,6 @@ async def run_agent(
 async def _drive_run(
     websocket: WebSocket,
     run_task: asyncio.Task[dict[str, Any]],
-    bridge: ClientValidationBridge,
     cancel_event: asyncio.Event,
     run_id: str,
 ) -> dict[str, Any]:
@@ -318,16 +301,11 @@ async def _drive_run(
         inbound_messages += 1
         if inbound_messages > 64:
             raise ValueError("Agent run received too many control messages")
-        if isinstance(message, ClientToolResult):
-            if not bridge.deliver(message):
-                raise ValueError("Client tool result does not match an active validation")
-            continue
         if isinstance(message, RunCancel) and message.runId == run_id:
             cancel_event.set()
-            bridge.cancel()
             run_task.cancel()
             raise asyncio.CancelledError
-        raise ValueError("Only client tool results or cancellation are accepted during a run")
+        raise ValueError("Only cancellation is accepted during a run")
 
 
 async def _receive_message(websocket: WebSocket) -> Any:

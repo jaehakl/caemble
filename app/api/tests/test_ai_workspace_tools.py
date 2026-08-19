@@ -8,7 +8,6 @@ import pytest
 
 import ai.workspace as workspace_module
 from ai.data_tools import VisibleDataError, VisibleDataReader, slice_recorded_tensor
-from ai.python_validation import validate_simulation_source
 from ai.tools import ToolExecutor
 from ai.workspace import StagedExperiment, WorkspaceEditError, bundle_hash, text_hash
 from db import (
@@ -42,7 +41,7 @@ def source_bundle(*, task_source: str = "export const Main = () => <task />") ->
     )
 
 
-def test_staged_workspace_hash_guard_revision_delete_and_python_gate():
+def test_staged_workspace_hash_guard_revision_delete_and_unvalidated_python_write():
     workspace = StagedExperiment(source_bundle())
     original_hash = workspace.source_hash
     original = workspace.read_file("experiment.tsx", offset=0, length=24_000)
@@ -71,7 +70,7 @@ def test_staged_workspace_hash_guard_revision_delete_and_python_gate():
 
     simulate = workspace.read_file("simulate.py", offset=0, length=24_000)
     workspace.write_file("simulate.py", "import os", simulate.sha256)
-    assert workspace.python_validation()["valid"] is False
+    assert workspace.bundle.files["simulate.py"] == "import os"
 
 
 @pytest.mark.asyncio
@@ -90,7 +89,6 @@ async def test_agent_write_tool_requires_a_complete_hash_bound_source_read():
         data=Data(),
         catalog=None,
         workspace=workspace,
-        validation_bridge=None,
     )
     source = workspace.bundle.files["experiment.tsx"]
     source_hash = text_hash(source)
@@ -136,7 +134,6 @@ async def test_agent_source_read_lease_covers_only_the_chunk_delivered_to_the_mo
         data=Data(),
         catalog=None,
         workspace=workspace,
-        validation_bridge=None,
     )
     first = await executor.execute(
         "read_experiment_file",
@@ -218,7 +215,6 @@ async def test_visible_search_candidates_receive_revalidatable_provenance():
         data=Data(),
         catalog=None,
         workspace=workspace,
-        validation_bridge=None,
     )
     execution = await executor.execute(
         "search_visible_data",
@@ -237,22 +233,40 @@ async def test_visible_search_candidates_receive_revalidatable_provenance():
     assert await executor.provenance_is_current(execution.provenance) is True
 
 
-@pytest.mark.parametrize(
-    "source,code",
-    [
-        ("import os", "python_entrypoint"),
-        (
-            "async def simulate(*, sim, tasks, vars):\n    return open('secret')\n",
-            "python_call_not_allowed",
-        ),
-        (
-            "async def simulate(sim, tasks, vars):\n    return {}\n",
-            "python_signature",
-        ),
-    ],
-)
-def test_python_validation_rejects_non_sandboxed_programs(source: str, code: str):
-    assert validate_simulation_source(source)[0].code == code
+@pytest.mark.asyncio
+async def test_geometry_write_survives_best_effort_snapshot_refresh_failure(monkeypatch):
+    workspace = StagedExperiment(source_bundle())
+
+    class Db:
+        async def rollback(self):
+            pass
+
+    class Data:
+        db = Db()
+        user_id = "user-1"
+
+    executor = ToolExecutor(data=Data(), catalog=None, workspace=workspace)
+    source = workspace.bundle.files["geometry.tsx"]
+    await executor.execute(
+        "read_experiment_file",
+        {"path": "geometry.tsx", "offset": 0, "length": len(source)},
+    )
+
+    async def failed_refresh():
+        raise RuntimeError("catalog unavailable")
+
+    monkeypatch.setattr(executor, "_refresh_geometry_snapshot", failed_refresh)
+    execution = await executor.execute(
+        "write_experiment_file",
+        {
+            "path": "geometry.tsx",
+            "content": "export const Geometry = () => <broken",
+            "expectedSha256": text_hash(source),
+        },
+    )
+
+    assert execution.output["stagedRevision"] == 1
+    assert workspace.bundle.files["geometry.tsx"].endswith("<broken")
 
 
 def test_recorded_data_slice_bounds_inline_and_base64_without_full_result():

@@ -129,9 +129,10 @@ credential 복호화에 필요하다. 기존 행은 자동 재암호화되지 �
 key를 다시 저장하기 전에 이전 키를 제거하면 해당 credential을 읽을 수 없다.
 
 사용자별 provider key는 DB에 암호화해 저장하고 원문이나 suffix를 다시 반환하지 않는다.
-Agent는 사용자가 볼 수 있는 DB/catalog 데이터, Experiment source와 compile 결과를
-사용자가 선택한 외부 provider로 전송할 수 있으므로 운영 개인정보 고지에 이 경계를
-포함한다. OpenAI 요청은 `store=false`, prompt cache는 `in_memory` 모드지만 이는 Zero Data
+Agent는 사용자가 볼 수 있는 DB/catalog 데이터와 Experiment source를 사용자가 선택한
+외부 provider로 전송할 수 있으므로 운영 개인정보 고지에 이 경계를 포함한다. Workbench
+compile/evaluate 결과는 Agent나 외부 provider로 자동 전송하지 않는다. OpenAI 요청은
+`store=false`, prompt cache는 `in_memory` 모드지만 이는 Zero Data
 Retention과 같지 않다. provider에는 일시적인 prompt-cache application state가 남을 수 있고 기본
 abuse-monitoring 로그에는 prompt/response가 포함되어 최대 30일 보존될 수 있고 법적 요구나
 서비스/제3자 보호에 필요한 경우에는 더 길어질 수 있다. Caemble 세션 삭제는 provider cache나

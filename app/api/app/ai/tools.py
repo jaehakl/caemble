@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any
 
 from caemble_catalog import CatalogNotFoundError
 from fastapi import HTTPException
@@ -15,10 +15,6 @@ from service.geometry.source import analyze_geometry_source
 
 
 MAX_TOOL_OUTPUT_BYTES = 64 * 1024
-
-
-class WorkspaceValidationBridge(Protocol):
-    async def validate(self, workspace: StagedExperiment) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -46,12 +42,10 @@ class ToolExecutor:
         data: VisibleDataReader,
         catalog: Any,
         workspace: StagedExperiment,
-        validation_bridge: WorkspaceValidationBridge,
     ):
         self.data = data
         self.catalog = catalog
         self.workspace = workspace
-        self.validation_bridge = validation_bridge
         self._source_reads: dict[tuple[str, str], list[tuple[int, int]]] = {}
 
     async def execute(self, name: str, arguments: dict[str, Any]) -> ToolExecution:
@@ -250,8 +244,12 @@ class ToolExecutor:
             )
             self._forget_source_reads(path)
             if path == "geometry.tsx":
-                await self._refresh_geometry_snapshot()
-                value["sourceHash"] = self.workspace.source_hash
+                try:
+                    await self._refresh_geometry_snapshot()
+                except Exception:
+                    pass
+                else:
+                    value["sourceHash"] = self.workspace.source_hash
             return ToolExecution(value, f"Staged {path}")
         if name == "delete_experiment_task":
             _exact_keys(arguments, {"path", "expectedSha256"})
@@ -265,35 +263,6 @@ class ToolExecutor:
             value = self.workspace.delete_task(path, expected_sha256)
             self._forget_source_reads(path)
             return ToolExecution(value, f"Deleted staged {path}")
-        if name == "validate_workspace":
-            _exact_keys(arguments, set())
-            await self._refresh_geometry_snapshot()
-            python_result = self.workspace.python_validation()
-            if not python_result["valid"]:
-                result = {"status": "invalid", "python": python_result}
-            else:
-                await self.data.db.rollback()
-                result = await self.validation_bridge.validate(self.workspace)
-                if result.get("status") not in {"valid", "invalid", "unavailable"}:
-                    raise ValueError("Client validation returned an unsupported status")
-                catalog_fingerprint = result.get("result", {}).get(
-                    "catalogFingerprint"
-                )
-                if result["status"] == "valid" and catalog_fingerprint not in {
-                    self.catalog.meta()["catalogRevision"],
-                    "draft-only-empty-v1",
-                }:
-                    result = {
-                        "status": "unavailable",
-                        "result": {"message": "Catalog changed during Workbench validation"},
-                    }
-                result = {**result, "python": python_result}
-            self.workspace.last_validation = {
-                "stagedRevision": self.workspace.revision,
-                "sourceHash": self.workspace.source_hash,
-                **result,
-            }
-            return ToolExecution(result, f"Workspace validation is {result['status']}")
         raise ValueError("Agent tool is not supported")
 
     async def _refresh_geometry_snapshot(self) -> None:
@@ -428,11 +397,6 @@ def agent_tool_definitions() -> list[dict[str, Any]]:
                 "path": _string_schema(256),
                 "expectedSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
             },
-        ),
-        _tool(
-            "validate_workspace",
-            "Compile and validate the complete staged Experiment, including simulate.py policy checks.",
-            {},
         ),
     ]
 

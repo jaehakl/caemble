@@ -232,7 +232,8 @@ export function AccountWorkspace() {
 
           <p className="text-xs leading-5 text-muted-foreground">
             API key는 Caemble 백엔드에서 암호화해 저장하며 저장 후 원문을 다시 표시하지 않습니다. AI Helper 사용 시
-            질문, source, 선택된 Visible 데이터와 컴파일 결과가 해당 provider에 전송됩니다. Caemble은 store=false로
+            질문, source와 선택된 Visible 데이터가 해당 provider에 전송됩니다. Workbench compile/evaluate 결과는
+            Agent에 자동 전송되지 않습니다. Caemble은 store=false로
             요청하고 대화를 DB에 저장하지 않지만, 일시적인 prompt cache와 최대 30일의 abuse-monitoring 로그가 provider
             data controls에 따라 남을 수 있습니다. Caemble 세션 삭제가 provider의 cache나 로그 삭제를 뜻하지 않습니다.
             연결 테스트는 버튼을 누를 때만 고정된 짧은 Luna 요청을 보내며 소량의 API 비용이 발생합니다.

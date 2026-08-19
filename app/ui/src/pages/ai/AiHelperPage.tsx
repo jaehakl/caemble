@@ -36,8 +36,6 @@ import {
   type AiAgentProvenance,
   type AiAgentReasoningEffort,
   type AiAgentServerEvent,
-  type AiAgentValidationRequest,
-  type AiAgentValidationResult,
 } from '@/api/aiAgent'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -64,7 +62,6 @@ export type AiHelperWorkspaceProps = Readonly<{
   geometryContextVersion?: string | null
   onApplyStagedBundle?: (request: AiAgentApplyRequest) => Promise<AiAgentApplyResult>
   onRequestLogin?: () => void
-  onValidateStagedBundle?: (request: AiAgentValidationRequest) => Promise<AiAgentValidationResult>
   workbench: CaeWorkbenchState
 }>
 
@@ -74,7 +71,6 @@ export function AiHelperWorkspace({
   geometryContextVersion,
   onApplyStagedBundle,
   onRequestLogin,
-  onValidateStagedBundle,
   workbench,
 }: AiHelperWorkspaceProps) {
   const auth = useAuth()
@@ -86,7 +82,7 @@ export function AiHelperWorkspace({
   })
   const [providerId, setProviderId] = useState<string>(AI_AGENT_PROVIDER)
   const [modelId, setModelId] = useState<string>(AI_AGENT_MODEL)
-  const [reasoningEffort, setReasoningEffort] = useState<AiAgentReasoningEffort>('high')
+  const [reasoningEffort, setReasoningEffort] = useState<AiAgentReasoningEffort>('medium')
   const [prompt, setPrompt] = useState('')
   const [messages, setMessages] = useState<readonly AiHelperMessage[]>([])
   const [activity, setActivity] = useState<readonly AiHelperActivity[]>([])
@@ -103,13 +99,6 @@ export function AiHelperWorkspace({
   const messageIdRef = useRef(0)
   const lastSequenceRef = useRef(-1)
   const runFinishedRef = useRef(true)
-  const runAbortControllerRef = useRef<AbortController | null>(null)
-  const lastValidWorkspaceRef = useRef<Readonly<{
-    runId: string
-    sourceHash: string
-    stagedRevision: number
-    geometryContextVersion: string
-  }> | null>(null)
   const runWorkspaceIdentityRef = useRef<Readonly<{
     baseHash: string
     geometryContextVersion: string
@@ -140,9 +129,7 @@ export function AiHelperWorkspace({
       ? `${auth.user.id}:${[...auth.user.roles].sort().join(',')}:unconfigured`
       : null
   const sessionBindingFingerprintRef = useRef(sessionBindingFingerprint)
-  const validationHandlerRef = useRef(onValidateStagedBundle)
   const applyHandlerRef = useRef(onApplyStagedBundle)
-  validationHandlerRef.current = onValidateStagedBundle
   applyHandlerRef.current = onApplyStagedBundle
 
   useEffect(() => {
@@ -158,7 +145,7 @@ export function AiHelperWorkspace({
   useEffect(() => {
     if (!selectedModel || selectedModel.reasoningEfforts.includes(reasoningEffort)) return
     setReasoningEffort(
-      selectedModel.reasoningEfforts.includes('high') ? 'high' : (selectedModel.reasoningEfforts[0] ?? 'high'),
+      selectedModel.reasoningEfforts.includes('medium') ? 'medium' : (selectedModel.reasoningEfforts[0] ?? 'medium'),
     )
   }, [reasoningEffort, selectedModel])
 
@@ -166,15 +153,12 @@ export function AiHelperWorkspace({
     if (sessionBindingFingerprintRef.current !== sessionBindingFingerprint) {
       sessionBindingFingerprintRef.current = sessionBindingFingerprint
       runFinishedRef.current = true
-      runAbortControllerRef.current?.abort()
-      runAbortControllerRef.current = null
       connectionRef.current?.close()
       connectionRef.current = null
       activeRunIdRef.current = null
       assistantIdRef.current = null
       runWorkspaceIdentityRef.current = null
       runSessionBindingRef.current = null
-      lastValidWorkspaceRef.current = null
       setBusy(false)
       setStatus('대기 중')
       setMessages([])
@@ -194,8 +178,6 @@ export function AiHelperWorkspace({
   useEffect(
     () => () => {
       runFinishedRef.current = true
-      runAbortControllerRef.current?.abort()
-      runAbortControllerRef.current = null
       connectionRef.current?.close()
     },
     [],
@@ -241,96 +223,13 @@ export function AiHelperWorkspace({
 
   function finishRun(nextStatus: string) {
     runFinishedRef.current = true
-    runAbortControllerRef.current?.abort()
-    runAbortControllerRef.current = null
     activeRunIdRef.current = null
     setBusy(false)
     setStatus(nextStatus)
     runWorkspaceIdentityRef.current = null
     runSessionBindingRef.current = null
-    lastValidWorkspaceRef.current = null
     connectionRef.current?.close()
     connectionRef.current = null
-  }
-
-  async function answerClientTool(event: Extract<AiAgentServerEvent, { type: 'client_tool.request' }>) {
-    const runAbortController = runAbortControllerRef.current
-    if (!runAbortController || runAbortController.signal.aborted || runFinishedRef.current) return
-    lastValidWorkspaceRef.current = null
-    updateActivity({ id: event.callId, label: toolLabel(event.name), status: 'running' })
-    let outcome: AiAgentValidationResult
-    if (!['validate_workspace', 'compile_experiment'].includes(event.name)) {
-      outcome = { status: 'unavailable', result: { message: `지원하지 않는 client tool입니다: ${event.name}` } }
-    } else if (!validationHandlerRef.current) {
-      outcome = { status: 'unavailable', result: { message: 'Workbench validation handler가 연결되지 않았습니다.' } }
-    } else {
-      try {
-        outcome = await validationHandlerRef.current({
-          runId: event.runId,
-          callId: event.callId,
-          stagedBundle: event.stagedBundle,
-          stagedRevision: event.stagedRevision,
-          sourceHash: event.sourceHash,
-          geometryContextVersion: event.geometryContextVersion,
-          signal: runAbortController.signal,
-        })
-      } catch (nextError) {
-        outcome = {
-          status: 'unavailable',
-          result: { message: runtimeErrorMessage(nextError, 'Workbench에서 staged bundle을 검증하지 못했습니다.') },
-        }
-      }
-    }
-    if (
-      runAbortController.signal.aborted ||
-      runFinishedRef.current ||
-      runAbortControllerRef.current !== runAbortController ||
-      activeRunIdRef.current !== event.runId
-    ) {
-      return
-    }
-    const validationResult =
-      typeof outcome.result === 'object' && outcome.result !== null ? (outcome.result as Record<string, unknown>) : null
-    if (
-      outcome.status === 'valid' &&
-      (!validationResult ||
-        validationResult.status !== 'valid' ||
-        validationResult.sourceHash !== event.sourceHash ||
-        validationResult.requestedSourceHash !== event.sourceHash ||
-        validationResult.stagedRevision !== event.stagedRevision ||
-        validationResult.contextVersion !== event.geometryContextVersion)
-    ) {
-      outcome = {
-        status: 'unavailable',
-        result: {
-          message: 'Workbench validation attestation이 Agent staged workspace와 일치하지 않습니다.',
-        },
-      }
-    }
-    lastValidWorkspaceRef.current =
-      outcome.status === 'valid'
-        ? {
-            runId: event.runId,
-            sourceHash: event.sourceHash,
-            stagedRevision: event.stagedRevision,
-            geometryContextVersion: event.geometryContextVersion,
-          }
-        : null
-    updateActivity({
-      id: event.callId,
-      label: toolLabel(event.name),
-      status: outcome.status === 'valid' ? 'completed' : 'failed',
-      summary: validationLabel(outcome.status),
-    })
-    connectionRef.current?.send({
-      type: 'client_tool.result',
-      runId: event.runId,
-      callId: event.callId,
-      stagedRevision: event.stagedRevision,
-      sourceHash: event.sourceHash,
-      status: outcome.status,
-      result: outcome.result,
-    })
   }
 
   async function completeRun(event: Extract<AiAgentServerEvent, { type: 'run.completed' }>) {
@@ -346,7 +245,7 @@ export function AiHelperWorkspace({
       const message = 'Agent 완료 결과의 Workspace identity가 실행 시작 시점과 일치하지 않습니다.'
       setError(message)
       updateActivity({ id: 'apply', label: '코드 편집기 반영', status: 'failed', summary: message })
-      finishRun('검증 불일치')
+      finishRun('Workspace 불일치')
       return
     }
     const runSessionBinding = runSessionBindingRef.current
@@ -365,18 +264,11 @@ export function AiHelperWorkspace({
       finishRun('완료')
       return
     }
-    const validation = lastValidWorkspaceRef.current
-    if (
-      !validation ||
-      validation.runId !== event.runId ||
-      validation.sourceHash !== event.sourceHash ||
-      validation.stagedRevision !== event.stagedRevision ||
-      validation.geometryContextVersion !== event.geometryContextVersion
-    ) {
-      const message = '마지막 staged source의 Workbench 검증을 확인할 수 없어 변경을 자동 반영하지 않았습니다.'
+    if (!event.sourceHash) {
+      const message = 'Agent 완료 결과에 source hash가 없어 변경을 자동 반영하지 않았습니다.'
       setError(message)
       updateActivity({ id: 'apply', label: '코드 편집기 반영', status: 'failed', summary: message })
-      finishRun('검증 불일치')
+      finishRun('무결성 오류')
       return
     }
     try {
@@ -404,8 +296,13 @@ export function AiHelperWorkspace({
       } catch (nextError) {
         setError(runtimeErrorMessage(nextError, 'AI Agent 세션 문맥을 저장하지 못했습니다.'))
       }
-      updateActivity({ id: 'apply', label: '코드 편집기 반영', status: 'completed' })
-      finishRun('변경 반영됨')
+      updateActivity({
+        id: 'apply',
+        label: '코드 편집기 반영',
+        status: 'completed',
+        summary: '미검증 AI 변경 · Workbench 확인 중',
+      })
+      finishRun('미검증 AI 변경 반영됨')
     } catch (nextError) {
       const message = runtimeErrorMessage(nextError, 'Agent 변경을 코드 편집기에 반영하지 못했습니다.')
       setError(message)
@@ -438,7 +335,6 @@ export function AiHelperWorkspace({
       return
     }
     if (event.type === 'workspace.changed') {
-      lastValidWorkspaceRef.current = null
       updateActivity({
         id: `workspace:${event.stagedRevision}`,
         label: 'staged source 수정',
@@ -471,10 +367,6 @@ export function AiHelperWorkspace({
       })
       return
     }
-    if (event.type === 'client_tool.request') {
-      await answerClientTool(event)
-      return
-    }
     if (event.type === 'run.completed') {
       await completeRun(event)
       return
@@ -505,25 +397,6 @@ export function AiHelperWorkspace({
       setError(`${selectedProvider.label} API key를 Account에 먼저 등록하세요.`)
       return
     }
-    const documentValidation = workbench.experimentDocument
-    const workspaceValidation = {
-      status:
-        documentValidation.status === 'Ready' && documentValidation.successfulRevision === documentValidation.revision
-          ? ('valid' as const)
-          : documentValidation.status === 'Error'
-            ? ('invalid' as const)
-            : ('stale' as const),
-      revision: documentValidation.revision,
-      diagnostics: documentValidation.diagnostics
-        .slice(0, 20)
-        .map((diagnostic) =>
-          boundedDiagnostic(
-            `${diagnostic.file}:${diagnostic.range.startLineNumber}:${diagnostic.range.startColumn} ` +
-              `[${diagnostic.severity}/${diagnostic.phase}/${diagnostic.code}] ${diagnostic.message}`,
-          ),
-        ),
-    }
-
     const userId = nextMessageId()
     const assistantId = nextMessageId()
     assistantIdRef.current = assistantId
@@ -540,11 +413,8 @@ export function AiHelperWorkspace({
     setBusy(true)
     setStatus('연결 중')
     runFinishedRef.current = false
-    runAbortControllerRef.current?.abort()
-    runAbortControllerRef.current = new AbortController()
     activeRunIdRef.current = null
     lastSequenceRef.current = -1
-    lastValidWorkspaceRef.current = null
     runWorkspaceIdentityRef.current = { baseHash, geometryContextVersion }
     runSessionBindingRef.current = sessionBinding
 
@@ -552,7 +422,6 @@ export function AiHelperWorkspace({
       onEvent: handleServerEvent,
       onClose: (message) => {
         if (runFinishedRef.current || !message) return
-        runAbortControllerRef.current?.abort()
         finishAssistant(`오류: ${message}`)
         setError(message)
         finishRun('연결 종료')
@@ -575,7 +444,6 @@ export function AiHelperWorkspace({
           activeFile:
             activeExperimentFile && activeExperimentFile in document.sourceBundle.files ? activeExperimentFile : null,
           workspaceSession: workbench.agentWorkspaceSession,
-          validation: workspaceValidation,
         },
         ...(sessionEnvelope ? { sessionContextEnvelope: sessionEnvelope } : {}),
       })
@@ -589,7 +457,6 @@ export function AiHelperWorkspace({
   }
 
   function cancelRun() {
-    runAbortControllerRef.current?.abort()
     const runId = activeRunIdRef.current
     if (runId) {
       try {
@@ -743,8 +610,8 @@ export function AiHelperWorkspace({
             <Bot className="mb-3 size-10 text-muted-foreground" />
             <p className="font-medium">현재 Experiment를 Agent와 함께 편집하세요.</p>
             <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-              Agent는 허용된 데이터와 카탈로그를 검색하고, staged source를 반복 수정·검증한 뒤 성공한 변경만 코드
-              편집기에 전달합니다.
+              Agent는 허용된 데이터와 카탈로그를 검색해 source를 수정하고, 생성된 최종 코드를 미검증 상태로
+              편집기에 바로 반영합니다. 결과는 Workbench에서 확인하세요.
             </p>
           </div>
         )}
@@ -760,7 +627,7 @@ export function AiHelperWorkspace({
         <div className="mb-3 flex items-start gap-2 rounded-md border bg-muted/20 px-3 py-2 text-xs leading-5 text-muted-foreground">
           <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-primary" />
           <span>
-            질문, 현재 Experiment source, Agent가 조회한 Visible DB·카탈로그 데이터와 컴파일 결과가 선택한 외부 AI
+            질문, 현재 Experiment source, Agent가 조회한 Visible DB·카탈로그 데이터가 선택한 외부 AI
             제공자에 전송됩니다. API key는 Caemble 백엔드에서만 사용됩니다. Caemble은 store=false로 요청하고 대화를 DB에
             저장하지 않지만, 일시적인 prompt cache와 최대 30일의 abuse-monitoring 로그가 provider data controls에 따라
             남을 수 있습니다. Caemble 세션 삭제가 provider의 cache나 로그 삭제를 뜻하지 않습니다.
@@ -886,8 +753,8 @@ export function AiHelperWorkspace({
             </label>
             <p className="flex items-start gap-2 rounded-md bg-muted/40 p-3 text-xs leading-5 text-muted-foreground">
               <Wrench className="mt-0.5 size-3.5 shrink-0" />
-              Reasoning을 높이면 복잡한 편집과 검증에 도움이 될 수 있지만 응답 시간과 사용량이 증가합니다. 기본값은
-              HIGH입니다.
+              Reasoning을 높이면 복잡한 조회와 편집에 도움이 될 수 있지만 응답 시간과 사용량이 증가합니다. 기본값은
+              MEDIUM입니다.
             </p>
           </div>
         </DialogContent>
@@ -925,35 +792,6 @@ function toolLabel(name: string) {
     write_staged_file: 'staged source 수정',
     add_staged_task: 'Task 추가',
     delete_staged_task: 'Task 삭제',
-    validate_workspace: 'Workbench 컴파일·평가',
-    compile_experiment: 'Workbench 컴파일·평가',
   }
   return labels[name] ?? name
-}
-
-function validationLabel(status: AiAgentValidationResult['status']) {
-  if (status === 'valid') return '성공'
-  if (status === 'invalid') return '오류 발견'
-  return '검증 불가'
-}
-
-function boundedDiagnostic(value: string) {
-  const encoder = new TextEncoder()
-  let maxBytes = 1_000
-  let result = truncateUtf8(value, maxBytes, encoder)
-  let encodedBytes = encoder.encode(JSON.stringify(result)).byteLength
-  while (encodedBytes > 1_024 && maxBytes > 0) {
-    maxBytes = Math.max(0, maxBytes - Math.max(16, encodedBytes - 1_024))
-    result = truncateUtf8(value, maxBytes, encoder)
-    encodedBytes = encoder.encode(JSON.stringify(result)).byteLength
-  }
-  return result
-}
-
-function truncateUtf8(value: string, maxBytes: number, encoder: TextEncoder) {
-  const bytes = encoder.encode(value)
-  if (bytes.byteLength <= maxBytes) return value
-  let end = maxBytes
-  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end -= 1
-  return new TextDecoder().decode(bytes.slice(0, end))
 }

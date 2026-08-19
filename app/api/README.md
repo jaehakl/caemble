@@ -42,7 +42,8 @@ DB에 저장하고, 등록 이후 원문이나 suffix를 API 응답으로 다시
 이전 키를 제거하면 안 된다.
 
 Agent는 작업에 필요한 현재 사용자의 Visible DB 데이터, catalog 항목, 편집 중인
-Experiment bundle과 compile 결과를 선택한 외부 provider로 보낼 수 있다. OpenAI
+Experiment bundle을 선택한 외부 provider로 보낼 수 있다. Workbench compile/evaluate
+결과는 Agent나 외부 provider로 자동 전송하지 않는다. OpenAI
 Responses 요청은 `store=false`를 사용해 응답을 나중에 조회하기 위한 저장을 요청하지
 않고 GPT-5.6 prompt cache는 implicit mode와 30분 TTL로만 요청한다. 그러나 이것은 Zero Data Retention을
 뜻하지 않는다. provider에는 일시적인 prompt-cache application state가 남을 수 있고 OpenAI 기본

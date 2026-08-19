@@ -9,9 +9,6 @@ from typing import Any
 
 from models import ExperimentSourceBundle, GeometrySnapshot
 
-from ai.python_validation import validate_simulation_source
-
-
 MAX_SOURCE_BYTES = 1024 * 1024
 MAX_GEOMETRY_MODULE_SOURCE_BYTES = 1024 * 1024
 MAX_GEOMETRY_GRAPH_SOURCE_BYTES = 8 * 1024 * 1024
@@ -52,7 +49,6 @@ class StagedExperiment:
         self._source_hash = bundle_hash(self._bundle)
         self._initial_hash = self._source_hash
         self.revision = 0
-        self.last_validation: dict[str, Any] | None = None
 
     @property
     def source_hash(self) -> str:
@@ -118,14 +114,11 @@ class StagedExperiment:
         self._bundle = candidate
         self._source_hash = bundle_hash(candidate)
         self.revision += 1
-        self.last_validation = None
-        diagnostics = validate_simulation_source(files["simulate.py"])
         return {
             "path": path,
             "sha256": text_hash(content),
             "stagedRevision": self.revision,
             "sourceHash": self.source_hash,
-            "pythonDiagnostics": [diagnostic.as_dict() for diagnostic in diagnostics],
         }
 
     def delete_task(self, path: str, expected_sha256: str) -> dict[str, Any]:
@@ -147,19 +140,11 @@ class StagedExperiment:
         self._bundle = candidate
         self._source_hash = bundle_hash(candidate)
         self.revision += 1
-        self.last_validation = None
         return {
             "path": path,
             "deleted": True,
             "stagedRevision": self.revision,
             "sourceHash": self.source_hash,
-        }
-
-    def python_validation(self) -> dict[str, Any]:
-        diagnostics = validate_simulation_source(self._bundle.files["simulate.py"])
-        return {
-            "valid": not diagnostics,
-            "diagnostics": [diagnostic.as_dict() for diagnostic in diagnostics],
         }
 
     def replace_geometry_snapshot(self, snapshot: GeometrySnapshot) -> None:
@@ -171,7 +156,6 @@ class StagedExperiment:
             geometrySnapshot=GeometrySnapshot.model_validate(snapshot.model_dump(mode="json")),
         )
         self._source_hash = bundle_hash(self._bundle)
-        self.last_validation = None
 
 
 def validate_source_path(path: str) -> None:

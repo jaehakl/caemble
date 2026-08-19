@@ -25,7 +25,7 @@ def start_payload():
         "request": {"prompt": "검토해 줘", "messages": []},
         "provider": "openai",
         "model": "gpt-5.6-luna",
-        "reasoningEffort": "high",
+        "reasoningEffort": "medium",
         "workspace": {
             "experimentId": 4,
             "document": {
@@ -274,7 +274,7 @@ def test_websocket_first_message_timeout_releases_user_run(websocket_app, monkey
 
 
 @pytest.mark.asyncio
-async def test_drive_run_bounds_inbound_control_messages():
+async def test_drive_run_rejects_removed_client_validation_messages():
     payload = json.dumps(
         {
             "type": "client_tool.result",
@@ -291,20 +291,12 @@ async def test_drive_run_bounds_inbound_control_messages():
         async def receive(self):
             return {"type": "websocket.receive", "text": payload}
 
-    class AcceptingBridge:
-        def deliver(self, message):
-            return True
-
-        def cancel(self):
-            pass
-
     run_task = asyncio.create_task(asyncio.Event().wait())
     try:
-        with pytest.raises(ValueError, match="too many control messages"):
+        with pytest.raises(ValueError, match="Unsupported WebSocket message type"):
             await _drive_run(
                 FloodingWebSocket(),
                 run_task,
-                AcceptingBridge(),
                 asyncio.Event(),
                 "run-1",
             )
