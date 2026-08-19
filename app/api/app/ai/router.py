@@ -242,6 +242,8 @@ async def run_agent(
                 failure = {"message": _safe_error_message(error)}
                 if isinstance(error, ContextBudgetExceeded):
                     failure["code"] = "context_too_large"
+                elif isinstance(error, ProviderError) and error.code is not None:
+                    failure.update(error.public_data())
                 await emitter.emit("run.failed", **failure)
                 await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
             except (RuntimeError, WebSocketDisconnect):
@@ -251,21 +253,30 @@ async def run_agent(
                 await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             except RuntimeError:
                 pass
-        logger.warning(
-            "ai_agent.run.failed",
-            extra={
-                "ai_run_id": emitter.run_id if emitter is not None else None,
-                "ai_user_id": user_id,
-                "ai_provider": start_message.provider if start_message is not None else None,
-                "ai_model": start_message.model if start_message is not None else None,
-                "ai_error_code": type(error).__name__,
-                "ai_latency_ms": (
-                    round((time.perf_counter() - started_at) * 1000, 2)
-                    if started_at is not None
-                    else None
-                ),
-            },
-        )
+        failure_log = {
+            "ai_run_id": emitter.run_id if emitter is not None else None,
+            "ai_user_id": user_id,
+            "ai_provider": start_message.provider if start_message is not None else None,
+            "ai_model": start_message.model if start_message is not None else None,
+            "ai_error_code": (
+                error.code
+                if isinstance(error, ProviderError) and error.code is not None
+                else type(error).__name__
+            ),
+            "ai_latency_ms": (
+                round((time.perf_counter() - started_at) * 1000, 2)
+                if started_at is not None
+                else None
+            ),
+        }
+        if isinstance(error, ProviderError):
+            failure_log.update(
+                ai_provider_status=error.status_code,
+                ai_provider_error_code=error.upstream_code,
+                ai_provider_parameter=error.parameter,
+                ai_provider_request_id=error.request_id,
+            )
+        logger.warning("ai_agent.run.failed", extra=failure_log)
     finally:
         if run_task is not None and not run_task.done():
             run_task.cancel()

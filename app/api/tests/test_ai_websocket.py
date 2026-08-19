@@ -12,7 +12,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 import ai.router as router_module
-from ai.provider import ProviderStep
+from ai.provider import ProviderError, ProviderStep
 from ai.router import _drive_run, _release_user_run, router
 from caemble_catalog import Catalog
 from main import app as main_app
@@ -80,9 +80,29 @@ class WaitingProvider:
         pass
 
 
+class FailingProvider:
+    async def generate(self, **_request):
+        raise ProviderError(
+            "OpenAI rejected the request parameters.",
+            code="provider_invalid_request",
+            request_id="req_safe123",
+            status_code=400,
+            upstream_code="unsupported_parameter",
+            parameter="prompt_cache_retention",
+        )
+
+    async def close(self):
+        pass
+
+
 def test_main_app_registers_ai_http_and_websocket_routes():
     paths = {route.path for route in main_app.routes}
-    assert {"/ai/providers", "/ai/providers/{provider}/credential", "/ai/agent/run"} <= paths
+    assert {
+        "/ai/providers",
+        "/ai/providers/{provider}/credential",
+        "/ai/providers/{provider}/credential/test",
+        "/ai/agent/run",
+    } <= paths
 
 
 @pytest.fixture
@@ -191,6 +211,30 @@ def test_websocket_cancellation_reaches_running_provider(websocket_app, monkeypa
 
     assert cancelled["type"] == "run.cancelled"
     assert cancelled["runId"] == started["runId"]
+
+
+def test_websocket_returns_structured_provider_failure(websocket_app, monkeypatch):
+    monkeypatch.setattr(
+        router_module,
+        "create_provider_adapter",
+        lambda provider, model, api_key: FailingProvider(),
+    )
+    with TestClient(websocket_app) as client:
+        client.cookies.set("access_token", "cookie-token")
+        with client.websocket_connect(
+            "/ai/agent/run",
+            headers={"origin": "https://app.example"},
+        ) as socket:
+            socket.send_json(start_payload())
+            event = socket.receive_json()
+            while event["type"] != "run.failed":
+                event = socket.receive_json()
+
+    assert event["message"] == "OpenAI rejected the request parameters."
+    assert event["code"] == "provider_invalid_request"
+    assert event["retryable"] is False
+    assert event["providerRequestId"] == "req_safe123"
+    assert "prompt_cache_retention" not in event
 
 
 def test_websocket_overall_timeout_is_bounded(websocket_app, monkeypatch):

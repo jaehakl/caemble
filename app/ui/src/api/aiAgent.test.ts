@@ -4,17 +4,32 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({ request: vi.fn() }))
 
-vi.mock('./http', () => ({ API_URL: '/api', request: mocks.request }))
+vi.mock('./http', () => ({
+  API_URL: '/api',
+  request: mocks.request,
+  ApiError: class ApiError extends Error {
+    constructor(
+      readonly status: number,
+      message: string,
+      readonly body: unknown,
+    ) {
+      super(message)
+    }
+  },
+}))
 
 import {
   AI_AGENT_PROMPT_TOOL_VERSION,
   aiAgentApi,
+  aiAgentApiErrorMessage,
+  aiAgentProviderFailureMessage,
   clearAiAgentSession,
   connectAiAgent,
   loadAiAgentSession,
   saveAiAgentSession,
   type AiAgentSessionBinding,
 } from './aiAgent'
+import { ApiError } from './http'
 
 beforeEach(() => {
   mocks.request.mockReset()
@@ -56,10 +71,17 @@ describe('AI Agent API transport', () => {
     mocks.request.mockResolvedValue(undefined)
     await aiAgentApi.saveCredential('openai', 'sk-secret')
     await aiAgentApi.deleteCredential('openai')
+    mocks.request.mockResolvedValue({ provider: 'openai', model: 'gpt-5.6-luna', ok: true })
+    await expect(aiAgentApi.testCredential('openai')).resolves.toEqual({
+      provider: 'openai',
+      model: 'gpt-5.6-luna',
+      ok: true,
+    })
     expect(mocks.request).toHaveBeenNthCalledWith(2, 'put', '/ai/providers/openai/credential', {
       apiKey: 'sk-secret',
     })
     expect(mocks.request).toHaveBeenNthCalledWith(3, 'delete', '/ai/providers/openai/credential')
+    expect(mocks.request).toHaveBeenNthCalledWith(4, 'post', '/ai/providers/openai/credential/test')
   })
 
   it('binds the opaque session envelope to identity, credential, Experiment, permissions and prompt version', () => {
@@ -149,10 +171,53 @@ describe('AI Agent API transport', () => {
         }),
       )
     })
+    socket.message({
+      type: 'run.failed',
+      run_id: 'run-1',
+      sequence: 6,
+      code: 'provider_quota_exceeded',
+      message: 'The OpenAI project has no available API quota.',
+      retryable: false,
+      provider_request_id: 'req_safe123',
+    })
+    await vi.waitFor(() =>
+      expect(onEvent).toHaveBeenCalledWith({
+        type: 'run.failed',
+        runId: 'run-1',
+        sequence: 6,
+        code: 'provider_quota_exceeded',
+        message: 'The OpenAI project has no available API quota.',
+        retryable: false,
+        providerRequestId: 'req_safe123',
+      }),
+    )
 
     connection.close()
     expect(onClose).toHaveBeenCalledWith(null)
     vi.stubGlobal('WebSocket', NativeWebSocket)
+  })
+
+  it('formats actionable Korean provider failures without exposing raw provider text', () => {
+    expect(
+      aiAgentProviderFailureMessage({
+        code: 'provider_quota_exceeded',
+        message: 'raw provider message',
+        providerRequestId: 'req_safe123',
+      }),
+    ).toBe('OpenAI API 크레딧 또는 프로젝트 사용 한도가 소진되었습니다. (OpenAI 요청 ID: req_safe123)')
+    expect(
+      aiAgentApiErrorMessage(
+        new ApiError(424, 'raw provider message', {
+          detail: {
+            code: 'provider_access_denied',
+            message: 'raw provider message',
+            retryable: false,
+            providerRequestId: 'req_safe456',
+          },
+        }),
+        'fallback',
+      ),
+    ).toBe('해당 OpenAI 프로젝트에서 GPT-5.6 Luna를 사용할 권한이 없습니다. (OpenAI 요청 ID: req_safe456)')
   })
 })
 

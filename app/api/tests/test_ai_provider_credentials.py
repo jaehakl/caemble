@@ -8,7 +8,9 @@ from fastapi import FastAPI
 from pydantic import SecretStr
 from sqlalchemy import func, select
 
+from ai import credentials as credentials_module
 from ai.credentials import get_provider_api_key, get_provider_credential, router
+from ai.provider import ProviderError, ProviderStep
 from settings import settings
 from tests.helpers import auth_headers, create_user
 from user_auth.db import AIProviderCredential
@@ -37,6 +39,23 @@ def configure_encryption(monkeypatch, *keys: bytes) -> None:
         "AI_CREDENTIAL_FERNET_KEYS",
         tuple(SecretStr(key.decode("ascii")) for key in keys),
     )
+
+
+class FakeConnectionTestAdapter:
+    def __init__(self, error=None):
+        self.error = error
+        self.request = None
+        self.closed = False
+
+    async def generate(self, **request):
+        self.request = request
+        if self.error is not None:
+            raise self.error
+        await request["on_delta"]("OK")
+        return ProviderStep(text="OK", output_items=[], tool_calls=[])
+
+    async def close(self):
+        self.closed = True
 
 
 @pytest.mark.asyncio
@@ -265,3 +284,116 @@ async def test_provider_endpoints_require_authentication(credential_client):
     assert (
         await credential_client.delete("/ai/providers/openai/credential")
     ).status_code == 403
+    assert (
+        await credential_client.post("/ai/providers/openai/credential/test")
+    ).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_provider_connection_test_uses_only_the_current_users_stored_credential(
+    credential_client,
+    db_session,
+    monkeypatch,
+):
+    configure_encryption(monkeypatch, Fernet.generate_key())
+    monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
+    user = await create_user(db_session)
+    headers = auth_headers(user)
+
+    missing = await credential_client.post(
+        "/ai/providers/openai/credential/test",
+        headers=headers,
+    )
+    assert missing.status_code == 409
+    assert missing.json()["detail"]["code"] == "credential_not_configured"
+
+    secret = "sk-private-connection-test-key"
+    assert (
+        await credential_client.put(
+            "/ai/providers/openai/credential",
+            headers=headers,
+            json={"apiKey": secret},
+        )
+    ).status_code == 200
+    adapter = FakeConnectionTestAdapter()
+    received = {}
+
+    def create_adapter(provider, model, api_key):
+        received.update(provider=provider, model=model, api_key=api_key)
+        return adapter
+
+    monkeypatch.setattr(credentials_module, "create_provider_adapter", create_adapter)
+    response = await credential_client.post(
+        "/ai/providers/openai/credential/test",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "ok": True,
+    }
+    assert received == {
+        "provider": "openai",
+        "model": "gpt-5.6-luna",
+        "api_key": secret,
+    }
+    assert adapter.request["tools"] == []
+    assert adapter.request["reasoning_effort"] == "none"
+    assert secret not in adapter.request["prompt_cache_key"]
+    assert adapter.closed is True
+    assert secret not in response.text
+
+
+@pytest.mark.asyncio
+async def test_provider_connection_test_returns_only_sanitized_provider_failure(
+    credential_client,
+    db_session,
+    monkeypatch,
+    caplog,
+):
+    configure_encryption(monkeypatch, Fernet.generate_key())
+    monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
+    user = await create_user(db_session)
+    headers = auth_headers(user)
+    secret = "sk-never-return-this-connection-secret"
+    assert (
+        await credential_client.put(
+            "/ai/providers/openai/credential",
+            headers=headers,
+            json={"apiKey": secret},
+        )
+    ).status_code == 200
+    adapter = FakeConnectionTestAdapter(
+        ProviderError(
+            "OpenAI rejected the request parameters.",
+            code="provider_invalid_request",
+            request_id="req_safe123",
+            status_code=400,
+            upstream_code="unsupported_parameter",
+            parameter="prompt_cache_retention",
+        )
+    )
+    monkeypatch.setattr(
+        credentials_module,
+        "create_provider_adapter",
+        lambda provider, model, api_key: adapter,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        response = await credential_client.post(
+            "/ai/providers/openai/credential/test",
+            headers=headers,
+        )
+
+    assert response.status_code == 424
+    assert response.json()["detail"] == {
+        "code": "provider_invalid_request",
+        "message": "OpenAI rejected the request parameters.",
+        "retryable": False,
+        "providerRequestId": "req_safe123",
+    }
+    assert adapter.closed is True
+    assert secret not in response.text
+    assert secret not in caplog.text

@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import { dbTables, startGoogleLogin, type AccessKeyScope } from '@/api'
-import { AI_AGENT_PROVIDER_QUERY_KEY, aiAgentApi } from '@/api/aiAgent'
+import { AI_AGENT_PROVIDER_QUERY_KEY, aiAgentApi, aiAgentApiErrorMessage } from '@/api/aiAgent'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -96,6 +96,15 @@ export function AccountWorkspace() {
       await queryClient.invalidateQueries({ queryKey: AI_AGENT_PROVIDER_QUERY_KEY })
     },
     onError: (nextError) => setProviderError(runtimeErrorMessage(nextError, '외부 AI API key를 삭제하지 못했습니다.')),
+  })
+  const testProviderCredential = useMutation({
+    mutationFn: (provider: string) => aiAgentApi.testCredential(provider),
+    onSuccess: (result) => {
+      setProviderError(null)
+      setProviderMessage(`${result.provider} / ${result.model} 연결 테스트에 성공했습니다.`)
+    },
+    onError: (nextError) =>
+      setProviderError(aiAgentApiErrorMessage(nextError, '외부 AI 연결 테스트를 완료하지 못했습니다.')),
   })
 
   if (auth.isLoading)
@@ -226,6 +235,7 @@ export function AccountWorkspace() {
             질문, source, 선택된 Visible 데이터와 컴파일 결과가 해당 provider에 전송됩니다. Caemble은 store=false로
             요청하고 대화를 DB에 저장하지 않지만, 일시적인 prompt cache와 최대 30일의 abuse-monitoring 로그가 provider
             data controls에 따라 남을 수 있습니다. Caemble 세션 삭제가 provider의 cache나 로그 삭제를 뜻하지 않습니다.
+            연결 테스트는 버튼을 누를 때만 고정된 짧은 Luna 요청을 보내며 소량의 API 비용이 발생합니다.
           </p>
           {providerError || providers.isError ? (
             <p className="text-sm text-destructive">
@@ -261,20 +271,40 @@ export function AccountWorkspace() {
                       {provider.models.length ? ` · ${provider.models.map(({ label }) => label).join(', ')}` : ''}
                     </p>
                   </div>
-                  <Button
-                    disabled={!provider.configured || deleteProviderCredential.isPending}
-                    onClick={() => {
-                      if (window.confirm(`${provider.label} API key를 삭제할까요?`)) {
-                        deleteProviderCredential.mutate(provider.id)
+                  <div className="flex items-center gap-2">
+                    <Button
+                      disabled={
+                        !provider.configured || testProviderCredential.isPending || deleteProviderCredential.isPending
                       }
-                    }}
-                    size="sm"
-                    type="button"
-                    variant="destructive"
-                  >
-                    <Trash2 />
-                    삭제
-                  </Button>
+                      onClick={() => {
+                        setProviderError(null)
+                        setProviderMessage(null)
+                        testProviderCredential.mutate(provider.id)
+                      }}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      <RefreshCw className={testProviderCredential.isPending ? 'animate-spin' : undefined} />
+                      연결 테스트
+                    </Button>
+                    <Button
+                      disabled={
+                        !provider.configured || deleteProviderCredential.isPending || testProviderCredential.isPending
+                      }
+                      onClick={() => {
+                        if (window.confirm(`${provider.label} API key를 삭제할까요?`)) {
+                          deleteProviderCredential.mutate(provider.id)
+                        }
+                      }}
+                      size="sm"
+                      type="button"
+                      variant="destructive"
+                    >
+                      <Trash2 />
+                      삭제
+                    </Button>
+                  </div>
                 </div>
               ))
             ) : (

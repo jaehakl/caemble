@@ -17,6 +17,7 @@ const agentApi = vi.hoisted(() => ({
   deleteCredential: vi.fn(),
   listProviders: vi.fn(),
   saveCredential: vi.fn(),
+  testCredential: vi.fn(),
 }))
 
 vi.mock('@/api', async (importActual) => {
@@ -111,6 +112,8 @@ describe('Account access tokens', () => {
     agentApi.saveCredential.mockResolvedValue(undefined)
     agentApi.deleteCredential.mockReset()
     agentApi.deleteCredential.mockResolvedValue(undefined)
+    agentApi.testCredential.mockReset()
+    agentApi.testCredential.mockResolvedValue({ provider: 'openai', model: 'gpt-5.6-luna', ok: true })
   })
 
   it('starts Google login from Account and returns to the current Workbench URL', async () => {
@@ -177,6 +180,10 @@ describe('Account access tokens', () => {
     await user.click(screen.getAllByRole('button', { name: '새로고침' })[0])
     expect(await screen.findByText(/Key 원문 숨김/)).toBeVisible()
     expect(screen.getByText(/credential v2/)).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: '연결 테스트' }))
+    await waitFor(() => expect(agentApi.testCredential).toHaveBeenCalledWith('openai'))
+    expect(await screen.findByText(/openai \/ gpt-5\.6-luna 연결 테스트에 성공/)).toBeVisible()
 
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     await user.click(screen.getByRole('button', { name: '삭제' }))

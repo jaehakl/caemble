@@ -44,7 +44,7 @@ DB에 저장하고, 등록 이후 원문이나 suffix를 API 응답으로 다시
 Agent는 작업에 필요한 현재 사용자의 Visible DB 데이터, catalog 항목, 편집 중인
 Experiment bundle과 compile 결과를 선택한 외부 provider로 보낼 수 있다. OpenAI
 Responses 요청은 `store=false`를 사용해 응답을 나중에 조회하기 위한 저장을 요청하지
-않고 prompt cache는 `in_memory` 모드로만 요청한다. 그러나 이것은 Zero Data Retention을
+않고 GPT-5.6 prompt cache는 implicit mode와 30분 TTL로만 요청한다. 그러나 이것은 Zero Data Retention을
 뜻하지 않는다. provider에는 일시적인 prompt-cache application state가 남을 수 있고 OpenAI 기본
 abuse-monitoring 로그에는 prompt와 response 같은 customer content가 포함될 수 있고
 기본적으로 최대 30일 보존될 수 있다. 법적 요구나 서비스/제3자 보호에 필요한 경우에는
@@ -53,6 +53,11 @@ abuse-monitoring 로그에는 prompt와 response 같은 customer content가 포�
 별도 승인이 필요한 Modified Abuse Monitoring 또는 Zero Data Retention을 설정해야 한다.
 자세한 내용은 [OpenAI API data controls](https://developers.openai.com/api/docs/guides/your-data#default-usage-policies-by-endpoint)를
 확인한다.
+
+Account의 `연결 테스트`는 `POST /ai/providers/{provider}/credential/test`를 통해 현재
+사용자에게 암호화 저장된 key로 고정된 짧은 Luna Responses 요청을 보낸다. 자동 실행하지
+않으며 소량의 provider API 비용이 발생한다. 실패 응답과 로그에는 분류된 오류 코드,
+재시도 가능 여부와 OpenAI request ID만 포함하고 key, prompt 또는 원본 오류 본문은 포함하지 않는다.
 
 일반 CI는 fake provider adapter만 사용한다. Luna의 실제 Responses/compaction 요청 계약을
 확인하는 유료 smoke test는 `CAEMBLE_RUN_LIVE_OPENAI_SMOKE=1`과

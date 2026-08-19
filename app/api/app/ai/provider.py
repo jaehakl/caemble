@@ -16,6 +16,35 @@ DeltaCallback = Callable[[str], Awaitable[None]]
 class ProviderError(RuntimeError):
     """A provider failure whose text is safe to return to the browser."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        retryable: bool = False,
+        request_id: str | None = None,
+        status_code: int | None = None,
+        upstream_code: str | None = None,
+        parameter: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.retryable = retryable
+        self.request_id = request_id
+        self.status_code = status_code
+        self.upstream_code = upstream_code
+        self.parameter = parameter
+
+    def public_data(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "code": self.code or "provider_request_failed",
+            "message": str(self),
+            "retryable": self.retryable,
+        }
+        if self.request_id is not None:
+            result["providerRequestId"] = self.request_id
+        return result
+
 
 @dataclass(frozen=True)
 class ProviderCapabilities:
@@ -128,22 +157,25 @@ class OpenAIResponsesAdapter:
             "model": self.capabilities.model,
             "instructions": instructions,
             "input": input_items,
-            "tools": tools,
-            "tool_choice": "auto",
-            "parallel_tool_calls": False,
             "store": False,
             "stream": True,
             "max_output_tokens": 16_000,
-            "max_tool_calls": 64,
             "reasoning": {"effort": reasoning_effort, "context": reasoning_context},
             "include": ["reasoning.encrypted_content"],
             "context_management": [
                 {"type": "compaction", "compact_threshold": 160_000}
             ],
             "prompt_cache_key": prompt_cache_key,
-            "prompt_cache_retention": "in_memory",
+            "prompt_cache_options": {"mode": "implicit", "ttl": "30m"},
             "safety_identifier": hashlib.sha256(prompt_cache_key.encode("utf-8")).hexdigest(),
         }
+        if tools:
+            request.update(
+                tools=tools,
+                tool_choice="auto",
+                parallel_tool_calls=False,
+                max_tool_calls=64,
+            )
         stream: Any = None
         completed_response: Any = None
         try:
@@ -159,7 +191,14 @@ class OpenAIResponsesAdapter:
                 elif event_type == "response.completed":
                     completed_response = _read(event, "response")
                 elif event_type in {"response.failed", "response.incomplete"}:
-                    raise ProviderError("The model could not complete this Agent step")
+                    response = _read(event, "response")
+                    detail = _read(response, "error")
+                    raise ProviderError(
+                        "OpenAI could not complete this Agent step.",
+                        code="provider_request_failed",
+                        upstream_code=_safe_field(_read(detail, "code")),
+                        parameter=_safe_field(_read(detail, "param")),
+                    )
             if completed_response is None:
                 completed_response = await _final_response(stream)
         except asyncio.CancelledError:
@@ -167,7 +206,7 @@ class OpenAIResponsesAdapter:
         except ProviderError:
             raise
         except Exception as error:
-            raise ProviderError("The OpenAI request failed") from error
+            raise _openai_provider_error(error) from error
         finally:
             if stream is not None:
                 await _close_stream(stream)
@@ -202,12 +241,12 @@ class OpenAIResponsesAdapter:
                 instructions=instructions,
                 input=input_items,
                 prompt_cache_key=prompt_cache_key,
-                prompt_cache_retention="in_memory",
+                prompt_cache_options={"mode": "implicit", "ttl": "30m"},
             )
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            raise ProviderError("The OpenAI context compaction request failed") from error
+            raise _openai_provider_error(error) from error
         if cancel_event.is_set():
             raise asyncio.CancelledError
         output_items = [_as_json(item) for item in (_read(response, "output") or [])]
@@ -235,6 +274,90 @@ def create_provider_adapter(provider: str, model: str, api_key: str) -> Provider
 _PROVIDER_ADAPTERS = {
     ("openai", "gpt-5.6-luna"): OpenAIResponsesAdapter,
 }
+
+
+def _openai_provider_error(error: Exception) -> ProviderError:
+    status_code = getattr(error, "status_code", None)
+    status_code = status_code if isinstance(status_code, int) else None
+    request_id = _safe_field(getattr(error, "request_id", None))
+    body = getattr(error, "body", None)
+    detail = body.get("error", body) if isinstance(body, dict) else None
+    upstream_code = _safe_field(_read(detail, "code"))
+    upstream_type = _safe_field(_read(detail, "type"))
+    parameter = _safe_field(_read(detail, "param"))
+    error_name = type(error).__name__
+
+    if error_name == "APITimeoutError" or isinstance(error, TimeoutError):
+        return ProviderError(
+            "The OpenAI request timed out.",
+            code="provider_timeout",
+            retryable=True,
+            request_id=request_id,
+            status_code=status_code,
+            upstream_code=upstream_code,
+            parameter=parameter,
+        )
+    if error_name == "APIConnectionError":
+        return ProviderError(
+            "Caemble could not connect to OpenAI.",
+            code="provider_unavailable",
+            retryable=True,
+            request_id=request_id,
+            status_code=status_code,
+            upstream_code=upstream_code,
+            parameter=parameter,
+        )
+    if status_code == 401:
+        code = "provider_authentication_failed"
+        message = "The configured OpenAI API key was rejected."
+        retryable = False
+    elif status_code in {403, 404}:
+        code = "provider_access_denied"
+        message = "The OpenAI project cannot access the selected model."
+        retryable = False
+    elif status_code == 429 and {upstream_code, upstream_type}.intersection(
+        {
+            "billing_hard_limit_reached",
+            "insufficient_quota",
+            "usage_limit_reached",
+        }
+    ):
+        code = "provider_quota_exceeded"
+        message = "The OpenAI project has no available API quota."
+        retryable = False
+    elif status_code == 429:
+        code = "provider_rate_limited"
+        message = "The OpenAI rate limit was reached."
+        retryable = True
+    elif status_code in {400, 409, 422}:
+        code = "provider_invalid_request"
+        message = "OpenAI rejected the request parameters."
+        retryable = False
+    elif status_code is not None and status_code >= 500:
+        code = "provider_unavailable"
+        message = "OpenAI is temporarily unavailable."
+        retryable = True
+    else:
+        code = "provider_request_failed"
+        message = "The OpenAI request failed."
+        retryable = False
+    return ProviderError(
+        message,
+        code=code,
+        retryable=retryable,
+        request_id=request_id,
+        status_code=status_code,
+        upstream_code=upstream_code,
+        parameter=parameter,
+    )
+
+
+def _safe_field(value: Any) -> str | None:
+    if not isinstance(value, str) or not value or len(value) > 128:
+        return None
+    if not all(character.isalnum() or character in "._-[]" for character in value):
+        return None
+    return value
 
 
 def _validate_strict_tools(tools: list[dict[str, Any]]) -> None:

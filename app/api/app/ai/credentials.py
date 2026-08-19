@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import logging
 from datetime import datetime
 from typing import Literal
 
@@ -11,6 +14,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gpstation.utils.csrf import require_web_csrf
+from ai.provider import ProviderError, create_provider_adapter
 from models import UserData
 from settings import settings
 from user_auth.db import AIProviderCredential
@@ -21,8 +25,10 @@ from user_auth.utils.auth_wrapper import require_roles
 PROVIDER_MODELS = {"openai": ("gpt-5.6-luna",)}
 SUPPORTED_PROVIDERS = frozenset(PROVIDER_MODELS)
 REASONING_EFFORTS = ("none", "low", "medium", "high", "xhigh", "max")
+CONNECTION_TEST_SECONDS = 30
 
 router = APIRouter(prefix="/ai", tags=["ai"])
+logger = logging.getLogger(__name__)
 
 
 class ProviderCredentialRequest(BaseModel):
@@ -54,6 +60,12 @@ class ProviderData(BaseModel):
 
 class ProvidersResponse(BaseModel):
     providers: list[ProviderData]
+
+
+class ProviderConnectionTestData(BaseModel):
+    provider: str
+    model: str
+    ok: Literal[True]
 
 
 def _fernet() -> MultiFernet:
@@ -236,3 +248,118 @@ async def delete_provider_credential(
     )
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/providers/{provider}/credential/test",
+    response_model=ProviderConnectionTestData,
+    dependencies=[Depends(require_web_csrf)],
+)
+async def test_provider_credential(
+    provider: str,
+    db: AsyncSession = Depends(get_db),
+    user: UserData = Depends(require_roles(["admin", "user"])),
+) -> ProviderConnectionTestData:
+    _require_provider(provider)
+    model = PROVIDER_MODELS[provider][0]
+    try:
+        api_key, _ = await get_provider_credential(db, user.id, provider)
+    except LookupError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "credential_not_configured",
+                "message": "Provider credential is not configured.",
+            },
+        ) from error
+    finally:
+        await db.rollback()
+
+    adapter = create_provider_adapter(provider, model, api_key)
+
+    async def ignore_delta(_value: str) -> None:
+        return None
+
+    try:
+        await asyncio.wait_for(
+            adapter.generate(
+                instructions="Return only OK. This is a Caemble provider connection test.",
+                input_items=[
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": "Verify that this model can complete a Responses API request.",
+                    }
+                ],
+                tools=[],
+                reasoning_effort="none",
+                reasoning_context="current_turn",
+                prompt_cache_key=(
+                    "caemble-provider-test-"
+                    + hashlib.sha256(user.id.encode("utf-8")).hexdigest()[:32]
+                ),
+                on_delta=ignore_delta,
+                cancel_event=asyncio.Event(),
+            ),
+            timeout=CONNECTION_TEST_SECONDS,
+        )
+    except TimeoutError as error:
+        failure = ProviderError(
+            "The OpenAI connection test timed out.",
+            code="provider_timeout",
+            retryable=True,
+        )
+        _log_connection_test_failure(user.id, provider, model, failure)
+        raise HTTPException(
+            status_code=status.HTTP_424_FAILED_DEPENDENCY,
+            detail=failure.public_data(),
+        ) from error
+    except ProviderError as error:
+        _log_connection_test_failure(user.id, provider, model, error)
+        raise HTTPException(
+            status_code=status.HTTP_424_FAILED_DEPENDENCY,
+            detail=error.public_data(),
+        ) from error
+    finally:
+        try:
+            await adapter.close()
+        except Exception:
+            logger.warning(
+                "ai_provider.connection_test.close_failed",
+                extra={
+                    "ai_user_id": user.id,
+                    "ai_provider": provider,
+                    "ai_model": model,
+                },
+            )
+
+    logger.info(
+        "ai_provider.connection_test.completed",
+        extra={
+            "ai_user_id": user.id,
+            "ai_provider": provider,
+            "ai_model": model,
+        },
+    )
+    return ProviderConnectionTestData(provider=provider, model=model, ok=True)
+
+
+def _log_connection_test_failure(
+    user_id: str,
+    provider: str,
+    model: str,
+    error: ProviderError,
+) -> None:
+    logger.warning(
+        "ai_provider.connection_test.failed",
+        extra={
+            "ai_user_id": user_id,
+            "ai_provider": provider,
+            "ai_model": model,
+            "ai_error_code": error.code or "provider_request_failed",
+            "ai_provider_status": error.status_code,
+            "ai_provider_error_code": error.upstream_code,
+            "ai_provider_parameter": error.parameter,
+            "ai_provider_request_id": error.request_id,
+        },
+    )

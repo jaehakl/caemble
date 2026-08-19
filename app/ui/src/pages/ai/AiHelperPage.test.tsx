@@ -79,6 +79,29 @@ describe('AiHelperWorkspace Agent transport', () => {
     expect(screen.queryByText('Top P')).not.toBeInTheDocument()
   })
 
+  it('shows an actionable provider failure instead of the raw OpenAI error', async () => {
+    const user = userEvent.setup()
+    renderWorkspace()
+
+    await screen.findByText('OpenAI · gpt-5.6-luna')
+    await user.type(screen.getByLabelText('AI Helper 질문'), '연결을 확인해 줘')
+    await user.click(screen.getByRole('button', { name: '전송' }))
+    await waitFor(() => expect(mocks.send).toHaveBeenCalled())
+    await emit({ type: 'run.started', runId: 'run-failed', sequence: 0 })
+    await emit({
+      type: 'run.failed',
+      runId: 'run-failed',
+      sequence: 1,
+      code: 'provider_access_denied',
+      message: 'raw provider error',
+      retryable: false,
+      providerRequestId: 'req_safe123',
+    })
+
+    expect(await screen.findAllByText(/GPT-5\.6 Luna를 사용할 권한이 없습니다.*req_safe123/)).toHaveLength(2)
+    expect(screen.queryByText('raw provider error')).not.toBeInTheDocument()
+  })
+
   it('runs the WS tool loop, validates staged code, persists only the sealed envelope and applies the final bundle', async () => {
     const user = userEvent.setup()
     const validation = vi.fn().mockResolvedValue({

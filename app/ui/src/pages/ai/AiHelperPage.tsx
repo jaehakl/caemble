@@ -24,6 +24,7 @@ import {
   AI_AGENT_PROMPT_TOOL_VERSION,
   AI_AGENT_REASONING_EFFORTS,
   aiAgentApi,
+  aiAgentProviderFailureMessage,
   clearAiAgentSession,
   connectAiAgent,
   loadAiAgentSession,
@@ -479,8 +480,9 @@ export function AiHelperWorkspace({
       return
     }
     if (event.type === 'run.failed') {
-      finishAssistant(`오류: ${event.message}`)
-      setError(event.message)
+      const message = aiAgentProviderFailureMessage(event, event.message)
+      finishAssistant(`오류: ${message}`)
+      setError(message)
       finishRun('실패')
       return
     }

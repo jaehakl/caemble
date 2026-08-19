@@ -1,4 +1,4 @@
-import { API_URL, request } from './http'
+import { API_URL, ApiError, request } from './http'
 import type { ExperimentRecord } from './types'
 
 export type AiAgentSourceBundle = ExperimentRecord['source_bundle']
@@ -53,6 +53,19 @@ export type AiAgentContextUsage = Readonly<{
   cachedTokens?: number
   cacheWriteTokens?: number
   compacted?: boolean
+}>
+
+export type AiAgentProviderFailure = Readonly<{
+  code?: string
+  message: string
+  retryable?: boolean
+  providerRequestId?: string
+}>
+
+export type AiAgentCredentialTestResult = Readonly<{
+  provider: string
+  model: string
+  ok: true
 }>
 
 export type AiAgentValidationRequest = Readonly<{
@@ -182,7 +195,7 @@ export type AiAgentServerEvent =
         contextUsage: AiAgentContextUsage | null
         provenance: readonly AiAgentProvenance[]
       }>)
-  | (AiAgentEventBase & Readonly<{ type: 'run.failed'; message: string }>)
+  | (AiAgentEventBase & Readonly<{ type: 'run.failed' }> & AiAgentProviderFailure)
   | (AiAgentEventBase & Readonly<{ type: 'run.cancelled'; message?: string }>)
 
 export const aiAgentApi = Object.freeze({
@@ -195,7 +208,44 @@ export const aiAgentApi = Object.freeze({
   async deleteCredential(provider: string) {
     await request<unknown>('delete', `/ai/providers/${encodeURIComponent(provider)}/credential`)
   },
+  async testCredential(provider: string) {
+    return request<AiAgentCredentialTestResult>('post', `/ai/providers/${encodeURIComponent(provider)}/credential/test`)
+  },
 })
+
+export function aiAgentProviderFailureMessage(
+  failure: AiAgentProviderFailure,
+  fallback = 'AI provider 요청에 실패했습니다.',
+) {
+  const messages: Record<string, string> = {
+    provider_invalid_request: 'OpenAI 요청 형식이 현재 API와 맞지 않습니다. Caemble 서버 업데이트를 확인해 주세요.',
+    provider_authentication_failed: '등록한 OpenAI API key가 거부되었습니다. key와 연결된 프로젝트를 확인해 주세요.',
+    provider_access_denied: '해당 OpenAI 프로젝트에서 GPT-5.6 Luna를 사용할 권한이 없습니다.',
+    provider_quota_exceeded: 'OpenAI API 크레딧 또는 프로젝트 사용 한도가 소진되었습니다.',
+    provider_rate_limited: 'OpenAI API 요청 한도에 도달했습니다. 잠시 후 다시 시도해 주세요.',
+    provider_timeout: 'OpenAI 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.',
+    provider_unavailable: 'OpenAI에 일시적으로 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.',
+    provider_request_failed: 'OpenAI 요청을 완료하지 못했습니다.',
+  }
+  const message = (failure.code && messages[failure.code]) || failure.message || fallback
+  return failure.providerRequestId ? `${message} (OpenAI 요청 ID: ${failure.providerRequestId})` : message
+}
+
+export function aiAgentApiErrorMessage(error: unknown, fallback: string) {
+  if (!(error instanceof ApiError)) return error instanceof Error && error.message ? error.message : fallback
+  const body = asRecord(error.body)
+  const detail = asRecord(body?.detail)
+  if (!detail) return error.message || fallback
+  return aiAgentProviderFailureMessage(
+    {
+      code: stringValue(detail.code) || undefined,
+      message: stringValue(detail.message) || error.message || fallback,
+      retryable: typeof detail.retryable === 'boolean' ? detail.retryable : undefined,
+      providerRequestId: stringValue(detail.providerRequestId, detail.provider_request_id) || undefined,
+    },
+    fallback,
+  )
+}
 
 export function aiAgentWebSocketUrl() {
   const url = new URL(`${API_URL}/ai/agent/run`, window.location.href)
@@ -455,7 +505,16 @@ function parseAiAgentServerEvent(value: unknown): AiAgentServerEvent | null {
       provenance: normalizeProvenance(record.provenance),
     }
   }
-  if (type === 'run.failed') return { ...base, type, message: stringValue(record.message, record.error) || '실패' }
+  if (type === 'run.failed') {
+    return {
+      ...base,
+      type,
+      code: stringValue(record.code) || undefined,
+      message: stringValue(record.message, record.error) || '실패',
+      retryable: typeof record.retryable === 'boolean' ? record.retryable : undefined,
+      providerRequestId: stringValue(record.providerRequestId, record.provider_request_id) || undefined,
+    }
+  }
   if (type === 'run.cancelled') return { ...base, type, message: stringValue(record.message) || undefined }
   return null
 }
