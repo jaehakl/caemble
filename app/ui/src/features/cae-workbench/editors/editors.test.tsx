@@ -47,6 +47,7 @@ const monacoMocks = vi.hoisted(() => {
     })),
     models,
     renderCadEditor: vi.fn(),
+    renderDiffEditor: vi.fn(),
   }
 })
 
@@ -60,6 +61,13 @@ vi.mock('@/features/viewer/editor/CadEditor', () => ({
         {modelPath}
       </div>
     )
+  },
+}))
+
+vi.mock('@/features/viewer/editor/CadDiffEditor', () => ({
+  CadDiffEditor: (props: { original: string; modified: string }) => {
+    monacoMocks.renderDiffEditor(props)
+    return <div data-testid="cad-diff-editor" />
   },
 }))
 
@@ -193,6 +201,85 @@ describe('ExperimentEditor', () => {
     expect(screen.getByText(/Task: main, thermal/)).toHaveTextContent(
       'Measurement 저장과 CAE 실행은 사용할 수 없습니다.',
     )
+  })
+
+  it('opens the Agent change as a diff with line summary and whole-change Undo', async () => {
+    const onUndoAgentChange = vi.fn(async () => true)
+    render(
+      <ExperimentEditor
+        agentChange={{
+          runId: 'run-1',
+          appliedAt: 1,
+          status: 'applied',
+          files: [
+            {
+              path: 'experiment.tsx',
+              before: 'experiment source',
+              after: 'experiment source\nchanged',
+              addedLines: 1,
+              removedLines: 0,
+            },
+          ],
+        }}
+        controller={controller()}
+        document={{
+          ...document,
+          sourceBundle: {
+            ...document.sourceBundle,
+            files: { ...document.sourceBundle.files, 'experiment.tsx': 'experiment source\nchanged' },
+          },
+        }}
+        onUndoAgentChange={onUndoAgentChange}
+      />,
+    )
+
+    expect(await screen.findByTestId('cad-diff-editor')).toBeInTheDocument()
+    expect(screen.getByText('+1')).toBeInTheDocument()
+    expect(screen.getByText('-0')).toBeInTheDocument()
+    expect(monacoMocks.renderDiffEditor).toHaveBeenCalledWith(
+      expect.objectContaining({ original: 'experiment source', modified: 'experiment source\nchanged' }),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'AI 변경 전체 Undo' }))
+    await waitFor(() => expect(onUndoAgentChange).toHaveBeenCalledOnce())
+  })
+
+  it('shows a conflicted Agent result as a read-only staged diff without changing the document', async () => {
+    const onUndoAgentChange = vi.fn(async () => true)
+    render(
+      <ExperimentEditor
+        agentChange={{
+          runId: 'run-conflict',
+          appliedAt: 2,
+          status: 'conflicted',
+          files: [
+            {
+              path: 'experiment.tsx',
+              before: 'manual source',
+              after: 'agent staged source',
+              addedLines: 1,
+              removedLines: 1,
+            },
+          ],
+        }}
+        controller={controller()}
+        document={{
+          ...document,
+          sourceBundle: {
+            ...document.sourceBundle,
+            files: { ...document.sourceBundle.files, 'experiment.tsx': 'manual source' },
+          },
+        }}
+        onUndoAgentChange={onUndoAgentChange}
+      />,
+    )
+
+    expect(await screen.findByTestId('cad-diff-editor')).toBeInTheDocument()
+    expect(monacoMocks.renderDiffEditor).toHaveBeenCalledWith(
+      expect.objectContaining({ original: 'manual source', modified: 'agent staged source', readOnly: true }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'AI staged diff 닫기' }))
+    await waitFor(() => expect(onUndoAgentChange).toHaveBeenCalledOnce())
   })
 })
 

@@ -23,6 +23,8 @@ dependencies = [
     "tree-sitter (>=0.25,<0.27)",
     "tree-sitter-typescript (>=0.23,<0.24)",
     "caemble-catalog",
+    "cryptography>=45,<50",
+    "openai>=2.54,<3",
 ]
 
 [tool.poetry]

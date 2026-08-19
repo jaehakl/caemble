@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   addExperimentTask,
   assertExperimentSourceBundle,
+  cadSourceHash,
   createCadSourceDocument,
   createExperimentSourceBundle,
   experimentTaskPaths,
@@ -56,5 +57,22 @@ describe('Experiment source bundle v5', () => {
     expect(experimentTaskPaths(added.sourceBundle)).toEqual(['tasks/electric.tsx', 'tasks/main.tsx'])
     expect(removeExperimentTask(added, 'electric').sourceBundle.files['tasks/electric.tsx']).toBeUndefined()
     expect(() => removeExperimentTask(document, 'main')).toThrow('at least one Task')
+  })
+
+  it('shares the Agent bundle hash contract with the backend', async () => {
+    const document = createCadSourceDocument(
+      'experiment',
+      createExperimentSourceBundle({
+        'experiment.tsx': 'export default () => <Main />',
+        'geometry.tsx': 'export const Geometry = () => <box />',
+        'material.tsx': 'export const steel = {}',
+        'simulate.py': 'async def simulate(*, sim, tasks, vars):\n    return {}\n',
+        'tasks/main.tsx': 'export const Main = () => <task />',
+      }),
+    )
+
+    await expect(cadSourceHash(document)).resolves.toBe(
+      '3c60c128c781a77616d6c9ceff61eba044c5afcf2e57cbc368ac0f4f20b7c82a',
+    )
   })
 })

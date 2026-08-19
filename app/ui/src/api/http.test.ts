@@ -30,10 +30,18 @@ describe('native fetch API client', () => {
           ? HttpResponse.json({ ok: true })
           : HttpResponse.json({ detail: 'CSRF token required' }, { status: 403 }),
       ),
+      http.put('http://api.test/ai/providers/openai/credential', ({ request }) =>
+        request.headers.get('x-csrf-token') === 'csrf-value'
+          ? HttpResponse.json({ configured: true })
+          : HttpResponse.json({ detail: 'CSRF token required' }, { status: 403 }),
+      ),
     )
 
     const { request } = await loadClient()
     await expect(request<{ ok: boolean }>('post', '/geometry/publish/plan', {})).resolves.toEqual({ ok: true })
+    await expect(
+      request<{ configured: boolean }>('put', '/ai/providers/openai/credential', { apiKey: 'sk-secret' }),
+    ).resolves.toEqual({ configured: true })
     expect(csrfCalls).toBe(1)
   })
 

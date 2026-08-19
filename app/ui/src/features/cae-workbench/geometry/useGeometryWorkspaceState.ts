@@ -1038,6 +1038,15 @@ export function useGeometryWorkspaceState({
     setPreviewError(null)
   }, [])
 
+  const syncSnapshot = useCallback((value: GeometrySnapshot) => {
+    snapshotRef.current = value
+    setCurrentSnapshot(value)
+    setEffectiveGraph(null)
+    setPreviewScene(null)
+    setPreviewSceneHash(null)
+    setPreviewError(null)
+  }, [])
+
   const restore = useCallback(
     (geometry: WorkbenchDraft['geometry'], source = entryRef.current) => {
       const replacements: Record<string, string> = {}
@@ -1232,6 +1241,7 @@ export function useGeometryWorkspaceState({
         current.includes(path) ? current.filter((item) => item !== path) : [...current, path],
       ),
     reset,
+    syncSnapshot,
     restore,
     draftState: (): WorkbenchDraft['geometry'] => ({
       drafts: draftsRef.current,

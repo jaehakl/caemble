@@ -13,6 +13,11 @@ const api = vi.hoisted(() => ({
   startGoogleLogin: vi.fn(),
 }))
 const auth = vi.hoisted(() => ({ authenticated: true }))
+const agentApi = vi.hoisted(() => ({
+  deleteCredential: vi.fn(),
+  listProviders: vi.fn(),
+  saveCredential: vi.fn(),
+}))
 
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
@@ -45,6 +50,14 @@ vi.mock('@/features/auth/use-auth', () => ({
   }),
   useLogout: () => ({ isPending: false, mutate: vi.fn() }),
 }))
+
+vi.mock('@/api/aiAgent', async (importActual) => {
+  const actual = await importActual<typeof import('@/api/aiAgent')>()
+  return {
+    ...actual,
+    aiAgentApi: agentApi,
+  }
+})
 
 function token() {
   return {
@@ -83,6 +96,21 @@ describe('Account access tokens', () => {
     api.create.mockResolvedValue({ access_key: token(), secret: 'csk_secret' })
     api.revoke.mockReset()
     api.revoke.mockResolvedValue({ deleted: 1 })
+    agentApi.listProviders.mockReset()
+    agentApi.listProviders.mockResolvedValue([
+      {
+        id: 'openai',
+        label: 'OpenAI',
+        configured: false,
+        credentialVersion: null,
+        updatedAt: null,
+        models: [{ id: 'gpt-5.6-luna', label: 'gpt-5.6-luna', reasoningEfforts: ['high'] }],
+      },
+    ])
+    agentApi.saveCredential.mockReset()
+    agentApi.saveCredential.mockResolvedValue(undefined)
+    agentApi.deleteCredential.mockReset()
+    agentApi.deleteCredential.mockResolvedValue(undefined)
   })
 
   it('starts Google login from Account and returns to the current Workbench URL', async () => {
@@ -121,5 +149,37 @@ describe('Account access tokens', () => {
     await user.click(await screen.findByRole('button', { name: '폐기' }))
 
     await waitFor(() => expect(api.revoke).toHaveBeenCalledWith('token-1'))
+  })
+
+  it('registers and removes the current user OpenAI credential without redisplaying it', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    expect(await screen.findByText('External AI')).toBeVisible()
+    expect(screen.getByText(/store=false.*최대 30일/)).toBeVisible()
+    await user.type(screen.getByLabelText('Provider API key'), 'sk-user-secret')
+    await user.click(screen.getByRole('button', { name: '저장' }))
+
+    await waitFor(() => expect(agentApi.saveCredential).toHaveBeenCalledWith('openai', 'sk-user-secret'))
+    expect(screen.getByLabelText('Provider API key')).toHaveValue('')
+    expect(screen.queryByText('sk-user-secret')).not.toBeInTheDocument()
+
+    agentApi.listProviders.mockResolvedValueOnce([
+      {
+        id: 'openai',
+        label: 'OpenAI',
+        configured: true,
+        credentialVersion: 2,
+        updatedAt: '2026-08-19T00:00:00Z',
+        models: [{ id: 'gpt-5.6-luna', label: 'gpt-5.6-luna', reasoningEfforts: ['high'] }],
+      },
+    ])
+    await user.click(screen.getAllByRole('button', { name: '새로고침' })[0])
+    expect(await screen.findByText(/Key 원문 숨김/)).toBeVisible()
+    expect(screen.getByText(/credential v2/)).toBeVisible()
+
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await user.click(screen.getByRole('button', { name: '삭제' }))
+    await waitFor(() => expect(agentApi.deleteCredential).toHaveBeenCalledWith('openai'))
   })
 })

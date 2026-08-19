@@ -1,7 +1,7 @@
 import os
 
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 load_dotenv()
 
@@ -40,6 +40,11 @@ class Settings(BaseModel):
     CSRF_TTL_SEC: int = int(os.getenv("CSRF_TTL_SEC", "3600"))
     COOKIE_DOMAIN: str = os.getenv("COOKIE_DOMAIN", "")
     SECURE_COOKIES: bool = env_bool("SECURE_COOKIES", True)
+    AI_CREDENTIAL_FERNET_KEYS: tuple[SecretStr, ...] = tuple(
+        SecretStr(value.strip())
+        for value in os.getenv("AI_CREDENTIAL_FERNET_KEYS", "").split(",")
+        if value.strip()
+    )
 
 
 settings = Settings()

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  Bot,
   CalendarDays,
   Clipboard,
   Globe2,
@@ -13,6 +14,7 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import { dbTables, startGoogleLogin, type AccessKeyScope } from '@/api'
+import { AI_AGENT_PROVIDER_QUERY_KEY, aiAgentApi } from '@/api/aiAgent'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -34,6 +36,15 @@ export function AccountWorkspace() {
   const [createdSecret, setCreatedSecret] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [providerId, setProviderId] = useState('openai')
+  const [providerApiKey, setProviderApiKey] = useState('')
+  const [providerMessage, setProviderMessage] = useState<string | null>(null)
+  const [providerError, setProviderError] = useState<string | null>(null)
+  const providers = useQuery({
+    queryKey: AI_AGENT_PROVIDER_QUERY_KEY,
+    queryFn: aiAgentApi.listProviders,
+    enabled: auth.isAuthenticated,
+  })
   const tokens = useQuery({
     queryKey: ['runtime', 'access-keys'],
     queryFn: () => dbTables.AccessKey.list(),
@@ -65,6 +76,26 @@ export function AccountWorkspace() {
       await queryClient.invalidateQueries({ queryKey: ['runtime', 'access-keys'] })
     },
     onError: (nextError) => setError(runtimeErrorMessage(nextError, 'Access Token을 폐기하지 못했습니다.')),
+  })
+  const saveProviderCredential = useMutation({
+    mutationFn: () => aiAgentApi.saveCredential(providerId, providerApiKey),
+    onSuccess: async () => {
+      setProviderApiKey('')
+      setProviderError(null)
+      setProviderMessage('외부 AI API key를 저장했습니다.')
+      await queryClient.invalidateQueries({ queryKey: AI_AGENT_PROVIDER_QUERY_KEY })
+    },
+    onError: (nextError) => setProviderError(runtimeErrorMessage(nextError, '외부 AI API key를 저장하지 못했습니다.')),
+  })
+  const deleteProviderCredential = useMutation({
+    mutationFn: (provider: string) => aiAgentApi.deleteCredential(provider),
+    onSuccess: async () => {
+      setProviderApiKey('')
+      setProviderError(null)
+      setProviderMessage('외부 AI API key를 삭제했습니다.')
+      await queryClient.invalidateQueries({ queryKey: AI_AGENT_PROVIDER_QUERY_KEY })
+    },
+    onError: (nextError) => setProviderError(runtimeErrorMessage(nextError, '외부 AI API key를 삭제하지 못했습니다.')),
   })
 
   if (auth.isLoading)
@@ -133,6 +164,123 @@ export function AccountWorkspace() {
             label="가입일"
             value={auth.user.created_at ? new Date(auth.user.created_at).toLocaleDateString('ko-KR') : '정보 없음'}
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-start justify-between gap-4">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Bot className="size-5 text-primary" />
+              External AI
+            </CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">
+              AI Helper Agent가 사용할 사용자별 provider API key를 관리합니다.
+            </p>
+          </div>
+          <Button disabled={providers.isFetching} onClick={() => void providers.refetch()} size="sm" variant="outline">
+            <RefreshCw className={providers.isFetching ? 'animate-spin' : undefined} />
+            새로고침
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-5 border-t pt-6">
+          <form
+            className="grid gap-3 rounded-lg border bg-muted/20 p-4 md:grid-cols-[12rem_minmax(0,1fr)_auto]"
+            onSubmit={(event) => {
+              event.preventDefault()
+              setProviderError(null)
+              setProviderMessage(null)
+              saveProviderCredential.mutate()
+            }}
+          >
+            <select
+              aria-label="AI Provider"
+              className="h-9 rounded-md border border-input bg-transparent px-3 text-sm"
+              disabled={providers.isLoading || saveProviderCredential.isPending}
+              onChange={(event) => setProviderId(event.target.value)}
+              value={providerId}
+            >
+              {(providers.data ?? []).map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.label}
+                </option>
+              ))}
+              {!providers.data?.length ? <option value="openai">OpenAI</option> : null}
+            </select>
+            <Input
+              aria-label="Provider API key"
+              autoComplete="off"
+              onChange={(event) => setProviderApiKey(event.target.value)}
+              placeholder="sk-…"
+              type="password"
+              value={providerApiKey}
+            />
+            <Button disabled={!providerApiKey.trim() || saveProviderCredential.isPending} type="submit">
+              {saveProviderCredential.isPending ? <LoaderCircle className="animate-spin" /> : <KeyRound />}
+              저장
+            </Button>
+          </form>
+
+          <p className="text-xs leading-5 text-muted-foreground">
+            API key는 Caemble 백엔드에서 암호화해 저장하며 저장 후 원문을 다시 표시하지 않습니다. AI Helper 사용 시
+            질문, source, 선택된 Visible 데이터와 컴파일 결과가 해당 provider에 전송됩니다. Caemble은 store=false로
+            요청하고 대화를 DB에 저장하지 않지만, 일시적인 prompt cache와 최대 30일의 abuse-monitoring 로그가 provider
+            data controls에 따라 남을 수 있습니다. Caemble 세션 삭제가 provider의 cache나 로그 삭제를 뜻하지 않습니다.
+          </p>
+          {providerError || providers.isError ? (
+            <p className="text-sm text-destructive">
+              {providerError || runtimeErrorMessage(providers.error, 'AI provider 상태를 불러오지 못했습니다.')}
+            </p>
+          ) : null}
+          {providerMessage ? <p className="text-sm text-emerald-700">{providerMessage}</p> : null}
+
+          <div className="space-y-2">
+            {providers.isLoading ? (
+              <p className="rounded-lg border p-4 text-sm text-muted-foreground">
+                AI provider 상태를 불러오는 중입니다.
+              </p>
+            ) : providers.data?.length ? (
+              providers.data.map((provider) => (
+                <div
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4"
+                  key={provider.id}
+                >
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium">{provider.label}</p>
+                      <Badge className={provider.configured ? 'bg-primary text-primary-foreground' : undefined}>
+                        {provider.configured ? '등록됨' : '미등록'}
+                      </Badge>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {provider.configured ? 'Key 원문 숨김' : '저장된 key 없음'}
+                      {provider.configured && provider.credentialVersion !== null
+                        ? ` · credential v${provider.credentialVersion}`
+                        : ''}
+                      {provider.updatedAt ? ` · 갱신 ${formatRuntimeDate(provider.updatedAt)}` : ''}
+                      {provider.models.length ? ` · ${provider.models.map(({ label }) => label).join(', ')}` : ''}
+                    </p>
+                  </div>
+                  <Button
+                    disabled={!provider.configured || deleteProviderCredential.isPending}
+                    onClick={() => {
+                      if (window.confirm(`${provider.label} API key를 삭제할까요?`)) {
+                        deleteProviderCredential.mutate(provider.id)
+                      }
+                    }}
+                    size="sm"
+                    type="button"
+                    variant="destructive"
+                  >
+                    <Trash2 />
+                    삭제
+                  </Button>
+                </div>
+              ))
+            ) : (
+              <p className="rounded-lg border p-4 text-sm text-muted-foreground">사용 가능한 AI provider가 없습니다.</p>
+            )}
+          </div>
         </CardContent>
       </Card>
 

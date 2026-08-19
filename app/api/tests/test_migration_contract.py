@@ -92,7 +92,7 @@ def test_source_migration_graph_continues_to_cae_workbench_indexes():
     root = Path(__file__).resolve().parents[1]
     scripts = ScriptDirectory.from_config(Config(root / "alembic.ini"))
 
-    assert scripts.get_heads() == ["d7a3c9e5b1f4"]
+    assert scripts.get_heads() == ["a6e4c8f2d901"]
     assert scripts.get_revision("f24a6b91d3ce").down_revision == "e7b2c5d91a40"
     assert scripts.get_revision("9d31a6f7c2e4").down_revision == "f24a6b91d3ce"
     assert scripts.get_revision("a4c8e2f19b73").down_revision == "9d31a6f7c2e4"
@@ -106,7 +106,24 @@ def test_source_migration_graph_continues_to_cae_workbench_indexes():
     assert scripts.get_revision("b31f7d9a4c20").down_revision == "8d4e2f6a1b30"
     assert scripts.get_revision("c92e1f4a6b38").down_revision == "b31f7d9a4c20"
     assert scripts.get_revision("d7a3c9e5b1f4").down_revision == "c92e1f4a6b38"
+    assert scripts.get_revision("a6e4c8f2d901").down_revision == "d7a3c9e5b1f4"
     assert not any(root.joinpath("alembic", "versions").glob("*_measurement_contract_metadata.py"))
+
+
+def test_ai_provider_credential_revision_stores_only_ciphertext():
+    revision = next(
+        (Path(__file__).resolve().parents[1] / "alembic" / "versions").glob(
+            "*_add_ai_provider_credentials.py"
+        )
+    )
+    source = revision.read_text(encoding="utf-8")
+    assert 'down_revision: str | None = "d7a3c9e5b1f4"' in source
+    assert '"encrypted_api_key"' in source
+    assert '"version"' in source
+    assert "uq_ai_provider_credentials_user_id_provider" in source
+    assert 'ondelete="CASCADE"' in source
+    assert "key_hint" not in source
+    assert "key_suffix" not in source
 
 
 def test_unified_research_revision_resets_only_research_data_and_replaces_split_schema():

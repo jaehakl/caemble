@@ -31,6 +31,35 @@ index와 FK를 포함한다. 이후 모델 변경은 반드시 새 revision으�
 제한된다. 로컬 HTTP에서는 `SECURE_COOKIES=false`, HTTPS 운영에서는
 `SECURE_COOKIES=true`를 사용하고 필요할 때만 `COOKIE_DOMAIN`을 설정한다.
 
+## 외부 AI provider와 Agent 데이터 경계
+
+각 사용자는 Account에서 자신의 외부 AI provider API key를 등록한다. 현재 v1은
+OpenAI의 `gpt-5.6-luna`만 허용한다. 키는 사용자별로 격리해 MultiFernet ciphertext로
+DB에 저장하고, 등록 이후 원문이나 suffix를 API 응답으로 다시 반환하지 않는다.
+`AI_CREDENTIAL_FERNET_KEYS`에는 쉼표로 구분한 Fernet key를 최신 primary부터 넣는다.
+새 키를 맨 앞에 추가하면 이후 쓰기는 새 키를 사용하고 읽기는 뒤의 이전 키도 시도한다.
+기존 credential은 자동 재암호화되지 않으므로 사용자가 다시 등록하기 전까지 필요한
+이전 키를 제거하면 안 된다.
+
+Agent는 작업에 필요한 현재 사용자의 Visible DB 데이터, catalog 항목, 편집 중인
+Experiment bundle과 compile 결과를 선택한 외부 provider로 보낼 수 있다. OpenAI
+Responses 요청은 `store=false`를 사용해 응답을 나중에 조회하기 위한 저장을 요청하지
+않고 prompt cache는 `in_memory` 모드로만 요청한다. 그러나 이것은 Zero Data Retention을
+뜻하지 않는다. provider에는 일시적인 prompt-cache application state가 남을 수 있고 OpenAI 기본
+abuse-monitoring 로그에는 prompt와 response 같은 customer content가 포함될 수 있고
+기본적으로 최대 30일 보존될 수 있다. 법적 요구나 서비스/제3자 보호에 필요한 경우에는
+더 길어질 수 있다. Caemble 세션 삭제는 provider의 cache나 abuse log를 삭제하지 않는다.
+더 엄격한 보존 정책이 필요하면 해당 사용자의 OpenAI 조직/project에서
+별도 승인이 필요한 Modified Abuse Monitoring 또는 Zero Data Retention을 설정해야 한다.
+자세한 내용은 [OpenAI API data controls](https://developers.openai.com/api/docs/guides/your-data#default-usage-policies-by-endpoint)를
+확인한다.
+
+일반 CI는 fake provider adapter만 사용한다. Luna의 실제 Responses/compaction 요청 계약을
+확인하는 유료 smoke test는 `CAEMBLE_RUN_LIVE_OPENAI_SMOKE=1`과
+`CAEMBLE_LIVE_OPENAI_API_KEY`를 명시한 환경에서만
+`poetry run pytest tests/test_ai_provider_live.py`로 실행한다. 이 key는 DB나 source에
+저장하지 않는다.
+
 ## 통합 job runtime
 
 Caemble은 GPStation 연결 정보를 저장하지 않고 `/v1` client/launcher API와
@@ -39,10 +68,11 @@ Caemble은 GPStation 연결 정보를 저장하지 않고 `/v1` client/launcher 
 
 서버 시작 시 `../slaves/*/manifest.json`을 UTF-8로 직접 읽어 `id`, `name`,
 `module`과 중복을 검증한다. 등록되지 않은 `slave_app_id`의 job과 launcher는
-거부된다. 런처 연결과 job dispatcher는 프로세스 메모리를 사용하므로 API는
-반드시 단일 worker/replica로 실행한다. 애플리케이션은 중복 runtime 시작을
-DB 잠금으로 차단하지 않으므로 실행 환경에서 단일 인스턴스를 보장해야 한다.
-재시작 시 진행 중 job은 실패로 복구된다.
+거부된다. 런처 연결과 job dispatcher, 실행 중 Agent의 staged workspace와 streaming
+상태는 프로세스 메모리를 사용하므로 API는 반드시 단일 worker/replica로 실행한다.
+애플리케이션은 중복 runtime 시작을 DB 잠금으로 차단하지 않으므로 실행 환경에서
+단일 인스턴스를 보장해야 한다. 재시작 시 진행 중 job은 실패로 복구되고 진행 중 Agent
+실행은 유지되지 않는다.
 
 GPStation 호환 API의 ORM, 요청/응답 model, router, service와 보안 utility는
 `app/gpstation` 패키지에서 함께 관리한다. `/v1`은 외부 SDK와 launcher용 bearer

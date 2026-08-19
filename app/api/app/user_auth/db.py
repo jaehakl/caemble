@@ -72,6 +72,45 @@ class User(TimestampMixin, Base):
     recorded_data: Mapped[List["RecordedData"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     designer_models: Mapped[List["DesignerModel"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     predictor_models: Mapped[List["PredictorModel"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+    ai_provider_credentials: Mapped[List["AIProviderCredential"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="raise",
+    )
+
+
+class AIProviderCredential(TimestampMixin, Base):
+    __tablename__ = "ai_provider_credentials"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "provider",
+            name="uq_ai_provider_credentials_user_id_provider",
+        ),
+        CheckConstraint("version >= 1", name="version_positive"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    user_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    encrypted_api_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default=text("1"),
+    )
+
+    user: Mapped[User] = relationship(back_populates="ai_provider_credentials")
 
 class Identity(TimestampMixin, Base):
     __tablename__ = "identities"

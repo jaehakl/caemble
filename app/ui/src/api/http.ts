@@ -53,6 +53,7 @@ async function send<T>(method: HttpMethod, url: string, data?: unknown, retryCsr
   const csrfProtected =
     method !== 'get' &&
     (url.startsWith('/web/') ||
+      url.startsWith('/ai/') ||
       url.startsWith('/geometry/') ||
       url === '/auth/geometry-namespace' ||
       url === '/experiment/save')

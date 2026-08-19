@@ -1,6 +1,7 @@
 import { Badge } from '@/components/ui/badge'
 import { lazy, Suspense, useMemo } from 'react'
 import { useLocation } from 'react-router'
+import type { AiAgentApplyRequest } from '@/api/aiAgent'
 import { useAuth } from '@/features/auth/use-auth'
 import {
   EditorDock,
@@ -66,6 +67,14 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     page.setActiveExperimentFile(EXPERIMENT_GEOMETRY_PATH)
     page.openTab('experiment')
   }
+  const applyAgentBundle = async (request: AiAgentApplyRequest) => {
+    const result = await workbench.applyAgentBundle(request)
+    if (result.firstChangedFile) {
+      page.setActiveExperimentFile(result.firstChangedFile)
+      page.openTab('experiment')
+    }
+    return result
+  }
 
   const tabs = caeWorkbenchTabs
     .filter((tab) => page.openTabs.includes(tab))
@@ -83,6 +92,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       content:
         tab === 'experiment' ? (
           <ExperimentEditor
+            agentChange={workbench.agentChange}
             controller={workbench.experimentDocument}
             disabled={
               !page.initialized || pendingResult || workbench.measurementActions.busy || workbench.saving !== null
@@ -90,6 +100,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             document={workbench.experiment?.kind === 'experiment' ? workbench.experiment : null}
             initialActiveFile={page.activeExperimentFile}
             onActiveFileChange={page.setActiveExperimentFile}
+            onUndoAgentChange={workbench.undoAgentChange}
           />
         ) : tab === 'geometry' ? (
           <GeometryWorkspaceContainer
@@ -113,8 +124,12 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             <AiHelperWorkspace
               activeExperimentFile={page.activeExperimentFile}
               activeTab={page.activeTab}
+              baseHash={workbench.agentWorkspaceIdentity?.baseHash}
+              geometryContextVersion={workbench.agentWorkspaceIdentity?.geometryContextVersion}
               workbench={workbench}
+              onApplyStagedBundle={applyAgentBundle}
               onRequestLogin={() => page.setDialog('account')}
+              onValidateStagedBundle={workbench.validateAgentBundle}
             />
           </Suspense>
         ),

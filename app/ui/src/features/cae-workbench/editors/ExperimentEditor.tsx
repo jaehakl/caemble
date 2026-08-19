@@ -11,7 +11,9 @@ import {
 } from '@/lib/cad'
 import { defaultExperimentTaskCode } from '@/lib/defaultExperimentProgramCode'
 import CadEditor from '@/features/viewer/editor/CadEditor'
+import { CadDiffEditor } from '@/features/viewer/editor/CadDiffEditor'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
+import type { AgentExperimentChange } from '../state/useCaeWorkbenchState'
 import { DocumentFeedback } from './DocumentFeedback'
 
 export type ExperimentEditorProps = {
@@ -19,6 +21,8 @@ export type ExperimentEditorProps = {
   disabled?: boolean
   document: ExperimentSourceDocument | null
   initialActiveFile?: string | null
+  agentChange?: AgentExperimentChange | null
+  onUndoAgentChange?: () => Promise<boolean>
   onActiveFileChange?: (path: string) => void
 }
 
@@ -104,25 +108,37 @@ export function ExperimentEditor({
   disabled = false,
   document,
   initialActiveFile,
+  agentChange = null,
+  onUndoAgentChange,
   onActiveFileChange,
 }: ExperimentEditorProps) {
   const filePaths = useMemo(
     () =>
       document
         ? [
-            EXPERIMENT_ENTRY_PATH,
-            EXPERIMENT_GEOMETRY_PATH,
-            EXPERIMENT_MATERIAL_PATH,
-            EXPERIMENT_SIMULATION_PATH,
-            ...experimentTaskPaths(document.sourceBundle),
+            ...new Set([
+              EXPERIMENT_ENTRY_PATH,
+              EXPERIMENT_GEOMETRY_PATH,
+              EXPERIMENT_MATERIAL_PATH,
+              EXPERIMENT_SIMULATION_PATH,
+              ...experimentTaskPaths(document.sourceBundle),
+              ...(agentChange?.files.map((file) => file.path) ?? []),
+            ]),
           ]
         : [],
-    [document],
+    [agentChange, document],
   )
   const [selectedFile, setSelectedFile] = useState(initialActiveFile ?? EXPERIMENT_ENTRY_PATH)
+  const [showAgentDiff, setShowAgentDiff] = useState(true)
   const appliedInitialFile = useRef(initialActiveFile)
   const activeFile = filePaths.includes(selectedFile) ? selectedFile : (filePaths[0] ?? null)
   const editorModels = useExperimentMonacoModels(document?.sourceBundle.files ?? null, activeFile)
+  const agentFileChange = agentChange?.files.find((file) => file.path === activeFile) ?? null
+  const conflictReview = agentChange?.status === 'conflicted'
+
+  useEffect(() => {
+    if (agentChange) setShowAgentDiff(true)
+  }, [agentChange])
 
   useEffect(() => {
     if (initialActiveFile === appliedInitialFile.current) return
@@ -205,14 +221,53 @@ export function ExperimentEditor({
               onClick={() => selectFile(path)}
             >
               {path}
+              {agentChange?.files.some((file) => file.path === path) ? (
+                <span
+                  className={`ml-1 text-[10px] font-semibold ${conflictReview ? 'text-amber-700' : 'text-emerald-700'}`}
+                >
+                  {conflictReview ? 'AI staged' : 'AI'}
+                </span>
+              ) : null}
             </button>
           ))}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
+          {agentChange ? (
+            <>
+              {agentFileChange ? (
+                <span className="font-mono text-[11px] text-slate-500">
+                  <span className="text-emerald-700">+{agentFileChange.addedLines}</span>{' '}
+                  <span className="text-rose-700">-{agentFileChange.removedLines}</span>
+                </span>
+              ) : null}
+              {agentChange.files.length ? (
+                <button
+                  className="rounded border border-sky-200 bg-white px-2 py-1 text-xs font-medium text-sky-700 hover:bg-sky-50"
+                  type="button"
+                  onClick={() => setShowAgentDiff((current) => !current)}
+                >
+                  {showAgentDiff ? '편집 보기' : 'AI Diff'}
+                </button>
+              ) : (
+                <span className="rounded border border-sky-200 bg-sky-50 px-2 py-1 text-xs font-medium text-sky-700">
+                  {conflictReview ? 'Geometry graph staged 충돌' : 'Geometry graph 갱신'}
+                </span>
+              )}
+              <button
+                className="rounded border border-amber-300 bg-white px-2 py-1 text-xs font-medium text-amber-800 hover:bg-amber-50"
+                type="button"
+                onClick={() => void onUndoAgentChange?.()}
+              >
+                {conflictReview ? 'AI staged diff 닫기' : 'AI 변경 전체 Undo'}
+              </button>
+            </>
+          ) : null}
           {isTask ? (
             <button
               className="rounded border border-rose-200 bg-white px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
-              disabled={controller.sourceReadOnly || disabled || taskCount <= 1}
+              disabled={
+                controller.sourceReadOnly || disabled || taskCount <= 1 || !(activeFile in document.sourceBundle.files)
+              }
               type="button"
               onClick={deleteTask}
             >
@@ -234,16 +289,38 @@ export function ExperimentEditor({
           <div className="grid h-full place-items-center bg-rose-50 p-6 text-sm text-rose-700">
             Monaco could not be loaded: {editorModels.loadError}
           </div>
-        ) : editorModels.ready ? (
+        ) : editorModels.ready && agentChange && agentFileChange && showAgentDiff ? (
+          <CadDiffEditor
+            changeId={`${agentChange.runId}-${agentChange.appliedAt}`}
+            diagnostics={controller.diagnostics.filter((diagnostic) => diagnostic.file === activeFile)}
+            key={`${agentChange.runId}-${activeFile}`}
+            language={activeFile === EXPERIMENT_SIMULATION_PATH ? 'python' : 'typescript'}
+            modelPath={
+              conflictReview
+                ? `inmemory://caemble-agent-conflict/${encodeURIComponent(agentChange.runId)}/${activeFile}`
+                : `file:///${activeFile}`
+            }
+            modified={conflictReview ? (agentFileChange.after ?? '') : (document.sourceBundle.files[activeFile] ?? '')}
+            original={conflictReview ? (document.sourceBundle.files[activeFile] ?? '') : (agentFileChange.before ?? '')}
+            readOnly={conflictReview || agentFileChange.after === null || controller.sourceReadOnly || disabled}
+            onChange={
+              conflictReview ? () => undefined : (source) => controller.handleExperimentFileChange(activeFile, source)
+            }
+          />
+        ) : editorModels.ready && activeFile in document.sourceBundle.files ? (
           <CadEditor
             diagnostics={controller.diagnostics.filter((diagnostic) => diagnostic.file === activeFile)}
             key={activeFile}
             language={activeFile === EXPERIMENT_SIMULATION_PATH ? 'python' : 'typescript'}
             modelPath={`file:///${activeFile}`}
             readOnly={controller.sourceReadOnly || disabled}
-            value={document.sourceBundle.files[activeFile]}
+            value={document.sourceBundle.files[activeFile] ?? ''}
             onChange={(source) => controller.handleExperimentFileChange(activeFile, source)}
           />
+        ) : editorModels.ready ? (
+          <div className="grid h-full place-items-center bg-slate-50 p-6 text-sm text-slate-500">
+            이 파일은 AI Agent 변경에서 삭제되었습니다. AI Diff로 삭제 전 내용을 확인할 수 있습니다.
+          </div>
         ) : (
           <div className="grid h-full place-items-center bg-slate-50 text-sm text-slate-500" role="status">
             Editor preparing…

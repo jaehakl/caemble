@@ -5,15 +5,20 @@ import { act, renderHook } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defaultExperimentSourceBundle } from '@/lib/defaultExperimentCode'
+import { createGeometrySnapshot, geometryModuleHash, geometrySourceHash } from '@/lib/cad'
 import type { SavedExperiment } from '../types'
 import { useCaeWorkbenchState } from './useCaeWorkbenchState'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 
 const mocks = vi.hoisted(() => ({
+  agentGeometryContextVersion: vi.fn(),
+  cadSourceHash: vi.fn(),
   cadWorkspace: vi.fn(),
   experimentList: vi.fn(),
   setCurrentExperimentId: vi.fn(),
   toastInfo: vi.fn(),
+  toastSuccess: vi.fn(),
+  validateAgentWorkspace: vi.fn(),
 }))
 
 const controller = {
@@ -52,7 +57,16 @@ vi.mock('@/features/viewer/workspace/useCadWorkspace', () => ({
     return { experimentDocument: controller, simulation: {} }
   },
 }))
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), info: mocks.toastInfo } }))
+vi.mock('@/lib/cad', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/cad')>()),
+  cadSourceHash: mocks.cadSourceHash,
+}))
+vi.mock('../agent/agentWorkspace', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../agent/agentWorkspace')>()),
+  agentGeometryContextVersion: mocks.agentGeometryContextVersion,
+  validateAgentWorkspace: mocks.validateAgentWorkspace,
+}))
+vi.mock('sonner', () => ({ toast: { error: vi.fn(), info: mocks.toastInfo, success: mocks.toastSuccess } }))
 vi.mock('@/features/cae-workbench/measurement/useCaeMeasurementActions', () => ({
   useCaeMeasurementActions: () => ({
     busy: false,
@@ -90,7 +104,21 @@ function wrapper() {
   )
 }
 
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => {
+  vi.clearAllMocks()
+  mocks.cadSourceHash.mockResolvedValue('base-v1')
+  mocks.agentGeometryContextVersion.mockResolvedValue('geometry-v1')
+  mocks.validateAgentWorkspace.mockImplementation(async (runId: string) => ({
+    status: 'valid',
+    sourceHash: runId === 'run-snapshot' ? 'staged-snapshot' : 'staged-v1',
+    catalogFingerprint: 'catalog-v1',
+    varsSchemaFingerprint: 'vars-v1',
+    sceneHash: 'scene-v1',
+    taskSceneHashes: {},
+    diagnostics: [],
+    error: null,
+  }))
+})
 
 describe('useCaeWorkbenchState', () => {
   it('owns a single Experiment and emits a v9 session draft', () => {
@@ -101,6 +129,7 @@ describe('useCaeWorkbenchState', () => {
     act(() => result.current.applyExperiment(experiment(7)))
 
     expect(result.current.experimentId).toBe(7)
+    expect(result.current.agentWorkspaceSession).toBe(1)
     expect(result.current.experimentRecord?.source_hash).toBe(sourceHash)
     expect(result.current).not.toHaveProperty('structureId')
     expect(result.current).not.toHaveProperty('pairClean')
@@ -185,6 +214,240 @@ describe('useCaeWorkbenchState', () => {
     expect(mocks.cadWorkspace.mock.calls[mocks.cadWorkspace.mock.calls.length - 1][2]).toMatchObject({
       candidateVarsPending: true,
       candidateProvenance: 'persisted-measurement',
+    })
+  })
+
+  it('applies one hash-guarded Agent bundle and can undo the complete change', async () => {
+    const { result } = renderHook(() => useCaeWorkbenchState({ id: 'user-1', roles: ['user'] } as never, true), {
+      wrapper: wrapper(),
+    })
+    act(() => result.current.applyExperiment(experiment(7)))
+    const changedSource = `${defaultExperimentSourceBundle.files['experiment.tsx']}\n// changed by agent`
+    const finalBundle = {
+      ...defaultExperimentSourceBundle,
+      files: { ...defaultExperimentSourceBundle.files, 'experiment.tsx': changedSource },
+    }
+    const validationSignal = new AbortController().signal
+
+    await act(async () => {
+      await result.current.validateAgentBundle({
+        runId: 'run-1',
+        stagedBundle: finalBundle,
+        stagedRevision: 1,
+        sourceHash: 'staged-v1',
+        geometryContextVersion: 'geometry-v1',
+        signal: validationSignal,
+      })
+      const applied = await result.current.applyAgentBundle({
+        runId: 'run-1',
+        finalBundle,
+        baseHash: 'base-v1',
+        sourceHash: 'staged-v1',
+        stagedRevision: 1,
+        geometryContextVersion: 'geometry-v1',
+      })
+      expect(applied).toMatchObject({ status: 'applied', firstChangedFile: 'experiment.tsx', changedFiles: 1 })
+    })
+    expect(mocks.validateAgentWorkspace).toHaveBeenCalledWith(
+      'run-1',
+      finalBundle,
+      expect.any(Map),
+      expect.objectContaining({ signal: validationSignal }),
+    )
+    expect(result.current.experiment?.sourceBundle.files['experiment.tsx']).toBe(changedSource)
+    expect(result.current.agentChange?.files).toHaveLength(1)
+
+    await act(async () => {
+      expect(await result.current.undoAgentChange()).toBe(true)
+    })
+    expect(result.current.experiment?.sourceBundle.files['experiment.tsx']).toBe(
+      defaultExperimentSourceBundle.files['experiment.tsx'],
+    )
+    expect(result.current.agentChange).toBeNull()
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('AI Agent 변경을 되돌렸습니다.')
+  })
+
+  it('preserves the current Experiment when the Agent base hash is stale', async () => {
+    const { result } = renderHook(() => useCaeWorkbenchState({ id: 'user-1', roles: ['user'] } as never, true), {
+      wrapper: wrapper(),
+    })
+    act(() => result.current.applyExperiment(experiment(7)))
+    const finalBundle = {
+      ...defaultExperimentSourceBundle,
+      files: { ...defaultExperimentSourceBundle.files, 'experiment.tsx': '// stale' },
+    }
+
+    await act(async () => {
+      await result.current.validateAgentBundle({
+        runId: 'run-1',
+        stagedBundle: finalBundle,
+        stagedRevision: 1,
+        sourceHash: 'staged-v1',
+        geometryContextVersion: 'geometry-v1',
+      })
+      expect(
+        await result.current.applyAgentBundle({
+          runId: 'run-1',
+          finalBundle,
+          baseHash: 'old-base',
+          sourceHash: 'staged-v1',
+          stagedRevision: 1,
+          geometryContextVersion: 'geometry-v1',
+        }),
+      ).toMatchObject({ status: 'conflicted', firstChangedFile: 'experiment.tsx', changedFiles: 1 })
+    })
+    expect(result.current.experiment?.sourceBundle.files['experiment.tsx']).toBe(
+      defaultExperimentSourceBundle.files['experiment.tsx'],
+    )
+    expect(result.current.agentChange).toMatchObject({
+      status: 'conflicted',
+      files: [{ path: 'experiment.tsx', after: '// stale' }],
+    })
+    await act(async () => {
+      expect(await result.current.undoAgentChange()).toBe(true)
+    })
+    expect(result.current.experiment?.sourceBundle.files['experiment.tsx']).toBe(
+      defaultExperimentSourceBundle.files['experiment.tsx'],
+    )
+    expect(result.current.agentChange).toBeNull()
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('AI Agent staged diff를 닫았습니다.')
+  })
+
+  it('applies and undoes a validated snapshot-only Agent change', async () => {
+    const { result } = renderHook(() => useCaeWorkbenchState({ id: 'user-1', roles: ['user'] } as never, true), {
+      wrapper: wrapper(),
+    })
+    act(() => result.current.applyExperiment(experiment(7)))
+    const source = 'export const Part = () => <box />'
+    const coordinate = 'caemble:geometry/user/repository/part@1.0.0' as const
+    const sourceHash = await geometrySourceHash(source)
+    const moduleWithoutHash = {
+      geometryVersionId: 1,
+      coordinate,
+      moduleFormatVersion: 4 as const,
+      cadApiVersion: 7 as const,
+      description: null,
+      source,
+      sourceHash,
+      imports: [],
+    }
+    const module = { ...moduleWithoutHash, moduleHash: await geometryModuleHash(moduleWithoutHash) }
+    const geometrySnapshot = createGeometrySnapshot(
+      [
+        {
+          exportName: 'Part',
+          alias: 'Part',
+          geometryVersionId: 1,
+          coordinate,
+          moduleHash: module.moduleHash,
+        },
+      ],
+      [module],
+    )
+    const finalBundle = { ...defaultExperimentSourceBundle, geometrySnapshot }
+
+    await act(async () => {
+      await result.current.validateAgentBundle({
+        runId: 'run-snapshot',
+        stagedBundle: finalBundle,
+        stagedRevision: 0,
+        sourceHash: 'staged-snapshot',
+        geometryContextVersion: 'geometry-v1',
+      })
+      expect(
+        await result.current.applyAgentBundle({
+          runId: 'run-snapshot',
+          finalBundle,
+          baseHash: 'base-v1',
+          sourceHash: 'staged-snapshot',
+          stagedRevision: 0,
+          geometryContextVersion: 'geometry-v1',
+        }),
+      ).toMatchObject({ status: 'applied', firstChangedFile: 'geometry.tsx', changedFiles: 0 })
+    })
+    expect(result.current.experiment?.sourceBundle.geometrySnapshot.modules).toHaveLength(1)
+    expect(result.current.geometry.currentSnapshot.modules).toHaveLength(1)
+
+    await act(async () => {
+      expect(await result.current.undoAgentChange()).toBe(true)
+    })
+    expect(result.current.experiment?.sourceBundle.geometrySnapshot.modules).toHaveLength(0)
+    expect(result.current.geometry.currentSnapshot.modules).toHaveLength(0)
+  })
+
+  it('rejects a completed bundle that is not the last browser-validated revision', async () => {
+    const { result } = renderHook(() => useCaeWorkbenchState({ id: 'user-1', roles: ['user'] } as never, true), {
+      wrapper: wrapper(),
+    })
+    act(() => result.current.applyExperiment(experiment(7)))
+    const validatedBundle = {
+      ...defaultExperimentSourceBundle,
+      files: { ...defaultExperimentSourceBundle.files, 'experiment.tsx': '// validated' },
+    }
+    await act(async () => {
+      await result.current.validateAgentBundle({
+        runId: 'run-1',
+        stagedBundle: validatedBundle,
+        stagedRevision: 1,
+        sourceHash: 'staged-v1',
+        geometryContextVersion: 'geometry-v1',
+      })
+      expect(
+        await result.current.applyAgentBundle({
+          runId: 'run-1',
+          finalBundle: validatedBundle,
+          baseHash: 'base-v1',
+          sourceHash: 'staged-v1',
+          stagedRevision: 2,
+          geometryContextVersion: 'geometry-v1',
+        }),
+      ).toMatchObject({ status: 'conflicted', message: expect.stringContaining('마지막으로 검증') })
+    })
+    expect(result.current.experiment?.sourceBundle.files['experiment.tsx']).toBe(
+      defaultExperimentSourceBundle.files['experiment.tsx'],
+    )
+  })
+
+  it('does not attest a browser compile result with a different source hash', async () => {
+    const { result } = renderHook(() => useCaeWorkbenchState({ id: 'user-1', roles: ['user'] } as never, true), {
+      wrapper: wrapper(),
+    })
+    act(() => result.current.applyExperiment(experiment(7)))
+    const finalBundle = {
+      ...defaultExperimentSourceBundle,
+      files: { ...defaultExperimentSourceBundle.files, 'experiment.tsx': '// mismatched hash' },
+    }
+    mocks.validateAgentWorkspace.mockResolvedValueOnce({
+      status: 'valid',
+      sourceHash: 'other-source',
+      catalogFingerprint: 'catalog-v1',
+      varsSchemaFingerprint: 'vars-v1',
+      sceneHash: 'scene-v1',
+      taskSceneHashes: {},
+      diagnostics: [],
+      error: null,
+    })
+
+    await act(async () => {
+      await expect(
+        result.current.validateAgentBundle({
+          runId: 'run-mismatch',
+          stagedBundle: finalBundle,
+          stagedRevision: 1,
+          sourceHash: 'staged-v1',
+          geometryContextVersion: 'geometry-v1',
+        }),
+      ).resolves.toMatchObject({ status: 'unavailable' })
+      await expect(
+        result.current.applyAgentBundle({
+          runId: 'run-mismatch',
+          finalBundle,
+          baseHash: 'base-v1',
+          sourceHash: 'staged-v1',
+          stagedRevision: 1,
+          geometryContextVersion: 'geometry-v1',
+        }),
+      ).resolves.toMatchObject({ status: 'conflicted' })
     })
   })
 })

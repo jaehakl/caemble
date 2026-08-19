@@ -7,15 +7,18 @@ import type { DefinitionFormValues } from '@/features/viewer/persistence/SaveDef
 import { saveCadDefinition } from '@/features/viewer/persistence/saveDefinition'
 import { useCadWorkspace, type CandidateVarsRegeneratedEvent } from '@/features/viewer/workspace/useCadWorkspace'
 import {
+  cadSourceHash,
   canonicalizeGeometrySnapshot,
   createCadSourceDocument,
   createExperimentSourceBundle,
   type ExperimentSourceBundle,
   type ExperimentSourceDocument,
+  type GeometryDraftOverlay,
   type GeometrySnapshot,
   type Vars,
 } from '@/lib/cad'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
+import { agentGeometryContextVersion, validateAgentWorkspace, type AgentCandidateCache } from '../agent/agentWorkspace'
 import { useGeometryWorkspaceState } from '../geometry'
 import { useCaeDataSelection } from '../measurement/useCaeDataSelection'
 import { useCaeMeasurementActions } from '../measurement/useCaeMeasurementActions'
@@ -52,6 +55,59 @@ function createExperimentDocument(sourceBundle: SavedExperiment['source_bundle']
   return document
 }
 
+export type AgentExperimentChange = Readonly<{
+  runId: string
+  appliedAt: number
+  status: 'applied' | 'conflicted'
+  geometrySnapshot?: Readonly<{
+    before: GeometrySnapshot
+    after: GeometrySnapshot
+  }>
+  files: readonly Readonly<{
+    path: string
+    before: string | null
+    after: string | null
+    addedLines: number
+    removedLines: number
+  }>[]
+}>
+
+type AgentBundleRequest = Readonly<{
+  runId: string
+  stagedBundle: ExperimentSourceBundle
+  stagedRevision: number
+  sourceHash: string
+  geometryContextVersion: string
+  signal?: AbortSignal
+}>
+
+type AgentApplyRequest = Readonly<{
+  runId: string
+  finalBundle: ExperimentSourceBundle
+  baseHash: string
+  sourceHash: string | null
+  stagedRevision: number
+  geometryContextVersion: string
+}>
+
+function changedLineCounts(before: string | null, after: string | null) {
+  const beforeLines = before === null ? [] : before.split('\n')
+  const afterLines = after === null ? [] : after.split('\n')
+  let prefix = 0
+  while (prefix < beforeLines.length && prefix < afterLines.length && beforeLines[prefix] === afterLines[prefix]) {
+    prefix += 1
+  }
+  let suffix = 0
+  while (
+    suffix < beforeLines.length - prefix &&
+    suffix < afterLines.length - prefix &&
+    beforeLines[beforeLines.length - suffix - 1] === afterLines[afterLines.length - suffix - 1]
+  ) {
+    suffix += 1
+  }
+  return { addedLines: afterLines.length - prefix - suffix, removedLines: beforeLines.length - prefix - suffix }
+}
+
 async function fetchExperiment(id: number) {
   const row = (await dbTables.Experiment.listRows(getListRequest('visible', [id]))).items[0]
   if (!row?.id) throw new Error(`Experiment #${id}을 찾을 수 없습니다.`)
@@ -76,7 +132,26 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
   const [pendingMeasurementId, setPendingMeasurementId] = useState<number | null>(null)
   const [selectionRestoreStatus, setSelectionRestoreStatus] = useState<'idle' | 'restoring' | 'failed'>('idle')
   const [workspaceSession, setWorkspaceSession] = useState(0)
+  const [agentChange, setAgentChange] = useState<AgentExperimentChange | null>(null)
+  const [agentWorkspaceIdentity, setAgentWorkspaceIdentity] = useState<Readonly<{
+    baseHash: string
+    geometryContextVersion: string
+    document: ExperimentSourceDocument
+    geometryDrafts: GeometryDraftOverlay | undefined
+  }> | null>(null)
   const requestSequence = useRef(0)
+  const agentCandidateCacheRef = useRef<AgentCandidateCache>(new Map())
+  const agentValidatedBundlesRef = useRef(
+    new Map<
+      string,
+      Readonly<{
+        sourceHash: string
+        stagedRevision: number
+        geometryContextVersion: string
+        bundle: ExperimentSourceBundle
+      }>
+    >(),
+  )
   const experimentRef = useRef(experiment)
   const authenticatedRef = useRef(authenticated)
   experimentRef.current = experiment
@@ -93,11 +168,14 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
 
   const handleGeometryExperimentChange = useCallback(
     (snapshot: GeometrySnapshot, files?: Readonly<Record<string, string>>) => {
-      setExperiment((current) =>
-        current
+      setAgentWorkspaceIdentity(null)
+      setExperiment((current) => {
+        const next = current
           ? createExperimentDocument(createExperimentSourceBundle(files ?? current.sourceBundle.files, snapshot))
-          : current,
-      )
+          : current
+        experimentRef.current = next
+        return next
+      })
       clearMeasurement()
       setCandidateMaterialParameters(null)
     },
@@ -111,8 +189,12 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
     snapshot: experiment?.sourceBundle.geometrySnapshot ?? null,
     sourceFiles: experiment?.sourceBundle.files ?? {},
   })
+  const currentAgentGeometryDrafts = geometry.previewDraftActive ? geometry.draftOverlay : undefined
+  const agentGeometryDraftsRef = useRef<GeometryDraftOverlay | undefined>(currentAgentGeometryDrafts)
+  agentGeometryDraftsRef.current = currentAgentGeometryDrafts
   const resetGeometry = geometry.reset
   const restoreGeometry = geometry.restore
+  const syncGeometrySnapshot = geometry.syncSnapshot
   const createGeometryDraftState = geometry.draftState
   const experimentSourceDirty = Boolean(
     experiment && !sourceFilesEqual(experiment.sourceBundle, baselineExperimentBundle),
@@ -151,6 +233,8 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
 
   const handleExperimentChange = useCallback(
     (document: ExperimentSourceDocument) => {
+      experimentRef.current = document
+      setAgentWorkspaceIdentity(null)
       setExperiment(document)
       clearMeasurement()
       setCandidateMaterialParameters(null)
@@ -178,6 +262,299 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
     sourceOnlyMaterials: !authenticated,
     onCandidateVarsRegenerated: handleCandidateVarsRegenerated,
   })
+
+  useEffect(() => {
+    if (!experiment) {
+      setAgentWorkspaceIdentity(null)
+      return
+    }
+    let active = true
+    const drafts = currentAgentGeometryDrafts
+    void Promise.all([cadSourceHash(experiment), agentGeometryContextVersion(experiment, drafts)]).then(
+      ([baseHash, geometryContextVersion]) => {
+        if (active) {
+          setAgentWorkspaceIdentity(
+            Object.freeze({ baseHash, geometryContextVersion, document: experiment, geometryDrafts: drafts }),
+          )
+        }
+      },
+      () => {
+        if (active) setAgentWorkspaceIdentity(null)
+      },
+    )
+    return () => {
+      active = false
+    }
+  }, [currentAgentGeometryDrafts, experiment])
+  const currentAgentWorkspaceIdentity =
+    agentWorkspaceIdentity?.document === experiment &&
+    agentWorkspaceIdentity.geometryDrafts === currentAgentGeometryDrafts
+      ? Object.freeze({
+          baseHash: agentWorkspaceIdentity.baseHash,
+          geometryContextVersion: agentWorkspaceIdentity.geometryContextVersion,
+        })
+      : null
+
+  const validateAgentBundle = useCallback(
+    async (request: AgentBundleRequest) => {
+      const current = experimentRef.current
+      agentValidatedBundlesRef.current.delete(request.runId)
+      const cancelled = () => ({
+        status: 'unavailable' as const,
+        result: {
+          stagedRevision: request.stagedRevision,
+          error: { kind: 'cancelled', message: 'Agent 검증이 취소되었습니다.' },
+        },
+      })
+      if (request.signal?.aborted) return cancelled()
+      if (!current) {
+        return {
+          status: 'invalid' as const,
+          result: { error: { kind: 'structural', message: 'Experiment가 없습니다.' } },
+        }
+      }
+      const drafts = agentGeometryDraftsRef.current
+      const contextVersion = await agentGeometryContextVersion(current, drafts)
+      if (request.signal?.aborted) return cancelled()
+      if (contextVersion !== request.geometryContextVersion) {
+        return {
+          status: 'unavailable' as const,
+          result: {
+            stagedRevision: request.stagedRevision,
+            contextVersion,
+            error: { kind: 'structural', message: 'Geometry context가 Agent 실행 중 변경되었습니다.' },
+          },
+        }
+      }
+      const result = await validateAgentWorkspace(request.runId, request.stagedBundle, agentCandidateCacheRef.current, {
+        geometryDrafts: drafts,
+        signal: request.signal,
+        timeoutMs: experimentDocument.evaluationTimeoutMs,
+      })
+      if (request.signal?.aborted) {
+        agentValidatedBundlesRef.current.delete(request.runId)
+        return cancelled()
+      }
+      const latestExperiment = experimentRef.current
+      const latestContextVersion = latestExperiment
+        ? await agentGeometryContextVersion(latestExperiment, agentGeometryDraftsRef.current)
+        : null
+      if (request.signal?.aborted) {
+        agentValidatedBundlesRef.current.delete(request.runId)
+        return cancelled()
+      }
+      if (latestExperiment !== current || latestContextVersion !== request.geometryContextVersion) {
+        agentValidatedBundlesRef.current.delete(request.runId)
+        return {
+          status: 'unavailable' as const,
+          result: {
+            stagedRevision: request.stagedRevision,
+            contextVersion: latestContextVersion,
+            error: { kind: 'structural', message: 'Experiment 또는 Geometry context가 Agent 검증 중 변경되었습니다.' },
+          },
+        }
+      }
+      if (result.status === 'valid' && result.sourceHash !== request.sourceHash) {
+        agentValidatedBundlesRef.current.delete(request.runId)
+        return {
+          status: 'unavailable' as const,
+          result: {
+            ...result,
+            stagedRevision: request.stagedRevision,
+            contextVersion,
+            requestedSourceHash: request.sourceHash,
+            error: {
+              kind: 'structural' as const,
+              message: '컴파일 결과의 source hash가 Agent staged bundle과 일치하지 않습니다.',
+            },
+          },
+        }
+      }
+      if (result.status === 'valid') {
+        agentValidatedBundlesRef.current.set(
+          request.runId,
+          Object.freeze({
+            sourceHash: request.sourceHash,
+            stagedRevision: request.stagedRevision,
+            geometryContextVersion: request.geometryContextVersion,
+            bundle: request.stagedBundle,
+          }),
+        )
+      } else {
+        agentValidatedBundlesRef.current.delete(request.runId)
+      }
+      if (agentValidatedBundlesRef.current.size > 16) {
+        const oldest = agentValidatedBundlesRef.current.keys().next().value
+        if (oldest) agentValidatedBundlesRef.current.delete(oldest)
+      }
+      if (agentCandidateCacheRef.current.size > 16) {
+        const oldest = agentCandidateCacheRef.current.keys().next().value
+        if (oldest) agentCandidateCacheRef.current.delete(oldest)
+      }
+      return {
+        status: result.status,
+        result: {
+          ...result,
+          stagedRevision: request.stagedRevision,
+          contextVersion,
+          requestedSourceHash: request.sourceHash,
+        },
+      }
+    },
+    [experimentDocument.evaluationTimeoutMs],
+  )
+
+  const applyAgentBundle = useCallback(
+    async (request: AgentApplyRequest) => {
+      const current = experimentRef.current
+      if (!current) return { status: 'conflicted' as const, message: 'Experiment가 없습니다.' }
+      const validated = agentValidatedBundlesRef.current.get(request.runId)
+      if (
+        !request.sourceHash ||
+        !validated ||
+        validated.sourceHash !== request.sourceHash ||
+        validated.stagedRevision !== request.stagedRevision ||
+        validated.geometryContextVersion !== request.geometryContextVersion ||
+        !sourceFilesEqual(validated.bundle, request.finalBundle) ||
+        !geometrySnapshotsEqual(validated.bundle, request.finalBundle)
+      ) {
+        return {
+          status: 'conflicted' as const,
+          message: '마지막으로 검증한 Agent bundle과 완료 결과가 일치하지 않아 자동 반영하지 않았습니다.',
+        }
+      }
+      let next: ExperimentSourceDocument
+      try {
+        next = createExperimentDocument(
+          createExperimentSourceBundle(request.finalBundle.files, request.finalBundle.geometrySnapshot),
+        )
+      } catch (cause: unknown) {
+        return { status: 'conflicted' as const, message: cause instanceof Error ? cause.message : String(cause) }
+      }
+      const drafts = agentGeometryDraftsRef.current
+      const [currentHash, contextVersion] = await Promise.all([
+        cadSourceHash(current),
+        agentGeometryContextVersion(current, drafts),
+      ])
+      const conflicted =
+        experimentRef.current !== current ||
+        agentGeometryDraftsRef.current !== drafts ||
+        currentHash !== request.baseHash ||
+        contextVersion !== request.geometryContextVersion
+      const comparison = conflicted ? (experimentRef.current ?? current) : current
+      const paths = [
+        ...new Set([...Object.keys(comparison.sourceBundle.files), ...Object.keys(next.sourceBundle.files)]),
+      ].sort()
+      const files = paths.flatMap((path) => {
+        const before = comparison.sourceBundle.files[path] ?? null
+        const after = next.sourceBundle.files[path] ?? null
+        return before === after ? [] : [{ path, before, after, ...changedLineCounts(before, after) }]
+      })
+      const snapshotChanged =
+        JSON.stringify(canonicalizeGeometrySnapshot(comparison.sourceBundle.geometrySnapshot)) !==
+        JSON.stringify(canonicalizeGeometrySnapshot(next.sourceBundle.geometrySnapshot))
+      const firstChangedFile = files[0]?.path ?? (snapshotChanged ? 'geometry.tsx' : null)
+      if (conflicted) {
+        if (files.length > 0 || snapshotChanged) {
+          setAgentChange(
+            Object.freeze({
+              runId: request.runId,
+              appliedAt: Date.now(),
+              status: 'conflicted' as const,
+              geometrySnapshot: Object.freeze({
+                before: comparison.sourceBundle.geometrySnapshot,
+                after: next.sourceBundle.geometrySnapshot,
+              }),
+              files: Object.freeze(files),
+            }),
+          )
+        } else setAgentChange(null)
+        agentValidatedBundlesRef.current.delete(request.runId)
+        return {
+          status: 'conflicted' as const,
+          message: 'Agent 실행 중 Experiment 또는 Geometry context가 변경되어 staged diff만 표시했습니다.',
+          firstChangedFile,
+          changedFiles: files.length,
+        }
+      }
+      if (files.length === 0 && !snapshotChanged) {
+        agentValidatedBundlesRef.current.delete(request.runId)
+        return { status: 'applied' as const, firstChangedFile: null, changedFiles: 0 }
+      }
+      experimentRef.current = next
+      setAgentWorkspaceIdentity(null)
+      setExperiment(next)
+      if (snapshotChanged) syncGeometrySnapshot(next.sourceBundle.geometrySnapshot)
+      clearMeasurement()
+      setCandidateMaterialParameters(null)
+      setAgentChange(
+        Object.freeze({
+          runId: request.runId,
+          appliedAt: Date.now(),
+          status: 'applied' as const,
+          geometrySnapshot: Object.freeze({
+            before: current.sourceBundle.geometrySnapshot,
+            after: next.sourceBundle.geometrySnapshot,
+          }),
+          files: Object.freeze(files),
+        }),
+      )
+      agentValidatedBundlesRef.current.delete(request.runId)
+      return {
+        status: 'applied' as const,
+        firstChangedFile,
+        changedFiles: files.length,
+      }
+    },
+    [clearMeasurement, syncGeometrySnapshot],
+  )
+
+  const undoAgentChange = useCallback(async () => {
+    const current = experimentRef.current
+    if (!current || !agentChange) return false
+    if (agentChange.status === 'conflicted') {
+      setAgentChange(null)
+      toast.success('AI Agent staged diff를 닫았습니다.')
+      return true
+    }
+    const files = { ...current.sourceBundle.files }
+    for (const change of agentChange.files) {
+      if ((files[change.path] ?? null) !== change.after) {
+        toast.error(`${change.path}가 Agent 반영 후 다시 수정되어 전체 Undo를 적용하지 않았습니다.`)
+        return false
+      }
+      if (change.before === null) delete files[change.path]
+      else files[change.path] = change.before
+    }
+    const snapshots = agentChange.geometrySnapshot
+    const agentChangedGeometrySnapshot =
+      snapshots &&
+      JSON.stringify(canonicalizeGeometrySnapshot(snapshots.before)) !==
+        JSON.stringify(canonicalizeGeometrySnapshot(snapshots.after))
+    if (
+      agentChangedGeometrySnapshot &&
+      JSON.stringify(canonicalizeGeometrySnapshot(current.sourceBundle.geometrySnapshot)) !==
+        JSON.stringify(canonicalizeGeometrySnapshot(snapshots.after))
+    ) {
+      toast.error('Geometry graph가 Agent 반영 후 다시 변경되어 전체 Undo를 적용하지 않았습니다.')
+      return false
+    }
+    const restored = createExperimentDocument(
+      createExperimentSourceBundle(
+        files,
+        agentChangedGeometrySnapshot ? snapshots.before : current.sourceBundle.geometrySnapshot,
+      ),
+    )
+    experimentRef.current = restored
+    setAgentWorkspaceIdentity(null)
+    setExperiment(restored)
+    if (agentChangedGeometrySnapshot) syncGeometrySnapshot(restored.sourceBundle.geometrySnapshot)
+    clearMeasurement()
+    setCandidateMaterialParameters(null)
+    setAgentChange(null)
+    toast.success('AI Agent 변경을 되돌렸습니다.')
+    return true
+  }, [agentChange, clearMeasurement, syncGeometrySnapshot])
 
   const generateCandidate = useCallback(() => {
     clearMeasurement()
@@ -236,9 +613,15 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
 
   const applyExperimentState = useCallback(
     (row: SavedExperiment) => {
+      const document = createExperimentDocument(row.source_bundle)
       setWorkspaceSession((current) => current + 1)
+      setAgentWorkspaceIdentity(null)
+      setAgentChange(null)
+      agentCandidateCacheRef.current.clear()
+      agentValidatedBundlesRef.current.clear()
       clearMeasurement()
-      setExperiment(createExperimentDocument(row.source_bundle))
+      experimentRef.current = document
+      setExperiment(document)
       setExperimentRecord(row)
       setBaselineExperimentBundle(row.source_bundle)
       setExperimentName(row.name)
@@ -285,10 +668,16 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
       name = 'Untitled Experiment',
       description = '',
     ) => {
+      const document = createExperimentDocument(sourceBundle)
       requestSequence.current += 1
       setWorkspaceSession((current) => current + 1)
+      setAgentWorkspaceIdentity(null)
+      setAgentChange(null)
+      agentCandidateCacheRef.current.clear()
+      agentValidatedBundlesRef.current.clear()
       clearMeasurement()
-      setExperiment(createExperimentDocument(sourceBundle))
+      experimentRef.current = document
+      setExperiment(document)
       setExperimentRecord(null)
       setBaselineExperimentBundle(sourceBundle)
       setExperimentName(name)
@@ -321,6 +710,7 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
         const prepared = await geometry.prepareExperimentSave()
         const savedDocument = createExperimentDocument(createExperimentSourceBundle(prepared.files, prepared.snapshot))
         experimentRef.current = savedDocument
+        setAgentWorkspaceIdentity(null)
         setExperiment(savedDocument)
         const result = await saveCadDefinition({
           document: savedDocument,
@@ -360,21 +750,25 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
     (draft: WorkbenchDraft) => {
       requestSequence.current += 1
       setWorkspaceSession((current) => current + 1)
+      setAgentWorkspaceIdentity(null)
+      setAgentChange(null)
+      agentCandidateCacheRef.current.clear()
+      agentValidatedBundlesRef.current.clear()
       const restoredGeometrySource = restoreGeometry(
         draft.geometry,
         draft.experiment.document?.sourceBundle.files['geometry.tsx'],
       )
-      setExperiment(
-        draft.experiment.document
-          ? createCadSourceDocument(
-              'experiment',
-              createExperimentSourceBundle(
-                { ...draft.experiment.document.sourceBundle.files, 'geometry.tsx': restoredGeometrySource },
-                draft.experiment.document.sourceBundle.geometrySnapshot,
-              ),
-            )
-          : null,
-      )
+      const document = draft.experiment.document
+        ? createCadSourceDocument(
+            'experiment',
+            createExperimentSourceBundle(
+              { ...draft.experiment.document.sourceBundle.files, 'geometry.tsx': restoredGeometrySource },
+              draft.experiment.document.sourceBundle.geometrySnapshot,
+            ),
+          )
+        : null
+      experimentRef.current = document
+      setExperiment(document)
       setExperimentRecord(draft.experiment.record)
       setBaselineExperimentBundle(draft.experiment.baselineBundle)
       setExperimentName(draft.experiment.name)
@@ -449,6 +843,9 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
     experimentClean,
     experimentStatus: definitionStatus(experiment, experimentRecord, experimentDirty),
     experimentManageable,
+    agentChange,
+    agentWorkspaceIdentity: currentAgentWorkspaceIdentity,
+    agentWorkspaceSession: workspaceSession,
     candidateVars,
     candidateMaterialParameters,
     saving,
@@ -466,6 +863,9 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
     saveExperiment,
     restoreDraft,
     draft,
+    validateAgentBundle,
+    applyAgentBundle,
+    undoAgentChange,
   }
 }
 

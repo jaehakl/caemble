@@ -101,6 +101,10 @@ CSRF_TTL_SEC=3600
 
 JWT_SECRET=<AT_LEAST_32_RANDOM_BYTES>
 
+# 사용자별 외부 AI provider key를 암호화한다. 최신 primary key를 맨 앞에 둔다.
+AI_CREDENTIAL_FERNET_KEYS=<NEWEST_PRIMARY_FERNET_KEY>
+# 회전 중 형식: <NEWEST_PRIMARY_FERNET_KEY>,<OLDER_FERNET_KEY>[,<ANOTHER_OLDER_KEY>...]
+
 # 빈 값은 www.caemble.com의 host-only 쿠키를 만든다. .caemble.com으로 설정하지 않는다.
 COOKIE_DOMAIN=
 SECURE_COOKIES=true
@@ -111,6 +115,30 @@ JWT secret은 다음과 같이 생성할 수 있다.
 ```bash
 python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
 ```
+
+Fernet key는 다음과 같이 생성한다. 출력값은 source나 배포 문서에 기록하지 말고 서버의
+`.env` 또는 secret manager에만 저장한다.
+
+```bash
+python3 -c 'import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("ascii"))'
+```
+
+`AI_CREDENTIAL_FERNET_KEYS`는 쉼표로 구분하며 첫 값이 암호화에 사용하는 primary다.
+회전할 때 새 키를 맨 앞에 추가하고 API를 재시작한다. 뒤의 이전 키는 기존 사용자
+credential 복호화에 필요하다. 기존 행은 자동 재암호화되지 않으므로 사용자가 provider
+key를 다시 저장하기 전에 이전 키를 제거하면 해당 credential을 읽을 수 없다.
+
+사용자별 provider key는 DB에 암호화해 저장하고 원문이나 suffix를 다시 반환하지 않는다.
+Agent는 사용자가 볼 수 있는 DB/catalog 데이터, Experiment source와 compile 결과를
+사용자가 선택한 외부 provider로 전송할 수 있으므로 운영 개인정보 고지에 이 경계를
+포함한다. OpenAI 요청은 `store=false`, prompt cache는 `in_memory` 모드지만 이는 Zero Data
+Retention과 같지 않다. provider에는 일시적인 prompt-cache application state가 남을 수 있고 기본
+abuse-monitoring 로그에는 prompt/response가 포함되어 최대 30일 보존될 수 있고 법적 요구나
+서비스/제3자 보호에 필요한 경우에는 더 길어질 수 있다. Caemble 세션 삭제는 provider cache나
+abuse log를 삭제하지 않는다. Modified Abuse Monitoring이나
+Zero Data Retention은 사용자의 OpenAI organization/project에 별도 승인과 설정이 필요하다.
+운영 전 [OpenAI API data controls](https://developers.openai.com/api/docs/guides/your-data#default-usage-policies-by-endpoint)를
+확인한다.
 
 `COOKIE_DOMAIN`을 비워 두는 것은 필수 보안 경계다. `.caemble.com`을 설정하면 인증 쿠키가
 `code-to-cad.caemble.com`에도 전달될 수 있다.
@@ -205,8 +233,10 @@ WantedBy=multi-user.target
 ```
 
 `WorkingDirectory`가 `api/app`인 이유는 현재 API module이 `main:app`과 같은 app-local
-import 계약을 사용하기 때문이다. launcher WebSocket registry가 프로세스 메모리에
-있으므로 `--workers`를 추가하거나 같은 API를 여러 replica로 띄우면 안 된다.
+import 계약을 사용하기 때문이다. launcher WebSocket registry와 실행 중 Agent의 staged
+workspace/streaming 상태가 프로세스 메모리에 있으므로 `--workers`를 추가하거나 같은
+API를 여러 replica로 띄우면 안 된다. 재시작 또는 process 장애 시 진행 중인 Agent 실행은
+복구되지 않으며 사용자가 다시 실행해야 한다.
 
 ```bash
 sudo systemctl daemon-reload
