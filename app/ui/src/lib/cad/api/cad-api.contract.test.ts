@@ -112,12 +112,12 @@ describe('unversioned CAD authoring declarations', () => {
   })
 
   it('accepts canonical transforms and legacy compatibility while rejecting mixed or invented transform props', () => {
-    const prefix = `import { type Geometry } from '@caemble/core'\n`
+    const prefix = `import { Box, radians, type Geometry } from '@caemble/core'\n`
     const sourcePath = 'C:/caemble-source/hash/geometry.tsx'
 
     expect(
       diagnosticsFor(
-        `${prefix}export const Canonical: Geometry = () => <box id="body" size={[1, 2, 3]} position={[4, 5, 6]} rotation={[0.1, 0.2, 0.3]} scale={[2, 2, 2]} />`,
+        `${prefix}export const Canonical: Geometry = () => <Box id="body" size={[1, 2, 3]} position={[4, 5, 6]} rotation={radians([10, 20, 30])} scale={[2, 2, 2]} />`,
         {},
         sourcePath,
       ),
@@ -150,13 +150,35 @@ describe('unversioned CAD authoring declarations', () => {
         sourcePath,
       ).join('\n'),
     ).toContain("Property 'id' does not exist")
+
+    expect(
+      diagnosticsFor(
+        `${prefix}export const Wrapped: Geometry = () => <translate offset={[1, 2, 3]}><rotate axis={[0, 0, 1]} angle={1}><scale x={2} y={1} z={1}><Box id="body" size={[1, 1, 1]} /></scale></rotate></translate>`,
+        {},
+        sourcePath,
+      ),
+    ).toEqual([])
+    expect(
+      diagnosticsFor(
+        `import { Box as Cuboid, type Geometry } from '@caemble/core'\nexport const Aliased: Geometry = () => <Cuboid id="body" size={[1, 1, 1]} />`,
+        {},
+        sourcePath,
+      ),
+    ).toEqual([])
+    expect(
+      diagnosticsFor(
+        `${prefix}export const InvalidWrapper: Geometry = () => <translate offset={[1, 2, 3]} position={[1, 0, 0]}><Box id="body" size={[1, 1, 1]} /></translate>`,
+        {},
+        sourcePath,
+      ).join('\n'),
+    ).toContain("Property 'position' does not exist")
   })
 
   it('type-checks every canonical element example in one TypeScript program', () => {
     const files = Object.fromEntries(
       cadElementCatalog.map((manifest, index) => [
         `C:/caemble-source/catalog/${index}-${manifest.tag}/geometry.tsx`,
-        `import { type Geometry } from '@caemble/core'\nexport const Example: Geometry = () => (${manifest.example})`,
+        `import { Box, Cylinder, CurvedEdgeCylinder, CurvedSurfaceSphere, Fiber, Sphere, radians, type Geometry } from '@caemble/core'\nexport const Example: Geometry = () => (${manifest.example})`,
       ]),
     )
 

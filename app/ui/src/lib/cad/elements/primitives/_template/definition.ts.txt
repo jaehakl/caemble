@@ -8,13 +8,15 @@ export type ExampleAttributes = Readonly<{
 
 export const exampleManifest = {
   tag: 'example',
+  authoringName: 'Example',
   category: 'primitive',
-  syntax: '<example value={1} />',
+  standardTransforms: true,
+  syntax: '<Example value={1} />',
   summary: 'Example geometry.',
   keywords: ['example'],
   properties: [{ name: 'value', type: 'number', required: true, description: 'Example value.' }],
   children: { count: 'none', description: 'This primitive does not accept children.' },
   origin: 'Centered at the origin.',
   surfaces: ['Outer'],
-  example: '<example id="example" value={1} />',
+  example: '<Example id="example" value={1} />',
 } as const satisfies CadElementManifest<'example'>

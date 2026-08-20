@@ -4,6 +4,7 @@ import {
   analyzeGeometrySource,
   analyzeMaterialSource,
   analyzeTaskSource,
+  geometryExportAtOffset,
   parseCadSource,
   projectGeometryExportSource,
   staticCadSourceImports,
@@ -60,6 +61,30 @@ export function Alternate() { return <Preview id="preview" /> }`
     ).toContain('@local')
   })
 
+  it('maps cursor offsets to local named Geometry functions and ignores imported re-exports', () => {
+    const coordinate = 'caemble:geometry/jlee/common/part@1.2.3'
+    const source = `import { Imported } from "${coordinate}"
+export const Arrow = () => <box id="arrow" />
+function Declared() { return <sphere id="declared" /> }
+const Shared = () => <cylinder id="shared" />
+export { Declared, Shared as FirstAlias, Shared as SecondAlias, Imported }
+`
+    const analysis = analyzeGeometrySource(source)
+    const arrowOffset = source.indexOf('<box')
+    const declaredOffset = source.indexOf('<sphere')
+    const sharedOffset = source.indexOf('<cylinder')
+    const importedExportOffset = source.lastIndexOf('Imported')
+
+    expect(geometryExportAtOffset(analysis, arrowOffset)).toBe('Arrow')
+    expect(geometryExportAtOffset(analysis, source.indexOf('Arrow'))).toBe('Arrow')
+    expect(geometryExportAtOffset(analysis, declaredOffset)).toBe('Declared')
+    expect(geometryExportAtOffset(analysis, sharedOffset)).toBe('FirstAlias')
+    expect(geometryExportAtOffset(analysis, sharedOffset, 'SecondAlias')).toBe('SecondAlias')
+    expect(geometryExportAtOffset(analysis, importedExportOffset)).toBeNull()
+    expect(analysis.exports.find((item) => item.name === 'Imported')?.functionRange).toBeNull()
+    expect(geometryExportAtOffset(analysis, source.indexOf('function Declared') - 1)).toBeNull()
+  })
+
   it('allows empty experiment geometry.tsx but rejects static, default and helper exports in modules', () => {
     expect(analyzeGeometrySource('export {}', { allowEmpty: true }).exports).toEqual([])
     expect(() => analyzeGeometrySource('export {}')).toThrow('at least one')
@@ -97,6 +122,31 @@ export const Other: Geometry = () => <Unrelated id="other" />
     expect(projected).not.toContain('Unused')
     expect(projected).not.toContain('Unrelated')
     expect(projected).not.toContain('Other')
+  })
+
+  it('preserves bounded loops and control flow inside a projected Geometry export', () => {
+    const source = `import { Box, type Geometry } from '@caemble/core'
+export const Pattern: Geometry<{ count?: number; includeCap?: boolean }> = ({ count = 3, includeCap = true }) => {
+  const parts: unknown[] = []
+  for (let index = 0; index < count; index += 1) {
+    parts.push(<Box id={\`cell-\${index}\`} size={[1, 1, 1]} position={[index * 2, 0, 0]} />)
+  }
+  if (includeCap) parts.push(<Box id="cap" size={[1, 2, 1]} />)
+  const mirrored = Array.from({ length: count }, (_, index) => index).map((index) => (
+    <Box id={\`mirror-\${index}\`} size={[1, 1, 1]} position={[-index * 2, 0, 0]} />
+  ))
+  return <>{parts}{mirrored}</>
+}
+export const Unused = () => <Box id="unused" size={[1, 1, 1]} />
+`
+    const projected = projectGeometryExportSource(source, 'Pattern')
+    expect(projected).toContain("import { Box, type Geometry } from '@caemble/core'")
+    expect(projected).toContain('for (let index = 0; index < count; index += 1)')
+    expect(projected).toContain('if (includeCap)')
+    expect(projected).toContain('Array.from')
+    expect(projected).toContain('.map(')
+    expect(projected).not.toContain('Unused')
+    expect(analyzeGeometrySource(projected).exports.map((item) => item.name)).toEqual(['Pattern'])
   })
 
   it('keeps a wheel-style private component closure and an aliased public export', () => {

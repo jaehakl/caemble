@@ -16,7 +16,7 @@ export type {
   CadElementManifest,
   CadElementPropertyManifest,
 } from './evaluation/types'
-export { CadModelError, isFloatDType, Mat, Material } from './model/core'
+export { CadModelError, isFloatDType, Mat, Material, radians } from './model/core'
 export { defineTask, experiment, ExperimentDefinition, TaskDefinition } from './model/v5'
 export type {
   CadDefinition,
@@ -46,6 +46,7 @@ export type {
   CanonicalGeometryTransformAttributes,
   Geometry,
   GeometryAttributes,
+  GeometryIdentityAttributes,
   GeometryTransformAttributes,
   IntegerDataDType,
   IntrinsicGeometryAttributes,
@@ -158,7 +159,12 @@ export type {
   GeometryModuleCoordinate,
   GeometryModuleDraft,
 } from './source/effectiveGeometryGraph'
-export { analyzeGeometrySource, analyzeMaterialSource, projectGeometryExportSource } from './source/sourceAnalysis'
+export {
+  analyzeGeometrySource,
+  analyzeMaterialSource,
+  geometryExportAtOffset,
+  projectGeometryExportSource,
+} from './source/sourceAnalysis'
 export {
   CadDocumentEvaluationError,
   evaluateDocument,

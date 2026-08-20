@@ -11,8 +11,10 @@ export type CylinderAttributes = Readonly<{
 
 export const cylinderManifest = {
   tag: 'cylinder',
+  authoringName: 'Cylinder',
   category: 'primitive',
-  syntax: '<cylinder radius={r1} radius_2={r2} height={h} segments={32} />',
+  standardTransforms: true,
+  syntax: '<Cylinder radius={r1} radius_2={r2} height={h} segments={32} />',
   summary: '서로 다른 양 끝 반지름을 지원하는 원점 중심의 원기둥을 생성합니다.',
   keywords: ['cylinder', 'cone', 'frustum', '원기둥', '원뿔대'],
   properties: [
@@ -41,5 +43,5 @@ export const cylinderManifest = {
   children: { count: 'none', description: '자식을 받지 않는 primitive입니다.' },
   origin: '중심이 원점에 있고 기본 축은 +Z이며 양 끝은 z = ±height/2에 있습니다.',
   surfaces: ['Bottom', 'Side', 'Top'],
-  example: '<cylinder id="pole" radius={3} height={300} position={[0, 0, 150]} />',
+  example: '<Cylinder id="pole" radius={3} height={300} position={[0, 0, 150]} />',
 } as const satisfies CadElementManifest<'cylinder'>

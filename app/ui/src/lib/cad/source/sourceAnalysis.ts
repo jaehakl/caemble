@@ -23,6 +23,7 @@ export type GeometrySourceAnalysis = Readonly<{
   exports: readonly Readonly<{
     name: string
     defaultedProps: readonly string[]
+    functionRange: Readonly<{ start: number; end: number }> | null
     renderExpression: Expression | null
   }>[]
   imports: readonly Readonly<{
@@ -470,12 +471,27 @@ export function analyzeGeometrySource(
         : []
     }),
   )
+  const declarationRanges = new Map<string, Readonly<{ start: number; end: number }>>()
   ast.program.body.forEach((statement) => {
-    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : null
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement
+    if (
+      declaration?.type === 'FunctionDeclaration' &&
+      declaration.id &&
+      declaration.start !== null &&
+      declaration.start !== undefined &&
+      declaration.end !== null &&
+      declaration.end !== undefined
+    ) {
+      declarationRanges.set(declaration.id.name, Object.freeze({ start: declaration.start, end: declaration.end }))
+    }
     if (declaration?.type !== 'VariableDeclaration' || declaration.kind !== 'const') return
     declaration.declarations.forEach((item) => {
-      if (item.id.type === 'Identifier' && item.init) {
+      if (item.id.type !== 'Identifier' || !item.init) return
+      if (statement.type === 'ExportNamedDeclaration') {
         bindings.set(item.id.name, sourceExpression(item.init, item.id.name))
+      }
+      if (item.start !== null && item.start !== undefined && item.end !== null && item.end !== undefined) {
+        declarationRanges.set(item.id.name, Object.freeze({ start: item.start, end: item.end }))
       }
     })
   })
@@ -524,7 +540,7 @@ export function analyzeGeometrySource(
       throw new SourceAnalysisError(`Geometry export must be PascalCase: ${name}`)
     }
     if (importedBindings.has(localName)) {
-      return Object.freeze({ name, defaultedProps: Object.freeze([]), renderExpression: null })
+      return Object.freeze({ name, defaultedProps: Object.freeze([]), functionRange: null, renderExpression: null })
     }
     let component: Expression | FunctionDeclaration
     if (functions.has(localName)) component = functions.get(localName)!
@@ -577,6 +593,14 @@ export function analyzeGeometrySource(
     return Object.freeze({
       name,
       defaultedProps: Object.freeze([...new Set(defaultedProps)].sort()),
+      functionRange:
+        declarationRanges.get(localName) ??
+        (component.start === null ||
+        component.start === undefined ||
+        component.end === null ||
+        component.end === undefined
+          ? null
+          : Object.freeze({ start: component.start, end: component.end })),
       renderExpression,
     })
   })
@@ -585,6 +609,17 @@ export function analyzeGeometrySource(
     exports: Object.freeze(exports),
     imports: Object.freeze(imports.map((item) => Object.freeze(item))),
   })
+}
+
+export function geometryExportAtOffset(
+  analysis: GeometrySourceAnalysis,
+  offset: number,
+  selectedExport: string | null = null,
+) {
+  const matches = analysis.exports.filter(
+    (item) => item.functionRange && item.functionRange.start <= offset && offset < item.functionRange.end,
+  )
+  return matches.find((item) => item.name === selectedExport)?.name ?? matches[0]?.name ?? null
 }
 
 function exportedIdentifierName(value: t.Identifier | t.StringLiteral) {

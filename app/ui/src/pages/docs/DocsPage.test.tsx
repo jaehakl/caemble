@@ -142,7 +142,7 @@ describe('integrated documentation page', () => {
     renderDocs('/docs?section=reference#cad-reference-v7-migration')
 
     expect(screen.getByRole('button', { name: 'API / CAD Reference' })).toHaveAttribute('aria-current', 'page')
-    expect(screen.getByRole('heading', { name: 'Transform: position, rotation, scale' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Transform: direct props와 operation wrapper' })).toBeInTheDocument()
     expect(document.getElementById('cad-reference-v7-migration')).toBeInTheDocument()
   })
 
@@ -151,7 +151,7 @@ describe('integrated documentation page', () => {
 
     expect(screen.getByRole('button', { name: 'Geometry Catalog' })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('heading', { name: 'Primitives & Operations' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '<box />' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '<Box />' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Properties' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Surfaces' })).toBeInTheDocument()
     expect(screen.getByText('Origin')).toBeInTheDocument()

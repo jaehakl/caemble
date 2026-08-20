@@ -1,4 +1,5 @@
 export const curvedSurfaceSphereHcpArrayCode = `import {
+  CurvedSurfaceSphere,
   experiment,
   type Geometry,
 } from '@caemble/core'
@@ -42,7 +43,7 @@ const CurvedParticle: Geometry<{
   polarMode2Amplitude,
   polarMode2Phase,
 }) => (
-  <curvedSurfaceSphere
+  <CurvedSurfaceSphere
     azimuthalCurve={[
       { amplitude: baseRadius, phase: 0 },
       { amplitude: 0, phase: 0 },

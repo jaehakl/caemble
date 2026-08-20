@@ -29,8 +29,10 @@ export type FiberAttributes = Readonly<{
 
 export const fiberManifest = {
   tag: 'fiber',
+  authoringName: 'Fiber',
   category: 'primitive',
-  syntax: '<fiber from={p0} to={p1} radius={(s) => r} helix={{turns,phase,radius}} fourier={modes} />',
+  standardTransforms: true,
+  syntax: '<Fiber from={p0} to={p1} radius={(s) => r} helix={{turns,phase,radius}} fourier={modes} />',
   summary: '두 점 사이의 절차적 중심선을 가변 반지름 원형 단면으로 sweep합니다.',
   keywords: ['fiber', 'sweep', 'tube', 'helix', '섬유', '튜브', '나선'],
   properties: [
@@ -102,5 +104,5 @@ export const fiberManifest = {
   children: { count: 'none', description: '자식을 받지 않는 primitive입니다.' },
   origin: 'from/to 또는 basePath가 정의한 좌표를 그대로 사용하며 별도의 중심 보정은 하지 않습니다.',
   surfaces: ['Start cap', 'Side', 'End cap'],
-  example: '<fiber id="strand" from={[0, 0, 0]} to={[0, 0, 20]} radius={1} />',
+  example: '<Fiber id="strand" from={[0, 0, 0]} to={[0, 0, 20]} radius={1} />',
 } as const satisfies CadElementManifest<'fiber'>

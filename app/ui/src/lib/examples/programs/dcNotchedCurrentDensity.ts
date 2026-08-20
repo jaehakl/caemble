@@ -72,7 +72,7 @@ export const Copper = (electricalConductivity: number) =>
   })
 `
 
-export const dcNotchedCurrentDensityGeometryCode = `import { type Geometry, type Vec3 } from '@caemble/core'
+export const dcNotchedCurrentDensityGeometryCode = `import { Box, type Geometry, type Vec3 } from '@caemble/core'
 
 export const NotchedConductor: Geometry<{
   notchPosition: Vec3
@@ -80,12 +80,12 @@ export const NotchedConductor: Geometry<{
   size: Vec3
 }> = ({ notchPosition, notchSize, size }) => (
   <subtract>
-    <box size={size} />
-    <box position={notchPosition} size={notchSize} />
+    <Box size={size} />
+    <Box position={notchPosition} size={notchSize} />
   </subtract>
 )
 
-export const FieldProbe: Geometry = () => <box size={[3, 3, 3]} />
+export const FieldProbe: Geometry = () => <Box size={[3, 3, 3]} />
 `
 
 export const dcNotchedCurrentDensityTaskCode = `import { defineTask } from '@caemble/core'

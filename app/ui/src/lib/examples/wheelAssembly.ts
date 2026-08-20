@@ -7,7 +7,7 @@ export const Rubber = new Material('Rubber', { errorRate: 0 })
 export const Aluminum = new Material('Aluminum', { errorRate: 0 })
 `
 
-export const wheelAssemblyGeometryCode = `import { type Geometry } from '@caemble/core'
+export const wheelAssemblyGeometryCode = `import { Cylinder, type Geometry } from '@caemble/core'
 
 const Tire: Geometry<{
   height: number
@@ -15,15 +15,15 @@ const Tire: Geometry<{
   outerRadius: number
 }> = ({ height, innerRadius, outerRadius }) => (
   <subtract>
-    <cylinder height={height} radius={outerRadius} />
-    <cylinder height={height * 1.1} radius={innerRadius} />
+    <Cylinder height={height} radius={outerRadius} />
+    <Cylinder height={height * 1.1} radius={innerRadius} />
   </subtract>
 )
 
 const Hub: Geometry<{
   height: number
   radius: number
-}> = ({ height, radius }) => <cylinder height={height} radius={radius} />
+}> = ({ height, radius }) => <Cylinder height={height} radius={radius} />
 
 const WheelParts: Geometry<{
   height: number

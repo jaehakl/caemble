@@ -5,6 +5,7 @@ import { curvedEdgeCylinderManifest } from './primitives/curvedEdgeCylinder/defi
 import { sphereManifest } from './primitives/sphere/definition'
 import { curvedSurfaceSphereManifest } from './primitives/curvedSurfaceSphere/definition'
 import { fiberManifest } from './primitives/fiber/definition'
+import { translateManifest, rotateManifest, scaleManifest } from './operations/transforms/definition'
 import { shellManifest } from './operations/shell/definition'
 import { arrayManifest } from './operations/array/definition'
 import { unionManifest, subtractManifest, intersectManifest } from './operations/booleans/definition'
@@ -14,6 +15,7 @@ import { curvedEdgeCylinderDefinition } from './primitives/curvedEdgeCylinder/ru
 import { sphereDefinition } from './primitives/sphere/runtime'
 import { curvedSurfaceSphereDefinition } from './primitives/curvedSurfaceSphere/runtime'
 import { fiberDefinition } from './primitives/fiber/runtime'
+import { translateDefinition, rotateDefinition, scaleDefinition } from './operations/transforms/runtime'
 import { shellDefinition } from './operations/shell/runtime'
 import { arrayDefinition } from './operations/array/runtime'
 import { unionDefinition, subtractDefinition, intersectDefinition } from './operations/booleans/runtime'
@@ -22,6 +24,15 @@ import type { CadElementDefinition } from '../evaluation/types'
 
 export { cadAuthoringContract }
 
+export const cadPrimitiveAuthoringBindings = Object.freeze({
+  Box: 'box',
+  Cylinder: 'cylinder',
+  CurvedEdgeCylinder: 'curvedEdgeCylinder',
+  Sphere: 'sphere',
+  CurvedSurfaceSphere: 'curvedSurfaceSphere',
+  Fiber: 'fiber',
+} as const)
+
 export const cadElementCatalog = [
   boxManifest,
   cylinderManifest,
@@ -29,6 +40,9 @@ export const cadElementCatalog = [
   sphereManifest,
   curvedSurfaceSphereManifest,
   fiberManifest,
+  translateManifest,
+  rotateManifest,
+  scaleManifest,
   shellManifest,
   arrayManifest,
   unionManifest,
@@ -43,6 +57,9 @@ export const cadElementDefinitions = [
   sphereDefinition,
   curvedSurfaceSphereDefinition,
   fiberDefinition,
+  translateDefinition,
+  rotateDefinition,
+  scaleDefinition,
   shellDefinition,
   arrayDefinition,
   unionDefinition,

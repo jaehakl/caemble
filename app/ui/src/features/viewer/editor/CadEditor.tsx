@@ -8,6 +8,7 @@ type CadEditorProps = {
   language?: 'python' | 'typescript'
   modelPath: string
   onChange: (value: string) => void
+  onCursorOffsetChange?: (offset: number) => void
   readOnly?: boolean
   value: string
 }
@@ -33,12 +34,14 @@ function CadEditor({
   language = 'typescript',
   modelPath,
   onChange,
+  onCursorOffsetChange,
   readOnly = false,
   value,
 }: CadEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
   const onChangeRef = useRef(onChange)
+  const onCursorOffsetChangeRef = useRef(onCursorOffsetChange)
   const diagnosticsRef = useRef(diagnostics)
   const monacoRef = useRef<typeof Monaco | null>(null)
   const readOnlyRef = useRef(readOnly)
@@ -46,12 +49,14 @@ function CadEditor({
   const [loadError, setLoadError] = useState<string | null>(null)
 
   onChangeRef.current = onChange
+  onCursorOffsetChangeRef.current = onCursorOffsetChange
   diagnosticsRef.current = diagnostics
   readOnlyRef.current = readOnly
 
   useEffect(() => {
     let disposed = false
-    let subscription: Monaco.IDisposable | null = null
+    let contentSubscription: Monaco.IDisposable | null = null
+    let cursorSubscription: Monaco.IDisposable | null = null
     let editorModel: Monaco.editor.ITextModel | null = null
 
     void import('@/lib/cad/authoring')
@@ -79,12 +84,17 @@ function CadEditor({
         monacoRef.current = monaco
         editorRef.current = editor
         monaco.editor.setModelMarkers(model, 'caemble-cad', markerData(monaco, diagnosticsRef.current))
-        subscription = model.onDidChangeContent(() => {
+        contentSubscription = model.onDidChangeContent(() => {
           const nextValue = model.getValue()
           if (nextValue === valueRef.current) return
           valueRef.current = nextValue
           onChangeRef.current(nextValue)
         })
+        cursorSubscription = editor.onDidChangeCursorPosition(({ position }) => {
+          onCursorOffsetChangeRef.current?.(model.getOffsetAt(position))
+        })
+        const initialPosition = editor.getPosition()
+        if (initialPosition) onCursorOffsetChangeRef.current?.(model.getOffsetAt(initialPosition))
       })
       .catch((error: unknown) => {
         if (!disposed) setLoadError(error instanceof Error ? error.message : String(error))
@@ -92,7 +102,8 @@ function CadEditor({
 
     return () => {
       disposed = true
-      subscription?.dispose()
+      contentSubscription?.dispose()
+      cursorSubscription?.dispose()
       editorRef.current?.dispose()
       if (disposeModelOnUnmount) editorModel?.dispose()
       editorRef.current = null

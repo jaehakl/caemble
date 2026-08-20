@@ -16,8 +16,10 @@ export type CurvedSurfaceSphereAttributes = Readonly<{
 
 export const curvedSurfaceSphereManifest = {
   tag: 'curvedSurfaceSphere',
+  authoringName: 'CurvedSurfaceSphere',
   category: 'primitive',
-  syntax: '<curvedSurfaceSphere azimuthalCurve={modes} polarCurve={modes} />',
+  standardTransforms: true,
+  syntax: '<CurvedSurfaceSphere azimuthalCurve={modes} polarCurve={modes} />',
   summary: '방위각과 polar angle의 Fourier 곡선 곱으로 중심 반지름이 정해지는 닫힌 구면을 생성합니다.',
   keywords: ['curved surface sphere', 'fourier sphere', '곡면 구', '푸리에'],
   properties: [
@@ -53,5 +55,5 @@ export const curvedSurfaceSphereManifest = {
   origin: '변형된 구면의 중심이 원점에 있고 극축은 +Z입니다.',
   surfaces: ['Outer'],
   example:
-    '<curvedSurfaceSphere id="particle" azimuthalCurve={[{ amplitude: 5, phase: 0 }]} polarCurve={[{ amplitude: 1, phase: 0 }]} />',
+    '<CurvedSurfaceSphere id="particle" azimuthalCurve={[{ amplitude: 5, phase: 0 }]} polarCurve={[{ amplitude: 1, phase: 0 }]} />',
 } as const satisfies CadElementManifest<'curvedSurfaceSphere'>

@@ -8,7 +8,9 @@ export type ExampleOperationAttributes = Readonly<{
 
 export const exampleOperationManifest = {
   tag: 'exampleOperation',
+  authoringName: 'exampleOperation',
   category: 'operation',
+  standardTransforms: true,
   syntax: '<exampleOperation>Geometry</exampleOperation>',
   summary: 'Example geometry operation.',
   keywords: ['example operation'],
@@ -16,5 +18,5 @@ export const exampleOperationManifest = {
   children: { count: 'one', description: 'Accepts one identified Geometry or CAD element.' },
   origin: 'Preserves the child coordinate system.',
   surfaces: ['child-defined'],
-  example: '<exampleOperation id="result"><box size={[1, 1, 1]} /></exampleOperation>',
+  example: '<exampleOperation id="result"><Box size={[1, 1, 1]} /></exampleOperation>',
 } as const satisfies CadElementManifest<'exampleOperation'>

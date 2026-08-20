@@ -1,12 +1,12 @@
-export const basketballGoalCode = `import { experiment, type Geometry } from '@caemble/core'
+export const basketballGoalCode = `import { Box, Cylinder, experiment, type Geometry } from '@caemble/core'
 
 const BasketballGoal: Geometry = () => (
   <>
     {/* Vertical support pole. Primitive axes and all dimensions use the Experiment lengthUnit. */}
-    <cylinder id="pole" radius={3} height={300} position={[0, 0, 150]} />
+    <Cylinder id="pole" radius={3} height={300} position={[0, 0, 150]} />
 
     {/* A cylinder is Z-aligned by default. +90 degrees around X makes this arm Y-aligned. */}
-    <cylinder
+    <Cylinder
       id="arm"
       radius={2.5}
       height={200}
@@ -14,12 +14,12 @@ const BasketballGoal: Geometry = () => (
       rotation={[Math.PI / 2, 0, 0]}
     />
 
-    <box id="backboard" size={[180, 5, 100]} position={[0, 200, 280]} />
+    <Box id="backboard" size={[180, 5, 100]} position={[0, 200, 280]} />
 
     {/* Subtract a taller inner cylinder to create an actual annular rim. */}
     <subtract id="rim" position={[0, 155, 280]}>
-      <cylinder radius={22} height={1.5} />
-      <cylinder radius={19} height={2} />
+      <Cylinder radius={22} height={1.5} />
+      <Cylinder radius={19} height={2} />
     </subtract>
   </>
 )

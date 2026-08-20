@@ -7,8 +7,11 @@ import type {
   CurvedSurfaceSphereAttributes,
   CylinderAttributes,
   FiberAttributes,
+  RotateAttributes,
+  ScaleAttributes,
   ShellAttributes,
   SphereAttributes,
+  TranslateAttributes,
 } from '@caemble/core'
 
 declare global {
@@ -17,12 +20,21 @@ declare global {
 
   namespace JSX {
     interface IntrinsicElements {
+      /** @deprecated Import { Box } from '@caemble/core'. */
       box: BoxAttributes
+      /** @deprecated Import { Cylinder } from '@caemble/core'. */
       cylinder: CylinderAttributes
+      /** @deprecated Import { CurvedEdgeCylinder } from '@caemble/core'. */
       curvedEdgeCylinder: CurvedEdgeCylinderAttributes
+      /** @deprecated Import { Sphere } from '@caemble/core'. */
       sphere: SphereAttributes
+      /** @deprecated Import { CurvedSurfaceSphere } from '@caemble/core'. */
       curvedSurfaceSphere: CurvedSurfaceSphereAttributes
+      /** @deprecated Import { Fiber } from '@caemble/core'. */
       fiber: FiberAttributes
+      translate: TranslateAttributes
+      rotate: RotateAttributes
+      scale: ScaleAttributes
       shell: ShellAttributes
       array: ArrayAttributes
       union: BooleanAttributes

@@ -45,7 +45,7 @@ describe('CAD registry contracts', () => {
       expect(manifest.children.description).not.toBe('')
       expect(manifest.origin).not.toBe('')
       expect(manifest.surfaces.length).toBeGreaterThan(0)
-      expect(manifest.example).toContain(`<${manifest.tag}`)
+      expect(manifest.example).toContain(`<${manifest.authoringName}`)
       expect(manifest.properties.every((property) => !commonProperties.has(property.name))).toBe(true)
     })
 
@@ -82,9 +82,24 @@ describe('CAD registry contracts', () => {
       'SphereAttributes',
       'ArrayAttributes',
       'FiberAttributes',
+      'TranslateAttributes',
+      'RotateAttributes',
+      'ScaleAttributes',
     ]) {
       expect(coreDeclarations).toContain(`export type ${typeName}`)
     }
+    for (const [name, tag] of [
+      ['Box', 'box'],
+      ['Cylinder', 'cylinder'],
+      ['CurvedEdgeCylinder', 'curvedEdgeCylinder'],
+      ['Sphere', 'sphere'],
+      ['CurvedSurfaceSphere', 'curvedSurfaceSphere'],
+      ['Fiber', 'fiber'],
+    ]) {
+      expect(coreDeclarations).toContain(`export const ${name}: '${tag}'`)
+      expect(jsxDeclarations).toContain(`@deprecated Import { ${name} }`)
+    }
+    expect(coreDeclarations).toContain('export function radians(degrees: Vec3): Vec3')
     expect(coreDeclarations).not.toContain('IDENTITY_CARTESIAN_BASIS')
 
     const cylinderDeclaration = coreDeclarations.match(/export type CylinderAttributes = Readonly<\{[\s\S]*?\n\}>/)?.[0]

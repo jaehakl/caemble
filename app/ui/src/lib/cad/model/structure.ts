@@ -21,7 +21,8 @@ export type LegacyGeometryTransformAttributes = Readonly<{
 
 export type GeometryTransformAttributes = CanonicalGeometryTransformAttributes | LegacyGeometryTransformAttributes
 
-export type IntrinsicGeometryAttributes = Readonly<{ id?: string }> & GeometryTransformAttributes
+export type GeometryIdentityAttributes = Readonly<{ id?: string }>
+export type IntrinsicGeometryAttributes = GeometryIdentityAttributes & GeometryTransformAttributes
 
 export type GeometryAttributes<P extends object = object> = Readonly<
   P & {

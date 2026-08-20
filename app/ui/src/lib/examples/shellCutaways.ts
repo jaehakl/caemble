@@ -1,4 +1,8 @@
 export const shellCutawaysCode = `import {
+  Box,
+  CurvedEdgeCylinder,
+  CurvedSurfaceSphere,
+  Fiber,
   experiment,
   type BoxAttributes,
   type CurvedEdgeCylinderAttributes,
@@ -64,12 +68,12 @@ const Shape: Geometry<{
   offsets?: Readonly<Record<string, number>>
 }> = ({ kind, offsets }) => {
   const geometry = kind === 'curvedCylinder'
-    ? <curvedEdgeCylinder {...curvedCylinderAttributes} />
+    ? <CurvedEdgeCylinder {...curvedCylinderAttributes} />
     : kind === 'curvedSphere'
-      ? <curvedSurfaceSphere {...curvedSphereAttributes} />
+      ? <CurvedSurfaceSphere {...curvedSphereAttributes} />
       : kind === 'fiber'
-        ? <fiber {...fiberAttributes} />
-        : <box {...cutawayAttributes} />
+        ? <Fiber {...fiberAttributes} />
+        : <Box {...cutawayAttributes} />
 
   return offsets === undefined
     ? geometry

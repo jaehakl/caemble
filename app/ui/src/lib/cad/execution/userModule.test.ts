@@ -85,7 +85,16 @@ function module(
 
 describe('compiled Experiment execution with source Geometry modules', () => {
   it('evaluates the default Experiment and Task through geometry.tsx', async () => {
-    expect(requireCaembleModule('@caemble/core')).toHaveProperty('experiment')
+    expect(requireCaembleModule('@caemble/core')).toMatchObject({
+      Box: 'box',
+      Cylinder: 'cylinder',
+      CurvedEdgeCylinder: 'curvedEdgeCylinder',
+      CurvedSurfaceSphere: 'curvedSurfaceSphere',
+      Fiber: 'fiber',
+      Sphere: 'sphere',
+      experiment: expect.any(Function),
+      radians: expect.any(Function),
+    })
     const compiled = await compiledDocument(defaultExperimentSourceBundle.files, '2'.repeat(64))
     const inspection = inspectCompiledDocument(compiled)
     const result = executeCompiledDocument(

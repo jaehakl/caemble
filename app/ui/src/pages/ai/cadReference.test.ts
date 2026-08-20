@@ -18,22 +18,22 @@ describe('official AI CAD reference', () => {
     expect(CAD_GRAMMAR_CORE).toContain("from '@caemble/core'")
     expect(CAD_GRAMMAR_CORE).toContain(geometryAuthoringSkeletonCode.trim())
     expect(CAD_GRAMMAR_CORE).toContain('Never generate `translation`')
-    expect(CAD_GRAMMAR_CORE).toContain('deprecated v7 compatibility properties for legacy source')
+    expect(CAD_GRAMMAR_CORE).toContain('lowercase primitive JSX are deprecated compatibility syntax')
     expect(CAD_GRAMMAR_CORE).not.toContain('migration-only v6 properties')
-    expect(CAD_GRAMMAR_CORE.split('## Intrinsic tag index')[1]).not.toMatch(/\b(?:pos|rotate)=/u)
-    cadElementCatalog.forEach(({ syntax, tag }) => {
-      expect(CAD_GRAMMAR_CORE).toContain(`\`${tag}\``)
+    expect(CAD_GRAMMAR_CORE.split('## Element index')[1]).not.toMatch(/\b(?:pos|rotate)=/u)
+    cadElementCatalog.forEach(({ authoringName, syntax }) => {
+      expect(CAD_GRAMMAR_CORE).toContain(`\`${authoringName}\``)
       expect(CAD_GRAMMAR_CORE).toContain(`\`${syntax}\``)
     })
   })
 
   it('orders explicit prompt tags before active-source and diagnostic tags', () => {
     const selected = selectAiReferenceDocs({
-      activeSource: '<><cylinder radius={2} height={4} /><box size={[1, 2, 3]} /></>',
+      activeSource: '<><Cylinder radius={2} height={4} /><Box size={[1, 2, 3]} /></>',
       diagnostics: 'subtract received an invalid child',
       docsKnowledge: getDocsKnowledge(),
       limit: 20,
-      prompt: 'sphere 코드를 작성해 줘',
+      prompt: 'Sphere 코드를 작성해 줘',
       recentUserPrompts: [],
     })
 
@@ -46,10 +46,14 @@ describe('official AI CAD reference', () => {
   })
 
   it('keeps diagnostic search hints within a valid UTF-8 budget', () => {
-    const hints = cadReferenceSearchHints('<box size={[1, 2, 3]} />', '한글🙂'.repeat(10_000))
+    const hints = cadReferenceSearchHints(
+      '<Box size={[1, 2, 3]} /><cylinder radius={1} height={2} />',
+      '한글🙂'.repeat(10_000),
+    )
 
     expect(new TextEncoder().encode(hints).byteLength).toBeLessThanOrEqual(8 * 1024)
     expect(hints).toContain('box')
+    expect(hints).toContain('cylinder')
     expect(hints).not.toContain('\uFFFD')
   })
 })

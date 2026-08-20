@@ -22,8 +22,10 @@ export type CurvedEdgeCylinderAttributes = Readonly<{
 
 export const curvedEdgeCylinderManifest = {
   tag: 'curvedEdgeCylinder',
+  authoringName: 'CurvedEdgeCylinder',
   category: 'primitive',
-  syntax: '<curvedEdgeCylinder height={h} azimuthalCurve={modes} verticalCurve={{origin,coefficients}} />',
+  standardTransforms: true,
+  syntax: '<CurvedEdgeCylinder height={h} azimuthalCurve={modes} verticalCurve={{origin,coefficients}} />',
   summary: 'Fourier 방위 곡선과 Taylor 높이 곡선의 곱으로 반지름이 정해지는 닫힌 원기둥을 생성합니다.',
   keywords: ['curved edge cylinder', 'fourier cylinder', '곡면 원기둥', '푸리에'],
   properties: [
@@ -61,5 +63,5 @@ export const curvedEdgeCylinderManifest = {
   origin: '중심이 원점에 있고 기본 축은 +Z이며 양 끝은 z = ±height/2에 있습니다.',
   surfaces: ['Bottom', 'Side', 'Top'],
   example:
-    '<curvedEdgeCylinder id="body" height={20} azimuthalCurve={[{ amplitude: 5, phase: 0 }]} verticalCurve={{ origin: 0, coefficients: [1] }} />',
+    '<CurvedEdgeCylinder id="body" height={20} azimuthalCurve={[{ amplitude: 5, phase: 0 }]} verticalCurve={{ origin: 0, coefficients: [1] }} />',
 } as const satisfies CadElementManifest<'curvedEdgeCylinder'>

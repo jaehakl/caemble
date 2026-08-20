@@ -211,6 +211,12 @@ export function useGeometryWorkspaceState({
   sourceFiles: Readonly<Record<string, string>>
 }) {
   const queryClient = useQueryClient()
+  const [entryPreviewCoordinate] = useState<GeometryModuleCoordinate>(() => {
+    const token = [...crypto.getRandomValues(new Uint32Array(4))]
+      .map((value) => value.toString(16).padStart(8, '0'))
+      .join('')
+    return `caemble:geometry/caemble-preview/internal/${token}@local` as GeometryModuleCoordinate
+  })
   const [namespace, setNamespaceState] = useState(initialNamespace ?? null)
   const [repositories, setRepositories] = useState<readonly GeometryRepositoryRecord[]>([])
   const [currentSnapshot, setCurrentSnapshot] = useState(snapshot ?? emptyGeometrySnapshot)
@@ -341,12 +347,20 @@ export function useGeometryWorkspaceState({
   )
 
   useEffect(() => {
-    if (!selectedCoordinate || selectedCoordinate === 'geometry.tsx' || !selectedExport || !effectiveGraph) return
+    if (!selectedCoordinate || !selectedExport || !effectiveGraph) return
     const abort = new AbortController()
+    const previewCoordinate = selectedCoordinate === 'geometry.tsx' ? entryPreviewCoordinate : selectedCoordinate
+    const previewDrafts =
+      selectedCoordinate === 'geometry.tsx'
+        ? Object.freeze({
+            ...draftOverlay,
+            [entryPreviewCoordinate]: Object.freeze({ source: entrySource }),
+          })
+        : draftOverlay
     setPreviewBusy(true)
     setPreviewStale(true)
-    void evaluateGeometryModule(currentSnapshot, selectedCoordinate, selectedExport, {
-      geometryDrafts: draftOverlay,
+    void evaluateGeometryModule(currentSnapshot, previewCoordinate, selectedExport, {
+      geometryDrafts: previewDrafts,
       signal: abort.signal,
       timeoutMs: 10000,
     })
@@ -371,7 +385,16 @@ export function useGeometryWorkspaceState({
         if (!abort.signal.aborted) setPreviewBusy(false)
       })
     return () => abort.abort()
-  }, [currentSnapshot, draftOverlay, effectiveGraph, previewInput, selectedCoordinate, selectedExport])
+  }, [
+    currentSnapshot,
+    draftOverlay,
+    effectiveGraph,
+    entryPreviewCoordinate,
+    entrySource,
+    previewInput,
+    selectedCoordinate,
+    selectedExport,
+  ])
 
   const refreshRepositories = useCallback(async () => {
     if (!authenticated) {

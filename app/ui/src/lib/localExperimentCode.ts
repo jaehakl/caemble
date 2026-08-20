@@ -22,10 +22,10 @@ const starterMaterialCode = `import { Material } from '@caemble/core'
 export const StarterMaterial = new Material('Starter Material')
 `
 
-const starterGeometryCode = `import { type Geometry, type Vec3 } from '@caemble/core'
+const starterGeometryCode = `import { Box, type Geometry, type Vec3 } from '@caemble/core'
 
 export const StarterStructure: Geometry<{ size: Vec3 }> = ({ size }) => (
-  <box size={size} />
+  <Box size={size} />
 )
 `
 

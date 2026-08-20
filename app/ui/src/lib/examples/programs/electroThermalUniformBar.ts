@@ -72,13 +72,13 @@ export const Copper = (electricalConductivity: number, thermalConductivity: numb
   })
 `
 
-export const electroThermalUniformBarGeometryCode = `import { type Geometry, type Vec3 } from '@caemble/core'
+export const electroThermalUniformBarGeometryCode = `import { Box, type Geometry, type Vec3 } from '@caemble/core'
 
-export const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />
+export const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <Box size={size} />
 
-export const ElectricProbe: Geometry = () => <box size={[2, 2, 2]} />
+export const ElectricProbe: Geometry = () => <Box size={[2, 2, 2]} />
 
-export const ThermalProbe: Geometry = () => <box size={[2, 2, 2]} />
+export const ThermalProbe: Geometry = () => <Box size={[2, 2, 2]} />
 `
 
 export const electroThermalUniformBarElectricTaskCode = `import { defineTask } from '@caemble/core'

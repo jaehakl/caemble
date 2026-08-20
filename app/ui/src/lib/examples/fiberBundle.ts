@@ -1,4 +1,5 @@
 export const fiberBundleCode = `import {
+  Fiber,
   experiment,
   type FiberFourierMode,
   type Geometry,
@@ -26,7 +27,7 @@ const Strand: Geometry<{
   }
 
   return (
-    <fiber
+    <Fiber
       from={strandFrom}
       to={strandTo}
       basePath={basePath}

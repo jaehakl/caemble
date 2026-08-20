@@ -154,10 +154,19 @@ test('keeps an anonymous Starter editable offline and restores the session draft
   const editor = page.locator('.monaco-editor:visible .view-lines')
   await editor.click({ position: { x: 120, y: 45 } })
   await page.keyboard.press('Control+A')
-  await page.keyboard.insertText(`import { type Geometry, type Vec3 } from '@caemble/core'
+  await page.keyboard.insertText(`import { Box, Cylinder, radians, type Geometry } from '@caemble/core'
 
-export const StarterStructure: Geometry<{ size: Vec3 }> = () => (
-  <box size={[18, 12, 6]} />
+export const StarterStructure: Geometry = () => (
+  <translate offset={[8, 0, 0]}>
+    <rotate axis={[0, 0, 1]} angle={radians(15)}>
+      <scale x={1.5} y={1} z={1}>
+        <Box id="body" size={[18, 12, 6]} />
+      </scale>
+    </rotate>
+    {Array.from({ length: 2 }, (_, index) => (
+      <Cylinder id={\`post-\${index}\`} radius={1} height={8} position={[index * 4, 0, 7]} />
+    ))}
+  </translate>
 )
 // offline-edit
 `)
@@ -180,7 +189,7 @@ export const StarterStructure: Geometry<{ size: Vec3 }> = () => (
   const blankEditor = page.locator('.monaco-editor:visible .view-lines')
   await blankEditor.click({ position: { x: 120, y: 45 } })
   await page.keyboard.press('Control+A')
-  await page.keyboard.insertText(`import { type Geometry } from '@caemble/core'
+  await page.keyboard.insertText(`import { Box, type Geometry } from '@caemble/core'
 
 export const EmptyStructure: Geometry = () => <></>
 // session-restored
@@ -219,7 +228,7 @@ test('regenerates an editable Candidate when varsSchema adds openness', async ({
 export const EmptyStructure: Geometry = () => <></>
 
 export const PaperBox: Geometry<{ openness: number }> = ({ openness }) => (
-  <box size={[100, 60, 2 + openness * 38]} />
+  <Box size={[100, 60, 2 + openness * 38]} />
 )
 `)
   await expect(page.locator('.monaco-editor:visible .squiggly-error')).toHaveCount(0, { timeout: 10_000 })
@@ -444,8 +453,10 @@ test('opens authenticated Launchers from Settings and Jobs from the shared Toolb
 test('manages Geometry packages and previews an editable Geometry without Monaco model conflicts', async ({ page }) => {
   const timestamp = '2026-08-13T00:00:00Z'
   const coordinate = 'caemble:geometry/designer/common/plate@1.2.3'
-  const geometrySource =
-    "import { type Geometry } from '@caemble/core'\nexport const Plate: Geometry = () => <box size={[1, 1, 1]} />\n"
+  const geometrySource = `import { type Geometry } from '@caemble/core'
+export const Plate: Geometry = () => <box size={[1, 1, 1]} />
+export const Sphere: Geometry = () => <sphere radius={1} />
+`
   const sourceHash = createHash('sha256').update(geometrySource).digest('hex')
   const moduleHash = createHash('sha256')
     .update(
@@ -661,6 +672,14 @@ export default experiment({
   await expect(saveGeometry).toBeEnabled({ timeout: 15_000 })
   await expect(workspace.getByText('Preview current', { exact: true })).toBeVisible()
   await expect(workspace.getByRole('alert')).toHaveCount(0)
+
+  const previewExport = workspace.getByRole('combobox', { name: 'Preview export' })
+  await expect(previewExport).toHaveValue('Plate')
+  await workspace.locator('.view-line').filter({ hasText: 'export const Sphere' }).click()
+  await expect(previewExport).toHaveValue('Sphere')
+  await expect(workspace.getByText('Preview current', { exact: true })).toBeVisible()
+  await workspace.locator('.view-line').filter({ hasText: 'export const Plate' }).click()
+  await expect(previewExport).toHaveValue('Plate')
 
   const draftEditor = workspace.locator('.monaco-editor:visible .view-lines')
   await draftEditor.click({ position: { x: 100, y: 30 } })

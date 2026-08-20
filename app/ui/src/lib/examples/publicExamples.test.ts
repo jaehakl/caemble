@@ -32,8 +32,9 @@ describe('public CAD examples', () => {
     expectReliablePublicScene(result.scene)
   })
 
-  it.each(cadElementCatalog)('compiles and evaluates the <$tag> manifest example', async (manifest) => {
-    const bundle = standalonePublicExampleBundle(`import { experiment } from '@caemble/core'
+  it.each(cadElementCatalog)('compiles and evaluates the <$authoringName> manifest example', async (manifest) => {
+    const bundle =
+      standalonePublicExampleBundle(`import { Box, Cylinder, CurvedEdgeCylinder, CurvedSurfaceSphere, Fiber, Sphere, experiment, radians } from '@caemble/core'
 
 export default experiment({
   lengthUnit: 'mm',
@@ -50,7 +51,12 @@ export default experiment({
   it('keeps the AI Helper complete geometry skeleton executable', async () => {
     const result = await evaluatePublicExampleBundle(geometryAuthoringSkeletonSourceBundle)
 
-    expect(result.scene.parts.map(({ id }) => id)).toEqual(['assembly.base', 'assembly.post'])
+    expect(result.scene.parts.map(({ id }) => id)).toEqual([
+      'assembly.base',
+      'assembly.post',
+      'assembly.brace-0',
+      'assembly.brace-1',
+    ])
     expectReliablePublicScene(result.scene)
   })
 })

@@ -1,4 +1,5 @@
 export const curvedEdgeCylinderArrayCode = `import {
+  CurvedEdgeCylinder,
   experiment,
   type Geometry,
 } from '@caemble/core'
@@ -32,7 +33,7 @@ const CurvedCell: Geometry<{
   verticalSlope,
   verticalCurvature,
 }) => (
-  <curvedEdgeCylinder
+  <CurvedEdgeCylinder
     height={height}
     azimuthalCurve={[
       { amplitude: baseRadius, phase: 0 },

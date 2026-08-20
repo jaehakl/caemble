@@ -7,7 +7,6 @@ export const CAD_GRAMMAR_API_VERSION = cadAuthoringContract.apiVersion
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder('utf-8', { fatal: true })
-const catalogTags = cadElementCatalog.map(({ tag }) => tag)
 
 function byteLength(value: string) {
   return encoder.encode(value).byteLength
@@ -23,16 +22,21 @@ function truncateUtf8(value: string, maxBytes: number) {
 
 function mentionedTags(value: string) {
   const normalized = value.normalize('NFKC').toLocaleLowerCase()
-  return catalogTags.filter((tag) => {
-    const escaped = tag.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').toLocaleLowerCase()
-    return new RegExp(`(^|[^a-z0-9_])${escaped}(?=$|[^a-z0-9_])`, 'u').test(normalized)
-  })
+  return cadElementCatalog
+    .filter(({ authoringName, tag }) =>
+      [authoringName, tag].some((name) => {
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').toLocaleLowerCase()
+        return new RegExp(`(^|[^a-z0-9_])${escaped}(?=$|[^a-z0-9_])`, 'u').test(normalized)
+      }),
+    )
+    .map(({ tag }) => tag)
 }
 
 function sourceTags(source: string) {
   const found = new Set<string>()
-  for (const match of source.matchAll(/<\s*([a-z][A-Za-z0-9]*)\b/gu)) {
-    if (catalogTags.includes(match[1] as (typeof catalogTags)[number])) found.add(match[1])
+  for (const match of source.matchAll(/<\s*([A-Za-z][A-Za-z0-9]*)\b/gu)) {
+    const entry = cadElementCatalog.find(({ authoringName, tag }) => match[1] === authoringName || match[1] === tag)
+    if (entry) found.add(entry.tag)
   }
   return [...found]
 }
@@ -55,7 +59,7 @@ function uniqueChunks(chunks: readonly (DocsKnowledgeChunk | undefined)[], limit
 
 const grammarCore = [
   `# Official CAD authoring grammar — API v${CAD_GRAMMAR_API_VERSION}`,
-  'Authority: app-owned Caemble contract. Detailed manuals: /docs?section=reference and /docs?section=geometry.',
+  'Authority: Caemble app contract. Manuals: /docs?section=reference and /docs?section=geometry.',
   '',
   '## Complete geometry.tsx skeleton',
   '```tsx',
@@ -64,21 +68,26 @@ const grammarCore = [
   '',
   '## Required rules',
   `- New code uses only canonical v${CAD_GRAMMAR_API_VERSION} transforms: ${cadAuthoringContract.transforms.canonicalProperties.map(({ name, type }) => `\`${name}?: ${type}\``).join(', ')}. ${cadAuthoringContract.transforms.rotationConvention} Effective order: ${cadAuthoringContract.transforms.applicationOrder.join(', ')}.`,
-  `- Never generate \`translation\`. ${cadAuthoringContract.transforms.legacyProperties.map(({ name }) => `\`${name}\``).join(' and ')} are deprecated v7 compatibility properties for legacy source; do not emit them. ${cadAuthoringContract.transforms.mixing}`,
+  '- Group transforms with lowercase `<translate offset={Vec3}>`, `<rotate axis={Vec3} angle={radians(degrees)}>`, and `<scale x={sx} y={sy} z={sz}>`; wrappers reject direct transform props.',
+  `- Never generate \`translation\`. ${cadAuthoringContract.transforms.legacyProperties.map(({ name }) => `\`${name}\``).join(' and ')} and lowercase primitive JSX are deprecated compatibility syntax; do not emit them. ${cadAuthoringContract.transforms.mixing}`,
   `- Every Geometry component call requires a sibling-unique \`id\`. ${cadAuthoringContract.identity.description} Fragment has no \`id\`; example nested path: \`${cadAuthoringContract.identity.pathExample}\`.`,
   '- A topology-changing operation owns its result `id`; consumed operand IDs are not final solver targets. `array` keeps `$cell-x-y-z` instance identity.',
   '- Components inherit the parent Material role map when `materials` is omitted; an explicit map replaces it and `{}` clears it. Primitives consume the `body` role.',
   "- Boolean child order matters: `subtract` uses the first child as base and the rest as cutters. Follow each operation's child contract exactly.",
-  '- Import public types and APIs from `@caemble/core`. In `geometry.tsx`, export PascalCase named `Geometry<Props>` components; do not default-export a geometry component.',
+  '- Import PascalCase primitives and public APIs from `@caemble/core`; keep operation tags lowercase. Export PascalCase named `Geometry<Props>` components, never a default Geometry export.',
+  '- Bounded deterministic `for`, `Array.from`/`map`, and `if` are supported. Use stable sibling `id`s; prefer `array` for a regular lattice.',
   '',
-  '## Intrinsic tag index (canonical syntax)',
+  '## Element index (canonical syntax)',
   ...cadElementCatalog.map(
-    ({ category, summary, syntax, tag }) => `- \`${tag}\` (${category}): ${summary} Syntax: \`${syntax}\``,
+    ({ authoringName, category, summary, syntax }) =>
+      `- \`${authoringName}\` (${category}): ${summary} Syntax: \`${syntax}\``,
   ),
 ].join('\n')
 
 if (byteLength(grammarCore) > CAD_GRAMMAR_CORE_MAX_BYTES) {
-  throw new Error(`Official CAD grammar core exceeds ${CAD_GRAMMAR_CORE_MAX_BYTES} UTF-8 bytes.`)
+  throw new Error(
+    `Official CAD grammar core is ${byteLength(grammarCore)} UTF-8 bytes and exceeds ${CAD_GRAMMAR_CORE_MAX_BYTES}.`,
+  )
 }
 
 export const CAD_GRAMMAR_CORE = grammarCore

@@ -9,12 +9,17 @@ import {
   RotateCcw,
   Upload,
 } from 'lucide-react'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import CadEditor from '@/features/viewer/editor/CadEditor'
-import { analyzeGeometrySource, type CadDiagnostic, type GeometryModuleCoordinate } from '@/lib/cad'
+import {
+  analyzeGeometrySource,
+  geometryExportAtOffset,
+  type CadDiagnostic,
+  type GeometryModuleCoordinate,
+} from '@/lib/cad'
 import { cn } from '@/lib/utils'
 import type { GeometryLocalDraft } from '../types'
 import type { GeometryWorkspaceState } from './useGeometryWorkspaceState'
@@ -163,9 +168,23 @@ export function GeometryWorkspace({
     geometry.selectedCoordinate === 'geometry.tsx'
       ? geometry.entrySource
       : (selectedDraft?.source ?? selectedModule?.source ?? '')
+  const selectedAnalysis = useMemo(
+    () => safeAnalysis(selectedSource, geometry.selectedCoordinate === 'geometry.tsx'),
+    [geometry.selectedCoordinate, selectedSource],
+  )
+  const [cursor, setCursor] = useState<Readonly<{
+    coordinate: GeometryModuleCoordinate | 'geometry.tsx'
+    offset: number
+  }> | null>(null)
   const entryAnalysis = safeAnalysis(geometry.entrySource, true)
   const reachable = new Set(geometry.effectiveGraph?.modules.map((module) => module.coordinate) ?? [])
   const standaloneDrafts = Object.values(geometry.drafts).filter((draft) => !reachable.has(draft.coordinate))
+
+  useEffect(() => {
+    if (!cursor || cursor.coordinate !== geometry.selectedCoordinate || !selectedAnalysis) return
+    const nextExport = geometryExportAtOffset(selectedAnalysis, cursor.offset, geometry.selectedExport)
+    if (nextExport && nextExport !== geometry.selectedExport) geometry.setSelectedExport(nextExport)
+  }, [cursor, geometry, selectedAnalysis])
 
   const renderOccurrence = (
     imported: Readonly<{ exportName: string; alias: string; coordinate: GeometryModuleCoordinate }>,
@@ -405,6 +424,9 @@ export function GeometryWorkspace({
                     : `file:///geometries/${encodeURIComponent(geometry.selectedCoordinate)}.tsx`
                 }
                 onChange={geometry.updateSource}
+                onCursorOffsetChange={(offset) => {
+                  if (geometry.selectedCoordinate) setCursor({ coordinate: geometry.selectedCoordinate, offset })
+                }}
                 readOnly={geometry.busy}
                 value={selectedSource}
               />

@@ -1,9 +1,19 @@
-// @caemble/core declaration version: 0.3.0
+// @caemble/core declaration version: 0.4.0
 export type Tensor = number | readonly Tensor[]
 export type Vars = Readonly<Record<string, Tensor>>
 export type Vec3 = readonly [number, number, number]
 export type CartesianBasis = readonly [Vec3, Vec3, Vec3]
 export type Rotation = Readonly<{ axis: Vec3; angle: number }>
+// <generated:primitive-authoring-bindings>
+export const Box: 'box'
+export const Cylinder: 'cylinder'
+export const CurvedEdgeCylinder: 'curvedEdgeCylinder'
+export const Sphere: 'sphere'
+export const CurvedSurfaceSphere: 'curvedSurfaceSphere'
+export const Fiber: 'fiber'
+// </generated:primitive-authoring-bindings>
+export function radians(degrees: number): number
+export function radians(degrees: Vec3): Vec3
 export type CanonicalGeometryTransformAttributes = Readonly<{
   position?: Vec3
   rotation?: Vec3
@@ -21,7 +31,8 @@ export type LegacyGeometryTransformAttributes = Readonly<{
   scale?: Vec3
 }>
 export type GeometryTransformAttributes = CanonicalGeometryTransformAttributes | LegacyGeometryTransformAttributes
-export type IntrinsicGeometryAttributes = Readonly<{ id?: string }> & GeometryTransformAttributes
+export type GeometryIdentityAttributes = Readonly<{ id?: string }>
+export type IntrinsicGeometryAttributes = GeometryIdentityAttributes & GeometryTransformAttributes
 export type GeometryGroupMap = Readonly<Record<string, readonly string[]>>
 export type VarsSchemaEntry = Readonly<{
   min: Tensor
@@ -217,6 +228,27 @@ export type ArrayAttributes = Readonly<{
   children?: unknown
 }> &
   IntrinsicGeometryAttributes
+
+export type TranslateAttributes = Readonly<{
+  offset: Vec3
+  children?: unknown
+}> &
+  GeometryIdentityAttributes
+
+export type RotateAttributes = Readonly<{
+  axis: Vec3
+  angle: number
+  children?: unknown
+}> &
+  GeometryIdentityAttributes
+
+export type ScaleAttributes = Readonly<{
+  x: number
+  y: number
+  z: number
+  children?: unknown
+}> &
+  GeometryIdentityAttributes
 
 export type ShellAttributes = Readonly<{
   offsets: Readonly<Record<string, number>>

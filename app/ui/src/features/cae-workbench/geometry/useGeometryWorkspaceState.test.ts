@@ -34,6 +34,10 @@ const api = vi.hoisted(() => ({
   setNamespace: vi.fn(async (namespace: string) => ({ geometry_namespace: namespace })),
 }))
 
+const cad = vi.hoisted(() => ({
+  evaluateGeometryModule: vi.fn(),
+}))
+
 vi.mock('@/api', async (importOriginal) => {
   const original = await importOriginal<typeof import('@/api')>()
   return {
@@ -55,6 +59,11 @@ vi.mock('@/api', async (importOriginal) => {
   }
 })
 
+vi.mock('@/lib/cad', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/lib/cad')>()
+  return { ...original, evaluateGeometryModule: cad.evaluateGeometryModule }
+})
+
 function wrapper({ children }: { children: ReactNode }) {
   return createElement(QueryClientProvider, { client: new QueryClient() }, children)
 }
@@ -68,7 +77,19 @@ const sourceFiles = {
 }
 
 describe('source-based Geometry workspace state', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    cad.evaluateGeometryModule.mockResolvedValue({
+      sourceHash: 'preview-source-hash',
+      scene: {
+        lengthUnit: 'mm',
+        parts: [],
+        tree: { key: 'preview', label: 'Preview', children: [] },
+        geometryGroups: [],
+        surfaceGroups: [],
+      },
+    })
+  })
   afterEach(cleanup)
 
   it('creates a standalone @local draft with a named multi-export compatible template', () => {
@@ -90,6 +111,38 @@ describe('source-based Geometry workspace state', () => {
     expect(draft.source).toContain('export const NotchedConductor')
     expect(draft.source).not.toContain('export default')
     expect(draft.standalonePreview).toBe(true)
+  })
+
+  it('previews a geometry.tsx export through an ephemeral local module without persisting it', async () => {
+    const files = {
+      ...sourceFiles,
+      'geometry.tsx': `import { type Geometry } from '@caemble/core'
+export const First: Geometry = () => <box id="first" />
+export const Second: Geometry = () => <sphere id="second" />
+`,
+    }
+    const { result } = renderHook(
+      () =>
+        useGeometryWorkspaceState({
+          initialNamespace: 'jlee',
+          onExperimentChange: vi.fn(),
+          snapshot: emptySnapshot,
+          sourceFiles: files,
+        }),
+      { wrapper },
+    )
+
+    await waitFor(() => expect(cad.evaluateGeometryModule).toHaveBeenCalled())
+    const calls = cad.evaluateGeometryModule.mock.calls
+    const [previewSnapshot, previewCoordinate, exportName, options] = calls[calls.length - 1]!
+    expect(previewSnapshot).toBe(emptySnapshot)
+    expect(previewCoordinate).toMatch(/^caemble:geometry\/caemble-preview\/internal\/[0-9a-f]{32}@local$/u)
+    expect(exportName).toBe('First')
+    expect(options.geometryDrafts[previewCoordinate]).toEqual({ source: files['geometry.tsx'] })
+    expect(result.current.drafts).toEqual({})
+    expect(result.current.draftOverlay).toEqual({})
+    expect(result.current.currentSnapshot).toBe(emptySnapshot)
+    expect(result.current.publishReady).toBe(false)
   })
 
   it('provides a local anonymous namespace without calling repository or publish APIs', async () => {

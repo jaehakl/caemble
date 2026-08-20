@@ -111,7 +111,9 @@ export type CadAuthoringContract = Readonly<{
 
 export type CadElementManifest<Tag extends string = string> = Readonly<{
   tag: Tag
+  authoringName: string
   category: 'primitive' | 'operation'
+  standardTransforms: boolean
   syntax: string
   summary: string
   keywords: readonly string[]

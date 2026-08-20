@@ -9,8 +9,10 @@ export type SphereAttributes = Readonly<{
 
 export const sphereManifest = {
   tag: 'sphere',
+  authoringName: 'Sphere',
   category: 'primitive',
-  syntax: '<sphere radius={r} segments={32} />',
+  standardTransforms: true,
+  syntax: '<Sphere radius={r} segments={32} />',
   summary: '원점 중심의 구를 생성합니다.',
   keywords: ['sphere', 'ball', '구', '구체'],
   properties: [
@@ -26,5 +28,5 @@ export const sphereManifest = {
   children: { count: 'none', description: '자식을 받지 않는 primitive입니다.' },
   origin: '구의 중심이 원점에 있습니다.',
   surfaces: ['Outer'],
-  example: '<sphere id="ball" radius={12} position={[0, 0, 12]} />',
+  example: '<Sphere id="ball" radius={12} position={[0, 0, 12]} />',
 } as const satisfies CadElementManifest<'sphere'>

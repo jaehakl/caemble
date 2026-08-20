@@ -36,7 +36,10 @@ describe('documentation knowledge registry', () => {
     expect(manualDocsKnowledge.find(({ id }) => id === 'reference-geometry-skeleton')?.content).toContain(
       geometryAuthoringSkeletonCode.trim(),
     )
-    expect(catalogDocsKnowledge.find(({ id }) => id === 'geometry:box')?.content).toContain('<box size=')
+    expect(catalogDocsKnowledge.find(({ id }) => id === 'geometry:box')?.content).toContain('<Box size=')
+    expect(manualDocsKnowledge.find(({ id }) => id === 'reference-geometry-transforms')?.content).toContain(
+      '<rotate axis=',
+    )
     expect(catalogDocsKnowledge.some(({ section }) => section === 'materials')).toBe(false)
   })
 

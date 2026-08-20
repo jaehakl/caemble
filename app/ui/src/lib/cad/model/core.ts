@@ -1,4 +1,4 @@
-import type { Tensor, Vars } from './types'
+import type { Tensor, Vars, Vec3 } from './types'
 import { CadModelError } from './errors'
 import {
   getQuantityKindComponentShape,
@@ -25,6 +25,7 @@ export type {
   Geometry,
   GeometryAttributes,
   GeometryGroupMap,
+  GeometryIdentityAttributes,
   GeometryTransformAttributes,
   IntrinsicGeometryAttributes,
   LegacyGeometryTransformAttributes,
@@ -75,6 +76,24 @@ export type {
   ScalarQuantityKindName,
   TensorQuantityKindName,
 } from '../../quantitykind/runtime'
+
+export function radians(degrees: number): number
+export function radians(degrees: Vec3): Vec3
+export function radians(degrees: number | Vec3): number | Vec3 {
+  if (typeof degrees === 'number') {
+    if (!Number.isFinite(degrees)) throw new CadModelError('radians degrees must be a finite number.')
+    return (degrees * Math.PI) / 180
+  }
+  if (
+    !Array.isArray(degrees) ||
+    degrees.length !== 3 ||
+    degrees.some((value) => typeof value !== 'number' || !Number.isFinite(value))
+  ) {
+    throw new CadModelError('radians degrees must be a finite number or an array of exactly three finite numbers.')
+  }
+  return Object.freeze(degrees.map((value) => (value * Math.PI) / 180) as [number, number, number])
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

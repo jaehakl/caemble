@@ -7,7 +7,8 @@ import {
 import { evaluateCadScene } from '../evaluation/evaluator'
 import { Fragment, h } from '../evaluation/jsx'
 import type { CadScene } from '../evaluation/types'
-import { CadModelError, evaluateWithVars, isFloatDType, Mat, Material } from '../model/core'
+import { cadPrimitiveAuthoringBindings } from '../elements/generated'
+import { CadModelError, evaluateWithVars, isFloatDType, Mat, Material, radians } from '../model/core'
 import { defineTask, experiment, ExperimentDefinition, TaskDefinition, type ExternalVars } from '../model/v5'
 import { assertUcumUnitComparable, convertUcumValue, normalizeUcumUnit, type UcumUnit } from '../model/units'
 import type { VarsSchemaEntry } from '../model/vars'
@@ -22,6 +23,7 @@ import type { GeometryModuleCoordinate } from '../source/effectiveGeometryGraph'
 import type { EvaluatedRuntimeDocumentSnapshot } from './snapshot'
 
 const coreModule = Object.freeze({
+  ...cadPrimitiveAuthoringBindings,
   assertUcumUnitComparable,
   CadModelError,
   convertUcumValue,
@@ -32,6 +34,7 @@ const coreModule = Object.freeze({
   Mat,
   Material,
   normalizeUcumUnit,
+  radians,
   TaskDefinition,
 })
 

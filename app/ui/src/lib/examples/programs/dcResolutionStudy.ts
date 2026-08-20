@@ -53,11 +53,11 @@ export const Copper = (electricalConductivity: number) =>
   })
 `
 
-export const dcResolutionStudyGeometryCode = `import { type Geometry, type Vec3 } from '@caemble/core'
+export const dcResolutionStudyGeometryCode = `import { Box, type Geometry, type Vec3 } from '@caemble/core'
 
-export const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />
+export const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <Box size={size} />
 
-export const ConvergenceProbe: Geometry = () => <box size={[2, 2, 2]} />
+export const ConvergenceProbe: Geometry = () => <Box size={[2, 2, 2]} />
 `
 
 function resolutionTaskCode(gridShape: string, outputKey: string, probePosition: number) {

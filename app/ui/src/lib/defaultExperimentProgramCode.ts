@@ -50,7 +50,7 @@ export const Copper = (electricalConductivity: number) =>
   })
 `
 
-export const defaultExperimentGeometryCode = `import { type Geometry, type Vec3 } from '@caemble/core'
+export const defaultExperimentGeometryCode = `import { Box, type Geometry, type Vec3 } from '@caemble/core'
 
 export const Conductor: Geometry<{
   notchPosition: Vec3
@@ -58,12 +58,12 @@ export const Conductor: Geometry<{
   size: Vec3
 }> = ({ notchPosition, notchSize, size }) => (
   <subtract>
-    <box size={size} />
-    <box position={notchPosition} size={notchSize} />
+    <Box size={size} />
+    <Box position={notchPosition} size={notchSize} />
   </subtract>
 )
 
-export const ExperimentDevice: Geometry = () => <box size={[1, 1, 1]} />
+export const ExperimentDevice: Geometry = () => <Box size={[1, 1, 1]} />
 `
 
 export const defaultExperimentTaskCode = `import { defineTask } from '@caemble/core'

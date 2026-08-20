@@ -13,7 +13,9 @@ export type ArrayAttributes = Readonly<{
 
 export const arrayManifest = {
   tag: 'array',
+  authoringName: 'array',
   category: 'operation',
+  standardTransforms: true,
   syntax: '<array shape={[nx,ny,nz]} period={[px,py,pz]} axes={{x,y,z}} inject={tensors}>Geometry</array>',
   summary: '하나의 Geometry를 3차원 격자에 반복 배치합니다.',
   keywords: ['array', 'lattice', 'pattern', 'grid', '배열', '격자', '반복'],
@@ -52,5 +54,5 @@ export const arrayManifest = {
   origin: '전체 array가 원점 주위에 중심 정렬되며 cell identity에는 $cell-x-y-z가 붙습니다.',
   surfaces: ['child-defined'],
   example:
-    '<array id="posts" shape={[3, 1, 1]} period={[20, 0, 0]}><cylinder id="post" radius={2} height={30} /></array>',
+    '<array id="posts" shape={[3, 1, 1]} period={[20, 0, 0]}><Cylinder id="post" radius={2} height={30} /></array>',
 } as const satisfies CadElementManifest<'array'>

@@ -15,9 +15,9 @@ type CadCatalogEntry = (typeof cadElementCatalog)[number]
 
 const columns: ColumnDef<CadCatalogEntry, unknown>[] = [
   {
-    accessorKey: 'tag',
+    accessorKey: 'authoringName',
     header: 'Tag',
-    cell: ({ row }) => <code className="font-semibold text-orange-700">{row.original.tag}</code>,
+    cell: ({ row }) => <code className="font-semibold text-orange-700">{row.original.authoringName}</code>,
   },
   { accessorKey: 'category', header: '종류', cell: ({ row }) => <Badge>{row.original.category}</Badge> },
   {
@@ -48,7 +48,7 @@ export function GeometryCatalog({
       (entry) =>
         (category === 'all' || entry.category === category) &&
         (!needle ||
-          `${entry.tag} ${entry.summary} ${entry.syntax} ${entry.keywords.join(' ')} ${entry.properties
+          `${entry.authoringName} ${entry.tag} ${entry.summary} ${entry.syntax} ${entry.keywords.join(' ')} ${entry.properties
             .map(({ description, name, type }) => `${name} ${type} ${description}`)
             .join(' ')}`
             .toLowerCase()
@@ -99,7 +99,7 @@ export function GeometryCatalog({
                 <Badge>{selected.category}</Badge>
                 <Code2 className="size-5 text-primary" />
               </div>
-              <CardTitle className="font-mono text-xl">&lt;{selected.tag} /&gt;</CardTitle>
+              <CardTitle className="font-mono text-xl">&lt;{selected.authoringName} /&gt;</CardTitle>
               <CardDescription>{selected.summary}</CardDescription>
             </CardHeader>
             <CardContent>
@@ -120,14 +120,24 @@ export function GeometryCatalog({
               </div>
 
               <div className="mt-6 rounded-lg border bg-slate-50 p-4 text-sm text-slate-700">
-                <p className="font-medium text-slate-950">공통 identity와 transform</p>
-                <p className="mt-1 leading-6">
-                  모든 intrinsic element는 선택적 <code>{cadAuthoringContract.identity.name}</code>와 canonical{' '}
-                  <code>position</code>, <code>rotation</code>, <code>scale</code>을 사용합니다. 적용 순서는{' '}
-                  <code>{cadAuthoringContract.transforms.applicationOrder.join(' → ')}</code>입니다.{' '}
-                  {cadAuthoringContract.transforms.rotationConvention} Nested path 예시는{' '}
-                  <code>{cadAuthoringContract.identity.pathExample}</code>입니다.
+                <p className="font-medium text-slate-950">
+                  {selected.standardTransforms ? '공통 identity와 transform' : 'Transform wrapper 계약'}
                 </p>
+                {selected.standardTransforms ? (
+                  <p className="mt-1 leading-6">
+                    이 element는 선택적 <code>{cadAuthoringContract.identity.name}</code>와 canonical{' '}
+                    <code>position</code>, <code>rotation</code>, <code>scale</code>을 사용합니다. 적용 순서는{' '}
+                    <code>{cadAuthoringContract.transforms.applicationOrder.join(' → ')}</code>입니다.{' '}
+                    {cadAuthoringContract.transforms.rotationConvention} Nested path 예시는{' '}
+                    <code>{cadAuthoringContract.identity.pathExample}</code>입니다.
+                  </p>
+                ) : (
+                  <p className="mt-1 leading-6">
+                    선택적 <code>{cadAuthoringContract.identity.name}</code>와 아래 전용 prop만 사용합니다. Direct{' '}
+                    <code>position</code>, <code>rotation</code>, <code>scale</code>은 child에 두고, wrapper의 중첩
+                    순서로 transform 합성을 명시하세요.
+                  </p>
+                )}
                 <a
                   className="mt-2 inline-block font-medium text-orange-700 underline underline-offset-4"
                   href="/docs?section=reference#cad-reference-geometry-transforms"
@@ -157,7 +167,7 @@ export function GeometryCatalog({
                           required: cadAuthoringContract.identity.required,
                           description: cadAuthoringContract.identity.description,
                         },
-                        ...cadAuthoringContract.transforms.canonicalProperties,
+                        ...(selected.standardTransforms ? cadAuthoringContract.transforms.canonicalProperties : []),
                         ...selected.properties,
                       ].map((property) => (
                         <tr className="align-top last:[&>td]:border-b-0" key={property.name}>
@@ -222,20 +232,22 @@ export function GeometryCatalog({
                 </pre>
               </div>
 
-              <details className="mt-6 rounded-lg border px-4 py-3 text-sm">
-                <summary className="cursor-pointer font-medium">Deprecated v7 호환 props</summary>
-                <p className="mt-2 leading-6 text-muted-foreground">{cadAuthoringContract.transforms.mixing}</p>
-                <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
-                  {cadAuthoringContract.transforms.legacyProperties.map((property) => (
-                    <li key={property.name}>
-                      <code>
-                        {property.name}: {property.type}
-                      </code>{' '}
-                      — {property.description}
-                    </li>
-                  ))}
-                </ul>
-              </details>
+              {selected.standardTransforms ? (
+                <details className="mt-6 rounded-lg border px-4 py-3 text-sm">
+                  <summary className="cursor-pointer font-medium">Deprecated v7 호환 props</summary>
+                  <p className="mt-2 leading-6 text-muted-foreground">{cadAuthoringContract.transforms.mixing}</p>
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
+                    {cadAuthoringContract.transforms.legacyProperties.map((property) => (
+                      <li key={property.name}>
+                        <code>
+                          {property.name}: {property.type}
+                        </code>{' '}
+                        — {property.description}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
             </CardContent>
           </>
         ) : (

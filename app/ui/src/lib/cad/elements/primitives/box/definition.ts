@@ -9,8 +9,10 @@ export type BoxAttributes = Readonly<{
 
 export const boxManifest = {
   tag: 'box',
+  authoringName: 'Box',
   category: 'primitive',
-  syntax: '<box size={[x,y,z]} />',
+  standardTransforms: true,
+  syntax: '<Box size={[x,y,z]} />',
   summary: '축 정렬 직육면체를 생성합니다.',
   keywords: ['box', 'cuboid', 'rectangular prism', '박스', '직육면체'],
   properties: [
@@ -24,5 +26,5 @@ export const boxManifest = {
   children: { count: 'none', description: '자식을 받지 않는 primitive입니다.' },
   origin: '기하 중심이 원점에 있고 모서리는 좌표축과 평행합니다.',
   surfaces: ['-X', '+X', '-Y', '+Y', 'Bottom', 'Top'],
-  example: '<box id="backboard" size={[180, 5, 100]} position={[0, 200, 280]} />',
+  example: '<Box id="backboard" size={[180, 5, 100]} position={[0, 200, 280]} />',
 } as const satisfies CadElementManifest<'box'>

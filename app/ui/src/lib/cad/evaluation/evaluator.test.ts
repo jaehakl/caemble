@@ -118,7 +118,7 @@ describe('CAD evaluator', () => {
     expect(bounds[1][1]).toBeCloseTo(4 + 2 * Math.SQRT2)
   })
 
-  it('rejects invalid transforms, Fragment transforms, and removed transform elements', () => {
+  it('rejects invalid direct transforms and Fragment transforms', () => {
     const core = new Material('Core', { color: '#2563eb' })
 
     ;[null, 1, [1, 2], [1, 2, 3, 4], [1, '2', 3], [1, Number.NaN, 3], [1, Number.POSITIVE_INFINITY, 3]].forEach(
@@ -166,16 +166,6 @@ describe('CAD evaluator', () => {
         'scale must be an array of exactly three finite numbers',
       )
     })
-
-    expect(() =>
-      evaluateCad(h('translate', { pos: [1, 2, 3], materials: { body: core } }, h(Box, { id: 'box' }))),
-    ).toThrow('Use the relative position attribute instead')
-    expect(() => evaluateCad(h('rotate', null, h(Box, { id: 'box', materials: { body: core } })))).toThrow(
-      'Use the XYZ Euler rotation attribute instead',
-    )
-    expect(() => evaluateCad(h('scale', null, h(Box, { id: 'box', materials: { body: core } })))).toThrow(
-      'Use the scale attribute instead',
-    )
   })
 
   it('matches Three/R3F intrinsic XYZ Euler order for a compound rotation', () => {

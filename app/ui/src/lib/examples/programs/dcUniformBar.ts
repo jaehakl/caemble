@@ -55,11 +55,11 @@ export const Copper = (electricalConductivity: number) =>
   })
 `
 
-export const dcUniformBarGeometryCode = `import { type Geometry, type Vec3 } from '@caemble/core'
+export const dcUniformBarGeometryCode = `import { Box, type Geometry, type Vec3 } from '@caemble/core'
 
-export const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <box size={size} />
+export const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <Box size={size} />
 
-export const Probe: Geometry = () => <box size={[2, 2, 2]} />
+export const Probe: Geometry = () => <Box size={[2, 2, 2]} />
 `
 
 export const dcUniformBarTaskCode = `import { defineTask } from '@caemble/core'

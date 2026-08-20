@@ -209,12 +209,6 @@ function evaluateNode(
     )
   }
 
-  if (type === 'translate')
-    throw new CadModelError('<translate> is not supported. Use the relative position attribute instead.')
-  if (type === 'rotate')
-    throw new CadModelError('<rotate> is not supported. Use the XYZ Euler rotation attribute instead.')
-  if (type === 'scale') throw new CadModelError('<scale> is not supported. Use the scale attribute instead.')
-
   const definition = getCadElementDefinition(type)
   if (!definition) throw new CadModelError(`Unknown CAD element: ${type}`)
   const globalId = props.id === undefined ? undefined : resolveGeometryId(props.id, `<${type}>`, identityParent, state)

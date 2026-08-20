@@ -9,7 +9,9 @@ export type ShellAttributes = Readonly<{
 
 export const shellManifest = {
   tag: 'shell',
+  authoringName: 'shell',
   category: 'operation',
+  standardTransforms: true,
   syntax: '<shell offsets={{ inner: -1, outer: 1 }}>Geometry</shell>',
   summary: '닫힌 Geometry의 signed offset 경계 사이에 다층 shell solid를 생성합니다.',
   keywords: ['shell', 'offset', 'layer', 'coating', '쉘', '오프셋', '코팅'],
@@ -28,5 +30,5 @@ export const shellManifest = {
   },
   origin: '자식 좌표를 유지한 채 생성된 shell 결과에 이 element의 transform을 적용합니다.',
   surfaces: ['Surface 1', 'Surface 2', '…'],
-  example: '<shell id="coating" offsets={{ inner: -1, outer: 1 }}><sphere radius={10} /></shell>',
+  example: '<shell id="coating" offsets={{ inner: -1, outer: 1 }}><Sphere radius={10} /></shell>',
 } as const satisfies CadElementManifest<'shell'>
