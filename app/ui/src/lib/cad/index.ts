@@ -2,6 +2,7 @@ export { evaluateCad, evaluateCadScene } from './evaluation/evaluator'
 export { setGeometryAuthoringGraph } from './compiler/geometryTypeEnvironment'
 export type { GeometryTypeGraph } from './compiler/geometryTypes'
 export { cadAuthoringContract, cadElementCatalog } from './catalog'
+export { CAD_API_DECLARATION_FINGERPRINT } from './api/generatedVersions'
 export {
   insertPrimitiveAfterCursorLine,
   operationAuthoringElements,

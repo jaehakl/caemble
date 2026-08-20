@@ -12,7 +12,9 @@ export type AiAgentSourceDocument = Readonly<{
 export const AI_AGENT_PROVIDER_QUERY_KEY = ['ai-agent', 'providers'] as const
 export const AI_AGENT_PROVIDER = 'openai' as const
 export const AI_AGENT_MODEL = 'gpt-5.6-luna' as const
-export const AI_AGENT_PROMPT_TOOL_VERSION = 'caemble-ai-agent-v3' as const
+// <generated:ai-agent-prompt-tool-version>
+export const AI_AGENT_PROMPT_TOOL_VERSION = 'caemble-ai-agent-v4-cd2d1fce3c1a' as const
+// </generated:ai-agent-prompt-tool-version>
 export const AI_AGENT_REASONING_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 
 export type AiAgentReasoningEffort = (typeof AI_AGENT_REASONING_EFFORTS)[number]

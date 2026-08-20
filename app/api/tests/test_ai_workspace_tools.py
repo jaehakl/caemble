@@ -7,8 +7,9 @@ import struct
 import pytest
 
 import ai.workspace as workspace_module
+from ai.cad_reference import CAD_AUTHORING_REFERENCE
 from ai.data_tools import VisibleDataError, VisibleDataReader, slice_recorded_tensor
-from ai.tools import ToolExecutor
+from ai.tools import ToolExecutor, agent_tool_definitions
 from ai.workspace import StagedExperiment, WorkspaceEditError, bundle_hash, text_hash
 from db import (
     Experiment,
@@ -115,6 +116,55 @@ async def test_agent_write_tool_requires_a_complete_hash_bound_source_read():
         },
     )
     assert written.output["stagedRevision"] == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_reads_bounded_official_cad_authoring_details():
+    workspace = StagedExperiment(source_bundle())
+
+    class Db:
+        async def rollback(self):
+            pass
+
+    class Data:
+        db = Db()
+        user_id = "user-1"
+
+    definitions = {item["name"]: item for item in agent_tool_definitions()}
+    schema = definitions["get_cad_authoring_reference"]["parameters"]["properties"]["elements"]
+    assert schema["minItems"] == 1
+    assert schema["maxItems"] == 14
+    assert {"Box", "box", "subtract"} <= set(schema["items"]["enum"])
+
+    executor = ToolExecutor(data=Data(), catalog=None, workspace=workspace)
+    execution = await executor.execute(
+        "get_cad_authoring_reference",
+        {"elements": ["Box", "box", "subtract"]},
+    )
+
+    assert execution.output["apiVersion"] == 8
+    assert [item["tag"] for item in execution.output["elements"]] == ["box", "subtract"]
+    assert execution.output["elements"][0]["properties"]
+    assert execution.output["elements"][1]["children"]["count"] == "many"
+    assert len(execution.model_output().encode("utf-8")) < 64 * 1024
+    assert execution.provenance == []
+
+    all_elements = await executor.execute(
+        "get_cad_authoring_reference",
+        {
+            "elements": [
+                item["authoringName"] for item in CAD_AUTHORING_REFERENCE["elements"]
+            ]
+        },
+    )
+    assert len(all_elements.output["elements"]) == 14
+    assert len(all_elements.model_output().encode("utf-8")) < 64 * 1024
+
+    unsupported = await executor.execute(
+        "get_cad_authoring_reference",
+        {"elements": ["Cube"]},
+    )
+    assert unsupported.output["ok"] is False
 
 
 @pytest.mark.asyncio

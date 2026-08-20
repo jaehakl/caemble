@@ -147,22 +147,29 @@ describe('AiHelperWorkspace Agent transport', () => {
       type: 'tool.started',
       runId: 'run-1',
       sequence: 2,
+      callId: 'cad-reference-1',
+      name: 'get_cad_authoring_reference',
+    })
+    await emit({
+      type: 'tool.started',
+      runId: 'run-1',
+      sequence: 3,
       callId: 'catalog-1',
       name: 'search_catalog',
     })
     await emit({
       type: 'workspace.changed',
       runId: 'run-1',
-      sequence: 3,
+      sequence: 4,
       stagedRevision: 3,
       sourceHash: 'staged-hash',
       changedFiles: ['tasks/thermal.tsx'],
     })
-    await emit({ type: 'message.delta', runId: 'run-1', sequence: 4, delta: '수정했습니다.' })
+    await emit({ type: 'message.delta', runId: 'run-1', sequence: 5, delta: '수정했습니다.' })
     await emit({
       type: 'run.completed',
       runId: 'run-1',
-      sequence: 5,
+      sequence: 6,
       message: '수정했습니다. Workbench에서 결과를 확인해 주세요.',
       finalBundle: bundle,
       baseHash: 'base-hash',
@@ -188,9 +195,10 @@ describe('AiHelperWorkspace Agent transport', () => {
       'sealed-after',
     )
     expect(await screen.findByText('수정했습니다. Workbench에서 결과를 확인해 주세요.')).toBeVisible()
-    await user.click(screen.getByText(/Agent 작업 4개/))
+    await user.click(screen.getByText(/Agent 작업 5개/))
     await user.click(screen.getByText(/사용한 데이터와 카탈로그 1개/))
     expect(screen.getByText('카탈로그 검색')).toBeVisible()
+    expect(screen.getByText('CAD 문법 상세 조회')).toBeVisible()
     expect(screen.getByText('Agent 컨텍스트 구성')).toBeVisible()
     expect(screen.getByText('staged source 수정')).toBeVisible()
     expect(screen.getByText('Steady-state heat solver')).toBeVisible()

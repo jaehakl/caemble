@@ -1,16 +1,21 @@
-import { cadAuthoringContract, cadElementCatalog } from '@/lib/cad'
+import { CAD_API_DECLARATION_FINGERPRINT, cadAuthoringContract, cadElementCatalog } from '@/lib/cad'
+import { buildCadAuthoringReference, CAD_GRAMMAR_CORE_MAX_BYTES } from '@/lib/cad/authoringReference'
 import { geometryAuthoringSkeletonCode } from '@/lib/examples'
 import { searchDocsKnowledge, type DocsKnowledgeChunk } from '@/pages/docs/docsKnowledge'
 
-export const CAD_GRAMMAR_CORE_MAX_BYTES = 5 * 1024
-export const CAD_GRAMMAR_API_VERSION = cadAuthoringContract.apiVersion
+export { CAD_GRAMMAR_CORE_MAX_BYTES }
+
+export const CAD_AUTHORING_REFERENCE = buildCadAuthoringReference({
+  authoringContract: cadAuthoringContract,
+  declarationFingerprint: CAD_API_DECLARATION_FINGERPRINT,
+  elements: cadElementCatalog,
+  geometrySkeleton: geometryAuthoringSkeletonCode,
+})
+export const CAD_GRAMMAR_API_VERSION = CAD_AUTHORING_REFERENCE.apiVersion
+export const CAD_GRAMMAR_CORE = CAD_AUTHORING_REFERENCE.core
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder('utf-8', { fatal: true })
-
-function byteLength(value: string) {
-  return encoder.encode(value).byteLength
-}
 
 function truncateUtf8(value: string, maxBytes: number) {
   const bytes = encoder.encode(value)
@@ -56,43 +61,6 @@ function uniqueChunks(chunks: readonly (DocsKnowledgeChunk | undefined)[], limit
   }
   return result
 }
-
-const grammarCore = [
-  `# Official CAD authoring grammar — API v${CAD_GRAMMAR_API_VERSION}`,
-  'Authority: Caemble app contract. Manuals: /docs?section=reference and /docs?section=geometry.',
-  '',
-  '## Complete geometry.tsx skeleton',
-  '```tsx',
-  ...geometryAuthoringSkeletonCode.trim().split('\n'),
-  '```',
-  '',
-  '## Required rules',
-  `- New code uses only canonical v${CAD_GRAMMAR_API_VERSION} transforms: ${cadAuthoringContract.transforms.canonicalProperties.map(({ name, type }) => `\`${name}?: ${type}\``).join(', ')}. ${cadAuthoringContract.transforms.rotationConvention} Effective order: ${cadAuthoringContract.transforms.applicationOrder.join(', ')}.`,
-  '- Group transforms with lowercase `<translate offset={Vec3}>`, `<rotate axis={Vec3} angle={radians(degrees)}>`, and `<scale x={sx} y={sy} z={sz}>`; wrappers reject direct transform props.',
-  `- Never generate \`translation\`. ${cadAuthoringContract.transforms.legacyProperties.map(({ name }) => `\`${name}\``).join(' and ')} and lowercase primitive JSX are deprecated compatibility syntax; do not emit them. ${cadAuthoringContract.transforms.mixing}`,
-  '- Omitted component/primitive IDs use lower-kebab names plus `-2`, `-3`; use explicit stable IDs for durable targets. Fragment has no `id`.',
-  '- A topology-changing operation owns its result `id`; consumed operand IDs are not final solver targets. `array` keeps `$cell-x-y-z` instance identity.',
-  '- Components inherit the parent Material role map when `materials` is omitted; an explicit map replaces it and `{}` clears it. Primitives consume the `body` role.',
-  "- Boolean child order matters: `subtract` uses the first child as base and the rest as cutters. Follow each operation's child contract exactly.",
-  '- Import PascalCase primitives and public APIs from `@caemble/core`; keep operation tags lowercase. Export PascalCase named `Geometry<Props>` components, never a default Geometry export.',
-  '- Local `Geometry<Props>` functions use direct destructuring with an initializer for every custom prop; no `props.foo`, rest, computed, or nested patterns.',
-  '- Primitive props are optional; omitted/`undefined` uses Catalog defaults. Operation props and child contracts stay required.',
-  '- Bounded deterministic `for`, `map`, and `if` are supported. Use explicit loop IDs; prefer `array` for regular lattices.',
-  '',
-  '## Element index (canonical syntax)',
-  ...cadElementCatalog.map(
-    ({ authoringName, category, summary, syntax }) =>
-      `- \`${authoringName}\` (${category}): ${summary} Syntax: \`${syntax}\``,
-  ),
-].join('\n')
-
-if (byteLength(grammarCore) > CAD_GRAMMAR_CORE_MAX_BYTES) {
-  throw new Error(
-    `Official CAD grammar core is ${byteLength(grammarCore)} UTF-8 bytes and exceeds ${CAD_GRAMMAR_CORE_MAX_BYTES}.`,
-  )
-}
-
-export const CAD_GRAMMAR_CORE = grammarCore
 
 export function cadReferenceSearchHints(activeSource: string, diagnostics: string) {
   return truncateUtf8([sourceTags(activeSource).join(' '), diagnostics].filter(Boolean).join('\n'), 8 * 1024)

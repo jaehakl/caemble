@@ -7,6 +7,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 import ai.workspace as agent_workspace
+from ai.cad_reference import CAD_AUTHORING_CORE, CAD_AUTHORING_REFERENCE_HASH
 from ai.agent import (
     MAX_AGENT_STEPS,
     MAX_TOOL_CALLS,
@@ -17,8 +18,8 @@ from ai.agent import (
 from ai.models import RunStart, parse_client_message
 from ai.provider import ProviderError, ProviderStep, ProviderToolCall, ProviderUsage
 from ai.session import AgentSessionState, SessionEnvelopeCodec, credential_fingerprint
-from ai.tools import ToolExecution
-from ai.workspace import StagedExperiment, bundle_hash
+from ai.tools import ToolExecution, ToolExecutor
+from ai.workspace import StagedExperiment, bundle_hash, text_hash
 from models import ExperimentSourceBundle
 
 
@@ -204,12 +205,104 @@ async def test_agent_runner_includes_active_dependencies_and_seals_replay_sessio
 
 
 def test_agent_generation_policy_and_execution_limits():
-    assert PROMPT_TOOL_VERSION == "caemble-ai-agent-v3"
+    assert PROMPT_TOOL_VERSION == f"caemble-ai-agent-v4-{CAD_AUTHORING_REFERENCE_HASH[:12]}"
     assert MAX_AGENT_STEPS == 12
     assert MAX_TOOL_CALLS == 24
+    assert CAD_AUTHORING_CORE in SYSTEM_PROMPT
+    assert "get_cad_authoring_reference" in SYSTEM_PROMPT
     assert "Never compile, evaluate, test, or validate" in SYSTEM_PROMPT
     assert "finish immediately" in SYSTEM_PROMPT
     assert run_start().reasoningEffort == "medium"
+
+
+@pytest.mark.asyncio
+async def test_agent_reads_official_cad_reference_before_staging_geometry(monkeypatch):
+    class GeometryProvider:
+        def __init__(self):
+            self.calls = 0
+
+        async def generate(self, **request):
+            self.calls += 1
+            if self.calls == 1:
+                call = ProviderToolCall(
+                    call_id="reference-1",
+                    name="get_cad_authoring_reference",
+                    arguments={"elements": ["Box"]},
+                )
+            elif self.calls == 2:
+                call = ProviderToolCall(
+                    call_id="read-1",
+                    name="read_experiment_file",
+                    arguments={
+                        "path": "geometry.tsx",
+                        "offset": 0,
+                        "length": 24_000,
+                    },
+                )
+            elif self.calls == 3:
+                source = source_bundle().files["geometry.tsx"]
+                call = ProviderToolCall(
+                    call_id="write-1",
+                    name="write_experiment_file",
+                    arguments={
+                        "path": "geometry.tsx",
+                        "content": (
+                            "import { Box, type Geometry } from '@caemble/core'\n"
+                            "export const Shape: Geometry = () => <Box id=\"shape\" />\n"
+                        ),
+                        "expectedSha256": text_hash(source),
+                    },
+                )
+            else:
+                await request["on_delta"]("완료")
+                return ProviderStep(text="Geometry를 수정했습니다.", output_items=[], tool_calls=[])
+            return ProviderStep(
+                text="",
+                output_items=[
+                    {
+                        "type": "function_call",
+                        "call_id": call.call_id,
+                        "name": call.name,
+                        "arguments": call.arguments,
+                    }
+                ],
+                tool_calls=[call],
+            )
+
+    class Db:
+        async def rollback(self):
+            pass
+
+    class Data:
+        db = Db()
+        user_id = "user-1"
+
+    start = run_start()
+    workspace = StagedExperiment(start.workspace.document.sourceBundle)
+    tools = ToolExecutor(data=Data(), catalog=None, workspace=workspace)
+
+    async def skip_snapshot_refresh():
+        pass
+
+    monkeypatch.setattr(tools, "_refresh_geometry_snapshot", skip_snapshot_refresh)
+    runner = AgentRunner(
+        run_id="run-geometry",
+        user_id="user-1",
+        credential_version=2,
+        permission_fingerprint="p" * 64,
+        start=start,
+        workspace=workspace,
+        provider=GeometryProvider(),
+        tools=tools,
+        session_codec=SessionEnvelopeCodec([Fernet.generate_key()]),
+        emitter=FakeEmitter(),
+        cancel_event=asyncio.Event(),
+    )
+
+    result = await runner.run("sk-test")
+
+    assert result["stagedRevision"] == 1
+    assert result["finalBundle"]["files"]["geometry.tsx"].endswith('<Box id="shape" />\n')
 
 
 def test_active_file_must_exist_in_bundle():

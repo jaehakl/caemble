@@ -610,8 +610,8 @@ export function AiHelperWorkspace({
             <Bot className="mb-3 size-10 text-muted-foreground" />
             <p className="font-medium">현재 Experiment를 Agent와 함께 편집하세요.</p>
             <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-              Agent는 허용된 데이터와 카탈로그를 검색해 source를 수정하고, 생성된 최종 코드를 미검증 상태로
-              편집기에 바로 반영합니다. 결과는 Workbench에서 확인하세요.
+              Agent는 허용된 데이터와 카탈로그를 검색해 source를 수정하고, 생성된 최종 코드를 미검증 상태로 편집기에
+              바로 반영합니다. 결과는 Workbench에서 확인하세요.
             </p>
           </div>
         )}
@@ -627,10 +627,10 @@ export function AiHelperWorkspace({
         <div className="mb-3 flex items-start gap-2 rounded-md border bg-muted/20 px-3 py-2 text-xs leading-5 text-muted-foreground">
           <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-primary" />
           <span>
-            질문, 현재 Experiment source, Agent가 조회한 Visible DB·카탈로그 데이터가 선택한 외부 AI
-            제공자에 전송됩니다. API key는 Caemble 백엔드에서만 사용됩니다. Caemble은 store=false로 요청하고 대화를 DB에
-            저장하지 않지만, 일시적인 prompt cache와 최대 30일의 abuse-monitoring 로그가 provider data controls에 따라
-            남을 수 있습니다. Caemble 세션 삭제가 provider의 cache나 로그 삭제를 뜻하지 않습니다.
+            질문, 현재 Experiment source, Agent가 조회한 Visible DB·카탈로그 데이터가 선택한 외부 AI 제공자에
+            전송됩니다. API key는 Caemble 백엔드에서만 사용됩니다. Caemble은 store=false로 요청하고 대화를 DB에 저장하지
+            않지만, 일시적인 prompt cache와 최대 30일의 abuse-monitoring 로그가 provider data controls에 따라 남을 수
+            있습니다. Caemble 세션 삭제가 provider의 cache나 로그 삭제를 뜻하지 않습니다.
           </span>
         </div>
         {providers.isError || error ? (
@@ -778,6 +778,7 @@ function boundedRecentMessages(messages: readonly AiHelperMessage[]) {
 
 function toolLabel(name: string) {
   const labels: Record<string, string> = {
+    get_cad_authoring_reference: 'CAD 문법 상세 조회',
     search_catalog: '카탈로그 검색',
     get_catalog_item: '카탈로그 상세 조회',
     search_visible_data: 'Visible 데이터 검색',

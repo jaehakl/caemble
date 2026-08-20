@@ -96,6 +96,8 @@ describe('AI Agent API transport', () => {
     expect(loadAiAgentSession({ ...binding, workspaceSession: 8 })).toBeNull()
     saveAiAgentSession(binding, 'sealed-context')
     expect(loadAiAgentSession({ ...binding, permissionFingerprint: 'admin,user' })).toBeNull()
+    saveAiAgentSession(binding, 'sealed-context')
+    expect(loadAiAgentSession({ ...binding, promptToolVersion: 'caemble-ai-agent-v3' })).toBeNull()
   })
 
   it('opens the Caemble WS endpoint, serializes client messages and normalizes snake-case server events', async () => {

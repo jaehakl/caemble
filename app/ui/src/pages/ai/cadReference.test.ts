@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { cadElementCatalog } from '@/lib/cad'
+import { CAD_API_DECLARATION_FINGERPRINT, cadElementCatalog } from '@/lib/cad'
+import { AI_AGENT_PROMPT_TOOL_VERSION } from '@/api/aiAgent'
 import { geometryAuthoringSkeletonCode } from '@/lib/examples'
 import { getDocsKnowledge } from '@/pages/docs/docsKnowledge'
 import {
+  CAD_AUTHORING_REFERENCE,
   CAD_GRAMMAR_CORE,
   CAD_GRAMMAR_CORE_MAX_BYTES,
   cadReferenceSearchHints,
@@ -27,6 +29,10 @@ describe('official AI CAD reference', () => {
       expect(CAD_GRAMMAR_CORE).toContain(`\`${authoringName}\``)
       expect(CAD_GRAMMAR_CORE).toContain(`\`${syntax}\``)
     })
+    expect(CAD_AUTHORING_REFERENCE.declarationFingerprint).toBe(CAD_API_DECLARATION_FINGERPRINT)
+    expect(CAD_AUTHORING_REFERENCE.elements).toHaveLength(14)
+    expect(CAD_AUTHORING_REFERENCE.elements.map(({ tag }) => tag)).toEqual(cadElementCatalog.map(({ tag }) => tag))
+    expect(AI_AGENT_PROMPT_TOOL_VERSION).toMatch(/^caemble-ai-agent-v4-[0-9a-f]{12}$/u)
   })
 
   it('orders explicit prompt tags before active-source and diagnostic tags', () => {

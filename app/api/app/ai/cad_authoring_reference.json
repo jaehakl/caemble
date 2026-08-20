@@ -1,0 +1,680 @@
+{
+  "schemaVersion": 1,
+  "apiVersion": 8,
+  "declarationFingerprint": "924b0387f45212ce60ec10448d492abc14142194b19ec0bb779f5d57a051b838",
+  "core": "# Official CAD authoring grammar — API v8\nAuthority: Caemble app contract. Manuals: /docs?section=reference and /docs?section=geometry.\n\n## Complete geometry.tsx skeleton\n```tsx\nimport { Box, Cylinder, type Geometry } from '@caemble/core'\n\nexport const Assembly: Geometry<{ includeBraces?: boolean }> = ({ includeBraces = true }) => {\n  const braces: unknown[] = []\n  if (includeBraces) {\n    for (let index = 0; index < 2; index += 1) {\n      braces.push(\n        <Box id={`brace-${index}`} size={[4, 40, 4]} position={[index === 0 ? -20 : 20, 0, 30]} />,\n      )\n    }\n  }\n\n  return (\n    <>\n      <Box id=\"base\" size={[100, 60, 10]} position={[0, 0, 5]} />\n      <Cylinder id=\"post\" radius={5} height={80} position={[0, 0, 50]} />\n      {braces}\n    </>\n  )\n}\n```\n\n## Required rules\n- New code uses only canonical v8 transforms: `position?: Vec3`, `rotation?: Vec3`, `scale?: Vec3`. Right-handed intrinsic XYZ Euler angles in radians, matching the Three/R3F default XYZ order. Effective order: scale, rotation, position.\n- Group transforms with lowercase `<translate offset={Vec3}>`, `<rotate axis={Vec3} angle={radians(degrees)}>`, and `<scale x={sx} y={sy} z={sz}>`; wrappers reject direct transform props.\n- Never generate `translation`. `pos` and `rotate` and lowercase primitive JSX are deprecated compatibility syntax; do not emit them. A node cannot mix canonical position/rotation with deprecated pos/rotate.\n- Omitted component/primitive IDs use lower-kebab names plus `-2`, `-3`; use explicit stable IDs for durable targets. Fragment has no `id`.\n- A topology-changing operation owns its result `id`; consumed operand IDs are not final solver targets. `array` keeps `$cell-x-y-z` instance identity.\n- Components inherit the parent Material role map when `materials` is omitted; an explicit map replaces it and `{}` clears it. Primitives consume the `body` role.\n- Boolean child order matters: `subtract` uses the first child as base and the rest as cutters. Follow each operation's child contract exactly.\n- Import PascalCase primitives and public APIs from `@caemble/core`; keep operation tags lowercase. Export PascalCase named `Geometry<Props>` components, never a default Geometry export.\n- Local `Geometry<Props>` functions use direct destructuring with an initializer for every custom prop; no `props.foo`, rest, computed, or nested patterns.\n- Primitive props are optional; omitted/`undefined` uses Catalog defaults. Operation props and child contracts stay required.\n- Bounded deterministic `for`, `map`, and `if` are supported. Use explicit loop IDs; prefer `array` for regular lattices.\n\n## Element index (canonical syntax)\n- `Box` (primitive): 축 정렬 직육면체를 생성합니다. Syntax: `<Box size={[x,y,z]} />`\n- `Cylinder` (primitive): 서로 다른 양 끝 반지름을 지원하는 원점 중심의 원기둥을 생성합니다. Syntax: `<Cylinder radius={r1} radius_2={r2} height={h} segments={32} />`\n- `CurvedEdgeCylinder` (primitive): Fourier 방위 곡선과 Taylor 높이 곡선의 곱으로 반지름이 정해지는 닫힌 원기둥을 생성합니다. Syntax: `<CurvedEdgeCylinder height={h} azimuthalCurve={modes} verticalCurve={{origin,coefficients}} />`\n- `Sphere` (primitive): 원점 중심의 구를 생성합니다. Syntax: `<Sphere radius={r} segments={32} />`\n- `CurvedSurfaceSphere` (primitive): 방위각과 polar angle의 Fourier 곡선 곱으로 중심 반지름이 정해지는 닫힌 구면을 생성합니다. Syntax: `<CurvedSurfaceSphere azimuthalCurve={modes} polarCurve={modes} />`\n- `Fiber` (primitive): 두 점 사이의 절차적 중심선을 가변 반지름 원형 단면으로 sweep합니다. Syntax: `<Fiber from={p0} to={p1} radius={(s) => r} helix={{turns,phase,radius}} fourier={modes} />`\n- `translate` (operation): 한 개 이상의 child Geometry를 parent 좌표계에서 상대 이동합니다. Syntax: `<translate offset={[x,y,z]}>Geometry...</translate>`\n- `rotate` (operation): 한 개 이상의 child Geometry를 원점 기준 axis-angle로 회전합니다. Syntax: `<rotate axis={[x,y,z]} angle={radians(degrees)}>Geometry...</rotate>`\n- `scale` (operation): 한 개 이상의 child Geometry를 원점 기준으로 축별 확대하거나 축소합니다. Syntax: `<scale x={sx} y={sy} z={sz}>Geometry...</scale>`\n- `shell` (operation): 닫힌 Geometry의 signed offset 경계 사이에 다층 shell solid를 생성합니다. Syntax: `<shell offsets={{ inner: -1, outer: 1 }}>Geometry</shell>`\n- `array` (operation): 하나의 Geometry를 3차원 격자에 반복 배치합니다. Syntax: `<array shape={[nx,ny,nz]} period={[px,py,pz]} axes={{x,y,z}} inject={tensors}>Geometry</array>`\n- `union` (operation): 같은 Material의 자식 solid를 합칩니다. Syntax: `<union>...</union>`\n- `subtract` (operation): 첫 Geometry의 각 Material part에서 나머지 cutter solid를 뺍니다. Syntax: `<subtract>base cutter...</subtract>`\n- `intersect` (operation): 모든 자식 solid의 교집합을 구합니다. Syntax: `<intersect>shapeA shapeB...</intersect>`",
+  "elements": [
+    {
+      "tag": "box",
+      "authoringName": "Box",
+      "category": "primitive",
+      "standardTransforms": true,
+      "syntax": "<Box size={[x,y,z]} />",
+      "summary": "축 정렬 직육면체를 생성합니다.",
+      "keywords": [
+        "box",
+        "cuboid",
+        "rectangular prism",
+        "박스",
+        "직육면체"
+      ],
+      "properties": [
+        {
+          "name": "size",
+          "type": "Vec3",
+          "required": false,
+          "default": "[1, 1, 1]",
+          "authoringValue": "[1, 1, 1]",
+          "description": "각각 X, Y, Z 방향의 전체 길이인 정확히 세 개의 유한한 양수입니다."
+        }
+      ],
+      "children": {
+        "count": "none",
+        "description": "자식을 받지 않는 primitive입니다."
+      },
+      "origin": "기하 중심이 원점에 있고 모서리는 좌표축과 평행합니다.",
+      "surfaces": [
+        "-X",
+        "+X",
+        "-Y",
+        "+Y",
+        "Bottom",
+        "Top"
+      ],
+      "example": "<Box id=\"backboard\" size={[180, 5, 100]} position={[0, 200, 280]} />"
+    },
+    {
+      "tag": "cylinder",
+      "authoringName": "Cylinder",
+      "category": "primitive",
+      "standardTransforms": true,
+      "syntax": "<Cylinder radius={r1} radius_2={r2} height={h} segments={32} />",
+      "summary": "서로 다른 양 끝 반지름을 지원하는 원점 중심의 원기둥을 생성합니다.",
+      "keywords": [
+        "cylinder",
+        "cone",
+        "frustum",
+        "원기둥",
+        "원뿔대"
+      ],
+      "properties": [
+        {
+          "name": "radius",
+          "type": "number",
+          "required": false,
+          "default": "0.5",
+          "authoringValue": "0.5",
+          "description": "아래쪽 끝의 유한한 0 이상 반지름입니다. radius_2와 동시에 0일 수 없습니다."
+        },
+        {
+          "name": "radius_2",
+          "type": "number",
+          "required": false,
+          "default": "radius",
+          "authoringValue": "0.5",
+          "description": "위쪽 끝의 유한한 0 이상 반지름입니다. 생략하면 radius와 같고 두 반지름이 동시에 0일 수 없습니다."
+        },
+        {
+          "name": "height",
+          "type": "number",
+          "required": false,
+          "default": "1",
+          "authoringValue": "1",
+          "description": "Z축 방향의 유한한 양수 전체 높이입니다."
+        },
+        {
+          "name": "segments",
+          "type": "number",
+          "required": false,
+          "default": "32",
+          "authoringValue": "32",
+          "description": "둘레 분할 수이며 4 이상의 안전한 정수입니다."
+        }
+      ],
+      "children": {
+        "count": "none",
+        "description": "자식을 받지 않는 primitive입니다."
+      },
+      "origin": "중심이 원점에 있고 기본 축은 +Z이며 양 끝은 z = ±height/2에 있습니다.",
+      "surfaces": [
+        "Bottom",
+        "Side",
+        "Top"
+      ],
+      "example": "<Cylinder id=\"pole\" radius={3} height={300} position={[0, 0, 150]} />"
+    },
+    {
+      "tag": "curvedEdgeCylinder",
+      "authoringName": "CurvedEdgeCylinder",
+      "category": "primitive",
+      "standardTransforms": true,
+      "syntax": "<CurvedEdgeCylinder height={h} azimuthalCurve={modes} verticalCurve={{origin,coefficients}} />",
+      "summary": "Fourier 방위 곡선과 Taylor 높이 곡선의 곱으로 반지름이 정해지는 닫힌 원기둥을 생성합니다.",
+      "keywords": [
+        "curved edge cylinder",
+        "fourier cylinder",
+        "곡면 원기둥",
+        "푸리에"
+      ],
+      "properties": [
+        {
+          "name": "height",
+          "type": "number",
+          "required": false,
+          "default": "1",
+          "authoringValue": "1",
+          "description": "Z축 방향의 유한한 양수 전체 높이입니다."
+        },
+        {
+          "name": "azimuthalCurve",
+          "type": "readonly { amplitude: number; phase: number }[]",
+          "required": false,
+          "default": "[{ amplitude: 0.5, phase: 0 }]",
+          "authoringValue": "[{ amplitude: 0.5, phase: 0 }]",
+          "description": "비어 있지 않은 Fourier mode 배열입니다. amplitude는 유한한 0 이상, phase는 유한해야 하며 모든 표본 반지름은 양수여야 합니다."
+        },
+        {
+          "name": "verticalCurve",
+          "type": "{ origin: number; coefficients: readonly number[] }",
+          "required": false,
+          "default": "{ origin: 0, coefficients: [1] }",
+          "authoringValue": "{ origin: 0, coefficients: [1] }",
+          "description": "유한한 origin과 비어 있지 않은 유한 coefficients로 높이별 Taylor 반지름 배율을 정의하며 모든 표본 반지름은 양수여야 합니다."
+        },
+        {
+          "name": "azimuthalSegments",
+          "type": "number",
+          "required": false,
+          "default": "64",
+          "authoringValue": "64",
+          "description": "방위각 방향 분할 수이며 4 이상의 안전한 정수입니다."
+        },
+        {
+          "name": "verticalSegments",
+          "type": "number",
+          "required": false,
+          "default": "32",
+          "authoringValue": "32",
+          "description": "높이 방향 분할 수이며 1 이상의 안전한 정수입니다."
+        }
+      ],
+      "children": {
+        "count": "none",
+        "description": "자식을 받지 않는 primitive입니다."
+      },
+      "origin": "중심이 원점에 있고 기본 축은 +Z이며 양 끝은 z = ±height/2에 있습니다.",
+      "surfaces": [
+        "Bottom",
+        "Side",
+        "Top"
+      ],
+      "example": "<CurvedEdgeCylinder id=\"body\" height={20} azimuthalCurve={[{ amplitude: 5, phase: 0 }]} verticalCurve={{ origin: 0, coefficients: [1] }} />"
+    },
+    {
+      "tag": "sphere",
+      "authoringName": "Sphere",
+      "category": "primitive",
+      "standardTransforms": true,
+      "syntax": "<Sphere radius={r} segments={32} />",
+      "summary": "원점 중심의 구를 생성합니다.",
+      "keywords": [
+        "sphere",
+        "ball",
+        "구",
+        "구체"
+      ],
+      "properties": [
+        {
+          "name": "radius",
+          "type": "number",
+          "required": false,
+          "default": "0.5",
+          "authoringValue": "0.5",
+          "description": "유한한 양수 구 반지름입니다."
+        },
+        {
+          "name": "segments",
+          "type": "number",
+          "required": false,
+          "default": "32",
+          "authoringValue": "32",
+          "description": "표면 분할 해상도이며 4 이상의 안전한 정수여야 합니다."
+        }
+      ],
+      "children": {
+        "count": "none",
+        "description": "자식을 받지 않는 primitive입니다."
+      },
+      "origin": "구의 중심이 원점에 있습니다.",
+      "surfaces": [
+        "Outer"
+      ],
+      "example": "<Sphere id=\"ball\" radius={12} position={[0, 0, 12]} />"
+    },
+    {
+      "tag": "curvedSurfaceSphere",
+      "authoringName": "CurvedSurfaceSphere",
+      "category": "primitive",
+      "standardTransforms": true,
+      "syntax": "<CurvedSurfaceSphere azimuthalCurve={modes} polarCurve={modes} />",
+      "summary": "방위각과 polar angle의 Fourier 곡선 곱으로 중심 반지름이 정해지는 닫힌 구면을 생성합니다.",
+      "keywords": [
+        "curved surface sphere",
+        "fourier sphere",
+        "곡면 구",
+        "푸리에"
+      ],
+      "properties": [
+        {
+          "name": "azimuthalCurve",
+          "type": "readonly { amplitude: number; phase: number }[]",
+          "required": false,
+          "default": "[{ amplitude: 0.5, phase: 0 }]",
+          "authoringValue": "[{ amplitude: 0.5, phase: 0 }]",
+          "description": "비어 있지 않은 Fourier mode 배열입니다. amplitude는 유한한 0 이상이고 phase는 유한해야 합니다."
+        },
+        {
+          "name": "polarCurve",
+          "type": "readonly { amplitude: number; phase: number }[]",
+          "required": false,
+          "default": "[{ amplitude: 1, phase: 0 }]",
+          "authoringValue": "[{ amplitude: 1, phase: 0 }]",
+          "description": "비어 있지 않은 Fourier mode 배열입니다. amplitude는 유한한 0 이상이고 phase는 유한하며 모든 결합 표본 반지름은 양수여야 합니다."
+        },
+        {
+          "name": "azimuthalSegments",
+          "type": "number",
+          "required": false,
+          "default": "64",
+          "authoringValue": "64",
+          "description": "방위각 방향 분할 수이며 4 이상의 안전한 정수입니다."
+        },
+        {
+          "name": "polarSegments",
+          "type": "number",
+          "required": false,
+          "default": "32",
+          "authoringValue": "32",
+          "description": "극각 방향 분할 수이며 2 이상의 안전한 정수입니다."
+        }
+      ],
+      "children": {
+        "count": "none",
+        "description": "자식을 받지 않는 primitive입니다."
+      },
+      "origin": "변형된 구면의 중심이 원점에 있고 극축은 +Z입니다.",
+      "surfaces": [
+        "Outer"
+      ],
+      "example": "<CurvedSurfaceSphere id=\"particle\" azimuthalCurve={[{ amplitude: 5, phase: 0 }]} polarCurve={[{ amplitude: 1, phase: 0 }]} />"
+    },
+    {
+      "tag": "fiber",
+      "authoringName": "Fiber",
+      "category": "primitive",
+      "standardTransforms": true,
+      "syntax": "<Fiber from={p0} to={p1} radius={(s) => r} helix={{turns,phase,radius}} fourier={modes} />",
+      "summary": "두 점 사이의 절차적 중심선을 가변 반지름 원형 단면으로 sweep합니다.",
+      "keywords": [
+        "fiber",
+        "sweep",
+        "tube",
+        "helix",
+        "섬유",
+        "튜브",
+        "나선"
+      ],
+      "properties": [
+        {
+          "name": "from",
+          "type": "Vec3",
+          "required": false,
+          "default": "[0, 0, -0.5]",
+          "authoringValue": "[0, 0, -0.5]",
+          "description": "정확히 세 유한 좌표인 중심선 시작점이며 to와 달라야 합니다."
+        },
+        {
+          "name": "to",
+          "type": "Vec3",
+          "required": false,
+          "default": "[0, 0, 0.5]",
+          "authoringValue": "[0, 0, 0.5]",
+          "description": "정확히 세 유한 좌표인 중심선 끝점이며 from과 달라야 합니다."
+        },
+        {
+          "name": "basePath",
+          "type": "(t: number) => Vec3",
+          "required": false,
+          "default": "straight line from from to to",
+          "authoringValue": "undefined",
+          "description": "0≤t≤1에서 유한 Vec3 중심선을 정의하며 양 끝은 from과 to에 일치하고 연속 표본이 중복되어 길이 0인 구간을 만들면 안 됩니다."
+        },
+        {
+          "name": "radius",
+          "type": "number | ((s: number) => number)",
+          "required": false,
+          "default": "0.05",
+          "authoringValue": "0.05",
+          "description": "정규화된 호 길이의 모든 표본에서 유한한 양수를 반환하는 단면 반지름입니다."
+        },
+        {
+          "name": "helix",
+          "type": "FiberHelix",
+          "required": false,
+          "default": "none",
+          "authoringValue": "undefined",
+          "description": "유한 turns/phase와 모든 표본에서 유한한 0 이상 radius를 갖는 나선 변위입니다."
+        },
+        {
+          "name": "fourier",
+          "type": "readonly FiberFourierMode[]",
+          "required": false,
+          "default": "none",
+          "authoringValue": "undefined",
+          "description": "지정 시 비어 있지 않아야 하며 각 mode는 유한한 0 이상 amplitude와 유한 phase를 가집니다."
+        },
+        {
+          "name": "envelopePower",
+          "type": "number",
+          "required": false,
+          "default": "2",
+          "authoringValue": "2",
+          "description": "끝점에서 변위를 감쇠하는 유한한 1 이상 envelope 지수입니다."
+        },
+        {
+          "name": "up",
+          "type": "Vec3",
+          "required": false,
+          "default": "automatic Bishop frame",
+          "authoringValue": "undefined",
+          "description": "초기 path tangent와 평행하지 않은 유한한 기준 방향입니다."
+        },
+        {
+          "name": "pathSegments",
+          "type": "number",
+          "required": false,
+          "default": "128",
+          "authoringValue": "128",
+          "description": "중심선 방향 분할 수이며 8~2048 범위의 정수입니다."
+        },
+        {
+          "name": "radialSegments",
+          "type": "number",
+          "required": false,
+          "default": "12",
+          "authoringValue": "12",
+          "description": "원형 단면 분할 수이며 3~64 범위의 정수입니다."
+        }
+      ],
+      "children": {
+        "count": "none",
+        "description": "자식을 받지 않는 primitive입니다."
+      },
+      "origin": "from/to 또는 basePath가 정의한 좌표를 그대로 사용하며 별도의 중심 보정은 하지 않습니다.",
+      "surfaces": [
+        "Start cap",
+        "Side",
+        "End cap"
+      ],
+      "example": "<Fiber id=\"strand\" from={[0, 0, 0]} to={[0, 0, 20]} radius={1} />"
+    },
+    {
+      "tag": "translate",
+      "authoringName": "translate",
+      "category": "operation",
+      "standardTransforms": false,
+      "syntax": "<translate offset={[x,y,z]}>Geometry...</translate>",
+      "summary": "한 개 이상의 child Geometry를 parent 좌표계에서 상대 이동합니다.",
+      "keywords": [
+        "translate",
+        "translation",
+        "offset",
+        "이동",
+        "변위"
+      ],
+      "properties": [
+        {
+          "name": "offset",
+          "type": "Vec3",
+          "required": true,
+          "authoringValue": "[0, 0, 0]",
+          "description": "parent 좌표계에서 적용할 정확히 세 개의 유한한 상대 이동 값입니다."
+        }
+      ],
+      "children": {
+        "count": "many",
+        "description": "동일한 상대 이동을 적용할 Geometry를 한 개 이상 받습니다."
+      },
+      "origin": "child의 local 좌표계를 유지한 채 offset만큼 이동합니다.",
+      "surfaces": [
+        "child-defined"
+      ],
+      "example": "<translate id=\"moved\" offset={[20, 0, 0]}><Box id=\"body\" size={[10, 10, 10]} /></translate>"
+    },
+    {
+      "tag": "rotate",
+      "authoringName": "rotate",
+      "category": "operation",
+      "standardTransforms": false,
+      "syntax": "<rotate axis={[x,y,z]} angle={radians(degrees)}>Geometry...</rotate>",
+      "summary": "한 개 이상의 child Geometry를 원점 기준 axis-angle로 회전합니다.",
+      "keywords": [
+        "rotate",
+        "rotation",
+        "axis angle",
+        "radians",
+        "회전",
+        "축"
+      ],
+      "properties": [
+        {
+          "name": "axis",
+          "type": "Vec3",
+          "required": true,
+          "authoringValue": "[0, 0, 1]",
+          "description": "오른손 법칙을 적용할 정확히 세 개의 유한한 값인 0이 아닌 회전축입니다."
+        },
+        {
+          "name": "angle",
+          "type": "number",
+          "required": true,
+          "authoringValue": "0",
+          "description": "radian 단위의 유한한 회전각입니다. degree 입력은 radians()로 변환합니다."
+        }
+      ],
+      "children": {
+        "count": "many",
+        "description": "동일한 axis-angle 회전을 적용할 Geometry를 한 개 이상 받습니다."
+      },
+      "origin": "wrapper local 원점을 중심으로 오른손 axis-angle 회전을 적용합니다.",
+      "surfaces": [
+        "child-defined"
+      ],
+      "example": "<rotate id=\"turned\" axis={[0, 0, 1]} angle={radians(90)}><Box id=\"body\" size={[10, 20, 5]} /></rotate>"
+    },
+    {
+      "tag": "scale",
+      "authoringName": "scale",
+      "category": "operation",
+      "standardTransforms": false,
+      "syntax": "<scale x={sx} y={sy} z={sz}>Geometry...</scale>",
+      "summary": "한 개 이상의 child Geometry를 원점 기준으로 축별 확대하거나 축소합니다.",
+      "keywords": [
+        "scale",
+        "scaling",
+        "resize",
+        "배율",
+        "확대",
+        "축소"
+      ],
+      "properties": [
+        {
+          "name": "x",
+          "type": "number",
+          "required": true,
+          "authoringValue": "1",
+          "description": "X축에 적용할 유한한 배율입니다."
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "required": true,
+          "authoringValue": "1",
+          "description": "Y축에 적용할 유한한 배율입니다."
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "required": true,
+          "authoringValue": "1",
+          "description": "Z축에 적용할 유한한 배율입니다."
+        }
+      ],
+      "children": {
+        "count": "many",
+        "description": "동일한 축별 배율을 적용할 Geometry를 한 개 이상 받습니다."
+      },
+      "origin": "wrapper local 원점을 중심으로 X, Y, Z축 배율을 적용합니다.",
+      "surfaces": [
+        "child-defined"
+      ],
+      "example": "<scale id=\"stretched\" x={2} y={1} z={1}><Box id=\"body\" size={[10, 10, 10]} /></scale>"
+    },
+    {
+      "tag": "shell",
+      "authoringName": "shell",
+      "category": "operation",
+      "standardTransforms": true,
+      "syntax": "<shell offsets={{ inner: -1, outer: 1 }}>Geometry</shell>",
+      "summary": "닫힌 Geometry의 signed offset 경계 사이에 다층 shell solid를 생성합니다.",
+      "keywords": [
+        "shell",
+        "offset",
+        "layer",
+        "coating",
+        "쉘",
+        "오프셋",
+        "코팅"
+      ],
+      "properties": [
+        {
+          "name": "offsets",
+          "type": "Readonly<Record<string, number>>",
+          "required": true,
+          "authoringValue": "{ inner: -1, outer: 1 }",
+          "description": "비어 있지 않은 Material role별 signed offset입니다. role은 비어 있지 않고 앞뒤 공백이 없어야 하며 값은 서로 다른 유한한 0 아닌 수여야 합니다."
+        }
+      ],
+      "children": {
+        "count": "one",
+        "description": "정확히 하나의 유효한 닫힌 양의 부피 solid를 받으며 각 offset에서도 퇴화·반전되지 않아야 합니다."
+      },
+      "origin": "자식 좌표를 유지한 채 생성된 shell 결과에 이 element의 transform을 적용합니다.",
+      "surfaces": [
+        "Surface 1",
+        "Surface 2",
+        "…"
+      ],
+      "example": "<shell id=\"coating\" offsets={{ inner: -1, outer: 1 }}><Sphere radius={10} /></shell>"
+    },
+    {
+      "tag": "array",
+      "authoringName": "array",
+      "category": "operation",
+      "standardTransforms": true,
+      "syntax": "<array shape={[nx,ny,nz]} period={[px,py,pz]} axes={{x,y,z}} inject={tensors}>Geometry</array>",
+      "summary": "하나의 Geometry를 3차원 격자에 반복 배치합니다.",
+      "keywords": [
+        "array",
+        "lattice",
+        "pattern",
+        "grid",
+        "배열",
+        "격자",
+        "반복"
+      ],
+      "properties": [
+        {
+          "name": "shape",
+          "type": "readonly [number, number, number]",
+          "required": true,
+          "authoringValue": "[1, 1, 1]",
+          "description": "X, Y, Z축 cell 개수인 정확히 세 개의 양의 안전한 정수입니다."
+        },
+        {
+          "name": "period",
+          "type": "Vec3",
+          "required": true,
+          "authoringValue": "[0, 0, 0]",
+          "description": "각 lattice 축의 유한한 cell 중심 간격입니다. cell이 둘 이상이면 양수, 아니면 0 이상이어야 합니다."
+        },
+        {
+          "name": "axes",
+          "type": "{ x: Vec3; y: Vec3; z: Vec3 }",
+          "required": false,
+          "default": "world XYZ axes",
+          "authoringValue": "{ x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }",
+          "description": "각각 정확히 세 유한 좌표인 0이 아닌 x/y/z lattice 방향이며 런타임에서 정규화됩니다."
+        },
+        {
+          "name": "inject",
+          "type": "Readonly<Record<string, Tensor | { axis: Tensor; angle: Tensor }>>",
+          "required": false,
+          "authoringValue": "undefined",
+          "description": "비어 있지 않은 dense finite tensor로 cell props를 주입합니다. 선두 shape가 일치해야 하며 position/rotation/scale은 뒤에 길이 3 축이 필요합니다. axis/angle 객체는 deprecated rotate 호환 전용입니다. id/materials/children 및 canonical/legacy transform 혼용은 금지됩니다."
+        }
+      ],
+      "children": {
+        "count": "one",
+        "description": "id가 있는 Geometry component 또는 intrinsic CAD element를 정확히 하나 받습니다."
+      },
+      "origin": "전체 array가 원점 주위에 중심 정렬되며 cell identity에는 $cell-x-y-z가 붙습니다.",
+      "surfaces": [
+        "child-defined"
+      ],
+      "example": "<array id=\"posts\" shape={[3, 1, 1]} period={[20, 0, 0]}><Cylinder id=\"post\" radius={2} height={30} /></array>"
+    },
+    {
+      "tag": "union",
+      "authoringName": "union",
+      "category": "operation",
+      "standardTransforms": true,
+      "syntax": "<union>...</union>",
+      "summary": "같은 Material의 자식 solid를 합칩니다.",
+      "keywords": [
+        "union",
+        "boolean union",
+        "합집합",
+        "불리언"
+      ],
+      "properties": [],
+      "children": {
+        "count": "many",
+        "description": "같은 Material instance와 role을 가진 하나 이상의 solid를 받습니다."
+      },
+      "origin": "자식 좌표를 유지한 채 결과에 이 element의 transform을 적용합니다.",
+      "surfaces": [
+        "Surface 1",
+        "Surface 2",
+        "…"
+      ],
+      "example": "<union id=\"body\"><Box size={[10, 10, 10]} /><Cylinder radius={3} height={14} /></union>"
+    },
+    {
+      "tag": "subtract",
+      "authoringName": "subtract",
+      "category": "operation",
+      "standardTransforms": true,
+      "syntax": "<subtract>base cutter...</subtract>",
+      "summary": "첫 Geometry의 각 Material part에서 나머지 cutter solid를 뺍니다.",
+      "keywords": [
+        "subtract",
+        "difference",
+        "cut",
+        "차집합",
+        "빼기",
+        "절삭"
+      ],
+      "properties": [],
+      "children": {
+        "count": "many",
+        "description": "첫 Geometry의 각 solid가 base이고 이후 하나 이상의 유효한 solid가 cutter입니다."
+      },
+      "origin": "자식 좌표를 유지한 채 결과에 이 element의 transform을 적용합니다.",
+      "surfaces": [
+        "Surface 1",
+        "Surface 2",
+        "…"
+      ],
+      "example": "<subtract id=\"notched\"><Box size={[20, 10, 6]} /><Box size={[4, 10, 3]} /></subtract>"
+    },
+    {
+      "tag": "intersect",
+      "authoringName": "intersect",
+      "category": "operation",
+      "standardTransforms": true,
+      "syntax": "<intersect>shapeA shapeB...</intersect>",
+      "summary": "모든 자식 solid의 교집합을 구합니다.",
+      "keywords": [
+        "intersect",
+        "intersection",
+        "교집합",
+        "불리언"
+      ],
+      "properties": [],
+      "children": {
+        "count": "many",
+        "description": "같은 Material instance와 role을 가지며 교차시킬 두 개 이상의 solid를 받습니다."
+      },
+      "origin": "자식 좌표를 유지한 채 결과에 이 element의 transform을 적용합니다.",
+      "surfaces": [
+        "Surface 1",
+        "Surface 2",
+        "…"
+      ],
+      "example": "<intersect id=\"overlap\"><Box size={[10, 10, 10]} /><Sphere radius={7} /></intersect>"
+    }
+  ],
+  "referenceHash": "cd2d1fce3c1ae268c0e50ccdacfc767e3a5a59dd413dd54ff59fdd9bfe670de2",
+  "promptToolVersion": "caemble-ai-agent-v4-cd2d1fce3c1a"
+}

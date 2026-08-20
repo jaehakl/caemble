@@ -129,6 +129,7 @@ async function validateElementManifest() {
     throw new Error('src/lib/cad/elements/manifest.json must use element manifest format version 2.')
   }
   const tags = new Set()
+  const manifests = []
   for (const element of elementManifest.elements) {
     if (tags.has(element.tag)) throw new Error(`Duplicate CAD element manifest tag: ${element.tag}`)
     tags.add(element.tag)
@@ -229,7 +230,9 @@ async function validateElementManifest() {
         )
       }
     }
+    manifests.push(manifest)
   }
+  return manifests
 }
 
 function generatedElementRegistry() {
@@ -418,7 +421,7 @@ export const QuantityKind = new Proxy(Object.create(null) as Record<string, Quan
 `
 }
 
-await validateElementManifest()
+const elementCatalog = await validateElementManifest()
 
 const [modelRuntime, coreRuntime] = await Promise.all([
   loadBundledModule(path.join(root, 'src/lib/cad/model/v5.ts')),
@@ -460,6 +463,28 @@ const coreDeclaration = await formatGenerated(
 )
 const jsxDeclaration = await formatGenerated('src/lib/cad/api/cad-jsx.d.ts', generatedJsxDeclaration())
 const declarationFingerprint = sha256(['@caemble/core', coreDeclaration, 'cad-jsx', jsxDeclaration].join('\0'))
+const [authoringReferenceModule, authoringContractModule, geometrySkeletonModule] = await Promise.all([
+  loadBundledModule(path.join(root, 'src/lib/cad/authoringReference.ts')),
+  loadBundledModule(path.join(root, 'src/lib/cad/elements/authoringContract.ts')),
+  loadBundledModule(path.join(root, 'src/lib/examples/geometryAuthoringSkeleton.ts')),
+])
+const authoringReferencePayload = authoringReferenceModule.buildCadAuthoringReference({
+  authoringContract: authoringContractModule.cadAuthoringContract,
+  declarationFingerprint,
+  elements: elementCatalog,
+  geometrySkeleton: geometrySkeletonModule.geometryAuthoringSkeletonCode,
+})
+const authoringReferenceHash = sha256(JSON.stringify(authoringReferencePayload))
+const aiAgentPromptToolVersion = `caemble-ai-agent-v4-${authoringReferenceHash.slice(0, 12)}`
+const backendAuthoringReference = `${JSON.stringify(
+  {
+    ...authoringReferencePayload,
+    referenceHash: authoringReferenceHash,
+    promptToolVersion: aiAgentPromptToolVersion,
+  },
+  null,
+  2,
+)}\n`
 
 const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
 if (packageJson.dependencies['monaco-editor'] !== authoringManifest.monacoVersion) {
@@ -485,6 +510,16 @@ export const CAEMBLE_TYPESCRIPT_VERSION = ${tsString(authoringManifest.typescrip
 export const CAD_API_DECLARATION_FINGERPRINT = ${tsString(declarationFingerprint)} as const
 `,
 )
+const aiAgentSourcePath = path.join(root, 'src/api/aiAgent.ts')
+const aiAgentSource = await formatGenerated(
+  'src/api/aiAgent.ts',
+  await readFile(aiAgentSourcePath, 'utf8').then((source) =>
+    source.replace(
+      /\/\/ <generated:ai-agent-prompt-tool-version>[\s\S]*?\/\/ <\/generated:ai-agent-prompt-tool-version>/,
+      `// <generated:ai-agent-prompt-tool-version>\nexport const AI_AGENT_PROMPT_TOOL_VERSION = ${tsString(aiAgentPromptToolVersion)} as const\n// </generated:ai-agent-prompt-tool-version>`,
+    ),
+  ),
+)
 
 await Promise.all([
   emit('src/lib/cad/elements/generated.ts', generatedElementRegistry()),
@@ -492,6 +527,8 @@ await Promise.all([
   emit('src/lib/cad/api/caemble-core.d.ts', coreDeclaration),
   emit('src/lib/quantitykind/index.ts', await formatGenerated('src/lib/quantitykind/index.ts', quantityKindFacade())),
   emit('src/lib/cad/api/generatedVersions.ts', generatedVersions),
+  emit('src/api/aiAgent.ts', aiAgentSource),
+  emit('../api/app/ai/cad_authoring_reference.json', backendAuthoringReference),
 ])
 
 if (checkOnly && changed.length > 0) {

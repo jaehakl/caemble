@@ -8,6 +8,7 @@ from typing import Any
 from caemble_catalog import CatalogNotFoundError
 from fastapi import HTTPException
 
+from ai.cad_reference import CAD_AUTHORING_ELEMENT_NAMES, cad_authoring_reference_details
 from ai.data_tools import VisibleDataError, VisibleDataReader, VisibleResource
 from ai.workspace import StagedExperiment, WorkspaceEditError
 from service.geometry import build_snapshot_from_entry_source
@@ -135,6 +136,13 @@ class ToolExecutor:
             await self.data.db.rollback()
 
     async def _execute(self, name: str, arguments: dict[str, Any]) -> ToolExecution:
+        if name == "get_cad_authoring_reference":
+            _exact_keys(arguments, {"elements"})
+            value = cad_authoring_reference_details(arguments.get("elements"))
+            return ToolExecution(
+                value,
+                f"Read official CAD authoring reference for {len(value['elements'])} elements",
+            )
         if name == "search_catalog":
             _exact_keys(arguments, {"query", "limit"})
             query = _string(arguments, "query", maximum=256)
@@ -296,6 +304,18 @@ class ToolExecutor:
 
 def agent_tool_definitions() -> list[dict[str, Any]]:
     return [
+        _tool(
+            "get_cad_authoring_reference",
+            "Read the server-bundled official CAD API v8 authoring contracts for primitives and operations before creating or editing geometry.tsx.",
+            {
+                "elements": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": list(CAD_AUTHORING_ELEMENT_NAMES)},
+                    "minItems": 1,
+                    "maxItems": 14,
+                }
+            },
+        ),
         _tool(
             "search_catalog",
             "Search the Caemble QuantityKind, MaterialParameter, MaterialModel, and Solver catalog.",
