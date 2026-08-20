@@ -1,7 +1,5 @@
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { cadElementCatalog } from '@/lib/cad'
-import { createExperimentSourceBundle } from '@/lib/cad/source/document'
 import { defaultExperimentSourceBundle } from '@/lib/defaultExperimentCode'
 import { installSyntheticCatalog } from '@/test/syntheticCatalog'
 import {
@@ -10,11 +8,6 @@ import {
   standalonePublicExampleBundle,
 } from '@/test/publicExampleHarness'
 import { caembleExamples, geometryAuthoringSkeletonSourceBundle } from '.'
-
-const experimentProgramGuide = readFileSync(
-  new URL('../../../../../docs/experiment-program.md', import.meta.url),
-  'utf8',
-)
 
 installSyntheticCatalog({
   quantityKinds: [
@@ -59,25 +52,5 @@ export default experiment({
 
     expect(result.scene.parts.map(({ id }) => id)).toEqual(['assembly.base', 'assembly.post'])
     expectReliablePublicScene(result.scene)
-  })
-
-  it('evaluates the complete source bundle published in the standalone Experiment guide', async () => {
-    const tsxSources = [...experimentProgramGuide.matchAll(/```tsx\r?\n([\s\S]*?)```/gu)].map((match) => match[1])
-    const pythonSource = /```python\r?\n([\s\S]*?)```/u.exec(experimentProgramGuide)?.[1]
-    expect(tsxSources).toHaveLength(4)
-    expect(pythonSource).toBeDefined()
-
-    const result = await evaluatePublicExampleBundle(
-      createExperimentSourceBundle({
-        'geometry.tsx': tsxSources[0],
-        'experiment.tsx': tsxSources[1],
-        'material.tsx': tsxSources[2],
-        'tasks/electric.tsx': tsxSources[3],
-        'simulate.py': pythonSource!,
-      }),
-    )
-
-    expectReliablePublicScene(result.scene)
-    expectReliablePublicScene(result.taskScenes.electric)
   })
 })

@@ -1,17 +1,24 @@
 # v1 SDK compatibility
 
-Caemble owns the v1 orchestration server and SDK source under this repository. The
-public v1 wire contract remains compatible with the GPStation 0.1.0 master SDKs so
-an existing client only has to change its API base URL:
+Caemble owns the v1 orchestration server and SDK source in this repository. The
+public wire remains compatible with the GPStation 0.1.0 master SDKs. A client
+that already has a valid token in the Caemble database can switch only its API
+base URL:
 
 ```text
 https://<caemble-host>/api
 ```
 
-The existing bearer token must first be imported into the Caemble database. New
-clients can instead create a `client` token from the Caemble Account page. Tokens
-with `launcher` scope are for the launcher control WebSocket and must not be
-embedded in third-party applications.
+Only bearer tokens already present in the Caemble database continue to work when
+an existing client changes its base URL. Caemble no longer includes a token
+importer. Create a new `client` token from Account for every new integration or
+token that is not already stored by Caemble. Tokens with `launcher` scope are for
+the launcher control WebSocket and must not be embedded in third-party
+applications.
+
+Usage and package setup live with the
+[JavaScript SDK](../app/sdk/master/js/README.md) and
+[Python SDK](../app/sdk/master/python/README.md).
 
 ## Frozen public contract
 

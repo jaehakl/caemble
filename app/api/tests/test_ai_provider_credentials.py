@@ -16,6 +16,8 @@ from tests.helpers import auth_headers, create_user
 from user_auth.db import AIProviderCredential
 from user_auth.routes import get_db
 
+pytestmark = pytest.mark.slow
+
 
 @pytest_asyncio.fixture
 async def credential_client(db_session):

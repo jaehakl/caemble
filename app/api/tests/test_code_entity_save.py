@@ -7,6 +7,8 @@ from db import Experiment
 from settings import settings
 from tests.helpers import auth_headers, create_user, experiment_source_bundle
 
+pytestmark = pytest.mark.slow
+
 
 def bundle_hash(bundle: dict) -> str:
     canonical = json.dumps(bundle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

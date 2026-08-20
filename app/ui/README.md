@@ -1,209 +1,114 @@
 # Caemble UI
 
-Caemble UI는 React 19, React Router Data Mode, Tailwind CSS v4로 구성된 CAE Workbench SPA다. 공개 Experiment와 읽기 전용 카탈로그는 로그인 없이 열람할 수 있고 저장 및 Runtime 기능은 Google OAuth 로그인이 필요하다. Experiment source bundle이 authoring의 source of truth이며 preview는 격리된 runner가 만든 immutable snapshot을, simulation은 Caemble Launcher와 CAE slave를 사용한다.
+React 19, React Router Data Mode, Tailwind CSS v4, and Vite power the Caemble
+Workbench. The product routes are `/` for the Workbench and `/docs` for the
+manual/catalog reference. Workspaces and managers open from the Workbench;
+unsupported historical routes return Not Found.
 
-유일한 제품 URL은 `/`이다. Source, Data, AI Chat, Material Manager, Analysis, Launchers, Jobs, Account, Manual과 모든 카탈로그는 Workbench의 Menubar 또는 Toolbar에서 모달로 연다. 과거 제품 URL과 legacy hash는 리다이렉트하지 않고 Not Found로 처리한다.
+An unauthenticated visitor receives an editable local Starter and can compile
+and preview it without the API. Sign-in gates persistence, remote execution,
+and provider-backed features.
 
-코드 구조는 다음 경계를 따른다.
+## Local development
 
-- `src/app`: provider와 단일 Workbench router
-- `src/pages/cae`: Workbench chrome, session, dialog orchestration
-- `src/pages`: Workbench 모달에 삽입되는 workspace와 manager
-- `src/features`: 인증, Viewer workspace/editor/persistence, thin CAE client
-- `src/components`: 앱 공통 컴포넌트와 소유 UI primitives
-- `src/api`: native fetch, Zod 응답 검증, endpoint 계약
-- `src/lib/cad`, `src/lib/material`, `src/lib/quantitykind`, `src/lib/solver`: 독립 Code-to-CAD 라이브러리
+Build the repository-local browser SDK once, then install and run the UI:
 
-## Development
+```powershell
+Push-Location ../sdk/master/js
+npm ci
+npm run build
+Pop-Location
 
-```bash
-npm install
+npm ci
 npm run dev
+```
+
+The host app runs at `http://localhost:5173` and the isolated Code-to-CAD runner
+at `http://localhost:5174`. `/api` proxies to `http://localhost:8000` with the
+prefix removed. To use custom ports, set both `VITE_CAEMBLE_HOST_ORIGIN` and
+`VITE_CAEMBLE_RUNNER_ORIGIN`.
+
+Routine validation is intentionally small; run contract and browser checks when
+the affected boundary requires them:
+
+```powershell
 npm test
+npm run check:docs
+npm run test:contracts
+npm run test:full
 npm run lint
 npm run build
-npm run build-storybook
 npm run test:e2e
 ```
 
-`npm install`은 `../sdk/master/js`의 로컬 SDK를 연결한다. UI production build는 이 SDK를 먼저
-빌드하므로 vendored package나 외부 repository checkout이 필요하지 않다.
+`npm test` is the fast iteration suite. `test:contracts` contains the slower
+compiler/worker/integration contracts, and `test:full` runs both. Production
+builds regenerate and verify the pinned CAD API; a non-empty generated diff is
+an error.
 
-`npm run dev`는 앱을 `http://localhost:5173`, 격리 runner를 `http://localhost:5174`에서 함께 실행한다. runner 서버는 `runner.html`을 Vite HTML 변환 없이 제공하며 HMR과 React Refresh를 주입하지 않는다. 따라서 개발 환경도 운영과 동일하게 별도 origin, `connect-src 'none'` CSP, sandboxed iframe 계약을 사용한다. 커스텀 포트를 쓸 때는 앱과 runner를 인접 포트로 실행하거나 `VITE_CAEMBLE_HOST_ORIGIN`과 `VITE_CAEMBLE_RUNNER_ORIGIN`을 모두 지정한다.
+## Ownership
 
-앱 개발 서버의 `/api`는 `http://localhost:8000`으로 proxy되며 prefix가 제거된다. 운영 reverse proxy도 같은 계약을 사용한다. 기본 설정은 `VITE_API_BASE_URL=/api`이고, 요청에는 HttpOnly access/refresh 쿠키를 위해 항상 credentials가 포함된다.
+- `src/app`: providers and the `/` + `/docs` router.
+- `src/pages/cae`: Workbench chrome, session, and dialog orchestration.
+- `src/pages/docs`: the canonical user manual shell.
+- `src/features`: authentication, Viewer/editor persistence, AI, and the thin
+  CAE client.
+- `src/api`: fetch clients and Zod response validation.
+- `src/lib/cad`: source model, generated CAD API v7, compiler, isolated runner,
+  evaluation, and serialization.
+- `src/lib/material`, `src/lib/quantitykind`, `src/lib/solver`: domain models
+  that consume API/catalog contracts.
 
-브라우저의 Job/WebRTC 요청도 같은 origin의 `/web/jobs`를 사용하고 로그인 HttpOnly 쿠키로
-인증한다. 별도 API URL이나 브라우저 저장 Access Token은 없다. Account 화면에서 만드는
-`csk_` Access Token은 외부 SDK(`client`) 또는 Launcher 등록(`launcher`)에만 사용하며
-원문은 생성 직후 한 번만 표시된다.
+The [architecture guide](../../docs/architecture.md) describes Experiment
+bundle versions and cross-component flow. Keep user-facing authoring examples
+in `/docs` and the executable example/element registries, not in this README.
 
-Generated CAD authoring APIs are checked by every production build:
+## Catalog and generated sources
 
-```bash
+The shared SQLite catalog is the only source for QuantityKind, Material, and
+Solver data. The UI has no full catalog or Solver-manifest copy. `/docs` queries
+the catalog API, while an Experiment requests only the pinned runtime slice it
+references.
+
+Element definitions and `src/lib/cad/api/authoring-manifest.json` generate the
+element catalog, JSX intrinsics, and `@caemble/core` declaration. Change those
+sources and run:
+
+```powershell
 npm run generate:cad-api
 npm run check:generated
 ```
 
-QuantityKind, Material, Solver descriptor의 단일 원본은 API가 직접 읽는 공유 SQLite
-catalog다. UI에는 전체 catalog나 Solver manifest 사본을 두지 않는다. Docs 화면은
-`/catalog` API의 검색·관계 조회를 사용하고, Experiment는 source에서 고정 참조만 추출해
-`POST /catalog/runtime-slice`로 받은 최소 불변 slice로 컴파일·검증·실행한다.
+Commit all intended generated changes. Do not hand-copy element props or
+catalog entries into TypeScript or Markdown.
 
-The CAD generator reads the element registry and
-`src/lib/cad/api/authoring-manifest.json`. It generates the element
-catalog/registry, JSX intrinsic types, and the pinned CAD authoring API v7.
-Commit all generated changes. CI should run `npm run check:generated`; a
-non-empty regeneration diff is an error.
+## Browser/runtime boundary
 
-각 element definition의 manifest가 tag별 keyword, prop type/필수값/default/제약,
-child 수, 기준 원점, surface와 예제의 단일 원본이다. 공통 `id`와 transform 계약은
-`cadAuthoringContract`에 한 번만 둔다. Geometry Catalog와 AI Helper의 5 KiB 이하
-영문 grammar core는 이 registry를 소비하고, 사람이 읽는 한국어 설명은 `/docs`의
-API/CAD Reference가 보완한다. 문법을 바꿀 때 declaration, Catalog, AI prompt에 같은
-내용을 따로 복사하지 말고 definition/authoring manifest를 수정한 뒤 재생성한다.
+The runner is served from a separate origin with `connect-src 'none'`. A
+nonce-bound `MessageChannel` sends schema-validated requests to a disposable
+Worker; the host never evaluates author source. The runner needs
+`'unsafe-eval'` for TypeScript CommonJS output, but that exception must not be
+added to the host CSP.
 
-## Experiment source bundle
+Browser jobs use cookie-authenticated `/web/jobs`. Browser storage never holds
+an Access Token; Account-created `client` and `launcher` tokens are for external
+SDKs and launchers only.
 
-An Experiment is stored atomically as `{ formatVersion: 5, files, geometrySnapshot }`.
-The bundle contains `experiment.tsx`, `geometry.tsx`, `material.tsx`, `simulate.py`,
-and one or more independent `tasks/<taskName>.tsx` files. Geometry source may use
-`@caemble/core` and exact Geometry coordinates. Material source may use only
-`@caemble/core`. Experiment and Task source may additionally use their respective
-`./geometry`/`../geometry` and `./material`/`../material` named imports. Task-to-Task
-imports, dynamic imports, and `require()` are rejected before execution.
+Simulation callers go through `src/features/cae/client.ts`, which sends
+`{ measurement, solverContracts }` and owns attachments, progress, record ACK,
+cancellation, and cleanup. There is no browser-local Solver fallback.
 
-`material.tsx` owns named Material objects and factories; Experiment and Task roots
-inject them by role through `materials={{ body: Copper, shell: Steel }}` maps.
-`experiment.tsx` owns the common `lengthUnit`, complete `varsSchema`, physical
-`geometry`, `geometryGroup`, `surfaceGroup`, and `recordedData`. Each Task file
-default-exports `defineTask({ kernel, config, ...optionalTaskGeometry })`; its
-filename registers the Task name. A Task may add its own solver-local geometry,
-groups, and length unit. `simulate.py` uses
-`async def simulate(*, sim, tasks, vars)`.
+## Production runner
 
-The Program tab exposes `experiment.tsx`, `geometry.tsx`, `material.tsx`, and
-`simulate.py`. Sorted Task tabs edit and preview independent scenes, while the
-Program preview overlays all Task scenes after unit conversion. See [the Experiment Program guide](../../docs/experiment-program.md)
-for the complete authoring and execution contract.
-
-## Candidate vars and deterministic evaluation
-
-Source and candidate values are separate. Evaluation accepts a complete `vars`
-object and never fills missing entries:
-
-```ts
-await evaluateDocument({
-  document,
-  vars: { conductorSize: [20, 20, 20] },
-})
-
-await evaluateDocument({
-  document,
-  vars: { conductorSize: [80, 30, 10] },
-})
-```
-
-The compiler caches emitted modules by SHA-256 source-project hash and compiler/API version. A new isolated evaluation reuses that emit without changing or recompiling Source. Missing or unknown keys, tensor-shape mismatches, non-finite values, and out-of-range components fail before any model callback runs. Authoring source cannot use hidden nondeterminism such as `Math.random`, `Date`, or `crypto`.
-
-The same immutable Experiment revision and complete vars produce the same scene and simulation program. **Generate Candidate** samples a new in-range candidate from `varsSchema` and freezes fresh Material values without changing or dirtying Source. `min === max` produces the fixed value. No random seed or generation provenance is persisted; sweep, optimization, and inverse-design workflows will submit the same complete-value contract.
-
-## Compilation and diagnostics
-
-The lazily loaded Monaco TypeScript Worker is the only browser compiler path. Its settings are ES2020, strict TypeScript, CommonJS emit, JSX factory `h`, and virtual-project module resolution. Syntactic, semantic, and source-policy errors prevent runner dispatch. Runtime stack locations are mapped back to Monaco ranges with source maps.
-
-Every diagnostic carries `file`, `range`, `code`, `severity`, and `phase`. Monaco markers and the document footer use the same diagnostics.
-
-The editor maintains one Monaco model per bundle source file and one active editor instance. Monaco core and the TypeScript Worker are Vite-generated, hashed first-party assets loaded only when the Source screen is entered. No jsDelivr loader or `esbuild-wasm` runtime is used.
-
-## Evaluation isolation
-
-Development and production evaluation use a hidden iframe served from a separate origin. The host and runner exchange one schema-validated request through a nonce-bound `MessageChannel`. The runner creates a disposable Worker for each evaluation and terminates it after success, failure, cancellation, or timeout. The iframe keeps `sandbox="allow-scripts allow-same-origin"` so its Worker can run, while the distinct runner origin prevents it from acquiring host privileges.
-
-The runner boundary provides the security controls:
-
-- no host cookies, authentication state, or sensitive storage on the runner origin;
-- runner CSP with `connect-src 'none'`;
-- an allowlisted static-import AST policy;
-- exact request/response schema and provenance checks on both sides;
-- 3-second default evaluation timeout, with 10- and 30-second heavy modes;
-- plain, finite, acyclic snapshot validation and complexity/binary-size limits;
-- no `new Function` or `unsafe-eval` in the host application bundles.
-
-The runner itself needs `'unsafe-eval'` because the isolated evaluation Worker executes TypeScript's CommonJS emit. That exception must never be added to the host CSP.
-
-## Snapshot and CAE boundary
-
-JSCAD instances do not cross the untrusted evaluation boundary. Each solid is
-normalized into validated `Float64Array` vertex positions plus `Uint32Array`
-polygon offsets. The UI then resolves variables, Material values, geometry,
-DataSchema and task config into one complete `BuiltMeasurement` value. Its
-common and Task-local Material parameters are already frozen.
-
-Simulation callers use only the thin client in `src/features/cae/client.ts`:
-
-```ts
-simulate(measurement, { signal, onStatus, onProgress, onRecord })
-```
-
-The client preserves author-supplied units and sends `{ measurement, solverContracts }`, where
-each Solver contract digest comes from the exact runtime slice used to evaluate the Experiment,
-and hides the JobSession, attachments, `start/next`,
-record ACK and kill handling. Browser-local solver,
-Python/TS simulation runtime and fallback execution do not exist. Only declared
-and actually recorded `DataTensor` values are returned; failed or cancelled runs
-discard every provisional record.
-
-Saving a candidate first creates a prepared Measurement containing immutable
-vars and Material snapshots. Running is a separate operation. A successful run
-attaches its complete RecordedData set once and changes the Measurement to
-recorded; failed or cancelled runs leave it prepared and retryable. Repeating an
-already recorded condition requires duplicating the Measurement.
-
-## Visual round-trip editing
-
-The supported writable form is an object literal, or a directly referenced top-level `const` object literal. Spread, computed properties, `map`/`filter`, and other dynamic expressions can still execute, but the affected visual editor is read-only.
-
-Group and Experiment parameter editors create source-hash-bound patches through one patch API. A patch is rejected if Source changed after analysis. Visual save is disabled whenever the current source hash differs from the evaluated snapshot hash.
-
-## Production deployment
-
-Set different origins at build time:
+Set distinct origins at build time:
 
 ```dotenv
+VITE_API_BASE_URL=/api
 VITE_CAEMBLE_HOST_ORIGIN=https://app.example.com
 VITE_CAEMBLE_RUNNER_ORIGIN=https://cad-runner.example.com
 ```
 
-Deploy the complete `dist` output to both origins, or otherwise ensure the runner origin serves `runner.html` and every hashed asset it references from the same build. `VITE_CAEMBLE_RUNNER_ORIGIN` is mandatory in production and must differ from the host origin.
-
-The production-origin smoke test builds once with fixed test origins and serves that same `dist` from two preview servers:
-
-```bash
-npm run test:e2e:production
-```
-
-Recommended runner headers are provided in `public/_headers`:
-
-```text
-/assets/*
-  Cache-Control: public, max-age=31536000, immutable
-
-/runner.html
-  Cache-Control: no-store
-  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-eval'; worker-src 'self'; connect-src 'none'; img-src 'none'; style-src 'none'; base-uri 'none'; form-action 'none'
-```
-
-The host can use a strict policy such as `script-src 'self'; worker-src 'self'; frame-src https://cad-runner.example.com` without any external script origin or `'unsafe-eval'`. Serve gzip or Brotli through the existing CDN. Hashed assets should use the immutable one-year cache policy; HTML should not.
-
-Do not place cookies, credentials, user data, service-worker scope, analytics, or general application endpoints on the runner origin. If browser isolation is no longer strong enough for the threat model, retain the runner protocol and replace the browser runner with a process-isolated backend sandbox.
-
-## Limits
-
-- Virtual project: 32 files and 1 MiB total.
-- Compiler initialization/operation timeout: 5 seconds after initialization.
-- Preview evaluation: 3 seconds by default; explicit 10- and 30-second heavy modes.
-- Snapshot binary payload: 128 MiB, with finite-value, depth, node-count, and protocol-size checks.
-- BuiltMeasurement request: 256 MiB total.
-- One run's RecordedData: 64 MiB raw bytes, with 16 MiB attachment shards.
-- Physics kernels execute only in the Caemble `cae` slave.
+Serve `runner.html` and every asset it references from the runner origin. Do not
+place cookies, credentials, user data, analytics, service-worker scope, or
+general application endpoints there. The complete production procedure and
+headers are in [deployment](../../deployment/deployment.md).

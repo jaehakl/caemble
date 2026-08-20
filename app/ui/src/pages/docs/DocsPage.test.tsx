@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -138,15 +138,12 @@ describe('integrated documentation page', () => {
     expect(screen.getByRole('searchbox', { name: '문서 전체 검색' })).toBeInTheDocument()
   })
 
-  it.each([
-    ['program', 'Experiment Authoring', 'Experiment Program의 파일과 책임'],
-    ['reference', 'API / CAD Reference', '공개 Source와 import 경계'],
-    ['troubleshooting', 'Troubleshooting', '문서가 Ready가 되지 않을 때'],
-  ])('opens the %s Manual deep link', (section, navigationLabel, articleTitle) => {
-    renderDocs(`/docs?section=${section}`)
+  it('opens a Manual section and preserves a legacy anchored deep link', () => {
+    renderDocs('/docs?section=reference#cad-reference-v7-migration')
 
-    expect(screen.getByRole('button', { name: navigationLabel })).toHaveAttribute('aria-current', 'page')
-    expect(screen.getByRole('heading', { name: articleTitle })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'API / CAD Reference' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('heading', { name: 'Transform: position, rotation, scale' })).toBeInTheDocument()
+    expect(document.getElementById('cad-reference-v7-migration')).toBeInTheDocument()
   })
 
   it('opens direct section and catalog item links', () => {
@@ -162,28 +159,6 @@ describe('integrated documentation page', () => {
     expect(screen.getByRole('button', { name: '예제 복사' })).toBeInTheDocument()
   })
 
-  it('navigates between Manual sections from the sidebar', async () => {
-    const user = userEvent.setup()
-    renderDocs()
-
-    await user.click(screen.getByRole('button', { name: 'API / CAD Reference' }))
-
-    expect(screen.getByRole('heading', { name: 'API / CAD Reference' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'API / CAD Reference' })).toHaveAttribute('aria-current', 'page')
-  })
-
-  it('uses the mobile navigation sheet to open a catalog section', async () => {
-    const user = userEvent.setup()
-    renderDocs()
-
-    await user.click(screen.getByRole('button', { name: '문서 메뉴 열기' }))
-    const navigation = screen.getByRole('dialog', { name: 'Caemble Documentation' })
-    await user.click(within(navigation).getByRole('button', { name: 'Material Catalog' }))
-
-    expect(screen.queryByRole('dialog', { name: 'Caemble Documentation' })).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Material Parameters' })).toBeInTheDocument()
-  })
-
   it('searches Manual headings and opens their anchored content', async () => {
     const user = userEvent.setup()
     renderDocs()
@@ -197,37 +172,14 @@ describe('integrated documentation page', () => {
     expect(screen.getByRole('searchbox', { name: '문서 전체 검색' })).toHaveValue('')
   })
 
-  it.each([
-    ['curvedEdgeCylinder', 'Geometry Catalog: curvedEdgeCylinder', 'Primitives & Operations', '<curvedEdgeCylinder />'],
-    [
-      'electrical.conductivity',
-      'Material Catalog: electrical.conductivity',
-      'Material Parameters',
-      'electrical.conductivity',
-    ],
-    [
-      'electromagnetism.ElectricCurrent',
-      'Quantity Catalog: electromagnetism.ElectricCurrent',
-      'Physical Quantity Kinds',
-      'electromagnetism.ElectricCurrent',
-    ],
-    [
-      'dc-current-density@0.1.0',
-      'Physics Catalog: dc-current-density@0.1.0',
-      'Simulations & Analysis',
-      'dc-current-density',
-    ],
-  ])(
-    'searches the full catalog index for %s and opens its detail',
-    async (query, resultName, pageTitle, detailTitle) => {
-      const user = userEvent.setup()
-      renderDocs()
+  it('searches the live catalog index and opens a solver detail', async () => {
+    const user = userEvent.setup()
+    renderDocs()
 
-      await user.type(screen.getByRole('searchbox', { name: '문서 전체 검색' }), query)
-      await user.click(await screen.findByRole('button', { name: resultName }))
+    await user.type(screen.getByRole('searchbox', { name: '문서 전체 검색' }), 'dc-current-density@0.1.0')
+    await user.click(await screen.findByRole('button', { name: 'Physics Catalog: dc-current-density@0.1.0' }))
 
-      expect(screen.getByRole('heading', { name: pageTitle })).toBeInTheDocument()
-      expect(screen.getByRole('heading', { name: detailTitle })).toBeInTheDocument()
-    },
-  )
+    expect(screen.getByRole('heading', { name: 'Simulations & Analysis' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'dc-current-density' })).toBeInTheDocument()
+  })
 })

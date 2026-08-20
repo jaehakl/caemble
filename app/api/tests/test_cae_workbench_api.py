@@ -7,6 +7,8 @@ from db import Experiment, Measurement
 from settings import settings
 from tests.helpers import auth_headers, create_user, experiment_source_bundle
 
+pytestmark = pytest.mark.slow
+
 
 def source_hash(bundle):
     value = json.dumps(bundle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

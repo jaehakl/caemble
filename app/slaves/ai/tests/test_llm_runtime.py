@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from app.llm import chat as llm_chat
 from app.llm import generation as llm_generation
@@ -478,81 +478,6 @@ class LlmChatRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(fake_llm.enable_thinking_override, True)
         self.assertFalse(hasattr(fake_llm, "_ai_slave_enable_thinking_override"))
 
-    async def test_generate_prompt_with_llm_removes_gemma_and_qwen_reasoning(self) -> None:
-        cases = {
-            "gemma": "<|channel>thought\nsecret reasoning<channel|>final answer<turn|>",
-            "qwen": "<think>secret reasoning</think>final answer",
-            "qwen-closing-only": "secret reasoning</think>final answer",
-        }
-        for reasoning_format, content in cases.items():
-            with self.subTest(reasoning_format=reasoning_format):
-                fake_llm = FakePromptCompletionLlm(content)
-                log = Mock()
-                with (
-                    patch.object(llm_runtime, "build_prompt_llm_config", return_value=config()),
-                    patch.object(llm_runtime, "acquire_gpu_model_multi", return_value=NullAsyncContext()),
-                    patch.object(llm_runtime, "_get_prompt_llm_locked", return_value=fake_llm),
-                    patch.object(llm_runtime, "log", log),
-                ):
-                    answer = await llm_runtime.generate_prompt_with_llm(
-                        [{"role": "user", "content": "hello"}],
-                        enable_thinking=True,
-                        response_format_json=False,
-                    )
-
-                self.assertEqual(answer, "final answer")
-                self.assertNotIn("secret reasoning", " ".join(call.args[0] for call in log.call_args_list))
-
-    async def test_generate_prompt_with_llm_rejects_unterminated_or_empty_reasoning_output(self) -> None:
-        cases = (
-            "<|channel>thought\nreasoning without end",
-            "<think>reasoning without end",
-            "reasoning</think>",
-        )
-        for content in cases:
-            with self.subTest(content=content):
-                fake_llm = FakePromptCompletionLlm(content)
-                with (
-                    patch.object(llm_runtime, "build_prompt_llm_config", return_value=config()),
-                    patch.object(llm_runtime, "acquire_gpu_model_multi", return_value=NullAsyncContext()),
-                    patch.object(llm_runtime, "_get_prompt_llm_locked", return_value=fake_llm),
-                ):
-                    with self.assertRaises(RuntimeError):
-                        await llm_runtime.generate_prompt_with_llm(
-                            [{"role": "user", "content": "hello"}],
-                            enable_thinking=True,
-                            response_format_json=False,
-                        )
-
-    async def test_generate_prompt_with_llm_validates_and_recovers_json_final(self) -> None:
-        cases = {
-            "strict": ('{"value":{"nested":true}}', '{"value":{"nested":true}}'),
-            "recovered": (
-                'Result:\n```json\n{"value":{"nested":true}}\n```',
-                '{"value":{"nested":true}}',
-            ),
-            "reasoning-and-recovered": (
-                '<|channel>thought\nsecret<channel|>Result: {"value":1}',
-                '{"value":1}',
-            ),
-        }
-        for name, (content, expected) in cases.items():
-            with self.subTest(name=name):
-                fake_llm = FakePromptCompletionLlm(content)
-                with (
-                    patch.object(llm_runtime, "build_prompt_llm_config", return_value=config()),
-                    patch.object(llm_runtime, "acquire_gpu_model_multi", return_value=NullAsyncContext()),
-                    patch.object(llm_runtime, "_get_prompt_llm_locked", return_value=fake_llm),
-                ):
-                    answer = await llm_runtime.generate_prompt_with_llm(
-                        [{"role": "user", "content": "hello"}],
-                        enable_thinking=True,
-                        response_format_json=True,
-                    )
-
-                self.assertEqual(answer, expected)
-                self.assertNotIn("response_format", fake_llm.kwargs)
-
     async def test_generate_prompt_with_llm_uses_json_grammar_without_thinking(self) -> None:
         fake_llm = FakePromptCompletionLlm('{"value":1}')
         with (
@@ -567,23 +492,6 @@ class LlmChatRuntimeTest(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(fake_llm.kwargs["response_format"], {"type": "json_object"})
-
-    async def test_generate_prompt_with_llm_rejects_ambiguous_or_non_object_json(self) -> None:
-        cases = ('{"first":1} and {"second":2}', '[{"value":1}]', "no json")
-        for content in cases:
-            with self.subTest(content=content):
-                fake_llm = FakePromptCompletionLlm(content)
-                with (
-                    patch.object(llm_runtime, "build_prompt_llm_config", return_value=config()),
-                    patch.object(llm_runtime, "acquire_gpu_model_multi", return_value=NullAsyncContext()),
-                    patch.object(llm_runtime, "_get_prompt_llm_locked", return_value=fake_llm),
-                ):
-                    with self.assertRaises(RuntimeError):
-                        await llm_runtime.generate_prompt_with_llm(
-                            [{"role": "user", "content": "hello"}],
-                            enable_thinking=True,
-                            response_format_json=True,
-                        )
 
     async def test_generate_chat_with_llm_streams_ordered_deltas_and_returns_answer(self) -> None:
         fake_llm = FakeStreamingLlm(

@@ -9,6 +9,8 @@ from db import Experiment, Measurement, RecordedData
 from settings import settings
 from tests.helpers import auth_headers, create_user, experiment_source_bundle
 
+pytestmark = pytest.mark.slow
+
 
 def source_hash(bundle: dict) -> str:
     encoded = json.dumps(bundle, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")

@@ -8,6 +8,7 @@ import pytest
 from ai.provider import OpenAIResponsesAdapter
 
 
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_luna_stateless_compaction_live_smoke() -> None:
     if os.getenv("CAEMBLE_RUN_LIVE_OPENAI_SMOKE") != "1":

@@ -20,3 +20,9 @@ packages = ["caemble_catalog"]
 
 [dependency-groups]
 dev = ["pytest>=8,<9"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: database or end-to-end integration coverage",
+    "live: opt-in test that calls an external service",
+]

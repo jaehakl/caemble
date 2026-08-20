@@ -524,7 +524,7 @@ class LlmServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(ask_llm.await_args.kwargs["enable_thinking"], True)
         self.assertIs(ask_llm.await_args.kwargs["response_format_json"], False)
 
-    async def test_llm_adds_low_thinking_instruction_and_forwards_json_format(self) -> None:
+    async def test_llm_forwards_thinking_effort_and_json_format(self) -> None:
         ask_llm = AsyncMock(return_value='{"answer":"ok"}')
         request = LlmRequest(
             system_prompt="system",
@@ -542,22 +542,6 @@ class LlmServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ask_llm.await_args.args[0], "system")
         self.assertEqual(ask_llm.await_args.kwargs["thinking_effort"], "low")
         self.assertIs(ask_llm.await_args.kwargs["response_format_json"], True)
-
-    async def test_llm_does_not_add_low_instruction_when_thinking_is_disabled(self) -> None:
-        ask_llm = AsyncMock(return_value="answer")
-        request = LlmRequest(
-            system_prompt="system",
-            prompt="prompt",
-            think=False,
-            thinking_effort="low",
-        )
-        with (
-            patch.object(llm_service, "resolve_llm_selection", return_value=local_selection("model-a")),
-            patch.object(llm_service, "ask_llm", ask_llm),
-        ):
-            await llm_service.generate_llm_answer(request)
-
-        self.assertEqual(ask_llm.await_args.args[0], "system")
 
     async def test_chat_forwards_context_size_and_top_p(self) -> None:
         generate_chat = AsyncMock(

@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
+import pytest
 from caemble_catalog import open_catalog
 
 from app.solver_framework.units import convert_ucum_value
@@ -46,6 +47,7 @@ def _quantity_descriptors(value: Any):
             yield from _quantity_descriptors(child)
 
 
+@pytest.mark.slow
 def test_sqlite_catalog_units_are_supported_by_the_slave_converter() -> None:
     catalog, opaque_names = _load_catalog()
 

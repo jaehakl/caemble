@@ -4,6 +4,8 @@ from db import Material
 from settings import settings
 from tests.helpers import auth_headers, create_user
 
+pytestmark = pytest.mark.slow
+
 
 @pytest.mark.asyncio
 async def test_material_color_is_validated_and_normalized(client, db_session, monkeypatch):

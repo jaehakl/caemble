@@ -10,6 +10,8 @@ from tests.helpers import create_user
 from user_auth.db import AuthAudit
 from user_auth.utils.jwt import make_access, make_refresh
 
+pytestmark = pytest.mark.slow
+
 
 def web_login(client, user) -> None:
     client.cookies.set("access_token", make_access(user))

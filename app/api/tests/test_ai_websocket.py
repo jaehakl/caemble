@@ -18,6 +18,8 @@ from caemble_catalog import Catalog
 from main import app as main_app
 from user_auth.routes import get_db
 
+pytestmark = pytest.mark.slow
+
 
 def start_payload():
     return {

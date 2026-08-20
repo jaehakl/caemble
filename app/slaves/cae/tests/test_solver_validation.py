@@ -1,6 +1,7 @@
 import pytest
 
 from app.errors import CaeError
+from app.runtime import _validate_material_snapshot, _validate_variables
 from app.solver_framework.validation import normalize_parameter_value
 
 
@@ -184,3 +185,53 @@ def test_reports_path_rich_unit_and_quantity_errors(value, message):
         )
 
     assert error.value.code in {"invalid_task", "invalid_unit"}
+
+
+def test_variable_schema_validation_rejects_range_shape_keys_and_boolean_values():
+    cases = [
+        ({"width": 11}, {"width": {"min": 1, "max": 10}}),
+        ({"width": [4]}, {"width": {"min": 1, "max": 10}}),
+        ({"width": 4, "extra": 1}, {"width": {"min": 1, "max": 10}}),
+        ({"width": True}, {"width": {"min": 1, "max": 10}}),
+    ]
+
+    for variables, schema in cases:
+        with pytest.raises(CaeError) as error:
+            _validate_variables(variables, schema, "Built Experiment")
+        assert error.value.code == "invalid_input"
+
+
+def test_material_snapshot_validation_rejects_provenance_and_tensor_errors():
+    cases = [
+        ("source", 7),
+        ("materialId", True),
+        (
+            "value",
+            {
+                "dtype": "float16",
+                "value": [[70000, 0, 0], [0, 70000, 0], [0, 0, 70000]],
+                "unit": "S.m-1",
+            },
+        ),
+    ]
+
+    for field, value in cases:
+        entry = {
+            "origin": "source",
+            "value": {
+                "dtype": "float64",
+                "value": [[5.96e7, 0, 0], [0, 5.96e7, 0], [0, 0, 5.96e7]],
+                "unit": "S.m-1",
+            },
+            "source": "reference",
+            "version": "1",
+            "materialId": None,
+            "materialParameterId": None,
+        }
+        entry[field] = value
+        with pytest.raises(CaeError) as error:
+            _validate_material_snapshot(
+                {"schemaVersion": 1, "materials": {"Copper": {"electrical.conductivity": entry}}},
+                "start.measurement.materialParameters",
+            )
+        assert error.value.code == "invalid_input"

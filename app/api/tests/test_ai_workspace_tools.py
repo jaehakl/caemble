@@ -292,6 +292,7 @@ def test_recorded_data_slice_bounds_inline_and_base64_without_full_result():
     assert sliced["nextOffset"] == 5
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_visible_material_children_are_public_or_owned_only(db_session):
     owner = await create_user(db_session)
@@ -327,6 +328,7 @@ async def test_visible_material_children_are_public_or_owned_only(db_session):
     assert await reader.search("material", "Other Secret", 10) == []
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_agent_visibility_is_public_plus_own_with_private_measurements_and_geometry(db_session):
     owner = await create_user(db_session)

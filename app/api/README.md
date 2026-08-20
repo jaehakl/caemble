@@ -1,212 +1,90 @@
 # Caemble API
 
-FastAPI와 PostgreSQL을 사용하는 Caemble 백엔드다. 인증 테이블은
-`app/user_auth/db.py`, GPStation 실행 테이블은 `app/gpstation/db.py`, Caemble
-도메인 테이블은 `app/db.py`에서 관리한다.
+The FastAPI service owns authentication, Caemble persistence, the public v1
+client/launcher API, job orchestration, catalog reads, and staged AI Agent
+sessions. PostgreSQL is required; the shared catalog package provides a
+read-only SQLite snapshot.
 
-## 초기 설정과 migration
+## Local setup
 
-`.env.example`을 `.env`로 복사하고 PostgreSQL 연결, Google OAuth client,
-JWT secret, 앱 origin을 설정한다. 새 개발 DB에는 다음 명령으로 전체 schema와
-`vector` 확장을 만들고 `user`, `admin` 역할을 멱등적으로 시드한다.
+Copy `.env.example` to `.env` and configure PostgreSQL, Google OAuth, JWT,
+allowed origins, and credential-encryption keys. Then install, migrate, and run:
 
 ```powershell
-poetry install --no-root
+poetry install
 poetry run alembic upgrade head
 poetry run alembic current
+poetry run uvicorn main:app --app-dir app --reload --host 127.0.0.1 --port 8000
 ```
 
-초기 Alembic revision은 인증 및 전체 도메인 테이블, OAuth provider enum,
-index와 FK를 포함한다. 이후 모델 변경은 반드시 새 revision으로 반영한다.
+The initial migration creates the required `vector` extension. If the
+application database user cannot create extensions, a DBA must create `vector`
+before running Alembic.
 
-## Google OAuth와 JWT
-
-- `GET /auth/google/start?return_to=...`는 state, nonce, PKCE를 만들고 Google로 이동한다.
-- `GET /auth/google/callback`은 검증된 Google identity와 사용자를 생성하거나 다시 연결한다.
-- access/refresh JWT는 종류가 구분되며 HttpOnly 쿠키로만 전달된다.
-- `GET /auth/me`, `GET /auth/refresh`, `POST /auth/logout`이 계정 상태를 관리한다.
-- refresh token은 stateless JWT로 재발급하며 별도 서버 session store를 두지 않는다.
-
-`return_to`는 `APP_BASE_URL`과 `ALLOWED_APP_ORIGINS`에 포함된 origin으로만
-제한된다. 로컬 HTTP에서는 `SECURE_COOKIES=false`, HTTPS 운영에서는
-`SECURE_COOKIES=true`를 사용하고 필요할 때만 `COOKIE_DOMAIN`을 설정한다.
-
-## 외부 AI provider와 Agent 데이터 경계
-
-각 사용자는 Account에서 자신의 외부 AI provider API key를 등록한다. 현재 v1은
-OpenAI의 `gpt-5.6-luna`만 허용한다. 키는 사용자별로 격리해 MultiFernet ciphertext로
-DB에 저장하고, 등록 이후 원문이나 suffix를 API 응답으로 다시 반환하지 않는다.
-`AI_CREDENTIAL_FERNET_KEYS`에는 쉼표로 구분한 Fernet key를 최신 primary부터 넣는다.
-새 키를 맨 앞에 추가하면 이후 쓰기는 새 키를 사용하고 읽기는 뒤의 이전 키도 시도한다.
-기존 credential은 자동 재암호화되지 않으므로 사용자가 다시 등록하기 전까지 필요한
-이전 키를 제거하면 안 된다.
-
-Agent는 작업에 필요한 현재 사용자의 Visible DB 데이터, catalog 항목, 편집 중인
-Experiment bundle을 선택한 외부 provider로 보낼 수 있다. Workbench compile/evaluate
-결과는 Agent나 외부 provider로 자동 전송하지 않는다. OpenAI
-Responses 요청은 `store=false`를 사용해 응답을 나중에 조회하기 위한 저장을 요청하지
-않고 GPT-5.6 prompt cache는 implicit mode와 30분 TTL로만 요청한다. 그러나 이것은 Zero Data Retention을
-뜻하지 않는다. provider에는 일시적인 prompt-cache application state가 남을 수 있고 OpenAI 기본
-abuse-monitoring 로그에는 prompt와 response 같은 customer content가 포함될 수 있고
-기본적으로 최대 30일 보존될 수 있다. 법적 요구나 서비스/제3자 보호에 필요한 경우에는
-더 길어질 수 있다. Caemble 세션 삭제는 provider의 cache나 abuse log를 삭제하지 않는다.
-더 엄격한 보존 정책이 필요하면 해당 사용자의 OpenAI 조직/project에서
-별도 승인이 필요한 Modified Abuse Monitoring 또는 Zero Data Retention을 설정해야 한다.
-자세한 내용은 [OpenAI API data controls](https://developers.openai.com/api/docs/guides/your-data#default-usage-policies-by-endpoint)를
-확인한다.
-
-Account의 `연결 테스트`는 `POST /ai/providers/{provider}/credential/test`를 통해 현재
-사용자에게 암호화 저장된 key로 고정된 짧은 Luna Responses 요청을 보낸다. 자동 실행하지
-않으며 소량의 provider API 비용이 발생한다. 실패 응답과 로그에는 분류된 오류 코드,
-재시도 가능 여부와 OpenAI request ID만 포함하고 key, prompt 또는 원본 오류 본문은 포함하지 않는다.
-
-일반 CI는 fake provider adapter만 사용한다. Luna의 실제 Responses/compaction 요청 계약을
-확인하는 유료 smoke test는 `CAEMBLE_RUN_LIVE_OPENAI_SMOKE=1`과
-`CAEMBLE_LIVE_OPENAI_API_KEY`를 명시한 환경에서만
-`poetry run pytest tests/test_ai_provider_live.py`로 실행한다. 이 key는 DB나 source에
-저장하지 않는다.
-
-## 통합 job runtime
-
-Caemble은 GPStation 연결 정보를 저장하지 않고 `/v1` client/launcher API와
-`/web` 관리 API를 직접 제공한다. Access Token 원문은 생성 응답에 한 번만
-표시하고 DB에는 SHA-256 hash와 표시용 prefix만 저장한다.
-
-서버 시작 시 `../slaves/*/manifest.json`을 UTF-8로 직접 읽어 `id`, `name`,
-`module`과 중복을 검증한다. 등록되지 않은 `slave_app_id`의 job과 launcher는
-거부된다. 런처 연결과 job dispatcher, 실행 중 Agent의 staged workspace와 streaming
-상태는 프로세스 메모리를 사용하므로 API는 반드시 단일 worker/replica로 실행한다.
-애플리케이션은 중복 runtime 시작을 DB 잠금으로 차단하지 않으므로 실행 환경에서
-단일 인스턴스를 보장해야 한다. 재시작 시 진행 중 job은 실패로 복구되고 진행 중 Agent
-실행은 유지되지 않는다.
-
-GPStation 호환 API의 ORM, 요청/응답 model, router, service와 보안 utility는
-`app/gpstation` 패키지에서 함께 관리한다. `/v1`은 외부 SDK와 launcher용 bearer
-token API이며, `/web`은 Caemble 쿠키와 CSRF 보호를 사용하는 관리 API다.
-
-## CRUD 계약
-
-카탈로그와 model artifact router는 공통 `utils/crud`를 사용해 다음
-경로를 제공한다.
-
-- `POST /<table>/list`
-- `POST /<table>/upsert`
-- `DELETE /<table>/`
-
-대상 table 경로는 `material`, `material_name`, `material_parameter`,
-`material_parameter_qualifier`, `designer_model`,
-`predictor_model`이다. Experiment는 `/list`, `/save`, `/history`, `DELETE /`를,
-Measurement는 `/list`, `/create`, `/{id}/record`, `DELETE /`를 사용한다.
-RecordedData는 `/list`만 제공하며 직접 upsert/delete할 수 없다.
-
-`user_id IS NULL`인 행은 공개 데이터다. 익명 사용자는 공개 행을 조회할 수
-있고, 로그인 사용자는 공개 행과 본인 행을 조회하며 본인 행만 변경할 수 있다.
-관리자는 모든 범위를 관리할 수 있다. `MaterialParameterQualifier`는 별도
-`user_id` 없이 부모 `MaterialParameter`의 범위를 상속한다.
-네 Material catalog의 기존 12개 URL은 모두 `routers/material.py`에서 제공하며
-URL과 method 계약은 유지한다. CRUD 구현은 `service/material` package에 모은다.
-
-목록 body의 `scope`는 `visible`, `mine`, `public` 중 하나다. 기본값
-`visible`은 기존 공개+본인 동작을 유지하고, `mine`은 로그인 사용자의 행만,
-`public`은 공개 행만 반환한다.
-
-공개 행의 FK는 공개 행만 가리킬 수 있다. 사용자 행의 FK는 공개 행 또는 같은
-사용자의 행을 가리킬 수 있다. Experiment의 parent 관계는 순환을 허용하지 않으며,
-부모 삭제 시 자식은 가장 가까운 생존 조상으로 이동한다.
-
-## 불변 Geometry module 계약
-
-사용자는 `PUT /auth/geometry-namespace`로 새 Repository에 사용할 기본 namespace를
-설정하고 언제든 다른 사용자가 예약하지 않은 값으로 변경할 수 있다. 변경해도 기존
-Repository의 불변 namespace와 Published Geometry 좌표는 바뀌지 않는다.
-Geometry 좌표는
-`caemble:geometry/<namespace>/<repository>/<package>@<major>.<minor>.<patch>`이고
-prerelease, range와 `latest`는 허용하지 않는다. 모든 dependency는 같은 owner의
-Repository 안에 있어야 하며 published version의 source는 수정하지 않는다. Module
-format v4 source는 PascalCase named `Geometry<Props>` 함수 component를 하나 이상
-export하고, 여러 component를 함께 export할 수 있다. default/static/helper value export는
-허용하지 않는다. Geometry dependency는 source의 named exact-coordinate import가 유일한
-원본이며 서버가 `geometry_imports` projection을 source에 맞춰 생성한다. Workbench draft만
-`@local` coordinate를 사용할 수 있고 Published source에는 exact SemVer만 저장된다. props
-계약은 TypeScript source에만 있고 별도 DB metadata로 저장하지 않는다.
-참조가 없는 Version과 Package만 검증된 정리 API로 삭제할 수 있다.
-사용자가 삭제되면 repository는 owner FK만 `NULL`로 바뀌고 namespace와 좌표를
-보존한 채 자동 archive된다. 이 orphan graph는 admin만 조회할 수 있고 namespace는
-재사용할 수 없다.
-
-- `POST /geometry/repositories/list`, `POST /geometry/repositories`
-- `PUT /geometry/repositories/{id}`, `POST /geometry/repositories/{id}/archive`
-- `POST /geometry/packages/list`, `DELETE /geometry/packages/`
-- `POST /geometry/versions/list`, `DELETE /geometry/versions/`
-- `GET /geometry/versions/{id}/resolve`, `POST /geometry/versions/{id}/archive`
-- `POST /geometry/versions/{id}/dependents/list`
-- `POST /geometry/versions/{id}/experiments/list`, `POST /geometry/versions/usage`
-- `POST /geometry/publish/plan`, `POST /geometry/publish`
-
-publish 요청은 local draft source와 선택 target을 보내고 서버가 Tree-sitter TSX 분석으로
-도달 가능한 local dependency closure, named import projection, cycle/깊이/크기 제한과
-child-first Merkle hash를 다시 계산한다. plan은 `@local`을 최종 exact coordinate로 바꾼
-source와 replacement를 반환한다. `publish`는 사용자가 확인한 `planHash`를 재검증한 뒤 한
-transaction으로 version과 import projection을 만든다. `repositoryId`가 있는 draft는
-해당 기존 Repository의 namespace를 사용하고, 없는 새 Repository draft만 사용자의
-현재 기본 namespace를 사용한다. 새 draft의 repository/package가 없으면 publish
-transaction 안에서 함께 생성한다. SemVer 충돌은
-`geometry_version_conflict` 409와 suggested version을 반환한다. resolve/publish snapshot의
-`moduleFormatVersion`은 4이고 CAD API version은 7이다.
-
-Experiment source bundle v5는 `experiment.tsx`, `geometry.tsx`, `material.tsx`,
-`simulate.py`와 하나 이상의 `tasks/*.tsx`를 항상 포함한다. `material.tsx`는 Material
-객체와 역할별 map을 직접 정의해 export하며 정적 `@caemble/core` import만 허용한다.
-Experiment는 `./geometry`, `./material`, Task는 `../geometry`, `../material`에서
-필요한 named export를 import한다. 모든 TSX source에서 dynamic import와 `require()`는
-허용하지 않는다. `Material` runtime import와 instance 생성은 `material.tsx`에만 둔다.
-`geometry.tsx`는 exact Geometry coordinate에서 named component를 import하고 여러 이름을
-export할 수 있다. `geometrySnapshot.schemaVersion=2`는 `entryImports`와 전체 reachable
-module source/hash/import projection을 canonical order로 보존한다. 저장 시 API가
-`geometry.tsx`에서 snapshot을 독립 재생성해 요청 값과 대조하고
-`experiment_geometry_imports` 및 `experiment_geometry_modules` projection을 갱신한다.
-
-CAD API v7 전환 migration은 이전 module source와 Experiment 입력 snapshot을 안전하게
-변환할 수 없으므로 Geometry Version/Import와 Experiment, Measurement, RecordedData,
-DesignerModel, PredictorModel 데이터를 upgrade와 downgrade에서 삭제한다. 사용자 계정,
-namespace, Geometry Repository/Package와 Material, MaterialName, MaterialParameter,
-MaterialParameterQualifier catalog는 보존한다.
-
-## 도메인 테이블
-
-- Material, MaterialName, MaterialParameter, MaterialParameterQualifier
-- GeometryRepository, GeometryPackage, GeometryVersion, GeometryImport, Experiment
-- Measurement, RecordedData
-- DesignerModel, PredictorModel
-
-모든 도메인 테이블은 `id`, `created_at`, `updated_at`을 가진다. JSON 데이터는
-JSONB, 코드 임베딩은 768차원 pgvector로 저장한다. MaterialName은 공개 범위와
-사용자별 범위에서 각각 유일하다.
-
-## Measurement 저장 경계
-
-`POST /measurement/create`는 Experiment source hash를 확인한 뒤 Experiment,
-전체 vars, 동결된 material parameter snapshot을 가진 pending Measurement를 항상
-새로 만든다. 결과는 `POST /measurement/{id}/record`로 한 번만 원자적으로
-기록한다. 완료된 Measurement를 다시 실행하려면 새 Measurement를 만들어야 한다.
-
-RecordedData에는 UI가 완성한 `quantity_kind`, `tensor_order`, `dtype`,
-`data_schema`, `data`를 그대로 저장한다. API는 QuantityKind catalog나 CAE 계약
-package를 사용하지 않으며 unit 호환성, tensor shape, dtype byte 수, base64 내용
-등을 해석하지 않는다. `data_url`과 `file_size`는 신규
-Measurement 저장에서도 `NULL`이다.
-
-## 실행
+Routine tests omit explicitly slow database/WebSocket contracts and opt-in live
+provider checks:
 
 ```powershell
-cd app/api/app
-poetry run python -m uvicorn main:app --reload --host 0.0.0.0
+poetry run pytest -q -m "not slow and not live"
 ```
 
-운영 실행에는 `--workers`를 추가하지 않는다.
-
-테스트는 설정된 PostgreSQL의 transaction 안에서 실행된다.
+Run the complete local suite before a cross-boundary change is merged:
 
 ```powershell
 poetry run pytest -q
 ```
+
+The live OpenAI smoke test is separate, uses the environment variables named in
+the test module, sends a paid request, and must never run in routine CI.
+
+## Ownership
+
+- `app/user_auth`: Google OAuth, cookies/JWT, CSRF, users, and access tokens.
+- `app/gpstation`: `/v1` models, services, job dispatch, launcher WebSocket, and
+  compatibility security utilities.
+- `app/routers`: cookie-authenticated `/web` and domain endpoints.
+- `app/service`: domain operations and transaction boundaries. Material CRUD
+  belongs in `service/material` and its routes in `routers/material.py`.
+- `app/ai`: external provider credentials, Agent tools, staged source changes,
+  and streaming run state.
+- `app/utils/crud`: shared owned/public CRUD mechanics.
+- `alembic`: append-only schema migrations.
+
+The [architecture guide](../../docs/architecture.md) is the concise source for
+current bundle versions and UI/API/worker responsibility. Endpoint request and
+response detail belongs in Pydantic/OpenAPI definitions, not a duplicated list
+in this README.
+
+## Security and runtime boundaries
+
+- First-party UI requests use HttpOnly cookies, `/web`, and CSRF protection.
+- External clients use bearer `client` tokens and `/v1`; launchers use bearer
+  `launcher` tokens on `/v1/launchers/control`.
+- Access-token plaintext is returned once. The database stores only a SHA-256
+  hash and display prefix.
+- User provider keys are encrypted with the ordered MultiFernet keys in
+  `AI_CREDENTIAL_FERNET_KEYS` and are never returned after registration.
+- Agent input may include source and Visible DB/catalog data selected for the
+  current user. Compile/evaluate output is not sent automatically.
+
+OpenAI Responses requests set `store=false` and request implicit prompt caching
+with a 30-minute TTL. This disables retrievable response state for those
+requests, but it is not Zero Data Retention: OpenAI's default abuse-monitoring
+logs may retain customer content for up to 30 days, and prompt-cache application
+state can have a longer provider-side maximum than the requested application
+TTL. See the [OpenAI API data controls](https://developers.openai.com/api/docs/guides/your-data)
+and the production disclosure in [deployment](../../deployment/deployment.md).
+
+Launcher connections, the dispatcher, and active Agent sessions are held in
+process memory. Run exactly one API worker/replica. A restart marks active jobs
+failed and does not resume an Agent run.
+
+## Persistence boundaries
+
+The API validates source hashes, ownership, immutable Geometry imports, and
+one-time RecordedData attachment. CAD evaluation, tensor interpretation, unit
+conversion, and physics execution remain in the UI/CAE worker boundary.
+
+QuantityKind, Material, and Solver catalog data is read from
+`app/catalog/caemble_catalog/catalog.sqlite3`. Never introduce parallel catalog
+data in API source, JSON, generated JavaScript, or Markdown.

@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { defaultCode } from '../../defaultCode'
@@ -25,25 +24,14 @@ import type { GeometryCoordinate } from '../source/geometrySnapshot'
 import coreTypes from './caemble-core.d.ts?raw'
 import jsxTypes from './cad-jsx.d.ts?raw'
 
-const experimentProgramDoc = readFileSync(
-  new URL('../../../../../../docs/experiment-program.md', import.meta.url),
-  'utf8',
-)
-
 const defaultGeometryFiles = {
   'C:/caemble-source/hash/geometry.tsx': defaultExperimentGeometryCode,
   'C:/caemble-source/hash/material.tsx': defaultExperimentMaterialCode,
 }
 
-function diagnosticsFor(
-  source: string,
-  additionalFiles: Readonly<Record<string, string>> = defaultGeometryFiles,
-  sourcePath = 'C:/caemble-source/hash/experiment.tsx',
-  catalogTypes?: string,
-) {
+function diagnosticsForFiles(sourceFiles: Readonly<Record<string, string>>, catalogTypes?: string) {
   const virtualFiles = new Map<string, string>([
-    ...Object.entries(additionalFiles),
-    [sourcePath, source],
+    ...Object.entries(sourceFiles),
     ['C:/node_modules/@caemble/core/index.d.ts', coreTypes],
     ['C:/node_modules/@caemble/core/cad-jsx.d.ts', jsxTypes],
     ...(catalogTypes === undefined
@@ -87,9 +75,8 @@ function diagnosticsFor(
   }
   const program = ts.createProgram({
     rootNames: [
-      sourcePath,
+      ...Object.keys(sourceFiles),
       'C:/node_modules/@caemble/core/cad-jsx.d.ts',
-      ...Object.keys(additionalFiles),
       ...(catalogTypes === undefined ? [] : ['C:/node_modules/@caemble/core/catalog-runtime.d.ts']),
     ],
     options,
@@ -98,6 +85,15 @@ function diagnosticsFor(
   return ts
     .getPreEmitDiagnostics(program)
     .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'))
+}
+
+function diagnosticsFor(
+  source: string,
+  additionalFiles: Readonly<Record<string, string>> = defaultGeometryFiles,
+  sourcePath = 'C:/caemble-source/hash/experiment.tsx',
+  catalogTypes?: string,
+) {
+  return diagnosticsForFiles({ ...additionalFiles, [sourcePath]: source }, catalogTypes)
 }
 
 describe('unversioned CAD authoring declarations', () => {
@@ -156,14 +152,15 @@ describe('unversioned CAD authoring declarations', () => {
     ).toContain("Property 'id' does not exist")
   })
 
-  it.each(cadElementCatalog)('type-checks the $tag canonical manifest example', (manifest) => {
-    expect(
-      diagnosticsFor(
+  it('type-checks every canonical element example in one TypeScript program', () => {
+    const files = Object.fromEntries(
+      cadElementCatalog.map((manifest, index) => [
+        `C:/caemble-source/catalog/${index}-${manifest.tag}/geometry.tsx`,
         `import { type Geometry } from '@caemble/core'\nexport const Example: Geometry = () => (${manifest.example})`,
-        {},
-        'C:/caemble-source/hash/geometry.tsx',
-      ),
-    ).toEqual([])
+      ]),
+    )
+
+    expect(diagnosticsForFiles(files)).toEqual([])
   })
 
   it('requires the common Experiment geometry contract', () => {
@@ -208,47 +205,48 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
     )
   })
 
-  it.each(caembleExamples)('type-checks the $title example', ({ code }) => {
-    expect(diagnosticsFor(code)).toEqual([])
-  })
-
-  it.each([...caembleProgramExamples, wheelAssemblyExample])('type-checks the $title Experiment bundle', (example) => {
-    const prefix = 'C:/caemble-source/hash'
+  it('type-checks every public Geometry example in one TypeScript program', () => {
     const files = Object.fromEntries(
-      Object.entries(example.experimentSourceBundle.files)
-        .filter(([path]) => path.endsWith('.tsx'))
-        .map(([path, source]) => [`${prefix}/${path}`, source]),
+      caembleExamples.flatMap(({ code, id }) => {
+        const prefix = `C:/caemble-source/examples/${id}`
+        return [
+          [`${prefix}/experiment.tsx`, code],
+          ...(id === 'dc-conductor'
+            ? [
+                [`${prefix}/geometry.tsx`, defaultExperimentGeometryCode],
+                [`${prefix}/material.tsx`, defaultExperimentMaterialCode],
+              ]
+            : []),
+        ]
+      }),
     )
-    Object.entries(example.experimentSourceBundle.files)
-      .filter(([path]) => path.endsWith('.tsx'))
-      .forEach(([path, source]) => expect(diagnosticsFor(source, files, `${prefix}/${path}`)).toEqual([]))
+
+    expect(diagnosticsForFiles(files)).toEqual([])
   })
 
-  it('type-checks the local templates and the AI Helper geometry skeleton bundle', () => {
-    for (const bundle of [
-      starterExperimentSourceBundle,
-      blankExperimentSourceBundle,
-      geometryAuthoringSkeletonSourceBundle,
-    ]) {
-      const prefix = 'C:/caemble-source/hash'
-      const files = Object.fromEntries(
-        Object.entries(bundle.files)
+  it('type-checks every shared Experiment bundle in one TypeScript program', () => {
+    const files = Object.fromEntries(
+      [...caembleProgramExamples, wheelAssemblyExample].flatMap((example, index) =>
+        Object.entries(example.experimentSourceBundle.files)
           .filter(([path]) => path.endsWith('.tsx'))
-          .map(([path, source]) => [`${prefix}/${path}`, source]),
-      )
-      Object.entries(bundle.files)
-        .filter(([path]) => path.endsWith('.tsx'))
-        .forEach(([path, source]) => expect(diagnosticsFor(source, files, `${prefix}/${path}`)).toEqual([]))
-    }
+          .map(([path, source]) => [`C:/caemble-source/programs/${index}-${example.id}/${path}`, source]),
+      ),
+    )
+
+    expect(diagnosticsForFiles(files)).toEqual([])
   })
 
-  it('type-checks the complete Experiment sources in the standalone guide', () => {
-    const sources = [...experimentProgramDoc.matchAll(/```tsx\r?\n([\s\S]*?)```/g)].map((match) => match[1])
-    expect(sources).toHaveLength(4)
-    const prefix = 'C:/caemble-source/hash'
-    const paths = ['geometry.tsx', 'experiment.tsx', 'material.tsx', 'tasks/electric.tsx']
-    const files = Object.fromEntries(paths.map((path, index) => [`${prefix}/${path}`, sources[index]]))
-    sources.forEach((source, index) => expect(diagnosticsFor(source, files, `${prefix}/${paths[index]}`)).toEqual([]))
+  it('type-checks local templates and the AI Helper geometry skeleton in one TypeScript program', () => {
+    const files = Object.fromEntries(
+      [starterExperimentSourceBundle, blankExperimentSourceBundle, geometryAuthoringSkeletonSourceBundle].flatMap(
+        (bundle, index) =>
+          Object.entries(bundle.files)
+            .filter(([path]) => path.endsWith('.tsx'))
+            .map(([path, source]) => [`C:/caemble-source/templates/${index}/${path}`, source]),
+      ),
+    )
+
+    expect(diagnosticsForFiles(files)).toEqual([])
   })
 
   it('rejects unknown vars and tuple shapes', () => {

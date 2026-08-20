@@ -51,6 +51,7 @@ def test_return_to_is_restricted_to_configured_origins(monkeypatch):
     assert safe_return_to("//evil.example/viewer") == "https://app.example.com"
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_refresh_has_no_legacy_gpstation_connection_query(
     client,
@@ -75,6 +76,7 @@ async def test_refresh_has_no_legacy_gpstation_connection_query(
     assert not any("gpstation_connections" in statement for statement in statements)
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_google_oauth_pkce_callback_relogin_and_cookies(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
@@ -178,6 +180,7 @@ async def test_google_oauth_pkce_callback_relogin_and_cookies(client, db_session
     assert (await client.get("/auth/refresh")).status_code == 401
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_google_oauth_verification_failure_is_logged_without_secrets(
     client,
@@ -234,6 +237,7 @@ async def test_google_oauth_verification_failure_is_logged_without_secrets(
 
 
 @pytest.mark.parametrize("token_nonce", [None, "sensitive-wrong-nonce"])
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_google_oauth_nonce_failure_is_logged_without_nonce(
     token_nonce,

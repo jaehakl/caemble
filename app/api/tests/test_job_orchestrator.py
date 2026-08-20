@@ -11,6 +11,8 @@ from gpstation.service.state import RuntimeRegistry
 from sdk.protocol.messages import parse_launcher_message
 from tests.helpers import create_user
 
+pytestmark = pytest.mark.slow
+
 
 class FakeWebSocket:
     def __init__(self):

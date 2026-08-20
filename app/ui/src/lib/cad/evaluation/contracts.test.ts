@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import coreDeclarations from '../api/caemble-core.d.ts?raw'
 import jsxDeclarations from '../api/cad-jsx.d.ts?raw'
-import monacoSetupSource from '../compiler/monacoSetup.ts?raw'
 import { cadAuthoringContract, cadElementCatalog } from '../catalog'
 import * as cadFacade from '../index'
 import * as quantityKindFacade from '../../quantitykind'
@@ -70,7 +69,7 @@ describe('CAD registry contracts', () => {
     })
   })
 
-  it('uses shared declaration files for public core types and Monaco', () => {
+  it('uses the generated declaration files for public core types', () => {
     for (const typeName of [
       'BoxAttributes',
       'ShellAttributes',
@@ -86,10 +85,6 @@ describe('CAD registry contracts', () => {
     ]) {
       expect(coreDeclarations).toContain(`export type ${typeName}`)
     }
-    expect(monacoSetupSource).toContain("import coreTypes from '../api/caemble-core.d.ts?raw'")
-    expect(monacoSetupSource).toContain("import jsxTypes from '../api/cad-jsx.d.ts?raw'")
-    expect(monacoSetupSource).toContain("'file:///node_modules/@caemble/core/index.d.ts'")
-    expect(monacoSetupSource).not.toContain('const cadTypes')
     expect(coreDeclarations).not.toContain('IDENTITY_CARTESIAN_BASIS')
 
     const cylinderDeclaration = coreDeclarations.match(/export type CylinderAttributes = Readonly<\{[\s\S]*?\n\}>/)?.[0]

@@ -53,6 +53,7 @@ def materialize_record(response: DataChannelMessage, expected: dict):
     return np.frombuffer(raw, dtype=np.dtype(expected["dtype"]).newbyteorder("<")).reshape(expected["shape"])
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_dc_uniform_bar_ui_fixture_runs_through_cae_handlers():
     payload, attachments = load_request()

@@ -1,93 +1,124 @@
 # Caemble
 
-Caemble is a standalone CAD, experiment, and remote execution application. The
-repository contains its FastAPI service, Vite UI, v1-compatible client SDKs,
-launcher, and the built-in AI and CAE slave codebases.
+Caemble is a local-first CAE Workbench for authoring CAD-backed Experiments,
+preparing Measurements, and running them through remote CAE workers. This
+repository contains the browser UI, FastAPI service, shared catalog, launcher,
+worker applications, and v1-compatible client SDKs.
 
 ```text
 app/
-  api/       FastAPI, OAuth, access tokens, launchers, and jobs
-  catalog/   shared read-only QuantityKind, Material, and Solver SQLite catalog
-  ui/        Caemble browser application
-  sdk/       shared protocol plus JavaScript and Python master SDKs
-  launcher/  per-user slave process launcher
-  slaves/
-    ai/      AI worker and local model catalog
-    cae/     CAE worker and solver implementations
+  ui/        React Workbench and isolated Code-to-CAD runner
+  api/       FastAPI, authentication, persistence, and job orchestration
+  catalog/   shared QuantityKind, Material, and Solver SQLite catalog
+  launcher/  per-user worker launcher
+  slaves/    AI and CAE worker applications
+  sdk/       worker protocol and JavaScript/Python master SDKs
 ```
 
-`app/slaves/*/manifest.json` remains the executable launcher registry. QuantityKind,
-Material, and CAE Solver contracts live in the versioned SQLite file provided by
-`app/catalog`; the API and CAE worker consume that shared package. See
-[Solver development](docs/solver-development.md) before adding or changing a Solver.
+QuantityKind, Material, and Solver catalog data belongs only in
+`app/catalog/caemble_catalog/catalog.sqlite3`. The files
+`app/slaves/*/manifest.json` describe launcher executables; they are not Solver
+contracts.
 
-## Local setup
+## Quick start
 
-Install and migrate the API:
+Start PostgreSQL, copy `app/api/.env.example` to `app/api/.env`, and configure
+the database and OAuth values. Then run the API:
 
 ```powershell
-cd app/api
+Push-Location app/api
 poetry install
 poetry run alembic upgrade head
 poetry run uvicorn main:app --app-dir app --host 127.0.0.1 --port 8000
+Pop-Location
 ```
 
-Build the local JavaScript SDK and start the UI:
+Build the repository-local browser SDK and start the UI:
 
 ```powershell
-cd app/sdk/master/js
+Push-Location app/sdk/master/js
 npm ci
 npm run build
+Pop-Location
 
-cd ../../../ui
+Push-Location app/ui
 npm ci
 npm run dev
+Pop-Location
 ```
 
-Sign in to Caemble and create a `launcher` Access Token from Account. Install each
-slave that this machine should advertise, then start the launcher:
+The Workbench opens at `http://localhost:5173/`; its user manual and live
+catalog reference are at `http://localhost:5173/docs`. An unauthenticated user
+can edit and preview a local Starter. Sign-in is required for persistence,
+provider-backed AI, and remote execution.
+
+To run workers, create a `launcher` token in Account, install only the worker
+projects needed by that machine, configure the launcher's `.env`, and start
+`app/launcher`. See the component READMEs for local details.
+
+## Documentation
+
+- The in-app `/docs` route is the canonical user manual for Workbench authoring,
+  current examples, and live catalog reference.
+- [Architecture](docs/architecture.md) explains source formats, runtime
+  boundaries, and where to read the implementation.
+- [Solver development](docs/solver-development.md) is required reading before
+  adding or changing a CAE Solver.
+- [v1 SDK compatibility](docs/v1-sdk-compatibility.md) defines the frozen public
+  SDK boundary.
+- [Deployment](deployment/deployment.md) covers the current Ubuntu production
+  setup.
+- [Historical plan](docs/archive/2026-08-plan.md) records earlier product notes;
+  it is not a current specification.
+
+Per-component setup and ownership notes live next to each project:
+[UI](app/ui/README.md), [API](app/api/README.md),
+[workers](app/slaves/README.md), [CAE worker](app/slaves/cae/README.md), and
+[SDKs](app/sdk/README.md).
+
+## Validation
+
+Run the focused test for the area being edited first. The routine suites omit
+explicit slow/live contracts:
 
 ```powershell
-cd app/slaves/cae
-poetry install
+Push-Location app/ui
+npm test
+npm run check:docs
+Pop-Location
 
-cd ../ai
-Copy-Item models.example.toml models.toml
-# Edit models.toml with launcher-local LLM, SDXL, and embedding models.
-poetry install
-
-cd ../../launcher
-Copy-Item .env.example .env
-# Set CAEMBLE_API_URL and CAEMBLE_ACCESS_TOKEN.
-poetry install
-poetry run launcher
+Push-Location app/api
+poetry run pytest -q -m "not slow and not live"
+Pop-Location
 ```
 
-The launcher executes one job at a time and switches its persistent worker
-between `ai` and `cae`. Run more launchers for concurrent jobs. AI model files,
-`models.toml`, VOICEVOX runtime files, virtual environments, and caches are local
-machine state and must not be committed.
+Before merging a cross-boundary change, run the fuller checks:
 
-## Client compatibility
+```powershell
+Push-Location app/ui
+npm run test:contracts
+npm run test:full
+npm run lint
+npm run build
+Pop-Location
 
-Existing GPStation v1 JavaScript and Python clients can target a deployed Caemble
-server by changing only their base URL to `https://<caemble-host>/api`, provided
-the existing client token has been imported. New integrations can create a
-Caemble `client` token instead.
+Push-Location app/api
+poetry run pytest -q
+Pop-Location
+```
 
-See [v1 SDK compatibility](docs/v1-sdk-compatibility.md) for the frozen public
-contract and [deployment](deployment/deployment.md) for the production setup.
-
+Run the relevant `pytest`/`npm test` command inside `app/catalog`,
+`app/launcher`, `app/sdk`, `app/slaves/ai`, or `app/slaves/cae` when those
+projects change. Live provider checks remain opt-in and may incur cost.
 
 ## Runtime boundaries
 
-- First-party UI requests use Caemble cookies and CSRF-protected `/web` routes.
-- Third-party SDK requests use bearer tokens and `/v1`.
-- Job payloads and attachments move over WebRTC between client and slave; the API
-  stores orchestration state rather than solver data.
-- CAE receives `{ measurement: BuiltMeasurement, solverContracts }`, verifies the selected
-  Solver contract digests against its local catalog, and then returns progress, cancellation,
-  and recorded data.
-- The default ICE configuration uses Google STUN. No managed TURN service is
-  included.
-- The API must run as one process because launcher WebSocket state is in memory.
+- First-party browser requests use cookies and CSRF-protected `/web` routes;
+  third-party SDKs use bearer tokens and `/v1`.
+- Job payloads and attachments travel over WebRTC between client and worker.
+  The API stores orchestration state rather than solver payloads.
+- One launcher executes one job at a time. Run additional launchers for
+  concurrency.
+- Launcher WebSocket and active Agent state are process-local, so the API must
+  run as one worker/replica.
+- Google STUN is the default ICE service; no managed TURN service is included.

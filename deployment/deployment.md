@@ -131,15 +131,16 @@ key를 다시 저장하기 전에 이전 키를 제거하면 해당 credential�
 사용자별 provider key는 DB에 암호화해 저장하고 원문이나 suffix를 다시 반환하지 않는다.
 Agent는 사용자가 볼 수 있는 DB/catalog 데이터와 Experiment source를 사용자가 선택한
 외부 provider로 전송할 수 있으므로 운영 개인정보 고지에 이 경계를 포함한다. Workbench
-compile/evaluate 결과는 Agent나 외부 provider로 자동 전송하지 않는다. OpenAI 요청은
-`store=false`, prompt cache는 `in_memory` 모드지만 이는 Zero Data
-Retention과 같지 않다. provider에는 일시적인 prompt-cache application state가 남을 수 있고 기본
-abuse-monitoring 로그에는 prompt/response가 포함되어 최대 30일 보존될 수 있고 법적 요구나
-서비스/제3자 보호에 필요한 경우에는 더 길어질 수 있다. Caemble 세션 삭제는 provider cache나
-abuse log를 삭제하지 않는다. Modified Abuse Monitoring이나
-Zero Data Retention은 사용자의 OpenAI organization/project에 별도 승인과 설정이 필요하다.
-운영 전 [OpenAI API data controls](https://developers.openai.com/api/docs/guides/your-data#default-usage-policies-by-endpoint)를
-확인한다.
+compile/evaluate 결과는 Agent나 외부 provider로 자동 전송하지 않는다. Caemble의 OpenAI
+Responses 요청은 `store=false`로 response application-state 저장을 끄고,
+`prompt_cache_options={"mode":"implicit","ttl":"30m"}`로 30분 cache TTL을 요청한다.
+이는 Zero Data Retention과 같지 않다. OpenAI 기본 abuse-monitoring log에는 prompt와
+response 같은 customer content가 포함되어 최대 30일 보존될 수 있다. Prompt caching은
+암호화된 KV를 GPU-local storage에 보관하며 provider 정책상 최대 24시간 남을 수 있으므로,
+Caemble이 요청한 30분 TTL과 provider 전체 보존 경계를 구분해야 한다. Caemble 세션 삭제는
+provider cache나 abuse log를 삭제하지 않는다. Modified Abuse Monitoring 또는 Zero Data
+Retention은 사용자의 OpenAI organization/project에 별도 승인과 설정이 필요하다. 운영 전
+[OpenAI API data controls](https://developers.openai.com/api/docs/guides/your-data)를 확인한다.
 
 `COOKIE_DOMAIN`을 비워 두는 것은 필수 보안 경계다. `.caemble.com`을 설정하면 인증 쿠키가
 `code-to-cad.caemble.com`에도 전달될 수 있다.
@@ -265,7 +266,7 @@ cp models.example.toml models.toml
 poetry install
 
 cd /opt/caemble/app/launcher
-cp env.example .env
+cp .env.example .env
 ```
 
 launcher의 `.env`에는 다음 두 값을 설정한다. 운영 URL에는 외부 reverse-proxy
@@ -362,7 +363,7 @@ sudo certbot renew --dry-run
 
 ```bash
 curl -I https://www.caemble.com/
-curl -I https://www.caemble.com/viewer
+curl -I https://www.caemble.com/docs
 curl -fsS https://www.caemble.com/api/openapi.json >/dev/null
 
 test "$(curl -sS -o /dev/null -w '%{http_code}' https://www.caemble.com/api/auth/me)" = "401"
@@ -370,7 +371,7 @@ test "$(curl -sS -o /dev/null -w '%{http_code}' https://code-to-cad.caemble.com/
 test "$(curl -sS -o /dev/null -w '%{http_code}' https://code-to-cad.caemble.com/api/openapi.json)" = "404"
 
 curl -sSI https://code-to-cad.caemble.com/runner.html
-curl -I "https://www.caemble.com/api/auth/google/start?return_to=https%3A%2F%2Fwww.caemble.com%2Faccount"
+curl -I "https://www.caemble.com/api/auth/google/start?return_to=https%3A%2F%2Fwww.caemble.com%2F"
 
 sudo systemctl status caemble-api --no-pager
 sudo nginx -t
@@ -378,7 +379,7 @@ sudo nginx -t
 
 확인 기준은 다음과 같다.
 
-- `/`와 `/viewer`는 `200`을 반환하고 새로고침해도 SPA가 열린다.
+- `/`와 `/docs`는 `200`을 반환하고 새로고침해도 SPA가 열린다.
 - `/api/openapi.json`은 FastAPI schema를 반환한다.
 - 비로그인 `/api/auth/me`는 예상된 `401`을 반환한다.
 - runner의 `/runner.html`만 `200`이며 정확한 CSP와 `Cache-Control: no-store`가 있다.
@@ -459,10 +460,10 @@ DB snapshot을 복원하거나 검토된 보정 migration을 적용한다.
 ## 11. 전환 순서
 
 1. Caemble schema/API와 WebSocket proxy를 배포한다.
-2. client token importer를 dry-run한 뒤 오류가 없을 때만 `--apply`한다.
-3. 사용자별 Caemble `launcher` token을 발급하고 launcher 연결을 확인한다.
+2. 사용자별 Caemble `launcher` token을 발급하고 launcher 연결을 확인한다.
+3. 외부 client에는 Caemble Account에서 새 `client` token을 발급한다. Caemble DB에 이미
+   존재하는 유효한 token만 그대로 사용할 수 있으며 별도 token importer는 제공하지 않는다.
 4. 원본 v1 SDK로 launcher 조회, CAE job, AI model 조회와 streaming chat smoke를 한다.
-5. 외부 client의 token은 그대로 두고 base URL만
-   `https://www.caemble.com/api`로 바꾼다.
-6. 전환 검증 후 source DB 환경 변수와 접근 권한을 제거하고, 운영 정책에 맞춰 기존
-   GPStation token을 만료하거나 폐기한다.
+5. 외부 client의 base URL을 `https://www.caemble.com/api`로 바꾼다.
+6. 전환 검증 후 기존 source DB 접근 권한과 더 이상 사용하지 않는 GPStation token을 운영
+   정책에 따라 제거한다.

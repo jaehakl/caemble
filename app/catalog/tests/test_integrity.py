@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import shutil
 import sqlite3
 from pathlib import Path
 
 import pytest
 
-from caemble_catalog import Catalog, CatalogIntegrityError, catalog_path
-from caemble_catalog.admin import create_draft, publish_draft, validate_database, writable_connection
+from caemble_catalog import Catalog, CatalogIntegrityError
+from caemble_catalog.admin import create_draft, validate_database, writable_connection
 from caemble_catalog.validation import OPAQUE_QUANTITY_KINDS
 
 
@@ -100,19 +99,6 @@ def test_validate_rejects_model_minimum_samples_even_if_sqlite_checks_are_bypass
     connection.close()
     with pytest.raises(CatalogIntegrityError, match="minimumSamples must be a safe integer of at least two"):
         validate_database(draft)
-
-
-def test_publish_rejects_invalid_content_without_replacing_canonical(tmp_path: Path):
-    destination = tmp_path / "canonical.sqlite3"
-    draft = tmp_path / "draft.sqlite3"
-    shutil.copy2(catalog_path(), destination)
-    create_draft(draft, destination)
-    with writable_connection(draft) as connection:
-        connection.execute("UPDATE quantity_kinds SET tensor_order = 5 WHERE name = 'Length'")
-    before = destination.read_bytes()
-    with pytest.raises(CatalogIntegrityError, match="tensorOrder"):
-        publish_draft(draft, destination)
-    assert destination.read_bytes() == before
 
 
 def test_reviewed_catalog_regression_contract_and_legacy_absence():

@@ -8,6 +8,8 @@ from gpstation.service.auth_service import authenticate_db_authorization
 from tests.helpers import create_user
 from user_auth.utils.auth_utils import hash_token
 
+pytestmark = pytest.mark.slow
+
 
 async def add_access_key(
     db_session,

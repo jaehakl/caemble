@@ -6,6 +6,8 @@ from app.kernels import run_kernel
 from app.solver_framework.numerics.voxel import build_voxel_domain
 from app.solver_framework.world import surface
 
+pytestmark = pytest.mark.slow
+
 
 def box_world():
     x0, x1 = -0.05, 0.05

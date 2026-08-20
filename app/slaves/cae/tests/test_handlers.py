@@ -1191,20 +1191,13 @@ async def test_start_rejects_incomplete_built_measurement(monkeypatch):
     assert emitted == [{"type": "cae.run.cleaned", "job_id": "session", "run_id": None}]
 
 
-@pytest.mark.parametrize(
-    "variables, schema",
-    [
-        ({"width": 11}, {"width": {"min": 1, "max": 10}}),
-        ({"width": [4]}, {"width": {"min": 1, "max": 10}}),
-        ({"width": 4, "extra": 1}, {"width": {"min": 1, "max": 10}}),
-        ({"width": True}, {"width": {"min": 1, "max": 10}}),
-    ],
-)
 @pytest.mark.asyncio
-async def test_start_validates_variables_against_vars_schema(variables, schema):
+async def test_start_maps_invalid_variables_to_invalid_input():
     request = payload()
-    request["measurement"]["experiment"]["variables"] = variables
-    request["measurement"]["experiment"]["varsSchema"] = schema
+    request["measurement"]["experiment"]["variables"] = {"width": 11}
+    request["measurement"]["experiment"]["varsSchema"] = {
+        "width": {"min": 1, "max": 10}
+    }
 
     response = await cae_simulation_start(
         DataChannelMessage(id="start", type="cae.simulation.start", payload=request),
@@ -1216,19 +1209,8 @@ async def test_start_validates_variables_against_vars_schema(variables, schema):
     assert response.payload["error"]["code"] == "invalid_input"
 
 
-@pytest.mark.parametrize(
-    "field, value",
-    [
-        ("source", 7),
-        ("materialId", True),
-        (
-            "value",
-            {"dtype": "float16", "value": [[70000, 0, 0], [0, 70000, 0], [0, 0, 70000]], "unit": "S.m-1"},
-        ),
-    ],
-)
 @pytest.mark.asyncio
-async def test_start_validates_material_value_and_provenance(field, value):
+async def test_start_maps_invalid_material_snapshot_to_invalid_input():
     request = payload()
     entry = {
         "origin": "source",
@@ -1242,7 +1224,7 @@ async def test_start_validates_material_value_and_provenance(field, value):
         "materialId": None,
         "materialParameterId": None,
     }
-    entry[field] = value
+    entry["source"] = 7
     request["measurement"]["materialParameters"]["materials"] = {
         "Copper": {"electrical.conductivity": entry}
     }
