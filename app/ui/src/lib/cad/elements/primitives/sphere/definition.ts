@@ -16,12 +16,20 @@ export const sphereManifest = {
   summary: '원점 중심의 구를 생성합니다.',
   keywords: ['sphere', 'ball', '구', '구체'],
   properties: [
-    { name: 'radius', type: 'number', required: false, default: '0.5', description: '유한한 양수 구 반지름입니다.' },
+    {
+      name: 'radius',
+      type: 'number',
+      required: false,
+      default: '0.5',
+      authoringValue: '0.5',
+      description: '유한한 양수 구 반지름입니다.',
+    },
     {
       name: 'segments',
       type: 'number',
       required: false,
       default: '32',
+      authoringValue: '32',
       description: '표면 분할 해상도이며 4 이상의 안전한 정수여야 합니다.',
     },
   ],

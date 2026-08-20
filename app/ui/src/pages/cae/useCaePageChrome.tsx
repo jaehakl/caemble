@@ -27,7 +27,9 @@ import {
 import type { WorkbenchAction, WorkbenchMenuDefinition } from '@/features/cae-workbench/chrome'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { WorkbenchTabId } from '@/features/cae-workbench/types'
+import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
 import type { WorkbenchDialog } from './caePageTypes'
+import { GeometryAuthoringRibbon } from './GeometryAuthoringRibbon'
 import { RibbonActions } from './RibbonActions'
 
 function openDocsWindow(href: string) {
@@ -36,6 +38,8 @@ function openDocsWindow(href: string) {
 
 export function useCaePageChrome({
   authenticated,
+  experimentAuthoringState,
+  geometryAuthoringState,
   openTab,
   requestRunSelected,
   runSafely,
@@ -43,6 +47,8 @@ export function useCaePageChrome({
   workbench,
 }: {
   authenticated: boolean
+  experimentAuthoringState: CadEditorAuthoringState | null
+  geometryAuthoringState: CadEditorAuthoringState | null
   openTab: (tab: WorkbenchTabId) => void
   requestRunSelected: () => void
   runSafely: (run: () => unknown | Promise<unknown>) => void
@@ -471,6 +477,7 @@ export function useCaePageChrome({
             actions.generateCandidate,
             actions.saveCurrentMeasurement,
           ]}
+          extraActions={<GeometryAuthoringRibbon state={experimentAuthoringState} />}
         >
           <span className="truncate text-sm font-semibold">{workbench.experimentName}</span>
           <span className="mt-1 text-xs text-muted-foreground">
@@ -484,7 +491,10 @@ export function useCaePageChrome({
       tabId: 'geometry',
       label: 'Geometry',
       content: (
-        <RibbonActions actions={[actions.publishGeometryExport, actions.geometryManager]}>
+        <RibbonActions
+          actions={[actions.publishGeometryExport, actions.geometryManager]}
+          extraActions={<GeometryAuthoringRibbon state={geometryAuthoringState} />}
+        >
           <span className="text-sm font-semibold">Geometry modules</span>
           <span className="mt-1 text-xs text-muted-foreground">
             {workbench.geometryLocalDraftDirty

@@ -24,12 +24,14 @@ export const arrayManifest = {
       name: 'shape',
       type: 'readonly [number, number, number]',
       required: true,
+      authoringValue: '[1, 1, 1]',
       description: 'X, Y, Z축 cell 개수인 정확히 세 개의 양의 안전한 정수입니다.',
     },
     {
       name: 'period',
       type: 'Vec3',
       required: true,
+      authoringValue: '[0, 0, 0]',
       description: '각 lattice 축의 유한한 cell 중심 간격입니다. cell이 둘 이상이면 양수, 아니면 0 이상이어야 합니다.',
     },
     {
@@ -37,12 +39,14 @@ export const arrayManifest = {
       type: '{ x: Vec3; y: Vec3; z: Vec3 }',
       required: false,
       default: 'world XYZ axes',
+      authoringValue: '{ x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }',
       description: '각각 정확히 세 유한 좌표인 0이 아닌 x/y/z lattice 방향이며 런타임에서 정규화됩니다.',
     },
     {
       name: 'inject',
       type: 'Readonly<Record<string, Tensor | { axis: Tensor; angle: Tensor }>>',
       required: false,
+      authoringValue: 'undefined',
       description:
         '비어 있지 않은 dense finite tensor로 cell props를 주입합니다. 선두 shape가 일치해야 하며 position/rotation/scale은 뒤에 길이 3 축이 필요합니다. axis/angle 객체는 deprecated rotate 호환 전용입니다. id/materials/children 및 canonical/legacy transform 혼용은 금지됩니다.',
     },

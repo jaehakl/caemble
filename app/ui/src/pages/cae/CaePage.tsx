@@ -1,5 +1,5 @@
 import { Badge } from '@/components/ui/badge'
-import { lazy, Suspense, useMemo } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { useLocation } from 'react-router'
 import type { AiAgentApplyRequest } from '@/api/aiAgent'
 import { useAuth } from '@/features/auth/use-auth'
@@ -15,6 +15,7 @@ import { ExperimentEditor, RecordedDataEditor } from '@/features/cae-workbench/e
 import { GeometryWorkspaceContainer } from '@/features/cae-workbench/geometry'
 import { useCaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { WorkbenchTabId } from '@/features/cae-workbench/types'
+import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
 import { EXPERIMENT_GEOMETRY_PATH, type RecordedDataRule } from '@/lib/cad'
 import { NotFoundPage } from '@/pages/not-found/NotFoundPage'
@@ -40,8 +41,12 @@ function AuthenticatedCaePage() {
 function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const workbench = useCaeWorkbenchState(auth.user, auth.isAuthenticated)
   const page = useCaePageSession(workbench)
+  const [experimentAuthoringState, setExperimentAuthoringState] = useState<CadEditorAuthoringState | null>(null)
+  const [geometryAuthoringState, setGeometryAuthoringState] = useState<CadEditorAuthoringState | null>(null)
   const chrome = useCaePageChrome({
     authenticated: auth.isAuthenticated,
+    experimentAuthoringState,
+    geometryAuthoringState,
     openTab: page.openTab,
     requestRunSelected: page.requestRunSelected,
     runSafely: page.runSafely,
@@ -100,6 +105,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             document={workbench.experiment?.kind === 'experiment' ? workbench.experiment : null}
             initialActiveFile={page.activeExperimentFile}
             onActiveFileChange={page.setActiveExperimentFile}
+            onAuthoringStateChange={setExperimentAuthoringState}
             onUndoAgentChange={workbench.undoAgentChange}
           />
         ) : tab === 'geometry' ? (
@@ -107,6 +113,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             authenticated={auth.isAuthenticated}
             diagnostics={workbench.geometry.previewDiagnostics}
             geometry={workbench.geometry}
+            onAuthoringStateChange={setGeometryAuthoringState}
             onOpenManager={() => page.setDialog('geometry-manager')}
           />
         ) : tab === 'recorded-data' ? (

@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import type { CadDiagnostic, GeometryModuleCoordinate } from '@/lib/cad'
+import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
 import type { GeometryWorkspaceState } from './useGeometryWorkspaceState'
 import { GeometryWorkspace } from './GeometryWorkspace'
 
@@ -40,11 +41,13 @@ export function GeometryWorkspaceContainer({
   authenticated,
   diagnostics,
   geometry,
+  onAuthoringStateChange,
   onOpenManager,
 }: {
   authenticated: boolean
   diagnostics: readonly CadDiagnostic[]
   geometry: GeometryWorkspaceState
+  onAuthoringStateChange?: (state: CadEditorAuthoringState | null) => void
   onOpenManager: () => void
 }) {
   const [dialog, setDialog] = useState<'namespace' | 'create' | null>(null)
@@ -107,6 +110,7 @@ export function GeometryWorkspaceContainer({
         authenticated={authenticated}
         diagnostics={diagnostics}
         geometry={geometry}
+        onAuthoringStateChange={onAuthoringStateChange}
         onChangeNamespace={() => {
           setOpenCreateAfterNamespace(false)
           setDialog('namespace')

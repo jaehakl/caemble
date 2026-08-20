@@ -203,6 +203,54 @@ export const EmptyStructure: Geometry = () => <></>
   await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('session-restored')
 })
 
+test('inserts primitives and wraps selected Geometry from both authoring ribbons', async ({ page }) => {
+  await page.route(apiPattern, (route) => route.abort('failed'))
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'geometry.tsx' }).click()
+
+  const editor = page.locator('.monaco-editor:visible .view-lines')
+  await editor.click({ position: { x: 120, y: 45 } })
+  await page.keyboard.press('Control+A')
+  await page.keyboard.insertText(`import { Sphere, type Geometry } from '@caemble/core'
+
+export const RibbonPart: Geometry = () => (
+  <>
+    <Sphere id="seed" radius={1} />
+    {/* ribbon cursor */}
+  </>
+)
+`)
+  await expect(page.locator('.monaco-editor:visible .squiggly-error')).toHaveCount(0, { timeout: 10_000 })
+
+  await page.keyboard.press('Control+f')
+  await page.keyboard.insertText('<Sphere id="seed" radius={1} />')
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Escape')
+  const experimentRibbon = page.getByRole('region', { name: 'Experiment 리본' })
+  await expect(experimentRibbon.getByRole('button', { name: 'Operation' })).toBeEnabled()
+  await experimentRibbon.getByRole('button', { name: 'Operation' }).click()
+  await page.getByRole('menuitem', { name: /^union\b/u }).click()
+  await expect(editor).toContainText('id="union"')
+  await expect(editor).toContainText('</union>')
+
+  await editor.click({ position: { x: 120, y: 45 } })
+  await page.keyboard.press('Control+f')
+  await page.keyboard.insertText('ribbon cursor')
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Escape')
+  await experimentRibbon.getByRole('button', { name: 'Primitive' }).click()
+  await page.getByRole('menuitem', { name: /^Box\b/u }).click()
+  await expect(editor).toContainText('type Geometry, Box')
+  await expect(editor).toContainText('id="box"')
+  await expect(editor).toContainText('size={[1, 1, 1]}')
+  await expect(editor).toContainText('rotation={[0, 0, 0]}')
+
+  await page.getByRole('tab', { name: 'Geometry', exact: true }).click()
+  const geometryRibbon = page.getByRole('region', { name: 'Geometry 리본' })
+  await expect(geometryRibbon.getByRole('button', { name: 'Primitive' })).toBeVisible()
+  await expect(geometryRibbon.getByRole('button', { name: /Operation/ })).toBeVisible()
+})
+
 test('regenerates an editable Candidate when varsSchema adds openness', async ({ page }) => {
   await mockApi(page)
   await mockCanonicalCatalog(page)

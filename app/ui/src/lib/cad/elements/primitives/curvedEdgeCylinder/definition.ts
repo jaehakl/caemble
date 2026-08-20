@@ -34,6 +34,7 @@ export const curvedEdgeCylinderManifest = {
       type: 'number',
       required: false,
       default: '1',
+      authoringValue: '1',
       description: 'Z축 방향의 유한한 양수 전체 높이입니다.',
     },
     {
@@ -41,6 +42,7 @@ export const curvedEdgeCylinderManifest = {
       type: 'readonly { amplitude: number; phase: number }[]',
       required: false,
       default: '[{ amplitude: 0.5, phase: 0 }]',
+      authoringValue: '[{ amplitude: 0.5, phase: 0 }]',
       description:
         '비어 있지 않은 Fourier mode 배열입니다. amplitude는 유한한 0 이상, phase는 유한해야 하며 모든 표본 반지름은 양수여야 합니다.',
     },
@@ -49,6 +51,7 @@ export const curvedEdgeCylinderManifest = {
       type: '{ origin: number; coefficients: readonly number[] }',
       required: false,
       default: '{ origin: 0, coefficients: [1] }',
+      authoringValue: '{ origin: 0, coefficients: [1] }',
       description:
         '유한한 origin과 비어 있지 않은 유한 coefficients로 높이별 Taylor 반지름 배율을 정의하며 모든 표본 반지름은 양수여야 합니다.',
     },
@@ -57,6 +60,7 @@ export const curvedEdgeCylinderManifest = {
       type: 'number',
       required: false,
       default: '64',
+      authoringValue: '64',
       description: '방위각 방향 분할 수이며 4 이상의 안전한 정수입니다.',
     },
     {
@@ -64,6 +68,7 @@ export const curvedEdgeCylinderManifest = {
       type: 'number',
       required: false,
       default: '32',
+      authoringValue: '32',
       description: '높이 방향 분할 수이며 1 이상의 안전한 정수입니다.',
     },
   ],

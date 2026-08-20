@@ -20,6 +20,7 @@ export const shellManifest = {
       name: 'offsets',
       type: 'Readonly<Record<string, number>>',
       required: true,
+      authoringValue: '{ inner: -1, outer: 1 }',
       description:
         '비어 있지 않은 Material role별 signed offset입니다. role은 비어 있지 않고 앞뒤 공백이 없어야 하며 값은 서로 다른 유한한 0 아닌 수여야 합니다.',
     },

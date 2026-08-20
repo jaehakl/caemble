@@ -11,6 +11,7 @@ import {
 } from '@/lib/cad'
 import { defaultExperimentTaskCode } from '@/lib/defaultExperimentProgramCode'
 import CadEditor from '@/features/viewer/editor/CadEditor'
+import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
 import { CadDiffEditor } from '@/features/viewer/editor/CadDiffEditor'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
 import type { AgentExperimentChange } from '../state/useCaeWorkbenchState'
@@ -24,6 +25,7 @@ export type ExperimentEditorProps = {
   agentChange?: AgentExperimentChange | null
   onUndoAgentChange?: () => Promise<boolean>
   onActiveFileChange?: (path: string) => void
+  onAuthoringStateChange?: (state: CadEditorAuthoringState | null) => void
 }
 
 function synchronizeExperimentModels(
@@ -111,6 +113,7 @@ export function ExperimentEditor({
   agentChange = null,
   onUndoAgentChange,
   onActiveFileChange,
+  onAuthoringStateChange,
 }: ExperimentEditorProps) {
   const filePaths = useMemo(
     () =>
@@ -135,6 +138,9 @@ export function ExperimentEditor({
   const editorModels = useExperimentMonacoModels(document?.sourceBundle.files ?? null, activeFile)
   const agentFileChange = agentChange?.files.find((file) => file.path === activeFile) ?? null
   const conflictReview = agentChange?.status === 'conflicted'
+  const isTask = activeFile ? experimentTaskName(activeFile) !== null : false
+  const supportsGeometryAuthoring =
+    activeFile === EXPERIMENT_ENTRY_PATH || activeFile === EXPERIMENT_GEOMETRY_PATH || isTask
 
   useEffect(() => {
     if (agentChange) setShowAgentDiff(true)
@@ -149,6 +155,10 @@ export function ExperimentEditor({
   useEffect(() => {
     if (activeFile && activeFile !== selectedFile) onActiveFileChange?.(activeFile)
   }, [activeFile, onActiveFileChange, selectedFile])
+
+  useEffect(() => {
+    if (!supportsGeometryAuthoring) onAuthoringStateChange?.(null)
+  }, [onAuthoringStateChange, supportsGeometryAuthoring])
 
   if (!document || !activeFile) {
     return (
@@ -198,7 +208,6 @@ export function ExperimentEditor({
     selectFile(EXPERIMENT_ENTRY_PATH)
   }
 
-  const isTask = experimentTaskName(activeFile) !== null
   const taskCount = filePaths.filter((path) => experimentTaskName(path) !== null).length
 
   return (
@@ -313,6 +322,7 @@ export function ExperimentEditor({
             key={activeFile}
             language={activeFile === EXPERIMENT_SIMULATION_PATH ? 'python' : 'typescript'}
             modelPath={`file:///${activeFile}`}
+            onAuthoringStateChange={supportsGeometryAuthoring ? onAuthoringStateChange : undefined}
             readOnly={controller.sourceReadOnly || disabled}
             value={document.sourceBundle.files[activeFile] ?? ''}
             onChange={(source) => controller.handleExperimentFileChange(activeFile, source)}

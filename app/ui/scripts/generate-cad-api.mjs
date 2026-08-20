@@ -103,7 +103,8 @@ function runtimeDefaultProperties(source, definitionName, fileName) {
   for (const statement of sourceFile.statements) {
     if (!ts.isVariableStatement(statement)) continue
     for (const declaration of statement.declarationList.declarations) {
-      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== definitionName || !declaration.initializer) continue
+      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== definitionName || !declaration.initializer)
+        continue
       let definition = declaration.initializer
       while (ts.isSatisfiesExpression(definition) || ts.isAsExpression(definition)) definition = definition.expression
       if (!ts.isObjectLiteralExpression(definition)) continue
@@ -195,6 +196,8 @@ async function validateElementManifest() {
           !property.type.trim() ||
           typeof property.required !== 'boolean' ||
           (property.default !== undefined && typeof property.default !== 'string') ||
+          typeof property.authoringValue !== 'string' ||
+          !property.authoringValue.trim() ||
           typeof property.description !== 'string' ||
           !property.description.trim(),
       )

@@ -2,6 +2,13 @@ export { evaluateCad, evaluateCadScene } from './evaluation/evaluator'
 export { setGeometryAuthoringGraph } from './compiler/geometryTypeEnvironment'
 export type { GeometryTypeGraph } from './compiler/geometryTypes'
 export { cadAuthoringContract, cadElementCatalog } from './catalog'
+export {
+  insertPrimitiveAfterCursorLine,
+  operationAuthoringElements,
+  primitiveAuthoringElements,
+  wrapSelectionWithOperation,
+  type CadAuthoringEditResult,
+} from './source/authoringEdits'
 export { applyCadSceneGroups } from './evaluation/groups'
 export { Fragment, h } from './evaluation/jsx'
 export type {

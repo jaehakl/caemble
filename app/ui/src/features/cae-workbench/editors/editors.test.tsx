@@ -54,11 +54,11 @@ const monacoMocks = vi.hoisted(() => {
 vi.mock('@/lib/cad/authoring', () => ({ loadMonaco: monacoMocks.loadMonaco }))
 
 vi.mock('@/features/viewer/editor/CadEditor', () => ({
-  default: ({ modelPath }: { modelPath: string }) => {
-    monacoMocks.renderCadEditor(modelPath)
+  default: (props: { modelPath: string; onAuthoringStateChange?: unknown }) => {
+    monacoMocks.renderCadEditor(props)
     return (
       <div data-geometry-ready={monacoMocks.models.has('file:///geometry.tsx')} data-testid="cad-editor">
-        {modelPath}
+        {props.modelPath}
       </div>
     )
   },
@@ -191,6 +191,30 @@ describe('ExperimentEditor', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'tasks/alpha.tsx' }))
     fireEvent.click(screen.getByRole('button', { name: 'Task 삭제' }))
     expect(handleRemoveExperimentTask).toHaveBeenCalledWith('alpha')
+  })
+
+  it('exposes Geometry authoring only for Experiment, Geometry, and Task TSX files', async () => {
+    const onAuthoringStateChange = vi.fn()
+    render(
+      <ExperimentEditor
+        controller={controller()}
+        document={document}
+        onAuthoringStateChange={onAuthoringStateChange}
+      />,
+    )
+    await screen.findByTestId('cad-editor')
+    expect(monacoMocks.renderCadEditor).toHaveBeenLastCalledWith(
+      expect.objectContaining({ modelPath: 'file:///experiment.tsx', onAuthoringStateChange }),
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: 'material.tsx' }))
+    expect(monacoMocks.renderCadEditor).toHaveBeenLastCalledWith(
+      expect.objectContaining({ modelPath: 'file:///material.tsx', onAuthoringStateChange: undefined }),
+    )
+    fireEvent.click(screen.getByRole('tab', { name: 'tasks/alpha.tsx' }))
+    expect(monacoMocks.renderCadEditor).toHaveBeenLastCalledWith(
+      expect.objectContaining({ modelPath: 'file:///tasks/alpha.tsx', onAuthoringStateChange }),
+    )
   })
 
   it('explains that Draft Tasks are preview-only', async () => {

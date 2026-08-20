@@ -2,7 +2,15 @@ import type { ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import type { WorkbenchAction } from '@/features/cae-workbench/chrome'
 
-export function RibbonActions({ actions, children }: { actions: readonly WorkbenchAction[]; children?: ReactNode }) {
+export function RibbonActions({
+  actions,
+  children,
+  extraActions,
+}: {
+  actions: readonly WorkbenchAction[]
+  children?: ReactNode
+  extraActions?: ReactNode
+}) {
   return (
     <div className="flex min-h-12 items-stretch gap-3">
       {children ? <div className="flex min-w-48 flex-col justify-center border-r pr-3">{children}</div> : null}
@@ -25,6 +33,7 @@ export function RibbonActions({ actions, children }: { actions: readonly Workben
           </Button>
         ))}
       </div>
+      {extraActions}
     </div>
   )
 }

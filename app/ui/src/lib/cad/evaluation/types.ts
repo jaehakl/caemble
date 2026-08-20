@@ -89,6 +89,7 @@ export type CadElementPropertyManifest = Readonly<{
   type: string
   required: boolean
   default?: string
+  authoringValue: string
   description: string
 }>
 

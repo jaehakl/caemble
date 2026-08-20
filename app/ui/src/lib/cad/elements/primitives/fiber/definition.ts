@@ -41,6 +41,7 @@ export const fiberManifest = {
       type: 'Vec3',
       required: false,
       default: '[0, 0, -0.5]',
+      authoringValue: '[0, 0, -0.5]',
       description: '정확히 세 유한 좌표인 중심선 시작점이며 to와 달라야 합니다.',
     },
     {
@@ -48,6 +49,7 @@ export const fiberManifest = {
       type: 'Vec3',
       required: false,
       default: '[0, 0, 0.5]',
+      authoringValue: '[0, 0, 0.5]',
       description: '정확히 세 유한 좌표인 중심선 끝점이며 from과 달라야 합니다.',
     },
     {
@@ -55,6 +57,7 @@ export const fiberManifest = {
       type: '(t: number) => Vec3',
       required: false,
       default: 'straight line from from to to',
+      authoringValue: 'undefined',
       description:
         '0≤t≤1에서 유한 Vec3 중심선을 정의하며 양 끝은 from과 to에 일치하고 연속 표본이 중복되어 길이 0인 구간을 만들면 안 됩니다.',
     },
@@ -63,6 +66,7 @@ export const fiberManifest = {
       type: 'number | ((s: number) => number)',
       required: false,
       default: '0.05',
+      authoringValue: '0.05',
       description: '정규화된 호 길이의 모든 표본에서 유한한 양수를 반환하는 단면 반지름입니다.',
     },
     {
@@ -70,6 +74,7 @@ export const fiberManifest = {
       type: 'FiberHelix',
       required: false,
       default: 'none',
+      authoringValue: 'undefined',
       description: '유한 turns/phase와 모든 표본에서 유한한 0 이상 radius를 갖는 나선 변위입니다.',
     },
     {
@@ -77,6 +82,7 @@ export const fiberManifest = {
       type: 'readonly FiberFourierMode[]',
       required: false,
       default: 'none',
+      authoringValue: 'undefined',
       description: '지정 시 비어 있지 않아야 하며 각 mode는 유한한 0 이상 amplitude와 유한 phase를 가집니다.',
     },
     {
@@ -84,6 +90,7 @@ export const fiberManifest = {
       type: 'number',
       required: false,
       default: '2',
+      authoringValue: '2',
       description: '끝점에서 변위를 감쇠하는 유한한 1 이상 envelope 지수입니다.',
     },
     {
@@ -91,6 +98,7 @@ export const fiberManifest = {
       type: 'Vec3',
       required: false,
       default: 'automatic Bishop frame',
+      authoringValue: 'undefined',
       description: '초기 path tangent와 평행하지 않은 유한한 기준 방향입니다.',
     },
     {
@@ -98,6 +106,7 @@ export const fiberManifest = {
       type: 'number',
       required: false,
       default: '128',
+      authoringValue: '128',
       description: '중심선 방향 분할 수이며 8~2048 범위의 정수입니다.',
     },
     {
@@ -105,6 +114,7 @@ export const fiberManifest = {
       type: 'number',
       required: false,
       default: '12',
+      authoringValue: '12',
       description: '원형 단면 분할 수이며 3~64 범위의 정수입니다.',
     },
   ],

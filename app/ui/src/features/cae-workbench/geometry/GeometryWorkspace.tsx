@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import CadEditor from '@/features/viewer/editor/CadEditor'
+import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
 import {
   analyzeGeometrySource,
   geometryExportAtOffset,
@@ -39,6 +40,7 @@ type GeometryWorkspaceProps = Readonly<{
   onEditAsNewVersion: (coordinate: GeometryModuleCoordinate) => void
   onManage: () => void
   onPublish: (coordinate: GeometryModuleCoordinate) => void
+  onAuthoringStateChange?: (state: CadEditorAuthoringState | null) => void
 }>
 
 function coordinateLabel(coordinate: string) {
@@ -151,6 +153,7 @@ export function GeometryWorkspace({
   onEditAsNewVersion,
   onManage,
   onPublish,
+  onAuthoringStateChange,
 }: GeometryWorkspaceProps) {
   const modules = useMemo(
     () => new Map(geometry.effectiveGraph?.modules.map((module) => [module.coordinate, module]) ?? []),
@@ -423,6 +426,7 @@ export function GeometryWorkspace({
                     ? 'file:///caemble-workbench/geometry.tsx'
                     : `file:///geometries/${encodeURIComponent(geometry.selectedCoordinate)}.tsx`
                 }
+                onAuthoringStateChange={onAuthoringStateChange}
                 onChange={geometry.updateSource}
                 onCursorOffsetChange={(offset) => {
                   if (geometry.selectedCoordinate) setCursor({ coordinate: geometry.selectedCoordinate, offset })
