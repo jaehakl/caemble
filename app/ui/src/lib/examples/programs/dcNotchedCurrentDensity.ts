@@ -78,7 +78,11 @@ export const NotchedConductor: Geometry<{
   notchPosition: Vec3
   notchSize: Vec3
   size: Vec3
-}> = ({ notchPosition, notchSize, size }) => (
+}> = ({
+  notchPosition = [0, 4.5, 3],
+  notchSize = [30, 5, 6],
+  size = [100, 12, 10],
+}) => (
   <subtract>
     <Box size={size} />
     <Box position={notchPosition} size={notchSize} />

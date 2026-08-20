@@ -46,11 +46,11 @@ void new Material('Inline')`,
     const coordinate = 'caemble:geometry/jlee/common/part@1.2.3'
     const source = `import { type Geometry } from '@caemble/core'
 import { Part as Child, Preview } from "${coordinate}"
-export const Assembly: Geometry<{ size: number; required: number }> = ({ size = 1, required }) => <Child id="child" scale={[size, required, 1]} />
+export const Assembly: Geometry<{ size: number; required: number }> = ({ size = 1, required = 2 }) => <Child id="child" scale={[size, required, 1]} />
 export function Alternate() { return <Preview id="preview" /> }`
     const analysis = analyzeGeometrySource(source)
     expect(analysis.exports.map((item) => item.name)).toEqual(['Assembly', 'Alternate'])
-    expect(analysis.exports.find((item) => item.name === 'Assembly')?.defaultedProps).toEqual(['size'])
+    expect(analysis.exports.find((item) => item.name === 'Assembly')?.defaultedProps).toEqual(['required', 'size'])
     expect(analysis.imports.map((item) => [item.exportName, item.alias, item.coordinate])).toEqual([
       ['Part', 'Child', coordinate],
       ['Preview', 'Preview', coordinate],
@@ -107,10 +107,10 @@ export { Declared, Shared as FirstAlias, Shared as SecondAlias, Imported }
     const source = `import { type Geometry, type Vec3 } from '@caemble/core'
 import { Child, Unused } from "${coordinate}"
 
-const Shared: Geometry<{ size: Vec3 }> = ({ size }) => <Child id="child" size={size} />
+const Shared: Geometry<{ size: Vec3 }> = ({ size = [1, 1, 1] }) => <Child id="child" size={size} />
 const Unrelated = () => <Unused id="unused" />
 
-export const Assembly: Geometry<{ size: Vec3 }> = ({ size }) => <Shared id="shared" size={size} />
+export const Assembly: Geometry<{ size: Vec3 }> = ({ size = [1, 1, 1] }) => <Shared id="shared" size={size} />
 export const Other: Geometry = () => <Unrelated id="other" />
 `
     const projected = projectGeometryExportSource(source, 'Assembly')
@@ -147,6 +147,32 @@ export const Unused = () => <Box id="unused" size={[1, 1, 1]} />
     expect(projected).toContain('.map(')
     expect(projected).not.toContain('Unused')
     expect(analyzeGeometrySource(projected).exports.map((item) => item.name)).toEqual(['Pattern'])
+  })
+
+  it('requires defaults for every statically known custom Geometry prop', () => {
+    const valid = `import { type Geometry } from '@caemble/core'
+interface PartProps { count: number; enabled?: boolean }
+const Helper: Geometry<PartProps> = ({ count = 2, enabled = true, materials }) => enabled ? <box scale={[count, 1, 1]} materials={materials} /> : <></>
+export { Helper as Assembly }
+`
+    expect(analyzeGeometrySource(valid).exports.map((item) => item.name)).toEqual(['Assembly'])
+    expect(() =>
+      analyzeGeometrySource(valid.replace('count = 2', 'count')),
+    ).toThrow('explicit defaults')
+    expect(() =>
+      analyzeGeometrySource(valid.replace('{ count = 2, enabled = true, materials }', 'props')),
+    ).toThrow('direct object destructuring')
+    expect(() =>
+      analyzeGeometrySource(valid.replace('materials }', 'materials, ...rest }')),
+    ).toThrow('direct properties with explicit defaults')
+    expect(() =>
+      analyzeGeometrySource(valid.replace('count = 2', 'count: { value } = { value: 2 }')),
+    ).toThrow('direct properties with explicit defaults')
+    expect(() =>
+      analyzeGeometrySource(`import { type Geometry } from '@caemble/core'
+type ImportedProps = Readonly<Record<string, number>>
+export const Assembly: Geometry<ImportedProps> = ({ value = 1 }) => <box scale={[value, 1, 1]} />`),
+    ).toThrow('statically enumerable')
   })
 
   it('keeps a wheel-style private component closure and an aliased public export', () => {

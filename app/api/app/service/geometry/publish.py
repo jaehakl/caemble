@@ -380,7 +380,7 @@ async def plan_publish(
             )
             imports.append(item)
         imports.sort(key=lambda item: (item["alias"], item["exportName"], item["coordinate"]))
-        digest_module = module_hash(state["coordinate"], digest, imports)
+        digest_module = module_hash(state["coordinate"], digest, imports, cad_api_version=8)
         hashes[draft_id] = digest_module
         steps.append(
             {
@@ -502,7 +502,7 @@ async def publish(
                 source_hash=step["sourceHash"],
                 module_hash=step["moduleHash"],
                 module_format_version=4,
-                cad_api_version=7,
+                cad_api_version=8,
             )
             db.add(version)
             await db.flush()

@@ -24,14 +24,14 @@ const CurvedCell: Geometry<{
   verticalSlope: number
   verticalCurvature: number
 }> = ({
-  height,
-  baseRadius,
-  mode2Amplitude,
-  mode2Phase,
-  mode3Amplitude,
-  mode3Phase,
-  verticalSlope,
-  verticalCurvature,
+  height = 10,
+  baseRadius = 4.6,
+  mode2Amplitude = 0.5,
+  mode2Phase = 0,
+  mode3Amplitude = 0.25,
+  mode3Phase = 0,
+  verticalSlope = 0,
+  verticalCurvature = 0,
 }) => (
   <CurvedEdgeCylinder
     height={height}

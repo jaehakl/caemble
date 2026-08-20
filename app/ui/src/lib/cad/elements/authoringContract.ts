@@ -1,13 +1,14 @@
 import type { CadAuthoringContract } from '../evaluation/types'
 
 export const cadAuthoringContract = {
-  apiVersion: 7,
+  apiVersion: 8,
   identity: {
     name: 'id',
     type: 'string',
     required: false,
+    default: 'lower-kebab authoring name with sibling ordinal',
     description:
-      'Intrinsic CAD elements may define a stable local ID using Unicode letters, numbers, _ or -. Sibling IDs are unique. Geometry component IDs remain required and already own their result; forward a component id to an intrinsic only when an additional nested segment is intended. Nested IDs form dot-separated solver paths.',
+      'Geometry components and primitives receive a lower-kebab local ID from their authoring name. Repeated automatic sibling IDs add -2, -3, and so on. Explicit IDs remain recommended when identity must survive insertion or reordering. Nested IDs form dot-separated solver paths.',
     pathExample: 'goal.pole',
   },
   transforms: {
@@ -49,6 +50,7 @@ export const cadAuthoringContract = {
         name: 'rotate',
         type: '{ axis: Vec3; angle: number }',
         required: false,
+        default: 'none',
         description:
           'Deprecated v7 compatibility axis-angle rotation with a finite angle and nonzero finite axis; new code uses XYZ Euler rotation.',
       },

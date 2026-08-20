@@ -97,10 +97,9 @@ export const arrayDefinition = {
     if (
       node.children.length !== 1 ||
       !isCadNode(node.children[0]) ||
-      node.children[0].type === Fragment ||
-      node.children[0].props.id === undefined
+      node.children[0].type === Fragment
     ) {
-      throw new CadModelError('<array> requires exactly one direct identified Geometry or intrinsic CAD element.')
+      throw new CadModelError('<array> requires exactly one direct Geometry or intrinsic CAD element.')
     }
 
     const shapeValue = node.props.shape

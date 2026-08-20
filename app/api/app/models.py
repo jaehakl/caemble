@@ -81,7 +81,7 @@ class GeometryModuleSnapshot(BaseModel):
     geometryVersionId: int = Field(..., gt=0)
     coordinate: str
     moduleFormatVersion: Literal[4]
-    cadApiVersion: Literal[7]
+    cadApiVersion: Literal[7, 8]
     description: Optional[str]
     source: str = Field(..., min_length=1)
     sourceHash: str
@@ -131,7 +131,7 @@ class GeometryVersionRow(TimestampFields):
     source_hash: str
     module_hash: str
     module_format_version: Literal[4]
-    cad_api_version: Literal[7]
+    cad_api_version: Literal[7, 8]
     archived_at: Optional[datetime] = None
     repository_id: Optional[int] = None
     namespace: Optional[str] = None

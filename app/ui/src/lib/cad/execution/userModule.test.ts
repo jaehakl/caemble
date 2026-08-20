@@ -51,7 +51,7 @@ async function compiledDocument(
       .filter(([path]) => path.endsWith('.tsx'))
       .map(async ([entryFile, source]) => {
         const compiled: CompiledCadSource = {
-          apiVersion: 7,
+          apiVersion: 8,
           compilerVersion: CAD_COMPILER_VERSION,
           entryFile,
           code: await compile(source),
@@ -60,7 +60,7 @@ async function compiledDocument(
         return [entryFile, compiled] as const
       }),
   )
-  return { apiVersion: 7, compilerVersion: CAD_COMPILER_VERSION, sourceHash, sources: Object.fromEntries(entries) }
+  return { apiVersion: 8, compilerVersion: CAD_COMPILER_VERSION, sourceHash, sources: Object.fromEntries(entries) }
 }
 
 function module(
@@ -71,7 +71,7 @@ function module(
   sourceHash = '4'.repeat(64),
 ): CompiledGeometryModule {
   return {
-    apiVersion: 7,
+    apiVersion: 8,
     compilerVersion: CAD_COMPILER_VERSION,
     entryFile,
     code,
@@ -142,9 +142,9 @@ describe('compiled Experiment execution with source Geometry modules', () => {
       },
     }
     const result = executeCompiledDocument(graph, {}, 'async def simulate(*, sim, tasks, vars):\n    return None\n')
-    expect(result.scene.parts[0].id).toBe('shared')
-    expect(result.taskScenes.electric.parts[0].id).toBe('task')
-    expect(evaluateCompiledGeometryModule(graph, rootCoordinate, 'Shared').parts[0].id).toBe('preview')
+    expect(result.scene.parts[0].id).toBe('shared.box')
+    expect(result.taskScenes.electric.parts[0].id).toBe('task.box')
+    expect(evaluateCompiledGeometryModule(graph, rootCoordinate, 'Shared').parts[0].id).toBe('preview.box')
     expect((globalThis as Record<string, unknown>).__geometryLeak).toBeUndefined()
   })
 
@@ -237,6 +237,6 @@ export default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => nu
         coordinate,
         'Working',
       ).parts[0].id,
-    ).toBe('preview')
+    ).toBe('preview.box')
   })
 })

@@ -16,7 +16,14 @@ const Strand: Geometry<{
   fourier: readonly FiberFourierMode[]
   phase: number
   turns: number
-}> = ({ bend, bundleRadius, fiberRadius, fourier, phase, turns }) => {
+}> = ({
+  bend = [0, 0, 0],
+  bundleRadius = 5,
+  fiberRadius = 1.2,
+  fourier = [],
+  phase = 0,
+  turns = 8,
+}) => {
   const basePath = (t: number) => {
     const arc = Math.sin(Math.PI * t)
     return [
@@ -52,7 +59,13 @@ const Bundle: Geometry<{
   fiberRadius: number
   fourier: readonly FiberFourierMode[]
   turns: number
-}> = ({ bend, bundleRadius, fiberRadius, fourier, turns }) => (
+}> = ({
+  bend = [0, 0, 0],
+  bundleRadius = 5,
+  fiberRadius = 1.2,
+  fourier = [],
+  turns = 8,
+}) => (
   <>
     <Strand
       id="1"
@@ -121,7 +134,7 @@ export default experiment({
     bundle: ['bundle'],
   },
   surfaceGroup: {
-    starts: ['bundle.1/surface-1', 'bundle.2/surface-1', 'bundle.3/surface-1'],
+    starts: ['bundle.1.fiber/surface-1', 'bundle.2.fiber/surface-1', 'bundle.3.fiber/surface-1'],
   },
   recordedData: {},
 })

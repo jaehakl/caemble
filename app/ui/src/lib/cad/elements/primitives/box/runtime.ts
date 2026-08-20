@@ -7,6 +7,7 @@ export const boxDefinition = {
   kind: 'primitive',
   tag: boxManifest.tag,
   manifest: boxManifest,
+  defaultProps: Object.freeze({ size: Object.freeze([1, 1, 1]) }),
   createGeometry(props) {
     if (
       !Array.isArray(props.size) ||

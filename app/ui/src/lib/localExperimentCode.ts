@@ -24,7 +24,7 @@ export const StarterMaterial = new Material('Starter Material')
 
 const starterGeometryCode = `import { Box, type Geometry, type Vec3 } from '@caemble/core'
 
-export const StarterStructure: Geometry<{ size: Vec3 }> = ({ size }) => (
+export const StarterStructure: Geometry<{ size: Vec3 }> = ({ size = [36, 24, 12] }) => (
   <Box size={size} />
 )
 `

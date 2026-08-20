@@ -14,10 +14,10 @@ export type FiberHelix = Readonly<{
 }>
 
 export type FiberAttributes = Readonly<{
-  from: Vec3
-  to: Vec3
+  from?: Vec3
+  to?: Vec3
   basePath?: (t: number) => Vec3
-  radius: number | ((s: number) => number)
+  radius?: number | ((s: number) => number)
   helix?: FiberHelix
   fourier?: readonly FiberFourierMode[]
   envelopePower?: number
@@ -39,38 +39,44 @@ export const fiberManifest = {
     {
       name: 'from',
       type: 'Vec3',
-      required: true,
+      required: false,
+      default: '[0, 0, -0.5]',
       description: '정확히 세 유한 좌표인 중심선 시작점이며 to와 달라야 합니다.',
     },
     {
       name: 'to',
       type: 'Vec3',
-      required: true,
+      required: false,
+      default: '[0, 0, 0.5]',
       description: '정확히 세 유한 좌표인 중심선 끝점이며 from과 달라야 합니다.',
     },
     {
       name: 'basePath',
       type: '(t: number) => Vec3',
       required: false,
+      default: 'straight line from from to to',
       description:
         '0≤t≤1에서 유한 Vec3 중심선을 정의하며 양 끝은 from과 to에 일치하고 연속 표본이 중복되어 길이 0인 구간을 만들면 안 됩니다.',
     },
     {
       name: 'radius',
       type: 'number | ((s: number) => number)',
-      required: true,
+      required: false,
+      default: '0.05',
       description: '정규화된 호 길이의 모든 표본에서 유한한 양수를 반환하는 단면 반지름입니다.',
     },
     {
       name: 'helix',
       type: 'FiberHelix',
       required: false,
+      default: 'none',
       description: '유한 turns/phase와 모든 표본에서 유한한 0 이상 radius를 갖는 나선 변위입니다.',
     },
     {
       name: 'fourier',
       type: 'readonly FiberFourierMode[]',
       required: false,
+      default: 'none',
       description: '지정 시 비어 있지 않아야 하며 각 mode는 유한한 0 이상 amplitude와 유한 phase를 가집니다.',
     },
     {
@@ -84,6 +90,7 @@ export const fiberManifest = {
       name: 'up',
       type: 'Vec3',
       required: false,
+      default: 'automatic Bishop frame',
       description: '초기 path tangent와 평행하지 않은 유한한 기준 방향입니다.',
     },
     {

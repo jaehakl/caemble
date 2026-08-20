@@ -34,6 +34,14 @@ export type GeometryAttributes<P extends object = object> = Readonly<
   GeometryTransformAttributes
 
 export type Geometry<P extends object = object> = (props: GeometryAttributes<P>) => unknown
+export type GeometryInvocationAttributes<P extends object = object> = Readonly<
+  Partial<P> & {
+    id?: string
+    materials?: Readonly<Record<string, import('./material').Material | undefined>>
+    children?: unknown
+  }
+> &
+  GeometryTransformAttributes
 export type GeometryGroupMap = Readonly<Record<string, readonly string[]>>
 
 function isRecord(value: unknown): value is Record<string, unknown> {

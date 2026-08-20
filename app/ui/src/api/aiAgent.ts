@@ -5,7 +5,7 @@ export type AiAgentSourceBundle = ExperimentRecord['source_bundle']
 export type AiAgentSourceDocument = Readonly<{
   kind: 'experiment'
   formatVersion: 2
-  apiVersion: 7
+  apiVersion: 7 | 8
   sourceBundle: AiAgentSourceBundle
 }>
 

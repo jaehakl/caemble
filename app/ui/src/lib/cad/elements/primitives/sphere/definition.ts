@@ -2,7 +2,7 @@ import type { IntrinsicGeometryAttributes } from '../../../model/structure'
 import type { CadElementManifest } from '../../../evaluation/types'
 
 export type SphereAttributes = Readonly<{
-  radius: number
+  radius?: number
   segments?: number
 }> &
   IntrinsicGeometryAttributes
@@ -16,7 +16,7 @@ export const sphereManifest = {
   summary: '원점 중심의 구를 생성합니다.',
   keywords: ['sphere', 'ball', '구', '구체'],
   properties: [
-    { name: 'radius', type: 'number', required: true, description: '유한한 양수 구 반지름입니다.' },
+    { name: 'radius', type: 'number', required: false, default: '0.5', description: '유한한 양수 구 반지름입니다.' },
     {
       name: 'segments',
       type: 'number',

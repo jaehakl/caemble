@@ -3,7 +3,7 @@ import type { Vec3 } from '../../../model/types'
 import type { CadElementManifest } from '../../../evaluation/types'
 
 export type BoxAttributes = Readonly<{
-  size: Vec3
+  size?: Vec3
 }> &
   IntrinsicGeometryAttributes
 
@@ -19,7 +19,8 @@ export const boxManifest = {
     {
       name: 'size',
       type: 'Vec3',
-      required: true,
+      required: false,
+      default: '[1, 1, 1]',
       description: '각각 X, Y, Z 방향의 전체 길이인 정확히 세 개의 유한한 양수입니다.',
     },
   ],

@@ -44,7 +44,10 @@ describe('CAD array', () => {
         [3, 1, 1],
       ],
     ])
-    expect(centered.map((part) => part.id)).toEqual(['parent.$cell-0-0-0.cell', 'parent.$cell-1-0-0.cell'])
+    expect(centered.map((part) => part.id)).toEqual([
+      'parent.$cell-0-0-0.cell.box',
+      'parent.$cell-1-0-0.cell.box',
+    ])
     expect(oriented).toHaveLength(4)
 
     const centers = oriented.map((part) => {
@@ -220,11 +223,11 @@ describe('CAD array', () => {
     )
   })
 
-  it('requires exactly one direct identified Geometry or intrinsic child for array', () => {
+  it('requires exactly one direct Geometry or intrinsic child for array', () => {
     const core = new Material('Core', { color: '#2563eb' })
     const props = { shape: [1, 1, 1], period: [0, 0, 0] }
 
-    expect(() => evaluateCad(h('array', props))).toThrow('exactly one direct identified Geometry or intrinsic')
+    expect(() => evaluateCad(h('array', props))).toThrow('exactly one direct Geometry or intrinsic')
     expect(() =>
       evaluateCad(
         h(
@@ -234,13 +237,11 @@ describe('CAD array', () => {
           h(Box, { id: 'second', materials: { body: core } }),
         ),
       ),
-    ).toThrow('exactly one direct identified Geometry or intrinsic')
-    expect(() => evaluateCad(h('array', props, h('box', { size, materials: { body: core } })))).toThrow(
-      'exactly one direct identified Geometry or intrinsic',
-    )
+    ).toThrow('exactly one direct Geometry or intrinsic')
+    expect(evaluateCad(h('array', props, h('box', { size, materials: { body: core } })))).toHaveLength(1)
     expect(() =>
       evaluateCad(h('array', props, h(Fragment, null, h(Box, { id: 'box', materials: { body: core } })))),
-    ).toThrow('exactly one direct identified Geometry or intrinsic')
+    ).toThrow('exactly one direct Geometry or intrinsic')
   })
 
   it('keeps array cells independent and preserves existing Material boolean rules', () => {

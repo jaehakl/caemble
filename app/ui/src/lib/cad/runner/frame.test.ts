@@ -27,12 +27,12 @@ class FakeWorker {
 
 const sourceHash = 'a'.repeat(64)
 const compiled: CompiledCadDocument = {
-  apiVersion: 7,
+  apiVersion: 8,
   compilerVersion: CAD_COMPILER_VERSION,
   sourceHash,
   sources: {
     'experiment.tsx': {
-      apiVersion: 7,
+      apiVersion: 8,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'experiment.tsx',
       code: '',

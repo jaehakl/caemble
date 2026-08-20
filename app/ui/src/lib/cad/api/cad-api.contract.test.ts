@@ -103,7 +103,7 @@ describe('unversioned CAD authoring declarations', () => {
     expect(jsxTypes).not.toContain('const Fragment: unknown')
   })
 
-  it('type-checks the v7 Experiment and Task defaults', () => {
+  it('type-checks the v8 Experiment and Task defaults', () => {
     expect(defaultExperimentCode).toBe(defaultExperimentProgramCode)
     expect(diagnosticsFor(defaultCode)).toEqual([])
     expect(
@@ -192,7 +192,7 @@ describe('unversioned CAD authoring declarations', () => {
     ).toContainEqual(expect.stringContaining('geometry, lengthUnit'))
   })
 
-  it('makes destructuring defaults optional while preserving id and props without defaults', () => {
+  it('makes all custom and common Geometry invocation props optional', () => {
     const coordinate = 'caemble:geometry/jlee/common/notched@1.0.0' as GeometryCoordinate
     const graph = {
       graphHash: 'a'.repeat(64),
@@ -200,12 +200,13 @@ describe('unversioned CAD authoring declarations', () => {
       modules: [
         {
           coordinate,
+          cadApiVersion: 8,
           sourceHash: 'c'.repeat(64),
           moduleHash: 'b'.repeat(64),
           exports: ['Notched'],
           imports: [],
           source: `import { type Geometry, type Vec3 } from '@caemble/core'
-export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1, 2, 3], thickness }) => <box size={size} scale={[thickness, 1, 1]} />`,
+export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1, 2, 3], thickness = 1 }) => <box size={size} scale={[thickness, 1, 1]} />`,
         },
       ],
     } satisfies EffectiveGeometryGraph
@@ -218,10 +219,8 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
     const valid = 'import { Notched } from "./geometry"\nexport default <Notched id="root" thickness={2} />'
 
     expect(diagnosticsFor(valid, files)).toEqual([])
-    expect(diagnosticsFor(valid.replace('thickness={2}', ''), files).join('\n')).toContain(
-      "Property 'thickness' is missing",
-    )
-    expect(diagnosticsFor(valid.replace('id="root" ', ''), files).join('\n')).toContain("Property 'id' is missing")
+    expect(diagnosticsFor(valid.replace('thickness={2}', ''), files)).toEqual([])
+    expect(diagnosticsFor(valid.replace('id="root" ', ''), files)).toEqual([])
     expect(diagnosticsFor(valid.replace('thickness={2}', 'size="large" thickness={2}'), files).join('\n')).toContain(
       "Type 'string' is not assignable",
     )

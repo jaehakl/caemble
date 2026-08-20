@@ -27,7 +27,7 @@ fail()
     const throwLine = generatedLines.findIndex((line) => line.includes("throw new Error('boom')")) + 1
     const throwColumn = generatedLines[throwLine - 1].indexOf('throw') + 1
     const source: CompiledCadSource = {
-      apiVersion: 7,
+      apiVersion: 8,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'structure.tsx',
       code: emitted.outputText,
@@ -49,7 +49,7 @@ fail()
 
   it('ignores stack frames from another compiled project', () => {
     const source: CompiledCadSource = {
-      apiVersion: 7,
+      apiVersion: 8,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'structure.tsx',
       code: '',
@@ -64,7 +64,7 @@ fail()
   it('attributes encoded Geometry module frames to their exact coordinate', () => {
     const coordinate = 'caemble:geometry/jlee/demo/block@1.0.0' as GeometryCoordinate
     const source: CompiledGeometryModule = {
-      apiVersion: 7,
+      apiVersion: 8,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: coordinate,
       code: '',

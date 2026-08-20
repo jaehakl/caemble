@@ -222,7 +222,7 @@ def _version_response(
         "sourceHash": version.source_hash,
         "moduleHash": version.module_hash,
         "moduleFormatVersion": 4,
-        "cadApiVersion": 7,
+        "cadApiVersion": version.cad_api_version,
         "archivedAt": version.archived_at,
         "createdAt": version.created_at,
     }

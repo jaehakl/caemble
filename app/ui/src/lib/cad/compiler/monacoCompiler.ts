@@ -224,7 +224,7 @@ async function compile(
             const emitted = await emitModel(model, coordinate)
             const graphModule = geometryGraph!.modules.find((item) => item.coordinate === coordinate)!
             const compiledModule: CompiledGeometryModule = Object.freeze({
-              apiVersion: 7,
+              apiVersion: 8,
               compilerVersion: CAD_COMPILER_VERSION,
               entryFile: graphModule.coordinate,
               code: `${emitted.code}\n//# sourceURL=caemble://${sourceHash}/geometry/${encodeURIComponent(coordinate)}`,
@@ -245,7 +245,7 @@ async function compile(
             Object.entries(sourceModels).map(async ([path, model]) => {
               const emitted = await emitModel(model, path)
               const compiledSource: CompiledCadSource = Object.freeze({
-                apiVersion: 7,
+                apiVersion: 8,
                 compilerVersion: CAD_COMPILER_VERSION,
                 entryFile: path,
                 code: `${emitted.code}\n//# sourceURL=caemble://${sourceHash}/${path}`,
@@ -258,7 +258,7 @@ async function compile(
         ),
       )
       return Object.freeze({
-        apiVersion: 7 as const,
+        apiVersion: 8 as const,
         compilerVersion: CAD_COMPILER_VERSION,
         sourceHash,
         sources: Object.freeze(Object.fromEntries(compiledEntries)),

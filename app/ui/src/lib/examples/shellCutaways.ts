@@ -66,7 +66,7 @@ type ShapeKind = 'curvedCylinder' | 'curvedSphere' | 'fiber' | 'cutaway'
 const Shape: Geometry<{
   kind: ShapeKind
   offsets?: Readonly<Record<string, number>>
-}> = ({ kind, offsets }) => {
+}> = ({ kind = 'curvedCylinder', offsets = undefined }) => {
   const geometry = kind === 'curvedCylinder'
     ? <CurvedEdgeCylinder {...curvedCylinderAttributes} />
     : kind === 'curvedSphere'
@@ -83,7 +83,11 @@ const Shape: Geometry<{
 const ShellCutaway: Geometry<{
   kind: Exclude<ShapeKind, 'cutaway'>
   offsets: Readonly<Record<string, number>>
-}> = ({ kind, materials, offsets }) => {
+}> = ({
+  kind = 'curvedCylinder',
+  materials,
+  offsets = { inner: -1, outer: 1 },
+}) => {
   const sortedOffsets = Object.entries(offsets).sort((left, right) => left[1] - right[1])
   const [innerRole, innerOffset] = sortedOffsets[0]
 

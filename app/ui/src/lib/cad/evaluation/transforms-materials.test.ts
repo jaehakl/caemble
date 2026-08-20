@@ -213,7 +213,7 @@ describe('CAD transforms-materials', () => {
 
     const [part] = evaluateCad(h(MateriallessBox, { id: 'box' }))
 
-    expect(part.id).toBe('box')
+    expect(part.id).toBe('box.box')
     expect(part.materialRole).toBe('body')
     expect(part).not.toHaveProperty('material')
     expect(part.surfaces.length).toBeGreaterThan(0)

@@ -37,8 +37,8 @@ describe('CAD scene identity and evaluated tree', () => {
     const nodes = flattenTree(first.tree)
 
     expect(first.parts.map((part) => part.id)).toEqual([
-      'root.$cell-0-0-0.particle',
-      'root.$cell-1-0-0.particle',
+      'root.$cell-0-0-0.particle.box',
+      'root.$cell-1-0-0.particle.box',
       'root.$part-1',
     ])
     expect(first.parts.map((part) => part.surfaces.length)).toEqual([6, 6, 7])
@@ -63,8 +63,8 @@ describe('CAD scene identity and evaluated tree', () => {
     )
     expect(nodes.some((node) => node.label === 'Fragment')).toBe(false)
     expect(nodes.filter((node) => node.geometryId).map((node) => node.geometryId)).toEqual([
-      'root.$cell-0-0-0.particle',
-      'root.$cell-1-0-0.particle',
+      'root.$cell-0-0-0.particle.box',
+      'root.$cell-1-0-0.particle.box',
       'root.$part-1',
     ])
     expect(nodes.filter((node) => node.surfaceId).map((node) => node.surfaceId)).toEqual(
@@ -74,7 +74,7 @@ describe('CAD scene identity and evaluated tree', () => {
     const rootNode = nodes.find((node) => node.globalId === 'root')!
     expect(rootNode).toMatchObject({
       groupId: 'root',
-      geometryIds: ['root.$cell-0-0-0.particle', 'root.$cell-1-0-0.particle', 'root.$part-1'],
+      geometryIds: ['root.$cell-0-0-0.particle.box', 'root.$cell-1-0-0.particle.box', 'root.$part-1'],
     })
 
     const arrayNode = nodes.find((node) => node.label === '<array>')!
@@ -117,7 +117,8 @@ describe('CAD scene identity and evaluated tree', () => {
     expect(scene.parts).toHaveLength(2)
     expect(scene.parts.every((part) => part.material === undefined)).toBe(true)
     expect(scene.parts.map((part) => part.materialRole)).toEqual(['body', 'body'])
-    expect(nodes.map((node) => node.label)).toEqual(expect.arrayContaining(['Part 1 · body', 'Part 2 · body']))
+    expect(scene.parts.map((part) => part.id)).toEqual(['pair.box', 'pair.box-2'])
+    expect(nodes.filter((node) => node.geometryId).map((node) => node.geometryId)).toEqual(['pair.box', 'pair.box-2'])
   })
 
   it('validates local IDs, sibling uniqueness, and the Geometry ownership boundary', () => {
@@ -127,12 +128,12 @@ describe('CAD scene identity and evaluated tree', () => {
       return h('box', { size: [1, 1, 1] })
     }
 
-    expect(() => evaluateCadScene(h(Box, { materials: { body: material } }))).toThrow('Geometry Box id')
+    expect(evaluateCadScene(h(Box, { materials: { body: material } })).parts[0].id).toBe('box.box')
     ;['', 'with space', 'with.dot', '$part-1'].forEach((id) => {
       expect(() => evaluateCadScene(h(Box, { id, materials: { body: material } }))).toThrow('Geometry Box id')
     })
     expect(() => evaluateCadScene(h(Box, { id: 1, materials: { body: material } }))).toThrow('Geometry Box id')
-    expect(evaluateCadScene(h(Box, { id: '한글-1', materials: { body: material } })).parts[0].id).toBe('한글-1')
+    expect(evaluateCadScene(h(Box, { id: '한글-1', materials: { body: material } })).parts[0].id).toBe('한글-1.box')
 
     function DuplicateChildren() {
       return h('union', null, h(Box, { id: 'same' }), h(Box, { id: 'same' }))
@@ -159,10 +160,8 @@ describe('CAD scene identity and evaluated tree', () => {
         h(Parent, { id: 'right', materials: { body: material } }),
       ),
     )
-    expect(separateParents.parts.map((part) => part.id)).toEqual(['left.leaf', 'right.leaf'])
-    expect(() => evaluateCadScene(h('box', { size: [1, 1, 1], materials: { body: material } }))).toThrow(
-      'requires an explicit id on an intrinsic element or enclosing Geometry',
-    )
+    expect(separateParents.parts.map((part) => part.id)).toEqual(['left.leaf.box', 'right.leaf.box'])
+    expect(evaluateCadScene(h('box', { materials: { body: material } })).parts[0].id).toBe('box')
     expect(() =>
       evaluateCadScene(
         h(
@@ -220,6 +219,35 @@ describe('CAD scene identity and evaluated tree', () => {
     ).toThrow('requires an explicit id on itself or an enclosing Geometry')
   })
 
+  it('assigns deterministic sibling ordinals to automatic component and primitive IDs', () => {
+    function Leaf() {
+      return h('box', null)
+    }
+
+    function Assembly() {
+      return h(
+        Fragment,
+        null,
+        h(Leaf, null),
+        h(Leaf, null),
+        h('box', null),
+        h('box', { id: 'box' }),
+        h('box', { id: 'fixed' }),
+      )
+    }
+
+    const first = evaluateCadScene(h(Assembly, null))
+    const second = evaluateCadScene(h(Assembly, null))
+    expect(first.parts.map((part) => part.id)).toEqual([
+      'assembly.leaf.box',
+      'assembly.leaf-2.box',
+      'assembly.box-2',
+      'assembly.box',
+      'assembly.fixed',
+    ])
+    expect(second.parts.map((part) => part.id)).toEqual(first.parts.map((part) => part.id))
+  })
+
   it('arrays accept an identified intrinsic child and preserve cell identity', () => {
     const scene = evaluateCadScene(
       h(
@@ -230,6 +258,14 @@ describe('CAD scene identity and evaluated tree', () => {
     )
 
     expect(scene.parts.map((part) => part.id)).toEqual(['posts.$cell-0-0-0.post', 'posts.$cell-1-0-0.post'])
+
+    const automatic = evaluateCadScene(
+      h('array', { id: 'posts', shape: [2, 1, 1], period: [3, 0, 0] }, h('cylinder', null)),
+    )
+    expect(automatic.parts.map((part) => part.id)).toEqual([
+      'posts.$cell-0-0-0.cylinder',
+      'posts.$cell-1-0-0.cylinder',
+    ])
   })
 
   it('accumulates reserved cell segments for nested arrays', () => {
@@ -250,10 +286,10 @@ describe('CAD scene identity and evaluated tree', () => {
     expect(
       evaluateCadScene(h(Assembly, { id: 'assembly', materials: { body: material } })).parts.map((part) => part.id),
     ).toEqual([
-      'assembly.$cell-0-0-0.row.$cell-0-0-0.particle',
-      'assembly.$cell-0-0-0.row.$cell-0-1-0.particle',
-      'assembly.$cell-1-0-0.row.$cell-0-0-0.particle',
-      'assembly.$cell-1-0-0.row.$cell-0-1-0.particle',
+      'assembly.$cell-0-0-0.row.$cell-0-0-0.particle.box',
+      'assembly.$cell-0-0-0.row.$cell-0-1-0.particle.box',
+      'assembly.$cell-1-0-0.row.$cell-0-0-0.particle.box',
+      'assembly.$cell-1-0-0.row.$cell-0-1-0.particle.box',
     ])
   })
 
@@ -275,7 +311,7 @@ describe('CAD scene identity and evaluated tree', () => {
         overlap: ['assembly.left'],
       },
       surfaceGroup: {
-        contacts: ['assembly.left/surface-1', 'assembly.right/surface-2', 'missing/surface-1'],
+        contacts: ['assembly.left.box/surface-1', 'assembly.right.box/surface-2', 'missing/surface-1'],
       },
     })
 
@@ -284,16 +320,16 @@ describe('CAD scene identity and evaluated tree', () => {
       name: '전체',
       kind: 'geometry',
       memberIds: ['assembly', 'assembly.left', 'missing.geometry'],
-      geometryIds: ['assembly.left', 'assembly.right'],
+      geometryIds: ['assembly.left.box', 'assembly.right.box'],
       surfaceIds: [],
       missingMemberIds: ['missing.geometry'],
     })
     expect(scene.geometryGroups[1].geometryIds).toEqual([])
-    expect(scene.geometryGroups[2].geometryIds).toEqual(['assembly.left'])
+    expect(scene.geometryGroups[2].geometryIds).toEqual(['assembly.left.box'])
     expect(scene.surfaceGroups[0]).toMatchObject({
       id: '@surface-group/contacts',
-      geometryIds: ['assembly.left', 'assembly.right'],
-      surfaceIds: ['assembly.left/surface-1', 'assembly.right/surface-2'],
+      geometryIds: ['assembly.left.box', 'assembly.right.box'],
+      surfaceIds: ['assembly.left.box/surface-1', 'assembly.right.box/surface-2'],
       missingMemberIds: ['missing/surface-1'],
     })
   })

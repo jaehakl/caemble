@@ -12,9 +12,9 @@ export type CurvedEdgeCylinderTaylorCurve = Readonly<{
 }>
 
 export type CurvedEdgeCylinderAttributes = Readonly<{
-  height: number
-  azimuthalCurve: readonly CurvedEdgeCylinderFourierMode[]
-  verticalCurve: CurvedEdgeCylinderTaylorCurve
+  height?: number
+  azimuthalCurve?: readonly CurvedEdgeCylinderFourierMode[]
+  verticalCurve?: CurvedEdgeCylinderTaylorCurve
   azimuthalSegments?: number
   verticalSegments?: number
 }> &
@@ -29,18 +29,26 @@ export const curvedEdgeCylinderManifest = {
   summary: 'Fourier 방위 곡선과 Taylor 높이 곡선의 곱으로 반지름이 정해지는 닫힌 원기둥을 생성합니다.',
   keywords: ['curved edge cylinder', 'fourier cylinder', '곡면 원기둥', '푸리에'],
   properties: [
-    { name: 'height', type: 'number', required: true, description: 'Z축 방향의 유한한 양수 전체 높이입니다.' },
+    {
+      name: 'height',
+      type: 'number',
+      required: false,
+      default: '1',
+      description: 'Z축 방향의 유한한 양수 전체 높이입니다.',
+    },
     {
       name: 'azimuthalCurve',
       type: 'readonly { amplitude: number; phase: number }[]',
-      required: true,
+      required: false,
+      default: '[{ amplitude: 0.5, phase: 0 }]',
       description:
         '비어 있지 않은 Fourier mode 배열입니다. amplitude는 유한한 0 이상, phase는 유한해야 하며 모든 표본 반지름은 양수여야 합니다.',
     },
     {
       name: 'verticalCurve',
       type: '{ origin: number; coefficients: readonly number[] }',
-      required: true,
+      required: false,
+      default: '{ origin: 0, coefficients: [1] }',
       description:
         '유한한 origin과 비어 있지 않은 유한 coefficients로 높이별 Taylor 반지름 배율을 정의하며 모든 표본 반지름은 양수여야 합니다.',
     },

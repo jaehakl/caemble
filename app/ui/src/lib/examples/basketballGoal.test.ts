@@ -7,7 +7,7 @@ import { defineTask } from '../cad/model/v5'
 import { analyzeCadSource } from '../cad/source/sourceAnalysis'
 import { basketballGoalCode } from './basketballGoal'
 
-describe('Basketball Goal CAD API v7 example', () => {
+describe('Basketball Goal CAD API v8 example', () => {
   it('passes source policy, compiles, evaluates stable IDs, and creates an annular rim', async () => {
     analyzeCadSource(basketballGoalCode)
     const compiled = await transform(basketballGoalCode, {

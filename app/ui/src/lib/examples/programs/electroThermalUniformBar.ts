@@ -25,8 +25,8 @@ export default experiment({
   ),
   geometryGroup: { conductor: ['conductor'] },
   surfaceGroup: {
-    sourceTerminal: ['conductor/surface-1'],
-    referenceTerminal: ['conductor/surface-2'],
+    sourceTerminal: ['conductor.box/surface-1'],
+    referenceTerminal: ['conductor.box/surface-2'],
   },
   recordedData: {
     totalCurrent: {
@@ -74,7 +74,7 @@ export const Copper = (electricalConductivity: number, thermalConductivity: numb
 
 export const electroThermalUniformBarGeometryCode = `import { Box, type Geometry, type Vec3 } from '@caemble/core'
 
-export const Conductor: Geometry<{ size: Vec3 }> = ({ size }) => <Box size={size} />
+export const Conductor: Geometry<{ size: Vec3 }> = ({ size = [100, 12, 10] }) => <Box size={size} />
 
 export const ElectricProbe: Geometry = () => <Box size={[2, 2, 2]} />
 

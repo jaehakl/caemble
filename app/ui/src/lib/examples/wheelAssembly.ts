@@ -13,7 +13,7 @@ const Tire: Geometry<{
   height: number
   innerRadius: number
   outerRadius: number
-}> = ({ height, innerRadius, outerRadius }) => (
+}> = ({ height = 12, innerRadius = 10, outerRadius = 16 }) => (
   <subtract>
     <Cylinder height={height} radius={outerRadius} />
     <Cylinder height={height * 1.1} radius={innerRadius} />
@@ -23,14 +23,20 @@ const Tire: Geometry<{
 const Hub: Geometry<{
   height: number
   radius: number
-}> = ({ height, radius }) => <Cylinder height={height} radius={radius} />
+}> = ({ height = 12, radius = 8 }) => <Cylinder height={height} radius={radius} />
 
 const WheelParts: Geometry<{
   height: number
   hubRadius: number
   tireInnerRadius: number
   tireOuterRadius: number
-}> = ({ height, hubRadius, materials, tireInnerRadius, tireOuterRadius }) => (
+}> = ({
+  height = 12,
+  hubRadius = 8,
+  materials,
+  tireInnerRadius = 10,
+  tireOuterRadius = 16,
+}) => (
   <>
     <Tire
       id="tire"
@@ -53,7 +59,12 @@ export const WheelAssembly: Geometry<{
   hubRadius: number
   tireInnerRadius: number
   tireOuterRadius: number
-}> = ({ height, hubRadius, tireInnerRadius, tireOuterRadius }) => (
+}> = ({
+  height = 12,
+  hubRadius = 8,
+  tireInnerRadius = 10,
+  tireOuterRadius = 16,
+}) => (
   <WheelParts
     id="parts"
     height={height}

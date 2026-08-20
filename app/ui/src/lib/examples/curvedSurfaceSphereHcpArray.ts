@@ -35,13 +35,13 @@ const CurvedParticle: Geometry<{
   polarMode2Amplitude: number
   polarMode2Phase: number
 }> = ({
-  baseRadius,
-  azimuthalMode2Amplitude,
-  azimuthalMode2Phase,
-  azimuthalMode3Amplitude,
-  azimuthalMode3Phase,
-  polarMode2Amplitude,
-  polarMode2Phase,
+  baseRadius = 3.125,
+  azimuthalMode2Amplitude = 0.08,
+  azimuthalMode2Phase = 0,
+  azimuthalMode3Amplitude = 0.04,
+  azimuthalMode3Phase = 0,
+  polarMode2Amplitude = 0.015,
+  polarMode2Phase = 0,
 }) => (
   <CurvedSurfaceSphere
     azimuthalCurve={[

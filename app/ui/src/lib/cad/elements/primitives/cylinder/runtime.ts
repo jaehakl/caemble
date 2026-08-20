@@ -7,6 +7,7 @@ export const cylinderDefinition = {
   kind: 'primitive',
   tag: cylinderManifest.tag,
   manifest: cylinderManifest,
+  defaultProps: Object.freeze({ radius: 0.5, radius_2: undefined, height: 1, segments: 32 }),
   createGeometry(props) {
     const radius = props.radius
     if (typeof radius !== 'number' || !Number.isFinite(radius) || radius < 0) {

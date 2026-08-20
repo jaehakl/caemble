@@ -7,8 +7,8 @@ export type CurvedSurfaceSphereFourierMode = Readonly<{
 }>
 
 export type CurvedSurfaceSphereAttributes = Readonly<{
-  azimuthalCurve: readonly CurvedSurfaceSphereFourierMode[]
-  polarCurve: readonly CurvedSurfaceSphereFourierMode[]
+  azimuthalCurve?: readonly CurvedSurfaceSphereFourierMode[]
+  polarCurve?: readonly CurvedSurfaceSphereFourierMode[]
   azimuthalSegments?: number
   polarSegments?: number
 }> &
@@ -26,13 +26,15 @@ export const curvedSurfaceSphereManifest = {
     {
       name: 'azimuthalCurve',
       type: 'readonly { amplitude: number; phase: number }[]',
-      required: true,
+      required: false,
+      default: '[{ amplitude: 0.5, phase: 0 }]',
       description: '비어 있지 않은 Fourier mode 배열입니다. amplitude는 유한한 0 이상이고 phase는 유한해야 합니다.',
     },
     {
       name: 'polarCurve',
       type: 'readonly { amplitude: number; phase: number }[]',
-      required: true,
+      required: false,
+      default: '[{ amplitude: 1, phase: 0 }]',
       description:
         '비어 있지 않은 Fourier mode 배열입니다. amplitude는 유한한 0 이상이고 phase는 유한하며 모든 결합 표본 반지름은 양수여야 합니다.',
     },

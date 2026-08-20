@@ -25,12 +25,12 @@ const syntheticCatalog = {
   warnings: [],
 } as const
 const compiledExperiment: CompiledCadDocument = {
-  apiVersion: 7,
+  apiVersion: 8,
   compilerVersion: CAD_COMPILER_VERSION,
   sourceHash,
   sources: {
     'experiment.tsx': {
-      apiVersion: 7,
+      apiVersion: 8,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'experiment.tsx',
       code: 'module.exports.default = {}',
@@ -46,7 +46,7 @@ const compiledGeometry = {
     entryImports: [{ exportName: 'Box', alias: 'Box', coordinate: geometryCoordinate, moduleHash: 'd'.repeat(64) }],
     modules: {
       [geometryCoordinate]: {
-        apiVersion: 7,
+        apiVersion: 8,
         compilerVersion: CAD_COMPILER_VERSION,
         entryFile: geometryCoordinate,
         code: `exports.Box = ({ id = 'preview' }) => h('box', { id, size: [1, 1, 1] })`,

@@ -4,7 +4,7 @@ export function isCadNode(value: unknown): value is CadNode {
   return typeof value === 'object' && value !== null && 'type' in value && 'props' in value && 'children' in value
 }
 
-export function flattenValues(values: unknown[]): unknown[] {
+export function flattenValues(values: readonly unknown[]): unknown[] {
   return values.flat(Infinity).filter((value) => value !== null && value !== undefined && value !== false)
 }
 

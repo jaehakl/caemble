@@ -11,6 +11,7 @@ import {
 const tau = Math.PI * 2
 
 export function createCurvedEdgeCylinderGeometry(attributes: CurvedEdgeCylinderAttributes) {
+  const height = attributes.height!
   if (typeof attributes.height !== 'number' || !Number.isFinite(attributes.height) || attributes.height <= 0) {
     throw new CadModelError('<curvedEdgeCylinder> height must be a finite positive number.')
   }
@@ -63,7 +64,7 @@ export function createCurvedEdgeCylinderGeometry(attributes: CurvedEdgeCylinderA
   }
 
   const slices = Array.from({ length: verticalSegments + 1 }, (_, verticalIndex) => {
-    const z = -attributes.height / 2 + (attributes.height * verticalIndex) / verticalSegments
+    const z = -height / 2 + (height * verticalIndex) / verticalSegments
     const offset = z - verticalCurve.origin
     let verticalRadius = 0
     for (let order = verticalCurve.coefficients.length - 1; order >= 0; order -= 1) {
@@ -103,6 +104,13 @@ export const curvedEdgeCylinderDefinition = {
   kind: 'primitive',
   tag: curvedEdgeCylinderManifest.tag,
   manifest: curvedEdgeCylinderManifest,
+  defaultProps: Object.freeze({
+    height: 1,
+    azimuthalCurve: Object.freeze([Object.freeze({ amplitude: 0.5, phase: 0 })]),
+    verticalCurve: Object.freeze({ origin: 0, coefficients: Object.freeze([1]) }),
+    azimuthalSegments: 64,
+    verticalSegments: 32,
+  }),
   createGeometry(props) {
     return createCurvedEdgeCylinderGeometry(props as CurvedEdgeCylinderAttributes)
   },

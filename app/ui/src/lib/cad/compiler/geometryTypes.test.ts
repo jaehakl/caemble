@@ -10,7 +10,7 @@ describe('generated Geometry named-export declarations', () => {
         {
           coordinate,
           source: `import { type Geometry } from '@caemble/core'
-export const Notched: Geometry<{ size: number; required: number }> = ({ size = 1, required }) => <box scale={[size, required, 1]} />
+export const Notched: Geometry<{ size: number; required: number }> = ({ size = 1, required = 2 }) => <box scale={[size, required, 1]} />
 export function Preview() { return <sphere /> }`,
           imports: [],
         },

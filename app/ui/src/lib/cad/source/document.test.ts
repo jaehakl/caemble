@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   addExperimentTask,
+  assertCadSourceDocument,
   assertExperimentSourceBundle,
   cadSourceHash,
   createCadSourceDocument,
@@ -51,6 +52,9 @@ describe('Experiment source bundle v5', () => {
 
   it('preserves geometry snapshot while editing and managing tasks', () => {
     const document = createCadSourceDocument('experiment', createExperimentSourceBundle(files))
+    expect(document.apiVersion).toBe(8)
+    expect(() => assertCadSourceDocument({ ...document, apiVersion: 7 })).not.toThrow()
+    expect(() => assertCadSourceDocument({ ...document, apiVersion: 8 })).not.toThrow()
     const edited = updateExperimentSourceFile(document, 'geometry.tsx', 'export {}\n// changed')
     expect(edited.sourceBundle.geometrySnapshot).toEqual(document.sourceBundle.geometrySnapshot)
     const added = addExperimentTask(edited, 'electric', 'export default 1')
@@ -72,7 +76,7 @@ describe('Experiment source bundle v5', () => {
     )
 
     await expect(cadSourceHash(document)).resolves.toBe(
-      '3c60c128c781a77616d6c9ceff61eba044c5afcf2e57cbc368ac0f4f20b7c82a',
+      '50bf96de0f339ad8593292bf872b720fad1677610e17b33f4470b54769cc0008',
     )
   })
 })

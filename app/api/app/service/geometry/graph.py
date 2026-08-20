@@ -243,6 +243,7 @@ def _snapshot_modules(
                 }
                 for item in imports
             ],
+            cad_api_version=version.cad_api_version,
         )
         if expected_hash != version.module_hash:
             raise _bad(f"Stored Geometry module hash is invalid: {coordinate}")
@@ -251,7 +252,7 @@ def _snapshot_modules(
                 geometryVersionId=version_id,
                 coordinate=coordinate,
                 moduleFormatVersion=4,
-                cadApiVersion=7,
+                cadApiVersion=version.cad_api_version,
                 description=version.description,
                 source=version.source,
                 sourceHash=digest,

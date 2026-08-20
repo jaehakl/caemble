@@ -10,6 +10,16 @@ function evaluate(tag: string, props: Record<string, unknown>) {
 }
 
 describe('CAD primitives', () => {
+  it('evaluates every primitive with canonical defaults and treats undefined as omission', () => {
+    for (const tag of ['box', 'cylinder', 'sphere', 'curvedEdgeCylinder', 'curvedSurfaceSphere', 'fiber']) {
+      const omitted = evaluate(tag, {}).geometry
+      const undefinedOverride = evaluate(tag, { radius: undefined, size: undefined }).geometry
+      expect(geometries.geom3.isA(omitted)).toBe(true)
+      expect(measurements.measureVolume(omitted)).toBeGreaterThan(0)
+      expect(measurements.measureBoundingBox(undefinedOverride)).toEqual(measurements.measureBoundingBox(omitted))
+    }
+  })
+
   it('creates valid box, cylinder, and sphere geom3 solids', () => {
     expect(geometries.geom3.isA(evaluate('box', { size: [1, 2, 3] }).geometry)).toBe(true)
     expect(geometries.geom3.isA(evaluate('cylinder', { radius: 1, height: 2, segments: 8 }).geometry)).toBe(true)
@@ -56,15 +66,15 @@ describe('CAD primitives', () => {
     const endTip = evaluate('cylinder', { radius: 2, radius_2: 0, height: 4, segments: 8 })
     const sphere = evaluate('sphere', { radius: 1, segments: 8 })
 
-    expect(box.id).toBe('primitive')
+    expect(box.id).toBe('primitive.box')
     expect(box.surfaces.map((surface) => surface.name)).toEqual(['-X', '+X', '-Y', '+Y', 'Bottom', 'Top'])
     expect(box.surfaces.map((surface) => surface.id)).toEqual([
-      'primitive/surface-1',
-      'primitive/surface-2',
-      'primitive/surface-3',
-      'primitive/surface-4',
-      'primitive/surface-5',
-      'primitive/surface-6',
+      'primitive.box/surface-1',
+      'primitive.box/surface-2',
+      'primitive.box/surface-3',
+      'primitive.box/surface-4',
+      'primitive.box/surface-5',
+      'primitive.box/surface-6',
     ])
     expect(cylinder.surfaces.map((surface) => surface.name)).toEqual(['Bottom', 'Side', 'Top'])
     expect(startTip.surfaces.map((surface) => surface.name)).toEqual(['Side', 'Top'])
@@ -80,7 +90,7 @@ describe('CAD primitives', () => {
   })
 
   it('validates box size before invoking JSCAD', () => {
-    for (const size of [undefined, [1, 2], [1, 2, 0], [1, Number.NaN, 3]]) {
+    for (const size of [null, [1, 2], [1, 2, 0], [1, Number.NaN, 3]]) {
       expect(() => evaluate('box', { size })).toThrowError(CadModelError)
       expect(() => evaluate('box', { size })).toThrow('<box> size')
     }

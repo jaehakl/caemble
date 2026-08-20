@@ -98,7 +98,7 @@ export type CadElementChildrenManifest = Readonly<{
 }>
 
 export type CadAuthoringContract = Readonly<{
-  apiVersion: 7
+  apiVersion: 8
   identity: CadElementPropertyManifest & Readonly<{ pathExample: string }>
   transforms: Readonly<{
     applicationOrder: readonly ['scale', 'rotation', 'position']
@@ -143,6 +143,7 @@ export type PrimitiveElementDefinition<Tag extends string = string> = Readonly<{
   kind: 'primitive'
   tag: Tag
   manifest: CadElementManifest<Tag>
+  defaultProps: Readonly<Record<string, unknown>>
   createGeometry: (props: Record<string, unknown>) => unknown
   createSurfaces: (geometry: unknown, props: Record<string, unknown>) => EvaluatedSurface[]
 }>

@@ -31,12 +31,22 @@ async function published(): Promise<GeometrySnapshotModule> {
 describe('effective source Geometry graph', () => {
   it('derives entry and module relations only from TSX source', async () => {
     const part = await published()
-    const snapshot = createGeometrySnapshot([], [])
+    const snapshot = createGeometrySnapshot(
+      [
+        {
+          exportName: 'Part',
+          alias: 'Part',
+          geometryVersionId: part.geometryVersionId,
+          coordinate: exact,
+          moduleHash: part.moduleHash,
+        },
+      ],
+      [part],
+    )
     const entry = `import { Assembly } from "${local}"\nexport { Assembly }`
     const graph = await createEffectiveGeometryGraph(
       snapshot,
       {
-        [exact]: { source: part.source },
         [local]: {
           source: `import { Part as Child } from "${exact}"\nexport const Assembly = () => <Child id="child" />`,
         },
@@ -47,6 +57,8 @@ describe('effective source Geometry graph', () => {
     expect(graph.modules.find((item) => item.coordinate === local)?.imports).toEqual([
       { exportName: 'Part', alias: 'Child', coordinate: exact },
     ])
+    expect(graph.modules.find((item) => item.coordinate === exact)?.cadApiVersion).toBe(7)
+    expect(graph.modules.find((item) => item.coordinate === local)?.cadApiVersion).toBe(8)
   })
 
   it('keeps repeated shared dependency occurrences with their local aliases', async () => {

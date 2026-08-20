@@ -47,6 +47,9 @@ LOCAL_COORDINATE_RE = re.compile(
 )
 TSX_LANGUAGE = Language(tree_sitter_typescript.language_tsx())
 SEMVER_COMPONENT_MAX_TEXT = str(GEOMETRY_SEMVER_COMPONENT_MAX)
+GEOMETRY_SHARED_PROPS = frozenset(
+    {"children", "id", "materials", "pos", "position", "rotate", "rotation", "scale"}
+)
 
 
 def _bad(message: str, *, code: int = status.HTTP_400_BAD_REQUEST) -> HTTPException:
@@ -93,12 +96,18 @@ def source_hash(source: str) -> str:
     return hashlib.sha256(source.encode("utf-8")).hexdigest()
 
 
-def module_hash(coordinate: str, source_digest: str, imports: list[dict[str, str]]) -> str:
+def module_hash(
+    coordinate: str,
+    source_digest: str,
+    imports: list[dict[str, str]],
+    *,
+    cad_api_version: int,
+) -> str:
     canonical = json.dumps(
         {
             "schemaVersion": 2,
             "moduleFormatVersion": 4,
-            "cadApiVersion": 7,
+            "cadApiVersion": cad_api_version,
             "coordinate": coordinate,
             "sourceHash": source_digest,
             "imports": [
@@ -118,6 +127,192 @@ def module_hash(coordinate: str, source_digest: str, imports: list[dict[str, str
         separators=(",", ":"),
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _node_text(node: Any, encoded: bytes) -> str:
+    return encoded[node.start_byte : node.end_byte].decode("utf-8")
+
+
+def _geometry_type_props(
+    node: Any,
+    declarations: dict[str, Any],
+    encoded: bytes,
+    resolving: set[str] | None = None,
+) -> list[str] | None:
+    resolving = resolving or set()
+    if node.type in {"object_type", "interface_body"}:
+        names: list[str] = []
+        for member in node.named_children:
+            if member.type != "property_signature":
+                return None
+            name = next(
+                (
+                    child
+                    for child in member.named_children
+                    if child.type in {"property_identifier", "string"}
+                ),
+                None,
+            )
+            if name is None:
+                return None
+            names.append(_node_text(name, encoded).strip("\"'"))
+        return names
+    if node.type == "intersection_type":
+        names: list[str] = []
+        for item in node.named_children:
+            resolved = _geometry_type_props(item, declarations, encoded, resolving)
+            if resolved is None:
+                return None
+            names.extend(resolved)
+        return list(dict.fromkeys(names))
+    if node.type == "predefined_type" and _node_text(node, encoded) == "object":
+        return []
+    if node.type == "generic_type":
+        type_name = next(
+            (child for child in node.named_children if child.type == "type_identifier"),
+            None,
+        )
+        arguments = next(
+            (child for child in node.named_children if child.type == "type_arguments"),
+            None,
+        )
+        if type_name is not None and _node_text(type_name, encoded) == "Readonly" and arguments is not None:
+            parameter = next(iter(arguments.named_children), None)
+            return (
+                _geometry_type_props(parameter, declarations, encoded, resolving)
+                if parameter is not None
+                else None
+            )
+        return None
+    if node.type not in {"type_identifier", "identifier"}:
+        return None
+    name = _node_text(node, encoded)
+    if name in resolving or name not in declarations:
+        return None
+    declaration = declarations[name]
+    body = declaration.child_by_field_name("body") or declaration.child_by_field_name("value")
+    if body is None:
+        return None
+    return _geometry_type_props(body, declarations, encoded, resolving | {name})
+
+
+def _component_custom_props(
+    name: str,
+    function: Any,
+    annotation: Any | None,
+    declarations: dict[str, Any],
+    encoded: bytes,
+) -> list[str]:
+    if annotation is not None:
+        generic = next(
+            (child for child in annotation.named_children if child.type == "generic_type"),
+            None,
+        )
+        if generic is not None:
+            type_name = next(
+                (child for child in generic.named_children if child.type == "type_identifier"),
+                None,
+            )
+            arguments = next(
+                (child for child in generic.named_children if child.type == "type_arguments"),
+                None,
+            )
+            if type_name is not None and _node_text(type_name, encoded) == "Geometry":
+                props_type = next(iter(arguments.named_children), None) if arguments is not None else None
+                if props_type is None:
+                    return []
+                props = _geometry_type_props(props_type, declarations, encoded)
+                if props is None:
+                    raise _bad(
+                        f"Geometry {name} props must use a statically enumerable inline or local object type."
+                    )
+                return props
+
+    parameters = next(
+        (child for child in function.named_children if child.type == "formal_parameters"),
+        None,
+    )
+    parameter = next(iter(parameters.named_children), None) if parameters is not None else None
+    if parameter is None:
+        return []
+    pattern = next(
+        (child for child in parameter.named_children if child.type == "object_pattern"),
+        None,
+    )
+    if pattern is None:
+        raise _bad(f"Geometry {name} props must use direct object destructuring.")
+    type_annotation = next(
+        (child for child in parameter.named_children if child.type == "type_annotation"),
+        None,
+    )
+    if type_annotation is not None:
+        props_type = next(iter(type_annotation.named_children), None)
+        props = (
+            _geometry_type_props(props_type, declarations, encoded)
+            if props_type is not None
+            else None
+        )
+        if props is None:
+            raise _bad(
+                f"Geometry {name} props must use a statically enumerable inline or local object type."
+            )
+        return [prop for prop in props if prop not in GEOMETRY_SHARED_PROPS]
+    return [
+        _node_text(item.named_children[0], encoded)
+        for item in pattern.named_children
+        if item.type == "object_assignment_pattern"
+        and item.named_children
+        and _node_text(item.named_children[0], encoded) not in GEOMETRY_SHARED_PROPS
+    ]
+
+
+def _validate_geometry_component_defaults(
+    name: str,
+    function: Any,
+    annotation: Any | None,
+    declarations: dict[str, Any],
+    encoded: bytes,
+) -> None:
+    custom_props = _component_custom_props(name, function, annotation, declarations, encoded)
+    parameters = next(
+        (child for child in function.named_children if child.type == "formal_parameters"),
+        None,
+    )
+    parameter = next(iter(parameters.named_children), None) if parameters is not None else None
+    if parameter is None:
+        if custom_props:
+            raise _bad(
+                f"Geometry {name} must provide defaults for custom props: {', '.join(custom_props)}."
+            )
+        return
+    pattern = next(
+        (child for child in parameter.named_children if child.type == "object_pattern"),
+        None,
+    )
+    if pattern is None:
+        raise _bad(f"Geometry {name} props must use direct object destructuring.")
+    defaults: set[str] = set()
+    for item in pattern.named_children:
+        if (
+            item.type == "object_assignment_pattern"
+            and item.named_children
+            and item.named_children[0].type == "shorthand_property_identifier_pattern"
+        ):
+            prop = _node_text(item.named_children[0], encoded)
+            if prop not in GEOMETRY_SHARED_PROPS:
+                defaults.add(prop)
+            continue
+        prop = _node_text(item, encoded)
+        if item.type == "shorthand_property_identifier_pattern" and prop in GEOMETRY_SHARED_PROPS:
+            continue
+        raise _bad(
+            f"Geometry {name} props must use direct properties with explicit defaults."
+        )
+    missing = [prop for prop in custom_props if prop not in defaults]
+    if missing:
+        raise _bad(
+            f"Geometry {name} must provide defaults for custom props: {', '.join(missing)}."
+        )
 
 
 def analyze_geometry_source(
@@ -143,11 +338,26 @@ def analyze_geometry_source(
         raise _bad(f"Geometry TSX syntax error at {row + 1}:{column + 1}.")
 
     bindings: dict[str, Any] = {}
+    binding_annotations: dict[str, Any] = {}
+    type_declarations: dict[str, Any] = {}
     imported_components: set[str] = set()
     imports: list[dict[str, Any]] = []
     export_specs: list[tuple[str, str]] = []
 
     for node in root.named_children:
+        declaration = node.child_by_field_name("declaration") if node.type == "export_statement" else node
+        if declaration is not None and declaration.type in {"type_alias_declaration", "interface_declaration"}:
+            name_node = declaration.child_by_field_name("name") or next(
+                (
+                    child
+                    for child in declaration.named_children
+                    if child.type == "type_identifier"
+                ),
+                None,
+            )
+            if name_node is not None:
+                type_declarations[_node_text(name_node, encoded)] = declaration
+            continue
         if node.type == "import_statement":
             source_node = node.child_by_field_name("source")
             clause = next((child for child in node.named_children if child.type == "import_clause"), None)
@@ -228,7 +438,6 @@ def analyze_geometry_source(
                 )
             continue
 
-        declaration = node.child_by_field_name("declaration") if node.type == "export_statement" else node
         if declaration is not None and declaration.type == "lexical_declaration":
             if not any(child.type == "const" for child in declaration.children):
                 if node.type == "export_statement":
@@ -242,6 +451,16 @@ def analyze_geometry_source(
                 if name_node is not None and name_node.type == "identifier" and value is not None:
                     name = encoded[name_node.start_byte : name_node.end_byte].decode("utf-8")
                     bindings[name] = value
+                    annotation = next(
+                        (
+                            child
+                            for child in declarator.named_children
+                            if child.type == "type_annotation"
+                        ),
+                        None,
+                    )
+                    if annotation is not None:
+                        binding_annotations[name] = annotation
                     if node.type == "export_statement":
                         export_specs.append((name, name))
             continue
@@ -277,6 +496,19 @@ def analyze_geometry_source(
         raise _bad("Geometry import aliases must be unique within a module.")
     if len(imports) > MAX_IMPORTS:
         raise _bad(f"Geometry modules may import at most {MAX_IMPORTS} bindings.")
+
+    for name in sorted(bindings):
+        if ALIAS_RE.fullmatch(name) is None:
+            continue
+        function = _binding_function_node(name, bindings, encoded, set())
+        if function is not None:
+            _validate_geometry_component_defaults(
+                name,
+                function,
+                binding_annotations.get(name),
+                type_declarations,
+                encoded,
+            )
 
     exports: list[str] = []
     for local_name, export_name in export_specs:
@@ -391,14 +623,14 @@ def validate_experiment_tsx_imports(source: str, *, path: str) -> None:
                 raise _bad("Dynamic import and require() are not allowed in Experiment sources.")
 
 
-def _binding_is_function(
+def _binding_function_node(
     name: str,
     bindings: dict[str, Any],
     encoded: bytes,
     visiting: set[str],
-) -> bool:
+) -> Any | None:
     if name in visiting:
-        return False
+        return None
     value = bindings.get(name)
     while value is not None and value.type in {
         "as_expression",
@@ -408,13 +640,22 @@ def _binding_is_function(
     }:
         value = next(iter(value.named_children), None)
     if value is None:
-        return False
+        return None
     if value.type in {"arrow_function", "function_declaration", "function_expression"}:
-        return True
+        return value
     if value.type != "identifier":
-        return False
+        return None
     target = encoded[value.start_byte : value.end_byte].decode("utf-8")
-    return _binding_is_function(target, bindings, encoded, visiting | {name})
+    return _binding_function_node(target, bindings, encoded, visiting | {name})
+
+
+def _binding_is_function(
+    name: str,
+    bindings: dict[str, Any],
+    encoded: bytes,
+    visiting: set[str],
+) -> bool:
+    return _binding_function_node(name, bindings, encoded, visiting) is not None
 
 
 def _validate_runtime_policy(root: Any, encoded: bytes) -> None:

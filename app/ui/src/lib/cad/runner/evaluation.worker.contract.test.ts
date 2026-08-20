@@ -13,26 +13,26 @@ const workerScope = {
 const nonce = '12345678-90ab-cdef-1234-567890abcdef'
 const sourceHash = 'c'.repeat(64)
 const compiledExperiment: CompiledCadDocument = {
-  apiVersion: 7,
+  apiVersion: 8,
   compilerVersion: CAD_COMPILER_VERSION,
   sourceHash,
   sources: {
     'geometry.tsx': {
-      apiVersion: 7,
+      apiVersion: 8,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'geometry.tsx',
       sourceHash,
       code: 'module.exports = {}',
     },
     'material.tsx': {
-      apiVersion: 7,
+      apiVersion: 8,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'material.tsx',
       sourceHash,
       code: 'module.exports = {}',
     },
     'experiment.tsx': {
-      apiVersion: 7,
+      apiVersion: 8,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'experiment.tsx',
       sourceHash,
@@ -44,7 +44,7 @@ module.exports.default = experiment({
 })`,
     },
     'tasks/electric.tsx': {
-      apiVersion: 7,
+      apiVersion: 8,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'tasks/electric.tsx',
       sourceHash,

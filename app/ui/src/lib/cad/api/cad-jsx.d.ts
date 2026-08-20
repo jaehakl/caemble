@@ -12,6 +12,8 @@ import type {
   ShellAttributes,
   SphereAttributes,
   TranslateAttributes,
+  Geometry,
+  GeometryInvocationAttributes,
 } from '@caemble/core'
 
 declare global {
@@ -19,6 +21,12 @@ declare global {
   function Fragment(props: { children?: unknown }): unknown
 
   namespace JSX {
+    type LibraryManagedAttributes<Component, Props> = Props extends { readonly id: string }
+      ? Component extends Geometry<infer CustomProps>
+        ? GeometryInvocationAttributes<CustomProps>
+        : Props
+      : Props
+
     interface IntrinsicElements {
       /** @deprecated Import { Box } from '@caemble/core'. */
       box: BoxAttributes

@@ -26,6 +26,7 @@ export type {
   GeometryAttributes,
   GeometryGroupMap,
   GeometryIdentityAttributes,
+  GeometryInvocationAttributes,
   GeometryTransformAttributes,
   IntrinsicGeometryAttributes,
   LegacyGeometryTransformAttributes,

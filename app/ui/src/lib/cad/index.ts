@@ -47,6 +47,7 @@ export type {
   Geometry,
   GeometryAttributes,
   GeometryIdentityAttributes,
+  GeometryInvocationAttributes,
   GeometryTransformAttributes,
   IntegerDataDType,
   IntrinsicGeometryAttributes,

@@ -16,6 +16,7 @@ import { assertUcumUnitComparable, normalizeUcumUnit, type UcumUnit } from '../m
 
 type EvaluationState = {
   nodes: Map<string, CadSceneTreeNode>
+  explicitIdsByParent: Map<string, Set<string>>
   localIdsByParent: Map<string, Set<string>>
   rootLabel: string
 }
@@ -135,6 +136,41 @@ function resolveGeometryId(value: unknown, label: string, parentId: string, stat
   return parentId ? `${parentId}.${value}` : value
 }
 
+function automaticGeometryId(authoringName: string, parentId: string, state: EvaluationState) {
+  const base = authoringName
+    .replace(/([a-z0-9])([A-Z])/gu, '$1-$2')
+    .replace(/[^A-Za-z0-9_-]+/gu, '-')
+    .replace(/^-+|-+$/gu, '')
+    .toLowerCase() || 'geometry'
+  const siblingIds = state.localIdsByParent.get(parentId) ?? new Set<string>()
+  const explicitIds = state.explicitIdsByParent.get(parentId)
+  let localId = base
+  let ordinal = 2
+  while (siblingIds.has(localId) || explicitIds?.has(localId)) {
+    localId = `${base}-${ordinal}`
+    ordinal += 1
+  }
+  siblingIds.add(localId)
+  state.localIdsByParent.set(parentId, siblingIds)
+  return { localId, globalId: parentId ? `${parentId}.${localId}` : localId }
+}
+
+function reserveExplicitSiblingIds(values: readonly unknown[], parentId: string, state: EvaluationState) {
+  const ids = state.explicitIdsByParent.get(parentId) ?? new Set<string>()
+  flattenValues(values).forEach((value) => {
+    if (isCadNode(value) && typeof value.props.id === 'string') ids.add(value.props.id)
+  })
+  if (ids.size) state.explicitIdsByParent.set(parentId, ids)
+}
+
+function primitiveProps(defaults: Readonly<Record<string, unknown>>, props: Record<string, unknown>) {
+  const resolved = { ...defaults }
+  Object.entries(props).forEach(([name, value]) => {
+    if (value !== undefined) resolved[name] = value
+  })
+  return resolved
+}
+
 function evaluateNode(
   value: unknown,
   inheritedMaterials: Map<string, MaterialBinding>,
@@ -145,6 +181,7 @@ function evaluateNode(
   ownerNodeKey: string | undefined,
 ): EvaluatedPart[] {
   if (Array.isArray(value)) {
+    reserveExplicitSiblingIds(value, identityParent, state)
     return flattenValues(value).flatMap((item, index) =>
       evaluateNode(
         item,
@@ -174,6 +211,7 @@ function evaluateNode(
         'Fragment only accepts children. Use a Geometry or CAD element for identity or transforms.',
       )
     }
+    reserveExplicitSiblingIds(children, identityParent, state)
     return children.flatMap((child, index) =>
       evaluateNode(
         child,
@@ -189,13 +227,18 @@ function evaluateNode(
 
   if (typeof type === 'function') {
     const label = type.name || 'Anonymous Geometry'
-    const globalId = resolveGeometryId(props.id, label, identityParent, state)
+    const identity =
+      props.id === undefined
+        ? automaticGeometryId(type.name || 'geometry', identityParent, state)
+        : { localId: props.id as string, globalId: resolveGeometryId(props.id, label, identityParent, state) }
+    const globalId = identity.globalId
     const traceNode = addTreeNode(state, traceParent, nodeKey, label, globalId)
     const owner = `Geometry ${type.name || '<anonymous>'}`
     const transformValues = normalizeTransforms(props, owner)
     const materials = resolveMaterials(props.materials, inheritedMaterials)
     const result = type({
       ...props,
+      id: identity.localId,
       ...(transformValues.family === 'legacy'
         ? { pos: transformValues.position, rotate: transformValues.rotate }
         : { position: transformValues.position, rotation: transformValues.rotation }),
@@ -211,11 +254,17 @@ function evaluateNode(
 
   const definition = getCadElementDefinition(type)
   if (!definition) throw new CadModelError(`Unknown CAD element: ${type}`)
-  const globalId = props.id === undefined ? undefined : resolveGeometryId(props.id, `<${type}>`, identityParent, state)
+  const resolvedProps = definition.kind === 'primitive' ? primitiveProps(definition.defaultProps, props) : props
+  const primitiveIdentity =
+    definition.kind === 'primitive' && props.id === undefined
+      ? automaticGeometryId(definition.manifest.authoringName, identityParent, state)
+      : null
+  const globalId = primitiveIdentity?.globalId ??
+    (props.id === undefined ? undefined : resolveGeometryId(props.id, `<${type}>`, identityParent, state))
   const traceNode = addTreeNode(state, traceParent, nodeKey, `<${type}>`, globalId)
   const elementIdentityParent = globalId ?? identityParent
   const elementOwnerNodeKey = globalId === undefined ? ownerNodeKey : traceNode.key
-  const transformValues = normalizeTransforms(props, `<${type}>`)
+  const transformValues = normalizeTransforms(resolvedProps, `<${type}>`)
   if (definition.kind === 'operation' && definition.surfacePolicy === 'derive' && !elementOwnerNodeKey) {
     throw new CadModelError(`<${type}> requires an explicit id on itself or an enclosing Geometry.`)
   }
@@ -227,18 +276,19 @@ function evaluateNode(
     }
     const binding = materialBinding(inheritedMaterials, 'body')
 
-    const geometry = definition.createGeometry(props)
+    const geometry = definition.createGeometry(resolvedProps)
     parts = [
       {
         geometry,
         materialRole: binding.role,
         ...(binding.material === undefined ? {} : { material: binding.material }),
-        surfaces: definition.createSurfaces(geometry, props),
+        surfaces: definition.createSurfaces(geometry, resolvedProps),
         ownerNodeKey: elementOwnerNodeKey,
         resultNodeKey: nodeKey,
       },
     ]
   } else {
+    reserveExplicitSiblingIds(children, elementIdentityParent, state)
     let childIndex = 0
     parts = definition.evaluate(value, {
       inheritedMaterials,
@@ -295,6 +345,7 @@ export function evaluateCadScene(
   const tree: CadSceneTreeNode = { key: rootKey, label: rootLabel, children: [] }
   const state: EvaluationState = {
     nodes: new Map([[tree.key, tree]]),
+    explicitIdsByParent: new Map(),
     localIdsByParent: new Map(),
     rootLabel,
   }

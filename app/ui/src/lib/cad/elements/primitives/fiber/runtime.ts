@@ -40,6 +40,18 @@ export const fiberDefinition = {
   kind: 'primitive',
   tag: fiberManifest.tag,
   manifest: fiberManifest,
+  defaultProps: Object.freeze({
+    from: Object.freeze([0, 0, -0.5]),
+    to: Object.freeze([0, 0, 0.5]),
+    basePath: undefined,
+    radius: 0.05,
+    helix: undefined,
+    fourier: undefined,
+    envelopePower: 2,
+    up: undefined,
+    pathSegments: 128,
+    radialSegments: 12,
+  }),
   createGeometry(props) {
     return createFiberGeometry(props as FiberAttributes)
   },

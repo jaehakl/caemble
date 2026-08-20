@@ -2,6 +2,8 @@ import { CadModelError } from '../model/errors'
 
 export const GEOMETRY_SNAPSHOT_SCHEMA_VERSION = 2 as const
 export const GEOMETRY_MODULE_FORMAT_VERSION = 4 as const
+export const CURRENT_CAD_API_VERSION = 8 as const
+export type CadApiVersion = 7 | typeof CURRENT_CAD_API_VERSION
 export const MAX_GEOMETRY_ENTRY_IMPORTS = 64
 export const MAX_GEOMETRY_MODULES = 256
 export const MAX_GEOMETRY_IMPORTS_PER_MODULE = 64
@@ -40,7 +42,7 @@ export type GeometrySnapshotModule = Readonly<{
   geometryVersionId: number
   coordinate: GeometryCoordinate
   moduleFormatVersion: typeof GEOMETRY_MODULE_FORMAT_VERSION
-  cadApiVersion: 7
+  cadApiVersion: CadApiVersion
   description: string | null
   source: string
   sourceHash: string
@@ -135,8 +137,11 @@ function assertModule(value: unknown, index: number): asserts value is GeometryS
   )
   assertVersionId(value.geometryVersionId, `${path}.geometryVersionId`)
   assertGeometryCoordinate(value.coordinate, `${path}.coordinate`)
-  if (value.moduleFormatVersion !== GEOMETRY_MODULE_FORMAT_VERSION || value.cadApiVersion !== 7) {
-    throw new CadModelError(`${path} must use Geometry module format version 4 and CAD API version 7.`)
+  if (
+    value.moduleFormatVersion !== GEOMETRY_MODULE_FORMAT_VERSION ||
+    (value.cadApiVersion !== 7 && value.cadApiVersion !== CURRENT_CAD_API_VERSION)
+  ) {
+    throw new CadModelError(`${path} must use Geometry module format version 4 and CAD API version 7 or 8.`)
   }
   if (value.description !== null && typeof value.description !== 'string') {
     throw new CadModelError(`${path}.description must be text or null.`)

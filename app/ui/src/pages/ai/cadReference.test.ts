@@ -10,15 +10,17 @@ import {
 } from './cadReference'
 
 describe('official AI CAD reference', () => {
-  it('keeps the complete v7 grammar and every registered intrinsic within 5 KiB', () => {
+  it('keeps the complete v8 grammar and every registered intrinsic within 5 KiB', () => {
     expect(new TextEncoder().encode(CAD_GRAMMAR_CORE).byteLength).toBeLessThanOrEqual(CAD_GRAMMAR_CORE_MAX_BYTES)
-    expect(CAD_GRAMMAR_CORE).toContain('API v7')
+    expect(CAD_GRAMMAR_CORE).toContain('API v8')
     expect(CAD_GRAMMAR_CORE).toContain('position?: Vec3')
     expect(CAD_GRAMMAR_CORE).toContain('rotation?: Vec3')
     expect(CAD_GRAMMAR_CORE).toContain("from '@caemble/core'")
     expect(CAD_GRAMMAR_CORE).toContain(geometryAuthoringSkeletonCode.trim())
     expect(CAD_GRAMMAR_CORE).toContain('Never generate `translation`')
     expect(CAD_GRAMMAR_CORE).toContain('lowercase primitive JSX are deprecated compatibility syntax')
+    expect(CAD_GRAMMAR_CORE).toContain('initializer for every custom prop')
+    expect(CAD_GRAMMAR_CORE).toContain('omitted/`undefined` uses Catalog defaults')
     expect(CAD_GRAMMAR_CORE).not.toContain('migration-only v6 properties')
     expect(CAD_GRAMMAR_CORE.split('## Element index')[1]).not.toMatch(/\b(?:pos|rotate)=/u)
     cadElementCatalog.forEach(({ authoringName, syntax }) => {

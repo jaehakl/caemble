@@ -6,9 +6,11 @@ import { curvedSurfaceSphereManifest, type CurvedSurfaceSphereAttributes } from 
 const tau = Math.PI * 2
 
 export function createCurvedSurfaceSphereGeometry(attributes: CurvedSurfaceSphereAttributes) {
+  const azimuthalCurve = attributes.azimuthalCurve!
+  const polarCurve = attributes.polarCurve!
   const curves = [
-    { name: 'azimuthalCurve', modes: attributes.azimuthalCurve },
-    { name: 'polarCurve', modes: attributes.polarCurve },
+    { name: 'azimuthalCurve', modes: azimuthalCurve },
+    { name: 'polarCurve', modes: polarCurve },
   ] as const
   curves.forEach(({ name, modes }) => {
     if (!Array.isArray(modes) || modes.length === 0) {
@@ -42,11 +44,11 @@ export function createCurvedSurfaceSphereGeometry(attributes: CurvedSurfaceSpher
 
   const pointAt = (theta: number, phi: number, azimuthalIndex: number, polarIndex: number) => {
     let azimuthalRadius = 0
-    attributes.azimuthalCurve.forEach((mode, modeIndex) => {
+    azimuthalCurve.forEach((mode, modeIndex) => {
       azimuthalRadius += mode.amplitude * Math.cos(modeIndex * theta + mode.phase)
     })
     let polarRadius = 0
-    attributes.polarCurve.forEach((mode, modeIndex) => {
+    polarCurve.forEach((mode, modeIndex) => {
       polarRadius += mode.amplitude * Math.cos(modeIndex * phi + mode.phase)
     })
     const radius = azimuthalRadius * polarRadius
@@ -109,6 +111,12 @@ export const curvedSurfaceSphereDefinition = {
   kind: 'primitive',
   tag: curvedSurfaceSphereManifest.tag,
   manifest: curvedSurfaceSphereManifest,
+  defaultProps: Object.freeze({
+    azimuthalCurve: Object.freeze([Object.freeze({ amplitude: 0.5, phase: 0 })]),
+    polarCurve: Object.freeze([Object.freeze({ amplitude: 1, phase: 0 })]),
+    azimuthalSegments: 64,
+    polarSegments: 32,
+  }),
   createGeometry(props) {
     return createCurvedSurfaceSphereGeometry(props as CurvedSurfaceSphereAttributes)
   },

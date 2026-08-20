@@ -231,7 +231,7 @@ def bundle_hash(bundle: ExperimentSourceBundle) -> str:
         modules.append(module)
     snapshot["modules"] = sorted(modules, key=lambda item: item["coordinate"])
     canonical_document = {
-        "apiVersion": 7,
+        "apiVersion": 8,
         "formatVersion": 2,
         "sourceBundle": {
             "formatVersion": bundle.formatVersion,

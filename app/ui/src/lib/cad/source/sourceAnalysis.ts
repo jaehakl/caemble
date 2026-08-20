@@ -2,7 +2,18 @@ import generate from '@babel/generator'
 import { parse } from '@babel/parser'
 import traverse, { type Binding, type NodePath } from '@babel/traverse'
 import * as t from '@babel/types'
-import type { Expression, File, FunctionDeclaration, ObjectExpression, ReturnStatement, Statement } from '@babel/types'
+import type {
+  Expression,
+  File,
+  FunctionDeclaration,
+  FunctionExpression,
+  ObjectExpression,
+  ReturnStatement,
+  Statement,
+  TSInterfaceDeclaration,
+  TSType,
+  TSTypeAliasDeclaration,
+} from '@babel/types'
 
 export class SourceAnalysisError extends Error {
   constructor(message: string) {
@@ -41,6 +52,141 @@ export type MaterialSourceAnalysis = Readonly<{
 }>
 
 type CadSourcePolicy = 'experiment' | 'task' | 'geometry' | 'material'
+
+const geometrySharedProps = new Set([
+  'children',
+  'id',
+  'materials',
+  'pos',
+  'position',
+  'rotate',
+  'rotation',
+  'scale',
+])
+
+function propertyName(node: t.Expression | t.PrivateName): string | null {
+  if (node.type === 'Identifier') return node.name
+  if (node.type === 'StringLiteral') return node.value
+  return null
+}
+
+function geometryPropNames(
+  node: TSType,
+  declarations: ReadonlyMap<string, TSTypeAliasDeclaration | TSInterfaceDeclaration>,
+  resolving = new Set<string>(),
+): readonly string[] | null {
+  if (node.type === 'TSObjectKeyword') return []
+  if (node.type === 'TSIntersectionType') {
+    const names: string[] = []
+    for (const item of node.types) {
+      const resolved = geometryPropNames(item, declarations, resolving)
+      if (resolved === null) return null
+      names.push(...resolved)
+    }
+    return [...new Set(names)]
+  }
+  if (node.type === 'TSTypeLiteral') {
+    const names = node.members.map((member) => {
+      if (member.type !== 'TSPropertySignature' || member.computed) return null
+      return propertyName(member.key)
+    })
+    return names.includes(null) ? null : (names as string[])
+  }
+  if (node.type !== 'TSTypeReference' || node.typeName.type !== 'Identifier') return null
+  if (node.typeName.name === 'Readonly') {
+    const parameter = node.typeParameters?.params[0]
+    return parameter ? geometryPropNames(parameter, declarations, resolving) : null
+  }
+  const declaration = declarations.get(node.typeName.name)
+  if (!declaration || resolving.has(node.typeName.name)) return null
+  resolving.add(node.typeName.name)
+  const names =
+    declaration.type === 'TSTypeAliasDeclaration'
+      ? geometryPropNames(declaration.typeAnnotation, declarations, resolving)
+      : declaration.extends?.length
+        ? null
+        : geometryPropNames(
+            t.tsTypeLiteral(declaration.body.body.map((member) => t.cloneNode(member, true))),
+            declarations,
+            resolving,
+          )
+  resolving.delete(node.typeName.name)
+  return names
+}
+
+function componentPropNames(
+  name: string,
+  component: t.ArrowFunctionExpression | FunctionExpression | FunctionDeclaration,
+  annotation: TSType | null,
+  declarations: ReadonlyMap<string, TSTypeAliasDeclaration | TSInterfaceDeclaration>,
+) {
+  if (annotation?.type === 'TSTypeReference' && annotation.typeName.type === 'Identifier' && annotation.typeName.name === 'Geometry') {
+    const propsType = annotation.typeParameters?.params[0]
+    if (!propsType) return []
+    const names = geometryPropNames(propsType, declarations)
+    if (names === null) {
+      throw new SourceAnalysisError(
+        `Geometry ${name} props must use a statically enumerable inline or local object type.`,
+      )
+    }
+    return names
+  }
+  const firstParameter = component.params[0]
+  if (!firstParameter) return []
+  if (firstParameter.type !== 'ObjectPattern') {
+    throw new SourceAnalysisError(`Geometry ${name} props must use direct object destructuring.`)
+  }
+  const parameterType =
+    firstParameter.typeAnnotation?.type === 'TSTypeAnnotation' ? firstParameter.typeAnnotation.typeAnnotation : null
+  if (!parameterType) {
+    return firstParameter.properties.flatMap((property) => {
+      if (property.type !== 'ObjectProperty' || property.computed) return []
+      const key = propertyName(property.key)
+      return key && !geometrySharedProps.has(key) ? [key] : []
+    })
+  }
+  const names = geometryPropNames(parameterType, declarations)
+  if (names === null) {
+    throw new SourceAnalysisError(`Geometry ${name} props must use a statically enumerable inline or local object type.`)
+  }
+  return names.filter((item) => !geometrySharedProps.has(item))
+}
+
+function assertGeometryPropDefaults(
+  name: string,
+  component: t.ArrowFunctionExpression | FunctionExpression | FunctionDeclaration,
+  annotation: TSType | null,
+  declarations: ReadonlyMap<string, TSTypeAliasDeclaration | TSInterfaceDeclaration>,
+) {
+  const customProps = componentPropNames(name, component, annotation, declarations)
+  const firstParameter = component.params[0]
+  if (!firstParameter) {
+    if (customProps.length) {
+      throw new SourceAnalysisError(`Geometry ${name} must provide defaults for custom props: ${customProps.join(', ')}.`)
+    }
+    return
+  }
+  if (firstParameter.type !== 'ObjectPattern') {
+    throw new SourceAnalysisError(`Geometry ${name} props must use direct object destructuring.`)
+  }
+  const defaults = new Set<string>()
+  firstParameter.properties.forEach((property) => {
+    if (property.type !== 'ObjectProperty' || property.computed || !property.shorthand) {
+      throw new SourceAnalysisError(`Geometry ${name} props must use direct properties with explicit defaults.`)
+    }
+    const key = propertyName(property.key)
+    if (!key) throw new SourceAnalysisError(`Geometry ${name} prop names must be static identifiers or strings.`)
+    if (geometrySharedProps.has(key)) return
+    if (property.value.type !== 'AssignmentPattern' || property.value.left.type !== 'Identifier') {
+      throw new SourceAnalysisError(`Geometry ${name} props must use direct properties with explicit defaults.`)
+    }
+    defaults.add(key)
+  })
+  const missing = customProps.filter((item) => !defaults.has(item))
+  if (missing.length) {
+    throw new SourceAnalysisError(`Geometry ${name} must provide defaults for custom props: ${missing.join(', ')}.`)
+  }
+}
 
 export function unwrapSourceExpression(expression: Expression): Expression {
   if (
@@ -463,6 +609,8 @@ export function analyzeGeometrySource(
   }
 
   const bindings = collectSourceBindings(ast.program.body)
+  const typeDeclarations = new Map<string, TSTypeAliasDeclaration | TSInterfaceDeclaration>()
+  const componentAnnotations = new Map<string, TSType>()
   const functions = new Map(
     ast.program.body.flatMap((statement) => {
       const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement
@@ -474,6 +622,9 @@ export function analyzeGeometrySource(
   const declarationRanges = new Map<string, Readonly<{ start: number; end: number }>>()
   ast.program.body.forEach((statement) => {
     const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement
+    if (declaration?.type === 'TSTypeAliasDeclaration' || declaration?.type === 'TSInterfaceDeclaration') {
+      typeDeclarations.set(declaration.id.name, declaration)
+    }
     if (
       declaration?.type === 'FunctionDeclaration' &&
       declaration.id &&
@@ -487,6 +638,8 @@ export function analyzeGeometrySource(
     if (declaration?.type !== 'VariableDeclaration' || declaration.kind !== 'const') return
     declaration.declarations.forEach((item) => {
       if (item.id.type !== 'Identifier' || !item.init) return
+      const annotation = item.id.typeAnnotation?.type === 'TSTypeAnnotation' ? item.id.typeAnnotation.typeAnnotation : null
+      if (annotation) componentAnnotations.set(item.id.name, annotation)
       if (statement.type === 'ExportNamedDeclaration') {
         bindings.set(item.id.name, sourceExpression(item.init, item.id.name))
       }
@@ -494,6 +647,22 @@ export function analyzeGeometrySource(
         declarationRanges.set(item.id.name, Object.freeze({ start: item.start, end: item.end }))
       }
     })
+  })
+
+  functions.forEach((component, name) => {
+    if (componentNamePattern.test(name)) {
+      assertGeometryPropDefaults(name, component, null, typeDeclarations)
+    }
+  })
+  bindings.forEach((binding, name) => {
+    if (!componentNamePattern.test(name) || functions.has(name)) return
+    const resolved = resolveSourceBinding(binding, bindings).expression
+    if (
+      resolved.type === 'ArrowFunctionExpression' ||
+      resolved.type === 'FunctionExpression'
+    ) {
+      assertGeometryPropDefaults(name, resolved, componentAnnotations.get(name) ?? null, typeDeclarations)
+    }
   })
 
   const exported: { localName: string; name: string }[] = []

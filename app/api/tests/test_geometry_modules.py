@@ -114,6 +114,34 @@ def test_source_contract_supports_multi_export_alias_and_local_rewrite_boundary(
     assert analyze_geometry_source(local, allow_local=True)["imports"][0]["coordinate"].endswith("@local")
 
 
+def test_source_contract_requires_defaults_for_local_geometry_component_props():
+    valid = '''import { type Geometry } from "@caemble/core"
+interface PartProps { count: number; enabled?: boolean }
+const Helper: Geometry<PartProps> = ({ count = 2, enabled = true, materials }) => enabled ? <box scale={[count, 1, 1]} materials={materials} /> : <></>
+export { Helper as Assembly }
+'''
+    assert analyze_geometry_source(valid)["exports"] == ["Assembly"]
+    with pytest.raises(Exception, match="explicit defaults"):
+        analyze_geometry_source(valid.replace("count = 2", "count"))
+    with pytest.raises(Exception, match="direct object destructuring"):
+        analyze_geometry_source(
+            valid.replace("{ count = 2, enabled = true, materials }", "props")
+        )
+    with pytest.raises(Exception, match="direct properties with explicit defaults"):
+        analyze_geometry_source(valid.replace("materials }", "materials, ...rest }"))
+    with pytest.raises(Exception, match="direct properties with explicit defaults"):
+        analyze_geometry_source(
+            valid.replace("count = 2", "count: { value } = { value: 2 }")
+        )
+    with pytest.raises(Exception, match="statically enumerable"):
+        analyze_geometry_source(
+            '''import { type Geometry } from "@caemble/core"
+type ImportedProps = Readonly<Record<string, number>>
+export const Assembly: Geometry<ImportedProps> = ({ value = 1 }) => <box scale={[value, 1, 1]} />
+'''
+        )
+
+
 def test_geometry_source_rejects_inline_material_construction_imports():
     with pytest.raises(Exception, match="material.tsx"):
         analyze_geometry_source(
@@ -133,15 +161,17 @@ def test_module_hash_uses_named_import_provenance_but_not_database_ids():
         "moduleHash": "a" * 64,
         "geometryVersionId": 1,
     }
-    assert module_hash(coordinate, digest, [imported]) == module_hash(
+    assert module_hash(coordinate, digest, [imported], cad_api_version=7) == module_hash(
         coordinate,
         digest,
         [{**imported, "geometryVersionId": 999}],
+        cad_api_version=7,
     )
-    assert module_hash(coordinate, digest, [imported]) != module_hash(
+    assert module_hash(coordinate, digest, [imported], cad_api_version=7) != module_hash(
         coordinate,
         digest,
         [{**imported, "alias": "Other"}],
+        cad_api_version=7,
     )
     canonical_v7 = json.dumps(
         {
@@ -162,9 +192,12 @@ def test_module_hash_uses_named_import_provenance_but_not_database_ids():
         ensure_ascii=False,
         separators=(",", ":"),
     )
-    assert module_hash(coordinate, digest, [imported]) == hashlib.sha256(
+    assert module_hash(coordinate, digest, [imported], cad_api_version=7) == hashlib.sha256(
         canonical_v7.encode("utf-8")
     ).hexdigest()
+    assert module_hash(coordinate, digest, [imported], cad_api_version=8) != module_hash(
+        coordinate, digest, [imported], cad_api_version=7
+    )
 
 
 @pytest.mark.asyncio
@@ -253,16 +286,18 @@ async def test_publish_named_multi_export_and_resolve_snapshot_v2(client, db_ses
     version = published["result"]["published"][0]
     assert step["exports"] == ["Assembly", "Preview"]
     assert step["sourceHash"] == source_hash(step["source"])
-    assert step["moduleHash"] == module_hash(step["coordinate"], step["sourceHash"], [])
+    assert step["moduleHash"] == module_hash(
+        step["coordinate"], step["sourceHash"], [], cad_api_version=8
+    )
     assert version["moduleFormatVersion"] == 4
-    assert version["cadApiVersion"] == 7
+    assert version["cadApiVersion"] == 8
 
     resolved = await client.get(f"/geometry/versions/{version['id']}/resolve", headers=auth_headers(owner))
     assert resolved.status_code == 200, resolved.text
     assert resolved.json()["schemaVersion"] == 2
     assert resolved.json()["root"]["exports"] == ["Assembly", "Preview"]
     assert resolved.json()["modules"][0]["moduleFormatVersion"] == 4
-    assert resolved.json()["modules"][0]["cadApiVersion"] == 7
+    assert resolved.json()["modules"][0]["cadApiVersion"] == 8
 
 
 @pytest.mark.asyncio

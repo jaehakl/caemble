@@ -39,7 +39,7 @@ class ExperimentSourceDocument(BaseModel):
 
     kind: Literal["experiment"]
     formatVersion: Literal[2]
-    apiVersion: Literal[7]
+    apiVersion: Literal[7, 8]
     sourceBundle: ExperimentSourceBundle
 
 

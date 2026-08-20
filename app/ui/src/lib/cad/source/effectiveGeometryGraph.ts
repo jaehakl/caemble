@@ -2,6 +2,7 @@ import { CadModelError } from '../model/errors'
 import { analyzeGeometrySource } from './sourceAnalysis'
 import {
   GEOMETRY_MODULE_FORMAT_VERSION,
+  CURRENT_CAD_API_VERSION,
   GEOMETRY_SNAPSHOT_SCHEMA_VERSION,
   MAX_GEOMETRY_GRAPH_DEPTH,
   MAX_GEOMETRY_GRAPH_SOURCE_BYTES,
@@ -15,6 +16,7 @@ import {
   isGeometryCoordinate,
   isGeometryComponentName,
   validateGeometrySnapshotHashes,
+  type CadApiVersion,
   type GeometryCoordinate,
   type GeometrySnapshot,
   type LocalGeometryCoordinate,
@@ -26,6 +28,7 @@ export type GeometryDraftOverlay = Readonly<Partial<Record<GeometryModuleCoordin
 
 export type EffectiveGeometryModule = Readonly<{
   coordinate: GeometryModuleCoordinate
+  cadApiVersion: CadApiVersion
   source: string
   sourceHash: string
   moduleHash: string
@@ -74,6 +77,9 @@ export async function createEffectiveGeometryGraph(
   const sources = new Map<GeometryModuleCoordinate, string>(
     snapshot.modules.map((module) => [module.coordinate, module.source]),
   )
+  const apiVersions = new Map<GeometryModuleCoordinate, CadApiVersion>(
+    snapshot.modules.map((module) => [module.coordinate, module.cadApiVersion]),
+  )
   Object.entries(drafts).forEach(([coordinate, draft]) => {
     if (!isModuleCoordinate(coordinate)) throw new CadModelError(`Geometry draft coordinate is invalid: ${coordinate}`)
     if (!draft || typeof draft.source !== 'string') {
@@ -87,6 +93,7 @@ export async function createEffectiveGeometryGraph(
       throw new CadModelError(`Geometry draft ${coordinate} exceeds ${MAX_GEOMETRY_MODULE_SOURCE_BYTES} bytes.`)
     }
     sources.set(coordinate, draft.source)
+    apiVersions.set(coordinate, CURRENT_CAD_API_VERSION)
   })
 
   const entryAnalysis = entrySource
@@ -168,9 +175,10 @@ export async function createEffectiveGeometryGraph(
           compareText(left.coordinate, right.coordinate),
       )
       const sourceHash = await geometrySourceHash(source)
+      const cadApiVersion = apiVersions.get(coordinate) ?? CURRENT_CAD_API_VERSION
       const moduleHash = await geometryModuleHash({
         moduleFormatVersion: GEOMETRY_MODULE_FORMAT_VERSION,
-        cadApiVersion: 7,
+        cadApiVersion,
         coordinate: coordinate as GeometryCoordinate,
         sourceHash,
         imports: imports.map((item) => ({
@@ -183,6 +191,7 @@ export async function createEffectiveGeometryGraph(
       })
       const module = Object.freeze({
         coordinate,
+        cadApiVersion,
         source,
         sourceHash,
         moduleHash,
@@ -239,8 +248,9 @@ export async function createEffectiveGeometryGraph(
     JSON.stringify({
       schemaVersion: GEOMETRY_SNAPSHOT_SCHEMA_VERSION,
       entryImports,
-      modules: sortedModules.map(({ coordinate, sourceHash, moduleHash, exports, imports }) => ({
+      modules: sortedModules.map(({ coordinate, cadApiVersion, sourceHash, moduleHash, exports, imports }) => ({
         coordinate,
+        cadApiVersion,
         sourceHash,
         moduleHash,
         exports,

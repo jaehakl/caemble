@@ -9,7 +9,7 @@ import {
 
 function compiled(): CompiledCadSource {
   return {
-    apiVersion: 7,
+    apiVersion: 8,
     compilerVersion: CAD_COMPILER_VERSION,
     entryFile: 'experiment.tsx',
     code: '"use strict";',
@@ -20,7 +20,7 @@ function compiled(): CompiledCadSource {
 describe('CompiledCadSource', () => {
   it('binds compiler provenance to all generated public declaration contents', () => {
     expect(CAD_API_DECLARATION_FINGERPRINT).toMatch(/^[0-9a-f]{64}$/)
-    expect(CAD_COMPILER_VERSION).toContain('-api-7-')
+    expect(CAD_COMPILER_VERSION).toContain('-api-8-')
     expect(CAD_COMPILER_VERSION).toContain(CAD_API_DECLARATION_FINGERPRINT)
     expect(() => assertCompiledCadSource(compiled())).not.toThrow()
   })
@@ -33,7 +33,7 @@ describe('CompiledCadSource', () => {
     expect(() => assertCompiledCadSource({ ...compiled(), entryFile: coordinate })).toThrow('provenance is invalid')
     expect(() =>
       assertCompiledCadDocument({
-        apiVersion: 7,
+        apiVersion: 8,
         compilerVersion: CAD_COMPILER_VERSION,
         sourceHash: 'a'.repeat(64),
         sources: { [coordinate]: { ...compiled(), entryFile: coordinate } },
@@ -68,7 +68,7 @@ describe('CompiledCadSource', () => {
 
     expect(() =>
       assertCompiledCadDocument({
-        apiVersion: 7,
+        apiVersion: 8,
         compilerVersion: CAD_COMPILER_VERSION,
         sourceHash,
         sources: { 'experiment.tsx': compiled() },
@@ -85,7 +85,7 @@ describe('CompiledCadSource', () => {
 
     expect(() =>
       assertCompiledCadDocument({
-        apiVersion: 7,
+        apiVersion: 8,
         compilerVersion: CAD_COMPILER_VERSION,
         sourceHash,
         sources: { 'experiment.tsx': compiled() },

@@ -154,7 +154,7 @@ async def test_agent_source_read_lease_covers_only_the_chunk_delivered_to_the_mo
 
 
 def test_bundle_hash_matches_frontend_cad_source_hash_fixture():
-    assert bundle_hash(source_bundle()) == "3c60c128c781a77616d6c9ceff61eba044c5afcf2e57cbc368ac0f4f20b7c82a"
+    assert bundle_hash(source_bundle()) == "50bf96de0f339ad8593292bf872b720fad1677610e17b33f4470b54769cc0008"
 
 
 def test_staged_workspace_reuses_its_hash_until_a_mutation(monkeypatch):

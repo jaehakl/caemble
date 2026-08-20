@@ -73,7 +73,7 @@ export async function evaluatePublicExampleBundle(bundle: ExperimentSourceBundle
       else if (entryFile === 'material.tsx') analyzeMaterialSource(source)
       else analyzeTaskSource(source)
       const compiled: CompiledCadSource = {
-        apiVersion: 7,
+        apiVersion: 8,
         compilerVersion: CAD_COMPILER_VERSION,
         entryFile,
         code: compileSource(source, entryFile),
@@ -83,7 +83,7 @@ export async function evaluatePublicExampleBundle(bundle: ExperimentSourceBundle
     }),
   )
   const document: CompiledCadDocument = {
-    apiVersion: 7,
+    apiVersion: 8,
     compilerVersion: CAD_COMPILER_VERSION,
     sourceHash,
     sources,

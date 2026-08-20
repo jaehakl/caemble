@@ -4,6 +4,7 @@ import {
   EXPERIMENT_ENTRY_PATH,
   EXPERIMENT_GEOMETRY_PATH,
   EXPERIMENT_MATERIAL_PATH,
+  CAD_SOURCE_API_VERSION,
   experimentTaskName,
 } from '../source/document'
 import {
@@ -18,7 +19,7 @@ import {
 import type { GeometryModuleCoordinate } from '../source/effectiveGeometryGraph'
 
 export const CAD_COMPILER_VERSION =
-  `monaco-${CAEMBLE_MONACO_VERSION}-api-7-${CAD_API_DECLARATION_FINGERPRINT}-geometry-source-modules-v4` as const
+  `monaco-${CAEMBLE_MONACO_VERSION}-api-8-${CAD_API_DECLARATION_FINGERPRINT}-geometry-source-modules-v4` as const
 
 export type CadDiagnostic = Readonly<{
   code: number | string
@@ -35,7 +36,7 @@ export type CadDiagnostic = Readonly<{
 }>
 
 export type CompiledCadSource = Readonly<{
-  apiVersion: 7
+  apiVersion: typeof CAD_SOURCE_API_VERSION
   compilerVersion: typeof CAD_COMPILER_VERSION
   entryFile: string
   code: string
@@ -44,7 +45,7 @@ export type CompiledCadSource = Readonly<{
 }>
 
 export type CompiledCadDocument = Readonly<{
-  apiVersion: 7
+  apiVersion: typeof CAD_SOURCE_API_VERSION
   compilerVersion: typeof CAD_COMPILER_VERSION
   sourceHash: string
   sources: Readonly<Record<string, CompiledCadSource>>
@@ -112,7 +113,7 @@ function assertCompiledSource(
   const compiled = value as Partial<CompiledCadSource>
   if (
     unknownKey ||
-    compiled.apiVersion !== 7 ||
+    compiled.apiVersion !== CAD_SOURCE_API_VERSION ||
     compiled.compilerVersion !== CAD_COMPILER_VERSION ||
     typeof compiled.entryFile !== 'string' ||
     !validEntryFile(compiled.entryFile, allowGeometry) ||
@@ -261,7 +262,7 @@ export function assertCompiledCadDocument(value: unknown): asserts value is Comp
   )
   if (
     unknownKey ||
-    compiled.apiVersion !== 7 ||
+    compiled.apiVersion !== CAD_SOURCE_API_VERSION ||
     compiled.compilerVersion !== CAD_COMPILER_VERSION ||
     typeof compiled.sourceHash !== 'string' ||
     !/^[0-9a-f]{64}$/u.test(compiled.sourceHash) ||

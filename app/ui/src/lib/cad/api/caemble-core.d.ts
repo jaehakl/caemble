@@ -1,4 +1,4 @@
-// @caemble/core declaration version: 0.4.0
+// @caemble/core declaration version: 0.5.0
 export type Tensor = number | readonly Tensor[]
 export type Vars = Readonly<Record<string, Tensor>>
 export type Vec3 = readonly [number, number, number]
@@ -149,7 +149,7 @@ export type RecordedDataSpec = RecordedDataResult
 export type ResolvedDataSchema = RecordedDataSpec & Readonly<{ tensorOrder: number }>
 
 export type BoxAttributes = Readonly<{
-  size: Vec3
+  size?: Vec3
 }> &
   IntrinsicGeometryAttributes
 export type BooleanAttributes = Readonly<{
@@ -158,9 +158,9 @@ export type BooleanAttributes = Readonly<{
   IntrinsicGeometryAttributes
 
 export type CylinderAttributes = Readonly<{
-  radius: number
+  radius?: number
   radius_2?: number
-  height: number
+  height?: number
   segments?: number
 }> &
   IntrinsicGeometryAttributes
@@ -174,9 +174,9 @@ export type CurvedEdgeCylinderTaylorCurve = Readonly<{
   coefficients: readonly number[]
 }>
 export type CurvedEdgeCylinderAttributes = Readonly<{
-  height: number
-  azimuthalCurve: readonly CurvedEdgeCylinderFourierMode[]
-  verticalCurve: CurvedEdgeCylinderTaylorCurve
+  height?: number
+  azimuthalCurve?: readonly CurvedEdgeCylinderFourierMode[]
+  verticalCurve?: CurvedEdgeCylinderTaylorCurve
   azimuthalSegments?: number
   verticalSegments?: number
 }> &
@@ -187,15 +187,15 @@ export type CurvedSurfaceSphereFourierMode = Readonly<{
   phase: number
 }>
 export type CurvedSurfaceSphereAttributes = Readonly<{
-  azimuthalCurve: readonly CurvedSurfaceSphereFourierMode[]
-  polarCurve: readonly CurvedSurfaceSphereFourierMode[]
+  azimuthalCurve?: readonly CurvedSurfaceSphereFourierMode[]
+  polarCurve?: readonly CurvedSurfaceSphereFourierMode[]
   azimuthalSegments?: number
   polarSegments?: number
 }> &
   IntrinsicGeometryAttributes
 
 export type SphereAttributes = Readonly<{
-  radius: number
+  radius?: number
   segments?: number
 }> &
   IntrinsicGeometryAttributes
@@ -207,10 +207,10 @@ export type FiberHelix = Readonly<{
   radius: number | ((u: number, theta: number) => number)
 }>
 export type FiberAttributes = Readonly<{
-  from: Vec3
-  to: Vec3
+  from?: Vec3
+  to?: Vec3
   basePath?: (t: number) => Vec3
-  radius: number | ((s: number) => number)
+  radius?: number | ((s: number) => number)
   helix?: FiberHelix
   fourier?: readonly FiberFourierMode[]
   envelopePower?: number
@@ -265,6 +265,14 @@ export type GeometryAttributes<P extends object = object> = Readonly<
 > &
   GeometryTransformAttributes
 export type Geometry<P extends object = object> = (props: GeometryAttributes<P>) => unknown
+export type GeometryInvocationAttributes<P extends object = object> = Readonly<
+  Partial<P> & {
+    id?: string
+    materials?: Readonly<Record<string, Material | undefined>>
+    children?: unknown
+  }
+> &
+  GeometryTransformAttributes
 
 // <generated:material-catalog-types>
 // Catalog keys are augmented in memory from the active Solver runtime slice.
@@ -449,7 +457,7 @@ export class ExperimentDefinition<
   Recorded extends Readonly<Record<string, RecordedDataSpec>> = Readonly<Record<string, RecordedDataSpec>>,
 > {
   constructor(options: ExperimentDefinitionOptions<Schema, Recorded>)
-  readonly apiVersion: 7
+  readonly apiVersion: 8
   readonly documentType: 'experiment'
   readonly varsSchema: Schema
   readonly lengthUnit: UcumUnit
@@ -460,7 +468,7 @@ export class ExperimentDefinition<
 
 export class TaskDefinition<Config = unknown> {
   constructor(options: TaskDefinitionOptions<Config>)
-  readonly apiVersion: 7
+  readonly apiVersion: 8
   readonly documentType: 'task'
   readonly kernel: KernelIdentity
   readonly lengthUnit?: UcumUnit

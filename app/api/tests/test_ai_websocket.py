@@ -33,7 +33,7 @@ def start_payload():
             "document": {
                 "kind": "experiment",
                 "formatVersion": 2,
-                "apiVersion": 7,
+                "apiVersion": 8,
                 "sourceBundle": {
                     "formatVersion": 5,
                     "files": {
@@ -46,7 +46,7 @@ def start_payload():
                     "geometrySnapshot": {"schemaVersion": 2, "entryImports": [], "modules": []},
                 },
             },
-            "baseHash": "3c60c128c781a77616d6c9ceff61eba044c5afcf2e57cbc368ac0f4f20b7c82a",
+            "baseHash": "50bf96de0f339ad8593292bf872b720fad1677610e17b33f4470b54769cc0008",
             "geometryContextVersion": "geometry-v1",
             "workspaceSession": 2,
             "activeFile": "experiment.tsx",
@@ -187,7 +187,7 @@ def test_websocket_completes_sequence_with_fake_provider(websocket_app, monkeypa
         "run.completed",
     }
     completed = events[-1]
-    assert completed["baseHash"] == "3c60c128c781a77616d6c9ceff61eba044c5afcf2e57cbc368ac0f4f20b7c82a"
+    assert completed["baseHash"] == "50bf96de0f339ad8593292bf872b720fad1677610e17b33f4470b54769cc0008"
     assert completed["stagedRevision"] == 0
     assert completed["sessionContextEnvelope"]
 

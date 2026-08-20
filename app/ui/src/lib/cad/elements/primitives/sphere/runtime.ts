@@ -7,6 +7,7 @@ export const sphereDefinition = {
   kind: 'primitive',
   tag: sphereManifest.tag,
   manifest: sphereManifest,
+  defaultProps: Object.freeze({ radius: 0.5, segments: 32 }),
   createGeometry(props) {
     if (typeof props.radius !== 'number' || !Number.isFinite(props.radius) || props.radius <= 0) {
       throw new CadModelError('<sphere> radius must be a finite positive number.')

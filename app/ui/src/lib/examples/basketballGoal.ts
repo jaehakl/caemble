@@ -36,7 +36,7 @@ export const basketballGoalExample = Object.freeze({
   id: 'basketball-goal',
   title: 'Basketball Goal',
   description:
-    'CAD API v7의 position, intrinsic XYZ Euler rotation, primitive/operation id와 Boolean ring 작성을 함께 보여주는 검증 예제입니다.',
+    'CAD API v8의 position, intrinsic XYZ Euler rotation, 자동/명시적 identity와 Boolean ring 작성을 함께 보여주는 검증 예제입니다.',
   code: basketballGoalCode,
   mode: 'geometry-preview' as const,
 })

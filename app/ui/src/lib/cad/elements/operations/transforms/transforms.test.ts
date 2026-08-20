@@ -31,7 +31,7 @@ describe('transform operations', () => {
       ),
     )
     const nestedBounds = measurements.measureBoundingBox(nested.parts[0].geometry)
-    expect(nested.parts.map((part) => part.id)).toEqual(['assembly'])
+    expect(nested.parts.map((part) => part.id)).toEqual(['assembly.box'])
     expect(nestedBounds.flat()).toHaveLength(6)
     expect(nestedBounds[0][0]).toBeCloseTo(8)
     expect(nestedBounds[1][0]).toBeCloseTo(12)

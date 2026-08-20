@@ -154,5 +154,16 @@ describe('Geometry snapshot v2', () => {
       ],
     })
     expect(left).not.toBe(right)
+    await expect(
+      geometryModuleHash({
+        coordinate: rootCoordinate,
+        sourceHash,
+        moduleFormatVersion: 4,
+        cadApiVersion: 8,
+        imports: [
+          { exportName: 'Part', alias: 'Child', geometryVersionId: 1, coordinate: leafCoordinate, moduleHash: hash },
+        ],
+      }),
+    ).resolves.not.toBe(left)
   })
 })
