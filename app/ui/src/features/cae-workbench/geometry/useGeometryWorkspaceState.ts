@@ -75,13 +75,6 @@ function assertReplacementsApplicable(
   Object.values(drafts).forEach((draft) => rewriteCoordinates(draft.source, byCoordinate))
 }
 
-function rewriteOccurrence(source: string, alias: string, coordinate: string, replacement: string) {
-  const analysis = analyzeGeometrySource(source, { allowEmpty: true, allowLocal: true })
-  const imported = analysis.imports.find((item) => item.alias === alias && item.coordinate === coordinate)
-  if (!imported) throw new Error(`${alias} import occurrence를 source에서 찾을 수 없습니다.`)
-  return `${source.slice(0, imported.specifierStart)}${replacement}${source.slice(imported.specifierEnd)}`
-}
-
 function geometryPublishRequest(
   drafts: Readonly<Record<string, GeometryLocalDraft>>,
   target: GeometryModuleCoordinate,
@@ -162,44 +155,31 @@ function snapshotFromEntrySource(source: string, modules: readonly GeometrySnaps
   )
 }
 
-type OccurrenceEdge = Readonly<{
-  parent: 'geometry.tsx' | GeometryModuleCoordinate
-  alias: string
-  coordinate: GeometryModuleCoordinate
-}>
-
-export function useGeometryWorkspaceState({
+export function useGeometryManagerState({
   authenticated = true,
   initialNamespace,
-  onExperimentChange,
   snapshot,
   sourceFiles,
 }: {
   authenticated?: boolean
   initialNamespace?: string | null
-  onExperimentChange: (snapshot: GeometrySnapshot, files?: Readonly<Record<string, string>>) => void
   snapshot: GeometrySnapshot | null
   sourceFiles: Readonly<Record<string, string>>
 }) {
   const queryClient = useQueryClient()
-  const [entryPreviewCoordinate] = useState<GeometryModuleCoordinate>(() => {
-    const token = [...crypto.getRandomValues(new Uint32Array(4))]
-      .map((value) => value.toString(16).padStart(8, '0'))
-      .join('')
-    return `caemble:geometry/caemble-preview/internal/${token}@local` as GeometryModuleCoordinate
-  })
   const [namespace, setNamespaceState] = useState(initialNamespace ?? null)
   const [repositories, setRepositories] = useState<readonly GeometryRepositoryRecord[]>([])
   const [currentSnapshot, setCurrentSnapshot] = useState(snapshot ?? emptyGeometrySnapshot)
   const [entrySource, setEntrySource] = useState(sourceFiles['geometry.tsx'] ?? 'export {}\n')
   const [drafts, setDrafts] = useState<Readonly<Record<string, GeometryLocalDraft>>>({})
-  const [stagedModules, setStagedModules] = useState<readonly GeometrySnapshotModule[]>([])
-  const [selectedCoordinate, setSelectedCoordinateState] = useState<GeometryModuleCoordinate | 'geometry.tsx' | null>(
-    'geometry.tsx',
-  )
+  const [managerModules, setManagerModules] = useState<readonly GeometrySnapshotModule[]>([])
+  const [experimentModules, setExperimentModules] = useState<readonly GeometrySnapshotModule[]>([])
+  const [transientPreview, setTransientPreview] = useState<Readonly<{
+    coordinate: LocalGeometryCoordinate
+    source: string
+  }> | null>(null)
+  const [selectedCoordinate, setSelectedCoordinateState] = useState<GeometryModuleCoordinate | null>(null)
   const [selectedExport, setSelectedExport] = useState<string | null>(null)
-  const [selectedPath, setSelectedPath] = useState<readonly OccurrenceEdge[]>([])
-  const [expandedPaths, setExpandedPaths] = useState<readonly string[]>(['geometry.tsx'])
   const [effectiveGraph, setEffectiveGraph] = useState<EffectiveGeometryGraph | null>(null)
   const [graphError, setGraphError] = useState<string | null>(null)
   const [previewScene, setPreviewScene] = useState<CadScene | null>(null)
@@ -208,7 +188,7 @@ export function useGeometryWorkspaceState({
   const [previewDiagnostics, setPreviewDiagnostics] = useState<readonly CadDiagnostic[]>([])
   const [previewBusy, setPreviewBusy] = useState(false)
   const [previewStale, setPreviewStale] = useState(false)
-  const [previewedInput, setPreviewedInput] = useState<object | null>(null)
+  const [previewedInputKey, setPreviewedInputKey] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [publishPlan, setPublishPlan] = useState<{
     request: ReturnType<typeof geometryPublishRequest>
@@ -216,14 +196,16 @@ export function useGeometryWorkspaceState({
   } | null>(null)
 
   const draftsRef = useRef(drafts)
-  const stagedRef = useRef(stagedModules)
+  const managerModulesRef = useRef(managerModules)
+  const experimentModulesRef = useRef(experimentModules)
   const snapshotRef = useRef(currentSnapshot)
   const entryRef = useRef(entrySource)
   const filesRef = useRef(sourceFiles)
   const initialNamespaceRef = useRef(initialNamespace)
   const authenticatedRef = useRef(authenticated)
   draftsRef.current = drafts
-  stagedRef.current = stagedModules
+  managerModulesRef.current = managerModules
+  experimentModulesRef.current = experimentModules
   snapshotRef.current = currentSnapshot
   entryRef.current = entrySource
   filesRef.current = sourceFiles
@@ -245,21 +227,33 @@ export function useGeometryWorkspaceState({
     setEntrySource(source)
   }, [sourceFiles])
 
-  const draftOverlay = useMemo<GeometryDraftOverlay>(
+  const managerDraftOverlay = useMemo<GeometryDraftOverlay>(
     () =>
       Object.freeze(
         Object.fromEntries([
-          ...stagedModules.map((module) => [module.coordinate, { source: module.source }] as const),
+          ...managerModules.map((module) => [module.coordinate, { source: module.source }] as const),
+          ...Object.values(drafts).map((draft) => [draft.coordinate, { source: draft.source }] as const),
+          ...(transientPreview ? ([[transientPreview.coordinate, { source: transientPreview.source }]] as const) : []),
+        ]),
+      ),
+    [drafts, managerModules, transientPreview],
+  )
+
+  const experimentAvailableOverlay = useMemo<GeometryDraftOverlay>(
+    () =>
+      Object.freeze(
+        Object.fromEntries([
+          ...experimentModules.map((module) => [module.coordinate, { source: module.source }] as const),
           ...Object.values(drafts).map((draft) => [draft.coordinate, { source: draft.source }] as const),
         ]),
       ),
-    [drafts, stagedModules],
+    [drafts, experimentModules],
   )
 
   useEffect(() => {
     let cancelled = false
     const timeout = window.setTimeout(() => {
-      void createEffectiveGeometryGraph(currentSnapshot, draftOverlay, entrySource)
+      void createEffectiveGeometryGraph(currentSnapshot, experimentAvailableOverlay, entrySource)
         .then((graph) => {
           if (cancelled) return
           setEffectiveGraph(graph)
@@ -269,7 +263,6 @@ export function useGeometryWorkspaceState({
         .catch((cause: unknown) => {
           if (!cancelled) {
             setGraphError(cause instanceof Error ? cause.message : String(cause))
-            setPreviewStale(true)
           }
         })
     }, 300)
@@ -277,12 +270,23 @@ export function useGeometryWorkspaceState({
       cancelled = true
       window.clearTimeout(timeout)
     }
-  }, [currentSnapshot, draftOverlay, entrySource])
+  }, [currentSnapshot, entrySource, experimentAvailableOverlay])
+
+  const experimentDraftOverlay = useMemo<GeometryDraftOverlay>(() => {
+    const reachable = new Set(effectiveGraph?.modules.map((module) => module.coordinate) ?? [])
+    return Object.freeze(
+      Object.fromEntries(
+        Object.entries(experimentAvailableOverlay).filter(([coordinate]) =>
+          reachable.has(coordinate as GeometryModuleCoordinate),
+        ),
+      ),
+    )
+  }, [effectiveGraph?.modules, experimentAvailableOverlay])
 
   const selectedModule = useMemo(() => {
-    if (!selectedCoordinate || selectedCoordinate === 'geometry.tsx') return null
-    return effectiveGraph?.modules.find((item) => item.coordinate === selectedCoordinate) ?? null
-  }, [effectiveGraph, selectedCoordinate])
+    if (!selectedCoordinate) return null
+    return managerModules.find((item) => item.coordinate === selectedCoordinate) ?? null
+  }, [managerModules, selectedCoordinate])
   const entryExports = useMemo(() => {
     try {
       return analyzeGeometrySource(entrySource, { allowEmpty: true, allowLocal: true }).exports.map((item) => item.name)
@@ -290,48 +294,50 @@ export function useGeometryWorkspaceState({
       return []
     }
   }, [entrySource])
-  const selectedExports = useMemo(() => {
-    const source =
-      selectedCoordinate === 'geometry.tsx'
-        ? entrySource
-        : selectedCoordinate
-          ? (drafts[selectedCoordinate]?.source ?? selectedModule?.source)
-          : undefined
-    if (!source) return []
+  const selectedSource = selectedCoordinate
+    ? (drafts[selectedCoordinate]?.source ??
+      selectedModule?.source ??
+      (transientPreview?.coordinate === selectedCoordinate ? transientPreview.source : undefined))
+    : undefined
+  const selectedAnalysis = useMemo(() => {
+    if (!selectedSource) return { exports: [] as readonly string[], error: null as string | null }
     try {
-      return analyzeGeometrySource(source, {
-        allowEmpty: selectedCoordinate === 'geometry.tsx',
-        allowLocal: true,
-      }).exports.map((item) => item.name)
-    } catch {
-      return []
+      const exports = analyzeGeometrySource(selectedSource, { allowLocal: true }).exports.map((item) => item.name)
+      return { exports, error: exports.length ? null : 'Geometry source에 named export가 없습니다.' }
+    } catch (cause) {
+      return { exports: [] as readonly string[], error: cause instanceof Error ? cause.message : String(cause) }
     }
-  }, [drafts, entrySource, selectedCoordinate, selectedModule?.source])
+  }, [selectedSource])
+  const selectedExports = selectedAnalysis.exports
   useEffect(() => {
     if (!selectedExports.length) setSelectedExport(null)
     else if (!selectedExport || !selectedExports.includes(selectedExport)) setSelectedExport(selectedExports[0])
   }, [selectedExport, selectedExports])
+  useEffect(() => {
+    if (!selectedCoordinate || !selectedAnalysis.error) return
+    setPreviewBusy(false)
+    setPreviewError(selectedAnalysis.error)
+    setPreviewDiagnostics([])
+    setPreviewStale(true)
+  }, [selectedAnalysis.error, selectedCoordinate])
 
-  const previewInput = useMemo(
-    () => ({ currentSnapshot, draftOverlay, effectiveGraph, entrySource, selectedCoordinate, selectedExport }),
-    [currentSnapshot, draftOverlay, effectiveGraph, entrySource, selectedCoordinate, selectedExport],
+  const previewInputKey = useMemo(
+    () =>
+      JSON.stringify({
+        modules: Object.entries(managerDraftOverlay).sort(([left], [right]) => left.localeCompare(right)),
+        selectedCoordinate,
+        selectedExport,
+      }),
+    [managerDraftOverlay, selectedCoordinate, selectedExport],
   )
 
   useEffect(() => {
-    if (!selectedCoordinate || !selectedExport || !effectiveGraph) return
+    if (!selectedCoordinate || !selectedExport || !selectedExports.includes(selectedExport)) return
     const abort = new AbortController()
-    const previewCoordinate = selectedCoordinate === 'geometry.tsx' ? entryPreviewCoordinate : selectedCoordinate
-    const previewDrafts =
-      selectedCoordinate === 'geometry.tsx'
-        ? Object.freeze({
-            ...draftOverlay,
-            [entryPreviewCoordinate]: Object.freeze({ source: entrySource }),
-          })
-        : draftOverlay
     setPreviewBusy(true)
     setPreviewStale(true)
-    void evaluateGeometryModule(currentSnapshot, previewCoordinate, selectedExport, {
-      geometryDrafts: previewDrafts,
+    void evaluateGeometryModule(emptyGeometrySnapshot, selectedCoordinate, selectedExport, {
+      geometryDrafts: managerDraftOverlay,
       signal: abort.signal,
       timeoutMs: 10000,
     })
@@ -341,7 +347,7 @@ export function useGeometryWorkspaceState({
         setPreviewSceneHash(result.sourceHash)
         setPreviewError(null)
         setPreviewDiagnostics([])
-        setPreviewedInput(previewInput)
+        setPreviewedInputKey(previewInputKey)
         setPreviewStale(false)
       })
       .catch((cause: unknown) => {
@@ -356,16 +362,7 @@ export function useGeometryWorkspaceState({
         if (!abort.signal.aborted) setPreviewBusy(false)
       })
     return () => abort.abort()
-  }, [
-    currentSnapshot,
-    draftOverlay,
-    effectiveGraph,
-    entryPreviewCoordinate,
-    entrySource,
-    previewInput,
-    selectedCoordinate,
-    selectedExport,
-  ])
+  }, [managerDraftOverlay, previewInputKey, selectedCoordinate, selectedExport, selectedExports])
 
   const refreshRepositories = useCallback(async () => {
     if (!authenticated) {
@@ -388,73 +385,35 @@ export function useGeometryWorkspaceState({
     void refreshRepositories().catch(() => undefined)
   }, [refreshRepositories])
 
-  const applyExperimentSource = useCallback(
-    (nextSource: string, nextSnapshot = snapshotRef.current) => {
-      const files = { ...filesRef.current, 'geometry.tsx': nextSource }
-      entryRef.current = nextSource
-      snapshotRef.current = nextSnapshot
-      filesRef.current = files
-      setEntrySource(nextSource)
-      setCurrentSnapshot(nextSnapshot)
-      onExperimentChange(nextSnapshot, files)
-    },
-    [onExperimentChange],
-  )
-
-  const applyNamespace = useCallback(
-    (nextNamespace: string) => {
-      const replacements: Record<string, string> = {}
-      Object.values(draftsRef.current).forEach((draft) => {
-        if (draft.baseGeometryVersionId !== null || draft.repositoryId !== null) return
-        const parts = coordinateParts(draft.coordinate)
-        if (parts.namespace !== nextNamespace) {
-          replacements[draft.coordinate] =
-            `caemble:geometry/${nextNamespace}/${draft.repository}/${draft.packageName}@local`
-        }
-      })
-      const nextEntry = rewriteCoordinates(entryRef.current, replacements)
-      const targetCoordinates = Object.values(draftsRef.current).map(
-        (draft) => replacements[draft.coordinate] ?? draft.coordinate,
-      )
-      if (targetCoordinates.length !== new Set(targetCoordinates).size) {
-        throw new Error('namespace 변경 후 local Geometry coordinate가 충돌합니다.')
+  const applyNamespace = useCallback((nextNamespace: string) => {
+    const replacements: Record<string, string> = {}
+    Object.values(draftsRef.current).forEach((draft) => {
+      if (draft.baseGeometryVersionId !== null || draft.repositoryId !== null) return
+      const parts = coordinateParts(draft.coordinate)
+      if (parts.namespace !== nextNamespace) {
+        replacements[draft.coordinate] =
+          `caemble:geometry/${nextNamespace}/${draft.repository}/${draft.packageName}@local`
       }
-      const nextDrafts = Object.fromEntries(
-        Object.values(draftsRef.current).map((draft) => {
-          const coordinate = (replacements[draft.coordinate] ?? draft.coordinate) as LocalGeometryCoordinate
-          return [coordinate, { ...draft, coordinate, source: rewriteCoordinates(draft.source, replacements) }]
-        }),
-      ) as Readonly<Record<string, GeometryLocalDraft>>
-      setNamespaceState(nextNamespace)
-      draftsRef.current = nextDrafts
-      setDrafts(nextDrafts)
-      setSelectedCoordinateState((current) =>
-        current && current !== 'geometry.tsx'
-          ? ((replacements[current] ?? current) as GeometryModuleCoordinate)
-          : current,
-      )
-      setSelectedPath((current) =>
-        current.map((edge) => ({
-          ...edge,
-          parent:
-            edge.parent === 'geometry.tsx'
-              ? edge.parent
-              : ((replacements[edge.parent] ?? edge.parent) as GeometryModuleCoordinate),
-          coordinate: (replacements[edge.coordinate] ?? edge.coordinate) as GeometryModuleCoordinate,
-        })),
-      )
-      setExpandedPaths((current) =>
-        current.map((path) =>
-          Object.entries(replacements).reduce(
-            (rewritten, [previous, next]) => rewritten.split(previous).join(next),
-            path,
-          ),
-        ),
-      )
-      if (Object.keys(replacements).length > 0) applyExperimentSource(nextEntry)
-    },
-    [applyExperimentSource],
-  )
+    })
+    const targetCoordinates = Object.values(draftsRef.current).map(
+      (draft) => replacements[draft.coordinate] ?? draft.coordinate,
+    )
+    if (targetCoordinates.length !== new Set(targetCoordinates).size) {
+      throw new Error('namespace 변경 후 local Geometry coordinate가 충돌합니다.')
+    }
+    const nextDrafts = Object.fromEntries(
+      Object.values(draftsRef.current).map((draft) => {
+        const coordinate = (replacements[draft.coordinate] ?? draft.coordinate) as LocalGeometryCoordinate
+        return [coordinate, { ...draft, coordinate, source: rewriteCoordinates(draft.source, replacements) }]
+      }),
+    ) as Readonly<Record<string, GeometryLocalDraft>>
+    setNamespaceState(nextNamespace)
+    draftsRef.current = nextDrafts
+    setDrafts(nextDrafts)
+    setSelectedCoordinateState((current) =>
+      current ? ((replacements[current] ?? current) as GeometryModuleCoordinate) : current,
+    )
+  }, [])
 
   useEffect(() => {
     const wasAuthenticated = authenticatedRef.current
@@ -471,99 +430,8 @@ export function useGeometryWorkspaceState({
     }
   }, [applyNamespace, authenticated, initialNamespace])
 
-  const moduleByCoordinate = useCallback(
-    (coordinate: string) =>
-      [...snapshotRef.current.modules, ...stagedRef.current].find((module) => module.coordinate === coordinate),
-    [],
-  )
-
-  const pathTo = useCallback(
-    (coordinate: GeometryModuleCoordinate) => {
-      if (selectedPath[selectedPath.length - 1]?.coordinate === coordinate) return selectedPath
-      if (!effectiveGraph) return []
-      const visit = (
-        current: GeometryModuleCoordinate,
-        path: readonly OccurrenceEdge[],
-        visited: ReadonlySet<string>,
-      ): readonly OccurrenceEdge[] | null => {
-        if (current === coordinate) return path
-        if (visited.has(current)) return null
-        const module = effectiveGraph.modules.find((item) => item.coordinate === current)
-        for (const imported of module?.imports ?? []) {
-          const found = visit(
-            imported.coordinate,
-            [...path, { parent: current, alias: imported.alias, coordinate: imported.coordinate }],
-            new Set([...visited, current]),
-          )
-          if (found) return found
-        }
-        return null
-      }
-      for (const imported of effectiveGraph.entryImports) {
-        const first = { parent: 'geometry.tsx' as const, alias: imported.alias, coordinate: imported.coordinate }
-        const found = visit(imported.coordinate, [first], new Set())
-        if (found) return found
-      }
-      return []
-    },
-    [effectiveGraph, selectedPath],
-  )
-
-  const promotePath = useCallback(
-    (coordinate: GeometryModuleCoordinate, nextSource: string) => {
-      const path = pathTo(coordinate)
-      const nextDrafts = { ...draftsRef.current }
-      let nextEntry = entryRef.current
-      for (const edge of path) {
-        if (localCoordinatePattern.test(edge.coordinate)) continue
-        const module = moduleByCoordinate(edge.coordinate)
-        if (!module) throw new Error(`편집할 Geometry module을 찾을 수 없습니다: ${edge.coordinate}`)
-        const local = localCoordinate(edge.coordinate)
-        const parts = coordinateParts(edge.coordinate)
-        nextDrafts[local] ??= {
-          draftId: crypto.randomUUID(),
-          coordinate: local,
-          source: module.source,
-          description: module.description ?? '',
-          baseGeometryVersionId: module.geometryVersionId,
-          repository: parts.repository,
-          packageName: parts.packageName,
-          repositoryId: null,
-          packageId: null,
-          version: parts.version,
-          bump: 'patch',
-          standalonePreview: false,
-        }
-        if (edge.parent === 'geometry.tsx') {
-          nextEntry = rewriteOccurrence(nextEntry, edge.alias, edge.coordinate, local)
-        } else {
-          const parentLocal = localCoordinate(edge.parent)
-          const parent = nextDrafts[parentLocal]
-          if (!parent) throw new Error(`상위 Geometry draft를 만들지 못했습니다: ${edge.parent}`)
-          nextDrafts[parentLocal] = {
-            ...parent,
-            source: rewriteOccurrence(parent.source, edge.alias, edge.coordinate, local),
-          }
-        }
-      }
-      const selectedLocal = localCoordinate(coordinate)
-      const selected = nextDrafts[selectedLocal]
-      if (!selected) throw new Error('선택한 Geometry를 local draft로 승격하지 못했습니다.')
-      nextDrafts[selectedLocal] = { ...selected, source: nextSource }
-      draftsRef.current = nextDrafts
-      setDrafts(nextDrafts)
-      setSelectedCoordinateState(selectedLocal)
-      applyExperimentSource(nextEntry)
-    },
-    [applyExperimentSource, moduleByCoordinate, pathTo],
-  )
-
   const updateSource = useCallback(
     (source: string) => {
-      if (selectedCoordinate === 'geometry.tsx') {
-        applyExperimentSource(source)
-        return
-      }
       if (!selectedCoordinate) return
       if (localCoordinatePattern.test(selectedCoordinate)) {
         const draft = draftsRef.current[selectedCoordinate]
@@ -573,9 +441,9 @@ export function useGeometryWorkspaceState({
         setDrafts(next)
         return
       }
-      promotePath(selectedCoordinate, source)
+      throw new Error('Published Geometry는 Edit as New Version으로 draft를 만든 뒤 편집하세요.')
     },
-    [applyExperimentSource, promotePath, selectedCoordinate],
+    [selectedCoordinate],
   )
 
   const createDraft = useCallback(
@@ -617,8 +485,8 @@ export function useGeometryWorkspaceState({
       const next = { ...draftsRef.current, [coordinate]: draft }
       draftsRef.current = next
       setDrafts(next)
+      setTransientPreview(null)
       setSelectedCoordinateState(coordinate)
-      setSelectedPath([])
       return coordinate
     },
     [namespace, repositories],
@@ -629,8 +497,8 @@ export function useGeometryWorkspaceState({
       if (!namespace) throw new Error('기본 Geometry namespace를 먼저 설정하세요.')
       const coordinate = `caemble:geometry/${namespace}/catalog/${key}@local` as LocalGeometryCoordinate
       if (draftsRef.current[coordinate]) {
+        setTransientPreview(null)
         setSelectedCoordinateState(coordinate)
-        setSelectedPath([])
         return { coordinate, created: false }
       }
       analyzeGeometrySource(source, { allowLocal: true })
@@ -651,24 +519,48 @@ export function useGeometryWorkspaceState({
       const next = { ...draftsRef.current, [coordinate]: draft }
       draftsRef.current = next
       setDrafts(next)
+      setTransientPreview(null)
       setSelectedCoordinateState(coordinate)
-      setSelectedPath([])
       return { coordinate, created: true }
     },
     [namespace],
   )
 
   const stageResolved = useCallback(
-    async (versionId: number) => {
+    async (versionId: number, target: 'manager' | 'experiment' = 'manager') => {
       if (!authenticated) throw new Error('Published Geometry 조회는 로그인 후 사용할 수 있습니다.')
       const resolved = await geometryApi.resolveVersion(versionId)
-      const next = mergedModules(stagedRef.current, resolved.modules)
-      stagedRef.current = next
-      setStagedModules(next)
+      if (target === 'manager') {
+        const next = mergedModules(managerModulesRef.current, resolved.modules)
+        managerModulesRef.current = next
+        setManagerModules(next)
+      } else {
+        const next = mergedModules(experimentModulesRef.current, resolved.modules)
+        experimentModulesRef.current = next
+        setExperimentModules(next)
+      }
       return resolved
     },
     [authenticated],
   )
+
+  const previewPublishedVersion = useCallback(
+    async (versionId: number) => {
+      const resolved = await stageResolved(versionId, 'manager')
+      setTransientPreview(null)
+      setSelectedCoordinateState(resolved.root.coordinate)
+      return resolved
+    },
+    [stageResolved],
+  )
+
+  const previewSource = useCallback((source: string) => {
+    analyzeGeometrySource(source, { allowLocal: true })
+    const coordinate = `caemble:geometry/local/preview/${crypto.randomUUID()}@local` as LocalGeometryCoordinate
+    setTransientPreview({ coordinate, source })
+    setSelectedCoordinateState(coordinate)
+    return coordinate
+  }, [])
 
   const publishNewGeometry = useCallback(
     async ({
@@ -811,12 +703,6 @@ export function useGeometryWorkspaceState({
     async (versionId: number, repositoryId?: number, packageId?: number) => {
       const resolved = await stageResolved(versionId)
       const coordinate = resolved.root.coordinate
-      const existingPath = effectiveGraph?.modules.some((item) => item.coordinate === coordinate)
-      if (existingPath) {
-        const module = resolved.modules.find((item) => item.coordinate === coordinate)!
-        promotePath(coordinate, module.source)
-        return localCoordinate(coordinate)
-      }
       const module = resolved.modules.find((item) => item.coordinate === coordinate)!
       const parts = coordinateParts(coordinate)
       const local = localCoordinate(coordinate)
@@ -837,18 +723,17 @@ export function useGeometryWorkspaceState({
       const next = { ...draftsRef.current, [local]: draft }
       draftsRef.current = next
       setDrafts(next)
+      setTransientPreview(null)
       setSelectedCoordinateState(local)
-      setSelectedPath([])
       return local
     },
-    [effectiveGraph?.modules, promotePath, stageResolved],
+    [stageResolved],
   )
 
   const usePublishedExport = useCallback(
     async (versionId: number, exportName: string, alias = exportName) => {
-      const resolved = await stageResolved(versionId)
+      const resolved = await stageResolved(versionId, 'experiment')
       if (!resolved.root.exports.includes(exportName)) throw new Error(`${exportName} export를 찾을 수 없습니다.`)
-      setSelectedCoordinateState('geometry.tsx')
       return `import { ${exportName}${alias === exportName ? '' : ` as ${alias}`} } from ${JSON.stringify(
         resolved.root.coordinate,
       )}`
@@ -876,49 +761,18 @@ export function useGeometryWorkspaceState({
           .filter((draft) => !publishedDraftIds.has(draft.draftId))
           .map((draft) => [draft.coordinate, { ...draft, source: rewriteCoordinates(draft.source, replacements) }]),
       ) as Readonly<Record<string, GeometryLocalDraft>>
-      const nextEntry = rewriteCoordinates(entryRef.current, replacements)
       const publishedModules = await resolvePublishedModules(result.published.map((item) => item.id))
-      const allModules = mergedModules(snapshotRef.current.modules, stagedRef.current, publishedModules)
-      const nextSnapshot = nextEntry.includes('@local')
-        ? snapshotRef.current
-        : snapshotFromEntrySource(nextEntry, allModules)
+      const allModules = mergedModules(managerModulesRef.current, publishedModules)
       draftsRef.current = nextDrafts
-      stagedRef.current = allModules
+      managerModulesRef.current = allModules
       setDrafts(nextDrafts)
-      setStagedModules(allModules)
-      applyExperimentSource(nextEntry, nextSnapshot)
+      setManagerModules(allModules)
       const selectedReplacement = result.replacements.find((item) => item.localCoordinate === selectedCoordinate)
       if (selectedReplacement) setSelectedCoordinateState(selectedReplacement.coordinate)
       await queryClient.invalidateQueries({ queryKey: ['geometry'] })
-      return { files: filesRef.current, snapshot: nextSnapshot, request }
+      return { request }
     },
-    [applyExperimentSource, queryClient, resolvePublishedModules, selectedCoordinate],
-  )
-
-  const publishNow = useCallback(
-    async (request: ReturnType<typeof geometryPublishRequest>) => {
-      let plan = await geometryApi.planPublish(request)
-      if (JSON.stringify(currentPublishRequest(draftsRef.current, request)) !== JSON.stringify(request)) {
-        throw new Error('발행 계획을 만드는 동안 Geometry source가 변경되었습니다. 저장을 다시 시도하세요.')
-      }
-      assertReplacementsApplicable(plan.replacements, entryRef.current, draftsRef.current)
-      let result: Awaited<ReturnType<typeof geometryApi.publish>>
-      try {
-        result = await geometryApi.publish({ ...request, planHash: plan.planHash })
-      } catch (cause) {
-        const parsed =
-          cause instanceof ApiError && cause.status === 409 ? geometryApi.parsePublishConflict(cause.body) : null
-        if (!parsed?.success || !parsed.data.revisedPlan) throw cause
-        if (JSON.stringify(currentPublishRequest(draftsRef.current, request)) !== JSON.stringify(request)) {
-          throw new Error('발행 경합을 처리하는 동안 Geometry source가 변경되었습니다. 저장을 다시 시도하세요.')
-        }
-        plan = parsed.data.revisedPlan
-        assertReplacementsApplicable(plan.replacements, entryRef.current, draftsRef.current)
-        result = await geometryApi.publish({ ...request, planHash: plan.planHash })
-      }
-      return applyPublished(request, plan, result)
-    },
-    [applyPublished],
+    [queryClient, resolvePublishedModules, selectedCoordinate],
   )
 
   const requestPublish = useCallback(
@@ -928,14 +782,14 @@ export function useGeometryWorkspaceState({
       setBusy(true)
       try {
         const value = await geometryApi.planPublish(request)
-        assertReplacementsApplicable(value.replacements, entryRef.current, draftsRef.current)
+        assertReplacementsApplicable(value.replacements, 'export {}\n', draftsRef.current)
         setPublishPlan({ request, value })
         return value
       } catch (cause) {
         const parsed =
           cause instanceof ApiError && cause.status === 409 ? geometryApi.parsePublishConflict(cause.body) : null
         if (parsed?.success && parsed.data.revisedPlan) {
-          assertReplacementsApplicable(parsed.data.revisedPlan.replacements, entryRef.current, draftsRef.current)
+          assertReplacementsApplicable(parsed.data.revisedPlan.replacements, 'export {}\n', draftsRef.current)
           setPublishPlan({ request, value: parsed.data.revisedPlan })
           return parsed.data.revisedPlan
         }
@@ -955,12 +809,12 @@ export function useGeometryWorkspaceState({
       const currentRequest = currentPublishRequest(draftsRef.current, publishPlan.request)
       if (JSON.stringify(currentRequest) !== JSON.stringify(publishPlan.request)) {
         const value = await geometryApi.planPublish(currentRequest)
-        assertReplacementsApplicable(value.replacements, entryRef.current, draftsRef.current)
+        assertReplacementsApplicable(value.replacements, 'export {}\n', draftsRef.current)
         setPublishPlan({ request: currentRequest, value })
         toast.info('Geometry source 변경을 반영해 발행 계획을 갱신했습니다. 내용을 확인해 주세요.')
         return null
       }
-      assertReplacementsApplicable(publishPlan.value.replacements, entryRef.current, draftsRef.current)
+      assertReplacementsApplicable(publishPlan.value.replacements, 'export {}\n', draftsRef.current)
       const result = await geometryApi.publish({ ...publishPlan.request, planHash: publishPlan.value.planHash })
       await applyPublished(publishPlan.request, publishPlan.value, result)
       setPublishPlan(null)
@@ -973,12 +827,12 @@ export function useGeometryWorkspaceState({
       const currentRequest = currentPublishRequest(draftsRef.current, publishPlan.request)
       if (JSON.stringify(currentRequest) !== JSON.stringify(publishPlan.request)) {
         const value = await geometryApi.planPublish(currentRequest)
-        assertReplacementsApplicable(value.replacements, entryRef.current, draftsRef.current)
+        assertReplacementsApplicable(value.replacements, 'export {}\n', draftsRef.current)
         setPublishPlan({ request: currentRequest, value })
         toast.info('Geometry source 변경을 반영해 발행 계획을 갱신했습니다. 내용을 확인해 주세요.')
         return null
       }
-      assertReplacementsApplicable(parsed.data.revisedPlan.replacements, entryRef.current, draftsRef.current)
+      assertReplacementsApplicable(parsed.data.revisedPlan.replacements, 'export {}\n', draftsRef.current)
       setPublishPlan({ request: publishPlan.request, value: parsed.data.revisedPlan })
       toast.info('다른 변경을 반영해 발행 계획을 갱신했습니다. 내용을 확인한 뒤 다시 발행하세요.')
       return null
@@ -991,19 +845,25 @@ export function useGeometryWorkspaceState({
     if (!authenticated) throw new Error('Experiment 저장은 로그인 후 사용할 수 있습니다.')
     setBusy(true)
     try {
-      while (true) {
-        const local = analyzeGeometrySource(entryRef.current, { allowEmpty: true, allowLocal: true }).imports.find(
-          (item) => localCoordinatePattern.test(item.coordinate),
+      const local = analyzeGeometrySource(entryRef.current, { allowEmpty: true, allowLocal: true }).imports.find(
+        (item) => localCoordinatePattern.test(item.coordinate),
+      )
+      if (local) {
+        throw new Error(
+          `Experiment geometry.tsx의 @local import를 Geometry 탭에서 먼저 발행하고 exact Version으로 바꾸세요: ${local.coordinate}`,
         )
-        if (!local) break
-        const request = geometryPublishRequest(draftsRef.current, local.coordinate as LocalGeometryCoordinate)
-        await publishNow(request)
       }
-      return { files: filesRef.current, snapshot: snapshotRef.current }
+      const nextSnapshot = snapshotFromEntrySource(
+        entryRef.current,
+        mergedModules(snapshotRef.current.modules, experimentModulesRef.current),
+      )
+      snapshotRef.current = nextSnapshot
+      setCurrentSnapshot(nextSnapshot)
+      return { files: filesRef.current, snapshot: nextSnapshot }
     } finally {
       setBusy(false)
     }
-  }, [authenticated, publishNow])
+  }, [authenticated])
 
   const setNamespace = useCallback(
     async (nextNamespace: string) => {
@@ -1016,70 +876,47 @@ export function useGeometryWorkspaceState({
     [applyNamespace, authenticated],
   )
 
-  const discardDraft = useCallback(
-    (coordinate: GeometryModuleCoordinate) => {
-      const draft = draftsRef.current[coordinate]
-      if (!draft) return
-      const referenced = [entryRef.current, ...Object.values(draftsRef.current).map((item) => item.source)].some(
-        (source) =>
-          analyzeGeometrySource(source, { allowEmpty: true, allowLocal: true }).imports.some(
-            (item) => item.coordinate === coordinate,
-          ),
-      )
-      if (referenced && draft.baseGeometryVersionId === null) {
-        throw new Error('이 local Geometry를 참조하는 source import를 먼저 제거하세요.')
-      }
-      const replacement =
-        draft.baseGeometryVersionId === null
-          ? {}
-          : {
-              [coordinate]: `caemble:geometry/${coordinateParts(coordinate).namespace}/${draft.repository}/${draft.packageName}@${draft.version}`,
-            }
-      const nextEntry = rewriteCoordinates(entryRef.current, replacement)
-      const next = Object.fromEntries(
-        Object.values(draftsRef.current)
-          .filter((item) => item.coordinate !== coordinate)
-          .map((item) => [item.coordinate, { ...item, source: rewriteCoordinates(item.source, replacement) }]),
-      ) as Readonly<Record<string, GeometryLocalDraft>>
-      draftsRef.current = next
-      setDrafts(next)
-      applyExperimentSource(nextEntry)
-      setSelectedCoordinateState('geometry.tsx')
-    },
-    [applyExperimentSource],
-  )
-
-  const reset = useCallback((value: GeometrySnapshot | null) => {
-    const next = value ?? emptyGeometrySnapshot
-    snapshotRef.current = next
-    draftsRef.current = {}
-    stagedRef.current = []
-    setCurrentSnapshot(next)
-    setDrafts({})
-    setStagedModules([])
-    setSelectedCoordinateState('geometry.tsx')
+  const discardDraft = useCallback((coordinate: GeometryModuleCoordinate) => {
+    const draft = draftsRef.current[coordinate]
+    if (!draft) return
+    const referenced = [entryRef.current, ...Object.values(draftsRef.current).map((item) => item.source)].some(
+      (source) =>
+        analyzeGeometrySource(source, { allowEmpty: true, allowLocal: true }).imports.some(
+          (item) => item.coordinate === coordinate,
+        ),
+    )
+    if (referenced) {
+      throw new Error('이 local Geometry를 참조하는 source import를 먼저 제거하세요.')
+    }
+    const next = Object.fromEntries(
+      Object.values(draftsRef.current)
+        .filter((item) => item.coordinate !== coordinate)
+        .map((item) => [item.coordinate, item]),
+    ) as Readonly<Record<string, GeometryLocalDraft>>
+    draftsRef.current = next
+    setDrafts(next)
+    setSelectedCoordinateState(null)
     setSelectedExport(null)
-    setSelectedPath([])
-    setEffectiveGraph(null)
-    setPreviewScene(null)
-    setPreviewSceneHash(null)
-    setPreviewError(null)
   }, [])
 
-  const syncSnapshot = useCallback((value: GeometrySnapshot) => {
-    snapshotRef.current = value
-    setCurrentSnapshot(value)
+  const syncSnapshot = useCallback((value: GeometrySnapshot | null) => {
+    const next = value ?? emptyGeometrySnapshot
+    snapshotRef.current = next
+    experimentModulesRef.current = []
+    setCurrentSnapshot(next)
+    setExperimentModules([])
     setEffectiveGraph(null)
-    setPreviewScene(null)
-    setPreviewSceneHash(null)
-    setPreviewError(null)
   }, [])
 
   const restore = useCallback(
-    (geometry: WorkbenchDraft['geometry'], source = entryRef.current) => {
+    (
+      manager: WorkbenchDraft['geometryManager'],
+      experimentGeometry: WorkbenchDraft['experimentGeometry'],
+      source = entryRef.current,
+    ) => {
       const replacements: Record<string, string> = {}
       if (namespace) {
-        Object.values(geometry.drafts).forEach((draft) => {
+        Object.values(manager.drafts).forEach((draft) => {
           if (draft.baseGeometryVersionId !== null || draft.repositoryId !== null) return
           const parts = coordinateParts(draft.coordinate)
           if (parts.namespace !== namespace) {
@@ -1089,10 +926,10 @@ export function useGeometryWorkspaceState({
         })
       }
       let nextSource = source
-      let nextDrafts = geometry.drafts
+      let nextDrafts = manager.drafts
       if (Object.keys(replacements).length) {
         try {
-          const targetCoordinates = Object.values(geometry.drafts).map(
+          const targetCoordinates = Object.values(manager.drafts).map(
             (draft) => replacements[draft.coordinate] ?? draft.coordinate,
           )
           if (targetCoordinates.length !== new Set(targetCoordinates).size) {
@@ -1100,7 +937,7 @@ export function useGeometryWorkspaceState({
           }
           nextSource = rewriteCoordinates(source, replacements)
           nextDrafts = Object.fromEntries(
-            Object.values(geometry.drafts).map((draft) => {
+            Object.values(manager.drafts).map((draft) => {
               const coordinate = (replacements[draft.coordinate] ?? draft.coordinate) as LocalGeometryCoordinate
               return [coordinate, { ...draft, coordinate, source: rewriteCoordinates(draft.source, replacements) }]
             }),
@@ -1112,46 +949,24 @@ export function useGeometryWorkspaceState({
         }
       }
       draftsRef.current = nextDrafts
-      stagedRef.current = geometry.stagedModules
+      managerModulesRef.current = manager.resolvedModules
+      experimentModulesRef.current = experimentGeometry.stagedModules
       entryRef.current = nextSource
       setDrafts(nextDrafts)
-      setStagedModules(geometry.stagedModules)
+      setManagerModules(manager.resolvedModules)
+      setExperimentModules(experimentGeometry.stagedModules)
       setEntrySource(nextSource)
       setSelectedCoordinateState(
-        nextDrafts !== geometry.drafts && geometry.selectedCoordinate && geometry.selectedCoordinate !== 'geometry.tsx'
-          ? ((replacements[geometry.selectedCoordinate] ?? geometry.selectedCoordinate) as GeometryModuleCoordinate)
-          : geometry.selectedCoordinate,
+        nextDrafts !== manager.drafts && manager.selectedCoordinate
+          ? ((replacements[manager.selectedCoordinate] ?? manager.selectedCoordinate) as GeometryModuleCoordinate)
+          : manager.selectedCoordinate,
       )
-      setSelectedExport(geometry.selectedExport)
-      setExpandedPaths(
-        geometry.expandedPaths.map((path) =>
-          nextDrafts === geometry.drafts
-            ? path
-            : Object.entries(replacements).reduce(
-                (current, [previous, next]) => current.split(previous).join(next),
-                path,
-              ),
-        ),
-      )
-      setSelectedPath([])
+      setSelectedExport(manager.selectedExport)
       setPreviewScene(null)
       setPreviewSceneHash(null)
       return nextSource
     },
     [namespace],
-  )
-
-  const selectOccurrence = useCallback(
-    (
-      coordinate: GeometryModuleCoordinate | 'geometry.tsx',
-      path: readonly OccurrenceEdge[] = [],
-      exportName: string | null = null,
-    ) => {
-      setSelectedCoordinateState(coordinate)
-      setSelectedPath(path)
-      setSelectedExport(exportName)
-    },
-    [],
   )
 
   const reachableLocalCoordinates = useMemo(() => {
@@ -1186,16 +1001,16 @@ export function useGeometryWorkspaceState({
     entrySource,
     entryExports,
     drafts,
-    stagedModules,
+    managerModules,
+    experimentModules,
     selectedCoordinate,
     selectedExport,
     selectedExports,
-    selectedPath,
-    expandedPaths,
     effectiveGraph,
     graphError,
-    draftOverlay,
-    previewDraftActive: Object.keys(draftOverlay).length > 0,
+    managerDraftOverlay,
+    experimentAvailableOverlay,
+    experimentDraftOverlay,
     hasReachableDrafts: reachableLocalCoordinates.size > 0,
     previewScene,
     previewSceneHash,
@@ -1204,9 +1019,10 @@ export function useGeometryWorkspaceState({
     previewBusy,
     previewStale,
     publishReady:
-      Boolean(selectedCoordinate && selectedCoordinate !== 'geometry.tsx' && drafts[selectedCoordinate]) &&
-      previewedInput === previewInput &&
-      !previewError,
+      Boolean(selectedCoordinate && drafts[selectedCoordinate]) &&
+      previewedInputKey === previewInputKey &&
+      !previewError &&
+      !previewStale,
     busy,
     publishPlan,
     setPublishPlan,
@@ -1233,15 +1049,11 @@ export function useGeometryWorkspaceState({
     createDraft,
     openCatalogDraft,
     editPublishedVersion,
-    editAsNewVersion: async (coordinate: GeometryModuleCoordinate) => {
-      if (!authenticated) throw new Error('Published Geometry 편집은 로그인 후 사용할 수 있습니다.')
-      const module = moduleByCoordinate(coordinate)
-      if (!module) throw new Error('Geometry module을 찾을 수 없습니다.')
-      return editPublishedVersion(module.geometryVersionId)
-    },
     usePublishedExport,
     publishNewGeometry,
     stageResolved,
+    previewPublishedVersion,
+    previewSource,
     updateSource,
     updateDescription: (coordinate: GeometryModuleCoordinate, description: string) => {
       const draft = draftsRef.current[coordinate]
@@ -1261,25 +1073,22 @@ export function useGeometryWorkspaceState({
     requestPublish,
     confirmPublish,
     prepareExperimentSave,
-    setSelectedCoordinate: (coordinate: GeometryModuleCoordinate | 'geometry.tsx' | null) =>
-      selectOccurrence(coordinate ?? 'geometry.tsx'),
+    setSelectedCoordinate: (coordinate: GeometryModuleCoordinate | null) => setSelectedCoordinateState(coordinate),
     setSelectedExport,
-    selectOccurrence,
-    togglePath: (path: string) =>
-      setExpandedPaths((current) =>
-        current.includes(path) ? current.filter((item) => item !== path) : [...current, path],
-      ),
-    reset,
     syncSnapshot,
     restore,
-    draftState: (): WorkbenchDraft['geometry'] => ({
-      drafts: draftsRef.current,
-      stagedModules: stagedRef.current,
-      selectedCoordinate,
-      selectedExport,
-      expandedPaths,
+    draftState: () => ({
+      geometryManager: {
+        drafts: draftsRef.current,
+        resolvedModules: managerModulesRef.current,
+        selectedCoordinate,
+        selectedExport,
+      } satisfies WorkbenchDraft['geometryManager'],
+      experimentGeometry: {
+        stagedModules: experimentModulesRef.current,
+      } satisfies WorkbenchDraft['experimentGeometry'],
     }),
   }
 }
 
-export type GeometryWorkspaceState = ReturnType<typeof useGeometryWorkspaceState>
+export type GeometryManagerState = ReturnType<typeof useGeometryManagerState>

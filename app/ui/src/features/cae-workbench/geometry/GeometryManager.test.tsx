@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { GeometryManager } from './GeometryManager'
-import type { GeometryWorkspaceState } from './useGeometryWorkspaceState'
+import type { GeometryManagerState } from './useGeometryWorkspaceState'
 
 const mocks = vi.hoisted(() => ({
   authenticated: false,
@@ -57,11 +57,24 @@ function Harness({ children }: { children: ReactNode }) {
 }
 
 function renderManager(namespace: string | null, openCatalogDraft = vi.fn()) {
+  const previewSource = vi.fn()
   return {
     openCatalogDraft,
+    previewSource,
     ...render(
       <GeometryManager
-        geometry={{ namespace, openCatalogDraft } as unknown as GeometryWorkspaceState}
+        geometry={
+          {
+            namespace,
+            drafts: {},
+            publishPlan: null,
+            repositories: [],
+            selectedCoordinate: null,
+            openCatalogDraft,
+            previewSource,
+            setSelectedCoordinate: vi.fn(),
+          } as unknown as GeometryManagerState
+        }
         onCatalogDraftOpened={vi.fn()}
         onEdit={vi.fn()}
         onOpenExperiment={vi.fn()}
@@ -90,6 +103,7 @@ describe('Geometry Manager official catalog', () => {
 
     expect(screen.queryByRole('tab', { name: 'Workspace Packages' })).not.toBeInTheDocument()
     expect(await screen.findByText('Official standalone Geometry')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Local Drafts (0)' })).toBeInTheDocument())
     await userEvent.click(screen.getByRole('button', { name: '로컬 Draft로 열기' }))
 
     expect(openCatalogDraft).toHaveBeenCalledWith({
@@ -97,6 +111,7 @@ describe('Geometry Manager official catalog', () => {
       source: geometryDetail.source,
       description: geometryDetail.description,
     })
+    expect(screen.getByRole('tab', { name: 'Local Drafts (0)' })).toHaveAttribute('aria-selected', 'true')
   })
 
   it('guides a signed-in user to configure a namespace before cloning', async () => {

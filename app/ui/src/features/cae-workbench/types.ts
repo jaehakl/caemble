@@ -31,7 +31,7 @@ export type GeometryLocalDraft = Readonly<{
 }>
 
 export type WorkbenchDraft = Readonly<{
-  version: 10
+  version: 11
   savedAt: number
   experiment: Readonly<{
     record: SavedExperiment | null
@@ -47,12 +47,14 @@ export type WorkbenchDraft = Readonly<{
   selection: Readonly<{
     measurementId: number | null
   }>
-  geometry: Readonly<{
+  geometryManager: Readonly<{
     drafts: Readonly<Record<string, GeometryLocalDraft>>
-    stagedModules: readonly GeometrySnapshotModule[]
-    selectedCoordinate: GeometryModuleCoordinate | 'geometry.tsx' | null
+    resolvedModules: readonly GeometrySnapshotModule[]
+    selectedCoordinate: GeometryModuleCoordinate | null
     selectedExport: string | null
-    expandedPaths: readonly string[]
+  }>
+  experimentGeometry: Readonly<{
+    stagedModules: readonly GeometrySnapshotModule[]
   }>
   layout: Readonly<{
     openTabs: readonly WorkbenchTabId[]

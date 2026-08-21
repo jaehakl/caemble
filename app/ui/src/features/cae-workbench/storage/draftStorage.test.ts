@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { geometryModuleHash, geometrySourceHash, type GeometryCoordinate } from '@/lib/cad'
 import type { WorkbenchDraft } from '../types'
 import {
   clearWorkbenchDraft,
@@ -11,18 +12,18 @@ import {
 
 function draft(): WorkbenchDraft {
   return {
-    version: 10,
+    version: 11,
     savedAt: 1,
     experiment: { record: null, baselineBundle: null, document: null, name: '', description: '' },
     candidate: { vars: null, materialParameters: null },
     selection: { measurementId: null },
-    geometry: {
+    geometryManager: {
       drafts: {},
-      stagedModules: [],
-      selectedCoordinate: 'geometry.tsx',
+      resolvedModules: [],
+      selectedCoordinate: null,
       selectedExport: null,
-      expandedPaths: ['geometry.tsx'],
     },
+    experimentGeometry: { stagedModules: [] },
     layout: { openTabs: ['experiment'], activeTab: 'experiment', experimentFile: 'geometry.tsx', splitPercent: 50 },
   }
 }
@@ -32,13 +33,13 @@ beforeEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('Workbench sessionStorage v10', () => {
+describe('Workbench sessionStorage v11', () => {
   it('stores and restores the single session draft, including local Geometry', async () => {
     const coordinate = 'caemble:geometry/local/common/part@local' as const
     const value: WorkbenchDraft = {
       ...draft(),
-      geometry: {
-        ...draft().geometry,
+      geometryManager: {
+        ...draft().geometryManager,
         drafts: {
           [coordinate]: {
             draftId: 'part',
@@ -79,7 +80,70 @@ describe('Workbench sessionStorage v10', () => {
     expect(sessionStorage.getItem(WORKBENCH_DRAFT_STORAGE_KEY)).toBeNull()
   })
 
-  it('does not read or migrate an older draft version', async () => {
+  it('migrates a v10 Geometry workspace without losing local source', async () => {
+    const coordinate = 'caemble:geometry/local/common/part@local' as const
+    const exactCoordinate = 'caemble:geometry/local/common/base@1.0.0' as GeometryCoordinate
+    const source = 'export const Base = () => <box />'
+    const sourceHash = await geometrySourceHash(source)
+    const stagedModule = {
+      geometryVersionId: 7,
+      coordinate: exactCoordinate,
+      moduleFormatVersion: 4 as const,
+      cadApiVersion: 8 as const,
+      description: null,
+      source,
+      sourceHash,
+      moduleHash: await geometryModuleHash({
+        coordinate: exactCoordinate,
+        moduleFormatVersion: 4,
+        cadApiVersion: 8,
+        sourceHash,
+        imports: [],
+      }),
+      imports: [],
+    }
+    const legacy = {
+      ...draft(),
+      version: 10,
+      geometry: {
+        drafts: {
+          [coordinate]: {
+            draftId: 'part',
+            coordinate,
+            source: 'export const Part = () => <box />',
+            description: '',
+            baseGeometryVersionId: null,
+            repository: 'common',
+            packageName: 'part',
+            repositoryId: null,
+            packageId: null,
+            version: '0.1.0',
+            bump: 'patch',
+            standalonePreview: true,
+          },
+        },
+        stagedModules: [stagedModule],
+        selectedCoordinate: 'geometry.tsx',
+        selectedExport: null,
+        expandedPaths: ['geometry.tsx'],
+      },
+      geometryManager: undefined,
+      experimentGeometry: undefined,
+    }
+    sessionStorage.setItem(WORKBENCH_DRAFT_STORAGE_KEY, JSON.stringify(legacy))
+
+    await expect(loadWorkbenchDraft()).resolves.toMatchObject({
+      version: 11,
+      geometryManager: {
+        drafts: { [coordinate]: { source: 'export const Part = () => <box />' } },
+        resolvedModules: [stagedModule],
+        selectedCoordinate: null,
+      },
+      experimentGeometry: { stagedModules: [stagedModule] },
+    })
+  })
+
+  it('does not read or migrate an unsupported older draft version', async () => {
     sessionStorage.setItem(WORKBENCH_DRAFT_STORAGE_KEY, JSON.stringify({ ...draft(), version: 9 }))
 
     await expect(loadWorkbenchDraft()).resolves.toBeNull()

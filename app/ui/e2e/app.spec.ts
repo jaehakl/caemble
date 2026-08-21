@@ -370,34 +370,33 @@ test('opens an official Geometry as an anonymous local draft without overwriting
 
   await page.getByRole('menuitem', { name: 'Source' }).click()
   await page.getByRole('menuitem', { name: 'Geometry Manager' }).click()
-  const manager = page.getByRole('dialog', { name: 'Geometry Manager' })
+  const manager = page.getByLabel('Geometry Manager')
+  await expect(page.getByRole('tab', { name: 'Geometry', exact: true })).toHaveAttribute('aria-selected', 'true')
   await expect(manager.getByRole('tab', { name: 'Official Catalog' })).toHaveAttribute('aria-selected', 'true')
   await manager.getByRole('button', { name: /Basketball Goal/ }).click()
   await manager.getByRole('button', { name: '로컬 Draft로 열기' }).click()
 
-  await expect(manager).toBeHidden()
-  await expect(page.locator('[data-state="closed"].fixed.inset-0')).toHaveCount(0)
-  await expect(page.getByRole('tab', { name: 'Geometry', exact: true })).toHaveAttribute('aria-selected', 'true')
-  const editor = page.locator('.monaco-editor:visible .view-lines')
-  await expect(editor).toContainText('BasketballGoal')
-  await editor.click({ position: { x: 120, y: 250 } })
+  await expect(manager.getByRole('tab', { name: 'Local Drafts (1)' })).toHaveAttribute('aria-selected', 'true')
+  await expect(manager.getByText('Preview current', { exact: true })).toBeVisible({ timeout: 15_000 })
+  await expect(manager.getByRole('alert')).toHaveCount(0)
+  const editor = manager.locator('.monaco-editor:visible')
+  await editor.getByRole('textbox', { name: 'Editor content' }).focus()
   await page.keyboard.press('Control+A')
   await page.keyboard.insertText(`import { type Geometry } from '@caemble/core'
 
 export const BasketballGoal: Geometry = () => <box id="local" />
 // keep-local-catalog-edit
 `)
-  await expect(editor).toContainText('keep-local-catalog-edit')
+  await expect(editor.locator('.view-lines')).toContainText('keep-local-catalog-edit')
 
-  await page.getByRole('menuitem', { name: 'Source' }).click()
-  await page.getByRole('menuitem', { name: 'Geometry Manager' }).click()
+  await manager.getByRole('tab', { name: 'Official Catalog' }).click()
   await manager.getByRole('button', { name: /Basketball Goal/ }).click()
   await manager.getByRole('button', { name: '로컬 Draft로 열기' }).click()
 
-  await expect(editor).toContainText('keep-local-catalog-edit')
+  await expect(editor.locator('.view-lines')).toContainText("import { type Geometry } from '@caemble/core'")
 })
 
-test('opens Geometry export publishing from the Source menu and Geometry ribbon', async ({ page }) => {
+test('opens Geometry export publishing from the Source menu and Experiment ribbon', async ({ page }) => {
   await mockApi(page, true)
   const coordinate = 'caemble:geometry/designer/common/starter-structure@0.1.0'
   const localCoordinate = 'caemble:geometry/designer/common/starter-structure@local'
@@ -475,9 +474,7 @@ test('opens Geometry export publishing from the Source menu and Geometry ribbon'
   await expect(dialog.getByLabel('Reconstructed TSX source')).toHaveValue(/export const StarterStructure/)
   await dialog.getByRole('button', { name: '취소' }).click()
 
-  await page.getByRole('menuitem', { name: 'View' }).click()
-  await page.getByRole('menuitem', { name: 'Geometry Workspace' }).click()
-  const ribbon = page.getByRole('region', { name: 'Geometry 리본' })
+  const ribbon = page.getByRole('region', { name: 'Experiment 리본' })
   await ribbon.getByRole('button', { name: 'Publish geometry.tsx Export' }).click()
   const ribbonDialog = page.getByRole('dialog', { name: 'Publish geometry.tsx Export' })
   await ribbonDialog.getByRole('button', { name: 'Geometry 발행' }).click()
@@ -556,8 +553,12 @@ test('opens authenticated Launchers from Settings and Jobs from the shared Toolb
 })
 
 test('manages Geometry packages and previews an editable Geometry without Monaco model conflicts', async ({ page }) => {
+  test.setTimeout(90_000)
   const timestamp = '2026-08-13T00:00:00Z'
   const coordinate = 'caemble:geometry/designer/common/plate@1.2.3'
+  const nextCoordinate = 'caemble:geometry/designer/common/plate@1.2.4'
+  const localCoordinate = 'caemble:geometry/designer/common/plate@local'
+  const planHash = 'f'.repeat(64)
   const geometrySource = `import { type Geometry } from '@caemble/core'
 export const Plate: Geometry = () => <box size={[1, 1, 1]} />
 export const Sphere: Geometry = () => <sphere radius={1} />
@@ -575,6 +576,9 @@ export const Sphere: Geometry = () => <sphere radius={1} />
       }),
     )
     .digest('hex')
+  let publishedSource = geometrySource
+  let publishedSourceHash = sourceHash
+  let publishedModuleHash = moduleHash
   const repository = {
     id: 1,
     user_id: user.id,
@@ -631,6 +635,71 @@ export const Sphere: Geometry = () => <sphere radius={1} />
       const body = route.request().postDataJSON() as { namespace: string }
       return json(route, { ...user, geometry_namespace: body.namespace })
     }
+    if (path === '/geometry/publish/plan') {
+      const request = route.request().postDataJSON() as {
+        targetDraftId: string
+        drafts: Array<Record<string, unknown> & { draftId: string; source: string }>
+      }
+      const draft = request.drafts[0]!
+      publishedSource = draft.source
+      publishedSourceHash = createHash('sha256').update(publishedSource).digest('hex')
+      publishedModuleHash = createHash('sha256')
+        .update(
+          JSON.stringify({
+            schemaVersion: 2,
+            moduleFormatVersion: 4,
+            cadApiVersion: 8,
+            coordinate: nextCoordinate,
+            sourceHash: publishedSourceHash,
+            imports: [],
+          }),
+        )
+        .digest('hex')
+      return json(route, {
+        planHash,
+        steps: [
+          {
+            ...draft,
+            baseGeometryVersionId: version.id,
+            repositoryId: repository.id,
+            repository: repository.slug,
+            package: geometryPackage.name,
+            version: '1.2.4',
+            coordinate: nextCoordinate,
+            localCoordinate,
+            description: version.description,
+            sourceHash: publishedSourceHash,
+            moduleHash: publishedModuleHash,
+            exports: ['Plate', 'Sphere'],
+            imports: [],
+          },
+        ],
+        replacements: [{ draftId: request.targetDraftId, localCoordinate, coordinate: nextCoordinate }],
+      })
+    }
+    if (path === '/geometry/publish') {
+      const request = route.request().postDataJSON() as { targetDraftId: string; planHash: string }
+      expect(request.planHash).toBe(planHash)
+      return json(route, {
+        planHash,
+        published: [
+          {
+            id: 4,
+            packageId: geometryPackage.id,
+            coordinate: nextCoordinate,
+            version: '1.2.4',
+            description: version.description,
+            sourceHash: publishedSourceHash,
+            moduleHash: publishedModuleHash,
+            moduleFormatVersion: 4,
+            cadApiVersion: 8,
+            archivedAt: null,
+            createdAt: timestamp,
+          },
+        ],
+        replacements: [{ draftId: request.targetDraftId, localCoordinate, coordinate: nextCoordinate }],
+      })
+    }
     if (path === '/geometry/repositories/list') return json(route, { total: 1, items: [repository] })
     if (path === '/geometry/packages/list') return json(route, { total: 1, items: [geometryPackage] })
     if (path === '/geometry/versions/list') return json(route, { total: 1, items: [version] })
@@ -648,6 +717,30 @@ export const Sphere: Geometry = () => <sphere radius={1} />
             source: version.source,
             sourceHash,
             moduleHash,
+            imports: [],
+          },
+        ],
+      })
+    }
+    if (path === '/geometry/versions/4/resolve') {
+      return json(route, {
+        schemaVersion: 2,
+        root: {
+          geometryVersionId: 4,
+          coordinate: nextCoordinate,
+          moduleHash: publishedModuleHash,
+          exports: ['Plate', 'Sphere'],
+        },
+        modules: [
+          {
+            geometryVersionId: 4,
+            coordinate: nextCoordinate,
+            moduleFormatVersion: 4,
+            cadApiVersion: 8,
+            description: version.description,
+            source: publishedSource,
+            sourceHash: publishedSourceHash,
+            moduleHash: publishedModuleHash,
             imports: [],
           },
         ],
@@ -712,7 +805,7 @@ export const Sphere: Geometry = () => <sphere radius={1} />
   await page.getByRole('tab', { name: 'experiment.tsx' }).click()
   await page.getByRole('menuitem', { name: 'Source' }).click()
   await page.getByRole('menuitem', { name: 'Geometry Manager' }).click()
-  const manager = page.getByRole('dialog', { name: 'Geometry Manager' })
+  const manager = page.getByLabel('Geometry Manager')
   await expect(manager).toBeVisible()
   await manager.getByRole('tab', { name: 'Workspace Packages' }).click()
   await expect(manager).toContainText('designer/common/plate')
@@ -735,8 +828,7 @@ export { PlateRoot }
 `)
   await expect(page.locator('.monaco-editor .squiggly-error')).toHaveCount(0, { timeout: 10_000 })
 
-  await page.getByRole('menuitem', { name: 'Source' }).click()
-  await page.getByRole('menuitem', { name: 'Geometry Manager' }).click()
+  await page.getByRole('tab', { name: 'Geometry', exact: true }).click()
   await expect(manager).toBeVisible()
   await manager.getByRole('tab', { name: 'Workspace Packages' }).click()
 
@@ -754,7 +846,7 @@ export { PlateRoot }
   await expect(manager.locator('input[name="namespace"]')).toHaveValue('designer-next')
   await expect(manager).toContainText(coordinate)
 
-  await manager.getByRole('button', { name: '닫기' }).click()
+  await page.getByRole('tab', { name: 'Experiment', exact: true }).click()
   await page.getByRole('tab', { name: 'experiment.tsx' }).click()
   const experimentEditor = page.locator('.monaco-editor:visible .view-lines')
   await experimentEditor.click({ position: { x: 100, y: 30 } })
@@ -771,28 +863,39 @@ export default experiment({
   await expect(page.locator('.monaco-editor .squiggly-error')).toHaveCount(0, { timeout: 10_000 })
 
   await page.getByRole('tab', { name: 'Geometry', exact: true }).click()
-  const workspace = page.locator('section[aria-label="Geometry workspace"]')
+  await manager.getByRole('tab', { name: 'Workspace Packages' }).click()
+  await manager.getByRole('button', { name: 'Edit as New Version' }).click()
+  const workspace = page.locator('section[aria-label="Local Geometry drafts"]')
   await expect(workspace).toBeVisible()
-  await workspace.getByRole('treeitem').getByRole('button').filter({ hasText: 'PlateRoot' }).click()
-  await workspace.getByRole('button', { name: 'Edit as New Version' }).click()
 
-  const saveGeometry = workspace.getByRole('button', { name: 'Geometry 저장' })
+  const saveGeometry = workspace.getByRole('button', { name: '새 Version 발행' })
   await expect(saveGeometry).toBeEnabled({ timeout: 15_000 })
   await expect(workspace.getByText('Preview current', { exact: true })).toBeVisible()
   await expect(workspace.getByRole('alert')).toHaveCount(0)
 
   const previewExport = workspace.getByRole('combobox', { name: 'Preview export' })
   await expect(previewExport).toHaveValue('Plate')
-  await workspace.locator('.view-line').filter({ hasText: 'export const Sphere' }).click()
+  await previewExport.selectOption('Sphere')
   await expect(previewExport).toHaveValue('Sphere')
   await expect(workspace.getByText('Preview current', { exact: true })).toBeVisible()
-  await workspace.locator('.view-line').filter({ hasText: 'export const Plate' }).click()
+  await previewExport.selectOption('Plate')
   await expect(previewExport).toHaveValue('Plate')
 
-  const draftEditor = workspace.locator('.monaco-editor:visible .view-lines')
-  await draftEditor.click({ position: { x: 100, y: 30 } })
+  const draftEditor = workspace.locator('.monaco-editor:visible')
+  await draftEditor.getByRole('textbox', { name: 'Editor content' }).focus()
   await page.keyboard.press('Control+A')
   await page.keyboard.insertText('export const Broken = (')
-  await expect(workspace.getByRole('alert')).toContainText('마지막 정상 Tree와 Viewer를 유지합니다.')
+  await expect(workspace.getByRole('alert')).toContainText('마지막 정상 Viewer scene을 유지합니다.')
   await expect(saveGeometry).toBeDisabled()
+
+  await draftEditor.getByRole('textbox', { name: 'Editor content' }).focus()
+  await page.keyboard.press('Control+A')
+  await page.keyboard.insertText(`${geometrySource}// manager-version-edit\n`)
+  await expect(workspace.getByText('Preview current', { exact: true })).toBeVisible({ timeout: 15_000 })
+  await expect(saveGeometry).toBeEnabled()
+  await saveGeometry.click()
+  const publishDialog = page.getByRole('dialog', { name: 'Geometry 발행 계획' })
+  await expect(publishDialog).toContainText(nextCoordinate)
+  await publishDialog.getByRole('button', { name: '계획대로 발행' }).click()
+  await expect(manager.getByRole('tab', { name: 'Local Drafts (0)' })).toBeVisible({ timeout: 15_000 })
 })

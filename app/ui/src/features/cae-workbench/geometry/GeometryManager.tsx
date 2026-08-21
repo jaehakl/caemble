@@ -24,9 +24,11 @@ import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuth } from '@/features/auth/use-auth'
 import CadEditor from '@/features/viewer/editor/CadEditor'
+import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
 import { cn } from '@/lib/utils'
+import { GeometryDrafts } from './GeometryDrafts'
 import { GeometryUsageDialog } from './GeometryUsageDialog'
-import type { GeometryWorkspaceState } from './useGeometryWorkspaceState'
+import type { GeometryManagerState } from './useGeometryWorkspaceState'
 
 const PAGE_SIZES = [12, 24, 48] as const
 
@@ -35,7 +37,7 @@ function message(error: unknown) {
 }
 
 type GeometryManagerProps = {
-  geometry: GeometryWorkspaceState
+  geometry: GeometryManagerState
   initialPackageId?: number | null
   initialVersionId?: number | null
   onCatalogDraftOpened: () => void
@@ -43,25 +45,52 @@ type GeometryManagerProps = {
   onOpenGeometrySource: () => void
   onOpenExperiment: (experimentId: number) => void | Promise<void>
   onUse: (versionId: number, exportName: string, alias: string) => string | Promise<string>
+  onAuthoringStateChange?: (state: CadEditorAuthoringState | null) => void
 }
 
 export function GeometryManager(props: GeometryManagerProps) {
   const auth = useAuth()
-  const [tab, setTab] = useState<'official' | 'workspace'>('official')
+  const [tab, setTab] = useState<'official' | 'workspace' | 'drafts'>('official')
   return (
-    <Tabs className="flex h-full min-h-0 flex-col" value={tab} onValueChange={(value) => setTab(value as typeof tab)}>
-      <TabsList className={`mx-4 mt-4 grid ${auth.isAuthenticated ? 'grid-cols-2' : 'grid-cols-1'}`}>
+    <Tabs
+      aria-label="Geometry Manager"
+      className="flex h-full min-h-0 flex-col"
+      value={tab}
+      onValueChange={(value) => setTab(value as typeof tab)}
+    >
+      <TabsList className={`mx-4 mt-4 grid ${auth.isAuthenticated ? 'grid-cols-3' : 'grid-cols-2'}`}>
         <TabsTrigger value="official">Official Catalog</TabsTrigger>
         {auth.isAuthenticated ? <TabsTrigger value="workspace">Workspace Packages</TabsTrigger> : null}
+        <TabsTrigger value="drafts">Local Drafts ({Object.keys(props.geometry.drafts).length})</TabsTrigger>
       </TabsList>
       <TabsContent className="min-h-0 flex-1 overflow-hidden" value="official">
-        <OfficialGeometryCatalog {...props} authenticated={auth.isAuthenticated} />
+        <OfficialGeometryCatalog
+          {...props}
+          authenticated={auth.isAuthenticated}
+          onCatalogDraftOpened={() => {
+            props.onCatalogDraftOpened()
+            setTab('drafts')
+          }}
+        />
       </TabsContent>
       {auth.isAuthenticated ? (
         <TabsContent className="min-h-0 flex-1 overflow-hidden" value="workspace">
-          <WorkspaceGeometryManager {...props} />
+          <WorkspaceGeometryManager
+            {...props}
+            onEdit={async (...args) => {
+              await props.onEdit(...args)
+              setTab('drafts')
+            }}
+          />
         </TabsContent>
       ) : null}
+      <TabsContent className="min-h-0 flex-1 overflow-hidden" value="drafts">
+        <GeometryDrafts
+          authenticated={auth.isAuthenticated}
+          geometry={props.geometry}
+          onAuthoringStateChange={props.onAuthoringStateChange}
+        />
+      </TabsContent>
     </Tabs>
   )
 }
@@ -71,6 +100,7 @@ function OfficialGeometryCatalog({
   geometry,
   onCatalogDraftOpened,
 }: Pick<GeometryManagerProps, 'geometry' | 'onCatalogDraftOpened'> & { authenticated: boolean }) {
+  const previewSource = geometry.previewSource
   const [search, setSearch] = useState('')
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const listQuery = useQuery({
@@ -82,11 +112,20 @@ function OfficialGeometryCatalog({
     queryFn: () => catalogApi.getGeometry(selectedKey!),
     enabled: selectedKey !== null,
   })
+  const detailSource = detailQuery.data?.source
 
   useEffect(() => {
     const items = listQuery.data?.items ?? []
     if (!items.some((item) => item.key === selectedKey)) setSelectedKey(items[0]?.key ?? null)
   }, [listQuery.data?.items, selectedKey])
+  useEffect(() => {
+    if (!detailSource) return
+    try {
+      previewSource(detailSource)
+    } catch (error) {
+      toast.error(message(error))
+    }
+  }, [detailSource, previewSource])
 
   const openDraft = () => {
     const item = detailQuery.data
@@ -194,6 +233,7 @@ function WorkspaceGeometryManager({
   onUse,
 }: GeometryManagerProps) {
   const auth = useAuth()
+  const previewPublishedVersion = geometry.previewPublishedVersion
   const isAdmin = Boolean(auth.user?.roles.includes('admin'))
   const listScope = isAdmin ? 'visible' : 'mine'
   const queryClient = useQueryClient()
@@ -380,6 +420,10 @@ function WorkspaceGeometryManager({
     if (!versions.some((item) => item.id === selectedVersionId)) setSelectedVersionId(versions[0].id)
   }, [pendingVersionId, selectedVersionId, versions])
   useEffect(() => setRepositoryDescription(selectedRepository?.description ?? ''), [selectedRepository])
+  useEffect(() => {
+    if (!selectedVersionId) return
+    void previewPublishedVersion(selectedVersionId).catch((error: unknown) => toast.error(message(error)))
+  }, [previewPublishedVersion, selectedVersionId])
 
   const invalidate = async () => {
     await queryClient.invalidateQueries({ queryKey: ['geometry'] })
@@ -453,7 +497,8 @@ function WorkspaceGeometryManager({
       ).flatMap((response) => response.items)
       const localIds = new Set([
         ...geometry.currentSnapshot.modules.map((module) => module.geometryVersionId),
-        ...geometry.stagedModules.map((module) => module.geometryVersionId),
+        ...geometry.managerModules.map((module) => module.geometryVersionId),
+        ...geometry.experimentModules.map((module) => module.geometryVersionId),
         ...Object.values(geometry.drafts).flatMap((draft) =>
           draft.baseGeometryVersionId ? [draft.baseGeometryVersionId] : [],
         ),
@@ -490,12 +535,13 @@ function WorkspaceGeometryManager({
     () =>
       new Set([
         ...geometry.currentSnapshot.modules.map((module) => module.geometryVersionId),
-        ...geometry.stagedModules.map((module) => module.geometryVersionId),
+        ...geometry.managerModules.map((module) => module.geometryVersionId),
+        ...geometry.experimentModules.map((module) => module.geometryVersionId),
         ...Object.values(geometry.drafts).flatMap((draft) =>
           draft.baseGeometryVersionId ? [draft.baseGeometryVersionId] : [],
         ),
       ]),
-    [geometry.currentSnapshot.modules, geometry.drafts, geometry.stagedModules],
+    [geometry.currentSnapshot.modules, geometry.drafts, geometry.experimentModules, geometry.managerModules],
   )
   const usage = usageQuery.data?.items.find((item) => item.versionId === selectedVersionId)
   const versionDeleteBlocked =

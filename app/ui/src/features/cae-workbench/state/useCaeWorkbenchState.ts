@@ -19,7 +19,7 @@ import {
 } from '@/lib/cad'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 import { agentGeometryContextVersion } from '../agent/agentWorkspace'
-import { useGeometryWorkspaceState } from '../geometry'
+import { useGeometryManagerState } from '../geometry'
 import { useCaeDataSelection } from '../measurement/useCaeDataSelection'
 import { useCaeMeasurementActions } from '../measurement/useCaeMeasurementActions'
 import type { DefinitionStatus, SavedExperiment, SavedMeasurement, WorkbenchDraft, WorkbenchTabId } from '../types'
@@ -145,33 +145,17 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
     clearBaseMeasurement()
   }, [clearBaseMeasurement])
 
-  const handleGeometryExperimentChange = useCallback(
-    (snapshot: GeometrySnapshot, files?: Readonly<Record<string, string>>) => {
-      setAgentWorkspaceIdentity(null)
-      setExperiment((current) => {
-        const next = current
-          ? createExperimentDocument(createExperimentSourceBundle(files ?? current.sourceBundle.files, snapshot))
-          : current
-        experimentRef.current = next
-        return next
-      })
-      clearMeasurement()
-      setCandidateMaterialParameters(null)
-    },
-    [clearMeasurement],
-  )
-
-  const geometry = useGeometryWorkspaceState({
+  const geometry = useGeometryManagerState({
     authenticated,
     initialNamespace: user?.geometry_namespace ?? (authenticated ? null : 'local'),
-    onExperimentChange: handleGeometryExperimentChange,
     snapshot: experiment?.sourceBundle.geometrySnapshot ?? null,
     sourceFiles: experiment?.sourceBundle.files ?? {},
   })
-  const currentAgentGeometryDrafts = geometry.previewDraftActive ? geometry.draftOverlay : undefined
+  const currentAgentGeometryDrafts = Object.keys(geometry.experimentDraftOverlay).length
+    ? geometry.experimentDraftOverlay
+    : undefined
   const agentGeometryDraftsRef = useRef<GeometryDraftOverlay | undefined>(currentAgentGeometryDrafts)
   agentGeometryDraftsRef.current = currentAgentGeometryDrafts
-  const resetGeometry = geometry.reset
   const restoreGeometry = geometry.restore
   const syncGeometrySnapshot = geometry.syncSnapshot
   const createGeometryDraftState = geometry.draftState
@@ -183,6 +167,7 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
   )
   const geometryLocalDraftDirty = Object.keys(geometry.drafts).length > 0
   const experimentDirty = experimentSourceDirty || geometryGraphDirty
+  const hasUnsavedExperimentWork = experimentDirty
   const hasUnsavedWork = experimentDirty || geometryLocalDraftDirty
   const experimentClean = Boolean(experimentId && !experimentDirty && !geometry.hasReachableDrafts)
 
@@ -236,7 +221,7 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
     candidateProvenance: selection.measurement || pendingMeasurementId ? 'persisted-measurement' : 'editable',
     frozenMaterialSnapshot: candidateMaterialParameters,
     runtimeEnabled: authenticated && !geometry.hasReachableDrafts,
-    geometryDrafts: geometry.previewDraftActive ? geometry.draftOverlay : undefined,
+    geometryDrafts: currentAgentGeometryDrafts,
     resetKey: workspaceSession,
     sourceOnlyMaterials: !authenticated,
     onCandidateVarsRegenerated: handleCandidateVarsRegenerated,
@@ -486,9 +471,9 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
       setExperimentDescription(row.description ?? '')
       setCandidateVars(null)
       setCandidateMaterialParameters(null)
-      resetGeometry(row.source_bundle.geometrySnapshot)
+      syncGeometrySnapshot(row.source_bundle.geometrySnapshot)
     },
-    [clearMeasurement, resetGeometry],
+    [clearMeasurement, syncGeometrySnapshot],
   )
 
   const applyExperiment = useCallback(
@@ -540,9 +525,9 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
       setExperimentDescription(description)
       setCandidateVars(null)
       setCandidateMaterialParameters(null)
-      resetGeometry(sourceBundle.geometrySnapshot)
+      syncGeometrySnapshot(sourceBundle.geometrySnapshot)
     },
-    [clearMeasurement, resetGeometry],
+    [clearMeasurement, syncGeometrySnapshot],
   )
 
   const invalidate = useCallback(async () => {
@@ -609,7 +594,8 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
       setAgentWorkspaceIdentity(null)
       setAgentChange(null)
       const restoredGeometrySource = restoreGeometry(
-        draft.geometry,
+        draft.geometryManager,
+        draft.experimentGeometry,
         draft.experiment.document?.sourceBundle.files['geometry.tsx'],
       )
       const document = draft.experiment.document
@@ -648,24 +634,28 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
         experimentFile: string | null
         splitPercent: number
       }>,
-    ): WorkbenchDraft => ({
-      version: 10,
-      savedAt: Date.now(),
-      experiment: {
-        record: experimentRecord,
-        baselineBundle: baselineExperimentBundle,
-        document: experiment,
-        name: experimentName,
-        description: experimentDescription,
-      },
-      candidate: {
-        vars: candidateVars,
-        materialParameters: candidateMaterialParameters,
-      },
-      selection: selectionIds,
-      geometry: createGeometryDraftState(),
-      layout,
-    }),
+    ): WorkbenchDraft => {
+      const geometryDraft = createGeometryDraftState()
+      return {
+        version: 11,
+        savedAt: Date.now(),
+        experiment: {
+          record: experimentRecord,
+          baselineBundle: baselineExperimentBundle,
+          document: experiment,
+          name: experimentName,
+          description: experimentDescription,
+        },
+        candidate: {
+          vars: candidateVars,
+          materialParameters: candidateMaterialParameters,
+        },
+        selection: selectionIds,
+        geometryManager: geometryDraft.geometryManager,
+        experimentGeometry: geometryDraft.experimentGeometry,
+        layout,
+      }
+    },
     [
       baselineExperimentBundle,
       candidateMaterialParameters,
@@ -693,6 +683,7 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
     experimentSourceDirty,
     geometryGraphDirty,
     geometryLocalDraftDirty,
+    hasUnsavedExperimentWork,
     hasUnsavedWork,
     experimentClean,
     experimentStatus: definitionStatus(experiment, experimentRecord, experimentDirty),

@@ -61,8 +61,8 @@ export function useCaePageChrome({
   const actions = useMemo<Record<string, WorkbenchAction>>(() => {
     const loginReason = '로그인 후 사용할 수 있습니다.'
     const savedReason = '저장되고 편집되지 않은 Experiment가 필요합니다.'
-    const geometryDraftReason = workbench.geometryLocalDraftDirty
-      ? 'Geometry local draft를 Publish & Apply하거나 폐기해야 합니다.'
+    const geometryDraftReason = workbench.geometry.hasReachableDrafts
+      ? 'geometry.tsx의 @local import를 발행한 exact Version으로 바꿔야 합니다.'
       : undefined
     const busyReason = workbench.measurementActions.busy ? '다른 CAE 작업이 진행 중입니다.' : undefined
     const pendingResultReason = workbench.measurementActions.pendingRecordMeasurementId
@@ -122,7 +122,7 @@ export function useCaePageChrome({
           !authenticated ||
           !workbench.experiment ||
           Boolean(workbench.experimentRecord && !workbench.experimentManageable) ||
-          workbench.geometryLocalDraftDirty ||
+          workbench.geometry.hasReachableDrafts ||
           workbench.saving !== null,
         disabledReason: !authenticated
           ? loginReason
@@ -138,7 +138,7 @@ export function useCaePageChrome({
         label: 'Save Experiment As',
         icon: <SaveAll className="size-4" />,
         disabled:
-          !authenticated || !workbench.experiment || workbench.geometryLocalDraftDirty || workbench.saving !== null,
+          !authenticated || !workbench.experiment || workbench.geometry.hasReachableDrafts || workbench.saving !== null,
         disabledReason: !authenticated
           ? loginReason
           : !workbench.experiment
@@ -278,7 +278,7 @@ export function useCaePageChrome({
       },
       geometryTab: {
         id: 'tab-geometry',
-        label: 'Geometry Workspace',
+        label: 'Geometry Manager',
         icon: <Boxes className="size-4" />,
         onSelect: () => openTab('geometry'),
       },
@@ -294,7 +294,7 @@ export function useCaePageChrome({
         id: 'geometry-manager',
         label: 'Geometry Manager',
         icon: <Boxes className="size-4" />,
-        onSelect: () => setDialog('geometry-manager'),
+        onSelect: () => openTab('geometry'),
       },
       publishGeometryExport: {
         id: 'publish-geometry-export',
@@ -481,6 +481,7 @@ export function useCaePageChrome({
             actions.experimentHistory,
             actions.saveExperiment,
             actions.saveExperimentAs,
+            actions.publishGeometryExport,
             actions.generateCandidate,
             actions.saveCurrentMeasurement,
           ]}
@@ -498,17 +499,12 @@ export function useCaePageChrome({
       tabId: 'geometry',
       label: 'Geometry',
       content: (
-        <RibbonActions
-          actions={[actions.publishGeometryExport, actions.geometryManager]}
-          extraActions={<GeometryAuthoringRibbon state={geometryAuthoringState} />}
-        >
-          <span className="text-sm font-semibold">Geometry modules</span>
+        <RibbonActions actions={[]} extraActions={<GeometryAuthoringRibbon state={geometryAuthoringState} />}>
+          <span className="text-sm font-semibold">Geometry Manager</span>
           <span className="mt-1 text-xs text-muted-foreground">
             {workbench.geometryLocalDraftDirty
-              ? `${Object.keys(workbench.geometry.drafts).length} local draft · Simulation/영구 저장 차단`
-              : workbench.geometryGraphDirty
-                ? 'Published graph 변경 · Experiment 저장 필요'
-                : 'Exact published graph'}
+              ? `${Object.keys(workbench.geometry.drafts).length} local draft · 브라우저 세션에 저장됨`
+              : 'Official Catalog · Workspace Packages · Local Drafts'}
           </span>
         </RibbonActions>
       ),

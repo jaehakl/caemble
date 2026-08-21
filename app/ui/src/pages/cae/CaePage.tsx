@@ -12,7 +12,7 @@ import {
 } from '@/features/cae-workbench/chrome'
 import { ConfirmWorkbenchDialog } from '@/features/cae-workbench/dialogs'
 import { ExperimentEditor, RecordedDataEditor } from '@/features/cae-workbench/editors'
-import { GeometryWorkspaceContainer } from '@/features/cae-workbench/geometry'
+import { GeometryManager } from '@/features/cae-workbench/geometry'
 import { useCaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { WorkbenchTabId } from '@/features/cae-workbench/types'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
@@ -110,12 +110,23 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             onUndoAgentChange={workbench.undoAgentChange}
           />
         ) : tab === 'geometry' ? (
-          <GeometryWorkspaceContainer
-            authenticated={auth.isAuthenticated}
-            diagnostics={workbench.geometry.previewDiagnostics}
+          <GeometryManager
             geometry={workbench.geometry}
+            onCatalogDraftOpened={() => undefined}
             onAuthoringStateChange={setGeometryAuthoringState}
-            onOpenManager={() => page.setDialog('geometry-manager')}
+            onEdit={async (versionId, repositoryId, packageId) => {
+              await workbench.geometry.editPublishedVersion(versionId, repositoryId, packageId)
+            }}
+            onOpenExperiment={(experimentId) =>
+              page.guardReplacement(async () => {
+                await workbench.loadExperiment(experimentId)
+                page.openTab('experiment')
+              })
+            }
+            onOpenGeometrySource={openGeometrySource}
+            onUse={(versionId, exportName, alias) =>
+              workbench.geometry.usePublishedExport(versionId, exportName, alias)
+            }
           />
         ) : tab === 'recorded-data' ? (
           <RecordedDataEditor
@@ -206,12 +217,13 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             Experiment{' '}
             {workbench.experimentDirty ? 'edited' : workbench.experimentId ? `#${workbench.experimentId}` : 'local'}
           </Badge>
-          {workbench.geometryLocalDraftDirty ? (
-            <Badge className="h-5 rounded-sm bg-amber-500 px-1.5 text-white">
-              Geometry draft · 영구 저장/Simulation 차단
-            </Badge>
-          ) : workbench.geometryGraphDirty ? (
-            <Badge className="h-5 rounded-sm bg-muted px-1.5">Geometry graph edited</Badge>
+          <Badge
+            className={`h-5 rounded-sm px-1.5 ${workbench.geometryLocalDraftDirty ? 'bg-amber-500 text-white' : 'bg-muted'}`}
+          >
+            Geometry Manager · {Object.keys(workbench.geometry.drafts).length} local draft
+          </Badge>
+          {workbench.geometryGraphDirty ? (
+            <Badge className="h-5 rounded-sm bg-muted px-1.5">Experiment Geometry graph edited</Badge>
           ) : null}
           <Badge className="h-5 rounded-sm px-1.5">
             {workbench.measurementActions.pendingRecordMeasurementId
@@ -248,7 +260,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         authenticated={auth.isAuthenticated}
         dialog={page.dialog}
         guardReplacement={page.guardReplacement}
-        openGeometrySource={openGeometrySource}
         openTab={page.openTab}
         runSafely={page.runSafely}
         setDialog={page.setDialog}

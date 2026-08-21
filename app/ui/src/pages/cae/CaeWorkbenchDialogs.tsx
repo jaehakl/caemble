@@ -9,7 +9,7 @@ import {
 } from '@/features/cae-workbench/dialogs'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { SavedExperiment, WorkbenchTabId } from '@/features/cae-workbench/types'
-import { GeometryExportPublishDialog, GeometryManager } from '@/features/cae-workbench/geometry'
+import { GeometryExportPublishDialog } from '@/features/cae-workbench/geometry'
 import { SaveDefinitionDialog } from '@/features/viewer/persistence/SaveDefinitionDialog'
 import { assertExperimentSourceBundle } from '@/lib/cad'
 import { AnalysisWorkspace } from '@/pages/analysis/AnalysisPage'
@@ -21,7 +21,6 @@ export function CaeWorkbenchDialogs({
   authenticated,
   dialog,
   guardReplacement,
-  openGeometrySource,
   openTab,
   runSafely,
   setDialog,
@@ -30,22 +29,12 @@ export function CaeWorkbenchDialogs({
   authenticated: boolean
   dialog: WorkbenchDialog
   guardReplacement: (run: () => unknown | Promise<unknown>) => void
-  openGeometrySource: () => void
   openTab: (tab: WorkbenchTabId) => void
   runSafely: (run: () => unknown | Promise<unknown>) => void
   setDialog: Dispatch<SetStateAction<WorkbenchDialog>>
   workbench: CaeWorkbenchState
 }) {
   const closeDialog = (open: boolean) => !open && setDialog(null)
-  const selectedGeometryDraft = workbench.geometry.selectedCoordinate
-    ? workbench.geometry.drafts[workbench.geometry.selectedCoordinate]
-    : null
-  const selectedGeometryModule = workbench.geometry.selectedCoordinate
-    ? [...workbench.geometry.currentSnapshot.modules, ...workbench.geometry.stagedModules].find(
-        (module) => module.coordinate === workbench.geometry.selectedCoordinate,
-      )
-    : null
-
   return (
     <>
       <DefinitionPickerDialog
@@ -121,49 +110,6 @@ export function CaeWorkbenchDialogs({
           </DialogHeader>
           <div className="min-h-0 overflow-auto p-4">
             <MaterialManager onRequestLogin={() => setDialog('account')} />
-          </div>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={dialog === 'geometry-manager'} onOpenChange={closeDialog}>
-        <DialogContent className="grid h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-0 sm:max-w-[calc(100%-2rem)]">
-          <DialogHeader className="border-b px-5 py-4 pr-12">
-            <DialogTitle>Geometry Manager</DialogTitle>
-            <DialogDescription>
-              Geometry Package와 exact Version, dependency 및 참조 Experiment를 조회하고 정리합니다.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="min-h-0 overflow-hidden">
-            <GeometryManager
-              geometry={workbench.geometry}
-              onCatalogDraftOpened={() => {
-                setDialog(null)
-                openTab('geometry')
-              }}
-              initialPackageId={selectedGeometryDraft?.packageId ?? null}
-              initialVersionId={
-                selectedGeometryDraft?.baseGeometryVersionId ?? selectedGeometryModule?.geometryVersionId
-              }
-              onEdit={(versionId, repositoryId, packageId) =>
-                runSafely(async () => {
-                  await workbench.geometry.editPublishedVersion(versionId, repositoryId, packageId)
-                  setDialog(null)
-                  openTab('geometry')
-                })
-              }
-              onOpenGeometrySource={() => {
-                setDialog(null)
-                openGeometrySource()
-              }}
-              onOpenExperiment={(experimentId) =>
-                guardReplacement(async () => {
-                  await workbench.loadExperiment(experimentId)
-                  setDialog(null)
-                })
-              }
-              onUse={(versionId, exportName, alias) =>
-                workbench.geometry.usePublishedExport(versionId, exportName, alias)
-              }
-            />
           </div>
         </DialogContent>
       </Dialog>

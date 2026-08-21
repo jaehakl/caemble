@@ -29,7 +29,7 @@ function validTabs(value: readonly WorkbenchTabId[]) {
 
 function starterDraft(): WorkbenchDraft {
   return {
-    version: 10,
+    version: 11,
     savedAt: Date.now(),
     experiment: {
       record: null,
@@ -40,13 +40,13 @@ function starterDraft(): WorkbenchDraft {
     },
     candidate: { vars: null, materialParameters: null },
     selection: { measurementId: null },
-    geometry: {
+    geometryManager: {
       drafts: {},
-      stagedModules: [],
-      selectedCoordinate: 'geometry.tsx',
+      resolvedModules: [],
+      selectedCoordinate: null,
       selectedExport: null,
-      expandedPaths: ['geometry.tsx'],
     },
+    experimentGeometry: { stagedModules: [] },
     layout: {
       openTabs: defaultCaeWorkbenchTabs,
       activeTab: 'experiment',
@@ -98,21 +98,21 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
         toast.error(workbench.saving ? '저장이 끝난 뒤 source를 바꾸세요.' : 'CAE 작업이 끝난 뒤 source를 바꾸세요.')
         return
       }
-      if (!workbench.hasUnsavedWork) {
+      if (!workbench.hasUnsavedExperimentWork) {
         runSafely(run)
         return
       }
       setConfirmation({
         title: '저장하지 않은 편집을 바꿀까요?',
         description:
-          'Experiment와 Geometry의 로컬 편집 내용이 새 선택으로 대체됩니다. 현재 브라우저 세션의 draft도 새 작업으로 바뀝니다.',
+          '저장하지 않은 Experiment 편집 내용이 새 선택으로 대체됩니다. Geometry Manager draft는 유지됩니다.',
         confirmLabel: '편집 내용 바꾸기',
         run,
       })
     },
     [
       runSafely,
-      workbench.hasUnsavedWork,
+      workbench.hasUnsavedExperimentWork,
       workbench.measurementActions.busy,
       workbench.measurementActions.pendingRecordMeasurementId,
       workbench.saving,
@@ -248,8 +248,8 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
         const experimentChanges = experimentId !== currentWorkbench.experimentId
         if (
           experimentChanges &&
-          currentWorkbench.hasUnsavedWork &&
-          !window.confirm('저장하지 않은 Experiment/Geometry 편집을 바꾸고 URL의 Experiment를 열까요?')
+          currentWorkbench.hasUnsavedExperimentWork &&
+          !window.confirm('저장하지 않은 Experiment 편집을 바꾸고 URL의 Experiment를 열까요?')
         ) {
           syncSelectionToUrl()
           return

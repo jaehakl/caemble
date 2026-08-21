@@ -18,7 +18,7 @@ import {
   projectGeometryExportSource,
   type LocalGeometryCoordinate,
 } from '@/lib/cad'
-import type { GeometryWorkspaceState } from './useGeometryWorkspaceState'
+import type { GeometryManagerState } from './useGeometryWorkspaceState'
 
 const slugPattern = '[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?'
 
@@ -42,7 +42,7 @@ export function GeometryExportPublishDialog({
   onOpenChange,
   open,
 }: {
-  geometry: GeometryWorkspaceState
+  geometry: GeometryManagerState
   onOpenChange: (open: boolean) => void
   open: boolean
 }) {
@@ -146,7 +146,7 @@ export default defineTask({ kernel: { name: 'preview', version: '1.0.0' }, confi
         createExperimentSourceBundle(files, geometry.currentSnapshot),
       )
       await compileCadDocument(document, {
-        geometryDrafts: { ...geometry.draftOverlay, [coordinate]: { source: projection.source } },
+        geometryDrafts: { ...geometry.experimentAvailableOverlay, [coordinate]: { source: projection.source } },
       })
       const result = await geometry.publishNewGeometry({
         description,

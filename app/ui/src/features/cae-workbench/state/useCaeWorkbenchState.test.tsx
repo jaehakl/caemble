@@ -5,7 +5,14 @@ import { act, renderHook } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
-import { createGeometrySnapshot, geometryModuleHash, geometrySourceHash } from '@/lib/cad'
+import {
+  createCadSourceDocument,
+  createExperimentSourceBundle,
+  createGeometrySnapshot,
+  geometryModuleHash,
+  geometrySourceHash,
+  type ExperimentSourceDocument,
+} from '@/lib/cad'
 import type { SavedExperiment } from '../types'
 import { useCaeWorkbenchState } from './useCaeWorkbenchState'
 
@@ -113,7 +120,7 @@ beforeEach(() => {
 })
 
 describe('useCaeWorkbenchState', () => {
-  it('owns a single Experiment and emits a v9 session draft', () => {
+  it('owns a single Experiment and emits split v11 Geometry state', () => {
     const { result } = renderHook(() => useCaeWorkbenchState({ id: 'user-1', roles: ['user'] } as never, true), {
       wrapper: wrapper(),
     })
@@ -133,17 +140,17 @@ describe('useCaeWorkbenchState', () => {
         splitPercent: 50,
       }),
     ).toMatchObject({
-      version: 10,
+      version: 11,
       experiment: { record: { id: 7 } },
       candidate: { vars: null, materialParameters: null },
       selection: { measurementId: null },
-      geometry: {
+      geometryManager: {
         drafts: {},
-        stagedModules: [],
-        selectedCoordinate: 'geometry.tsx',
-        selectedExport: 'StarterStructure',
-        expandedPaths: ['geometry.tsx'],
+        resolvedModules: [],
+        selectedCoordinate: null,
+        selectedExport: null,
       },
+      experimentGeometry: { stagedModules: [] },
     })
   })
 
@@ -171,6 +178,22 @@ describe('useCaeWorkbenchState', () => {
     expect(result.current.experimentId).toBe(2)
   })
 
+  it('keeps Geometry Manager drafts when the current Experiment changes', () => {
+    const user = { id: 'user-1', roles: ['user'], geometry_namespace: 'jlee' } as never
+    const { result } = renderHook(() => useCaeWorkbenchState(user, true), { wrapper: wrapper() })
+    act(() => {
+      result.current.geometry.createDraft({ repository: 'common', packageName: 'part' })
+      result.current.applyExperiment(experiment(7))
+    })
+
+    expect(result.current.geometry.drafts).toHaveProperty('caemble:geometry/jlee/common/part@local')
+    expect(result.current.geometry.selectedCoordinate).toBe('caemble:geometry/jlee/common/part@local')
+    expect(result.current.geometryLocalDraftDirty).toBe(true)
+    expect(result.current.hasUnsavedExperimentWork).toBe(false)
+    expect(result.current.hasUnsavedWork).toBe(true)
+    expect(result.current.experimentDirty).toBe(false)
+  })
+
   it('treats a newly opened local template as the clean baseline and becomes dirty after editing', () => {
     const { result } = renderHook(() => useCaeWorkbenchState(null, false), { wrapper: wrapper() })
 
@@ -178,7 +201,20 @@ describe('useCaeWorkbenchState', () => {
     expect(result.current.experimentDirty).toBe(false)
     expect(result.current.hasUnsavedWork).toBe(false)
 
-    act(() => result.current.geometry.updateSource(`${starterExperimentSourceBundle.files['geometry.tsx']}\n// edited`))
+    const onExperimentChange = mocks.cadWorkspace.mock.calls[mocks.cadWorkspace.mock.calls.length - 1][1] as (
+      document: ExperimentSourceDocument,
+    ) => void
+    act(() =>
+      onExperimentChange(
+        createCadSourceDocument(
+          'experiment',
+          createExperimentSourceBundle({
+            ...starterExperimentSourceBundle.files,
+            'geometry.tsx': `${starterExperimentSourceBundle.files['geometry.tsx']}\n// edited`,
+          }),
+        ) as ExperimentSourceDocument,
+      ),
+    )
     expect(result.current.experimentDirty).toBe(true)
     expect(result.current.hasUnsavedWork).toBe(true)
   })

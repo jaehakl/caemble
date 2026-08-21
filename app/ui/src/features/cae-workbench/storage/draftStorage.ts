@@ -12,7 +12,7 @@ import {
 } from '@/lib/cad'
 import type { GeometryLocalDraft, WorkbenchDraft } from '../types'
 
-export const WORKBENCH_DRAFT_VERSION = 10 as const
+export const WORKBENCH_DRAFT_VERSION = 11 as const
 export const WORKBENCH_DRAFT_STORAGE_KEY = 'caemble:cae-workbench-draft'
 
 const localCoordinatePattern =
@@ -35,7 +35,7 @@ function validText(value: unknown, maxBytes: number) {
   return bytes.byteLength <= maxBytes && new TextDecoder('utf-8', { fatal: true }).decode(bytes) === value
 }
 
-function validDrafts(value: unknown): value is WorkbenchDraft['geometry']['drafts'] {
+function validDrafts(value: unknown): value is WorkbenchDraft['geometryManager']['drafts'] {
   if (!plainObject(value) || Object.keys(value).length > MAX_GEOMETRY_MODULES) return false
   const ids = new Set<string>()
   try {
@@ -91,7 +91,7 @@ function stagedSnapshot(modules: readonly GeometrySnapshotModule[]) {
 }
 
 function validSelectedCoordinate(value: unknown) {
-  if (value === null || value === 'geometry.tsx') return true
+  if (value === null) return true
   if (typeof value !== 'string') return false
   if (localCoordinatePattern.test(value)) return true
   try {
@@ -117,14 +117,15 @@ function isWorkbenchDraft(value: unknown): value is WorkbenchDraft {
       (draft.candidate.materialParameters !== null && !plainObject(draft.candidate.materialParameters)) ||
       !plainObject(draft.selection) ||
       !validOptionalId(draft.selection.measurementId) ||
-      !plainObject(draft.geometry) ||
-      !validDrafts(draft.geometry.drafts) ||
-      !Array.isArray(draft.geometry.stagedModules) ||
-      draft.geometry.stagedModules.length > MAX_GEOMETRY_MODULES ||
-      !validSelectedCoordinate(draft.geometry.selectedCoordinate) ||
-      (draft.geometry.selectedExport !== null && typeof draft.geometry.selectedExport !== 'string') ||
-      !Array.isArray(draft.geometry.expandedPaths) ||
-      draft.geometry.expandedPaths.some((path) => typeof path !== 'string' || path.length > 4096) ||
+      !plainObject(draft.geometryManager) ||
+      !validDrafts(draft.geometryManager.drafts) ||
+      !Array.isArray(draft.geometryManager.resolvedModules) ||
+      draft.geometryManager.resolvedModules.length > MAX_GEOMETRY_MODULES ||
+      !validSelectedCoordinate(draft.geometryManager.selectedCoordinate) ||
+      (draft.geometryManager.selectedExport !== null && typeof draft.geometryManager.selectedExport !== 'string') ||
+      !plainObject(draft.experimentGeometry) ||
+      !Array.isArray(draft.experimentGeometry.stagedModules) ||
+      draft.experimentGeometry.stagedModules.length > MAX_GEOMETRY_MODULES ||
       !plainObject(draft.layout) ||
       !Array.isArray(draft.layout.openTabs) ||
       draft.layout.openTabs.some((tab) => !validTabs.includes(tab)) ||
@@ -140,10 +141,31 @@ function isWorkbenchDraft(value: unknown): value is WorkbenchDraft {
       if (!plainObject(draft.experiment.record)) return false
       assertExperimentSourceBundle(draft.experiment.record.source_bundle)
     }
-    stagedSnapshot(draft.geometry.stagedModules)
+    stagedSnapshot(draft.geometryManager.resolvedModules)
+    stagedSnapshot(draft.experimentGeometry.stagedModules)
     return true
   } catch {
     return false
+  }
+}
+
+function migrateWorkbenchDraft(value: unknown): unknown {
+  if (!plainObject(value) || value.version !== 10 || !plainObject(value.geometry)) return value
+  const geometry = value.geometry
+  const selectedCoordinate = geometry.selectedCoordinate === 'geometry.tsx' ? null : geometry.selectedCoordinate
+  const stagedModules = Array.isArray(geometry.stagedModules) ? geometry.stagedModules : []
+  const rest = { ...value }
+  delete rest.geometry
+  return {
+    ...rest,
+    version: WORKBENCH_DRAFT_VERSION,
+    geometryManager: {
+      drafts: geometry.drafts,
+      resolvedModules: stagedModules,
+      selectedCoordinate,
+      selectedExport: geometry.selectedExport,
+    },
+    experimentGeometry: { stagedModules },
   }
 }
 
@@ -151,9 +173,12 @@ export async function loadWorkbenchDraft() {
   const serialized = sessionStorage.getItem(WORKBENCH_DRAFT_STORAGE_KEY)
   if (serialized === null) return null
   try {
-    const stored: unknown = JSON.parse(serialized)
+    const stored = migrateWorkbenchDraft(JSON.parse(serialized) as unknown)
     if (!isWorkbenchDraft(stored)) throw new Error('Invalid Workbench draft.')
-    await validateGeometrySnapshotHashes(stagedSnapshot(stored.geometry.stagedModules))
+    await Promise.all([
+      validateGeometrySnapshotHashes(stagedSnapshot(stored.geometryManager.resolvedModules)),
+      validateGeometrySnapshotHashes(stagedSnapshot(stored.experimentGeometry.stagedModules)),
+    ])
     return stored
   } catch {
     sessionStorage.removeItem(WORKBENCH_DRAFT_STORAGE_KEY)

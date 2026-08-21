@@ -23,9 +23,10 @@ vi.mock('sonner', () => ({ toast: { error: mocks.toastError } }))
 function workbench(overrides: Record<string, unknown> = {}) {
   return {
     applyExperiment: vi.fn(),
-    draft: vi.fn(() => ({ version: 10 })),
+    draft: vi.fn(() => ({ version: 11 })),
     experimentDirty: false,
     hasUnsavedWork: false,
+    hasUnsavedExperimentWork: false,
     experimentId: null,
     loadExperiment: vi.fn().mockResolvedValue(undefined),
     measurementActions: {
@@ -106,7 +107,7 @@ describe('useCaePageSession', () => {
     await waitFor(() => expect(result.current.initialized).toBe(true))
     expect(state.restoreDraft).toHaveBeenCalledWith(
       expect.objectContaining({
-        version: 10,
+        version: 11,
         experiment: expect.objectContaining({
           name: 'Starter Experiment',
           baselineBundle: expect.objectContaining({ files: expect.any(Object) }),
@@ -114,13 +115,13 @@ describe('useCaePageSession', () => {
         }),
         candidate: { vars: null, materialParameters: null },
         selection: { measurementId: null },
-        geometry: {
+        geometryManager: {
           drafts: {},
-          stagedModules: [],
-          selectedCoordinate: 'geometry.tsx',
+          resolvedModules: [],
+          selectedCoordinate: null,
           selectedExport: null,
-          expandedPaths: ['geometry.tsx'],
         },
+        experimentGeometry: { stagedModules: [] },
         layout: expect.objectContaining({ activeTab: 'experiment' }),
       }),
     )
@@ -128,7 +129,7 @@ describe('useCaePageSession', () => {
   })
 
   it('guards replacement when the Experiment source is dirty', async () => {
-    const state = workbench({ experimentDirty: true, hasUnsavedWork: true })
+    const state = workbench({ experimentDirty: true, hasUnsavedWork: true, hasUnsavedExperimentWork: true })
     const { result } = renderHook(() => useCaePageSession(state), { wrapper: wrapper() })
     await waitFor(() => expect(result.current.initialized).toBe(true))
     const replace = vi.fn()
@@ -137,6 +138,18 @@ describe('useCaePageSession', () => {
 
     expect(replace).not.toHaveBeenCalled()
     expect(result.current.confirmation?.title).toContain('저장하지 않은 편집')
+  })
+
+  it('does not guard Experiment replacement for an independent Geometry Manager draft', async () => {
+    const state = workbench({ hasUnsavedWork: true, hasUnsavedExperimentWork: false })
+    const { result } = renderHook(() => useCaePageSession(state), { wrapper: wrapper() })
+    await waitFor(() => expect(result.current.initialized).toBe(true))
+    const replace = vi.fn()
+
+    act(() => result.current.guardReplacement(replace))
+
+    await waitFor(() => expect(replace).toHaveBeenCalledOnce())
+    expect(result.current.confirmation).toBeNull()
   })
 
   it('keeps a session result in place until its RecordedData save is retried', async () => {

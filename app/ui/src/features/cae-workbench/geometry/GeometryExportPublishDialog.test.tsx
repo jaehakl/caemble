@@ -3,7 +3,7 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { GeometryWorkspaceState } from './useGeometryWorkspaceState'
+import type { GeometryManagerState } from './useGeometryWorkspaceState'
 import { GeometryExportPublishDialog } from './GeometryExportPublishDialog'
 
 const cad = vi.hoisted(() => ({ compile: vi.fn(async () => undefined) }))
@@ -18,7 +18,7 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-function geometryState(source: string, overrides: Partial<GeometryWorkspaceState> = {}) {
+function geometryState(source: string, overrides: Partial<GeometryManagerState> = {}) {
   const publishNewGeometry = vi.fn(async () => ({
     stageError: null,
     version: { id: 42, coordinate: 'caemble:geometry/jlee/common/second-part@0.1.0' },
@@ -29,13 +29,13 @@ function geometryState(source: string, overrides: Partial<GeometryWorkspaceState
     namespace: 'jlee',
     repositories: [],
     currentSnapshot: { schemaVersion: 2, entryImports: [], modules: [] },
-    draftOverlay: {},
+    experimentAvailableOverlay: {},
     busy: false,
     refreshRepositories: vi.fn(async () => []),
     setNamespace: vi.fn(async (value: string) => value),
     publishNewGeometry,
     ...overrides,
-  } as unknown as GeometryWorkspaceState
+  } as unknown as GeometryManagerState
 }
 
 describe('GeometryExportPublishDialog', () => {
