@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,6 +15,32 @@ const elementManifestPath = path.join(root, 'src/lib/cad/elements/manifest.json'
 const authoringManifestPath = path.join(root, 'src/lib/cad/api/authoring-manifest.json')
 const elementManifest = JSON.parse(await readFile(elementManifestPath, 'utf8'))
 const authoringManifest = JSON.parse(await readFile(authoringManifestPath, 'utf8'))
+
+function catalogQuery(resource, key) {
+  const catalogRoot = path.resolve(root, '../catalog')
+  const executable = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3')
+  const output = execFileSync(
+    executable,
+    [
+      '-m',
+      'caemble_catalog',
+      '--database',
+      path.join(catalogRoot, 'caemble_catalog/catalog.sqlite3'),
+      'query',
+      resource,
+      key,
+    ],
+    {
+      cwd: catalogRoot,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PYTHONPATH: [catalogRoot, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
+      },
+    },
+  )
+  return JSON.parse(output)
+}
 
 function tsString(value) {
   return `'${value.replaceAll('\\', '\\\\').replaceAll("'", "\\'")}'`
@@ -463,16 +490,16 @@ const coreDeclaration = await formatGenerated(
 )
 const jsxDeclaration = await formatGenerated('src/lib/cad/api/cad-jsx.d.ts', generatedJsxDeclaration())
 const declarationFingerprint = sha256(['@caemble/core', coreDeclaration, 'cad-jsx', jsxDeclaration].join('\0'))
-const [authoringReferenceModule, authoringContractModule, geometrySkeletonModule] = await Promise.all([
+const [authoringReferenceModule, authoringContractModule] = await Promise.all([
   loadBundledModule(path.join(root, 'src/lib/cad/authoringReference.ts')),
   loadBundledModule(path.join(root, 'src/lib/cad/elements/authoringContract.ts')),
-  loadBundledModule(path.join(root, 'src/lib/examples/geometryAuthoringSkeleton.ts')),
 ])
+const geometrySkeleton = catalogQuery('geometry', 'geometry-authoring-skeleton')
 const authoringReferencePayload = authoringReferenceModule.buildCadAuthoringReference({
   authoringContract: authoringContractModule.cadAuthoringContract,
   declarationFingerprint,
   elements: elementCatalog,
-  geometrySkeleton: geometrySkeletonModule.geometryAuthoringSkeletonCode,
+  geometrySkeleton: geometrySkeleton.source,
 })
 const authoringReferenceHash = sha256(JSON.stringify(authoringReferencePayload))
 const aiAgentPromptToolVersion = `caemble-ai-agent-v4-${authoringReferenceHash.slice(0, 12)}`

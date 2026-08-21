@@ -523,7 +523,7 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
   const newExperiment = useCallback(
     (
       sourceBundle: ExperimentSourceBundle = starterExperimentSourceBundle,
-      name = 'Untitled Experiment',
+      name = 'Starter Experiment',
       description = '',
     ) => {
       const document = createExperimentDocument(sourceBundle)

@@ -109,6 +109,7 @@ describe('source-based Geometry workspace state', () => {
     const draft = Object.values(result.current.drafts)[0]
     expect(draft.coordinate).toBe('caemble:geometry/jlee/common/notched-conductor@local')
     expect(draft.source).toContain('export const NotchedConductor')
+    expect(draft.source).toContain('= () => <></>')
     expect(draft.source).not.toContain('export default')
     expect(draft.standalonePreview).toBe(true)
   })
@@ -163,11 +164,11 @@ export const Second: Geometry = () => <sphere id="second" />
       coordinate = result.current.createDraft({ repository: 'common', packageName: 'offline-part' })
     })
     act(() =>
-      result.current.updateSource(result.current.drafts[coordinate].source.replace('[100, 12, 10]', '[20, 10, 5]')),
+      result.current.updateSource(result.current.drafts[coordinate].source.replace('<></>', '<box id="body" />')),
     )
 
     expect(coordinate).toBe('caemble:geometry/local/common/offline-part@local')
-    expect(result.current.drafts[coordinate].source).toContain('[20, 10, 5]')
+    expect(result.current.drafts[coordinate].source).toContain('<box id="body" />')
     expect(api.listRows).not.toHaveBeenCalled()
     await expect(result.current.requestPublish(coordinate)).rejects.toThrow('로그인')
     await expect(result.current.setNamespace('designer')).rejects.toThrow('로그인')
@@ -178,6 +179,46 @@ export const Second: Geometry = () => <sphere id="second" />
     expect(api.planPublish).not.toHaveBeenCalled()
     expect(api.resolveVersion).not.toHaveBeenCalled()
     expect(api.createRepository).not.toHaveBeenCalled()
+  })
+
+  it('opens an official Geometry in the catalog namespace without overwriting an edited existing draft', () => {
+    const { result } = renderHook(
+      () =>
+        useGeometryWorkspaceState({
+          authenticated: false,
+          initialNamespace: 'local',
+          onExperimentChange: vi.fn(),
+          snapshot: emptySnapshot,
+          sourceFiles,
+        }),
+      { wrapper },
+    )
+    const officialSource =
+      "import { type Geometry } from '@caemble/core'\nexport const Basket: Geometry = () => <></>\n"
+    let coordinate = '' as LocalGeometryCoordinate
+    act(() => {
+      const opened = result.current.openCatalogDraft({
+        key: 'basketball-goal',
+        source: officialSource,
+        description: 'Official source',
+      })
+      expect(opened.created).toBe(true)
+      coordinate = opened.coordinate
+    })
+    act(() => result.current.updateSource(`${officialSource}// local edit\n`))
+    act(() => {
+      expect(
+        result.current.openCatalogDraft({
+          key: 'basketball-goal',
+          source: `${officialSource}// changed upstream\n`,
+          description: 'Changed official source',
+        }),
+      ).toEqual({ coordinate, created: false })
+    })
+
+    expect(coordinate).toBe('caemble:geometry/local/catalog/basketball-goal@local')
+    expect(result.current.selectedCoordinate).toBe(coordinate)
+    expect(result.current.drafts[coordinate].source).toBe(`${officialSource}// local edit\n`)
   })
 
   it('rekeys unbased local drafts and imports after the signed-in namespace becomes known', async () => {
@@ -366,14 +407,12 @@ export const Second: Geometry = () => <sphere id="second" />
       target = result.current.createDraft({ repository: 'common', packageName: 'target' })
     })
     await act(() => result.current.requestPublish(target))
-    act(() =>
-      result.current.updateSource(result.current.drafts[target].source.replace('[100, 12, 10]', '[50, 12, 10]')),
-    )
+    act(() => result.current.updateSource(result.current.drafts[target].source.replace('<></>', '<box id="body" />')))
     await act(() => result.current.confirmPublish())
 
     expect(api.planPublish).toHaveBeenCalledTimes(2)
     expect(api.publish).not.toHaveBeenCalled()
-    expect(result.current.publishPlan?.request.drafts[0].source).toContain('[50, 12, 10]')
+    expect(result.current.publishPlan?.request.drafts[0].source).toContain('<box id="body" />')
   })
 
   it('reconciles restored new-repository drafts to the current namespace without changing based drafts', () => {

@@ -19,6 +19,9 @@ try {
     define: {
       'import.meta.env.MODE': '"test"',
     },
+    banner: {
+      js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
+    },
     outfile: bundledEntry,
     logLevel: 'silent',
   })

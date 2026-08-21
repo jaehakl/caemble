@@ -1,18 +1,11 @@
 {
   "formatVersion": 1,
   "payload": {
-    "solverContracts": [
-      {
-        "name": "dc-current-density",
-        "version": "0.1.0",
-        "contractDigest": "9962cb167fc38f7899ece5578300683d9c226b7054843cce446b24c42b5c59c4"
-      }
-    ],
     "measurement": {
       "kind": "measurement",
       "experiment": {
         "kind": "experiment",
-        "sourceHash": "8a0209d872cec409c2a61b7fed50ad84424ecbcf0a7868e0dbd06d82033ce141",
+        "sourceHash": "932d37c881e4cbd45895666b3b2d0b42650b15b70e6576729a33218a378a6e48",
         "variables": {
           "conductorSize": [
             100,
@@ -53,7 +46,7 @@
           "lengthUnit": "mm",
           "parts": [
             {
-              "id": "conductor",
+              "id": "conductor.box",
               "geometry": {
                 "kind": "mesh",
                 "positions": {
@@ -81,6 +74,7 @@
                   }
                 }
               },
+              "materialRole": "body",
               "material": {
                 "name": "Copper",
                 "source": "reference",
@@ -131,42 +125,42 @@
               },
               "surfaces": [
                 {
-                  "id": "conductor/surface-1",
+                  "id": "conductor.box/surface-1",
                   "name": "-X",
                   "polygonIndices": [
                     0
                   ]
                 },
                 {
-                  "id": "conductor/surface-2",
+                  "id": "conductor.box/surface-2",
                   "name": "+X",
                   "polygonIndices": [
                     1
                   ]
                 },
                 {
-                  "id": "conductor/surface-3",
+                  "id": "conductor.box/surface-3",
                   "name": "-Y",
                   "polygonIndices": [
                     2
                   ]
                 },
                 {
-                  "id": "conductor/surface-4",
+                  "id": "conductor.box/surface-4",
                   "name": "+Y",
                   "polygonIndices": [
                     3
                   ]
                 },
                 {
-                  "id": "conductor/surface-5",
+                  "id": "conductor.box/surface-5",
                   "name": "Bottom",
                   "polygonIndices": [
                     4
                   ]
                 },
                 {
-                  "id": "conductor/surface-6",
+                  "id": "conductor.box/surface-6",
                   "name": "Top",
                   "polygonIndices": [
                     5
@@ -187,47 +181,52 @@
                   {
                     "key": "experiment/root/result",
                     "label": "<box>",
+                    "globalId": "conductor.box",
                     "children": [
                       {
-                        "key": "experiment/root/result/conductor/surface-1",
+                        "key": "experiment/root/result/conductor.box/surface-1",
                         "label": "-X",
-                        "surfaceId": "conductor/surface-1",
+                        "surfaceId": "conductor.box/surface-1",
                         "children": []
                       },
                       {
-                        "key": "experiment/root/result/conductor/surface-2",
+                        "key": "experiment/root/result/conductor.box/surface-2",
                         "label": "+X",
-                        "surfaceId": "conductor/surface-2",
+                        "surfaceId": "conductor.box/surface-2",
                         "children": []
                       },
                       {
-                        "key": "experiment/root/result/conductor/surface-3",
+                        "key": "experiment/root/result/conductor.box/surface-3",
                         "label": "-Y",
-                        "surfaceId": "conductor/surface-3",
+                        "surfaceId": "conductor.box/surface-3",
                         "children": []
                       },
                       {
-                        "key": "experiment/root/result/conductor/surface-4",
+                        "key": "experiment/root/result/conductor.box/surface-4",
                         "label": "+Y",
-                        "surfaceId": "conductor/surface-4",
+                        "surfaceId": "conductor.box/surface-4",
                         "children": []
                       },
                       {
-                        "key": "experiment/root/result/conductor/surface-5",
+                        "key": "experiment/root/result/conductor.box/surface-5",
                         "label": "Bottom",
-                        "surfaceId": "conductor/surface-5",
+                        "surfaceId": "conductor.box/surface-5",
                         "children": []
                       },
                       {
-                        "key": "experiment/root/result/conductor/surface-6",
+                        "key": "experiment/root/result/conductor.box/surface-6",
                         "label": "Top",
-                        "surfaceId": "conductor/surface-6",
+                        "surfaceId": "conductor.box/surface-6",
                         "children": []
                       }
-                    ]
+                    ],
+                    "geometryId": "conductor.box"
                   }
                 ],
-                "geometryId": "conductor"
+                "groupId": "conductor",
+                "geometryIds": [
+                  "conductor.box"
+                ]
               }
             ]
           },
@@ -240,7 +239,7 @@
                 "conductor"
               ],
               "geometryIds": [
-                "conductor"
+                "conductor.box"
               ],
               "surfaceIds": [],
               "missingMemberIds": []
@@ -252,13 +251,13 @@
               "name": "sourceTerminal",
               "kind": "surface",
               "memberIds": [
-                "conductor/surface-1"
+                "conductor.box/surface-1"
               ],
               "geometryIds": [
-                "conductor"
+                "conductor.box"
               ],
               "surfaceIds": [
-                "conductor/surface-1"
+                "conductor.box/surface-1"
               ],
               "missingMemberIds": []
             },
@@ -267,25 +266,25 @@
               "name": "referenceTerminal",
               "kind": "surface",
               "memberIds": [
-                "conductor/surface-2"
+                "conductor.box/surface-2"
               ],
               "geometryIds": [
-                "conductor"
+                "conductor.box"
               ],
               "surfaceIds": [
-                "conductor/surface-2"
+                "conductor.box/surface-2"
               ],
               "missingMemberIds": []
             }
           ],
-          "sceneHash": "b2e3660db6311e397db52ee7a5757a9d26321e63fbe6f06102f9d392bc140c6d"
+          "sceneHash": "98980b7390b3f9019be4cf65d81ad939eeb457651e837af196ea18062afd0f41"
         },
         "taskScenes": {
           "solveCurrent": {
             "lengthUnit": "mm",
             "parts": [
               {
-                "id": "probe",
+                "id": "probe.box",
                 "geometry": {
                   "kind": "mesh",
                   "positions": {
@@ -313,44 +312,93 @@
                     }
                   }
                 },
+                "materialRole": "body",
+                "material": {
+                  "name": "Copper",
+                  "source": "reference",
+                  "errorRate": 0,
+                  "variables": {
+                    "electrical.conductivity": {
+                      "dtype": "float64",
+                      "unit": "S.m-1",
+                      "quantityKind": "electromagnetism.ElectricConductivity",
+                      "errorRate": 0,
+                      "basis": [
+                        [
+                          1,
+                          0,
+                          0
+                        ],
+                        [
+                          0,
+                          1,
+                          0
+                        ],
+                        [
+                          0,
+                          0,
+                          1
+                        ]
+                      ],
+                      "value": [
+                        [
+                          59600000,
+                          0,
+                          0
+                        ],
+                        [
+                          0,
+                          59600000,
+                          0
+                        ],
+                        [
+                          0,
+                          0,
+                          59600000
+                        ]
+                      ]
+                    },
+                    "color": "#d97706"
+                  }
+                },
                 "surfaces": [
                   {
-                    "id": "probe/surface-1",
+                    "id": "probe.box/surface-1",
                     "name": "-X",
                     "polygonIndices": [
                       0
                     ]
                   },
                   {
-                    "id": "probe/surface-2",
+                    "id": "probe.box/surface-2",
                     "name": "+X",
                     "polygonIndices": [
                       1
                     ]
                   },
                   {
-                    "id": "probe/surface-3",
+                    "id": "probe.box/surface-3",
                     "name": "-Y",
                     "polygonIndices": [
                       2
                     ]
                   },
                   {
-                    "id": "probe/surface-4",
+                    "id": "probe.box/surface-4",
                     "name": "+Y",
                     "polygonIndices": [
                       3
                     ]
                   },
                   {
-                    "id": "probe/surface-5",
+                    "id": "probe.box/surface-5",
                     "name": "Bottom",
                     "polygonIndices": [
                       4
                     ]
                   },
                   {
-                    "id": "probe/surface-6",
+                    "id": "probe.box/surface-6",
                     "name": "Top",
                     "polygonIndices": [
                       5
@@ -371,53 +419,58 @@
                     {
                       "key": "task \"solvecurrent\"/root/result",
                       "label": "<box>",
+                      "globalId": "probe.box",
                       "children": [
                         {
-                          "key": "task \"solvecurrent\"/root/result/probe/surface-1",
+                          "key": "task \"solvecurrent\"/root/result/probe.box/surface-1",
                           "label": "-X",
-                          "surfaceId": "probe/surface-1",
+                          "surfaceId": "probe.box/surface-1",
                           "children": []
                         },
                         {
-                          "key": "task \"solvecurrent\"/root/result/probe/surface-2",
+                          "key": "task \"solvecurrent\"/root/result/probe.box/surface-2",
                           "label": "+X",
-                          "surfaceId": "probe/surface-2",
+                          "surfaceId": "probe.box/surface-2",
                           "children": []
                         },
                         {
-                          "key": "task \"solvecurrent\"/root/result/probe/surface-3",
+                          "key": "task \"solvecurrent\"/root/result/probe.box/surface-3",
                           "label": "-Y",
-                          "surfaceId": "probe/surface-3",
+                          "surfaceId": "probe.box/surface-3",
                           "children": []
                         },
                         {
-                          "key": "task \"solvecurrent\"/root/result/probe/surface-4",
+                          "key": "task \"solvecurrent\"/root/result/probe.box/surface-4",
                           "label": "+Y",
-                          "surfaceId": "probe/surface-4",
+                          "surfaceId": "probe.box/surface-4",
                           "children": []
                         },
                         {
-                          "key": "task \"solvecurrent\"/root/result/probe/surface-5",
+                          "key": "task \"solvecurrent\"/root/result/probe.box/surface-5",
                           "label": "Bottom",
-                          "surfaceId": "probe/surface-5",
+                          "surfaceId": "probe.box/surface-5",
                           "children": []
                         },
                         {
-                          "key": "task \"solvecurrent\"/root/result/probe/surface-6",
+                          "key": "task \"solvecurrent\"/root/result/probe.box/surface-6",
                           "label": "Top",
-                          "surfaceId": "probe/surface-6",
+                          "surfaceId": "probe.box/surface-6",
                           "children": []
                         }
-                      ]
+                      ],
+                      "geometryId": "probe.box"
                     }
                   ],
-                  "geometryId": "probe"
+                  "groupId": "probe",
+                  "geometryIds": [
+                    "probe.box"
+                  ]
                 }
               ]
             },
             "geometryGroups": [],
             "surfaceGroups": [],
-            "sceneHash": "60bdfad45ad7b5604962135aeb32dfac2473195ea34c19b88840882d14a5816c"
+            "sceneHash": "ff02de8f3388a9857b4031397b5aae45783986e1e3cd6dd544a9b66a64e64e9d"
           }
         },
         "simulationProgram": {
@@ -560,21 +613,61 @@
         "materialColors": {}
       },
       "materialWarnings": [
-        "Legacy Material snapshot: database parameters were not automatically re-resolved."
+        "Legacy Material snapshot: database parameters were not automatically re-resolved.",
+        "Material Copper: database catalog values are unavailable in source-only mode; only explicit source parameters are used."
       ],
       "taskMaterialParameters": {
         "solveCurrent": {
           "schemaVersion": 1,
-          "materials": {},
+          "materials": {
+            "Copper": {
+              "electrical.conductivity": {
+                "origin": "source",
+                "value": {
+                  "dtype": "float64",
+                  "value": [
+                    [
+                      59600000,
+                      0,
+                      0
+                    ],
+                    [
+                      0,
+                      59600000,
+                      0
+                    ],
+                    [
+                      0,
+                      0,
+                      59600000
+                    ]
+                  ],
+                  "unit": "S.m-1"
+                },
+                "source": null,
+                "version": null,
+                "materialId": null,
+                "materialParameterId": null
+              }
+            }
+          },
           "materialColors": {}
         }
       },
       "taskMaterialWarnings": {
         "solveCurrent": [
-          "Legacy Material snapshot: database parameters were not automatically re-resolved."
+          "Legacy Material snapshot: database parameters were not automatically re-resolved.",
+          "Material Copper: database catalog values are unavailable in source-only mode; only explicit source parameters are used."
         ]
       }
-    }
+    },
+    "solverContracts": [
+      {
+        "name": "dc-current-density",
+        "version": "0.1.0",
+        "contractDigest": "9962cb167fc38f7899ece5578300683d9c226b7054843cce446b24c42b5c59c4"
+      }
+    ]
   },
   "attachments": [
     {

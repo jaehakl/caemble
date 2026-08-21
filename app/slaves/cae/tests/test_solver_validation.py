@@ -1,7 +1,7 @@
 import pytest
 
 from app.errors import CaeError
-from app.runtime import _validate_material_snapshot, _validate_variables
+from app.runtime import _validate_material_snapshot, _validate_scene_part, _validate_variables
 from app.solver_framework.validation import normalize_parameter_value
 
 
@@ -233,5 +233,27 @@ def test_material_snapshot_validation_rejects_provenance_and_tensor_errors():
             _validate_material_snapshot(
                 {"schemaVersion": 1, "materials": {"Copper": {"electrical.conductivity": entry}}},
                 "start.measurement.materialParameters",
+            )
+        assert error.value.code == "invalid_input"
+
+
+def test_scene_part_accepts_a_named_material_role_and_rejects_invalid_roles():
+    part = {
+        "id": "wheel.tire",
+        "materialRole": "tire",
+        "geometry": {
+            "kind": "mesh",
+            "positions": [0, 0, 0, 1, 0, 0, 0, 1, 0],
+            "polygonOffsets": [0, 3],
+        },
+        "surfaces": [],
+    }
+    _validate_scene_part(part, "Built Experiment.scene.parts[0]")
+
+    for invalid in ("", 7):
+        with pytest.raises(CaeError) as error:
+            _validate_scene_part(
+                {**part, "materialRole": invalid},
+                "Built Experiment.scene.parts[0]",
             )
         assert error.value.code == "invalid_input"

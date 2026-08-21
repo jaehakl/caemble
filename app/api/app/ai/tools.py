@@ -162,7 +162,11 @@ class ToolExecutor:
             return ToolExecution({"items": items}, f"Catalog search returned {len(items)} items", provenance)
         if name == "get_catalog_item":
             _exact_keys(arguments, {"kind", "key"})
-            kind = _choice(arguments, "kind", {"quantityKind", "materialParameter", "materialModel", "solver"})
+            kind = _choice(
+                arguments,
+                "kind",
+                {"quantityKind", "materialParameter", "materialModel", "solver", "geometry", "experiment"},
+            )
             key = _string(arguments, "key", maximum=256)
             value = _catalog_detail(self.catalog, kind, key)
             label = value.get("label_ko") or value.get("name") or key
@@ -318,14 +322,17 @@ def agent_tool_definitions() -> list[dict[str, Any]]:
         ),
         _tool(
             "search_catalog",
-            "Search the Caemble QuantityKind, MaterialParameter, MaterialModel, and Solver catalog.",
+            "Search the Caemble QuantityKind, MaterialParameter, MaterialModel, Solver, Geometry, and Experiment catalog.",
             {"query": _string_schema(256), "limit": _integer_schema(1, 10)},
         ),
         _tool(
             "get_catalog_item",
             "Read one full catalog item and its relations.",
             {
-                "kind": {"type": "string", "enum": ["quantityKind", "materialParameter", "materialModel", "solver"]},
+                "kind": {
+                    "type": "string",
+                    "enum": ["quantityKind", "materialParameter", "materialModel", "solver", "geometry", "experiment"],
+                },
                 "key": _string_schema(256),
             },
         ),
@@ -443,6 +450,10 @@ def _catalog_detail(catalog: Any, kind: str, key: str) -> dict[str, Any]:
         return {**catalog.material_parameter(key), "relations": catalog.material_parameter_relations(key)}
     if kind == "materialModel":
         return catalog.material_model(key)
+    if kind == "geometry":
+        return catalog.geometry(key)
+    if kind == "experiment":
+        return catalog.experiment(key)
     if "@" not in key:
         raise ValueError("Solver key must use name@version")
     name, version = key.rsplit("@", 1)

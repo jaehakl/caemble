@@ -13,6 +13,10 @@ from catalog_models import (
     CatalogRuntimeSlice,
     CatalogRuntimeSliceRequest,
     CatalogSearchResponse,
+    ExperimentDetail,
+    ExperimentSummary,
+    GeometryDetail,
+    GeometrySummary,
     MaterialModel,
     MaterialParameter,
     MaterialParameterDetail,
@@ -186,6 +190,63 @@ def solvers(
 def solver(name: str, version: str, response: Response, catalog: Catalog = Depends(get_catalog)):
     try:
         result = catalog.solver_detail(name, version)
+    except CatalogNotFoundError as error:
+        raise _not_found(error) from error
+    _cache(response, catalog)
+    return result
+
+
+@router.get("/geometries", response_model=CatalogPage[GeometrySummary])
+def geometries(
+    response: Response,
+    q: str | None = Query(default=None, max_length=200),
+    element: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=50, ge=1, le=200),
+    cursor: str | None = Query(default=None, max_length=100),
+    catalog: Catalog = Depends(get_catalog),
+):
+    offset = _offset(cursor)
+    items, total = catalog.list_geometries(query=q, element=element, limit=limit, offset=offset)
+    _cache(response, catalog)
+    return {"items": items, "nextCursor": _cursor(offset, len(items), total), "total": total}
+
+
+@router.get("/geometries/{key}", response_model=GeometryDetail)
+def geometry(key: str, response: Response, catalog: Catalog = Depends(get_catalog)):
+    try:
+        result = catalog.geometry(key)
+    except CatalogNotFoundError as error:
+        raise _not_found(error) from error
+    _cache(response, catalog)
+    return result
+
+
+@router.get("/experiments", response_model=CatalogPage[ExperimentSummary])
+def experiments(
+    response: Response,
+    q: str | None = Query(default=None, max_length=200),
+    solver_name: str | None = Query(default=None, alias="solverName", max_length=200),
+    solver_version: str | None = Query(default=None, alias="solverVersion", max_length=100),
+    limit: int = Query(default=50, ge=1, le=200),
+    cursor: str | None = Query(default=None, max_length=100),
+    catalog: Catalog = Depends(get_catalog),
+):
+    offset = _offset(cursor)
+    items, total = catalog.list_experiments(
+        query=q,
+        solver_name=solver_name,
+        solver_version=solver_version,
+        limit=limit,
+        offset=offset,
+    )
+    _cache(response, catalog)
+    return {"items": items, "nextCursor": _cursor(offset, len(items), total), "total": total}
+
+
+@router.get("/experiments/{key}", response_model=ExperimentDetail)
+def experiment(key: str, response: Response, catalog: Catalog = Depends(get_catalog)):
+    try:
+        result = catalog.experiment(key)
     except CatalogNotFoundError as error:
         raise _not_found(error) from error
     _cache(response, catalog)

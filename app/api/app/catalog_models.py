@@ -5,13 +5,15 @@ from typing import Annotated, Any, Generic, Literal, TypeVar
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from pydantic.alias_generators import to_camel
 
+from models import ExperimentSourceBundle
+
 
 class CatalogModel(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
 
 class CatalogMeta(CatalogModel):
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     catalog_revision: str
     quantity_kind_data_version: str
     material_catalog_version: str
@@ -19,6 +21,8 @@ class CatalogMeta(CatalogModel):
     material_parameter_count: int
     material_model_count: int
     solver_count: int
+    geometry_count: int
+    experiment_count: int
     material_global_qualifiers: list[str]
     material_design_rules: dict[str, str]
 
@@ -131,8 +135,80 @@ class SolverDetail(SolverSummary):
     consumes_artifacts: list[ConsumedArtifact]
 
 
+class GeometryMaterialRole(CatalogModel):
+    role: str
+    description: str
+
+
+class GeometrySummary(CatalogModel):
+    key: str
+    title: str
+    description: str
+    cad_api_version: Literal[8]
+    module_format_version: Literal[4]
+    length_unit: str
+    export_name: str
+    source_hash: str
+    concepts: list[str]
+    material_roles: list[GeometryMaterialRole]
+    related_elements: list[str]
+
+
+class GeometryDetail(GeometrySummary):
+    source: str
+
+
+class ExperimentSolver(CatalogModel):
+    name: str
+    version: str
+    description: str
+
+
+class ExperimentSummary(CatalogModel):
+    key: str
+    title: str
+    description: str
+    cad_api_version: Literal[8]
+    source_format_version: Literal[2]
+    bundle_format_version: Literal[5]
+    bundle_hash: str
+    concepts: list[str]
+    related_solvers: list[ExperimentSolver]
+
+
+class VerificationRecord(CatalogModel):
+    name: str
+    dtype: str
+    shape: list[int]
+    value: Any
+    absolute_tolerance: float
+
+
+class VerificationTerminal(CatalogModel):
+    kind: Literal["complete"]
+    sequence: int
+    record_sequences: list[int]
+
+
+class ExperimentFixture(CatalogModel):
+    records: list[VerificationRecord]
+    terminal: VerificationTerminal
+
+
+class ExperimentVerification(CatalogModel):
+    kernel_tasks: list[str]
+    recorded_data: list[str]
+    expectations: list[str]
+    fixture: ExperimentFixture | None = None
+
+
+class ExperimentDetail(ExperimentSummary):
+    verification: ExperimentVerification
+    source_bundle: ExperimentSourceBundle
+
+
 class CatalogSearchItem(CatalogModel):
-    kind: Literal["quantityKind", "materialParameter", "materialModel", "solver"]
+    kind: Literal["quantityKind", "materialParameter", "materialModel", "solver", "geometry", "experiment"]
     key: str
     title: str
     subtitle: str

@@ -9,10 +9,14 @@ import { buildSyntheticSolver } from '@/test/syntheticCatalog'
 import { DocsPage } from './DocsPage'
 
 const catalog = vi.hoisted(() => ({
+  getExperiment: vi.fn(),
+  getGeometry: vi.fn(),
   getMaterialModel: vi.fn(),
   getMaterialParameter: vi.fn(),
   getQuantityKind: vi.fn(),
   getSolver: vi.fn(),
+  listExperiments: vi.fn(),
+  listGeometries: vi.fn(),
   listMaterialModels: vi.fn(),
   listMaterialParameters: vi.fn(),
   listQuantityKinds: vi.fn(),
@@ -55,6 +59,22 @@ beforeEach(() => {
           subtitle: 'Synthetic Solver.',
         },
       ],
+      'basketball-goal': [
+        {
+          kind: 'geometry',
+          key: query,
+          title: 'Basketball Goal',
+          subtitle: 'Official Geometry.',
+        },
+      ],
+      'dc-uniform-bar': [
+        {
+          kind: 'experiment',
+          key: query,
+          title: 'DC Uniform Bar',
+          subtitle: 'Official Experiment.',
+        },
+      ],
     } as const
     return { items: items[query as keyof typeof items] ?? [] }
   })
@@ -75,6 +95,30 @@ beforeEach(() => {
     specialQualifiers: [],
   }
   const solver = buildSyntheticSolver('dc-current-density', '0.1.0')
+  const geometry = {
+    key: 'basketball-goal',
+    title: 'Basketball Goal',
+    description: 'Official standalone Geometry.',
+    cadApiVersion: 8,
+    moduleFormatVersion: 4,
+    lengthUnit: 'mm',
+    exportName: 'BasketballGoal',
+    sourceHash: 'b'.repeat(64),
+    concepts: ['position'],
+    materialRoles: [],
+    relatedElements: ['box', 'cylinder'],
+  }
+  const experiment = {
+    key: 'dc-uniform-bar',
+    title: 'DC Uniform Bar',
+    description: 'Official Experiment.',
+    cadApiVersion: 8,
+    sourceFormatVersion: 2,
+    bundleFormatVersion: 5,
+    bundleHash: 'c'.repeat(64),
+    concepts: ['DC'],
+    relatedSolvers: [{ name: 'dc-current-density', version: '0.1.0', description: 'Synthetic Solver.' }],
+  }
 
   catalog.listMaterialParameters.mockResolvedValue({ items: [materialParameter], nextCursor: null, total: 1 })
   catalog.listMaterialModels.mockResolvedValue({ items: [], nextCursor: null, total: 0 })
@@ -111,6 +155,27 @@ beforeEach(() => {
     quantityKindUsages: [],
     producesArtifacts: [],
     consumesArtifacts: [],
+  })
+  catalog.listGeometries.mockResolvedValue({ items: [geometry], nextCursor: null, total: 1 })
+  catalog.getGeometry.mockResolvedValue({
+    ...geometry,
+    source: "import { type Geometry } from '@caemble/core'\nexport const BasketballGoal: Geometry = () => <></>\n",
+  })
+  catalog.listExperiments.mockResolvedValue({ items: [experiment], nextCursor: null, total: 1 })
+  catalog.getExperiment.mockResolvedValue({
+    ...experiment,
+    sourceBundle: {
+      formatVersion: 5,
+      files: {
+        'experiment.tsx': 'export default 1',
+        'geometry.tsx': 'export const Bar = () => <box />',
+        'material.tsx': 'export {}',
+        'simulate.py': 'async def simulate(*, sim, tasks, vars):\n    return None\n',
+        'tasks/solveField.tsx': 'export default 1',
+      },
+      geometrySnapshot: { schemaVersion: 2, entryImports: [], modules: [] },
+    },
+    verification: { kernelTasks: ['solveField'], recordedData: ['current'], expectations: ['Current is finite.'] },
   })
 })
 
@@ -157,6 +222,24 @@ describe('integrated documentation page', () => {
     expect(screen.getByText('Origin')).toBeInTheDocument()
     expect(screen.getByText('Children')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '예제 복사' })).toBeInTheDocument()
+  })
+
+  it('opens an official Geometry deep link and follows its CAD element relation', async () => {
+    renderDocs('/docs?section=geometry&item=example:basketball-goal')
+
+    expect(await screen.findByRole('heading', { name: 'Basketball Goal' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Official Geometries' })).toHaveAttribute('aria-selected', 'true')
+    await userEvent.click(screen.getByRole('button', { name: 'box' }))
+    expect(await screen.findByRole('heading', { name: '<Box />' })).toBeInTheDocument()
+  })
+
+  it('opens an official Experiment deep link and follows its Solver relation', async () => {
+    renderDocs('/docs?section=solvers&item=experiment:dc-uniform-bar')
+
+    expect(await screen.findByRole('heading', { name: 'DC Uniform Bar' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Official Experiments' })).toHaveAttribute('aria-selected', 'true')
+    await userEvent.click(screen.getByRole('button', { name: 'dc-current-density@0.1.0' }))
+    expect(await screen.findByRole('heading', { name: 'dc-current-density' })).toBeInTheDocument()
   })
 
   it('searches Manual headings and opens their anchored content', async () => {

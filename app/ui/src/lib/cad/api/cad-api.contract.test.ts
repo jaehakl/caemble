@@ -1,20 +1,12 @@
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
-import { defaultCode } from '../../defaultCode'
-import { defaultExperimentCode } from '../../defaultExperimentCode'
 import {
-  defaultExperimentGeometryCode,
-  defaultExperimentMaterialCode,
-  defaultExperimentProgramCode,
-  defaultExperimentTaskCode,
-} from '../../defaultExperimentProgramCode'
-import {
-  caembleExamples,
-  caembleProgramExamples,
-  geometryAuthoringSkeletonSourceBundle,
-  wheelAssemblyExample,
-} from '../../examples'
-import { blankExperimentSourceBundle, starterExperimentSourceBundle } from '../../localExperimentCode'
+  officialExperiment,
+  officialExperimentKeys,
+  officialGeometry,
+  officialGeometryKeys,
+} from '../../catalog/catalogTestData'
+import { starterExperimentSourceBundle } from '../../localExperimentCode'
 import { buildSyntheticCatalog } from '../../../test/syntheticCatalog'
 import { catalogRuntimeTypes } from '../compiler/catalogTypeEnvironment'
 import { cadElementCatalog } from '../catalog'
@@ -24,9 +16,12 @@ import type { GeometryCoordinate } from '../source/geometrySnapshot'
 import coreTypes from './caemble-core.d.ts?raw'
 import jsxTypes from './cad-jsx.d.ts?raw'
 
-const defaultGeometryFiles = {
-  'C:/caemble-source/hash/geometry.tsx': defaultExperimentGeometryCode,
-  'C:/caemble-source/hash/material.tsx': defaultExperimentMaterialCode,
+const catalogExperiment = officialExperiment('dc-notched-current-density')
+const catalogExperimentProgramCode = catalogExperiment.sourceBundle.files['experiment.tsx']
+const catalogExperimentTaskCode = catalogExperiment.sourceBundle.files['tasks/solveField.tsx']
+const catalogGeometryFiles = {
+  'C:/caemble-source/hash/geometry.tsx': catalogExperiment.sourceBundle.files['geometry.tsx'],
+  'C:/caemble-source/hash/material.tsx': catalogExperiment.sourceBundle.files['material.tsx'],
 }
 
 function diagnosticsForFiles(sourceFiles: Readonly<Record<string, string>>, catalogTypes?: string) {
@@ -89,7 +84,7 @@ function diagnosticsForFiles(sourceFiles: Readonly<Record<string, string>>, cata
 
 function diagnosticsFor(
   source: string,
-  additionalFiles: Readonly<Record<string, string>> = defaultGeometryFiles,
+  additionalFiles: Readonly<Record<string, string>> = catalogGeometryFiles,
   sourcePath = 'C:/caemble-source/hash/experiment.tsx',
   catalogTypes?: string,
 ) {
@@ -104,10 +99,9 @@ describe('unversioned CAD authoring declarations', () => {
   })
 
   it('type-checks the v8 Experiment and Task defaults', () => {
-    expect(defaultExperimentCode).toBe(defaultExperimentProgramCode)
-    expect(diagnosticsFor(defaultCode)).toEqual([])
+    expect(diagnosticsFor(catalogExperimentProgramCode)).toEqual([])
     expect(
-      diagnosticsFor(defaultExperimentTaskCode, defaultGeometryFiles, 'C:/caemble-source/hash/tasks/electric.tsx'),
+      diagnosticsFor(catalogExperimentTaskCode, catalogGeometryFiles, 'C:/caemble-source/hash/tasks/electric.tsx'),
     ).toEqual([])
   })
 
@@ -228,18 +222,10 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
 
   it('type-checks every public Geometry example in one TypeScript program', () => {
     const files = Object.fromEntries(
-      caembleExamples.flatMap(({ code, id }) => {
-        const prefix = `C:/caemble-source/examples/${id}`
-        return [
-          [`${prefix}/experiment.tsx`, code],
-          ...(id === 'dc-conductor'
-            ? [
-                [`${prefix}/geometry.tsx`, defaultExperimentGeometryCode],
-                [`${prefix}/material.tsx`, defaultExperimentMaterialCode],
-              ]
-            : []),
-        ]
-      }),
+      officialGeometryKeys.map((key) => [
+        `C:/caemble-source/geometries/${key}/geometry.tsx`,
+        officialGeometry(key).source,
+      ]),
     )
 
     expect(diagnosticsForFiles(files)).toEqual([])
@@ -247,10 +233,10 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
 
   it('type-checks every shared Experiment bundle in one TypeScript program', () => {
     const files = Object.fromEntries(
-      [...caembleProgramExamples, wheelAssemblyExample].flatMap((example, index) =>
-        Object.entries(example.experimentSourceBundle.files)
+      officialExperimentKeys.flatMap((key, index) =>
+        Object.entries(officialExperiment(key).sourceBundle.files)
           .filter(([path]) => path.endsWith('.tsx'))
-          .map(([path, source]) => [`C:/caemble-source/programs/${index}-${example.id}/${path}`, source]),
+          .map(([path, source]) => [`C:/caemble-source/programs/${index}-${key}/${path}`, source]),
       ),
     )
 
@@ -258,37 +244,38 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
   })
 
   it('type-checks local templates and the AI Helper geometry skeleton in one TypeScript program', () => {
-    const files = Object.fromEntries(
-      [starterExperimentSourceBundle, blankExperimentSourceBundle, geometryAuthoringSkeletonSourceBundle].flatMap(
-        (bundle, index) =>
-          Object.entries(bundle.files)
-            .filter(([path]) => path.endsWith('.tsx'))
-            .map(([path, source]) => [`C:/caemble-source/templates/${index}/${path}`, source]),
-      ),
-    )
+    const files = Object.fromEntries([
+      ...Object.entries(starterExperimentSourceBundle.files)
+        .filter(([path]) => path.endsWith('.tsx'))
+        .map(([path, source]) => [`C:/caemble-source/templates/starter/${path}`, source]),
+      [
+        'C:/caemble-source/templates/geometry-authoring-skeleton/geometry.tsx',
+        officialGeometry('geometry-authoring-skeleton').source,
+      ],
+    ])
 
     expect(diagnosticsForFiles(files)).toEqual([])
   })
 
   it('rejects unknown vars and tuple shapes', () => {
-    const unknownVar = defaultCode.replace('size={vars.conductorSize}', 'size={vars.unknownSize}')
-    const wrongTuple = defaultCode.replace('size={vars.conductorSize}', 'size={[1, 2]}')
+    const unknownVar = catalogExperimentProgramCode.replace('size={vars.conductorSize}', 'size={vars.unknownSize}')
+    const wrongTuple = catalogExperimentProgramCode.replace('size={vars.conductorSize}', 'size={[1, 2]}')
 
     expect(diagnosticsFor(unknownVar).join('\n')).toContain("Property 'unknownSize' does not exist")
     expect(diagnosticsFor(wrongTuple).join('\n')).toContain('Source has 2 element(s) but target requires 3')
   })
 
   it('keeps solver config generic so CAE performs contract validation', () => {
-    const wrongMethod = defaultExperimentProgramCode.replace("methodId: 'dc.voxel-grid'", "methodId: 'dc.unknown'")
-    const wrongParameter = defaultExperimentProgramCode.replace('gridShape: {', 'unknownGridShape: {')
+    const wrongMethod = catalogExperimentProgramCode.replace("methodId: 'dc.voxel-grid'", "methodId: 'dc.unknown'")
+    const wrongParameter = catalogExperimentProgramCode.replace('gridShape: {', 'unknownGridShape: {')
 
     expect(diagnosticsFor(wrongMethod)).toEqual([])
     expect(diagnosticsFor(wrongParameter)).toEqual([])
   })
 
   it('keeps browser-side simulate orchestration out of new Experiment source', () => {
-    expect(defaultExperimentProgramCode).not.toContain('simulate:')
-    expect(defaultExperimentProgramCode).not.toContain('sim.run(')
+    expect(catalogExperimentProgramCode).not.toContain('simulate:')
+    expect(catalogExperimentProgramCode).not.toContain('sim.run(')
   })
 
   it('keeps catalog literals runtime-scoped while preserving strict Material authoring types', () => {
@@ -339,11 +326,11 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
       })
     `
     const materialPath = 'C:/caemble-source/hash/material.tsx'
-    expect(diagnosticsFor(materialSource, defaultGeometryFiles, materialPath, runtimeTypes)).toEqual([])
+    expect(diagnosticsFor(materialSource, catalogGeometryFiles, materialPath, runtimeTypes)).toEqual([])
     expect(
       diagnosticsFor(
         materialSource.replace('synthetic.vector-property', 'synthetic.unknown-property'),
-        defaultGeometryFiles,
+        catalogGeometryFiles,
         materialPath,
         runtimeTypes,
       ).join('\n'),
@@ -354,7 +341,7 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
           "unit: '{synthetic-vector}',",
           "unit: '{synthetic-vector}',\n          quantityKind: 'synthetic.Vector',",
         ),
-        defaultGeometryFiles,
+        catalogGeometryFiles,
         materialPath,
         runtimeTypes,
       ).join('\n'),
@@ -370,11 +357,11 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
         },
       })
     `
-    expect(diagnosticsFor(modelRelation, defaultGeometryFiles, materialPath, runtimeTypes)).toEqual([])
+    expect(diagnosticsFor(modelRelation, catalogGeometryFiles, materialPath, runtimeTypes)).toEqual([])
     expect(
       diagnosticsFor(
         modelRelation.replace('model.synthetic.relation', 'model.synthetic.omitted'),
-        defaultGeometryFiles,
+        catalogGeometryFiles,
         materialPath,
         runtimeTypes,
       ).join('\n'),

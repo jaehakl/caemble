@@ -6,6 +6,8 @@ import struct
 
 import pytest
 
+from caemble_catalog import Catalog
+
 import ai.workspace as workspace_module
 from ai.cad_reference import CAD_AUTHORING_REFERENCE
 from ai.data_tools import VisibleDataError, VisibleDataReader, slice_recorded_tensor
@@ -165,6 +167,41 @@ async def test_agent_reads_bounded_official_cad_authoring_details():
         {"elements": ["Cube"]},
     )
     assert unsupported.output["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_agent_searches_and_reads_official_geometry_and_experiment_catalog_items():
+    class Db:
+        async def rollback(self):
+            pass
+
+    class Data:
+        db = Db()
+        user_id = "user-1"
+
+    definitions = {item["name"]: item for item in agent_tool_definitions()}
+    kinds = definitions["get_catalog_item"]["parameters"]["properties"]["kind"]["enum"]
+    assert {"geometry", "experiment"} <= set(kinds)
+
+    with Catalog.open_readonly() as catalog:
+        executor = ToolExecutor(data=Data(), catalog=catalog, workspace=StagedExperiment(source_bundle()))
+        geometry_search = await executor.execute("search_catalog", {"query": "Basketball", "limit": 10})
+        experiment_search = await executor.execute("search_catalog", {"query": "DC Uniform Bar", "limit": 10})
+        geometry = await executor.execute(
+            "get_catalog_item",
+            {"kind": "geometry", "key": "basketball-goal"},
+        )
+        experiment = await executor.execute(
+            "get_catalog_item",
+            {"kind": "experiment", "key": "dc-uniform-bar"},
+        )
+
+    assert any(item["kind"] == "geometry" for item in geometry_search.output["items"])
+    assert any(item["kind"] == "experiment" for item in experiment_search.output["items"])
+    assert geometry.output["exportName"] == "BasketballGoal"
+    assert experiment.output["sourceBundle"]["formatVersion"] == 5
+    assert geometry.provenance[0]["resourceType"] == "geometry"
+    assert experiment.provenance[0]["resourceType"] == "experiment"
 
 
 @pytest.mark.asyncio

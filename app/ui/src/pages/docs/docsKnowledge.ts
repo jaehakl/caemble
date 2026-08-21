@@ -1,11 +1,5 @@
 import type { CatalogSearchItem } from '@/api/catalog'
 import { cadElementCatalog } from '@/lib/cad'
-import {
-  basketballGoalExample,
-  caembleProgramExamples,
-  geometryAuthoringSkeletonCode,
-  wheelAssemblyExample,
-} from '@/lib/examples'
 import { docsSectionHref, type DocsSectionId } from './docsRoute'
 
 export type DocsKnowledgeChunk = Readonly<{
@@ -29,9 +23,6 @@ function manualChunk(
 ): DocsKnowledgeChunk {
   return Object.freeze({ ...chunk, href: docsSectionHref(chunk.section, undefined, chunk.anchor) })
 }
-
-const firstProgramExample = caembleProgramExamples[0]
-const multiphysicsExample = caembleProgramExamples.find(({ id }) => id === 'electro-thermal-uniform-bar')
 
 export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze([
   manualChunk({
@@ -152,9 +143,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       '',
       '`varsSchema`의 `min`과 `max`는 같은 tensor shape여야 합니다. Geometry callback은 `({ vars })`로 값을 받고 외부의 변경 가능한 상태에 의존하지 않아야 합니다. 같은 parent 아래의 component `id`는 고유해야 하며, 이 ID를 `geometryGroup`에 넣어 `experiment.geometry.<group>`으로 참조합니다. surface는 Viewer에서 확인한 `partId/surface-N`을 `surfaceGroup`에 넣습니다.',
       '',
-      '```tsx',
-      firstProgramExample.experimentSourceBundle.files['experiment.tsx'].trim(),
-      '```',
+      '[DC Uniform Bar의 canonical experiment.tsx 열기](/docs?section=solvers&item=experiment:dc-uniform-bar)',
     ].join('\n'),
   }),
   manualChunk({
@@ -186,15 +175,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       '',
       '`errorRate`가 있으면 Candidate의 frozen 값이 달라질 수 있습니다. 같은 이름과 선언의 Material은 Experiment와 모든 Task에서 한 번만 sampling되며, 저장한 Measurement에는 실제 parameter snapshot이 고정됩니다. unresolved 역할은 preview할 수 있지만 Measurement 생성과 solver 실행은 차단됩니다.',
       '',
-      `검증 예제: ${wheelAssemblyExample.title}`,
-      '',
-      '```tsx',
-      wheelAssemblyExample.experimentSourceBundle.files['material.tsx'].trim(),
-      '```',
-      '',
-      '```tsx',
-      wheelAssemblyExample.experimentSourceBundle.files['geometry.tsx'].trim(),
-      '```',
+      '[Two-material Wheel Assembly의 canonical Geometry source 열기](/docs?section=geometry&item=example:two-material-wheel-assembly)',
     ].join('\n'),
   }),
   manualChunk({
@@ -210,11 +191,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       '',
       '`parameters`, `initializations`, `boundaryConditions`, `outputs`의 이름과 occurrence는 [Physics Catalog](/docs?section=solvers)의 현재 manifest가 단일 원본입니다. target은 `experiment.geometry.*`, `experiment.surface.*`, `task.geometry.*`, `task.surface.*` 중 method가 요구하는 source/kind와 일치해야 합니다.',
       '',
-      '```tsx',
-      Object.entries(firstProgramExample.experimentSourceBundle.files)
-        .find(([path]) => path.startsWith('tasks/'))?.[1]
-        .trim() ?? '',
-      '```',
+      '[DC Uniform Bar의 canonical Task source 열기](/docs?section=solvers&item=experiment:dc-uniform-bar)',
     ].join('\n'),
   }),
   manualChunk({
@@ -232,9 +209,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       '- `inputs={port: artifact}`: producer artifact를 호환되는 consumer input port에 전달',
       '- `state=...`: kernel의 opaque revision을 이어서 실행할 때만 사용',
       '',
-      '```python',
-      firstProgramExample.experimentSourceBundle.files['simulate.py'].trim(),
-      '```',
+      '[DC Uniform Bar의 canonical simulate.py 열기](/docs?section=solvers&item=experiment:dc-uniform-bar)',
     ].join('\n'),
   }),
   manualChunk({
@@ -262,40 +237,25 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
     summary: '실제 UI-CAE fixture로 검증되는 단계별 Experiment Program입니다.',
     keywords: ['program examples', 'DC', 'current density', 'resolution', 'electro thermal', 'multiphysics'],
     content: [
-      '다음 예제는 문서 전용 복사본이 아니라 Workbench와 UI-CAE 계약 테스트가 사용하는 source bundle입니다.',
+      '다음 예제는 SQLite 공식 카탈로그의 source bundle을 Workbench와 UI-CAE 계약 테스트가 직접 사용합니다.',
       '',
-      ...caembleProgramExamples.flatMap((example) => [
-        `### ${example.title}`,
-        '',
-        example.description,
-        '',
-        `핵심: ${example.concepts.join(', ')}`,
-        '',
-        `검증 RecordedData: ${example.verification.recordedData.map((name) => `\`${name}\``).join(', ')}`,
-        '',
-      ]),
+      '- [DC Uniform Bar](/docs?section=solvers&item=experiment:dc-uniform-bar)',
+      '- [DC Notched Current Density](/docs?section=solvers&item=experiment:dc-notched-current-density)',
+      '- [DC Resolution Study](/docs?section=solvers&item=experiment:dc-resolution-study)',
+      '- [Electro-Thermal Uniform Bar](/docs?section=solvers&item=experiment:electro-thermal-uniform-bar)',
     ].join('\n'),
   }),
-  ...(multiphysicsExample
-    ? [
-        manualChunk({
-          id: 'program-multiphysics-example',
-          section: 'program',
-          anchor: 'experiment-program-multiphysics',
-          title: `Multiphysics 예제: ${multiphysicsExample.title}`,
-          summary: 'DC의 Joule heating artifact를 정상상태 Heat task로 전달하는 검증된 orchestration입니다.',
-          keywords: ['multiphysics', 'Joule heating', 'heatSource', 'electric', 'thermal'],
-          collapsed: true,
-          content: [
-            multiphysicsExample.description,
-            '',
-            '```python',
-            multiphysicsExample.experimentSourceBundle.files['simulate.py'].trim(),
-            '```',
-          ].join('\n'),
-        }),
-      ]
-    : []),
+  manualChunk({
+    id: 'program-multiphysics-example',
+    section: 'program',
+    anchor: 'experiment-program-multiphysics',
+    title: 'Multiphysics 예제: Electro-Thermal Uniform Bar',
+    summary: 'DC의 Joule heating artifact를 정상상태 Heat task로 전달하는 검증된 orchestration입니다.',
+    keywords: ['multiphysics', 'Joule heating', 'heatSource', 'electric', 'thermal'],
+    collapsed: true,
+    content:
+      '[Electro-Thermal Uniform Bar의 canonical bundle과 verification 열기](/docs?section=solvers&item=experiment:electro-thermal-uniform-bar)',
+  }),
   manualChunk({
     id: 'reference-source-import',
     section: 'reference',
@@ -352,11 +312,9 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
     content: [
       'CAD API v8 Geometry는 JSX를 반환하는 순수 함수 component입니다. `geometry.tsx`에는 재사용할 named `Geometry<Props>`를 두고, `experiment.tsx`의 `geometry` callback에서 호출합니다. 모든 custom prop은 required/optional 표기와 관계없이 구조 분해 initializer가 있어야 하므로 `<Assembly />`처럼 props 없이 호출할 수 있습니다. 숫자로 된 길이는 모두 해당 scene의 `lengthUnit`으로 해석됩니다.',
       '',
-      '```tsx',
-      geometryAuthoringSkeletonCode.trim(),
-      '```',
+      '[AI Helper가 사용하는 canonical Geometry Authoring Skeleton 열기](/docs?section=geometry&item=example:geometry-authoring-skeleton)',
       '',
-      '위 `geometry.tsx`는 AI Helper와 같은 source 상수를 사용하며 production과 동일한 TypeScript emit 설정, 별도 declaration type-check와 실제 evaluator 회귀 테스트를 통과합니다.',
+      '이 skeleton은 SQLite 카탈로그에서 AI reference로 생성되며 production과 동일한 TypeScript emit 설정, declaration type-check와 실제 evaluator 회귀 테스트를 통과합니다.',
       '',
       '좌표계는 오른손 좌표계입니다. `+X`, `+Y`, `+Z`와 회전의 양의 방향에는 오른손 법칙을 적용합니다. primitive의 기준축과 원점은 요소마다 다르므로 추측하지 말고 [Geometry Catalog](/docs?section=geometry)의 **Origin / surfaces**를 확인하세요. 예를 들어 기본 cylinder 축은 Z이고, box와 cylinder는 자신의 local origin을 중심으로 생성됩니다.',
       '',
@@ -478,18 +436,14 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
     id: 'reference-basketball-goal',
     section: 'reference',
     anchor: 'cad-reference-basketball-goal',
-    title: `검증 예제: ${basketballGoalExample.title}`,
-    summary: '지지대, 수평 암, 백보드와 실제 annular rim을 canonical v7 문법으로 조립합니다.',
+    title: '검증 예제: Basketball Goal',
+    summary: '지지대, 수평 암, 백보드와 실제 annular rim을 canonical v8 문법으로 조립합니다.',
     keywords: ['basketball', 'goal', 'hoop', 'pole', 'backboard', 'ring', 'verified example', '농구', '골대'],
     collapsed: true,
     content: [
-      basketballGoalExample.description,
+      '이 예제는 SQLite 카탈로그의 source를 직접 compile/evaluate하는 회귀 테스트 대상입니다.',
       '',
-      '이 예제는 repository의 source-policy·compile·evaluate 회귀 테스트 대상이므로 문서와 실제 문법이 함께 검증됩니다.',
-      '',
-      '```tsx',
-      basketballGoalExample.code.trim(),
-      '```',
+      '[Basketball Goal canonical source 열기](/docs?section=geometry&item=example:basketball-goal)',
     ].join('\n'),
   }),
   manualChunk({
@@ -668,14 +622,27 @@ export const catalogDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze
 export function catalogSearchKnowledge(items: readonly CatalogSearchItem[]): readonly DocsKnowledgeChunk[] {
   return Object.freeze(
     items.map((item) => {
-      const section = item.kind === 'quantityKind' ? 'quantity-kinds' : item.kind === 'solver' ? 'solvers' : 'materials'
+      const section =
+        item.kind === 'quantityKind'
+          ? 'quantity-kinds'
+          : item.kind === 'solver' || item.kind === 'experiment'
+            ? 'solvers'
+            : item.kind === 'geometry'
+              ? 'geometry'
+              : 'materials'
+      const selectedItem =
+        item.kind === 'geometry'
+          ? `example:${item.key}`
+          : item.kind === 'experiment'
+            ? `experiment:${item.key}`
+            : item.key
       return Object.freeze({
         id: `${item.kind}:${item.key}`,
         section,
         title: item.title,
         summary: item.subtitle,
-        item: item.key,
-        href: docsSectionHref(section, item.key),
+        item: selectedItem,
+        href: docsSectionHref(section, selectedItem),
         keywords: Object.freeze([item.kind, item.key, item.title, item.subtitle]),
         content: item.subtitle,
       })

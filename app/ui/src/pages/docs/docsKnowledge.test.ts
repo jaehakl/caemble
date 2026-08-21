@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { geometryAuthoringSkeletonCode } from '@/lib/examples'
 import {
   catalogDocsKnowledge,
   catalogSearchKnowledge,
@@ -28,13 +27,15 @@ describe('documentation knowledge registry', () => {
     expect(manualDocsKnowledge.every(({ content, href }) => content && href.startsWith('/docs?section='))).toBe(true)
   })
 
-  it('builds examples and Geometry reference from shared executable sources', () => {
+  it('links manual examples to canonical catalog detail instead of duplicating full source', () => {
     expect(manualDocsKnowledge.find(({ id }) => id === 'program-definition')?.content).toContain(
-      'export default experiment({',
+      'item=experiment:dc-uniform-bar',
     )
-    expect(manualDocsKnowledge.find(({ id }) => id === 'program-task')?.content).toContain("name: 'dc-current-density'")
     expect(manualDocsKnowledge.find(({ id }) => id === 'reference-geometry-skeleton')?.content).toContain(
-      geometryAuthoringSkeletonCode.trim(),
+      'item=example:geometry-authoring-skeleton',
+    )
+    expect(manualDocsKnowledge.find(({ id }) => id === 'reference-geometry-skeleton')?.content).not.toContain(
+      'export const Assembly',
     )
     expect(catalogDocsKnowledge.find(({ id }) => id === 'geometry:box')?.content).toContain('<Box size=')
     expect(manualDocsKnowledge.find(({ id }) => id === 'reference-geometry-transforms')?.content).toContain(
@@ -52,6 +53,8 @@ describe('documentation knowledge registry', () => {
         subtitle: 'electromagnetism.ElectricConductivity',
       },
       { kind: 'solver', key: 'dc-current-density@0.1.0', title: 'DC current density', subtitle: 'Solver' },
+      { kind: 'geometry', key: 'basketball-goal', title: 'Basketball Goal', subtitle: 'Official Geometry' },
+      { kind: 'experiment', key: 'dc-uniform-bar', title: 'DC Uniform Bar', subtitle: 'Official Experiment' },
     ])
 
     expect(searchDocsKnowledge('electrical.conductivity', [...getDocsKnowledge(), ...serverResults])[0]?.id).toBe(
@@ -64,5 +67,7 @@ describe('documentation knowledge registry', () => {
         .map(({ id }) => id),
     ).toContain('program-multiphysics-example')
     expect(serverResults[1].href).toBe('/docs?section=solvers&item=dc-current-density%400.1.0')
+    expect(serverResults[2].item).toBe('example:basketball-goal')
+    expect(serverResults[3].item).toBe('experiment:dc-uniform-bar')
   })
 })

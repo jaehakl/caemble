@@ -2,7 +2,7 @@ import { geometries, measurements } from '@jscad/modeling'
 import { transform } from 'esbuild'
 import { describe, expect, it } from 'vitest'
 import { installSyntheticCatalog } from '@/test/syntheticCatalog'
-import { defaultExperimentSourceBundle } from '../../defaultExperimentCode'
+import { starterExperimentSourceBundle } from '../../localExperimentCode'
 import {
   CAD_COMPILER_VERSION,
   type CompiledCadDocument,
@@ -84,7 +84,7 @@ function module(
 }
 
 describe('compiled Experiment execution with source Geometry modules', () => {
-  it('evaluates the default Experiment and Task through geometry.tsx', async () => {
+  it('evaluates the local Starter Experiment and Solver-independent draft Task through geometry.tsx', async () => {
     expect(requireCaembleModule('@caemble/core')).toMatchObject({
       Box: 'box',
       Cylinder: 'cylinder',
@@ -95,16 +95,16 @@ describe('compiled Experiment execution with source Geometry modules', () => {
       experiment: expect.any(Function),
       radians: expect.any(Function),
     })
-    const compiled = await compiledDocument(defaultExperimentSourceBundle.files, '2'.repeat(64))
+    const compiled = await compiledDocument(starterExperimentSourceBundle.files, '2'.repeat(64))
     const inspection = inspectCompiledDocument(compiled)
     const result = executeCompiledDocument(
       compiled,
       generateRandomVars(inspection.varsSchema),
-      defaultExperimentSourceBundle.files['simulate.py'],
+      starterExperimentSourceBundle.files['simulate.py'],
     )
     expect(geometries.geom3.isA(result.scene.parts[0].geometry)).toBe(true)
     expect(measurements.measureVolume(result.scene.parts[0].geometry)).toBeGreaterThan(0)
-    expect(result.taskScenes.electric.parts).toHaveLength(1)
+    expect(result.taskScenes.main.parts).toHaveLength(0)
   })
 
   it('loads named exports once, resolves relative geometry.tsx imports, and isolates module scopes', async () => {
@@ -150,7 +150,7 @@ describe('compiled Experiment execution with source Geometry modules', () => {
 
   it('rejects static named exports at the runtime boundary', async () => {
     const coordinate = 'caemble:geometry/jlee/demo/static@1.0.0' as GeometryCoordinate
-    const compiled = await compiledDocument(defaultExperimentSourceBundle.files, '9'.repeat(64))
+    const compiled = await compiledDocument(starterExperimentSourceBundle.files, '9'.repeat(64))
     const legacy = module(
       coordinate,
       `exports.Static = h('box', { size: [1, 1, 1] })`,
@@ -215,7 +215,7 @@ export default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => nu
 
   it('treats an @local module like a virtual published module during preview', async () => {
     const coordinate = 'caemble:geometry/jlee/demo/working@local' as GeometryModuleCoordinate
-    const compiled = await compiledDocument(defaultExperimentSourceBundle.files, '8'.repeat(64))
+    const compiled = await compiledDocument(starterExperimentSourceBundle.files, '8'.repeat(64))
     const working = module(
       coordinate,
       `exports.Working = ({ size = [2, 3, 4] }) => h('box', { size })`,

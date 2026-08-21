@@ -1,6 +1,10 @@
 import { z } from 'zod'
 import {
   catalogMetaSchema,
+  experimentDetailSchema,
+  experimentListItemSchema,
+  geometryDetailSchema,
+  geometryListItemSchema,
   listSchema,
   materialModelSchema,
   materialParameterDetailSchema,
@@ -30,6 +34,10 @@ export type {
   CatalogMaterialParameter,
   CatalogMaterialParameterDetail,
   CatalogMeta,
+  CatalogExperimentDetail,
+  CatalogExperimentListItem,
+  CatalogGeometryDetail,
+  CatalogGeometryListItem,
   CatalogQuantityKind,
   CatalogQuantityKindDetail,
   CatalogRuntimeSlice,
@@ -49,6 +57,10 @@ export const catalogQueryKeys = {
   materialModels: (query: ListQuery) => ['catalog', 'material-models', query] as const,
   solvers: (query: ListQuery) => ['catalog', 'solvers', query] as const,
   solver: (name: string, version: string) => ['catalog', 'solver', name, version] as const,
+  geometries: (query: ListQuery) => ['catalog', 'geometries', query] as const,
+  geometry: (key: string) => ['catalog', 'geometry', key] as const,
+  experiments: (query: ListQuery) => ['catalog', 'experiments', query] as const,
+  experiment: (key: string) => ['catalog', 'experiment', key] as const,
   search: (query: string) => ['catalog', 'search', query] as const,
 } as const
 
@@ -87,10 +99,23 @@ export const catalogApi = {
   },
   async getSolver(name: string, version: string) {
     return solverDetailSchema.parse(
-      await request<unknown>(
-        'get',
-        catalogUrl(`/solvers/${encodeURIComponent(name)}/${encodeURIComponent(version)}`),
-      ),
+      await request<unknown>('get', catalogUrl(`/solvers/${encodeURIComponent(name)}/${encodeURIComponent(version)}`)),
+    )
+  },
+  async listGeometries(query: ListQuery = {}) {
+    return listSchema(geometryListItemSchema).parse(await request<unknown>('get', catalogUrl('/geometries', query)))
+  },
+  async getGeometry(key: string) {
+    return geometryDetailSchema.parse(
+      await request<unknown>('get', catalogUrl(`/geometries/${encodeURIComponent(key)}`)),
+    )
+  },
+  async listExperiments(query: ListQuery = {}) {
+    return listSchema(experimentListItemSchema).parse(await request<unknown>('get', catalogUrl('/experiments', query)))
+  },
+  async getExperiment(key: string) {
+    return experimentDetailSchema.parse(
+      await request<unknown>('get', catalogUrl(`/experiments/${encodeURIComponent(key)}`)),
     )
   },
   async search(q: string, limit = 50) {

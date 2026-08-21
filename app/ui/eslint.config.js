@@ -23,10 +23,7 @@ export default tseslint.config(
     },
   },
   {
-    files: [
-      'src/lib/{cad,examples,material,quantitykind,solver}/**/*.{ts,tsx}',
-      'src/lib/{defaultCode,defaultExperimentCode,metadata}.ts',
-    ],
+    files: ['src/lib/{cad,examples,material,quantitykind,solver}/**/*.{ts,tsx}', 'src/lib/metadata.ts'],
     rules: {
       'no-restricted-imports': [
         'error',

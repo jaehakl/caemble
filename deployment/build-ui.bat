@@ -20,6 +20,19 @@ if errorlevel 1 (
     exit /b 1
 )
 
+where python >nul 2>nul
+if errorlevel 1 (
+    echo ERROR: Python 3.11 or newer was not found in PATH.
+    exit /b 1
+)
+
+python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"
+if errorlevel 1 (
+    echo ERROR: Python 3.11 or newer is required to read the canonical CAE catalog.
+    python --version
+    exit /b 1
+)
+
 node -e "const [major, minor] = process.versions.node.split('.').map(Number); process.exit((major === 22 && minor >= 13) || major >= 24 ? 0 : 1)"
 if errorlevel 1 (
     echo WARNING: Node.js 22.13 LTS or Node.js 24 or newer is recommended.

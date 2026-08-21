@@ -45,12 +45,26 @@ const dataAxisSchema = z.object({
 
 const valueSpecSchema = z.object({
   dtype: z.enum([
-    'bool', 'string', 'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64',
-    'float16', 'float32', 'float64',
+    'bool',
+    'string',
+    'int8',
+    'int16',
+    'int32',
+    'int64',
+    'uint8',
+    'uint16',
+    'uint32',
+    'uint64',
+    'float16',
+    'float32',
+    'float64',
   ]),
   unit: z.string().optional(),
   quantityKind: z.string().optional(),
-  basis: z.array(z.tuple([z.number(), z.number(), z.number()])).length(3).optional(),
+  basis: z
+    .array(z.tuple([z.number(), z.number(), z.number()]))
+    .length(3)
+    .optional(),
   axes: z.array(dataAxisSchema).optional(),
   minimum: z.number().optional(),
   maximum: z.number().optional(),
@@ -96,27 +110,35 @@ const solverDescriptorShapeSchema = z.object({
   referenceLengthUnit: z.string().min(1),
   minimumOutputs: z.number().int().nonnegative().optional(),
   parameters: z.record(z.string(), parameterSchema),
-  materials: z.array(z.object({
-    role: z.string().min(1),
-    description: z.string(),
-    target: z.object({
-      category: z.enum(['initializations', 'boundaryConditions', 'outputs']),
-      methodId: z.string().min(1),
+  materials: z.array(
+    z.object({
+      role: z.string().min(1),
+      description: z.string(),
+      target: z.object({
+        category: z.enum(['initializations', 'boundaryConditions', 'outputs']),
+        methodId: z.string().min(1),
+      }),
+      properties: z.record(z.string(), parameterSchema),
     }),
-    properties: z.record(z.string(), parameterSchema),
-  })),
-  inputPorts: z.record(z.string(), z.object({
-    description: z.string(),
-    artifactTypes: z.array(z.string().regex(/^.+@\d+$/)),
-    minimumOccurrences: z.number().int().nonnegative(),
-    maximumOccurrences: z.number().int().nonnegative(),
-    data: valueSpecSchema.optional(),
-  })),
-  observations: z.record(z.string(), z.object({
-    description: z.string(),
-    type: z.enum(['number', 'boolean', 'string']),
-    required: z.boolean().optional(),
-  })),
+  ),
+  inputPorts: z.record(
+    z.string(),
+    z.object({
+      description: z.string(),
+      artifactTypes: z.array(z.string().regex(/^.+@\d+$/)),
+      minimumOccurrences: z.number().int().nonnegative(),
+      maximumOccurrences: z.number().int().nonnegative(),
+      data: valueSpecSchema.optional(),
+    }),
+  ),
+  observations: z.record(
+    z.string(),
+    z.object({
+      description: z.string(),
+      type: z.enum(['number', 'boolean', 'string']),
+      required: z.boolean().optional(),
+    }),
+  ),
   methods: z.object({
     initializations: z.array(methodSchema),
     boundaryConditions: z.array(methodSchema),
@@ -144,12 +166,14 @@ const materialRequirementSchema = z.object({
 })
 
 export const catalogMetaSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   catalogRevision: z.string().min(1),
   quantityKindCount: z.number().int().nonnegative(),
   materialParameterCount: z.number().int().nonnegative(),
   materialModelCount: z.number().int().nonnegative(),
   solverCount: z.number().int().nonnegative(),
+  geometryCount: z.number().int().nonnegative(),
+  experimentCount: z.number().int().nonnegative(),
   materialGlobalQualifiers: z.array(z.string()),
   materialDesignRules: z.record(z.string(), z.string()),
 })
@@ -166,27 +190,123 @@ export const materialParameterDetailSchema = materialParameterSchema.extend({
 
 export const solverDetailSchema = solverListItemSchema.extend({
   descriptor: solverDescriptorSchema,
-  materialRequirements: z.array(z.object({
-    solverName: z.string(), solverVersion: z.string(), role: z.string(), roleDescription: z.string().nullable(),
-    methodCategory: z.string(), methodId: z.string(), materialParameter: z.string().nullable(), description: z.string(),
-    quantityKind: z.string().nullable(), unit: z.string().nullable(),
-  })),
-  quantityKindUsages: z.array(z.object({
-    solverName: z.string(), solverVersion: z.string(), quantityKind: z.string(), context: z.string(), path: z.string(),
-    unit: z.string().nullable().optional(),
-  })),
-  producesArtifacts: z.array(z.object({
-    methodId: z.string(), artifactType: z.string(),
-    consumers: z.array(z.object({ solverName: z.string(), solverVersion: z.string(), inputPort: z.string() })),
-  })),
-  consumesArtifacts: z.array(z.object({
-    inputPort: z.string(), artifactType: z.string(),
-    producers: z.array(z.object({ solverName: z.string(), solverVersion: z.string(), methodId: z.string() })),
-  })),
+  materialRequirements: z.array(
+    z.object({
+      solverName: z.string(),
+      solverVersion: z.string(),
+      role: z.string(),
+      roleDescription: z.string().nullable(),
+      methodCategory: z.string(),
+      methodId: z.string(),
+      materialParameter: z.string().nullable(),
+      description: z.string(),
+      quantityKind: z.string().nullable(),
+      unit: z.string().nullable(),
+    }),
+  ),
+  quantityKindUsages: z.array(
+    z.object({
+      solverName: z.string(),
+      solverVersion: z.string(),
+      quantityKind: z.string(),
+      context: z.string(),
+      path: z.string(),
+      unit: z.string().nullable().optional(),
+    }),
+  ),
+  producesArtifacts: z.array(
+    z.object({
+      methodId: z.string(),
+      artifactType: z.string(),
+      consumers: z.array(z.object({ solverName: z.string(), solverVersion: z.string(), inputPort: z.string() })),
+    }),
+  ),
+  consumesArtifacts: z.array(
+    z.object({
+      inputPort: z.string(),
+      artifactType: z.string(),
+      producers: z.array(z.object({ solverName: z.string(), solverVersion: z.string(), methodId: z.string() })),
+    }),
+  ),
+})
+
+export const geometryListItemSchema = z.object({
+  key: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().min(1),
+  cadApiVersion: z.literal(8),
+  moduleFormatVersion: z.literal(4),
+  lengthUnit: z.string().min(1),
+  exportName: z.string().regex(/^[A-Z][A-Za-z0-9]*$/),
+  sourceHash: z.string().regex(/^[0-9a-f]{64}$/),
+  concepts: z.array(z.string()),
+  materialRoles: z.array(z.object({ role: z.string().min(1), description: z.string().min(1) })),
+  relatedElements: z.array(z.string().min(1)),
+})
+
+export const geometryDetailSchema = geometryListItemSchema.extend({ source: z.string().min(1) })
+
+const experimentSolverSchema = z.object({
+  name: z.string().min(1),
+  version: z.string().min(1),
+  description: z.string(),
+})
+
+export const experimentListItemSchema = z.object({
+  key: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().min(1),
+  cadApiVersion: z.literal(8),
+  sourceFormatVersion: z.literal(2),
+  bundleFormatVersion: z.literal(5),
+  bundleHash: z.string().regex(/^[0-9a-f]{64}$/),
+  concepts: z.array(z.string()),
+  relatedSolvers: z.array(experimentSolverSchema),
+})
+
+const geometrySnapshotSchema = z.object({
+  schemaVersion: z.literal(2),
+  entryImports: z.array(z.unknown()),
+  modules: z.array(z.unknown()),
+})
+
+const experimentSourceBundleSchema = z.object({
+  formatVersion: z.literal(5),
+  files: z.record(z.string(), z.string()),
+  geometrySnapshot: geometrySnapshotSchema,
+})
+
+const experimentVerificationSchema = z.object({
+  kernelTasks: z.array(z.string()),
+  recordedData: z.array(z.string()),
+  expectations: z.array(z.string()),
+  fixture: z
+    .object({
+      records: z.array(
+        z.object({
+          name: z.string(),
+          dtype: z.string(),
+          shape: z.array(z.number().int().nonnegative()),
+          value: z.unknown(),
+          absoluteTolerance: z.number().nonnegative(),
+        }),
+      ),
+      terminal: z.object({
+        kind: z.literal('complete'),
+        sequence: z.number().int().nonnegative(),
+        recordSequences: z.array(z.number().int().nonnegative()),
+      }),
+    })
+    .optional(),
+})
+
+export const experimentDetailSchema = experimentListItemSchema.extend({
+  sourceBundle: experimentSourceBundleSchema,
+  verification: experimentVerificationSchema,
 })
 
 export const searchItemSchema = z.object({
-  kind: z.enum(['quantityKind', 'materialParameter', 'materialModel', 'solver']),
+  kind: z.enum(['quantityKind', 'materialParameter', 'materialModel', 'solver', 'geometry', 'experiment']),
   key: z.string(),
   title: z.string(),
   subtitle: z.string(),
@@ -225,6 +345,7 @@ export type ListQuery = Readonly<{
   unit?: string
   tensorOrder?: number
   quantityKind?: string
+  element?: string
   limit?: number
   cursor?: string
 }>
@@ -245,6 +366,10 @@ export type CatalogMaterialParameterDetail = z.infer<typeof materialParameterDet
 export type CatalogMaterialModel = z.infer<typeof materialModelSchema>
 export type CatalogSolverListItem = z.infer<typeof solverListItemSchema>
 export type CatalogSolverDetail = z.infer<typeof solverDetailSchema>
+export type CatalogGeometryListItem = z.infer<typeof geometryListItemSchema>
+export type CatalogGeometryDetail = z.infer<typeof geometryDetailSchema>
+export type CatalogExperimentListItem = z.infer<typeof experimentListItemSchema>
+export type CatalogExperimentDetail = z.infer<typeof experimentDetailSchema>
 export type CatalogSearchItem = z.infer<typeof searchItemSchema>
 export type CatalogRuntimeSlice = z.infer<typeof runtimeSliceSchema>
 export type CatalogRuntimeSliceRequest = Readonly<{

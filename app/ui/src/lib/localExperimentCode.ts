@@ -29,26 +29,7 @@ export const StarterStructure: Geometry<{ size: Vec3 }> = ({ size = [36, 24, 12]
 )
 `
 
-const blankExperimentCode = `import { experiment } from '@caemble/core'
-import { EmptyStructure } from './geometry'
-
-export default experiment({
-  lengthUnit: 'mm',
-  varsSchema: {},
-  geometry: () => <EmptyStructure id="structure" />,
-  recordedData: {},
-})
-`
-
-const blankGeometryCode = `import { type Geometry } from '@caemble/core'
-
-export const EmptyStructure: Geometry = () => <></>
-`
-
-const blankMaterialCode = `export {}
-`
-
-const placeholderTaskCode = `import { defineTask } from '@caemble/core'
+export const draftTaskCode = `import { defineTask } from '@caemble/core'
 
 // Draft preview only: select a compatible Solver and config before creating a Measurement or running CAE.
 export default defineTask({
@@ -67,13 +48,5 @@ export const starterExperimentSourceBundle = createExperimentSourceBundle({
   'geometry.tsx': starterGeometryCode,
   'material.tsx': starterMaterialCode,
   'simulate.py': placeholderSimulationCode,
-  'tasks/main.tsx': placeholderTaskCode,
-})
-
-export const blankExperimentSourceBundle = createExperimentSourceBundle({
-  'experiment.tsx': blankExperimentCode,
-  'geometry.tsx': blankGeometryCode,
-  'material.tsx': blankMaterialCode,
-  'simulate.py': placeholderSimulationCode,
-  'tasks/main.tsx': placeholderTaskCode,
+  'tasks/main.tsx': draftTaskCode,
 })

@@ -15,6 +15,7 @@ import {
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 import { dbTables, geometryApi, getListRequest, type GeometryPackageRecord } from '@/api'
+import { catalogApi, catalogQueryKeys } from '@/api/catalog'
 import { DataTable } from '@/components/DataTable'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -33,7 +34,157 @@ function message(error: unknown) {
   return error instanceof Error ? error.message : String(error)
 }
 
-export function GeometryManager({
+type GeometryManagerProps = {
+  geometry: GeometryWorkspaceState
+  initialPackageId?: number | null
+  initialVersionId?: number | null
+  onCatalogDraftOpened: () => void
+  onEdit: (versionId: number, repositoryId: number, packageId: number) => void | Promise<void>
+  onOpenGeometrySource: () => void
+  onOpenExperiment: (experimentId: number) => void | Promise<void>
+  onUse: (versionId: number, exportName: string, alias: string) => string | Promise<string>
+}
+
+export function GeometryManager(props: GeometryManagerProps) {
+  const auth = useAuth()
+  const [tab, setTab] = useState<'official' | 'workspace'>('official')
+  return (
+    <Tabs className="flex h-full min-h-0 flex-col" value={tab} onValueChange={(value) => setTab(value as typeof tab)}>
+      <TabsList className={`mx-4 mt-4 grid ${auth.isAuthenticated ? 'grid-cols-2' : 'grid-cols-1'}`}>
+        <TabsTrigger value="official">Official Catalog</TabsTrigger>
+        {auth.isAuthenticated ? <TabsTrigger value="workspace">Workspace Packages</TabsTrigger> : null}
+      </TabsList>
+      <TabsContent className="min-h-0 flex-1 overflow-hidden" value="official">
+        <OfficialGeometryCatalog {...props} authenticated={auth.isAuthenticated} />
+      </TabsContent>
+      {auth.isAuthenticated ? (
+        <TabsContent className="min-h-0 flex-1 overflow-hidden" value="workspace">
+          <WorkspaceGeometryManager {...props} />
+        </TabsContent>
+      ) : null}
+    </Tabs>
+  )
+}
+
+function OfficialGeometryCatalog({
+  authenticated,
+  geometry,
+  onCatalogDraftOpened,
+}: Pick<GeometryManagerProps, 'geometry' | 'onCatalogDraftOpened'> & { authenticated: boolean }) {
+  const [search, setSearch] = useState('')
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const listQuery = useQuery({
+    queryKey: catalogQueryKeys.geometries({ q: search.trim(), limit: 100 }),
+    queryFn: () => catalogApi.listGeometries({ q: search.trim(), limit: 100 }),
+  })
+  const detailQuery = useQuery({
+    queryKey: catalogQueryKeys.geometry(selectedKey ?? ''),
+    queryFn: () => catalogApi.getGeometry(selectedKey!),
+    enabled: selectedKey !== null,
+  })
+
+  useEffect(() => {
+    const items = listQuery.data?.items ?? []
+    if (!items.some((item) => item.key === selectedKey)) setSelectedKey(items[0]?.key ?? null)
+  }, [listQuery.data?.items, selectedKey])
+
+  const openDraft = () => {
+    const item = detailQuery.data
+    if (!item) return
+    try {
+      const result = geometry.openCatalogDraft({ key: item.key, source: item.source, description: item.description })
+      toast.success(result.created ? '공식 Geometry를 로컬 Draft로 열었습니다.' : '기존 로컬 Draft를 선택했습니다.')
+      onCatalogDraftOpened()
+    } catch (error) {
+      toast.error(message(error))
+    }
+  }
+
+  return (
+    <div className="grid h-full min-h-0 gap-4 p-4 lg:grid-cols-[20rem_minmax(0,1fr)]">
+      <section className="flex min-h-0 flex-col overflow-hidden rounded-md border">
+        <label className="relative m-3">
+          <Search className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground" />
+          <Input
+            aria-label="공식 Geometry 검색"
+            className="pl-9"
+            placeholder="키, 제목, 설명 검색"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </label>
+        <div className="min-h-0 flex-1 overflow-auto border-t">
+          {listQuery.isLoading ? (
+            <div className="grid h-full place-items-center text-sm text-muted-foreground">
+              <LoaderCircle className="size-5 animate-spin" />
+            </div>
+          ) : listQuery.isError ? (
+            <p className="p-4 text-sm text-destructive">공식 Geometry 카탈로그를 불러오지 못했습니다.</p>
+          ) : (
+            <ul className="divide-y">
+              {listQuery.data?.items.map((item) => (
+                <li key={item.key}>
+                  <button
+                    className={cn(
+                      'grid w-full gap-1 p-3 text-left hover:bg-muted/60',
+                      selectedKey === item.key && 'bg-muted',
+                    )}
+                    type="button"
+                    onClick={() => setSelectedKey(item.key)}
+                  >
+                    <span className="font-medium">{item.title}</span>
+                    <span className="font-mono text-xs text-muted-foreground">{item.key}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </section>
+      <section className="flex min-h-0 flex-col overflow-hidden rounded-md border">
+        {detailQuery.isLoading ? (
+          <div className="grid h-full place-items-center">
+            <LoaderCircle className="size-5 animate-spin" />
+          </div>
+        ) : detailQuery.isError ? (
+          <p className="p-4 text-sm text-destructive">Geometry detail을 불러오지 못했습니다.</p>
+        ) : detailQuery.data ? (
+          <>
+            <header className="space-y-2 border-b p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold">{detailQuery.data.title}</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">{detailQuery.data.description}</p>
+                </div>
+                <Button disabled={!geometry.namespace} type="button" onClick={openDraft}>
+                  로컬 Draft로 열기
+                </Button>
+              </div>
+              {!geometry.namespace && authenticated ? (
+                <p className="text-sm text-amber-700">Account에서 기본 Geometry namespace를 먼저 설정하세요.</p>
+              ) : null}
+              <div className="flex flex-wrap gap-1">
+                <Badge>CAD API v{detailQuery.data.cadApiVersion}</Badge>
+                <Badge>module v{detailQuery.data.moduleFormatVersion}</Badge>
+                <Badge>{detailQuery.data.exportName}</Badge>
+                {detailQuery.data.materialRoles.map((role) => (
+                  <Badge key={role.role}>{role.role}</Badge>
+                ))}
+              </div>
+            </header>
+            <pre className="min-h-0 flex-1 overflow-auto bg-slate-950 p-4 text-xs text-slate-100">
+              <code>{detailQuery.data.source}</code>
+            </pre>
+          </>
+        ) : (
+          <p className="p-4 text-sm text-muted-foreground">Geometry를 선택하세요.</p>
+        )}
+      </section>
+    </div>
+  )
+}
+
+function WorkspaceGeometryManager({
   geometry,
   initialPackageId = null,
   initialVersionId = null,
@@ -41,15 +192,7 @@ export function GeometryManager({
   onOpenGeometrySource,
   onOpenExperiment,
   onUse,
-}: {
-  geometry: GeometryWorkspaceState
-  initialPackageId?: number | null
-  initialVersionId?: number | null
-  onEdit: (versionId: number, repositoryId: number, packageId: number) => void | Promise<void>
-  onOpenGeometrySource: () => void
-  onOpenExperiment: (experimentId: number) => void | Promise<void>
-  onUse: (versionId: number, exportName: string, alias: string) => string | Promise<string>
-}) {
+}: GeometryManagerProps) {
   const auth = useAuth()
   const isAdmin = Boolean(auth.user?.roles.includes('admin'))
   const listScope = isAdmin ? 'visible' : 'mine'

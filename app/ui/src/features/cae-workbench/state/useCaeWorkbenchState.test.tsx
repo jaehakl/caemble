@@ -4,11 +4,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, renderHook } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { defaultExperimentSourceBundle } from '@/lib/defaultExperimentCode'
+import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 import { createGeometrySnapshot, geometryModuleHash, geometrySourceHash } from '@/lib/cad'
 import type { SavedExperiment } from '../types'
 import { useCaeWorkbenchState } from './useCaeWorkbenchState'
-import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 
 const mocks = vi.hoisted(() => ({
   agentGeometryContextVersion: vi.fn(),
@@ -90,7 +89,7 @@ function experiment(id: number, name = `Experiment ${id}`): SavedExperiment {
     parent_id: null,
     name,
     description: null,
-    source_bundle: defaultExperimentSourceBundle,
+    source_bundle: starterExperimentSourceBundle,
     source_hash: sourceHash,
   }
 }
@@ -104,9 +103,9 @@ function wrapper() {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mocks.cadSourceHash.mockImplementation(async (document: { sourceBundle: typeof defaultExperimentSourceBundle }) => {
+  mocks.cadSourceHash.mockImplementation(async (document: { sourceBundle: typeof starterExperimentSourceBundle }) => {
     if (document.sourceBundle.geometrySnapshot.modules.length > 0) return 'staged-snapshot'
-    return document.sourceBundle.files['experiment.tsx'] === defaultExperimentSourceBundle.files['experiment.tsx']
+    return document.sourceBundle.files['experiment.tsx'] === starterExperimentSourceBundle.files['experiment.tsx']
       ? 'base-v1'
       : 'staged-v1'
   })
@@ -142,7 +141,7 @@ describe('useCaeWorkbenchState', () => {
         drafts: {},
         stagedModules: [],
         selectedCoordinate: 'geometry.tsx',
-        selectedExport: 'Conductor',
+        selectedExport: 'StarterStructure',
         expandedPaths: ['geometry.tsx'],
       },
     })
@@ -215,10 +214,10 @@ describe('useCaeWorkbenchState', () => {
       wrapper: wrapper(),
     })
     act(() => result.current.applyExperiment(experiment(7)))
-    const changedSource = `${defaultExperimentSourceBundle.files['experiment.tsx']}\n// changed by agent`
+    const changedSource = `${starterExperimentSourceBundle.files['experiment.tsx']}\n// changed by agent`
     const finalBundle = {
-      ...defaultExperimentSourceBundle,
-      files: { ...defaultExperimentSourceBundle.files, 'experiment.tsx': changedSource },
+      ...starterExperimentSourceBundle,
+      files: { ...starterExperimentSourceBundle.files, 'experiment.tsx': changedSource },
     }
     await act(async () => {
       const applied = await result.current.applyAgentBundle({
@@ -238,7 +237,7 @@ describe('useCaeWorkbenchState', () => {
       expect(await result.current.undoAgentChange()).toBe(true)
     })
     expect(result.current.experiment?.sourceBundle.files['experiment.tsx']).toBe(
-      defaultExperimentSourceBundle.files['experiment.tsx'],
+      starterExperimentSourceBundle.files['experiment.tsx'],
     )
     expect(result.current.agentChange).toBeNull()
     expect(mocks.toastSuccess).toHaveBeenCalledWith('AI Agent 변경을 되돌렸습니다.')
@@ -250,8 +249,8 @@ describe('useCaeWorkbenchState', () => {
     })
     act(() => result.current.applyExperiment(experiment(7)))
     const finalBundle = {
-      ...defaultExperimentSourceBundle,
-      files: { ...defaultExperimentSourceBundle.files, 'experiment.tsx': '// stale' },
+      ...starterExperimentSourceBundle,
+      files: { ...starterExperimentSourceBundle.files, 'experiment.tsx': '// stale' },
     }
 
     await act(async () => {
@@ -267,7 +266,7 @@ describe('useCaeWorkbenchState', () => {
       ).toMatchObject({ status: 'conflicted', firstChangedFile: 'experiment.tsx', changedFiles: 1 })
     })
     expect(result.current.experiment?.sourceBundle.files['experiment.tsx']).toBe(
-      defaultExperimentSourceBundle.files['experiment.tsx'],
+      starterExperimentSourceBundle.files['experiment.tsx'],
     )
     expect(result.current.agentChange).toMatchObject({
       status: 'conflicted',
@@ -277,7 +276,7 @@ describe('useCaeWorkbenchState', () => {
       expect(await result.current.undoAgentChange()).toBe(true)
     })
     expect(result.current.experiment?.sourceBundle.files['experiment.tsx']).toBe(
-      defaultExperimentSourceBundle.files['experiment.tsx'],
+      starterExperimentSourceBundle.files['experiment.tsx'],
     )
     expect(result.current.agentChange).toBeNull()
     expect(mocks.toastSuccess).toHaveBeenCalledWith('AI Agent staged diff를 닫았습니다.')
@@ -314,7 +313,7 @@ describe('useCaeWorkbenchState', () => {
       ],
       [module],
     )
-    const finalBundle = { ...defaultExperimentSourceBundle, geometrySnapshot }
+    const finalBundle = { ...starterExperimentSourceBundle, geometrySnapshot }
 
     await act(async () => {
       expect(
@@ -344,8 +343,8 @@ describe('useCaeWorkbenchState', () => {
     })
     act(() => result.current.applyExperiment(experiment(7)))
     const generatedBundle = {
-      ...defaultExperimentSourceBundle,
-      files: { ...defaultExperimentSourceBundle.files, 'experiment.tsx': 'export default <broken' },
+      ...starterExperimentSourceBundle,
+      files: { ...starterExperimentSourceBundle.files, 'experiment.tsx': 'export default <broken' },
     }
     await act(async () => {
       expect(
@@ -368,8 +367,8 @@ describe('useCaeWorkbenchState', () => {
     })
     act(() => result.current.applyExperiment(experiment(7)))
     const finalBundle = {
-      ...defaultExperimentSourceBundle,
-      files: { ...defaultExperimentSourceBundle.files, 'experiment.tsx': '// mismatched hash' },
+      ...starterExperimentSourceBundle,
+      files: { ...starterExperimentSourceBundle.files, 'experiment.tsx': '// mismatched hash' },
     }
     await act(async () => {
       await expect(
@@ -384,7 +383,7 @@ describe('useCaeWorkbenchState', () => {
       ).resolves.toMatchObject({ status: 'conflicted', message: expect.stringContaining('source hash') })
     })
     expect(result.current.experiment?.sourceBundle.files['experiment.tsx']).toBe(
-      defaultExperimentSourceBundle.files['experiment.tsx'],
+      starterExperimentSourceBundle.files['experiment.tsx'],
     )
   })
 })

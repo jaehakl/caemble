@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Iterator, Sequence
 
 from .errors import CatalogIntegrityError, CatalogNotFoundError
-from .schema import APPLICATION_ID, SCHEMA_VERSION
+from .schema import APPLICATION_ID, RUNTIME_SLICE_SCHEMA_VERSION, SCHEMA_VERSION
 
 
 def catalog_path() -> Path:
@@ -94,7 +94,9 @@ class Catalog:
               (SELECT count(*) FROM quantity_kinds) AS quantity_kind_count,
               (SELECT count(*) FROM material_parameters) AS material_parameter_count,
               (SELECT count(*) FROM material_models) AS material_model_count,
-              (SELECT count(*) FROM solvers) AS solver_count
+              (SELECT count(*) FROM solvers) AS solver_count,
+              (SELECT count(*) FROM geometries) AS geometry_count,
+              (SELECT count(*) FROM experiments) AS experiment_count
             """
         )
         global_qualifiers = [
@@ -113,6 +115,8 @@ class Catalog:
             "materialParameterCount": counts["material_parameter_count"],
             "materialModelCount": counts["material_model_count"],
             "solverCount": counts["solver_count"],
+            "geometryCount": counts["geometry_count"],
+            "experimentCount": counts["experiment_count"],
             "materialGlobalQualifiers": global_qualifiers,
             "materialDesignRules": design_rules,
         }
@@ -617,6 +621,157 @@ class Catalog:
             "consumesArtifacts": consumed_items,
         }
 
+    def geometry(self, key: str, *, include_source: bool = True) -> dict[str, Any]:
+        row = self._one("SELECT * FROM geometries WHERE key = ?", (key,))
+        if row is None:
+            raise CatalogNotFoundError(f"Unknown Geometry: {key}")
+        result: dict[str, Any] = {
+            "key": row["key"],
+            "title": row["title"],
+            "description": row["description"],
+            "cadApiVersion": row["cad_api_version"],
+            "moduleFormatVersion": row["module_format_version"],
+            "lengthUnit": row["length_unit"],
+            "exportName": row["export_name"],
+            "sourceHash": row["source_hash"],
+            "concepts": [
+                item["concept"]
+                for item in self._all(
+                    "SELECT concept FROM geometry_concepts WHERE geometry_key = ? ORDER BY ordinal", (key,)
+                )
+            ],
+            "materialRoles": [
+                {"role": item["role"], "description": item["description"]}
+                for item in self._all(
+                    "SELECT role, description FROM geometry_material_roles WHERE geometry_key = ? ORDER BY ordinal",
+                    (key,),
+                )
+            ],
+            "relatedElements": [
+                item["element"]
+                for item in self._all(
+                    "SELECT element FROM geometry_elements WHERE geometry_key = ? ORDER BY ordinal", (key,)
+                )
+            ],
+        }
+        if include_source:
+            result["source"] = row["source"]
+        return result
+
+    def list_geometries(
+        self,
+        *,
+        query: str | None = None,
+        element: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        joins = ""
+        clauses: list[str] = []
+        parameters: list[object] = []
+        if element is not None:
+            joins = " JOIN geometry_elements ge ON ge.geometry_key = g.key"
+            clauses.append("ge.element = ?")
+            parameters.append(element)
+        if query:
+            escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like = f"%{escaped}%"
+            clauses.append("(g.key LIKE ? ESCAPE '\\' OR g.title LIKE ? ESCAPE '\\' OR g.description LIKE ? ESCAPE '\\')")
+            parameters.extend((like, like, like))
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        total = self._one(
+            f"SELECT count(DISTINCT g.key) AS value FROM geometries g{joins}{where}", parameters
+        )["value"]
+        rows = self._all(
+            f"SELECT DISTINCT g.key FROM geometries g{joins}{where} ORDER BY g.key LIMIT ? OFFSET ?",
+            (*parameters, limit, offset),
+        )
+        return [self.geometry(row["key"], include_source=False) for row in rows], total
+
+    def experiment(self, key: str, *, include_bundle: bool = True) -> dict[str, Any]:
+        row = self._one("SELECT * FROM experiments WHERE key = ?", (key,))
+        if row is None:
+            raise CatalogNotFoundError(f"Unknown Experiment: {key}")
+        result: dict[str, Any] = {
+            "key": row["key"],
+            "title": row["title"],
+            "description": row["description"],
+            "cadApiVersion": row["cad_api_version"],
+            "sourceFormatVersion": row["source_format_version"],
+            "bundleFormatVersion": row["bundle_format_version"],
+            "bundleHash": row["bundle_hash"],
+            "concepts": [
+                item["concept"]
+                for item in self._all(
+                    "SELECT concept FROM experiment_concepts WHERE experiment_key = ? ORDER BY ordinal", (key,)
+                )
+            ],
+            "relatedSolvers": [
+                {
+                    "name": item["solver_name"],
+                    "version": item["solver_version"],
+                    "description": item["description"],
+                }
+                for item in self._all(
+                    """
+                    SELECT es.solver_name, es.solver_version, s.description
+                    FROM experiment_solvers es
+                    JOIN solvers s ON s.name = es.solver_name AND s.version = es.solver_version
+                    WHERE es.experiment_key = ? ORDER BY es.ordinal
+                    """,
+                    (key,),
+                )
+            ],
+        }
+        if include_bundle:
+            result["verification"] = _json(row["verification_json"])
+            result["sourceBundle"] = {
+                "formatVersion": row["bundle_format_version"],
+                "files": {
+                    item["path"]: item["source"]
+                    for item in self._all(
+                        "SELECT path, source FROM experiment_files WHERE experiment_key = ? ORDER BY ordinal", (key,)
+                    )
+                },
+                "geometrySnapshot": _json(row["geometry_snapshot_json"]),
+            }
+        return result
+
+    def list_experiments(
+        self,
+        *,
+        query: str | None = None,
+        solver_name: str | None = None,
+        solver_version: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        joins = ""
+        clauses: list[str] = []
+        parameters: list[object] = []
+        if solver_name is not None or solver_version is not None:
+            joins = " JOIN experiment_solvers es ON es.experiment_key = e.key"
+        if solver_name is not None:
+            clauses.append("es.solver_name = ?")
+            parameters.append(solver_name)
+        if solver_version is not None:
+            clauses.append("es.solver_version = ?")
+            parameters.append(solver_version)
+        if query:
+            escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like = f"%{escaped}%"
+            clauses.append("(e.key LIKE ? ESCAPE '\\' OR e.title LIKE ? ESCAPE '\\' OR e.description LIKE ? ESCAPE '\\')")
+            parameters.extend((like, like, like))
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        total = self._one(
+            f"SELECT count(DISTINCT e.key) AS value FROM experiments e{joins}{where}", parameters
+        )["value"]
+        rows = self._all(
+            f"SELECT DISTINCT e.key FROM experiments e{joins}{where} ORDER BY e.key LIMIT ? OFFSET ?",
+            (*parameters, limit, offset),
+        )
+        return [self.experiment(row["key"], include_bundle=False) for row in rows], total
+
     def search(self, query: str, *, limit: int = 30) -> list[dict[str, str]]:
         escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         like = f"%{escaped}%"
@@ -635,9 +790,15 @@ class Catalog:
               UNION ALL
               SELECT 'solver', name || '@' || version, name, version || ' · Solver', name
               FROM solvers WHERE name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\'
+              UNION ALL
+              SELECT 'geometry', key, title, 'Official Geometry', key
+              FROM geometries WHERE key LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\'
+              UNION ALL
+              SELECT 'experiment', key, title, 'Official Experiment', key
+              FROM experiments WHERE key LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\'
             ) ORDER BY sort_key, kind LIMIT ?
             """,
-            (like, like, like, like, like, like, like, like, limit),
+            (like, like, like, like, like, like, like, like, like, like, like, like, like, like, limit),
         )
         return [dict(row) for row in rows]
 
@@ -705,7 +866,7 @@ class Catalog:
             )
         meta = self.meta()
         return {
-            "schemaVersion": SCHEMA_VERSION,
+            "schemaVersion": RUNTIME_SLICE_SCHEMA_VERSION,
             "catalogRevision": meta["catalogRevision"],
             "solvers": [
                 {

@@ -12,7 +12,7 @@ from typing import Any, Iterable
 
 from .database import Catalog, catalog_path
 from .errors import CatalogIntegrityError, CatalogNotFoundError
-from .schema import create_schema
+from .schema import create_schema, upgrade_schema
 from .validation import validate_catalog_content
 
 
@@ -204,6 +204,76 @@ def insert_solver_manifest(connection: sqlite3.Connection, manifest: dict[str, A
                 )
 
 
+def insert_geometry(connection: sqlite3.Connection, geometry: dict[str, Any]) -> None:
+    source = geometry["source"]
+    connection.execute(
+        "INSERT INTO geometries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            geometry["key"],
+            geometry["title"],
+            geometry["description"],
+            geometry.get("cadApiVersion", 8),
+            geometry.get("moduleFormatVersion", 4),
+            geometry["lengthUnit"],
+            geometry["exportName"],
+            source,
+            hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        ),
+    )
+    connection.executemany(
+        "INSERT INTO geometry_concepts VALUES (?, ?, ?)",
+        [(geometry["key"], ordinal, value) for ordinal, value in enumerate(geometry.get("concepts", []))],
+    )
+    connection.executemany(
+        "INSERT INTO geometry_material_roles VALUES (?, ?, ?, ?)",
+        [
+            (geometry["key"], ordinal, value["role"], value["description"])
+            for ordinal, value in enumerate(geometry.get("materialRoles", []))
+        ],
+    )
+    connection.executemany(
+        "INSERT INTO geometry_elements VALUES (?, ?, ?)",
+        [(geometry["key"], ordinal, value) for ordinal, value in enumerate(geometry.get("relatedElements", []))],
+    )
+
+
+def insert_experiment(connection: sqlite3.Connection, experiment: dict[str, Any]) -> None:
+    bundle = experiment["sourceBundle"]
+    bundle_hash = hashlib.sha256(canonical_json(bundle).encode("utf-8")).hexdigest()
+    connection.execute(
+        "INSERT INTO experiments VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            experiment["key"],
+            experiment["title"],
+            experiment["description"],
+            experiment.get("cadApiVersion", 8),
+            experiment.get("sourceFormatVersion", 2),
+            bundle["formatVersion"],
+            canonical_json(bundle["geometrySnapshot"]),
+            canonical_json(experiment["verification"]),
+            bundle_hash,
+        ),
+    )
+    connection.executemany(
+        "INSERT INTO experiment_files VALUES (?, ?, ?, ?)",
+        [
+            (experiment["key"], ordinal, path, source)
+            for ordinal, (path, source) in enumerate(sorted(bundle["files"].items()))
+        ],
+    )
+    connection.executemany(
+        "INSERT INTO experiment_concepts VALUES (?, ?, ?)",
+        [(experiment["key"], ordinal, value) for ordinal, value in enumerate(experiment.get("concepts", []))],
+    )
+    connection.executemany(
+        "INSERT INTO experiment_solvers VALUES (?, ?, ?, ?)",
+        [
+            (experiment["key"], ordinal, value["name"], value["version"])
+            for ordinal, value in enumerate(experiment["relatedSolvers"])
+        ],
+    )
+
+
 def create_database(path: Path, dataset: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
@@ -264,6 +334,10 @@ def create_database(path: Path, dataset: dict[str, Any]) -> None:
                 )
             for manifest in dataset["solverManifests"]:
                 insert_solver_manifest(connection, manifest)
+            for geometry in dataset.get("geometries", []):
+                insert_geometry(connection, geometry)
+            for experiment in dataset.get("experiments", []):
+                insert_experiment(connection, experiment)
             revision_source = {
                 "quantityKinds": quantity_kinds,
                 "opaqueQuantityKindNames": sorted(opaque_names),
@@ -354,6 +428,13 @@ def draft_path(root: Path | None = None) -> Path:
     return workspace / ".catalog-work" / "draft.sqlite3"
 
 
+def upgrade_database(path: Path) -> None:
+    with writable_connection(path) as connection:
+        upgrade_schema(connection)
+    refresh_derived_data(path)
+    validate_database(path)
+
+
 def create_draft(destination: Path, source: Path | None = None) -> None:
     source_path = (source or catalog_path()).resolve()
     if not source_path.is_file():
@@ -422,6 +503,14 @@ def semantic_snapshot(path: Path) -> dict[str, Any]:
                 f"{item['descriptor']['name']}@{item['descriptor']['version']}": item
                 for item in catalog.solver_manifests()
             },
+            "geometries": {
+                row["key"]: catalog.geometry(row["key"])
+                for row in catalog._all("SELECT key FROM geometries ORDER BY key")
+            },
+            "experiments": {
+                row["key"]: catalog.experiment(row["key"])
+                for row in catalog._all("SELECT key FROM experiments ORDER BY key")
+            },
         }
 
 
@@ -429,7 +518,7 @@ def semantic_diff(candidate: Path, baseline: Path | None = None) -> list[str]:
     before = semantic_snapshot((baseline or catalog_path()).resolve())
     after = semantic_snapshot(candidate.resolve())
     changes: list[str] = []
-    for section in ("quantityKinds", "materialParameters", "materialModels", "solvers"):
+    for section in ("quantityKinds", "materialParameters", "materialModels", "solvers", "geometries", "experiments"):
         before_items = before[section]
         after_items = after[section]
         for key in sorted(before_items.keys() - after_items.keys()):
@@ -534,6 +623,14 @@ def _revision_payload(path: Path) -> dict[str, Any]:
                 for row in catalog._all("SELECT key, description FROM material_design_rules ORDER BY key")
             },
             "solverManifests": catalog.solver_manifests(),
+            "geometries": [
+                catalog.geometry(row["key"])
+                for row in catalog._all("SELECT key FROM geometries ORDER BY key")
+            ],
+            "experiments": [
+                catalog.experiment(row["key"])
+                for row in catalog._all("SELECT key FROM experiments ORDER BY key")
+            ],
         }
 
 

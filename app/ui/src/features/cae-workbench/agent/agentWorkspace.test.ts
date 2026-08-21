@@ -2,10 +2,10 @@
 
 import { describe, expect, it } from 'vitest'
 import { createCadSourceDocument } from '@/lib/cad'
-import { defaultExperimentSourceBundle } from '@/lib/defaultExperimentCode'
+import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 import { agentGeometryContextVersion } from './agentWorkspace'
 
-const document = createCadSourceDocument('experiment', defaultExperimentSourceBundle)
+const document = createCadSourceDocument('experiment', starterExperimentSourceBundle)
 
 describe('agentGeometryContextVersion', () => {
   it('is stable for the same Experiment and Geometry drafts', async () => {

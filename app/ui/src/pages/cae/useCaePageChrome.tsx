@@ -28,6 +28,7 @@ import type { WorkbenchAction, WorkbenchMenuDefinition } from '@/features/cae-wo
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { WorkbenchTabId } from '@/features/cae-workbench/types'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
+import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 import type { WorkbenchDialog } from './caePageTypes'
 import { GeometryAuthoringRibbon } from './GeometryAuthoringRibbon'
 import { RibbonActions } from './RibbonActions'
@@ -40,6 +41,7 @@ export function useCaePageChrome({
   authenticated,
   experimentAuthoringState,
   geometryAuthoringState,
+  guardReplacement,
   openTab,
   requestRunSelected,
   runSafely,
@@ -49,6 +51,7 @@ export function useCaePageChrome({
   authenticated: boolean
   experimentAuthoringState: CadEditorAuthoringState | null
   geometryAuthoringState: CadEditorAuthoringState | null
+  guardReplacement: (run: () => unknown | Promise<unknown>) => void
   openTab: (tab: WorkbenchTabId) => void
   requestRunSelected: () => void
   runSafely: (run: () => unknown | Promise<unknown>) => void
@@ -83,14 +86,20 @@ export function useCaePageChrome({
         id: 'new-experiment',
         label: 'New Experiment',
         icon: <FlaskConical className="size-4" />,
-        onSelect: () => setDialog('new-experiment'),
+        onSelect: () =>
+          guardReplacement(() => {
+            workbench.newExperiment(
+              starterExperimentSourceBundle,
+              'Starter Experiment',
+              '로컬에서 즉시 편집할 수 있는 Starter Box Experiment입니다.',
+            )
+            openTab('experiment')
+          }),
       },
       loadExperiment: {
         id: 'load-experiment',
         label: 'Load Experiment',
         icon: <FolderOpen className="size-4" />,
-        disabled: !authenticated,
-        disabledReason: !authenticated ? loginReason : undefined,
         onSelect: () => setDialog('load-experiment'),
       },
       experimentHistory: {
@@ -285,8 +294,6 @@ export function useCaePageChrome({
         id: 'geometry-manager',
         label: 'Geometry Manager',
         icon: <Boxes className="size-4" />,
-        disabled: !authenticated,
-        disabledReason: !authenticated ? loginReason : undefined,
         onSelect: () => setDialog('geometry-manager'),
       },
       publishGeometryExport: {
@@ -377,7 +384,7 @@ export function useCaePageChrome({
         locked.includes(key) ? { ...action, disabled: true, disabledReason: sourceLockReason } : action,
       ]),
     )
-  }, [authenticated, openTab, requestRunSelected, runSafely, setDialog, workbench])
+  }, [authenticated, guardReplacement, openTab, requestRunSelected, runSafely, setDialog, workbench])
 
   const menus = useMemo<readonly WorkbenchMenuDefinition[]>(
     () => [

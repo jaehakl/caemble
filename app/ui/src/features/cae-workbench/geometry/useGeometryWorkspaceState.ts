@@ -20,6 +20,7 @@ import {
   type LocalGeometryCoordinate,
 } from '@/lib/cad'
 import type { GeometryLocalDraft, WorkbenchDraft } from '../types'
+import { draftGeometrySource } from './draftGeometrySource'
 
 const emptyGeometrySnapshot: GeometrySnapshot = { schemaVersion: 2, entryImports: [], modules: [] }
 const localCoordinatePattern =
@@ -41,36 +42,6 @@ function coordinateParts(coordinate: string) {
 function localCoordinate(coordinate: string) {
   const parts = coordinateParts(coordinate)
   return `caemble:geometry/${parts.namespace}/${parts.repository}/${parts.packageName}@local` as LocalGeometryCoordinate
-}
-
-function pascalCase(value: string) {
-  const result = value
-    .split(/[^A-Za-z0-9]+/u)
-    .filter(Boolean)
-    .map((part) => `${part[0]?.toUpperCase() ?? ''}${part.slice(1)}`)
-    .join('')
-  return /^[A-Z][A-Za-z0-9_]*$/u.test(result) ? result : 'NewGeometry'
-}
-
-function defaultGeometrySource(packageName: string) {
-  const name = pascalCase(packageName)
-  return `import { type Geometry, type Vec3 } from '@caemble/core'
-
-export const ${name}: Geometry<{
-  notchPosition: Vec3
-  notchSize: Vec3
-  size: Vec3
-}> = ({
-  notchPosition = [0, 4, 2.5],
-  notchSize = [30, 5, 6],
-  size = [100, 12, 10],
-}) => (
-  <subtract>
-    <box size={size} />
-    <box position={notchPosition} size={notchSize} />
-  </subtract>
-)
-`
 }
 
 function rewriteCoordinates(source: string, replacements: Readonly<Record<string, string>>) {
@@ -631,7 +602,7 @@ export function useGeometryWorkspaceState({
       const draft: GeometryLocalDraft = {
         draftId: crypto.randomUUID(),
         coordinate,
-        source: source ?? defaultGeometrySource(packageName),
+        source: source ?? draftGeometrySource(packageName),
         description,
         baseGeometryVersionId: null,
         repository: repositorySlug,
@@ -651,6 +622,40 @@ export function useGeometryWorkspaceState({
       return coordinate
     },
     [namespace, repositories],
+  )
+
+  const openCatalogDraft = useCallback(
+    ({ key, source, description }: { key: string; source: string; description: string }) => {
+      if (!namespace) throw new Error('기본 Geometry namespace를 먼저 설정하세요.')
+      const coordinate = `caemble:geometry/${namespace}/catalog/${key}@local` as LocalGeometryCoordinate
+      if (draftsRef.current[coordinate]) {
+        setSelectedCoordinateState(coordinate)
+        setSelectedPath([])
+        return { coordinate, created: false }
+      }
+      analyzeGeometrySource(source, { allowLocal: true })
+      const draft: GeometryLocalDraft = {
+        draftId: crypto.randomUUID(),
+        coordinate,
+        source,
+        description,
+        baseGeometryVersionId: null,
+        repository: 'catalog',
+        packageName: key,
+        repositoryId: null,
+        packageId: null,
+        version: '0.1.0',
+        bump: 'patch',
+        standalonePreview: true,
+      }
+      const next = { ...draftsRef.current, [coordinate]: draft }
+      draftsRef.current = next
+      setDrafts(next)
+      setSelectedCoordinateState(coordinate)
+      setSelectedPath([])
+      return { coordinate, created: true }
+    },
+    [namespace],
   )
 
   const stageResolved = useCallback(
@@ -1226,6 +1231,7 @@ export function useGeometryWorkspaceState({
       return result
     },
     createDraft,
+    openCatalogDraft,
     editPublishedVersion,
     editAsNewVersion: async (coordinate: GeometryModuleCoordinate) => {
       if (!authenticated) throw new Error('Published Geometry 편집은 로그인 후 사용할 수 있습니다.')

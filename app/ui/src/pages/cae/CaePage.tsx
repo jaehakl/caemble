@@ -47,6 +47,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     authenticated: auth.isAuthenticated,
     experimentAuthoringState,
     geometryAuthoringState,
+    guardReplacement: page.guardReplacement,
     openTab: page.openTab,
     requestRunSelected: page.requestRunSelected,
     runSafely: page.runSafely,

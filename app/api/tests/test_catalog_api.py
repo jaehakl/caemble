@@ -17,6 +17,8 @@ def test_catalog_openapi_builds_without_warnings():
         warnings.simplefilter("error")
         schema = app.openapi()
     assert "/catalog/runtime-slice" in schema["paths"]
+    assert "/catalog/geometries/{key}" in schema["paths"]
+    assert "/catalog/experiments/{key}" in schema["paths"]
 
 
 @pytest_asyncio.fixture
@@ -35,6 +37,9 @@ async def test_catalog_is_anonymous_cacheable_and_paginated(catalog_client: http
     meta = await catalog_client.get("/catalog/meta")
     assert meta.status_code == 200
     assert meta.json()["quantityKindCount"] == 1_216
+    assert meta.json()["schemaVersion"] == 2
+    assert meta.json()["geometryCount"] == 7
+    assert meta.json()["experimentCount"] == 4
     assert meta.json()["materialGlobalQualifiers"][0] == "temperature"
     assert "canonical_key" in meta.json()["materialDesignRules"]
     assert meta.headers["etag"].startswith('"')
@@ -85,6 +90,40 @@ async def test_catalog_search_filters_and_errors(catalog_client: httpx.AsyncClie
     assert missing.json()["detail"]["code"] == "catalog_not_found"
     bad_cursor = await catalog_client.get("/catalog/quantity-kinds", params={"cursor": "not-base64!"})
     assert bad_cursor.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_official_geometries_and_experiments_are_public_filterable_and_cacheable(
+    catalog_client: httpx.AsyncClient,
+):
+    geometries = await catalog_client.get("/catalog/geometries", params={"element": "fiber", "limit": 1})
+    assert geometries.status_code == 200
+    assert geometries.json()["total"] == 2
+    assert geometries.json()["nextCursor"]
+    assert geometries.headers["etag"]
+
+    wheel = await catalog_client.get("/catalog/geometries/two-material-wheel-assembly")
+    assert wheel.status_code == 200
+    assert wheel.json()["exportName"] == "WheelAssembly"
+    assert [item["role"] for item in wheel.json()["materialRoles"]] == ["tire", "wheel"]
+    assert "export const WheelAssembly" in wheel.json()["source"]
+
+    experiments = await catalog_client.get(
+        "/catalog/experiments",
+        params={"solverName": "steady-state-heat", "solverVersion": "0.1.0"},
+    )
+    assert experiments.status_code == 200
+    assert [item["key"] for item in experiments.json()["items"]] == ["electro-thermal-uniform-bar"]
+
+    detail = await catalog_client.get("/catalog/experiments/dc-uniform-bar")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["sourceBundle"]["formatVersion"] == 5
+    assert detail.json()["verification"]["kernelTasks"] == ["solveCurrent"]
+
+    search = await catalog_client.get("/catalog/search", params={"q": "wheel"})
+    assert {item["kind"] for item in search.json()["items"]} >= {"geometry"}
+    missing = await catalog_client.get("/catalog/experiments/not-real")
+    assert missing.status_code == 404
 
 
 @pytest.mark.asyncio

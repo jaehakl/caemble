@@ -987,9 +987,16 @@ def _validate_scene(value: Any, path: str) -> None:
 def _validate_scene_part(value: Any, path: str) -> None:
     if (
         not isinstance(value, dict)
-        or any(key not in {"id", "geometry", "material", "surfaces"} for key in value)
+        or any(key not in {"id", "geometry", "material", "materialRole", "surfaces"} for key in value)
         or not isinstance(value.get("id"), str)
         or not value["id"]
+        or (
+            "materialRole" in value
+            and (
+                not isinstance(value["materialRole"], str)
+                or not value["materialRole"]
+            )
+        )
         or not isinstance(value.get("surfaces"), list)
     ):
         raise CaeError("invalid_input", f"{path} metadata is invalid")

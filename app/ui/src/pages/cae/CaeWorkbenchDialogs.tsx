@@ -4,7 +4,6 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import {
   DefinitionLineageSummary,
   DefinitionPickerDialog,
-  ExamplePickerDialog,
   HistoryDialog,
   MeasurementPickerDialog,
 } from '@/features/cae-workbench/dialogs'
@@ -12,6 +11,7 @@ import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWor
 import type { SavedExperiment, WorkbenchTabId } from '@/features/cae-workbench/types'
 import { GeometryExportPublishDialog, GeometryManager } from '@/features/cae-workbench/geometry'
 import { SaveDefinitionDialog } from '@/features/viewer/persistence/SaveDefinitionDialog'
+import { assertExperimentSourceBundle } from '@/lib/cad'
 import { AnalysisWorkspace } from '@/pages/analysis/AnalysisPage'
 import { MaterialManager } from '@/pages/materials/MaterialManager'
 import type { WorkbenchDialog } from './caePageTypes'
@@ -48,22 +48,19 @@ export function CaeWorkbenchDialogs({
 
   return (
     <>
-      <ExamplePickerDialog
-        open={dialog === 'new-experiment'}
-        onOpenChange={closeDialog}
-        onSelect={(example) =>
-          guardReplacement(() => {
-            workbench.newExperiment(example.experimentSourceBundle, `${example.title} Experiment`, example.description)
-            openTab('experiment')
-          })
-        }
-      />
       <DefinitionPickerDialog
         authenticated={authenticated}
         open={dialog === 'load-experiment'}
         selectedId={workbench.experimentId}
         onOpenChange={closeDialog}
         onSelect={(row) => guardReplacement(() => workbench.loadExperiment(row as SavedExperiment))}
+        onSelectCatalog={(item) =>
+          guardReplacement(() => {
+            assertExperimentSourceBundle(item.sourceBundle)
+            workbench.newExperiment(item.sourceBundle, item.title, item.description)
+            openTab('experiment')
+          })
+        }
       />
       <HistoryDialog
         id={workbench.experimentId}
@@ -138,6 +135,10 @@ export function CaeWorkbenchDialogs({
           <div className="min-h-0 overflow-hidden">
             <GeometryManager
               geometry={workbench.geometry}
+              onCatalogDraftOpened={() => {
+                setDialog(null)
+                openTab('geometry')
+              }}
               initialPackageId={selectedGeometryDraft?.packageId ?? null}
               initialVersionId={
                 selectedGeometryDraft?.baseGeometryVersionId ?? selectedGeometryModule?.geometryVersionId

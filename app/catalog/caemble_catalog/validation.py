@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import re
 from functools import lru_cache
 from typing import Any
-
-from ucumvert import PintUcumRegistry
 
 from .database import Catalog
 from .errors import CatalogIntegrityError
@@ -69,7 +69,16 @@ _material_key = re.compile(r"^([a-z][a-z0-9_]*)\.([a-z][a-z0-9_]*)$")
 _model_key = re.compile(r"^model\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
 _annotation = re.compile(r"^\{[^{}]+\}$")
 _repeated_whitespace = re.compile(r"\s{2,}")
-_registry = PintUcumRegistry()
+_catalog_key = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_export_name = re.compile(r"^[A-Z][A-Za-z0-9]*$")
+_source_path = re.compile(r"^(?:experiment|geometry|material)\.tsx$|^simulate\.py$|^tasks/[A-Za-z][A-Za-z0-9_-]*\.tsx$")
+
+
+@lru_cache(maxsize=1)
+def _unit_registry() -> Any:
+    from ucumvert import PintUcumRegistry
+
+    return PintUcumRegistry()
 
 
 def _validate_text(value: str, path: str) -> None:
@@ -86,8 +95,8 @@ def _validate_ordinals(rows: list[Any], path: str) -> None:
 @lru_cache(maxsize=None)
 def _parsed_unit(unit: str) -> tuple[float, Any]:
     if _annotation.fullmatch(unit):
-        return 1.0, _registry.dimensionless
-    parsed = _registry.from_ucum(unit)
+        return 1.0, _unit_registry().dimensionless
+    parsed = _unit_registry().from_ucum(unit)
     parsed_unit = getattr(parsed, "units", None)
     magnitude = getattr(parsed, "magnitude", None)
     if parsed_unit is None or not isinstance(magnitude, (int, float)):
@@ -102,7 +111,7 @@ def _parsed_unit(unit: str) -> tuple[float, Any]:
 def _converted_value(value: int, source_unit: str, target_unit: str) -> float:
     source_scale, source = _parsed_unit(source_unit)
     target_scale, target = _parsed_unit(target_unit)
-    converted = _registry.Quantity(value * source_scale, source).to(target).magnitude / target_scale
+    converted = _unit_registry().Quantity(value * source_scale, source).to(target).magnitude / target_scale
     result = float(converted)
     if not math.isfinite(result):
         raise ValueError("conversion result is not finite")
@@ -239,6 +248,127 @@ def _validate_material_models(catalog: Catalog, quantity_kinds: set[str]) -> Non
             raise CatalogIntegrityError(f"Material model {key} sharedBasis must be boolean")
 
 
+def _validate_geometries(catalog: Catalog) -> None:
+    for row in catalog._all("SELECT * FROM geometries ORDER BY key"):
+        key = row["key"]
+        if _catalog_key.fullmatch(key) is None:
+            raise CatalogIntegrityError(f"Geometry key {key!r} must be a lowercase kebab-case key")
+        _validate_text(row["title"], f"Geometry {key} title")
+        _validate_text(row["description"], f"Geometry {key} description")
+        if _export_name.fullmatch(row["export_name"]) is None:
+            raise CatalogIntegrityError(f"Geometry {key} exportName must be a PascalCase identifier")
+        if not row["length_unit"] or row["length_unit"] != row["length_unit"].strip():
+            raise CatalogIntegrityError(f"Geometry {key} lengthUnit must be non-empty and trimmed")
+        source = row["source"]
+        if not source.strip() or len(source.encode("utf-8")) > 1_048_576:
+            raise CatalogIntegrityError(f"Geometry {key} source must be between 1 byte and 1 MiB")
+        expected_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        if row["source_hash"] != expected_hash:
+            raise CatalogIntegrityError(f"Geometry {key} source hash mismatch")
+        if re.search(rf"\bexport\s+const\s+{re.escape(row['export_name'])}\b", source) is None:
+            raise CatalogIntegrityError(
+                f"Geometry {key} source must provide named export {row['export_name']}"
+            )
+        concepts = catalog._all(
+            "SELECT ordinal, concept FROM geometry_concepts WHERE geometry_key = ? ORDER BY ordinal", (key,)
+        )
+        _validate_ordinals(concepts, f"Geometry {key} concepts")
+        for concept in concepts:
+            _validate_text(concept["concept"], f"Geometry {key} concept")
+        roles = catalog._all(
+            "SELECT ordinal, role, description FROM geometry_material_roles WHERE geometry_key = ? ORDER BY ordinal",
+            (key,),
+        )
+        _validate_ordinals(roles, f"Geometry {key} material roles")
+        for role in roles:
+            if _identifier.fullmatch(role["role"]) is None:
+                raise CatalogIntegrityError(f"Geometry {key} has invalid Material role {role['role']!r}")
+            _validate_text(role["description"], f"Geometry {key} Material role {role['role']}")
+        elements = catalog._all(
+            "SELECT ordinal, element FROM geometry_elements WHERE geometry_key = ? ORDER BY ordinal", (key,)
+        )
+        _validate_ordinals(elements, f"Geometry {key} related elements")
+        for element in elements:
+            if not element["element"] or element["element"] != element["element"].strip():
+                raise CatalogIntegrityError(f"Geometry {key} contains an invalid related CAD element")
+
+
+def _validate_verification(key: str, verification: Any) -> None:
+    if not isinstance(verification, dict):
+        raise CatalogIntegrityError(f"Experiment {key} verification must be an object")
+    allowed = {"kernelTasks", "recordedData", "expectations", "fixture"}
+    if set(verification) - allowed:
+        raise CatalogIntegrityError(f"Experiment {key} verification contains unknown fields")
+    for field in ("kernelTasks", "recordedData", "expectations"):
+        values = verification.get(field)
+        if not isinstance(values, list) or not all(isinstance(value, str) and value for value in values):
+            raise CatalogIntegrityError(f"Experiment {key} verification.{field} must be a string array")
+    fixture = verification.get("fixture")
+    if fixture is None:
+        return
+    if not isinstance(fixture, dict) or set(fixture) != {"records", "terminal"}:
+        raise CatalogIntegrityError(f"Experiment {key} verification.fixture is invalid")
+    if not isinstance(fixture["records"], list) or not isinstance(fixture["terminal"], dict):
+        raise CatalogIntegrityError(f"Experiment {key} verification.fixture is invalid")
+
+
+def _validate_experiments(catalog: Catalog) -> None:
+    for row in catalog._all("SELECT * FROM experiments ORDER BY key"):
+        key = row["key"]
+        if _catalog_key.fullmatch(key) is None:
+            raise CatalogIntegrityError(f"Experiment key {key!r} must be a lowercase kebab-case key")
+        _validate_text(row["title"], f"Experiment {key} title")
+        _validate_text(row["description"], f"Experiment {key} description")
+        try:
+            geometry = json.loads(row["geometry_snapshot_json"])
+            verification = json.loads(row["verification_json"])
+        except json.JSONDecodeError as error:
+            raise CatalogIntegrityError(f"Experiment {key} contains invalid JSON") from error
+        if not isinstance(geometry, dict) or not geometry:
+            raise CatalogIntegrityError(f"Experiment {key} Geometry snapshot must be a non-empty object")
+        _validate_verification(key, verification)
+        files = catalog._all(
+            "SELECT ordinal, path, source FROM experiment_files WHERE experiment_key = ? ORDER BY ordinal", (key,)
+        )
+        if not files:
+            raise CatalogIntegrityError(f"Experiment {key} must contain source files")
+        _validate_ordinals(files, f"Experiment {key} files")
+        paths = {file["path"] for file in files}
+        required_paths = {"experiment.tsx", "geometry.tsx", "material.tsx", "simulate.py"}
+        if not required_paths <= paths or not any(path.startswith("tasks/") for path in paths):
+            raise CatalogIntegrityError(f"Experiment {key} source bundle is missing required files")
+        total_size = 0
+        for file in files:
+            if _source_path.fullmatch(file["path"]) is None or ".." in file["path"].split("/"):
+                raise CatalogIntegrityError(f"Experiment {key} contains invalid source path {file['path']!r}")
+            source_size = len(file["source"].encode("utf-8"))
+            if source_size == 0 or source_size > 1_048_576:
+                raise CatalogIntegrityError(f"Experiment {key} file {file['path']} exceeds source limits")
+            total_size += source_size
+        if total_size > 1_048_576:
+            raise CatalogIntegrityError(f"Experiment {key} source bundle exceeds 1 MiB")
+        concepts = catalog._all(
+            "SELECT ordinal, concept FROM experiment_concepts WHERE experiment_key = ? ORDER BY ordinal", (key,)
+        )
+        _validate_ordinals(concepts, f"Experiment {key} concepts")
+        for concept in concepts:
+            _validate_text(concept["concept"], f"Experiment {key} concept")
+        solvers = catalog._all(
+            "SELECT ordinal FROM experiment_solvers WHERE experiment_key = ? ORDER BY ordinal", (key,)
+        )
+        if not solvers:
+            raise CatalogIntegrityError(f"Experiment {key} must reference at least one Solver")
+        _validate_ordinals(solvers, f"Experiment {key} related Solvers")
+        bundle = {
+            "formatVersion": row["bundle_format_version"],
+            "files": {file["path"]: file["source"] for file in files},
+            "geometrySnapshot": geometry,
+        }
+        bundle_json = json.dumps(bundle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if row["bundle_hash"] != hashlib.sha256(bundle_json.encode("utf-8")).hexdigest():
+            raise CatalogIntegrityError(f"Experiment {key} bundle hash mismatch")
+
+
 def validate_catalog_content(catalog: Catalog) -> None:
     """Validate semantic invariants that SQLite constraints cannot express."""
 
@@ -246,3 +376,5 @@ def validate_catalog_content(catalog: Catalog) -> None:
     quantity_kinds = {row["name"] for row in catalog._all("SELECT name FROM quantity_kinds")}
     _validate_material_parameters(catalog, quantity_kinds)
     _validate_material_models(catalog, quantity_kinds)
+    _validate_geometries(catalog)
+    _validate_experiments(catalog)

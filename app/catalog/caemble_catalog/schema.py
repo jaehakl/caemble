@@ -3,7 +3,91 @@ from __future__ import annotations
 import sqlite3
 
 APPLICATION_ID = 0x4341454D  # "CAEM"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+RUNTIME_SLICE_SCHEMA_VERSION = 1
+
+CATALOG_ENTITY_SCHEMA_SQL = r"""
+CREATE TABLE geometries (
+    key TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    cad_api_version INTEGER NOT NULL CHECK (cad_api_version = 8),
+    module_format_version INTEGER NOT NULL CHECK (module_format_version = 4),
+    length_unit TEXT NOT NULL,
+    export_name TEXT NOT NULL,
+    source TEXT NOT NULL,
+    source_hash TEXT NOT NULL CHECK (length(source_hash) = 64)
+) STRICT;
+
+CREATE TABLE geometry_concepts (
+    geometry_key TEXT NOT NULL REFERENCES geometries(key) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    concept TEXT NOT NULL,
+    PRIMARY KEY (geometry_key, ordinal),
+    UNIQUE (geometry_key, concept)
+) STRICT;
+
+CREATE TABLE geometry_material_roles (
+    geometry_key TEXT NOT NULL REFERENCES geometries(key) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    role TEXT NOT NULL,
+    description TEXT NOT NULL,
+    PRIMARY KEY (geometry_key, role),
+    UNIQUE (geometry_key, ordinal)
+) STRICT;
+
+CREATE TABLE geometry_elements (
+    geometry_key TEXT NOT NULL REFERENCES geometries(key) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    element TEXT NOT NULL,
+    PRIMARY KEY (geometry_key, element),
+    UNIQUE (geometry_key, ordinal)
+) STRICT;
+
+CREATE INDEX geometry_elements_element_idx ON geometry_elements(element, geometry_key);
+
+CREATE TABLE experiments (
+    key TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    cad_api_version INTEGER NOT NULL CHECK (cad_api_version = 8),
+    source_format_version INTEGER NOT NULL CHECK (source_format_version = 2),
+    bundle_format_version INTEGER NOT NULL CHECK (bundle_format_version = 5),
+    geometry_snapshot_json TEXT NOT NULL CHECK (json_valid(geometry_snapshot_json)),
+    verification_json TEXT NOT NULL CHECK (json_valid(verification_json)),
+    bundle_hash TEXT NOT NULL CHECK (length(bundle_hash) = 64)
+) STRICT;
+
+CREATE TABLE experiment_files (
+    experiment_key TEXT NOT NULL REFERENCES experiments(key) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    path TEXT NOT NULL,
+    source TEXT NOT NULL,
+    PRIMARY KEY (experiment_key, path),
+    UNIQUE (experiment_key, ordinal)
+) STRICT;
+
+CREATE TABLE experiment_concepts (
+    experiment_key TEXT NOT NULL REFERENCES experiments(key) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    concept TEXT NOT NULL,
+    PRIMARY KEY (experiment_key, ordinal),
+    UNIQUE (experiment_key, concept)
+) STRICT;
+
+CREATE TABLE experiment_solvers (
+    experiment_key TEXT NOT NULL REFERENCES experiments(key) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    solver_name TEXT NOT NULL,
+    solver_version TEXT NOT NULL,
+    PRIMARY KEY (experiment_key, solver_name, solver_version),
+    UNIQUE (experiment_key, ordinal),
+    FOREIGN KEY (solver_name, solver_version) REFERENCES solvers(name, version)
+) STRICT;
+
+CREATE INDEX experiment_solvers_solver_idx
+ON experiment_solvers(solver_name, solver_version, experiment_key);
+"""
 
 SCHEMA_SQL = r"""
 PRAGMA foreign_keys = ON;
@@ -230,10 +314,22 @@ SELECT producer.solver_name AS producer_solver_name,
 FROM solver_methods AS producer
 JOIN solver_input_artifact_types AS consumer ON consumer.artifact_type = producer.artifact_type
 WHERE producer.category = 'outputs' AND producer.artifact_type IS NOT NULL;
-"""
+""" + CATALOG_ENTITY_SCHEMA_SQL
 
 
 def create_schema(connection: sqlite3.Connection) -> None:
     connection.executescript(SCHEMA_SQL)
     connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
+    connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+
+def upgrade_schema(connection: sqlite3.Connection) -> None:
+    application_id = connection.execute("PRAGMA application_id").fetchone()[0]
+    user_version = connection.execute("PRAGMA user_version").fetchone()[0]
+    if application_id != APPLICATION_ID or user_version != 1:
+        raise ValueError(
+            f"Only a CAEM catalog schema v1 database can be upgraded: "
+            f"application_id={application_id}, user_version={user_version}"
+        )
+    connection.executescript(CATALOG_ENTITY_SCHEMA_SQL)
     connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

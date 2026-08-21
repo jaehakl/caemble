@@ -17,6 +17,7 @@ const user = {
 }
 const apiPattern = /^http:\/\/127\.0\.0\.1:\d+\/api\//
 const catalogPackageRoot = fileURLToPath(new URL('../../catalog', import.meta.url))
+const catalogDatabasePath = fileURLToPath(new URL('../../catalog/caemble_catalog/catalog.sqlite3', import.meta.url))
 const catalogSliceScript = `import json, sys
 from caemble_catalog import Catalog
 request = json.load(sys.stdin)
@@ -29,13 +30,11 @@ with Catalog.open_readonly() as catalog:
     )
 json.dump(result, sys.stdout)
 `
-const publicExperimentTemplates = [
-  ['Blank Experiment', 'EmptyStructure', true, true],
-  ['Two-material Wheel Assembly', 'WheelAssembly', false, true],
-  ['DC Uniform Bar', 'referenceVoltage', false, false],
-  ['DC Notched Current Density', 'NotchedConductor', false, false],
-  ['DC Resolution Study', 'sourceVoltage', false, false],
-  ['Electro-Thermal Uniform Bar', 'fixedTemperature', false, false],
+const officialExperimentTemplates = [
+  ['DC Uniform Bar', 'referenceVoltage'],
+  ['DC Notched Current Density', 'NotchedConductor'],
+  ['DC Resolution Study', 'sourceVoltage'],
+  ['Electro-Thermal Uniform Bar', 'fixedTemperature'],
 ] as const
 
 function canonicalCatalogSlice(request: unknown) {
@@ -48,17 +47,52 @@ function canonicalCatalogSlice(request: unknown) {
   return JSON.parse(output) as unknown
 }
 
+function canonicalCatalogQuery(kind: 'experiment' | 'geometry', key?: string) {
+  const pythonPath = [catalogPackageRoot, process.env.PYTHONPATH].filter(Boolean).join(delimiter)
+  const args = ['-m', 'caemble_catalog', '--database', catalogDatabasePath, 'query', kind]
+  if (key) args.push(key)
+  const output = execFileSync(process.env.PYTHON ?? 'python', args, {
+    encoding: 'utf8',
+    env: { ...process.env, PYTHONPATH: pythonPath, PYTHONUTF8: '1' },
+  })
+  return JSON.parse(output) as Record<string, unknown> | Record<string, unknown>[]
+}
+
 async function mockCanonicalCatalog(page: Page) {
   const slices = new Map<string, unknown>()
-  await page.route(/\/api\/catalog\/runtime-slice$/u, async (route) => {
-    const request = route.request().postDataJSON()
-    const key = JSON.stringify(request)
-    let slice = slices.get(key)
-    if (!slice) {
-      slice = canonicalCatalogSlice(request)
-      slices.set(key, slice)
+  await page.route('**/api/catalog/**', async (route) => {
+    const url = new URL(route.request().url())
+    if (url.pathname === '/api/catalog/runtime-slice') {
+      const request = route.request().postDataJSON()
+      const key = JSON.stringify(request)
+      let slice = slices.get(key)
+      if (!slice) {
+        slice = canonicalCatalogSlice(request)
+        slices.set(key, slice)
+      }
+      return json(route, slice)
     }
-    await json(route, slice)
+    const match = url.pathname.match(/^\/api\/catalog\/(experiments|geometries)(?:\/([^/]+))?$/u)
+    if (!match) return route.fallback()
+    const kind = match[1] === 'experiments' ? 'experiment' : 'geometry'
+    if (match[2]) return json(route, canonicalCatalogQuery(kind, decodeURIComponent(match[2])))
+    const query = (url.searchParams.get('q') ?? '').trim().toLowerCase()
+    const element = url.searchParams.get('element')
+    const solverName = url.searchParams.get('solverName')
+    const solverVersion = url.searchParams.get('solverVersion')
+    const items = (canonicalCatalogQuery(kind) as Record<string, unknown>[]).filter((item) => {
+      if (query && !`${item.key} ${item.title} ${item.description}`.toLowerCase().includes(query)) return false
+      if (element && !(item.relatedElements as string[] | undefined)?.includes(element)) return false
+      if (
+        solverName &&
+        !(item.relatedSolvers as Array<{ name: string; version: string }> | undefined)?.some(
+          (solver) => solver.name === solverName && (!solverVersion || solver.version === solverVersion),
+        )
+      )
+        return false
+      return true
+    })
+    return json(route, { items, nextCursor: null, total: items.length })
   })
 }
 
@@ -154,13 +188,13 @@ test('keeps an anonymous Starter editable offline and restores the session draft
   const editor = page.locator('.monaco-editor:visible .view-lines')
   await editor.click({ position: { x: 120, y: 45 } })
   await page.keyboard.press('Control+A')
-  await page.keyboard.insertText(`import { Box, Cylinder, radians, type Geometry } from '@caemble/core'
+  await page.keyboard.insertText(`import { Box, Cylinder, radians, type Geometry, type Vec3 } from '@caemble/core'
 
-export const StarterStructure: Geometry = () => (
+export const StarterStructure: Geometry<{ size: Vec3 }> = ({ size = [36, 24, 12] }) => (
   <translate offset={[8, 0, 0]}>
     <rotate axis={[0, 0, 1]} angle={radians(15)}>
       <scale x={1.5} y={1} z={1}>
-        <Box id="body" size={[18, 12, 6]} />
+        <Box id="body" size={size} />
       </scale>
     </rotate>
     {Array.from({ length: 2 }, (_, index) => (
@@ -171,27 +205,22 @@ export const StarterStructure: Geometry = () => (
 // offline-edit
 `)
   await expect(page.locator('.monaco-editor:visible .squiggly-error')).toHaveCount(0, { timeout: 10_000 })
-  await expect(page.getByRole('button', { name: 'Toggle Experiment' })).toBeEnabled({ timeout: 15_000 })
+  await expect(page.getByRole('button', { name: 'Toggle Experiment' })).toBeVisible({ timeout: 15_000 })
   await expect(page.getByText('Draft preview · Solver 미선택')).toBeVisible()
   await expect(page.locator('footer [role="alert"]')).toHaveCount(0)
 
   await page.getByRole('menuitem', { name: 'Source' }).click()
   await page.getByRole('menuitem', { name: 'New Experiment' }).click()
-  await page
-    .getByRole('dialog', { name: 'New Experiment' })
-    .getByRole('button', { name: /Blank Experiment/ })
-    .click()
   const confirmation = page.getByRole('dialog', { name: '저장하지 않은 편집을 바꿀까요?' })
   await confirmation.getByRole('button', { name: '편집 내용 바꾸기' }).click()
-  await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('EmptyStructure')
-  await expect(page.getByText('Waiting for model...', { exact: true })).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('StarterStructure')
 
-  const blankEditor = page.locator('.monaco-editor:visible .view-lines')
-  await blankEditor.click({ position: { x: 120, y: 45 } })
+  const starterEditor = page.locator('.monaco-editor:visible .view-lines')
+  await starterEditor.click({ position: { x: 120, y: 45 } })
   await page.keyboard.press('Control+A')
-  await page.keyboard.insertText(`import { Box, type Geometry } from '@caemble/core'
+  await page.keyboard.insertText(`import { Box, type Geometry, type Vec3 } from '@caemble/core'
 
-export const EmptyStructure: Geometry = () => <></>
+export const StarterStructure: Geometry<{ size: Vec3 }> = ({ size = [12, 8, 4] }) => <Box size={size} />
 // session-restored
 `)
   await expect
@@ -259,23 +288,15 @@ test('regenerates an editable Candidate when varsSchema adds openness', async ({
     timeout: 30_000,
   })
 
-  await page.getByRole('menuitem', { name: 'Source' }).click()
-  await page.getByRole('menuitem', { name: 'New Experiment' }).click()
-  await page
-    .getByRole('dialog', { name: 'New Experiment' })
-    .getByRole('button', { name: /Blank Experiment/ })
-    .click()
-  await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('EmptyStructure')
-
   await page.getByRole('tab', { name: 'geometry.tsx' }).click()
   const geometryEditor = page.locator('.monaco-editor:visible .view-lines')
   await geometryEditor.click({ position: { x: 120, y: 45 } })
   await page.keyboard.press('Control+A')
-  await page.keyboard.insertText(`import { type Geometry } from '@caemble/core'
+  await page.keyboard.insertText(`import { Box, type Geometry } from '@caemble/core'
 
-export const EmptyStructure: Geometry = () => <></>
+export const StarterStructure: Geometry = () => <></>
 
-export const PaperBox: Geometry<{ openness: number }> = ({ openness }) => (
+export const PaperBox: Geometry<{ openness: number }> = ({ openness = 0.5 }) => (
   <Box size={[100, 60, 2 + openness * 38]} />
 )
 `)
@@ -299,14 +320,19 @@ export default experiment({
 `)
 
   await expect(page.getByText('Waiting for model...', { exact: true })).toBeHidden({ timeout: 15_000 })
+  const generateCandidate = page
+    .getByRole('toolbar', { name: 'CAE 빠른 작업' })
+    .getByRole('button', { name: 'Generate Candidate' })
+  await expect(generateCandidate).toBeEnabled()
+  await generateCandidate.click()
   await expect(page.getByRole('button', { name: 'Toggle Experiment' })).toBeEnabled()
   await expect(page.locator('footer [role="alert"]')).toHaveCount(0)
   await expect(page.getByText('Draft preview · Solver 미선택')).toBeVisible({ timeout: 15_000 })
 })
 
-for (const [title, sourceMarker, empty, draft] of publicExperimentTemplates) {
-  test(`loads the ${title} template through the Workbench Picker`, async ({ page }) => {
-    test.setTimeout(draft ? 60_000 : 90_000)
+for (const [title, sourceMarker] of officialExperimentTemplates) {
+  test(`loads the ${title} official Experiment through the Workbench Picker`, async ({ page }) => {
+    test.setTimeout(90_000)
     await mockApi(page)
     await mockCanonicalCatalog(page)
     await page.goto('/')
@@ -315,30 +341,54 @@ for (const [title, sourceMarker, empty, draft] of publicExperimentTemplates) {
     })
 
     await page.getByRole('menuitem', { name: 'Source' }).click()
-    await page.getByRole('menuitem', { name: 'New Experiment' }).click()
+    await page.getByRole('menuitem', { name: 'Load Experiment' }).click()
     await page
-      .getByRole('dialog', { name: 'New Experiment' })
+      .getByRole('dialog', { name: 'Experiment 불러오기' })
       .getByRole('button', { name: new RegExp(`^${title}`) })
       .click()
 
     await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText(sourceMarker)
-    if (empty) {
-      await expect(page.getByText('Waiting for model...', { exact: true })).toBeVisible({ timeout: 15_000 })
-    } else {
-      await expect(page.getByText('Waiting for model...', { exact: true })).toBeHidden({ timeout: 30_000 })
-    }
-    if (draft) {
-      await expect(page.getByText('Draft preview · Solver 미선택')).toBeVisible({ timeout: 30_000 })
-    } else {
-      await expect(page.getByText('Draft preview · Solver 미선택')).toHaveCount(0)
-      await expect(page.getByRole('button', { name: 'Toggle Task' })).toBeEnabled()
-    }
-    if (!empty) {
-      await expect(page.getByRole('button', { name: 'Toggle Experiment' })).toBeEnabled()
-    }
+    await expect(page.getByText('Waiting for model...', { exact: true })).toBeHidden({ timeout: 30_000 })
+    await expect(page.getByText('Draft preview · Solver 미선택')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Toggle Task' })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Toggle Experiment' })).toBeEnabled()
     await expect(page.locator('footer [role="alert"]')).toHaveCount(0)
   })
 }
+
+test('opens an official Geometry as an anonymous local draft without overwriting a collision', async ({ page }) => {
+  await mockApi(page)
+  await mockCanonicalCatalog(page)
+  await page.goto('/')
+
+  await page.getByRole('menuitem', { name: 'Source' }).click()
+  await page.getByRole('menuitem', { name: 'Geometry Manager' }).click()
+  const manager = page.getByRole('dialog', { name: 'Geometry Manager' })
+  await expect(manager.getByRole('tab', { name: 'Official Catalog' })).toHaveAttribute('aria-selected', 'true')
+  await manager.getByRole('button', { name: /Basketball Goal/ }).click()
+  await manager.getByRole('button', { name: '로컬 Draft로 열기' }).click()
+
+  await expect(manager).toBeHidden()
+  await expect(page.locator('[data-state="closed"].fixed.inset-0')).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: 'Geometry', exact: true })).toHaveAttribute('aria-selected', 'true')
+  const editor = page.locator('.monaco-editor:visible .view-lines')
+  await expect(editor).toContainText('BasketballGoal')
+  await editor.click({ position: { x: 120, y: 250 } })
+  await page.keyboard.press('Control+A')
+  await page.keyboard.insertText(`import { type Geometry } from '@caemble/core'
+
+export const BasketballGoal: Geometry = () => <box id="local" />
+// keep-local-catalog-edit
+`)
+  await expect(editor).toContainText('keep-local-catalog-edit')
+
+  await page.getByRole('menuitem', { name: 'Source' }).click()
+  await page.getByRole('menuitem', { name: 'Geometry Manager' }).click()
+  await manager.getByRole('button', { name: /Basketball Goal/ }).click()
+  await manager.getByRole('button', { name: '로컬 Draft로 열기' }).click()
+
+  await expect(editor).toContainText('keep-local-catalog-edit')
+})
 
 test('opens Geometry export publishing from the Source menu and Geometry ribbon', async ({ page }) => {
   await mockApi(page, true)
@@ -393,7 +443,7 @@ test('opens Geometry export publishing from the Source menu and Geometry ribbon'
           sourceHash,
           moduleHash,
           moduleFormatVersion: 4,
-          cadApiVersion: 7,
+          cadApiVersion: 8,
           archivedAt: null,
           createdAt: '2026-08-14T00:00:00Z',
         },
@@ -511,7 +561,7 @@ export const Sphere: Geometry = () => <sphere radius={1} />
       JSON.stringify({
         schemaVersion: 2,
         moduleFormatVersion: 4,
-        cadApiVersion: 7,
+        cadApiVersion: 8,
         coordinate,
         sourceHash,
         imports: [],
@@ -552,7 +602,7 @@ export const Sphere: Geometry = () => <sphere radius={1} />
     source_hash: sourceHash,
     module_hash: moduleHash,
     module_format_version: 4,
-    cad_api_version: 7,
+    cad_api_version: 8,
     archived_at: null,
     repository_id: repository.id,
     namespace: repository.namespace,
@@ -586,7 +636,7 @@ export const Sphere: Geometry = () => <sphere radius={1} />
             geometryVersionId: version.id,
             coordinate,
             moduleFormatVersion: 4,
-            cadApiVersion: 7,
+            cadApiVersion: 8,
             description: version.description,
             source: version.source,
             sourceHash,
@@ -635,12 +685,13 @@ export const Sphere: Geometry = () => <sphere radius={1} />
     if (path.endsWith('/list')) return json(route, { total: 0, items: [] })
     return json(route, { detail: `Unexpected mocked endpoint: ${path}` }, 404)
   })
+  await mockCanonicalCatalog(page)
 
   await page.goto('/')
   await page.getByRole('menuitem', { name: 'Source' }).click()
-  await page.getByRole('menuitem', { name: 'New Experiment' }).click()
+  await page.getByRole('menuitem', { name: 'Load Experiment' }).click()
   await page
-    .getByRole('dialog', { name: 'New Experiment' })
+    .getByRole('dialog', { name: 'Experiment 불러오기' })
     .getByRole('button', { name: /DC Uniform Bar/ })
     .click()
   await expect(page.getByRole('tab', { name: 'experiment.tsx' })).toHaveAttribute('aria-selected', 'true')
@@ -656,6 +707,7 @@ export const Sphere: Geometry = () => <sphere radius={1} />
   await page.getByRole('menuitem', { name: 'Geometry Manager' }).click()
   const manager = page.getByRole('dialog', { name: 'Geometry Manager' })
   await expect(manager).toBeVisible()
+  await manager.getByRole('tab', { name: 'Workspace Packages' }).click()
   await expect(manager).toContainText('designer/common/plate')
   await expect(manager).toContainText(coordinate)
 
@@ -679,6 +731,7 @@ export { PlateRoot }
   await page.getByRole('menuitem', { name: 'Source' }).click()
   await page.getByRole('menuitem', { name: 'Geometry Manager' }).click()
   await expect(manager).toBeVisible()
+  await manager.getByRole('tab', { name: 'Workspace Packages' }).click()
 
   await manager.getByRole('tab', { name: 'References' }).click()
   await expect(manager).toContainText('Bracket study')

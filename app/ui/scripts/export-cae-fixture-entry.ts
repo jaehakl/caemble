@@ -1,4 +1,5 @@
 import { transform } from 'esbuild'
+import { execFileSync } from 'node:child_process'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { buildSourceOnlyMeasurement } from '../src/lib/cad/execution/measurement'
@@ -13,16 +14,48 @@ import {
 } from '../src/lib/cad/compiler/types'
 import {
   cadSourceHash,
+  CAD_SOURCE_API_VERSION,
   createCadSourceDocument,
   EXPERIMENT_ENTRY_PATH,
   EXPERIMENT_GEOMETRY_PATH,
   EXPERIMENT_MATERIAL_PATH,
   EXPERIMENT_SIMULATION_PATH,
   experimentTaskPaths,
+  type ExperimentSourceBundle,
 } from '../src/lib/cad/source/document'
 import { createEffectiveGeometryGraph } from '../src/lib/cad/source/effectiveGeometryGraph'
-import { caembleProgramExamples, type CaembleProgramExample } from '../src/lib/examples/programs'
 import { serializeCaeRequest } from '../src/features/cae/request'
+import type { CatalogRuntimeSlice } from '../src/contracts/catalog'
+import {
+  installCatalogRuntimeSlice,
+  registerSourceCatalogRuntimeSlice,
+  sourceCatalogSolverContracts,
+} from '../src/lib/catalog/runtime'
+
+type CatalogExperiment = Readonly<{
+  key: string
+  relatedSolvers: readonly Readonly<{ name: string; version: string }>[]
+  sourceBundle: ExperimentSourceBundle
+  verification: Readonly<{
+    fixture?: Readonly<{
+      records: readonly unknown[]
+      terminal: Readonly<Record<string, unknown>>
+    }>
+  }>
+}>
+
+const catalogRuntimeScript = `import json, sys
+from caemble_catalog import Catalog
+request = json.load(sys.stdin)
+with Catalog.open_readonly() as catalog:
+    result = catalog.runtime_slice(
+        solvers=[(item["name"], item["version"]) for item in request["solvers"]],
+        quantity_kinds=[],
+        material_parameters=[],
+        material_models=[],
+    )
+json.dump(result, sys.stdout, ensure_ascii=False)
+`
 
 function argument(name: string) {
   const index = process.argv.indexOf(`--${name}`)
@@ -42,35 +75,81 @@ async function compileSource(source: string) {
   ).code
 }
 
-async function buildMeasurement(example: CaembleProgramExample) {
-  const experimentDocument = createCadSourceDocument('experiment', example.experimentSourceBundle)
+function catalogExperiment(key: string) {
+  const catalogRoot = path.resolve('../catalog')
+  const executable = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3')
+  const output = execFileSync(
+    executable,
+    [
+      '-m',
+      'caemble_catalog',
+      '--database',
+      path.join(catalogRoot, 'caemble_catalog/catalog.sqlite3'),
+      'query',
+      'experiment',
+      key,
+    ],
+    {
+      cwd: catalogRoot,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PYTHONPATH: [catalogRoot, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
+        PYTHONUTF8: '1',
+      },
+    },
+  )
+  return JSON.parse(output) as CatalogExperiment
+}
+
+function catalogRuntimeSlice(example: CatalogExperiment) {
+  const catalogRoot = path.resolve('../catalog')
+  const executable = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3')
+  const output = execFileSync(executable, ['-c', catalogRuntimeScript], {
+    cwd: catalogRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PYTHONPATH: [catalogRoot, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
+      PYTHONUTF8: '1',
+    },
+    input: JSON.stringify({ solvers: example.relatedSolvers }),
+  })
+  return JSON.parse(output) as CatalogRuntimeSlice
+}
+
+async function buildMeasurement(example: CatalogExperiment) {
+  const catalog = catalogRuntimeSlice(example)
+  installCatalogRuntimeSlice(catalog)
+  const experimentDocument = createCadSourceDocument('experiment', example.sourceBundle)
   const sourceHash = await cadSourceHash(experimentDocument)
+  registerSourceCatalogRuntimeSlice(sourceHash, catalog)
   const sourcePaths = [
     EXPERIMENT_ENTRY_PATH,
     EXPERIMENT_GEOMETRY_PATH,
     EXPERIMENT_MATERIAL_PATH,
-    ...experimentTaskPaths(example.experimentSourceBundle),
+    ...experimentTaskPaths(example.sourceBundle),
   ]
   const sources = Object.fromEntries(
     await Promise.all(
       sourcePaths.map(async (entryFile) => {
         const source: CompiledCadSource = {
-          apiVersion: 7,
+          apiVersion: CAD_SOURCE_API_VERSION,
           compilerVersion: CAD_COMPILER_VERSION,
           entryFile,
-          code: await compileSource(example.experimentSourceBundle.files[entryFile]),
+          code: await compileSource(example.sourceBundle.files[entryFile]),
           sourceHash,
         }
         return [entryFile, source] as const
       }),
     ),
   )
-  const effective = await createEffectiveGeometryGraph(example.experimentSourceBundle.geometrySnapshot)
+  const effective = await createEffectiveGeometryGraph(example.sourceBundle.geometrySnapshot)
   const modules = Object.fromEntries(
     await Promise.all(
       effective.modules.map(async (module) => {
         const compiled: CompiledGeometryModule = {
-          apiVersion: 7,
+          apiVersion: CAD_SOURCE_API_VERSION,
           compilerVersion: CAD_COMPILER_VERSION,
           entryFile: module.coordinate,
           code: await compileSource(module.source),
@@ -90,13 +169,13 @@ async function buildMeasurement(example: CaembleProgramExample) {
     modules,
   }
   const compiled: CompiledCadDocument = {
-    apiVersion: 7,
+    apiVersion: CAD_SOURCE_API_VERSION,
     compilerVersion: CAD_COMPILER_VERSION,
     sourceHash,
     sources,
     geometryGraph,
   }
-  const simulationSource = example.experimentSourceBundle.files[EXPERIMENT_SIMULATION_PATH]
+  const simulationSource = example.sourceBundle.files[EXPERIMENT_SIMULATION_PATH]
   const inspection = inspectCompiledDocument(compiled)
   const experiment = serializeEvaluatedDocumentSnapshot(
     executeCompiledDocument(compiled, generateRandomVars(inspection.varsSchema), simulationSource),
@@ -109,12 +188,7 @@ const outputArgument = argument('out')
 if (!exampleId || !outputArgument) {
   throw new Error('Usage: npm run export:cae-fixture -- --example <id> --out <directory>')
 }
-const example = caembleProgramExamples.find((candidate) => candidate.id === exampleId)
-if (!example) {
-  throw new Error(
-    `Unknown example ${exampleId}. Available examples: ${caembleProgramExamples.map(({ id }) => id).join(', ')}`,
-  )
-}
+const example = catalogExperiment(exampleId)
 const expected = example.verification.fixture
 if (!expected) {
   throw new Error(`Example ${exampleId} has no deterministic CAE fixture expectation.`)
@@ -127,7 +201,7 @@ if (outputDirectory === path.parse(outputDirectory).root || outputDirectory === 
 }
 
 const measurement = await buildMeasurement(example)
-const request = serializeCaeRequest(measurement)
+const request = serializeCaeRequest(measurement, sourceCatalogSolverContracts(measurement.experiment.sourceHash))
 await mkdir(outputDirectory, { recursive: true })
 await rm(attachmentDirectory, { recursive: true, force: true })
 await mkdir(attachmentDirectory)
@@ -155,4 +229,4 @@ await writeFile(
   'utf8',
 )
 
-console.log(`Exported ${exampleId} CAE fixture to ${outputDirectory}`)
+console.log(`Exported catalog Experiment ${exampleId} CAE fixture to ${outputDirectory}`)

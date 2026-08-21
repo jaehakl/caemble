@@ -9,7 +9,7 @@ import {
   experimentTaskPaths,
   type ExperimentSourceDocument,
 } from '@/lib/cad'
-import { defaultExperimentTaskCode } from '@/lib/defaultExperimentProgramCode'
+import { draftTaskCode } from '@/lib/localExperimentCode'
 import CadEditor from '@/features/viewer/editor/CadEditor'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
 import { CadDiffEditor } from '@/features/viewer/editor/CadDiffEditor'
@@ -196,7 +196,7 @@ export function ExperimentEditor({
       window.alert('같은 이름의 Task가 이미 있습니다.')
       return
     }
-    controller.handleAddExperimentTask(trimmed, defaultExperimentTaskCode)
+    controller.handleAddExperimentTask(trimmed, draftTaskCode)
     selectFile(path)
   }
 

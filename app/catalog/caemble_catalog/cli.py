@@ -10,6 +10,8 @@ from typing import Any, Callable
 from .admin import (
     create_draft,
     draft_path,
+    insert_experiment,
+    insert_geometry,
     insert_solver_manifest,
     publish_draft,
     semantic_diff,
@@ -42,12 +44,38 @@ def _replace_manifest(
     manifest: dict[str, Any] | None,
 ) -> None:
     with writable_connection(database) as connection:
+        references = []
         if identity is not None:
+            references = connection.execute(
+                """
+                SELECT experiment_key, ordinal, solver_name, solver_version
+                FROM experiment_solvers WHERE solver_name = ? AND solver_version = ? ORDER BY experiment_key
+                """,
+                identity,
+            ).fetchall()
+            replacement = None if manifest is None else (
+                manifest["descriptor"]["name"],
+                manifest["descriptor"]["version"],
+            )
+            if references and replacement != identity:
+                raise CatalogError(
+                    f"Solver {identity[0]}@{identity[1]} is referenced by official Experiment entries"
+                )
+            connection.execute(
+                "DELETE FROM experiment_solvers WHERE solver_name = ? AND solver_version = ?", identity
+            )
             cursor = connection.execute("DELETE FROM solvers WHERE name = ? AND version = ?", identity)
             if cursor.rowcount != 1:
                 raise CatalogNotFoundError(f"Unknown Solver: {identity[0]}@{identity[1]}")
         if manifest is not None:
             insert_solver_manifest(connection, manifest)
+            connection.executemany(
+                "INSERT INTO experiment_solvers VALUES (?, ?, ?, ?)",
+                [
+                    (row["experiment_key"], row["ordinal"], row["solver_name"], row["solver_version"])
+                    for row in references
+                ],
+            )
     refresh_derived_data(database)
 
 
@@ -93,17 +121,101 @@ def _run_query(args: argparse.Namespace) -> Any:
         if not args.key:
             if args.resource == "solver":
                 return catalog.list_solvers()
+            if args.resource == "geometry":
+                return catalog.list_geometries(limit=10_000)[0]
+            if args.resource == "experiment":
+                return catalog.list_experiments(limit=10_000)[0]
             raise CatalogError(f"{args.resource} query requires KEY")
         if args.resource == "quantity-kind":
             return {**catalog.quantity_kind(args.key), **catalog.quantity_kind_relations(args.key)}
         if args.resource == "material-parameter":
             return {**catalog.material_parameter(args.key), **catalog.material_parameter_relations(args.key)}
+        if args.resource == "geometry":
+            return catalog.geometry(args.key)
+        if args.resource == "experiment":
+            return catalog.experiment(args.key)
         if not args.version:
             raise CatalogError("solver query requires VERSION")
         return {
             **catalog.solver_detail(args.key, args.version),
             "implementation": catalog.get_solver_manifest(args.key, args.version)["implementation"],
         }
+
+
+def _load_json_file(path: Path, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise CatalogError(f"Unable to read {label} as UTF-8 JSON: {path}: {error}") from error
+    if not isinstance(value, dict):
+        raise CatalogError(f"{label} must contain a JSON object: {path}")
+    return value
+
+
+def _edit_geometry(args: argparse.Namespace) -> None:
+    with writable_connection(args.database) as connection:
+        if args.geometry_action == "remove":
+            cursor = connection.execute("DELETE FROM geometries WHERE key = ?", (args.key,))
+            if cursor.rowcount != 1:
+                raise CatalogNotFoundError(f"Unknown Geometry: {args.key}")
+        else:
+            try:
+                source = args.source_file.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as error:
+                raise CatalogError(f"Unable to read Geometry source as UTF-8: {args.source_file}: {error}") from error
+            roles = []
+            for value in args.material_role:
+                role, separator, description = value.partition("=")
+                if not separator:
+                    raise CatalogError("--material-role must use ROLE=DESCRIPTION")
+                roles.append({"role": role, "description": description})
+            connection.execute("DELETE FROM geometries WHERE key = ?", (args.key,))
+            insert_geometry(
+                connection,
+                {
+                    "key": args.key,
+                    "title": args.title,
+                    "description": args.description,
+                    "cadApiVersion": 8,
+                    "moduleFormatVersion": 4,
+                    "lengthUnit": args.length_unit,
+                    "exportName": args.export_name,
+                    "source": source,
+                    "concepts": args.concept,
+                    "materialRoles": roles,
+                    "relatedElements": args.element,
+                },
+            )
+    refresh_derived_data(args.database)
+
+
+def _edit_experiment(args: argparse.Namespace) -> None:
+    with writable_connection(args.database) as connection:
+        if args.experiment_action == "remove":
+            cursor = connection.execute("DELETE FROM experiments WHERE key = ?", (args.key,))
+            if cursor.rowcount != 1:
+                raise CatalogNotFoundError(f"Unknown Experiment: {args.key}")
+        else:
+            related_solvers = []
+            for value in args.solver:
+                name, separator, version = value.rpartition("@")
+                if not separator or not name or not version:
+                    raise CatalogError("--solver must use NAME@VERSION")
+                related_solvers.append({"name": name, "version": version})
+            connection.execute("DELETE FROM experiments WHERE key = ?", (args.key,))
+            insert_experiment(
+                connection,
+                {
+                    "key": args.key,
+                    "title": args.title,
+                    "description": args.description,
+                    "concepts": args.concept,
+                    "relatedSolvers": related_solvers,
+                    "sourceBundle": _load_json_file(args.bundle_file, "Experiment source bundle"),
+                    "verification": _load_json_file(args.verification_file, "Experiment verification"),
+                },
+            )
+    refresh_derived_data(args.database)
 
 
 def _run_solver(args: argparse.Namespace) -> None:
@@ -495,9 +607,39 @@ def build_parser() -> argparse.ArgumentParser:
     publish = commands.add_parser("publish")
     publish.add_argument("--destination", type=Path, default=catalog_path())
     query = commands.add_parser("query")
-    query.add_argument("resource", choices=("meta", "quantity-kind", "material-parameter", "solver"))
+    query.add_argument(
+        "resource", choices=("meta", "quantity-kind", "material-parameter", "solver", "geometry", "experiment")
+    )
     query.add_argument("key", nargs="?")
     query.add_argument("version", nargs="?")
+
+    geometry = commands.add_parser("geometry")
+    geometry_actions = geometry.add_subparsers(dest="geometry_action", required=True)
+    upsert = geometry_actions.add_parser("upsert")
+    upsert.add_argument("key")
+    upsert.add_argument("--title", required=True)
+    upsert.add_argument("--description", required=True)
+    upsert.add_argument("--length-unit", required=True)
+    upsert.add_argument("--export-name", required=True)
+    upsert.add_argument("--source-file", type=Path, required=True)
+    upsert.add_argument("--concept", action="append", default=[])
+    upsert.add_argument("--material-role", action="append", default=[])
+    upsert.add_argument("--element", action="append", default=[])
+    remove = geometry_actions.add_parser("remove")
+    remove.add_argument("key")
+
+    experiment = commands.add_parser("experiment")
+    experiment_actions = experiment.add_subparsers(dest="experiment_action", required=True)
+    upsert = experiment_actions.add_parser("upsert")
+    upsert.add_argument("key")
+    upsert.add_argument("--title", required=True)
+    upsert.add_argument("--description", required=True)
+    upsert.add_argument("--bundle-file", type=Path, required=True)
+    upsert.add_argument("--verification-file", type=Path, required=True)
+    upsert.add_argument("--concept", action="append", default=[])
+    upsert.add_argument("--solver", action="append", default=[], required=True)
+    remove = experiment_actions.add_parser("remove")
+    remove.add_argument("key")
 
     solver = commands.add_parser("solver")
     solver_actions = solver.add_subparsers(dest="solver_action", required=True)
@@ -661,6 +803,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8")
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
@@ -687,6 +833,8 @@ def main(argv: list[str] | None = None) -> int:
                 "global-qualifier": _edit_global_qualifier,
                 "design-rule": _edit_design_rule,
                 "metadata": _edit_metadata,
+                "geometry": _edit_geometry,
+                "experiment": _edit_experiment,
             }[args.command]
             handler(args)
             result = {"updated": str(args.database.resolve())}

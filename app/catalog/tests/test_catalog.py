@@ -22,7 +22,7 @@ from caemble_catalog.cli import main
 def test_canonical_catalog_is_normalized_and_complete():
     with Catalog.open_readonly() as catalog:
         assert catalog.meta() == {
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "catalogRevision": catalog.meta()["catalogRevision"],
             "quantityKindDataVersion": "0.0.1",
             "materialCatalogVersion": "0.0.0",
@@ -30,6 +30,8 @@ def test_canonical_catalog_is_normalized_and_complete():
             "materialParameterCount": 258,
             "materialModelCount": 2,
             "solverCount": 2,
+            "geometryCount": 7,
+            "experimentCount": 4,
             "materialGlobalQualifiers": [
                 "temperature",
                 "pressure",
@@ -76,6 +78,87 @@ def test_solver_manifests_reconstruct_the_legacy_contract():
             "basis": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
         }
         assert len(catalog.solver_contract_digest("steady-state-heat", "0.1.0")) == 64
+
+
+def test_official_geometry_and_experiment_catalog_contracts():
+    with Catalog.open_readonly() as catalog:
+        geometries, geometry_total = catalog.list_geometries(limit=100)
+        experiments, experiment_total = catalog.list_experiments(limit=100)
+        assert geometry_total == 7
+        assert experiment_total == 4
+        assert {item["key"] for item in geometries} == {
+            "basketball-goal",
+            "fiber-bundle",
+            "shell-cutaways",
+            "random-curved-edge-cylinder-array",
+            "random-curved-surface-sphere-hcp-array",
+            "geometry-authoring-skeleton",
+            "two-material-wheel-assembly",
+        }
+        wheel = catalog.geometry("two-material-wheel-assembly")
+        assert wheel["cadApiVersion"] == 8
+        assert wheel["moduleFormatVersion"] == 4
+        assert wheel["exportName"] == "WheelAssembly"
+        assert [item["role"] for item in wheel["materialRoles"]] == ["tire", "wheel"]
+        assert len(wheel["sourceHash"]) == 64
+
+        coupled = catalog.experiment("electro-thermal-uniform-bar")
+        assert coupled["sourceBundle"]["formatVersion"] == 5
+        assert coupled["cadApiVersion"] == 8
+        assert coupled["sourceFormatVersion"] == 2
+        assert [(item["name"], item["version"]) for item in coupled["relatedSolvers"]] == [
+            ("dc-current-density", "0.1.0"),
+            ("steady-state-heat", "0.1.0"),
+        ]
+        assert set(coupled["sourceBundle"]["files"]) >= {
+            "experiment.tsx",
+            "geometry.tsx",
+            "material.tsx",
+            "simulate.py",
+        }
+        assert catalog.list_geometries(element="fiber", limit=100)[1] == 2
+        assert catalog.list_experiments(solver_name="steady-state-heat", solver_version="0.1.0")[1] == 1
+        assert {item["kind"] for item in catalog.search("wheel")} >= {"geometry"}
+
+
+def test_geometry_and_experiment_cli_crud_and_semantic_diff(tmp_path: Path):
+    baseline = tmp_path / "baseline.sqlite3"
+    draft = tmp_path / "draft.sqlite3"
+    shutil.copy2(catalog_path(), baseline)
+    create_draft(draft, baseline)
+    with Catalog.open_readonly(baseline, immutable=False) as catalog:
+        geometry = catalog.geometry("basketball-goal")
+        experiment = catalog.experiment("dc-uniform-bar")
+
+    source = tmp_path / "geometry.tsx"
+    source.write_text(geometry["source"], encoding="utf-8")
+    assert main(
+        [
+            "--database", str(draft), "geometry", "upsert", geometry["key"],
+            "--title", "Updated Basketball Goal", "--description", geometry["description"],
+            "--length-unit", geometry["lengthUnit"], "--export-name", geometry["exportName"],
+            "--source-file", str(source), "--element", "box", "--element", "cylinder", "--element", "subtract",
+        ]
+    ) == 0
+    bundle = tmp_path / "bundle.json"
+    verification = tmp_path / "verification.json"
+    bundle.write_text(json.dumps(experiment["sourceBundle"], ensure_ascii=False), encoding="utf-8")
+    verification.write_text(json.dumps(experiment["verification"], ensure_ascii=False), encoding="utf-8")
+    assert main(
+        [
+            "--database", str(draft), "experiment", "upsert", experiment["key"],
+            "--title", "Updated DC Uniform Bar", "--description", experiment["description"],
+            "--bundle-file", str(bundle), "--verification-file", str(verification),
+            "--solver", "dc-current-density@0.1.0",
+        ]
+    ) == 0
+    validate_database(draft)
+    assert semantic_diff(draft, baseline) == [
+        "~ geometries/basketball-goal",
+        "~ experiments/dc-uniform-bar",
+    ]
+    assert main(["--database", str(draft), "geometry", "remove", geometry["key"]]) == 0
+    assert main(["--database", str(draft), "experiment", "remove", experiment["key"]]) == 0
 
 
 def test_runtime_slice_is_solver_scoped_and_resolves_explicit_references():
@@ -166,6 +249,9 @@ def test_draft_diff_publish_and_released_solver_identity_policy(tmp_path: Path):
 
     create_draft(draft, baseline)
     assert main(
+        ["--database", str(draft), "experiment", "remove", "electro-thermal-uniform-bar"]
+    ) == 0
+    assert main(
         [
             "--database",
             str(draft),
@@ -204,4 +290,44 @@ def test_validate_detects_stale_contract_digest(tmp_path: Path):
     connection.commit()
     connection.close()
     with pytest.raises(CatalogIntegrityError, match="Contract digest mismatch"):
+        validate_database(draft)
+
+
+@pytest.mark.parametrize(
+    ("statement", "match"),
+    [
+        (
+            "UPDATE geometries SET source_hash = '0000000000000000000000000000000000000000000000000000000000000000' "
+            "WHERE key = 'basketball-goal'",
+            "Geometry basketball-goal source hash mismatch",
+        ),
+        (
+            "UPDATE experiment_files SET path = 'missing.py' "
+            "WHERE experiment_key = 'dc-uniform-bar' AND path = 'simulate.py'",
+            "Experiment dc-uniform-bar source bundle is missing required files",
+        ),
+        (
+            "UPDATE experiments SET verification_json = '{}' WHERE key = 'dc-uniform-bar'",
+            "Experiment dc-uniform-bar verification.kernelTasks must be a string array",
+        ),
+        (
+            "UPDATE experiment_solvers SET solver_version = '9.9.9' "
+            "WHERE experiment_key = 'dc-uniform-bar'",
+            "foreign-key violation",
+        ),
+    ],
+)
+def test_validate_rejects_invalid_official_source_bundle_and_solver_relations(
+    tmp_path: Path,
+    statement: str,
+    match: str,
+):
+    draft = tmp_path / "invalid.sqlite3"
+    create_draft(draft)
+    connection = sqlite3.connect(draft)
+    connection.execute(statement)
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(CatalogIntegrityError, match=match):
         validate_database(draft)

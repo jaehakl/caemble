@@ -62,6 +62,25 @@ export function standalonePublicExampleBundle(experimentSource: string) {
   })
 }
 
+export function standaloneGeometryBundle(source: string, exportName: string, lengthUnit = 'mm') {
+  return createExperimentSourceBundle({
+    'experiment.tsx': `import { experiment } from '@caemble/core'
+import { ${exportName} } from './geometry'
+
+export default experiment({
+  lengthUnit: ${JSON.stringify(lengthUnit)},
+  varsSchema: {},
+  geometry: () => <${exportName} id="catalog-preview" />,
+  recordedData: {},
+})
+`,
+    'geometry.tsx': source,
+    'material.tsx': 'export {}\n',
+    'simulate.py': previewPythonSource,
+    'tasks/preview.tsx': previewTaskSource,
+  })
+}
+
 export async function evaluatePublicExampleBundle(bundle: ExperimentSourceBundle) {
   assertExperimentSourceBundle(bundle)
   const sourceHash = 'e'.repeat(64)

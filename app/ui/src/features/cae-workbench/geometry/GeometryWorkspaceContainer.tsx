@@ -14,24 +14,7 @@ import type { CadDiagnostic, GeometryModuleCoordinate } from '@/lib/cad'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
 import type { GeometryWorkspaceState } from './useGeometryWorkspaceState'
 import { GeometryWorkspace } from './GeometryWorkspace'
-
-const initialSource = `import { type Geometry, type Vec3 } from '@caemble/core'
-
-export const NotchedConductor: Geometry<{
-  notchPosition: Vec3
-  notchSize: Vec3
-  size: Vec3
-}> = ({
-  notchPosition = [0, 4, 2.5],
-  notchSize = [30, 5, 6],
-  size = [100, 12, 10],
-}) => (
-  <subtract>
-    <box size={size} />
-    <box position={notchPosition} size={notchSize} />
-  </subtract>
-)
-`
+import { draftGeometrySource } from './draftGeometrySource'
 
 function formValue(form: FormData, name: string) {
   return String(form.get(name) ?? '').trim()
@@ -203,7 +186,7 @@ export function GeometryWorkspaceContainer({
               TSX source
               <textarea
                 className="min-h-72 rounded-md border bg-background p-3 font-mono text-xs"
-                defaultValue={initialSource}
+                defaultValue={draftGeometrySource('new-geometry')}
                 name="source"
                 required
                 spellCheck={false}

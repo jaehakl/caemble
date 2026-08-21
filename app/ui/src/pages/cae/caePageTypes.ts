@@ -10,7 +10,6 @@ export type WorkbenchDialog =
   | 'load-experiment'
   | 'material'
   | 'measurement'
-  | 'new-experiment'
   | 'save-experiment'
   | 'save-experiment-as'
   | null
