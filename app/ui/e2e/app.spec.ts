@@ -363,7 +363,7 @@ for (const [title, sourceMarker] of officialExperimentTemplates) {
   })
 }
 
-test('creates one anonymous Draft Version on the first Official source edit', async ({ page }) => {
+test('keeps Official Geometry read-only for anonymous users in the unified manager', async ({ page }) => {
   await mockApi(page)
   await mockCanonicalCatalog(page)
   await page.goto('/')
@@ -372,28 +372,228 @@ test('creates one anonymous Draft Version on the first Official source edit', as
   await page.getByRole('menuitem', { name: 'Geometry Manager' }).click()
   const manager = page.getByLabel('Geometry Manager')
   await expect(page.getByRole('tab', { name: 'Geometry', exact: true })).toHaveAttribute('aria-selected', 'true')
-  await expect(manager.getByRole('tab', { name: 'Official Catalog' })).toHaveAttribute('aria-selected', 'true')
+  await expect(manager.getByRole('tab', { name: 'Official Catalog' })).toHaveCount(0)
+  await expect(manager.getByRole('tab', { name: 'Workspace Packages' })).toHaveCount(0)
+  await expect(manager.getByRole('button', { name: '전체', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await manager.getByRole('button', { name: /Basketball Goal/ }).click()
-  const editor = manager.locator('.monaco-editor:visible')
-  await editor.getByRole('textbox', { name: 'Editor content' }).focus()
-  await page.keyboard.press('Control+A')
-  await page.keyboard.insertText(`import { type Geometry } from '@caemble/core'
+  await expect(manager.locator('.monaco-editor:visible')).toBeVisible()
+  await expect(manager.getByRole('button', { name: '개인 Repository로 Fork' })).toBeDisabled()
+  await expect(page.locator('footer').last()).toContainText('Draft Versions · 0')
 
-export const BasketballGoal: Geometry = () => <box id="local" />
-// keep-local-catalog-edit
-`)
-  await expect(editor.locator('.view-lines')).toContainText('keep-local-catalog-edit')
+  await manager.getByRole('button', { name: 'Workspace', exact: true }).click()
+  await expect(manager.getByRole('region', { name: 'Workspace Packages' })).toContainText('세션 Geometry가 없습니다.')
+})
+
+test('forks Official Geometry into a personal Draft and publishes its first exact Version', async ({ page }) => {
+  test.setTimeout(90_000)
+  const timestamp = '2026-08-21T00:00:00Z'
+  const localCoordinate = 'caemble:geometry/designer/forks/basketball-goal@local'
+  const exactCoordinate = 'caemble:geometry/designer/forks/basketball-goal@0.1.0'
+  const planHash = 'd'.repeat(64)
+  let published = false
+  let publishedSource = ''
+  let publishedSourceHash = ''
+  let publishedModuleHash = ''
+  let publishedDescription: string | null = null
+
+  await page.route(apiPattern, async (route) => {
+    const path = new URL(route.request().url()).pathname.replace(/^\/api/, '')
+    if (path === '/auth/me') return json(route, user)
+    if (path === '/auth/refresh') return json(route, { detail: 'Unexpected refresh' }, 401)
+    if (path === '/web/auth/csrf') return json(route, { csrf_token: 'csrf-official-fork' })
+    if (path === '/geometry/publish/plan') {
+      const request = route.request().postDataJSON() as {
+        targetDraftId: string
+        drafts: Array<{
+          draftId: string
+          baseGeometryVersionId: null
+          repositoryId: null
+          repository: string
+          package: string
+          version: string
+          description: string | null
+          source: string
+        }>
+      }
+      const draft = request.drafts[0]!
+      expect(draft).toMatchObject({
+        baseGeometryVersionId: null,
+        repository: 'forks',
+        package: 'basketball-goal',
+        version: '0.1.0',
+      })
+      publishedSource = draft.source
+      publishedDescription = draft.description
+      publishedSourceHash = createHash('sha256').update(publishedSource).digest('hex')
+      publishedModuleHash = createHash('sha256')
+        .update(
+          JSON.stringify({
+            schemaVersion: 2,
+            moduleFormatVersion: 4,
+            cadApiVersion: 8,
+            coordinate: exactCoordinate,
+            sourceHash: publishedSourceHash,
+            imports: [],
+          }),
+        )
+        .digest('hex')
+      return json(route, {
+        planHash,
+        steps: [
+          {
+            ...draft,
+            coordinate: exactCoordinate,
+            localCoordinate,
+            sourceHash: publishedSourceHash,
+            moduleHash: publishedModuleHash,
+            exports: ['BasketballGoal'],
+            imports: [],
+          },
+        ],
+        replacements: [{ draftId: draft.draftId, localCoordinate, coordinate: exactCoordinate }],
+      })
+    }
+    if (path === '/geometry/publish') {
+      const request = route.request().postDataJSON() as { targetDraftId: string; planHash: string }
+      expect(request.planHash).toBe(planHash)
+      published = true
+      return json(route, {
+        planHash,
+        published: [
+          {
+            id: 13,
+            packageId: 12,
+            coordinate: exactCoordinate,
+            version: '0.1.0',
+            description: publishedDescription,
+            sourceHash: publishedSourceHash,
+            moduleHash: publishedModuleHash,
+            moduleFormatVersion: 4,
+            cadApiVersion: 8,
+            archivedAt: null,
+            createdAt: timestamp,
+          },
+        ],
+        replacements: [{ draftId: request.targetDraftId, localCoordinate, coordinate: exactCoordinate }],
+      })
+    }
+    const repository = {
+      id: 11,
+      user_id: user.id,
+      namespace: 'designer',
+      slug: 'forks',
+      description: null,
+      archived_at: null,
+      created_at: timestamp,
+      updated_at: timestamp,
+    }
+    const geometryPackage = {
+      id: 12,
+      repository_id: repository.id,
+      name: 'basketball-goal',
+      user_id: user.id,
+      namespace: repository.namespace,
+      repository: repository.slug,
+      repository_archived_at: null,
+      version_count: 1,
+      latest_version: '0.1.0',
+      created_at: timestamp,
+      updated_at: timestamp,
+    }
+    if (path === '/geometry/repositories/list') {
+      return json(route, { total: published ? 1 : 0, items: published ? [repository] : [] })
+    }
+    if (path === '/geometry/packages/list') {
+      return json(route, { total: published ? 1 : 0, items: published ? [geometryPackage] : [] })
+    }
+    if (path === '/geometry/versions/list') {
+      return json(route, {
+        total: published ? 1 : 0,
+        items: published
+          ? [
+              {
+                id: 13,
+                package_id: geometryPackage.id,
+                version_major: 0,
+                version_minor: 1,
+                version_patch: 0,
+                description: publishedDescription,
+                source: publishedSource,
+                source_hash: publishedSourceHash,
+                module_hash: publishedModuleHash,
+                module_format_version: 4,
+                cad_api_version: 8,
+                archived_at: null,
+                repository_id: repository.id,
+                namespace: repository.namespace,
+                repository: repository.slug,
+                package_name: geometryPackage.name,
+                coordinate: exactCoordinate,
+                version: '0.1.0',
+                created_at: timestamp,
+                updated_at: timestamp,
+              },
+            ]
+          : [],
+      })
+    }
+    if (path === '/geometry/versions/13/resolve') {
+      return json(route, {
+        schemaVersion: 2,
+        root: {
+          geometryVersionId: 13,
+          coordinate: exactCoordinate,
+          moduleHash: publishedModuleHash,
+          exports: ['BasketballGoal'],
+        },
+        modules: [
+          {
+            geometryVersionId: 13,
+            coordinate: exactCoordinate,
+            moduleFormatVersion: 4,
+            cadApiVersion: 8,
+            description: publishedDescription,
+            source: publishedSource,
+            sourceHash: publishedSourceHash,
+            moduleHash: publishedModuleHash,
+            imports: [],
+          },
+        ],
+      })
+    }
+    if (path === '/geometry/versions/usage') return json(route, { items: [] })
+    if (path.endsWith('/dependents/list') || path.endsWith('/experiments/list')) {
+      return json(route, { total: 0, items: [] })
+    }
+    if (path === '/web/jobs') return json(route, [])
+    if (path === '/web/launchers/runtime') return json(route, [])
+    if (path.endsWith('/list')) return json(route, { total: 0, items: [] })
+    return json(route, { detail: `Unexpected mocked endpoint: ${path}` }, 404)
+  })
+  await mockCanonicalCatalog(page)
+
+  await page.goto('/')
+  await page.getByRole('menuitem', { name: 'Source' }).click()
+  await page.getByRole('menuitem', { name: 'Geometry Manager' }).click()
+  const manager = page.getByLabel('Geometry Manager')
+  await manager.getByRole('button', { name: /Basketball Goal/ }).click()
+  await manager.getByRole('button', { name: '개인 Repository로 Fork' }).click()
+  await page
+    .getByRole('dialog', { name: '개인 Repository로 Fork' })
+    .getByRole('button', { name: /Draft Version 만들기/ })
+    .click()
+
+  const draftEditor = manager.getByRole('region', { name: 'Draft Version editor' })
+  await expect(draftEditor).toBeVisible()
   await expect(page.locator('footer').last()).toContainText('Draft Versions · 1')
+  await expect(draftEditor.getByRole('button', { name: '새 Version 발행' })).toBeEnabled({ timeout: 30_000 })
+  await draftEditor.getByRole('button', { name: '새 Version 발행' }).click()
+  const publishDialog = page.getByRole('dialog', { name: 'Geometry 발행 계획' })
+  await expect(publishDialog).toContainText(exactCoordinate)
+  await publishDialog.getByRole('button', { name: '계획대로 발행' }).click()
 
-  await manager.getByRole('tab', { name: 'Workspace Packages' }).click()
-  await expect(manager.getByRole('region', { name: 'Session Packages' })).toContainText('catalog/basketball-goal')
-  await expect(manager.getByRole('button', { name: /catalog\/basketball-goal/ })).toContainText('Draft Version')
-  await manager.getByRole('button', { name: /catalog\/basketball-goal/ }).click()
-  await expect(manager.getByRole('region', { name: 'Draft Version editor' })).toBeVisible()
-
-  await manager.getByRole('tab', { name: 'Official Catalog' }).click()
-  await expect(manager.locator('.monaco-editor:visible .view-lines')).toContainText('keep-local-catalog-edit')
-  await expect(page.locator('footer').last()).toContainText('Draft Versions · 1')
+  await expect(manager.getByRole('button', { name: 'v0.1.0' })).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('footer').last()).toContainText('Draft Versions · 0')
 })
 
 test('opens Geometry export publishing from the Source menu and Experiment ribbon', async ({ page }) => {
@@ -822,7 +1022,7 @@ export const Sphere: Geometry = () => <sphere radius={1} />
   await page.getByRole('menuitem', { name: 'Geometry Manager' }).click()
   const manager = page.getByLabel('Geometry Manager')
   await expect(manager).toBeVisible()
-  await manager.getByRole('tab', { name: 'Workspace Packages' }).click()
+  await manager.getByRole('button', { name: 'Workspace', exact: true }).click()
   await expect(manager).toContainText('designer/common/plate')
   await expect(manager).toContainText(coordinate)
 
@@ -845,7 +1045,7 @@ export { PlateRoot }
 
   await page.getByRole('tab', { name: 'Geometry', exact: true }).click()
   await expect(manager).toBeVisible()
-  await manager.getByRole('tab', { name: 'Workspace Packages' }).click()
+  await manager.getByRole('button', { name: 'Workspace', exact: true }).click()
 
   await manager.getByRole('tab', { name: 'References' }).click()
   await expect(manager).toContainText('Bracket study')
@@ -878,12 +1078,9 @@ export default experiment({
   await expect(page.locator('.monaco-editor .squiggly-error')).toHaveCount(0, { timeout: 10_000 })
 
   await page.getByRole('tab', { name: 'Geometry', exact: true }).click()
-  await manager.getByRole('tab', { name: 'Workspace Packages' }).click()
+  await manager.getByRole('button', { name: 'Workspace', exact: true }).click()
   await manager.getByRole('tab', { name: 'Source' }).click()
-  const publishedEditor = manager.locator('.monaco-editor:visible')
-  await publishedEditor.getByRole('textbox', { name: 'Editor content' }).focus()
-  await page.keyboard.press('Control+A')
-  await page.keyboard.insertText(`${geometrySource}// first-copy-on-write-edit\n`)
+  await manager.getByRole('button', { name: '새 Version 편집' }).click()
 
   const workspace = page.getByRole('region', { name: 'Draft Version editor' })
   await expect(workspace).toBeVisible()

@@ -455,12 +455,14 @@ export function useGeometryManagerState({
       source,
       description = '',
       repositoryId = null,
+      originCatalogKey = null,
     }: {
       repository: string
       packageName: string
       source?: string
       description?: string
       repositoryId?: number | null
+      originCatalogKey?: string | null
     }) => {
       if (!namespace) throw new Error('기본 Geometry namespace를 먼저 설정하세요.')
       const repositoryRecord = repositories.find((item) => item.id === repositoryId)
@@ -475,7 +477,7 @@ export function useGeometryManagerState({
         source: source ?? draftGeometrySource(packageName),
         description,
         baseGeometryVersionId: null,
-        originCatalogKey: null,
+        originCatalogKey,
         repository: repositorySlug,
         packageName,
         repositoryId,
@@ -495,36 +497,31 @@ export function useGeometryManagerState({
     [namespace, repositories],
   )
 
-  const updateCatalogSource = useCallback(
-    ({ key, source, description }: { key: string; source: string; description: string }) => {
-      if (!namespace) throw new Error('기본 Geometry namespace를 먼저 설정하세요.')
-      const coordinate = `caemble:geometry/${namespace}/catalog/${key}@local` as LocalGeometryCoordinate
-      const existing = draftsRef.current[coordinate]
-      const draft: GeometryDraftVersion = existing
-        ? { ...existing, source }
-        : {
-            draftId: crypto.randomUUID(),
-            coordinate,
-            source,
-            description,
-            baseGeometryVersionId: null,
-            originCatalogKey: key,
-            repository: 'catalog',
-            packageName: key,
-            repositoryId: null,
-            packageId: null,
-            version: '0.1.0',
-            bump: 'patch',
-            standalonePreview: true,
-          }
-      const next = { ...draftsRef.current, [coordinate]: draft }
-      draftsRef.current = next
-      setDrafts(next)
-      setTransientPreview(null)
-      setSelectedCoordinateState(coordinate)
-      return { coordinate, created: !existing }
-    },
-    [namespace],
+  const forkOfficial = useCallback(
+    ({
+      key,
+      repository,
+      packageName,
+      source,
+      description,
+      repositoryId,
+    }: {
+      key: string
+      repository: string
+      packageName: string
+      source: string
+      description: string
+      repositoryId: number | null
+    }) =>
+      createDraft({
+        repository,
+        packageName,
+        source,
+        description,
+        repositoryId,
+        originCatalogKey: key,
+      }),
+    [createDraft],
   )
 
   const stageResolved = useCallback(
@@ -702,7 +699,7 @@ export function useGeometryManagerState({
     [authenticated, namespace, queryClient, refreshRepositories, repositories, stageResolved],
   )
 
-  const updatePublishedSource = useCallback(
+  const startVersionDraft = useCallback(
     ({
       versionId,
       coordinate,
@@ -724,29 +721,27 @@ export function useGeometryManagerState({
       if (existing && existing.baseGeometryVersionId !== versionId) {
         throw new Error('이 Package의 Draft Version을 선택하거나 폐기한 뒤 다른 Version을 편집하세요.')
       }
-      const draft: GeometryDraftVersion = existing
-        ? { ...existing, source }
-        : {
-            draftId: crypto.randomUUID(),
-            coordinate: local,
-            source,
-            description,
-            baseGeometryVersionId: versionId,
-            originCatalogKey: null,
-            repository: parts.repository,
-            packageName: parts.packageName,
-            repositoryId,
-            packageId,
-            version: parts.version,
-            bump: 'patch',
-            standalonePreview: true,
-          }
+      const draft: GeometryDraftVersion = existing ?? {
+        draftId: crypto.randomUUID(),
+        coordinate: local,
+        source,
+        description,
+        baseGeometryVersionId: versionId,
+        originCatalogKey: null,
+        repository: parts.repository,
+        packageName: parts.packageName,
+        repositoryId,
+        packageId,
+        version: parts.version,
+        bump: 'patch',
+        standalonePreview: true,
+      }
       const next = { ...draftsRef.current, [local]: draft }
       draftsRef.current = next
       setDrafts(next)
       setTransientPreview(null)
       setSelectedCoordinateState(local)
-      return { coordinate: local, created: !existing }
+      return local
     },
     [],
   )
@@ -796,12 +791,42 @@ export function useGeometryManagerState({
     [queryClient, resolvePublishedModules, selectedCoordinate],
   )
 
+  const assertNewPackageTargetsAvailable = useCallback(
+    async (request: ReturnType<typeof geometryPublishRequest>) => {
+      const targets = request.drafts.filter((draft) => draft.baseGeometryVersionId === null)
+      await Promise.all(
+        targets.map(async (draft) => {
+          const localDraft = Object.values(draftsRef.current).find((item) => item.draftId === draft.draftId)
+          if (!localDraft) return
+          const parts = coordinateParts(localDraft.coordinate)
+          const repository =
+            repositories.find((item) => item.id === draft.repositoryId) ??
+            repositories.find((item) => item.namespace === parts.namespace && item.slug === draft.repository)
+          if (!repository) return
+          const response = await dbTables.GeometryPackage.listRows({
+            ...getListRequest('mine'),
+            limit: 100,
+            text_filter: { name: [draft.package] },
+            filter: { repository_id: [repository.id, repository.id] },
+          })
+          if (response.items.some((item) => item.repository_id === repository.id && item.name === draft.package)) {
+            throw new Error(
+              `${repository.namespace}/${repository.slug}/${draft.package} Package가 이미 있습니다. 다른 이름을 사용하세요.`,
+            )
+          }
+        }),
+      )
+    },
+    [repositories],
+  )
+
   const requestPublish = useCallback(
     async (coordinate: GeometryModuleCoordinate) => {
       if (!authenticated) throw new Error('Geometry 저장은 로그인 후 사용할 수 있습니다.')
       const request = geometryPublishRequest(draftsRef.current, coordinate)
       setBusy(true)
       try {
+        await assertNewPackageTargetsAvailable(request)
         const value = await geometryApi.planPublish(request)
         assertReplacementsApplicable(value.replacements, 'export {}\n', draftsRef.current)
         setPublishPlan({ request, value })
@@ -819,7 +844,7 @@ export function useGeometryManagerState({
         setBusy(false)
       }
     },
-    [authenticated],
+    [assertNewPackageTargetsAvailable, authenticated],
   )
 
   const confirmPublish = useCallback(async () => {
@@ -828,6 +853,7 @@ export function useGeometryManagerState({
     setBusy(true)
     try {
       const currentRequest = currentPublishRequest(draftsRef.current, publishPlan.request)
+      await assertNewPackageTargetsAvailable(currentRequest)
       if (JSON.stringify(currentRequest) !== JSON.stringify(publishPlan.request)) {
         const value = await geometryApi.planPublish(currentRequest)
         assertReplacementsApplicable(value.replacements, 'export {}\n', draftsRef.current)
@@ -860,7 +886,7 @@ export function useGeometryManagerState({
     } finally {
       setBusy(false)
     }
-  }, [applyPublished, authenticated, publishPlan])
+  }, [applyPublished, assertNewPackageTargetsAvailable, authenticated, publishPlan])
 
   const prepareExperimentSave = useCallback(async () => {
     if (!authenticated) throw new Error('Experiment 저장은 로그인 후 사용할 수 있습니다.')
@@ -1122,8 +1148,8 @@ export function useGeometryManagerState({
       return result
     },
     createDraft,
-    updateCatalogSource,
-    updatePublishedSource,
+    forkOfficial,
+    startVersionDraft,
     usePublishedExport,
     publishNewGeometry,
     stageResolved,

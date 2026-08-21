@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError } from '@/api'
+import { ApiError, type GeometryPackageRecord, type GeometryRepositoryRecord } from '@/api'
 import {
   geometryModuleHash,
   geometrySourceHash,
@@ -15,7 +15,14 @@ import {
 import { useGeometryManagerState } from './useGeometryWorkspaceState'
 
 const api = vi.hoisted(() => ({
-  listRows: vi.fn(async () => ({ total: 0, items: [] })),
+  listRows: vi.fn(async (): Promise<{ total: number; items: GeometryRepositoryRecord[] }> => ({
+    total: 0,
+    items: [],
+  })),
+  packageListRows: vi.fn(async (): Promise<{ total: number; items: GeometryPackageRecord[] }> => ({
+    total: 0,
+    items: [],
+  })),
   planPublish: vi.fn(),
   publish: vi.fn(),
   resolveVersion: vi.fn(),
@@ -29,6 +36,7 @@ vi.mock('@/api', async (importOriginal) => {
     ...original,
     dbTables: {
       ...original.dbTables,
+      GeometryPackage: { ...original.dbTables.GeometryPackage, listRows: api.packageListRows },
       GeometryRepository: { ...original.dbTables.GeometryRepository, listRows: api.listRows },
     },
     geometryApi: {
@@ -98,6 +106,8 @@ function renderState(files: Readonly<Record<string, string>> = sourceFiles) {
 describe('independent Geometry Manager state', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    api.listRows.mockResolvedValue({ total: 0, items: [] })
+    api.packageListRows.mockResolvedValue({ total: 0, items: [] })
     cad.evaluateGeometryModule.mockResolvedValue({
       sourceHash: 'preview-source-hash',
       scene: {
@@ -140,7 +150,7 @@ describe('independent Geometry Manager state', () => {
     )
   })
 
-  it('creates a Draft Version on the first Published source change and keeps the original immutable', async () => {
+  it('starts a Draft Version explicitly and keeps the Published source immutable', async () => {
     const coordinate = 'caemble:geometry/jlee/common/part@1.2.3' as GeometryCoordinate
     const module = await geometryModule(42, coordinate)
     api.resolveVersion.mockResolvedValue({
@@ -154,17 +164,18 @@ describe('independent Geometry Manager state', () => {
     expect(result.current.managerModules).toEqual([module])
     expect(result.current.experimentModules).toEqual([])
 
-    const changedSource = 'export const Part = () => <sphere />'
     act(() =>
-      result.current.updatePublishedSource({
+      result.current.startVersionDraft({
         versionId: 42,
         coordinate,
-        source: changedSource,
+        source: module.source,
         description: '',
         repositoryId: 3,
         packageId: 7,
       }),
     )
+    const changedSource = 'export const Part = () => <sphere />'
+    act(() => result.current.updateSource(changedSource))
     const draft = result.current.draftVersions['caemble:geometry/jlee/common/part@local']
     expect(draft).toMatchObject({ baseGeometryVersionId: 42, repositoryId: 3, packageId: 7, version: '1.2.3' })
     expect(draft?.source).toBe(changedSource)
@@ -178,7 +189,7 @@ describe('independent Geometry Manager state', () => {
     const { result } = renderState()
 
     act(() =>
-      result.current.updatePublishedSource({
+      result.current.startVersionDraft({
         versionId: 42,
         coordinate: first,
         source: 'export const Part = () => <box />',
@@ -189,7 +200,7 @@ describe('independent Geometry Manager state', () => {
     )
 
     expect(() =>
-      result.current.updatePublishedSource({
+      result.current.startVersionDraft({
         versionId: 43,
         coordinate: second,
         source: 'export const Part = () => <sphere />',
@@ -235,16 +246,19 @@ describe('independent Geometry Manager state', () => {
     expect(Object.values(result.current.draftVersions)[0]?.source).toBe('export const Plate = () => <box />')
   })
 
-  it('creates an Official-based session Package only on the first source change', () => {
+  it('forks Official source into an explicit Workspace Draft Version', () => {
     const { result } = renderState()
     act(() => result.current.previewSource('export const Official = () => <box />'))
 
     expect(result.current.draftVersions).toEqual({})
     act(() =>
-      result.current.updateCatalogSource({
+      result.current.forkOfficial({
         key: 'official-box',
         source: 'export const Official = () => <sphere />',
         description: 'Official box',
+        repository: 'forks',
+        packageName: 'official-box',
+        repositoryId: null,
       }),
     )
 
@@ -253,6 +267,59 @@ describe('independent Geometry Manager state', () => {
       packageName: 'official-box',
       source: 'export const Official = () => <sphere />',
     })
+  })
+
+  it('blocks a new Draft when its target personal Package already exists', async () => {
+    api.listRows.mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          id: 3,
+          user_id: 'user-1',
+          namespace: 'jlee',
+          slug: 'forks',
+          description: null,
+          archived_at: null,
+          created_at: null,
+          updated_at: null,
+        },
+      ],
+    })
+    api.packageListRows.mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          id: 7,
+          repository_id: 3,
+          name: 'official-box',
+          user_id: 'user-1',
+          namespace: 'jlee',
+          repository: 'forks',
+          repository_archived_at: null,
+          version_count: 1,
+          latest_version: '0.1.0',
+          created_at: null,
+          updated_at: null,
+        },
+      ],
+    })
+    const { result } = renderState()
+    await waitFor(() => expect(result.current.repositories).toHaveLength(1))
+    let coordinate = '' as LocalGeometryCoordinate
+    act(() => {
+      coordinate = result.current.forkOfficial({
+        key: 'official-box',
+        repository: 'forks',
+        packageName: 'official-box',
+        source: 'export const Official = () => <box />',
+        description: 'Official box',
+        repositoryId: 3,
+      })
+    })
+    await waitFor(() => expect(result.current.publishReady).toBe(true))
+
+    await expect(act(() => result.current.requestPublish(coordinate))).rejects.toThrow('Package가 이미 있습니다')
+    expect(api.planPublish).not.toHaveBeenCalled()
   })
 
   it('publishes an edited Version with a server-replanned conflict without changing Experiment state', async () => {
@@ -271,7 +338,7 @@ describe('independent Geometry Manager state', () => {
     const { result } = renderState()
 
     act(() =>
-      result.current.updatePublishedSource({
+      result.current.startVersionDraft({
         versionId: 42,
         coordinate,
         source: currentModule.source,

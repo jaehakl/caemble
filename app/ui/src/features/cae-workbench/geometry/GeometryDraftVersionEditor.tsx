@@ -103,7 +103,7 @@ export function GeometryDraftVersionEditor({
           마지막 정상 Viewer scene을 유지합니다. {geometry.previewError}
         </div>
       ) : null}
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_16rem]">
+      <div className="grid min-h-0 flex-1 grid-rows-[minmax(28rem,1fr)_auto]">
         <CadEditor
           diagnostics={geometry.previewDiagnostics.filter((item) => item.file === draft.coordinate)}
           modelPath={
@@ -116,7 +116,7 @@ export function GeometryDraftVersionEditor({
           onAuthoringStateChange={onAuthoringStateChange}
           onChange={geometry.updateSource}
         />
-        <aside className="min-h-0 overflow-auto border-l bg-muted/10 p-4 text-xs">
+        <aside className="min-h-0 overflow-auto border-t bg-muted/10 p-4 text-xs">
           {draft.baseGeometryVersionId ? (
             <dl className="grid gap-3 border-b pb-4">
               <div>
