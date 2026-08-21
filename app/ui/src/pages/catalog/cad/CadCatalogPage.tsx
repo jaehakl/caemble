@@ -362,7 +362,7 @@ function OfficialGeometryCatalog({
       title="Official Geometries"
       filters={
         <Input
-          aria-label="Official Geometry 검색"
+          aria-label="Examples Geometry 검색"
           placeholder="key, 제목, 설명 검색"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -374,7 +374,7 @@ function OfficialGeometryCatalog({
             <LoaderCircle className="animate-spin" />
           </div>
         ) : listQuery.isError ? (
-          <p className="p-6 text-sm text-destructive">Official Geometry 목록을 불러오지 못했습니다.</p>
+          <p className="p-6 text-sm text-destructive">Examples Geometry 목록을 불러오지 못했습니다.</p>
         ) : (
           <ul className="divide-y">
             {listQuery.data?.items.map((item) => (
@@ -399,7 +399,7 @@ function OfficialGeometryCatalog({
             <LoaderCircle className="animate-spin" />
           </div>
         ) : detailQuery.isError ? (
-          <p className="p-6 text-sm text-destructive">Official Geometry detail을 불러오지 못했습니다.</p>
+          <p className="p-6 text-sm text-destructive">Example Geometry detail을 불러오지 못했습니다.</p>
         ) : detailQuery.data ? (
           <>
             <CardHeader>
@@ -463,7 +463,7 @@ function OfficialGeometryCatalog({
           </>
         ) : (
           <CardContent className="grid min-h-60 place-items-center text-sm text-muted-foreground">
-            Official Geometry를 선택하세요.
+            Example Geometry를 선택하세요.
           </CardContent>
         )
       }

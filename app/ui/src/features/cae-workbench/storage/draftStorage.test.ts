@@ -12,7 +12,7 @@ import {
 
 function draft(): WorkbenchDraft {
   return {
-    version: 12,
+    version: 13,
     savedAt: 1,
     experiment: { record: null, baselineBundle: null, document: null, name: '', description: '' },
     candidate: { vars: null, materialParameters: null },
@@ -20,7 +20,14 @@ function draft(): WorkbenchDraft {
     geometryManager: {
       draftVersions: {},
       resolvedModules: [],
-      selection: { view: 'official', catalogKey: null, coordinate: null, exportName: null },
+      selection: {
+        view: 'examples',
+        namespace: 'examples',
+        repository: 'all',
+        catalogKey: null,
+        coordinate: null,
+        exportName: null,
+      },
     },
     experimentGeometry: { stagedModules: [] },
     layout: { openTabs: ['experiment'], activeTab: 'experiment', experimentFile: 'geometry.tsx', splitPercent: 50 },
@@ -32,7 +39,7 @@ beforeEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('Workbench sessionStorage v12', () => {
+describe('Workbench sessionStorage v13', () => {
   it('stores and restores Package Draft Versions', async () => {
     const coordinate = 'caemble:geometry/local/common/part@local' as const
     const value: WorkbenchDraft = {
@@ -57,7 +64,14 @@ describe('Workbench sessionStorage v12', () => {
             standalonePreview: true,
           },
         },
-        selection: { view: 'workspace', catalogKey: null, coordinate, exportName: 'Part' },
+        selection: {
+          view: 'workspace',
+          namespace: 'local',
+          repository: 'local/common',
+          catalogKey: null,
+          coordinate,
+          exportName: 'Part',
+        },
       },
       layout: {
         ...draft().layout,
@@ -132,13 +146,13 @@ describe('Workbench sessionStorage v12', () => {
     sessionStorage.setItem(WORKBENCH_DRAFT_STORAGE_KEY, JSON.stringify(legacy))
 
     await expect(loadWorkbenchDraft()).resolves.toMatchObject({
-      version: 12,
+      version: 13,
       geometryManager: {
         draftVersions: {
           [coordinate]: { source: 'export const Part = () => <box />', originCatalogKey: null },
         },
         resolvedModules: [stagedModule],
-        selection: { view: 'official', catalogKey: null, coordinate: null },
+        selection: { view: 'examples', namespace: 'examples', repository: 'all', catalogKey: null, coordinate: null },
       },
       experimentGeometry: { stagedModules: [stagedModule] },
     })
@@ -174,12 +188,64 @@ describe('Workbench sessionStorage v12', () => {
     sessionStorage.setItem(WORKBENCH_DRAFT_STORAGE_KEY, JSON.stringify(legacy))
 
     await expect(loadWorkbenchDraft()).resolves.toMatchObject({
-      version: 12,
+      version: 13,
       geometryManager: {
         draftVersions: {
           [coordinate]: { source: 'export const Part = (', originCatalogKey: 'official-part' },
         },
-        selection: { view: 'workspace', catalogKey: null, coordinate, exportName: 'Part' },
+        selection: {
+          view: 'workspace',
+          namespace: 'local',
+          repository: 'local/catalog',
+          catalogKey: null,
+          coordinate,
+          exportName: 'Part',
+        },
+      },
+    })
+  })
+
+  it('migrates v12 Official and Workspace selections into namespace and Repository filters', async () => {
+    const official = {
+      ...draft(),
+      version: 12,
+      geometryManager: {
+        ...draft().geometryManager,
+        selection: {
+          view: 'official',
+          catalogKey: 'basketball-goal',
+          coordinate: null,
+          exportName: 'BasketballGoal',
+        },
+      },
+    }
+    sessionStorage.setItem(WORKBENCH_DRAFT_STORAGE_KEY, JSON.stringify(official))
+    await expect(loadWorkbenchDraft()).resolves.toMatchObject({
+      version: 13,
+      geometryManager: {
+        selection: { view: 'examples', namespace: 'examples', repository: 'all' },
+      },
+    })
+
+    const coordinate = 'caemble:geometry/designer/common/part@local' as const
+    const workspace = {
+      ...draft(),
+      version: 12,
+      geometryManager: {
+        ...draft().geometryManager,
+        selection: {
+          view: 'workspace',
+          catalogKey: null,
+          coordinate,
+          exportName: 'Part',
+        },
+      },
+    }
+    sessionStorage.setItem(WORKBENCH_DRAFT_STORAGE_KEY, JSON.stringify(workspace))
+    await expect(loadWorkbenchDraft()).resolves.toMatchObject({
+      version: 13,
+      geometryManager: {
+        selection: { view: 'workspace', namespace: 'designer', repository: 'designer/common' },
       },
     })
   })

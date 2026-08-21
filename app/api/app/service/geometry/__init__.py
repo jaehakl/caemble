@@ -1,6 +1,7 @@
 from service.geometry.graph import build_snapshot, build_snapshot_from_entry_source
 from service.geometry.manager import (
     archive_repository,
+    delete_geometry_repository,
     archive_version,
     change_geometry_namespace,
     create_repository,
@@ -12,6 +13,7 @@ from service.geometry.manager import (
     list_geometry_version_dependents,
     list_geometry_version_experiments,
     list_geometry_versions,
+    restore_repository,
     resolve_version,
     update_repository_description,
 )
@@ -27,6 +29,7 @@ __all__ = [
     "GeometryVersionConflict",
     "analyze_geometry_source",
     "archive_repository",
+    "delete_geometry_repository",
     "archive_version",
     "build_snapshot",
     "build_snapshot_from_entry_source",
@@ -40,6 +43,7 @@ __all__ = [
     "list_geometry_version_dependents",
     "list_geometry_version_experiments",
     "list_geometry_versions",
+    "restore_repository",
     "module_hash",
     "plan_publish",
     "publish",

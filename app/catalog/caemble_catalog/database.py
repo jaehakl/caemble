@@ -634,6 +634,7 @@ class Catalog:
             "lengthUnit": row["length_unit"],
             "exportName": row["export_name"],
             "sourceHash": row["source_hash"],
+            "repository": row["repository_slug"],
             "concepts": [
                 item["concept"]
                 for item in self._all(
@@ -658,11 +659,23 @@ class Catalog:
             result["source"] = row["source"]
         return result
 
+    def list_geometry_repositories(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "slug": row["slug"],
+                "title": row["title"],
+                "description": row["description"],
+                "ordinal": row["ordinal"],
+            }
+            for row in self._all("SELECT * FROM geometry_repositories ORDER BY ordinal, slug")
+        ]
+
     def list_geometries(
         self,
         *,
         query: str | None = None,
         element: str | None = None,
+        repository: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[dict[str, Any]], int]:
@@ -673,6 +686,9 @@ class Catalog:
             joins = " JOIN geometry_elements ge ON ge.geometry_key = g.key"
             clauses.append("ge.element = ?")
             parameters.append(element)
+        if repository is not None:
+            clauses.append("g.repository_slug = ?")
+            parameters.append(repository)
         if query:
             escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             like = f"%{escaped}%"
@@ -791,7 +807,7 @@ class Catalog:
               SELECT 'solver', name || '@' || version, name, version || ' · Solver', name
               FROM solvers WHERE name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\'
               UNION ALL
-              SELECT 'geometry', key, title, 'Official Geometry', key
+              SELECT 'geometry', key, title, 'Example Geometry', key
               FROM geometries WHERE key LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\'
               UNION ALL
               SELECT 'experiment', key, title, 'Official Experiment', key

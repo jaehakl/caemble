@@ -19,6 +19,7 @@ import {
   type LocalGeometryCoordinate,
 } from '@/lib/cad'
 import type { GeometryManagerState } from './useGeometryWorkspaceState'
+import { GeometryRepositoryPicker } from './GeometryRepositoryPicker'
 
 const slugPattern = '[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?'
 
@@ -49,7 +50,6 @@ export function GeometryExportPublishDialog({
   const [sourceSnapshot, setSourceSnapshot] = useState('')
   const [exportName, setExportName] = useState('')
   const [repositoryId, setRepositoryId] = useState<number | null>(null)
-  const [repository, setRepository] = useState('common')
   const [targetPackage, setTargetPackage] = useState('')
   const [description, setDescription] = useState('')
   const [namespaceInput, setNamespaceInput] = useState('')
@@ -68,8 +68,7 @@ export function GeometryExportPublishDialog({
       const firstExport = entryExports[0] ?? ''
       setSourceSnapshot(entrySource)
       setExportName(firstExport)
-      setRepositoryId(null)
-      setRepository('common')
+      setRepositoryId(geometry.repositories.find((item) => item.archived_at === null)?.id ?? null)
       setTargetPackage(packageName(firstExport))
       setDescription('')
       setNamespaceInput(namespace ?? '')
@@ -78,7 +77,7 @@ export function GeometryExportPublishDialog({
       void refreshRepositories().catch(() => undefined)
     }
     wasOpen.current = open
-  }, [entryExports, entrySource, namespace, open, refreshRepositories])
+  }, [entryExports, entrySource, geometry.repositories, namespace, open, refreshRepositories])
 
   const projection = useMemo(() => {
     if (!sourceSnapshot || !exportName)
@@ -96,8 +95,8 @@ export function GeometryExportPublishDialog({
   }, [exportName, sourceSnapshot])
 
   const selectedRepository = geometry.repositories.find((item) => item.id === repositoryId) ?? null
-  const repositorySlug = selectedRepository?.slug ?? repository
-  const targetNamespace = selectedRepository?.namespace ?? namespace
+  const repositorySlug = selectedRepository?.slug ?? ''
+  const targetNamespace = selectedRepository?.namespace ?? null
 
   const setNamespace = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -120,8 +119,8 @@ export function GeometryExportPublishDialog({
       setError('팝업을 연 뒤 geometry.tsx가 변경되었습니다. 팝업을 닫고 다시 열어 최신 source를 확인하세요.')
       return
     }
-    if (!projection.source || projection.error || !targetNamespace) {
-      setError(projection.error ?? 'Geometry 발행 정보를 확인하세요.')
+    if (!projection.source || projection.error || !targetNamespace || !selectedRepository) {
+      setError(projection.error ?? 'Repository를 선택하세요.')
       return
     }
     const coordinate =
@@ -272,32 +271,14 @@ export default defineTask({ kernel: { name: 'preview', version: '1.0.0' }, confi
                 Initial version
                 <Input readOnly value="0.1.0" />
               </label>
-              <label className="grid gap-1 text-sm">
-                Existing Repository
-                <select
-                  className="h-9 rounded-md border bg-background px-3"
-                  onChange={(event) => setRepositoryId(Number(event.target.value) || null)}
-                  value={repositoryId ?? ''}
-                >
-                  <option value="">현재 namespace의 새 Repository</option>
-                  {geometry.repositories
-                    .filter((item) => item.archived_at === null)
-                    .map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.namespace}/{item.slug}
-                      </option>
-                    ))}
-                </select>
-              </label>
-              <label className="grid gap-1 text-sm">
-                Repository slug
-                <Input
-                  disabled={selectedRepository !== null}
-                  maxLength={64}
-                  onChange={(event) => setRepository(event.target.value)}
-                  pattern={slugPattern}
-                  required
-                  value={repositorySlug}
+              <label className="grid gap-1 text-sm sm:col-span-2">
+                Repository
+                <GeometryRepositoryPicker
+                  namespace={namespace}
+                  onChange={(repository) => setRepositoryId(repository.id)}
+                  onCreate={geometry.createRepository}
+                  repositories={geometry.repositories}
+                  value={repositoryId}
                 />
               </label>
               <label className="grid gap-1 text-sm">

@@ -64,7 +64,7 @@ beforeEach(() => {
           kind: 'geometry',
           key: query,
           title: 'Basketball Goal',
-          subtitle: 'Official Geometry.',
+          subtitle: 'Example Geometry.',
         },
       ],
       'dc-uniform-bar': [
@@ -98,7 +98,7 @@ beforeEach(() => {
   const geometry = {
     key: 'basketball-goal',
     title: 'Basketball Goal',
-    description: 'Official standalone Geometry.',
+    description: 'Example standalone Geometry.',
     cadApiVersion: 8,
     moduleFormatVersion: 4,
     lengthUnit: 'mm',

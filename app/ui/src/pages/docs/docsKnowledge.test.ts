@@ -53,7 +53,7 @@ describe('documentation knowledge registry', () => {
         subtitle: 'electromagnetism.ElectricConductivity',
       },
       { kind: 'solver', key: 'dc-current-density@0.1.0', title: 'DC current density', subtitle: 'Solver' },
-      { kind: 'geometry', key: 'basketball-goal', title: 'Basketball Goal', subtitle: 'Official Geometry' },
+      { kind: 'geometry', key: 'basketball-goal', title: 'Basketball Goal', subtitle: 'Example Geometry' },
       { kind: 'experiment', key: 'dc-uniform-bar', title: 'DC Uniform Bar', subtitle: 'Official Experiment' },
     ])
 

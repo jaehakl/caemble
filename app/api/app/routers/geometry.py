@@ -17,6 +17,7 @@ from service.geometry import (
     archive_version,
     create_repository,
     delete_geometry_packages,
+    delete_geometry_repository,
     delete_geometry_versions,
     geometry_version_usage,
     list_geometry_packages,
@@ -27,6 +28,7 @@ from service.geometry import (
     plan_publish,
     publish,
     resolve_version,
+    restore_repository,
     update_repository_description,
 )
 from user_auth.routes import get_db
@@ -61,6 +63,25 @@ async def archive_geometry_repository(
     user: UserData = Depends(require_roles(["admin", "user"])),
 ):
     return await archive_repository(db, repository_id, user=user)
+
+
+@router.post("/repositories/{repository_id}/restore")
+async def restore_geometry_repository(
+    repository_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: UserData = Depends(require_roles(["admin", "user"])),
+):
+    return await restore_repository(db, repository_id, user=user)
+
+
+@router.delete("/repositories/{repository_id}")
+async def delete_geometry_repository_row(
+    repository_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: UserData = Depends(require_roles(["admin", "user"])),
+):
+    await delete_geometry_repository(db, repository_id, user=user)
+    return None
 
 
 @router.put("/repositories/{repository_id}")

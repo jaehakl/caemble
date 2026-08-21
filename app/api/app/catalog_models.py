@@ -13,7 +13,7 @@ class CatalogModel(BaseModel):
 
 
 class CatalogMeta(CatalogModel):
-    schema_version: Literal[2]
+    schema_version: Literal[3]
     catalog_revision: str
     quantity_kind_data_version: str
     material_catalog_version: str
@@ -140,10 +140,18 @@ class GeometryMaterialRole(CatalogModel):
     description: str
 
 
+class GeometryRepository(CatalogModel):
+    slug: str
+    title: str
+    description: str
+    ordinal: int
+
+
 class GeometrySummary(CatalogModel):
     key: str
     title: str
     description: str
+    repository: str
     cad_api_version: Literal[8]
     module_format_version: Literal[4]
     length_unit: str

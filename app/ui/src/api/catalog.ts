@@ -5,6 +5,7 @@ import {
   experimentListItemSchema,
   geometryDetailSchema,
   geometryListItemSchema,
+  geometryRepositorySchema,
   listSchema,
   materialModelSchema,
   materialParameterDetailSchema,
@@ -38,6 +39,7 @@ export type {
   CatalogExperimentListItem,
   CatalogGeometryDetail,
   CatalogGeometryListItem,
+  CatalogGeometryRepository,
   CatalogQuantityKind,
   CatalogQuantityKindDetail,
   CatalogRuntimeSlice,
@@ -58,6 +60,7 @@ export const catalogQueryKeys = {
   solvers: (query: ListQuery) => ['catalog', 'solvers', query] as const,
   solver: (name: string, version: string) => ['catalog', 'solver', name, version] as const,
   geometries: (query: ListQuery) => ['catalog', 'geometries', query] as const,
+  geometryRepositories: ['catalog', 'geometry-repositories'] as const,
   geometry: (key: string) => ['catalog', 'geometry', key] as const,
   experiments: (query: ListQuery) => ['catalog', 'experiments', query] as const,
   experiment: (key: string) => ['catalog', 'experiment', key] as const,
@@ -104,6 +107,9 @@ export const catalogApi = {
   },
   async listGeometries(query: ListQuery = {}) {
     return listSchema(geometryListItemSchema).parse(await request<unknown>('get', catalogUrl('/geometries', query)))
+  },
+  async listGeometryRepositories() {
+    return z.array(geometryRepositorySchema).parse(await request<unknown>('get', catalogUrl('/geometry-repositories')))
   },
   async getGeometry(key: string) {
     return geometryDetailSchema.parse(

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .database import Catalog, catalog_path
-from .errors import CatalogIntegrityError, CatalogNotFoundError
+from .errors import CatalogError, CatalogIntegrityError, CatalogNotFoundError
 from .schema import create_schema, upgrade_schema
 from .validation import validate_catalog_content
 
@@ -206,8 +206,17 @@ def insert_solver_manifest(connection: sqlite3.Connection, manifest: dict[str, A
 
 def insert_geometry(connection: sqlite3.Connection, geometry: dict[str, Any]) -> None:
     source = geometry["source"]
+    repository = geometry.get("repository")
+    if repository is None:
+        row = connection.execute("SELECT slug FROM geometry_repositories ORDER BY ordinal LIMIT 1").fetchone()
+        if row is None:
+            raise CatalogError("At least one Geometry Repository is required before inserting Geometry examples.")
+        repository = row[0]
     connection.execute(
-        "INSERT INTO geometries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        """INSERT INTO geometries(
+               key, title, description, cad_api_version, module_format_version,
+               length_unit, export_name, source, source_hash, repository_slug
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             geometry["key"],
             geometry["title"],
@@ -218,6 +227,7 @@ def insert_geometry(connection: sqlite3.Connection, geometry: dict[str, Any]) ->
             geometry["exportName"],
             source,
             hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            repository,
         ),
     )
     connection.executemany(
@@ -334,6 +344,25 @@ def create_database(path: Path, dataset: dict[str, Any]) -> None:
                 )
             for manifest in dataset["solverManifests"]:
                 insert_solver_manifest(connection, manifest)
+            geometry_repositories = dataset.get("geometryRepositories", [])
+            if dataset.get("geometries") and not geometry_repositories:
+                geometry_repositories = [
+                    {
+                        "slug": "general",
+                        "title": "General",
+                        "description": "Imported Geometry examples",
+                    }
+                ]
+            for ordinal, repository in enumerate(geometry_repositories):
+                connection.execute(
+                    "INSERT INTO geometry_repositories VALUES (?, ?, ?, ?)",
+                    (
+                        repository["slug"],
+                        repository["title"],
+                        repository["description"],
+                        repository.get("ordinal", ordinal),
+                    ),
+                )
             for geometry in dataset.get("geometries", []):
                 insert_geometry(connection, geometry)
             for experiment in dataset.get("experiments", []):
@@ -503,6 +532,9 @@ def semantic_snapshot(path: Path) -> dict[str, Any]:
                 f"{item['descriptor']['name']}@{item['descriptor']['version']}": item
                 for item in catalog.solver_manifests()
             },
+            "geometryRepositories": {
+                item["slug"]: item for item in catalog.list_geometry_repositories()
+            },
             "geometries": {
                 row["key"]: catalog.geometry(row["key"])
                 for row in catalog._all("SELECT key FROM geometries ORDER BY key")
@@ -518,7 +550,15 @@ def semantic_diff(candidate: Path, baseline: Path | None = None) -> list[str]:
     before = semantic_snapshot((baseline or catalog_path()).resolve())
     after = semantic_snapshot(candidate.resolve())
     changes: list[str] = []
-    for section in ("quantityKinds", "materialParameters", "materialModels", "solvers", "geometries", "experiments"):
+    for section in (
+        "quantityKinds",
+        "materialParameters",
+        "materialModels",
+        "solvers",
+        "geometryRepositories",
+        "geometries",
+        "experiments",
+    ):
         before_items = before[section]
         after_items = after[section]
         for key in sorted(before_items.keys() - after_items.keys()):
@@ -623,6 +663,7 @@ def _revision_payload(path: Path) -> dict[str, Any]:
                 for row in catalog._all("SELECT key, description FROM material_design_rules ORDER BY key")
             },
             "solverManifests": catalog.solver_manifests(),
+            "geometryRepositories": catalog.list_geometry_repositories(),
             "geometries": [
                 catalog.geometry(row["key"])
                 for row in catalog._all("SELECT key FROM geometries ORDER BY key")

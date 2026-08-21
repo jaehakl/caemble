@@ -140,14 +140,21 @@ describe('useCaeWorkbenchState', () => {
         splitPercent: 50,
       }),
     ).toMatchObject({
-      version: 12,
+      version: 13,
       experiment: { record: { id: 7 } },
       candidate: { vars: null, materialParameters: null },
       selection: { measurementId: null },
       geometryManager: {
         draftVersions: {},
         resolvedModules: [],
-        selection: { view: 'official', catalogKey: null, coordinate: null, exportName: null },
+        selection: {
+          view: 'examples',
+          namespace: 'examples',
+          repository: 'all',
+          catalogKey: null,
+          coordinate: null,
+          exportName: null,
+        },
       },
       experimentGeometry: { stagedModules: [] },
     })

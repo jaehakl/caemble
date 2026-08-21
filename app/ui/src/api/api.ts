@@ -235,6 +235,8 @@ const geometryRepositoryRowSchema = z.object({
   slug: z.string(),
   description: z.string().nullable(),
   archived_at: z.string().nullable(),
+  package_count: z.number().int().nonnegative().optional(),
+  version_count: z.number().int().nonnegative().optional(),
   created_at: z.string().nullable(),
   updated_at: z.string().nullable(),
 })
@@ -907,6 +909,16 @@ export const geometryApi = {
   async archiveRepository(id: number) {
     return geometryRepositorySchema.parse(
       await request<unknown>('post', `/geometry/repositories/${z.number().int().positive().parse(id)}/archive`),
+    )
+  },
+  async restoreRepository(id: number) {
+    return geometryRepositorySchema.parse(
+      await request<unknown>('post', `/geometry/repositories/${z.number().int().positive().parse(id)}/restore`),
+    )
+  },
+  async deleteRepository(id: number) {
+    deleteResponseSchema.parse(
+      await request<unknown>('delete', `/geometry/repositories/${z.number().int().positive().parse(id)}`),
     )
   },
   async updateRepositoryDescription(id: number, description: string | null) {

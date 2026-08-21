@@ -27,7 +27,7 @@ function geometryState(source: string, overrides: Partial<GeometryManagerState> 
     entrySource: source,
     entryExports: ['FirstPart', 'SecondPart'],
     namespace: 'jlee',
-    repositories: [],
+    repositories: [{ id: 7, namespace: 'jlee', slug: 'common', description: null, archived_at: null }] as never,
     currentSnapshot: { schemaVersion: 2, entryImports: [], modules: [] },
     experimentAvailableOverlay: {},
     busy: false,
@@ -70,7 +70,7 @@ export const SecondPart: Geometry = () => <cylinder radius={2} height={3} />
         exportName: 'SecondPart',
         packageName: 'second-part',
         repository: 'common',
-        repositoryId: null,
+        repositoryId: 7,
         source: expect.stringContaining('export const SecondPart'),
       }),
     )
@@ -134,9 +134,7 @@ export const SecondPart = () => <cylinder radius={2} height={3} />`
     })
     render(<GeometryExportPublishDialog geometry={geometry} onOpenChange={vi.fn()} open />)
 
-    await user.selectOptions(screen.getByLabelText('Existing Repository'), '7')
-    expect(screen.getByLabelText('Repository slug')).toHaveValue('design')
-    expect(screen.getByLabelText('Repository slug')).toBeDisabled()
+    await user.selectOptions(screen.getByLabelText('Repository'), '7')
     await user.click(screen.getByRole('button', { name: 'Geometry 발행' }))
 
     await waitFor(() =>

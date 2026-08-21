@@ -22,7 +22,7 @@ from caemble_catalog.cli import main
 def test_canonical_catalog_is_normalized_and_complete():
     with Catalog.open_readonly() as catalog:
         assert catalog.meta() == {
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "catalogRevision": catalog.meta()["catalogRevision"],
             "quantityKindDataVersion": "0.0.1",
             "materialCatalogVersion": "0.0.0",
@@ -80,11 +80,24 @@ def test_solver_manifests_reconstruct_the_legacy_contract():
         assert len(catalog.solver_contract_digest("steady-state-heat", "0.1.0")) == 64
 
 
-def test_official_geometry_and_experiment_catalog_contracts():
+def test_example_geometry_and_experiment_catalog_contracts():
     with Catalog.open_readonly() as catalog:
         geometries, geometry_total = catalog.list_geometries(limit=100)
         experiments, experiment_total = catalog.list_experiments(limit=100)
         assert geometry_total == 7
+        repositories = catalog.list_geometry_repositories()
+        assert [item["slug"] for item in repositories] == [
+            "getting-started",
+            "arrays",
+            "advanced-shapes",
+            "assemblies",
+        ]
+        arrays, arrays_total = catalog.list_geometries(repository="arrays", limit=100)
+        assert arrays_total == 2
+        assert {item["key"] for item in arrays} == {
+            "random-curved-edge-cylinder-array",
+            "random-curved-surface-sphere-hcp-array",
+        }
         assert experiment_total == 4
         assert {item["key"] for item in geometries} == {
             "basketball-goal",
@@ -96,6 +109,7 @@ def test_official_geometry_and_experiment_catalog_contracts():
             "two-material-wheel-assembly",
         }
         wheel = catalog.geometry("two-material-wheel-assembly")
+        assert wheel["repository"] == "assemblies"
         assert wheel["cadApiVersion"] == 8
         assert wheel["moduleFormatVersion"] == 4
         assert wheel["exportName"] == "WheelAssembly"

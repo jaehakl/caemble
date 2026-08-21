@@ -166,7 +166,7 @@ const materialRequirementSchema = z.object({
 })
 
 export const catalogMetaSchema = z.object({
-  schemaVersion: z.literal(2),
+  schemaVersion: z.literal(3),
   catalogRevision: z.string().min(1),
   quantityKindCount: z.number().int().nonnegative(),
   materialParameterCount: z.number().int().nonnegative(),
@@ -234,6 +234,7 @@ export const geometryListItemSchema = z.object({
   key: z.string().min(1),
   title: z.string().min(1),
   description: z.string().min(1),
+  repository: z.string().min(1),
   cadApiVersion: z.literal(8),
   moduleFormatVersion: z.literal(4),
   lengthUnit: z.string().min(1),
@@ -245,6 +246,13 @@ export const geometryListItemSchema = z.object({
 })
 
 export const geometryDetailSchema = geometryListItemSchema.extend({ source: z.string().min(1) })
+
+export const geometryRepositorySchema = z.object({
+  slug: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string(),
+  ordinal: z.number().int().nonnegative(),
+})
 
 const experimentSolverSchema = z.object({
   name: z.string().min(1),
@@ -347,6 +355,7 @@ export type ListQuery = Readonly<{
   tensorOrder?: number
   quantityKind?: string
   element?: string
+  repository?: string
   limit?: number
   cursor?: string
 }>
@@ -369,6 +378,7 @@ export type CatalogSolverListItem = z.infer<typeof solverListItemSchema>
 export type CatalogSolverDetail = z.infer<typeof solverDetailSchema>
 export type CatalogGeometryListItem = z.infer<typeof geometryListItemSchema>
 export type CatalogGeometryDetail = z.infer<typeof geometryDetailSchema>
+export type CatalogGeometryRepository = z.infer<typeof geometryRepositorySchema>
 export type CatalogExperimentListItem = z.infer<typeof experimentListItemSchema>
 export type CatalogExperimentDetail = z.infer<typeof experimentDetailSchema>
 export type CatalogSearchItem = z.infer<typeof searchItemSchema>

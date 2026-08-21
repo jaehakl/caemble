@@ -23,7 +23,7 @@ vi.mock('sonner', () => ({ toast: { error: mocks.toastError } }))
 function workbench(overrides: Record<string, unknown> = {}) {
   return {
     applyExperiment: vi.fn(),
-    draft: vi.fn(() => ({ version: 12 })),
+    draft: vi.fn(() => ({ version: 13 })),
     experimentDirty: false,
     hasUnsavedWork: false,
     hasUnsavedExperimentWork: false,
@@ -107,7 +107,7 @@ describe('useCaePageSession', () => {
     await waitFor(() => expect(result.current.initialized).toBe(true))
     expect(state.restoreDraft).toHaveBeenCalledWith(
       expect.objectContaining({
-        version: 12,
+        version: 13,
         experiment: expect.objectContaining({
           name: 'Starter Experiment',
           baselineBundle: expect.objectContaining({ files: expect.any(Object) }),
@@ -118,7 +118,14 @@ describe('useCaePageSession', () => {
         geometryManager: {
           draftVersions: {},
           resolvedModules: [],
-          selection: { view: 'official', catalogKey: null, coordinate: null, exportName: null },
+          selection: {
+            view: 'examples',
+            namespace: 'examples',
+            repository: 'all',
+            catalogKey: null,
+            coordinate: null,
+            exportName: null,
+          },
         },
         experimentGeometry: { stagedModules: [] },
         layout: expect.objectContaining({ activeTab: 'experiment' }),

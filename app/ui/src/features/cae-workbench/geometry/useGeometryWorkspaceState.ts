@@ -178,7 +178,9 @@ export function useGeometryManagerState({
     coordinate: LocalGeometryCoordinate
     source: string
   }> | null>(null)
-  const [managerView, setManagerView] = useState<'official' | 'workspace'>('official')
+  const [managerView, setManagerView] = useState<'examples' | 'workspace'>('examples')
+  const [managerNamespace, setManagerNamespace] = useState('examples')
+  const [managerRepository, setManagerRepository] = useState('all')
   const [selectedCatalogKey, setSelectedCatalogKey] = useState<string | null>(null)
   const [selectedCoordinate, setSelectedCoordinateState] = useState<GeometryModuleCoordinate | null>(null)
   const [selectedExport, setSelectedExport] = useState<string | null>(null)
@@ -379,6 +381,19 @@ export function useGeometryManagerState({
         ['slug', 'asc'],
       ],
     })
+    let nextDrafts = draftsRef.current
+    for (const draft of Object.values(draftsRef.current)) {
+      if (draft.baseGeometryVersionId !== null || draft.repositoryId !== null) continue
+      const draftNamespace = coordinateParts(draft.coordinate).namespace
+      const repository = response.items.find(
+        (item) => item.archived_at === null && item.namespace === draftNamespace && item.slug === draft.repository,
+      )
+      if (repository) nextDrafts = { ...nextDrafts, [draft.coordinate]: { ...draft, repositoryId: repository.id } }
+    }
+    if (nextDrafts !== draftsRef.current) {
+      draftsRef.current = nextDrafts
+      setDrafts(nextDrafts)
+    }
     setRepositories(response.items)
     return response.items
   }, [authenticated])
@@ -823,6 +838,10 @@ export function useGeometryManagerState({
   const requestPublish = useCallback(
     async (coordinate: GeometryModuleCoordinate) => {
       if (!authenticated) throw new Error('Geometry 저장은 로그인 후 사용할 수 있습니다.')
+      const target = draftsRef.current[coordinate]
+      if (target?.baseGeometryVersionId === null && target.repositoryId === null) {
+        throw new Error('발행할 Repository를 선택하거나 새로 만드세요.')
+      }
       const request = geometryPublishRequest(draftsRef.current, coordinate)
       setBusy(true)
       try {
@@ -1058,6 +1077,8 @@ export function useGeometryManagerState({
       )
       setSelectedExport(manager.selection.exportName)
       setManagerView(manager.selection.view)
+      setManagerNamespace(manager.selection.namespace)
+      setManagerRepository(manager.selection.repository)
       setSelectedCatalogKey(manager.selection.catalogKey)
       setPreviewScene(null)
       setPreviewSceneHash(null)
@@ -1094,6 +1115,8 @@ export function useGeometryManagerState({
   return {
     namespace,
     managerView,
+    managerNamespace,
+    managerRepository,
     selectedCatalogKey,
     repositories,
     currentSnapshot,
@@ -1119,6 +1142,13 @@ export function useGeometryManagerState({
     previewStale,
     publishReady:
       Boolean(selectedCoordinate && drafts[selectedCoordinate]) &&
+      Boolean(
+        selectedCoordinate &&
+        drafts[selectedCoordinate] &&
+        (!authenticated ||
+          drafts[selectedCoordinate].baseGeometryVersionId !== null ||
+          drafts[selectedCoordinate].repositoryId !== null),
+      ) &&
       previewedInputKey === previewInputKey &&
       !previewError &&
       !previewStale,
@@ -1126,20 +1156,76 @@ export function useGeometryManagerState({
     publishPlan,
     setPublishPlan,
     setManagerView,
+    setManagerNamespace,
+    setManagerRepository,
     setSelectedCatalogKey,
     setNamespace,
     refreshRepositories,
     createRepository: async (slug: string, description?: string | null) => {
       if (!authenticated) throw new Error('Geometry Repository 관리는 로그인 후 사용할 수 있습니다.')
       const result = await geometryApi.createRepository({ slug, description })
-      await refreshRepositories()
-      return result
+      const next = await refreshRepositories()
+      await queryClient.invalidateQueries({ queryKey: ['geometry'] })
+      return next.find((repository) => repository.id === result.id)!
     },
     archiveRepository: async (id: number) => {
       if (!authenticated) throw new Error('Geometry Repository 관리는 로그인 후 사용할 수 있습니다.')
       const result = await geometryApi.archiveRepository(id)
       await refreshRepositories()
+      await queryClient.invalidateQueries({ queryKey: ['geometry'] })
       return result
+    },
+    restoreRepository: async (id: number) => {
+      if (!authenticated) throw new Error('Geometry Repository 관리는 로그인 후 사용할 수 있습니다.')
+      const result = await geometryApi.restoreRepository(id)
+      await refreshRepositories()
+      await queryClient.invalidateQueries({ queryKey: ['geometry'] })
+      return result
+    },
+    updateRepositoryDescription: async (id: number, description: string) => {
+      if (!authenticated) throw new Error('Geometry Repository 관리는 로그인 후 사용할 수 있습니다.')
+      const result = await geometryApi.updateRepositoryDescription(id, description)
+      await refreshRepositories()
+      await queryClient.invalidateQueries({ queryKey: ['geometry'] })
+      return result
+    },
+    deleteRepository: async (id: number) => {
+      if (!authenticated) throw new Error('Geometry Repository 관리는 로그인 후 사용할 수 있습니다.')
+      if (Object.values(draftsRef.current).some((draft) => draft.repositoryId === id)) {
+        throw new Error('현재 Manager Draft가 연결된 Repository는 삭제할 수 없습니다.')
+      }
+      const packages = await dbTables.GeometryPackage.listRows({
+        ...getListRequest('visible'),
+        limit: null,
+        filter: { repository_id: [id, id] },
+      })
+      const versions = (
+        await Promise.all(
+          packages.items.map((item) =>
+            dbTables.GeometryVersion.listRows({
+              ...getListRequest('visible'),
+              limit: null,
+              filter: { package_id: [item.id, item.id] },
+            }),
+          ),
+        )
+      ).flatMap((response) => response.items)
+      const locallyReferencedVersionIds = new Set([
+        ...currentSnapshot.modules.map((module) => module.geometryVersionId),
+        ...managerModules.map((module) => module.geometryVersionId),
+        ...experimentModules.map((module) => module.geometryVersionId),
+        ...Object.values(draftsRef.current).flatMap((draft) =>
+          draft.baseGeometryVersionId === null ? [] : [draft.baseGeometryVersionId],
+        ),
+      ])
+      if (versions.some((version) => locallyReferencedVersionIds.has(version.id))) {
+        throw new Error(
+          '현재 Experiment snapshot, staging 또는 Manager 선택이 참조하는 Repository는 삭제할 수 없습니다.',
+        )
+      }
+      await geometryApi.deleteRepository(id)
+      await refreshRepositories()
+      await queryClient.invalidateQueries({ queryKey: ['geometry'] })
     },
     archiveVersion: async (id: number) => {
       if (!authenticated) throw new Error('Published Geometry 관리는 로그인 후 사용할 수 있습니다.')
@@ -1192,6 +1278,8 @@ export function useGeometryManagerState({
         resolvedModules: managerModulesRef.current,
         selection: {
           view: managerView,
+          namespace: managerNamespace,
+          repository: managerRepository,
           catalogKey: selectedCatalogKey,
           coordinate: selectedCoordinate,
           exportName: selectedExport,

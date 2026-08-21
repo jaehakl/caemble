@@ -37,7 +37,7 @@ async def test_catalog_is_anonymous_cacheable_and_paginated(catalog_client: http
     meta = await catalog_client.get("/catalog/meta")
     assert meta.status_code == 200
     assert meta.json()["quantityKindCount"] == 1_216
-    assert meta.json()["schemaVersion"] == 2
+    assert meta.json()["schemaVersion"] == 3
     assert meta.json()["geometryCount"] == 7
     assert meta.json()["experimentCount"] == 4
     assert meta.json()["materialGlobalQualifiers"][0] == "temperature"
@@ -93,9 +93,22 @@ async def test_catalog_search_filters_and_errors(catalog_client: httpx.AsyncClie
 
 
 @pytest.mark.asyncio
-async def test_official_geometries_and_experiments_are_public_filterable_and_cacheable(
+async def test_example_geometries_and_experiments_are_public_filterable_and_cacheable(
     catalog_client: httpx.AsyncClient,
 ):
+    repositories = await catalog_client.get("/catalog/geometry-repositories")
+    assert repositories.status_code == 200
+    assert [item["slug"] for item in repositories.json()] == [
+        "getting-started",
+        "arrays",
+        "advanced-shapes",
+        "assemblies",
+    ]
+    arrays = await catalog_client.get("/catalog/geometries", params={"repository": "arrays"})
+    assert arrays.status_code == 200
+    assert arrays.json()["total"] == 2
+    assert {item["repository"] for item in arrays.json()["items"]} == {"arrays"}
+
     geometries = await catalog_client.get("/catalog/geometries", params={"element": "fiber", "limit": 1})
     assert geometries.status_code == 200
     assert geometries.json()["total"] == 2

@@ -2,7 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GeometryPackageRecord, GeometryRepositoryRecord } from '@/api'
 import { GeometryManager } from './GeometryManager'
@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   user: null as { roles: string[] } | null,
   getGeometry: vi.fn(),
   listGeometries: vi.fn(),
+  listGeometryRepositories: vi.fn(),
   listPackages: vi.fn(
     async (request?: PackageListRequest): Promise<{ total: number; items: GeometryPackageRecord[] }> => {
       void request
@@ -49,6 +50,7 @@ vi.mock('@/api/catalog', async (importActual) => {
       ...actual.catalogApi,
       getGeometry: mocks.getGeometry,
       listGeometries: mocks.listGeometries,
+      listGeometryRepositories: mocks.listGeometryRepositories,
     },
   }
 })
@@ -74,7 +76,8 @@ vi.mock('@/features/viewer/editor/CadEditor', () => ({
 const geometryItem = {
   key: 'basketball-goal',
   title: 'Basketball Goal',
-  description: 'Official standalone Geometry',
+  description: 'Example standalone Geometry',
+  repository: 'getting-started',
   cadApiVersion: 8 as const,
   moduleFormatVersion: 4 as const,
   lengthUnit: 'mm',
@@ -105,22 +108,24 @@ function renderManager(
   const previewSource = vi.fn()
   const setManagerView = vi.fn()
   const setSelectedCatalogKey = vi.fn()
-  return {
-    forkOfficial,
-    previewSource,
-    setManagerView,
-    setSelectedCatalogKey,
-    ...render(
+  function StatefulManager() {
+    const [managerView, applyManagerView] = useState<'examples' | 'workspace'>('examples')
+    const [managerNamespace, setManagerNamespace] = useState('examples')
+    const [managerRepository, setManagerRepository] = useState('all')
+    const [selectedCatalogKey, applySelectedCatalogKey] = useState<string | null>('basketball-goal')
+    return (
       <GeometryManager
         geometry={
           {
             namespace,
             draftVersions: {},
-            managerView: 'official',
+            managerView,
+            managerNamespace,
+            managerRepository,
             publishPlan: null,
             repositories,
             selectedCoordinate: null,
-            selectedCatalogKey: 'basketball-goal',
+            selectedCatalogKey,
             currentSnapshot: { schemaVersion: 2, entryImports: [], modules: [] },
             managerModules: [],
             experimentModules: [],
@@ -128,17 +133,31 @@ function renderManager(
             previewError: null,
             previewSource,
             setSelectedCoordinate: vi.fn(),
-            setManagerView,
-            setSelectedCatalogKey,
+            setManagerView: (value: 'examples' | 'workspace') => {
+              setManagerView(value)
+              applyManagerView(value)
+            },
+            setManagerNamespace,
+            setManagerRepository,
+            setSelectedCatalogKey: (value: string | null) => {
+              setSelectedCatalogKey(value)
+              applySelectedCatalogKey(value)
+            },
             forkOfficial,
           } as unknown as GeometryManagerState
         }
         onOpenExperiment={vi.fn()}
         onOpenGeometrySource={vi.fn()}
         onUse={vi.fn()}
-      />,
-      { wrapper: Harness },
-    ),
+      />
+    )
+  }
+  return {
+    forkOfficial,
+    previewSource,
+    setManagerView,
+    setSelectedCatalogKey,
+    ...render(<StatefulManager />, { wrapper: Harness }),
   }
 }
 
@@ -148,22 +167,25 @@ describe('unified Geometry Manager', () => {
     mocks.user = null
     mocks.getGeometry.mockReset().mockResolvedValue(geometryDetail)
     mocks.listGeometries.mockReset().mockResolvedValue({ items: [geometryItem], nextCursor: null, total: 1 })
+    mocks.listGeometryRepositories
+      .mockReset()
+      .mockResolvedValue([{ slug: 'getting-started', title: 'Getting Started', description: '', ordinal: 0 }])
     mocks.listPackages.mockReset().mockResolvedValue({ total: 0, items: [] })
     mocks.listRepositories.mockReset().mockResolvedValue({ total: 0, items: [] })
   })
   afterEach(cleanup)
 
-  it('uses Official as a virtual namespace and keeps its source read-only', async () => {
+  it('uses Examples as a highlighted namespace and keeps its source read-only', async () => {
     const { forkOfficial } = renderManager('local')
 
     expect(screen.queryByRole('tab', { name: 'Official Catalog' })).not.toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: 'Workspace Packages' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '전체' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Workspace' })).not.toBeInTheDocument()
-    expect(screen.getByRole('combobox', { name: 'Namespace' })).toHaveValue('__official__')
-    expect(screen.getByRole('option', { name: 'Official' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Namespace' })).toHaveValue('examples')
+    expect(screen.getByRole('option', { name: 'Examples' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'local' })).toBeInTheDocument()
-    expect(await screen.findByText('Official standalone Geometry')).toBeInTheDocument()
+    expect(await screen.findByText('Example standalone Geometry')).toBeInTheDocument()
     expect(screen.queryByLabelText('Official Packages')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Workspace Packages')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Geometry Packages list')).toHaveTextContent('Basketball Goal')
@@ -176,7 +198,7 @@ describe('unified Geometry Manager', () => {
     expect(forkOfficial).not.toHaveBeenCalled()
 
     fireEvent.change(screen.getByRole('combobox', { name: 'Namespace' }), { target: { value: 'local' } })
-    expect(await screen.findByText('세션 Geometry가 없습니다.')).toBeInTheDocument()
+    expect(await screen.findByText('표시할 Geometry가 없습니다.')).toBeInTheDocument()
     expect(screen.getByLabelText('Geometry Packages list')).not.toHaveTextContent('Basketball Goal')
   })
 
@@ -219,26 +241,40 @@ describe('unified Geometry Manager', () => {
         expect.objectContaining({ text_filter: expect.objectContaining({ namespace: ['shared'] }) }),
       ),
     )
-    expect(screen.queryByRole('option', { name: '모든 namespace' })).not.toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '모든 namespace' })).toBeInTheDocument()
   })
 
-  it('creates an Official fork only after the signed-in user confirms its target', async () => {
+  it('creates an Example fork only after the signed-in user confirms its target', async () => {
     mocks.authenticated = true
     const forkOfficial = vi.fn(() => 'caemble:geometry/designer/forks/basketball-goal@local')
-    renderManager('designer', forkOfficial)
+    renderManager('designer', forkOfficial, [
+      {
+        id: 3,
+        namespace: 'designer',
+        slug: 'forks',
+        user_id: 'user-1',
+        description: null,
+        archived_at: null,
+        created_at: null,
+        updated_at: null,
+      },
+    ])
 
     fireEvent.click(await screen.findByRole('button', { name: '개인 Repository로 Fork' }))
     const dialog = screen.getByRole('dialog', { name: '개인 Repository로 Fork' })
+    fireEvent.change(dialog.querySelector('select')!, { target: { value: '3' } })
     fireEvent.submit(dialog.querySelector('form')!)
 
-    expect(forkOfficial).toHaveBeenCalledWith({
-      key: 'basketball-goal',
-      repository: 'forks',
-      packageName: 'basketball-goal',
-      source: geometryDetail.source,
-      description: geometryDetail.description,
-      repositoryId: null,
-    })
+    await waitFor(() =>
+      expect(forkOfficial).toHaveBeenCalledWith({
+        key: 'basketball-goal',
+        repository: 'forks',
+        packageName: 'basketball-goal',
+        source: geometryDetail.source,
+        description: geometryDetail.description,
+        repositoryId: 3,
+      }),
+    )
     expect(screen.getByRole('combobox', { name: 'Namespace' })).toHaveValue('designer')
   })
 
@@ -289,7 +325,9 @@ describe('unified Geometry Manager', () => {
     ])
 
     fireEvent.click(await screen.findByRole('button', { name: '개인 Repository로 Fork' }))
-    fireEvent.submit(screen.getByRole('dialog', { name: '개인 Repository로 Fork' }).querySelector('form')!)
+    const dialog = screen.getByRole('dialog', { name: '개인 Repository로 Fork' })
+    fireEvent.change(dialog.querySelector('select')!, { target: { value: '3' } })
+    fireEvent.submit(dialog.querySelector('form')!)
 
     await waitFor(() =>
       expect(mocks.listPackages).toHaveBeenCalledWith(

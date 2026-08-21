@@ -16,6 +16,7 @@ from catalog_models import (
     ExperimentDetail,
     ExperimentSummary,
     GeometryDetail,
+    GeometryRepository,
     GeometrySummary,
     MaterialModel,
     MaterialParameter,
@@ -201,14 +202,24 @@ def geometries(
     response: Response,
     q: str | None = Query(default=None, max_length=200),
     element: str | None = Query(default=None, max_length=200),
+    repository: str | None = Query(default=None, max_length=64),
     limit: int = Query(default=50, ge=1, le=200),
     cursor: str | None = Query(default=None, max_length=100),
     catalog: Catalog = Depends(get_catalog),
 ):
     offset = _offset(cursor)
-    items, total = catalog.list_geometries(query=q, element=element, limit=limit, offset=offset)
+    items, total = catalog.list_geometries(
+        query=q, element=element, repository=repository, limit=limit, offset=offset
+    )
     _cache(response, catalog)
     return {"items": items, "nextCursor": _cursor(offset, len(items), total), "total": total}
+
+
+@router.get("/geometry-repositories", response_model=list[GeometryRepository])
+def geometry_repositories(response: Response, catalog: Catalog = Depends(get_catalog)):
+    result = catalog.list_geometry_repositories()
+    _cache(response, catalog)
+    return result
 
 
 @router.get("/geometries/{key}", response_model=GeometryDetail)

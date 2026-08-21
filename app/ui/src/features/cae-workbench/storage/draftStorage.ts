@@ -12,7 +12,7 @@ import {
 } from '@/lib/cad'
 import type { GeometryDraftVersion, WorkbenchDraft } from '../types'
 
-export const WORKBENCH_DRAFT_VERSION = 12 as const
+export const WORKBENCH_DRAFT_VERSION = 13 as const
 export const WORKBENCH_DRAFT_STORAGE_KEY = 'caemble:cae-workbench-draft'
 
 const localCoordinatePattern =
@@ -122,7 +122,9 @@ function isWorkbenchDraft(value: unknown): value is WorkbenchDraft {
       !Array.isArray(draft.geometryManager.resolvedModules) ||
       draft.geometryManager.resolvedModules.length > MAX_GEOMETRY_MODULES ||
       !plainObject(draft.geometryManager.selection) ||
-      !['official', 'workspace'].includes(draft.geometryManager.selection.view) ||
+      !['examples', 'workspace'].includes(draft.geometryManager.selection.view) ||
+      typeof draft.geometryManager.selection.namespace !== 'string' ||
+      typeof draft.geometryManager.selection.repository !== 'string' ||
       (draft.geometryManager.selection.catalogKey !== null &&
         typeof draft.geometryManager.selection.catalogKey !== 'string') ||
       !validSelectedCoordinate(draft.geometryManager.selection.coordinate) ||
@@ -155,7 +157,26 @@ function isWorkbenchDraft(value: unknown): value is WorkbenchDraft {
 }
 
 function migrateWorkbenchDraft(value: unknown): unknown {
-  if (!plainObject(value) || ![10, 11].includes(Number(value.version))) return value
+  if (!plainObject(value) || ![10, 11, 12].includes(Number(value.version))) return value
+  if (value.version === 12) {
+    if (!plainObject(value.geometryManager) || !plainObject(value.geometryManager.selection)) return value
+    const selection = value.geometryManager.selection
+    const coordinate = typeof selection.coordinate === 'string' ? selection.coordinate : null
+    const match = coordinate?.match(/^caemble:geometry\/([^/]+)\/([^/]+)\//u)
+    return {
+      ...value,
+      version: WORKBENCH_DRAFT_VERSION,
+      geometryManager: {
+        ...value.geometryManager,
+        selection: {
+          ...selection,
+          view: selection.view === 'official' ? 'examples' : 'workspace',
+          namespace: selection.view === 'official' ? 'examples' : (match?.[1] ?? 'all'),
+          repository: match ? `${match[1]}/${match[2]}` : 'all',
+        },
+      },
+    }
+  }
   const legacyManager = value.version === 10 ? value.geometry : value.geometryManager
   if (!plainObject(legacyManager)) return value
   const legacyDrafts = plainObject(legacyManager.drafts) ? legacyManager.drafts : {}
@@ -178,8 +199,9 @@ function migrateWorkbenchDraft(value: unknown): unknown {
       ]
     }),
   )
-  const selectedCoordinate =
+  const selectedCoordinate = (
     legacyManager.selectedCoordinate === 'geometry.tsx' ? null : (legacyManager.selectedCoordinate ?? null)
+  ) as string | null
   const resolvedModules = Array.isArray(legacyManager.resolvedModules)
     ? legacyManager.resolvedModules
     : Array.isArray(legacyManager.stagedModules)
@@ -199,7 +221,13 @@ function migrateWorkbenchDraft(value: unknown): unknown {
       draftVersions,
       resolvedModules,
       selection: {
-        view: selectedCoordinate ? 'workspace' : 'official',
+        view: selectedCoordinate ? 'workspace' : 'examples',
+        namespace: selectedCoordinate?.match(/^caemble:geometry\/([^/]+)\//u)?.[1] ?? 'examples',
+        repository:
+          selectedCoordinate
+            ?.match(/^caemble:geometry\/([^/]+)\/([^/]+)\//u)
+            ?.slice(1)
+            .join('/') ?? 'all',
         catalogKey: null,
         coordinate: selectedCoordinate,
         exportName: legacyManager.selectedExport ?? null,

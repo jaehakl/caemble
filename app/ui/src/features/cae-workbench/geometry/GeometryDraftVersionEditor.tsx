@@ -15,6 +15,7 @@ import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor
 import CadEditor from '@/features/viewer/editor/CadEditor'
 import type { GeometryDraftVersion } from '../types'
 import type { GeometryManagerState } from './useGeometryWorkspaceState'
+import { GeometryRepositoryPicker } from './GeometryRepositoryPicker'
 
 function errorMessage(cause: unknown) {
   return cause instanceof Error ? cause.message : String(cause)
@@ -130,40 +131,35 @@ export function GeometryDraftVersionEditor({
             </dl>
           ) : (
             <div className="grid gap-3 border-b pb-4">
-              {authenticated && geometry.repositories.length ? (
+              {authenticated ? (
                 <label className="grid gap-1.5">
-                  Existing Repository
-                  <select
-                    className="h-8 rounded-md border bg-background px-2"
-                    value={draft.repositoryId ?? ''}
-                    onChange={(event) => {
-                      const repositoryId = Number(event.target.value) || null
-                      const repository = geometry.repositories.find((item) => item.id === repositoryId)
-                      updatePackage(repository?.slug ?? draft.repository, draft.packageName, repositoryId)
-                    }}
-                  >
-                    <option value="">Session Repository</option>
-                    {geometry.repositories.map((repository) => (
-                      <option key={repository.id} value={repository.id}>
-                        {repository.namespace}/{repository.slug}
-                      </option>
-                    ))}
-                  </select>
+                  Repository
+                  <GeometryRepositoryPicker
+                    namespace={geometry.namespace}
+                    onChange={(repository) => updatePackage(repository.slug, draft.packageName, repository.id)}
+                    onCreate={geometry.createRepository}
+                    repositories={geometry.repositories}
+                    value={draft.repositoryId}
+                  />
+                  {draft.repositoryId === null ? (
+                    <span className="text-amber-700">Repository를 선택해야 발행할 수 있습니다.</span>
+                  ) : null}
                 </label>
               ) : null}
-              <label className="grid gap-1.5">
-                Repository
-                <Input
-                  defaultValue={draft.repository}
-                  disabled={draft.repositoryId !== null}
-                  key={`${draft.draftId}:repository:${draft.repository}`}
-                  onBlur={(event) => {
-                    if (!updatePackage(event.target.value.trim(), draft.packageName, null)) {
-                      event.target.value = draft.repository
-                    }
-                  }}
-                />
-              </label>
+              {!authenticated ? (
+                <label className="grid gap-1.5">
+                  Repository 이름
+                  <Input
+                    defaultValue={draft.repository}
+                    key={`${draft.draftId}:repository:${draft.repository}`}
+                    onBlur={(event) => {
+                      if (!updatePackage(event.target.value.trim(), draft.packageName, null)) {
+                        event.target.value = draft.repository
+                      }
+                    }}
+                  />
+                </label>
+              ) : null}
               <label className="grid gap-1.5">
                 Package
                 <Input

@@ -285,7 +285,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       '',
       'Geometry Manager의 **Experiment에서 사용**은 선택한 export의 exact import 예시를 복사하고 `geometry.tsx`를 엽니다. Source는 자동 수정하지 않습니다. Import alias는 해당 source module 안에서만 고유하며 `id` prop과는 별개입니다.',
       '',
-      'Geometry 탭은 Experiment와 독립적인 Geometry Manager입니다. Official Catalog와 Workspace의 Published source를 직접 편집할 수 있으며 첫 변경에 Package별 Draft Version이 생성됩니다. 이 선택과 Draft Version은 현재 Experiment의 `geometry.tsx`, 저장, Simulation, AI context를 바꾸지 않습니다.',
+      'Geometry 탭은 Experiment와 독립적인 Geometry Manager입니다. Examples source는 읽기 전용으로 보고 개인 Repository로 Fork하여 사용합니다. Workspace Published Version도 읽기 전용이며 `새 Version 편집`을 눌러야 Draft Version이 생성됩니다. Manager 선택과 Draft Version은 현재 Experiment의 `geometry.tsx`, 저장, Simulation, AI context를 바꾸지 않습니다.',
       '',
       'Published Version은 직접 덮어쓰지 않습니다. source를 처음 바꾸면 기존 Version 기반 Draft Version이 생기며, 발행하면 새 exact Version이 됩니다. 이전 세션의 `geometry.tsx`가 발행 전 Geometry를 참조하면 미리보기는 유지되지만, Experiment 저장 전에 사용자가 해당 Geometry를 발행하고 exact import로 직접 교체해야 합니다. 자동 발행이나 source 자동 수정은 하지 않습니다.',
       '',

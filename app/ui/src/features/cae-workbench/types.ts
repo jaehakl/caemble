@@ -32,7 +32,7 @@ export type GeometryDraftVersion = Readonly<{
 }>
 
 export type WorkbenchDraft = Readonly<{
-  version: 12
+  version: 13
   savedAt: number
   experiment: Readonly<{
     record: SavedExperiment | null
@@ -52,7 +52,9 @@ export type WorkbenchDraft = Readonly<{
     draftVersions: Readonly<Record<string, GeometryDraftVersion>>
     resolvedModules: readonly GeometrySnapshotModule[]
     selection: Readonly<{
-      view: 'official' | 'workspace'
+      view: 'examples' | 'workspace'
+      namespace: string
+      repository: string
       catalogKey: string | null
       coordinate: GeometryModuleCoordinate | null
       exportName: string | null

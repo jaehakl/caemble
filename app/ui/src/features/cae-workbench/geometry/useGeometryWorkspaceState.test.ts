@@ -127,7 +127,8 @@ describe('independent Geometry Manager state', () => {
       result.current.createDraft({ repository: 'common', packageName: 'part' })
     })
 
-    await waitFor(() => expect(result.current.publishReady).toBe(true))
+    await waitFor(() => expect(result.current.previewStale).toBe(false))
+    expect(result.current.publishReady).toBe(false)
     expect(result.current.entrySource).toBe(sourceFiles['geometry.tsx'])
     expect(result.current.selectedCoordinate).toBe('caemble:geometry/jlee/common/part@local')
     expect(result.current.experimentDraftOverlay).toEqual({})
@@ -446,9 +447,25 @@ describe('independent Geometry Manager state', () => {
   })
 
   it('keeps the last successful preview and disables publishing after an edit error', async () => {
+    api.listRows.mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          id: 7,
+          user_id: 'user-1',
+          namespace: 'jlee',
+          slug: 'common',
+          description: null,
+          archived_at: null,
+          created_at: null,
+          updated_at: null,
+        },
+      ],
+    })
     const { result } = renderState()
+    await waitFor(() => expect(result.current.repositories).toHaveLength(1))
     act(() => {
-      result.current.createDraft({ repository: 'common', packageName: 'part' })
+      result.current.createDraft({ repository: 'common', packageName: 'part', repositoryId: 7 })
     })
     await waitFor(() => expect(result.current.publishReady).toBe(true))
     const lastScene = result.current.previewScene

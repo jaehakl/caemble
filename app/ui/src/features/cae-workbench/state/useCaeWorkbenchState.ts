@@ -637,7 +637,7 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
     ): WorkbenchDraft => {
       const geometryDraft = createGeometryDraftState()
       return {
-        version: 12,
+        version: 13,
         savedAt: Date.now(),
         experiment: {
           record: experimentRecord,

@@ -109,6 +109,8 @@ class GeometryRepositoryRow(OwnedTimestampFields):
     slug: str
     description: Optional[str] = None
     archived_at: Optional[datetime] = None
+    package_count: int = 0
+    version_count: int = 0
 
 
 class GeometryPackageRow(TimestampFields):

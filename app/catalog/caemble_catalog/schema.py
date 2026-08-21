@@ -3,10 +3,17 @@ from __future__ import annotations
 import sqlite3
 
 APPLICATION_ID = 0x4341454D  # "CAEM"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 RUNTIME_SLICE_SCHEMA_VERSION = 1
 
 CATALOG_ENTITY_SCHEMA_SQL = r"""
+CREATE TABLE geometry_repositories (
+    slug TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    ordinal INTEGER NOT NULL UNIQUE CHECK (ordinal >= 0)
+) STRICT;
+
 CREATE TABLE geometries (
     key TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -16,7 +23,8 @@ CREATE TABLE geometries (
     length_unit TEXT NOT NULL,
     export_name TEXT NOT NULL,
     source TEXT NOT NULL,
-    source_hash TEXT NOT NULL CHECK (length(source_hash) = 64)
+    source_hash TEXT NOT NULL CHECK (length(source_hash) = 64),
+    repository_slug TEXT NOT NULL REFERENCES geometry_repositories(slug)
 ) STRICT;
 
 CREATE TABLE geometry_concepts (
@@ -326,10 +334,30 @@ def create_schema(connection: sqlite3.Connection) -> None:
 def upgrade_schema(connection: sqlite3.Connection) -> None:
     application_id = connection.execute("PRAGMA application_id").fetchone()[0]
     user_version = connection.execute("PRAGMA user_version").fetchone()[0]
-    if application_id != APPLICATION_ID or user_version != 1:
+    if application_id != APPLICATION_ID or user_version not in (1, 2):
         raise ValueError(
-            f"Only a CAEM catalog schema v1 database can be upgraded: "
+            f"Only a CAEM catalog schema v1 or v2 database can be upgraded: "
             f"application_id={application_id}, user_version={user_version}"
         )
-    connection.executescript(CATALOG_ENTITY_SCHEMA_SQL)
+    if user_version == 1:
+        connection.executescript(CATALOG_ENTITY_SCHEMA_SQL)
+    else:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS geometry_repositories (
+                slug TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                ordinal INTEGER NOT NULL UNIQUE CHECK (ordinal >= 0)
+            ) STRICT;
+            INSERT OR IGNORE INTO geometry_repositories
+                VALUES ('general', 'General', 'General Geometry examples.', 0);
+            """
+        )
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(geometries)")}
+        if "repository_slug" not in columns:
+            connection.execute(
+                "ALTER TABLE geometries ADD COLUMN repository_slug TEXT REFERENCES geometry_repositories(slug)"
+            )
+        connection.execute("UPDATE geometries SET repository_slug = 'general' WHERE repository_slug IS NULL")
     connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

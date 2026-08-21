@@ -622,6 +622,69 @@ async def test_experiment_save_accepts_static_material_imports(
 
 
 @pytest.mark.asyncio
+async def test_repository_counts_restore_and_atomic_safe_delete(client, db_session, monkeypatch):
+    monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
+    owner = await create_user(db_session)
+    headers = auth_headers(owner)
+    await set_namespace(client, owner, "repository-owner")
+
+    first_repository = await client.post(
+        "/geometry/repositories", headers=headers, json={"slug": "first", "description": "First"}
+    )
+    second_repository = await client.post(
+        "/geometry/repositories", headers=headers, json={"slug": "second", "description": "Second"}
+    )
+    assert first_repository.status_code == second_repository.status_code == 200
+    first_repository_id = first_repository.json()["id"]
+    second_repository_id = second_repository.json()["id"]
+
+    base_draft = {
+        **new_draft("base", "base", source("Base")),
+        "repository": "first",
+        "repositoryId": first_repository_id,
+    }
+    base = await plan_and_publish(client, owner, publish_payload(base_draft))
+    base_coordinate = base["result"]["published"][0]["coordinate"]
+    dependent_source = source(
+        "Dependent",
+        f'import {{ Base }} from "{base_coordinate}"',
+    )
+    dependent_draft = {
+        **new_draft("dependent", "dependent", dependent_source),
+        "repository": "second",
+        "repositoryId": second_repository_id,
+    }
+    await plan_and_publish(client, owner, publish_payload(dependent_draft))
+
+    listed = await client.post(
+        "/geometry/repositories/list",
+        headers=headers,
+        json={"scope": "mine", "limit": None, "sort": [["slug", "asc"]]},
+    )
+    assert listed.status_code == 200, listed.text
+    by_id = {item["id"]: item for item in listed.json()["items"]}
+    assert (by_id[first_repository_id]["package_count"], by_id[first_repository_id]["version_count"]) == (1, 1)
+    assert (by_id[second_repository_id]["package_count"], by_id[second_repository_id]["version_count"]) == (1, 1)
+
+    archived = await client.post(f"/geometry/repositories/{first_repository_id}/archive", headers=headers)
+    assert archived.status_code == 200
+    restored = await client.post(f"/geometry/repositories/{first_repository_id}/restore", headers=headers)
+    restored_again = await client.post(f"/geometry/repositories/{first_repository_id}/restore", headers=headers)
+    assert restored.status_code == restored_again.status_code == 200
+    assert restored_again.json()["archivedAt"] is None
+
+    blocked = await client.delete(f"/geometry/repositories/{first_repository_id}", headers=headers)
+    assert blocked.status_code == 409
+    assert await db_session.get(GeometryRepository, first_repository_id) is not None
+
+    removed_dependent = await client.delete(f"/geometry/repositories/{second_repository_id}", headers=headers)
+    removed_base = await client.delete(f"/geometry/repositories/{first_repository_id}", headers=headers)
+    assert removed_dependent.status_code == removed_base.status_code == 200
+    assert await db_session.get(GeometryRepository, first_repository_id) is None
+    assert await db_session.get(GeometryRepository, second_repository_id) is None
+
+
+@pytest.mark.asyncio
 async def test_manager_lists_search_paginate_and_safe_delete_refreshes_usage(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)

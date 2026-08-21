@@ -170,6 +170,31 @@ async def archive_repository(
     return response
 
 
+async def restore_repository(
+    db: AsyncSession,
+    repository_id: int,
+    *,
+    user: Any,
+) -> dict[str, Any]:
+    repository = await db.get(GeometryRepository, repository_id)
+    if repository is None or (not is_admin_user(user) and repository.user_id != user.id):
+        raise _bad("Geometry repository not found.", code=status.HTTP_404_NOT_FOUND)
+    if repository.user_id is not None:
+        await _lock_geometry_owner(db, repository.user_id)
+    repository = await db.scalar(
+        select(GeometryRepository).where(GeometryRepository.id == repository_id).with_for_update()
+    )
+    if repository is None or (not is_admin_user(user) and repository.user_id != user.id):
+        raise _bad("Geometry repository not found.", code=status.HTTP_404_NOT_FOUND)
+    await db.execute(text("SELECT set_config('caemble.geometry_repository_restore', 'on', true)"))
+    repository.archived_at = None
+    await db.flush()
+    await db.refresh(repository)
+    response = _repository_response(repository)
+    await db.commit()
+    return response
+
+
 async def update_repository_description(
     db: AsyncSession,
     repository_id: int,
@@ -398,12 +423,40 @@ async def list_geometry_repositories(
     *,
     user: Any,
 ) -> Any:
-    return await get_list_response(
+    response = await get_list_response(
         db,
         _owned_list_request(request, user),
         REPOSITORY_CRUD_SPEC,
         user=user,
     )
+    items = [item.model_dump(mode="json") for item in response.items]
+    repository_ids = [item["id"] for item in items]
+    counts: dict[int, tuple[int, int]] = {}
+    if repository_ids:
+        rows = (
+            await db.execute(
+                select(
+                    GeometryPackage.repository_id,
+                    func.count(func.distinct(GeometryPackage.id)),
+                    func.count(GeometryVersion.id),
+                )
+                .outerjoin(GeometryVersion, GeometryVersion.package_id == GeometryPackage.id)
+                .where(GeometryPackage.repository_id.in_(repository_ids))
+                .group_by(GeometryPackage.repository_id)
+            )
+        ).all()
+        counts = {repository_id: (package_count, version_count) for repository_id, package_count, version_count in rows}
+    return {
+        "total": response.total,
+        "items": [
+            {
+                **item,
+                "package_count": counts.get(item["id"], (0, 0))[0],
+                "version_count": counts.get(item["id"], (0, 0))[1],
+            }
+            for item in items
+        ],
+    }
 
 
 async def list_geometry_packages(
@@ -666,6 +719,63 @@ async def delete_geometry_packages(
             )
             await db.execute(delete(GeometryVersion).where(GeometryVersion.id.in_(version_ids)))
         await db.execute(delete(GeometryPackage).where(GeometryPackage.id.in_(normalized_ids)))
+        await db.commit()
+    except IntegrityError as error:
+        await db.rollback()
+        latest_usage = await geometry_version_usage(db, version_ids, user=user)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_in_use_detail(latest_usage),
+        ) from error
+
+
+async def delete_geometry_repository(
+    db: AsyncSession,
+    repository_id: int,
+    *,
+    user: Any,
+) -> None:
+    repository = await db.get(GeometryRepository, repository_id)
+    if repository is None or (not is_admin_user(user) and repository.user_id != user.id):
+        raise _bad("Geometry repository not found.", code=status.HTTP_404_NOT_FOUND)
+    if repository.user_id is not None:
+        await _lock_geometry_owner(db, repository.user_id)
+    repository = await db.scalar(
+        select(GeometryRepository).where(GeometryRepository.id == repository_id).with_for_update()
+    )
+    if repository is None or (not is_admin_user(user) and repository.user_id != user.id):
+        raise _bad("Geometry repository not found.", code=status.HTTP_404_NOT_FOUND)
+    package_ids = list(
+        (
+            await db.execute(select(GeometryPackage.id).where(GeometryPackage.repository_id == repository_id))
+        ).scalars()
+    )
+    version_ids = list(
+        (
+            await db.execute(select(GeometryVersion.id).where(GeometryVersion.package_id.in_(package_ids)))
+        ).scalars()
+    ) if package_ids else []
+    if version_ids:
+        usage = await geometry_version_usage(db, version_ids, user=user)
+        deleting = set(version_ids)
+        blocked = [
+            item
+            for item in usage["items"]
+            if item["experimentCount"]
+            or any(version_id not in deleting for version_id in item["dependentVersionIds"])
+        ]
+        if blocked:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_in_use_detail({"items": blocked}))
+    try:
+        await _enable_geometry_delete(db)
+        if version_ids:
+            await db.execute(
+                delete(GeometryImport).where(GeometryImport.importer_geometry_version_id.in_(version_ids))
+            )
+            await db.execute(delete(GeometryVersion).where(GeometryVersion.id.in_(version_ids)))
+        if package_ids:
+            await db.execute(delete(GeometryPackage).where(GeometryPackage.id.in_(package_ids)))
+        await db.execute(delete(GeometryRepository).where(GeometryRepository.id == repository_id))
         await db.commit()
     except IntegrityError as error:
         await db.rollback()

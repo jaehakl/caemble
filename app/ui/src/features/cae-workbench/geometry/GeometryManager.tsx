@@ -1,4 +1,3 @@
-import type { ColumnDef } from '@tanstack/react-table'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Archive,
@@ -15,8 +14,7 @@ import {
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 import { dbTables, geometryApi, getListRequest, type GeometryPackageRecord } from '@/api'
-import { catalogApi, catalogQueryKeys, type CatalogGeometryDetail } from '@/api/catalog'
-import { DataTable } from '@/components/DataTable'
+import { catalogApi, catalogQueryKeys, type CatalogGeometryDetail, type CatalogGeometryListItem } from '@/api/catalog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -37,11 +35,20 @@ import type { GeometryModuleCoordinate } from '@/lib/cad'
 import { cn } from '@/lib/utils'
 import { draftGeometrySource } from './draftGeometrySource'
 import { GeometryDraftVersionEditor } from './GeometryDraftVersionEditor'
+import { GeometryRepositoryPicker } from './GeometryRepositoryPicker'
+import { GeometryRepositoryManagerDialog } from './GeometryRepositoryManagerDialog'
 import { GeometryUsageDialog } from './GeometryUsageDialog'
 import type { GeometryManagerState } from './useGeometryWorkspaceState'
+import type { GeometryDraftVersion } from '../types'
 
 const PAGE_SIZES = [12, 24, 48] as const
-const OFFICIAL_NAMESPACE = '__official__'
+const ALL_NAMESPACES = 'all'
+const EXAMPLES_NAMESPACE = 'examples'
+
+type GeometryListRow =
+  | { kind: 'example'; item: CatalogGeometryListItem; sortKey: string }
+  | { kind: 'draft'; item: GeometryDraftVersion; sortKey: string }
+  | { kind: 'package'; item: GeometryPackageRecord; sortKey: string }
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : String(error)
@@ -49,6 +56,11 @@ function message(error: unknown) {
 
 function coordinateNamespace(coordinate: string | null) {
   return coordinate?.match(/^caemble:geometry\/([^/]+)\//u)?.[1] ?? null
+}
+
+function coordinateRepository(coordinate: string | null) {
+  const match = coordinate?.match(/^caemble:geometry\/([^/]+)\/([^/]+)\//u)
+  return match ? `${match[1]}/${match[2]}` : null
 }
 
 type GeometryManagerProps = {
@@ -88,17 +100,12 @@ function WorkspaceGeometryManager({
   const listScope = isAdmin ? 'visible' : 'mine'
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
-  const [selectedNamespace, setSelectedNamespace] = useState(() => {
-    if (geometry.managerView === 'official') return OFFICIAL_NAMESPACE
-    return (
-      coordinateNamespace(geometry.selectedCoordinate) ??
-      geometry.namespace ??
-      (auth.isAuthenticated ? OFFICIAL_NAMESPACE : 'local')
-    )
-  })
+  const selectedNamespace = geometry.managerNamespace
+  const setSelectedNamespace = geometry.setManagerNamespace
+  const selectedRepositoryFilter = geometry.managerRepository
+  const setSelectedRepositoryFilter = geometry.setManagerRepository
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZES)[number]>(24)
-  const [repositoryId, setRepositoryId] = useState<number | null>(null)
   const [ownerFilter, setOwnerFilter] = useState('')
   const [archiveFilter, setArchiveFilter] = useState<'active' | 'archived' | 'all'>('active')
   const [selectedPackageId, setSelectedPackageId] = useState<number | null>(initialPackageId)
@@ -107,19 +114,25 @@ function WorkspaceGeometryManager({
   const [pendingVersionId, setPendingVersionId] = useState<number | null>(null)
   const [experimentSearch, setExperimentSearch] = useState('')
   const [experimentPage, setExperimentPage] = useState(0)
-  const [repositoryDescription, setRepositoryDescription] = useState('')
   const [usageExample, setUsageExample] = useState<string | null>(null)
   const [selectedDraftCoordinate, setSelectedDraftCoordinate] = useState<GeometryModuleCoordinate | null>(null)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [createRepositoryId, setCreateRepositoryId] = useState<number | null>(null)
   const [forkDetail, setForkDetail] = useState<CatalogGeometryDetail | null>(null)
+  const [forkRepositoryId, setForkRepositoryId] = useState<number | null>(null)
+  const [repositoryManagerOpen, setRepositoryManagerOpen] = useState(false)
   const draftVersions = useMemo(() => Object.values(geometry.draftVersions), [geometry.draftVersions])
-  const officialSelected = selectedNamespace === OFFICIAL_NAMESPACE
+  const examplesVisible = selectedNamespace === EXAMPLES_NAMESPACE || selectedNamespace === ALL_NAMESPACES
+  const workspaceVisible = selectedNamespace !== EXAMPLES_NAMESPACE
   const sessionDraftVersions = useMemo(
     () =>
       draftVersions.filter(
-        (draft) => draft.packageId === null && coordinateNamespace(draft.coordinate) === selectedNamespace,
+        (draft) =>
+          draft.packageId === null &&
+          (selectedNamespace === ALL_NAMESPACES || coordinateNamespace(draft.coordinate) === selectedNamespace) &&
+          (selectedRepositoryFilter === 'all' || coordinateRepository(draft.coordinate) === selectedRepositoryFilter),
       ),
-    [draftVersions, selectedNamespace],
+    [draftVersions, selectedNamespace, selectedRepositoryFilter],
   )
   const visibleSessionDraftVersions = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -130,13 +143,27 @@ function WorkspaceGeometryManager({
   }, [search, sessionDraftVersions])
   const selectedDraft = selectedDraftCoordinate ? (geometry.draftVersions[selectedDraftCoordinate] ?? null) : null
 
+  const exampleRepositoriesQuery = useQuery({
+    queryKey: catalogQueryKeys.geometryRepositories,
+    queryFn: () => catalogApi.listGeometryRepositories(),
+  })
+  const selectedExampleRepository = selectedRepositoryFilter.startsWith(`${EXAMPLES_NAMESPACE}/`)
+    ? selectedRepositoryFilter.slice(EXAMPLES_NAMESPACE.length + 1)
+    : undefined
+  const examplesListVisible =
+    examplesVisible && (selectedRepositoryFilter === 'all' || Boolean(selectedExampleRepository))
+  const workspaceListVisible = workspaceVisible && !selectedRepositoryFilter.startsWith(`${EXAMPLES_NAMESPACE}/`)
   const officialListQuery = useQuery({
-    enabled: officialSelected,
-    queryKey: catalogQueryKeys.geometries({ q: search.trim(), limit: 100 }),
-    queryFn: () => catalogApi.listGeometries({ q: search.trim(), limit: 100 }),
+    enabled: examplesListVisible,
+    queryKey: catalogQueryKeys.geometries({
+      q: search.trim(),
+      repository: selectedExampleRepository,
+      limit: 200,
+    }),
+    queryFn: () => catalogApi.listGeometries({ q: search.trim(), repository: selectedExampleRepository, limit: 200 }),
   })
   const officialDetailQuery = useQuery({
-    enabled: officialSelected && geometry.selectedCatalogKey !== null,
+    enabled: geometry.managerView === 'examples' && geometry.selectedCatalogKey !== null,
     queryKey: catalogQueryKeys.geometry(geometry.selectedCatalogKey ?? ''),
     queryFn: () => catalogApi.getGeometry(geometry.selectedCatalogKey!),
   })
@@ -162,16 +189,9 @@ function WorkspaceGeometryManager({
     }
     if (geometry.namespace) values.add(geometry.namespace)
     if (!auth.isAuthenticated) values.add('local')
-    if (!officialSelected) values.add(selectedNamespace)
+    if (![ALL_NAMESPACES, EXAMPLES_NAMESPACE].includes(selectedNamespace)) values.add(selectedNamespace)
     return [...values].sort()
-  }, [
-    auth.isAuthenticated,
-    draftVersions,
-    geometry.namespace,
-    officialSelected,
-    repositoriesQuery.data?.items,
-    selectedNamespace,
-  ])
+  }, [auth.isAuthenticated, draftVersions, geometry.namespace, repositoriesQuery.data?.items, selectedNamespace])
   const owners = useMemo(
     () =>
       [
@@ -183,17 +203,62 @@ function WorkspaceGeometryManager({
       ].sort(),
     [repositoriesQuery.data?.items],
   )
+  const repositoryOptions = useMemo(() => {
+    const options: { key: string; label: string; example: boolean }[] = []
+    if (examplesVisible) {
+      for (const repository of exampleRepositoriesQuery.data ?? []) {
+        options.push({
+          key: `${EXAMPLES_NAMESPACE}/${repository.slug}`,
+          label: selectedNamespace === ALL_NAMESPACES ? `Examples/${repository.title}` : repository.title,
+          example: true,
+        })
+      }
+    }
+    if (workspaceVisible) {
+      for (const repository of repositoriesQuery.data?.items ?? []) {
+        if (selectedNamespace !== ALL_NAMESPACES && repository.namespace !== selectedNamespace) continue
+        options.push({
+          key: `${repository.namespace}/${repository.slug}`,
+          label: selectedNamespace === ALL_NAMESPACES ? `${repository.namespace}/${repository.slug}` : repository.slug,
+          example: false,
+        })
+      }
+      for (const draft of draftVersions) {
+        const key = coordinateRepository(draft.coordinate)
+        const namespace = coordinateNamespace(draft.coordinate)
+        if (!key || !namespace || (selectedNamespace !== ALL_NAMESPACES && namespace !== selectedNamespace)) continue
+        if (!options.some((item) => item.key === key)) {
+          options.push({ key, label: selectedNamespace === ALL_NAMESPACES ? key : draft.repository, example: false })
+        }
+      }
+    }
+    return options.sort((left, right) => left.label.localeCompare(right.label))
+  }, [
+    draftVersions,
+    exampleRepositoriesQuery.data,
+    examplesVisible,
+    repositoriesQuery.data?.items,
+    selectedNamespace,
+    workspaceVisible,
+  ])
+  const selectedDbRepository = (repositoriesQuery.data?.items ?? []).find(
+    (item) => `${item.namespace}/${item.slug}` === selectedRepositoryFilter,
+  )
   const packageRequest = useMemo(
     () => ({
       ...getListRequest(listScope),
-      offset: page * pageSize,
-      limit: pageSize,
+      offset: 0,
+      limit: (page + 1) * pageSize,
       search_text: search.trim() || null,
       text_filter: {
-        namespace: [selectedNamespace],
+        ...(![ALL_NAMESPACES, EXAMPLES_NAMESPACE].includes(selectedNamespace)
+          ? { namespace: [selectedNamespace] }
+          : {}),
         ...(ownerFilter ? { owner_id: [ownerFilter] } : {}),
       },
-      filter: repositoryId ? { repository_id: [repositoryId, repositoryId] } : ({} as Record<string, unknown[]>),
+      filter: selectedDbRepository
+        ? { repository_id: [selectedDbRepository.id, selectedDbRepository.id] }
+        : ({} as Record<string, unknown[]>),
       null_filter:
         archiveFilter === 'all'
           ? ({} as Record<string, 'is_null' | 'is_not_null'>)
@@ -205,10 +270,10 @@ function WorkspaceGeometryManager({
         ['name', 'asc'],
       ] as [string, 'asc' | 'desc'][],
     }),
-    [archiveFilter, listScope, ownerFilter, page, pageSize, repositoryId, search, selectedNamespace],
+    [archiveFilter, listScope, ownerFilter, page, pageSize, search, selectedDbRepository, selectedNamespace],
   )
   const packagesQuery = useQuery({
-    enabled: auth.isAuthenticated && !officialSelected,
+    enabled: auth.isAuthenticated && workspaceListVisible,
     queryKey: ['geometry', 'manager', 'packages', packageRequest],
     queryFn: () => dbTables.GeometryPackage.listRows(packageRequest),
   })
@@ -238,10 +303,6 @@ function WorkspaceGeometryManager({
   })
   const selectedPackage = selectedPackageQuery.data ?? null
   const selectedPackageDraft = draftVersions.find((draft) => draft.packageId === selectedPackageId) ?? null
-  const selectedRepository = (repositoriesQuery.data?.items ?? []).find(
-    (item) => item.id === selectedPackage?.repository_id,
-  )
-
   const versionsQuery = useQuery({
     enabled: auth.isAuthenticated && selectedPackageId !== null,
     queryKey: ['geometry', 'manager', 'versions', selectedPackageId],
@@ -295,26 +356,32 @@ function WorkspaceGeometryManager({
   })
 
   useEffect(() => {
-    if (!officialSelected) return
+    if (!examplesVisible || geometry.managerView !== 'examples') return
     const items = officialListQuery.data?.items ?? []
     if (!items.some((item) => item.key === geometry.selectedCatalogKey)) {
       setSelectedCatalogKey(items[0]?.key ?? null)
     }
-  }, [geometry.selectedCatalogKey, officialListQuery.data?.items, officialSelected, setSelectedCatalogKey])
+  }, [
+    examplesVisible,
+    geometry.managerView,
+    geometry.selectedCatalogKey,
+    officialListQuery.data?.items,
+    setSelectedCatalogKey,
+  ])
   useEffect(() => {
-    if (!officialSelected || !officialDetailQuery.data?.source) return
+    if (geometry.managerView !== 'examples' || !officialDetailQuery.data?.source) return
     try {
       previewSource(officialDetailQuery.data.source)
     } catch (error) {
       toast.error(message(error))
     }
-  }, [officialDetailQuery.data?.source, officialSelected, previewSource])
+  }, [geometry.managerView, officialDetailQuery.data?.source, previewSource])
   useEffect(() => {
     if (initialPackageId !== null || initialVersionId !== null) setManagerView('workspace')
   }, [initialPackageId, initialVersionId, setManagerView])
   useEffect(() => {
     setPage(0)
-  }, [archiveFilter, ownerFilter, pageSize, repositoryId, search, selectedNamespace])
+  }, [archiveFilter, ownerFilter, pageSize, search, selectedNamespace, selectedRepositoryFilter])
   useEffect(() => {
     setExperimentPage(0)
   }, [experimentSearch, selectedVersionId])
@@ -323,18 +390,21 @@ function WorkspaceGeometryManager({
     if (initialVersion) {
       const namespace = coordinateNamespace(initialVersion.coordinate)
       if (namespace) setSelectedNamespace(namespace)
+      setSelectedRepositoryFilter(coordinateRepository(initialVersion.coordinate) ?? 'all')
       setManagerView('workspace')
       setSelectedPackageId(initialVersion.package_id)
       setSelectedVersionId(initialVersion.id)
     }
-  }, [initialVersionQuery.data?.items, setManagerView])
+  }, [initialVersionQuery.data?.items, setManagerView, setSelectedNamespace, setSelectedRepositoryFilter])
   useEffect(() => {
     if (!selectedPackage) return
     setSelectedNamespace(selectedPackage.namespace)
+    setSelectedRepositoryFilter(`${selectedPackage.namespace}/${selectedPackage.repository}`)
     setManagerView('workspace')
-  }, [selectedPackage, setManagerView])
+  }, [selectedPackage, setManagerView, setSelectedNamespace, setSelectedRepositoryFilter])
   useEffect(() => {
-    if (officialSelected || selectedPackageId || selectedDraftCoordinate) return
+    if (!workspaceVisible || geometry.managerView !== 'workspace' || selectedPackageId || selectedDraftCoordinate)
+      return
     if (initialVersionQuery.data?.items[0]) return
     const firstDraft = visibleSessionDraftVersions[0]
     if (firstDraft) {
@@ -346,11 +416,12 @@ function WorkspaceGeometryManager({
   }, [
     setSelectedCoordinate,
     initialVersionQuery.data?.items,
-    officialSelected,
+    geometry.managerView,
     packagesQuery.data?.items,
     selectedDraftCoordinate,
     selectedPackageId,
     visibleSessionDraftVersions,
+    workspaceVisible,
   ])
   useEffect(() => {
     if (selectedDraftCoordinate && !geometry.draftVersions[selectedDraftCoordinate]) {
@@ -386,7 +457,6 @@ function WorkspaceGeometryManager({
     }
     if (!versions.some((item) => item.id === selectedVersionId)) setSelectedVersionId(versions[0].id)
   }, [pendingVersionId, selectedVersionId, versions])
-  useEffect(() => setRepositoryDescription(selectedRepository?.description ?? ''), [selectedRepository])
   useEffect(() => {
     if (!selectedVersionId) return
     void previewPublishedVersion(selectedVersionId).catch((error: unknown) => toast.error(message(error)))
@@ -401,31 +471,6 @@ function WorkspaceGeometryManager({
     onSuccess: async () => {
       await invalidate()
       toast.success('기본 Geometry namespace를 변경했습니다. 기존 좌표는 유지됩니다.')
-    },
-    onError: (error) => toast.error(message(error)),
-  })
-  const createRepositoryMutation = useMutation({
-    mutationFn: ({ slug, description }: { slug: string; description: string }) =>
-      geometry.createRepository(slug, description),
-    onSuccess: async () => {
-      await invalidate()
-      toast.success('Geometry repository를 만들었습니다.')
-    },
-    onError: (error) => toast.error(message(error)),
-  })
-  const updateRepositoryMutation = useMutation({
-    mutationFn: () => geometryApi.updateRepositoryDescription(selectedRepository!.id, repositoryDescription),
-    onSuccess: async () => {
-      await invalidate()
-      toast.success('Repository 설명을 저장했습니다.')
-    },
-    onError: (error) => toast.error(message(error)),
-  })
-  const archiveRepositoryMutation = useMutation({
-    mutationFn: () => geometry.archiveRepository(selectedRepository!.id),
-    onSuccess: async () => {
-      await invalidate()
-      toast.success('Repository를 archive했습니다.')
     },
     onError: (error) => toast.error(message(error)),
   })
@@ -523,85 +568,55 @@ function WorkspaceGeometryManager({
     )
   })
 
-  const columns = useMemo<ColumnDef<GeometryPackageRecord, unknown>[]>(
-    () => [
-      {
-        id: 'selected',
-        header: '',
-        cell: ({ row }) => (
-          <input
-            aria-label={`${row.original.name} 선택`}
-            checked={checkedPackageIds.has(row.original.id)}
-            onChange={(event) => {
-              event.stopPropagation()
-              setCheckedPackageIds((current) => {
-                const next = new Set(current)
-                if (next.has(row.original.id)) next.delete(row.original.id)
-                else next.add(row.original.id)
-                return next
-              })
-            }}
-            onClick={(event) => event.stopPropagation()}
-            type="checkbox"
-          />
-        ),
-      },
-      {
-        id: 'coordinate',
-        header: 'Geometry Package',
-        cell: ({ row }) => (
-          <div className="min-w-0">
-            <p className="truncate font-mono text-xs">
-              {row.original.namespace}/{row.original.repository}/{row.original.name}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {row.original.version_count} versions · latest {row.original.latest_version ?? '없음'}
-            </p>
-          </div>
-        ),
-      },
-      {
-        accessorKey: 'repository_archived_at',
-        header: '상태',
-        cell: ({ row }) => (
-          <Badge className={row.original.repository_archived_at ? 'bg-muted' : 'bg-emerald-600 text-white'}>
-            {row.original.repository_archived_at ? 'Archived repo' : 'Active'}
-          </Badge>
-        ),
-      },
-      {
-        accessorKey: 'updated_at',
-        header: 'Updated',
-        cell: ({ row }) => (
-          <span className="text-xs whitespace-nowrap text-muted-foreground">
-            {row.original.updated_at ? new Date(row.original.updated_at).toLocaleDateString() : '—'}
-          </span>
-        ),
-      },
+  const geometryListRows = useMemo<GeometryListRow[]>(
+    () =>
+      [
+        ...(examplesListVisible
+          ? (officialListQuery.data?.items ?? []).map((item) => ({
+              kind: 'example' as const,
+              item,
+              sortKey: `examples/${item.repository}/${item.key}`,
+            }))
+          : []),
+        ...(workspaceListVisible
+          ? visibleSessionDraftVersions.map((item) => ({
+              kind: 'draft' as const,
+              item,
+              sortKey: `${coordinateNamespace(item.coordinate)}/${item.repository}/${item.packageName}`,
+            }))
+          : []),
+        ...(auth.isAuthenticated && workspaceListVisible
+          ? (packagesQuery.data?.items ?? []).map((item) => ({
+              kind: 'package' as const,
+              item,
+              sortKey: `${item.namespace}/${item.repository}/${item.name}`,
+            }))
+          : []),
+      ].sort((left, right) => left.sortKey.localeCompare(right.sortKey)),
+    [
+      auth.isAuthenticated,
+      examplesListVisible,
+      officialListQuery.data?.items,
+      packagesQuery.data?.items,
+      visibleSessionDraftVersions,
+      workspaceListVisible,
     ],
-    [checkedPackageIds],
   )
 
   const submitNamespace = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     namespaceMutation.mutate(String(new FormData(event.currentTarget).get('namespace') ?? '').trim())
   }
-  const submitRepository = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const form = new FormData(event.currentTarget)
-    createRepositoryMutation.mutate({
-      slug: String(form.get('slug') ?? '').trim(),
-      description: String(form.get('description') ?? '').trim(),
-    })
-    event.currentTarget.reset()
-  }
   const submitGeometry = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     try {
+      if (auth.isAuthenticated && createRepositoryId === null) throw new Error('Repository를 선택하세요.')
       const coordinate = geometry.createDraft({
-        repositoryId: Number(String(form.get('repositoryId') ?? '')) || null,
-        repository: String(form.get('repository') ?? '').trim(),
+        repositoryId: auth.isAuthenticated ? createRepositoryId : null,
+        repository: auth.isAuthenticated
+          ? (geometry.repositories.find((item) => item.id === createRepositoryId)?.slug ?? '')
+          : String(form.get('repository') ?? '').trim(),
         packageName: String(form.get('package') ?? '').trim(),
         description: String(form.get('description') ?? '').trim(),
         source: String(form.get('source') ?? ''),
@@ -610,8 +625,10 @@ function WorkspaceGeometryManager({
       setSelectedVersionId(null)
       setSelectedDraftCoordinate(coordinate)
       setSelectedNamespace(coordinateNamespace(coordinate) ?? geometry.namespace ?? 'local')
+      setSelectedRepositoryFilter(coordinateRepository(coordinate) ?? 'all')
       setManagerView('workspace')
       setCreateDialogOpen(false)
+      setCreateRepositoryId(null)
     } catch (cause) {
       toast.error(message(cause))
     }
@@ -620,20 +637,17 @@ function WorkspaceGeometryManager({
     event.preventDefault()
     if (!forkDetail) return
     const form = new FormData(event.currentTarget)
-    const selectedRepositoryId = Number(String(form.get('repositoryId') ?? '')) || null
-    const requestedSlug = String(form.get('repository') ?? '').trim()
+    const selectedRepositoryId = forkRepositoryId
     const packageName = String(form.get('package') ?? '').trim()
     void (async () => {
-      if (!auth.isAuthenticated) throw new Error('Official Geometry Fork는 로그인 후 사용할 수 있습니다.')
+      if (!auth.isAuthenticated) throw new Error('Examples Fork는 로그인 후 사용할 수 있습니다.')
       if (!geometry.namespace) throw new Error('기본 Geometry namespace를 먼저 설정하세요.')
-      const selectedRepository = geometry.repositories.find((item) => item.id === selectedRepositoryId)
-      const matchingRepository =
-        selectedRepository ??
-        geometry.repositories.find(
-          (item) => item.namespace === geometry.namespace && item.slug === requestedSlug && item.archived_at === null,
-        )
-      const repository = matchingRepository?.slug ?? requestedSlug
-      const repositoryId = matchingRepository?.id ?? null
+      const matchingRepository = geometry.repositories.find((item) => item.id === selectedRepositoryId)
+      if (!matchingRepository || matchingRepository.archived_at !== null) {
+        throw new Error('Fork할 Repository를 선택하세요.')
+      }
+      const repository = matchingRepository.slug
+      const repositoryId = matchingRepository.id
       if (matchingRepository) {
         const response = await dbTables.GeometryPackage.listRows({
           ...getListRequest('mine'),
@@ -659,6 +673,7 @@ function WorkspaceGeometryManager({
       setSelectedVersionId(null)
       setSelectedDraftCoordinate(coordinate)
       setSelectedNamespace(coordinateNamespace(coordinate) ?? geometry.namespace ?? 'local')
+      setSelectedRepositoryFilter(coordinateRepository(coordinate) ?? 'all')
       setManagerView('workspace')
       setForkDetail(null)
     })().catch((cause: unknown) => toast.error(message(cause)))
@@ -667,8 +682,9 @@ function WorkspaceGeometryManager({
     setSelectedDraftCoordinate(null)
     if (discarded.originCatalogKey) {
       setSelectedCatalogKey(discarded.originCatalogKey)
-      setSelectedNamespace(OFFICIAL_NAMESPACE)
-      setManagerView('official')
+      setSelectedNamespace(EXAMPLES_NAMESPACE)
+      setSelectedRepositoryFilter('all')
+      setManagerView('examples')
     } else if (discarded.baseGeometryVersionId) {
       setSelectedVersionId(discarded.baseGeometryVersionId)
       void geometry
@@ -684,7 +700,7 @@ function WorkspaceGeometryManager({
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="font-semibold">Geometry Packages</h2>
-              <p className="text-xs text-muted-foreground">하나의 namespace에서 Geometry를 탐색합니다.</p>
+              <p className="text-xs text-muted-foreground">Examples, Workspace, local Geometry를 탐색합니다.</p>
             </div>
             <div className="flex gap-2">
               <Button onClick={() => setCreateDialogOpen(true)} size="sm">
@@ -719,7 +735,10 @@ function WorkspaceGeometryManager({
           </div>
           <select
             aria-label="Namespace"
-            className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+            className={cn(
+              'h-9 w-full rounded-md border bg-background px-2 text-sm',
+              selectedNamespace === EXAMPLES_NAMESPACE && 'border-violet-400 bg-violet-50 text-violet-950',
+            )}
             onChange={(event) => {
               const namespace = event.target.value
               setSelectedNamespace(namespace)
@@ -728,23 +747,65 @@ function WorkspaceGeometryManager({
               setSelectedDraftCoordinate(null)
               setPendingVersionId(null)
               setCheckedPackageIds(new Set())
-              setRepositoryId(null)
+              setSelectedRepositoryFilter('all')
               geometry.setSelectedCoordinate(null)
-              if (namespace === OFFICIAL_NAMESPACE) setSelectedCatalogKey(null)
-              setManagerView(namespace === OFFICIAL_NAMESPACE ? 'official' : 'workspace')
+              if (namespace === EXAMPLES_NAMESPACE) {
+                setSelectedCatalogKey(null)
+                setManagerView('examples')
+              } else if (namespace !== ALL_NAMESPACES) {
+                setManagerView('workspace')
+              }
             }}
             value={selectedNamespace}
           >
-            <option value={OFFICIAL_NAMESPACE}>Official</option>
+            <option value={ALL_NAMESPACES}>모든 namespace</option>
+            <option value={EXAMPLES_NAMESPACE}>Examples</option>
             {namespaces.map((item) => (
               <option key={item} value={item}>
                 {item}
               </option>
             ))}
           </select>
-          {auth.isAuthenticated && !officialSelected ? (
+          <div className="flex gap-2">
+            <select
+              aria-label="Repository"
+              className={cn(
+                'h-9 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm',
+                selectedRepositoryFilter.startsWith(`${EXAMPLES_NAMESPACE}/`) &&
+                  'border-violet-400 bg-violet-50 text-violet-950',
+              )}
+              onChange={(event) => {
+                const repository = event.target.value
+                setSelectedRepositoryFilter(repository)
+                setSelectedPackageId(null)
+                setSelectedVersionId(null)
+                setSelectedDraftCoordinate(null)
+                geometry.setSelectedCoordinate(null)
+                if (repository.startsWith(`${EXAMPLES_NAMESPACE}/`)) {
+                  setSelectedCatalogKey(null)
+                  setManagerView('examples')
+                } else if (repository !== 'all') {
+                  setManagerView('workspace')
+                }
+              }}
+              value={selectedRepositoryFilter}
+            >
+              <option value="all">모든 Repository</option>
+              {repositoryOptions.map((item) => (
+                <option key={item.key} value={item.key}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+            {auth.isAuthenticated ? (
+              <Button onClick={() => setRepositoryManagerOpen(true)} size="sm" variant="outline">
+                Repository 관리
+              </Button>
+            ) : null}
+          </div>
+          {auth.isAuthenticated && workspaceVisible ? (
             <>
-              <div className={cn('grid gap-2', isAdmin ? 'grid-cols-3' : 'grid-cols-2')}>
+              <div className={cn('grid gap-2', isAdmin ? 'grid-cols-2' : 'grid-cols-1')}>
                 {isAdmin ? (
                   <select
                     aria-label="Owner 필터"
@@ -762,21 +823,6 @@ function WorkspaceGeometryManager({
                   </select>
                 ) : null}
                 <select
-                  aria-label="Repository 필터"
-                  className="h-9 rounded-md border bg-background px-2 text-xs"
-                  onChange={(event) => setRepositoryId(Number(event.target.value) || null)}
-                  value={repositoryId ?? ''}
-                >
-                  <option value="">모든 repository</option>
-                  {(repositoriesQuery.data?.items ?? [])
-                    .filter((item) => item.namespace === selectedNamespace)
-                    .map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.slug}
-                      </option>
-                    ))}
-                </select>
-                <select
                   aria-label="Archive 필터"
                   className="h-9 rounded-md border bg-background px-2 text-xs"
                   onChange={(event) => setArchiveFilter(event.target.value as typeof archiveFilter)}
@@ -788,103 +834,129 @@ function WorkspaceGeometryManager({
                 </select>
               </div>
             </>
-          ) : !auth.isAuthenticated && !officialSelected ? (
+          ) : !auth.isAuthenticated && workspaceVisible ? (
             <p className="text-xs text-muted-foreground">세션 Package는 편집과 Viewer 미리보기를 사용할 수 있습니다.</p>
           ) : null}
         </div>
-        <div aria-label="Geometry Packages list" className="min-h-0 flex-1 overflow-auto">
-          {officialSelected ? (
-            officialListQuery.isLoading ? (
-              <div className="grid h-24 place-items-center text-xs text-muted-foreground">
-                <LoaderCircle className="size-4 animate-spin" />
-              </div>
-            ) : officialListQuery.isError ? (
-              <p className="px-3 py-3 text-xs text-destructive">Official 목록을 불러오지 못했습니다.</p>
-            ) : (
-              <ul className="divide-y">
-                {officialListQuery.data?.items.map((item) => (
-                  <li key={item.key}>
-                    <button
-                      className={cn(
-                        'grid w-full gap-1 px-3 py-2.5 text-left hover:bg-accent',
-                        geometry.selectedCatalogKey === item.key && 'bg-accent',
-                      )}
-                      onClick={() => {
-                        setSelectedCatalogKey(item.key)
-                        setManagerView('official')
-                      }}
-                      type="button"
-                    >
-                      <span className="truncate text-sm font-medium">{item.title}</span>
-                      <span className="truncate font-mono text-[11px] text-muted-foreground">{item.key}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )
-          ) : (
-            <>
-              {visibleSessionDraftVersions.map((draft) => (
+        <div aria-label="Geometry Packages list" className="min-h-0 flex-1 divide-y overflow-auto">
+          {geometryListRows.map((row) => {
+            if (row.kind === 'example') {
+              return (
                 <button
                   className={cn(
-                    'grid w-full gap-1 border-b px-3 py-2.5 text-left hover:bg-accent',
-                    selectedDraftCoordinate === draft.coordinate && 'bg-accent',
+                    'grid w-full gap-1 border-l-4 border-violet-400 bg-violet-50/60 px-3 py-2.5 text-left hover:bg-violet-100',
+                    geometry.managerView === 'examples' &&
+                      geometry.selectedCatalogKey === row.item.key &&
+                      'bg-violet-100',
                   )}
-                  key={draft.draftId}
+                  key={`example:${row.item.key}`}
+                  onClick={() => {
+                    setSelectedCatalogKey(row.item.key)
+                    setManagerView('examples')
+                    setSelectedRepositoryFilter(`${EXAMPLES_NAMESPACE}/${row.item.repository}`)
+                  }}
+                  type="button"
+                >
+                  <span className="flex items-center justify-between gap-2 text-sm font-medium">
+                    <span className="truncate">{row.item.title}</span>
+                    <Badge className="border-violet-300 bg-violet-100 text-violet-900">Example</Badge>
+                  </span>
+                  <span className="truncate font-mono text-[11px] text-violet-700">
+                    Examples/{row.item.repository}/{row.item.key}
+                  </span>
+                </button>
+              )
+            }
+            if (row.kind === 'draft') {
+              return (
+                <button
+                  className={cn(
+                    'grid w-full gap-1 px-3 py-2.5 text-left hover:bg-accent',
+                    selectedDraftCoordinate === row.item.coordinate && 'bg-accent',
+                  )}
+                  key={`draft:${row.item.draftId}`}
                   onClick={() => {
                     setSelectedPackageId(null)
                     setSelectedVersionId(null)
-                    setSelectedDraftCoordinate(draft.coordinate)
-                    geometry.setSelectedCoordinate(draft.coordinate)
+                    setSelectedDraftCoordinate(row.item.coordinate)
+                    geometry.setSelectedCoordinate(row.item.coordinate)
                     setManagerView('workspace')
                   }}
                   type="button"
                 >
                   <span className="flex items-center justify-between gap-2">
                     <span className="truncate font-mono text-xs">
-                      {draft.repository}/{draft.packageName}
+                      {coordinateNamespace(row.item.coordinate)}/{row.item.repository}/{row.item.packageName}
                     </span>
                     <Badge>Draft</Badge>
                   </span>
                   <span className="text-[10px] text-muted-foreground">Draft Version</span>
                 </button>
-              ))}
-              {!auth.isAuthenticated ? (
-                !visibleSessionDraftVersions.length ? (
-                  <div className="grid h-32 place-items-center px-6 text-center text-xs text-muted-foreground">
-                    세션 Geometry가 없습니다.
-                  </div>
-                ) : null
-              ) : packagesQuery.isLoading ? (
-                <div className="grid h-32 place-items-center text-xs text-muted-foreground">
-                  <span className="flex items-center gap-2">
-                    <LoaderCircle className="size-4 animate-spin" /> Geometry 목록 불러오는 중
-                  </span>
-                </div>
-              ) : packagesQuery.isError ? (
-                <div className="grid h-32 place-items-center text-xs text-destructive">
-                  Geometry 목록을 불러오지 못했습니다.
-                </div>
-              ) : (
-                <DataTable
-                  columns={columns}
-                  data={packagesQuery.data?.items ?? []}
-                  getRowKey={(row) => String(row.id)}
-                  selectedKey={selectedPackageId ? String(selectedPackageId) : undefined}
-                  onRowClick={(row) => {
-                    setSelectedDraftCoordinate(null)
-                    geometry.setSelectedCoordinate(null)
-                    setPendingVersionId(null)
-                    setSelectedVersionId(null)
-                    setSelectedPackageId(row.id)
-                    setManagerView('workspace')
+              )
+            }
+            return (
+              <div
+                className={cn(
+                  'flex cursor-pointer items-start gap-3 px-3 py-2.5 hover:bg-accent',
+                  selectedPackageId === row.item.id && 'bg-accent',
+                )}
+                key={`package:${row.item.id}`}
+                onClick={() => {
+                  setSelectedDraftCoordinate(null)
+                  geometry.setSelectedCoordinate(null)
+                  setPendingVersionId(null)
+                  setSelectedVersionId(null)
+                  setSelectedPackageId(row.item.id)
+                  setManagerView('workspace')
+                }}
+                role="button"
+                tabIndex={0}
+              >
+                <input
+                  aria-label={`${row.item.name} 선택`}
+                  checked={checkedPackageIds.has(row.item.id)}
+                  onChange={() => {
+                    setCheckedPackageIds((current) => {
+                      const next = new Set(current)
+                      if (next.has(row.item.id)) next.delete(row.item.id)
+                      else next.add(row.item.id)
+                      return next
+                    })
                   }}
+                  onClick={(event) => event.stopPropagation()}
+                  type="checkbox"
                 />
-              )}
-            </>
-          )}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-mono text-xs">
+                    {row.item.namespace}/{row.item.repository}/{row.item.name}
+                  </p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {row.item.version_count} versions · latest {row.item.latest_version ?? '없음'}
+                  </p>
+                </div>
+                <Badge className={row.item.repository_archived_at ? 'bg-muted' : 'bg-emerald-600 text-white'}>
+                  {row.item.repository_archived_at ? 'Archived' : 'Active'}
+                </Badge>
+              </div>
+            )
+          })}
+          {examplesListVisible && officialListQuery.isLoading ? (
+            <p className="px-3 py-3 text-xs text-muted-foreground">Examples 목록을 불러오는 중입니다.</p>
+          ) : examplesListVisible && officialListQuery.isError ? (
+            <p className="px-3 py-3 text-xs text-destructive">Examples 목록을 불러오지 못했습니다.</p>
+          ) : null}
+          {auth.isAuthenticated && workspaceListVisible && packagesQuery.isLoading ? (
+            <p className="px-3 py-3 text-xs text-muted-foreground">Workspace 목록을 불러오는 중입니다.</p>
+          ) : auth.isAuthenticated && workspaceListVisible && packagesQuery.isError ? (
+            <p className="px-3 py-3 text-xs text-destructive">Workspace 목록을 불러오지 못했습니다.</p>
+          ) : null}
+          {!geometryListRows.length && !officialListQuery.isLoading && !packagesQuery.isLoading ? (
+            <div className="grid h-32 place-items-center px-6 text-center text-xs text-muted-foreground">
+              표시할 Geometry가 없습니다.
+            </div>
+          ) : null}
         </div>
-        {auth.isAuthenticated && !officialSelected ? (
+        {auth.isAuthenticated && workspaceListVisible ? (
           <div className="flex items-center justify-between gap-2 border-t p-3 text-xs">
             <span>{packagesQuery.data?.total.toLocaleString() ?? 0} packages</span>
             <div className="flex items-center gap-1">
@@ -898,17 +970,13 @@ function WorkspaceGeometryManager({
                   <option key={size}>{size}</option>
                 ))}
               </select>
-              <Button disabled={page === 0} onClick={() => setPage((value) => value - 1)} size="icon" variant="ghost">
-                <ChevronLeft />
-              </Button>
-              <span className="min-w-12 text-center">{page + 1}</span>
               <Button
                 disabled={(page + 1) * pageSize >= (packagesQuery.data?.total ?? 0)}
                 onClick={() => setPage((value) => value + 1)}
-                size="icon"
-                variant="ghost"
+                size="sm"
+                variant="outline"
               >
-                <ChevronRight />
+                더 보기
               </Button>
             </div>
           </div>
@@ -916,14 +984,14 @@ function WorkspaceGeometryManager({
       </aside>
 
       <main className="min-h-0 overflow-auto p-5">
-        {officialSelected ? (
+        {geometry.managerView === 'examples' ? (
           officialDetailQuery.isLoading ? (
             <div className="grid h-full place-items-center text-sm text-muted-foreground">
               <LoaderCircle className="size-5 animate-spin" />
             </div>
           ) : officialDetailQuery.isError ? (
             <div className="grid h-full place-items-center text-sm text-destructive">
-              Official Geometry detail을 불러오지 못했습니다.
+              Example Geometry detail을 불러오지 못했습니다.
             </div>
           ) : officialDetailQuery.data ? (
             <Card className="mx-auto flex min-h-[32rem] max-w-6xl flex-col overflow-hidden">
@@ -932,14 +1000,19 @@ function WorkspaceGeometryManager({
                   <div>
                     <div className="mb-1 flex items-center gap-2">
                       <h2 className="text-xl font-semibold">{officialDetailQuery.data.title}</h2>
-                      <Badge className="border bg-background">Official</Badge>
+                      <Badge className="border-violet-300 bg-violet-100 text-violet-900">Example</Badge>
                     </div>
-                    <p className="font-mono text-xs text-muted-foreground">{officialDetailQuery.data.key}</p>
+                    <p className="font-mono text-xs text-violet-700">
+                      Examples/{officialDetailQuery.data.repository}/{officialDetailQuery.data.key}
+                    </p>
                     <p className="mt-2 text-sm text-muted-foreground">{officialDetailQuery.data.description}</p>
                   </div>
                   <Button
                     disabled={!auth.isAuthenticated || !geometry.namespace}
-                    onClick={() => setForkDetail(officialDetailQuery.data)}
+                    onClick={() => {
+                      setForkRepositoryId(null)
+                      setForkDetail(officialDetailQuery.data)
+                    }}
                     title={
                       !auth.isAuthenticated
                         ? '개인 Repository Fork는 로그인 후 사용할 수 있습니다.'
@@ -953,7 +1026,7 @@ function WorkspaceGeometryManager({
                 </div>
                 {!auth.isAuthenticated ? (
                   <p className="text-xs text-muted-foreground">
-                    Official Geometry는 미리보기만 제공됩니다. 로그인하면 개인 Repository로 Fork할 수 있습니다.
+                    Examples는 미리보기만 제공됩니다. 로그인하면 개인 Repository로 Fork할 수 있습니다.
                   </p>
                 ) : !geometry.namespace ? (
                   <p className="text-xs text-amber-700">Account에서 기본 Geometry namespace를 먼저 설정하세요.</p>
@@ -985,7 +1058,7 @@ function WorkspaceGeometryManager({
             </Card>
           ) : (
             <div className="grid h-full place-items-center text-sm text-muted-foreground">
-              Official Geometry를 선택하세요.
+              Example Geometry를 선택하세요.
             </div>
           )
         ) : selectedDraft && !selectedPackage ? (
@@ -1104,7 +1177,7 @@ function WorkspaceGeometryManager({
               </div>
             </header>
 
-            <Card className="grid gap-4 p-4 lg:grid-cols-2">
+            <Card className="p-4">
               <section className="space-y-3">
                 <h3 className="text-sm font-semibold">기본 Geometry namespace</h3>
                 <form className="flex gap-2" onSubmit={submitNamespace}>
@@ -1124,42 +1197,6 @@ function WorkspaceGeometryManager({
                 <p className="text-xs text-muted-foreground">
                   새 Repository에만 적용됩니다. 기존 Published Geometry의 좌표와 hash는 바뀌지 않습니다.
                 </p>
-              </section>
-              <section className="space-y-3">
-                <h3 className="text-sm font-semibold">Repository</h3>
-                <div className="flex gap-2">
-                  <Input
-                    onChange={(event) => setRepositoryDescription(event.target.value)}
-                    value={repositoryDescription}
-                  />
-                  <Button
-                    disabled={!selectedRepository || updateRepositoryMutation.isPending}
-                    onClick={() => updateRepositoryMutation.mutate()}
-                    variant="outline"
-                  >
-                    설명 저장
-                  </Button>
-                  <Button
-                    disabled={
-                      !selectedRepository ||
-                      Boolean(selectedRepository.archived_at) ||
-                      archiveRepositoryMutation.isPending
-                    }
-                    onClick={() => {
-                      if (window.confirm('이 Repository를 archive할까요?')) archiveRepositoryMutation.mutate()
-                    }}
-                    variant="outline"
-                  >
-                    <Archive /> Archive
-                  </Button>
-                </div>
-                <form className="grid grid-cols-[1fr_1.5fr_auto] gap-2" onSubmit={submitRepository}>
-                  <Input name="slug" placeholder="새 repository slug" required />
-                  <Input name="description" placeholder="설명 (선택)" />
-                  <Button disabled={createRepositoryMutation.isPending} type="submit">
-                    <Plus /> 만들기
-                  </Button>
-                </form>
               </section>
             </Card>
 
@@ -1402,39 +1439,30 @@ function WorkspaceGeometryManager({
               <DialogHeader>
                 <DialogTitle>개인 Repository로 Fork</DialogTitle>
                 <DialogDescription>
-                  Official source는 변경하지 않고 개인 Workspace에 편집 가능한 Draft Version을 만듭니다.
+                  Example source는 변경하지 않고 개인 Workspace에 편집 가능한 Draft Version을 만듭니다.
                 </DialogDescription>
               </DialogHeader>
               <div className="rounded-md border bg-muted/30 p-3">
                 <p className="text-sm font-medium">{forkDetail.title}</p>
                 <p className="mt-1 font-mono text-xs text-muted-foreground">{forkDetail.key}</p>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-3">
                 <label className="grid gap-1 text-sm sm:col-span-2">
-                  기존 개인 Repository
-                  <select className="h-9 rounded-md border bg-background px-3" name="repositoryId">
-                    <option value="">새 Repository slug 사용</option>
-                    {geometry.repositories
-                      .filter((repository) => repository.archived_at === null)
-                      .map((repository) => (
-                        <option key={repository.id} value={repository.id}>
-                          {repository.namespace}/{repository.slug}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <label className="grid gap-1 text-sm">
-                  새 Repository slug
-                  <Input defaultValue="forks" name="repository" required />
+                  Repository
+                  <GeometryRepositoryPicker
+                    namespace={geometry.namespace}
+                    onChange={(repository) => setForkRepositoryId(repository.id)}
+                    onCreate={geometry.createRepository}
+                    repositories={geometry.repositories}
+                    value={forkRepositoryId}
+                  />
                 </label>
                 <label className="grid gap-1 text-sm">
                   Package name
                   <Input defaultValue={forkDetail.key} key={forkDetail.key} name="package" required />
                 </label>
               </div>
-              <p className="text-xs text-muted-foreground">
-                첫 Version은 0.1.0으로 시작합니다. 새 Repository는 Draft 발행 시 생성됩니다.
-              </p>
+              <p className="text-xs text-muted-foreground">첫 Version은 0.1.0으로 시작합니다.</p>
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setForkDetail(null)}>
                   취소
@@ -1458,22 +1486,22 @@ function WorkspaceGeometryManager({
             </DialogHeader>
             <div className="grid gap-3 sm:grid-cols-2">
               {auth.isAuthenticated ? (
-                <label className="grid gap-1 text-sm">
-                  기존 Repository
-                  <select className="h-9 rounded-md border bg-background px-3" name="repositoryId">
-                    <option value="">현재 namespace의 새 Repository</option>
-                    {geometry.repositories.map((repository) => (
-                      <option key={repository.id} value={repository.id}>
-                        {repository.namespace}/{repository.slug}
-                      </option>
-                    ))}
-                  </select>
+                <label className="grid gap-1 text-sm sm:col-span-2">
+                  Repository
+                  <GeometryRepositoryPicker
+                    namespace={geometry.namespace}
+                    onChange={(repository) => setCreateRepositoryId(repository.id)}
+                    onCreate={geometry.createRepository}
+                    repositories={geometry.repositories}
+                    value={createRepositoryId}
+                  />
                 </label>
-              ) : null}
-              <label className="grid gap-1 text-sm">
-                Repository slug
-                <Input defaultValue="common" name="repository" required />
-              </label>
+              ) : (
+                <label className="grid gap-1 text-sm">
+                  Repository 이름
+                  <Input defaultValue="common" name="repository" required />
+                </label>
+              )}
               <label className="grid gap-1 text-sm">
                 Package name
                 <Input defaultValue="new-geometry" name="package" required />
@@ -1507,6 +1535,12 @@ function WorkspaceGeometryManager({
         onOpenChange={(open) => !open && setUsageExample(null)}
         onOpenGeometrySource={onOpenGeometrySource}
         open={usageExample !== null}
+      />
+      <GeometryRepositoryManagerDialog
+        geometry={geometry}
+        onOpenChange={setRepositoryManagerOpen}
+        open={repositoryManagerOpen}
+        repositories={repositoriesQuery.data?.items ?? geometry.repositories}
       />
     </div>
   )

@@ -72,6 +72,14 @@ async function mockCanonicalCatalog(page: Page) {
       }
       return json(route, slice)
     }
+    if (url.pathname === '/api/catalog/geometry-repositories') {
+      return json(route, [
+        { slug: 'getting-started', title: 'Getting Started', description: '', ordinal: 0 },
+        { slug: 'arrays', title: 'Arrays', description: '', ordinal: 1 },
+        { slug: 'advanced-shapes', title: 'Advanced Shapes', description: '', ordinal: 2 },
+        { slug: 'assemblies', title: 'Assemblies', description: '', ordinal: 3 },
+      ])
+    }
     const match = url.pathname.match(/^\/api\/catalog\/(experiments|geometries)(?:\/([^/]+))?$/u)
     if (!match) return route.fallback()
     const kind = match[1] === 'experiments' ? 'experiment' : 'geometry'
@@ -85,11 +93,13 @@ async function mockCanonicalCatalog(page: Page) {
     }
     const query = (url.searchParams.get('q') ?? '').trim().toLowerCase()
     const element = url.searchParams.get('element')
+    const repository = url.searchParams.get('repository')
     const solverName = url.searchParams.get('solverName')
     const solverVersion = url.searchParams.get('solverVersion')
     const items = (canonicalCatalogQuery(kind) as Record<string, unknown>[]).filter((item) => {
       if (query && !`${item.key} ${item.title} ${item.description}`.toLowerCase().includes(query)) return false
       if (element && !(item.relatedElements as string[] | undefined)?.includes(element)) return false
+      if (repository && item.repository !== repository) return false
       if (
         solverName &&
         !(item.relatedSolvers as Array<{ name: string; version: string }> | undefined)?.some(
@@ -363,7 +373,7 @@ for (const [title, sourceMarker] of officialExperimentTemplates) {
   })
 }
 
-test('keeps Official Geometry read-only for anonymous users in the unified manager', async ({ page }) => {
+test('keeps Example Geometry read-only for anonymous users in the unified manager', async ({ page }) => {
   await mockApi(page)
   await mockCanonicalCatalog(page)
   await page.goto('/')
@@ -375,8 +385,8 @@ test('keeps Official Geometry read-only for anonymous users in the unified manag
   await expect(manager.getByRole('tab', { name: 'Official Catalog' })).toHaveCount(0)
   await expect(manager.getByRole('tab', { name: 'Workspace Packages' })).toHaveCount(0)
   await expect(manager.getByRole('button', { name: '전체', exact: true })).toHaveCount(0)
-  await expect(manager.getByRole('combobox', { name: 'Namespace' })).toHaveValue('__official__')
-  await expect(manager.getByRole('option', { name: 'Official' })).toHaveCount(1)
+  await expect(manager.getByRole('combobox', { name: 'Namespace' })).toHaveValue('examples')
+  await expect(manager.getByRole('option', { name: 'Examples' })).toHaveCount(1)
   await expect(manager.getByRole('option', { name: 'local' })).toHaveCount(1)
   await manager.getByRole('button', { name: /Basketball Goal/ }).click()
   await expect(manager.locator('.monaco-editor:visible')).toBeVisible()
@@ -384,11 +394,11 @@ test('keeps Official Geometry read-only for anonymous users in the unified manag
   await expect(page.locator('footer').last()).toContainText('Draft Versions · 0')
 
   await manager.getByRole('combobox', { name: 'Namespace' }).selectOption('local')
-  await expect(manager.getByLabel('Geometry Packages list')).toContainText('세션 Geometry가 없습니다.')
+  await expect(manager.getByLabel('Geometry Packages list')).toContainText('표시할 Geometry가 없습니다.')
   await expect(manager.getByLabel('Geometry Packages list')).not.toContainText('Basketball Goal')
 })
 
-test('forks Official Geometry into a personal Draft and publishes its first exact Version', async ({ page }) => {
+test('forks Example Geometry into a personal Draft and publishes its first exact Version', async ({ page }) => {
   test.setTimeout(90_000)
   const timestamp = '2026-08-21T00:00:00Z'
   const localCoordinate = 'caemble:geometry/designer/forks/basketball-goal@local'
@@ -399,6 +409,7 @@ test('forks Official Geometry into a personal Draft and publishes its first exac
   let publishedSourceHash = ''
   let publishedModuleHash = ''
   let publishedDescription: string | null = null
+  let repositoryCreated = false
 
   await page.route(apiPattern, async (route) => {
     const path = new URL(route.request().url()).pathname.replace(/^\/api/, '')
@@ -411,7 +422,7 @@ test('forks Official Geometry into a personal Draft and publishes its first exac
         drafts: Array<{
           draftId: string
           baseGeometryVersionId: null
-          repositoryId: null
+          repositoryId: number
           repository: string
           package: string
           version: string
@@ -422,6 +433,7 @@ test('forks Official Geometry into a personal Draft and publishes its first exac
       const draft = request.drafts[0]!
       expect(draft).toMatchObject({
         baseGeometryVersionId: null,
+        repositoryId: 11,
         repository: 'forks',
         package: 'basketball-goal',
         version: '0.1.0',
@@ -491,6 +503,19 @@ test('forks Official Geometry into a personal Draft and publishes its first exac
       created_at: timestamp,
       updated_at: timestamp,
     }
+    if (path === '/geometry/repositories' && route.request().method() === 'POST') {
+      repositoryCreated = true
+      return json(route, {
+        id: repository.id,
+        userId: repository.user_id,
+        namespace: repository.namespace,
+        slug: repository.slug,
+        description: repository.description,
+        archivedAt: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+    }
     const geometryPackage = {
       id: 12,
       repository_id: repository.id,
@@ -505,7 +530,12 @@ test('forks Official Geometry into a personal Draft and publishes its first exac
       updated_at: timestamp,
     }
     if (path === '/geometry/repositories/list') {
-      return json(route, { total: published ? 1 : 0, items: published ? [repository] : [] })
+      return json(route, {
+        total: repositoryCreated ? 1 : 0,
+        items: repositoryCreated
+          ? [{ ...repository, package_count: published ? 1 : 0, version_count: published ? 1 : 0 }]
+          : [],
+      })
     }
     if (path === '/geometry/packages/list') {
       return json(route, { total: published ? 1 : 0, items: published ? [geometryPackage] : [] })
@@ -582,10 +612,13 @@ test('forks Official Geometry into a personal Draft and publishes its first exac
   const manager = page.getByLabel('Geometry Manager')
   await manager.getByRole('button', { name: /Basketball Goal/ }).click()
   await manager.getByRole('button', { name: '개인 Repository로 Fork' }).click()
-  await page
-    .getByRole('dialog', { name: '개인 Repository로 Fork' })
-    .getByRole('button', { name: /Draft Version 만들기/ })
-    .click()
+  const forkDialog = page.getByRole('dialog', { name: '개인 Repository로 Fork' })
+  await forkDialog.getByRole('button', { name: '새 Repository' }).click()
+  const repositoryDialog = page.getByRole('dialog', { name: '새 Repository' })
+  await repositoryDialog.getByLabel('Repository 이름').fill('forks')
+  await repositoryDialog.getByRole('button', { name: '만들기' }).click()
+  await expect(repositoryDialog).toBeHidden()
+  await forkDialog.getByRole('button', { name: /Draft Version 만들기/ }).click()
 
   await expect(manager.getByRole('combobox', { name: 'Namespace' })).toHaveValue('designer')
   const draftEditor = manager.getByRole('region', { name: 'Draft Version editor' })
@@ -785,12 +818,15 @@ export const Sphere: Geometry = () => <sphere radius={1} />
   let publishedSourceHash = sourceHash
   let publishedModuleHash = moduleHash
   let published = false
+  let repositoryArchived = false
+  let repositoryDescription = 'Reusable parts'
+  let repositoryDeleteRequests = 0
   const repository = {
     id: 1,
     user_id: user.id,
     namespace: 'designer',
     slug: 'common',
-    description: 'Reusable parts',
+    description: repositoryDescription,
     archived_at: null,
     created_at: timestamp,
     updated_at: timestamp,
@@ -840,6 +876,49 @@ export const Sphere: Geometry = () => <sphere radius={1} />
     if (path === '/auth/geometry-namespace') {
       const body = route.request().postDataJSON() as { namespace: string }
       return json(route, { ...user, geometry_namespace: body.namespace })
+    }
+    if (path === `/geometry/repositories/${repository.id}/archive`) {
+      repositoryArchived = true
+      return json(route, {
+        id: repository.id,
+        userId: repository.user_id,
+        namespace: repository.namespace,
+        slug: repository.slug,
+        description: repositoryDescription,
+        archivedAt: timestamp,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+    }
+    if (path === `/geometry/repositories/${repository.id}/restore`) {
+      repositoryArchived = false
+      return json(route, {
+        id: repository.id,
+        userId: repository.user_id,
+        namespace: repository.namespace,
+        slug: repository.slug,
+        description: repositoryDescription,
+        archivedAt: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+    }
+    if (path === `/geometry/repositories/${repository.id}` && route.request().method() === 'PUT') {
+      repositoryDescription = (route.request().postDataJSON() as { description: string }).description
+      return json(route, {
+        id: repository.id,
+        userId: repository.user_id,
+        namespace: repository.namespace,
+        slug: repository.slug,
+        description: repositoryDescription,
+        archivedAt: repositoryArchived ? timestamp : null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+    }
+    if (path === `/geometry/repositories/${repository.id}` && route.request().method() === 'DELETE') {
+      repositoryDeleteRequests += 1
+      return json(route, null)
     }
     if (path === '/geometry/publish/plan') {
       const request = route.request().postDataJSON() as {
@@ -907,7 +986,20 @@ export const Sphere: Geometry = () => <sphere radius={1} />
         replacements: [{ draftId: request.targetDraftId, localCoordinate, coordinate: nextCoordinate }],
       })
     }
-    if (path === '/geometry/repositories/list') return json(route, { total: 1, items: [repository] })
+    if (path === '/geometry/repositories/list') {
+      return json(route, {
+        total: 1,
+        items: [
+          {
+            ...repository,
+            description: repositoryDescription,
+            archived_at: repositoryArchived ? timestamp : null,
+            package_count: 1,
+            version_count: published ? 2 : 1,
+          },
+        ],
+      })
+    }
     if (path === '/geometry/packages/list') return json(route, { total: 1, items: [geometryPackage] })
     if (path === '/geometry/versions/list') {
       const nextVersion = {
@@ -1051,6 +1143,22 @@ export { PlateRoot }
   await page.getByRole('tab', { name: 'Geometry', exact: true }).click()
   await expect(manager).toBeVisible()
   await expect(manager.getByRole('combobox', { name: 'Namespace' })).toHaveValue('designer')
+
+  await manager.getByRole('button', { name: 'Repository 관리' }).click()
+  const repositoryManager = page.getByRole('dialog', { name: 'Repository 관리' })
+  await expect(repositoryManager).toContainText('1 packages · 1 versions')
+  await repositoryManager.getByLabel('common 설명').fill('Updated repository')
+  await repositoryManager.getByRole('button', { name: '저장' }).click()
+  await expect(repositoryManager.getByLabel('common 설명')).toHaveValue('Updated repository')
+  await repositoryManager.getByRole('button', { name: 'Archive' }).click()
+  await expect(repositoryManager.getByRole('button', { name: 'Restore' })).toBeVisible()
+  await repositoryManager.getByRole('button', { name: 'Restore' }).click()
+  await expect(repositoryManager.getByRole('button', { name: 'Archive' })).toBeVisible()
+  page.once('dialog', (dialog) => dialog.accept())
+  await repositoryManager.getByRole('button', { name: '삭제' }).click()
+  await expect(page.getByText(/현재 .* 참조하는 Repository는 삭제할 수 없습니다/)).toBeVisible()
+  expect(repositoryDeleteRequests).toBe(0)
+  await repositoryManager.getByRole('button', { name: '닫기' }).click()
 
   await manager.getByRole('tab', { name: 'References' }).click()
   await expect(manager).toContainText('Bracket study')
