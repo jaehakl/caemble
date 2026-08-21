@@ -15,12 +15,13 @@ export type SavedRecordedData = RecordedDataRecord & { id?: number }
 export type DefinitionStatus = 'empty' | 'new' | 'saved-clean' | 'saved-dirty'
 export type WorkbenchTabId = 'experiment' | 'geometry' | 'recorded-data' | 'ai-helper'
 
-export type GeometryLocalDraft = Readonly<{
+export type GeometryDraftVersion = Readonly<{
   draftId: string
   coordinate: LocalGeometryCoordinate
   source: string
   description: string
   baseGeometryVersionId: number | null
+  originCatalogKey: string | null
   repository: string
   packageName: string
   repositoryId: number | null
@@ -31,7 +32,7 @@ export type GeometryLocalDraft = Readonly<{
 }>
 
 export type WorkbenchDraft = Readonly<{
-  version: 11
+  version: 12
   savedAt: number
   experiment: Readonly<{
     record: SavedExperiment | null
@@ -48,10 +49,14 @@ export type WorkbenchDraft = Readonly<{
     measurementId: number | null
   }>
   geometryManager: Readonly<{
-    drafts: Readonly<Record<string, GeometryLocalDraft>>
+    draftVersions: Readonly<Record<string, GeometryDraftVersion>>
     resolvedModules: readonly GeometrySnapshotModule[]
-    selectedCoordinate: GeometryModuleCoordinate | null
-    selectedExport: string | null
+    selection: Readonly<{
+      view: 'official' | 'workspace'
+      catalogKey: string | null
+      coordinate: GeometryModuleCoordinate | null
+      exportName: string | null
+    }>
   }>
   experimentGeometry: Readonly<{
     stagedModules: readonly GeometrySnapshotModule[]

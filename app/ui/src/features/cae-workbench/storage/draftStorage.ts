@@ -10,9 +10,9 @@ import {
   validateGeometrySnapshotHashes,
   type GeometrySnapshotModule,
 } from '@/lib/cad'
-import type { GeometryLocalDraft, WorkbenchDraft } from '../types'
+import type { GeometryDraftVersion, WorkbenchDraft } from '../types'
 
-export const WORKBENCH_DRAFT_VERSION = 11 as const
+export const WORKBENCH_DRAFT_VERSION = 12 as const
 export const WORKBENCH_DRAFT_STORAGE_KEY = 'caemble:cae-workbench-draft'
 
 const localCoordinatePattern =
@@ -35,13 +35,13 @@ function validText(value: unknown, maxBytes: number) {
   return bytes.byteLength <= maxBytes && new TextDecoder('utf-8', { fatal: true }).decode(bytes) === value
 }
 
-function validDrafts(value: unknown): value is WorkbenchDraft['geometryManager']['drafts'] {
+function validDraftVersions(value: unknown): value is WorkbenchDraft['geometryManager']['draftVersions'] {
   if (!plainObject(value) || Object.keys(value).length > MAX_GEOMETRY_MODULES) return false
   const ids = new Set<string>()
   try {
     return Object.entries(value).every(([coordinate, item]) => {
       if (!localCoordinatePattern.test(coordinate) || !plainObject(item) || item.coordinate !== coordinate) return false
-      const draft = item as Partial<GeometryLocalDraft>
+      const draft = item as Partial<GeometryDraftVersion>
       const version = typeof draft.version === 'string' ? versionPattern.exec(draft.version) : null
       if (
         typeof draft.draftId !== 'string' ||
@@ -50,6 +50,7 @@ function validDrafts(value: unknown): value is WorkbenchDraft['geometryManager']
         !validText(draft.source, MAX_GEOMETRY_MODULE_SOURCE_BYTES) ||
         typeof draft.description !== 'string' ||
         !validOptionalId(draft.baseGeometryVersionId) ||
+        (draft.originCatalogKey !== null && typeof draft.originCatalogKey !== 'string') ||
         typeof draft.repository !== 'string' ||
         !slugPattern.test(draft.repository) ||
         typeof draft.packageName !== 'string' ||
@@ -63,7 +64,6 @@ function validDrafts(value: unknown): value is WorkbenchDraft['geometryManager']
       ) {
         return false
       }
-      analyzeGeometrySource(draft.source!, { allowLocal: true })
       ids.add(draft.draftId)
       return true
     })
@@ -118,11 +118,16 @@ function isWorkbenchDraft(value: unknown): value is WorkbenchDraft {
       !plainObject(draft.selection) ||
       !validOptionalId(draft.selection.measurementId) ||
       !plainObject(draft.geometryManager) ||
-      !validDrafts(draft.geometryManager.drafts) ||
+      !validDraftVersions(draft.geometryManager.draftVersions) ||
       !Array.isArray(draft.geometryManager.resolvedModules) ||
       draft.geometryManager.resolvedModules.length > MAX_GEOMETRY_MODULES ||
-      !validSelectedCoordinate(draft.geometryManager.selectedCoordinate) ||
-      (draft.geometryManager.selectedExport !== null && typeof draft.geometryManager.selectedExport !== 'string') ||
+      !plainObject(draft.geometryManager.selection) ||
+      !['official', 'workspace'].includes(draft.geometryManager.selection.view) ||
+      (draft.geometryManager.selection.catalogKey !== null &&
+        typeof draft.geometryManager.selection.catalogKey !== 'string') ||
+      !validSelectedCoordinate(draft.geometryManager.selection.coordinate) ||
+      (draft.geometryManager.selection.exportName !== null &&
+        typeof draft.geometryManager.selection.exportName !== 'string') ||
       !plainObject(draft.experimentGeometry) ||
       !Array.isArray(draft.experimentGeometry.stagedModules) ||
       draft.experimentGeometry.stagedModules.length > MAX_GEOMETRY_MODULES ||
@@ -150,22 +155,57 @@ function isWorkbenchDraft(value: unknown): value is WorkbenchDraft {
 }
 
 function migrateWorkbenchDraft(value: unknown): unknown {
-  if (!plainObject(value) || value.version !== 10 || !plainObject(value.geometry)) return value
-  const geometry = value.geometry
-  const selectedCoordinate = geometry.selectedCoordinate === 'geometry.tsx' ? null : geometry.selectedCoordinate
-  const stagedModules = Array.isArray(geometry.stagedModules) ? geometry.stagedModules : []
+  if (!plainObject(value) || ![10, 11].includes(Number(value.version))) return value
+  const legacyManager = value.version === 10 ? value.geometry : value.geometryManager
+  if (!plainObject(legacyManager)) return value
+  const legacyDrafts = plainObject(legacyManager.drafts) ? legacyManager.drafts : {}
+  const draftVersions = Object.fromEntries(
+    Object.entries(legacyDrafts).map(([coordinate, item]) => {
+      if (!plainObject(item)) return [coordinate, item]
+      return [
+        coordinate,
+        {
+          ...item,
+          originCatalogKey:
+            typeof item.originCatalogKey === 'string'
+              ? item.originCatalogKey
+              : item.baseGeometryVersionId === null &&
+                  item.repository === 'catalog' &&
+                  typeof item.packageName === 'string'
+                ? item.packageName
+                : null,
+        },
+      ]
+    }),
+  )
+  const selectedCoordinate =
+    legacyManager.selectedCoordinate === 'geometry.tsx' ? null : (legacyManager.selectedCoordinate ?? null)
+  const resolvedModules = Array.isArray(legacyManager.resolvedModules)
+    ? legacyManager.resolvedModules
+    : Array.isArray(legacyManager.stagedModules)
+      ? legacyManager.stagedModules
+      : []
+  const experimentModules =
+    plainObject(value.experimentGeometry) && Array.isArray(value.experimentGeometry.stagedModules)
+      ? value.experimentGeometry.stagedModules
+      : resolvedModules
   const rest = { ...value }
   delete rest.geometry
+  delete rest.geometryManager
   return {
     ...rest,
     version: WORKBENCH_DRAFT_VERSION,
     geometryManager: {
-      drafts: geometry.drafts,
-      resolvedModules: stagedModules,
-      selectedCoordinate,
-      selectedExport: geometry.selectedExport,
+      draftVersions,
+      resolvedModules,
+      selection: {
+        view: selectedCoordinate ? 'workspace' : 'official',
+        catalogKey: null,
+        coordinate: selectedCoordinate,
+        exportName: legacyManager.selectedExport ?? null,
+      },
     },
-    experimentGeometry: { stagedModules },
+    experimentGeometry: { stagedModules: experimentModules },
   }
 }
 

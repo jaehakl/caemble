@@ -62,7 +62,7 @@ export function useCaePageChrome({
     const loginReason = '로그인 후 사용할 수 있습니다.'
     const savedReason = '저장되고 편집되지 않은 Experiment가 필요합니다.'
     const geometryDraftReason = workbench.geometry.hasReachableDrafts
-      ? 'geometry.tsx의 @local import를 발행한 exact Version으로 바꿔야 합니다.'
+      ? 'geometry.tsx의 발행 전 Geometry import를 exact Version으로 바꿔야 합니다.'
       : undefined
     const busyReason = workbench.measurementActions.busy ? '다른 CAE 작업이 진행 중입니다.' : undefined
     const pendingResultReason = workbench.measurementActions.pendingRecordMeasurementId
@@ -502,9 +502,7 @@ export function useCaePageChrome({
         <RibbonActions actions={[]} extraActions={<GeometryAuthoringRibbon state={geometryAuthoringState} />}>
           <span className="text-sm font-semibold">Geometry Manager</span>
           <span className="mt-1 text-xs text-muted-foreground">
-            {workbench.geometryLocalDraftDirty
-              ? `${Object.keys(workbench.geometry.drafts).length} local draft · 브라우저 세션에 저장됨`
-              : 'Official Catalog · Workspace Packages · Local Drafts'}
+            Draft Versions · {Object.keys(workbench.geometry.draftVersions).length}
           </span>
         </RibbonActions>
       ),

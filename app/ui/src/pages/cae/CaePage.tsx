@@ -112,11 +112,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         ) : tab === 'geometry' ? (
           <GeometryManager
             geometry={workbench.geometry}
-            onCatalogDraftOpened={() => undefined}
             onAuthoringStateChange={setGeometryAuthoringState}
-            onEdit={async (versionId, repositoryId, packageId) => {
-              await workbench.geometry.editPublishedVersion(versionId, repositoryId, packageId)
-            }}
             onOpenExperiment={(experimentId) =>
               page.guardReplacement(async () => {
                 await workbench.loadExperiment(experimentId)
@@ -220,7 +216,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           <Badge
             className={`h-5 rounded-sm px-1.5 ${workbench.geometryLocalDraftDirty ? 'bg-amber-500 text-white' : 'bg-muted'}`}
           >
-            Geometry Manager · {Object.keys(workbench.geometry.drafts).length} local draft
+            Draft Versions · {Object.keys(workbench.geometry.draftVersions).length}
           </Badge>
           {workbench.geometryGraphDirty ? (
             <Badge className="h-5 rounded-sm bg-muted px-1.5">Experiment Geometry graph edited</Badge>

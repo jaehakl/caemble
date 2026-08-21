@@ -23,7 +23,7 @@ function workbench(newExperiment = vi.fn()) {
     experimentName: 'Edited Experiment',
     experimentRecord: null,
     experimentStatus: 'Edited',
-    geometry: { busy: false, drafts: {}, entryExports: [] },
+    geometry: { busy: false, draftVersions: {}, entryExports: [] },
     geometryGraphDirty: false,
     geometryLocalDraftDirty: false,
     measurementActions: {

@@ -5,7 +5,13 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api'
-import { geometryModuleHash, geometrySourceHash, type GeometryCoordinate, type GeometrySnapshotModule } from '@/lib/cad'
+import {
+  geometryModuleHash,
+  geometrySourceHash,
+  type GeometryCoordinate,
+  type GeometrySnapshotModule,
+  type LocalGeometryCoordinate,
+} from '@/lib/cad'
 import { useGeometryManagerState } from './useGeometryWorkspaceState'
 
 const api = vi.hoisted(() => ({
@@ -105,7 +111,7 @@ describe('independent Geometry Manager state', () => {
   })
   afterEach(cleanup)
 
-  it('creates and previews a local draft without changing geometry.tsx', async () => {
+  it('creates and previews a Draft Version without changing geometry.tsx', async () => {
     const { result } = renderState()
     act(() => {
       result.current.createDraft({ repository: 'common', packageName: 'part' })
@@ -124,7 +130,7 @@ describe('independent Geometry Manager state', () => {
     })
 
     await waitFor(() => expect(result.current.previewStale).toBe(false))
-    expect(result.current.drafts).toEqual({})
+    expect(result.current.draftVersions).toEqual({})
     expect(result.current.selectedExport).toBe('Official')
     expect(cad.evaluateGeometryModule).toHaveBeenCalledWith(
       emptySnapshot,
@@ -134,7 +140,7 @@ describe('independent Geometry Manager state', () => {
     )
   })
 
-  it('previews a published Version and edits it as an independent new-Version draft', async () => {
+  it('creates a Draft Version on the first Published source change and keeps the original immutable', async () => {
     const coordinate = 'caemble:geometry/jlee/common/part@1.2.3' as GeometryCoordinate
     const module = await geometryModule(42, coordinate)
     api.resolveVersion.mockResolvedValue({
@@ -148,10 +154,105 @@ describe('independent Geometry Manager state', () => {
     expect(result.current.managerModules).toEqual([module])
     expect(result.current.experimentModules).toEqual([])
 
-    await act(() => result.current.editPublishedVersion(42, 3, 7))
-    const draft = result.current.drafts['caemble:geometry/jlee/common/part@local']
+    const changedSource = 'export const Part = () => <sphere />'
+    act(() =>
+      result.current.updatePublishedSource({
+        versionId: 42,
+        coordinate,
+        source: changedSource,
+        description: '',
+        repositoryId: 3,
+        packageId: 7,
+      }),
+    )
+    const draft = result.current.draftVersions['caemble:geometry/jlee/common/part@local']
     expect(draft).toMatchObject({ baseGeometryVersionId: 42, repositoryId: 3, packageId: 7, version: '1.2.3' })
+    expect(draft?.source).toBe(changedSource)
+    expect(module.source).toBe('export const Part = () => <box />')
     expect(result.current.entrySource).toBe(sourceFiles['geometry.tsx'])
+  })
+
+  it('keeps at most one Draft Version per Package', async () => {
+    const first = 'caemble:geometry/jlee/common/part@1.2.3' as GeometryCoordinate
+    const second = 'caemble:geometry/jlee/common/part@2.0.0' as GeometryCoordinate
+    const { result } = renderState()
+
+    act(() =>
+      result.current.updatePublishedSource({
+        versionId: 42,
+        coordinate: first,
+        source: 'export const Part = () => <box />',
+        description: '',
+        repositoryId: 3,
+        packageId: 7,
+      }),
+    )
+
+    expect(() =>
+      result.current.updatePublishedSource({
+        versionId: 43,
+        coordinate: second,
+        source: 'export const Part = () => <sphere />',
+        description: '',
+        repositoryId: 3,
+        packageId: 7,
+      }),
+    ).toThrow('Draft Version을 선택하거나 폐기')
+    expect(Object.keys(result.current.draftVersions)).toHaveLength(1)
+  })
+
+  it('keeps concurrent Draft Versions for different Packages', () => {
+    const { result } = renderState()
+
+    act(() => {
+      result.current.createDraft({ repository: 'common', packageName: 'plate' })
+      result.current.createDraft({ repository: 'common', packageName: 'bracket' })
+    })
+
+    expect(Object.values(result.current.draftVersions).map((draft) => draft.packageName)).toEqual(['plate', 'bracket'])
+  })
+
+  it('updates a new Draft Version Package coordinate without losing source', () => {
+    const { result } = renderState()
+    let coordinate = '' as LocalGeometryCoordinate
+    act(() => {
+      coordinate = result.current.createDraft({
+        repository: 'common',
+        packageName: 'plate',
+        source: 'export const Plate = () => <box />',
+      })
+    })
+
+    act(() => {
+      result.current.updateDraftPackage(coordinate, {
+        repository: 'parts',
+        packageName: 'bracket',
+        repositoryId: null,
+      })
+    })
+
+    expect(result.current.draftVersions).toHaveProperty('caemble:geometry/jlee/parts/bracket@local')
+    expect(Object.values(result.current.draftVersions)[0]?.source).toBe('export const Plate = () => <box />')
+  })
+
+  it('creates an Official-based session Package only on the first source change', () => {
+    const { result } = renderState()
+    act(() => result.current.previewSource('export const Official = () => <box />'))
+
+    expect(result.current.draftVersions).toEqual({})
+    act(() =>
+      result.current.updateCatalogSource({
+        key: 'official-box',
+        source: 'export const Official = () => <sphere />',
+        description: 'Official box',
+      }),
+    )
+
+    expect(Object.values(result.current.draftVersions)[0]).toMatchObject({
+      originCatalogKey: 'official-box',
+      packageName: 'official-box',
+      source: 'export const Official = () => <sphere />',
+    })
   })
 
   it('publishes an edited Version with a server-replanned conflict without changing Experiment state', async () => {
@@ -169,9 +270,18 @@ describe('independent Geometry Manager state', () => {
     }))
     const { result } = renderState()
 
-    await act(() => result.current.editPublishedVersion(42, 3, 7))
+    act(() =>
+      result.current.updatePublishedSource({
+        versionId: 42,
+        coordinate,
+        source: currentModule.source,
+        description: '',
+        repositoryId: 3,
+        packageId: 7,
+      }),
+    )
     await waitFor(() => expect(result.current.publishReady).toBe(true))
-    const draft = result.current.drafts[localCoordinate]!
+    const draft = result.current.draftVersions[localCoordinate]!
     const revisedPlan = {
       planHash: 'a'.repeat(64),
       steps: [
@@ -228,7 +338,7 @@ describe('independent Geometry Manager state', () => {
     await act(() => result.current.confirmPublish())
 
     expect(api.publish).toHaveBeenCalledWith(expect.objectContaining({ planHash: revisedPlan.planHash }))
-    expect(result.current.drafts).toEqual({})
+    expect(result.current.draftVersions).toEqual({})
     expect(result.current.managerModules).toContainEqual(nextModule)
     expect(result.current.experimentModules).toEqual([])
     expect(result.current.entrySource).toBe(sourceFiles['geometry.tsx'])
@@ -293,7 +403,11 @@ describe('independent Geometry Manager state', () => {
       modules: [module],
     })
     const first = renderState()
-    act(() => first.result.current.createDraft({ repository: 'common', packageName: 'local-part' }))
+    act(() => {
+      first.result.current.createDraft({ repository: 'common', packageName: 'local-part' })
+      first.result.current.setManagerView('workspace')
+      first.result.current.setSelectedCatalogKey('official-box')
+    })
     await act(() => first.result.current.previewPublishedVersion(42))
     await act(() => first.result.current.usePublishedExport(42, 'Part'))
     const stored = first.result.current.draftState()
@@ -304,8 +418,10 @@ describe('independent Geometry Manager state', () => {
       second.result.current.restore(stored.geometryManager, stored.experimentGeometry, sourceFiles['geometry.tsx'])
     })
 
-    expect(second.result.current.drafts).toHaveProperty('caemble:geometry/jlee/common/local-part@local')
+    expect(second.result.current.draftVersions).toHaveProperty('caemble:geometry/jlee/common/local-part@local')
     expect(second.result.current.managerModules).toEqual([module])
     expect(second.result.current.experimentModules).toEqual([module])
+    expect(second.result.current.managerView).toBe('workspace')
+    expect(second.result.current.selectedCatalogKey).toBe('official-box')
   })
 })

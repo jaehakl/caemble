@@ -165,7 +165,7 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
   const geometryGraphDirty = Boolean(
     experiment && !geometrySnapshotsEqual(experiment.sourceBundle, baselineExperimentBundle),
   )
-  const geometryLocalDraftDirty = Object.keys(geometry.drafts).length > 0
+  const geometryLocalDraftDirty = Object.keys(geometry.draftVersions).length > 0
   const experimentDirty = experimentSourceDirty || geometryGraphDirty
   const hasUnsavedExperimentWork = experimentDirty
   const hasUnsavedWork = experimentDirty || geometryLocalDraftDirty
@@ -637,7 +637,7 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
     ): WorkbenchDraft => {
       const geometryDraft = createGeometryDraftState()
       return {
-        version: 11,
+        version: 12,
         savedAt: Date.now(),
         experiment: {
           record: experimentRecord,

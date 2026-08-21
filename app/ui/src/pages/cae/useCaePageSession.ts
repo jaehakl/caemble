@@ -29,7 +29,7 @@ function validTabs(value: readonly WorkbenchTabId[]) {
 
 function starterDraft(): WorkbenchDraft {
   return {
-    version: 11,
+    version: 12,
     savedAt: Date.now(),
     experiment: {
       record: null,
@@ -41,10 +41,9 @@ function starterDraft(): WorkbenchDraft {
     candidate: { vars: null, materialParameters: null },
     selection: { measurementId: null },
     geometryManager: {
-      drafts: {},
+      draftVersions: {},
       resolvedModules: [],
-      selectedCoordinate: null,
-      selectedExport: null,
+      selection: { view: 'official', catalogKey: null, coordinate: null, exportName: null },
     },
     experimentGeometry: { stagedModules: [] },
     layout: {

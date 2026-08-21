@@ -140,15 +140,14 @@ describe('useCaeWorkbenchState', () => {
         splitPercent: 50,
       }),
     ).toMatchObject({
-      version: 11,
+      version: 12,
       experiment: { record: { id: 7 } },
       candidate: { vars: null, materialParameters: null },
       selection: { measurementId: null },
       geometryManager: {
-        drafts: {},
+        draftVersions: {},
         resolvedModules: [],
-        selectedCoordinate: null,
-        selectedExport: null,
+        selection: { view: 'official', catalogKey: null, coordinate: null, exportName: null },
       },
       experimentGeometry: { stagedModules: [] },
     })
@@ -183,11 +182,13 @@ describe('useCaeWorkbenchState', () => {
     const { result } = renderHook(() => useCaeWorkbenchState(user, true), { wrapper: wrapper() })
     act(() => {
       result.current.geometry.createDraft({ repository: 'common', packageName: 'part' })
+      result.current.geometry.setManagerView('workspace')
       result.current.applyExperiment(experiment(7))
     })
 
-    expect(result.current.geometry.drafts).toHaveProperty('caemble:geometry/jlee/common/part@local')
+    expect(result.current.geometry.draftVersions).toHaveProperty('caemble:geometry/jlee/common/part@local')
     expect(result.current.geometry.selectedCoordinate).toBe('caemble:geometry/jlee/common/part@local')
+    expect(result.current.geometry.managerView).toBe('workspace')
     expect(result.current.geometryLocalDraftDirty).toBe(true)
     expect(result.current.hasUnsavedExperimentWork).toBe(false)
     expect(result.current.hasUnsavedWork).toBe(true)

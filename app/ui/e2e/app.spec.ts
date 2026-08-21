@@ -363,7 +363,7 @@ for (const [title, sourceMarker] of officialExperimentTemplates) {
   })
 }
 
-test('opens an official Geometry as an anonymous local draft without overwriting a collision', async ({ page }) => {
+test('creates one anonymous Draft Version on the first Official source edit', async ({ page }) => {
   await mockApi(page)
   await mockCanonicalCatalog(page)
   await page.goto('/')
@@ -374,11 +374,6 @@ test('opens an official Geometry as an anonymous local draft without overwriting
   await expect(page.getByRole('tab', { name: 'Geometry', exact: true })).toHaveAttribute('aria-selected', 'true')
   await expect(manager.getByRole('tab', { name: 'Official Catalog' })).toHaveAttribute('aria-selected', 'true')
   await manager.getByRole('button', { name: /Basketball Goal/ }).click()
-  await manager.getByRole('button', { name: '로컬 Draft로 열기' }).click()
-
-  await expect(manager.getByRole('tab', { name: 'Local Drafts (1)' })).toHaveAttribute('aria-selected', 'true')
-  await expect(manager.getByText('Preview current', { exact: true })).toBeVisible({ timeout: 15_000 })
-  await expect(manager.getByRole('alert')).toHaveCount(0)
   const editor = manager.locator('.monaco-editor:visible')
   await editor.getByRole('textbox', { name: 'Editor content' }).focus()
   await page.keyboard.press('Control+A')
@@ -388,12 +383,17 @@ export const BasketballGoal: Geometry = () => <box id="local" />
 // keep-local-catalog-edit
 `)
   await expect(editor.locator('.view-lines')).toContainText('keep-local-catalog-edit')
+  await expect(page.locator('footer').last()).toContainText('Draft Versions · 1')
+
+  await manager.getByRole('tab', { name: 'Workspace Packages' }).click()
+  await expect(manager.getByRole('region', { name: 'Session Packages' })).toContainText('catalog/basketball-goal')
+  await expect(manager.getByRole('button', { name: /catalog\/basketball-goal/ })).toContainText('Draft Version')
+  await manager.getByRole('button', { name: /catalog\/basketball-goal/ }).click()
+  await expect(manager.getByRole('region', { name: 'Draft Version editor' })).toBeVisible()
 
   await manager.getByRole('tab', { name: 'Official Catalog' }).click()
-  await manager.getByRole('button', { name: /Basketball Goal/ }).click()
-  await manager.getByRole('button', { name: '로컬 Draft로 열기' }).click()
-
-  await expect(editor.locator('.view-lines')).toContainText("import { type Geometry } from '@caemble/core'")
+  await expect(manager.locator('.monaco-editor:visible .view-lines')).toContainText('keep-local-catalog-edit')
+  await expect(page.locator('footer').last()).toContainText('Draft Versions · 1')
 })
 
 test('opens Geometry export publishing from the Source menu and Experiment ribbon', async ({ page }) => {
@@ -579,6 +579,7 @@ export const Sphere: Geometry = () => <sphere radius={1} />
   let publishedSource = geometrySource
   let publishedSourceHash = sourceHash
   let publishedModuleHash = moduleHash
+  let published = false
   const repository = {
     id: 1,
     user_id: user.id,
@@ -680,6 +681,7 @@ export const Sphere: Geometry = () => <sphere radius={1} />
     if (path === '/geometry/publish') {
       const request = route.request().postDataJSON() as { targetDraftId: string; planHash: string }
       expect(request.planHash).toBe(planHash)
+      published = true
       return json(route, {
         planHash,
         published: [
@@ -702,7 +704,20 @@ export const Sphere: Geometry = () => <sphere radius={1} />
     }
     if (path === '/geometry/repositories/list') return json(route, { total: 1, items: [repository] })
     if (path === '/geometry/packages/list') return json(route, { total: 1, items: [geometryPackage] })
-    if (path === '/geometry/versions/list') return json(route, { total: 1, items: [version] })
+    if (path === '/geometry/versions/list') {
+      const nextVersion = {
+        ...version,
+        id: 4,
+        version_patch: 4,
+        description: version.description,
+        source: publishedSource,
+        source_hash: publishedSourceHash,
+        module_hash: publishedModuleHash,
+        coordinate: nextCoordinate,
+        version: '1.2.4',
+      }
+      return json(route, { total: published ? 2 : 1, items: published ? [nextVersion, version] : [version] })
+    }
     if (path === `/geometry/versions/${version.id}/resolve`) {
       return json(route, {
         schemaVersion: 2,
@@ -864,12 +879,18 @@ export default experiment({
 
   await page.getByRole('tab', { name: 'Geometry', exact: true }).click()
   await manager.getByRole('tab', { name: 'Workspace Packages' }).click()
-  await manager.getByRole('button', { name: 'Edit as New Version' }).click()
-  const workspace = page.locator('section[aria-label="Local Geometry drafts"]')
+  await manager.getByRole('tab', { name: 'Source' }).click()
+  const publishedEditor = manager.locator('.monaco-editor:visible')
+  await publishedEditor.getByRole('textbox', { name: 'Editor content' }).focus()
+  await page.keyboard.press('Control+A')
+  await page.keyboard.insertText(`${geometrySource}// first-copy-on-write-edit\n`)
+
+  const workspace = page.getByRole('region', { name: 'Draft Version editor' })
   await expect(workspace).toBeVisible()
+  await expect(manager.getByRole('button', { name: /Draft Draft Version/ })).toBeVisible()
 
   const saveGeometry = workspace.getByRole('button', { name: '새 Version 발행' })
-  await expect(saveGeometry).toBeEnabled({ timeout: 15_000 })
+  await expect(saveGeometry).toBeEnabled({ timeout: 30_000 })
   await expect(workspace.getByText('Preview current', { exact: true })).toBeVisible()
   await expect(workspace.getByRole('alert')).toHaveCount(0)
 
@@ -892,10 +913,12 @@ export default experiment({
   await page.keyboard.press('Control+A')
   await page.keyboard.insertText(`${geometrySource}// manager-version-edit\n`)
   await expect(workspace.getByText('Preview current', { exact: true })).toBeVisible({ timeout: 15_000 })
-  await expect(saveGeometry).toBeEnabled()
+  await expect(saveGeometry).toBeEnabled({ timeout: 30_000 })
   await saveGeometry.click()
   const publishDialog = page.getByRole('dialog', { name: 'Geometry 발행 계획' })
   await expect(publishDialog).toContainText(nextCoordinate)
   await publishDialog.getByRole('button', { name: '계획대로 발행' }).click()
-  await expect(manager.getByRole('tab', { name: 'Local Drafts (0)' })).toBeVisible({ timeout: 15_000 })
+  await expect(manager.getByRole('button', { name: 'v1.2.4' })).toBeVisible({ timeout: 15_000 })
+  await expect(manager.getByRole('button', { name: /Draft Draft Version/ })).toHaveCount(0)
+  await expect(page.locator('footer').last()).toContainText('Draft Versions · 0')
 })

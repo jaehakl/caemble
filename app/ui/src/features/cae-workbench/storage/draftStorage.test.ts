@@ -12,16 +12,15 @@ import {
 
 function draft(): WorkbenchDraft {
   return {
-    version: 11,
+    version: 12,
     savedAt: 1,
     experiment: { record: null, baselineBundle: null, document: null, name: '', description: '' },
     candidate: { vars: null, materialParameters: null },
     selection: { measurementId: null },
     geometryManager: {
-      drafts: {},
+      draftVersions: {},
       resolvedModules: [],
-      selectedCoordinate: null,
-      selectedExport: null,
+      selection: { view: 'official', catalogKey: null, coordinate: null, exportName: null },
     },
     experimentGeometry: { stagedModules: [] },
     layout: { openTabs: ['experiment'], activeTab: 'experiment', experimentFile: 'geometry.tsx', splitPercent: 50 },
@@ -33,14 +32,14 @@ beforeEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('Workbench sessionStorage v11', () => {
-  it('stores and restores the single session draft, including local Geometry', async () => {
+describe('Workbench sessionStorage v12', () => {
+  it('stores and restores Package Draft Versions', async () => {
     const coordinate = 'caemble:geometry/local/common/part@local' as const
     const value: WorkbenchDraft = {
       ...draft(),
       geometryManager: {
         ...draft().geometryManager,
-        drafts: {
+        draftVersions: {
           [coordinate]: {
             draftId: 'part',
             coordinate,
@@ -48,6 +47,7 @@ describe('Workbench sessionStorage v11', () => {
               "import { type Geometry } from '@caemble/core'\nexport const Part: Geometry = () => <box size={[1, 1, 1]} />",
             description: '',
             baseGeometryVersionId: null,
+            originCatalogKey: null,
             repository: 'common',
             packageName: 'part',
             repositoryId: null,
@@ -57,8 +57,7 @@ describe('Workbench sessionStorage v11', () => {
             standalonePreview: true,
           },
         },
-        selectedCoordinate: coordinate,
-        selectedExport: 'Part',
+        selection: { view: 'workspace', catalogKey: null, coordinate, exportName: 'Part' },
       },
       layout: {
         ...draft().layout,
@@ -104,7 +103,7 @@ describe('Workbench sessionStorage v11', () => {
     }
     const legacy = {
       ...draft(),
-      version: 10,
+      version: 10 as number,
       geometry: {
         drafts: {
           [coordinate]: {
@@ -133,13 +132,55 @@ describe('Workbench sessionStorage v11', () => {
     sessionStorage.setItem(WORKBENCH_DRAFT_STORAGE_KEY, JSON.stringify(legacy))
 
     await expect(loadWorkbenchDraft()).resolves.toMatchObject({
-      version: 11,
+      version: 12,
       geometryManager: {
-        drafts: { [coordinate]: { source: 'export const Part = () => <box />' } },
+        draftVersions: {
+          [coordinate]: { source: 'export const Part = () => <box />', originCatalogKey: null },
+        },
         resolvedModules: [stagedModule],
-        selectedCoordinate: null,
+        selection: { view: 'official', catalogKey: null, coordinate: null },
       },
       experimentGeometry: { stagedModules: [stagedModule] },
+    })
+  })
+
+  it('migrates a v11 Manager draft and preserves an invalid in-progress source', async () => {
+    const coordinate = 'caemble:geometry/local/catalog/official-part@local' as const
+    const legacy = {
+      ...draft(),
+      version: 11,
+      geometryManager: {
+        drafts: {
+          [coordinate]: {
+            draftId: 'official-part',
+            coordinate,
+            source: 'export const Part = (',
+            description: 'Official part',
+            baseGeometryVersionId: null,
+            repository: 'catalog',
+            packageName: 'official-part',
+            repositoryId: null,
+            packageId: null,
+            version: '0.1.0',
+            bump: 'patch',
+            standalonePreview: true,
+          },
+        },
+        resolvedModules: [],
+        selectedCoordinate: coordinate,
+        selectedExport: 'Part',
+      },
+    }
+    sessionStorage.setItem(WORKBENCH_DRAFT_STORAGE_KEY, JSON.stringify(legacy))
+
+    await expect(loadWorkbenchDraft()).resolves.toMatchObject({
+      version: 12,
+      geometryManager: {
+        draftVersions: {
+          [coordinate]: { source: 'export const Part = (', originCatalogKey: 'official-part' },
+        },
+        selection: { view: 'workspace', catalogKey: null, coordinate, exportName: 'Part' },
+      },
     })
   })
 

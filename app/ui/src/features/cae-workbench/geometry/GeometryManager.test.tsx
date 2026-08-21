@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { GeometryManager } from './GeometryManager'
@@ -29,6 +28,11 @@ vi.mock('@/api/catalog', async (importActual) => {
     },
   }
 })
+vi.mock('@/features/viewer/editor/CadEditor', () => ({
+  default: ({ value, onChange }: { value: string; onChange: (value: string) => void }) => (
+    <textarea aria-label="Geometry source" value={value} onChange={(event) => onChange(event.target.value)} />
+  ),
+}))
 
 const geometryItem = {
   key: 'basketball-goal',
@@ -56,27 +60,29 @@ function Harness({ children }: { children: ReactNode }) {
   )
 }
 
-function renderManager(namespace: string | null, openCatalogDraft = vi.fn()) {
+function renderManager(namespace: string | null, updateCatalogSource = vi.fn()) {
   const previewSource = vi.fn()
   return {
-    openCatalogDraft,
     previewSource,
+    updateCatalogSource,
     ...render(
       <GeometryManager
         geometry={
           {
             namespace,
-            drafts: {},
+            draftVersions: {},
+            managerView: 'official',
             publishPlan: null,
             repositories: [],
             selectedCoordinate: null,
-            openCatalogDraft,
+            selectedCatalogKey: 'basketball-goal',
             previewSource,
             setSelectedCoordinate: vi.fn(),
+            setManagerView: vi.fn(),
+            setSelectedCatalogKey: vi.fn(),
+            updateCatalogSource,
           } as unknown as GeometryManagerState
         }
-        onCatalogDraftOpened={vi.fn()}
-        onEdit={vi.fn()}
         onOpenExperiment={vi.fn()}
         onOpenGeometrySource={vi.fn()}
         onUse={vi.fn()}
@@ -94,32 +100,32 @@ describe('Geometry Manager official catalog', () => {
   })
   afterEach(cleanup)
 
-  it('lets an anonymous local namespace clone an official Geometry draft', async () => {
-    const openCatalogDraft = vi.fn(() => ({
+  it('shows Workspace to anonymous users and creates an Official Draft Version on first edit', async () => {
+    const updateCatalogSource = vi.fn(() => ({
       coordinate: 'caemble:geometry/local/catalog/basketball-goal@local',
       created: true,
     }))
-    renderManager('local', openCatalogDraft)
+    renderManager('local', updateCatalogSource)
 
-    expect(screen.queryByRole('tab', { name: 'Workspace Packages' })).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Workspace Packages' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: /Local Drafts/u })).not.toBeInTheDocument()
     expect(await screen.findByText('Official standalone Geometry')).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByRole('tab', { name: 'Local Drafts (0)' })).toBeInTheDocument())
-    await userEvent.click(screen.getByRole('button', { name: '로컬 Draft로 열기' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Geometry source' }), {
+      target: { value: 'export const BasketballGoal = () => <box />' },
+    })
 
-    expect(openCatalogDraft).toHaveBeenCalledWith({
+    expect(updateCatalogSource).toHaveBeenCalledWith({
       key: 'basketball-goal',
-      source: geometryDetail.source,
+      source: 'export const BasketballGoal = () => <box />',
       description: geometryDetail.description,
     })
-    expect(screen.getByRole('tab', { name: 'Local Drafts (0)' })).toHaveAttribute('aria-selected', 'true')
   })
 
-  it('guides a signed-in user to configure a namespace before cloning', async () => {
+  it('guides a signed-in user to configure a namespace before editing', async () => {
     mocks.authenticated = true
     renderManager(null)
 
     expect(await screen.findByText('Account에서 기본 Geometry namespace를 먼저 설정하세요.')).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByRole('button', { name: '로컬 Draft로 열기' })).toBeDisabled())
     expect(screen.getByRole('tab', { name: 'Workspace Packages' })).toBeInTheDocument()
   })
 })

@@ -19,7 +19,7 @@ import {
   type GeometrySnapshotModule,
   type LocalGeometryCoordinate,
 } from '@/lib/cad'
-import type { GeometryLocalDraft, WorkbenchDraft } from '../types'
+import type { GeometryDraftVersion, WorkbenchDraft } from '../types'
 import { draftGeometrySource } from './draftGeometrySource'
 
 const emptyGeometrySnapshot: GeometrySnapshot = { schemaVersion: 2, entryImports: [], modules: [] }
@@ -68,7 +68,7 @@ function rewriteCoordinates(source: string, replacements: Readonly<Record<string
 function assertReplacementsApplicable(
   replacements: readonly Readonly<{ localCoordinate: string; coordinate: string }>[],
   entrySource: string,
-  drafts: Readonly<Record<string, GeometryLocalDraft>>,
+  drafts: Readonly<Record<string, GeometryDraftVersion>>,
 ) {
   const byCoordinate = Object.fromEntries(replacements.map((item) => [item.localCoordinate, item.coordinate]))
   rewriteCoordinates(entrySource, byCoordinate)
@@ -76,11 +76,11 @@ function assertReplacementsApplicable(
 }
 
 function geometryPublishRequest(
-  drafts: Readonly<Record<string, GeometryLocalDraft>>,
+  drafts: Readonly<Record<string, GeometryDraftVersion>>,
   target: GeometryModuleCoordinate,
 ) {
   const draft = drafts[target]
-  if (!draft) throw new Error('발행할 Geometry draft를 찾을 수 없습니다.')
+  if (!draft) throw new Error('발행할 Draft Version을 찾을 수 없습니다.')
   const selected = new Set<string>()
   const pending: string[] = [target]
   while (pending.length) {
@@ -112,11 +112,11 @@ function geometryPublishRequest(
 }
 
 function currentPublishRequest(
-  drafts: Readonly<Record<string, GeometryLocalDraft>>,
+  drafts: Readonly<Record<string, GeometryDraftVersion>>,
   request: ReturnType<typeof geometryPublishRequest>,
 ) {
   const target = Object.values(drafts).find((draft) => draft.draftId === request.targetDraftId)
-  if (!target) throw new Error('발행할 Geometry draft가 더 이상 존재하지 않습니다.')
+  if (!target) throw new Error('발행할 Draft Version이 더 이상 존재하지 않습니다.')
   return geometryPublishRequest(drafts, target.coordinate)
 }
 
@@ -171,13 +171,15 @@ export function useGeometryManagerState({
   const [repositories, setRepositories] = useState<readonly GeometryRepositoryRecord[]>([])
   const [currentSnapshot, setCurrentSnapshot] = useState(snapshot ?? emptyGeometrySnapshot)
   const [entrySource, setEntrySource] = useState(sourceFiles['geometry.tsx'] ?? 'export {}\n')
-  const [drafts, setDrafts] = useState<Readonly<Record<string, GeometryLocalDraft>>>({})
+  const [drafts, setDrafts] = useState<Readonly<Record<string, GeometryDraftVersion>>>({})
   const [managerModules, setManagerModules] = useState<readonly GeometrySnapshotModule[]>([])
   const [experimentModules, setExperimentModules] = useState<readonly GeometrySnapshotModule[]>([])
   const [transientPreview, setTransientPreview] = useState<Readonly<{
     coordinate: LocalGeometryCoordinate
     source: string
   }> | null>(null)
+  const [managerView, setManagerView] = useState<'official' | 'workspace'>('official')
+  const [selectedCatalogKey, setSelectedCatalogKey] = useState<string | null>(null)
   const [selectedCoordinate, setSelectedCoordinateState] = useState<GeometryModuleCoordinate | null>(null)
   const [selectedExport, setSelectedExport] = useState<string | null>(null)
   const [effectiveGraph, setEffectiveGraph] = useState<EffectiveGeometryGraph | null>(null)
@@ -399,14 +401,14 @@ export function useGeometryManagerState({
       (draft) => replacements[draft.coordinate] ?? draft.coordinate,
     )
     if (targetCoordinates.length !== new Set(targetCoordinates).size) {
-      throw new Error('namespace 변경 후 local Geometry coordinate가 충돌합니다.')
+      throw new Error('namespace 변경 후 Draft Version coordinate가 충돌합니다.')
     }
     const nextDrafts = Object.fromEntries(
       Object.values(draftsRef.current).map((draft) => {
         const coordinate = (replacements[draft.coordinate] ?? draft.coordinate) as LocalGeometryCoordinate
         return [coordinate, { ...draft, coordinate, source: rewriteCoordinates(draft.source, replacements) }]
       }),
-    ) as Readonly<Record<string, GeometryLocalDraft>>
+    ) as Readonly<Record<string, GeometryDraftVersion>>
     setNamespaceState(nextNamespace)
     draftsRef.current = nextDrafts
     setDrafts(nextDrafts)
@@ -425,7 +427,7 @@ export function useGeometryManagerState({
       applyNamespace(initialNamespace)
     } catch (cause) {
       setGraphError(
-        `local Geometry를 로그인 namespace로 조정하지 못했습니다. 충돌하는 draft를 정리한 뒤 다시 적용하세요. ${cause instanceof Error ? cause.message : String(cause)}`,
+        `Draft Version을 로그인 namespace로 조정하지 못했습니다. 충돌하는 Version을 정리한 뒤 다시 적용하세요. ${cause instanceof Error ? cause.message : String(cause)}`,
       )
     }
   }, [applyNamespace, authenticated, initialNamespace])
@@ -441,7 +443,7 @@ export function useGeometryManagerState({
         setDrafts(next)
         return
       }
-      throw new Error('Published Geometry는 Edit as New Version으로 draft를 만든 뒤 편집하세요.')
+      throw new Error('Published Geometry를 수정하면 Draft Version이 먼저 생성되어야 합니다.')
     },
     [selectedCoordinate],
   )
@@ -466,13 +468,14 @@ export function useGeometryManagerState({
       const repositorySlug = repositoryRecord?.slug ?? repository
       const coordinate =
         `caemble:geometry/${ownerNamespace}/${repositorySlug}/${packageName}@local` as LocalGeometryCoordinate
-      if (draftsRef.current[coordinate]) throw new Error('이 Package의 local draft가 이미 열려 있습니다.')
-      const draft: GeometryLocalDraft = {
+      if (draftsRef.current[coordinate]) throw new Error('이 Package의 Draft Version이 이미 있습니다.')
+      const draft: GeometryDraftVersion = {
         draftId: crypto.randomUUID(),
         coordinate,
         source: source ?? draftGeometrySource(packageName),
         description,
         baseGeometryVersionId: null,
+        originCatalogKey: null,
         repository: repositorySlug,
         packageName,
         repositoryId,
@@ -492,36 +495,34 @@ export function useGeometryManagerState({
     [namespace, repositories],
   )
 
-  const openCatalogDraft = useCallback(
+  const updateCatalogSource = useCallback(
     ({ key, source, description }: { key: string; source: string; description: string }) => {
       if (!namespace) throw new Error('기본 Geometry namespace를 먼저 설정하세요.')
       const coordinate = `caemble:geometry/${namespace}/catalog/${key}@local` as LocalGeometryCoordinate
-      if (draftsRef.current[coordinate]) {
-        setTransientPreview(null)
-        setSelectedCoordinateState(coordinate)
-        return { coordinate, created: false }
-      }
-      analyzeGeometrySource(source, { allowLocal: true })
-      const draft: GeometryLocalDraft = {
-        draftId: crypto.randomUUID(),
-        coordinate,
-        source,
-        description,
-        baseGeometryVersionId: null,
-        repository: 'catalog',
-        packageName: key,
-        repositoryId: null,
-        packageId: null,
-        version: '0.1.0',
-        bump: 'patch',
-        standalonePreview: true,
-      }
+      const existing = draftsRef.current[coordinate]
+      const draft: GeometryDraftVersion = existing
+        ? { ...existing, source }
+        : {
+            draftId: crypto.randomUUID(),
+            coordinate,
+            source,
+            description,
+            baseGeometryVersionId: null,
+            originCatalogKey: key,
+            repository: 'catalog',
+            packageName: key,
+            repositoryId: null,
+            packageId: null,
+            version: '0.1.0',
+            bump: 'patch',
+            standalonePreview: true,
+          }
       const next = { ...draftsRef.current, [coordinate]: draft }
       draftsRef.current = next
       setDrafts(next)
       setTransientPreview(null)
       setSelectedCoordinateState(coordinate)
-      return { coordinate, created: true }
+      return { coordinate, created: !existing }
     },
     [namespace],
   )
@@ -586,7 +587,9 @@ export function useGeometryManagerState({
       }
       const localImport = analysis.imports.find((item) => localCoordinatePattern.test(item.coordinate))
       if (localImport) {
-        throw new Error(`@local dependency를 먼저 발행하세요: ${localImport.coordinate}`)
+        throw new Error(
+          `발행 전 Draft dependency를 먼저 발행하세요: ${coordinateParts(localImport.coordinate).packageName}`,
+        )
       }
       const repositoryRecord = repositories.find((item) => item.id === repositoryId)
       if (repositoryId !== null && !repositoryRecord) {
@@ -598,7 +601,7 @@ export function useGeometryManagerState({
         `caemble:geometry/${ownerNamespace}/${repositorySlug}/${packageName}@local` as LocalGeometryCoordinate
       const exactCoordinate = `caemble:geometry/${ownerNamespace}/${repositorySlug}/${packageName}@0.1.0`
       if (draftsRef.current[coordinate]) {
-        throw new Error('같은 Package의 local draft가 열려 있습니다. 먼저 발행하거나 폐기하세요.')
+        throw new Error('같은 Package의 Draft Version이 있습니다. 먼저 발행하거나 폐기하세요.')
       }
       const draftId = crypto.randomUUID()
       const request = {
@@ -699,35 +702,53 @@ export function useGeometryManagerState({
     [authenticated, namespace, queryClient, refreshRepositories, repositories, stageResolved],
   )
 
-  const editPublishedVersion = useCallback(
-    async (versionId: number, repositoryId?: number, packageId?: number) => {
-      const resolved = await stageResolved(versionId)
-      const coordinate = resolved.root.coordinate
-      const module = resolved.modules.find((item) => item.coordinate === coordinate)!
+  const updatePublishedSource = useCallback(
+    ({
+      versionId,
+      coordinate,
+      source,
+      description,
+      repositoryId,
+      packageId,
+    }: {
+      versionId: number
+      coordinate: GeometryModuleCoordinate
+      source: string
+      description: string
+      repositoryId: number | null
+      packageId: number
+    }) => {
       const parts = coordinateParts(coordinate)
       const local = localCoordinate(coordinate)
-      const draft: GeometryLocalDraft = {
-        draftId: crypto.randomUUID(),
-        coordinate: local,
-        source: module.source,
-        description: module.description ?? '',
-        baseGeometryVersionId: versionId,
-        repository: parts.repository,
-        packageName: parts.packageName,
-        repositoryId: repositoryId ?? null,
-        packageId: packageId ?? null,
-        version: parts.version,
-        bump: 'patch',
-        standalonePreview: true,
+      const existing = draftsRef.current[local]
+      if (existing && existing.baseGeometryVersionId !== versionId) {
+        throw new Error('이 Package의 Draft Version을 선택하거나 폐기한 뒤 다른 Version을 편집하세요.')
       }
+      const draft: GeometryDraftVersion = existing
+        ? { ...existing, source }
+        : {
+            draftId: crypto.randomUUID(),
+            coordinate: local,
+            source,
+            description,
+            baseGeometryVersionId: versionId,
+            originCatalogKey: null,
+            repository: parts.repository,
+            packageName: parts.packageName,
+            repositoryId,
+            packageId,
+            version: parts.version,
+            bump: 'patch',
+            standalonePreview: true,
+          }
       const next = { ...draftsRef.current, [local]: draft }
       draftsRef.current = next
       setDrafts(next)
       setTransientPreview(null)
       setSelectedCoordinateState(local)
-      return local
+      return { coordinate: local, created: !existing }
     },
-    [stageResolved],
+    [],
   )
 
   const usePublishedExport = useCallback(
@@ -760,7 +781,7 @@ export function useGeometryManagerState({
         Object.values(draftsRef.current)
           .filter((draft) => !publishedDraftIds.has(draft.draftId))
           .map((draft) => [draft.coordinate, { ...draft, source: rewriteCoordinates(draft.source, replacements) }]),
-      ) as Readonly<Record<string, GeometryLocalDraft>>
+      ) as Readonly<Record<string, GeometryDraftVersion>>
       const publishedModules = await resolvePublishedModules(result.published.map((item) => item.id))
       const allModules = mergedModules(managerModulesRef.current, publishedModules)
       draftsRef.current = nextDrafts
@@ -850,7 +871,7 @@ export function useGeometryManagerState({
       )
       if (local) {
         throw new Error(
-          `Experiment geometry.tsx의 @local import를 Geometry 탭에서 먼저 발행하고 exact Version으로 바꾸세요: ${local.coordinate}`,
+          `Experiment geometry.tsx가 발행 전 Draft Version을 참조합니다. Geometry 탭에서 ${coordinateParts(local.coordinate).packageName}을 먼저 발행하고 exact Version으로 바꾸세요.`,
         )
       }
       const nextSnapshot = snapshotFromEntrySource(
@@ -876,6 +897,54 @@ export function useGeometryManagerState({
     [applyNamespace, authenticated],
   )
 
+  const updateDraftPackage = useCallback(
+    (
+      coordinate: GeometryModuleCoordinate,
+      {
+        repository,
+        packageName,
+        repositoryId,
+      }: { repository: string; packageName: string; repositoryId: number | null },
+    ) => {
+      const draft = draftsRef.current[coordinate]
+      if (!draft || draft.baseGeometryVersionId !== null) return
+      if (!namespace) throw new Error('기본 Geometry namespace를 먼저 설정하세요.')
+      const repositoryRecord = repositories.find((item) => item.id === repositoryId)
+      if (repositoryId !== null && !repositoryRecord) throw new Error('선택한 Geometry Repository를 찾을 수 없습니다.')
+      const ownerNamespace = repositoryRecord?.namespace ?? namespace
+      const repositorySlug = repositoryRecord?.slug ?? repository
+      const nextCoordinate =
+        `caemble:geometry/${ownerNamespace}/${repositorySlug}/${packageName}@local` as LocalGeometryCoordinate
+      coordinateParts(nextCoordinate)
+      if (nextCoordinate !== coordinate && draftsRef.current[nextCoordinate]) {
+        throw new Error('이 Package의 Draft Version이 이미 있습니다.')
+      }
+      const nextDrafts = Object.fromEntries(
+        Object.values(draftsRef.current).map((item) => {
+          const source = item.source.split(coordinate).join(nextCoordinate)
+          return item.coordinate === coordinate
+            ? [
+                nextCoordinate,
+                {
+                  ...item,
+                  coordinate: nextCoordinate,
+                  source,
+                  repository: repositorySlug,
+                  packageName,
+                  repositoryId,
+                },
+              ]
+            : [item.coordinate, { ...item, source }]
+        }),
+      ) as Readonly<Record<string, GeometryDraftVersion>>
+      draftsRef.current = nextDrafts
+      setDrafts(nextDrafts)
+      setSelectedCoordinateState(nextCoordinate)
+      return nextCoordinate
+    },
+    [namespace, repositories],
+  )
+
   const discardDraft = useCallback((coordinate: GeometryModuleCoordinate) => {
     const draft = draftsRef.current[coordinate]
     if (!draft) return
@@ -886,13 +955,13 @@ export function useGeometryManagerState({
         ),
     )
     if (referenced) {
-      throw new Error('이 local Geometry를 참조하는 source import를 먼저 제거하세요.')
+      throw new Error('이 Draft Version을 참조하는 source import를 먼저 제거하세요.')
     }
     const next = Object.fromEntries(
       Object.values(draftsRef.current)
         .filter((item) => item.coordinate !== coordinate)
         .map((item) => [item.coordinate, item]),
-    ) as Readonly<Record<string, GeometryLocalDraft>>
+    ) as Readonly<Record<string, GeometryDraftVersion>>
     draftsRef.current = next
     setDrafts(next)
     setSelectedCoordinateState(null)
@@ -916,7 +985,7 @@ export function useGeometryManagerState({
     ) => {
       const replacements: Record<string, string> = {}
       if (namespace) {
-        Object.values(manager.drafts).forEach((draft) => {
+        Object.values(manager.draftVersions).forEach((draft) => {
           if (draft.baseGeometryVersionId !== null || draft.repositoryId !== null) return
           const parts = coordinateParts(draft.coordinate)
           if (parts.namespace !== namespace) {
@@ -926,25 +995,25 @@ export function useGeometryManagerState({
         })
       }
       let nextSource = source
-      let nextDrafts = manager.drafts
+      let nextDrafts = manager.draftVersions
       if (Object.keys(replacements).length) {
         try {
-          const targetCoordinates = Object.values(manager.drafts).map(
+          const targetCoordinates = Object.values(manager.draftVersions).map(
             (draft) => replacements[draft.coordinate] ?? draft.coordinate,
           )
           if (targetCoordinates.length !== new Set(targetCoordinates).size) {
-            throw new Error('복원한 Geometry draft의 coordinate가 현재 namespace에서 충돌합니다.')
+            throw new Error('복원한 Draft Version의 coordinate가 현재 namespace에서 충돌합니다.')
           }
           nextSource = rewriteCoordinates(source, replacements)
           nextDrafts = Object.fromEntries(
-            Object.values(manager.drafts).map((draft) => {
+            Object.values(manager.draftVersions).map((draft) => {
               const coordinate = (replacements[draft.coordinate] ?? draft.coordinate) as LocalGeometryCoordinate
               return [coordinate, { ...draft, coordinate, source: rewriteCoordinates(draft.source, replacements) }]
             }),
-          ) as Readonly<Record<string, GeometryLocalDraft>>
+          ) as Readonly<Record<string, GeometryDraftVersion>>
         } catch (cause) {
           setGraphError(
-            `복원한 draft를 현재 namespace로 조정하지 못했습니다. source 오류를 수정한 뒤 namespace를 다시 적용하세요. ${cause instanceof Error ? cause.message : String(cause)}`,
+            `복원한 Draft Version을 현재 namespace로 조정하지 못했습니다. source 오류를 수정한 뒤 namespace를 다시 적용하세요. ${cause instanceof Error ? cause.message : String(cause)}`,
           )
         }
       }
@@ -957,11 +1026,13 @@ export function useGeometryManagerState({
       setExperimentModules(experimentGeometry.stagedModules)
       setEntrySource(nextSource)
       setSelectedCoordinateState(
-        nextDrafts !== manager.drafts && manager.selectedCoordinate
-          ? ((replacements[manager.selectedCoordinate] ?? manager.selectedCoordinate) as GeometryModuleCoordinate)
-          : manager.selectedCoordinate,
+        nextDrafts !== manager.draftVersions && manager.selection.coordinate
+          ? ((replacements[manager.selection.coordinate] ?? manager.selection.coordinate) as GeometryModuleCoordinate)
+          : manager.selection.coordinate,
       )
-      setSelectedExport(manager.selectedExport)
+      setSelectedExport(manager.selection.exportName)
+      setManagerView(manager.selection.view)
+      setSelectedCatalogKey(manager.selection.catalogKey)
       setPreviewScene(null)
       setPreviewSceneHash(null)
       return nextSource
@@ -996,11 +1067,13 @@ export function useGeometryManagerState({
 
   return {
     namespace,
+    managerView,
+    selectedCatalogKey,
     repositories,
     currentSnapshot,
     entrySource,
     entryExports,
-    drafts,
+    draftVersions: drafts,
     managerModules,
     experimentModules,
     selectedCoordinate,
@@ -1026,6 +1099,8 @@ export function useGeometryManagerState({
     busy,
     publishPlan,
     setPublishPlan,
+    setManagerView,
+    setSelectedCatalogKey,
     setNamespace,
     refreshRepositories,
     createRepository: async (slug: string, description?: string | null) => {
@@ -1047,14 +1122,15 @@ export function useGeometryManagerState({
       return result
     },
     createDraft,
-    openCatalogDraft,
-    editPublishedVersion,
+    updateCatalogSource,
+    updatePublishedSource,
     usePublishedExport,
     publishNewGeometry,
     stageResolved,
     previewPublishedVersion,
     previewSource,
     updateSource,
+    updateDraftPackage,
     updateDescription: (coordinate: GeometryModuleCoordinate, description: string) => {
       const draft = draftsRef.current[coordinate]
       if (!draft) return
@@ -1062,10 +1138,17 @@ export function useGeometryManagerState({
       draftsRef.current = next
       setDrafts(next)
     },
-    setBump: (coordinate: GeometryModuleCoordinate, bump: GeometryLocalDraft['bump']) => {
+    setBump: (coordinate: GeometryModuleCoordinate, bump: GeometryDraftVersion['bump']) => {
       const draft = draftsRef.current[coordinate]
       if (!draft) return
       const next = { ...draftsRef.current, [coordinate]: { ...draft, bump } }
+      draftsRef.current = next
+      setDrafts(next)
+    },
+    setVersion: (coordinate: GeometryModuleCoordinate, version: string) => {
+      const draft = draftsRef.current[coordinate]
+      if (!draft || draft.baseGeometryVersionId !== null) return
+      const next = { ...draftsRef.current, [coordinate]: { ...draft, version } }
       draftsRef.current = next
       setDrafts(next)
     },
@@ -1079,10 +1162,14 @@ export function useGeometryManagerState({
     restore,
     draftState: () => ({
       geometryManager: {
-        drafts: draftsRef.current,
+        draftVersions: draftsRef.current,
         resolvedModules: managerModulesRef.current,
-        selectedCoordinate,
-        selectedExport,
+        selection: {
+          view: managerView,
+          catalogKey: selectedCatalogKey,
+          coordinate: selectedCoordinate,
+          exportName: selectedExport,
+        },
       } satisfies WorkbenchDraft['geometryManager'],
       experimentGeometry: {
         stagedModules: experimentModulesRef.current,
