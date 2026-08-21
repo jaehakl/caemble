@@ -390,6 +390,9 @@ test('keeps Example Geometry read-only for anonymous users in the unified manage
   await expect(manager.getByRole('option', { name: 'local' })).toHaveCount(1)
   await manager.getByRole('button', { name: /Basketball Goal/ }).click()
   await expect(manager.locator('.monaco-editor:visible')).toBeVisible()
+  await expect(manager.locator('.monaco-editor:visible .view-lines')).toContainText('BasketballGoal')
+  await expect(manager.getByRole('combobox', { name: 'Namespace' })).toHaveValue('examples')
+  await expect(manager.getByRole('combobox', { name: 'Repository' })).toHaveValue('all')
   await expect(manager.getByRole('button', { name: '개인 Repository로 Fork' })).toBeDisabled()
   await expect(page.locator('footer').last()).toContainText('Draft Versions · 0')
 

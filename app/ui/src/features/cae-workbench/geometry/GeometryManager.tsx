@@ -11,7 +11,7 @@ import {
   Search,
   Trash2,
 } from 'lucide-react'
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 import { dbTables, geometryApi, getListRequest, type GeometryPackageRecord } from '@/api'
 import { catalogApi, catalogQueryKeys, type CatalogGeometryDetail, type CatalogGeometryListItem } from '@/api/catalog'
@@ -121,6 +121,7 @@ function WorkspaceGeometryManager({
   const [forkDetail, setForkDetail] = useState<CatalogGeometryDetail | null>(null)
   const [forkRepositoryId, setForkRepositoryId] = useState<number | null>(null)
   const [repositoryManagerOpen, setRepositoryManagerOpen] = useState(false)
+  const appliedInitialTargetRef = useRef<string | null>(null)
   const draftVersions = useMemo(() => Object.values(geometry.draftVersions), [geometry.draftVersions])
   const examplesVisible = selectedNamespace === EXAMPLES_NAMESPACE || selectedNamespace === ALL_NAMESPACES
   const workspaceVisible = selectedNamespace !== EXAMPLES_NAMESPACE
@@ -387,21 +388,25 @@ function WorkspaceGeometryManager({
   }, [experimentSearch, selectedVersionId])
   useEffect(() => {
     const initialVersion = initialVersionQuery.data?.items[0]
-    if (initialVersion) {
-      const namespace = coordinateNamespace(initialVersion.coordinate)
-      if (namespace) setSelectedNamespace(namespace)
-      setSelectedRepositoryFilter(coordinateRepository(initialVersion.coordinate) ?? 'all')
-      setManagerView('workspace')
-      setSelectedPackageId(initialVersion.package_id)
-      setSelectedVersionId(initialVersion.id)
-    }
+    const target = initialVersion ? `version:${initialVersion.id}` : null
+    if (!initialVersion || appliedInitialTargetRef.current === target) return
+    appliedInitialTargetRef.current = target
+    const namespace = coordinateNamespace(initialVersion.coordinate)
+    if (namespace) setSelectedNamespace(namespace)
+    setSelectedRepositoryFilter(coordinateRepository(initialVersion.coordinate) ?? 'all')
+    setManagerView('workspace')
+    setSelectedPackageId(initialVersion.package_id)
+    setSelectedVersionId(initialVersion.id)
   }, [initialVersionQuery.data?.items, setManagerView, setSelectedNamespace, setSelectedRepositoryFilter])
   useEffect(() => {
-    if (!selectedPackage) return
+    if (!selectedPackage || initialPackageId === null || selectedPackage.id !== initialPackageId) return
+    const target = `package:${selectedPackage.id}`
+    if (appliedInitialTargetRef.current === target) return
+    appliedInitialTargetRef.current = target
     setSelectedNamespace(selectedPackage.namespace)
     setSelectedRepositoryFilter(`${selectedPackage.namespace}/${selectedPackage.repository}`)
     setManagerView('workspace')
-  }, [selectedPackage, setManagerView, setSelectedNamespace, setSelectedRepositoryFilter])
+  }, [initialPackageId, selectedPackage, setManagerView, setSelectedNamespace, setSelectedRepositoryFilter])
   useEffect(() => {
     if (!workspaceVisible || geometry.managerView !== 'workspace' || selectedPackageId || selectedDraftCoordinate)
       return
@@ -853,7 +858,6 @@ function WorkspaceGeometryManager({
                   onClick={() => {
                     setSelectedCatalogKey(row.item.key)
                     setManagerView('examples')
-                    setSelectedRepositoryFilter(`${EXAMPLES_NAMESPACE}/${row.item.repository}`)
                   }}
                   type="button"
                 >
@@ -1045,7 +1049,7 @@ function WorkspaceGeometryManager({
                   마지막 정상 Viewer scene을 유지합니다. {geometry.previewError}
                 </div>
               ) : null}
-              <div className="min-h-[28rem] flex-1">
+              <div className="h-[28rem]">
                 <CadEditor
                   diagnostics={[]}
                   modelPath={`file:///geometry-manager/official/${officialDetailQuery.data.key}.tsx`}

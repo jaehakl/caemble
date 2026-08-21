@@ -8,7 +8,11 @@ import type { GeometryPackageRecord, GeometryRepositoryRecord } from '@/api'
 import { GeometryManager } from './GeometryManager'
 import type { GeometryManagerState } from './useGeometryWorkspaceState'
 
-type PackageListRequest = { text_filter?: Record<string, string[]> }
+type PackageListRequest = {
+  selected_ids?: number[]
+  text_filter?: Record<string, string[]>
+  filter?: Record<string, unknown[]>
+}
 
 const mocks = vi.hoisted(() => ({
   authenticated: false,
@@ -22,6 +26,7 @@ const mocks = vi.hoisted(() => ({
       return { total: 0, items: [] }
     },
   ),
+  listVersions: vi.fn(async () => ({ total: 0, items: [] })),
   listRepositories: vi.fn(async (): Promise<{ total: number; items: GeometryRepositoryRecord[] }> => ({
     total: 0,
     items: [],
@@ -39,6 +44,7 @@ vi.mock('@/api', async (importActual) => {
       ...actual.dbTables,
       GeometryPackage: { ...actual.dbTables.GeometryPackage, listRows: mocks.listPackages },
       GeometryRepository: { ...actual.dbTables.GeometryRepository, listRows: mocks.listRepositories },
+      GeometryVersion: { ...actual.dbTables.GeometryVersion, listRows: mocks.listVersions },
     },
   }
 })
@@ -91,6 +97,35 @@ const geometryDetail = {
   ...geometryItem,
   source: "import { type Geometry } from '@caemble/core'\nexport const BasketballGoal: Geometry = () => <></>\n",
 }
+
+const workspacePackages: GeometryPackageRecord[] = [
+  {
+    id: 7,
+    repository_id: 3,
+    name: 'bracket',
+    user_id: 'user-1',
+    namespace: 'designer',
+    repository: 'forks',
+    repository_archived_at: null,
+    version_count: 0,
+    latest_version: null,
+    created_at: null,
+    updated_at: null,
+  },
+  {
+    id: 8,
+    repository_id: 4,
+    name: 'plate',
+    user_id: 'user-2',
+    namespace: 'shared',
+    repository: 'catalog',
+    repository_archived_at: null,
+    version_count: 0,
+    latest_version: null,
+    created_at: null,
+    updated_at: null,
+  },
+]
 
 function Harness({ children }: { children: ReactNode }) {
   return (
@@ -171,6 +206,7 @@ describe('unified Geometry Manager', () => {
       .mockReset()
       .mockResolvedValue([{ slug: 'getting-started', title: 'Getting Started', description: '', ordinal: 0 }])
     mocks.listPackages.mockReset().mockResolvedValue({ total: 0, items: [] })
+    mocks.listVersions.mockReset().mockResolvedValue({ total: 0, items: [] })
     mocks.listRepositories.mockReset().mockResolvedValue({ total: 0, items: [] })
   })
   afterEach(cleanup)
@@ -190,7 +226,12 @@ describe('unified Geometry Manager', () => {
     expect(screen.queryByLabelText('Workspace Packages')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Geometry Packages list')).toHaveTextContent('Basketball Goal')
     expect(screen.getByRole('textbox', { name: 'Geometry source' })).toHaveAttribute('readonly')
+    expect(screen.getByRole('textbox', { name: 'Geometry source' })).toHaveValue(geometryDetail.source)
     expect(screen.getByRole('button', { name: '개인 Repository로 Fork' })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: /Basketball Goal/ }))
+    expect(screen.getByRole('combobox', { name: 'Namespace' })).toHaveValue('examples')
+    expect(screen.getByRole('combobox', { name: 'Repository' })).toHaveValue('all')
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Geometry source' }), {
       target: { value: 'export const BasketballGoal = () => <box />' },
@@ -242,6 +283,72 @@ describe('unified Geometry Manager', () => {
       ),
     )
     expect(screen.getByRole('option', { name: '모든 namespace' })).toBeInTheDocument()
+  })
+
+  it('keeps Package selection independent from namespace and Repository filters', async () => {
+    mocks.authenticated = true
+    mocks.user = { roles: ['admin'] }
+    const repositories: GeometryRepositoryRecord[] = [
+      {
+        id: 3,
+        namespace: 'designer',
+        slug: 'forks',
+        user_id: 'user-1',
+        description: null,
+        archived_at: null,
+        created_at: null,
+        updated_at: null,
+      },
+      {
+        id: 4,
+        namespace: 'shared',
+        slug: 'catalog',
+        user_id: 'user-2',
+        description: null,
+        archived_at: null,
+        created_at: null,
+        updated_at: null,
+      },
+    ]
+    mocks.listRepositories.mockResolvedValue({ total: repositories.length, items: repositories })
+    mocks.listPackages.mockImplementation(async (request?: PackageListRequest) => {
+      let items = workspacePackages
+      if (request?.selected_ids?.length) {
+        items = items.filter((item) => request.selected_ids!.includes(item.id))
+      }
+      const namespace = request?.text_filter?.namespace?.[0]
+      if (namespace) items = items.filter((item) => item.namespace === namespace)
+      const repositoryId = request?.filter?.repository_id?.[0]
+      if (typeof repositoryId === 'number') items = items.filter((item) => item.repository_id === repositoryId)
+      return { total: items.length, items }
+    })
+    renderManager('designer')
+
+    const namespaceSelector = screen.getByRole('combobox', { name: 'Namespace' })
+    const repositorySelector = screen.getByRole('combobox', { name: 'Repository' })
+    await screen.findByRole('option', { name: 'designer' })
+
+    fireEvent.change(namespaceSelector, { target: { value: 'all' } })
+    const packageRow = await screen.findByText('designer/forks/bracket')
+    fireEvent.click(packageRow.closest('[role="button"]')!)
+    await screen.findByRole('heading', { name: 'bracket' })
+    expect(namespaceSelector).toHaveValue('all')
+    expect(repositorySelector).toHaveValue('all')
+
+    fireEvent.change(namespaceSelector, { target: { value: 'designer' } })
+    await waitFor(() => expect(repositorySelector).toContainElement(screen.getByRole('option', { name: 'forks' })))
+    fireEvent.change(repositorySelector, { target: { value: 'designer/forks' } })
+    fireEvent.change(namespaceSelector, { target: { value: 'all' } })
+    await waitFor(() => {
+      expect(namespaceSelector).toHaveValue('all')
+      expect(repositorySelector).toHaveValue('all')
+    })
+
+    fireEvent.change(namespaceSelector, { target: { value: 'designer' } })
+    await waitFor(() => expect(repositorySelector).toContainElement(screen.getByRole('option', { name: 'forks' })))
+    fireEvent.change(repositorySelector, { target: { value: 'designer/forks' } })
+    fireEvent.change(repositorySelector, { target: { value: 'all' } })
+    await waitFor(() => expect(repositorySelector).toHaveValue('all'))
   })
 
   it('creates an Example fork only after the signed-in user confirms its target', async () => {
