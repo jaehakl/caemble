@@ -13,6 +13,7 @@ import {
 import { ConfirmWorkbenchDialog } from '@/features/cae-workbench/dialogs'
 import { ExperimentEditor, RecordedDataEditor } from '@/features/cae-workbench/editors'
 import { GeometryManager } from '@/features/cae-workbench/geometry'
+import type { GeometryManagerRibbonState } from '@/features/cae-workbench/geometry/geometryManagerTypes'
 import { useCaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { WorkbenchTabId } from '@/features/cae-workbench/types'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
@@ -43,10 +44,12 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const page = useCaePageSession(workbench)
   const [experimentAuthoringState, setExperimentAuthoringState] = useState<CadEditorAuthoringState | null>(null)
   const [geometryAuthoringState, setGeometryAuthoringState] = useState<CadEditorAuthoringState | null>(null)
+  const [geometryManagerRibbonState, setGeometryManagerRibbonState] = useState<GeometryManagerRibbonState | null>(null)
   const chrome = useCaePageChrome({
     authenticated: auth.isAuthenticated,
     experimentAuthoringState,
     geometryAuthoringState,
+    geometryManagerRibbonState,
     guardReplacement: page.guardReplacement,
     openTab: page.openTab,
     requestRunSelected: page.requestRunSelected,
@@ -113,6 +116,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           <GeometryManager
             geometry={workbench.geometry}
             onAuthoringStateChange={setGeometryAuthoringState}
+            onRibbonStateChange={setGeometryManagerRibbonState}
             onOpenExperiment={(experimentId) =>
               page.guardReplacement(async () => {
                 await workbench.loadExperiment(experimentId)

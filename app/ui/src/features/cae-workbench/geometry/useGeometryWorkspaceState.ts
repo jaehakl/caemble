@@ -1268,7 +1268,7 @@ export function useGeometryManagerState({
     requestPublish,
     confirmPublish,
     prepareExperimentSave,
-    setSelectedCoordinate: (coordinate: GeometryModuleCoordinate | null) => setSelectedCoordinateState(coordinate),
+    setSelectedCoordinate: setSelectedCoordinateState,
     setSelectedExport,
     syncSnapshot,
     restore,

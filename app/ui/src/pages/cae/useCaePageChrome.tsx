@@ -28,6 +28,8 @@ import type { WorkbenchAction, WorkbenchMenuDefinition } from '@/features/cae-wo
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { WorkbenchTabId } from '@/features/cae-workbench/types'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
+import { GeometryManagerRibbon } from '@/features/cae-workbench/geometry/GeometryManagerRibbon'
+import type { GeometryManagerRibbonState } from '@/features/cae-workbench/geometry/geometryManagerTypes'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 import type { WorkbenchDialog } from './caePageTypes'
 import { GeometryAuthoringRibbon } from './GeometryAuthoringRibbon'
@@ -41,6 +43,7 @@ export function useCaePageChrome({
   authenticated,
   experimentAuthoringState,
   geometryAuthoringState,
+  geometryManagerRibbonState = null,
   guardReplacement,
   openTab,
   requestRunSelected,
@@ -51,6 +54,7 @@ export function useCaePageChrome({
   authenticated: boolean
   experimentAuthoringState: CadEditorAuthoringState | null
   geometryAuthoringState: CadEditorAuthoringState | null
+  geometryManagerRibbonState?: GeometryManagerRibbonState | null
   guardReplacement: (run: () => unknown | Promise<unknown>) => void
   openTab: (tab: WorkbenchTabId) => void
   requestRunSelected: () => void
@@ -499,12 +503,10 @@ export function useCaePageChrome({
       tabId: 'geometry',
       label: 'Geometry',
       content: (
-        <RibbonActions actions={[]} extraActions={<GeometryAuthoringRibbon state={geometryAuthoringState} />}>
-          <span className="text-sm font-semibold">Geometry Manager</span>
-          <span className="mt-1 text-xs text-muted-foreground">
-            Draft Versions · {Object.keys(workbench.geometry.draftVersions).length}
-          </span>
-        </RibbonActions>
+        <GeometryManagerRibbon
+          extraActions={<GeometryAuthoringRibbon state={geometryAuthoringState} />}
+          state={geometryManagerRibbonState}
+        />
       ),
     },
     {

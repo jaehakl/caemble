@@ -6,6 +6,8 @@ import { useState, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GeometryPackageRecord, GeometryRepositoryRecord, GeometryVersionRecord } from '@/api'
 import { GeometryManager } from './GeometryManager'
+import { GeometryManagerRibbon } from './GeometryManagerRibbon'
+import type { GeometryManagerRibbonState } from './geometryManagerTypes'
 import type { GeometryManagerState } from './useGeometryWorkspaceState'
 
 type PackageListRequest = {
@@ -150,55 +152,61 @@ function renderManager(
   const setManagerNamespace = vi.fn()
   const setManagerRepository = vi.fn()
   const setSelectedCatalogKey = vi.fn()
+  const setSelectedCoordinate = vi.fn()
   function StatefulManager() {
     const [managerView, applyManagerView] = useState<'examples' | 'workspace'>('examples')
     const [managerNamespace, applyManagerNamespace] = useState('examples')
     const [managerRepository, applyManagerRepository] = useState('all')
     const [selectedCatalogKey, applySelectedCatalogKey] = useState<string | null>('basketball-goal')
+    const [ribbonState, setRibbonState] = useState<GeometryManagerRibbonState | null>(null)
     return (
-      <GeometryManager
-        geometry={
-          {
-            namespace,
-            draftVersions: {},
-            managerView,
-            managerNamespace,
-            managerRepository,
-            publishPlan: null,
-            repositories,
-            selectedCoordinate: managerSelection.selectedCoordinate ?? null,
-            selectedCatalogKey,
-            currentSnapshot: { schemaVersion: 2, entryImports: [], modules: [] },
-            managerModules: managerSelection.managerModules ?? [],
-            experimentModules: [],
-            previewDiagnostics: [],
-            previewError: null,
-            previewPublishedVersion,
-            previewSource,
-            setSelectedCoordinate: vi.fn(),
-            setManagerView: (value: 'examples' | 'workspace') => {
-              setManagerView(value)
-              applyManagerView(value)
-            },
-            setManagerNamespace: (value: string) => {
-              setManagerNamespace(value)
-              applyManagerNamespace(value)
-            },
-            setManagerRepository: (value: string) => {
-              setManagerRepository(value)
-              applyManagerRepository(value)
-            },
-            setSelectedCatalogKey: (value: string | null) => {
-              setSelectedCatalogKey(value)
-              applySelectedCatalogKey(value)
-            },
-            forkOfficial,
-          } as unknown as GeometryManagerState
-        }
-        onOpenExperiment={vi.fn()}
-        onOpenGeometrySource={vi.fn()}
-        onUse={vi.fn()}
-      />
+      <>
+        <GeometryManagerRibbon state={ribbonState} />
+        <GeometryManager
+          geometry={
+            {
+              namespace,
+              draftVersions: {},
+              managerView,
+              managerNamespace,
+              managerRepository,
+              publishPlan: null,
+              repositories,
+              selectedCoordinate: managerSelection.selectedCoordinate ?? null,
+              selectedCatalogKey,
+              currentSnapshot: { schemaVersion: 2, entryImports: [], modules: [] },
+              managerModules: managerSelection.managerModules ?? [],
+              experimentModules: [],
+              previewDiagnostics: [],
+              previewError: null,
+              previewPublishedVersion,
+              previewSource,
+              setSelectedCoordinate,
+              setManagerView: (value: 'examples' | 'workspace') => {
+                setManagerView(value)
+                applyManagerView(value)
+              },
+              setManagerNamespace: (value: string) => {
+                setManagerNamespace(value)
+                applyManagerNamespace(value)
+              },
+              setManagerRepository: (value: string) => {
+                setManagerRepository(value)
+                applyManagerRepository(value)
+              },
+              setSelectedCatalogKey: (value: string | null) => {
+                setSelectedCatalogKey(value)
+                applySelectedCatalogKey(value)
+              },
+              forkOfficial,
+            } as unknown as GeometryManagerState
+          }
+          onOpenExperiment={vi.fn()}
+          onOpenGeometrySource={vi.fn()}
+          onRibbonStateChange={setRibbonState}
+          onUse={vi.fn()}
+        />
+      </>
     )
   }
   return {
@@ -260,6 +268,8 @@ describe('unified Geometry Manager', () => {
     fireEvent.change(screen.getByRole('combobox', { name: 'Namespace' }), { target: { value: 'local' } })
     expect(await screen.findByText('표시할 Geometry가 없습니다.')).toBeInTheDocument()
     expect(screen.getByLabelText('Geometry Packages list')).not.toHaveTextContent('Basketball Goal')
+    expect(await screen.findByRole('status')).toHaveTextContent('현재 목록 필터 밖의 선택 항목')
+    expect(screen.getByRole('textbox', { name: 'Geometry source' })).toHaveValue(geometryDetail.source)
   })
 
   it('requests and displays exactly one Workspace namespace', async () => {
@@ -351,12 +361,17 @@ describe('unified Geometry Manager', () => {
     const packageRow = await screen.findByText('designer/forks/bracket')
     setManagerNamespace.mockClear()
     setManagerRepository.mockClear()
-    fireEvent.click(packageRow.closest('[role="button"]')!)
+    fireEvent.click(packageRow.closest('button')!)
     await screen.findByRole('heading', { name: 'bracket' })
     expect(namespaceSelector).toHaveValue('all')
     expect(repositorySelector).toHaveValue('all')
     expect(setManagerNamespace).not.toHaveBeenCalled()
     expect(setManagerRepository).not.toHaveBeenCalled()
+
+    fireEvent.change(namespaceSelector, { target: { value: 'shared' } })
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'bracket' })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('현재 목록 필터 밖의 선택 항목'))
+    fireEvent.change(namespaceSelector, { target: { value: 'all' } })
 
     fireEvent.change(namespaceSelector, { target: { value: 'designer' } })
     await waitFor(() => expect(repositorySelector).toContainElement(screen.getByRole('option', { name: 'forks' })))
