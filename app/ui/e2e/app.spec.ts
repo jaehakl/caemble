@@ -75,7 +75,14 @@ async function mockCanonicalCatalog(page: Page) {
     const match = url.pathname.match(/^\/api\/catalog\/(experiments|geometries)(?:\/([^/]+))?$/u)
     if (!match) return route.fallback()
     const kind = match[1] === 'experiments' ? 'experiment' : 'geometry'
-    if (match[2]) return json(route, canonicalCatalogQuery(kind, decodeURIComponent(match[2])))
+    if (match[2]) {
+      const detail = canonicalCatalogQuery(kind, decodeURIComponent(match[2])) as Record<string, unknown>
+      if (kind === 'experiment') {
+        const verification = detail.verification as Record<string, unknown>
+        return json(route, { ...detail, verification: { ...verification, fixture: verification.fixture ?? null } })
+      }
+      return json(route, detail)
+    }
     const query = (url.searchParams.get('q') ?? '').trim().toLowerCase()
     const element = url.searchParams.get('element')
     const solverName = url.searchParams.get('solverName')

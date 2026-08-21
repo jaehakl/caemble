@@ -119,6 +119,12 @@ async def test_official_geometries_and_experiments_are_public_filterable_and_cac
     assert detail.status_code == 200, detail.text
     assert detail.json()["sourceBundle"]["formatVersion"] == 5
     assert detail.json()["verification"]["kernelTasks"] == ["solveCurrent"]
+    assert detail.json()["verification"]["fixture"]["records"][0]["name"] == "totalCurrent"
+
+    for key in ("dc-notched-current-density", "dc-resolution-study", "electro-thermal-uniform-bar"):
+        without_fixture = await catalog_client.get(f"/catalog/experiments/{key}")
+        assert without_fixture.status_code == 200, without_fixture.text
+        assert without_fixture.json()["verification"]["fixture"] is None
 
     search = await catalog_client.get("/catalog/search", params={"q": "wheel"})
     assert {item["kind"] for item in search.json()["items"]} >= {"geometry"}

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
+import { experimentDetailSchema } from '@/contracts/catalog'
 import { scenePartColor } from '@/features/viewer/viewer/materialColor'
 import { cadElementCatalog } from '@/lib/cad'
 import { assertSimulationProgramManifest } from '@/lib/cad/simulation'
@@ -56,6 +57,22 @@ describe('canonical public Geometry catalog', () => {
 })
 
 describe('canonical public Experiment catalog', () => {
+  it('accepts fixture objects, explicit null, and omitted fixture fields from catalog transports', () => {
+    const withFixture = officialExperiment('dc-uniform-bar')
+    const withoutFixture = officialExperiment('dc-notched-current-density')
+
+    expect(experimentDetailSchema.parse(withFixture).verification.fixture).toMatchObject({
+      records: [{ name: 'totalCurrent' }],
+    })
+    expect(experimentDetailSchema.parse(withoutFixture).verification.fixture).toBeUndefined()
+    expect(
+      experimentDetailSchema.parse({
+        ...withoutFixture,
+        verification: { ...withoutFixture.verification, fixture: null },
+      }).verification.fixture,
+    ).toBeNull()
+  })
+
   it.each(officialExperimentKeys)('validates %s bundle, tasks, RecordedData, and verification', async (key) => {
     const item = officialExperiment(key)
     const result = await evaluatePublicExampleBundle(item.sourceBundle)

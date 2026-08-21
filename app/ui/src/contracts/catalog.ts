@@ -297,6 +297,7 @@ const experimentVerificationSchema = z.object({
         recordSequences: z.array(z.number().int().nonnegative()),
       }),
     })
+    .nullable()
     .optional(),
 })
 
