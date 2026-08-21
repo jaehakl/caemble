@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { GeometryPackageRecord } from '@/api'
+import type { GeometryPackageRecord, GeometryRepositoryRecord } from '@/api'
 import { GeometryManager } from './GeometryManager'
 import type { GeometryManagerState } from './useGeometryWorkspaceState'
 
@@ -12,6 +12,7 @@ type PackageListRequest = { text_filter?: Record<string, string[]> }
 
 const mocks = vi.hoisted(() => ({
   authenticated: false,
+  user: null as { roles: string[] } | null,
   getGeometry: vi.fn(),
   listGeometries: vi.fn(),
   listPackages: vi.fn(
@@ -20,11 +21,14 @@ const mocks = vi.hoisted(() => ({
       return { total: 0, items: [] }
     },
   ),
-  listRepositories: vi.fn(async () => ({ total: 0, items: [] })),
+  listRepositories: vi.fn(async (): Promise<{ total: number; items: GeometryRepositoryRecord[] }> => ({
+    total: 0,
+    items: [],
+  })),
 }))
 
 vi.mock('@/features/auth/use-auth', () => ({
-  useAuth: () => ({ isAuthenticated: mocks.authenticated, user: null }),
+  useAuth: () => ({ isAuthenticated: mocks.authenticated, user: mocks.user }),
 }))
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
@@ -141,6 +145,7 @@ function renderManager(
 describe('unified Geometry Manager', () => {
   beforeEach(() => {
     mocks.authenticated = false
+    mocks.user = null
     mocks.getGeometry.mockReset().mockResolvedValue(geometryDetail)
     mocks.listGeometries.mockReset().mockResolvedValue({ items: [geometryItem], nextCursor: null, total: 1 })
     mocks.listPackages.mockReset().mockResolvedValue({ total: 0, items: [] })
@@ -148,15 +153,20 @@ describe('unified Geometry Manager', () => {
   })
   afterEach(cleanup)
 
-  it('shows both sources in one browser and keeps Official source read-only', async () => {
+  it('uses Official as a virtual namespace and keeps its source read-only', async () => {
     const { forkOfficial } = renderManager('local')
 
     expect(screen.queryByRole('tab', { name: 'Official Catalog' })).not.toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: 'Workspace Packages' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '전체' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByRole('button', { name: '전체' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Workspace' })).not.toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Namespace' })).toHaveValue('__official__')
+    expect(screen.getByRole('option', { name: 'Official' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'local' })).toBeInTheDocument()
     expect(await screen.findByText('Official standalone Geometry')).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: 'Official Packages' })).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: 'Workspace Packages' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('Official Packages')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Workspace Packages')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Geometry Packages list')).toHaveTextContent('Basketball Goal')
     expect(screen.getByRole('textbox', { name: 'Geometry source' })).toHaveAttribute('readonly')
     expect(screen.getByRole('button', { name: '개인 Repository로 Fork' })).toBeDisabled()
 
@@ -164,6 +174,52 @@ describe('unified Geometry Manager', () => {
       target: { value: 'export const BasketballGoal = () => <box />' },
     })
     expect(forkOfficial).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Namespace' }), { target: { value: 'local' } })
+    expect(await screen.findByText('세션 Geometry가 없습니다.')).toBeInTheDocument()
+    expect(screen.getByLabelText('Geometry Packages list')).not.toHaveTextContent('Basketball Goal')
+  })
+
+  it('requests and displays exactly one Workspace namespace', async () => {
+    mocks.authenticated = true
+    mocks.user = { roles: ['admin'] }
+    mocks.listRepositories.mockResolvedValue({
+      total: 2,
+      items: [
+        {
+          id: 3,
+          namespace: 'designer',
+          slug: 'forks',
+          user_id: 'user-1',
+          description: null,
+          archived_at: null,
+          created_at: null,
+          updated_at: null,
+        },
+        {
+          id: 4,
+          namespace: 'shared',
+          slug: 'catalog',
+          user_id: 'user-2',
+          description: null,
+          archived_at: null,
+          created_at: null,
+          updated_at: null,
+        },
+      ],
+    })
+    renderManager('designer')
+
+    const selector = screen.getByRole('combobox', { name: 'Namespace' })
+    expect(await screen.findByRole('option', { name: 'shared' })).toBeInTheDocument()
+    fireEvent.change(selector, { target: { value: 'shared' } })
+
+    await waitFor(() =>
+      expect(mocks.listPackages).toHaveBeenCalledWith(
+        expect.objectContaining({ text_filter: expect.objectContaining({ namespace: ['shared'] }) }),
+      ),
+    )
+    expect(screen.queryByRole('option', { name: '모든 namespace' })).not.toBeInTheDocument()
   })
 
   it('creates an Official fork only after the signed-in user confirms its target', async () => {
@@ -183,6 +239,7 @@ describe('unified Geometry Manager', () => {
       description: geometryDetail.description,
       repositoryId: null,
     })
+    expect(screen.getByRole('combobox', { name: 'Namespace' })).toHaveValue('designer')
   })
 
   it('requires a Geometry namespace before forking', async () => {

@@ -41,9 +41,14 @@ import { GeometryUsageDialog } from './GeometryUsageDialog'
 import type { GeometryManagerState } from './useGeometryWorkspaceState'
 
 const PAGE_SIZES = [12, 24, 48] as const
+const OFFICIAL_NAMESPACE = '__official__'
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function coordinateNamespace(coordinate: string | null) {
+  return coordinate?.match(/^caemble:geometry\/([^/]+)\//u)?.[1] ?? null
 }
 
 type GeometryManagerProps = {
@@ -76,17 +81,24 @@ function WorkspaceGeometryManager({
   const auth = useAuth()
   const previewPublishedVersion = geometry.previewPublishedVersion
   const previewSource = geometry.previewSource
+  const setSelectedCoordinate = geometry.setSelectedCoordinate
   const setSelectedCatalogKey = geometry.setSelectedCatalogKey
   const setManagerView = geometry.setManagerView
   const isAdmin = Boolean(auth.user?.roles.includes('admin'))
   const listScope = isAdmin ? 'visible' : 'mine'
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
-  const [sourceFilter, setSourceFilter] = useState<'all' | 'official' | 'workspace'>('all')
+  const [selectedNamespace, setSelectedNamespace] = useState(() => {
+    if (geometry.managerView === 'official') return OFFICIAL_NAMESPACE
+    return (
+      coordinateNamespace(geometry.selectedCoordinate) ??
+      geometry.namespace ??
+      (auth.isAuthenticated ? OFFICIAL_NAMESPACE : 'local')
+    )
+  })
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZES)[number]>(24)
   const [repositoryId, setRepositoryId] = useState<number | null>(null)
-  const [namespaceFilter, setNamespaceFilter] = useState('')
   const [ownerFilter, setOwnerFilter] = useState('')
   const [archiveFilter, setArchiveFilter] = useState<'active' | 'archived' | 'all'>('active')
   const [selectedPackageId, setSelectedPackageId] = useState<number | null>(initialPackageId)
@@ -101,7 +113,14 @@ function WorkspaceGeometryManager({
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [forkDetail, setForkDetail] = useState<CatalogGeometryDetail | null>(null)
   const draftVersions = useMemo(() => Object.values(geometry.draftVersions), [geometry.draftVersions])
-  const sessionDraftVersions = useMemo(() => draftVersions.filter((draft) => draft.packageId === null), [draftVersions])
+  const officialSelected = selectedNamespace === OFFICIAL_NAMESPACE
+  const sessionDraftVersions = useMemo(
+    () =>
+      draftVersions.filter(
+        (draft) => draft.packageId === null && coordinateNamespace(draft.coordinate) === selectedNamespace,
+      ),
+    [draftVersions, selectedNamespace],
+  )
   const visibleSessionDraftVersions = useMemo(() => {
     const query = search.trim().toLowerCase()
     if (!query) return sessionDraftVersions
@@ -112,12 +131,12 @@ function WorkspaceGeometryManager({
   const selectedDraft = selectedDraftCoordinate ? (geometry.draftVersions[selectedDraftCoordinate] ?? null) : null
 
   const officialListQuery = useQuery({
-    enabled: sourceFilter !== 'workspace',
+    enabled: officialSelected,
     queryKey: catalogQueryKeys.geometries({ q: search.trim(), limit: 100 }),
     queryFn: () => catalogApi.listGeometries({ q: search.trim(), limit: 100 }),
   })
   const officialDetailQuery = useQuery({
-    enabled: geometry.managerView === 'official' && geometry.selectedCatalogKey !== null,
+    enabled: officialSelected && geometry.selectedCatalogKey !== null,
     queryKey: catalogQueryKeys.geometry(geometry.selectedCatalogKey ?? ''),
     queryFn: () => catalogApi.getGeometry(geometry.selectedCatalogKey!),
   })
@@ -135,10 +154,24 @@ function WorkspaceGeometryManager({
         ],
       }),
   })
-  const namespaces = useMemo(
-    () => [...new Set((repositoriesQuery.data?.items ?? []).map((item) => item.namespace))].sort(),
-    [repositoriesQuery.data?.items],
-  )
+  const namespaces = useMemo(() => {
+    const values = new Set((repositoriesQuery.data?.items ?? []).map((item) => item.namespace))
+    for (const draft of draftVersions) {
+      const namespace = coordinateNamespace(draft.coordinate)
+      if (namespace) values.add(namespace)
+    }
+    if (geometry.namespace) values.add(geometry.namespace)
+    if (!auth.isAuthenticated) values.add('local')
+    if (!officialSelected) values.add(selectedNamespace)
+    return [...values].sort()
+  }, [
+    auth.isAuthenticated,
+    draftVersions,
+    geometry.namespace,
+    officialSelected,
+    repositoriesQuery.data?.items,
+    selectedNamespace,
+  ])
   const owners = useMemo(
     () =>
       [
@@ -157,7 +190,7 @@ function WorkspaceGeometryManager({
       limit: pageSize,
       search_text: search.trim() || null,
       text_filter: {
-        ...(namespaceFilter ? { namespace: [namespaceFilter] } : {}),
+        namespace: [selectedNamespace],
         ...(ownerFilter ? { owner_id: [ownerFilter] } : {}),
       },
       filter: repositoryId ? { repository_id: [repositoryId, repositoryId] } : ({} as Record<string, unknown[]>),
@@ -172,10 +205,10 @@ function WorkspaceGeometryManager({
         ['name', 'asc'],
       ] as [string, 'asc' | 'desc'][],
     }),
-    [archiveFilter, listScope, namespaceFilter, ownerFilter, page, pageSize, repositoryId, search],
+    [archiveFilter, listScope, ownerFilter, page, pageSize, repositoryId, search, selectedNamespace],
   )
   const packagesQuery = useQuery({
-    enabled: auth.isAuthenticated,
+    enabled: auth.isAuthenticated && !officialSelected,
     queryKey: ['geometry', 'manager', 'packages', packageRequest],
     queryFn: () => dbTables.GeometryPackage.listRows(packageRequest),
   })
@@ -262,42 +295,63 @@ function WorkspaceGeometryManager({
   })
 
   useEffect(() => {
-    if (geometry.managerView !== 'official') return
+    if (!officialSelected) return
     const items = officialListQuery.data?.items ?? []
     if (!items.some((item) => item.key === geometry.selectedCatalogKey)) {
       setSelectedCatalogKey(items[0]?.key ?? null)
     }
-  }, [geometry.managerView, geometry.selectedCatalogKey, officialListQuery.data?.items, setSelectedCatalogKey])
+  }, [geometry.selectedCatalogKey, officialListQuery.data?.items, officialSelected, setSelectedCatalogKey])
   useEffect(() => {
-    if (geometry.managerView !== 'official' || !officialDetailQuery.data?.source) return
+    if (!officialSelected || !officialDetailQuery.data?.source) return
     try {
       previewSource(officialDetailQuery.data.source)
     } catch (error) {
       toast.error(message(error))
     }
-  }, [geometry.managerView, officialDetailQuery.data?.source, previewSource])
+  }, [officialDetailQuery.data?.source, officialSelected, previewSource])
   useEffect(() => {
     if (initialPackageId !== null || initialVersionId !== null) setManagerView('workspace')
   }, [initialPackageId, initialVersionId, setManagerView])
   useEffect(() => {
     setPage(0)
-  }, [archiveFilter, namespaceFilter, ownerFilter, pageSize, repositoryId, search])
+  }, [archiveFilter, ownerFilter, pageSize, repositoryId, search, selectedNamespace])
   useEffect(() => {
     setExperimentPage(0)
   }, [experimentSearch, selectedVersionId])
   useEffect(() => {
     const initialVersion = initialVersionQuery.data?.items[0]
     if (initialVersion) {
+      const namespace = coordinateNamespace(initialVersion.coordinate)
+      if (namespace) setSelectedNamespace(namespace)
+      setManagerView('workspace')
       setSelectedPackageId(initialVersion.package_id)
       setSelectedVersionId(initialVersion.id)
     }
-  }, [initialVersionQuery.data?.items])
+  }, [initialVersionQuery.data?.items, setManagerView])
   useEffect(() => {
-    if (!selectedPackageId && packagesQuery.data?.items[0]) {
-      if (initialVersionQuery.data?.items[0]) return
-      setSelectedPackageId(packagesQuery.data.items[0].id)
+    if (!selectedPackage) return
+    setSelectedNamespace(selectedPackage.namespace)
+    setManagerView('workspace')
+  }, [selectedPackage, setManagerView])
+  useEffect(() => {
+    if (officialSelected || selectedPackageId || selectedDraftCoordinate) return
+    if (initialVersionQuery.data?.items[0]) return
+    const firstDraft = visibleSessionDraftVersions[0]
+    if (firstDraft) {
+      setSelectedDraftCoordinate(firstDraft.coordinate)
+      setSelectedCoordinate(firstDraft.coordinate)
+      return
     }
-  }, [initialVersionQuery.data?.items, packagesQuery.data?.items, selectedPackageId])
+    if (packagesQuery.data?.items[0]) setSelectedPackageId(packagesQuery.data.items[0].id)
+  }, [
+    setSelectedCoordinate,
+    initialVersionQuery.data?.items,
+    officialSelected,
+    packagesQuery.data?.items,
+    selectedDraftCoordinate,
+    selectedPackageId,
+    visibleSessionDraftVersions,
+  ])
   useEffect(() => {
     if (selectedDraftCoordinate && !geometry.draftVersions[selectedDraftCoordinate]) {
       setSelectedDraftCoordinate(null)
@@ -555,8 +609,8 @@ function WorkspaceGeometryManager({
       setSelectedPackageId(null)
       setSelectedVersionId(null)
       setSelectedDraftCoordinate(coordinate)
+      setSelectedNamespace(coordinateNamespace(coordinate) ?? geometry.namespace ?? 'local')
       setManagerView('workspace')
-      setSourceFilter('workspace')
       setCreateDialogOpen(false)
     } catch (cause) {
       toast.error(message(cause))
@@ -604,8 +658,8 @@ function WorkspaceGeometryManager({
       setSelectedPackageId(null)
       setSelectedVersionId(null)
       setSelectedDraftCoordinate(coordinate)
+      setSelectedNamespace(coordinateNamespace(coordinate) ?? geometry.namespace ?? 'local')
       setManagerView('workspace')
-      setSourceFilter('workspace')
       setForkDetail(null)
     })().catch((cause: unknown) => toast.error(message(cause)))
   }
@@ -613,8 +667,8 @@ function WorkspaceGeometryManager({
     setSelectedDraftCoordinate(null)
     if (discarded.originCatalogKey) {
       setSelectedCatalogKey(discarded.originCatalogKey)
+      setSelectedNamespace(OFFICIAL_NAMESPACE)
       setManagerView('official')
-      setSourceFilter('official')
     } else if (discarded.baseGeometryVersionId) {
       setSelectedVersionId(discarded.baseGeometryVersionId)
       void geometry
@@ -630,7 +684,7 @@ function WorkspaceGeometryManager({
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="font-semibold">Geometry Packages</h2>
-              <p className="text-xs text-muted-foreground">Official과 Workspace Geometry를 한곳에서 탐색합니다.</p>
+              <p className="text-xs text-muted-foreground">하나의 namespace에서 Geometry를 탐색합니다.</p>
             </div>
             <div className="flex gap-2">
               <Button onClick={() => setCreateDialogOpen(true)} size="sm">
@@ -663,38 +717,34 @@ function WorkspaceGeometryManager({
               value={search}
             />
           </div>
-          <div aria-label="Geometry 출처 필터" className="grid grid-cols-3 gap-1 rounded-md bg-muted p-1">
-            {(['all', 'official', 'workspace'] as const).map((value) => (
-              <Button
-                aria-pressed={sourceFilter === value}
-                className="h-8"
-                key={value}
-                onClick={() => {
-                  setSourceFilter(value)
-                  if (value === 'official') setManagerView('official')
-                  if (value === 'workspace') setManagerView('workspace')
-                }}
-                size="sm"
-                variant={sourceFilter === value ? 'secondary' : 'ghost'}
-              >
-                {value === 'all' ? '전체' : value === 'official' ? 'Official' : 'Workspace'}
-              </Button>
+          <select
+            aria-label="Namespace"
+            className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+            onChange={(event) => {
+              const namespace = event.target.value
+              setSelectedNamespace(namespace)
+              setSelectedPackageId(null)
+              setSelectedVersionId(null)
+              setSelectedDraftCoordinate(null)
+              setPendingVersionId(null)
+              setCheckedPackageIds(new Set())
+              setRepositoryId(null)
+              geometry.setSelectedCoordinate(null)
+              if (namespace === OFFICIAL_NAMESPACE) setSelectedCatalogKey(null)
+              setManagerView(namespace === OFFICIAL_NAMESPACE ? 'official' : 'workspace')
+            }}
+            value={selectedNamespace}
+          >
+            <option value={OFFICIAL_NAMESPACE}>Official</option>
+            {namespaces.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
             ))}
-          </div>
-          {auth.isAuthenticated && sourceFilter !== 'official' ? (
+          </select>
+          {auth.isAuthenticated && !officialSelected ? (
             <>
-              <div className={cn('grid gap-2', isAdmin ? 'grid-cols-4' : 'grid-cols-3')}>
-                <select
-                  aria-label="Namespace 필터"
-                  className="h-9 rounded-md border bg-background px-2 text-xs"
-                  onChange={(event) => setNamespaceFilter(event.target.value)}
-                  value={namespaceFilter}
-                >
-                  <option value="">모든 namespace</option>
-                  {namespaces.map((item) => (
-                    <option key={item}>{item}</option>
-                  ))}
-                </select>
+              <div className={cn('grid gap-2', isAdmin ? 'grid-cols-3' : 'grid-cols-2')}>
                 {isAdmin ? (
                   <select
                     aria-label="Owner 필터"
@@ -718,11 +768,13 @@ function WorkspaceGeometryManager({
                   value={repositoryId ?? ''}
                 >
                   <option value="">모든 repository</option>
-                  {(repositoriesQuery.data?.items ?? []).map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.namespace}/{item.slug}
-                    </option>
-                  ))}
+                  {(repositoriesQuery.data?.items ?? [])
+                    .filter((item) => item.namespace === selectedNamespace)
+                    .map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.slug}
+                      </option>
+                    ))}
                 </select>
                 <select
                   aria-label="Archive 필터"
@@ -736,89 +788,67 @@ function WorkspaceGeometryManager({
                 </select>
               </div>
             </>
-          ) : !auth.isAuthenticated && sourceFilter !== 'official' ? (
+          ) : !auth.isAuthenticated && !officialSelected ? (
             <p className="text-xs text-muted-foreground">세션 Package는 편집과 Viewer 미리보기를 사용할 수 있습니다.</p>
           ) : null}
         </div>
-        <div className="min-h-0 flex-1 overflow-auto">
-          {sourceFilter !== 'workspace' ? (
-            <section aria-label="Official Packages" className="border-b">
-              <div className="flex items-center justify-between px-3 py-2 text-[11px] font-semibold text-muted-foreground">
-                <span>Official</span>
-                <Badge className="bg-muted">Catalog</Badge>
+        <div aria-label="Geometry Packages list" className="min-h-0 flex-1 overflow-auto">
+          {officialSelected ? (
+            officialListQuery.isLoading ? (
+              <div className="grid h-24 place-items-center text-xs text-muted-foreground">
+                <LoaderCircle className="size-4 animate-spin" />
               </div>
-              {officialListQuery.isLoading ? (
-                <div className="grid h-24 place-items-center text-xs text-muted-foreground">
-                  <LoaderCircle className="size-4 animate-spin" />
-                </div>
-              ) : officialListQuery.isError ? (
-                <p className="px-3 pb-3 text-xs text-destructive">Official 목록을 불러오지 못했습니다.</p>
-              ) : (
-                <ul className="divide-y border-t">
-                  {officialListQuery.data?.items.map((item) => (
-                    <li key={item.key}>
-                      <button
-                        className={cn(
-                          'grid w-full gap-1 px-3 py-2.5 text-left hover:bg-accent',
-                          geometry.managerView === 'official' &&
-                            geometry.selectedCatalogKey === item.key &&
-                            'bg-accent',
-                        )}
-                        onClick={() => {
-                          setSelectedCatalogKey(item.key)
-                          setManagerView('official')
-                        }}
-                        type="button"
-                      >
-                        <span className="flex items-center justify-between gap-2 text-sm font-medium">
-                          <span className="truncate">{item.title}</span>
-                          <Badge className="border bg-background">Official</Badge>
-                        </span>
-                        <span className="truncate font-mono text-[11px] text-muted-foreground">{item.key}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-          ) : null}
-          {sourceFilter !== 'official' ? (
-            <section aria-label="Workspace Packages">
-              <div className="flex items-center justify-between px-3 py-2 text-[11px] font-semibold text-muted-foreground">
-                <span>Workspace</span>
-                <Badge className="bg-muted">{auth.isAuthenticated ? 'Repository' : 'Session'}</Badge>
-              </div>
-              {visibleSessionDraftVersions.length ? (
-                <div className="border-y p-2" aria-label="Session Packages">
-                  {visibleSessionDraftVersions.map((draft) => (
+            ) : officialListQuery.isError ? (
+              <p className="px-3 py-3 text-xs text-destructive">Official 목록을 불러오지 못했습니다.</p>
+            ) : (
+              <ul className="divide-y">
+                {officialListQuery.data?.items.map((item) => (
+                  <li key={item.key}>
                     <button
                       className={cn(
-                        'mb-1 grid w-full gap-1 rounded px-2 py-2 text-left hover:bg-accent',
-                        geometry.managerView === 'workspace' &&
-                          selectedDraftCoordinate === draft.coordinate &&
-                          'bg-accent',
+                        'grid w-full gap-1 px-3 py-2.5 text-left hover:bg-accent',
+                        geometry.selectedCatalogKey === item.key && 'bg-accent',
                       )}
-                      key={draft.draftId}
                       onClick={() => {
-                        setSelectedPackageId(null)
-                        setSelectedVersionId(null)
-                        setSelectedDraftCoordinate(draft.coordinate)
-                        geometry.setSelectedCoordinate(draft.coordinate)
-                        setManagerView('workspace')
+                        setSelectedCatalogKey(item.key)
+                        setManagerView('official')
                       }}
                       type="button"
                     >
-                      <span className="flex items-center justify-between gap-2">
-                        <span className="truncate font-mono text-xs">
-                          {draft.repository}/{draft.packageName}
-                        </span>
-                        <Badge>Draft</Badge>
-                      </span>
-                      <span className="text-[10px] text-muted-foreground">Draft Version</span>
+                      <span className="truncate text-sm font-medium">{item.title}</span>
+                      <span className="truncate font-mono text-[11px] text-muted-foreground">{item.key}</span>
                     </button>
-                  ))}
-                </div>
-              ) : null}
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : (
+            <>
+              {visibleSessionDraftVersions.map((draft) => (
+                <button
+                  className={cn(
+                    'grid w-full gap-1 border-b px-3 py-2.5 text-left hover:bg-accent',
+                    selectedDraftCoordinate === draft.coordinate && 'bg-accent',
+                  )}
+                  key={draft.draftId}
+                  onClick={() => {
+                    setSelectedPackageId(null)
+                    setSelectedVersionId(null)
+                    setSelectedDraftCoordinate(draft.coordinate)
+                    geometry.setSelectedCoordinate(draft.coordinate)
+                    setManagerView('workspace')
+                  }}
+                  type="button"
+                >
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="truncate font-mono text-xs">
+                      {draft.repository}/{draft.packageName}
+                    </span>
+                    <Badge>Draft</Badge>
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">Draft Version</span>
+                </button>
+              ))}
               {!auth.isAuthenticated ? (
                 !visibleSessionDraftVersions.length ? (
                   <div className="grid h-32 place-items-center px-6 text-center text-xs text-muted-foreground">
@@ -828,12 +858,12 @@ function WorkspaceGeometryManager({
               ) : packagesQuery.isLoading ? (
                 <div className="grid h-32 place-items-center text-xs text-muted-foreground">
                   <span className="flex items-center gap-2">
-                    <LoaderCircle className="size-4 animate-spin" /> Workspace 목록 불러오는 중
+                    <LoaderCircle className="size-4 animate-spin" /> Geometry 목록 불러오는 중
                   </span>
                 </div>
               ) : packagesQuery.isError ? (
                 <div className="grid h-32 place-items-center text-xs text-destructive">
-                  Workspace 목록을 불러오지 못했습니다.
+                  Geometry 목록을 불러오지 못했습니다.
                 </div>
               ) : (
                 <DataTable
@@ -851,10 +881,10 @@ function WorkspaceGeometryManager({
                   }}
                 />
               )}
-            </section>
-          ) : null}
+            </>
+          )}
         </div>
-        {auth.isAuthenticated && sourceFilter !== 'official' ? (
+        {auth.isAuthenticated && !officialSelected ? (
           <div className="flex items-center justify-between gap-2 border-t p-3 text-xs">
             <span>{packagesQuery.data?.total.toLocaleString() ?? 0} packages</span>
             <div className="flex items-center gap-1">
@@ -886,7 +916,7 @@ function WorkspaceGeometryManager({
       </aside>
 
       <main className="min-h-0 overflow-auto p-5">
-        {geometry.managerView === 'official' ? (
+        {officialSelected ? (
           officialDetailQuery.isLoading ? (
             <div className="grid h-full place-items-center text-sm text-muted-foreground">
               <LoaderCircle className="size-5 animate-spin" />
@@ -1281,6 +1311,10 @@ function WorkspaceGeometryManager({
                             className="mb-2 flex w-full items-center justify-between rounded border p-3 text-left hover:bg-accent"
                             key={item.id}
                             onClick={() => {
+                              const namespace = coordinateNamespace(item.coordinate)
+                              if (namespace) setSelectedNamespace(namespace)
+                              setSelectedDraftCoordinate(null)
+                              setManagerView('workspace')
                               setPendingVersionId(item.id)
                               setSelectedPackageId(item.package_id)
                             }}

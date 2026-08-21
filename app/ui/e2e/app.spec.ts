@@ -374,14 +374,18 @@ test('keeps Official Geometry read-only for anonymous users in the unified manag
   await expect(page.getByRole('tab', { name: 'Geometry', exact: true })).toHaveAttribute('aria-selected', 'true')
   await expect(manager.getByRole('tab', { name: 'Official Catalog' })).toHaveCount(0)
   await expect(manager.getByRole('tab', { name: 'Workspace Packages' })).toHaveCount(0)
-  await expect(manager.getByRole('button', { name: '전체', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect(manager.getByRole('button', { name: '전체', exact: true })).toHaveCount(0)
+  await expect(manager.getByRole('combobox', { name: 'Namespace' })).toHaveValue('__official__')
+  await expect(manager.getByRole('option', { name: 'Official' })).toHaveCount(1)
+  await expect(manager.getByRole('option', { name: 'local' })).toHaveCount(1)
   await manager.getByRole('button', { name: /Basketball Goal/ }).click()
   await expect(manager.locator('.monaco-editor:visible')).toBeVisible()
   await expect(manager.getByRole('button', { name: '개인 Repository로 Fork' })).toBeDisabled()
   await expect(page.locator('footer').last()).toContainText('Draft Versions · 0')
 
-  await manager.getByRole('button', { name: 'Workspace', exact: true }).click()
-  await expect(manager.getByRole('region', { name: 'Workspace Packages' })).toContainText('세션 Geometry가 없습니다.')
+  await manager.getByRole('combobox', { name: 'Namespace' }).selectOption('local')
+  await expect(manager.getByLabel('Geometry Packages list')).toContainText('세션 Geometry가 없습니다.')
+  await expect(manager.getByLabel('Geometry Packages list')).not.toContainText('Basketball Goal')
 })
 
 test('forks Official Geometry into a personal Draft and publishes its first exact Version', async ({ page }) => {
@@ -583,6 +587,7 @@ test('forks Official Geometry into a personal Draft and publishes its first exac
     .getByRole('button', { name: /Draft Version 만들기/ })
     .click()
 
+  await expect(manager.getByRole('combobox', { name: 'Namespace' })).toHaveValue('designer')
   const draftEditor = manager.getByRole('region', { name: 'Draft Version editor' })
   await expect(draftEditor).toBeVisible()
   await expect(page.locator('footer').last()).toContainText('Draft Versions · 1')
@@ -1022,7 +1027,7 @@ export const Sphere: Geometry = () => <sphere radius={1} />
   await page.getByRole('menuitem', { name: 'Geometry Manager' }).click()
   const manager = page.getByLabel('Geometry Manager')
   await expect(manager).toBeVisible()
-  await manager.getByRole('button', { name: 'Workspace', exact: true }).click()
+  await manager.getByRole('combobox', { name: 'Namespace' }).selectOption('designer')
   await expect(manager).toContainText('designer/common/plate')
   await expect(manager).toContainText(coordinate)
 
@@ -1045,7 +1050,7 @@ export { PlateRoot }
 
   await page.getByRole('tab', { name: 'Geometry', exact: true }).click()
   await expect(manager).toBeVisible()
-  await manager.getByRole('button', { name: 'Workspace', exact: true }).click()
+  await expect(manager.getByRole('combobox', { name: 'Namespace' })).toHaveValue('designer')
 
   await manager.getByRole('tab', { name: 'References' }).click()
   await expect(manager).toContainText('Bracket study')
@@ -1078,7 +1083,7 @@ export default experiment({
   await expect(page.locator('.monaco-editor .squiggly-error')).toHaveCount(0, { timeout: 10_000 })
 
   await page.getByRole('tab', { name: 'Geometry', exact: true }).click()
-  await manager.getByRole('button', { name: 'Workspace', exact: true }).click()
+  await expect(manager.getByRole('combobox', { name: 'Namespace' })).toHaveValue('designer')
   await manager.getByRole('tab', { name: 'Source' }).click()
   await manager.getByRole('button', { name: '새 Version 편집' }).click()
 
