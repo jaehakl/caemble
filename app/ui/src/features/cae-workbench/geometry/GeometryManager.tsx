@@ -121,7 +121,7 @@ function WorkspaceGeometryManager({
   const [forkDetail, setForkDetail] = useState<CatalogGeometryDetail | null>(null)
   const [forkRepositoryId, setForkRepositoryId] = useState<number | null>(null)
   const [repositoryManagerOpen, setRepositoryManagerOpen] = useState(false)
-  const appliedInitialTargetRef = useRef<string | null>(null)
+  const appliedInitialVersionIdRef = useRef<number | null>(null)
   const draftVersions = useMemo(() => Object.values(geometry.draftVersions), [geometry.draftVersions])
   const examplesVisible = selectedNamespace === EXAMPLES_NAMESPACE || selectedNamespace === ALL_NAMESPACES
   const workspaceVisible = selectedNamespace !== EXAMPLES_NAMESPACE
@@ -388,25 +388,12 @@ function WorkspaceGeometryManager({
   }, [experimentSearch, selectedVersionId])
   useEffect(() => {
     const initialVersion = initialVersionQuery.data?.items[0]
-    const target = initialVersion ? `version:${initialVersion.id}` : null
-    if (!initialVersion || appliedInitialTargetRef.current === target) return
-    appliedInitialTargetRef.current = target
-    const namespace = coordinateNamespace(initialVersion.coordinate)
-    if (namespace) setSelectedNamespace(namespace)
-    setSelectedRepositoryFilter(coordinateRepository(initialVersion.coordinate) ?? 'all')
+    if (!initialVersion || appliedInitialVersionIdRef.current === initialVersion.id) return
+    appliedInitialVersionIdRef.current = initialVersion.id
     setManagerView('workspace')
     setSelectedPackageId(initialVersion.package_id)
     setSelectedVersionId(initialVersion.id)
-  }, [initialVersionQuery.data?.items, setManagerView, setSelectedNamespace, setSelectedRepositoryFilter])
-  useEffect(() => {
-    if (!selectedPackage || initialPackageId === null || selectedPackage.id !== initialPackageId) return
-    const target = `package:${selectedPackage.id}`
-    if (appliedInitialTargetRef.current === target) return
-    appliedInitialTargetRef.current = target
-    setSelectedNamespace(selectedPackage.namespace)
-    setSelectedRepositoryFilter(`${selectedPackage.namespace}/${selectedPackage.repository}`)
-    setManagerView('workspace')
-  }, [initialPackageId, selectedPackage, setManagerView, setSelectedNamespace, setSelectedRepositoryFilter])
+  }, [initialVersionQuery.data?.items, setManagerView])
   useEffect(() => {
     if (!workspaceVisible || geometry.managerView !== 'workspace' || selectedPackageId || selectedDraftCoordinate)
       return
@@ -629,8 +616,6 @@ function WorkspaceGeometryManager({
       setSelectedPackageId(null)
       setSelectedVersionId(null)
       setSelectedDraftCoordinate(coordinate)
-      setSelectedNamespace(coordinateNamespace(coordinate) ?? geometry.namespace ?? 'local')
-      setSelectedRepositoryFilter(coordinateRepository(coordinate) ?? 'all')
       setManagerView('workspace')
       setCreateDialogOpen(false)
       setCreateRepositoryId(null)
@@ -677,8 +662,6 @@ function WorkspaceGeometryManager({
       setSelectedPackageId(null)
       setSelectedVersionId(null)
       setSelectedDraftCoordinate(coordinate)
-      setSelectedNamespace(coordinateNamespace(coordinate) ?? geometry.namespace ?? 'local')
-      setSelectedRepositoryFilter(coordinateRepository(coordinate) ?? 'all')
       setManagerView('workspace')
       setForkDetail(null)
     })().catch((cause: unknown) => toast.error(message(cause)))
@@ -687,8 +670,6 @@ function WorkspaceGeometryManager({
     setSelectedDraftCoordinate(null)
     if (discarded.originCatalogKey) {
       setSelectedCatalogKey(discarded.originCatalogKey)
-      setSelectedNamespace(EXAMPLES_NAMESPACE)
-      setSelectedRepositoryFilter('all')
       setManagerView('examples')
     } else if (discarded.baseGeometryVersionId) {
       setSelectedVersionId(discarded.baseGeometryVersionId)
@@ -1352,8 +1333,6 @@ function WorkspaceGeometryManager({
                             className="mb-2 flex w-full items-center justify-between rounded border p-3 text-left hover:bg-accent"
                             key={item.id}
                             onClick={() => {
-                              const namespace = coordinateNamespace(item.coordinate)
-                              if (namespace) setSelectedNamespace(namespace)
                               setSelectedDraftCoordinate(null)
                               setManagerView('workspace')
                               setPendingVersionId(item.id)

@@ -392,7 +392,7 @@ test('keeps Example Geometry read-only for anonymous users in the unified manage
   await expect(manager.locator('.monaco-editor:visible')).toBeVisible()
   await expect(manager.locator('.monaco-editor:visible .view-lines')).toContainText('BasketballGoal')
   await expect(manager.getByRole('combobox', { name: 'Namespace' })).toHaveValue('examples')
-  await expect(manager.getByRole('combobox', { name: 'Repository' })).toHaveValue('all')
+  await expect(manager.getByRole('combobox', { name: 'Repository' }).first()).toHaveValue('all')
   await expect(manager.getByRole('button', { name: '개인 Repository로 Fork' })).toBeDisabled()
   await expect(page.locator('footer').last()).toContainText('Draft Versions · 0')
 
@@ -623,7 +623,8 @@ test('forks Example Geometry into a personal Draft and publishes its first exact
   await expect(repositoryDialog).toBeHidden()
   await forkDialog.getByRole('button', { name: /Draft Version 만들기/ }).click()
 
-  await expect(manager.getByRole('combobox', { name: 'Namespace' })).toHaveValue('designer')
+  await expect(manager.getByRole('combobox', { name: 'Namespace' })).toHaveValue('examples')
+  await expect(manager.getByRole('combobox', { name: 'Repository' }).first()).toHaveValue('all')
   const draftEditor = manager.getByRole('region', { name: 'Draft Version editor' })
   await expect(draftEditor).toBeVisible()
   await expect(page.locator('footer').last()).toContainText('Draft Versions · 1')
@@ -1125,6 +1126,7 @@ export const Sphere: Geometry = () => <sphere radius={1} />
   await manager.getByRole('combobox', { name: 'Namespace' }).selectOption('designer')
   await expect(manager).toContainText('designer/common/plate')
   await expect(manager).toContainText(coordinate)
+  await expect(manager.getByRole('combobox', { name: 'Repository' }).first()).toHaveValue('all')
 
   page.once('dialog', (prompt) => prompt.accept('PlateRoot'))
   await manager.getByRole('button', { name: 'Experiment에서 사용' }).click()
@@ -1146,6 +1148,7 @@ export { PlateRoot }
   await page.getByRole('tab', { name: 'Geometry', exact: true }).click()
   await expect(manager).toBeVisible()
   await expect(manager.getByRole('combobox', { name: 'Namespace' })).toHaveValue('designer')
+  await expect(manager.getByRole('combobox', { name: 'Repository' }).first()).toHaveValue('all')
 
   await manager.getByRole('button', { name: 'Repository 관리' }).click()
   const repositoryManager = page.getByRole('dialog', { name: 'Repository 관리' })
