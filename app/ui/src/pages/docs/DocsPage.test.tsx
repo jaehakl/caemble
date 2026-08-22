@@ -60,9 +60,9 @@ beforeEach(() => {
       'dc-uniform-bar': [
         {
           kind: 'experiment',
-          key: 'caemble:experiment/official/examples/dc-uniform-bar@1.0.0',
+          key: 'caemble:experiment/caemble/examples/dc-uniform-bar@1.0.0',
           title: 'DC Uniform Bar',
-          subtitle: 'Official Experiment.',
+          subtitle: 'Example Experiment.',
         },
       ],
     } as const
@@ -87,12 +87,12 @@ beforeEach(() => {
   const solver = buildSyntheticSolver('dc-current-density', '0.1.0')
   const experiment = {
     key: 'dc-uniform-bar',
-    namespace: 'official',
+    namespace: 'caemble',
     repository: 'examples',
     version: '1.0.0',
-    coordinate: 'caemble:experiment/official/examples/dc-uniform-bar@1.0.0',
+    coordinate: 'caemble:experiment/caemble/examples/dc-uniform-bar@1.0.0',
     title: 'DC Uniform Bar',
-    description: 'Official Experiment.',
+    description: 'Example Experiment.',
     cadApiVersion: 8,
     sourceFormatVersion: 2,
     bundleFormatVersion: 6,
@@ -199,24 +199,20 @@ describe('integrated documentation page', () => {
     expect(screen.getByRole('button', { name: '예제 복사' })).toBeInTheDocument()
   })
 
-  it('opens an official Experiment deep link and follows its Solver relation', async () => {
+  it('opens an Example deep link and follows its Solver relation', async () => {
     renderDocs('/docs?section=solvers&item=experiment:dc-uniform-bar')
 
     expect(await screen.findByRole('heading', { name: 'DC Uniform Bar' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Official Experiments' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'Examples' })).toHaveAttribute('aria-selected', 'true')
     await userEvent.click(screen.getByRole('button', { name: 'dc-current-density@0.1.0' }))
     expect(await screen.findByRole('heading', { name: 'dc-current-density' })).toBeInTheDocument()
   })
 
   it('opens a canonical coordinate deep link without falling back to a bare key', async () => {
-    renderDocs(
-      '/docs?section=solvers&item=experiment:caemble:experiment/official/examples/dc-uniform-bar@1.0.0',
-    )
+    renderDocs('/docs?section=solvers&item=experiment:caemble:experiment/caemble/examples/dc-uniform-bar@1.0.0')
 
     expect(await screen.findByRole('heading', { name: 'DC Uniform Bar' })).toBeInTheDocument()
-    expect(catalog.getExperiment).toHaveBeenCalledWith(
-      'caemble:experiment/official/examples/dc-uniform-bar@1.0.0',
-    )
+    expect(catalog.getExperiment).toHaveBeenCalledWith('caemble:experiment/caemble/examples/dc-uniform-bar@1.0.0')
   })
 
   it('leaves an ambiguous legacy key for the API to reject instead of selecting one coordinate', async () => {

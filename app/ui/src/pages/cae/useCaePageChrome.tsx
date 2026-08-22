@@ -499,7 +499,7 @@ export function useCaePageChrome({
         <RibbonActions actions={[actions.newExperiment, actions.loadExperiment, actions.saveExperimentAs]}>
           <span className="text-sm font-semibold">Experiment Manager</span>
           <span className="mt-1 text-xs text-muted-foreground">
-            Official 및 저장된 namespace / repository / SemVer 목록
+            Example 및 저장된 namespace / repository / SemVer 목록
           </span>
         </RibbonActions>
       ),

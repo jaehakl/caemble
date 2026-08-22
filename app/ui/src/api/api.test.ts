@@ -143,7 +143,7 @@ describe('integrated Experiment API facade', () => {
   })
 })
 
-describe('official Experiment catalog identity', () => {
+describe('Example Experiment catalog identity', () => {
   it('uses the full namespace, repository, key, and SemVer selector for detail requests', async () => {
     const identity = {
       key: 'integrated',
@@ -155,7 +155,7 @@ describe('official Experiment catalog identity', () => {
     mocks.request.mockResolvedValueOnce({
       ...identity,
       title: 'Integrated',
-      description: 'Official Experiment.',
+      description: 'Example Experiment.',
       cadApiVersion: 8,
       sourceFormatVersion: 2,
       bundleFormatVersion: 6,

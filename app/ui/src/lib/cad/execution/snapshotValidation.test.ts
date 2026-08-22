@@ -54,4 +54,29 @@ describe('Experiment snapshot validation', () => {
       'less than or equal to 10',
     )
   })
+
+  it('accepts a common scene when the Experiment has no Tasks', () => {
+    const scene = evaluateCadScene(h(Box, { id: 'preview' }), {}, 'Experiment')
+    const tasklessProgram = { ...program, tasks: {} }
+    const snapshot = serializeEvaluatedDocumentSnapshot({
+      kind: 'experiment',
+      scene,
+      taskScenes: {},
+      simulationProgram: tasklessProgram,
+      sourceHash: 'b'.repeat(64),
+      variables: {},
+      varsSchema: {},
+    })
+
+    expect(snapshot.scene.parts).toHaveLength(1)
+    expect(snapshot.taskScenes).toEqual({})
+    expect(snapshot.simulationProgram.tasks).toEqual({})
+    expect(() => assertEvaluatedDocumentSnapshot(snapshot)).not.toThrow()
+    expect(() => assertEvaluatedDocumentSnapshot({ ...snapshot, simulationProgram: program })).toThrow(
+      'do not match its Simulation Program',
+    )
+    expect(() => assertEvaluatedDocumentSnapshot({ ...snapshot, taskScenes: { main: snapshot.scene } })).toThrow(
+      'do not match its Simulation Program',
+    )
+  })
 })

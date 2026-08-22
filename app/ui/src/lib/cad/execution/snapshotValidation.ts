@@ -91,12 +91,7 @@ export function assertEvaluatedDocumentSnapshot(value: unknown): asserts value i
   const schema = normalizeVarsSchema(snapshot.varsSchema, 'Evaluated Experiment snapshot')
   normalizeVars(schema.normalized, snapshot.variables, 'Evaluated Experiment snapshot')
   assertSerializableCadScene(snapshot.scene)
-  if (
-    typeof snapshot.taskScenes !== 'object' ||
-    snapshot.taskScenes === null ||
-    Array.isArray(snapshot.taskScenes) ||
-    Object.keys(snapshot.taskScenes).length === 0
-  ) {
+  if (typeof snapshot.taskScenes !== 'object' || snapshot.taskScenes === null || Array.isArray(snapshot.taskScenes)) {
     throw new CadModelError('Evaluated Experiment snapshot Task scenes are invalid.')
   }
   Object.entries(snapshot.taskScenes).forEach(([name, scene]) => {

@@ -1,6 +1,6 @@
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
-import { officialExperiment, officialExperimentKeys } from '../../catalog/catalogTestData'
+import { exampleExperiment, exampleExperimentKeys } from '../../catalog/catalogTestData'
 import { starterExperimentSourceBundle } from '../../localExperimentCode'
 import { buildSyntheticCatalog } from '../../../test/syntheticCatalog'
 import { catalogRuntimeTypes } from '../compiler/catalogTypeEnvironment'
@@ -8,7 +8,7 @@ import { cadElementCatalog } from '../catalog'
 import coreTypes from './caemble-core.d.ts?raw'
 import jsxTypes from './cad-jsx.d.ts?raw'
 
-const catalogExperiment = officialExperiment('dc-notched-current-density')
+const catalogExperiment = exampleExperiment('dc-notched-current-density')
 const catalogExperimentProgramCode = catalogExperiment.sourceBundle.files['experiment.tsx']
 const catalogExperimentTaskCode = catalogExperiment.sourceBundle.files['tasks/solveField.tsx']
 const catalogGeometryFiles = Object.fromEntries(
@@ -202,8 +202,8 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
 
   it('type-checks every shared Experiment bundle in one TypeScript program', () => {
     const files = Object.fromEntries(
-      officialExperimentKeys.flatMap((key, index) =>
-        Object.entries(officialExperiment(key).sourceBundle.files)
+      exampleExperimentKeys.flatMap((key, index) =>
+        Object.entries(exampleExperiment(key).sourceBundle.files)
           .filter(([path]) => path.endsWith('.ts') || path.endsWith('.tsx'))
           .map(([path, source]) => [`C:/caemble-source/programs/${index}-${key}/${path}`, source]),
       ),
@@ -213,7 +213,7 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
   })
 
   it('type-checks local templates and the Experiment geometry skeleton in one TypeScript program', () => {
-    const skeleton = officialExperiment('geometry-authoring-skeleton').sourceBundle
+    const skeleton = exampleExperiment('geometry-authoring-skeleton').sourceBundle
     const files = Object.fromEntries([
       ...Object.entries(starterExperimentSourceBundle.files)
         .filter(([path]) => path.endsWith('.ts') || path.endsWith('.tsx'))

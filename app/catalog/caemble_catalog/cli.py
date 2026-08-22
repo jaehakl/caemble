@@ -59,7 +59,7 @@ def _replace_manifest(
             )
             if references and replacement != identity:
                 raise CatalogError(
-                    f"Solver {identity[0]}@{identity[1]} is referenced by official Experiment entries"
+                    f"Solver {identity[0]}@{identity[1]} is referenced by Example Experiment entries"
                 )
             connection.execute(
                 "DELETE FROM experiment_solvers WHERE solver_name = ? AND solver_version = ?", identity

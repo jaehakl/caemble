@@ -196,13 +196,15 @@ export default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => nu
   it('supports an Experiment with no Task files for local inspection and evaluation', async () => {
     const files = {
       'experiment.tsx': `import { experiment } from '@caemble/core'
-export default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => <></>, recordedData: {} })`,
+export default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => <box size={[2, 3, 4]} />, recordedData: {} })`,
       'geometry.tsx': 'export {}',
       'material.tsx': 'export {}',
     }
     const compiled = await compiledDocument(files, '8'.repeat(64))
     expect(inspectCompiledDocument(compiled).varsSchema).toEqual({})
     const result = executeCompiledDocument(compiled, {}, 'async def simulate(*, sim, tasks, vars):\n    return None\n')
+    expect(result.scene.parts).toHaveLength(1)
+    expect(geometries.geom3.isA(result.scene.parts[0].geometry)).toBe(true)
     expect(result.taskScenes).toEqual({})
     expect(result.simulationProgram.tasks).toEqual({})
   })

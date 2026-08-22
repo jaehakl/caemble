@@ -4,7 +4,7 @@ import { scenePartColor } from '@/features/viewer/viewer/materialColor'
 import { assertSimulationProgramManifest } from '@/lib/cad/simulation'
 import { installSyntheticCatalog } from '@/test/syntheticCatalog'
 import { evaluatePublicExampleBundle, expectReliablePublicScene } from '@/test/publicExampleHarness'
-import { officialExperiment, officialExperimentKeys } from './catalogTestData'
+import { exampleExperiment, exampleExperimentKeys } from './catalogTestData'
 
 installSyntheticCatalog({
   quantityKinds: [
@@ -25,8 +25,8 @@ installSyntheticCatalog({
 
 describe('canonical public Experiment catalog', () => {
   it('accepts fixture objects, explicit null, and omitted fixture fields from catalog transports', () => {
-    const withFixture = officialExperiment('dc-uniform-bar')
-    const withoutFixture = officialExperiment('dc-notched-current-density')
+    const withFixture = exampleExperiment('dc-uniform-bar')
+    const withoutFixture = exampleExperiment('dc-notched-current-density')
 
     expect(experimentDetailSchema.parse(withFixture).verification.fixture).toMatchObject({
       records: [{ name: 'totalCurrent' }],
@@ -40,8 +40,8 @@ describe('canonical public Experiment catalog', () => {
     ).toBeNull()
   })
 
-  it.each(officialExperimentKeys)('validates %s bundle, tasks, RecordedData, and verification', async (key) => {
-    const item = officialExperiment(key)
+  it.each(exampleExperimentKeys)('validates %s bundle, tasks, RecordedData, and verification', async (key) => {
+    const item = exampleExperiment(key)
     const result = await evaluatePublicExampleBundle(item.sourceBundle)
     const manifest = result.simulationProgram
 
@@ -69,13 +69,13 @@ describe('canonical public Experiment catalog', () => {
   })
 
   it('preserves wheel Material roles and gives them distinct automatic Viewer colors', async () => {
-    const result = await evaluatePublicExampleBundle(officialExperiment('two-material-wheel-assembly').sourceBundle)
+    const result = await evaluatePublicExampleBundle(exampleExperiment('two-material-wheel-assembly').sourceBundle)
     expect(result.scene.parts.map(({ materialRole }) => materialRole)).toEqual(['tire', 'wheel'])
     expect(new Set(result.scene.parts.map(scenePartColor)).size).toBe(2)
   })
 
-  it.each(officialExperimentKeys)('keeps %s orchestration in the Python v3 ABI', (key) => {
-    const item = officialExperiment(key)
+  it.each(exampleExperimentKeys)('keeps %s orchestration in the Python v3 ABI', (key) => {
+    const item = exampleExperiment(key)
     const source = item.sourceBundle.files['simulate.py']
     expect(item.sourceBundle.files['experiment.tsx']).not.toContain('sim.run(')
     expect(source).toMatch(/^async def simulate\(\*, sim, tasks, vars\):/u)

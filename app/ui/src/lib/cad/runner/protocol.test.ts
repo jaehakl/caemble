@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CAD_COMPILER_VERSION, type CompiledCadDocument } from '../compiler/types'
+import { cadSceneHash } from '../execution/meshValidation'
 import {
   assertCadEvaluationRequest,
   assertCadGeometryPreviewRequest,
@@ -46,6 +47,46 @@ const compiledExperiment: CompiledCadDocument = {
 }
 
 describe('isolated runner protocol for Experiment bundles', () => {
+  it('accepts a Taskless Experiment evaluation result', () => {
+    const sceneContent = {
+      lengthUnit: 'mm' as const,
+      parts: [],
+      tree: { key: 'experiment', label: 'Experiment', children: [] },
+      geometryGroups: [],
+      surfaceGroups: [],
+    }
+    const scene = { sceneHash: cadSceneHash(sceneContent), ...sceneContent }
+
+    expect(() =>
+      assertRunnerOperationResultEnvelope({
+        type: 'operation-result',
+        operation: 'evaluate',
+        nonce,
+        response: {
+          type: 'evaluation-success',
+          requestId: 'evaluate-taskless',
+          revision: 1,
+          documentType: 'experiment',
+          snapshot: {
+            kind: 'experiment',
+            sourceHash,
+            variables: {},
+            varsSchema: {},
+            scene,
+            taskScenes: {},
+            simulationProgram: {
+              formatVersion: 5,
+              simulationApiVersion: 3,
+              pythonSource: 'async def simulate(*, sim, tasks, vars):\n    return None\n',
+              tasks: {},
+              recordedData: {},
+            },
+          },
+        },
+      }),
+    ).not.toThrow()
+  })
+
   it('accepts exact inspect, evaluate, start, result, and cancel messages', () => {
     const inspect = {
       type: 'inspect' as const,

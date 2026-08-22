@@ -57,13 +57,13 @@ describe('documentation knowledge registry', () => {
         kind: 'experiment',
         key: 'caemble:experiment/caemble/getting-started/basketball-goal@1.0.0',
         title: 'Basketball Goal',
-        subtitle: 'Official Experiment',
+        subtitle: 'Example Experiment',
       },
       {
         kind: 'experiment',
         key: 'caemble:experiment/caemble/verified/dc-uniform-bar@1.0.0',
         title: 'DC Uniform Bar',
-        subtitle: 'Official Experiment',
+        subtitle: 'Example Experiment',
       },
     ])
 
@@ -77,9 +77,7 @@ describe('documentation knowledge registry', () => {
         .map(({ id }) => id),
     ).toContain('program-multiphysics-example')
     expect(serverResults[1].href).toBe('/docs?section=solvers&item=dc-current-density%400.1.0')
-    expect(serverResults[2].item).toBe(
-      'experiment:caemble:experiment/caemble/getting-started/basketball-goal@1.0.0',
-    )
+    expect(serverResults[2].item).toBe('experiment:caemble:experiment/caemble/getting-started/basketball-goal@1.0.0')
     expect(serverResults[3].item).toBe('experiment:caemble:experiment/caemble/verified/dc-uniform-bar@1.0.0')
   })
 })

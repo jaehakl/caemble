@@ -43,6 +43,16 @@ vi.mock('@/api/catalog', async (importOriginal) => {
 })
 vi.mock('sonner', () => ({ toast: { error: mocks.toastError, success: mocks.toastSuccess } }))
 
+Object.defineProperties(HTMLElement.prototype, {
+  hasPointerCapture: { configurable: true, value: () => false },
+  releasePointerCapture: { configurable: true, value: () => undefined },
+  setPointerCapture: { configurable: true, value: () => undefined },
+})
+Object.defineProperty(Element.prototype, 'scrollIntoView', {
+  configurable: true,
+  value: () => undefined,
+})
+
 const sourceBundle = {
   formatVersion: 6 as const,
   files: {
@@ -93,7 +103,11 @@ const rows = [
 ]
 
 function wrapper({ children }: { children: ReactNode }) {
-  return <QueryClientProvider client={new QueryClient()}>{children}</QueryClientProvider>
+  return (
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      {children}
+    </QueryClientProvider>
+  )
 }
 
 afterEach(() => {
@@ -139,15 +153,15 @@ beforeEach(() => {
 })
 
 describe('ExperimentManager', () => {
-  it('shows official coordinates and groups saved SemVer rows with lock impact', async () => {
+  it('shows Example and saved coordinates together with grouped SemVer lock impact', async () => {
     const user = userEvent.setup()
-    const onOpenCatalog = vi.fn()
+    const onOpenExample = vi.fn()
     render(
       <ExperimentManager
         authenticated
         selectedId={2}
         user={{ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never}
-        onOpenCatalog={onOpenCatalog}
+        onOpenExample={onOpenExample}
         onOpenSaved={vi.fn()}
       />,
       { wrapper },
@@ -165,15 +179,95 @@ describe('ExperimentManager', () => {
         }),
       ),
     )
-    expect(onOpenCatalog).toHaveBeenCalledWith(sourceBundle, 'Basketball Goal', 'Example')
-    await user.click(screen.getByRole('tab', { name: 'Saved Experiments' }))
-
+    expect(onOpenExample).toHaveBeenCalledWith(sourceBundle, 'Basketball Goal', 'Example')
     expect(await screen.findByText('jlee/lab/plate')).toBeVisible()
     expect(screen.getByText('v1.1.0')).toBeVisible()
-    expect(screen.getByText('v1.0.0')).toBeVisible()
+    expect(screen.getAllByText('v1.0.0')).toHaveLength(2)
     expect(screen.getByText('Locked')).toBeVisible()
     expect(screen.getByText('연결 데이터 3')).toBeVisible()
     expect(screen.queryByRole('combobox', { name: '소유 범위' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+  })
+
+  it('filters the unified list by namespace and repository', async () => {
+    const user = userEvent.setup()
+    render(
+      <ExperimentManager
+        authenticated
+        selectedId={2}
+        user={{ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never}
+        onOpenExample={vi.fn()}
+        onOpenSaved={vi.fn()}
+      />,
+      { wrapper },
+    )
+
+    expect(await screen.findByText('jlee/lab/plate')).toBeVisible()
+    expect(screen.getByText('caemble/getting-started/basketball-goal')).toBeVisible()
+
+    screen.getByRole('combobox', { name: 'Namespace 필터' }).focus()
+    await user.keyboard('{Enter}{ArrowDown}{Enter}')
+    expect(screen.queryByText('jlee/lab/plate')).not.toBeInTheDocument()
+    expect(screen.getByText('caemble/getting-started/basketball-goal')).toBeVisible()
+
+    screen.getByRole('combobox', { name: 'Namespace 필터' }).focus()
+    await user.keyboard('{Enter}{ArrowDown}{Enter}')
+    screen.getByRole('combobox', { name: 'Repository 필터' }).focus()
+    await user.keyboard('{Enter}{ArrowDown}{Enter}')
+    expect(screen.getByText('jlee/lab/plate')).toBeVisible()
+    expect(screen.queryByText('caemble/getting-started/basketball-goal')).not.toBeInTheDocument()
+  })
+
+  it('keeps saved results available when the Example query fails', async () => {
+    mocks.listExperiments.mockRejectedValueOnce(new Error('example failed'))
+    render(
+      <ExperimentManager
+        authenticated
+        selectedId={2}
+        user={{ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never}
+        onOpenExample={vi.fn()}
+        onOpenSaved={vi.fn()}
+      />,
+      { wrapper },
+    )
+
+    expect(await screen.findByText('Example 목록을 불러오지 못했습니다.')).toBeVisible()
+    expect(await screen.findByText('jlee/lab/plate')).toBeVisible()
+  })
+
+  it('keeps Examples available when the saved query fails', async () => {
+    mocks.listRows.mockRejectedValueOnce(new Error('saved failed'))
+    render(
+      <ExperimentManager
+        authenticated
+        selectedId={null}
+        user={{ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never}
+        onOpenExample={vi.fn()}
+        onOpenSaved={vi.fn()}
+      />,
+      { wrapper },
+    )
+
+    expect(await screen.findByText('저장된 Experiment 목록을 불러오지 못했습니다.')).toBeVisible()
+    expect(await screen.findByText('caemble/getting-started/basketball-goal')).toBeVisible()
+  })
+
+  it('loads only Examples for unauthenticated users', async () => {
+    render(
+      <ExperimentManager
+        authenticated={false}
+        selectedId={null}
+        user={null}
+        onOpenExample={vi.fn()}
+        onOpenSaved={vi.fn()}
+      />,
+      { wrapper },
+    )
+
+    expect(await screen.findByText('caemble/getting-started/basketball-goal')).toBeVisible()
+    expect(mocks.listRows).not.toHaveBeenCalled()
+    expect(screen.queryByText('jlee/lab/plate')).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'Experiment namespace' })).not.toBeInTheDocument()
   })
 
   it('syncs asynchronously loaded namespace and deletes one Version after usage confirmation', async () => {
@@ -182,7 +276,7 @@ describe('ExperimentManager', () => {
     const props = {
       authenticated: true,
       selectedId: 2,
-      onOpenCatalog: vi.fn(),
+      onOpenExample: vi.fn(),
       onOpenSaved: vi.fn(),
     }
     const { rerender } = render(<ExperimentManager {...props} user={null} />, { wrapper })
@@ -194,7 +288,6 @@ describe('ExperimentManager', () => {
       />,
     )
     expect(screen.getByRole('textbox', { name: 'Experiment namespace' })).toHaveValue('late-user')
-    await user.click(screen.getByRole('tab', { name: 'Saved Experiments' }))
     await user.click(await screen.findByRole('button', { name: 'Plate v1.0.0 삭제' }))
 
     await waitFor(() => expect(mocks.usage).toHaveBeenCalledWith([1]))
@@ -209,7 +302,7 @@ describe('ExperimentManager', () => {
         authenticated
         selectedId={2}
         user={{ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never}
-        onOpenCatalog={vi.fn()}
+        onOpenExample={vi.fn()}
         onOpenSaved={vi.fn()}
       />,
       { wrapper },
@@ -225,6 +318,10 @@ describe('ExperimentManager', () => {
         'Experiment namespace는 3~32자의 소문자 영숫자와 하이픈으로 입력하세요.',
       ),
     )
+    await user.clear(input)
+    await user.type(input, 'caemble')
+    await user.click(screen.getByRole('button', { name: 'Namespace 저장' }))
+    await waitFor(() => expect(mocks.toastError).toHaveBeenLastCalledWith('caemble namespace는 Example 전용입니다.'))
     expect(mocks.setNamespace).not.toHaveBeenCalled()
   })
 
@@ -236,7 +333,7 @@ describe('ExperimentManager', () => {
         authenticated
         selectedId={2}
         user={{ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never}
-        onOpenCatalog={vi.fn()}
+        onOpenExample={vi.fn()}
         onOpenSaved={vi.fn()}
       />,
       { wrapper },
@@ -260,13 +357,12 @@ describe('ExperimentManager', () => {
         authenticated
         selectedId={2}
         user={{ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never}
-        onOpenCatalog={vi.fn()}
+        onOpenExample={vi.fn()}
         onOpenSaved={vi.fn()}
       />,
       { wrapper },
     )
 
-    await user.click(screen.getByRole('tab', { name: 'Saved Experiments' }))
     await user.click(await screen.findByRole('button', { name: 'Plate v1.0.0 삭제' }))
 
     await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith('usage failed'))
@@ -283,13 +379,12 @@ describe('ExperimentManager', () => {
         authenticated
         selectedId={2}
         user={{ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never}
-        onOpenCatalog={vi.fn()}
+        onOpenExample={vi.fn()}
         onOpenSaved={vi.fn()}
       />,
       { wrapper },
     )
 
-    await user.click(screen.getByRole('tab', { name: 'Saved Experiments' }))
     await user.click(await screen.findByRole('button', { name: 'Plate v1.0.0 삭제' }))
 
     await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith('delete failed'))

@@ -85,7 +85,7 @@ export function PhysicsCatalog({
       <div className="border-b px-4 pt-4 sm:px-6">
         <TabsList className="grid w-full max-w-md grid-cols-2">
           <TabsTrigger value="solvers">Solvers</TabsTrigger>
-          <TabsTrigger value="experiments">Official Experiments</TabsTrigger>
+          <TabsTrigger value="experiments">Examples</TabsTrigger>
         </TabsList>
       </div>
       <TabsContent className="mt-0" value="solvers">
@@ -146,7 +146,7 @@ export function PhysicsCatalog({
         />
       </TabsContent>
       <TabsContent className="mt-0" value="experiments">
-        <OfficialExperimentCatalog
+        <ExampleExperimentCatalog
           embedded={embedded}
           selectedKey={
             controlledSelectedKey?.startsWith('experiment:') ? controlledSelectedKey.slice('experiment:'.length) : null
@@ -162,7 +162,7 @@ export function PhysicsCatalog({
   )
 }
 
-function OfficialExperimentCatalog({
+function ExampleExperimentCatalog({
   embedded,
   onSelect,
   onSelectSolver,
@@ -199,10 +199,10 @@ function OfficialExperimentCatalog({
       count={listQuery.data?.total ?? 0}
       description="SQLite 카탈로그에서 제공하는 읽기 전용 Experiment bundle v6 예제"
       embedded={embedded}
-      title="Official Experiments"
+      title="Examples"
       filters={
         <Input
-          aria-label="Official Experiment 검색"
+          aria-label="Example 검색"
           placeholder="key, 제목, 설명 검색"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -210,7 +210,7 @@ function OfficialExperimentCatalog({
       }
       list={
         listQuery.isLoading ? (
-          <CatalogLoading label="Official Experiment를 조회하고 있습니다." />
+          <CatalogLoading label="Example을 조회하고 있습니다." />
         ) : listQuery.isError ? (
           <CatalogError error={listQuery.error} />
         ) : (
@@ -233,7 +233,7 @@ function OfficialExperimentCatalog({
       }
       detail={
         detailQuery.isLoading ? (
-          <CatalogLoading label="Official Experiment detail을 조회하고 있습니다." />
+          <CatalogLoading label="Example detail을 조회하고 있습니다." />
         ) : detailQuery.isError ? (
           <CatalogError error={detailQuery.error} />
         ) : detailQuery.data ? (
@@ -300,7 +300,7 @@ function OfficialExperimentCatalog({
           </>
         ) : (
           <CardContent className="grid min-h-60 place-items-center text-sm text-muted-foreground">
-            Official Experiment를 선택하세요.
+            Example을 선택하세요.
           </CardContent>
         )
       }
@@ -353,7 +353,7 @@ function SolverDetail({
       </CardHeader>
       <CardContent>
         <div className="mb-5">
-          <p className="mb-2 text-xs font-medium text-muted-foreground">Official Experiments</p>
+          <p className="mb-2 text-xs font-medium text-muted-foreground">Examples</p>
           <div className="flex flex-wrap gap-1">
             {relatedExperiments.length ? (
               relatedExperiments.map((experiment) => (

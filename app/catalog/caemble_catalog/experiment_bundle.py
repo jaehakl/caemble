@@ -15,7 +15,7 @@ TSX_LANGUAGE = Language(tree_sitter_typescript.language_tsx())
 
 
 class ExperimentBundleError(ValueError):
-    """An official Experiment bundle violates the executable module policy."""
+    """An Example Experiment bundle violates the executable module policy."""
 
 
 def _walk(node: Any) -> Iterable[Any]:

@@ -116,7 +116,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 page.openTab('experiment')
               })
             }
-            onOpenCatalog={(sourceBundle, name, description) =>
+            onOpenExample={(sourceBundle, name, description) =>
               page.guardReplacement(() => {
                 workbench.newExperiment(sourceBundle, name, description)
                 page.openTab('experiment')

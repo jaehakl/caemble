@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ExternalLink, LoaderCircle, Search, Settings2, Trash2 } from 'lucide-react'
+import { LoaderCircle, Search, Settings2, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   dbTables,
@@ -16,7 +16,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { assertExperimentSourceBundle } from '@/lib/cad'
 import type { SavedExperiment } from '../types'
 
@@ -26,34 +25,60 @@ type ExperimentManagerProps = {
   selectedId: number | null
   user: UserData | null
   onDeleteSelected?: (row: SavedExperiment) => void
-  onOpenCatalog: (sourceBundle: SavedExperiment['source_bundle'], name: string, description: string) => void
+  onOpenExample: (sourceBundle: SavedExperiment['source_bundle'], name: string, description: string) => void
   onOpenSaved: (row: SavedExperiment) => void
 }
+
+type ManagedExperimentVersion =
+  | Readonly<{
+      kind: 'example'
+      coordinate: string
+      description: string
+      experimentKey: string
+      identity: string
+      name: string
+      namespace: string
+      repository: string
+      version: string
+      versionParts: readonly [number, number, number]
+      item: CatalogExperimentListItem
+    }>
+  | Readonly<{
+      kind: 'saved'
+      coordinate: string
+      description: string
+      experimentKey: string
+      identity: string
+      name: string
+      namespace: string
+      repository: string
+      version: string
+      versionParts: readonly [number, number, number]
+      row: ExperimentRecord
+    }>
 
 export function ExperimentManager({
   authenticated,
   busy = false,
   selectedId,
   user,
-  onOpenCatalog,
+  onOpenExample,
   onOpenSaved,
   onDeleteSelected,
 }: ExperimentManagerProps) {
   const queryClient = useQueryClient()
-  const [tab, setTab] = useState<'official' | 'saved'>('official')
   const [search, setSearch] = useState('')
   const [scope, setScope] = useState<'visible' | 'mine'>('mine')
   const [namespace, setNamespace] = useState('all')
   const [repository, setRepository] = useState('all')
   const [namespaceDraft, setNamespaceDraft] = useState(user?.experiment_namespace ?? '')
-  const [loadingOfficial, setLoadingOfficial] = useState<string | null>(null)
+  const [loadingExample, setLoadingExample] = useState<string | null>(null)
 
   useEffect(() => setNamespaceDraft(user?.experiment_namespace ?? ''), [user?.experiment_namespace])
 
-  const officialQuery = useQuery({
+  const exampleQuery = useQuery({
     queryKey: catalogQueryKeys.experiments({ q: search.trim(), limit: 100 }),
     queryFn: () => catalogApi.listExperiments({ q: search.trim(), limit: 100 }),
-    enabled: tab === 'official',
   })
   const savedRequest = useMemo<GetListRequest>(
     () => ({
@@ -75,66 +100,98 @@ export function ExperimentManager({
   const savedQuery = useQuery({
     queryKey: ['cae-workbench', 'experiments', savedRequest],
     queryFn: () => dbTables.Experiment.listRows(savedRequest),
-    enabled: authenticated && tab === 'saved',
+    enabled: authenticated,
   })
+  const managedVersions = useMemo<readonly ManagedExperimentVersion[]>(() => {
+    const examples = (exampleQuery.data?.items ?? []).map((item): ManagedExperimentVersion => {
+      const versionParts = item.version.split('.').map(Number) as [number, number, number]
+      return {
+        kind: 'example',
+        coordinate: item.coordinate,
+        description: item.description,
+        experimentKey: item.key,
+        identity: `${item.namespace}/${item.repository}/${item.key}`,
+        name: item.title,
+        namespace: item.namespace,
+        repository: item.repository,
+        version: item.version,
+        versionParts,
+        item,
+      }
+    })
+    const saved = (savedQuery.data?.items ?? []).map((row): ManagedExperimentVersion => {
+      const version = row.version ?? `${row.version_major}.${row.version_minor}.${row.version_patch}`
+      const identity = `${row.namespace}/${row.repository_slug}/${row.experiment_key}`
+      return {
+        kind: 'saved',
+        coordinate: row.coordinate ?? `caemble:experiment/${identity}@${version}`,
+        description: row.description || '설명 없음',
+        experimentKey: row.experiment_key,
+        identity,
+        name: row.name,
+        namespace: row.namespace,
+        repository: row.repository_slug,
+        version,
+        versionParts: [row.version_major, row.version_minor, row.version_patch],
+        row,
+      }
+    })
+    return Object.freeze([...examples, ...saved])
+  }, [exampleQuery.data?.items, savedQuery.data?.items])
   const namespaces = useMemo(() => {
-    const items = tab === 'official' ? (officialQuery.data?.items ?? []) : (savedQuery.data?.items ?? [])
-    return [...new Set(items.map((item) => item.namespace))].sort()
-  }, [officialQuery.data?.items, savedQuery.data?.items, tab])
+    return [...new Set(managedVersions.map((item) => item.namespace))].sort()
+  }, [managedVersions])
   const repositories = useMemo(
     () =>
       [
         ...new Set(
-          (tab === 'official' ? (officialQuery.data?.items ?? []) : (savedQuery.data?.items ?? []))
+          managedVersions
             .filter((item) => namespace === 'all' || item.namespace === namespace)
-            .map((item) => ('repository_slug' in item ? item.repository_slug : item.repository)),
+            .map((item) => item.repository),
         ),
       ].sort(),
-    [namespace, officialQuery.data?.items, savedQuery.data?.items, tab],
+    [managedVersions, namespace],
   )
-  const officialRows = useMemo(
-    () =>
-      (officialQuery.data?.items ?? []).filter(
+  const groups = useMemo(() => {
+    const grouped = new Map<string, ManagedExperimentVersion[]>()
+    managedVersions
+      .filter(
         (item) =>
           (namespace === 'all' || item.namespace === namespace) &&
           (repository === 'all' || item.repository === repository),
-      ),
-    [namespace, officialQuery.data?.items, repository],
-  )
-  const rows = useMemo(
-    () =>
-      (savedQuery.data?.items ?? []).filter(
-        (item) =>
-          (namespace === 'all' || item.namespace === namespace) &&
-          (repository === 'all' || item.repository_slug === repository),
-      ),
-    [namespace, repository, savedQuery.data?.items],
-  )
-  const savedGroups = useMemo(() => {
-    const grouped = new Map<string, ExperimentRecord[]>()
-    rows.forEach((row) => {
-      const identity = `${row.namespace}/${row.repository_slug}/${row.experiment_key}`
-      grouped.set(identity, [...(grouped.get(identity) ?? []), row])
-    })
-    return [...grouped.entries()].map(
-      ([identity, versions]) =>
-        [
-          identity,
-          versions.sort(
-            (left, right) =>
-              right.version_major - left.version_major ||
-              right.version_minor - left.version_minor ||
-              right.version_patch - left.version_patch,
-          ),
-        ] as const,
-    )
-  }, [rows])
+      )
+      .forEach((item) => {
+        grouped.set(item.identity, [...(grouped.get(item.identity) ?? []), item])
+      })
+    return [...grouped.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([identity, versions]) => {
+        versions.sort(
+          (left, right) =>
+            right.versionParts[0] - left.versionParts[0] ||
+            right.versionParts[1] - left.versionParts[1] ||
+            right.versionParts[2] - left.versionParts[2],
+        )
+        return [identity, versions] as const
+      })
+  }, [managedVersions, namespace, repository])
+
+  const filtersReady = !exampleQuery.isPending && (!authenticated || !savedQuery.isPending)
+  useEffect(() => {
+    if (filtersReady && namespace !== 'all' && !namespaces.includes(namespace)) {
+      setNamespace('all')
+      setRepository('all')
+    }
+  }, [filtersReady, namespace, namespaces])
+  useEffect(() => {
+    if (filtersReady && repository !== 'all' && !repositories.includes(repository)) setRepository('all')
+  }, [filtersReady, repositories, repository])
 
   const namespaceMutation = useMutation({
     mutationFn: (value: string) => {
       const nextNamespace = value.trim()
       if (nextNamespace === 'caemble') {
-        throw new Error('caemble namespace는 공식 Experiment 전용입니다.')
+        throw new Error('caemble namespace는 Example 전용입니다.')
       }
       if (!/^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$/.test(nextNamespace)) {
         throw new Error('Experiment namespace는 3~32자의 소문자 영숫자와 하이픈으로 입력하세요.')
@@ -182,16 +239,16 @@ export function ExperimentManager({
     },
   })
 
-  const openOfficial = async (experiment: CatalogExperimentListItem) => {
-    setLoadingOfficial(experiment.coordinate)
+  const openExample = async (experiment: CatalogExperimentListItem) => {
+    setLoadingExample(experiment.coordinate)
     try {
       const item = await catalogApi.getExperiment(experiment)
       assertExperimentSourceBundle(item.sourceBundle)
-      onOpenCatalog(item.sourceBundle, item.title, item.description)
+      onOpenExample(item.sourceBundle, item.title, item.description)
     } catch (cause: unknown) {
-      toast.error(cause instanceof Error ? cause.message : '공식 Experiment를 불러오지 못했습니다.')
+      toast.error(cause instanceof Error ? cause.message : 'Example을 불러오지 못했습니다.')
     } finally {
-      setLoadingOfficial(null)
+      setLoadingExample(null)
     }
   }
 
@@ -202,7 +259,7 @@ export function ExperimentManager({
           <div>
             <h2 className="font-semibold">Experiment Manager</h2>
             <p className="text-sm text-muted-foreground">
-              공식 예제와 저장된 namespace / repository / SemVer 목록을 한곳에서 관리합니다.
+              Example과 저장된 namespace / repository / SemVer 목록을 한곳에서 관리합니다.
             </p>
           </div>
           {authenticated ? (
@@ -273,148 +330,115 @@ export function ExperimentManager({
           </Select>
         </div>
       </header>
-      <Tabs
-        className="flex min-h-0 flex-1 flex-col p-4"
-        value={tab}
-        onValueChange={(value) => {
-          setTab(value as typeof tab)
-          setNamespace('all')
-          setRepository('all')
-        }}
-      >
-        <TabsList className={`grid w-full shrink-0 ${authenticated ? 'grid-cols-2' : 'grid-cols-1'}`}>
-          <TabsTrigger value="official">Official Experiments</TabsTrigger>
-          {authenticated ? <TabsTrigger value="saved">Saved Experiments</TabsTrigger> : null}
-        </TabsList>
-        <TabsContent className="min-h-0 flex-1 overflow-auto rounded-md border" value="official">
-          {officialQuery.isLoading ? (
-            <ManagerMessage loading>공식 Experiment를 불러오는 중…</ManagerMessage>
-          ) : officialQuery.isError ? (
-            <ManagerMessage>공식 Experiment 목록을 불러오지 못했습니다.</ManagerMessage>
-          ) : officialRows.length ? (
+      <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+        {authenticated && user?.roles.includes('admin') ? (
+          <Select value={scope} onValueChange={(value) => setScope(value as typeof scope)}>
+            <SelectTrigger aria-label="소유 범위" className="w-full sm:w-56">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="visible">전체 사용자</SelectItem>
+              <SelectItem value="mine">내 Experiment</SelectItem>
+            </SelectContent>
+          </Select>
+        ) : null}
+        <div className="min-h-0 flex-1 overflow-auto rounded-md border">
+          {exampleQuery.isError ? (
+            <div
+              className="border-b border-destructive/25 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+              role="alert"
+            >
+              Example 목록을 불러오지 못했습니다.
+            </div>
+          ) : null}
+          {authenticated && savedQuery.isError ? (
+            <div
+              className="border-b border-destructive/25 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+              role="alert"
+            >
+              저장된 Experiment 목록을 불러오지 못했습니다.
+            </div>
+          ) : null}
+          {groups.length ? (
             <ul className="divide-y">
-              {officialRows.map((item) => (
-                <li className="flex items-start gap-3 p-4" key={item.coordinate}>
-                  <button
-                    className="min-w-0 flex-1 text-left disabled:opacity-50"
-                    disabled={busy || loadingOfficial !== null}
-                    type="button"
-                    onClick={() => void openOfficial(item)}
-                  >
-                    <span className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-medium">{item.title}</span>
-                      <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">v{item.version}</span>
-                    </span>
-                    <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">
-                      {item.coordinate}
-                    </span>
-                    <span className="mt-1 line-clamp-2 block text-sm text-muted-foreground">{item.description}</span>
-                  </button>
-                  <Button
-                    aria-label={`${item.title} 열기`}
-                    disabled={busy || loadingOfficial !== null}
-                    size="icon"
-                    type="button"
-                    variant="ghost"
-                    onClick={() => void openOfficial(item)}
-                  >
-                    {loadingOfficial === item.coordinate ? <LoaderCircle className="animate-spin" /> : <ExternalLink />}
-                  </Button>
+              {groups.map(([identity, versions]) => (
+                <li key={identity}>
+                  <div className="border-b bg-muted/35 px-4 py-2 font-mono text-xs font-semibold">{identity}</div>
+                  <ul className="divide-y">
+                    {versions.map((item) => {
+                      const savedRow = item.kind === 'saved' ? item.row : null
+                      const manageable = Boolean(
+                        savedRow && user && (savedRow.user_id === user.id || user.roles.includes('admin')),
+                      )
+                      const counts = savedRow?.derivedCounts
+                      const linked = counts
+                        ? counts.measurements + counts.recordedData + counts.designerModels + counts.predictorModels
+                        : 0
+                      return (
+                        <li
+                          className={savedRow?.id === selectedId ? 'bg-orange-50/70' : undefined}
+                          key={item.coordinate}
+                        >
+                          <div className="flex items-start gap-3 p-4 pl-6">
+                            <button
+                              className="min-w-0 flex-1 text-left disabled:opacity-50"
+                              disabled={busy || (item.kind === 'example' && loadingExample !== null)}
+                              type="button"
+                              onClick={() =>
+                                item.kind === 'example'
+                                  ? void openExample(item.item)
+                                  : onOpenSaved(item.row as SavedExperiment)
+                              }
+                            >
+                              <span className="flex flex-wrap items-center gap-2">
+                                <span className="font-medium">{item.name}</span>
+                                <Badge className="bg-muted text-foreground">v{item.version}</Badge>
+                                {item.kind === 'example' && loadingExample === item.coordinate ? (
+                                  <LoaderCircle className="size-4 animate-spin" />
+                                ) : null}
+                                {savedRow?.sourceLocked ? (
+                                  <Badge className="bg-amber-600 text-white">Locked</Badge>
+                                ) : null}
+                                {linked ? (
+                                  <Badge className="border bg-transparent text-foreground">
+                                    연결 데이터 {linked.toLocaleString()}
+                                  </Badge>
+                                ) : null}
+                              </span>
+                              <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">
+                                {item.coordinate}
+                              </span>
+                              <span className="mt-1 line-clamp-2 block text-sm text-muted-foreground">
+                                {item.description}
+                              </span>
+                            </button>
+                            {manageable && savedRow ? (
+                              <Button
+                                aria-label={`${savedRow.name} v${item.version} 삭제`}
+                                disabled={busy || deleteMutation.isPending}
+                                size="icon"
+                                type="button"
+                                variant="ghost"
+                                onClick={() => deleteMutation.mutate(savedRow)}
+                              >
+                                <Trash2 className="text-destructive" />
+                              </Button>
+                            ) : null}
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
                 </li>
               ))}
             </ul>
+          ) : exampleQuery.isPending || (authenticated && savedQuery.isPending) ? (
+            <ManagerMessage loading>Experiment 목록을 불러오는 중…</ManagerMessage>
           ) : (
-            <ManagerMessage>조건에 맞는 공식 Experiment가 없습니다.</ManagerMessage>
+            <ManagerMessage>조건에 맞는 Experiment가 없습니다.</ManagerMessage>
           )}
-        </TabsContent>
-        {authenticated ? (
-          <TabsContent className="flex min-h-0 flex-1 flex-col gap-3" value="saved">
-            {user?.roles.includes('admin') ? (
-              <Select value={scope} onValueChange={(value) => setScope(value as typeof scope)}>
-                <SelectTrigger aria-label="소유 범위" className="w-full sm:w-56">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="visible">전체 사용자</SelectItem>
-                  <SelectItem value="mine">내 Experiment</SelectItem>
-                </SelectContent>
-              </Select>
-            ) : null}
-            <div className="min-h-0 flex-1 overflow-auto rounded-md border">
-              {savedQuery.isLoading ? (
-                <ManagerMessage loading>저장된 Experiment를 불러오는 중…</ManagerMessage>
-              ) : savedQuery.isError ? (
-                <ManagerMessage>저장된 Experiment 목록을 불러오지 못했습니다.</ManagerMessage>
-              ) : savedGroups.length ? (
-                <ul className="divide-y">
-                  {savedGroups.map(([identity, versions]) => (
-                    <li key={identity}>
-                      <div className="border-b bg-muted/35 px-4 py-2 font-mono text-xs font-semibold">{identity}</div>
-                      <ul className="divide-y">
-                        {versions.map((row) => {
-                          const version =
-                            row.version ?? `${row.version_major}.${row.version_minor}.${row.version_patch}`
-                          const coordinate = row.coordinate ?? `caemble:experiment/${identity}@${version}`
-                          const manageable = Boolean(user && (row.user_id === user.id || user.roles.includes('admin')))
-                          const counts = row.derivedCounts
-                          const linked = counts
-                            ? counts.measurements + counts.recordedData + counts.designerModels + counts.predictorModels
-                            : 0
-                          return (
-                            <li className={row.id === selectedId ? 'bg-orange-50/70' : undefined} key={row.id}>
-                              <div className="flex items-start gap-3 p-4 pl-6">
-                                <button
-                                  className="min-w-0 flex-1 text-left disabled:opacity-50"
-                                  disabled={busy}
-                                  type="button"
-                                  onClick={() => onOpenSaved(row as SavedExperiment)}
-                                >
-                                  <span className="flex flex-wrap items-center gap-2">
-                                    <span className="font-medium">{row.name}</span>
-                                    <Badge className="bg-muted text-foreground">v{version}</Badge>
-                                    {row.sourceLocked ? (
-                                      <Badge className="bg-amber-600 text-white">Locked</Badge>
-                                    ) : null}
-                                    {linked ? (
-                                      <Badge className="border bg-transparent text-foreground">
-                                        연결 데이터 {linked.toLocaleString()}
-                                      </Badge>
-                                    ) : null}
-                                  </span>
-                                  <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">
-                                    {coordinate}
-                                  </span>
-                                  <span className="mt-1 line-clamp-2 block text-sm text-muted-foreground">
-                                    {row.description || '설명 없음'}
-                                  </span>
-                                </button>
-                                {manageable ? (
-                                  <Button
-                                    aria-label={`${row.name} v${version} 삭제`}
-                                    disabled={busy || deleteMutation.isPending}
-                                    size="icon"
-                                    type="button"
-                                    variant="ghost"
-                                    onClick={() => deleteMutation.mutate(row)}
-                                  >
-                                    <Trash2 className="text-destructive" />
-                                  </Button>
-                                ) : null}
-                              </div>
-                            </li>
-                          )
-                        })}
-                      </ul>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <ManagerMessage>조건에 맞는 저장된 Experiment가 없습니다.</ManagerMessage>
-              )}
-            </div>
-          </TabsContent>
-        ) : null}
-      </Tabs>
+        </div>
+      </div>
     </section>
   )
 }

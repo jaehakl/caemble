@@ -86,7 +86,7 @@ Payloads and attachments travel over WebRTC between the client and worker.
 | --- | --- |
 | UI | authoring, isolated evaluation, preview, candidate generation, Material freezing, BuiltMeasurement serialization |
 | API | OAuth/tokens, Experiment version ownership, prepared Measurements, one-time RecordedData transaction, job orchestration |
-| Catalog | the sole QuantityKind, Material, Solver, and official Experiment data source in `catalog.sqlite3` |
+| Catalog | the sole QuantityKind, Material, Solver, and Example Experiment data source in `catalog.sqlite3` |
 | Launcher | discovers executable manifests, owns one active worker/job, and bridges the control WebSocket |
 | CAE worker | verifies catalog digests, converts units, validates target/method contracts, runs `simulate.py` and Solvers |
 | AI worker | executes the public v1 AI handlers using machine-local model/provider configuration |

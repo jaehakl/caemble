@@ -29,7 +29,7 @@ with Catalog.open_readonly() as catalog:
     )
 json.dump(result, sys.stdout)
 `
-const officialExperimentTemplates = [
+const exampleExperimentTemplates = [
   ['DC Uniform Bar', 'referenceVoltage'],
   ['DC Notched Current Density', 'NotchedConductor'],
   ['DC Resolution Study', 'sourceVoltage'],
@@ -341,8 +341,8 @@ export default experiment({
   await expect(page.getByText('Draft preview · Solver 미선택')).toBeVisible({ timeout: 15_000 })
 })
 
-for (const [title, sourceMarker] of officialExperimentTemplates) {
-  test(`loads the ${title} official Experiment through Experiment Manager`, async ({ page }) => {
+for (const [title, sourceMarker] of exampleExperimentTemplates) {
+  test(`loads the ${title} Example through Experiment Manager`, async ({ page }) => {
     test.setTimeout(90_000)
     await mockApi(page)
     await mockCanonicalCatalog(page)
@@ -355,7 +355,7 @@ for (const [title, sourceMarker] of officialExperimentTemplates) {
     await page.getByRole('menuitem', { name: 'Load Experiment' }).click()
     const manager = page.getByLabel('Experiment Manager')
     await expect(page.getByRole('tab', { name: 'Experiments', exact: true })).toHaveAttribute('aria-selected', 'true')
-    await manager.getByRole('button', { name: `${title} 열기` }).click()
+    await manager.getByRole('button', { name: new RegExp(title) }).click()
 
     await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText(sourceMarker)
     await expect(page.getByText('Waiting for model...', { exact: true })).toBeHidden({ timeout: 30_000 })
@@ -466,7 +466,7 @@ test('manages Experiment namespace, SemVer saves, locks, and version deletion', 
 
   await manager.getByRole('textbox', { name: 'Experiment namespace' }).fill('design-lab')
   await manager.getByRole('button', { name: 'Namespace 저장' }).click()
-  await manager.getByRole('button', { name: 'Basketball Goal 열기' }).click()
+  await manager.getByRole('button', { name: /Basketball Goal v1\.0\.0/ }).click()
   await expect(workbenchFooter).toContainText('Preview only · Task 없음')
 
   await page.getByRole('menuitem', { name: 'Source' }).click()
@@ -486,7 +486,6 @@ test('manages Experiment namespace, SemVer saves, locks, and version deletion', 
 
   await page.getByRole('menuitem', { name: 'Source' }).click()
   await page.getByRole('menuitem', { name: 'Experiment Manager' }).click()
-  await manager.getByRole('tab', { name: 'Saved Experiments' }).click()
   await expect(manager).toContainText('design-lab/prototypes/basketball-goal')
   await expect(manager).toContainText('Locked')
   await expect(manager).toContainText('연결 데이터 3')

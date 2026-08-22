@@ -95,7 +95,7 @@ def test_solver_manifests_reconstruct_the_legacy_contract():
         assert len(catalog.solver_contract_digest("steady-state-heat", "0.1.0")) == 64
 
 
-def test_official_experiment_catalog_contracts():
+def test_example_experiment_catalog_contracts():
     with Catalog.open_readonly() as catalog:
         experiments, experiment_total = catalog.list_experiments(limit=100)
         assert experiment_total == 11
@@ -385,7 +385,7 @@ def test_validate_detects_stale_contract_digest(tmp_path: Path):
         ),
     ],
 )
-def test_validate_rejects_invalid_official_source_bundle_and_solver_relations(
+def test_validate_rejects_invalid_example_source_bundle_and_solver_relations(
     tmp_path: Path,
     statement: str,
     match: str,
@@ -401,7 +401,7 @@ def test_validate_rejects_invalid_official_source_bundle_and_solver_relations(
         validate_database(draft)
 
 
-def test_official_experiment_module_policy_accepts_ts_syntax_and_type_only_cycles():
+def test_example_experiment_module_policy_accepts_ts_syntax_and_type_only_cycles():
     files = {
         "experiment.tsx": "import { value } from './lib/value'\nexport default value\n",
         "geometry.tsx": "export {}\n",
@@ -418,7 +418,7 @@ def test_official_experiment_module_policy_accepts_ts_syntax_and_type_only_cycle
     validate_experiment_module_graph(files)
 
 
-def test_official_experiment_module_policy_resolves_dotted_extensionless_paths():
+def test_example_experiment_module_policy_resolves_dotted_extensionless_paths():
     validate_experiment_module_graph(
         {
             "entry.ts": "import { value } from './lib/value.helpers'\nexport { value }\n",
@@ -427,7 +427,7 @@ def test_official_experiment_module_policy_resolves_dotted_extensionless_paths()
     )
 
 
-def test_official_experiment_module_policy_uses_structural_type_modifiers():
+def test_example_experiment_module_policy_uses_structural_type_modifiers():
     validate_experiment_module_graph(
         {
             "types/a.ts": "import { type\n B } from './b'\nexport type A = B\n",
@@ -458,7 +458,7 @@ def test_official_experiment_module_policy_uses_structural_type_modifiers():
         ("const value = <number>1\n", "TSX syntax error"),
     ],
 )
-def test_official_experiment_module_policy_rejects_non_executable_graphs(source: str, match: str):
+def test_example_experiment_module_policy_rejects_non_executable_graphs(source: str, match: str):
     files = {
         "experiment.tsx": "export default null\n",
         "geometry.tsx": "export {}\n",
@@ -471,7 +471,7 @@ def test_official_experiment_module_policy_rejects_non_executable_graphs(source:
         validate_experiment_module_graph(files)
 
 
-def test_catalog_validation_applies_official_experiment_module_policy(tmp_path: Path):
+def test_catalog_validation_applies_example_experiment_module_policy(tmp_path: Path):
     draft = tmp_path / "invalid-import.sqlite3"
     create_draft(draft)
     connection = sqlite3.connect(draft)

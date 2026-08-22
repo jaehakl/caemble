@@ -149,8 +149,8 @@ def upgrade() -> None:
     _reset_research_data()
     _drop_geometry_schema()
 
-    # `caemble` was valid in the legacy Geometry namespace contract. Official
-    # Experiments now reserve it, so preserve the user while clearing only that
+    # `caemble` was valid in the legacy Geometry namespace contract. Examples
+    # now reserve it, so preserve the user while clearing only that
     # legacy namespace after the intentionally destructive operational reset.
     op.execute(
         "UPDATE users SET geometry_namespace = NULL "

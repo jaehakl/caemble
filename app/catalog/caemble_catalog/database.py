@@ -821,7 +821,7 @@ class Catalog:
                      'caemble:experiment/' || namespace || '/' || repository_slug || '/' || key || '@' ||
                        version_major || '.' || version_minor || '.' || version_patch,
                      title,
-                     'Official Experiment · ' || namespace || '/' || repository_slug || '@' ||
+                     'Example Experiment · ' || namespace || '/' || repository_slug || '@' ||
                        version_major || '.' || version_minor || '.' || version_patch,
                      namespace || '/' || repository_slug || '/' || key || '@' ||
                        version_major || '.' || version_minor || '.' || version_patch

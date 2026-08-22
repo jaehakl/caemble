@@ -41,6 +41,27 @@ describe('CadViewer', () => {
     expect(markup).toContain('min-h-[360px] min-w-0 lg:min-h-0 lg:overflow-hidden')
   })
 
+  it('keeps common Experiment geometry visible without Tasks', () => {
+    const experiment = { scene: experimentScene, taskScenes: {}, variables: {} }
+    const content = resolveCadViewerContent(experiment, true, true)
+    const markup = renderToStaticMarkup(
+      <CadViewer
+        experiment={experiment}
+        onRenderEnd={() => undefined}
+        onRenderError={() => undefined}
+        onRenderStart={() => undefined}
+      />,
+    )
+
+    expect(content.availableSources).toEqual(['experiment'])
+    expect(content.visibleSources).toEqual(['experiment'])
+    expect(content.layers).toHaveLength(1)
+    expect(content.layers[0].parts[0].id).toBe('experiment-part')
+    expect(markup).toMatch(/<button[^>]*aria-label="Toggle experiment"[^>]*aria-pressed="true"/)
+    expect(markup).toMatch(/<button[^>]*aria-label="Toggle task"[^>]*disabled/)
+    expect(markup).not.toContain('No Experiment geometry is available.')
+  })
+
   it('disables a missing source toggle', () => {
     const markup = renderToStaticMarkup(
       <CadViewer

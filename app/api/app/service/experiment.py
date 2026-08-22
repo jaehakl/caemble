@@ -126,7 +126,7 @@ async def change_experiment_namespace(db: AsyncSession, user_id: str, namespace:
         raise _bad("Experiment namespace format is invalid.")
     if namespace == "caemble":
         raise _bad(
-            "The caemble namespace is reserved for official Experiments.",
+            "The caemble namespace is reserved for Examples.",
             code=status.HTTP_409_CONFLICT,
         )
     user = await db.scalar(

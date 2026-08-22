@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { CatalogExperimentDetail } from '@/api/catalog'
 import { assertExperimentSourceBundle, type ExperimentSourceBundle } from '@/lib/cad'
 
-export const officialExperimentKeys = [
+export const exampleExperimentKeys = [
   'basketball-goal',
   'fiber-bundle',
   'shell-cutaways',
@@ -18,7 +18,7 @@ export const officialExperimentKeys = [
 ] as const
 
 const cached = new Map<string, unknown>()
-const officialExperimentRepositories: Record<(typeof officialExperimentKeys)[number], string> = {
+const exampleExperimentRepositories: Record<(typeof exampleExperimentKeys)[number], string> = {
   'basketball-goal': 'getting-started',
   'fiber-bundle': 'advanced-shapes',
   'shell-cutaways': 'advanced-shapes',
@@ -32,8 +32,8 @@ const officialExperimentRepositories: Record<(typeof officialExperimentKeys)[num
   'electro-thermal-uniform-bar': 'verified',
 }
 
-function catalogQuery(key: (typeof officialExperimentKeys)[number]) {
-  const repository = officialExperimentRepositories[key]
+function catalogQuery(key: (typeof exampleExperimentKeys)[number]) {
+  const repository = exampleExperimentRepositories[key]
   const cacheKey = `caemble:experiment/caemble/${repository}/${key}@1.0.0`
   if (cached.has(cacheKey)) return cached.get(cacheKey)
   const catalogRoot = path.resolve(process.cwd(), '../catalog')
@@ -65,7 +65,7 @@ function catalogQuery(key: (typeof officialExperimentKeys)[number]) {
   return value
 }
 
-export function officialExperiment(key: (typeof officialExperimentKeys)[number]) {
+export function exampleExperiment(key: (typeof exampleExperimentKeys)[number]) {
   const value = catalogQuery(key) as CatalogExperimentDetail
   assertExperimentSourceBundle(value.sourceBundle)
   return value as CatalogExperimentDetail & { sourceBundle: ExperimentSourceBundle }
