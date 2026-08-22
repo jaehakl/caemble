@@ -1,5 +1,5 @@
 import { Archive, RotateCcw, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -9,30 +9,63 @@ import { GeometryRepositoryPicker } from './GeometryRepositoryPicker'
 import type { GeometryRepositoryRecord } from '@/api'
 import type { GeometryManagerState } from './useGeometryWorkspaceState'
 
+export type GeometryRepositoryManagerState = Pick<
+  GeometryManagerState,
+  | 'archiveRepository'
+  | 'createRepository'
+  | 'deleteRepository'
+  | 'namespace'
+  | 'repositories'
+  | 'restoreRepository'
+  | 'updateRepositoryDescription'
+>
+
 export function GeometryRepositoryManagerDialog({
   geometry,
   onOpenChange,
   open,
   repositories = geometry.repositories,
 }: {
-  geometry: GeometryManagerState
+  geometry: GeometryRepositoryManagerState
   onOpenChange: (open: boolean) => void
   open: boolean
   repositories?: readonly GeometryRepositoryRecord[]
 }) {
   const [descriptions, setDescriptions] = useState<Record<number, string>>({})
-  const [busyId, setBusyId] = useState<number | null>(null)
+  const [busyIds, setBusyIds] = useState<ReadonlySet<number>>(new Set())
+  const dirtyDescriptionIds = useRef(new Set<number>())
 
   useEffect(() => {
-    setDescriptions(Object.fromEntries(repositories.map((item) => [item.id, item.description ?? ''])))
-  }, [repositories])
+    if (!open) {
+      dirtyDescriptionIds.current.clear()
+      return
+    }
+    setDescriptions((current) =>
+      Object.fromEntries(
+        repositories.map((item) => [
+          item.id,
+          dirtyDescriptionIds.current.has(item.id) ? (current[item.id] ?? '') : (item.description ?? ''),
+        ]),
+      ),
+    )
+  }, [open, repositories])
 
-  const run = (id: number, action: () => Promise<unknown>, success: string) => {
-    setBusyId(id)
+  const run = (id: number, action: () => Promise<unknown>, success: string, onSuccess?: () => void) => {
+    if (busyIds.has(id)) return
+    setBusyIds((current) => new Set(current).add(id))
     void action()
-      .then(() => toast.success(success))
+      .then(() => {
+        onSuccess?.()
+        toast.success(success)
+      })
       .catch((cause: unknown) => toast.error(cause instanceof Error ? cause.message : String(cause)))
-      .finally(() => setBusyId(null))
+      .finally(() =>
+        setBusyIds((current) => {
+          const next = new Set(current)
+          next.delete(id)
+          return next
+        }),
+      )
   }
 
   return (
@@ -72,19 +105,21 @@ export function GeometryRepositoryManagerDialog({
                     <div className="flex gap-2">
                       <Input
                         aria-label={`${repository.slug} 설명`}
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          dirtyDescriptionIds.current.add(repository.id)
                           setDescriptions((current) => ({ ...current, [repository.id]: event.target.value }))
-                        }
+                        }}
                         value={descriptions[repository.id] ?? ''}
                       />
                       <Button
-                        disabled={busyId === repository.id}
+                        disabled={busyIds.has(repository.id)}
                         onClick={() =>
                           run(
                             repository.id,
                             () =>
                               geometry.updateRepositoryDescription(repository.id, descriptions[repository.id] ?? ''),
                             'Repository 설명을 저장했습니다.',
+                            () => dirtyDescriptionIds.current.delete(repository.id),
                           )
                         }
                         size="sm"
@@ -106,7 +141,7 @@ export function GeometryRepositoryManagerDialog({
                     <div className="flex gap-1">
                       {repository.archived_at ? (
                         <Button
-                          disabled={busyId === repository.id}
+                          disabled={busyIds.has(repository.id)}
                           onClick={() =>
                             run(
                               repository.id,
@@ -121,7 +156,7 @@ export function GeometryRepositoryManagerDialog({
                         </Button>
                       ) : (
                         <Button
-                          disabled={busyId === repository.id}
+                          disabled={busyIds.has(repository.id)}
                           onClick={() =>
                             run(
                               repository.id,
@@ -136,7 +171,7 @@ export function GeometryRepositoryManagerDialog({
                         </Button>
                       )}
                       <Button
-                        disabled={busyId === repository.id}
+                        disabled={busyIds.has(repository.id)}
                         onClick={() => {
                           if (
                             window.confirm(

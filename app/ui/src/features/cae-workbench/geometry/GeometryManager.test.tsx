@@ -181,6 +181,7 @@ function renderManager(
               previewError: null,
               previewPublishedVersion,
               previewSource,
+              refreshRepositories: vi.fn(async () => repositories),
               setSelectedCoordinate,
               setManagerView: (value: 'examples' | 'workspace') => {
                 setManagerView(value)
@@ -312,6 +313,36 @@ describe('unified Geometry Manager', () => {
       ),
     )
     expect(screen.getByRole('option', { name: '모든 namespace' })).toBeInTheDocument()
+  })
+
+  it('refreshes Ribbon repository options when only query data changes', async () => {
+    mocks.authenticated = true
+    mocks.user = { roles: ['admin'] }
+    const common = {
+      id: 3,
+      namespace: 'designer',
+      slug: 'common',
+      user_id: 'user-1',
+      description: null,
+      archived_at: null,
+      created_at: null,
+      updated_at: null,
+    } satisfies GeometryRepositoryRecord
+    mocks.listRepositories.mockResolvedValue({ total: 1, items: [common] })
+    renderManager('designer')
+
+    const namespaceSelector = screen.getByRole('combobox', { name: 'Namespace' })
+    await screen.findByRole('option', { name: 'designer' })
+    fireEvent.change(namespaceSelector, { target: { value: 'all' } })
+    expect(await screen.findByRole('option', { name: 'designer/common' })).toBeInTheDocument()
+
+    mocks.listRepositories.mockResolvedValue({
+      total: 2,
+      items: [common, { ...common, id: 4, slug: 'parts' }],
+    })
+    fireEvent.click(screen.getByRole('button', { name: '새로고침' }))
+
+    expect(await screen.findByRole('option', { name: 'designer/parts' })).toBeInTheDocument()
   })
 
   it('keeps Package selection independent from namespace and Repository filters', async () => {

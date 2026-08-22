@@ -17,6 +17,31 @@ import type { GeometryDraftVersion } from '../types'
 import type { GeometryManagerState } from './useGeometryWorkspaceState'
 import { GeometryRepositoryPicker } from './GeometryRepositoryPicker'
 
+export type GeometryDraftEditorState = Pick<
+  GeometryManagerState,
+  | 'busy'
+  | 'confirmPublish'
+  | 'createRepository'
+  | 'discardDraft'
+  | 'namespace'
+  | 'previewDiagnostics'
+  | 'previewError'
+  | 'previewStale'
+  | 'publishPlan'
+  | 'publishReady'
+  | 'repositories'
+  | 'requestPublish'
+  | 'selectedExport'
+  | 'selectedExports'
+  | 'setBump'
+  | 'setPublishPlan'
+  | 'setSelectedExport'
+  | 'setVersion'
+  | 'updateDescription'
+  | 'updateDraftPackage'
+  | 'updateSource'
+>
+
 function errorMessage(cause: unknown) {
   return cause instanceof Error ? cause.message : String(cause)
 }
@@ -30,7 +55,7 @@ export function GeometryDraftVersionEditor({
 }: {
   authenticated: boolean
   draft: GeometryDraftVersion
-  geometry: GeometryManagerState
+  geometry: GeometryDraftEditorState
   onDiscard?: (draft: GeometryDraftVersion) => void
   onAuthoringStateChange?: (state: CadEditorAuthoringState | null) => void
 }) {

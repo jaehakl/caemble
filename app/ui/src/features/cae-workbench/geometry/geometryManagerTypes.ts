@@ -1,7 +1,6 @@
-import type { CatalogGeometryDetail, CatalogGeometryListItem } from '@/api/catalog'
-import type { GeometryPackageRecord, GeometryVersionRecord } from '@/api'
+import type { CatalogGeometryListItem } from '@/api/catalog'
+import type { GeometryPackageRecord } from '@/api'
 import type { GeometryModuleCoordinate } from '@/lib/cad'
-import type { ReactNode } from 'react'
 import type { GeometryDraftVersion } from '../types'
 
 export const GEOMETRY_MANAGER_ALL = 'all' as const
@@ -20,7 +19,7 @@ export type GeometryManagerFilters = Readonly<{
 export type GeometryManagerSelection =
   | Readonly<{ kind: 'none' }>
   | Readonly<{ kind: 'example'; key: string }>
-  | Readonly<{ kind: 'draft'; coordinate: GeometryModuleCoordinate }>
+  | Readonly<{ kind: 'draft'; coordinate: GeometryModuleCoordinate; packageId: number | null }>
   | Readonly<{ kind: 'package'; packageId: number; versionId: number | null }>
 
 export type GeometryManagerListRow =
@@ -30,7 +29,6 @@ export type GeometryManagerListRow =
 
 export type GeometryManagerRibbonAction = Readonly<{
   label: string
-  icon?: ReactNode
   disabled?: boolean
   disabledReason?: string
   onSelect: () => void
@@ -53,10 +51,7 @@ export type GeometryManagerRibbonState = Readonly<{
     reset: () => void
   }>
   selection: GeometryManagerSelection
-  selectedPackage: GeometryPackageRecord | null
-  selectedVersion: GeometryVersionRecord | null
-  selectedDraft: GeometryDraftVersion | null
-  selectedExample: CatalogGeometryDetail | null
+  selectionLabel: string
   actions: Readonly<{
     newGeometry: GeometryManagerRibbonAction
     refresh: GeometryManagerRibbonAction

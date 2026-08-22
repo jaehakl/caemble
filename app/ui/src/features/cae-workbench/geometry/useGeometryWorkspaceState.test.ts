@@ -247,6 +247,48 @@ describe('independent Geometry Manager state', () => {
     expect(Object.values(result.current.draftVersions)[0]?.source).toBe('export const Plate = () => <box />')
   })
 
+  it('rewrites only Geometry import specifiers when a Draft coordinate changes', () => {
+    const { result } = renderState()
+    const coordinate = 'caemble:geometry/jlee/common/plate@local' as LocalGeometryCoordinate
+    act(() => {
+      result.current.createDraft({
+        repository: 'common',
+        packageName: 'plate',
+        source: `const note = ${JSON.stringify(coordinate)}
+export const Plate = () => <box />`,
+      })
+      result.current.createDraft({
+        repository: 'common',
+        packageName: 'assembly',
+        source: `import { Plate } from ${JSON.stringify(coordinate)}
+export const Assembly = () => <Plate id="plate" />`,
+      })
+    })
+
+    act(() => {
+      result.current.updateDraftPackage(coordinate, {
+        repository: 'parts',
+        packageName: 'bracket',
+        repositoryId: null,
+      })
+    })
+
+    const drafts = Object.values(result.current.draftVersions)
+    expect(drafts.find((draft) => draft.packageName === 'bracket')?.source).toContain(coordinate)
+    expect(drafts.find((draft) => draft.packageName === 'assembly')?.source).toContain(
+      'caemble:geometry/jlee/parts/bracket@local',
+    )
+  })
+
+  it('rejects an invalid Draft Package before storing it', () => {
+    const { result } = renderState()
+
+    expect(() => result.current.createDraft({ repository: 'common', packageName: 'Bad Package' })).toThrow(
+      'Geometry coordinate가 올바르지 않습니다',
+    )
+    expect(result.current.draftVersions).toEqual({})
+  })
+
   it('forks Official source into an explicit Workspace Draft Version', () => {
     const { result } = renderState()
     act(() => result.current.previewSource('export const Official = () => <box />'))
@@ -430,6 +472,132 @@ describe('independent Geometry Manager state', () => {
     expect(result.current.experimentModules).toEqual([module])
     expect(result.current.managerModules).toEqual([])
     expect(result.current.entrySource).toBe(sourceFiles['geometry.tsx'])
+  })
+
+  it('rejects an invalid local alias before staging a Published Version', async () => {
+    const { result } = renderState()
+
+    await expect(result.current.usePublishedExport(42, 'Part', 'not-valid')).rejects.toThrow(
+      '올바른 Geometry component alias가 아닙니다',
+    )
+    expect(api.resolveVersion).not.toHaveBeenCalled()
+  })
+
+  it('keeps the latest Published Version selection when an older preview resolves last', async () => {
+    const firstCoordinate = 'caemble:geometry/jlee/common/first@1.0.0' as GeometryCoordinate
+    const secondCoordinate = 'caemble:geometry/jlee/common/second@1.0.0' as GeometryCoordinate
+    const firstModule = await geometryModule(41, firstCoordinate)
+    const secondModule = await geometryModule(42, secondCoordinate)
+    let resolveFirst!: (value: {
+      root: { geometryVersionId: number; coordinate: GeometryCoordinate; moduleHash: string; exports: string[] }
+      modules: GeometrySnapshotModule[]
+    }) => void
+    api.resolveVersion.mockImplementation((id: number) => {
+      if (id === 41) {
+        return new Promise((resolve) => {
+          resolveFirst = resolve
+        })
+      }
+      return Promise.resolve({
+        root: {
+          geometryVersionId: 42,
+          coordinate: secondCoordinate,
+          moduleHash: secondModule.moduleHash,
+          exports: ['Part'],
+        },
+        modules: [secondModule],
+      })
+    })
+    const { result } = renderState()
+
+    const firstPreview = result.current.previewPublishedVersion(41)
+    await act(() => result.current.previewPublishedVersion(42))
+    expect(result.current.selectedCoordinate).toBe(secondCoordinate)
+
+    await act(async () => {
+      resolveFirst({
+        root: {
+          geometryVersionId: 41,
+          coordinate: firstCoordinate,
+          moduleHash: firstModule.moduleHash,
+          exports: ['Part'],
+        },
+        modules: [firstModule],
+      })
+      await firstPreview
+    })
+
+    expect(result.current.selectedCoordinate).toBe(secondCoordinate)
+  })
+
+  it('commits a successful publish locally even when staging the published Version fails', async () => {
+    const coordinate = 'caemble:geometry/jlee/common/part@1.0.0' as GeometryCoordinate
+    const nextCoordinate = 'caemble:geometry/jlee/common/part@1.0.1' as GeometryCoordinate
+    const localCoordinate = 'caemble:geometry/jlee/common/part@local'
+    const { result } = renderState()
+    act(() =>
+      result.current.startVersionDraft({
+        versionId: 42,
+        coordinate,
+        source: 'export const Part = () => <box />',
+        description: '',
+        repositoryId: 3,
+        packageId: 7,
+      }),
+    )
+    await waitFor(() => expect(result.current.publishReady).toBe(true))
+    const draft = result.current.draftVersions[localCoordinate]!
+    const plan = {
+      planHash: 'a'.repeat(64),
+      steps: [
+        {
+          draftId: draft.draftId,
+          baseGeometryVersionId: 42,
+          repositoryId: 3,
+          repository: 'common',
+          package: 'part',
+          version: '1.0.1',
+          coordinate: nextCoordinate,
+          localCoordinate,
+          description: null,
+          source: draft.source,
+          sourceHash: 'b'.repeat(64),
+          moduleHash: 'c'.repeat(64),
+          exports: ['Part'],
+          imports: [],
+        },
+      ],
+      replacements: [{ draftId: draft.draftId, localCoordinate, coordinate: nextCoordinate }],
+    }
+    api.planPublish.mockResolvedValue(plan)
+    api.publish.mockResolvedValue({
+      planHash: plan.planHash,
+      published: [
+        {
+          id: 43,
+          packageId: 7,
+          coordinate: nextCoordinate,
+          version: '1.0.1',
+          description: null,
+          sourceHash: 'b'.repeat(64),
+          moduleHash: 'c'.repeat(64),
+          moduleFormatVersion: 4,
+          cadApiVersion: 8,
+          archivedAt: null,
+          createdAt: '2026-08-22T00:00:00Z',
+        },
+      ],
+      replacements: plan.replacements,
+    })
+    api.resolveVersion.mockRejectedValue(new Error('staging unavailable'))
+
+    await act(() => result.current.requestPublish(localCoordinate))
+    await act(() => result.current.confirmPublish())
+
+    expect(result.current.draftVersions).toEqual({})
+    expect(result.current.publishPlan).toBeNull()
+    expect(result.current.selectedCoordinate).toBe(nextCoordinate)
+    await waitFor(() => expect(result.current.previewError).toContain('source를 불러오지 못했습니다'))
   })
 
   it('blocks saving a legacy @local Experiment import instead of auto-publishing it', async () => {

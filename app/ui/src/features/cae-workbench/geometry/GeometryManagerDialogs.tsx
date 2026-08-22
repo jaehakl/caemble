@@ -12,12 +12,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import type { GeometryManagerState } from './useGeometryWorkspaceState'
 import { GeometryRepositoryPicker } from './GeometryRepositoryPicker'
-import { GeometryRepositoryManagerDialog } from './GeometryRepositoryManagerDialog'
+import { GeometryRepositoryManagerDialog, type GeometryRepositoryManagerState } from './GeometryRepositoryManagerDialog'
 import { GeometryUsageDialog } from './GeometryUsageDialog'
 import { GeometryWorkspaceSettingsDialog } from './GeometryWorkspaceSettingsDialog'
 import { draftGeometrySource } from './draftGeometrySource'
+
+const slugPattern = '[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?'
 
 export function GeometryManagerDialogs({
   authenticated,
@@ -45,7 +46,7 @@ export function GeometryManagerDialogs({
   onSubmitNamespace,
 }: {
   authenticated: boolean
-  geometry: GeometryManagerState
+  geometry: GeometryRepositoryManagerState
   forkDetail: CatalogGeometryDetail | null
   forkRepositoryId: number | null
   setForkDetail: (value: CatalogGeometryDetail | null) => void
@@ -97,7 +98,14 @@ export function GeometryManagerDialogs({
                 </label>
                 <label className="grid gap-1 text-sm">
                   Package name
-                  <Input defaultValue={forkDetail.key} key={forkDetail.key} name="package" required />
+                  <Input
+                    defaultValue={forkDetail.key}
+                    key={forkDetail.key}
+                    maxLength={64}
+                    name="package"
+                    pattern={slugPattern}
+                    required
+                  />
                 </label>
               </div>
               <p className="text-xs text-muted-foreground">첫 Version은 0.1.0으로 시작합니다.</p>
@@ -137,16 +145,16 @@ export function GeometryManagerDialogs({
               ) : (
                 <label className="grid gap-1 text-sm">
                   Repository 이름
-                  <Input defaultValue="common" name="repository" required />
+                  <Input defaultValue="common" maxLength={64} name="repository" pattern={slugPattern} required />
                 </label>
               )}
               <label className="grid gap-1 text-sm">
                 Package name
-                <Input defaultValue="new-geometry" name="package" required />
+                <Input defaultValue="new-geometry" maxLength={64} name="package" pattern={slugPattern} required />
               </label>
               <label className="grid gap-1 text-sm">
                 Description
-                <Input name="description" />
+                <Input maxLength={2_000} name="description" />
               </label>
             </div>
             <label className="grid gap-1 text-sm">

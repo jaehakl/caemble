@@ -17,6 +17,7 @@ function renderController() {
     managerRepository: 'shared',
     managerView: 'workspace',
     selectedCatalogKey: null,
+    draftVersions: {},
     setManagerNamespace,
     setManagerRepository,
     setSelectedCoordinate,
@@ -24,13 +25,7 @@ function renderController() {
     setManagerView,
   } as unknown as GeometryManagerState
 
-  const hook = renderHook(() =>
-    useGeometryManagerController({
-      geometry,
-      initialPackageId: null,
-      initialVersionId: null,
-    }),
-  )
+  const hook = renderHook(() => useGeometryManagerController({ geometry }))
 
   return {
     ...hook,
@@ -78,5 +73,17 @@ describe('useGeometryManagerController', () => {
     expect(setManagerRepository).not.toHaveBeenCalled()
     expect(result.current.filters.namespace).toBe('team')
     expect(result.current.filters.repository).toBe('shared')
+  })
+
+  it('keeps the Package context while opening and leaving its Draft Version', () => {
+    const { result } = renderController()
+    const coordinate = 'caemble:geometry/team/shared/plate@local' as GeometryModuleCoordinate
+
+    act(() => result.current.selectPackage(7))
+    act(() => result.current.openDraft(coordinate))
+    expect(result.current.selection).toEqual({ kind: 'draft', coordinate, packageId: 7 })
+
+    act(() => result.current.selectVersion(11, coordinate))
+    expect(result.current.selection).toEqual({ kind: 'package', packageId: 7, versionId: 11 })
   })
 })

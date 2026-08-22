@@ -9,9 +9,8 @@ import type { GeometryModuleCoordinate } from '@/lib/cad'
 import { cn } from '@/lib/utils'
 import CadEditor from '@/features/viewer/editor/CadEditor'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
-import { GeometryDraftVersionEditor } from './GeometryDraftVersionEditor'
+import { GeometryDraftVersionEditor, type GeometryDraftEditorState } from './GeometryDraftVersionEditor'
 import type { GeometryDraftVersion } from '../types'
-import type { GeometryManagerState } from './useGeometryWorkspaceState'
 
 type ResolvedModule = {
   coordinate: string
@@ -62,7 +61,7 @@ export function GeometryWorkspaceDetail({
   versionDeleteBlocked,
 }: {
   authenticated: boolean
-  geometry: GeometryManagerState
+  geometry: GeometryDraftEditorState
   selectedDraft: GeometryDraftVersion | null
   selectedPackage: GeometryPackageRecord | null
   selectedPackageDraft: GeometryDraftVersion | null

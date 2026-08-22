@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useReducer, useState } from 'react'
 import type { CatalogGeometryDetail } from '@/api/catalog'
 import type { GeometryModuleCoordinate } from '@/lib/cad'
 import type { GeometryManagerState } from './useGeometryWorkspaceState'
@@ -12,15 +12,76 @@ type GeometryManagerPageSize = 12 | 24 | 48
 
 type GeometryManagerControllerProps = {
   geometry: GeometryManagerState
-  initialPackageId: number | null
-  initialVersionId: number | null
 }
 
-export function useGeometryManagerController({
-  geometry,
-  initialPackageId,
-  initialVersionId,
-}: GeometryManagerControllerProps) {
+type SelectionState = Readonly<{
+  current: GeometryManagerSelection
+  pendingVersionId: number | null
+}>
+
+type SelectionAction =
+  | Readonly<{ type: 'select'; selection: GeometryManagerSelection }>
+  | Readonly<{ type: 'package'; packageId: number | null }>
+  | Readonly<{ type: 'version'; versionId: number | null }>
+  | Readonly<{ type: 'draft'; coordinate: GeometryModuleCoordinate | null; packageId: number | null }>
+  | Readonly<{ type: 'pending-version'; versionId: number | null }>
+  | Readonly<{ type: 'clear' }>
+
+function selectionReducer(state: SelectionState, action: SelectionAction): SelectionState {
+  switch (action.type) {
+    case 'select':
+      return { current: action.selection, pendingVersionId: null }
+    case 'package':
+      if (action.packageId === null) {
+        return state.current.kind === 'package' || state.current.kind === 'draft'
+          ? { current: { kind: 'none' }, pendingVersionId: null }
+          : state
+      }
+      return {
+        current: {
+          kind: 'package',
+          packageId: action.packageId,
+          versionId:
+            state.current.kind === 'package' && state.current.packageId === action.packageId
+              ? state.current.versionId
+              : null,
+        },
+        pendingVersionId: null,
+      }
+    case 'version':
+      if (state.current.kind === 'package') {
+        return { ...state, current: { ...state.current, versionId: action.versionId } }
+      }
+      return state.current.kind === 'draft' && state.current.packageId !== null
+        ? {
+            ...state,
+            current: { kind: 'package', packageId: state.current.packageId, versionId: action.versionId },
+          }
+        : state
+    case 'draft':
+      if (action.coordinate) {
+        return {
+          current: { kind: 'draft', coordinate: action.coordinate, packageId: action.packageId },
+          pendingVersionId: null,
+        }
+      }
+      return state.current.kind === 'draft'
+        ? {
+            current:
+              state.current.packageId === null
+                ? { kind: 'none' }
+                : { kind: 'package', packageId: state.current.packageId, versionId: null },
+            pendingVersionId: null,
+          }
+        : state
+    case 'pending-version':
+      return { ...state, pendingVersionId: action.versionId }
+    case 'clear':
+      return { current: { kind: 'none' }, pendingVersionId: null }
+  }
+}
+
+export function useGeometryManagerController({ geometry }: GeometryManagerControllerProps) {
   const setManagerNamespace = geometry.setManagerNamespace
   const setManagerRepository = geometry.setManagerRepository
   const setSelectedCoordinate = geometry.setSelectedCoordinate
@@ -31,10 +92,13 @@ export function useGeometryManagerController({
   const [pageSize, setPageSize] = useState<GeometryManagerPageSize>(24)
   const [owner, setOwner] = useState('')
   const [archive, setArchive] = useState<GeometryManagerFilters['archive']>('active')
-  const [selectedPackageId, setSelectedPackageId] = useState<number | null>(initialPackageId)
-  const [selectedVersionId, setSelectedVersionId] = useState<number | null>(initialVersionId)
-  const [pendingVersionId, setPendingVersionId] = useState<number | null>(null)
-  const [selectedDraftCoordinate, setSelectedDraftCoordinate] = useState<GeometryModuleCoordinate | null>(null)
+  const [selectionState, dispatchSelection] = useReducer(selectionReducer, {
+    current:
+      geometry.managerView === 'examples' && geometry.selectedCatalogKey
+        ? { kind: 'example', key: geometry.selectedCatalogKey }
+        : { kind: 'none' },
+    pendingVersionId: null,
+  })
   const [checkedPackageIds, setCheckedPackageIds] = useState<Set<number>>(new Set())
   const [experimentSearch, setExperimentSearch] = useState('')
   const [experimentPage, setExperimentPage] = useState(0)
@@ -60,15 +124,31 @@ export function useGeometryManagerController({
     [archive, geometry.managerNamespace, geometry.managerRepository, owner, page, pageSize, search],
   )
 
-  const selection = useMemo<GeometryManagerSelection>(() => {
-    if (selectedDraftCoordinate) return { kind: 'draft', coordinate: selectedDraftCoordinate }
-    if (selectedPackageId !== null)
-      return { kind: 'package', packageId: selectedPackageId, versionId: selectedVersionId }
-    if (geometry.managerView === 'examples' && geometry.selectedCatalogKey) {
-      return { kind: 'example', key: geometry.selectedCatalogKey }
-    }
-    return { kind: 'none' }
-  }, [geometry.managerView, geometry.selectedCatalogKey, selectedDraftCoordinate, selectedPackageId, selectedVersionId])
+  const selection = selectionState.current
+  const selectedPackageId = selection.kind === 'package' || selection.kind === 'draft' ? selection.packageId : null
+  const selectedVersionId = selection.kind === 'package' ? selection.versionId : null
+  const selectedDraftCoordinate = selection.kind === 'draft' ? selection.coordinate : null
+  const setSelectedPackageId = useCallback(
+    (packageId: number | null) => dispatchSelection({ type: 'package', packageId }),
+    [],
+  )
+  const setSelectedVersionId = useCallback(
+    (versionId: number | null) => dispatchSelection({ type: 'version', versionId }),
+    [],
+  )
+  const setSelectedDraftCoordinate = useCallback(
+    (coordinate: GeometryModuleCoordinate | null) =>
+      dispatchSelection({
+        type: 'draft',
+        coordinate,
+        packageId: coordinate ? (geometry.draftVersions[coordinate]?.packageId ?? selectedPackageId) : null,
+      }),
+    [geometry.draftVersions, selectedPackageId],
+  )
+  const setPendingVersionId = useCallback(
+    (versionId: number | null) => dispatchSelection({ type: 'pending-version', versionId }),
+    [],
+  )
 
   const changeNamespace = useCallback(
     (namespace: string) => {
@@ -98,10 +178,7 @@ export function useGeometryManagerController({
 
   const selectExample = useCallback(
     (key: string) => {
-      setSelectedPackageId(null)
-      setSelectedVersionId(null)
-      setSelectedDraftCoordinate(null)
-      setPendingVersionId(null)
+      dispatchSelection({ type: 'select', selection: { kind: 'example', key } })
       setSelectedCoordinate(null)
       setSelectedCatalogKey(key)
       setManagerView('examples')
@@ -112,10 +189,7 @@ export function useGeometryManagerController({
 
   const selectDraft = useCallback(
     (coordinate: GeometryModuleCoordinate) => {
-      setSelectedPackageId(null)
-      setSelectedVersionId(null)
-      setSelectedDraftCoordinate(coordinate)
-      setPendingVersionId(null)
+      dispatchSelection({ type: 'select', selection: { kind: 'draft', coordinate, packageId: null } })
       setSelectedCoordinate(coordinate)
       setSelectedCatalogKey(null)
       setManagerView('workspace')
@@ -126,10 +200,7 @@ export function useGeometryManagerController({
 
   const selectPackage = useCallback(
     (packageId: number) => {
-      setSelectedDraftCoordinate(null)
-      setPendingVersionId(null)
-      setSelectedVersionId(null)
-      setSelectedPackageId(packageId)
+      dispatchSelection({ type: 'select', selection: { kind: 'package', packageId, versionId: null } })
       setSelectedCoordinate(null)
       setSelectedCatalogKey(null)
       setManagerView('workspace')
@@ -140,8 +211,7 @@ export function useGeometryManagerController({
 
   const selectVersion = useCallback(
     (versionId: number, coordinate: GeometryModuleCoordinate) => {
-      setSelectedDraftCoordinate(null)
-      setSelectedVersionId(versionId)
+      dispatchSelection({ type: 'version', versionId })
       setSelectedCoordinate(coordinate)
       setManagerView('workspace')
       setMobileDetailOpen(true)
@@ -151,19 +221,23 @@ export function useGeometryManagerController({
 
   const openDraft = useCallback(
     (coordinate: GeometryModuleCoordinate) => {
-      setSelectedDraftCoordinate(coordinate)
+      dispatchSelection({
+        type: 'select',
+        selection: {
+          kind: 'draft',
+          coordinate,
+          packageId: geometry.draftVersions[coordinate]?.packageId ?? selectedPackageId,
+        },
+      })
       setSelectedCoordinate(coordinate)
       setManagerView('workspace')
       setMobileDetailOpen(true)
     },
-    [setManagerView, setSelectedCoordinate, setMobileDetailOpen],
+    [geometry.draftVersions, selectedPackageId, setManagerView, setSelectedCoordinate, setMobileDetailOpen],
   )
 
   const clearSelection = useCallback(() => {
-    setSelectedPackageId(null)
-    setSelectedVersionId(null)
-    setSelectedDraftCoordinate(null)
-    setPendingVersionId(null)
+    dispatchSelection({ type: 'clear' })
     setSelectedCoordinate(null)
     setSelectedCatalogKey(null)
     setMobileDetailOpen(false)
@@ -186,7 +260,7 @@ export function useGeometryManagerController({
     setSelectedPackageId,
     selectedVersionId,
     setSelectedVersionId,
-    pendingVersionId,
+    pendingVersionId: selectionState.pendingVersionId,
     setPendingVersionId,
     selectedDraftCoordinate,
     setSelectedDraftCoordinate,

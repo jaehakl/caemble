@@ -36,6 +36,7 @@ export function GeometryRepositoryPicker({
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (creating) return
     const form = new FormData(event.currentTarget)
     const name = String(form.get('name') ?? '').trim()
     const description = String(form.get('description') ?? '').trim()
@@ -77,7 +78,7 @@ export function GeometryRepositoryPicker({
           <Plus /> 새 Repository
         </Button>
       </div>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={(nextOpen) => !creating && setOpen(nextOpen)}>
         <DialogContent className="sm:max-w-md">
           <form className="grid gap-4" onSubmit={submit}>
             <DialogHeader>
@@ -103,7 +104,7 @@ export function GeometryRepositoryPicker({
               <Input maxLength={2_000} name="description" />
             </label>
             <DialogFooter>
-              <Button onClick={() => setOpen(false)} type="button" variant="outline">
+              <Button disabled={creating} onClick={() => setOpen(false)} type="button" variant="outline">
                 취소
               </Button>
               <Button disabled={creating} type="submit">

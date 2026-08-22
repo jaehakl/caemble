@@ -21,6 +21,20 @@ import {
 import type { GeometryManagerState } from './useGeometryWorkspaceState'
 import { GeometryRepositoryPicker } from './GeometryRepositoryPicker'
 
+type GeometryExportPublishState = Pick<
+  GeometryManagerState,
+  | 'createRepository'
+  | 'currentSnapshot'
+  | 'entryExports'
+  | 'entrySource'
+  | 'experimentAvailableOverlay'
+  | 'namespace'
+  | 'publishNewGeometry'
+  | 'refreshRepositories'
+  | 'repositories'
+  | 'setNamespace'
+>
+
 const slugPattern = '[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?'
 
 function packageName(exportName: string) {
@@ -43,7 +57,7 @@ export function GeometryExportPublishDialog({
   onOpenChange,
   open,
 }: {
-  geometry: GeometryManagerState
+  geometry: GeometryExportPublishState
   onOpenChange: (open: boolean) => void
   open: boolean
 }) {

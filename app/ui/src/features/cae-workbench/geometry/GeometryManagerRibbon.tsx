@@ -66,19 +66,13 @@ export function GeometryManagerRibbon({
     { action: actions.deletePackage, icon: <Trash2 /> },
   ]
 
-  const selectionLabel =
-    state.selectedExample?.title ??
-    state.selectedDraft?.packageName ??
-    state.selectedPackage?.name ??
-    '선택된 Geometry 없음'
-
   return (
     <div className="grid gap-2">
       <div className="flex min-h-12 min-w-max items-center gap-2">
         <div className="flex min-w-48 flex-col justify-center border-r pr-3">
           <span className="text-sm font-semibold">Geometry Manager</span>
-          <span className="mt-1 max-w-56 truncate text-xs text-muted-foreground" title={selectionLabel}>
-            {selectionLabel}
+          <span className="mt-1 max-w-56 truncate text-xs text-muted-foreground" title={state.selectionLabel}>
+            {state.selectionLabel}
           </span>
         </div>
         <RibbonButton action={actions.newGeometry} icon={<CopyPlus />} />
