@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDataTensorAccessor } from '../../lib/cad'
 import { installCatalogRuntimeSlice, registerSourceCatalogRuntimeSlice } from '@/lib/catalog/runtime'
 import type { CatalogRuntimeSlice } from '@/contracts/catalog'
+import type { RuntimeActivityDraft } from '@/features/runtime-console'
 import { releaseRecordedDataAttachments, simulate } from './client'
 
 const sdk = vi.hoisted(() => ({ clientOptions: vi.fn(), runJob: vi.fn() }))
@@ -184,8 +185,12 @@ describe('CAE session client', () => {
       session: { call, finish, close: vi.fn(), jobId: 'job-1', closed: false },
     })
     const onRecord = vi.fn()
+    const activities: RuntimeActivityDraft[] = []
 
-    const result = await simulate(fixture.measurement as never, { onRecord })
+    const result = await simulate(fixture.measurement as never, {
+      onActivity: (activity) => activities.push(activity),
+      onRecord,
+    })
 
     expect(sdk.runJob).toHaveBeenCalledWith(
       'cae.simulation.start',
@@ -226,6 +231,18 @@ describe('CAE session client', () => {
     expect(Object.keys(result)).toEqual(['values'])
     expect(createDataTensorAccessor(fixture.recordedData.values, result.values).materialize()).toEqual([1.25, 2.5])
     expect(finish).toHaveBeenCalledOnce()
+    expect(activities.map(({ source, phase }) => `${source}:${phase}`)).toEqual([
+      'gpstation:job.requested',
+      'gpstation:job.connected',
+      'cae:run.started',
+      'cae:record.received',
+      'cae:run.completed',
+      'gpstation:job.finished',
+    ])
+    expect(activities.find(({ phase }) => phase === 'run.started')).toMatchObject({
+      jobId: 'job-1',
+      runId: 'run-1',
+    })
 
     releaseRecordedDataAttachments(result)
   })
@@ -257,6 +274,45 @@ describe('CAE session client', () => {
       message: '수렴하지 않았습니다.',
     })
     expect(finish).toHaveBeenCalledOnce()
+  })
+
+  it('reports normalized CAE status and progress activity without adding fields to the wire calls', async () => {
+    const fixture = measurementFixture()
+    const onActivity = vi.fn()
+    const onProgress = vi.fn()
+    const call = vi.fn(async (_handler: string, _payload: unknown, options: { onEvent: (event: unknown) => void }) => {
+      options.onEvent({ type: 'status', payload: { status: 'running' } })
+      options.onEvent({
+        type: 'progress',
+        payload: {
+          task: 'electric',
+          kernel: { name: 'dc-current-density', version: '0.1.0' },
+          stage: 'solve',
+          completed: 3,
+          total: 4,
+        },
+      })
+      return { payload: { kind: 'complete', sequence: 1, recordSequences: [] }, files: [] }
+    })
+    sdk.runJob.mockResolvedValue({
+      payload: { kind: 'started', runId: 'run-progress', maxRunSeconds: 60 },
+      files: [],
+      session: { call, finish: vi.fn(), close: vi.fn(), jobId: 'job-progress', closed: false },
+    })
+
+    await simulate(fixture.measurement as never, { onActivity, onProgress })
+
+    expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({ completed: 3, total: 4, stage: 'solve' }))
+    expect(onActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'cae',
+        phase: 'run.progress',
+        jobId: 'job-progress',
+        runId: 'run-progress',
+        progress: 0.75,
+      }),
+    )
+    expect(call.mock.calls[0]?.[1]).toEqual({ runId: 'run-progress', ackSequence: null })
   })
 
   it('rejects a taskless local manifest before opening a remote CAE session', async () => {

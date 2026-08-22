@@ -1,86 +1,93 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Beaker } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import type { BottomDockMode, WorkbenchSectionId } from '../types'
 import { EditorDock, type EditorDockTab } from './EditorDock'
-import { ResizableWorkbenchSplit } from './ResizableWorkbenchSplit'
+import { WorkbenchBottomDock } from './WorkbenchBottomDock'
 import { WorkbenchMenubar } from './WorkbenchMenubar'
-import { WorkbenchRibbon } from './WorkbenchRibbon'
+import { WorkbenchRibbon, WorkbenchRibbonActions, WorkbenchRibbonGroup } from './WorkbenchRibbon'
 import { WorkbenchShell } from './WorkbenchShell'
-import { WorkbenchToolbar } from './WorkbenchToolbar'
-import type { WorkbenchMenuDefinition } from './actions'
 
 afterEach(cleanup)
 
 describe('workbench action chrome', () => {
-  it('uses the same action contract for menu and toolbar commands', async () => {
+  it('shows seven top-level categories without opening dropdown menus', async () => {
+    const user = userEvent.setup()
+
+    function MenubarHarness() {
+      const [activeSection, setActiveSection] = useState<WorkbenchSectionId>('experiment')
+      return <WorkbenchMenubar activeSectionId={activeSection} onActiveSectionChange={setActiveSection} />
+    }
+
+    render(<MenubarHarness />)
+
+    expect(screen.getAllByRole('menuitemradio')).toHaveLength(7)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('menuitemradio', { name: 'Measurement' }))
+    expect(screen.getByRole('menuitemradio', { name: 'Measurement' })).toHaveAttribute('aria-checked', 'true')
+
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('menuitemradio', { name: 'Material' })).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('shows large contextual actions only for the active section', async () => {
     const user = userEvent.setup()
     const run = vi.fn()
     const blocked = vi.fn()
-    const action = { id: 'run', label: '실행', icon: <Beaker />, onSelect: run }
-    const disabledAction = {
-      id: 'blocked',
-      label: '측정',
-      icon: <Beaker />,
-      disabled: true,
-      disabledReason: 'Prepared Measurement가 필요합니다.',
-      onSelect: blocked,
-    }
-    const menus: readonly WorkbenchMenuDefinition[] = [
+    const panels = [
       {
-        id: 'data',
-        label: 'Data',
-        items: [
-          { type: 'action', action },
-          { type: 'action', action: disabledAction },
-        ],
+        sectionId: 'experiment' as const,
+        label: 'Experiment',
+        content: (
+          <WorkbenchRibbonGroup label="실행">
+            <WorkbenchRibbonActions
+              actions={[
+                { id: 'run', label: '실행', icon: <Beaker />, onSelect: run },
+                {
+                  id: 'blocked',
+                  label: '측정',
+                  icon: <Beaker />,
+                  disabled: true,
+                  disabledReason: 'Prepared Measurement가 필요합니다.',
+                  onSelect: blocked,
+                },
+              ]}
+            />
+          </WorkbenchRibbonGroup>
+        ),
+      },
+      {
+        sectionId: 'measurement' as const,
+        label: 'Measurement',
+        content: <div>Measurement actions</div>,
       },
     ]
-
-    render(
-      <>
-        <WorkbenchMenubar menus={menus} />
-        <WorkbenchToolbar actions={[action, disabledAction]} />
-      </>,
-    )
-
-    await user.click(screen.getByRole('menuitem', { name: 'Data' }))
-    await user.click(screen.getByRole('menuitem', { name: '실행' }))
-    await user.click(screen.getByRole('button', { name: '실행' }))
-    const blockedButton = screen.getByRole('button', { name: /측정: Prepared Measurement가 필요합니다/ })
-    await user.click(blockedButton)
-
-    expect(run).toHaveBeenCalledTimes(2)
-    expect(blocked).not.toHaveBeenCalled()
-  })
-
-  it('shows only the active tab ribbon', () => {
     const { rerender } = render(
-      <WorkbenchRibbon
-        activeTabId="experiment"
-        panels={[
-          { tabId: 'experiment', label: 'Experiment', content: <div>Experiment actions</div> },
-          { tabId: 'recorded-data', label: 'RecordedData', content: <div>RecordedData actions</div> },
-        ]}
-      />,
+      <TooltipProvider delayDuration={0}>
+        <WorkbenchRibbon activeSectionId="experiment" panels={panels} />
+      </TooltipProvider>,
     )
 
-    expect(screen.getByRole('region', { name: 'Experiment 리본' })).toHaveTextContent('Experiment actions')
-    expect(screen.queryByText('RecordedData actions')).not.toBeInTheDocument()
+    const runButton = screen.getByRole('button', { name: '실행' })
+    expect(runButton).toHaveClass('h-[68px]')
+    await user.click(runButton)
+    await user.click(screen.getByRole('button', { name: /측정: Prepared Measurement가 필요합니다/ }))
+    expect(run).toHaveBeenCalledOnce()
+    expect(blocked).not.toHaveBeenCalled()
+    expect(screen.queryByText('Measurement actions')).not.toBeInTheDocument()
 
     rerender(
-      <WorkbenchRibbon
-        activeTabId="recorded-data"
-        panels={[
-          { tabId: 'experiment', label: 'Experiment', content: <div>Experiment actions</div> },
-          { tabId: 'recorded-data', label: 'RecordedData', content: <div>RecordedData actions</div> },
-        ]}
-      />,
+      <TooltipProvider delayDuration={0}>
+        <WorkbenchRibbon activeSectionId="measurement" panels={panels} />
+      </TooltipProvider>,
     )
-    expect(screen.getByRole('region', { name: 'RecordedData 리본' })).toHaveTextContent('RecordedData actions')
+    expect(screen.getByRole('region', { name: 'Measurement 리본' })).toHaveTextContent('Measurement actions')
+    expect(screen.queryByRole('button', { name: '실행' })).not.toBeInTheDocument()
   })
 })
 
@@ -169,45 +176,106 @@ describe('EditorDock', () => {
   })
 })
 
-describe('responsive workbench layout', () => {
-  it('resizes the desktop split with an accessible separator', async () => {
+describe('fixed desktop workbench layout', () => {
+  it('keeps three panes visible and keyboard-resizes every open split', async () => {
     const user = userEvent.setup()
-    const changed = vi.fn()
-    render(
-      <ResizableWorkbenchSplit
-        editor={<div>Editor content</div>}
-        onViewerPercentChange={changed}
-        viewer={<div>Viewer content</div>}
-      />,
-    )
 
-    const separator = screen.getByRole('separator', { name: 'Viewer와 Editor 크기 조절' })
-    separator.focus()
+    function LayoutHarness() {
+      const [leftWidth, setLeftWidth] = useState(280)
+      const [rightWidth, setRightWidth] = useState(420)
+      const [bottomHeight, setBottomHeight] = useState(220)
+      return (
+        <WorkbenchShell
+          bottom={<div>Bottom content</div>}
+          bottomHeightPx={bottomHeight}
+          bottomMode="console"
+          left={<div>Experiment list</div>}
+          leftWidthPx={leftWidth}
+          menubar={<div>Menubar</div>}
+          onBottomHeightChange={setBottomHeight}
+          onLeftWidthChange={setLeftWidth}
+          onRightWidthChange={setRightWidth}
+          ribbon={<div>Ribbon</div>}
+          right={<div>Experiment detail</div>}
+          rightWidthPx={rightWidth}
+          viewer={<div>Viewer content</div>}
+        />
+      )
+    }
+
+    const { container } = render(<LayoutHarness />)
+    expect(screen.getByRole('region', { name: '목록' })).toHaveTextContent('Experiment list')
+    expect(screen.getByRole('region', { name: '3D CAD View' })).toHaveTextContent('Viewer content')
+    expect(screen.getByRole('region', { name: 'Detail' })).toHaveTextContent('Experiment detail')
+    expect(container.firstElementChild).toHaveStyle({ minWidth: '1280px' })
+
+    const leftSeparator = screen.getByRole('separator', { name: '왼쪽 목록 너비 조절' })
+    leftSeparator.focus()
     await user.keyboard('{ArrowRight}')
-    expect(separator).toHaveAttribute('aria-valuenow', '52')
-    expect(changed).toHaveBeenLastCalledWith(52)
+    expect(leftSeparator).toHaveAttribute('aria-valuenow', '296')
 
-    await user.keyboard('{Home}')
-    expect(separator).toHaveAttribute('aria-valuenow', '25')
+    const rightSeparator = screen.getByRole('separator', { name: '오른쪽 Detail 너비 조절' })
+    rightSeparator.focus()
+    await user.keyboard('{ArrowLeft}')
+    expect(rightSeparator).toHaveAttribute('aria-valuenow', '436')
+
+    const bottomSeparator = screen.getByRole('separator', { name: '3D CAD View와 하단 도크 높이 조절' })
+    bottomSeparator.focus()
+    await user.keyboard('{ArrowUp}')
+    expect(bottomSeparator).toHaveAttribute('aria-valuenow', '236')
   })
 
-  it('keeps the editor visible and opens the Viewer in a modal on a small screen', async () => {
+  it('keeps the AI Agent mounted while switching or hiding the center-only dock', async () => {
     const user = userEvent.setup()
-    render(
-      <WorkbenchShell
-        editor={<div>Editor content</div>}
-        menubar={<div>Menubar</div>}
-        ribbon={<div>Ribbon</div>}
-        toolbar={<div>Toolbar</div>}
-        viewer={<div>Viewer content</div>}
-      />,
-    )
+    const cleanupAgent = vi.fn()
 
-    expect(screen.getByRole('region', { name: 'Editor' })).toHaveTextContent('Editor content')
-    expect(screen.queryByText('Viewer content')).not.toBeInTheDocument()
+    function Agent() {
+      const [messages, setMessages] = useState(0)
+      useEffect(() => cleanupAgent, [])
+      return <button onClick={() => setMessages((count) => count + 1)}>Agent messages {messages}</button>
+    }
 
-    await user.click(screen.getByRole('button', { name: '3D Viewer' }))
-    const dialog = screen.getByRole('dialog', { name: '3D Viewer' })
-    expect(within(dialog).getByText('Viewer content')).toBeInTheDocument()
+    function DockHarness() {
+      const [mode, setMode] = useState<BottomDockMode>('hidden')
+      return (
+        <WorkbenchShell
+          bottom={
+            <WorkbenchBottomDock
+              agent={<Agent />}
+              console={<div>Session console</div>}
+              mode={mode}
+              onModeChange={setMode}
+            />
+          }
+          bottomMode={mode}
+          left={<div>Left pane</div>}
+          menubar={<div>Menubar</div>}
+          ribbon={<div>Ribbon</div>}
+          right={<div>Right pane</div>}
+          viewer={<div>Viewer</div>}
+        />
+      )
+    }
+
+    render(<DockHarness />)
+    const dock = screen.getByRole('region', { name: '중앙 하단 도크' })
+    expect(screen.queryByRole('separator', { name: '3D CAD View와 하단 도크 높이 조절' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '목록' })).not.toContainElement(dock)
+    expect(screen.getByRole('region', { name: 'Detail' })).not.toContainElement(dock)
+
+    const agentTab = screen.getByRole('tab', { name: 'AI Agent' })
+    expect(agentTab).toHaveAttribute('tabindex', '0')
+    agentTab.focus()
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('tab', { name: 'Console' })).toHaveAttribute('aria-selected', 'true')
+
+    await user.click(agentTab)
+    await user.click(screen.getByRole('button', { name: 'Agent messages 0' }))
+    await user.click(screen.getByRole('tab', { name: 'Console' }))
+    expect(cleanupAgent).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('tab', { name: 'AI Agent' }))
+    expect(screen.getByRole('button', { name: 'Agent messages 1' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '하단 도크 숨기기' }))
+    expect(cleanupAgent).not.toHaveBeenCalled()
   })
 })

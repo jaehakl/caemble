@@ -130,37 +130,40 @@ async function mockApi(page: Page, authenticated = false) {
   })
 }
 
-test('uses the root Workbench and opens integrated documentation in a new window', async ({ page }) => {
+test('uses the seven-category Workbench with contextual panes and an integrated Help area', async ({ page }) => {
   await mockApi(page)
   await page.goto('/')
 
-  await expect(page.getByRole('menubar', { name: 'CAE 워크벤치 메뉴' })).toBeVisible()
-  const toolbar = page.getByRole('toolbar', { name: 'CAE 빠른 작업' })
-  await expect(toolbar.getByRole('button')).toHaveCount(8)
-  await expect(toolbar.getByRole('button', { name: 'Jobs' })).toBeVisible()
+  const menubar = page.getByRole('menubar', { name: 'CAE 워크벤치 메뉴' })
+  await expect(menubar).toBeVisible()
+  await expect(menubar.getByRole('menuitemradio')).toHaveCount(7)
+  for (const name of ['Experiment', 'Measurement', 'Material', 'Analysis', 'Lab', 'Help', 'Setting']) {
+    await expect(menubar.getByRole('menuitemradio', { name, exact: true })).toBeVisible()
+  }
+  await expect(menubar.getByRole('menuitemradio', { name: 'Experiment', exact: true })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  )
+  await expect(page.getByRole('toolbar', { name: 'CAE 빠른 작업' })).toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'Experiment 리본' })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'experiment 목록 및 설정' })).toContainText('Experiment Manager')
+  await expect(page.getByRole('region', { name: '3D CAD View', exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'experiment Detail' })).toBeVisible()
 
-  await page.getByRole('menuitem', { name: 'Help' }).click()
-  await page.getByRole('menuitem', { name: 'AI Helper' }).click()
-  await expect(page.getByRole('tab', { name: 'AI Helper' })).toHaveAttribute('aria-selected', 'true')
+  await page.getByRole('tab', { name: 'AI Agent' }).click()
+  await expect(page.getByRole('tab', { name: 'AI Agent' })).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByText('AI Helper Agent를 사용하려면 Account에서 로그인하세요.')).toBeVisible()
-  await expect(page.getByRole('dialog', { name: 'AI Helper' })).toHaveCount(0)
-  await page.getByRole('button', { name: 'AI Helper 탭 닫기' }).click()
+  await page.getByRole('button', { name: '하단 도크 숨기기' }).click()
+  await expect(page.getByRole('tab', { name: 'AI Agent' })).toHaveAttribute('aria-selected', 'false')
 
-  await page.getByRole('menuitem', { name: 'Help' }).click()
-  const manualPagePromise = page.waitForEvent('popup')
-  await page.getByRole('menuitem', { name: 'Manual' }).click()
-  const manualPage = await manualPagePromise
-  await expect(manualPage).toHaveURL(/\/docs\?section=program$/)
-  await manualPage.close()
-
-  await page.getByRole('menuitem', { name: 'Help' }).click()
-  const docsPagePromise = page.waitForEvent('popup')
-  await page.getByRole('menuitem', { name: 'Geometry Catalog' }).click()
-  const docsPage = await docsPagePromise
-  await expect(docsPage).toHaveURL(/\/docs\?section=geometry$/)
-  await expect(docsPage.getByRole('heading', { name: 'Primitives & Operations' })).toBeVisible()
-  await expect(page.getByRole('dialog', { name: 'Geometry Catalog' })).toHaveCount(0)
-  await docsPage.close()
+  await menubar.getByRole('menuitemradio', { name: 'Help', exact: true }).click()
+  const helpRibbon = page.getByRole('region', { name: 'Help 리본' })
+  await expect(helpRibbon.getByRole('button', { name: 'Manual' })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'help 목록 및 설정' })).toContainText('Manual')
+  await expect(page.getByRole('region', { name: 'help Detail' })).toBeVisible()
+  await helpRibbon.getByRole('button', { name: 'Geometry' }).click()
+  await expect(page.getByRole('heading', { name: 'Geometry Catalog' })).toBeVisible()
+  await expect(page.getByText('Geometry Catalog 항목을 선택하세요')).toBeVisible()
 
   for (const path of [
     '/cae',
@@ -194,7 +197,10 @@ test('keeps an anonymous Starter editable offline and restores the session draft
   await page.route(apiPattern, (route) => route.abort('failed'))
   await page.goto('/')
 
-  await expect(page.getByRole('tab', { name: 'Experiment', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('menuitemradio', { name: 'Experiment', exact: true })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  )
   await expect(page.getByText('Local editing · 서버 기능은 로그인 필요')).toBeVisible()
   await expect(page.getByText('현재 브라우저 세션에 Draft 자동 저장')).toBeVisible()
   await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('StarterStructure')
@@ -225,8 +231,7 @@ export const StarterStructure: Geometry<{ size: Vec3 }> = ({ size = [36, 24, 12]
   await expect(page.getByText('Draft preview · Solver 미선택')).toBeVisible()
   await expect(page.locator('footer [role="alert"]')).toHaveCount(0)
 
-  await page.getByRole('menuitem', { name: 'Source' }).click()
-  await page.getByRole('menuitem', { name: 'New Experiment' }).click()
+  await page.getByRole('region', { name: 'Experiment 리본' }).getByRole('button', { name: 'New', exact: true }).click()
   const confirmation = page.getByRole('dialog', { name: '저장하지 않은 편집을 바꿀까요?' })
   await confirmation.getByRole('button', { name: '편집 내용 바꾸기' }).click()
   await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('StarterStructure')
@@ -251,7 +256,11 @@ export const StarterStructure: Geometry<{ size: Vec3 }> = ({ size = [12, 8, 4] }
 test('inserts primitives and wraps selected Geometry from the Experiment authoring ribbon', async ({ page }) => {
   await page.route(apiPattern, (route) => route.abort('failed'))
   await page.goto('/')
+  await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('StarterStructure', {
+    timeout: 15_000,
+  })
   await page.getByRole('tab', { name: 'geometry.tsx' }).click()
+  await expect(page.getByRole('tab', { name: 'geometry.tsx' })).toHaveAttribute('aria-selected', 'true')
 
   const editor = page.locator('.monaco-editor:visible .view-lines')
   await editor.click({ position: { x: 120, y: 45 } })
@@ -332,8 +341,8 @@ export default experiment({
 
   await expect(page.getByText('Waiting for model...', { exact: true })).toBeHidden({ timeout: 15_000 })
   const generateCandidate = page
-    .getByRole('toolbar', { name: 'CAE 빠른 작업' })
-    .getByRole('button', { name: 'Generate Candidate' })
+    .getByRole('region', { name: 'Experiment 리본' })
+    .getByRole('button', { name: 'Candidate' })
   await expect(generateCandidate).toBeEnabled()
   await generateCandidate.click()
   await expect(page.getByRole('button', { name: 'Toggle Experiment' })).toBeEnabled()
@@ -351,17 +360,14 @@ for (const [title, sourceMarker] of exampleExperimentTemplates) {
       timeout: 30_000,
     })
 
-    await page.getByRole('menuitem', { name: 'Source' }).click()
-    await page.getByRole('menuitem', { name: 'Load Experiment' }).click()
     const manager = page.getByLabel('Experiment Manager')
-    await expect(page.getByRole('tab', { name: 'Experiments', exact: true })).toHaveAttribute('aria-selected', 'true')
     await manager.getByRole('button', { name: new RegExp(title) }).click()
 
     await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText(sourceMarker)
     await expect(page.getByText('Waiting for model...', { exact: true })).toBeHidden({ timeout: 30_000 })
     await expect(page.getByText('Draft preview · Solver 미선택')).toHaveCount(0)
-    await expect(page.getByRole('button', { name: 'Toggle Task' })).toBeEnabled()
-    await expect(page.getByRole('button', { name: 'Toggle Experiment' })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Toggle Task' })).toBeEnabled({ timeout: 30_000 })
+    await expect(page.getByRole('button', { name: 'Toggle Experiment' })).toBeEnabled({ timeout: 30_000 })
     await expect(page.locator('footer [role="alert"]')).toHaveCount(0)
   })
 }
@@ -459,8 +465,6 @@ test('manages Experiment namespace, SemVer saves, locks, and version deletion', 
 
   await page.goto('/')
   const workbenchFooter = page.locator('footer.h-7')
-  await page.getByRole('menuitem', { name: 'Source' }).click()
-  await page.getByRole('menuitem', { name: 'Load Experiment' }).click()
   const manager = page.getByLabel('Experiment Manager')
   await expect(manager).toContainText('caemble:experiment/caemble/getting-started/basketball-goal@1.0.0')
 
@@ -469,23 +473,20 @@ test('manages Experiment namespace, SemVer saves, locks, and version deletion', 
   await manager.getByRole('button', { name: /Basketball Goal v1\.0\.0/ }).click()
   await expect(workbenchFooter).toContainText('Preview only · Task 없음')
 
-  await page.getByRole('menuitem', { name: 'Source' }).click()
-  await page.getByRole('menuitem', { name: 'Save Experiment', exact: true }).click()
+  const experimentRibbon = page.getByRole('region', { name: 'Experiment 리본' })
+  await experimentRibbon.getByRole('button', { name: 'Save', exact: true }).click()
   const createDialog = page.getByRole('dialog', { name: 'Save Experiment' })
   await createDialog.getByRole('textbox', { name: 'Repository' }).fill('prototypes')
   await createDialog.getByRole('textbox', { name: 'Experiment key' }).fill('basketball-goal')
   await createDialog.getByRole('button', { name: 'Experiment 저장' }).click()
   await expect(workbenchFooter).toContainText('caemble:experiment/design-lab/prototypes/basketball-goal@0.1.0')
 
-  await page.getByRole('menuitem', { name: 'Source' }).click()
-  await page.getByRole('menuitem', { name: 'Save New Version' }).click()
+  await experimentRibbon.getByRole('button', { name: 'New Version', exact: true }).click()
   const versionDialog = page.getByRole('dialog', { name: 'Save New Version' })
   await versionDialog.getByRole('combobox', { name: 'Version 증가' }).selectOption('minor')
   await versionDialog.getByRole('button', { name: '새 Version 저장' }).click()
   await expect(workbenchFooter).toContainText('@0.2.0')
 
-  await page.getByRole('menuitem', { name: 'Source' }).click()
-  await page.getByRole('menuitem', { name: 'Experiment Manager' }).click()
   await expect(manager).toContainText('design-lab/prototypes/basketball-goal')
   await expect(manager).toContainText('Locked')
   await expect(manager).toContainText('연결 데이터 3')
@@ -496,7 +497,7 @@ test('manages Experiment namespace, SemVer saves, locks, and version deletion', 
   await expect(manager).toContainText('v0.2.0')
 })
 
-test('opens authenticated Launchers from Settings and Jobs from the shared Toolbar actions', async ({ page }) => {
+test('shows authenticated Launchers and Jobs together in the Setting workspace', async ({ page }) => {
   const launcher = {
     id: 'launcher-1',
     user_id: user.id,
@@ -553,12 +554,11 @@ test('opens authenticated Launchers from Settings and Jobs from the shared Toolb
   })
 
   await page.goto('/')
-  const toolbar = page.getByRole('toolbar', { name: 'CAE 빠른 작업' })
-  await page.getByRole('menuitem', { name: 'Settings' }).click()
-  await page.getByRole('menuitem', { name: 'Launchers' }).click()
-  await expect(page.getByRole('dialog', { name: 'Launchers' })).toContainText('gpu-workstation')
-  await page.getByRole('button', { name: '닫기' }).click()
+  await page.getByRole('menuitemradio', { name: 'Setting', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Setting 리본' })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'setting 목록 및 설정' })).toContainText('gpu-workstation')
+  await expect(page.getByRole('region', { name: 'setting Detail' })).toContainText('cae.simulation.start')
 
-  await toolbar.getByRole('button', { name: 'Jobs' }).click()
-  await expect(page.getByRole('dialog', { name: 'Jobs' })).toContainText('cae.simulation.start')
+  await page.getByRole('region', { name: 'Setting 리본' }).getByRole('button', { name: 'Account' }).click()
+  await expect(page.getByRole('dialog', { name: 'Account' })).toBeVisible()
 })

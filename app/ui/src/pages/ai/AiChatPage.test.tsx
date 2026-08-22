@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AiChatWorkspace, ChatWorkspace } from './AiChatPage'
@@ -8,6 +8,7 @@ import { AiChatWorkspace, ChatWorkspace } from './AiChatPage'
 const sdk = vi.hoisted(() => ({
   call: vi.fn(),
   clientOptions: vi.fn(),
+  close: vi.fn(),
   finish: vi.fn(),
   runJob: vi.fn(),
 }))
@@ -37,7 +38,9 @@ describe('AiChatWorkspace', () => {
     })
     sdk.call.mockReset()
     sdk.clientOptions.mockReset()
+    sdk.close.mockReset()
     sdk.finish.mockReset()
+    sdk.finish.mockResolvedValue(undefined)
     sdk.runJob.mockReset()
     sdk.runJob.mockImplementation(
       async (handler: string, _payload: unknown, options: { onEvent?: (event: unknown) => void }) => {
@@ -73,7 +76,7 @@ describe('AiChatWorkspace', () => {
           files: [],
           session: {
             call: sdk.call,
-            close: vi.fn(),
+            close: sdk.close,
             closed: false,
             finish: sdk.finish,
             jobId: 'job-chat',
@@ -106,6 +109,24 @@ describe('AiChatWorkspace', () => {
     expect(temperatureInput).toBeEnabled()
     expect(topPInput).toBeEnabled()
     expect(screen.queryByText(/OpenAI Thinking에서는/)).not.toBeInTheDocument()
+  })
+
+  it('portals settings into a split-pane host without rendering the modal trigger', async () => {
+    const user = userEvent.setup()
+    const settingsContainer = document.createElement('aside')
+    document.body.append(settingsContainer)
+    const { container, unmount } = render(<AiChatWorkspace settingsContainer={settingsContainer} />)
+
+    const settings = within(settingsContainer)
+    expect(await settings.findByRole('heading', { name: 'AI Chat 설정' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: '설정' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await user.selectOptions(settings.getByRole('combobox', { name: /Model/ }), 'luna')
+    expect(await within(container).findByText('OpenAI · luna')).toBeVisible()
+
+    unmount()
+    settingsContainer.remove()
   })
 
   it('uses the cookie job endpoint, discovers models, and renders a streamed chat response', async () => {
@@ -146,6 +167,89 @@ describe('AiChatWorkspace', () => {
     const chatPayload = sdk.runJob.mock.calls.find(([handler]) => handler === 'ai.chat')?.[1]
     expect(chatPayload).not.toHaveProperty('reference_context')
     expect(scrollIntoView).not.toHaveBeenCalled()
+  })
+
+  it('handles each graceful new/end command once and clears the conversation', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(<AiChatWorkspace command={null} />)
+
+    await screen.findByText('local-llm')
+    await user.type(screen.getByLabelText('AI 질문'), '첫 질문')
+    await user.click(screen.getByRole('button', { name: '전송' }))
+    expect(await screen.findByText(/안녕하세요/)).toBeVisible()
+
+    rerender(<AiChatWorkspace command={{ id: 1, type: 'new' }} />)
+    await waitFor(() => expect(sdk.finish).toHaveBeenCalledTimes(1))
+    expect(await screen.findByText('무엇이든 물어보세요.')).toBeVisible()
+    expect(screen.getByText('새 대화', { selector: 'span' })).toBeVisible()
+
+    rerender(<AiChatWorkspace command={{ id: 1, type: 'new' }} />)
+    await waitFor(() => expect(sdk.finish).toHaveBeenCalledTimes(1))
+
+    await user.type(screen.getByLabelText('AI 질문'), '두 번째 질문')
+    await user.click(screen.getByRole('button', { name: '전송' }))
+    expect(await screen.findByText(/안녕하세요/)).toBeVisible()
+
+    rerender(<AiChatWorkspace command={{ id: 2, type: 'end' }} />)
+    await waitFor(() => expect(sdk.finish).toHaveBeenCalledTimes(2))
+    expect(await screen.findByText('대화 종료')).toBeVisible()
+    expect(screen.getByText('무엇이든 물어보세요.')).toBeVisible()
+  })
+
+  it('closes promptly for cancel commands without waiting for finish', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(<AiChatWorkspace command={null} />)
+
+    await screen.findByText('local-llm')
+    await user.type(screen.getByLabelText('AI 질문'), '취소할 대화')
+    await user.click(screen.getByRole('button', { name: '전송' }))
+    expect(await screen.findByText(/안녕하세요/)).toBeVisible()
+
+    let resolveCall: (result: unknown) => void = () => undefined
+    sdk.call.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveCall = resolve
+        }),
+    )
+    await user.type(screen.getByLabelText('AI 질문'), '늦게 끝날 질문')
+    await user.click(screen.getByRole('button', { name: '전송' }))
+    await waitFor(() => expect(sdk.call).toHaveBeenCalledTimes(1))
+
+    rerender(<AiChatWorkspace command={{ id: 1, type: 'cancel' }} />)
+
+    expect(sdk.close).toHaveBeenCalledTimes(1)
+    expect(sdk.finish).not.toHaveBeenCalled()
+    expect(screen.getByText('취소됨')).toBeVisible()
+    expect(screen.getByText('무엇이든 물어보세요.')).toBeVisible()
+    expect(screen.getByLabelText('AI 질문')).toHaveValue('')
+
+    resolveCall({
+      payload: {
+        answer: '늦게 도착한 응답',
+        cache_enabled: true,
+        context_window: 8192,
+        model: 'local-llm',
+        remaining_tokens: 7990,
+      },
+    })
+    await waitFor(() => expect(screen.queryByText('늦게 도착한 응답')).not.toBeInTheDocument())
+  })
+
+  it('finishes an open session on unmount and closes it when finish fails', async () => {
+    const user = userEvent.setup()
+    const { unmount } = render(<AiChatWorkspace />)
+
+    await screen.findByText('local-llm')
+    await user.type(screen.getByLabelText('AI 질문'), '종료할 대화')
+    await user.click(screen.getByRole('button', { name: '전송' }))
+    expect(await screen.findByText(/안녕하세요/)).toBeVisible()
+    sdk.finish.mockRejectedValueOnce(new Error('finish failed'))
+
+    unmount()
+
+    expect(sdk.finish).toHaveBeenCalledWith({ timeoutMs: 600_000 })
+    await waitFor(() => expect(sdk.close).toHaveBeenCalledTimes(1))
   })
 
   it('labels OpenAI models while sending the configured alias', async () => {

@@ -1,6 +1,7 @@
 import { GpStationClient, type JobEvent, type JobSession } from '@gpstation/v1-master-js-sdk'
 import { Check, Copy, MessageCircle, Send, Settings, Square } from 'lucide-react'
 import { isValidElement, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
@@ -53,11 +54,25 @@ export type ChatReferenceRequest = Readonly<{
   recentUserPrompts: readonly string[]
 }>
 
-export function AiChatWorkspace({ onRequestLogin }: { onRequestLogin?: () => void }) {
-  return <ChatWorkspace onRequestLogin={onRequestLogin} />
+export type AiChatCommand = Readonly<{
+  id: number
+  type: 'new' | 'end' | 'cancel'
+}>
+
+export function AiChatWorkspace({
+  command,
+  onRequestLogin,
+  settingsContainer,
+}: {
+  command?: AiChatCommand | null
+  onRequestLogin?: () => void
+  settingsContainer?: Element | null
+}) {
+  return <ChatWorkspace command={command} onRequestLogin={onRequestLogin} settingsContainer={settingsContainer} />
 }
 
 export function ChatWorkspace({
+  command,
   defaultSystemPrompt = 'You are a helpful engineering assistant.',
   emptyDescription = '대화가 열리면 같은 JobSession에서 문맥을 유지합니다.',
   emptyTitle = '무엇이든 물어보세요.',
@@ -69,9 +84,11 @@ export function ChatWorkspace({
   questionPlaceholder = '질문을 입력하세요. Shift+Enter로 줄바꿈',
   referenceLabel = '현재 Docs와 Workbench 문맥 자동 첨부',
   referenceProvider,
+  settingsContainer,
   showCodeCopy = false,
   title = 'AI Chat',
 }: {
+  command?: AiChatCommand | null
   defaultSystemPrompt?: string
   emptyDescription?: string
   emptyTitle?: string
@@ -83,6 +100,7 @@ export function ChatWorkspace({
   questionPlaceholder?: string
   referenceLabel?: string
   referenceProvider?: (request: ChatReferenceRequest) => ChatReferenceContext | Promise<ChatReferenceContext>
+  settingsContainer?: Element | null
   showCodeCopy?: boolean
   title?: string
 }) {
@@ -123,6 +141,9 @@ export function ChatWorkspace({
   const activeAssistantIdRef = useRef<number | null>(null)
   const pendingDeltaRef = useRef('')
   const deltaFrameRef = useRef<number | null>(null)
+  const lifecycleIdRef = useRef(0)
+  const handledCommandIdRef = useRef<number | null>(null)
+  const commandHandlerRef = useRef<(type: AiChatCommand['type']) => void>(() => undefined)
 
   const chatOpen = Boolean(session && !session.closed)
   const selectedModelSettings = models.find((model) => model.name === selectedModel) ?? null
@@ -132,6 +153,20 @@ export function ChatWorkspace({
   useEffect(() => {
     sessionRef.current = session
   }, [session])
+
+  commandHandlerRef.current = (type) => {
+    if (type === 'cancel') {
+      cancelChat()
+      return
+    }
+    void endChat(type === 'new' ? '새 대화' : '대화 종료')
+  }
+
+  useEffect(() => {
+    if (!command || handledCommandIdRef.current === command.id) return
+    handledCommandIdRef.current = command.id
+    commandHandlerRef.current(command.type)
+  }, [command])
 
   useEffect(() => {
     if (!auth.isAuthenticated) return
@@ -167,8 +202,19 @@ export function ChatWorkspace({
 
   useEffect(
     () => () => {
-      sessionRef.current?.close()
+      lifecycleIdRef.current += 1
+      const currentSession = sessionRef.current
+      sessionRef.current = null
+      activeAssistantIdRef.current = null
+      pendingDeltaRef.current = ''
       if (deltaFrameRef.current !== null) window.cancelAnimationFrame(deltaFrameRef.current)
+      deltaFrameRef.current = null
+      if (!currentSession || currentSession.closed) return
+      try {
+        void Promise.resolve(currentSession.finish({ timeoutMs: CHAT_TIMEOUT_MS })).catch(() => currentSession.close())
+      } catch {
+        currentSession.close()
+      }
     },
     [],
   )
@@ -266,6 +312,7 @@ export function ChatWorkspace({
       setSettingsOpen(true)
       return
     }
+    const lifecycleId = lifecycleIdRef.current
 
     let nextReferenceContext: ChatReferenceContext | null = null
     if (referenceProvider && (fixedReference || referenceEnabled)) {
@@ -280,10 +327,12 @@ export function ChatWorkspace({
             .map((message) => message.content),
         })
       } catch (nextError) {
+        if (lifecycleIdRef.current !== lifecycleId) return
         setError(runtimeErrorMessage(nextError, '참고자료를 준비하지 못했습니다.'))
         setStatus('참고자료 오류')
         return
       }
+      if (lifecycleIdRef.current !== lifecycleId) return
     }
     setReferenceContext(nextReferenceContext)
     const payload: Record<string, unknown> = {
@@ -310,17 +359,28 @@ export function ChatWorkspace({
       if (currentSession) {
         const result = await currentSession.call<Record<string, unknown>, ChatResponse>('ai.chat', payload, {
           timeoutMs: CHAT_TIMEOUT_MS,
-          onEvent: (event) => handleChatEvent(event, assistantId),
+          onEvent: (event) => {
+            if (lifecycleIdRef.current === lifecycleId) handleChatEvent(event, assistantId)
+          },
         })
+        if (lifecycleIdRef.current !== lifecycleId) return
         response = result.payload
       } else {
         const result = await client.runJob<Record<string, unknown>, ChatResponse>('ai.chat', payload, {
           slaveAppId: 'ai',
           autoFinish: false,
           timeoutMs: CHAT_TIMEOUT_MS,
-          onEvent: (event) => handleChatEvent(event, assistantId),
-          onStatus: setStatus,
+          onEvent: (event) => {
+            if (lifecycleIdRef.current === lifecycleId) handleChatEvent(event, assistantId)
+          },
+          onStatus: (nextStatus) => {
+            if (lifecycleIdRef.current === lifecycleId) setStatus(nextStatus)
+          },
         })
+        if (lifecycleIdRef.current !== lifecycleId) {
+          if (!result.session.closed) result.session.close()
+          return
+        }
         sessionRef.current = result.session
         setSession(result.session)
         response = result.payload
@@ -329,16 +389,19 @@ export function ChatWorkspace({
       setContext(response)
       setStatus('대화 연결됨')
     } catch (nextError) {
+      if (lifecycleIdRef.current !== lifecycleId) return
       const message = runtimeErrorMessage(nextError, 'AI 응답을 받지 못했습니다.')
       finishAssistant(assistantId, `오류: ${message}`)
       setError(message)
       setStatus('실패')
     } finally {
-      setBusy(false)
+      if (lifecycleIdRef.current === lifecycleId) setBusy(false)
     }
   }
 
-  async function endChat() {
+  async function endChat(nextStatus = '새 대화') {
+    const lifecycleId = lifecycleIdRef.current + 1
+    lifecycleIdRef.current = lifecycleId
     const currentSession = sessionRef.current
     setBusy(true)
     try {
@@ -346,16 +409,109 @@ export function ChatWorkspace({
     } catch {
       currentSession?.close()
     } finally {
-      sessionRef.current = null
-      setSession(null)
-      setMessages([])
-      setContext(null)
-      setReferenceContext(null)
-      setError(null)
-      setStatus('새 대화')
-      setBusy(false)
+      if (lifecycleIdRef.current === lifecycleId) clearConversation(nextStatus)
     }
   }
+
+  function cancelChat() {
+    const currentSession = sessionRef.current
+    currentSession?.close()
+    clearConversation('취소됨')
+  }
+
+  function clearConversation(nextStatus: string) {
+    lifecycleIdRef.current += 1
+    sessionRef.current = null
+    activeAssistantIdRef.current = null
+    pendingDeltaRef.current = ''
+    if (deltaFrameRef.current !== null) window.cancelAnimationFrame(deltaFrameRef.current)
+    deltaFrameRef.current = null
+    setSession(null)
+    setMessages([])
+    setContext(null)
+    setReferenceContext(null)
+    setPrompt('')
+    setError(null)
+    setStatus(nextStatus)
+    setBusy(false)
+  }
+
+  const settingsFields = (
+    <div className="grid gap-4">
+      <label className="grid gap-1.5 text-sm">
+        Model
+        <select
+          className="h-9 rounded-md border border-input bg-transparent px-3 text-sm"
+          disabled={chatOpen || modelsLoading}
+          onChange={(event) => setSelectedModel(event.target.value)}
+          value={selectedModel}
+        >
+          {!models.length ? <option value="">{modelsLoading ? '모델 조회 중' : '사용 가능한 모델 없음'}</option> : null}
+          {models.map((model) => (
+            <option key={model.name} value={model.name}>
+              {model.provider === 'openai' ? `OpenAI · ${model.name}` : model.name}
+            </option>
+          ))}
+        </select>
+        {selectedModelSettings ? (
+          <span className="text-xs text-muted-foreground">
+            기본 context {selectedModelSettings.context_size}, top-p {selectedModelSettings.top_p}
+          </span>
+        ) : null}
+      </label>
+      {!fixedSystemPrompt ? (
+        <label className="grid gap-1.5 text-sm">
+          System Prompt
+          <textarea
+            className="min-h-24 rounded-md border border-input bg-transparent px-3 py-2 text-sm"
+            disabled={chatOpen}
+            onChange={(event) => setSystemPrompt(event.target.value)}
+            value={systemPrompt}
+          />
+        </label>
+      ) : null}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <SettingInput label="Max Tokens" onChange={setMaxTokens} value={maxTokens} />
+        <SettingInput disabled={openAiThinking} label="Temperature" onChange={setTemperature} value={temperature} />
+        <SettingInput label="Context Size" onChange={setContextSize} value={contextSize} />
+        <SettingInput disabled={openAiThinking} label="Top P" onChange={setTopP} value={topP} />
+      </div>
+      {openAiThinking ? (
+        <p className="text-xs text-muted-foreground">
+          OpenAI Thinking에서는 Temperature와 Top P에 모델 기본값을 사용합니다.
+        </p>
+      ) : null}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <label className="flex items-center gap-2 text-sm">
+          <input checked={think} onChange={(event) => setThink(event.target.checked)} type="checkbox" />
+          Thinking
+        </label>
+        <label className="grid gap-1 text-sm">
+          Thinking Effort
+          <select
+            className="h-9 rounded-md border border-input bg-transparent px-3"
+            disabled={!think}
+            onChange={(event) => setThinkingEffort(event.target.value as 'default' | 'low')}
+            value={thinkingEffort}
+          >
+            <option value="low">LOW</option>
+            <option value="default">DEFAULT</option>
+          </select>
+        </label>
+        <label className="grid gap-1 text-sm">
+          Response Format
+          <select
+            className="h-9 rounded-md border border-input bg-transparent px-3"
+            onChange={(event) => setResponseFormat(event.target.value as 'text' | 'json')}
+            value={responseFormat}
+          >
+            <option value="text">Text</option>
+            <option value="json">JSON</option>
+          </select>
+        </label>
+      </div>
+    </div>
+  )
 
   return (
     <div className={`flex h-full min-h-0 w-full flex-col ${embedded ? 'overflow-hidden' : ''}`}>
@@ -371,10 +527,12 @@ export function ChatWorkspace({
               {context.context_window - context.remaining_tokens} / {context.context_window} tokens
             </span>
           ) : null}
-          <Button onClick={() => setSettingsOpen(true)} variant="outline">
-            <Settings />
-            설정
-          </Button>
+          {!settingsContainer ? (
+            <Button onClick={() => setSettingsOpen(true)} variant="outline">
+              <Settings />
+              설정
+            </Button>
+          ) : null}
         </div>
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
@@ -478,95 +636,28 @@ export function ChatWorkspace({
         </form>
       </div>
 
-      <Dialog onOpenChange={setSettingsOpen} open={settingsOpen}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{title} 설정</DialogTitle>
-            <DialogDescription>모델과 생성 옵션은 현재 대화에 적용됩니다.</DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4">
-            <label className="grid gap-1.5 text-sm">
-              Model
-              <select
-                className="h-9 rounded-md border border-input bg-transparent px-3 text-sm"
-                disabled={chatOpen || modelsLoading}
-                onChange={(event) => setSelectedModel(event.target.value)}
-                value={selectedModel}
-              >
-                {!models.length ? (
-                  <option value="">{modelsLoading ? '모델 조회 중' : '사용 가능한 모델 없음'}</option>
-                ) : null}
-                {models.map((model) => (
-                  <option key={model.name} value={model.name}>
-                    {model.provider === 'openai' ? `OpenAI · ${model.name}` : model.name}
-                  </option>
-                ))}
-              </select>
-              {selectedModelSettings ? (
-                <span className="text-xs text-muted-foreground">
-                  기본 context {selectedModelSettings.context_size}, top-p {selectedModelSettings.top_p}
-                </span>
-              ) : null}
-            </label>
-            {!fixedSystemPrompt ? (
-              <label className="grid gap-1.5 text-sm">
-                System Prompt
-                <textarea
-                  className="min-h-24 rounded-md border border-input bg-transparent px-3 py-2 text-sm"
-                  disabled={chatOpen}
-                  onChange={(event) => setSystemPrompt(event.target.value)}
-                  value={systemPrompt}
-                />
-              </label>
-            ) : null}
-            <div className="grid gap-3 sm:grid-cols-2">
-              <SettingInput label="Max Tokens" onChange={setMaxTokens} value={maxTokens} />
-              <SettingInput
-                disabled={openAiThinking}
-                label="Temperature"
-                onChange={setTemperature}
-                value={temperature}
-              />
-              <SettingInput label="Context Size" onChange={setContextSize} value={contextSize} />
-              <SettingInput disabled={openAiThinking} label="Top P" onChange={setTopP} value={topP} />
+      {settingsContainer ? (
+        createPortal(
+          <div className="h-full overflow-y-auto p-4">
+            <div className="mb-4 space-y-1">
+              <h2 className="font-semibold">{title} 설정</h2>
+              <p className="text-sm text-muted-foreground">모델과 생성 옵션은 현재 대화에 적용됩니다.</p>
             </div>
-            {openAiThinking ? (
-              <p className="text-xs text-muted-foreground">
-                OpenAI Thinking에서는 Temperature와 Top P에 모델 기본값을 사용합니다.
-              </p>
-            ) : null}
-            <div className="grid gap-3 sm:grid-cols-3">
-              <label className="flex items-center gap-2 text-sm">
-                <input checked={think} onChange={(event) => setThink(event.target.checked)} type="checkbox" />
-                Thinking
-              </label>
-              <label className="grid gap-1 text-sm">
-                Thinking Effort
-                <select
-                  className="h-9 rounded-md border border-input bg-transparent px-3"
-                  disabled={!think}
-                  onChange={(event) => setThinkingEffort(event.target.value as 'default' | 'low')}
-                  value={thinkingEffort}
-                >
-                  <option value="low">LOW</option>
-                  <option value="default">DEFAULT</option>
-                </select>
-              </label>
-              <label className="grid gap-1 text-sm">
-                Response Format
-                <select
-                  className="h-9 rounded-md border border-input bg-transparent px-3"
-                  onChange={(event) => setResponseFormat(event.target.value as 'text' | 'json')}
-                  value={responseFormat}
-                >
-                  <option value="text">Text</option>
-                  <option value="json">JSON</option>
-                </select>
-              </label>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+            {settingsFields}
+          </div>,
+          settingsContainer,
+        )
+      ) : (
+        <Dialog onOpenChange={setSettingsOpen} open={settingsOpen}>
+          <DialogContent className="sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{title} 설정</DialogTitle>
+              <DialogDescription>모델과 생성 옵션은 현재 대화에 적용됩니다.</DialogDescription>
+            </DialogHeader>
+            {settingsFields}
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }

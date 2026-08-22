@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, CircleAlert, Edit3, LoaderCircle, LockKeyhole, Plus, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
   dbTables,
@@ -127,14 +127,22 @@ function ParameterValueSummary({
 }
 
 export function MaterialDetail({
+  className,
+  command,
+  compact = false,
   embedded = false,
   materialId,
   onBack,
+  onDeleted,
   onRequestLogin,
 }: {
+  className?: string
+  command?: Readonly<{ id: number; type: 'edit' | 'add-name' | 'add-parameter' | 'delete' }> | null
+  compact?: boolean
   embedded?: boolean
   materialId: number
-  onBack: () => void
+  onBack?: () => void
+  onDeleted?: () => void
   onRequestLogin?: () => void
 }) {
   const id = Number(materialId)
@@ -153,6 +161,7 @@ export function MaterialDetail({
     parameter: MaterialParameterRecord
     record?: MaterialParameterQualifierRecord
   } | null>(null)
+  const handledCommandIdRef = useRef<number | null>(null)
 
   const materialQuery = useQuery({
     enabled: validId,
@@ -223,7 +232,8 @@ export function MaterialDetail({
     onSuccess: async () => {
       await invalidate()
       toast.success('Material을 삭제했습니다.')
-      onBack()
+      if (onDeleted) onDeleted()
+      else onBack?.()
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : 'Material을 삭제하지 못했습니다.'),
   })
@@ -252,6 +262,36 @@ export function MaterialDetail({
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : 'Qualifier를 삭제하지 못했습니다.'),
   })
+
+  useEffect(() => {
+    if (!command || handledCommandIdRef.current === command.id) return
+    const material = materialQuery.data
+    if (!material) return
+    handledCommandIdRef.current = command.id
+    if (!user) {
+      onRequestLogin?.()
+      return
+    }
+    const canEditMaterial = admin || material.user_id === user.id
+    const canAddChild = admin || material.user_id === null || material.user_id === user.id
+    if ((command.type === 'edit' || command.type === 'delete') && !canEditMaterial) {
+      toast.error('이 Material을 편집하거나 삭제할 권한이 없습니다.')
+      return
+    }
+    if ((command.type === 'add-name' || command.type === 'add-parameter') && !canAddChild) {
+      toast.error('이 Material에 항목을 추가할 권한이 없습니다.')
+      return
+    }
+    if (command.type === 'edit') setEditMaterialOpen(true)
+    if (command.type === 'add-name') setNameDialog({})
+    if (command.type === 'add-parameter') setParameterDialog({})
+    if (
+      command.type === 'delete' &&
+      window.confirm('이 Material과 연결된 이름, parameter, qualifier를 모두 삭제할까요? 이 작업은 되돌릴 수 없습니다.')
+    ) {
+      deleteMaterialMutation.mutate()
+    }
+  }, [admin, command, deleteMaterialMutation, materialQuery.data, onRequestLogin, user])
 
   const parameterItems = parametersQuery.data?.items ?? []
 
@@ -285,9 +325,11 @@ export function MaterialDetail({
     return (
       <div className="p-8 text-center">
         <p className="font-medium">Material을 찾을 수 없습니다.</p>
-        <Button className="mt-4" onClick={onBack} variant="outline">
-          목록으로
-        </Button>
+        {onBack ? (
+          <Button className="mt-4" onClick={onBack} variant="outline">
+            목록으로
+          </Button>
+        ) : null}
       </div>
     )
 
@@ -299,43 +341,64 @@ export function MaterialDetail({
   const canEditMaterial = Boolean(user && (admin || material.user_id === user.id))
   const canAddChild = Boolean(user && (admin || material.user_id === null || material.user_id === user.id))
   const canEditOwned = (ownerId?: string | null) => Boolean(user && (admin || ownerId === user.id))
+  const actions = canEditMaterial ? (
+    <>
+      <Button onClick={() => setEditMaterialOpen(true)} size={compact ? 'sm' : 'default'} variant="outline">
+        <Edit3 />
+        편집
+      </Button>
+      <Button
+        disabled={deleteMaterialMutation.isPending}
+        onClick={() => {
+          if (
+            window.confirm(
+              '이 Material과 연결된 이름, parameter, qualifier를 모두 삭제할까요? 이 작업은 되돌릴 수 없습니다.',
+            )
+          )
+            deleteMaterialMutation.mutate()
+        }}
+        size={compact ? 'sm' : 'default'}
+        variant="destructive"
+      >
+        <Trash2 />
+        삭제
+      </Button>
+    </>
+  ) : undefined
 
   return (
-    <div className={cn('space-y-6', !embedded && 'mx-auto max-w-7xl px-4 py-8 sm:px-6')}>
-      <Button onClick={onBack} size="sm" variant="ghost">
-        <ArrowLeft />
-        Material 목록
-      </Button>
-      <PageHeader
-        actions={
-          canEditMaterial ? (
-            <>
-              <Button onClick={() => setEditMaterialOpen(true)} variant="outline">
-                <Edit3 />
-                편집
-              </Button>
-              <Button
-                disabled={deleteMaterialMutation.isPending}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      '이 Material과 연결된 이름, parameter, qualifier를 모두 삭제할까요? 이 작업은 되돌릴 수 없습니다.',
-                    )
-                  )
-                    deleteMaterialMutation.mutate()
-                }}
-                variant="destructive"
-              >
-                <Trash2 />
-                삭제
-              </Button>
-            </>
-          ) : undefined
-        }
-        description={material.description || '등록된 설명이 없습니다.'}
-        eyebrow={`Material #${material.id}`}
-        title={title}
-      />
+    <div
+      className={cn(
+        compact ? 'h-full space-y-4 overflow-y-auto p-3' : 'space-y-6',
+        !embedded && !compact && 'mx-auto max-w-7xl px-4 py-8 sm:px-6',
+        className,
+      )}
+    >
+      {onBack ? (
+        <Button onClick={onBack} size="sm" variant="ghost">
+          <ArrowLeft />
+          Material 목록
+        </Button>
+      ) : null}
+      {compact ? (
+        <header className="space-y-2">
+          <div>
+            <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+              Material #{material.id}
+            </p>
+            <h2 className="text-lg font-semibold break-words">{title}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">{material.description || '등록된 설명이 없습니다.'}</p>
+          </div>
+          {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
+        </header>
+      ) : (
+        <PageHeader
+          actions={actions}
+          description={material.description || '등록된 설명이 없습니다.'}
+          eyebrow={`Material #${material.id}`}
+          title={title}
+        />
+      )}
 
       <Card>
         <CardHeader className="sm:flex sm:flex-row sm:items-start sm:justify-between">

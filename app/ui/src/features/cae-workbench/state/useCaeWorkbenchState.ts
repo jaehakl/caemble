@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { dbTables, getListRequest, type UserData } from '@/api'
+import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
 import { useCurrentCadSelection } from '@/features/viewer/current-cad-selection'
 import type { DefinitionFormValues, ExperimentSaveMode } from '@/features/viewer/persistence/SaveDefinitionDialog'
 import { saveCadDefinition } from '@/features/viewer/persistence/saveDefinition'
@@ -19,7 +20,13 @@ import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 import { agentExperimentContextVersion } from '../agent/agentWorkspace'
 import { useCaeDataSelection } from '../measurement/useCaeDataSelection'
 import { useCaeMeasurementActions } from '../measurement/useCaeMeasurementActions'
-import type { DefinitionStatus, SavedExperiment, SavedMeasurement, WorkbenchDraft, WorkbenchTabId } from '../types'
+import type {
+  DefinitionStatus,
+  SavedExperiment,
+  SavedMeasurement,
+  WorkbenchDraft,
+  WorkbenchLayoutState,
+} from '../types'
 
 function definitionStatus(
   document: ExperimentSourceDocument | null,
@@ -89,7 +96,13 @@ async function fetchExperiment(id: number) {
   return row as SavedExperiment
 }
 
-export function useCaeWorkbenchState(user: UserData | null, authenticated: boolean) {
+export type UseCaeWorkbenchStateOptions = Readonly<{ onActivity?: RuntimeActivityCallback }>
+
+export function useCaeWorkbenchState(
+  user: UserData | null,
+  authenticated: boolean,
+  { onActivity }: UseCaeWorkbenchStateOptions = {},
+) {
   const queryClient = useQueryClient()
   const { setCurrentExperimentId } = useCurrentCadSelection()
   const [experiment, setExperiment] = useState<ExperimentSourceDocument | null>(null)
@@ -182,6 +195,7 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
     runtimeEnabled: authenticated,
     resetKey: workspaceSession,
     sourceOnlyMaterials: !authenticated,
+    onActivity,
     onCandidateVarsRegenerated: handleCandidateVarsRegenerated,
   })
 
@@ -547,15 +561,8 @@ export function useCaeWorkbenchState(user: UserData | null, authenticated: boole
   )
 
   const draft = useCallback(
-    (
-      layout: Readonly<{
-        openTabs: readonly WorkbenchTabId[]
-        activeTab: WorkbenchTabId | null
-        experimentFile: string | null
-        splitPercent: number
-      }>,
-    ): WorkbenchDraft => ({
-      version: 14,
+    (layout: WorkbenchLayoutState): WorkbenchDraft => ({
+      version: 15,
       savedAt: Date.now(),
       experiment: {
         record: experimentRecord,

@@ -1,58 +1,82 @@
 import { useMemo, type Dispatch, type SetStateAction } from 'react'
 import {
   Beaker,
-  Bot,
   BookOpenText,
   Boxes,
+  BrainCircuit,
   ChartNoAxesCombined,
   CircleUserRound,
   Copy,
   Database,
+  Download,
   FlaskConical,
-  FolderOpen,
   Gauge,
   GitBranch,
   Layers3,
-  ListChecks,
   MessageCircle,
+  Pencil,
   Play,
+  Plus,
+  RefreshCw,
   RotateCw,
   Save,
   SaveAll,
-  Server,
+  Sparkles,
   Square,
-  TableProperties,
+  Trash2,
 } from 'lucide-react'
-import type { WorkbenchAction, WorkbenchMenuDefinition } from '@/features/cae-workbench/chrome'
+import {
+  WorkbenchRibbonActions,
+  WorkbenchRibbonGroup,
+  type WorkbenchAction,
+  type WorkbenchRibbonPanel,
+} from '@/features/cae-workbench/chrome'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
-import type { WorkbenchTabId } from '@/features/cae-workbench/types'
+import type { AnalysisTabId, HelpKindId, WorkbenchSectionId } from '@/features/cae-workbench/types'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 import type { WorkbenchDialog } from './caePageTypes'
 import { GeometryAuthoringRibbon } from './GeometryAuthoringRibbon'
-import { RibbonActions } from './RibbonActions'
 
-function openDocsWindow(href: string) {
-  window.open(href, '_blank', 'noopener,noreferrer')
-}
+export type AnalysisRibbonCommand = 'reload' | 'export-dataset' | 'export-prediction'
+export type LabRibbonCommand = 'new' | 'end' | 'cancel'
+export type MaterialRibbonCommand = 'new' | 'edit' | 'add-name' | 'add-parameter' | 'delete' | 'refresh'
 
 export function useCaePageChrome({
+  analysisTab,
   authenticated,
   experimentAuthoringState,
   guardReplacement,
-  openTab,
+  helpKind,
+  materialSelected,
+  requestAnalysisCommand,
+  requestLabCommand,
+  requestMaterialCommand,
+  refreshRuntime,
   requestRunSelected,
   runSafely,
+  setActiveSection,
+  setAnalysisTab,
   setDialog,
+  setHelpKind,
   workbench,
 }: {
+  analysisTab: AnalysisTabId
   authenticated: boolean
   experimentAuthoringState: CadEditorAuthoringState | null
   guardReplacement: (run: () => unknown | Promise<unknown>) => void
-  openTab: (tab: WorkbenchTabId) => void
+  helpKind: HelpKindId
+  materialSelected: boolean
+  requestAnalysisCommand: (command: AnalysisRibbonCommand) => void
+  requestLabCommand: (command: LabRibbonCommand) => void
+  requestMaterialCommand: (command: MaterialRibbonCommand) => void
+  refreshRuntime: () => void
   requestRunSelected: () => void
   runSafely: (run: () => unknown | Promise<unknown>) => void
+  setActiveSection: (section: WorkbenchSectionId) => void
+  setAnalysisTab: (tab: AnalysisTabId) => void
   setDialog: Dispatch<SetStateAction<WorkbenchDialog>>
+  setHelpKind: (kind: HelpKindId) => void
   workbench: CaeWorkbenchState
 }) {
   const actions = useMemo<Record<string, WorkbenchAction>>(() => {
@@ -70,10 +94,16 @@ export function useCaePageChrome({
     const evaluationBusyReason = workbench.experimentDocument.runIsBusy
       ? 'Experiment 평가가 진행 중입니다.'
       : busyReason
-    const draftPreviewReason =
-      workbench.experimentDocument.draftTaskNames.length > 0
-        ? 'Solver가 선택되지 않은 Draft Task가 있어 Measurement 저장과 CAE 실행을 사용할 수 없습니다.'
+    const candidateEvaluationReason =
+      workbench.experimentDocument.status !== 'Ready' ||
+      workbench.experimentDocument.successfulRevision !== workbench.experimentDocument.revision ||
+      !workbench.experimentDocument.variables ||
+      !workbench.experimentDocument.materialParameters
+        ? '저장할 Candidate 평가가 완료되지 않았습니다.'
         : undefined
+    const draftPreviewReason = workbench.experimentDocument.draftTaskNames.length
+      ? 'Solver가 선택되지 않은 Draft Task가 있어 Measurement 저장과 CAE 실행을 사용할 수 없습니다.'
+      : undefined
     const selected = workbench.selection.measurement
     const cancellingRun =
       workbench.measurementActions.operation === 'measurement' && workbench.measurementActions.cancelable
@@ -81,8 +111,8 @@ export function useCaePageChrome({
     const defined: Record<string, WorkbenchAction> = {
       newExperiment: {
         id: 'new-experiment',
-        label: 'New Experiment',
-        icon: <FlaskConical className="size-4" />,
+        label: 'New',
+        icon: <FlaskConical />,
         onSelect: () =>
           guardReplacement(() => {
             workbench.newExperiment(
@@ -90,25 +120,13 @@ export function useCaePageChrome({
               'Starter Experiment',
               '로컬에서 즉시 편집할 수 있는 Starter Box Experiment입니다.',
             )
-            openTab('experiment')
+            setActiveSection('experiment')
           }),
-      },
-      loadExperiment: {
-        id: 'load-experiment',
-        label: 'Load Experiment',
-        icon: <FolderOpen className="size-4" />,
-        onSelect: () => openTab('experiments'),
-      },
-      experimentManager: {
-        id: 'experiment-manager',
-        label: 'Experiment Manager',
-        icon: <GitBranch className="size-4" />,
-        onSelect: () => openTab('experiments'),
       },
       saveExperiment: {
         id: 'save-experiment',
-        label: 'Save Experiment',
-        icon: <Save className="size-4" />,
+        label: 'Save',
+        icon: <Save />,
         disabled:
           !authenticated ||
           !workbench.experiment ||
@@ -128,14 +146,10 @@ export function useCaePageChrome({
       },
       saveExperimentVersion: {
         id: 'save-experiment-version',
-        label: 'Save New Version',
-        icon: <GitBranch className="size-4" />,
+        label: 'New Version',
+        icon: <GitBranch />,
         disabled:
-          !authenticated ||
-          !workbench.experiment ||
-          !workbench.experimentRecord ||
-          !workbench.experimentManageable ||
-          workbench.saving !== null,
+          !authenticated || !workbench.experimentRecord || !workbench.experimentManageable || workbench.saving !== null,
         disabledReason: !authenticated
           ? loginReason
           : !workbench.experimentRecord
@@ -147,8 +161,8 @@ export function useCaePageChrome({
       },
       saveExperimentAs: {
         id: 'save-experiment-as',
-        label: 'Save Experiment As',
-        icon: <SaveAll className="size-4" />,
+        label: 'Save As',
+        icon: <SaveAll />,
         disabled: !authenticated || !workbench.experiment || workbench.saving !== null,
         disabledReason: !authenticated
           ? loginReason
@@ -159,8 +173,8 @@ export function useCaePageChrome({
       },
       generateCandidate: {
         id: 'generate-candidate',
-        label: 'Generate Candidate',
-        icon: <RotateCw className="size-4" />,
+        label: 'Candidate',
+        icon: <RotateCw />,
         disabled:
           !workbench.experiment ||
           workbench.experimentDocument.runIsBusy ||
@@ -173,14 +187,15 @@ export function useCaePageChrome({
       },
       saveCurrentMeasurement: {
         id: 'save-current-measurement',
-        label: 'Save Current Measurement',
-        icon: <Beaker className="size-4" />,
+        label: 'Save Current',
+        icon: <Beaker />,
         disabled:
           !authenticated ||
           !workbench.hasTasks ||
           !workbench.experimentClean ||
           workbench.experimentDocument.draftTaskNames.length > 0 ||
           workbench.experimentDocument.status !== 'Ready' ||
+          workbench.experimentDocument.successfulRevision !== workbench.experimentDocument.revision ||
           !workbench.experimentDocument.variables ||
           !workbench.experimentDocument.materialParameters ||
           workbench.measurementActions.busy ||
@@ -190,34 +205,23 @@ export function useCaePageChrome({
           : (tasklessReason ??
             (!workbench.experimentClean
               ? savedReason
-              : (draftPreviewReason ?? pendingResultReason ?? evaluationBusyReason))),
+              : (draftPreviewReason ?? pendingResultReason ?? candidateEvaluationReason ?? evaluationBusyReason))),
         onSelect: () => runSafely(workbench.measurementActions.saveCurrent),
-      },
-      selectMeasurement: {
-        id: 'select-measurement',
-        label: 'Select Measurement',
-        icon: <TableProperties className="size-4" />,
-        disabled:
-          !authenticated ||
-          !workbench.hasTasks ||
-          !workbench.experimentClean ||
-          workbench.measurementActions.busy ||
-          Boolean(workbench.measurementActions.pendingRecordMeasurementId),
-        disabledReason: !authenticated
-          ? loginReason
-          : (tasklessReason ?? (!workbench.experimentClean ? savedReason : (pendingResultReason ?? busyReason))),
-        onSelect: () => setDialog('measurement'),
       },
       duplicateMeasurement: {
         id: 'duplicate-measurement',
-        label: 'Duplicate Measurement',
-        icon: <Copy className="size-4" />,
+        label: 'Duplicate',
+        icon: <Copy />,
         disabled:
           !authenticated ||
           !workbench.hasTasks ||
           !workbench.experimentClean ||
-          !selected ||
           workbench.experimentDocument.draftTaskNames.length > 0 ||
+          workbench.experimentDocument.status !== 'Ready' ||
+          workbench.experimentDocument.successfulRevision !== workbench.experimentDocument.revision ||
+          !workbench.experimentDocument.variables ||
+          !workbench.experimentDocument.materialParameters ||
+          !selected ||
           workbench.measurementActions.busy ||
           Boolean(workbench.measurementActions.pendingRecordMeasurementId),
         disabledReason: !authenticated
@@ -225,17 +229,15 @@ export function useCaePageChrome({
           : (tasklessReason ??
             (!workbench.experimentClean
               ? savedReason
-              : !selected
-                ? '복제할 Measurement를 선택하세요.'
-                : (draftPreviewReason ?? pendingResultReason ?? busyReason))),
-        onSelect: () => {
-          if (selected) runSafely(() => workbench.measurementActions.duplicateMeasurement(selected))
-        },
+              : (draftPreviewReason ??
+                candidateEvaluationReason ??
+                (!selected ? '복제할 Measurement를 선택하세요.' : (pendingResultReason ?? busyReason))))),
+        onSelect: () => selected && runSafely(() => workbench.measurementActions.duplicateMeasurement(selected)),
       },
       runSelected: {
         id: 'run-selected',
-        label: cancellingRun ? 'Cancel Run' : 'Run Selected',
-        icon: cancellingRun ? <Square className="size-4" /> : <Play className="size-4" />,
+        label: cancellingRun ? 'Cancel' : 'Run',
+        icon: cancellingRun ? <Square /> : <Play />,
         disabled:
           !cancellingRun &&
           (!authenticated ||
@@ -256,16 +258,14 @@ export function useCaePageChrome({
                 : !selected
                   ? 'Prepared Measurement를 선택하세요.'
                   : selected.recorded_at
-                    ? '이미 RecordedData가 있는 Measurement는 다시 실행할 수 없습니다.'
-                    : workbench.measurementActions.pendingRecordMeasurementId
-                      ? '실행 결과 저장을 먼저 다시 시도하세요.'
-                      : (draftPreviewReason ?? evaluationBusyReason))),
+                    ? 'Recorded Measurement는 다시 실행할 수 없습니다.'
+                    : (pendingResultReason ?? draftPreviewReason ?? evaluationBusyReason))),
         onSelect: cancellingRun ? workbench.measurementActions.cancel : () => runSafely(requestRunSelected),
       },
       retryRecord: {
         id: 'retry-record',
-        label: 'Retry Saving Results',
-        icon: <Save className="size-4" />,
+        label: 'Retry Save',
+        icon: <Save />,
         disabled: !workbench.measurementActions.pendingRecordMeasurementId || workbench.measurementActions.busy,
         disabledReason: !workbench.measurementActions.pendingRecordMeasurementId
           ? '다시 저장할 session 결과가 없습니다.'
@@ -274,278 +274,295 @@ export function useCaePageChrome({
       },
       analyzeMeasurements: {
         id: 'analyze-measurements',
-        label: 'Analyze Measurements',
-        icon: <ChartNoAxesCombined className="size-4" />,
-        disabled: !authenticated || !workbench.hasTasks || !workbench.experimentClean,
-        disabledReason: !authenticated
-          ? loginReason
-          : (tasklessReason ?? (!workbench.experimentClean ? savedReason : undefined)),
-        onSelect: () => setDialog('analysis'),
+        label: 'Analysis',
+        icon: <ChartNoAxesCombined />,
+        disabled: !authenticated || !workbench.experimentClean,
+        disabledReason: !authenticated ? loginReason : !workbench.experimentClean ? savedReason : undefined,
+        onSelect: () => setActiveSection('analysis'),
       },
-      experimentTab: {
-        id: 'tab-experiment',
-        label: 'Experiment Editor',
-        icon: <FlaskConical className="size-4" />,
-        onSelect: () => openTab('experiment'),
-      },
-      recordedDataTab: {
-        id: 'tab-recorded-data',
-        label: 'RecordedData',
-        icon: <ChartNoAxesCombined className="size-4" />,
-        onSelect: () => openTab('recorded-data'),
-      },
-      experimentsTab: {
-        id: 'tab-experiments',
-        label: 'Experiment Manager',
-        icon: <Boxes className="size-4" />,
-        onSelect: () => openTab('experiments'),
-      },
-      materialManager: {
-        id: 'material-manager',
-        label: 'Material Manager',
-        icon: <Database className="size-4" />,
+      materialNew: {
+        id: 'material-new',
+        label: 'New',
+        icon: <Plus />,
         disabled: !authenticated,
         disabledReason: !authenticated ? loginReason : undefined,
-        onSelect: () => setDialog('material'),
+        onSelect: () => requestMaterialCommand('new'),
       },
-      aiChat: {
-        id: 'ai-chat',
+      materialEdit: {
+        id: 'material-edit',
+        label: 'Edit',
+        icon: <Pencil />,
+        disabled: !authenticated || !materialSelected,
+        disabledReason: !authenticated ? loginReason : !materialSelected ? 'Material을 선택하세요.' : undefined,
+        onSelect: () => requestMaterialCommand('edit'),
+      },
+      materialName: {
+        id: 'material-name',
+        label: 'Add Name',
+        icon: <Plus />,
+        disabled: !authenticated || !materialSelected,
+        disabledReason: !authenticated ? loginReason : !materialSelected ? 'Material을 선택하세요.' : undefined,
+        onSelect: () => requestMaterialCommand('add-name'),
+      },
+      materialParameter: {
+        id: 'material-parameter',
+        label: 'Add Parameter',
+        icon: <Database />,
+        disabled: !authenticated || !materialSelected,
+        disabledReason: !authenticated ? loginReason : !materialSelected ? 'Material을 선택하세요.' : undefined,
+        onSelect: () => requestMaterialCommand('add-parameter'),
+      },
+      materialDelete: {
+        id: 'material-delete',
+        label: 'Delete',
+        icon: <Trash2 />,
+        disabled: !authenticated || !materialSelected,
+        disabledReason: !authenticated ? loginReason : !materialSelected ? 'Material을 선택하세요.' : undefined,
+        onSelect: () => requestMaterialCommand('delete'),
+      },
+      materialRefresh: {
+        id: 'material-refresh',
+        label: 'Refresh',
+        icon: <RefreshCw />,
+        onSelect: () => requestMaterialCommand('refresh'),
+      },
+      account: { id: 'account', label: 'Account', icon: <CircleUserRound />, onSelect: () => setDialog('account') },
+      labChat: {
+        id: 'lab-chat',
         label: 'AI Chat',
-        icon: <MessageCircle className="size-4" />,
-        onSelect: () => setDialog('ai-chat'),
+        icon: <MessageCircle />,
+        pressed: true,
+        onSelect: () => setActiveSection('lab'),
       },
-      aiHelper: {
-        id: 'ai-helper',
-        label: 'AI Helper',
-        icon: <Bot className="size-4" />,
-        onSelect: () => openTab('ai-helper'),
-      },
-      launchers: {
-        id: 'launchers',
-        label: 'Launchers',
-        icon: <Server className="size-4" />,
+      labNew: {
+        id: 'lab-new',
+        label: 'New Chat',
+        icon: <Plus />,
         disabled: !authenticated,
         disabledReason: !authenticated ? loginReason : undefined,
-        onSelect: () => setDialog('launchers'),
+        onSelect: () => requestLabCommand('new'),
       },
-      jobs: {
-        id: 'jobs',
-        label: 'Jobs',
-        icon: <ListChecks className="size-4" />,
+      labEnd: {
+        id: 'lab-end',
+        label: 'End',
+        icon: <Square />,
         disabled: !authenticated,
         disabledReason: !authenticated ? loginReason : undefined,
-        onSelect: () => setDialog('jobs'),
+        onSelect: () => requestLabCommand('end'),
       },
-      account: {
-        id: 'account',
-        label: 'Account',
-        icon: <CircleUserRound className="size-4" />,
-        onSelect: () => setDialog('account'),
+      labCancel: {
+        id: 'lab-cancel',
+        label: 'Cancel',
+        icon: <Trash2 />,
+        disabled: !authenticated,
+        disabledReason: !authenticated ? loginReason : undefined,
+        onSelect: () => requestLabCommand('cancel'),
       },
-      manual: {
-        id: 'manual',
-        label: 'Manual',
-        icon: <BookOpenText className="size-4" />,
-        onSelect: () => openDocsWindow('/docs?section=program'),
+      analysisReload: {
+        id: 'analysis-reload',
+        label: 'Reload',
+        icon: <RefreshCw />,
+        disabled: !authenticated,
+        disabledReason: !authenticated ? loginReason : undefined,
+        onSelect: () => requestAnalysisCommand('reload'),
       },
-      geometryCatalog: {
-        id: 'geometry-catalog',
-        label: 'Geometry Catalog',
-        icon: <Boxes className="size-4" />,
-        onSelect: () => openDocsWindow('/docs?section=geometry'),
+      analysisDataset: {
+        id: 'analysis-dataset',
+        label: 'Data CSV',
+        icon: <Download />,
+        disabled: !authenticated,
+        disabledReason: !authenticated ? loginReason : undefined,
+        onSelect: () => requestAnalysisCommand('export-dataset'),
       },
-      materialCatalog: {
-        id: 'material-catalog',
-        label: 'Material Catalog',
-        icon: <Layers3 className="size-4" />,
-        onSelect: () => openDocsWindow('/docs?section=materials'),
+      analysisPrediction: {
+        id: 'analysis-prediction',
+        label: 'Prediction CSV',
+        icon: <Download />,
+        disabled: !authenticated,
+        disabledReason: !authenticated ? loginReason : undefined,
+        onSelect: () => requestAnalysisCommand('export-prediction'),
       },
-      quantityCatalog: {
-        id: 'quantity-catalog',
-        label: 'Quantity Catalog',
-        icon: <Gauge className="size-4" />,
-        onSelect: () => openDocsWindow('/docs?section=quantity-kinds'),
-      },
-      physicsCatalog: {
-        id: 'physics-catalog',
-        label: 'Physics Catalog',
-        icon: <FlaskConical className="size-4" />,
-        onSelect: () => openDocsWindow('/docs?section=solvers'),
-      },
+      settingRefresh: { id: 'setting-refresh', label: 'Refresh', icon: <RefreshCw />, onSelect: refreshRuntime },
     }
 
     if (!sourceLockReason) return defined
-    const locked = ['newExperiment', 'loadExperiment', 'saveExperiment', 'saveExperimentVersion', 'saveExperimentAs']
+    const locked = new Set(['newExperiment', 'saveExperiment', 'saveExperimentVersion', 'saveExperimentAs'])
     return Object.fromEntries(
       Object.entries(defined).map(([key, action]) => [
         key,
-        locked.includes(key) ? { ...action, disabled: true, disabledReason: sourceLockReason } : action,
+        locked.has(key) ? { ...action, disabled: true, disabledReason: sourceLockReason } : action,
       ]),
     )
-  }, [authenticated, guardReplacement, openTab, requestRunSelected, runSafely, setDialog, workbench])
+  }, [
+    authenticated,
+    guardReplacement,
+    materialSelected,
+    requestAnalysisCommand,
+    requestLabCommand,
+    requestMaterialCommand,
+    refreshRuntime,
+    requestRunSelected,
+    runSafely,
+    setActiveSection,
+    setDialog,
+    workbench,
+  ])
 
-  const menus = useMemo<readonly WorkbenchMenuDefinition[]>(
-    () => [
-      {
-        id: 'source',
-        label: 'Source',
-        items: [
-          { type: 'action', action: actions.newExperiment },
-          { type: 'action', action: actions.loadExperiment },
-          { type: 'action', action: actions.experimentManager },
-          { type: 'separator', id: 'source-save-separator' },
-          { type: 'action', action: actions.saveExperiment },
-          { type: 'action', action: actions.saveExperimentVersion },
-          { type: 'action', action: actions.saveExperimentAs },
-          { type: 'separator', id: 'material-separator' },
-          { type: 'action', action: actions.materialManager },
-        ],
-      },
-      {
-        id: 'data',
-        label: 'Data',
-        items: [
-          { type: 'action', action: actions.saveCurrentMeasurement },
-          { type: 'action', action: actions.selectMeasurement },
-          { type: 'action', action: actions.duplicateMeasurement },
-          { type: 'separator', id: 'run-separator' },
-          { type: 'action', action: actions.runSelected },
-          ...(workbench.measurementActions.pendingRecordMeasurementId
-            ? ([{ type: 'action', action: actions.retryRecord }] as const)
-            : []),
-          { type: 'action', action: actions.analyzeMeasurements },
-        ],
-      },
-      {
-        id: 'view',
-        label: 'View',
-        items: [
-          { type: 'action', action: actions.experimentTab },
-          { type: 'action', action: actions.experimentsTab },
-          { type: 'action', action: actions.recordedDataTab },
-        ],
-      },
-      { id: 'lab', label: 'Lab', items: [{ type: 'action', action: actions.aiChat }] },
-      {
-        id: 'settings',
-        label: 'Settings',
-        items: [
-          { type: 'action', action: actions.launchers },
-          { type: 'action', action: actions.jobs },
-          { type: 'separator', id: 'account-separator' },
-          { type: 'action', action: actions.account },
-        ],
-      },
-      {
-        id: 'help',
-        label: 'Help',
-        items: [
-          { type: 'action', action: actions.aiHelper },
-          { type: 'separator', id: 'ai-helper-separator' },
-          { type: 'action', action: actions.manual },
-          { type: 'separator', id: 'catalog-separator' },
-          { type: 'action', action: actions.geometryCatalog },
-          { type: 'action', action: actions.materialCatalog },
-          { type: 'action', action: actions.quantityCatalog },
-          { type: 'action', action: actions.physicsCatalog },
-        ],
-      },
-    ],
-    [actions, workbench.measurementActions.pendingRecordMeasurementId],
-  )
-
-  const toolbar = [
-    actions.newExperiment,
-    actions.loadExperiment,
-    actions.saveExperiment,
-    actions.generateCandidate,
-    actions.saveCurrentMeasurement,
-    actions.selectMeasurement,
-    actions.runSelected,
-    ...(workbench.measurementActions.pendingRecordMeasurementId ? [actions.retryRecord] : []),
-    actions.jobs,
+  const analysisActions = (['overview', 'relationships', 'mining', 'prediction', 'data'] as const).map((tab) => ({
+    id: `analysis-${tab}`,
+    label:
+      tab === 'overview' ? 'Overview' : tab === 'relationships' ? 'Relations' : tab[0].toUpperCase() + tab.slice(1),
+    icon: tab === 'prediction' ? <BrainCircuit /> : tab === 'mining' ? <Sparkles /> : <ChartNoAxesCombined />,
+    pressed: analysisTab === tab,
+    onSelect: () => setAnalysisTab(tab),
+  }))
+  const helpActions: readonly WorkbenchAction[] = [
+    {
+      id: 'help-manual',
+      label: 'Manual',
+      icon: <BookOpenText />,
+      pressed: helpKind === 'manual',
+      onSelect: () => setHelpKind('manual'),
+    },
+    {
+      id: 'help-geometry',
+      label: 'Geometry',
+      icon: <Boxes />,
+      pressed: helpKind === 'geometry',
+      onSelect: () => setHelpKind('geometry'),
+    },
+    {
+      id: 'help-materials',
+      label: 'Material',
+      icon: <Layers3 />,
+      pressed: helpKind === 'materials',
+      onSelect: () => setHelpKind('materials'),
+    },
+    {
+      id: 'help-quantity',
+      label: 'Quantity',
+      icon: <Gauge />,
+      pressed: helpKind === 'quantity-kinds',
+      onSelect: () => setHelpKind('quantity-kinds'),
+    },
+    {
+      id: 'help-solvers',
+      label: 'Solvers',
+      icon: <FlaskConical />,
+      pressed: helpKind === 'solvers',
+      onSelect: () => setHelpKind('solvers'),
+    },
   ]
 
-  const ribbonPanels = [
+  const ribbonPanels: readonly WorkbenchRibbonPanel[] = [
     {
-      tabId: 'experiment',
+      sectionId: 'experiment',
       label: 'Experiment',
       content: (
-        <RibbonActions
-          actions={[
-            actions.newExperiment,
-            actions.loadExperiment,
-            actions.experimentManager,
-            actions.saveExperiment,
-            actions.saveExperimentVersion,
-            actions.saveExperimentAs,
-            actions.generateCandidate,
-            actions.saveCurrentMeasurement,
-          ]}
-          extraActions={<GeometryAuthoringRibbon state={experimentAuthoringState} />}
-        >
-          <span className="truncate text-sm font-semibold">{workbench.experimentName}</span>
-          <span className="mt-1 text-xs text-muted-foreground">
-            {workbench.experimentId ? `#${workbench.experimentId}` : 'DB에 저장되지 않음'} ·{' '}
-            {workbench.experimentStatus}
-          </span>
-        </RibbonActions>
+        <>
+          <WorkbenchRibbonGroup label="File">
+            <WorkbenchRibbonActions
+              actions={[
+                actions.newExperiment,
+                actions.saveExperiment,
+                actions.saveExperimentVersion,
+                actions.saveExperimentAs,
+              ]}
+            />
+          </WorkbenchRibbonGroup>
+          <WorkbenchRibbonGroup label="Candidate">
+            <WorkbenchRibbonActions actions={[actions.generateCandidate, actions.saveCurrentMeasurement]} />
+          </WorkbenchRibbonGroup>
+          <WorkbenchRibbonGroup label="Geometry">
+            <GeometryAuthoringRibbon state={experimentAuthoringState} />
+          </WorkbenchRibbonGroup>
+        </>
       ),
     },
     {
-      tabId: 'experiments',
-      label: 'Experiments',
+      sectionId: 'measurement',
+      label: 'Measurement',
       content: (
-        <RibbonActions actions={[actions.newExperiment, actions.loadExperiment, actions.saveExperimentAs]}>
-          <span className="text-sm font-semibold">Experiment Manager</span>
-          <span className="mt-1 text-xs text-muted-foreground">
-            Example 및 저장된 namespace / repository / SemVer 목록
-          </span>
-        </RibbonActions>
+        <>
+          <WorkbenchRibbonGroup label="Measurement">
+            <WorkbenchRibbonActions
+              actions={[actions.generateCandidate, actions.saveCurrentMeasurement, actions.duplicateMeasurement]}
+            />
+          </WorkbenchRibbonGroup>
+          <WorkbenchRibbonGroup label="Run">
+            <WorkbenchRibbonActions
+              actions={[
+                actions.runSelected,
+                ...(workbench.measurementActions.pendingRecordMeasurementId ? [actions.retryRecord] : []),
+                actions.analyzeMeasurements,
+              ]}
+            />
+          </WorkbenchRibbonGroup>
+        </>
       ),
     },
     {
-      tabId: 'ai-helper',
-      label: 'AI Helper',
+      sectionId: 'material',
+      label: 'Material',
       content: (
-        <RibbonActions actions={[actions.aiHelper]}>
-          <span className="text-sm font-semibold">AI Helper</span>
-          <span className="mt-1 text-xs text-muted-foreground">
-            Docs와 현재 Workbench 문맥을 참고합니다. AI 응답은 로그인과 GPStation이 필요합니다.
-          </span>
-        </RibbonActions>
+        <WorkbenchRibbonGroup label="Material">
+          <WorkbenchRibbonActions
+            actions={[
+              actions.materialNew,
+              actions.materialEdit,
+              actions.materialName,
+              actions.materialParameter,
+              actions.materialDelete,
+              actions.materialRefresh,
+            ]}
+          />
+        </WorkbenchRibbonGroup>
       ),
     },
     {
-      tabId: 'recorded-data',
-      label: 'RecordedData',
+      sectionId: 'analysis',
+      label: 'Analysis',
       content: (
-        <RibbonActions
-          actions={[
-            actions.selectMeasurement,
-            actions.runSelected,
-            ...(workbench.measurementActions.pendingRecordMeasurementId ? [actions.retryRecord] : []),
-            actions.generateCandidate,
-            actions.saveCurrentMeasurement,
-            actions.analyzeMeasurements,
-          ]}
-        >
-          <span className="text-sm font-semibold">
-            {workbench.selection.measurement
-              ? `Measurement #${workbench.selection.measurement.id}`
-              : 'Candidate preview'}
-          </span>
-          <span className="mt-1 text-xs text-muted-foreground">
-            {workbench.selection.measurement?.recorded_at
-              ? 'Recorded · 실행 완료'
-              : workbench.selection.measurement
-                ? 'Prepared · 실행 가능'
-                : '저장되지 않은 현재 조건'}
-          </span>
-        </RibbonActions>
+        <>
+          <WorkbenchRibbonGroup label="View">
+            <WorkbenchRibbonActions actions={analysisActions} />
+          </WorkbenchRibbonGroup>
+          <WorkbenchRibbonGroup label="Data">
+            <WorkbenchRibbonActions
+              actions={[actions.analysisReload, actions.analysisDataset, actions.analysisPrediction]}
+            />
+          </WorkbenchRibbonGroup>
+        </>
+      ),
+    },
+    {
+      sectionId: 'lab',
+      label: 'Lab',
+      content: (
+        <WorkbenchRibbonGroup label="AI Chat">
+          <WorkbenchRibbonActions actions={[actions.labChat, actions.labNew, actions.labEnd, actions.labCancel]} />
+        </WorkbenchRibbonGroup>
+      ),
+    },
+    {
+      sectionId: 'help',
+      label: 'Help',
+      content: (
+        <WorkbenchRibbonGroup label="Manual & Catalog">
+          <WorkbenchRibbonActions actions={helpActions} />
+        </WorkbenchRibbonGroup>
+      ),
+    },
+    {
+      sectionId: 'setting',
+      label: 'Setting',
+      content: (
+        <WorkbenchRibbonGroup label="Runtime & Account">
+          <WorkbenchRibbonActions actions={[actions.account, actions.settingRefresh]} />
+        </WorkbenchRibbonGroup>
       ),
     },
   ]
 
-  return { menus, ribbonPanels, toolbar }
+  return { actions, ribbonPanels }
 }

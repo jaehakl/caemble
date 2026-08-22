@@ -15,6 +15,7 @@ import {
 import { fetchCatalogRuntimeSlice } from '@/lib/catalog/references'
 import { registerSourceCatalogRuntimeSlice } from '@/lib/catalog/runtime'
 import { buildSyntheticCatalog, buildSyntheticSolver } from '@/test/syntheticCatalog'
+import type { RuntimeActivityDraft } from '@/features/runtime-console'
 import { resolveDocumentMaterials } from '../persistence/resolveMaterials'
 import { useCadWorkspace } from './useCadWorkspace'
 
@@ -123,6 +124,33 @@ describe('useCadWorkspace unified Experiment', () => {
     expect(render.result.current.experimentDocument.taskSceneHashes).toBe(initialHashes)
     act(() => render.result.current.experimentDocument.handleRenderEnd())
     expect(render.result.current.experimentDocument.status).toBe('Ready')
+    render.unmount()
+  })
+
+  it('reports typed CAD compile, evaluation, material, and render activity without changing the workspace result', async () => {
+    const activities: RuntimeActivityDraft[] = []
+    const render = renderHook(() =>
+      useCadWorkspace(document, vi.fn(), {
+        candidateVars: { fixed: 4, width: 2 },
+        onActivity: (activity) => activities.push(activity),
+      }),
+    )
+
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
+    expect(activities.map(({ source }) => source).every((source) => source === 'cad')).toBe(true)
+    expect(activities.map(({ phase }) => phase)).toEqual([
+      'source.checking',
+      'compile.started',
+      'compile.completed',
+      'evaluate.started',
+      'evaluate.completed',
+      'materials.resolving',
+      'workspace.ready',
+    ])
+
+    act(() => render.result.current.experimentDocument.handleRenderStart())
+    act(() => render.result.current.experimentDocument.handleRenderEnd())
+    expect(activities.slice(-2).map(({ phase }) => phase)).toEqual(['render.started', 'render.completed'])
     render.unmount()
   })
 

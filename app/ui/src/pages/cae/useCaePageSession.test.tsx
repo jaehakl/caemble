@@ -23,7 +23,7 @@ vi.mock('sonner', () => ({ toast: { error: mocks.toastError } }))
 function workbench(overrides: Record<string, unknown> = {}) {
   return {
     applyExperiment: vi.fn(),
-    draft: vi.fn(() => ({ version: 14 })),
+    draft: vi.fn(() => ({ version: 15 })),
     experimentDirty: false,
     hasUnsavedWork: false,
     hasUnsavedExperimentWork: false,
@@ -100,14 +100,14 @@ describe('useCaePageSession', () => {
     expect(state.loadExperiment).toHaveBeenCalledWith(7, 11)
   })
 
-  it('initializes the local Starter immediately with Experiment as the active tab', async () => {
+  it('initializes the local Starter immediately with Experiment as the active section', async () => {
     const state = workbench()
     const { result } = renderHook(() => useCaePageSession(state), { wrapper: wrapper() })
 
     await waitFor(() => expect(result.current.initialized).toBe(true))
     expect(state.restoreDraft).toHaveBeenCalledWith(
       expect.objectContaining({
-        version: 14,
+        version: 15,
         experiment: expect.objectContaining({
           name: 'Starter Experiment',
           baselineBundle: expect.objectContaining({ files: expect.any(Object) }),
@@ -115,10 +115,10 @@ describe('useCaePageSession', () => {
         }),
         candidate: { vars: null, materialParameters: null },
         selection: { measurementId: null },
-        layout: expect.objectContaining({ activeTab: 'experiment' }),
+        layout: expect.objectContaining({ activeSection: 'experiment', bottomMode: 'hidden' }),
       }),
     )
-    expect(result.current.activeTab).toBe('experiment')
+    expect(result.current.activeSection).toBe('experiment')
   })
 
   it('guards replacement when the Experiment source is dirty', async () => {
@@ -184,12 +184,12 @@ describe('useCaePageSession', () => {
       wrapper: wrapper(),
     })
     await waitFor(() => expect(result.current.initialized).toBe(true))
-    act(() => result.current.openTab('ai-helper'))
+    act(() => result.current.setLayout((current) => ({ ...current, bottomMode: 'agent' })))
 
     rerender({ state: signedInState })
 
-    expect(result.current.activeTab).toBe('ai-helper')
-    expect(result.current.openTabs).toContain('ai-helper')
+    expect(result.current.bottomMode).toBe('agent')
+    expect(result.current.activeSection).toBe('experiment')
     expect(mocks.loadDraft).toHaveBeenCalledOnce()
     expect(signedInState.restoreDraft).not.toHaveBeenCalled()
   })

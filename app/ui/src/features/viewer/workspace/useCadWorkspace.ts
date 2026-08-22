@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { releaseRecordedDataAttachments, simulate } from '@/features/cae/client'
 import {
+  emitRuntimeActivity,
+  type RuntimeActivityCallback,
+  type RuntimeActivityDetails,
+} from '@/features/runtime-console/types'
+import {
   EXPERIMENT_SIMULATION_PATH,
   addExperimentSourceFile,
   addExperimentTask,
@@ -128,6 +133,7 @@ export type UseCadWorkspaceOptions = Readonly<{
   runtimeEnabled?: boolean
   resetKey?: string | number
   sourceOnlyMaterials?: boolean
+  onActivity?: RuntimeActivityCallback
   onCandidateVarsRegenerated?: (event: CandidateVarsRegeneratedEvent) => void
 }>
 
@@ -149,6 +155,7 @@ export function useCadWorkspace(
     runtimeEnabled = true,
     resetKey = 'default',
     sourceOnlyMaterials = false,
+    onActivity,
     onCandidateVarsRegenerated,
   }: UseCadWorkspaceOptions = {},
 ) {
@@ -190,6 +197,7 @@ export function useCadWorkspace(
   const evaluationTimeoutRef = useRef<EvaluationTimeoutMs>(evaluationTimeoutMs)
   const lastHandledGenerationRef = useRef(0)
   const lastSchemaFingerprintRef = useRef<string | null>(null)
+  const onActivityRef = useRef(onActivity)
   const onCandidateVarsRegeneratedRef = useRef(onCandidateVarsRegenerated)
   const recordedDataRef = useRef<RecordedData | null>(null)
   const revisionRef = useRef(0)
@@ -199,6 +207,7 @@ export function useCadWorkspace(
 
   builtMeasurementRef.current = builtMeasurement
   evaluationTimeoutRef.current = evaluationTimeoutMs
+  onActivityRef.current = onActivity
   onCandidateVarsRegeneratedRef.current = onCandidateVarsRegenerated
   recordedDataRef.current = recordedData
   statusRef.current = status
@@ -280,17 +289,38 @@ export function useCadWorkspace(
     const abort = new AbortController()
     activeEvaluationRef.current = abort
     updateStatus('Checking')
+    emitRuntimeActivity(onActivityRef.current, {
+      source: 'cad',
+      level: 'info',
+      phase: 'source.checking',
+      message: 'Experiment source 검사를 시작했습니다.',
+      details: { revision: requestRevision },
+    })
     const explicitGeneration = generation !== lastHandledGenerationRef.current
 
     void fetchCatalogRuntimeSlice(evaluationDocument.sourceBundle)
       .then(async (catalog) => {
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
+        emitRuntimeActivity(onActivityRef.current, {
+          source: 'cad',
+          level: 'info',
+          phase: 'compile.started',
+          message: 'CAD source compile을 시작했습니다.',
+          details: { revision: requestRevision, catalogRevision: catalog.catalogRevision },
+        })
         const inspection = await inspectDocument(evaluationDocument, {
           catalog,
           signal: abort.signal,
           timeoutMs: evaluationTimeoutRef.current,
         })
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
+        emitRuntimeActivity(onActivityRef.current, {
+          source: 'cad',
+          level: 'info',
+          phase: 'compile.completed',
+          message: 'CAD source compile을 완료했습니다.',
+          details: { revision: requestRevision, variableCount: Object.keys(inspection.varsSchema).length },
+        })
         setVarsSchema(inspection.varsSchema)
         const fingerprint = varsSchemaFingerprint(inspection.varsSchema)
         const schemaChanged =
@@ -347,12 +377,37 @@ export function useCadWorkspace(
           }
         }
         updateStatus('Evaluating')
+        emitRuntimeActivity(onActivityRef.current, {
+          source: 'cad',
+          level: 'info',
+          phase: 'evaluate.started',
+          message: 'CAD 구조 평가를 시작했습니다.',
+          details: { revision: requestRevision },
+        })
         const snapshot = await evaluateDocument(
           { document: evaluationDocument, vars: nextVars },
           { catalog, signal: abort.signal, timeoutMs: evaluationTimeoutRef.current },
         )
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
+        emitRuntimeActivity(onActivityRef.current, {
+          source: 'cad',
+          level: 'info',
+          phase: 'evaluate.completed',
+          message: 'CAD 구조 평가를 완료했습니다.',
+          details: {
+            revision: requestRevision,
+            taskCount: Object.keys(snapshot.taskScenes).length,
+            sourceHash: snapshot.sourceHash,
+          },
+        })
         updateStatus('Resolving Materials')
+        emitRuntimeActivity(onActivityRef.current, {
+          source: 'cad',
+          level: 'info',
+          phase: 'materials.resolving',
+          message: 'Material snapshot을 확인하고 있습니다.',
+          details: { revision: requestRevision },
+        })
         const resolution = await resolveDocumentMaterials(
           snapshot,
           explicitGeneration ? null : frozenMaterialSnapshot,
@@ -379,6 +434,14 @@ export function useCadWorkspace(
         ])
         const unresolved = unresolvedMeasurementMaterialRoles(snapshot)
         const registeredCatalog = sourceCatalogRuntimeSlice(snapshot.sourceHash)
+        const reportReady = (details: RuntimeActivityDetails) =>
+          emitRuntimeActivity(onActivityRef.current, {
+            source: 'cad',
+            level: 'info',
+            phase: 'workspace.ready',
+            message: 'CAD 구조가 준비되었습니다.',
+            details,
+          })
         if (unresolved.length > 0) {
           const nextDraftTaskNames = assertCatalogKernelTasks(registeredCatalog, snapshot.simulationProgram)
           setEvaluatedSnapshot(snapshot)
@@ -397,6 +460,7 @@ export function useCadWorkspace(
           successfulRevisionRef.current = requestRevision
           setSuccessfulRevision(requestRevision)
           updateStatus('Ready')
+          reportReady({ revision: requestRevision, unresolvedMaterialRoles: unresolved.length })
           return
         }
         const nextDraftTaskNames = assertCatalogKernelTasks(registeredCatalog, snapshot.simulationProgram, {
@@ -416,6 +480,7 @@ export function useCadWorkspace(
           successfulRevisionRef.current = requestRevision
           setSuccessfulRevision(requestRevision)
           updateStatus('Ready')
+          reportReady({ revision: requestRevision, draftTaskCount: nextDraftTaskNames.length })
           return
         }
         const built = buildMeasurement(snapshot, resolution)
@@ -437,6 +502,7 @@ export function useCadWorkspace(
         successfulRevisionRef.current = requestRevision
         setSuccessfulRevision(requestRevision)
         updateStatus('Ready')
+        reportReady({ revision: requestRevision, warningCount: resolutionWarnings.length })
       })
       .catch((cause: unknown) => {
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
@@ -458,6 +524,17 @@ export function useCadWorkspace(
           ...(cause instanceof Error && cause.stack ? { stack: cause.stack } : {}),
         })
         updateStatus('Error')
+        emitRuntimeActivity(onActivityRef.current, {
+          source: 'cad',
+          level: 'error',
+          phase: compilation ? 'compile.failed' : 'evaluate.failed',
+          message: cause instanceof Error ? cause.message : 'CAD 구조 처리에 실패했습니다.',
+          details: {
+            revision: requestRevision,
+            errorName: cause instanceof Error ? cause.name : 'UnknownError',
+            diagnosticCount: compilation?.diagnostics.length ?? evaluation?.diagnostics.length ?? 0,
+          },
+        })
       })
 
     return () => {
@@ -538,16 +615,36 @@ export function useCadWorkspace(
     [experiment, onExperimentChange],
   )
   const handleRenderStart = useCallback(() => {
-    if (statusRef.current === 'Ready') updateStatus('Rendering')
+    if (statusRef.current !== 'Ready') return
+    updateStatus('Rendering')
+    emitRuntimeActivity(onActivityRef.current, {
+      source: 'cad',
+      level: 'info',
+      phase: 'render.started',
+      message: '3D CAD View 렌더링을 시작했습니다.',
+    })
   }, [updateStatus])
   const handleRenderEnd = useCallback(() => {
-    if (statusRef.current === 'Rendering') updateStatus('Ready')
+    if (statusRef.current !== 'Rendering') return
+    updateStatus('Ready')
+    emitRuntimeActivity(onActivityRef.current, {
+      source: 'cad',
+      level: 'info',
+      phase: 'render.completed',
+      message: '3D CAD View 렌더링을 완료했습니다.',
+    })
   }, [updateStatus])
   const handleRenderError = useCallback(
     (message: string) => {
       if (statusRef.current === 'Error') return
       setError({ title: 'Rendering Error', message })
       updateStatus('Error')
+      emitRuntimeActivity(onActivityRef.current, {
+        source: 'cad',
+        level: 'error',
+        phase: 'render.failed',
+        message,
+      })
     },
     [updateStatus],
   )
@@ -595,6 +692,7 @@ export function useCadWorkspace(
     activeRunRef.current = Object.freeze({ abort, requestId: id, runId: null, startedAt })
     void simulate(built, {
       signal: abort.signal,
+      onActivity: onActivityRef.current,
       onRecord(name, tensor) {
         if (activeRunRef.current?.requestId !== id) return
         const next = Object.freeze({ ...(recordedDataRef.current ?? {}), [name]: tensor }) as RecordedData

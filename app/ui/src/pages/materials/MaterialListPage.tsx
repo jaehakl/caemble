@@ -1,7 +1,7 @@
 import type { ColumnDef } from '@tanstack/react-table'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { LoaderCircle, LockKeyhole, Plus, Search } from 'lucide-react'
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 import { dbTables, type MaterialNameRecord, type MaterialRecord } from '@/api'
 import { DataTable } from '@/components/DataTable'
@@ -213,13 +213,22 @@ function MaterialCreateDialog({
 }
 
 export function MaterialList({
+  className,
+  command,
+  compact = false,
   embedded = false,
   onSelectMaterial,
+  selectedMaterialId,
 }: {
+  className?: string
+  command?: Readonly<{ id: number; type: 'new' | 'refresh' }> | null
+  compact?: boolean
   embedded?: boolean
   onSelectMaterial: (id: number) => void
+  selectedMaterialId?: number | null
 }) {
   const { isAuthenticated } = useAuth()
+  const queryClient = useQueryClient()
   const [query, setQuery] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
   const request = useMemo(() => allRowsRequest(), [])
@@ -231,6 +240,12 @@ export function MaterialList({
     queryKey: ['materials', 'names'],
     queryFn: () => dbTables.MaterialName.listRows(request),
   })
+
+  useEffect(() => {
+    if (!command) return
+    if (command.type === 'new') setCreateOpen(true)
+    else void queryClient.invalidateQueries({ queryKey: ['materials'] })
+  }, [command, queryClient])
 
   const rows = useMemo(() => {
     const names = namesQuery.data?.items ?? []
@@ -254,20 +269,39 @@ export function MaterialList({
   const failed = materialsQuery.isError || namesQuery.isError
 
   return (
-    <div className={cn('space-y-6', !embedded && 'mx-auto max-w-7xl px-4 py-8 sm:px-6')}>
-      <PageHeader
-        actions={
-          <Button onClick={() => setCreateOpen(true)}>
+    <div
+      className={cn(
+        compact ? 'flex h-full min-h-0 flex-col gap-3 overflow-hidden p-3' : 'space-y-6',
+        !embedded && !compact && 'mx-auto max-w-7xl px-4 py-8 sm:px-6',
+        className,
+      )}
+    >
+      {compact ? (
+        <header className="flex shrink-0 items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="truncate font-semibold">Materials</h2>
+            <p className="text-xs text-muted-foreground">{rows.length.toLocaleString()} materials</p>
+          </div>
+          <Button onClick={() => setCreateOpen(true)} size="sm">
             {isAuthenticated ? <Plus /> : <LockKeyhole />}
             {isAuthenticated ? 'Material 추가' : '로그인 후 추가'}
           </Button>
-        }
-        description="공개 Material과 내 private Material의 이름, InChI, 물성 파라미터를 관리합니다."
-        eyebrow={`${rows.length.toLocaleString()} materials`}
-        title="Materials"
-      />
-      <Card className="overflow-hidden">
-        <div className="border-b bg-muted/20 p-4">
+        </header>
+      ) : (
+        <PageHeader
+          actions={
+            <Button onClick={() => setCreateOpen(true)}>
+              {isAuthenticated ? <Plus /> : <LockKeyhole />}
+              {isAuthenticated ? 'Material 추가' : '로그인 후 추가'}
+            </Button>
+          }
+          description="공개 Material과 내 private Material의 이름, InChI, 물성 파라미터를 관리합니다."
+          eyebrow={`${rows.length.toLocaleString()} materials`}
+          title="Materials"
+        />
+      )}
+      <Card className={cn('overflow-hidden', compact && 'flex min-h-0 flex-1 flex-col')}>
+        <div className={cn('shrink-0 border-b bg-muted/20', compact ? 'p-2' : 'p-4')}>
           <div className="relative max-w-xl">
             <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -280,20 +314,72 @@ export function MaterialList({
           </div>
         </div>
         {loading ? (
-          <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-muted-foreground">
+          <div
+            className={cn(
+              'flex items-center justify-center gap-2 text-sm text-muted-foreground',
+              compact ? 'flex-1' : 'min-h-48',
+            )}
+          >
             <LoaderCircle className="animate-spin" />
             Material 목록을 불러오는 중입니다.
           </div>
         ) : failed ? (
-          <div className="flex min-h-48 items-center justify-center text-sm text-destructive">
+          <div
+            className={cn('flex items-center justify-center text-sm text-destructive', compact ? 'flex-1' : 'min-h-48')}
+          >
             Material 목록을 불러오지 못했습니다.
           </div>
+        ) : compact ? (
+          <ul aria-label="Material 목록" className="min-h-0 flex-1 divide-y overflow-y-auto">
+            {rows.length ? (
+              rows.map((row) => (
+                <li key={row.material.id}>
+                  <button
+                    aria-current={row.material.id === selectedMaterialId ? 'true' : undefined}
+                    className={cn(
+                      'block w-full px-3 py-2.5 text-left hover:bg-muted/50',
+                      row.material.id === selectedMaterialId && 'bg-orange-50 hover:bg-orange-50',
+                    )}
+                    type="button"
+                    onClick={() => onSelectMaterial(row.material.id!)}
+                  >
+                    <span className="flex items-center gap-2">
+                      {row.material.color ? (
+                        <span
+                          aria-label={`색상 ${row.material.color}`}
+                          className="size-3.5 shrink-0 rounded-full border"
+                          style={{ backgroundColor: row.material.color }}
+                        />
+                      ) : null}
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{row.name}</span>
+                      <Badge>{row.material.user_id === null ? 'Public' : 'Private'}</Badge>
+                    </span>
+                    {row.aliases.length > 1 ? (
+                      <span className="mt-1 block truncate text-xs text-muted-foreground">
+                        {row.aliases.slice(1).join(', ')}
+                      </span>
+                    ) : null}
+                    <code className="mt-1 block truncate text-[11px] text-muted-foreground">
+                      {row.material.inchi || 'InChI 없음'}
+                    </code>
+                  </button>
+                </li>
+              ))
+            ) : (
+              <li className="grid min-h-32 place-items-center px-3 text-center text-sm text-muted-foreground">
+                조건에 맞는 항목이 없습니다.
+              </li>
+            )}
+          </ul>
         ) : (
           <DataTable
             columns={columns}
             data={rows}
             getRowKey={(row) => String(row.material.id)}
             onRowClick={(row) => onSelectMaterial(row.material.id!)}
+            selectedKey={
+              selectedMaterialId === null || selectedMaterialId === undefined ? undefined : String(selectedMaterialId)
+            }
           />
         )}
       </Card>

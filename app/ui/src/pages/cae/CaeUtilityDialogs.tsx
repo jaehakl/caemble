@@ -5,13 +5,6 @@ import type { WorkbenchDialog } from './caePageTypes'
 const AccountWorkspace = lazy(() =>
   import('@/pages/account/AccountPage').then((module) => ({ default: module.AccountWorkspace })),
 )
-const AiChatWorkspace = lazy(() =>
-  import('@/pages/ai/AiChatPage').then((module) => ({ default: module.AiChatWorkspace })),
-)
-const JobsWorkspace = lazy(() => import('@/pages/jobs/JobsPage').then((module) => ({ default: module.JobsWorkspace })))
-const LaunchersWorkspace = lazy(() =>
-  import('@/pages/launchers/LaunchersPage').then((module) => ({ default: module.LaunchersWorkspace })),
-)
 
 export function CaeUtilityDialogs({
   dialog,
@@ -20,50 +13,17 @@ export function CaeUtilityDialogs({
   dialog: WorkbenchDialog
   setDialog: Dispatch<SetStateAction<WorkbenchDialog>>
 }) {
-  const requestLogin = () => setDialog('account')
   return (
-    <>
-      <UtilityDialog
-        contentClassName="sm:max-w-4xl"
-        description="로컬 LLM과 대화합니다."
-        dialog={dialog}
-        id="ai-chat"
-        title="AI Chat"
-        setDialog={setDialog}
-      >
-        <AiChatWorkspace onRequestLogin={requestLogin} />
-      </UtilityDialog>
-      <UtilityDialog
-        contentClassName="sm:max-w-7xl"
-        description="연결된 Launcher와 worker 상태를 관리합니다."
-        dialog={dialog}
-        id="launchers"
-        title="Launchers"
-        setDialog={setDialog}
-      >
-        <LaunchersWorkspace onRequestLogin={requestLogin} />
-      </UtilityDialog>
-      <UtilityDialog
-        contentClassName="sm:max-w-7xl"
-        description="CAE 및 AI Job 실행 이력을 확인합니다."
-        dialog={dialog}
-        id="jobs"
-        title="Jobs"
-        setDialog={setDialog}
-      >
-        <JobsWorkspace onRequestLogin={requestLogin} />
-      </UtilityDialog>
-      <UtilityDialog
-        contentClassName="sm:max-w-6xl"
-        description="계정과 Access Token을 관리합니다."
-        dialog={dialog}
-        id="account"
-        title="Account"
-        setDialog={setDialog}
-      >
-        <AccountWorkspace />
-      </UtilityDialog>
-    </>
+    <UtilityDialog
+      contentClassName="sm:max-w-6xl"
+      description="계정과 Access Token을 관리합니다."
+      dialog={dialog}
+      id="account"
+      title="Account"
+      setDialog={setDialog}
+    >
+      <AccountWorkspace />
+    </UtilityDialog>
   )
 }
 

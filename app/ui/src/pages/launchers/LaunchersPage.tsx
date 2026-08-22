@@ -12,8 +12,17 @@ import { useAuth } from '@/features/auth/use-auth'
 import { WorkbenchSignInPrompt } from '@/features/auth/WorkbenchSignInPrompt'
 import { formatRuntimeDate, runtimeErrorMessage } from '@/features/runtime/format'
 import { bundledSlaveManifests } from '@/features/runtime/manifests'
+import { cn } from '@/lib/utils'
 
-export function LaunchersWorkspace({ onRequestLogin }: { onRequestLogin?: () => void }) {
+export function LaunchersWorkspace({
+  className,
+  compact = false,
+  onRequestLogin,
+}: {
+  className?: string
+  compact?: boolean
+  onRequestLogin?: () => void
+}) {
   const auth = useAuth()
   const [activeOnly, setActiveOnly] = useState(true)
   const [actionLauncherId, setActionLauncherId] = useState<string | null>(null)
@@ -40,7 +49,7 @@ export function LaunchersWorkspace({ onRequestLogin }: { onRequestLogin?: () => 
 
   if (auth.isLoading)
     return (
-      <div className="mx-auto max-w-7xl space-y-6 px-5 py-10">
+      <div className={cn(compact ? 'h-full space-y-3 p-3' : 'mx-auto max-w-7xl space-y-6 px-5 py-10', className)}>
         <Skeleton className="h-20 w-full" />
         <Skeleton className="h-80 w-full" />
       </div>
@@ -90,118 +99,226 @@ export function LaunchersWorkspace({ onRequestLogin }: { onRequestLogin?: () => 
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-5 py-10">
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
-        <PageHeader
-          description="연결된 Launcher와 worker, 현재 실행 중인 Job을 확인하고 복구합니다."
-          eyebrow="Runtime"
-          title="Launchers"
-        />
+    <div
+      className={cn(
+        compact ? 'flex h-full min-h-0 flex-col gap-3 overflow-hidden p-3' : 'mx-auto max-w-7xl space-y-6 px-5 py-10',
+        className,
+      )}
+    >
+      <div
+        className={cn(
+          'flex justify-between gap-3',
+          compact ? 'shrink-0 items-center' : 'flex-col sm:flex-row sm:items-start',
+        )}
+      >
+        {compact ? (
+          <div className="min-w-0">
+            <h2 className="truncate font-semibold">Launchers</h2>
+            <p className="truncate text-xs text-muted-foreground">
+              Bundled · {bundledSlaveManifests.map((manifest) => manifest.name).join(', ') || '없음'}
+            </p>
+          </div>
+        ) : (
+          <PageHeader
+            description="연결된 Launcher와 worker, 현재 실행 중인 Job을 확인하고 복구합니다."
+            eyebrow="Runtime"
+            title="Launchers"
+          />
+        )}
         <div className="flex gap-2">
-          <Button disabled={reconciling} onClick={() => void reconcile()} variant="outline">
+          <Button
+            disabled={reconciling}
+            onClick={() => void reconcile()}
+            size={compact ? 'sm' : 'default'}
+            variant="outline"
+          >
             <Wrench className={reconciling ? 'animate-pulse' : undefined} />
             상태 보정
           </Button>
-          <Button disabled={launchers.isFetching} onClick={() => void launchers.refetch()} variant="outline">
+          <Button
+            disabled={launchers.isFetching}
+            onClick={() => void launchers.refetch()}
+            size={compact ? 'sm' : 'default'}
+            variant="outline"
+          >
             <RefreshCw className={launchers.isFetching ? 'animate-spin' : undefined} />
             새로고침
           </Button>
         </div>
       </div>
 
-      <Card>
-        <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <Card className={cn(compact && 'flex min-h-0 flex-1 flex-col')}>
+        <CardHeader className={cn('gap-3 sm:flex-row sm:items-center sm:justify-between', compact && 'shrink-0 p-3')}>
           <div>
-            <CardTitle className="flex items-center gap-2 text-lg">
+            <CardTitle className={cn('flex items-center gap-2', compact ? 'text-sm' : 'text-lg')}>
               <Server className="size-5 text-primary" />
               Launcher 상태
             </CardTitle>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Bundled apps · {bundledSlaveManifests.map((manifest) => manifest.name).join(', ') || '없음'}
-            </p>
+            {!compact ? (
+              <p className="mt-1 text-sm text-muted-foreground">
+                Bundled apps · {bundledSlaveManifests.map((manifest) => manifest.name).join(', ') || '없음'}
+              </p>
+            ) : null}
           </div>
           <label className="flex items-center gap-2 text-sm">
             <input checked={activeOnly} onChange={(event) => setActiveOnly(event.target.checked)} type="checkbox" />
             활성 Launcher만 표시
           </label>
         </CardHeader>
-        <CardContent className="border-t pt-4">
+        <CardContent className={cn('border-t pt-4', compact && 'min-h-0 flex-1 overflow-y-auto p-3')}>
           {error ? <p className="mb-3 text-sm text-destructive">{error}</p> : null}
           {message ? <p className="mb-3 text-sm text-emerald-700">{message}</p> : null}
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>이름</TableHead>
-                <TableHead>상태</TableHead>
-                <TableHead>Apps</TableHead>
-                <TableHead>Worker</TableHead>
-                <TableHead>현재 Job</TableHead>
-                <TableHead>Heartbeat</TableHead>
-                <TableHead>IP</TableHead>
-                <TableHead className="text-right">작업</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {launchers.isLoading ? (
-                <EmptyRow text="Launcher 목록을 불러오는 중입니다." />
-              ) : launchers.isError ? (
-                <EmptyRow text={runtimeErrorMessage(launchers.error, 'Launcher 목록을 불러오지 못했습니다.')} />
-              ) : visibleLaunchers.length ? (
-                visibleLaunchers.map((launcher) => {
+          {compact ? (
+            launchers.isLoading ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">Launcher 목록을 불러오는 중입니다.</p>
+            ) : launchers.isError ? (
+              <p className="py-10 text-center text-sm text-destructive">
+                {runtimeErrorMessage(launchers.error, 'Launcher 목록을 불러오지 못했습니다.')}
+              </p>
+            ) : visibleLaunchers.length ? (
+              <ul aria-label="Launcher 목록" className="space-y-2">
+                {visibleLaunchers.map((launcher) => {
                   const runtime = runtimeByLauncher.get(launcher.id)
                   return (
-                    <TableRow key={launcher.id}>
-                      <TableCell>
-                        <p className="font-medium">{launcher.launcher_name}</p>
-                        <p className="font-mono text-[11px] text-muted-foreground">{launcher.id}</p>
-                      </TableCell>
-                      <TableCell>
+                    <li className="rounded-md border p-3" key={launcher.id}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">{launcher.launcher_name}</p>
+                          <p className="truncate font-mono text-[10px] text-muted-foreground">{launcher.id}</p>
+                        </div>
                         <Badge
                           className={launcher.status === 'ready' ? 'bg-primary text-primary-foreground' : undefined}
                         >
                           {launcher.status}
                         </Badge>
-                      </TableCell>
-                      <TableCell>{launcher.slave_app_ids.join(', ') || '-'}</TableCell>
-                      <TableCell>
-                        <Badge className="border bg-transparent">{runtime?.worker_status ?? 'offline'}</Badge>
-                        <p className="mt-1 text-xs text-muted-foreground">{runtime?.loaded_slave_app_id ?? '-'}</p>
-                      </TableCell>
-                      <TableCell className="max-w-48 truncate font-mono text-xs">
-                        {runtime?.current_job_id ?? '-'}
-                      </TableCell>
-                      <TableCell>{formatRuntimeDate(launcher.last_heartbeat_at)}</TableCell>
-                      <TableCell>{launcher.ip_address ?? '-'}</TableCell>
-                      <TableCell>
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            disabled={!runtime?.current_job_id || actionLauncherId === launcher.id}
-                            onClick={() => void runAction(launcher.id, 'cancel')}
-                            size="sm"
-                            variant="destructive"
-                          >
-                            <Square />
-                            취소
-                          </Button>
-                          <Button
-                            disabled={!runtime || runtime.resetting || actionLauncherId === launcher.id}
-                            onClick={() => void runAction(launcher.id, 'reset')}
-                            size="sm"
-                            variant="outline"
-                          >
-                            <RotateCcw />
-                            Reset
-                          </Button>
+                      </div>
+                      <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                        <div>
+                          <dt className="text-muted-foreground">Worker</dt>
+                          <dd className="truncate">
+                            {runtime?.worker_status ?? 'offline'} · {runtime?.loaded_slave_app_id ?? '-'}
+                          </dd>
                         </div>
-                      </TableCell>
-                    </TableRow>
+                        <div>
+                          <dt className="text-muted-foreground">Apps</dt>
+                          <dd className="truncate">{launcher.slave_app_ids.join(', ') || '-'}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-muted-foreground">현재 Job</dt>
+                          <dd className="truncate font-mono">{runtime?.current_job_id ?? '-'}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-muted-foreground">Heartbeat</dt>
+                          <dd className="truncate">{formatRuntimeDate(launcher.last_heartbeat_at)}</dd>
+                        </div>
+                        <div className="col-span-2">
+                          <dt className="text-muted-foreground">IP</dt>
+                          <dd className="truncate">{launcher.ip_address ?? '-'}</dd>
+                        </div>
+                      </dl>
+                      <div className="mt-3 flex justify-end gap-2">
+                        <Button
+                          disabled={!runtime?.current_job_id || actionLauncherId === launcher.id}
+                          onClick={() => void runAction(launcher.id, 'cancel')}
+                          size="sm"
+                          variant="destructive"
+                        >
+                          <Square />
+                          취소
+                        </Button>
+                        <Button
+                          disabled={!runtime || runtime.resetting || actionLauncherId === launcher.id}
+                          onClick={() => void runAction(launcher.id, 'reset')}
+                          size="sm"
+                          variant="outline"
+                        >
+                          <RotateCcw />
+                          Reset
+                        </Button>
+                      </div>
+                    </li>
                   )
-                })
-              ) : (
-                <EmptyRow text="표시할 Launcher가 없습니다." />
-              )}
-            </TableBody>
-          </Table>
+                })}
+              </ul>
+            ) : (
+              <p className="py-10 text-center text-sm text-muted-foreground">표시할 Launcher가 없습니다.</p>
+            )
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>이름</TableHead>
+                  <TableHead>상태</TableHead>
+                  <TableHead>Apps</TableHead>
+                  <TableHead>Worker</TableHead>
+                  <TableHead>현재 Job</TableHead>
+                  <TableHead>Heartbeat</TableHead>
+                  <TableHead>IP</TableHead>
+                  <TableHead className="text-right">작업</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {launchers.isLoading ? (
+                  <EmptyRow text="Launcher 목록을 불러오는 중입니다." />
+                ) : launchers.isError ? (
+                  <EmptyRow text={runtimeErrorMessage(launchers.error, 'Launcher 목록을 불러오지 못했습니다.')} />
+                ) : visibleLaunchers.length ? (
+                  visibleLaunchers.map((launcher) => {
+                    const runtime = runtimeByLauncher.get(launcher.id)
+                    return (
+                      <TableRow key={launcher.id}>
+                        <TableCell>
+                          <p className="font-medium">{launcher.launcher_name}</p>
+                          <p className="font-mono text-[11px] text-muted-foreground">{launcher.id}</p>
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            className={launcher.status === 'ready' ? 'bg-primary text-primary-foreground' : undefined}
+                          >
+                            {launcher.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{launcher.slave_app_ids.join(', ') || '-'}</TableCell>
+                        <TableCell>
+                          <Badge className="border bg-transparent">{runtime?.worker_status ?? 'offline'}</Badge>
+                          <p className="mt-1 text-xs text-muted-foreground">{runtime?.loaded_slave_app_id ?? '-'}</p>
+                        </TableCell>
+                        <TableCell className="max-w-48 truncate font-mono text-xs">
+                          {runtime?.current_job_id ?? '-'}
+                        </TableCell>
+                        <TableCell>{formatRuntimeDate(launcher.last_heartbeat_at)}</TableCell>
+                        <TableCell>{launcher.ip_address ?? '-'}</TableCell>
+                        <TableCell>
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              disabled={!runtime?.current_job_id || actionLauncherId === launcher.id}
+                              onClick={() => void runAction(launcher.id, 'cancel')}
+                              size="sm"
+                              variant="destructive"
+                            >
+                              <Square />
+                              취소
+                            </Button>
+                            <Button
+                              disabled={!runtime || runtime.resetting || actionLauncherId === launcher.id}
+                              onClick={() => void runAction(launcher.id, 'reset')}
+                              size="sm"
+                              variant="outline"
+                            >
+                              <RotateCcw />
+                              Reset
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })
+                ) : (
+                  <EmptyRow text="표시할 Launcher가 없습니다." />
+                )}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </div>

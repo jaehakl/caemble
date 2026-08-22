@@ -12,6 +12,7 @@ import { CaeSimulationError } from './errors'
 import { serializeCaeRequest } from './request'
 import { API_URL } from '@/api'
 import { request as apiRequest } from '@/api/http'
+import { emitRuntimeActivity, type RuntimeActivityCallback } from '@/features/runtime-console/types'
 import type { BuiltMeasurement, DataTensor, RecordedData } from '../../lib/cad'
 import { createDataTensorAccessor, registerDataTensorAttachment, releaseDataTensorAttachments } from '../../lib/cad'
 import { sourceCatalogSolverContracts } from '@/lib/catalog/runtime'
@@ -26,6 +27,7 @@ export type CaeSimulationOptions = Readonly<{
   onRecord?: (name: string, tensor: DataTensor) => void
   onStatus?: (status: CaeSimulationStatus) => void
   onProgress?: (progress: CaeSimulationProgress) => void
+  onActivity?: RuntimeActivityCallback
 }>
 
 type StartPayload = CaeStartedPayload | CaeFailedPayload
@@ -36,8 +38,11 @@ export { CaeSimulationError } from './errors'
 export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOptions = {}): Promise<RecordedData> {
   let cancelled = options.signal?.aborted ?? false
   let jobId: string | null = null
+  let runId: string | null = null
   let session: JobSession | null = null
+  let failureReported = false
   const attachmentIds: string[] = []
+  const report = (activity: Parameters<RuntimeActivityCallback>[0]) => emitRuntimeActivity(options.onActivity, activity)
 
   const kill = async () => {
     if (!jobId) return
@@ -51,6 +56,14 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
   const cancel = () => {
     if (cancelled) return
     cancelled = true
+    report({
+      source: 'gpstation',
+      level: 'warning',
+      phase: 'job.cancel.requested',
+      message: 'GPStation Job 취소를 요청했습니다.',
+      ...(jobId ? { jobId } : {}),
+      ...(runId ? { runId } : {}),
+    })
     void kill()
     session?.close()
     releaseDataTensorAttachments(attachmentIds)
@@ -61,6 +74,12 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
     if (cancelled) throw abortError()
     const manifest = measurement.experiment.simulationProgram
     if (!manifest || manifest.formatVersion !== 5 || Object.keys(manifest.tasks).length === 0) {
+      report({
+        source: 'cae',
+        level: 'error',
+        phase: 'request.rejected',
+        message: '실행 가능한 Python simulation program이 없습니다.',
+      })
       throw new CaeSimulationError('program_required', 'Python simulationProgram v5가 필요합니다.')
     }
     const request = serializeCaeRequest(measurement, sourceCatalogSolverContracts(measurement.experiment.sourceHash))
@@ -75,6 +94,13 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
     })
     let transportSucceeded = false
     try {
+      report({
+        source: 'gpstation',
+        level: 'info',
+        phase: 'job.requested',
+        message: 'CAE Job을 GPStation에 요청했습니다.',
+        details: { handler: 'cae.simulation.start', attachmentCount: requestAttachments.length },
+      })
       const started = await client.runJob<unknown, StartPayload>('cae.simulation.start', request.payload, {
         slaveAppId: 'cae',
         autoFinish: false,
@@ -82,11 +108,26 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
         attachments: requestAttachments,
         onJobCreated(job) {
           jobId = job.id
+          report({
+            source: 'gpstation',
+            level: 'info',
+            phase: 'job.created',
+            message: 'GPStation Job이 생성되었습니다.',
+            jobId,
+          })
           if (cancelled) void kill()
         },
       })
       const jobSession = started.session
       session = jobSession
+      jobId ??= jobSession.jobId
+      report({
+        source: 'gpstation',
+        level: 'info',
+        phase: 'job.connected',
+        message: 'GPStation worker session에 연결되었습니다.',
+        jobId,
+      })
       if (cancelled) throw abortError()
       if (started.files.length > 0) {
         throw new CaeSimulationError('protocol_error', 'CAE start 응답은 attachment를 포함할 수 없습니다.')
@@ -99,9 +140,28 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
         }
         await jobSession.finish({ timeoutMs: FINISH_TIMEOUT_MS })
         transportSucceeded = true
+        failureReported = true
+        report({
+          source: 'cae',
+          level: 'error',
+          phase: 'run.failed',
+          message: startedPayload.error.message,
+          jobId,
+          details: { code: startedPayload.error.code },
+        })
         throw new CaeSimulationError(startedPayload.error.code, startedPayload.error.message)
       }
       assertStarted(startedPayload)
+      runId = startedPayload.runId
+      report({
+        source: 'cae',
+        level: 'info',
+        phase: 'run.started',
+        message: 'CAE 실행이 시작되었습니다.',
+        jobId,
+        runId,
+        details: { maxRunSeconds: startedPayload.maxRunSeconds },
+      })
 
       const records: Record<string, DataTensor> = {}
       const recordSequences: number[] = []
@@ -114,7 +174,7 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
           { runId: startedPayload.runId, ackSequence },
           {
             timeoutMs: (startedPayload.maxRunSeconds + 5 * 60) * 1000,
-            onEvent: (event) => handleEvent(event, startedPayload.runId, options),
+            onEvent: (event) => handleEvent(event, startedPayload.runId, jobId, options),
           },
         )
         const payload = response.payload
@@ -142,6 +202,15 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
           records[record.name] = tensor
           recordSequences.push(record.sequence)
           options.onRecord?.(record.name, tensor)
+          report({
+            source: 'cae',
+            level: 'info',
+            phase: 'record.received',
+            message: `Recorded Data ${record.name}을 수신했습니다.`,
+            jobId,
+            runId,
+            details: { name: record.name, sequence: record.sequence, byteLength: accessor.byteLength },
+          })
           ackSequence = record.sequence
           continue
         }
@@ -155,6 +224,16 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
         if (payload.kind === 'failed') {
           await jobSession.finish({ timeoutMs: FINISH_TIMEOUT_MS })
           transportSucceeded = true
+          failureReported = true
+          report({
+            source: 'cae',
+            level: 'error',
+            phase: 'run.failed',
+            message: payload.error.message,
+            jobId,
+            runId,
+            details: { code: payload.error.code, sequence: payload.sequence },
+          })
           throw new CaeSimulationError(payload.error.code, payload.error.message)
         }
         if (
@@ -165,12 +244,47 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
         }
         await jobSession.finish({ timeoutMs: FINISH_TIMEOUT_MS })
         transportSucceeded = true
+        report({
+          source: 'cae',
+          level: 'info',
+          phase: 'run.completed',
+          message: 'CAE 실행이 완료되었습니다.',
+          jobId,
+          runId,
+          progress: 1,
+          details: { recordCount: recordSequences.length },
+        })
+        report({
+          source: 'gpstation',
+          level: 'info',
+          phase: 'job.finished',
+          message: 'GPStation Job session을 종료했습니다.',
+          jobId,
+          runId,
+        })
         return Object.freeze(records)
       }
     } catch (error) {
       releaseDataTensorAttachments(attachmentIds)
       if (!transportSucceeded) await kill()
       session?.close()
+      if (!failureReported) {
+        report({
+          source: cancelled || (error instanceof Error && error.name === 'AbortError') ? 'gpstation' : 'cae',
+          level: cancelled || (error instanceof Error && error.name === 'AbortError') ? 'warning' : 'error',
+          phase:
+            cancelled || (error instanceof Error && error.name === 'AbortError') ? 'job.cancelled' : 'client.failed',
+          message:
+            cancelled || (error instanceof Error && error.name === 'AbortError')
+              ? 'GPStation Job session이 취소되었습니다.'
+              : error instanceof Error
+                ? error.message
+                : 'CAE client 실행에 실패했습니다.',
+          ...(jobId ? { jobId } : {}),
+          ...(runId ? { runId } : {}),
+          details: { errorName: error instanceof Error ? error.name : 'UnknownError' },
+        })
+      }
       throw error
     }
   })()
@@ -311,13 +425,23 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
   return actual.length === keys.length && actual.every((key) => keys.includes(key))
 }
 
-function handleEvent(event: JobEvent, runId: string, callbacks: CaeSimulationOptions): void {
+function handleEvent(event: JobEvent, runId: string, jobId: string | null, callbacks: CaeSimulationOptions): void {
   if (event.type === 'status') {
     const status =
       event.payload && typeof event.payload === 'object' && 'status' in event.payload
         ? String(event.payload.status)
         : ''
-    if (status === 'validating' || status === 'running' || status === 'finalizing') callbacks?.onStatus?.(status)
+    if (status === 'validating' || status === 'running' || status === 'finalizing') {
+      callbacks.onStatus?.(status)
+      emitRuntimeActivity(callbacks.onActivity, {
+        source: 'cae',
+        level: 'info',
+        phase: `status.${status}`,
+        message: `CAE 실행 상태: ${status}`,
+        ...(jobId ? { jobId } : {}),
+        runId,
+      })
+    }
     return
   }
   if (event.type !== 'progress' || !event.payload || typeof event.payload !== 'object') return
@@ -329,20 +453,37 @@ function handleEvent(event: JobEvent, runId: string, callbacks: CaeSimulationOpt
   ) {
     return
   }
-  callbacks?.onProgress?.(
-    Object.freeze({
-      runId,
-      task: typeof progress.task === 'string' ? progress.task : 'simulation',
-      kernel:
-        progress.kernel && typeof progress.kernel.name === 'string' && typeof progress.kernel.version === 'string'
-          ? progress.kernel
-          : Object.freeze({ name: 'cae', version: '1' }),
-      stage: progress.stage,
-      completed: progress.completed,
-      ...(typeof progress.total === 'number' ? { total: progress.total } : {}),
-      ...(typeof progress.message === 'string' ? { message: progress.message } : {}),
-    }),
-  )
+  const normalized = Object.freeze({
+    runId,
+    task: typeof progress.task === 'string' ? progress.task : 'simulation',
+    kernel:
+      progress.kernel && typeof progress.kernel.name === 'string' && typeof progress.kernel.version === 'string'
+        ? progress.kernel
+        : Object.freeze({ name: 'cae', version: '1' }),
+    stage: progress.stage,
+    completed: progress.completed,
+    ...(typeof progress.total === 'number' ? { total: progress.total } : {}),
+    ...(typeof progress.message === 'string' ? { message: progress.message } : {}),
+  })
+  callbacks.onProgress?.(normalized)
+  emitRuntimeActivity(callbacks.onActivity, {
+    source: 'cae',
+    level: 'info',
+    phase: 'run.progress',
+    message: `${normalized.task}: ${normalized.stage}`,
+    ...(jobId ? { jobId } : {}),
+    runId,
+    ...(typeof normalized.total === 'number' && normalized.total > 0
+      ? { progress: normalized.completed / normalized.total }
+      : {}),
+    details: {
+      task: normalized.task,
+      stage: normalized.stage,
+      kernel: `${normalized.kernel.name}@${normalized.kernel.version}`,
+      completed: normalized.completed,
+      ...(typeof normalized.total === 'number' ? { total: normalized.total } : {}),
+    },
+  })
 }
 
 function abortError() {

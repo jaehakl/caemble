@@ -144,4 +144,19 @@ describe('MaterialListPage', () => {
     await userEvent.click(await screen.findByText('Iron'))
     expect(onMaterialIdChange).toHaveBeenCalledWith(2)
   })
+
+  it('renders a compact controlled list for the workbench side pane', async () => {
+    const onSelectMaterial = vi.fn()
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MaterialList compact onSelectMaterial={onSelectMaterial} selectedMaterialId={1} />
+      </QueryClientProvider>,
+    )
+
+    const list = await screen.findByRole('list', { name: 'Material 목록' })
+    expect(within(list).getByRole('button', { name: /Copper/ })).toHaveAttribute('aria-current', 'true')
+    await userEvent.click(within(list).getByRole('button', { name: /Iron/ }))
+    expect(onSelectMaterial).toHaveBeenCalledWith(2)
+  })
 })

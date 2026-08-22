@@ -22,11 +22,11 @@ vi.mock('@/features/runtime/manifests', () => ({
   bundledSlaveManifests: [{ id: 'cae', name: 'CAE', module: 'app', startup_timeout_seconds: 60 }],
 }))
 
-function renderPage() {
+function renderPage(compact = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={client}>
-      <LaunchersWorkspace />
+      <LaunchersWorkspace compact={compact} />
     </QueryClientProvider>,
   )
 }
@@ -62,7 +62,9 @@ describe('LaunchersWorkspace', () => {
     ])
     api.cancelCurrentJob.mockReset()
     api.cancelCurrentJob.mockResolvedValue({ ok: true })
+    api.resetWorker.mockReset()
     api.resetWorker.mockResolvedValue({ ok: true })
+    api.reconcile.mockReset()
     api.reconcile.mockResolvedValue({ ok: true, launchers: 0 })
   })
 
@@ -77,5 +79,17 @@ describe('LaunchersWorkspace', () => {
     await user.click(screen.getByRole('button', { name: '취소' }))
 
     await waitFor(() => expect(api.cancelCurrentJob).toHaveBeenCalledWith('launcher-1'))
+  })
+
+  it('renders the same runtime controls as a compact Settings pane', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderPage(true)
+
+    const list = await screen.findByRole('list', { name: 'Launcher 목록' })
+    expect(list).toHaveTextContent('workstation')
+    expect(list).toHaveTextContent('job-1')
+    expect(screen.queryByRole('columnheader')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Reset' }))
+    await waitFor(() => expect(api.resetWorker).toHaveBeenCalledWith('launcher-1'))
   })
 })

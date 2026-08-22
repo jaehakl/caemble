@@ -22,6 +22,7 @@ import type { SavedExperiment } from '../types'
 type ExperimentManagerProps = {
   authenticated: boolean
   busy?: boolean
+  compact?: boolean
   selectedId: number | null
   user: UserData | null
   onDeleteSelected?: (row: SavedExperiment) => void
@@ -60,6 +61,7 @@ type ManagedExperimentVersion =
 export function ExperimentManager({
   authenticated,
   busy = false,
+  compact = false,
   selectedId,
   user,
   onOpenExample,
@@ -254,8 +256,8 @@ export function ExperimentManager({
 
   return (
     <section aria-label="Experiment Manager" className="flex h-full min-h-0 flex-col bg-background">
-      <header className="space-y-3 border-b p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      <header className={`space-y-3 border-b ${compact ? 'p-3' : 'p-4'}`}>
+        <div className={compact ? 'space-y-3' : 'flex flex-wrap items-start justify-between gap-3'}>
           <div>
             <h2 className="font-semibold">Experiment Manager</h2>
             <p className="text-sm text-muted-foreground">
@@ -264,7 +266,7 @@ export function ExperimentManager({
           </div>
           {authenticated ? (
             <form
-              className="flex items-center gap-2"
+              className={compact ? 'grid grid-cols-[auto_minmax(0,1fr)] gap-2' : 'flex items-center gap-2'}
               onSubmit={(event) => {
                 event.preventDefault()
                 namespaceMutation.mutate(namespaceDraft)
@@ -273,13 +275,18 @@ export function ExperimentManager({
               <Settings2 className="size-4 text-muted-foreground" />
               <Input
                 aria-label="Experiment namespace"
-                className="h-8 w-44 font-mono text-xs"
+                className={compact ? 'h-8 min-w-0 font-mono text-xs' : 'h-8 w-44 font-mono text-xs'}
                 disabled={namespaceMutation.isPending}
                 placeholder="namespace"
                 value={namespaceDraft}
                 onChange={(event) => setNamespaceDraft(event.target.value)}
               />
-              <Button disabled={!namespaceDraft.trim() || namespaceMutation.isPending} size="sm" type="submit">
+              <Button
+                className={compact ? 'col-span-2' : undefined}
+                disabled={!namespaceDraft.trim() || namespaceMutation.isPending}
+                size="sm"
+                type="submit"
+              >
                 Namespace 저장
               </Button>
             </form>
@@ -295,7 +302,7 @@ export function ExperimentManager({
             onChange={(event) => setSearch(event.target.value)}
           />
         </label>
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className={compact ? 'grid gap-2' : 'grid gap-2 sm:grid-cols-2'}>
           <Select
             value={namespace}
             onValueChange={(value) => {
@@ -330,7 +337,7 @@ export function ExperimentManager({
           </Select>
         </div>
       </header>
-      <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+      <div className={`flex min-h-0 flex-1 flex-col gap-3 ${compact ? 'p-2' : 'p-4'}`}>
         {authenticated && user?.roles.includes('admin') ? (
           <Select value={scope} onValueChange={(value) => setScope(value as typeof scope)}>
             <SelectTrigger aria-label="소유 범위" className="w-full sm:w-56">
@@ -363,7 +370,9 @@ export function ExperimentManager({
             <ul className="divide-y">
               {groups.map(([identity, versions]) => (
                 <li key={identity}>
-                  <div className="border-b bg-muted/35 px-4 py-2 font-mono text-xs font-semibold">{identity}</div>
+                  <div className="border-b bg-muted/35 px-3 py-2 font-mono text-xs font-semibold break-all">
+                    {identity}
+                  </div>
                   <ul className="divide-y">
                     {versions.map((item) => {
                       const savedRow = item.kind === 'saved' ? item.row : null
@@ -379,7 +388,7 @@ export function ExperimentManager({
                           className={savedRow?.id === selectedId ? 'bg-orange-50/70' : undefined}
                           key={item.coordinate}
                         >
-                          <div className="flex items-start gap-3 p-4 pl-6">
+                          <div className={`flex items-start gap-3 ${compact ? 'p-3' : 'p-4 pl-6'}`}>
                             <button
                               className="min-w-0 flex-1 text-left disabled:opacity-50"
                               disabled={busy || (item.kind === 'example' && loadingExample !== null)}
@@ -408,9 +417,11 @@ export function ExperimentManager({
                               <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">
                                 {item.coordinate}
                               </span>
-                              <span className="mt-1 line-clamp-2 block text-sm text-muted-foreground">
-                                {item.description}
-                              </span>
+                              {!compact ? (
+                                <span className="mt-1 line-clamp-2 block text-sm text-muted-foreground">
+                                  {item.description}
+                                </span>
+                              ) : null}
                             </button>
                             {manageable && savedRow ? (
                               <Button

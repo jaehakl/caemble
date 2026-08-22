@@ -39,11 +39,11 @@ const runningJob = {
   started_at: '2026-08-07T00:00:02Z',
 }
 
-function renderPage(onRequestLogin?: () => void) {
+function renderPage(onRequestLogin?: () => void, compact = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={client}>
-      <JobsWorkspace onRequestLogin={onRequestLogin} />
+      <JobsWorkspace compact={compact} onRequestLogin={onRequestLogin} />
     </QueryClientProvider>,
   )
 }
@@ -110,5 +110,17 @@ describe('JobsWorkspace', () => {
     expect(await screen.findByText('<img src=x onerror=alert(1)>')).toBeVisible()
     expect(screen.getByText('42')).toBeVisible()
     expect(document.querySelector('img')).toBeNull()
+  })
+
+  it('renders active job metadata and controls in the compact Settings pane', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderPage(undefined, true)
+
+    const list = await screen.findByRole('list', { name: 'Job 목록' })
+    expect(list).toHaveTextContent('cae.simulation.start')
+    expect(list).toHaveTextContent('launcher-1')
+    expect(screen.queryByRole('columnheader')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '중단' }))
+    await waitFor(() => expect(api.kill).toHaveBeenCalledWith('job-1'))
   })
 })

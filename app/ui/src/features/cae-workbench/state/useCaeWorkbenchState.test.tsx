@@ -6,7 +6,7 @@ import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createCadSourceDocument, createExperimentSourceBundle, type ExperimentSourceDocument } from '@/lib/cad'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
-import type { SavedExperiment } from '../types'
+import { defaultWorkbenchLayoutState, type SavedExperiment } from '../types'
 import { useCaeWorkbenchState } from './useCaeWorkbenchState'
 
 const mocks = vi.hoisted(() => ({
@@ -106,7 +106,7 @@ function wrapper() {
 beforeEach(() => vi.clearAllMocks())
 
 describe('useCaeWorkbenchState', () => {
-  it('stores a files-only v14 draft and exposes Experiment coordinate state', async () => {
+  it('stores a files-only v15 draft and exposes Experiment coordinate state', async () => {
     const { result } = renderHook(
       () => useCaeWorkbenchState({ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never, true),
       { wrapper: wrapper() },
@@ -120,12 +120,10 @@ describe('useCaeWorkbenchState', () => {
     expect(result.current.sourceLocked).toBe(false)
     expect(
       result.current.draft({
-        openTabs: ['experiment', 'experiments'],
-        activeTab: 'experiment',
-        experimentFile: 'geometry.tsx',
-        splitPercent: 50,
+        ...defaultWorkbenchLayoutState,
+        activeExperimentFile: 'geometry.tsx',
       }),
-    ).toMatchObject({ version: 14, experiment: { record: { id: 7 } } })
+    ).toMatchObject({ version: 15, experiment: { record: { id: 7 } } })
   })
 
   it('allows a taskless local Experiment for preview and source saving state', () => {
@@ -184,7 +182,7 @@ describe('useCaeWorkbenchState', () => {
     })
     act(() =>
       result.current.restoreDraft({
-        version: 14,
+        version: 15,
         savedAt: Date.now(),
         experiment: {
           record: locked,
@@ -195,7 +193,7 @@ describe('useCaeWorkbenchState', () => {
         },
         candidate: { vars: null, materialParameters: null },
         selection: { measurementId: null },
-        layout: { openTabs: ['experiment'], activeTab: 'experiment', experimentFile: 'geometry.tsx', splitPercent: 50 },
+        layout: { ...defaultWorkbenchLayoutState, activeExperimentFile: 'geometry.tsx' },
       }),
     )
 

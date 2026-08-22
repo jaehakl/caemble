@@ -1,36 +1,22 @@
 import type { Dispatch, SetStateAction } from 'react'
 import { toast } from 'sonner'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { MeasurementPickerDialog } from '@/features/cae-workbench/dialogs'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import { SaveDefinitionDialog } from '@/features/viewer/persistence/SaveDefinitionDialog'
-import { AnalysisWorkspace } from '@/pages/analysis/AnalysisPage'
-import { MaterialManager } from '@/pages/materials/MaterialManager'
 import type { WorkbenchDialog } from './caePageTypes'
 import { CaeUtilityDialogs } from './CaeUtilityDialogs'
 
 export function CaeWorkbenchDialogs({
   dialog,
-  runSafely,
   setDialog,
   workbench,
 }: {
   dialog: WorkbenchDialog
-  runSafely: (run: () => unknown | Promise<unknown>) => void
   setDialog: Dispatch<SetStateAction<WorkbenchDialog>>
   workbench: CaeWorkbenchState
 }) {
   const closeDialog = (open: boolean) => !open && setDialog(null)
   return (
     <>
-      <MeasurementPickerDialog
-        experimentId={workbench.experimentId}
-        open={dialog === 'measurement'}
-        selectedId={workbench.selection.measurement?.id}
-        onDuplicate={(row) => runSafely(() => workbench.measurementActions.duplicateMeasurement(row))}
-        onOpenChange={closeDialog}
-        onSelect={(row) => runSafely(() => workbench.selection.loadMeasurement(row))}
-      />
       <SaveDefinitionDialog
         context={
           dialog === 'save-experiment' || dialog === 'save-experiment-version' || dialog === 'save-experiment-as' ? (
@@ -107,32 +93,6 @@ export function CaeWorkbenchDialogs({
           )
         }}
       />
-      <Dialog open={dialog === 'material'} onOpenChange={closeDialog}>
-        <DialogContent className="grid h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-0 sm:max-w-[calc(100%-2rem)]">
-          <DialogHeader className="border-b px-5 py-4 pr-12">
-            <DialogTitle>Material Manager</DialogTitle>
-            <DialogDescription>Material 목록과 속성을 조회하고 편집합니다.</DialogDescription>
-          </DialogHeader>
-          <div className="min-h-0 overflow-auto p-4">
-            <MaterialManager onRequestLogin={() => setDialog('account')} />
-          </div>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={dialog === 'analysis'} onOpenChange={closeDialog}>
-        <DialogContent className="grid h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-0 sm:max-w-[calc(100%-2rem)]">
-          <DialogHeader className="border-b px-5 py-4 pr-12">
-            <DialogTitle>Analyze Measurements</DialogTitle>
-            <DialogDescription>현재 Experiment의 Recorded Measurement 데이터를 분석합니다.</DialogDescription>
-          </DialogHeader>
-          <div className="min-h-0 overflow-auto">
-            <AnalysisWorkspace
-              embedded
-              experimentId={workbench.experimentId}
-              onRequestLogin={() => setDialog('account')}
-            />
-          </div>
-        </DialogContent>
-      </Dialog>
       <CaeUtilityDialogs dialog={dialog} setDialog={setDialog} />
     </>
   )

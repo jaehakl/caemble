@@ -4,13 +4,14 @@ import { toast } from 'sonner'
 import { dbTables, getListRequest } from '@/api'
 import { loadWorkbenchDraft, saveWorkbenchDraft } from '@/features/cae-workbench/storage/draftStorage'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
-import type { WorkbenchDraft, WorkbenchTabId } from '@/features/cae-workbench/types'
+import {
+  defaultWorkbenchLayoutState,
+  type WorkbenchDraft,
+  type WorkbenchLayoutState,
+} from '@/features/cae-workbench/types'
 import { createCadSourceDocument } from '@/lib/cad'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 import type { PendingConfirmation, WorkbenchDialog } from './caePageTypes'
-
-export const caeWorkbenchTabs: readonly WorkbenchTabId[] = ['experiment', 'experiments', 'recorded-data', 'ai-helper']
-export const defaultCaeWorkbenchTabs: readonly WorkbenchTabId[] = ['experiment', 'experiments', 'recorded-data']
 
 function positiveId(value: string | null) {
   const parsed = Number(value)
@@ -23,13 +24,9 @@ async function measurementExperimentId(measurementId: number) {
   return measurement.experiment_id
 }
 
-function validTabs(value: readonly WorkbenchTabId[]) {
-  return value.filter((tab, index) => caeWorkbenchTabs.includes(tab) && value.indexOf(tab) === index)
-}
-
 function starterDraft(): WorkbenchDraft {
   return {
-    version: 14,
+    version: 15,
     savedAt: Date.now(),
     experiment: {
       record: null,
@@ -40,12 +37,7 @@ function starterDraft(): WorkbenchDraft {
     },
     candidate: { vars: null, materialParameters: null },
     selection: { measurementId: null },
-    layout: {
-      openTabs: defaultCaeWorkbenchTabs,
-      activeTab: 'experiment',
-      experimentFile: 'experiment.tsx',
-      splitPercent: 50,
-    },
+    layout: defaultWorkbenchLayoutState,
   }
 }
 
@@ -53,11 +45,7 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [dialog, setDialog] = useState<WorkbenchDialog>(null)
   const [confirmation, setConfirmation] = useState<PendingConfirmation | null>(null)
-  const [openTabs, setOpenTabs] = useState<readonly WorkbenchTabId[]>(defaultCaeWorkbenchTabs)
-  const [activeTab, setActiveTab] = useState<WorkbenchTabId>('experiment')
-  const [activeExperimentFile, setActiveExperimentFile] = useState<string | null>('experiment.tsx')
-  const [viewerPercent, setViewerPercent] = useState(50)
-  const [mobileViewerOpen, setMobileViewerOpen] = useState(false)
+  const [layout, setLayout] = useState<WorkbenchLayoutState>(defaultWorkbenchLayoutState)
   const [initialized, setInitialized] = useState(false)
   const [persistenceAvailable, setPersistenceAvailable] = useState(true)
   const initializingRef = useRef(false)
@@ -74,11 +62,6 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
     void Promise.resolve()
       .then(run)
       .catch((cause: unknown) => toast.error(cause instanceof Error ? cause.message : String(cause)))
-  }, [])
-
-  const openTab = useCallback((tab: WorkbenchTabId) => {
-    setOpenTabs((current) => (current.includes(tab) ? current : [...current, tab]))
-    setActiveTab(tab)
   }, [])
 
   const guardReplacement = useCallback(
@@ -121,10 +104,7 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
     setPersistenceAvailable(true)
     externalNavigationRef.current = true
     lastSyncedSearchRef.current = initialSearchKey
-    setOpenTabs(defaultCaeWorkbenchTabs)
-    setActiveTab('experiment')
-    setActiveExperimentFile('experiment.tsx')
-    setViewerPercent(50)
+    setLayout(defaultWorkbenchLayoutState)
     currentWorkbench.restoreDraft(starterDraft())
 
     let cancelled = false
@@ -141,18 +121,9 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
         if (cancelled) return
         let urlExperimentId = positiveId(initialSearchParams.get('experiment'))
         const urlMeasurementId = positiveId(initialSearchParams.get('measurement'))
-        if (!urlExperimentId && urlMeasurementId) {
-          urlExperimentId = await measurementExperimentId(urlMeasurementId)
-        }
+        if (!urlExperimentId && urlMeasurementId) urlExperimentId = await measurementExperimentId(urlMeasurementId)
 
-        if (draft) {
-          const restoredTabs = validTabs(draft.layout.openTabs)
-          setOpenTabs(restoredTabs.length ? restoredTabs : defaultCaeWorkbenchTabs)
-          if (draft.layout.activeTab && restoredTabs.includes(draft.layout.activeTab))
-            setActiveTab(draft.layout.activeTab)
-          setActiveExperimentFile(draft.layout.experimentFile)
-          setViewerPercent(Math.min(75, Math.max(25, draft.layout.splitPercent)))
-        }
+        if (draft) setLayout(draft.layout)
 
         if (urlExperimentId) {
           const draftExperimentId = draft?.experiment.record?.id ?? null
@@ -165,8 +136,16 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
           } else if (draft && urlExperimentId === draftExperimentId) {
             currentWorkbench.restoreDraft(draft)
             if (urlMeasurementId) currentWorkbench.restoreSelection(urlMeasurementId)
+            setLayout((current) => ({
+              ...current,
+              activeSection: urlMeasurementId ? 'measurement' : 'experiment',
+            }))
           } else {
             await currentWorkbench.loadExperiment(urlExperimentId, urlMeasurementId)
+            setLayout((current) => ({
+              ...current,
+              activeSection: urlMeasurementId ? 'measurement' : 'experiment',
+            }))
           }
         } else if (draft) {
           currentWorkbench.restoreDraft(draft)
@@ -250,8 +229,14 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
           if (experimentChanges) await currentWorkbench.loadExperiment(experimentId, measurementId)
           else if (measurementId) await currentWorkbench.selection.loadMeasurement(measurementId, experimentId)
           else currentWorkbench.selection.clearMeasurement()
+          setLayout((current) => ({
+            ...current,
+            activeSection: measurementId ? 'measurement' : 'experiment',
+          }))
         } else {
-          currentWorkbench.restoreDraft(starterDraft())
+          const starter = starterDraft()
+          currentWorkbench.restoreDraft(starter)
+          setLayout(starter.layout)
         }
       } catch (cause: unknown) {
         if (navigationSequence !== externalNavigationSequenceRef.current) return
@@ -271,20 +256,13 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
   useEffect(() => {
     if (!initialized || !persistenceAvailable) return
     const timeout = window.setTimeout(() => {
-      void saveWorkbenchDraft(
-        workbench.draft({
-          openTabs,
-          activeTab: openTabs.includes(activeTab) ? activeTab : null,
-          experimentFile: activeExperimentFile,
-          splitPercent: viewerPercent,
-        }),
-      ).catch((cause: unknown) => {
+      void saveWorkbenchDraft(workbench.draft(layout)).catch((cause: unknown) => {
         setPersistenceAvailable(false)
         toast.error(cause instanceof Error ? cause.message : 'CAE draft를 sessionStorage에 저장하지 못했습니다.')
       })
     }, 500)
     return () => window.clearTimeout(timeout)
-  }, [activeExperimentFile, activeTab, initialized, openTabs, persistenceAvailable, viewerPercent, workbench])
+  }, [initialized, layout, persistenceAvailable, workbench])
 
   useEffect(() => {
     if (!workbench.hasUnsavedWork && !workbench.measurementActions.pendingRecordMeasurementId) return
@@ -303,25 +281,23 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
     }
   }, [])
 
+  const setActiveExperimentFile = useCallback(
+    (activeExperimentFile: string | null) => setLayout((current) => ({ ...current, activeExperimentFile })),
+    [],
+  )
+
   return {
-    activeExperimentFile,
-    activeTab,
+    ...layout,
     confirmation,
     dialog,
     guardReplacement,
     initialized,
-    mobileViewerOpen,
-    openTab,
-    openTabs,
+    layout,
     requestRunSelected,
     runSafely,
     setActiveExperimentFile,
-    setActiveTab,
     setConfirmation,
     setDialog,
-    setMobileViewerOpen,
-    setOpenTabs,
-    setViewerPercent,
-    viewerPercent,
+    setLayout,
   }
 }

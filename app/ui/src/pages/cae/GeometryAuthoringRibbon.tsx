@@ -9,18 +9,22 @@ export function GeometryAuthoringRibbon({ state }: { state: CadEditorAuthoringSt
   const operationReason = unavailableReason ?? (!state?.hasSelection ? '감쌀 코드 영역을 먼저 선택하세요.' : undefined)
 
   return (
-    <div className="flex items-center gap-1 border-l pl-2">
+    <div className="flex items-center gap-0.5">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
             aria-label={unavailableReason ? `Primitive: ${unavailableReason}` : 'Primitive'}
+            className="h-[68px] w-16 flex-col gap-1 px-1"
             disabled={!state}
-            size="sm"
             title={unavailableReason}
             type="button"
             variant="ghost"
           >
-            <Shapes className="size-4" /> Primitive <ChevronDown className="size-3" />
+            <span className="flex h-8 items-center">
+              <Shapes className="!size-7" />
+              <ChevronDown className="!size-3" />
+            </span>
+            <span className="w-full truncate text-[11px]">Primitive</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start">
@@ -37,13 +41,17 @@ export function GeometryAuthoringRibbon({ state }: { state: CadEditorAuthoringSt
         <DropdownMenuTrigger asChild>
           <Button
             aria-label={operationReason ? `Operation: ${operationReason}` : 'Operation'}
+            className="h-[68px] w-16 flex-col gap-1 px-1"
             disabled={Boolean(operationReason)}
-            size="sm"
             title={operationReason}
             type="button"
             variant="ghost"
           >
-            <Braces className="size-4" /> Operation <ChevronDown className="size-3" />
+            <span className="flex h-8 items-center">
+              <Braces className="!size-7" />
+              <ChevronDown className="!size-3" />
+            </span>
+            <span className="w-full truncate text-[11px]">Operation</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start">
