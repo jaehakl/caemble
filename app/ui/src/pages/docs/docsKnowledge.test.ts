@@ -29,10 +29,10 @@ describe('documentation knowledge registry', () => {
 
   it('links manual examples to canonical catalog detail instead of duplicating full source', () => {
     expect(manualDocsKnowledge.find(({ id }) => id === 'program-definition')?.content).toContain(
-      'item=experiment:dc-uniform-bar',
+      'item=experiment:caemble:experiment/caemble/verified/dc-uniform-bar@1.0.0',
     )
     expect(manualDocsKnowledge.find(({ id }) => id === 'reference-geometry-skeleton')?.content).toContain(
-      'item=example:geometry-authoring-skeleton',
+      'item=experiment:caemble:experiment/caemble/getting-started/geometry-authoring-skeleton@1.0.0',
     )
     expect(manualDocsKnowledge.find(({ id }) => id === 'reference-geometry-skeleton')?.content).not.toContain(
       'export const Assembly',
@@ -53,8 +53,18 @@ describe('documentation knowledge registry', () => {
         subtitle: 'electromagnetism.ElectricConductivity',
       },
       { kind: 'solver', key: 'dc-current-density@0.1.0', title: 'DC current density', subtitle: 'Solver' },
-      { kind: 'geometry', key: 'basketball-goal', title: 'Basketball Goal', subtitle: 'Example Geometry' },
-      { kind: 'experiment', key: 'dc-uniform-bar', title: 'DC Uniform Bar', subtitle: 'Official Experiment' },
+      {
+        kind: 'experiment',
+        key: 'caemble:experiment/caemble/getting-started/basketball-goal@1.0.0',
+        title: 'Basketball Goal',
+        subtitle: 'Official Experiment',
+      },
+      {
+        kind: 'experiment',
+        key: 'caemble:experiment/caemble/verified/dc-uniform-bar@1.0.0',
+        title: 'DC Uniform Bar',
+        subtitle: 'Official Experiment',
+      },
     ])
 
     expect(searchDocsKnowledge('electrical.conductivity', [...getDocsKnowledge(), ...serverResults])[0]?.id).toBe(
@@ -67,7 +77,9 @@ describe('documentation knowledge registry', () => {
         .map(({ id }) => id),
     ).toContain('program-multiphysics-example')
     expect(serverResults[1].href).toBe('/docs?section=solvers&item=dc-current-density%400.1.0')
-    expect(serverResults[2].item).toBe('example:basketball-goal')
-    expect(serverResults[3].item).toBe('experiment:dc-uniform-bar')
+    expect(serverResults[2].item).toBe(
+      'experiment:caemble:experiment/caemble/getting-started/basketball-goal@1.0.0',
+    )
+    expect(serverResults[3].item).toBe('experiment:caemble:experiment/caemble/verified/dc-uniform-bar@1.0.0')
   })
 })

@@ -1,28 +1,24 @@
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
-import {
-  officialExperiment,
-  officialExperimentKeys,
-  officialGeometry,
-  officialGeometryKeys,
-} from '../../catalog/catalogTestData'
+import { officialExperiment, officialExperimentKeys } from '../../catalog/catalogTestData'
 import { starterExperimentSourceBundle } from '../../localExperimentCode'
 import { buildSyntheticCatalog } from '../../../test/syntheticCatalog'
 import { catalogRuntimeTypes } from '../compiler/catalogTypeEnvironment'
 import { cadElementCatalog } from '../catalog'
-import { geometryCoordinateTypes } from '../compiler/geometryTypes'
-import type { EffectiveGeometryGraph } from '../source/effectiveGeometryGraph'
-import type { GeometryCoordinate } from '../source/geometrySnapshot'
 import coreTypes from './caemble-core.d.ts?raw'
 import jsxTypes from './cad-jsx.d.ts?raw'
 
 const catalogExperiment = officialExperiment('dc-notched-current-density')
 const catalogExperimentProgramCode = catalogExperiment.sourceBundle.files['experiment.tsx']
 const catalogExperimentTaskCode = catalogExperiment.sourceBundle.files['tasks/solveField.tsx']
-const catalogGeometryFiles = {
-  'C:/caemble-source/hash/geometry.tsx': catalogExperiment.sourceBundle.files['geometry.tsx'],
-  'C:/caemble-source/hash/material.tsx': catalogExperiment.sourceBundle.files['material.tsx'],
-}
+const catalogGeometryFiles = Object.fromEntries(
+  Object.entries(catalogExperiment.sourceBundle.files)
+    .filter(
+      ([path]) =>
+        path !== 'experiment.tsx' && !path.startsWith('tasks/') && (path.endsWith('.ts') || path.endsWith('.tsx')),
+    )
+    .map(([path, source]) => [`C:/caemble-source/hash/${path}`, source]),
+)
 
 function diagnosticsForFiles(sourceFiles: Readonly<Record<string, string>>, catalogTypes?: string) {
   const virtualFiles = new Map<string, string>([
@@ -34,6 +30,7 @@ function diagnosticsForFiles(sourceFiles: Readonly<Record<string, string>>, cata
       : ([['C:/node_modules/@caemble/core/catalog-runtime.d.ts', catalogTypes]] as const)),
   ])
   const options: ts.CompilerOptions = {
+    allowImportingTsExtensions: true,
     allowNonTsExtensions: true,
     baseUrl: 'C:/',
     jsx: ts.JsxEmit.React,
@@ -187,28 +184,11 @@ describe('unversioned CAD authoring declarations', () => {
   })
 
   it('makes all custom and common Geometry invocation props optional', () => {
-    const coordinate = 'caemble:geometry/jlee/common/notched@1.0.0' as GeometryCoordinate
-    const graph = {
-      graphHash: 'a'.repeat(64),
-      entryImports: [{ exportName: 'Notched', alias: 'Notched', coordinate, moduleHash: 'b'.repeat(64) }],
-      modules: [
-        {
-          coordinate,
-          cadApiVersion: 8,
-          sourceHash: 'c'.repeat(64),
-          moduleHash: 'b'.repeat(64),
-          exports: ['Notched'],
-          imports: [],
-          source: `import { type Geometry, type Vec3 } from '@caemble/core'
-export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1, 2, 3], thickness = 1 }) => <box size={size} scale={[thickness, 1, 1]} />`,
-        },
-      ],
-    } satisfies EffectiveGeometryGraph
     const prefix = 'C:/caemble-source/hash'
     const files = {
-      [`${prefix}/geometry-coordinates.d.ts`]: geometryCoordinateTypes(graph),
-      [`${prefix}/geometries/${encodeURIComponent(coordinate)}.tsx`]: graph.modules[0].source,
-      [`${prefix}/geometry.tsx`]: `import { Notched } from "${coordinate}"\nexport { Notched }`,
+      [`${prefix}/shared/notched.tsx`]: `import { type Geometry, type Vec3 } from '@caemble/core'
+export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1, 2, 3], thickness = 1 }) => <box size={size} scale={[thickness, 1, 1]} />`,
+      [`${prefix}/geometry.tsx`]: `export { Notched } from './shared/notched'`,
     }
     const valid = 'import { Notched } from "./geometry"\nexport default <Notched id="root" thickness={2} />'
 
@@ -220,22 +200,11 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
     )
   })
 
-  it('type-checks every public Geometry example in one TypeScript program', () => {
-    const files = Object.fromEntries(
-      officialGeometryKeys.map((key) => [
-        `C:/caemble-source/geometries/${key}/geometry.tsx`,
-        officialGeometry(key).source,
-      ]),
-    )
-
-    expect(diagnosticsForFiles(files)).toEqual([])
-  })
-
   it('type-checks every shared Experiment bundle in one TypeScript program', () => {
     const files = Object.fromEntries(
       officialExperimentKeys.flatMap((key, index) =>
         Object.entries(officialExperiment(key).sourceBundle.files)
-          .filter(([path]) => path.endsWith('.tsx'))
+          .filter(([path]) => path.endsWith('.ts') || path.endsWith('.tsx'))
           .map(([path, source]) => [`C:/caemble-source/programs/${index}-${key}/${path}`, source]),
       ),
     )
@@ -243,15 +212,15 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
     expect(diagnosticsForFiles(files)).toEqual([])
   })
 
-  it('type-checks local templates and the AI Helper geometry skeleton in one TypeScript program', () => {
+  it('type-checks local templates and the Experiment geometry skeleton in one TypeScript program', () => {
+    const skeleton = officialExperiment('geometry-authoring-skeleton').sourceBundle
     const files = Object.fromEntries([
       ...Object.entries(starterExperimentSourceBundle.files)
-        .filter(([path]) => path.endsWith('.tsx'))
+        .filter(([path]) => path.endsWith('.ts') || path.endsWith('.tsx'))
         .map(([path, source]) => [`C:/caemble-source/templates/starter/${path}`, source]),
-      [
-        'C:/caemble-source/templates/geometry-authoring-skeleton/geometry.tsx',
-        officialGeometry('geometry-authoring-skeleton').source,
-      ],
+      ...Object.entries(skeleton.files)
+        .filter(([path]) => path.endsWith('.ts') || path.endsWith('.tsx'))
+        .map(([path, source]) => [`C:/caemble-source/templates/geometry-authoring-skeleton/${path}`, source]),
     ])
 
     expect(diagnosticsForFiles(files)).toEqual([])

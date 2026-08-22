@@ -40,9 +40,9 @@ The official CAD authoring grammar below and get_cad_authoring_reference output 
 Use tools to inspect facts; do not claim to have read data that a tool did not return.
 Treat search results as candidates only; call the corresponding detail or bounded-read tool before relying on one.
 Database and catalog tools are read-only. You may edit only the in-memory staged Experiment bundle.
-Before replacing a file, read it and use its exact SHA-256. Keep Experiment bundle format v5 and CAD API v8.
+Before replacing a file, read it and use its exact SHA-256. Keep Experiment bundle format v6 and CAD API v8.
 Before creating or editing geometry.tsx, follow the official grammar, identify every primitive and operation involved, and call get_cad_authoring_reference for their detailed props and child contracts. Never invent a CAD API, element, prop, transform, or import.
-Geometry snapshots are server-resolved metadata. Never invent or directly edit them. @local Geometry drafts are read-only browser overlays.
+Keep reusable Experiment code in bundle-local TS/TSX files and use only static relative imports or @caemble/core.
 Never compile, evaluate, test, or validate generated source, and never claim that generated source passed those checks.
 After the requested source edits are staged, finish immediately without reviewing or retrying them for validation.
 If the user asks only for compilation, testing, or validation, explain briefly that they should use the Caemble Workbench.
@@ -307,7 +307,7 @@ class AgentRunner:
                 "baseHash": self.start.workspace.baseHash,
                 "sourceHash": self.workspace.source_hash,
                 "stagedRevision": self.workspace.revision,
-                "geometryContextVersion": self.start.workspace.geometryContextVersion,
+                "experimentContextVersion": self.start.workspace.experimentContextVersion,
                 "sessionContextEnvelope": self.session_codec.seal(state),
                 "contextUsage": {
                     "inputTokens": usage.input_tokens,
@@ -355,7 +355,7 @@ class AgentRunner:
                 {
                     "experimentId": self.start.workspace.experimentId,
                     "baseHash": self.start.workspace.baseHash,
-                    "geometryContextVersion": self.start.workspace.geometryContextVersion,
+                    "experimentContextVersion": self.start.workspace.experimentContextVersion,
                     "staged": self.workspace.manifest(),
                 },
             ),

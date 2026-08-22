@@ -142,7 +142,7 @@ describe('AI Agent API transport', () => {
       staged_revision: 2,
       base_hash: 'base-hash',
       source_hash: 'source-hash',
-      geometry_context_version: 'geometry-v1',
+      experiment_context_version: 'experiment-v1',
       context_usage: { cached_tokens: 400, cache_write_tokens: 100 },
     })
     await vi.waitFor(() => {

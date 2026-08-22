@@ -51,22 +51,7 @@ export async function compiledCadDocumentSemanticHash(
       .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
       .map(async ([path, source]) => [path, await compiledCadSemanticHash(source)] as const),
   )
-  if (!compiled.geometryGraph) return sha256(JSON.stringify({ sources: sourceHashes, pythonSource }))
-  const geometryModules = await Promise.all(
-    Object.entries(compiled.geometryGraph.modules)
-      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-      .map(async ([coordinate, source]) => [coordinate, await compiledCadSemanticHash(source)] as const),
-  )
-  return sha256(
-    JSON.stringify({
-      sources: sourceHashes,
-      pythonSource,
-      geometryGraph: {
-        entryImports: compiled.geometryGraph.entryImports,
-        modules: geometryModules,
-      },
-    }),
-  )
+  return sha256(JSON.stringify({ sources: sourceHashes, pythonSource }))
 }
 
 export async function cadSemanticHash(document: CadSourceDocument) {

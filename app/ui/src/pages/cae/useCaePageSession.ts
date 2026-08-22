@@ -9,8 +9,8 @@ import { createCadSourceDocument } from '@/lib/cad'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 import type { PendingConfirmation, WorkbenchDialog } from './caePageTypes'
 
-export const caeWorkbenchTabs: readonly WorkbenchTabId[] = ['experiment', 'geometry', 'recorded-data', 'ai-helper']
-export const defaultCaeWorkbenchTabs: readonly WorkbenchTabId[] = ['experiment', 'geometry', 'recorded-data']
+export const caeWorkbenchTabs: readonly WorkbenchTabId[] = ['experiment', 'experiments', 'recorded-data', 'ai-helper']
+export const defaultCaeWorkbenchTabs: readonly WorkbenchTabId[] = ['experiment', 'experiments', 'recorded-data']
 
 function positiveId(value: string | null) {
   const parsed = Number(value)
@@ -29,7 +29,7 @@ function validTabs(value: readonly WorkbenchTabId[]) {
 
 function starterDraft(): WorkbenchDraft {
   return {
-    version: 13,
+    version: 14,
     savedAt: Date.now(),
     experiment: {
       record: null,
@@ -40,19 +40,6 @@ function starterDraft(): WorkbenchDraft {
     },
     candidate: { vars: null, materialParameters: null },
     selection: { measurementId: null },
-    geometryManager: {
-      draftVersions: {},
-      resolvedModules: [],
-      selection: {
-        view: 'examples',
-        namespace: 'examples',
-        repository: 'all',
-        catalogKey: null,
-        coordinate: null,
-        exportName: null,
-      },
-    },
-    experimentGeometry: { stagedModules: [] },
     layout: {
       openTabs: defaultCaeWorkbenchTabs,
       activeTab: 'experiment',
@@ -110,8 +97,7 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
       }
       setConfirmation({
         title: '저장하지 않은 편집을 바꿀까요?',
-        description:
-          '저장하지 않은 Experiment 편집 내용이 새 선택으로 대체됩니다. Geometry Manager draft는 유지됩니다.',
+        description: '저장하지 않은 Experiment 편집 내용이 새 선택으로 대체됩니다.',
         confirmLabel: '편집 내용 바꾸기',
         run,
       })

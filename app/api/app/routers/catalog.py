@@ -4,7 +4,7 @@ import base64
 import binascii
 from typing import Annotated, Any
 
-from caemble_catalog import Catalog, CatalogNotFoundError
+from caemble_catalog import Catalog, CatalogAmbiguousError, CatalogNotFoundError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from catalog_models import (
@@ -15,9 +15,6 @@ from catalog_models import (
     CatalogSearchResponse,
     ExperimentDetail,
     ExperimentSummary,
-    GeometryDetail,
-    GeometryRepository,
-    GeometrySummary,
     MaterialModel,
     MaterialParameter,
     MaterialParameterDetail,
@@ -65,6 +62,10 @@ def _cache(response: Response, catalog: Catalog) -> None:
 
 def _not_found(error: CatalogNotFoundError) -> HTTPException:
     return HTTPException(status_code=404, detail={"code": "catalog_not_found", "message": str(error)})
+
+
+def _ambiguous(error: CatalogAmbiguousError) -> HTTPException:
+    return HTTPException(status_code=409, detail={"code": "catalog_ambiguous", "message": str(error)})
 
 
 @router.get("/meta", response_model=CatalogMeta)
@@ -197,47 +198,14 @@ def solver(name: str, version: str, response: Response, catalog: Catalog = Depen
     return result
 
 
-@router.get("/geometries", response_model=CatalogPage[GeometrySummary])
-def geometries(
-    response: Response,
-    q: str | None = Query(default=None, max_length=200),
-    element: str | None = Query(default=None, max_length=200),
-    repository: str | None = Query(default=None, max_length=64),
-    limit: int = Query(default=50, ge=1, le=200),
-    cursor: str | None = Query(default=None, max_length=100),
-    catalog: Catalog = Depends(get_catalog),
-):
-    offset = _offset(cursor)
-    items, total = catalog.list_geometries(
-        query=q, element=element, repository=repository, limit=limit, offset=offset
-    )
-    _cache(response, catalog)
-    return {"items": items, "nextCursor": _cursor(offset, len(items), total), "total": total}
-
-
-@router.get("/geometry-repositories", response_model=list[GeometryRepository])
-def geometry_repositories(response: Response, catalog: Catalog = Depends(get_catalog)):
-    result = catalog.list_geometry_repositories()
-    _cache(response, catalog)
-    return result
-
-
-@router.get("/geometries/{key}", response_model=GeometryDetail)
-def geometry(key: str, response: Response, catalog: Catalog = Depends(get_catalog)):
-    try:
-        result = catalog.geometry(key)
-    except CatalogNotFoundError as error:
-        raise _not_found(error) from error
-    _cache(response, catalog)
-    return result
-
-
 @router.get("/experiments", response_model=CatalogPage[ExperimentSummary])
 def experiments(
     response: Response,
     q: str | None = Query(default=None, max_length=200),
     solver_name: str | None = Query(default=None, alias="solverName", max_length=200),
     solver_version: str | None = Query(default=None, alias="solverVersion", max_length=100),
+    namespace: str | None = Query(default=None, max_length=32),
+    repository: str | None = Query(default=None, max_length=64),
     limit: int = Query(default=50, ge=1, le=200),
     cursor: str | None = Query(default=None, max_length=100),
     catalog: Catalog = Depends(get_catalog),
@@ -247,6 +215,8 @@ def experiments(
         query=q,
         solver_name=solver_name,
         solver_version=solver_version,
+        namespace=namespace,
+        repository=repository,
         limit=limit,
         offset=offset,
     )
@@ -255,11 +225,24 @@ def experiments(
 
 
 @router.get("/experiments/{key}", response_model=ExperimentDetail)
-def experiment(key: str, response: Response, catalog: Catalog = Depends(get_catalog)):
+def experiment(
+    key: str,
+    response: Response,
+    namespace: str | None = Query(default=None, max_length=32),
+    repository: str | None = Query(default=None, max_length=64),
+    version: str | None = Query(
+        default=None,
+        pattern=r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$",
+        max_length=32,
+    ),
+    catalog: Catalog = Depends(get_catalog),
+):
     try:
-        result = catalog.experiment(key)
+        result = catalog.experiment(key, namespace=namespace, repository=repository, version=version)
     except CatalogNotFoundError as error:
         raise _not_found(error) from error
+    except CatalogAmbiguousError as error:
+        raise _ambiguous(error) from error
     _cache(response, catalog)
     return result
 

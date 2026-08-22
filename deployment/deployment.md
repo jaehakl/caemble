@@ -408,12 +408,10 @@ bash deployment/update.sh
 ```
 
 `update.sh`는 `git pull --ff-only`로 최신 소스와 artifact를 함께 받은 뒤 archive
-무결성과 `index.html`, `runner.html`을 먼저 검사한다. API dependency를 설치한 다음,
-서비스를 중지하기 전에 legacy `geometries`가 비어 있는지도 검사한다. legacy 행이
-남아 있으면 API는 실행 중인 상태로 두고, JSON export와 수동 repository/package/version
-mapping을 요구하며 배포를 중단한다. 검사가 끝난 후에만 maintenance window를 열어
-Alembic migration, 새 정적 release 게시, `current` 링크 원자적 교체, API 재시작,
-설치된 Nginx 설정 동기화, Nginx 검사/reload를 수행한다. Migration 자체가 실패하면
+무결성과 `index.html`, `runner.html`을 먼저 검사한다. API dependency와 버전 관리되는
+SQLite catalog를 검증한 다음 API를 중지하고, 별도 확인 없이 모든 대기 중인 Alembic
+migration을 적용한다. 이후 새 정적 release 게시, `current` 링크 원자적 교체, API 재시작,
+설치된 Nginx 설정 동기화와 Nginx 검사/reload를 수행한다. Migration 자체가 실패하면
 새 코드와 구 schema 조합을 피하기 위해 API를 중지 상태로 유지한다. Git 추적 파일인
 artifact는 배포 후에도 삭제하거나 수정하지 않는다.
 

@@ -6,16 +6,20 @@ import type { CadScene } from '@/lib/cad/evaluation/types'
 import { executeCompiledDocument, inspectCompiledDocument } from '@/lib/cad/execution/userModule'
 import { generateRandomVars } from '@/lib/cad/model/vars'
 import {
+  analyzeBundleModuleSource,
   analyzeCadSource,
   analyzeGeometrySource,
   analyzeMaterialSource,
   analyzeTaskSource,
+  assertExperimentModuleGraph,
 } from '@/lib/cad/source/sourceAnalysis'
 import {
   assertExperimentSourceBundle,
   createExperimentSourceBundle,
+  experimentTaskName,
   type ExperimentSourceBundle,
 } from '@/lib/cad/source/document'
+import { experimentTypeScriptPaths } from '@/lib/cad/source/moduleResolution'
 
 const previewPythonSource = 'async def simulate(*, sim, tasks, vars):\n    return None\n'
 const previewTaskSource = `import { defineTask } from '@caemble/core'
@@ -62,35 +66,18 @@ export function standalonePublicExampleBundle(experimentSource: string) {
   })
 }
 
-export function standaloneGeometryBundle(source: string, exportName: string, lengthUnit = 'mm') {
-  return createExperimentSourceBundle({
-    'experiment.tsx': `import { experiment } from '@caemble/core'
-import { ${exportName} } from './geometry'
-
-export default experiment({
-  lengthUnit: ${JSON.stringify(lengthUnit)},
-  varsSchema: {},
-  geometry: () => <${exportName} id="catalog-preview" />,
-  recordedData: {},
-})
-`,
-    'geometry.tsx': source,
-    'material.tsx': 'export {}\n',
-    'simulate.py': previewPythonSource,
-    'tasks/preview.tsx': previewTaskSource,
-  })
-}
-
 export async function evaluatePublicExampleBundle(bundle: ExperimentSourceBundle) {
   assertExperimentSourceBundle(bundle)
+  assertExperimentModuleGraph(bundle.files)
   const sourceHash = 'e'.repeat(64)
-  const entries = Object.entries(bundle.files).filter(([path]) => path.endsWith('.tsx'))
+  const entries = experimentTypeScriptPaths(bundle.files).map((path) => [path, bundle.files[path]] as const)
   const sources = Object.fromEntries(
     entries.map(([entryFile, source]) => {
       if (entryFile === 'experiment.tsx') analyzeCadSource(source)
-      else if (entryFile === 'geometry.tsx') analyzeGeometrySource(source, { allowEmpty: true, allowLocal: true })
+      else if (entryFile === 'geometry.tsx') analyzeGeometrySource(source, { allowEmpty: true })
       else if (entryFile === 'material.tsx') analyzeMaterialSource(source)
-      else analyzeTaskSource(source)
+      else if (experimentTaskName(entryFile) !== null) analyzeTaskSource(source)
+      else analyzeBundleModuleSource(source, entryFile)
       const compiled: CompiledCadSource = {
         apiVersion: 8,
         compilerVersion: CAD_COMPILER_VERSION,

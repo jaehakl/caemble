@@ -54,9 +54,8 @@ async function send<T>(method: HttpMethod, url: string, data?: unknown, retryCsr
     method !== 'get' &&
     (url.startsWith('/web/') ||
       url.startsWith('/ai/') ||
-      url.startsWith('/geometry/') ||
-      url === '/auth/geometry-namespace' ||
-      url === '/experiment/save')
+      url.startsWith('/experiment/') ||
+      url === '/auth/experiment-namespace')
   const headers = new Headers(data === undefined ? undefined : { 'content-type': 'application/json' })
   if (csrfProtected) headers.set('X-CSRF-Token', await ensureCsrfToken())
   const response = await fetch(`${API_URL}${url}`, {

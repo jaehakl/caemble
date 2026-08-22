@@ -6,24 +6,16 @@ import { buildSourceOnlyMeasurement } from '../src/lib/cad/execution/measurement
 import { serializeEvaluatedDocumentSnapshot } from '../src/lib/cad/execution/snapshot'
 import { executeCompiledDocument, inspectCompiledDocument } from '../src/lib/cad/execution/userModule'
 import { generateRandomVars } from '../src/lib/cad/model/vars'
-import {
-  CAD_COMPILER_VERSION,
-  type CompiledCadDocument,
-  type CompiledCadSource,
-  type CompiledGeometryModule,
-} from '../src/lib/cad/compiler/types'
+import { CAD_COMPILER_VERSION, type CompiledCadDocument, type CompiledCadSource } from '../src/lib/cad/compiler/types'
 import {
   cadSourceHash,
   CAD_SOURCE_API_VERSION,
   createCadSourceDocument,
-  EXPERIMENT_ENTRY_PATH,
-  EXPERIMENT_GEOMETRY_PATH,
-  EXPERIMENT_MATERIAL_PATH,
   EXPERIMENT_SIMULATION_PATH,
-  experimentTaskPaths,
   type ExperimentSourceBundle,
 } from '../src/lib/cad/source/document'
-import { createEffectiveGeometryGraph } from '../src/lib/cad/source/effectiveGeometryGraph'
+import { experimentTypeScriptPaths } from '../src/lib/cad/source/moduleResolution'
+import { assertExperimentModuleGraph } from '../src/lib/cad/source/sourceAnalysis'
 import { serializeCaeRequest } from '../src/features/cae/request'
 import type { CatalogRuntimeSlice } from '../src/contracts/catalog'
 import {
@@ -33,6 +25,7 @@ import {
 } from '../src/lib/catalog/runtime'
 
 type CatalogExperiment = Readonly<{
+  coordinate: string
   key: string
   relatedSolvers: readonly Readonly<{ name: string; version: string }>[]
   sourceBundle: ExperimentSourceBundle
@@ -62,7 +55,7 @@ function argument(name: string) {
   return index >= 0 ? process.argv[index + 1] : undefined
 }
 
-async function compileSource(source: string) {
+async function compileSource(source: string, sourcefile: string) {
   return (
     await transform(source, {
       format: 'cjs',
@@ -70,12 +63,13 @@ async function compileSource(source: string) {
       jsxFragment: 'Fragment',
       loader: 'tsx',
       platform: 'browser',
+      sourcefile,
       target: 'es2020',
     })
   ).code
 }
 
-function catalogExperiment(key: string) {
+function catalogExperiment(identifier: string) {
   const catalogRoot = path.resolve('../catalog')
   const executable = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3')
   const output = execFileSync(
@@ -87,7 +81,7 @@ function catalogExperiment(key: string) {
       path.join(catalogRoot, 'caemble_catalog/catalog.sqlite3'),
       'query',
       'experiment',
-      key,
+      identifier,
     ],
     {
       cwd: catalogRoot,
@@ -124,12 +118,8 @@ async function buildMeasurement(example: CatalogExperiment) {
   const experimentDocument = createCadSourceDocument('experiment', example.sourceBundle)
   const sourceHash = await cadSourceHash(experimentDocument)
   registerSourceCatalogRuntimeSlice(sourceHash, catalog)
-  const sourcePaths = [
-    EXPERIMENT_ENTRY_PATH,
-    EXPERIMENT_GEOMETRY_PATH,
-    EXPERIMENT_MATERIAL_PATH,
-    ...experimentTaskPaths(example.sourceBundle),
-  ]
+  const sourcePaths = experimentTypeScriptPaths(example.sourceBundle.files)
+  assertExperimentModuleGraph(example.sourceBundle.files)
   const sources = Object.fromEntries(
     await Promise.all(
       sourcePaths.map(async (entryFile) => {
@@ -137,43 +127,18 @@ async function buildMeasurement(example: CatalogExperiment) {
           apiVersion: CAD_SOURCE_API_VERSION,
           compilerVersion: CAD_COMPILER_VERSION,
           entryFile,
-          code: await compileSource(example.sourceBundle.files[entryFile]),
+          code: await compileSource(example.sourceBundle.files[entryFile], entryFile),
           sourceHash,
         }
         return [entryFile, source] as const
       }),
     ),
   )
-  const effective = await createEffectiveGeometryGraph(example.sourceBundle.geometrySnapshot)
-  const modules = Object.fromEntries(
-    await Promise.all(
-      effective.modules.map(async (module) => {
-        const compiled: CompiledGeometryModule = {
-          apiVersion: CAD_SOURCE_API_VERSION,
-          compilerVersion: CAD_COMPILER_VERSION,
-          entryFile: module.coordinate,
-          code: await compileSource(module.source),
-          sourceHash,
-          geometrySourceHash: module.sourceHash,
-          moduleHash: module.moduleHash,
-          exports: module.exports,
-          imports: module.imports,
-        }
-        return [module.coordinate, compiled] as const
-      }),
-    ),
-  )
-  const geometryGraph: NonNullable<CompiledCadDocument['geometryGraph']> = {
-    graphHash: effective.graphHash,
-    entryImports: effective.entryImports,
-    modules,
-  }
   const compiled: CompiledCadDocument = {
     apiVersion: CAD_SOURCE_API_VERSION,
     compilerVersion: CAD_COMPILER_VERSION,
     sourceHash,
     sources,
-    geometryGraph,
   }
   const simulationSource = example.sourceBundle.files[EXPERIMENT_SIMULATION_PATH]
   const inspection = inspectCompiledDocument(compiled)
@@ -183,15 +148,15 @@ async function buildMeasurement(example: CatalogExperiment) {
   return buildSourceOnlyMeasurement(experiment)
 }
 
-const exampleId = argument('example')
+const experimentIdentifier = argument('example')
 const outputArgument = argument('out')
-if (!exampleId || !outputArgument) {
-  throw new Error('Usage: npm run export:cae-fixture -- --example <id> --out <directory>')
+if (!experimentIdentifier || !outputArgument) {
+  throw new Error('Usage: npm run export:cae-fixture -- --example <experiment-coordinate> --out <directory>')
 }
-const example = catalogExperiment(exampleId)
+const example = catalogExperiment(experimentIdentifier)
 const expected = example.verification.fixture
 if (!expected) {
-  throw new Error(`Example ${exampleId} has no deterministic CAE fixture expectation.`)
+  throw new Error(`Experiment ${example.coordinate} has no deterministic CAE fixture expectation.`)
 }
 
 const outputDirectory = path.resolve(outputArgument)
@@ -229,4 +194,4 @@ await writeFile(
   'utf8',
 )
 
-console.log(`Exported catalog Experiment ${exampleId} CAE fixture to ${outputDirectory}`)
+console.log(`Exported catalog Experiment ${example.coordinate} CAE fixture to ${outputDirectory}`)

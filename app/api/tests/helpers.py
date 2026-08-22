@@ -11,7 +11,13 @@ from user_auth.utils.jwt import make_access
 async def create_user(db: AsyncSession, role_name: str = "user") -> User:
     role = await db.scalar(select(Role).where(Role.name == role_name))
     assert role is not None
-    user = User(email=f"{uuid.uuid4()}@example.com", display_name="테스트 사용자", is_active=True)
+    unique = uuid.uuid4()
+    user = User(
+        email=f"{unique}@example.com",
+        display_name="테스트 사용자",
+        experiment_namespace=f"test-{unique.hex[:16]}",
+        is_active=True,
+    )
     db.add(user)
     await db.flush()
     db.add(UserRole(user_id=user.id, role_id=role.id))
@@ -29,7 +35,7 @@ def auth_headers(user: User) -> dict[str, str]:
 
 def experiment_source_bundle(label: str = "experiment") -> dict:
     return {
-        "formatVersion": 5,
+        "formatVersion": 6,
         "files": {
             "experiment.tsx": label,
             "geometry.tsx": "export {}\n",
@@ -37,5 +43,4 @@ def experiment_source_bundle(label: str = "experiment") -> dict:
             "simulate.py": "async def simulate(*, sim, tasks, vars):\n    return None\n",
             "tasks/main.tsx": "task",
         },
-        "geometrySnapshot": {"schemaVersion": 2, "entryImports": [], "modules": []},
     }

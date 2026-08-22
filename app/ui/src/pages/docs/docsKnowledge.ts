@@ -36,7 +36,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       'Caemble의 Experiment는 공통 형상과 변수, Material, solver Task, 실행 프로그램과 RecordedData 계약을 하나의 source bundle로 관리합니다.',
       '',
       '1. 로그인하고 CAE Launcher가 연결되어 있는지 확인합니다.',
-      '2. Experiment 탭에서 `experiment.tsx`, `geometry.tsx`, `material.tsx`, `tasks/*.tsx`, `simulate.py`를 작성합니다.',
+      '2. Experiment Manager에서 공식 예제를 열거나 저장된 namespace / repository / SemVer Version을 선택한 뒤, Experiment 탭에서 source bundle을 작성합니다.',
       '3. source 상태가 `Ready`가 될 때까지 compile/evaluate 오류를 해결합니다.',
       '4. **Generate Candidate**로 `varsSchema` 범위의 새 변수 조건과 frozen Material 값을 미리 봅니다.',
       '5. 원하는 조건이면 **Save Current Measurement**로 변수와 Material snapshot을 고정합니다. 이 단계는 solver를 실행하지 않습니다.',
@@ -45,6 +45,8 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       '8. 성공하면 RecordedData가 원자적으로 기록되고 Measurement는 Recorded 상태가 됩니다. 결과 저장만 실패하면 세션 결과를 유지한 채 **Retry Saving Results**로 저장을 다시 시도합니다.',
       '',
       'Measurement는 immutable Experiment revision을 가리킵니다. 생성 요청의 source hash가 현재 revision과 다르면 저장이 거부되므로, source가 바뀌면 새 revision에서 새 Measurement를 준비하세요.',
+      '',
+      'Task 파일이 하나도 없는 Experiment도 Geometry preview와 Experiment 저장은 사용할 수 있습니다. 이 경우 Measurement 생성·선택·분석과 Simulation 실행은 Task를 추가할 때까지 비활성화됩니다.',
     ].join('\n'),
   }),
   manualChunk({
@@ -110,7 +112,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       'tasks',
       'simulate.py',
       'orchestration',
-      'formatVersion 5',
+      'formatVersion 6',
     ],
     content: [
       'Experiment Program은 공통 정의와 solver별 task, 실행 정책을 분리합니다.',
@@ -118,12 +120,13 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       '| 파일 | 책임 |',
       '| --- | --- |',
       '| `experiment.tsx` | 공통 lengthUnit, geometry, varsSchema, Material 역할 주입, group과 최종 recordedData 계약 |',
-      '| `geometry.tsx` | Experiment와 Task가 공유하는 named Geometry component와 Published Geometry import |',
+      '| `geometry.tsx` | Experiment와 Task가 공유하는 named Geometry component |',
       '| `material.tsx` | named Material 객체 또는 vars를 받는 Material factory |',
       '| `tasks/<name>.tsx` | solver identity, 선택적 Task-local scene과 `config({ vars })` |',
       '| `simulate.py` | named task 실행 순서, 분기, artifact 전달·해제·기록 |',
+      '| 그 밖의 `.ts`, `.tsx` 파일 | bundle 내부에서 상대 import하는 보조 모듈 |',
       '',
-      '공통 형상과 Task 보조 형상은 `geometry.tsx`, Material 정의는 `material.tsx`에서 named export하고 `experiment.tsx`와 각 Task에서 상대 import합니다. Task 사이의 중간 결과는 vars로 다시 계산하지 않고 typed artifact로 전달합니다.',
+      '공통 형상과 Task 보조 형상은 `geometry.tsx`, Material 정의는 `material.tsx`에서 named export하고 `experiment.tsx`와 각 Task에서 상대 import합니다. 필요한 보조 코드는 bundle에 파일을 추가해 로컬 상대 import할 수 있습니다. Source bundle 밖 package, URL, 동적 `import()`와 `require()`는 지원하지 않습니다.',
       '',
       '`experiment.tsx`의 `lengthUnit`, `varsSchema`, `geometry({ vars })`, `geometryGroup`, `surfaceGroup`, `recordedData`가 여러 Task가 공유하는 물리 세계와 최종 결과 계약입니다. 숫자만 보고 SI라고 가정하지 말고 scene 길이 단위와 각 DataSchema의 UCUM 단위를 명시하세요.',
     ].join('\n'),
@@ -143,7 +146,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       '',
       '`varsSchema`의 `min`과 `max`는 같은 tensor shape여야 합니다. Geometry callback은 `({ vars })`로 값을 받고 외부의 변경 가능한 상태에 의존하지 않아야 합니다. 같은 parent 아래의 component `id`는 고유해야 하며, 이 ID를 `geometryGroup`에 넣어 `experiment.geometry.<group>`으로 참조합니다. surface는 Viewer에서 확인한 `partId/surface-N`을 `surfaceGroup`에 넣습니다.',
       '',
-      '[DC Uniform Bar의 canonical experiment.tsx 열기](/docs?section=solvers&item=experiment:dc-uniform-bar)',
+      '[DC Uniform Bar의 canonical experiment.tsx 열기](/docs?section=solvers&item=experiment:caemble:experiment/caemble/verified/dc-uniform-bar@1.0.0)',
     ].join('\n'),
   }),
   manualChunk({
@@ -175,7 +178,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       '',
       '`errorRate`가 있으면 Candidate의 frozen 값이 달라질 수 있습니다. 같은 이름과 선언의 Material은 Experiment와 모든 Task에서 한 번만 sampling되며, 저장한 Measurement에는 실제 parameter snapshot이 고정됩니다. unresolved 역할은 preview할 수 있지만 Measurement 생성과 solver 실행은 차단됩니다.',
       '',
-      '[Two-material Wheel Assembly의 canonical Geometry source 열기](/docs?section=geometry&item=example:two-material-wheel-assembly)',
+      '[Two-material Wheel Assembly의 canonical Experiment bundle 열기](/docs?section=solvers&item=experiment:caemble:experiment/caemble/assemblies/two-material-wheel-assembly@1.0.0)',
     ].join('\n'),
   }),
   manualChunk({
@@ -191,7 +194,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       '',
       '`parameters`, `initializations`, `boundaryConditions`, `outputs`의 이름과 occurrence는 [Physics Catalog](/docs?section=solvers)의 현재 manifest가 단일 원본입니다. target은 `experiment.geometry.*`, `experiment.surface.*`, `task.geometry.*`, `task.surface.*` 중 method가 요구하는 source/kind와 일치해야 합니다.',
       '',
-      '[DC Uniform Bar의 canonical Task source 열기](/docs?section=solvers&item=experiment:dc-uniform-bar)',
+      '[DC Uniform Bar의 canonical Task source 열기](/docs?section=solvers&item=experiment:caemble:experiment/caemble/verified/dc-uniform-bar@1.0.0)',
     ].join('\n'),
   }),
   manualChunk({
@@ -209,7 +212,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       '- `inputs={port: artifact}`: producer artifact를 호환되는 consumer input port에 전달',
       '- `state=...`: kernel의 opaque revision을 이어서 실행할 때만 사용',
       '',
-      '[DC Uniform Bar의 canonical simulate.py 열기](/docs?section=solvers&item=experiment:dc-uniform-bar)',
+      '[DC Uniform Bar의 canonical simulate.py 열기](/docs?section=solvers&item=experiment:caemble:experiment/caemble/verified/dc-uniform-bar@1.0.0)',
     ].join('\n'),
   }),
   manualChunk({
@@ -233,16 +236,23 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
     section: 'program',
     anchor: 'experiment-program-examples',
     aliases: ['experiment-verified-example'],
-    title: '검증된 프로그램 예제 4종',
+    title: '검증된 공식 Experiment 예제',
     summary: '실제 UI-CAE fixture로 검증되는 단계별 Experiment Program입니다.',
     keywords: ['program examples', 'DC', 'current density', 'resolution', 'electro thermal', 'multiphysics'],
     content: [
       '다음 예제는 SQLite 공식 카탈로그의 source bundle을 Workbench와 UI-CAE 계약 테스트가 직접 사용합니다.',
       '',
-      '- [DC Uniform Bar](/docs?section=solvers&item=experiment:dc-uniform-bar)',
-      '- [DC Notched Current Density](/docs?section=solvers&item=experiment:dc-notched-current-density)',
-      '- [DC Resolution Study](/docs?section=solvers&item=experiment:dc-resolution-study)',
-      '- [Electro-Thermal Uniform Bar](/docs?section=solvers&item=experiment:electro-thermal-uniform-bar)',
+      '- [DC Uniform Bar](/docs?section=solvers&item=experiment:caemble:experiment/caemble/verified/dc-uniform-bar@1.0.0)',
+      '- [DC Notched Current Density](/docs?section=solvers&item=experiment:caemble:experiment/caemble/verified/dc-notched-current-density@1.0.0)',
+      '- [DC Resolution Study](/docs?section=solvers&item=experiment:caemble:experiment/caemble/verified/dc-resolution-study@1.0.0)',
+      '- [Electro-Thermal Uniform Bar](/docs?section=solvers&item=experiment:caemble:experiment/caemble/verified/electro-thermal-uniform-bar@1.0.0)',
+      '- [Basketball Goal](/docs?section=solvers&item=experiment:caemble:experiment/caemble/getting-started/basketball-goal@1.0.0)',
+      '- [Fiber Bundle](/docs?section=solvers&item=experiment:caemble:experiment/caemble/advanced-shapes/fiber-bundle@1.0.0)',
+      '- [Shell Cutaways](/docs?section=solvers&item=experiment:caemble:experiment/caemble/advanced-shapes/shell-cutaways@1.0.0)',
+      '- [Random Curved-edge Cylinder Array](/docs?section=solvers&item=experiment:caemble:experiment/caemble/arrays/random-curved-edge-cylinder-array@1.0.0)',
+      '- [Random Curved-surface Sphere HCP Array](/docs?section=solvers&item=experiment:caemble:experiment/caemble/arrays/random-curved-surface-sphere-hcp-array@1.0.0)',
+      '- [Geometry Authoring Skeleton](/docs?section=solvers&item=experiment:caemble:experiment/caemble/getting-started/geometry-authoring-skeleton@1.0.0)',
+      '- [Two-material Wheel Assembly](/docs?section=solvers&item=experiment:caemble:experiment/caemble/assemblies/two-material-wheel-assembly@1.0.0)',
     ].join('\n'),
   }),
   manualChunk({
@@ -254,7 +264,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
     keywords: ['multiphysics', 'Joule heating', 'heatSource', 'electric', 'thermal'],
     collapsed: true,
     content:
-      '[Electro-Thermal Uniform Bar의 canonical bundle과 verification 열기](/docs?section=solvers&item=experiment:electro-thermal-uniform-bar)',
+      '[Electro-Thermal Uniform Bar의 canonical bundle과 verification 열기](/docs?section=solvers&item=experiment:caemble:experiment/caemble/verified/electro-thermal-uniform-bar@1.0.0)',
   }),
   manualChunk({
     id: 'reference-source-import',
@@ -265,29 +275,21 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
     summary: 'TSX source에서 사용할 수 있는 @caemble/core 공개 경계를 설명합니다.',
     keywords: ['CAD Reference', '@caemble/core', 'import', 'default export', 'compile', 'evaluate'],
     content: [
-      '`material.tsx`는 `@caemble/core`만 import합니다. Experiment TSX는 `@caemble/core`, `./geometry`, `./material`, Task TSX는 `@caemble/core`, `../geometry`, `../material`의 named import만 사용합니다. Task 간 import, 동적 `import()`, `require()`, URL과 다른 package는 지원하지 않습니다.',
+      'Experiment source bundle은 핵심 파일뿐 아니라 사용자가 추가한 로컬 `.ts`, `.tsx` 파일도 함께 저장합니다. TypeScript/TSX 파일은 bundle 안의 다른 파일을 상대 경로로 import할 수 있습니다. Python은 핵심 `simulate.py` 한 파일만 사용합니다. `@caemble/core` 외 package, URL, 동적 `import()`와 `require()`는 지원하지 않습니다.',
       '',
-      'Experiment 정의는 `experiment({...})`, 각 Task는 `defineTask({...})`를 default export합니다. `material.tsx`는 named Material 객체 또는 factory만 export합니다. `geometry.tsx`와 Published Geometry module은 PascalCase named `Geometry<Props>` 함수 component를 여러 개 export할 수 있습니다. Geometry dependency는 exact coordinate의 named import 문이 유일한 원본이며 Tree와 DB projection은 source에서 자동으로 만들어집니다.',
+      'Experiment 정의는 `experiment({...})`, 각 Task는 `defineTask({...})`를 default export합니다. `material.tsx`는 named Material 객체 또는 factory를 export하고, `geometry.tsx`는 PascalCase named `Geometry<Props>` 함수 component를 여러 개 export할 수 있습니다. 모든 의존 코드는 같은 Experiment bundle 안에 있으므로 별도 Geometry Repository나 Version coordinate를 해석하지 않습니다.',
       '',
-      '부분 예시 — 다음 두 fence는 각각 완성 파일이 아니라 import 경계만 보여줍니다.',
+      '부분 예시 — 다음 fence는 완성 파일이 아니라 로컬 bundle import 경계만 보여줍니다.',
       '',
       '```tsx',
       '// geometry.tsx',
-      'import { NotchedConductor as Conductor } from "caemble:geometry/jlee/common/notched-conductor@1.2.3"',
-      'export { Conductor }',
+      'import { profilePoints } from "./lib/profile"',
+      'export const Conductor: Geometry = () => <Polygon points={profilePoints} />',
       '```',
       '',
-      '```tsx',
-      '// experiment.tsx',
-      'import { Conductor } from "./geometry"',
-      '<Conductor id="conductor" />',
-      '```',
+      'Experiment Manager는 공식 bundle과 저장된 사용자 Experiment Version을 엽니다. 저장된 coordinate는 `namespace / repository / key / SemVer`로 식별하며, Repository는 별도 관리 객체가 아니라 저장된 Experiment에서 파생되는 그룹입니다.',
       '',
-      'Geometry Manager의 **Experiment에서 사용**은 선택한 export의 exact import 예시를 복사하고 `geometry.tsx`를 엽니다. Source는 자동 수정하지 않습니다. Import alias는 해당 source module 안에서만 고유하며 `id` prop과는 별개입니다.',
-      '',
-      'Geometry 탭은 Experiment와 독립적인 Geometry Manager입니다. Examples source는 읽기 전용으로 보고 개인 Repository로 Fork하여 사용합니다. Workspace Published Version도 읽기 전용이며 `새 Version 편집`을 눌러야 Draft Version이 생성됩니다. Manager 선택과 Draft Version은 현재 Experiment의 `geometry.tsx`, 저장, Simulation, AI context를 바꾸지 않습니다.',
-      '',
-      'Published Version은 직접 덮어쓰지 않습니다. source를 처음 바꾸면 기존 Version 기반 Draft Version이 생기며, 발행하면 새 exact Version이 됩니다. 이전 세션의 `geometry.tsx`가 발행 전 Geometry를 참조하면 미리보기는 유지되지만, Experiment 저장 전에 사용자가 해당 Geometry를 발행하고 exact import로 직접 교체해야 합니다. 자동 발행이나 source 자동 수정은 하지 않습니다.',
+      '**Save**는 현재 Version을 덮어쓰고, **Save New Version**은 patch/minor/major를 증가시키며, **Save As**는 새 repository/key의 `0.1.0`을 만듭니다. Measurement나 모델이 연결된 Version은 source만 잠깁니다. source 변경은 새 Version 또는 Save As로 저장하되, name/description 같은 metadata는 현재 Version에 **Save**할 수 있습니다.',
       '',
       'Standalone preview는 선택한 named export를 props 없이 호출할 수 있습니다. 모든 local PascalCase `Geometry<Props>` 함수는 custom prop을 직접 구조 분해하고 각각 명시적인 기본값을 제공해야 합니다. `id`, Material, children과 transform은 evaluator가 공통 기본값을 주입합니다.',
       '',
@@ -314,7 +316,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
     content: [
       'CAD API v8 Geometry는 JSX를 반환하는 순수 함수 component입니다. `geometry.tsx`에는 재사용할 named `Geometry<Props>`를 두고, `experiment.tsx`의 `geometry` callback에서 호출합니다. 모든 custom prop은 required/optional 표기와 관계없이 구조 분해 initializer가 있어야 하므로 `<Assembly />`처럼 props 없이 호출할 수 있습니다. 숫자로 된 길이는 모두 해당 scene의 `lengthUnit`으로 해석됩니다.',
       '',
-      '[AI Helper가 사용하는 canonical Geometry Authoring Skeleton 열기](/docs?section=geometry&item=example:geometry-authoring-skeleton)',
+      '[AI Helper가 사용하는 canonical Geometry Authoring Skeleton Experiment 열기](/docs?section=solvers&item=experiment:caemble:experiment/caemble/getting-started/geometry-authoring-skeleton@1.0.0)',
       '',
       '이 skeleton은 SQLite 카탈로그에서 AI reference로 생성되며 production과 동일한 TypeScript emit 설정, declaration type-check와 실제 evaluator 회귀 테스트를 통과합니다.',
       '',
@@ -445,7 +447,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
     content: [
       '이 예제는 SQLite 카탈로그의 source를 직접 compile/evaluate하는 회귀 테스트 대상입니다.',
       '',
-      '[Basketball Goal canonical source 열기](/docs?section=geometry&item=example:basketball-goal)',
+      '[Basketball Goal canonical Experiment bundle 열기](/docs?section=solvers&item=experiment:caemble:experiment/caemble/getting-started/basketball-goal@1.0.0)',
     ].join('\n'),
   }),
   manualChunk({
@@ -629,15 +631,8 @@ export function catalogSearchKnowledge(items: readonly CatalogSearchItem[]): rea
           ? 'quantity-kinds'
           : item.kind === 'solver' || item.kind === 'experiment'
             ? 'solvers'
-            : item.kind === 'geometry'
-              ? 'geometry'
-              : 'materials'
-      const selectedItem =
-        item.kind === 'geometry'
-          ? `example:${item.key}`
-          : item.kind === 'experiment'
-            ? `experiment:${item.key}`
-            : item.key
+            : 'materials'
+      const selectedItem = item.kind === 'experiment' ? `experiment:${item.key}` : item.key
       return Object.freeze({
         id: `${item.kind}:${item.key}`,
         section,

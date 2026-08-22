@@ -1,6 +1,4 @@
 export { evaluateCad, evaluateCadScene } from './evaluation/evaluator'
-export { setGeometryAuthoringGraph } from './compiler/geometryTypeEnvironment'
-export type { GeometryTypeGraph } from './compiler/geometryTypes'
 export { cadAuthoringContract, cadElementCatalog } from './catalog'
 export { CAD_API_DECLARATION_FINGERPRINT } from './api/generatedVersions'
 export {
@@ -110,6 +108,7 @@ export {
   EXPERIMENT_MATERIAL_PATH,
   EXPERIMENT_SIMULATION_PATH,
   EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION,
+  addExperimentSourceFile,
   addExperimentTask,
   assertCadSourceDocument,
   assertExperimentSourceBundle,
@@ -120,6 +119,7 @@ export {
   experimentSourceFile,
   experimentTaskName,
   experimentTaskPaths,
+  removeExperimentSourceFile,
   removeExperimentTask,
   updateCadSource,
   updateExperimentSourceFile,
@@ -132,48 +132,20 @@ export type {
   ExperimentSourceDocument,
 } from './source/document'
 export {
-  GEOMETRY_MODULE_FORMAT_VERSION,
-  GEOMETRY_SNAPSHOT_SCHEMA_VERSION,
-  MAX_COMPILED_GEOMETRY_GRAPH_BYTES,
-  MAX_GEOMETRY_GRAPH_DEPTH,
-  MAX_GEOMETRY_GRAPH_SOURCE_BYTES,
-  MAX_GEOMETRY_IMPORTS_PER_MODULE,
-  MAX_GEOMETRY_MODULES,
-  MAX_GEOMETRY_MODULE_SOURCE_BYTES,
-  MAX_GEOMETRY_ENTRY_IMPORTS,
-  MAX_GEOMETRY_SEMVER_COMPONENT,
-  assertGeometryCoordinate,
-  assertGeometrySnapshot,
-  canonicalizeGeometrySnapshot,
-  createGeometrySnapshot,
-  geometryModuleHash,
-  geometryCoordinateNamespace,
-  geometrySourceHash,
-  isGeometryCoordinate,
-  isGeometryComponentName,
-  validateGeometrySnapshotHashes,
-} from './source/geometrySnapshot'
-export type {
-  GeometryCoordinate,
-  LocalGeometryCoordinate,
-  GeometrySnapshot,
-  GeometrySnapshotImport,
-  GeometrySnapshotModule,
-} from './source/geometrySnapshot'
-export { createEffectiveGeometryGraph } from './source/effectiveGeometryGraph'
-export type {
-  EffectiveGeometryGraph,
-  EffectiveGeometryModule,
-  GeometryDraftOverlay,
-  GeometryModuleCoordinate,
-  GeometryModuleDraft,
-} from './source/effectiveGeometryGraph'
-export {
+  analyzeBundleModuleSource,
   analyzeGeometrySource,
   analyzeMaterialSource,
+  assertExperimentModuleGraph,
   geometryExportAtOffset,
   projectGeometryExportSource,
 } from './source/sourceAnalysis'
+export {
+  assertExperimentSourcePath,
+  assertExperimentSourcePaths,
+  experimentTypeScriptPaths,
+  isExperimentTypeScriptPath,
+  resolveExperimentModuleSpecifier,
+} from './source/moduleResolution'
 export {
   CadDocumentEvaluationError,
   evaluateDocument,
@@ -221,13 +193,7 @@ export {
 export type { DataTensorAccessor } from './model/dataTensor'
 export { CadCompilationError, compileCadDocument } from './compiler/monacoCompiler'
 export type { CompileCadDocumentOptions } from './compiler/monacoCompiler'
-export type {
-  CadDiagnostic as CompilerDiagnostic,
-  CompiledCadDocument,
-  CompiledCadSource,
-  CompiledGeometryGraph,
-  CompiledGeometryModule,
-} from './compiler/types'
+export type { CadDiagnostic as CompilerDiagnostic, CompiledCadDocument, CompiledCadSource } from './compiler/types'
 export {
   cadSemanticHash,
   compiledCadDocumentSemanticHash,

@@ -22,14 +22,11 @@ import {
   Server,
   Square,
   TableProperties,
-  Upload,
 } from 'lucide-react'
 import type { WorkbenchAction, WorkbenchMenuDefinition } from '@/features/cae-workbench/chrome'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { WorkbenchTabId } from '@/features/cae-workbench/types'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
-import { GeometryManagerRibbon } from '@/features/cae-workbench/geometry/GeometryManagerRibbon'
-import type { GeometryManagerRibbonState } from '@/features/cae-workbench/geometry/geometryManagerTypes'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 import type { WorkbenchDialog } from './caePageTypes'
 import { GeometryAuthoringRibbon } from './GeometryAuthoringRibbon'
@@ -42,8 +39,6 @@ function openDocsWindow(href: string) {
 export function useCaePageChrome({
   authenticated,
   experimentAuthoringState,
-  geometryAuthoringState,
-  geometryManagerRibbonState = null,
   guardReplacement,
   openTab,
   requestRunSelected,
@@ -53,8 +48,6 @@ export function useCaePageChrome({
 }: {
   authenticated: boolean
   experimentAuthoringState: CadEditorAuthoringState | null
-  geometryAuthoringState: CadEditorAuthoringState | null
-  geometryManagerRibbonState?: GeometryManagerRibbonState | null
   guardReplacement: (run: () => unknown | Promise<unknown>) => void
   openTab: (tab: WorkbenchTabId) => void
   requestRunSelected: () => void
@@ -65,8 +58,8 @@ export function useCaePageChrome({
   const actions = useMemo<Record<string, WorkbenchAction>>(() => {
     const loginReason = '로그인 후 사용할 수 있습니다.'
     const savedReason = '저장되고 편집되지 않은 Experiment가 필요합니다.'
-    const geometryDraftReason = workbench.geometry.hasReachableDrafts
-      ? 'geometry.tsx의 발행 전 Geometry import를 exact Version으로 바꿔야 합니다.'
+    const tasklessReason = !workbench.hasTasks
+      ? 'Task가 없는 Experiment는 미리보기와 source 저장만 사용할 수 있습니다.'
       : undefined
     const busyReason = workbench.measurementActions.busy ? '다른 CAE 작업이 진행 중입니다.' : undefined
     const pendingResultReason = workbench.measurementActions.pendingRecordMeasurementId
@@ -104,19 +97,13 @@ export function useCaePageChrome({
         id: 'load-experiment',
         label: 'Load Experiment',
         icon: <FolderOpen className="size-4" />,
-        onSelect: () => setDialog('load-experiment'),
+        onSelect: () => openTab('experiments'),
       },
-      experimentHistory: {
-        id: 'experiment-history',
-        label: 'Experiment History',
+      experimentManager: {
+        id: 'experiment-manager',
+        label: 'Experiment Manager',
         icon: <GitBranch className="size-4" />,
-        disabled: !authenticated || !workbench.experimentId,
-        disabledReason: !authenticated
-          ? loginReason
-          : !workbench.experimentId
-            ? '저장된 Experiment가 필요합니다.'
-            : undefined,
-        onSelect: () => setDialog('experiment-history'),
+        onSelect: () => openTab('experiments'),
       },
       saveExperiment: {
         id: 'save-experiment',
@@ -126,28 +113,48 @@ export function useCaePageChrome({
           !authenticated ||
           !workbench.experiment ||
           Boolean(workbench.experimentRecord && !workbench.experimentManageable) ||
-          workbench.geometry.hasReachableDrafts ||
+          (workbench.sourceLocked && workbench.experimentDirty) ||
           workbench.saving !== null,
         disabledReason: !authenticated
           ? loginReason
           : !workbench.experiment
             ? 'Experiment source가 없습니다.'
             : workbench.experimentRecord && !workbench.experimentManageable
-              ? '다른 사용자의 정의는 Save As로 저장하세요.'
-              : (geometryDraftReason ?? sourceLockReason),
+              ? '다른 사용자의 Experiment는 Save As로 저장하세요.'
+              : workbench.sourceLocked && workbench.experimentDirty
+                ? '연결 데이터가 있는 Version은 잠겨 있습니다. Save New Version을 사용하세요.'
+                : sourceLockReason,
         onSelect: () => setDialog('save-experiment'),
+      },
+      saveExperimentVersion: {
+        id: 'save-experiment-version',
+        label: 'Save New Version',
+        icon: <GitBranch className="size-4" />,
+        disabled:
+          !authenticated ||
+          !workbench.experiment ||
+          !workbench.experimentRecord ||
+          !workbench.experimentManageable ||
+          workbench.saving !== null,
+        disabledReason: !authenticated
+          ? loginReason
+          : !workbench.experimentRecord
+            ? '먼저 Experiment를 저장하세요.'
+            : !workbench.experimentManageable
+              ? '다른 사용자의 Experiment는 Save As로 저장하세요.'
+              : sourceLockReason,
+        onSelect: () => setDialog('save-experiment-version'),
       },
       saveExperimentAs: {
         id: 'save-experiment-as',
         label: 'Save Experiment As',
         icon: <SaveAll className="size-4" />,
-        disabled:
-          !authenticated || !workbench.experiment || workbench.geometry.hasReachableDrafts || workbench.saving !== null,
+        disabled: !authenticated || !workbench.experiment || workbench.saving !== null,
         disabledReason: !authenticated
           ? loginReason
           : !workbench.experiment
             ? 'Experiment source가 없습니다.'
-            : (geometryDraftReason ?? sourceLockReason),
+            : sourceLockReason,
         onSelect: () => setDialog('save-experiment-as'),
       },
       generateCandidate: {
@@ -170,6 +177,7 @@ export function useCaePageChrome({
         icon: <Beaker className="size-4" />,
         disabled:
           !authenticated ||
+          !workbench.hasTasks ||
           !workbench.experimentClean ||
           workbench.experimentDocument.draftTaskNames.length > 0 ||
           workbench.experimentDocument.status !== 'Ready' ||
@@ -179,9 +187,10 @@ export function useCaePageChrome({
           Boolean(workbench.measurementActions.pendingRecordMeasurementId),
         disabledReason: !authenticated
           ? loginReason
-          : !workbench.experimentClean
-            ? savedReason
-            : (draftPreviewReason ?? pendingResultReason ?? evaluationBusyReason),
+          : (tasklessReason ??
+            (!workbench.experimentClean
+              ? savedReason
+              : (draftPreviewReason ?? pendingResultReason ?? evaluationBusyReason))),
         onSelect: () => runSafely(workbench.measurementActions.saveCurrent),
       },
       selectMeasurement: {
@@ -190,14 +199,13 @@ export function useCaePageChrome({
         icon: <TableProperties className="size-4" />,
         disabled:
           !authenticated ||
+          !workbench.hasTasks ||
           !workbench.experimentClean ||
           workbench.measurementActions.busy ||
           Boolean(workbench.measurementActions.pendingRecordMeasurementId),
         disabledReason: !authenticated
           ? loginReason
-          : !workbench.experimentClean
-            ? savedReason
-            : (pendingResultReason ?? busyReason),
+          : (tasklessReason ?? (!workbench.experimentClean ? savedReason : (pendingResultReason ?? busyReason))),
         onSelect: () => setDialog('measurement'),
       },
       duplicateMeasurement: {
@@ -206,6 +214,7 @@ export function useCaePageChrome({
         icon: <Copy className="size-4" />,
         disabled:
           !authenticated ||
+          !workbench.hasTasks ||
           !workbench.experimentClean ||
           !selected ||
           workbench.experimentDocument.draftTaskNames.length > 0 ||
@@ -213,11 +222,12 @@ export function useCaePageChrome({
           Boolean(workbench.measurementActions.pendingRecordMeasurementId),
         disabledReason: !authenticated
           ? loginReason
-          : !workbench.experimentClean
-            ? savedReason
-            : !selected
-              ? '복제할 Measurement를 선택하세요.'
-              : (draftPreviewReason ?? pendingResultReason ?? busyReason),
+          : (tasklessReason ??
+            (!workbench.experimentClean
+              ? savedReason
+              : !selected
+                ? '복제할 Measurement를 선택하세요.'
+                : (draftPreviewReason ?? pendingResultReason ?? busyReason))),
         onSelect: () => {
           if (selected) runSafely(() => workbench.measurementActions.duplicateMeasurement(selected))
         },
@@ -229,6 +239,7 @@ export function useCaePageChrome({
         disabled:
           !cancellingRun &&
           (!authenticated ||
+            !workbench.hasTasks ||
             !workbench.experimentClean ||
             !selected ||
             Boolean(selected?.recorded_at) ||
@@ -239,15 +250,16 @@ export function useCaePageChrome({
           ? undefined
           : !authenticated
             ? loginReason
-            : !workbench.experimentClean
-              ? savedReason
-              : !selected
-                ? 'Prepared Measurement를 선택하세요.'
-                : selected.recorded_at
-                  ? '이미 RecordedData가 있는 Measurement는 다시 실행할 수 없습니다.'
-                  : workbench.measurementActions.pendingRecordMeasurementId
-                    ? '실행 결과 저장을 먼저 다시 시도하세요.'
-                    : (draftPreviewReason ?? evaluationBusyReason),
+            : (tasklessReason ??
+              (!workbench.experimentClean
+                ? savedReason
+                : !selected
+                  ? 'Prepared Measurement를 선택하세요.'
+                  : selected.recorded_at
+                    ? '이미 RecordedData가 있는 Measurement는 다시 실행할 수 없습니다.'
+                    : workbench.measurementActions.pendingRecordMeasurementId
+                      ? '실행 결과 저장을 먼저 다시 시도하세요.'
+                      : (draftPreviewReason ?? evaluationBusyReason))),
         onSelect: cancellingRun ? workbench.measurementActions.cancel : () => runSafely(requestRunSelected),
       },
       retryRecord: {
@@ -264,8 +276,10 @@ export function useCaePageChrome({
         id: 'analyze-measurements',
         label: 'Analyze Measurements',
         icon: <ChartNoAxesCombined className="size-4" />,
-        disabled: !authenticated || !workbench.experimentClean,
-        disabledReason: !authenticated ? loginReason : !workbench.experimentClean ? savedReason : undefined,
+        disabled: !authenticated || !workbench.hasTasks || !workbench.experimentClean,
+        disabledReason: !authenticated
+          ? loginReason
+          : (tasklessReason ?? (!workbench.experimentClean ? savedReason : undefined)),
         onSelect: () => setDialog('analysis'),
       },
       experimentTab: {
@@ -280,11 +294,11 @@ export function useCaePageChrome({
         icon: <ChartNoAxesCombined className="size-4" />,
         onSelect: () => openTab('recorded-data'),
       },
-      geometryTab: {
-        id: 'tab-geometry',
-        label: 'Geometry Manager',
+      experimentsTab: {
+        id: 'tab-experiments',
+        label: 'Experiment Manager',
         icon: <Boxes className="size-4" />,
-        onSelect: () => openTab('geometry'),
+        onSelect: () => openTab('experiments'),
       },
       materialManager: {
         id: 'material-manager',
@@ -293,26 +307,6 @@ export function useCaePageChrome({
         disabled: !authenticated,
         disabledReason: !authenticated ? loginReason : undefined,
         onSelect: () => setDialog('material'),
-      },
-      geometryManager: {
-        id: 'geometry-manager',
-        label: 'Geometry Manager',
-        icon: <Boxes className="size-4" />,
-        onSelect: () => openTab('geometry'),
-      },
-      publishGeometryExport: {
-        id: 'publish-geometry-export',
-        label: 'Publish geometry.tsx Export',
-        icon: <Upload className="size-4" />,
-        disabled: !authenticated || workbench.geometry.entryExports.length === 0 || workbench.geometry.busy,
-        disabledReason: !authenticated
-          ? loginReason
-          : workbench.geometry.entryExports.length === 0
-            ? 'geometry.tsx에 분석 가능한 named Geometry export가 없습니다.'
-            : workbench.geometry.busy
-              ? '다른 Geometry 작업이 진행 중입니다.'
-              : undefined,
-        onSelect: () => setDialog('publish-geometry-export'),
       },
       aiChat: {
         id: 'ai-chat',
@@ -381,7 +375,7 @@ export function useCaePageChrome({
     }
 
     if (!sourceLockReason) return defined
-    const locked = ['newExperiment', 'loadExperiment', 'experimentHistory', 'saveExperiment', 'saveExperimentAs']
+    const locked = ['newExperiment', 'loadExperiment', 'saveExperiment', 'saveExperimentVersion', 'saveExperimentAs']
     return Object.fromEntries(
       Object.entries(defined).map(([key, action]) => [
         key,
@@ -398,13 +392,12 @@ export function useCaePageChrome({
         items: [
           { type: 'action', action: actions.newExperiment },
           { type: 'action', action: actions.loadExperiment },
-          { type: 'action', action: actions.experimentHistory },
+          { type: 'action', action: actions.experimentManager },
           { type: 'separator', id: 'source-save-separator' },
           { type: 'action', action: actions.saveExperiment },
+          { type: 'action', action: actions.saveExperimentVersion },
           { type: 'action', action: actions.saveExperimentAs },
           { type: 'separator', id: 'material-separator' },
-          { type: 'action', action: actions.publishGeometryExport },
-          { type: 'action', action: actions.geometryManager },
           { type: 'action', action: actions.materialManager },
         ],
       },
@@ -428,7 +421,7 @@ export function useCaePageChrome({
         label: 'View',
         items: [
           { type: 'action', action: actions.experimentTab },
-          { type: 'action', action: actions.geometryTab },
+          { type: 'action', action: actions.experimentsTab },
           { type: 'action', action: actions.recordedDataTab },
         ],
       },
@@ -482,10 +475,10 @@ export function useCaePageChrome({
           actions={[
             actions.newExperiment,
             actions.loadExperiment,
-            actions.experimentHistory,
+            actions.experimentManager,
             actions.saveExperiment,
+            actions.saveExperimentVersion,
             actions.saveExperimentAs,
-            actions.publishGeometryExport,
             actions.generateCandidate,
             actions.saveCurrentMeasurement,
           ]}
@@ -500,13 +493,15 @@ export function useCaePageChrome({
       ),
     },
     {
-      tabId: 'geometry',
-      label: 'Geometry',
+      tabId: 'experiments',
+      label: 'Experiments',
       content: (
-        <GeometryManagerRibbon
-          extraActions={<GeometryAuthoringRibbon state={geometryAuthoringState} />}
-          state={geometryManagerRibbonState}
-        />
+        <RibbonActions actions={[actions.newExperiment, actions.loadExperiment, actions.saveExperimentAs]}>
+          <span className="text-sm font-semibold">Experiment Manager</span>
+          <span className="mt-1 text-xs text-muted-foreground">
+            Official 및 저장된 namespace / repository / SemVer 목록
+          </span>
+        </RibbonActions>
       ),
     },
     {

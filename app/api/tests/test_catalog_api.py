@@ -5,6 +5,7 @@ import pytest
 import pytest_asyncio
 import warnings
 from caemble_catalog import Catalog
+from caemble_catalog.admin import create_draft, insert_experiment, refresh_derived_data, writable_connection
 from fastapi import FastAPI
 
 from routers.catalog import router
@@ -17,7 +18,7 @@ def test_catalog_openapi_builds_without_warnings():
         warnings.simplefilter("error")
         schema = app.openapi()
     assert "/catalog/runtime-slice" in schema["paths"]
-    assert "/catalog/geometries/{key}" in schema["paths"]
+    assert "/catalog/geometries/{key}" not in schema["paths"]
     assert "/catalog/experiments/{key}" in schema["paths"]
 
 
@@ -37,9 +38,9 @@ async def test_catalog_is_anonymous_cacheable_and_paginated(catalog_client: http
     meta = await catalog_client.get("/catalog/meta")
     assert meta.status_code == 200
     assert meta.json()["quantityKindCount"] == 1_216
-    assert meta.json()["schemaVersion"] == 3
-    assert meta.json()["geometryCount"] == 7
-    assert meta.json()["experimentCount"] == 4
+    assert meta.json()["schemaVersion"] == 4
+    assert "geometryCount" not in meta.json()
+    assert meta.json()["experimentCount"] == 11
     assert meta.json()["materialGlobalQualifiers"][0] == "temperature"
     assert "canonical_key" in meta.json()["materialDesignRules"]
     assert meta.headers["etag"].startswith('"')
@@ -93,44 +94,29 @@ async def test_catalog_search_filters_and_errors(catalog_client: httpx.AsyncClie
 
 
 @pytest.mark.asyncio
-async def test_example_geometries_and_experiments_are_public_filterable_and_cacheable(
+async def test_example_experiments_are_public_filterable_and_cacheable(
     catalog_client: httpx.AsyncClient,
 ):
-    repositories = await catalog_client.get("/catalog/geometry-repositories")
-    assert repositories.status_code == 200
-    assert [item["slug"] for item in repositories.json()] == [
-        "getting-started",
-        "arrays",
-        "advanced-shapes",
-        "assemblies",
-    ]
-    arrays = await catalog_client.get("/catalog/geometries", params={"repository": "arrays"})
-    assert arrays.status_code == 200
-    assert arrays.json()["total"] == 2
-    assert {item["repository"] for item in arrays.json()["items"]} == {"arrays"}
-
-    geometries = await catalog_client.get("/catalog/geometries", params={"element": "fiber", "limit": 1})
-    assert geometries.status_code == 200
-    assert geometries.json()["total"] == 2
-    assert geometries.json()["nextCursor"]
-    assert geometries.headers["etag"]
-
-    wheel = await catalog_client.get("/catalog/geometries/two-material-wheel-assembly")
-    assert wheel.status_code == 200
-    assert wheel.json()["exportName"] == "WheelAssembly"
-    assert [item["role"] for item in wheel.json()["materialRoles"]] == ["tire", "wheel"]
-    assert "export const WheelAssembly" in wheel.json()["source"]
-
     experiments = await catalog_client.get(
         "/catalog/experiments",
-        params={"solverName": "steady-state-heat", "solverVersion": "0.1.0"},
+        params={
+            "solverName": "steady-state-heat",
+            "solverVersion": "0.1.0",
+            "namespace": "caemble",
+            "repository": "verified",
+        },
     )
     assert experiments.status_code == 200
     assert [item["key"] for item in experiments.json()["items"]] == ["electro-thermal-uniform-bar"]
 
-    detail = await catalog_client.get("/catalog/experiments/dc-uniform-bar")
+    detail = await catalog_client.get(
+        "/catalog/experiments/dc-uniform-bar",
+        params={"namespace": "caemble", "repository": "verified", "version": "1.0.0"},
+    )
     assert detail.status_code == 200, detail.text
-    assert detail.json()["sourceBundle"]["formatVersion"] == 5
+    assert detail.json()["sourceBundle"]["formatVersion"] == 6
+    assert detail.json()["namespace"] == "caemble"
+    assert detail.json()["coordinate"].startswith("caemble:experiment/caemble/")
     assert detail.json()["verification"]["kernelTasks"] == ["solveCurrent"]
     assert detail.json()["verification"]["fixture"]["records"][0]["name"] == "totalCurrent"
 
@@ -139,10 +125,45 @@ async def test_example_geometries_and_experiments_are_public_filterable_and_cach
         assert without_fixture.status_code == 200, without_fixture.text
         assert without_fixture.json()["verification"]["fixture"] is None
 
-    search = await catalog_client.get("/catalog/search", params={"q": "wheel"})
-    assert {item["kind"] for item in search.json()["items"]} >= {"geometry"}
+    search = await catalog_client.get("/catalog/search", params={"q": "uniform"})
+    assert {item["kind"] for item in search.json()["items"]} >= {"experiment"}
     missing = await catalog_client.get("/catalog/experiments/not-real")
     assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_experiment_detail_requires_full_identity_when_key_is_ambiguous(tmp_path):
+    draft = tmp_path / "catalog.sqlite3"
+    create_draft(draft)
+    with Catalog.open_readonly(draft, immutable=False) as catalog:
+        duplicate = {**catalog.experiment("basketball-goal"), "version": "2.0.0"}
+    with writable_connection(draft) as connection:
+        insert_experiment(connection, duplicate)
+    refresh_derived_data(draft)
+
+    app = FastAPI()
+    catalog = Catalog.open_readonly(draft, immutable=False)
+    app.state.catalog = catalog
+    app.include_router(router)
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://testserver"
+        ) as client:
+            ambiguous = await client.get("/catalog/experiments/basketball-goal")
+            assert ambiguous.status_code == 409
+            assert ambiguous.json()["detail"]["code"] == "catalog_ambiguous"
+            selected = await client.get(
+                "/catalog/experiments/basketball-goal",
+                params={
+                    "namespace": "caemble",
+                    "repository": "getting-started",
+                    "version": "2.0.0",
+                },
+            )
+            assert selected.status_code == 200
+            assert selected.json()["coordinate"].endswith("@2.0.0")
+    finally:
+        catalog.close()
 
 
 @pytest.mark.asyncio

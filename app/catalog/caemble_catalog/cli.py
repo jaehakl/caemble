@@ -11,7 +11,6 @@ from .admin import (
     create_draft,
     draft_path,
     insert_experiment,
-    insert_geometry,
     insert_solver_manifest,
     publish_draft,
     semantic_diff,
@@ -21,6 +20,7 @@ from .admin import (
 )
 from .database import Catalog, catalog_path
 from .errors import CatalogError, CatalogNotFoundError
+from .schema import EXPERIMENT_COORDINATE_PREFIX, parse_experiment_coordinate, parse_experiment_version
 
 
 def _data(value: str) -> dict[str, Any]:
@@ -48,8 +48,8 @@ def _replace_manifest(
         if identity is not None:
             references = connection.execute(
                 """
-                SELECT experiment_key, ordinal, solver_name, solver_version
-                FROM experiment_solvers WHERE solver_name = ? AND solver_version = ? ORDER BY experiment_key
+                SELECT experiment_id, ordinal, solver_name, solver_version
+                FROM experiment_solvers WHERE solver_name = ? AND solver_version = ? ORDER BY experiment_id
                 """,
                 identity,
             ).fetchall()
@@ -70,9 +70,11 @@ def _replace_manifest(
         if manifest is not None:
             insert_solver_manifest(connection, manifest)
             connection.executemany(
-                "INSERT INTO experiment_solvers VALUES (?, ?, ?, ?)",
+                """INSERT INTO experiment_solvers(
+                       experiment_id, ordinal, solver_name, solver_version
+                   ) VALUES (?, ?, ?, ?)""",
                 [
-                    (row["experiment_key"], row["ordinal"], row["solver_name"], row["solver_version"])
+                    (row["experiment_id"], row["ordinal"], row["solver_name"], row["solver_version"])
                     for row in references
                 ],
             )
@@ -121,8 +123,6 @@ def _run_query(args: argparse.Namespace) -> Any:
         if not args.key:
             if args.resource == "solver":
                 return catalog.list_solvers()
-            if args.resource == "geometry":
-                return catalog.list_geometries(limit=10_000)[0]
             if args.resource == "experiment":
                 return catalog.list_experiments(limit=10_000)[0]
             raise CatalogError(f"{args.resource} query requires KEY")
@@ -130,10 +130,13 @@ def _run_query(args: argparse.Namespace) -> Any:
             return {**catalog.quantity_kind(args.key), **catalog.quantity_kind_relations(args.key)}
         if args.resource == "material-parameter":
             return {**catalog.material_parameter(args.key), **catalog.material_parameter_relations(args.key)}
-        if args.resource == "geometry":
-            return catalog.geometry(args.key)
         if args.resource == "experiment":
-            return catalog.experiment(args.key)
+            return catalog.experiment(
+                args.key,
+                namespace=args.namespace,
+                repository=args.repository,
+                version=args.version,
+            )
         if not args.version:
             raise CatalogError("solver query requires VERSION")
         return {
@@ -152,49 +155,56 @@ def _load_json_file(path: Path, label: str) -> dict[str, Any]:
     return value
 
 
-def _edit_geometry(args: argparse.Namespace) -> None:
-    with writable_connection(args.database) as connection:
-        if args.geometry_action == "remove":
-            cursor = connection.execute("DELETE FROM geometries WHERE key = ?", (args.key,))
-            if cursor.rowcount != 1:
-                raise CatalogNotFoundError(f"Unknown Geometry: {args.key}")
-        else:
-            try:
-                source = args.source_file.read_text(encoding="utf-8")
-            except (OSError, UnicodeError) as error:
-                raise CatalogError(f"Unable to read Geometry source as UTF-8: {args.source_file}: {error}") from error
-            roles = []
-            for value in args.material_role:
-                role, separator, description = value.partition("=")
-                if not separator:
-                    raise CatalogError("--material-role must use ROLE=DESCRIPTION")
-                roles.append({"role": role, "description": description})
-            connection.execute("DELETE FROM geometries WHERE key = ?", (args.key,))
-            insert_geometry(
-                connection,
-                {
-                    "key": args.key,
-                    "title": args.title,
-                    "description": args.description,
-                    "cadApiVersion": 8,
-                    "moduleFormatVersion": 4,
-                    "lengthUnit": args.length_unit,
-                    "exportName": args.export_name,
-                    "source": source,
-                    "concepts": args.concept,
-                    "materialRoles": roles,
-                    "relatedElements": args.element,
-                },
-            )
-    refresh_derived_data(args.database)
-
-
 def _edit_experiment(args: argparse.Namespace) -> None:
     with writable_connection(args.database) as connection:
         if args.experiment_action == "remove":
-            cursor = connection.execute("DELETE FROM experiments WHERE key = ?", (args.key,))
-            if cursor.rowcount != 1:
-                raise CatalogNotFoundError(f"Unknown Experiment: {args.key}")
+            key = args.key
+            namespace = args.namespace
+            repository = args.repository
+            version_text = args.version
+            if key.startswith(EXPERIMENT_COORDINATE_PREFIX):
+                try:
+                    coordinate_namespace, coordinate_repository, coordinate_key, coordinate_version = (
+                        parse_experiment_coordinate(key)
+                    )
+                except ValueError as error:
+                    raise CatalogError(f"Invalid Experiment coordinate: {key}: {error}") from error
+                if (
+                    (namespace is not None and namespace != coordinate_namespace)
+                    or (repository is not None and repository != coordinate_repository)
+                    or (version_text is not None and version_text != coordinate_version)
+                ):
+                    raise CatalogError(f"Conflicting Experiment coordinate selector: {key}")
+                namespace = coordinate_namespace
+                repository = coordinate_repository
+                key = coordinate_key
+                version_text = coordinate_version
+
+            clauses = ["key = ?"]
+            parameters: list[object] = [key]
+            if namespace is not None:
+                clauses.append("namespace = ?")
+                parameters.append(namespace)
+            if repository is not None:
+                clauses.append("repository_slug = ?")
+                parameters.append(repository)
+            if version_text is not None:
+                try:
+                    version = parse_experiment_version(version_text)
+                except ValueError as error:
+                    raise CatalogError(str(error)) from error
+                clauses.extend(("version_major = ?", "version_minor = ?", "version_patch = ?"))
+                parameters.extend(version)
+            matches = connection.execute(
+                f"SELECT id FROM experiments WHERE {' AND '.join(clauses)} LIMIT 2", parameters
+            ).fetchall()
+            if not matches:
+                raise CatalogNotFoundError(f"Unknown Experiment: {key}")
+            if len(matches) > 1:
+                raise CatalogError(
+                    f"Ambiguous Experiment key: {args.key}; provide --namespace, --repository, and --version"
+                )
+            connection.execute("DELETE FROM experiments WHERE id = ?", (matches[0]["id"],))
         else:
             related_solvers = []
             for value in args.solver:
@@ -202,11 +212,23 @@ def _edit_experiment(args: argparse.Namespace) -> None:
                 if not separator or not name or not version:
                     raise CatalogError("--solver must use NAME@VERSION")
                 related_solvers.append({"name": name, "version": version})
-            connection.execute("DELETE FROM experiments WHERE key = ?", (args.key,))
+            try:
+                version = parse_experiment_version(args.version)
+            except ValueError as error:
+                raise CatalogError(str(error)) from error
+            connection.execute(
+                """DELETE FROM experiments
+                   WHERE key = ? AND namespace = ? AND repository_slug = ?
+                     AND version_major = ? AND version_minor = ? AND version_patch = ?""",
+                (args.key, args.namespace, args.repository, *version),
+            )
             insert_experiment(
                 connection,
                 {
                     "key": args.key,
+                    "namespace": args.namespace,
+                    "repository": args.repository,
+                    "version": args.version,
                     "title": args.title,
                     "description": args.description,
                     "concepts": args.concept,
@@ -608,38 +630,31 @@ def build_parser() -> argparse.ArgumentParser:
     publish.add_argument("--destination", type=Path, default=catalog_path())
     query = commands.add_parser("query")
     query.add_argument(
-        "resource", choices=("meta", "quantity-kind", "material-parameter", "solver", "geometry", "experiment")
+        "resource", choices=("meta", "quantity-kind", "material-parameter", "solver", "experiment")
     )
     query.add_argument("key", nargs="?")
     query.add_argument("version", nargs="?")
-
-    geometry = commands.add_parser("geometry")
-    geometry_actions = geometry.add_subparsers(dest="geometry_action", required=True)
-    upsert = geometry_actions.add_parser("upsert")
-    upsert.add_argument("key")
-    upsert.add_argument("--title", required=True)
-    upsert.add_argument("--description", required=True)
-    upsert.add_argument("--length-unit", required=True)
-    upsert.add_argument("--export-name", required=True)
-    upsert.add_argument("--source-file", type=Path, required=True)
-    upsert.add_argument("--concept", action="append", default=[])
-    upsert.add_argument("--material-role", action="append", default=[])
-    upsert.add_argument("--element", action="append", default=[])
-    remove = geometry_actions.add_parser("remove")
-    remove.add_argument("key")
+    query.add_argument("--namespace")
+    query.add_argument("--repository")
 
     experiment = commands.add_parser("experiment")
     experiment_actions = experiment.add_subparsers(dest="experiment_action", required=True)
     upsert = experiment_actions.add_parser("upsert")
     upsert.add_argument("key")
+    upsert.add_argument("--namespace", default="caemble")
+    upsert.add_argument("--repository", default="verified")
+    upsert.add_argument("--version", default="1.0.0")
     upsert.add_argument("--title", required=True)
     upsert.add_argument("--description", required=True)
     upsert.add_argument("--bundle-file", type=Path, required=True)
     upsert.add_argument("--verification-file", type=Path, required=True)
     upsert.add_argument("--concept", action="append", default=[])
-    upsert.add_argument("--solver", action="append", default=[], required=True)
+    upsert.add_argument("--solver", action="append", default=[])
     remove = experiment_actions.add_parser("remove")
     remove.add_argument("key")
+    remove.add_argument("--namespace")
+    remove.add_argument("--repository")
+    remove.add_argument("--version")
 
     solver = commands.add_parser("solver")
     solver_actions = solver.add_subparsers(dest="solver_action", required=True)
@@ -833,7 +848,6 @@ def main(argv: list[str] | None = None) -> int:
                 "global-qualifier": _edit_global_qualifier,
                 "design-rule": _edit_design_rule,
                 "metadata": _edit_metadata,
-                "geometry": _edit_geometry,
                 "experiment": _edit_experiment,
             }[args.command]
             handler(args)

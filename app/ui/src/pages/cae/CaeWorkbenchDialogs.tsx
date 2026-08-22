@@ -1,35 +1,21 @@
 import type { Dispatch, SetStateAction } from 'react'
 import { toast } from 'sonner'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import {
-  DefinitionLineageSummary,
-  DefinitionPickerDialog,
-  HistoryDialog,
-  MeasurementPickerDialog,
-} from '@/features/cae-workbench/dialogs'
+import { MeasurementPickerDialog } from '@/features/cae-workbench/dialogs'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
-import type { SavedExperiment, WorkbenchTabId } from '@/features/cae-workbench/types'
-import { GeometryExportPublishDialog } from '@/features/cae-workbench/geometry'
 import { SaveDefinitionDialog } from '@/features/viewer/persistence/SaveDefinitionDialog'
-import { assertExperimentSourceBundle } from '@/lib/cad'
 import { AnalysisWorkspace } from '@/pages/analysis/AnalysisPage'
 import { MaterialManager } from '@/pages/materials/MaterialManager'
 import type { WorkbenchDialog } from './caePageTypes'
 import { CaeUtilityDialogs } from './CaeUtilityDialogs'
 
 export function CaeWorkbenchDialogs({
-  authenticated,
   dialog,
-  guardReplacement,
-  openTab,
   runSafely,
   setDialog,
   workbench,
 }: {
-  authenticated: boolean
   dialog: WorkbenchDialog
-  guardReplacement: (run: () => unknown | Promise<unknown>) => void
-  openTab: (tab: WorkbenchTabId) => void
   runSafely: (run: () => unknown | Promise<unknown>) => void
   setDialog: Dispatch<SetStateAction<WorkbenchDialog>>
   workbench: CaeWorkbenchState
@@ -37,26 +23,6 @@ export function CaeWorkbenchDialogs({
   const closeDialog = (open: boolean) => !open && setDialog(null)
   return (
     <>
-      <DefinitionPickerDialog
-        authenticated={authenticated}
-        open={dialog === 'load-experiment'}
-        selectedId={workbench.experimentId}
-        onOpenChange={closeDialog}
-        onSelect={(row) => guardReplacement(() => workbench.loadExperiment(row as SavedExperiment))}
-        onSelectCatalog={(item) =>
-          guardReplacement(() => {
-            assertExperimentSourceBundle(item.sourceBundle)
-            workbench.newExperiment(item.sourceBundle, item.title, item.description)
-            openTab('experiment')
-          })
-        }
-      />
-      <HistoryDialog
-        id={workbench.experimentId}
-        open={dialog === 'experiment-history'}
-        onOpenChange={closeDialog}
-        onSelect={(id) => guardReplacement(() => workbench.loadExperiment(id))}
-      />
       <MeasurementPickerDialog
         experimentId={workbench.experimentId}
         open={dialog === 'measurement'}
@@ -67,40 +33,79 @@ export function CaeWorkbenchDialogs({
       />
       <SaveDefinitionDialog
         context={
-          dialog === 'save-experiment' || dialog === 'save-experiment-as' ? (
-            <DefinitionLineageSummary id={dialog === 'save-experiment-as' ? null : workbench.experimentId} />
+          dialog === 'save-experiment' || dialog === 'save-experiment-version' || dialog === 'save-experiment-as' ? (
+            <p className="rounded-md border bg-muted/40 p-3 font-mono text-xs text-muted-foreground">
+              {dialog === 'save-experiment-as' || !workbench.experimentRecord
+                ? '새 coordinate · initial version 0.1.0'
+                : workbench.experimentCoordinate}
+            </p>
           ) : null
         }
-        defaults={{ name: workbench.experimentName, description: workbench.experimentDescription }}
+        defaults={{
+          name: workbench.experimentName,
+          description: workbench.experimentDescription,
+          repository: workbench.experimentRecord?.repository_slug ?? 'experiments',
+          key:
+            workbench.experimentRecord?.experiment_key ??
+            (workbench.experimentName
+              .trim()
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/gu, '-')
+              .replace(/^-+|-+$/gu, '') ||
+              'untitled-experiment'),
+          bump: 'patch',
+        }}
         description={
           dialog === 'save-experiment-as'
-            ? '현재 source bundle을 parent가 없는 새 Experiment 계보로 저장합니다.'
-            : `현재 source bundle을 저장합니다.${workbench.experimentId ? ` 기준 Experiment #${workbench.experimentId}의 source가 바뀌면 child로 저장됩니다.` : ''}`
+            ? '현재 source bundle을 새 namespace / repository / key의 Experiment로 저장합니다.'
+            : dialog === 'save-experiment-version'
+              ? '현재 Version을 기준으로 새 SemVer Version을 저장합니다.'
+              : workbench.experimentRecord
+                ? '현재 Version의 source와 메타데이터를 덮어씁니다.'
+                : '현재 source bundle을 첫 Experiment Version으로 저장합니다.'
         }
-        kind="Experiment"
-        open={dialog === 'save-experiment' || dialog === 'save-experiment-as'}
+        mode={
+          dialog === 'save-experiment-version'
+            ? 'new_version'
+            : dialog === 'save-experiment-as' || !workbench.experimentRecord
+              ? 'create'
+              : 'overwrite'
+        }
+        open={dialog === 'save-experiment' || dialog === 'save-experiment-version' || dialog === 'save-experiment-as'}
         pending={workbench.saving === 'experiment'}
-        submitLabel={dialog === 'save-experiment-as' ? '새 계보로 저장' : 'Experiment 저장'}
-        title={dialog === 'save-experiment-as' ? 'Save Experiment As' : 'Save Experiment'}
+        submitLabel={
+          dialog === 'save-experiment-version'
+            ? '새 Version 저장'
+            : dialog === 'save-experiment-as'
+              ? '새 Experiment 저장'
+              : 'Experiment 저장'
+        }
+        title={
+          dialog === 'save-experiment-version'
+            ? 'Save New Version'
+            : dialog === 'save-experiment-as'
+              ? 'Save Experiment As'
+              : 'Save Experiment'
+        }
         onOpenChange={closeDialog}
         onSubmit={async (values) => {
           if (workbench.measurementActions.busy) throw new Error('CAE 작업이 끝난 뒤 source를 저장하세요.')
-          const forceRoot = dialog === 'save-experiment-as'
-          const result = await workbench.saveExperiment(values, forceRoot)
+          const mode =
+            dialog === 'save-experiment-version'
+              ? 'new_version'
+              : dialog === 'save-experiment-as' || !workbench.experimentRecord
+                ? 'create'
+                : 'overwrite'
+          const result = await workbench.saveExperiment(values, mode)
           setDialog(null)
           toast.success(
-            forceRoot
-              ? 'Experiment를 새 계보로 저장했습니다.'
-              : result.action === 'forked'
-                ? 'Source 변경을 child Experiment로 저장했습니다.'
-                : 'Experiment를 저장했습니다.',
+            result.action === 'new_version'
+              ? `Experiment ${result.version}을 저장했습니다.`
+              : result.action === 'create'
+                ? '새 Experiment를 저장했습니다.'
+                : 'Experiment Version을 저장했습니다.',
           )
         }}
-      />
-      <GeometryExportPublishDialog
-        geometry={workbench.geometry}
-        onOpenChange={closeDialog}
-        open={dialog === 'publish-geometry-export'}
       />
       <Dialog open={dialog === 'material'} onOpenChange={closeDialog}>
         <DialogContent className="grid h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-0 sm:max-w-[calc(100%-2rem)]">

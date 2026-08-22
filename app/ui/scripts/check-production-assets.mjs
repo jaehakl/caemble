@@ -67,11 +67,16 @@ const hostCsp =
   "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-src https://code-to-cad.caemble.com; base-uri 'self'; form-action 'self'; object-src 'none'; frame-ancestors 'self'"
 const runnerCsp =
   "default-src 'none'; script-src 'self' 'unsafe-eval'; worker-src 'self'; connect-src 'none'; img-src 'none'; style-src 'none'; base-uri 'none'; form-action 'none'"
+const workerCsp =
+  "default-src 'none'; script-src 'self' 'unsafe-eval'; worker-src 'none'; connect-src 'none'; img-src 'none'; media-src 'none'; style-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
 if (!deploymentConfig.includes(`add_header Content-Security-Policy "${hostCsp}" always;`)) {
   throw new Error('The deployment config must allow the regl renderer required by the host UI.')
 }
 if (!runnerHtml?.includes(runnerCsp) || !runnerHeaders.includes(runnerCsp)) {
   throw new Error('Runner HTML and deployment headers must preserve the isolated runner CSP.')
+}
+if (!runnerHeaders.includes(workerCsp) || !deploymentConfig.includes(workerCsp)) {
+  throw new Error('Evaluation Worker responses must disable network, storage, and nested Worker capabilities.')
 }
 if (runnerHtml.includes('@vite/client') || runnerHtml.includes('react-refresh')) {
   throw new Error('The production runner HTML contains development client code.')

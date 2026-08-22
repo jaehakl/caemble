@@ -3,7 +3,13 @@ import type { ColumnDef } from '@tanstack/react-table'
 import { Cpu, FlaskConical, LoaderCircle } from 'lucide-react'
 import { useDeferredValue, useEffect, useState } from 'react'
 import { Link } from 'react-router'
-import { catalogApi, catalogQueryKeys, type CatalogSolverDetail, type CatalogSolverListItem } from '@/api/catalog'
+import {
+  catalogApi,
+  catalogQueryKeys,
+  type CatalogExperimentListItem,
+  type CatalogSolverDetail,
+  type CatalogSolverListItem,
+} from '@/api/catalog'
 import { CatalogPageLayout } from '@/components/CatalogPageLayout'
 import { DataTable } from '@/components/DataTable'
 import { Badge } from '@/components/ui/badge'
@@ -131,9 +137,9 @@ export function PhysicsCatalog({
               error={detail.error}
               pending={detail.isPending && !!selectedKey}
               relatedExperiments={relatedExperiments.data?.items ?? []}
-              onSelectExperiment={(key) => {
+              onSelectExperiment={(coordinate) => {
                 setCatalogTab('experiments')
-                onSelectedKeyChange?.(`experiment:${key}`)
+                onSelectedKeyChange?.(`experiment:${coordinate}`)
               }}
             />
           }
@@ -176,9 +182,13 @@ function OfficialExperimentCatalog({
     queryKey: catalogQueryKeys.experiments({ q: query.trim(), limit: 100 }),
     queryFn: () => catalogApi.listExperiments({ q: query.trim(), limit: 100 }),
   })
+  const listedExperiments = listQuery.data?.items ?? []
+  const exactIdentity = listedExperiments.find((item) => item.coordinate === activeKey)
+  const keyMatches = listedExperiments.filter((item) => item.key === activeKey)
+  const activeIdentity = exactIdentity ?? (keyMatches.length === 1 ? keyMatches[0] : activeKey)
   const detailQuery = useQuery({
-    queryKey: catalogQueryKeys.experiment(activeKey ?? ''),
-    queryFn: () => catalogApi.getExperiment(activeKey!),
+    queryKey: catalogQueryKeys.experiment(activeIdentity ?? ''),
+    queryFn: () => catalogApi.getExperiment(activeIdentity!),
     enabled: activeKey !== null,
   })
   const sourceFiles = detailQuery.data ? Object.keys(detailQuery.data.sourceBundle.files) : []
@@ -187,7 +197,7 @@ function OfficialExperimentCatalog({
   return (
     <CatalogPageLayout
       count={listQuery.data?.total ?? 0}
-      description="SQLite 카탈로그에서 제공하는 읽기 전용 Experiment bundle v5 예제"
+      description="SQLite 카탈로그에서 제공하는 읽기 전용 Experiment bundle v6 예제"
       embedded={embedded}
       title="Official Experiments"
       filters={
@@ -205,15 +215,15 @@ function OfficialExperimentCatalog({
           <CatalogError error={listQuery.error} />
         ) : (
           <ul className="divide-y">
-            {listQuery.data?.items.map((item) => (
-              <li key={item.key}>
+            {listedExperiments.map((item) => (
+              <li key={item.coordinate}>
                 <button
-                  className={`grid w-full gap-1 p-3 text-left hover:bg-muted/60 ${activeKey === item.key ? 'bg-orange-50' : ''}`}
+                  className={`grid w-full gap-1 p-3 text-left hover:bg-muted/60 ${activeKey === item.coordinate || (keyMatches.length === 1 && activeKey === item.key) ? 'bg-orange-50' : ''}`}
                   type="button"
-                  onClick={() => select(item.key)}
+                  onClick={() => select(item.coordinate)}
                 >
                   <span className="font-medium">{item.title}</span>
-                  <span className="font-mono text-xs text-muted-foreground">{item.key}</span>
+                  <span className="font-mono text-xs text-muted-foreground">{item.coordinate}</span>
                   <span className="line-clamp-2 text-sm text-muted-foreground">{item.description}</span>
                 </button>
               </li>
@@ -236,7 +246,7 @@ function OfficialExperimentCatalog({
               </div>
               <CardTitle>{detailQuery.data.title}</CardTitle>
               <CardDescription>{detailQuery.data.description}</CardDescription>
-              <p className="font-mono text-xs text-muted-foreground">{detailQuery.data.key}</p>
+              <p className="font-mono text-xs text-muted-foreground">{detailQuery.data.coordinate}</p>
             </CardHeader>
             <CardContent className="space-y-5">
               <div>
@@ -311,9 +321,9 @@ function SolverDetail({
 }: {
   detail?: CatalogSolverDetail
   error: Error | null
-  onSelectExperiment: (key: string) => void
+  onSelectExperiment: (coordinate: string) => void
   pending: boolean
-  relatedExperiments: readonly Readonly<{ key: string; title: string }>[]
+  relatedExperiments: readonly CatalogExperimentListItem[]
 }) {
   if (pending) return <CatalogLoading label="Solver 관계 정보를 조회하고 있습니다." />
   if (error) return <CatalogError error={error} />
@@ -348,11 +358,11 @@ function SolverDetail({
             {relatedExperiments.length ? (
               relatedExperiments.map((experiment) => (
                 <Button
-                  key={experiment.key}
+                  key={experiment.coordinate}
                   size="sm"
                   type="button"
                   variant="outline"
-                  onClick={() => onSelectExperiment(experiment.key)}
+                  onClick={() => onSelectExperiment(experiment.coordinate)}
                 >
                   {experiment.title}
                 </Button>

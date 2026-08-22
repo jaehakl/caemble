@@ -121,13 +121,24 @@ describe('CAE session client', () => {
     const catalog = {
       schemaVersion: 1,
       catalogRevision: 'test',
-      solvers: [{
-        name: 'dc-current-density', version: '0.1.0', contractDigest: 'd'.repeat(64), descriptor: {} as never,
-      }],
-      quantityKinds: [{
-        name: 'DimensionlessRatio', domain: 'general', tensorOrder: 0, description: 'Ratio', opaque: false,
-        applicableUnits: ['{fraction}'],
-      }],
+      solvers: [
+        {
+          name: 'dc-current-density',
+          version: '0.1.0',
+          contractDigest: 'd'.repeat(64),
+          descriptor: {} as never,
+        },
+      ],
+      quantityKinds: [
+        {
+          name: 'DimensionlessRatio',
+          domain: 'general',
+          tensorOrder: 0,
+          description: 'Ratio',
+          opaque: false,
+          applicableUnits: ['{fraction}'],
+        },
+      ],
       materialParameters: [],
       materialModels: [],
       materialGlobalQualifiers: [],
@@ -188,19 +199,25 @@ describe('CAE session client', () => {
     })
     expect(Object.keys(sdk.runJob.mock.calls[0][1])).toEqual(['measurement', 'solverContracts'])
     const startPayload = sdk.runJob.mock.calls[0][1]
-    expect(startPayload.solverContracts).toEqual([{
-      name: 'dc-current-density', version: '0.1.0', contractDigest: 'd'.repeat(64),
-    }])
+    expect(startPayload.solverContracts).toEqual([
+      {
+        name: 'dc-current-density',
+        version: '0.1.0',
+        contractDigest: 'd'.repeat(64),
+      },
+    ])
     expect(startPayload.measurement.experiment.scene.lengthUnit).toBe('mm')
-    expect(startPayload.measurement.materialParameters.materials.Copper['electrical.conductivity'].value).toMatchObject({
-      dtype: 'float64',
-      unit: 'S.cm-1',
-      value: [
-        [2, 0, 0],
-        [0, 2, 0],
-        [0, 0, 2],
-      ],
-    })
+    expect(startPayload.measurement.materialParameters.materials.Copper['electrical.conductivity'].value).toMatchObject(
+      {
+        dtype: 'float64',
+        unit: 'S.cm-1',
+        value: [
+          [2, 0, 0],
+          [0, 2, 0],
+          [0, 0, 2],
+        ],
+      },
+    )
     expect(call.mock.calls.map((entry) => entry[1])).toEqual([
       { runId: 'run-1', ackSequence: null },
       { runId: 'run-1', ackSequence: 1 },
@@ -240,6 +257,23 @@ describe('CAE session client', () => {
       message: '수렴하지 않았습니다.',
     })
     expect(finish).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a taskless local manifest before opening a remote CAE session', async () => {
+    const fixture = measurementFixture()
+    const measurement = {
+      ...fixture.measurement,
+      experiment: {
+        ...fixture.measurement.experiment,
+        taskScenes: {},
+        simulationProgram: { ...fixture.measurement.experiment.simulationProgram, tasks: {} },
+      },
+      taskMaterialParameters: {},
+      taskMaterialWarnings: {},
+    }
+
+    await expect(simulate(measurement as never)).rejects.toMatchObject({ code: 'program_required' })
+    expect(sdk.runJob).not.toHaveBeenCalled()
   })
 
   it('moves a large UTF-8 start payload into request attachments', async () => {

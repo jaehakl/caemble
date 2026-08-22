@@ -9,23 +9,22 @@ those details in Markdown.
 
 | Contract | Version | Owner |
 | --- | ---: | --- |
-| Experiment source bundle | 5 | UI source document model |
+| Experiment source bundle | 6 | UI/API source document model |
 | CAD document | 2 | UI Code-to-CAD runner |
-| CAD authoring API | 7 | generated UI declaration and element registry |
-| Published Geometry module | 4 | API publish/resolve boundary |
+| CAD authoring API | 8 | generated UI declaration and element registry |
 | Simulation manifest | 5 | UI evaluation and CAE runtime |
 | Python simulation API | 3 | CAE program runtime |
 | Material snapshot | 2 | UI Measurement builder |
 
-An Experiment revision atomically owns this source bundle:
+An Experiment version atomically owns this source bundle:
 
 ```text
 experiment.tsx
 geometry.tsx
 material.tsx
 simulate.py
-tasks/<taskName>.tsx   (one or more)
-geometrySnapshot      (published Geometry dependency graph)
+tasks/<taskName>.tsx   (zero or more)
+<relative-path>.ts(x)  (optional bundle-local modules)
 ```
 
 `experiment.tsx` owns common units, variables, physical geometry, groups, and
@@ -33,22 +32,29 @@ RecordedData declarations. `geometry.tsx` exports shared Geometry components;
 `material.tsx` exports Material values or factories. Each Task selects a pinned
 Solver name/version and owns its config plus optional task-local geometry.
 `simulate.py` orchestrates Tasks through `sim.run`, `sim.record`, and
-`sim.release`.
+`sim.release`. Task entries are optional while authoring and previewing, but a
+Measurement requires at least one valid Task.
 
-CAD API v7 uses `position`, `rotation`, and `scale` as canonical transforms.
+Persisted versions use
+`caemble:experiment/<namespace>/<repository>/<key>@X.Y.Z`. Namespace,
+repository, key, and SemVer are stored on the Experiment row; repository lists
+are derived from those rows rather than maintained as separate entities.
+
+CAD API v8 uses `position`, `rotation`, and `scale` as canonical transforms.
 Material assignment uses named roles such as `body`, `tire`, or `shell`, not
-positional arrays. Published Geometry imports use exact coordinates of the form
-`caemble:geometry/<namespace>/<repository>/<package>@X.Y.Z`.
+positional arrays. TypeScript sources may statically import `@caemble/core` and
+relative `.ts`/`.tsx` modules stored in the same bundle; there is no external
+Geometry source graph.
 
 Authoring examples and element-specific props belong in generated executable
-examples and the live Geometry Catalog exposed by `/docs`. When syntax changes,
+examples and the live Experiment Catalog exposed by `/docs`. When syntax changes,
 update the registry/authoring manifest and regenerate declarations instead of
 copying a new prose example here.
 
 ## Data flow
 
 ```text
-Experiment revision + complete vars
+Experiment version + complete vars
   -> isolated UI compile/evaluate
   -> deterministic common and Task-local scenes
   -> frozen Material snapshot
@@ -67,8 +73,11 @@ and strict. A failed or cancelled run leaves the prepared Measurement unchanged.
 A successful run attaches all declared RecordedData once; repeating the same
 conditions requires a new Measurement.
 
-The API stores immutable authoring revisions, ownership, Measurement conditions,
-RecordedData, and orchestration state. It does not execute CAD or physics.
+The API stores namespace/repository/SemVer Experiment identities, source bundles,
+Measurement conditions, RecordedData, and orchestration state. Source can
+overwrite an unlocked version; any derived Measurement or model locks that
+version's source and requires an explicit new SemVer for code changes. Name and
+description metadata remain editable. The API does not execute CAD or physics.
 Payloads and attachments travel over WebRTC between the client and worker.
 
 ## Ownership boundaries
@@ -76,8 +85,8 @@ Payloads and attachments travel over WebRTC between the client and worker.
 | Area | Responsibility |
 | --- | --- |
 | UI | authoring, isolated evaluation, preview, candidate generation, Material freezing, BuiltMeasurement serialization |
-| API | OAuth/tokens, immutable revisions, ownership, prepared Measurements, one-time RecordedData transaction, job orchestration |
-| Catalog | the sole QuantityKind, Material, and Solver data source in `catalog.sqlite3` |
+| API | OAuth/tokens, Experiment version ownership, prepared Measurements, one-time RecordedData transaction, job orchestration |
+| Catalog | the sole QuantityKind, Material, Solver, and official Experiment data source in `catalog.sqlite3` |
 | Launcher | discovers executable manifests, owns one active worker/job, and bridges the control WebSocket |
 | CAE worker | verifies catalog digests, converts units, validates target/method contracts, runs `simulate.py` and Solvers |
 | AI worker | executes the public v1 AI handlers using machine-local model/provider configuration |

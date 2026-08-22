@@ -25,7 +25,8 @@ export function assertPlainSnapshotValue(value: unknown, path = 'snapshot') {
   let typedArrayBytes = 0
   const visit = (current: unknown, currentPath: string, depth: number) => {
     nodes += 1
-    if (nodes > 1_000_000 || depth > 128) throw new CadModelError(`${currentPath} exceeds the snapshot complexity limit.`)
+    if (nodes > 1_000_000 || depth > 128)
+      throw new CadModelError(`${currentPath} exceeds the snapshot complexity limit.`)
     if (current === null || typeof current === 'string' || typeof current === 'boolean') return
     if (typeof current === 'number') {
       if (!Number.isFinite(current)) throw new CadModelError(`${currentPath} must contain finite numbers.`)
@@ -103,7 +104,7 @@ export function assertEvaluatedDocumentSnapshot(value: unknown): asserts value i
     assertSerializableCadScene(scene)
   })
   const simulationProgram = snapshot.simulationProgram
-  assertSimulationProgramManifest(simulationProgram)
+  assertSimulationProgramManifest(simulationProgram, { allowTaskless: true })
   const taskNames = Object.keys(snapshot.taskScenes)
   if (
     taskNames.length !== Object.keys(simulationProgram.tasks).length ||

@@ -2,14 +2,12 @@ export type WorkbenchDialog =
   | 'account'
   | 'analysis'
   | 'ai-chat'
-  | 'experiment-history'
-  | 'publish-geometry-export'
   | 'jobs'
   | 'launchers'
-  | 'load-experiment'
   | 'material'
   | 'measurement'
   | 'save-experiment'
+  | 'save-experiment-version'
   | 'save-experiment-as'
   | null
 

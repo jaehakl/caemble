@@ -1,32 +1,25 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createCadSourceDocument, createExperimentSourceBundle, type ExperimentSourceDocument } from '@/lib/cad'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
-import {
-  createCadSourceDocument,
-  createExperimentSourceBundle,
-  createGeometrySnapshot,
-  geometryModuleHash,
-  geometrySourceHash,
-  type ExperimentSourceDocument,
-} from '@/lib/cad'
 import type { SavedExperiment } from '../types'
 import { useCaeWorkbenchState } from './useCaeWorkbenchState'
 
 const mocks = vi.hoisted(() => ({
-  agentGeometryContextVersion: vi.fn(),
-  cadSourceHash: vi.fn(),
-  cadWorkspace: vi.fn(),
+  agentContext: vi.fn(async () => 'context-v1'),
   experimentList: vi.fn(),
+  saveDefinition: vi.fn(),
   setCurrentExperimentId: vi.fn(),
-  toastInfo: vi.fn(),
-  toastSuccess: vi.fn(),
+  sourceHash: vi.fn(async () => 'source-v1'),
+  workspaceChange: vi.fn(),
 }))
 
 const controller = {
+  draftTaskNames: [],
   generateCandidate: vi.fn(),
   materialParameters: null,
   revision: 1,
@@ -39,12 +32,13 @@ const controller = {
 vi.mock('@/api', () => ({
   dbTables: {
     Experiment: { listRows: mocks.experimentList },
-    Measurement: { listRows: vi.fn() },
-    RecordedData: { listRows: vi.fn() },
+    Measurement: { listRows: vi.fn(async () => ({ total: 0, items: [] })) },
+    RecordedData: { listRows: vi.fn(async () => ({ total: 0, items: [] })) },
   },
   getListRequest: (scope: string, selectedIds: number[] = []) => ({
     filter: {},
     limit: 24,
+    null_filter: {},
     offset: 0,
     scope,
     search_text: null,
@@ -56,48 +50,49 @@ vi.mock('@/api', () => ({
 vi.mock('@/features/viewer/current-cad-selection', () => ({
   useCurrentCadSelection: () => ({ setCurrentExperimentId: mocks.setCurrentExperimentId }),
 }))
+vi.mock('@/features/viewer/persistence/saveDefinition', () => ({ saveCadDefinition: mocks.saveDefinition }))
 vi.mock('@/features/viewer/workspace/useCadWorkspace', () => ({
-  useCadWorkspace: (...args: unknown[]) => {
-    mocks.cadWorkspace(...args)
+  useCadWorkspace: (_experiment: unknown, onExperimentChange: (document: ExperimentSourceDocument) => void) => {
+    mocks.workspaceChange.mockImplementation(onExperimentChange)
     return { experimentDocument: controller, simulation: {} }
   },
 }))
 vi.mock('@/lib/cad', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/cad')>()),
-  cadSourceHash: mocks.cadSourceHash,
+  cadSourceHash: mocks.sourceHash,
 }))
-vi.mock('../agent/agentWorkspace', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../agent/agentWorkspace')>()),
-  agentGeometryContextVersion: mocks.agentGeometryContextVersion,
-}))
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), info: mocks.toastInfo, success: mocks.toastSuccess } }))
-vi.mock('@/features/cae-workbench/measurement/useCaeMeasurementActions', () => ({
+vi.mock('../agent/agentWorkspace', () => ({ agentExperimentContextVersion: mocks.agentContext }))
+vi.mock('sonner', () => ({ toast: { error: vi.fn(), info: vi.fn(), success: vi.fn() } }))
+vi.mock('../measurement/useCaeMeasurementActions', () => ({
   useCaeMeasurementActions: () => ({
     busy: false,
     cancel: vi.fn(),
     cancelable: false,
     duplicateMeasurement: vi.fn(),
-    error: null,
     generateCandidate: vi.fn(),
     operation: null,
     pendingRecordMeasurementId: null,
     retryRecord: vi.fn(),
-    runSelected: vi.fn(),
     saveCurrent: vi.fn(),
     stage: null,
   }),
 }))
 
-const sourceHash = 'a'.repeat(64)
-function experiment(id: number, name = `Experiment ${id}`): SavedExperiment {
+function savedExperiment(id: number, name = `Experiment ${id}`): SavedExperiment {
   return {
     id,
     user_id: 'user-1',
-    parent_id: null,
+    namespace: 'jlee',
+    repository_slug: 'examples',
+    experiment_key: `experiment-${id}`,
+    version_major: 1,
+    version_minor: 2,
+    version_patch: 3,
     name,
     description: null,
     source_bundle: starterExperimentSourceBundle,
-    source_hash: sourceHash,
+    source_hash: 'a'.repeat(64),
+    sourceLocked: false,
   }
 }
 
@@ -108,56 +103,106 @@ function wrapper() {
   )
 }
 
-beforeEach(() => {
-  vi.clearAllMocks()
-  mocks.cadSourceHash.mockImplementation(async (document: { sourceBundle: typeof starterExperimentSourceBundle }) => {
-    if (document.sourceBundle.geometrySnapshot.modules.length > 0) return 'staged-snapshot'
-    return document.sourceBundle.files['experiment.tsx'] === starterExperimentSourceBundle.files['experiment.tsx']
-      ? 'base-v1'
-      : 'staged-v1'
-  })
-  mocks.agentGeometryContextVersion.mockResolvedValue('geometry-v1')
-})
+beforeEach(() => vi.clearAllMocks())
 
 describe('useCaeWorkbenchState', () => {
-  it('owns a single Experiment and emits split v11 Geometry state', () => {
-    const { result } = renderHook(() => useCaeWorkbenchState({ id: 'user-1', roles: ['user'] } as never, true), {
-      wrapper: wrapper(),
-    })
+  it('stores a files-only v14 draft and exposes Experiment coordinate state', async () => {
+    const { result } = renderHook(
+      () => useCaeWorkbenchState({ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never, true),
+      { wrapper: wrapper() },
+    )
 
-    act(() => result.current.applyExperiment(experiment(7)))
+    act(() => result.current.applyExperiment(savedExperiment(7)))
+    await waitFor(() => expect(result.current.agentWorkspaceIdentity).not.toBeNull())
 
-    expect(result.current.experimentId).toBe(7)
-    expect(result.current.agentWorkspaceSession).toBe(1)
-    expect(result.current.experimentRecord?.source_hash).toBe(sourceHash)
-    expect(result.current).not.toHaveProperty('structureId')
-    expect(result.current).not.toHaveProperty('pairClean')
+    expect(result.current.experimentCoordinate).toBe('caemble:experiment/jlee/examples/experiment-7@1.2.3')
+    expect(result.current.experimentVersion).toBe('1.2.3')
+    expect(result.current.sourceLocked).toBe(false)
     expect(
       result.current.draft({
-        openTabs: ['experiment', 'recorded-data'],
+        openTabs: ['experiment', 'experiments'],
         activeTab: 'experiment',
-        experimentFile: 'experiment.tsx',
+        experimentFile: 'geometry.tsx',
         splitPercent: 50,
       }),
-    ).toMatchObject({
-      version: 13,
-      experiment: { record: { id: 7 } },
-      candidate: { vars: null, materialParameters: null },
-      selection: { measurementId: null },
-      geometryManager: {
-        draftVersions: {},
-        resolvedModules: [],
-        selection: {
-          view: 'examples',
-          namespace: 'examples',
-          repository: 'all',
-          catalogKey: null,
-          coordinate: null,
-          exportName: null,
-        },
-      },
-      experimentGeometry: { stagedModules: [] },
+    ).toMatchObject({ version: 14, experiment: { record: { id: 7 } } })
+  })
+
+  it('allows a taskless local Experiment for preview and source saving state', () => {
+    const taskless = createExperimentSourceBundle({
+      'experiment.tsx': starterExperimentSourceBundle.files['experiment.tsx'],
+      'geometry.tsx': starterExperimentSourceBundle.files['geometry.tsx'],
+      'material.tsx': starterExperimentSourceBundle.files['material.tsx'],
+      'simulate.py': starterExperimentSourceBundle.files['simulate.py'],
+      'lib/profile.ts': 'export const profile = []',
     })
+    const { result } = renderHook(() => useCaeWorkbenchState(null, false), { wrapper: wrapper() })
+
+    act(() => result.current.newExperiment(taskless, 'Preview only'))
+
+    expect(result.current.hasTasks).toBe(false)
+    expect(result.current.experimentStatus).toBe('new')
+    expect(result.current.experiment?.sourceBundle.files).toHaveProperty('lib/profile.ts')
+  })
+
+  it('allows metadata overwrite on a source-locked Version but blocks changed source', async () => {
+    const locked = { ...savedExperiment(7), sourceLocked: true }
+    const values = {
+      name: 'Renamed Experiment',
+      description: 'Metadata only',
+      repository: 'examples',
+      key: 'experiment-7',
+      bump: 'patch' as const,
+    }
+    mocks.saveDefinition.mockResolvedValue({
+      id: 7,
+      action: 'overwrite',
+      namespace: 'jlee',
+      repository: 'examples',
+      key: 'experiment-7',
+      version: '1.2.3',
+      coordinate: 'caemble:experiment/jlee/examples/experiment-7@1.2.3',
+      bundleHash: 'b'.repeat(64),
+      sourceLocked: true,
+      derivedCounts: { measurements: 1, recordedData: 0, designerModels: 0, predictorModels: 0 },
+      sourceBundle: starterExperimentSourceBundle,
+    })
+    const { result } = renderHook(
+      () => useCaeWorkbenchState({ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never, true),
+      { wrapper: wrapper() },
+    )
+
+    act(() => result.current.applyExperiment(locked))
+    await act(async () => {
+      await result.current.saveExperiment(values, 'overwrite')
+    })
+    expect(mocks.saveDefinition).toHaveBeenCalledOnce()
+
+    const changedBundle = createExperimentSourceBundle({
+      ...starterExperimentSourceBundle.files,
+      'geometry.tsx': 'export const Changed = () => <box size={[2, 2, 2]} />',
+    })
+    act(() =>
+      result.current.restoreDraft({
+        version: 14,
+        savedAt: Date.now(),
+        experiment: {
+          record: locked,
+          baselineBundle: starterExperimentSourceBundle,
+          document: createCadSourceDocument('experiment', changedBundle),
+          name: locked.name,
+          description: locked.description ?? '',
+        },
+        candidate: { vars: null, materialParameters: null },
+        selection: { measurementId: null },
+        layout: { openTabs: ['experiment'], activeTab: 'experiment', experimentFile: 'geometry.tsx', splitPercent: 50 },
+      }),
+    )
+
+    await expect(result.current.saveExperiment(values, 'overwrite')).rejects.toThrow(
+      '연결 데이터가 있는 Version은 잠겨 있습니다.',
+    )
+    expect(mocks.saveDefinition).toHaveBeenCalledOnce()
   })
 
   it('does not let an older load overwrite a newer Experiment', async () => {
@@ -165,10 +210,11 @@ describe('useCaeWorkbenchState', () => {
     const old = new Promise((resolve) => {
       resolveOld = resolve
     })
-    mocks.experimentList.mockReturnValueOnce(old).mockResolvedValueOnce({ total: 1, items: [experiment(2)] })
-    const { result } = renderHook(() => useCaeWorkbenchState({ id: 'user-1', roles: ['user'] } as never, true), {
-      wrapper: wrapper(),
-    })
+    mocks.experimentList.mockReturnValueOnce(old).mockResolvedValueOnce({ total: 1, items: [savedExperiment(2)] })
+    const { result } = renderHook(
+      () => useCaeWorkbenchState({ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never, true),
+      { wrapper: wrapper() },
+    )
 
     let oldLoad!: Promise<SavedExperiment>
     await act(async () => {
@@ -178,256 +224,87 @@ describe('useCaeWorkbenchState', () => {
     expect(result.current.experimentId).toBe(2)
 
     await act(async () => {
-      resolveOld({ total: 1, items: [experiment(1)] })
+      resolveOld({ total: 1, items: [savedExperiment(1)] })
       await oldLoad
     })
     expect(result.current.experimentId).toBe(2)
   })
 
-  it('keeps Geometry Manager drafts when the current Experiment changes', () => {
-    const user = { id: 'user-1', roles: ['user'], geometry_namespace: 'jlee' } as never
-    const { result } = renderHook(() => useCaeWorkbenchState(user, true), { wrapper: wrapper() })
+  it('attaches the saved identity while preserving edits made during an in-flight save', async () => {
+    const savedBundle = starterExperimentSourceBundle
+    const changedBundle = createExperimentSourceBundle({
+      ...savedBundle.files,
+      'geometry.tsx': 'export const Changed = () => <box size={[2, 2, 2]} />',
+    })
+    const saveResult = {
+      id: 12,
+      action: 'create' as const,
+      namespace: 'jlee',
+      repository: 'examples',
+      key: 'in-flight',
+      version: '0.1.0',
+      coordinate: 'caemble:experiment/jlee/examples/in-flight@0.1.0',
+      bundleHash: 'c'.repeat(64),
+      sourceLocked: false,
+      derivedCounts: { measurements: 0, recordedData: 0, designerModels: 0, predictorModels: 0 },
+      sourceBundle: savedBundle,
+    }
+    let resolveSave!: (value: typeof saveResult) => void
+    mocks.saveDefinition.mockReturnValue(
+      new Promise<typeof saveResult>((resolve) => {
+        resolveSave = resolve
+      }),
+    )
+    const { result } = renderHook(
+      () => useCaeWorkbenchState({ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never, true),
+      { wrapper: wrapper() },
+    )
+
+    act(() => result.current.newExperiment(savedBundle, 'In-flight'))
+    let savePromise!: Promise<unknown>
     act(() => {
-      result.current.geometry.createDraft({ repository: 'common', packageName: 'part' })
-      result.current.geometry.setManagerView('workspace')
-      result.current.applyExperiment(experiment(7))
-    })
-
-    expect(result.current.geometry.draftVersions).toHaveProperty('caemble:geometry/jlee/common/part@local')
-    expect(result.current.geometry.selectedCoordinate).toBe('caemble:geometry/jlee/common/part@local')
-    expect(result.current.geometry.managerView).toBe('workspace')
-    expect(result.current.geometryLocalDraftDirty).toBe(true)
-    expect(result.current.hasUnsavedExperimentWork).toBe(false)
-    expect(result.current.hasUnsavedWork).toBe(true)
-    expect(result.current.experimentDirty).toBe(false)
-  })
-
-  it('treats a newly opened local template as the clean baseline and becomes dirty after editing', () => {
-    const { result } = renderHook(() => useCaeWorkbenchState(null, false), { wrapper: wrapper() })
-
-    act(() => result.current.newExperiment(starterExperimentSourceBundle, 'Starter Experiment'))
-    expect(result.current.experimentDirty).toBe(false)
-    expect(result.current.hasUnsavedWork).toBe(false)
-
-    const onExperimentChange = mocks.cadWorkspace.mock.calls[mocks.cadWorkspace.mock.calls.length - 1][1] as (
-      document: ExperimentSourceDocument,
-    ) => void
-    act(() =>
-      onExperimentChange(
-        createCadSourceDocument(
-          'experiment',
-          createExperimentSourceBundle({
-            ...starterExperimentSourceBundle.files,
-            'geometry.tsx': `${starterExperimentSourceBundle.files['geometry.tsx']}\n// edited`,
-          }),
-        ) as ExperimentSourceDocument,
-      ),
-    )
-    expect(result.current.experimentDirty).toBe(true)
-    expect(result.current.hasUnsavedWork).toBe(true)
-  })
-
-  it('stores and announces Candidate vars automatically regenerated for an edited schema', () => {
-    const { result } = renderHook(() => useCaeWorkbenchState(null, false), { wrapper: wrapper() })
-    const options = mocks.cadWorkspace.mock.calls[mocks.cadWorkspace.mock.calls.length - 1][2] as {
-      onCandidateVarsRegenerated: (event: { reason: 'schema-changed'; vars: { openness: number } }) => void
-    }
-
-    act(() => options.onCandidateVarsRegenerated({ reason: 'schema-changed', vars: { openness: 0.5 } }))
-
-    expect(result.current.candidateVars).toEqual({ openness: 0.5 })
-    expect(mocks.toastInfo).toHaveBeenCalledWith('varsSchema가 변경되어 모든 Candidate 변수를 새로 생성했습니다.')
-  })
-
-  it('uses the strict vars policy while a persisted Measurement is selected or restoring', () => {
-    const { result } = renderHook(() => useCaeWorkbenchState(null, false), { wrapper: wrapper() })
-    expect(mocks.cadWorkspace.mock.calls[mocks.cadWorkspace.mock.calls.length - 1][2]).toMatchObject({
-      candidateProvenance: 'editable',
-    })
-
-    act(() => result.current.restoreSelection(17))
-
-    expect(mocks.cadWorkspace.mock.calls[mocks.cadWorkspace.mock.calls.length - 1][2]).toMatchObject({
-      candidateVarsPending: true,
-      candidateProvenance: 'persisted-measurement',
-    })
-  })
-
-  it('applies one hash-guarded Agent bundle and can undo the complete change', async () => {
-    const { result } = renderHook(() => useCaeWorkbenchState({ id: 'user-1', roles: ['user'] } as never, true), {
-      wrapper: wrapper(),
-    })
-    act(() => result.current.applyExperiment(experiment(7)))
-    const changedSource = `${starterExperimentSourceBundle.files['experiment.tsx']}\n// changed by agent`
-    const finalBundle = {
-      ...starterExperimentSourceBundle,
-      files: { ...starterExperimentSourceBundle.files, 'experiment.tsx': changedSource },
-    }
-    await act(async () => {
-      const applied = await result.current.applyAgentBundle({
-        runId: 'run-1',
-        finalBundle,
-        baseHash: 'base-v1',
-        sourceHash: 'staged-v1',
-        stagedRevision: 1,
-        geometryContextVersion: 'geometry-v1',
-      })
-      expect(applied).toMatchObject({ status: 'applied', firstChangedFile: 'experiment.tsx', changedFiles: 1 })
-    })
-    expect(result.current.experiment?.sourceBundle.files['experiment.tsx']).toBe(changedSource)
-    expect(result.current.agentChange?.files).toHaveLength(1)
-
-    await act(async () => {
-      expect(await result.current.undoAgentChange()).toBe(true)
-    })
-    expect(result.current.experiment?.sourceBundle.files['experiment.tsx']).toBe(
-      starterExperimentSourceBundle.files['experiment.tsx'],
-    )
-    expect(result.current.agentChange).toBeNull()
-    expect(mocks.toastSuccess).toHaveBeenCalledWith('AI Agent 변경을 되돌렸습니다.')
-  })
-
-  it('preserves the current Experiment when the Agent base hash is stale', async () => {
-    const { result } = renderHook(() => useCaeWorkbenchState({ id: 'user-1', roles: ['user'] } as never, true), {
-      wrapper: wrapper(),
-    })
-    act(() => result.current.applyExperiment(experiment(7)))
-    const finalBundle = {
-      ...starterExperimentSourceBundle,
-      files: { ...starterExperimentSourceBundle.files, 'experiment.tsx': '// stale' },
-    }
-
-    await act(async () => {
-      expect(
-        await result.current.applyAgentBundle({
-          runId: 'run-1',
-          finalBundle,
-          baseHash: 'old-base',
-          sourceHash: 'staged-v1',
-          stagedRevision: 1,
-          geometryContextVersion: 'geometry-v1',
-        }),
-      ).toMatchObject({ status: 'conflicted', firstChangedFile: 'experiment.tsx', changedFiles: 1 })
-    })
-    expect(result.current.experiment?.sourceBundle.files['experiment.tsx']).toBe(
-      starterExperimentSourceBundle.files['experiment.tsx'],
-    )
-    expect(result.current.agentChange).toMatchObject({
-      status: 'conflicted',
-      files: [{ path: 'experiment.tsx', after: '// stale' }],
-    })
-    await act(async () => {
-      expect(await result.current.undoAgentChange()).toBe(true)
-    })
-    expect(result.current.experiment?.sourceBundle.files['experiment.tsx']).toBe(
-      starterExperimentSourceBundle.files['experiment.tsx'],
-    )
-    expect(result.current.agentChange).toBeNull()
-    expect(mocks.toastSuccess).toHaveBeenCalledWith('AI Agent staged diff를 닫았습니다.')
-  })
-
-  it('applies and undoes an unvalidated snapshot-only Agent change', async () => {
-    const { result } = renderHook(() => useCaeWorkbenchState({ id: 'user-1', roles: ['user'] } as never, true), {
-      wrapper: wrapper(),
-    })
-    act(() => result.current.applyExperiment(experiment(7)))
-    const source = 'export const Part = () => <box />'
-    const coordinate = 'caemble:geometry/user/repository/part@1.0.0' as const
-    const sourceHash = await geometrySourceHash(source)
-    const moduleWithoutHash = {
-      geometryVersionId: 1,
-      coordinate,
-      moduleFormatVersion: 4 as const,
-      cadApiVersion: 7 as const,
-      description: null,
-      source,
-      sourceHash,
-      imports: [],
-    }
-    const module = { ...moduleWithoutHash, moduleHash: await geometryModuleHash(moduleWithoutHash) }
-    const geometrySnapshot = createGeometrySnapshot(
-      [
+      savePromise = result.current.saveExperiment(
         {
-          exportName: 'Part',
-          alias: 'Part',
-          geometryVersionId: 1,
-          coordinate,
-          moduleHash: module.moduleHash,
+          name: 'In-flight',
+          description: '',
+          repository: 'examples',
+          key: 'in-flight',
+          bump: 'patch',
         },
-      ],
-      [module],
-    )
-    const finalBundle = { ...starterExperimentSourceBundle, geometrySnapshot }
-
-    await act(async () => {
-      expect(
-        await result.current.applyAgentBundle({
-          runId: 'run-snapshot',
-          finalBundle,
-          baseHash: 'base-v1',
-          sourceHash: 'staged-snapshot',
-          stagedRevision: 0,
-          geometryContextVersion: 'geometry-v1',
-        }),
-      ).toMatchObject({ status: 'applied', firstChangedFile: 'geometry.tsx', changedFiles: 0 })
+        'create',
+      )
     })
-    expect(result.current.experiment?.sourceBundle.geometrySnapshot.modules).toHaveLength(1)
-    expect(result.current.geometry.currentSnapshot.modules).toHaveLength(1)
-
+    act(() => mocks.workspaceChange(createCadSourceDocument('experiment', changedBundle)))
     await act(async () => {
-      expect(await result.current.undoAgentChange()).toBe(true)
+      resolveSave(saveResult)
+      await savePromise
     })
-    expect(result.current.experiment?.sourceBundle.geometrySnapshot.modules).toHaveLength(0)
-    expect(result.current.geometry.currentSnapshot.modules).toHaveLength(0)
+
+    expect(result.current.experimentRecord).toMatchObject({ id: 12, experiment_key: 'in-flight' })
+    expect(result.current.experiment?.sourceBundle).toEqual(changedBundle)
+    expect(result.current.experimentStatus).toBe('saved-dirty')
+    expect(result.current.hasUnsavedExperimentWork).toBe(true)
   })
 
-  it('applies syntax-invalid source when the bundle structure and hashes are valid', async () => {
-    const { result } = renderHook(() => useCaeWorkbenchState({ id: 'user-1', roles: ['user'] } as never, true), {
-      wrapper: wrapper(),
+  it('detaches a deleted current Version while preserving its latest source as dirty work', () => {
+    const changedBundle = createExperimentSourceBundle({
+      ...starterExperimentSourceBundle.files,
+      'geometry.tsx': 'export const Changed = () => <sphere radius={2} />',
     })
-    act(() => result.current.applyExperiment(experiment(7)))
-    const generatedBundle = {
-      ...starterExperimentSourceBundle,
-      files: { ...starterExperimentSourceBundle.files, 'experiment.tsx': 'export default <broken' },
-    }
-    await act(async () => {
-      expect(
-        await result.current.applyAgentBundle({
-          runId: 'run-1',
-          finalBundle: generatedBundle,
-          baseHash: 'base-v1',
-          sourceHash: 'staged-v1',
-          stagedRevision: 1,
-          geometryContextVersion: 'geometry-v1',
-        }),
-      ).toMatchObject({ status: 'applied', firstChangedFile: 'experiment.tsx' })
-    })
-    expect(result.current.experiment?.sourceBundle.files['experiment.tsx']).toBe('export default <broken')
-  })
-
-  it('blocks a completed bundle with a different source hash', async () => {
-    const { result } = renderHook(() => useCaeWorkbenchState({ id: 'user-1', roles: ['user'] } as never, true), {
-      wrapper: wrapper(),
-    })
-    act(() => result.current.applyExperiment(experiment(7)))
-    const finalBundle = {
-      ...starterExperimentSourceBundle,
-      files: { ...starterExperimentSourceBundle.files, 'experiment.tsx': '// mismatched hash' },
-    }
-    await act(async () => {
-      await expect(
-        result.current.applyAgentBundle({
-          runId: 'run-mismatch',
-          finalBundle,
-          baseHash: 'base-v1',
-          sourceHash: 'other-source',
-          stagedRevision: 1,
-          geometryContextVersion: 'geometry-v1',
-        }),
-      ).resolves.toMatchObject({ status: 'conflicted', message: expect.stringContaining('source hash') })
-    })
-    expect(result.current.experiment?.sourceBundle.files['experiment.tsx']).toBe(
-      starterExperimentSourceBundle.files['experiment.tsx'],
+    const { result } = renderHook(
+      () => useCaeWorkbenchState({ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never, true),
+      { wrapper: wrapper() },
     )
+
+    act(() => result.current.applyExperiment(savedExperiment(7)))
+    act(() => mocks.workspaceChange(createCadSourceDocument('experiment', changedBundle)))
+    act(() => result.current.detachDeletedExperiment())
+
+    expect(result.current.experimentRecord).toBeNull()
+    expect(result.current.experimentId).toBeNull()
+    expect(result.current.experiment?.sourceBundle).toEqual(changedBundle)
+    expect(result.current.experimentStatus).toBe('new')
+    expect(result.current.experimentDirty).toBe(true)
+    expect(result.current.hasUnsavedExperimentWork).toBe(true)
   })
 })

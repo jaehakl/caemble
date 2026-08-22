@@ -16,9 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db import (
     DesignerModel,
     Experiment,
-    GeometryPackage,
-    GeometryRepository,
-    GeometryVersion,
     Material,
     MaterialName,
     MaterialParameter,
@@ -33,7 +30,6 @@ VisibleResource = Literal[
     "experiment",
     "measurement",
     "recorded_data",
-    "geometry",
     "designer_model",
     "predictor_model",
 ]
@@ -98,38 +94,6 @@ class VisibleDataReader:
                 }
                 for row in rows
             ]
-        if resource == "geometry":
-            statement = (
-                select(
-                    GeometryVersion.id,
-                    GeometryRepository.namespace,
-                    GeometryPackage.name,
-                    GeometryVersion.version_major,
-                    GeometryVersion.version_minor,
-                    GeometryVersion.version_patch,
-                    GeometryVersion.description,
-                    GeometryVersion.source_hash,
-                    GeometryVersion.updated_at,
-                )
-                .join(GeometryPackage, GeometryPackage.id == GeometryVersion.package_id)
-                .join(GeometryRepository, GeometryRepository.id == GeometryPackage.repository_id)
-                .where(
-                    GeometryRepository.user_id == self.user_id,
-                    GeometryRepository.archived_at.is_(None),
-                    GeometryVersion.archived_at.is_(None),
-                    or_(
-                        GeometryRepository.namespace.ilike(pattern, escape="\\"),
-                        GeometryRepository.slug.ilike(pattern, escape="\\"),
-                        GeometryPackage.name.ilike(pattern, escape="\\"),
-                        GeometryVersion.description.ilike(pattern, escape="\\"),
-                    ),
-                )
-                .order_by(GeometryVersion.updated_at.desc(), GeometryVersion.id.desc())
-                .limit(limit)
-            )
-            rows = (await self.db.execute(statement)).mappings().all()
-            return [_geometry_summary(row) for row in rows]
-
         model, columns, searchable, visibility = self._simple_search_spec(resource)
         statement = (
             select(*columns)
@@ -145,18 +109,20 @@ class VisibleDataReader:
     async def detail(self, resource: VisibleResource, resource_id: int) -> dict[str, Any]:
         if resource == "material":
             return await self._material_detail(resource_id)
-        if resource == "geometry":
-            row = await self._geometry_row(resource_id, include_source=False)
-            return _geometry_summary(row)
         if resource == "experiment":
             row = await self._one_visible(
                 select(
                     Experiment.id,
                     Experiment.name,
                     Experiment.description,
+                    Experiment.namespace,
+                    Experiment.repository_slug,
+                    Experiment.experiment_key,
+                    Experiment.version_major,
+                    Experiment.version_minor,
+                    Experiment.version_patch,
                     Experiment.source_hash,
                     Experiment.source_bundle,
-                    Experiment.parent_id,
                     Experiment.updated_at,
                 ),
                 Experiment,
@@ -164,12 +130,20 @@ class VisibleDataReader:
             )
             bundle = row["source_bundle"] if isinstance(row["source_bundle"], dict) else {}
             files = bundle.get("files") if isinstance(bundle.get("files"), dict) else {}
+            version = f"{row['version_major']}.{row['version_minor']}.{row['version_patch']}"
             return {
                 "id": row["id"],
                 "name": row["name"],
                 "description": row["description"],
+                "namespace": row["namespace"],
+                "repository": row["repository_slug"],
+                "key": row["experiment_key"],
+                "version": version,
+                "coordinate": (
+                    f"caemble:experiment/{row['namespace']}/"
+                    f"{row['repository_slug']}/{row['experiment_key']}@{version}"
+                ),
                 "sourceHash": row["source_hash"],
-                "parentId": row["parent_id"],
                 "formatVersion": bundle.get("formatVersion"),
                 "files": [
                     {"path": path, "characters": len(source)}
@@ -217,38 +191,27 @@ class VisibleDataReader:
 
     async def read_source(
         self,
-        resource: Literal["experiment", "geometry"],
+        resource: Literal["experiment"],
         resource_id: int,
         path: str | None,
         offset: int,
         length: int,
     ) -> dict[str, Any]:
         length = min(max(length, 1), MAX_SOURCE_CHUNK)
-        if resource == "experiment":
-            row = await self._one_visible(
-                select(Experiment.id, Experiment.name, Experiment.source_hash, Experiment.source_bundle),
-                Experiment,
-                resource_id,
-            )
-            if path is None:
-                raise VisibleDataError("Experiment source path is required")
-            bundle = row["source_bundle"] if isinstance(row["source_bundle"], dict) else {}
-            files = bundle.get("files") if isinstance(bundle.get("files"), dict) else {}
-            source = files.get(path)
-            if not isinstance(source, str):
-                raise VisibleDataError("Visible Experiment source file was not found")
-            label = f"{row['name']} / {path}"
-            revision = row["source_hash"]
-        elif resource == "geometry":
-            row = await self._geometry_row(resource_id, include_source=True)
-            if path not in {None, "geometry.tsx", "source"}:
-                raise VisibleDataError("Geometry source path is not supported")
-            source = row["source"]
-            label = _geometry_label(row)
-            revision = row["source_hash"]
-            path = "geometry.tsx"
-        else:
-            raise VisibleDataError("Only Experiment and Geometry source can be read")
+        row = await self._one_visible(
+            select(Experiment.id, Experiment.name, Experiment.source_hash, Experiment.source_bundle),
+            Experiment,
+            resource_id,
+        )
+        if path is None:
+            raise VisibleDataError("Experiment source path is required")
+        bundle = row["source_bundle"] if isinstance(row["source_bundle"], dict) else {}
+        files = bundle.get("files") if isinstance(bundle.get("files"), dict) else {}
+        source = files.get(path)
+        if not isinstance(source, str):
+            raise VisibleDataError("Visible Experiment source file was not found")
+        label = f"{row['name']} / {path}"
+        revision = row["source_hash"]
         if offset > len(source):
             raise VisibleDataError("Source offset is outside the file")
         content = source[offset : offset + length]
@@ -289,8 +252,23 @@ class VisibleDataReader:
         if resource == "experiment":
             return (
                 Experiment,
-                [Experiment.id, Experiment.name, Experiment.description, Experiment.source_hash, Experiment.updated_at],
-                [Experiment.name, Experiment.description],
+                [
+                    Experiment.id,
+                    Experiment.name,
+                    Experiment.description,
+                    Experiment.namespace,
+                    Experiment.repository_slug,
+                    Experiment.experiment_key,
+                    Experiment.source_hash,
+                    Experiment.updated_at,
+                ],
+                [
+                    Experiment.name,
+                    Experiment.description,
+                    Experiment.namespace,
+                    Experiment.repository_slug,
+                    Experiment.experiment_key,
+                ],
                 _visible(Experiment.user_id, self.user_id),
             )
         if resource == "measurement":
@@ -381,40 +359,6 @@ class VisibleDataReader:
             ).encode("utf-8")
         ).hexdigest()
         return value
-
-    async def _geometry_row(self, resource_id: int, *, include_source: bool) -> Any:
-        columns = [
-            GeometryVersion.id,
-            GeometryRepository.namespace,
-            GeometryRepository.slug,
-            GeometryPackage.name,
-            GeometryVersion.version_major,
-            GeometryVersion.version_minor,
-            GeometryVersion.version_patch,
-            GeometryVersion.description,
-            GeometryVersion.source_hash,
-            GeometryVersion.module_hash,
-            GeometryVersion.cad_api_version,
-            GeometryVersion.updated_at,
-        ]
-        if include_source:
-            columns.append(GeometryVersion.source)
-        row = (
-            await self.db.execute(
-                select(*columns)
-                .join(GeometryPackage, GeometryPackage.id == GeometryVersion.package_id)
-                .join(GeometryRepository, GeometryRepository.id == GeometryPackage.repository_id)
-                .where(
-                    GeometryVersion.id == resource_id,
-                    GeometryRepository.user_id == self.user_id,
-                    GeometryRepository.archived_at.is_(None),
-                    GeometryVersion.archived_at.is_(None),
-                )
-            )
-        ).mappings().one_or_none()
-        if row is None:
-            raise VisibleDataError("Visible Geometry was not found")
-        return row
 
     async def _recorded_row(self, resource_id: int, *, include_data: bool) -> Any:
         columns = [
@@ -601,21 +545,6 @@ def _bounded_value(value: Any) -> Any:
     if len(encoded.encode("utf-8")) <= 16 * 1024:
         return value
     return {"truncated": True, "preview": encoded[:8_000]}
-
-
-def _geometry_summary(row: Any) -> dict[str, Any]:
-    return {
-        "id": row["id"],
-        "name": _geometry_label(row),
-        "description": row["description"],
-        "version": f"{row['version_major']}.{row['version_minor']}.{row['version_patch']}",
-        "sourceHash": row["source_hash"],
-        "updatedAt": _json_value(row["updated_at"]),
-    }
-
-
-def _geometry_label(row: Any) -> str:
-    return f"{row['namespace']}/{row['name']}@{row['version_major']}.{row['version_minor']}.{row['version_patch']}"
 
 
 def _provenance(

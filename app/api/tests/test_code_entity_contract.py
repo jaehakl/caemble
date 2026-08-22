@@ -1,66 +1,46 @@
 import unittest
 
-from db import Experiment, GeometryPackage, GeometryRepository, GeometryVersion, Measurement
-from models import ExperimentBase, GeometryModuleSnapshot, MeasurementBase
+from db import Experiment, Measurement
+from models import ExperimentBase, MeasurementBase
 from tests.helpers import experiment_source_bundle
 
 
 class TestCodeEntityContract(unittest.TestCase):
-    def test_experiment_contract_exposes_server_source_hash(self):
+    def test_experiment_contract_owns_repository_semver_and_bundle_v6(self):
         value = ExperimentBase.model_validate(
             {
+                "user_id": "00000000-0000-0000-0000-000000000001",
+                "namespace": "owner-name",
+                "repository_slug": "examples",
+                "experiment_key": "beam",
+                "version_major": 1,
+                "version_minor": 2,
+                "version_patch": 3,
                 "name": "Experiment",
                 "source_bundle": experiment_source_bundle(),
                 "source_hash": "a" * 64,
             }
         )
-        self.assertEqual(value.source_bundle.formatVersion, 5)
-        self.assertEqual(
-            value.model_dump(mode="json")["source_bundle"],
-            experiment_source_bundle(),
-        )
-        self.assertEqual(value.source_hash, "a" * 64)
+        self.assertEqual(value.source_bundle.formatVersion, 6)
+        self.assertEqual(value.version_major, 1)
         self.assertNotIn("code_embedding", value.model_dump())
-        self.assertFalse(Experiment.__table__.columns.source_hash.nullable)
+        self.assertFalse(Experiment.__table__.columns.user_id.nullable)
+        self.assertNotIn("parent_id", Experiment.__table__.columns)
 
-    def test_current_geometry_contract_uses_module_v4_and_reads_cad_api_v7_and_v8(self):
-        value = GeometryModuleSnapshot(
-            geometryVersionId=1,
-            coordinate="caemble:geometry/owner/common/shape@1.0.0",
-            moduleFormatVersion=4,
-            cadApiVersion=7,
-            description=None,
-            source="export const Shape = () => <box />",
-            sourceHash="a" * 64,
-            moduleHash="b" * 64,
-        )
-        self.assertEqual(value.moduleFormatVersion, 4)
-        self.assertEqual(value.cadApiVersion, 7)
-        self.assertEqual(
-            GeometryModuleSnapshot.model_validate(
-                {**value.model_dump(mode="json"), "cadApiVersion": 8}
-            ).cadApiVersion,
-            8,
-        )
-        constraints = {str(item.sqltext) for item in GeometryVersion.__table__.constraints if hasattr(item, "sqltext")}
-        self.assertIn("module_format_version = 4", constraints)
-        self.assertIn("cad_api_version IN (7, 8)", constraints)
-
-    def test_removed_split_tables_are_not_mapped(self):
+    def test_geometry_and_projection_tables_are_not_mapped(self):
         table_names = set(Experiment.metadata.tables)
-        self.assertNotIn("structures", table_names)
-        self.assertNotIn("samples", table_names)
-        self.assertNotIn("setups", table_names)
-        self.assertIn("experiments", table_names)
-        self.assertIn("measurements", table_names)
-
-    def test_geometry_contract_is_immutable_repository_package_version(self):
-        table_names = set(Experiment.metadata.tables)
-        self.assertNotIn("geometries", table_names)
-        self.assertIn(GeometryRepository.__tablename__, table_names)
-        self.assertIn(GeometryPackage.__tablename__, table_names)
-        self.assertIn(GeometryVersion.__tablename__, table_names)
-        self.assertNotIn("parent_id", GeometryVersion.__table__.columns)
+        self.assertFalse(
+            {
+                "geometries",
+                "geometry_repositories",
+                "geometry_packages",
+                "geometry_versions",
+                "geometry_imports",
+                "experiment_geometry_imports",
+                "experiment_geometry_modules",
+            }
+            & table_names
+        )
 
     def test_measurement_contract_contains_complete_input_snapshot(self):
         value = MeasurementBase(

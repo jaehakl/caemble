@@ -166,13 +166,12 @@ const materialRequirementSchema = z.object({
 })
 
 export const catalogMetaSchema = z.object({
-  schemaVersion: z.literal(3),
+  schemaVersion: z.literal(4),
   catalogRevision: z.string().min(1),
   quantityKindCount: z.number().int().nonnegative(),
   materialParameterCount: z.number().int().nonnegative(),
   materialModelCount: z.number().int().nonnegative(),
   solverCount: z.number().int().nonnegative(),
-  geometryCount: z.number().int().nonnegative(),
   experimentCount: z.number().int().nonnegative(),
   materialGlobalQualifiers: z.array(z.string()),
   materialDesignRules: z.record(z.string(), z.string()),
@@ -230,30 +229,6 @@ export const solverDetailSchema = solverListItemSchema.extend({
   ),
 })
 
-export const geometryListItemSchema = z.object({
-  key: z.string().min(1),
-  title: z.string().min(1),
-  description: z.string().min(1),
-  repository: z.string().min(1),
-  cadApiVersion: z.literal(8),
-  moduleFormatVersion: z.literal(4),
-  lengthUnit: z.string().min(1),
-  exportName: z.string().regex(/^[A-Z][A-Za-z0-9]*$/),
-  sourceHash: z.string().regex(/^[0-9a-f]{64}$/),
-  concepts: z.array(z.string()),
-  materialRoles: z.array(z.object({ role: z.string().min(1), description: z.string().min(1) })),
-  relatedElements: z.array(z.string().min(1)),
-})
-
-export const geometryDetailSchema = geometryListItemSchema.extend({ source: z.string().min(1) })
-
-export const geometryRepositorySchema = z.object({
-  slug: z.string().min(1),
-  title: z.string().min(1),
-  description: z.string(),
-  ordinal: z.number().int().nonnegative(),
-})
-
 const experimentSolverSchema = z.object({
   name: z.string().min(1),
   version: z.string().min(1),
@@ -262,26 +237,23 @@ const experimentSolverSchema = z.object({
 
 export const experimentListItemSchema = z.object({
   key: z.string().min(1),
+  namespace: z.string().min(1),
+  repository: z.string().min(1),
+  version: z.string().regex(/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/),
+  coordinate: z.string().min(1),
   title: z.string().min(1),
   description: z.string().min(1),
   cadApiVersion: z.literal(8),
   sourceFormatVersion: z.literal(2),
-  bundleFormatVersion: z.literal(5),
+  bundleFormatVersion: z.literal(6),
   bundleHash: z.string().regex(/^[0-9a-f]{64}$/),
   concepts: z.array(z.string()),
   relatedSolvers: z.array(experimentSolverSchema),
 })
 
-const geometrySnapshotSchema = z.object({
-  schemaVersion: z.literal(2),
-  entryImports: z.array(z.unknown()),
-  modules: z.array(z.unknown()),
-})
-
 const experimentSourceBundleSchema = z.object({
-  formatVersion: z.literal(5),
+  formatVersion: z.literal(6),
   files: z.record(z.string(), z.string()),
-  geometrySnapshot: geometrySnapshotSchema,
 })
 
 const experimentVerificationSchema = z.object({
@@ -315,7 +287,7 @@ export const experimentDetailSchema = experimentListItemSchema.extend({
 })
 
 export const searchItemSchema = z.object({
-  kind: z.enum(['quantityKind', 'materialParameter', 'materialModel', 'solver', 'geometry', 'experiment']),
+  kind: z.enum(['quantityKind', 'materialParameter', 'materialModel', 'solver', 'experiment']),
   key: z.string(),
   title: z.string(),
   subtitle: z.string(),
@@ -354,8 +326,9 @@ export type ListQuery = Readonly<{
   unit?: string
   tensorOrder?: number
   quantityKind?: string
-  element?: string
+  namespace?: string
   repository?: string
+  version?: string
   limit?: number
   cursor?: string
 }>
@@ -376,9 +349,6 @@ export type CatalogMaterialParameterDetail = z.infer<typeof materialParameterDet
 export type CatalogMaterialModel = z.infer<typeof materialModelSchema>
 export type CatalogSolverListItem = z.infer<typeof solverListItemSchema>
 export type CatalogSolverDetail = z.infer<typeof solverDetailSchema>
-export type CatalogGeometryListItem = z.infer<typeof geometryListItemSchema>
-export type CatalogGeometryDetail = z.infer<typeof geometryDetailSchema>
-export type CatalogGeometryRepository = z.infer<typeof geometryRepositorySchema>
 export type CatalogExperimentListItem = z.infer<typeof experimentListItemSchema>
 export type CatalogExperimentDetail = z.infer<typeof experimentDetailSchema>
 export type CatalogSearchItem = z.infer<typeof searchItemSchema>

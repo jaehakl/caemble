@@ -17,7 +17,7 @@ def _to_user_data(user: User) -> UserData:
         is_active=user.is_active,
         created_at=user.created_at,
         updated_at=user.updated_at,
-        geometry_namespace=user.geometry_namespace,
+        experiment_namespace=user.experiment_namespace,
         roles=[user_role.role.name for user_role in user.user_roles],
     )
 

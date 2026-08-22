@@ -5,7 +5,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from models import ExperimentSourceBundle
-from ai.workspace import validate_geometry_snapshot
 
 
 ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
@@ -49,7 +48,7 @@ class AgentWorkspace(BaseModel):
     experimentId: int | None = Field(default=None, gt=0)
     document: ExperimentSourceDocument
     baseHash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    geometryContextVersion: str = Field(min_length=1, max_length=256)
+    experimentContextVersion: str = Field(min_length=1, max_length=256)
     workspaceSession: int = Field(ge=0)
     activeFile: str | None = Field(default=None, max_length=256)
 
@@ -57,7 +56,6 @@ class AgentWorkspace(BaseModel):
     def validate_active_file(self) -> "AgentWorkspace":
         if self.activeFile is not None and self.activeFile not in self.document.sourceBundle.files:
             raise ValueError("activeFile must name a sourceBundle file")
-        validate_geometry_snapshot(self.document.sourceBundle.geometrySnapshot)
         return self
 
 

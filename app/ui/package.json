@@ -18,7 +18,7 @@
     "test:contracts": "vitest run contract.test",
     "test:full": "vitest run",
     "test:e2e": "playwright test",
-    "test:e2e:production": "npm run build:production-e2e && playwright test --config playwright.production.config.ts --grep \"opens Geometry export publishing\"",
+    "test:e2e:production": "npm run build:production-e2e && playwright test --config playwright.production.config.ts --grep \"manages Experiment namespace\"",
     "build:production-e2e": "npm run build:sdk && npm run check:generated && tsc -b && vite build --mode production-e2e && node scripts/check-production-assets.mjs",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",

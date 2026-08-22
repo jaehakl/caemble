@@ -12,11 +12,13 @@ import {
 } from '../cad/source/sourceAnalysis'
 import {
   EXPERIMENT_ENTRY_PATH,
+  EXPERIMENT_GEOMETRY_PATH,
   EXPERIMENT_MATERIAL_PATH,
   experimentTaskName,
   experimentTaskPaths,
   type ExperimentSourceBundle,
 } from '../cad/source/document'
+import { experimentTypeScriptPaths } from '../cad/source/moduleResolution'
 import { DRAFT_TASK_KERNEL } from './draftTask'
 
 export type CatalogSourceReferences = CatalogRuntimeSliceRequest & Readonly<{ draftTaskNames: readonly string[] }>
@@ -82,12 +84,26 @@ function taskSolver(analysis: SourceAnalysis) {
   })
 }
 
-function collectFileReferences(source: string, policy: 'experiment' | 'material' | 'task') {
-  const ast = parseCadSource(source, policy)
+function collectFileReferences(
+  path: string,
+  source: string,
+  policy: 'experiment' | 'geometry' | 'material' | 'module' | 'task',
+) {
+  const ast = parseCadSource(source, policy, path)
   const analysis = { bindings: collectSourceBindings(ast.program.body) }
   const quantityKinds = new Set<string>()
   const materialParameters = new Set<string>()
   const materialModels = new Set<string>()
+  const materialConstructors = new Set(
+    ast.program.body.flatMap((statement) => {
+      if (statement.type !== 'ImportDeclaration' || statement.source.value !== '@caemble/core') return []
+      return statement.specifiers.flatMap((specifier) => {
+        if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') return []
+        const imported = specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value
+        return imported === 'Material' ? [specifier.local.name] : []
+      })
+    }),
+  )
 
   const visit = (value: unknown) => {
     if (!value || typeof value !== 'object') return
@@ -111,7 +127,7 @@ function collectFileReferences(source: string, policy: 'experiment' | 'material'
     if (
       node.type === 'NewExpression' &&
       (node.callee as { type?: string; name?: string })?.type === 'Identifier' &&
-      (node.callee as { name?: string }).name === 'Material'
+      materialConstructors.has((node.callee as { name: string }).name)
     ) {
       const args = node.arguments as unknown[]
       const variables = args.length >= 3 ? args[2] : args.length === 2 ? args[1] : undefined
@@ -167,13 +183,23 @@ export function extractCatalogSourceReferences(bundle: ExperimentSourceBundle): 
   const quantityKinds = new Set<string>()
   const materialParameters = new Set<string>()
   const materialModels = new Set<string>()
-  const sourceFiles: readonly (readonly [string, 'experiment' | 'material' | 'task'])[] = [
-    [EXPERIMENT_ENTRY_PATH, 'experiment' as const],
-    [EXPERIMENT_MATERIAL_PATH, 'material' as const],
-    ...experimentTaskPaths(bundle).map((path) => [path, 'task' as const] as const),
-  ]
+  const sourceFiles = experimentTypeScriptPaths(bundle.files).map(
+    (path) =>
+      [
+        path,
+        path === EXPERIMENT_ENTRY_PATH
+          ? ('experiment' as const)
+          : path === EXPERIMENT_GEOMETRY_PATH
+            ? ('geometry' as const)
+            : path === EXPERIMENT_MATERIAL_PATH
+              ? ('material' as const)
+              : experimentTaskName(path) !== null
+                ? ('task' as const)
+                : ('module' as const),
+      ] as const,
+  )
   sourceFiles.forEach(([path, policy]) => {
-    const found = collectFileReferences(bundle.files[path], policy)
+    const found = collectFileReferences(path, bundle.files[path], policy)
     found.quantityKinds.forEach((name) => quantityKinds.add(name))
     found.materialParameters.forEach((key) => materialParameters.add(key))
     found.materialModels.forEach((key) => materialModels.add(key))
@@ -190,7 +216,6 @@ export function extractCatalogSourceReferences(bundle: ExperimentSourceBundle): 
 export async function fetchCatalogRuntimeSlice(bundle: ExperimentSourceBundle): Promise<CatalogRuntimeSlice> {
   const references = extractCatalogSourceReferences(bundle)
   if (
-    references.draftTaskNames.length > 0 &&
     references.solvers.length === 0 &&
     references.quantityKinds.length === 0 &&
     references.materialParameters.length === 0 &&

@@ -17,6 +17,13 @@ import type { CadDocumentController } from '@/features/viewer/workspace/useCadWo
 import type { AgentExperimentChange } from '../state/useCaeWorkbenchState'
 import { DocumentFeedback } from './DocumentFeedback'
 
+const protectedCorePaths: readonly string[] = [
+  EXPERIMENT_ENTRY_PATH,
+  EXPERIMENT_GEOMETRY_PATH,
+  EXPERIMENT_MATERIAL_PATH,
+  EXPERIMENT_SIMULATION_PATH,
+]
+
 export type ExperimentEditorProps = {
   controller: CadDocumentController
   disabled?: boolean
@@ -118,16 +125,25 @@ export function ExperimentEditor({
   const filePaths = useMemo(
     () =>
       document
-        ? [
-            ...new Set([
+        ? (() => {
+            const core = [
               EXPERIMENT_ENTRY_PATH,
               EXPERIMENT_GEOMETRY_PATH,
               EXPERIMENT_MATERIAL_PATH,
               EXPERIMENT_SIMULATION_PATH,
-              ...experimentTaskPaths(document.sourceBundle),
-              ...(agentChange?.files.map((file) => file.path) ?? []),
-            ]),
-          ]
+            ].filter((path) => path in document.sourceBundle.files)
+            const tasks = experimentTaskPaths(document.sourceBundle)
+            const known = new Set([...core, ...tasks])
+            const additional = [
+              ...new Set([
+                ...Object.keys(document.sourceBundle.files),
+                ...(agentChange?.files.map((file) => file.path) ?? []),
+              ]),
+            ]
+              .filter((path) => !known.has(path))
+              .sort()
+            return [...core, ...tasks, ...additional]
+          })()
         : [],
     [agentChange, document],
   )
@@ -200,15 +216,42 @@ export function ExperimentEditor({
     selectFile(path)
   }
 
-  const deleteTask = () => {
-    const taskName = experimentTaskName(activeFile)
-    if (!taskName || filePaths.filter((path) => experimentTaskName(path) !== null).length <= 1) return
-    if (!window.confirm(`${taskName} Task를 삭제할까요? simulate.py의 참조는 자동으로 변경되지 않습니다.`)) return
-    controller.handleRemoveExperimentTask(taskName)
-    selectFile(EXPERIMENT_ENTRY_PATH)
+  const addFile = () => {
+    const value = window.prompt('번들에 추가할 .ts 또는 .tsx 상대 경로를 입력하세요. 예: lib/profile.ts')
+    if (value === null) return
+    const path = value.trim().replace(/\\/gu, '/')
+    if (!path) {
+      window.alert('파일 경로를 입력하세요.')
+      return
+    }
+    if (!path.endsWith('.ts') && !path.endsWith('.tsx')) {
+      window.alert('추가 파일은 .ts 또는 .tsx만 사용할 수 있습니다.')
+      return
+    }
+    if (path in document.sourceBundle.files) {
+      window.alert('같은 경로의 파일이 이미 있습니다.')
+      return
+    }
+    try {
+      controller.handleAddExperimentFile(path, 'export {}\n')
+      selectFile(path)
+    } catch (cause: unknown) {
+      window.alert(cause instanceof Error ? cause.message : String(cause))
+    }
   }
 
-  const taskCount = filePaths.filter((path) => experimentTaskName(path) !== null).length
+  const deleteFile = () => {
+    const taskName = experimentTaskName(activeFile)
+    if (protectedCorePaths.includes(activeFile)) return
+    const label = taskName ? `${taskName} Task` : activeFile
+    if (!window.confirm(`${label}를 삭제할까요? 다른 파일의 import나 simulate.py 참조는 자동으로 변경되지 않습니다.`)) {
+      return
+    }
+    if (taskName) controller.handleRemoveExperimentTask(taskName)
+    else controller.handleRemoveExperimentFile(activeFile)
+    selectFile(EXPERIMENT_ENTRY_PATH)
+  }
+  const isProtectedCore = protectedCorePaths.includes(activeFile)
 
   return (
     <section aria-label="Experiment editor" className="flex h-full min-h-0 min-w-0 flex-col bg-white">
@@ -259,7 +302,7 @@ export function ExperimentEditor({
                 </button>
               ) : (
                 <span className="rounded border border-sky-200 bg-sky-50 px-2 py-1 text-xs font-medium text-sky-700">
-                  {conflictReview ? 'Geometry graph staged 충돌' : '미검증 Geometry graph 갱신'}
+                  {conflictReview ? 'Source staged 충돌' : '미검증 Source 갱신'}
                 </span>
               )}
               <button
@@ -271,16 +314,14 @@ export function ExperimentEditor({
               </button>
             </>
           ) : null}
-          {isTask ? (
+          {!isProtectedCore && activeFile in document.sourceBundle.files ? (
             <button
               className="rounded border border-rose-200 bg-white px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
-              disabled={
-                controller.sourceReadOnly || disabled || taskCount <= 1 || !(activeFile in document.sourceBundle.files)
-              }
+              disabled={controller.sourceReadOnly || disabled}
               type="button"
-              onClick={deleteTask}
+              onClick={deleteFile}
             >
-              Task 삭제
+              {isTask ? 'Task 삭제' : 'File 삭제'}
             </button>
           ) : null}
           <button
@@ -290,6 +331,14 @@ export function ExperimentEditor({
             onClick={addTask}
           >
             + Task
+          </button>
+          <button
+            className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={controller.sourceReadOnly || disabled}
+            type="button"
+            onClick={addFile}
+          >
+            + File
           </button>
         </div>
       </header>

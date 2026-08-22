@@ -11,14 +11,14 @@ import {
 } from './sourceAnalysis'
 
 describe('CAD source policy', () => {
-  it('accepts only the explicit relative geometry and material modules in Experiment and Task', () => {
+  it('accepts arbitrary bundle-relative modules in Experiment and Task sources', () => {
     const experiment = `import { experiment } from '@caemble/core'\nimport { Assembly } from './geometry'\nimport { Steel } from './material'\nvoid Steel\nexport default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => <Assembly id="assembly" />, recordedData: {} })`
     const task = `import { defineTask } from '@caemble/core'\nimport { Assembly } from '../geometry'\nimport { Steel } from '../material'\nvoid Steel\nexport default defineTask({ kernel: { name: 'solver', version: '1.0.0' }, geometry: () => <Assembly id="assembly" />, config: () => ({}) })`
     expect(analyzeCadSource(experiment).factoryName).toBe('experiment')
     expect(analyzeTaskSource(task).factoryName).toBe('defineTask')
     expect(staticCadSourceImports(experiment)).toEqual(['@caemble/core', './geometry', './material'])
-    expect(() => analyzeCadSource(experiment.replace('./geometry', '../geometry'))).toThrow()
-    expect(() => analyzeTaskSource(task.replace('../geometry', './geometry'))).toThrow()
+    expect(() => analyzeCadSource(experiment.replace('./geometry', './shared/geometry'))).not.toThrow()
+    expect(() => analyzeTaskSource(task.replace('../geometry', '../shared/geometry'))).not.toThrow()
   })
 
   it('accepts named Material values and factories only in material.tsx', () => {
@@ -34,16 +34,16 @@ export default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => nu
 void new Material('Inline')`,
       ),
     ).toThrow('material.tsx')
-    expect(() => analyzeMaterialSource("import { Part } from './geometry'\nexport { Part }")).toThrow('@caemble/core')
+    expect(analyzeMaterialSource("import { Part } from './materials'\nexport { Part }").exports).toEqual(['Part'])
     expect(() => analyzeMaterialSource('export default 1')).toThrow('named Material')
     expect(() => analyzeMaterialSource('const Steel = {}\nexport { Steel as default }')).toThrow('named Material')
     expect(() =>
-      analyzeGeometrySource("import { Steel } from './material'\nexport const Part = () => <box />"),
-    ).toThrow()
+      analyzeGeometrySource("import { Steel } from './material'\nvoid Steel\nexport const Part = () => <box />"),
+    ).not.toThrow()
   })
 
-  it('derives multiple named function exports and aliased exact/local imports', () => {
-    const coordinate = 'caemble:geometry/jlee/common/part@1.2.3'
+  it('derives multiple named function exports and aliased relative imports', () => {
+    const coordinate = './part'
     const source = `import { type Geometry } from '@caemble/core'
 import { Part as Child, Preview } from "${coordinate}"
 export const Assembly: Geometry<{ size: number; required: number }> = ({ size = 1, required = 2 }) => <Child id="child" scale={[size, required, 1]} />
@@ -51,18 +51,15 @@ export function Alternate() { return <Preview id="preview" /> }`
     const analysis = analyzeGeometrySource(source)
     expect(analysis.exports.map((item) => item.name)).toEqual(['Assembly', 'Alternate'])
     expect(analysis.exports.find((item) => item.name === 'Assembly')?.defaultedProps).toEqual(['required', 'size'])
-    expect(analysis.imports.map((item) => [item.exportName, item.alias, item.coordinate])).toEqual([
+    expect(analysis.imports.map((item) => [item.exportName, item.alias, item.specifier])).toEqual([
       ['Part', 'Child', coordinate],
       ['Preview', 'Preview', coordinate],
     ])
-    expect(() => analyzeGeometrySource(source.replace('@1.2.3', '@local'))).toThrow('exact')
-    expect(
-      analyzeGeometrySource(source.replace('@1.2.3', '@local'), { allowLocal: true }).imports[0]?.coordinate,
-    ).toContain('@local')
+    expect(analysis.imports[0]?.specifier).toBe('./part')
   })
 
   it('maps cursor offsets to local named Geometry functions and ignores imported re-exports', () => {
-    const coordinate = 'caemble:geometry/jlee/common/part@1.2.3'
+    const coordinate = './part'
     const source = `import { Imported } from "${coordinate}"
 export const Arrow = () => <box id="arrow" />
 function Declared() { return <sphere id="declared" /> }
@@ -93,17 +90,31 @@ export { Declared, Shared as FirstAlias, Shared as SecondAlias, Imported }
     expect(() => analyzeGeometrySource('export const Helper = 1')).toThrow('function')
   })
 
-  it('rejects retired registry, default Geometry imports and nondeterminism', () => {
+  it('rejects external modules and nondeterminism while accepting relative default imports', () => {
     expect(() =>
       analyzeGeometrySource("import value from 'caemble:geometry/jlee/common/x@1.0.0'\nexport { value }"),
-    ).toThrow('named')
+    ).toThrow('bundle-relative')
     expect(() => analyzeGeometrySource("import value from '@caemble/geometries'\nexport { value }")).toThrow()
+    expect(() => analyzeGeometrySource("import Part from './part'\nexport { Part }")).not.toThrow()
     expect(() => parseCadSource('const value = Math.random()')).toThrow('Math.random')
     expect(() => parseCadSource('const value = Date.now()')).toThrow('Date')
   })
 
+  it('blocks indirect runtime escape aliases without rejecting type names, object keys, or local bindings', () => {
+    expect(() => parseCadSource("const invoke = eval\ninvoke('postMessage(1)')")).toThrow('eval')
+    expect(() => parseCadSource("const key = 'constructor'\nconst Runtime = (() => {})[key]")).toThrow('constructor')
+    expect(() => parseCadSource('const random = Math[`random`]')).toThrow('Math.random')
+    expect(() =>
+      parseCadSource(`interface RuntimeShape { window: number; process: string; Date: string }
+type RuntimeDate = Date
+const labels = { window: 1, process: 2, Date: 'local', constructor: 'data' }
+const fetch = (value: number) => value + labels.window
+export const result: RuntimeShape | RuntimeDate | number = fetch(Math.sin(1))`),
+    ).not.toThrow()
+  })
+
   it('projects one Geometry export with only its transitive declarations and import specifiers', () => {
-    const coordinate = 'caemble:geometry/jlee/common/child@1.2.3'
+    const coordinate = './child'
     const source = `import { type Geometry, type Vec3 } from '@caemble/core'
 import { Child, Unused } from "${coordinate}"
 
@@ -156,18 +167,16 @@ const Helper: Geometry<PartProps> = ({ count = 2, enabled = true, materials }) =
 export { Helper as Assembly }
 `
     expect(analyzeGeometrySource(valid).exports.map((item) => item.name)).toEqual(['Assembly'])
-    expect(() =>
-      analyzeGeometrySource(valid.replace('count = 2', 'count')),
-    ).toThrow('explicit defaults')
-    expect(() =>
-      analyzeGeometrySource(valid.replace('{ count = 2, enabled = true, materials }', 'props')),
-    ).toThrow('direct object destructuring')
-    expect(() =>
-      analyzeGeometrySource(valid.replace('materials }', 'materials, ...rest }')),
-    ).toThrow('direct properties with explicit defaults')
-    expect(() =>
-      analyzeGeometrySource(valid.replace('count = 2', 'count: { value } = { value: 2 }')),
-    ).toThrow('direct properties with explicit defaults')
+    expect(() => analyzeGeometrySource(valid.replace('count = 2', 'count'))).toThrow('explicit defaults')
+    expect(() => analyzeGeometrySource(valid.replace('{ count = 2, enabled = true, materials }', 'props'))).toThrow(
+      'direct object destructuring',
+    )
+    expect(() => analyzeGeometrySource(valid.replace('materials }', 'materials, ...rest }'))).toThrow(
+      'direct properties with explicit defaults',
+    )
+    expect(() => analyzeGeometrySource(valid.replace('count = 2', 'count: { value } = { value: 2 }'))).toThrow(
+      'direct properties with explicit defaults',
+    )
     expect(() =>
       analyzeGeometrySource(`import { type Geometry } from '@caemble/core'
 type ImportedProps = Readonly<Record<string, number>>
@@ -194,7 +203,7 @@ export { InternalWheel as WheelAssembly, Unused }
   })
 
   it('projects an aliased imported binding re-export', () => {
-    const coordinate = 'caemble:geometry/jlee/common/child@1.2.3'
+    const coordinate = './child'
     const projected = projectGeometryExportSource(
       `import { Child as InternalChild, Unused } from "${coordinate}"
 export { InternalChild as PublishedChild, Unused }
@@ -207,19 +216,19 @@ export { InternalChild as PublishedChild, Unused }
     expect(analyzeGeometrySource(projected).exports.map((item) => item.name)).toEqual(['PublishedChild'])
   })
 
-  it('rejects unsafe mutable projection and selected local Geometry dependencies', () => {
+  it('rejects unsafe mutable projection and preserves selected relative dependencies', () => {
     expect(() =>
       projectGeometryExportSource(
         `let size = 1\nexport const Mutable = () => <box size={[size, size, size]} />`,
         'Mutable',
       ),
     ).toThrow('mutable top-level binding')
-    expect(() =>
+    expect(
       projectGeometryExportSource(
-        `import { Child } from 'caemble:geometry/jlee/common/child@local'\nexport const Parent = () => <Child id="child" />`,
+        `import { Child } from './child'\nexport const Parent = () => <Child id="child" />`,
         'Parent',
       ),
-    ).toThrow('Publish local Geometry dependency first')
+    ).toContain("from './child'")
     expect(() => projectGeometryExportSource('export const Part = () => <box />', 'Missing')).toThrow(
       'Geometry export was not found',
     )

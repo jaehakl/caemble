@@ -20,10 +20,8 @@ function handleOperation(value: unknown) {
   const { nonce, request, type: operation } = value
   let response: RunnerOperationResultEnvelope['response']
   try {
-    if (request.type !== 'preview-geometry') {
-      installCatalogRuntimeSlice(request.catalog)
-      request.catalog.solvers.forEach(({ descriptor }) => assertValidKernelDescriptor(descriptor))
-    }
+    installCatalogRuntimeSlice(request.catalog)
+    request.catalog.solvers.forEach(({ descriptor }) => assertValidKernelDescriptor(descriptor))
     if (request.type === 'inspect') {
       const inspection = inspectCompiledDocument(request.compiledDocument)
       response = {
@@ -56,7 +54,7 @@ function handleOperation(value: unknown) {
         scene: serializeCadScene(
           evaluateCompiledGeometryModule(
             request.compiledDocument,
-            request.coordinate,
+            request.path,
             request.exportName,
             request.lengthUnit,
           ),
@@ -64,10 +62,7 @@ function handleOperation(value: unknown) {
       }
     }
   } catch (error) {
-    const compiledSources = [
-      ...Object.values(request.compiledDocument.sources),
-      ...Object.values(request.compiledDocument.geometryGraph?.modules ?? {}),
-    ]
+    const compiledSources = Object.values(request.compiledDocument.sources)
     const diagnostic =
       error instanceof Error
         ? compiledSources.map((source) => runtimeDiagnostic(error, source)).find(Boolean)

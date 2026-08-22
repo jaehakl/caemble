@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import sqlite3
@@ -7,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from caemble_catalog import Catalog, CatalogIntegrityError, CatalogNotFoundError, catalog_path
+from caemble_catalog import (
+    Catalog,
+    CatalogAmbiguousError,
+    CatalogIntegrityError,
+    CatalogNotFoundError,
+    catalog_path,
+)
 from caemble_catalog.admin import (
     create_draft,
     publish_draft,
@@ -17,12 +24,14 @@ from caemble_catalog.admin import (
     writable_connection,
 )
 from caemble_catalog.cli import main
+from caemble_catalog.experiment_bundle import ExperimentBundleError, validate_experiment_module_graph
+from caemble_catalog.schema import parse_experiment_version
 
 
 def test_canonical_catalog_is_normalized_and_complete():
     with Catalog.open_readonly() as catalog:
         assert catalog.meta() == {
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "catalogRevision": catalog.meta()["catalogRevision"],
             "quantityKindDataVersion": "0.0.1",
             "materialCatalogVersion": "0.0.0",
@@ -30,8 +39,7 @@ def test_canonical_catalog_is_normalized_and_complete():
             "materialParameterCount": 258,
             "materialModelCount": 2,
             "solverCount": 2,
-            "geometryCount": 7,
-            "experimentCount": 4,
+            "experimentCount": 11,
             "materialGlobalQualifiers": [
                 "temperature",
                 "pressure",
@@ -59,6 +67,13 @@ def test_canonical_catalog_is_normalized_and_complete():
         assert "descriptor_json" not in {
             row["name"] for row in catalog._all("PRAGMA table_info('solvers')")
         }
+        experiment_columns = {row["name"]: row for row in catalog._all("PRAGMA table_info('experiments')")}
+        assert experiment_columns["id"]["pk"] == 1
+        assert experiment_columns["key"]["pk"] == 0
+        assert {
+            (row["from"], row["to"])
+            for row in catalog._all("PRAGMA foreign_key_list('experiment_files')")
+        } == {("experiment_id", "id")}
 
 
 def test_solver_manifests_reconstruct_the_legacy_contract():
@@ -80,26 +95,11 @@ def test_solver_manifests_reconstruct_the_legacy_contract():
         assert len(catalog.solver_contract_digest("steady-state-heat", "0.1.0")) == 64
 
 
-def test_example_geometry_and_experiment_catalog_contracts():
+def test_official_experiment_catalog_contracts():
     with Catalog.open_readonly() as catalog:
-        geometries, geometry_total = catalog.list_geometries(limit=100)
         experiments, experiment_total = catalog.list_experiments(limit=100)
-        assert geometry_total == 7
-        repositories = catalog.list_geometry_repositories()
-        assert [item["slug"] for item in repositories] == [
-            "getting-started",
-            "arrays",
-            "advanced-shapes",
-            "assemblies",
-        ]
-        arrays, arrays_total = catalog.list_geometries(repository="arrays", limit=100)
-        assert arrays_total == 2
-        assert {item["key"] for item in arrays} == {
-            "random-curved-edge-cylinder-array",
-            "random-curved-surface-sphere-hcp-array",
-        }
-        assert experiment_total == 4
-        assert {item["key"] for item in geometries} == {
+        assert experiment_total == 11
+        assert {
             "basketball-goal",
             "fiber-bundle",
             "shell-cutaways",
@@ -107,17 +107,23 @@ def test_example_geometry_and_experiment_catalog_contracts():
             "random-curved-surface-sphere-hcp-array",
             "geometry-authoring-skeleton",
             "two-material-wheel-assembly",
-        }
-        wheel = catalog.geometry("two-material-wheel-assembly")
+        } < {item["key"] for item in experiments}
+        assert catalog._all("SELECT name FROM sqlite_schema WHERE name LIKE '%geometr%'") == []
+
+        wheel = catalog.experiment("two-material-wheel-assembly")
+        assert wheel["namespace"] == "caemble"
         assert wheel["repository"] == "assemblies"
+        assert wheel["version"] == "1.0.0"
+        assert wheel["coordinate"] == "caemble:experiment/caemble/assemblies/two-material-wheel-assembly@1.0.0"
         assert wheel["cadApiVersion"] == 8
-        assert wheel["moduleFormatVersion"] == 4
-        assert wheel["exportName"] == "WheelAssembly"
-        assert [item["role"] for item in wheel["materialRoles"]] == ["tire", "wheel"]
-        assert len(wheel["sourceHash"]) == 64
+        assert wheel["sourceBundle"]["formatVersion"] == 6
+        assert not any(path.startswith("tasks/") for path in wheel["sourceBundle"]["files"])
+        assert wheel["relatedSolvers"] == []
+        assert catalog.list_experiments(namespace="caemble", repository="arrays", limit=100)[1] == 2
 
         coupled = catalog.experiment("electro-thermal-uniform-bar")
-        assert coupled["sourceBundle"]["formatVersion"] == 5
+        assert coupled["sourceBundle"]["formatVersion"] == 6
+        assert "geometrySnapshot" not in coupled["sourceBundle"]
         assert coupled["cadApiVersion"] == 8
         assert coupled["sourceFormatVersion"] == 2
         assert [(item["name"], item["version"]) for item in coupled["relatedSolvers"]] == [
@@ -130,30 +136,29 @@ def test_example_geometry_and_experiment_catalog_contracts():
             "material.tsx",
             "simulate.py",
         }
-        assert catalog.list_geometries(element="fiber", limit=100)[1] == 2
         assert catalog.list_experiments(solver_name="steady-state-heat", solver_version="0.1.0")[1] == 1
-        assert {item["kind"] for item in catalog.search("wheel")} >= {"geometry"}
+        assert {item["kind"] for item in catalog.search("wheel")} == {"experiment"}
 
 
-def test_geometry_and_experiment_cli_crud_and_semantic_diff(tmp_path: Path):
+@pytest.mark.parametrize("value", ["01.0.0", "1.00.0", "1.0.0-alpha", "2147483648.0.0"])
+def test_experiment_versions_are_bounded_release_only_semver(value: str):
+    with pytest.raises(ValueError):
+        parse_experiment_version(value)
+    with Catalog.open_readonly() as catalog:
+        with pytest.raises(CatalogNotFoundError):
+            catalog.experiment("basketball-goal", version=value)
+
+    assert parse_experiment_version("2147483647.0.0") == (2_147_483_647, 0, 0)
+
+
+def test_experiment_cli_crud_and_semantic_diff(tmp_path: Path, capsys):
     baseline = tmp_path / "baseline.sqlite3"
     draft = tmp_path / "draft.sqlite3"
     shutil.copy2(catalog_path(), baseline)
     create_draft(draft, baseline)
     with Catalog.open_readonly(baseline, immutable=False) as catalog:
-        geometry = catalog.geometry("basketball-goal")
-        experiment = catalog.experiment("dc-uniform-bar")
+        experiment = catalog.experiment("basketball-goal")
 
-    source = tmp_path / "geometry.tsx"
-    source.write_text(geometry["source"], encoding="utf-8")
-    assert main(
-        [
-            "--database", str(draft), "geometry", "upsert", geometry["key"],
-            "--title", "Updated Basketball Goal", "--description", geometry["description"],
-            "--length-unit", geometry["lengthUnit"], "--export-name", geometry["exportName"],
-            "--source-file", str(source), "--element", "box", "--element", "cylinder", "--element", "subtract",
-        ]
-    ) == 0
     bundle = tmp_path / "bundle.json"
     verification = tmp_path / "verification.json"
     bundle.write_text(json.dumps(experiment["sourceBundle"], ensure_ascii=False), encoding="utf-8")
@@ -161,17 +166,61 @@ def test_geometry_and_experiment_cli_crud_and_semantic_diff(tmp_path: Path):
     assert main(
         [
             "--database", str(draft), "experiment", "upsert", experiment["key"],
-            "--title", "Updated DC Uniform Bar", "--description", experiment["description"],
+            "--namespace", experiment["namespace"], "--repository", experiment["repository"],
+            "--version", experiment["version"],
+            "--title", "Updated Basketball Goal", "--description", experiment["description"],
             "--bundle-file", str(bundle), "--verification-file", str(verification),
-            "--solver", "dc-current-density@0.1.0",
         ]
     ) == 0
     validate_database(draft)
-    assert semantic_diff(draft, baseline) == [
-        "~ geometries/basketball-goal",
-        "~ experiments/dc-uniform-bar",
+    assert semantic_diff(draft, baseline) == [f"~ experiments/{experiment['coordinate']}"]
+
+    second_version_args = [
+        "--database", str(draft), "experiment", "upsert", experiment["key"],
+        "--namespace", experiment["namespace"], "--repository", experiment["repository"],
+        "--version", "2.0.0", "--title", experiment["title"], "--description", experiment["description"],
+        "--bundle-file", str(bundle), "--verification-file", str(verification),
     ]
-    assert main(["--database", str(draft), "geometry", "remove", geometry["key"]]) == 0
+    assert main(second_version_args) == 0
+    fork_args = second_version_args.copy()
+    fork_args[fork_args.index("--namespace") + 1] = "forked"
+    fork_args[fork_args.index("--repository") + 1] = "examples"
+    fork_args[fork_args.index("--version") + 1] = "1.0.0"
+    assert main(fork_args) == 0
+    with Catalog.open_readonly(draft, immutable=False) as catalog:
+        with pytest.raises(CatalogAmbiguousError, match="provide namespace, repository, and version"):
+            catalog.experiment(experiment["key"])
+        selected = catalog.experiment(
+            experiment["key"],
+            namespace=experiment["namespace"],
+            repository=experiment["repository"],
+            version="2.0.0",
+        )
+        assert catalog.experiment(selected["coordinate"])["version"] == "2.0.0"
+        matches = catalog.list_experiments(query=experiment["key"], limit=100)[0]
+        assert {item["coordinate"] for item in matches} == {
+            experiment["coordinate"],
+            "caemble:experiment/caemble/getting-started/basketball-goal@2.0.0",
+            "caemble:experiment/forked/examples/basketball-goal@1.0.0",
+        }
+    capsys.readouterr()
+    assert main(
+        [
+            "--database", str(draft), "query", "experiment", experiment["key"], "2.0.0",
+            "--namespace", experiment["namespace"], "--repository", experiment["repository"],
+        ]
+    ) == 0
+    assert json.loads(capsys.readouterr().out)["coordinate"].endswith("@2.0.0")
+    assert main(["--database", str(draft), "query", "experiment", selected["coordinate"]]) == 0
+    assert json.loads(capsys.readouterr().out)["coordinate"] == selected["coordinate"]
+    assert main(["--database", str(draft), "experiment", "remove", experiment["key"]]) == 1
+    assert main(["--database", str(draft), "experiment", "remove", selected["coordinate"]]) == 0
+    assert main(
+        [
+            "--database", str(draft), "experiment", "remove", experiment["key"],
+            "--namespace", "forked", "--repository", "examples", "--version", "1.0.0",
+        ]
+    ) == 0
     assert main(["--database", str(draft), "experiment", "remove", experiment["key"]]) == 0
 
 
@@ -256,6 +305,10 @@ def test_draft_diff_publish_and_released_solver_identity_policy(tmp_path: Path):
             "changed",
         ]
     ) == 0
+    with Catalog.open_readonly(draft, immutable=False) as catalog:
+        assert [
+            item["name"] for item in catalog.experiment("electro-thermal-uniform-bar")["relatedSolvers"]
+        ] == ["dc-current-density", "steady-state-heat"]
     before = baseline.read_bytes()
     with pytest.raises(CatalogIntegrityError, match="immutable"):
         publish_draft(draft, baseline)
@@ -311,13 +364,14 @@ def test_validate_detects_stale_contract_digest(tmp_path: Path):
     ("statement", "match"),
     [
         (
-            "UPDATE geometries SET source_hash = '0000000000000000000000000000000000000000000000000000000000000000' "
+            "UPDATE experiments SET bundle_hash = '0000000000000000000000000000000000000000000000000000000000000000' "
             "WHERE key = 'basketball-goal'",
-            "Geometry basketball-goal source hash mismatch",
+            "Experiment basketball-goal bundle hash mismatch",
         ),
         (
             "UPDATE experiment_files SET path = 'missing.py' "
-            "WHERE experiment_key = 'dc-uniform-bar' AND path = 'simulate.py'",
+            "WHERE experiment_id = (SELECT id FROM experiments WHERE key = 'dc-uniform-bar') "
+            "AND path = 'simulate.py'",
             "Experiment dc-uniform-bar source bundle is missing required files",
         ),
         (
@@ -326,7 +380,7 @@ def test_validate_detects_stale_contract_digest(tmp_path: Path):
         ),
         (
             "UPDATE experiment_solvers SET solver_version = '9.9.9' "
-            "WHERE experiment_key = 'dc-uniform-bar'",
+            "WHERE experiment_id = (SELECT id FROM experiments WHERE key = 'dc-uniform-bar')",
             "foreign-key violation",
         ),
     ],
@@ -345,3 +399,123 @@ def test_validate_rejects_invalid_official_source_bundle_and_solver_relations(
 
     with pytest.raises(CatalogIntegrityError, match=match):
         validate_database(draft)
+
+
+def test_official_experiment_module_policy_accepts_ts_syntax_and_type_only_cycles():
+    files = {
+        "experiment.tsx": "import { value } from './lib/value'\nexport default value\n",
+        "geometry.tsx": "export {}\n",
+        "material.tsx": "export {}\n",
+        "simulate.py": "async def simulate(*, sim, tasks, vars): pass\n",
+        "lib/value.ts": (
+            "import type { Other } from './other'\n"
+            "export type Value = { other?: Other }\n"
+            "export const value = <number>1\n"
+        ),
+        "lib/other.ts": "import type { Value } from './value'\nexport type Other = { value?: Value }\n",
+    }
+
+    validate_experiment_module_graph(files)
+
+
+def test_official_experiment_module_policy_resolves_dotted_extensionless_paths():
+    validate_experiment_module_graph(
+        {
+            "entry.ts": "import { value } from './lib/value.helpers'\nexport { value }\n",
+            "lib/value.helpers.ts": "export const value = 1\n",
+        }
+    )
+
+
+def test_official_experiment_module_policy_uses_structural_type_modifiers():
+    validate_experiment_module_graph(
+        {
+            "types/a.ts": "import { type\n B } from './b'\nexport type A = B\n",
+            "types/b.ts": "import { type /* comment */ A } from './a'\nexport type B = A\n",
+        }
+    )
+
+    with pytest.raises(ExperimentBundleError, match="Runtime bundle import cycle"):
+        validate_experiment_module_graph(
+            {
+                "runtime/a.ts": (
+                    "import { type as b } from './b'\n"
+                    "export const type = b\n"
+                ),
+                "runtime/b.ts": (
+                    "import { type as a } from './a'\n"
+                    "export const type = a\n"
+                ),
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("source", "match"),
+    [
+        ("import './missing'\n", "not found"),
+        ("void import('./value')\n", "Dynamic import"),
+        ("const value = <number>1\n", "TSX syntax error"),
+    ],
+)
+def test_official_experiment_module_policy_rejects_non_executable_graphs(source: str, match: str):
+    files = {
+        "experiment.tsx": "export default null\n",
+        "geometry.tsx": "export {}\n",
+        "material.tsx": "export {}\n",
+        "simulate.py": "async def simulate(*, sim, tasks, vars): pass\n",
+        "lib/value.tsx": source,
+    }
+
+    with pytest.raises(ExperimentBundleError, match=match):
+        validate_experiment_module_graph(files)
+
+
+def test_catalog_validation_applies_official_experiment_module_policy(tmp_path: Path):
+    draft = tmp_path / "invalid-import.sqlite3"
+    create_draft(draft)
+    connection = sqlite3.connect(draft)
+    connection.execute(
+        """UPDATE experiment_files SET source = 'import ''./missing''; export {}'
+           WHERE experiment_id = (SELECT id FROM experiments WHERE key = 'basketball-goal')
+             AND path = 'geometry.tsx'"""
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(CatalogIntegrityError, match="Bundle import is not found"):
+        validate_database(draft)
+
+
+def test_catalog_validation_accepts_shared_source_path_rules(tmp_path: Path):
+    draft = tmp_path / "dotted-path.sqlite3"
+    create_draft(draft)
+    connection = sqlite3.connect(draft)
+    experiment_id, format_version = connection.execute(
+        "SELECT id, bundle_format_version FROM experiments WHERE key = 'basketball-goal'"
+    ).fetchone()
+    source_rows = connection.execute(
+        "SELECT path, source FROM experiment_files WHERE experiment_id = ? ORDER BY ordinal",
+        (experiment_id,),
+    ).fetchall()
+    files = {path: source for path, source in source_rows}
+    files["lib/value..helpers.ts"] = "export const value = 1\n"
+    connection.execute(
+        "INSERT INTO experiment_files(experiment_id, ordinal, path, source) VALUES (?, ?, ?, ?)",
+        (experiment_id, len(source_rows), "lib/value..helpers.ts", files["lib/value..helpers.ts"]),
+    )
+    bundle_json = json.dumps(
+        {"formatVersion": format_version, "files": files},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    connection.execute(
+        "UPDATE experiments SET bundle_hash = ? WHERE id = ?",
+        (hashlib.sha256(bundle_json.encode("utf-8")).hexdigest(), experiment_id),
+    )
+    connection.commit()
+    connection.close()
+
+    refresh_derived_data(draft)
+    validate_database(draft)

@@ -59,7 +59,7 @@ export type AiHelperWorkspaceProps = Readonly<{
   activeExperimentFile: string | null
   activeTab: WorkbenchTabId
   baseHash?: string | null
-  geometryContextVersion?: string | null
+  experimentContextVersion?: string | null
   onApplyStagedBundle?: (request: AiAgentApplyRequest) => Promise<AiAgentApplyResult>
   onRequestLogin?: () => void
   workbench: CaeWorkbenchState
@@ -68,7 +68,7 @@ export type AiHelperWorkspaceProps = Readonly<{
 export function AiHelperWorkspace({
   activeExperimentFile,
   baseHash,
-  geometryContextVersion,
+  experimentContextVersion,
   onApplyStagedBundle,
   onRequestLogin,
   workbench,
@@ -101,7 +101,7 @@ export function AiHelperWorkspace({
   const runFinishedRef = useRef(true)
   const runWorkspaceIdentityRef = useRef<Readonly<{
     baseHash: string
-    geometryContextVersion: string
+    experimentContextVersion: string
   }> | null>(null)
   const selectedProvider = providers.data?.find(({ id }) => id === providerId) ?? null
   const selectedModel = selectedProvider?.models.find(({ id }) => id === modelId) ?? null
@@ -240,7 +240,7 @@ export function AiHelperWorkspace({
     if (
       !runWorkspaceIdentity ||
       event.baseHash !== runWorkspaceIdentity.baseHash ||
-      event.geometryContextVersion !== runWorkspaceIdentity.geometryContextVersion
+      event.experimentContextVersion !== runWorkspaceIdentity.experimentContextVersion
     ) {
       const message = 'Agent 완료 결과의 Workspace identity가 실행 시작 시점과 일치하지 않습니다.'
       setError(message)
@@ -281,7 +281,7 @@ export function AiHelperWorkspace({
         baseHash: runWorkspaceIdentity.baseHash,
         sourceHash: event.sourceHash,
         stagedRevision: event.stagedRevision,
-        geometryContextVersion: runWorkspaceIdentity.geometryContextVersion,
+        experimentContextVersion: runWorkspaceIdentity.experimentContextVersion,
         provenance: event.provenance,
       })
       if (result.status === 'conflicted') {
@@ -385,7 +385,7 @@ export function AiHelperWorkspace({
   async function sendPrompt() {
     const value = prompt.trim()
     const document = workbench.experiment
-    if (!baseHash || !geometryContextVersion || !sessionBinding) {
+    if (!baseHash || !experimentContextVersion || !sessionBinding) {
       setError('Workspace context 준비 중입니다. 잠시 후 다시 시도하세요.')
       return
     }
@@ -415,7 +415,7 @@ export function AiHelperWorkspace({
     runFinishedRef.current = false
     activeRunIdRef.current = null
     lastSequenceRef.current = -1
-    runWorkspaceIdentityRef.current = { baseHash, geometryContextVersion }
+    runWorkspaceIdentityRef.current = { baseHash, experimentContextVersion }
     runSessionBindingRef.current = sessionBinding
 
     const connection = connectAiAgent({
@@ -440,7 +440,7 @@ export function AiHelperWorkspace({
           experimentId: workbench.experimentId,
           document,
           baseHash,
-          geometryContextVersion,
+          experimentContextVersion,
           activeFile:
             activeExperimentFile && activeExperimentFile in document.sourceBundle.files ? activeExperimentFile : null,
           workspaceSession: workbench.agentWorkspaceSession,
@@ -674,7 +674,7 @@ export function AiHelperWorkspace({
                 !prompt.trim() ||
                 !workbench.experiment ||
                 !baseHash ||
-                !geometryContextVersion
+                !experimentContextVersion
               }
               type="submit"
             >
@@ -788,11 +788,7 @@ function toolLabel(name: string) {
     list_experiment_files: 'Experiment 파일 목록',
     read_experiment_file: 'staged source 읽기',
     write_experiment_file: 'staged source 수정',
-    delete_experiment_task: 'staged Task 삭제',
-    read_staged_file: 'staged source 읽기',
-    write_staged_file: 'staged source 수정',
-    add_staged_task: 'Task 추가',
-    delete_staged_task: 'Task 삭제',
+    delete_experiment_file: 'staged source 삭제',
   }
   return labels[name] ?? name
 }

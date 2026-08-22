@@ -3,7 +3,11 @@ name = "caemble-catalog"
 version = "0.1.0"
 description = "Versioned read-only CAE catalog shared by Caemble API and solver workers."
 requires-python = ">=3.11,<3.15"
-dependencies = ["ucumvert==0.3.1"]
+dependencies = [
+    "tree-sitter>=0.25,<0.27",
+    "tree-sitter-typescript>=0.23,<0.24",
+    "ucumvert==0.3.1",
+]
 
 [project.scripts]
 catalogctl = "caemble_catalog.cli:main"

@@ -88,21 +88,16 @@ export function assertCadWorkerRequest(value: unknown): asserts value is CadWork
   if (value.type === 'preview-geometry') {
     assertOnlyKeys(
       value,
-      ['type', 'requestId', 'revision', 'compiledDocument', 'coordinate', 'exportName', 'lengthUnit'],
+      ['type', 'requestId', 'revision', 'compiledDocument', 'catalog', 'path', 'exportName', 'lengthUnit'],
       'request',
     )
-    const module =
-      typeof value.coordinate === 'string'
-        ? Object.entries(value.compiledDocument.geometryGraph?.modules ?? {}).find(
-            ([coordinate]) => coordinate === value.coordinate,
-          )?.[1]
-        : undefined
+    parseCatalogRuntimeSlice(value.catalog)
     if (
-      !value.compiledDocument.geometryGraph ||
-      typeof value.coordinate !== 'string' ||
-      !module ||
+      typeof value.path !== 'string' ||
+      !value.compiledDocument.sources[value.path] ||
       typeof value.exportName !== 'string' ||
-      !module.exports.includes(value.exportName) ||
+      !value.exportName ||
+      value.exportName.length > 256 ||
       typeof value.lengthUnit !== 'string' ||
       !value.lengthUnit
     ) {

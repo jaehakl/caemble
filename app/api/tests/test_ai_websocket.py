@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from types import SimpleNamespace
 
@@ -22,6 +23,19 @@ pytestmark = pytest.mark.slow
 
 
 def start_payload():
+    source_bundle = {
+        "formatVersion": 6,
+        "files": {
+            "experiment.tsx": "export default () => <Main />",
+            "geometry.tsx": "export const Geometry = () => <box />",
+            "material.tsx": "export const steel = {}",
+            "simulate.py": "async def simulate(*, sim, tasks, vars):\n    return {}\n",
+            "tasks/main.tsx": "export const Main = () => <task />",
+        },
+    }
+    source_hash = hashlib.sha256(
+        json.dumps(source_bundle, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     return {
         "type": "run.start",
         "request": {"prompt": "검토해 줘", "messages": []},
@@ -34,20 +48,10 @@ def start_payload():
                 "kind": "experiment",
                 "formatVersion": 2,
                 "apiVersion": 8,
-                "sourceBundle": {
-                    "formatVersion": 5,
-                    "files": {
-                        "experiment.tsx": "export default () => <Main />",
-                        "geometry.tsx": "export const Geometry = () => <box />",
-                        "material.tsx": "export const steel = {}",
-                        "simulate.py": "async def simulate(*, sim, tasks, vars):\n    return {}\n",
-                        "tasks/main.tsx": "export const Main = () => <task />",
-                    },
-                    "geometrySnapshot": {"schemaVersion": 2, "entryImports": [], "modules": []},
-                },
+                "sourceBundle": source_bundle,
             },
-            "baseHash": "50bf96de0f339ad8593292bf872b720fad1677610e17b33f4470b54769cc0008",
-            "geometryContextVersion": "geometry-v1",
+            "baseHash": source_hash,
+            "experimentContextVersion": "experiment-v1",
             "workspaceSession": 2,
             "activeFile": "experiment.tsx",
         },
@@ -187,7 +191,7 @@ def test_websocket_completes_sequence_with_fake_provider(websocket_app, monkeypa
         "run.completed",
     }
     completed = events[-1]
-    assert completed["baseHash"] == "50bf96de0f339ad8593292bf872b720fad1677610e17b33f4470b54769cc0008"
+    assert completed["baseHash"] == start_payload()["workspace"]["baseHash"]
     assert completed["stagedRevision"] == 0
     assert completed["sessionContextEnvelope"]
 

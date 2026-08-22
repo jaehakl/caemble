@@ -29,6 +29,7 @@ describe('setupMonaco', () => {
 
     expect(setCompilerOptions).toHaveBeenCalledWith(
       expect.objectContaining({
+        allowImportingTsExtensions: true,
         jsx: 2,
         module: 1,
         moduleResolution: 2,
@@ -36,10 +37,9 @@ describe('setupMonaco', () => {
       }),
     )
     expect(setEagerModelSync).toHaveBeenCalledWith(true)
-    expect(addExtraLib).toHaveBeenCalledTimes(3)
+    expect(addExtraLib).toHaveBeenCalledTimes(2)
     expect(addExtraLib).toHaveBeenCalledWith(expect.any(String), 'file:///node_modules/@caemble/core/index.d.ts')
     expect(addExtraLib).toHaveBeenCalledWith(expect.any(String), 'file:///node_modules/@caemble/core/cad-jsx.d.ts')
-    expect(addExtraLib).toHaveBeenCalledWith(expect.any(String), 'file:///geometry-coordinates.d.ts')
     expect(addExtraLib.mock.calls.flatMap((call) => call).join('\n')).not.toContain('@caemble/geometries')
     expect(addExtraLib.mock.calls.flatMap((call) => call).join('\n')).not.toContain('caemble:geometry/*')
     expect(addExtraLib.mock.calls.flatMap((call) => call).join('\n')).not.toContain('/v2/')

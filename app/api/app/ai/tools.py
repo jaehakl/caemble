@@ -5,14 +5,12 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from caemble_catalog import CatalogNotFoundError
+from caemble_catalog import CatalogError
 from fastapi import HTTPException
 
 from ai.cad_reference import CAD_AUTHORING_ELEMENT_NAMES, cad_authoring_reference_details
 from ai.data_tools import VisibleDataError, VisibleDataReader, VisibleResource
 from ai.workspace import StagedExperiment, WorkspaceEditError
-from service.geometry import build_snapshot_from_entry_source
-from service.geometry.source import analyze_geometry_source
 
 
 MAX_TOOL_OUTPUT_BYTES = 64 * 1024
@@ -55,7 +53,7 @@ class ToolExecutor:
         except (
             VisibleDataError,
             WorkspaceEditError,
-            CatalogNotFoundError,
+            CatalogError,
             KeyError,
             ValueError,
             HTTPException,
@@ -91,7 +89,6 @@ class ToolExecutor:
                             "experiment",
                             "measurement",
                             "recorded_data",
-                            "geometry",
                             "designer_model",
                             "predictor_model",
                         }
@@ -115,7 +112,6 @@ class ToolExecutor:
                     "experiment",
                     "measurement",
                     "recorded_data",
-                    "geometry",
                     "designer_model",
                     "predictor_model",
                 } or isinstance(resource_id, bool) or not isinstance(resource_id, int):
@@ -165,7 +161,7 @@ class ToolExecutor:
             kind = _choice(
                 arguments,
                 "kind",
-                {"quantityKind", "materialParameter", "materialModel", "solver", "geometry", "experiment"},
+                {"quantityKind", "materialParameter", "materialModel", "solver", "experiment"},
             )
             key = _string(arguments, "key", maximum=256)
             value = _catalog_detail(self.catalog, kind, key)
@@ -194,7 +190,7 @@ class ToolExecutor:
             return ToolExecution(value, f"Read visible {resource} {resource_id}", provenance)
         if name == "read_visible_source":
             _exact_keys(arguments, {"resource", "id", "path", "offset", "length"})
-            resource = _choice(arguments, "resource", {"experiment", "geometry"})
+            resource = _choice(arguments, "resource", {"experiment"})
             value = await self.data.read_source(
                 resource,
                 _integer(arguments, "id", minimum=1),
@@ -255,39 +251,20 @@ class ToolExecutor:
                 expected_sha256,
             )
             self._forget_source_reads(path)
-            if path == "geometry.tsx":
-                try:
-                    await self._refresh_geometry_snapshot()
-                except Exception:
-                    pass
-                else:
-                    value["sourceHash"] = self.workspace.source_hash
             return ToolExecution(value, f"Staged {path}")
-        if name == "delete_experiment_task":
+        if name == "delete_experiment_file":
             _exact_keys(arguments, {"path", "expectedSha256"})
             path = _string(arguments, "path", maximum=256)
             expected_sha256 = _hash(arguments, "expectedSha256")
             current = self.workspace.bundle.files.get(path)
             if current is None or not self._was_fully_read(path, expected_sha256, len(current)):
                 raise WorkspaceEditError(
-                    "Read the complete current Task source before deleting it"
+                    "Read the complete current source file before deleting it"
                 )
-            value = self.workspace.delete_task(path, expected_sha256)
+            value = self.workspace.delete_file(path, expected_sha256)
             self._forget_source_reads(path)
             return ToolExecution(value, f"Deleted staged {path}")
         raise ValueError("Agent tool is not supported")
-
-    async def _refresh_geometry_snapshot(self) -> None:
-        source = self.workspace.bundle.files["geometry.tsx"]
-        analysis = analyze_geometry_source(source, allow_empty=True, allow_local=True)
-        if any(str(item.get("coordinate", "")).endswith("@local") for item in analysis["imports"]):
-            return
-        snapshot = await build_snapshot_from_entry_source(
-            self.data.db,
-            source,
-            owner_id=self.data.user_id,
-        )
-        self.workspace.replace_geometry_snapshot(snapshot)
 
     def _was_fully_read(self, path: str, source_hash: str | None, total: int) -> bool:
         if source_hash is None:
@@ -322,23 +299,23 @@ def agent_tool_definitions() -> list[dict[str, Any]]:
         ),
         _tool(
             "search_catalog",
-            "Search the Caemble QuantityKind, MaterialParameter, MaterialModel, Solver, Geometry, and Experiment catalog.",
+            "Search the Caemble QuantityKind, MaterialParameter, MaterialModel, Solver, and Experiment catalog.",
             {"query": _string_schema(256), "limit": _integer_schema(1, 10)},
         ),
         _tool(
             "get_catalog_item",
-            "Read one full catalog item and its relations.",
+            "Read one full catalog item and its relations. Use the full coordinate returned by search_catalog for an Experiment.",
             {
                 "kind": {
                     "type": "string",
-                    "enum": ["quantityKind", "materialParameter", "materialModel", "solver", "geometry", "experiment"],
+                    "enum": ["quantityKind", "materialParameter", "materialModel", "solver", "experiment"],
                 },
                 "key": _string_schema(256),
             },
         ),
         _tool(
             "search_visible_data",
-            "Search public and user-owned visible records. Geometry, Measurement, and RecordedData are user-owned only.",
+            "Search public and user-owned visible records. Measurement and RecordedData are user-owned only.",
             {
                 "resource": {
                     "type": "string",
@@ -347,7 +324,6 @@ def agent_tool_definitions() -> list[dict[str, Any]]:
                         "experiment",
                         "measurement",
                         "recorded_data",
-                        "geometry",
                         "designer_model",
                         "predictor_model",
                     ],
@@ -367,7 +343,6 @@ def agent_tool_definitions() -> list[dict[str, Any]]:
                         "experiment",
                         "measurement",
                         "recorded_data",
-                        "geometry",
                         "designer_model",
                         "predictor_model",
                     ],
@@ -377,9 +352,9 @@ def agent_tool_definitions() -> list[dict[str, Any]]:
         ),
         _tool(
             "read_visible_source",
-            "Read a bounded source chunk from a visible Experiment or user-owned Geometry.",
+            "Read a bounded source chunk from a visible Experiment.",
             {
-                "resource": {"type": "string", "enum": ["experiment", "geometry"]},
+                "resource": {"type": "string", "enum": ["experiment"]},
                 "id": _integer_schema(1),
                 "path": {"type": ["string", "null"], "maxLength": 256},
                 "offset": _integer_schema(0),
@@ -407,7 +382,7 @@ def agent_tool_definitions() -> list[dict[str, Any]]:
         ),
         _tool(
             "write_experiment_file",
-            "Replace one staged source file using its last observed SHA-256, or null only for a new Task file.",
+            "Replace one staged source file using its last observed SHA-256, or null for a new TS/TSX file.",
             {
                 "path": _string_schema(256),
                 "content": _string_schema(1024 * 1024),
@@ -418,8 +393,8 @@ def agent_tool_definitions() -> list[dict[str, Any]]:
             },
         ),
         _tool(
-            "delete_experiment_task",
-            "Delete one staged tasks/<name>.tsx file using its last observed SHA-256.",
+            "delete_experiment_file",
+            "Delete one staged non-core TS/TSX file using its last observed SHA-256.",
             {
                 "path": _string_schema(256),
                 "expectedSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
@@ -450,8 +425,6 @@ def _catalog_detail(catalog: Any, kind: str, key: str) -> dict[str, Any]:
         return {**catalog.material_parameter(key), "relations": catalog.material_parameter_relations(key)}
     if kind == "materialModel":
         return catalog.material_model(key)
-    if kind == "geometry":
-        return catalog.geometry(key)
     if kind == "experiment":
         return catalog.experiment(key)
     if "@" not in key:
@@ -510,7 +483,6 @@ def _resource(arguments: dict[str, Any]) -> VisibleResource:
             "experiment",
             "measurement",
             "recorded_data",
-            "geometry",
             "designer_model",
             "predictor_model",
         },

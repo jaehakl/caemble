@@ -7,97 +7,69 @@ import {
   type CompiledCadSource,
 } from './types'
 
-function compiled(): CompiledCadSource {
+const sourceHash = 'a'.repeat(64)
+
+function compiled(entryFile = 'experiment.tsx'): CompiledCadSource {
   return {
     apiVersion: 8,
     compilerVersion: CAD_COMPILER_VERSION,
-    entryFile: 'experiment.tsx',
+    entryFile,
     code: '"use strict";',
-    sourceHash: 'a'.repeat(64),
+    sourceHash,
   }
 }
 
-describe('CompiledCadSource', () => {
-  it('binds compiler provenance to all generated public declaration contents', () => {
+function compiledDocument(extra: Readonly<Record<string, CompiledCadSource>> = {}) {
+  return {
+    apiVersion: 8 as const,
+    compilerVersion: CAD_COMPILER_VERSION,
+    sourceHash,
+    sources: {
+      'experiment.tsx': compiled(),
+      'geometry.tsx': compiled('geometry.tsx'),
+      'material.tsx': compiled('material.tsx'),
+      ...extra,
+    },
+  }
+}
+
+describe('compiled Experiment bundle', () => {
+  it('binds compiler provenance to generated declarations and accepts arbitrary TS/TSX modules', () => {
     expect(CAD_API_DECLARATION_FINGERPRINT).toMatch(/^[0-9a-f]{64}$/)
     expect(CAD_COMPILER_VERSION).toContain('-api-8-')
     expect(CAD_COMPILER_VERSION).toContain(CAD_API_DECLARATION_FINGERPRINT)
-    expect(() => assertCompiledCadSource(compiled())).not.toThrow()
+    expect(() => assertCompiledCadSource(compiled('shared/helper.ts'))).not.toThrow()
+    expect(() =>
+      assertCompiledCadDocument(compiledDocument({ 'shared/helper.tsx': compiled('shared/helper.tsx') })),
+    ).not.toThrow()
   })
 
-  it('rejects project modules, version drift, and extra fields', () => {
+  it('rejects unsupported entries, version drift, extra fields, and removed Geometry graphs', () => {
     expect(() => assertCompiledCadSource({ ...compiled(), modules: {} })).toThrow('provenance is invalid')
     expect(() => assertCompiledCadSource({ ...compiled(), apiVersion: 2 })).toThrow('provenance is invalid')
-    expect(() => assertCompiledCadSource({ ...compiled(), entryFile: 'helper.ts' })).toThrow('provenance is invalid')
-    const coordinate = 'caemble:geometry/jlee/demo/block@1.0.0'
-    expect(() => assertCompiledCadSource({ ...compiled(), entryFile: coordinate })).toThrow('provenance is invalid')
-    expect(() =>
-      assertCompiledCadDocument({
-        apiVersion: 8,
-        compilerVersion: CAD_COMPILER_VERSION,
-        sourceHash: 'a'.repeat(64),
-        sources: { [coordinate]: { ...compiled(), entryFile: coordinate } },
-      }),
-    ).toThrow('provenance is invalid')
+    expect(() => assertCompiledCadSource({ ...compiled(), entryFile: 'simulate.py' })).toThrow('provenance is invalid')
+    expect(() => assertCompiledCadSource({ ...compiled(), entryFile: 'types.d.ts' })).toThrow('provenance is invalid')
+    expect(() => assertCompiledCadDocument({ ...compiledDocument(), geometryGraph: {} })).toThrow(
+      'provenance is invalid',
+    )
   })
 
-  it('rejects a depth-65 graph when its shared tail was first visited from a shallow root', () => {
-    const sourceHash = 'a'.repeat(64)
-    const moduleHash = 'b'.repeat(64)
-    const coordinates = Array.from({ length: 65 }, (_, index) => `caemble:geometry/jlee/demo/node-${index}@1.0.0`)
-    const modules = Object.fromEntries(
-      coordinates.map((coordinate, index) => [
-        coordinate,
-        {
-          ...compiled(),
-          entryFile: coordinate,
-          sourceHash,
-          geometrySourceHash: 'c'.repeat(64),
-          moduleHash,
-          exports: ['Part'],
-          imports:
-            index === coordinates.length - 1
-              ? []
-              : [{ exportName: 'Part', alias: 'Child', coordinate: coordinates[index + 1] }],
-        },
-      ]),
-    )
-    const validModules = Object.fromEntries(
-      Object.entries(modules).filter(([coordinate]) => coordinate !== coordinates[0]),
-    )
-
+  it('requires all three compiled core modules and exact case-safe provenance', () => {
+    const missingGeometry = compiledDocument()
+    delete (missingGeometry.sources as Partial<typeof missingGeometry.sources>)['geometry.tsx']
+    expect(() => assertCompiledCadDocument(missingGeometry)).toThrow('missing required')
     expect(() =>
-      assertCompiledCadDocument({
-        apiVersion: 8,
-        compilerVersion: CAD_COMPILER_VERSION,
-        sourceHash,
-        sources: { 'experiment.tsx': compiled() },
-        geometryGraph: {
-          graphHash: 'd'.repeat(64),
-          entryImports: [
-            { exportName: 'Part', alias: 'Shallow', coordinate: coordinates[63], moduleHash },
-            { exportName: 'Part', alias: 'Long', coordinate: coordinates[1], moduleHash },
-          ],
-          modules: validModules,
-        },
-      }),
-    ).not.toThrow()
-
+      assertCompiledCadDocument(
+        compiledDocument({
+          'shared/Part.ts': compiled('shared/Part.ts'),
+          'shared/part.ts': compiled('shared/part.ts'),
+        }),
+      ),
+    ).toThrow('differ only by case')
     expect(() =>
-      assertCompiledCadDocument({
-        apiVersion: 8,
-        compilerVersion: CAD_COMPILER_VERSION,
-        sourceHash,
-        sources: { 'experiment.tsx': compiled() },
-        geometryGraph: {
-          graphHash: 'd'.repeat(64),
-          entryImports: [
-            { exportName: 'Part', alias: 'Shallow', coordinate: coordinates[63], moduleHash },
-            { exportName: 'Part', alias: 'Long', coordinate: coordinates[0], moduleHash },
-          ],
-          modules,
-        },
-      }),
-    ).toThrow('dependency depth 64')
+      assertCompiledCadDocument(
+        compiledDocument({ 'shared/helper.ts': { ...compiled('shared/helper.ts'), sourceHash: 'b'.repeat(64) } }),
+      ),
+    ).toThrow('does not match')
   })
 })

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -10,13 +10,11 @@ import { DocsPage } from './DocsPage'
 
 const catalog = vi.hoisted(() => ({
   getExperiment: vi.fn(),
-  getGeometry: vi.fn(),
   getMaterialModel: vi.fn(),
   getMaterialParameter: vi.fn(),
   getQuantityKind: vi.fn(),
   getSolver: vi.fn(),
   listExperiments: vi.fn(),
-  listGeometries: vi.fn(),
   listMaterialModels: vi.fn(),
   listMaterialParameters: vi.fn(),
   listQuantityKinds: vi.fn(),
@@ -59,18 +57,10 @@ beforeEach(() => {
           subtitle: 'Synthetic Solver.',
         },
       ],
-      'basketball-goal': [
-        {
-          kind: 'geometry',
-          key: query,
-          title: 'Basketball Goal',
-          subtitle: 'Example Geometry.',
-        },
-      ],
       'dc-uniform-bar': [
         {
           kind: 'experiment',
-          key: query,
+          key: 'caemble:experiment/official/examples/dc-uniform-bar@1.0.0',
           title: 'DC Uniform Bar',
           subtitle: 'Official Experiment.',
         },
@@ -95,26 +85,17 @@ beforeEach(() => {
     specialQualifiers: [],
   }
   const solver = buildSyntheticSolver('dc-current-density', '0.1.0')
-  const geometry = {
-    key: 'basketball-goal',
-    title: 'Basketball Goal',
-    description: 'Example standalone Geometry.',
-    cadApiVersion: 8,
-    moduleFormatVersion: 4,
-    lengthUnit: 'mm',
-    exportName: 'BasketballGoal',
-    sourceHash: 'b'.repeat(64),
-    concepts: ['position'],
-    materialRoles: [],
-    relatedElements: ['box', 'cylinder'],
-  }
   const experiment = {
     key: 'dc-uniform-bar',
+    namespace: 'official',
+    repository: 'examples',
+    version: '1.0.0',
+    coordinate: 'caemble:experiment/official/examples/dc-uniform-bar@1.0.0',
     title: 'DC Uniform Bar',
     description: 'Official Experiment.',
     cadApiVersion: 8,
     sourceFormatVersion: 2,
-    bundleFormatVersion: 5,
+    bundleFormatVersion: 6,
     bundleHash: 'c'.repeat(64),
     concepts: ['DC'],
     relatedSolvers: [{ name: 'dc-current-density', version: '0.1.0', description: 'Synthetic Solver.' }],
@@ -156,16 +137,11 @@ beforeEach(() => {
     producesArtifacts: [],
     consumesArtifacts: [],
   })
-  catalog.listGeometries.mockResolvedValue({ items: [geometry], nextCursor: null, total: 1 })
-  catalog.getGeometry.mockResolvedValue({
-    ...geometry,
-    source: "import { type Geometry } from '@caemble/core'\nexport const BasketballGoal: Geometry = () => <></>\n",
-  })
   catalog.listExperiments.mockResolvedValue({ items: [experiment], nextCursor: null, total: 1 })
   catalog.getExperiment.mockResolvedValue({
     ...experiment,
     sourceBundle: {
-      formatVersion: 5,
+      formatVersion: 6,
       files: {
         'experiment.tsx': 'export default 1',
         'geometry.tsx': 'export const Bar = () => <box />',
@@ -173,7 +149,6 @@ beforeEach(() => {
         'simulate.py': 'async def simulate(*, sim, tasks, vars):\n    return None\n',
         'tasks/solveField.tsx': 'export default 1',
       },
-      geometrySnapshot: { schemaVersion: 2, entryImports: [], modules: [] },
     },
     verification: { kernelTasks: ['solveField'], recordedData: ['current'], expectations: ['Current is finite.'] },
   })
@@ -224,15 +199,6 @@ describe('integrated documentation page', () => {
     expect(screen.getByRole('button', { name: '예제 복사' })).toBeInTheDocument()
   })
 
-  it('opens an official Geometry deep link and follows its CAD element relation', async () => {
-    renderDocs('/docs?section=geometry&item=example:basketball-goal')
-
-    expect(await screen.findByRole('heading', { name: 'Basketball Goal' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Official Geometries' })).toHaveAttribute('aria-selected', 'true')
-    await userEvent.click(screen.getByRole('button', { name: 'box' }))
-    expect(await screen.findByRole('heading', { name: '<Box />' })).toBeInTheDocument()
-  })
-
   it('opens an official Experiment deep link and follows its Solver relation', async () => {
     renderDocs('/docs?section=solvers&item=experiment:dc-uniform-bar')
 
@@ -240,6 +206,41 @@ describe('integrated documentation page', () => {
     expect(screen.getByRole('tab', { name: 'Official Experiments' })).toHaveAttribute('aria-selected', 'true')
     await userEvent.click(screen.getByRole('button', { name: 'dc-current-density@0.1.0' }))
     expect(await screen.findByRole('heading', { name: 'dc-current-density' })).toBeInTheDocument()
+  })
+
+  it('opens a canonical coordinate deep link without falling back to a bare key', async () => {
+    renderDocs(
+      '/docs?section=solvers&item=experiment:caemble:experiment/official/examples/dc-uniform-bar@1.0.0',
+    )
+
+    expect(await screen.findByRole('heading', { name: 'DC Uniform Bar' })).toBeInTheDocument()
+    expect(catalog.getExperiment).toHaveBeenCalledWith(
+      'caemble:experiment/official/examples/dc-uniform-bar@1.0.0',
+    )
+  })
+
+  it('leaves an ambiguous legacy key for the API to reject instead of selecting one coordinate', async () => {
+    const listed = await catalog.listExperiments()
+    const first = listed.items[0]
+    catalog.listExperiments.mockResolvedValue({
+      items: [
+        first,
+        {
+          ...first,
+          namespace: 'forked',
+          repository: 'examples',
+          coordinate: 'caemble:experiment/forked/examples/dc-uniform-bar@1.0.0',
+        },
+      ],
+      nextCursor: null,
+      total: 2,
+    })
+    catalog.getExperiment.mockRejectedValue(new Error('Ambiguous Experiment key'))
+
+    renderDocs('/docs?section=solvers&item=experiment:dc-uniform-bar')
+
+    await waitFor(() => expect(catalog.getExperiment).toHaveBeenCalled())
+    expect(catalog.getExperiment.mock.calls.every(([selector]) => selector === 'dc-uniform-bar')).toBe(true)
   })
 
   it('searches Manual headings and opens their anchored content', async () => {

@@ -1,8 +1,9 @@
 from .database import Catalog, catalog_path, open_catalog
-from .errors import CatalogError, CatalogIntegrityError, CatalogNotFoundError
+from .errors import CatalogAmbiguousError, CatalogError, CatalogIntegrityError, CatalogNotFoundError
 
 __all__ = [
     "Catalog",
+    "CatalogAmbiguousError",
     "CatalogError",
     "CatalogIntegrityError",
     "CatalogNotFoundError",

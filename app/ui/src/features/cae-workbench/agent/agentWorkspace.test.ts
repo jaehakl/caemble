@@ -3,19 +3,22 @@
 import { describe, expect, it } from 'vitest'
 import { createCadSourceDocument } from '@/lib/cad'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
-import { agentGeometryContextVersion } from './agentWorkspace'
+import { agentExperimentContextVersion } from './agentWorkspace'
 
 const document = createCadSourceDocument('experiment', starterExperimentSourceBundle)
 
-describe('agentGeometryContextVersion', () => {
-  it('is stable for the same Experiment and Geometry drafts', async () => {
-    await expect(agentGeometryContextVersion(document)).resolves.toBe(await agentGeometryContextVersion(document))
+describe('agentExperimentContextVersion', () => {
+  it('is stable for the same Experiment source bundle', async () => {
+    await expect(agentExperimentContextVersion(document)).resolves.toBe(await agentExperimentContextVersion(document))
   })
 
-  it('changes when a local Geometry draft changes', async () => {
-    const coordinate = 'caemble:geometry/local/repository/package@local'
-    const first = await agentGeometryContextVersion(document, { [coordinate]: { source: 'export const A = 1' } })
-    const second = await agentGeometryContextVersion(document, { [coordinate]: { source: 'export const A = 2' } })
+  it('changes when a bundle-local source file changes', async () => {
+    const changedDocument = createCadSourceDocument('experiment', {
+      ...starterExperimentSourceBundle,
+      files: { ...starterExperimentSourceBundle.files, 'geometry.tsx': 'export const A = 2' },
+    })
+    const first = await agentExperimentContextVersion(document)
+    const second = await agentExperimentContextVersion(changedDocument)
 
     expect(second).not.toBe(first)
   })

@@ -1,6 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import { delimiter } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -12,7 +11,7 @@ const user = {
   is_active: true,
   created_at: '2026-07-21T00:00:00Z',
   updated_at: '2026-07-21T00:00:00Z',
-  geometry_namespace: 'designer',
+  experiment_namespace: 'designer',
   roles: ['user'],
 }
 const apiPattern = /^http:\/\/127\.0\.0\.1:\d+\/api\//
@@ -47,10 +46,18 @@ function canonicalCatalogSlice(request: unknown) {
   return JSON.parse(output) as unknown
 }
 
-function canonicalCatalogQuery(kind: 'experiment' | 'geometry', key?: string) {
+function canonicalCatalogQuery(
+  key?: string,
+  identity: { namespace?: string | null; repository?: string | null; version?: string | null } = {},
+) {
   const pythonPath = [catalogPackageRoot, process.env.PYTHONPATH].filter(Boolean).join(delimiter)
-  const args = ['-m', 'caemble_catalog', '--database', catalogDatabasePath, 'query', kind]
-  if (key) args.push(key)
+  const args = ['-m', 'caemble_catalog', '--database', catalogDatabasePath, 'query', 'experiment']
+  if (key) {
+    args.push(key)
+    if (identity.version) args.push(identity.version)
+    if (identity.namespace) args.push('--namespace', identity.namespace)
+    if (identity.repository) args.push('--repository', identity.repository)
+  }
   const output = execFileSync(process.env.PYTHON ?? 'python', args, {
     encoding: 'utf8',
     env: { ...process.env, PYTHONPATH: pythonPath, PYTHONUTF8: '1' },
@@ -72,33 +79,25 @@ async function mockCanonicalCatalog(page: Page) {
       }
       return json(route, slice)
     }
-    if (url.pathname === '/api/catalog/geometry-repositories') {
-      return json(route, [
-        { slug: 'getting-started', title: 'Getting Started', description: '', ordinal: 0 },
-        { slug: 'arrays', title: 'Arrays', description: '', ordinal: 1 },
-        { slug: 'advanced-shapes', title: 'Advanced Shapes', description: '', ordinal: 2 },
-        { slug: 'assemblies', title: 'Assemblies', description: '', ordinal: 3 },
-      ])
-    }
-    const match = url.pathname.match(/^\/api\/catalog\/(experiments|geometries)(?:\/([^/]+))?$/u)
+    const match = url.pathname.match(/^\/api\/catalog\/experiments(?:\/([^/]+))?$/u)
     if (!match) return route.fallback()
-    const kind = match[1] === 'experiments' ? 'experiment' : 'geometry'
-    if (match[2]) {
-      const detail = canonicalCatalogQuery(kind, decodeURIComponent(match[2])) as Record<string, unknown>
-      if (kind === 'experiment') {
-        const verification = detail.verification as Record<string, unknown>
-        return json(route, { ...detail, verification: { ...verification, fixture: verification.fixture ?? null } })
-      }
-      return json(route, detail)
+    if (match[1]) {
+      const detail = canonicalCatalogQuery(decodeURIComponent(match[1]), {
+        namespace: url.searchParams.get('namespace'),
+        repository: url.searchParams.get('repository'),
+        version: url.searchParams.get('version'),
+      }) as Record<string, unknown>
+      const verification = detail.verification as Record<string, unknown>
+      return json(route, { ...detail, verification: { ...verification, fixture: verification.fixture ?? null } })
     }
     const query = (url.searchParams.get('q') ?? '').trim().toLowerCase()
-    const element = url.searchParams.get('element')
+    const namespace = url.searchParams.get('namespace')
     const repository = url.searchParams.get('repository')
     const solverName = url.searchParams.get('solverName')
     const solverVersion = url.searchParams.get('solverVersion')
-    const items = (canonicalCatalogQuery(kind) as Record<string, unknown>[]).filter((item) => {
-      if (query && !`${item.key} ${item.title} ${item.description}`.toLowerCase().includes(query)) return false
-      if (element && !(item.relatedElements as string[] | undefined)?.includes(element)) return false
+    const items = (canonicalCatalogQuery() as Record<string, unknown>[]).filter((item) => {
+      if (query && !`${item.coordinate} ${item.title} ${item.description}`.toLowerCase().includes(query)) return false
+      if (namespace && item.namespace !== namespace) return false
       if (repository && item.repository !== repository) return false
       if (
         solverName &&
@@ -143,7 +142,7 @@ test('uses the root Workbench and opens integrated documentation in a new window
   await page.getByRole('menuitem', { name: 'Help' }).click()
   await page.getByRole('menuitem', { name: 'AI Helper' }).click()
   await expect(page.getByRole('tab', { name: 'AI Helper' })).toHaveAttribute('aria-selected', 'true')
-  await expect(page.getByText('AI Helper을 사용하려면 Account에서 로그인하세요.')).toBeVisible()
+  await expect(page.getByText('AI Helper Agent를 사용하려면 Account에서 로그인하세요.')).toBeVisible()
   await expect(page.getByRole('dialog', { name: 'AI Helper' })).toHaveCount(0)
   await page.getByRole('button', { name: 'AI Helper 탭 닫기' }).click()
 
@@ -249,7 +248,7 @@ export const StarterStructure: Geometry<{ size: Vec3 }> = ({ size = [12, 8, 4] }
   await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('session-restored')
 })
 
-test('inserts primitives and wraps selected Geometry from both authoring ribbons', async ({ page }) => {
+test('inserts primitives and wraps selected Geometry from the Experiment authoring ribbon', async ({ page }) => {
   await page.route(apiPattern, (route) => route.abort('failed'))
   await page.goto('/')
   await page.getByRole('tab', { name: 'geometry.tsx' }).click()
@@ -290,11 +289,6 @@ export const RibbonPart: Geometry = () => (
   await expect(editor).toContainText('id="box"')
   await expect(editor).toContainText('size={[1, 1, 1]}')
   await expect(editor).toContainText('rotation={[0, 0, 0]}')
-
-  await page.getByRole('tab', { name: 'Geometry', exact: true }).click()
-  const geometryRibbon = page.getByRole('region', { name: 'Geometry 리본' })
-  await expect(geometryRibbon.getByRole('button', { name: 'Primitive' })).toBeVisible()
-  await expect(geometryRibbon.getByRole('button', { name: /Operation/ })).toBeVisible()
 })
 
 test('regenerates an editable Candidate when varsSchema adds openness', async ({ page }) => {
@@ -348,7 +342,7 @@ export default experiment({
 })
 
 for (const [title, sourceMarker] of officialExperimentTemplates) {
-  test(`loads the ${title} official Experiment through the Workbench Picker`, async ({ page }) => {
+  test(`loads the ${title} official Experiment through Experiment Manager`, async ({ page }) => {
     test.setTimeout(90_000)
     await mockApi(page)
     await mockCanonicalCatalog(page)
@@ -359,10 +353,9 @@ for (const [title, sourceMarker] of officialExperimentTemplates) {
 
     await page.getByRole('menuitem', { name: 'Source' }).click()
     await page.getByRole('menuitem', { name: 'Load Experiment' }).click()
-    await page
-      .getByRole('dialog', { name: 'Experiment 불러오기' })
-      .getByRole('button', { name: new RegExp(`^${title}`) })
-      .click()
+    const manager = page.getByLabel('Experiment Manager')
+    await expect(page.getByRole('tab', { name: 'Experiments', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await manager.getByRole('button', { name: `${title} 열기` }).click()
 
     await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText(sourceMarker)
     await expect(page.getByText('Waiting for model...', { exact: true })).toBeHidden({ timeout: 30_000 })
@@ -373,360 +366,135 @@ for (const [title, sourceMarker] of officialExperimentTemplates) {
   })
 }
 
-test('keeps Example Geometry read-only for anonymous users in the unified manager', async ({ page }) => {
-  await mockApi(page)
-  await mockCanonicalCatalog(page)
-  await page.goto('/')
-
-  await page.getByRole('menuitem', { name: 'Source' }).click()
-  await page.getByRole('menuitem', { name: 'Geometry Manager' }).click()
-  const manager = page.getByLabel('Geometry Manager')
-  const geometryRibbon = page.getByRole('region', { name: 'Geometry 리본' })
-  await expect(page.getByRole('tab', { name: 'Geometry', exact: true })).toHaveAttribute('aria-selected', 'true')
-  await expect(manager.getByRole('tab', { name: 'Official Catalog' })).toHaveCount(0)
-  await expect(manager.getByRole('tab', { name: 'Workspace Packages' })).toHaveCount(0)
-  await expect(manager.getByRole('button', { name: '전체', exact: true })).toHaveCount(0)
-  await expect(geometryRibbon.getByRole('combobox', { name: 'Namespace' })).toHaveValue('examples')
-  await expect(geometryRibbon.getByRole('option', { name: 'Examples' })).toHaveCount(1)
-  await expect(geometryRibbon.getByRole('option', { name: 'local' })).toHaveCount(1)
-  await manager.getByRole('button', { name: /Basketball Goal/ }).click()
-  await expect(manager.locator('.monaco-editor:visible')).toBeVisible()
-  await expect(manager.locator('.monaco-editor:visible .view-lines')).toContainText('BasketballGoal')
-  await expect(geometryRibbon.getByRole('combobox', { name: 'Namespace' })).toHaveValue('examples')
-  await expect(geometryRibbon.getByRole('combobox', { name: 'Repository' })).toHaveValue('all')
-  await expect(manager.getByRole('button', { name: '개인 Repository로 Fork' })).toBeDisabled()
-  await expect(page.locator('footer').last()).toContainText('Draft Versions · 0')
-
-  await geometryRibbon.getByRole('combobox', { name: 'Namespace' }).selectOption('local')
-  await expect(manager.getByLabel('Geometry Packages list')).toContainText('표시할 Geometry가 없습니다.')
-  await expect(manager.getByLabel('Geometry Packages list')).not.toContainText('Basketball Goal')
-})
-
-test('forks Example Geometry into a personal Draft and publishes its first exact Version', async ({ page }) => {
+test('manages Experiment namespace, SemVer saves, locks, and version deletion', async ({ page }) => {
   test.setTimeout(90_000)
-  const timestamp = '2026-08-21T00:00:00Z'
-  const localCoordinate = 'caemble:geometry/designer/forks/basketball-goal@local'
-  const exactCoordinate = 'caemble:geometry/designer/forks/basketball-goal@0.1.0'
-  const planHash = 'd'.repeat(64)
-  let published = false
-  let publishedSource = ''
-  let publishedSourceHash = ''
-  let publishedModuleHash = ''
-  let publishedDescription: string | null = null
-  let repositoryCreated = false
+  let namespace = 'designer'
+  let nextId = 1
+  let rows: Array<Record<string, unknown>> = []
 
+  await mockApi(page, true)
+  await mockCanonicalCatalog(page)
   await page.route(apiPattern, async (route) => {
     const path = new URL(route.request().url()).pathname.replace(/^\/api/, '')
-    if (path === '/auth/me') return json(route, user)
-    if (path === '/auth/refresh') return json(route, { detail: 'Unexpected refresh' }, 401)
-    if (path === '/web/auth/csrf') return json(route, { csrf_token: 'csrf-official-fork' })
-    if (path === '/geometry/publish/plan') {
-      const request = route.request().postDataJSON() as {
-        targetDraftId: string
-        drafts: Array<{
-          draftId: string
-          baseGeometryVersionId: null
-          repositoryId: number
-          repository: string
-          package: string
-          version: string
-          description: string | null
-          source: string
-        }>
+    if (path === '/auth/experiment-namespace') {
+      namespace = (route.request().postDataJSON() as { namespace: string }).namespace
+      return json(route, { ...user, experiment_namespace: namespace })
+    }
+    if (path === '/experiment/list') {
+      const body = route.request().postDataJSON() as { selected_ids?: number[] }
+      const selected = body.selected_ids ?? []
+      const items = selected.length ? rows.filter((row) => selected.includes(row.id as number)) : rows
+      return json(route, { total: items.length, items })
+    }
+    if (path === '/experiment/save') {
+      const body = route.request().postDataJSON() as Record<string, unknown>
+      const action = body.mode as 'create' | 'overwrite' | 'new_version'
+      const sourceBundle = body.sourceBundle as Record<string, unknown>
+      const previous = action === 'new_version' ? rows.find((row) => row.id === body.experimentId) : null
+      const repository = action === 'create' ? String(body.repository) : String(previous?.repository_slug)
+      const key = action === 'create' ? String(body.key) : String(previous?.experiment_key)
+      const version = action === 'new_version' ? '0.2.0' : '0.1.0'
+      if (action === 'new_version' && previous) {
+        previous.sourceLocked = true
+        previous.derivedCounts = { measurements: 1, recordedData: 2, designerModels: 0, predictorModels: 0 }
       }
-      const draft = request.drafts[0]!
-      expect(draft).toMatchObject({
-        baseGeometryVersionId: null,
-        repositoryId: 11,
-        repository: 'forks',
-        package: 'basketball-goal',
-        version: '0.1.0',
-      })
-      publishedSource = draft.source
-      publishedDescription = draft.description
-      publishedSourceHash = createHash('sha256').update(publishedSource).digest('hex')
-      publishedModuleHash = createHash('sha256')
-        .update(
-          JSON.stringify({
-            schemaVersion: 2,
-            moduleFormatVersion: 4,
-            cadApiVersion: 8,
-            coordinate: exactCoordinate,
-            sourceHash: publishedSourceHash,
-            imports: [],
-          }),
-        )
-        .digest('hex')
+      const id = nextId++
+      const [versionMajor, versionMinor, versionPatch] = version.split('.').map(Number)
+      const coordinate = `caemble:experiment/${namespace}/${repository}/${key}@${version}`
+      const row = {
+        id,
+        user_id: user.id,
+        namespace,
+        repository_slug: repository,
+        experiment_key: key,
+        version_major: versionMajor,
+        version_minor: versionMinor,
+        version_patch: versionPatch,
+        name: body.name,
+        description: body.description,
+        source_bundle: sourceBundle,
+        source_hash: body.bundleHash,
+        repository,
+        key,
+        version,
+        coordinate,
+        bundleHash: body.bundleHash,
+        sourceLocked: false,
+        derivedCounts: { measurements: 0, recordedData: 0, designerModels: 0, predictorModels: 0 },
+      }
+      rows = [row, ...rows]
       return json(route, {
-        planHash,
-        steps: [
-          {
-            ...draft,
-            coordinate: exactCoordinate,
-            localCoordinate,
-            sourceHash: publishedSourceHash,
-            moduleHash: publishedModuleHash,
-            exports: ['BasketballGoal'],
-            imports: [],
-          },
-        ],
-        replacements: [{ draftId: draft.draftId, localCoordinate, coordinate: exactCoordinate }],
+        id,
+        action,
+        namespace,
+        repository,
+        key,
+        version,
+        coordinate,
+        bundleHash: body.bundleHash,
+        sourceLocked: false,
+        derivedCounts: row.derivedCounts,
       })
     }
-    if (path === '/geometry/publish') {
-      const request = route.request().postDataJSON() as { targetDraftId: string; planHash: string }
-      expect(request.planHash).toBe(planHash)
-      published = true
+    if (path === '/experiment/usage') {
+      const { experimentIds } = route.request().postDataJSON() as { experimentIds: number[] }
       return json(route, {
-        planHash,
-        published: [
-          {
-            id: 13,
-            packageId: 12,
-            coordinate: exactCoordinate,
-            version: '0.1.0',
-            description: publishedDescription,
-            sourceHash: publishedSourceHash,
-            moduleHash: publishedModuleHash,
-            moduleFormatVersion: 4,
-            cadApiVersion: 8,
-            archivedAt: null,
-            createdAt: timestamp,
-          },
-        ],
-        replacements: [{ draftId: request.targetDraftId, localCoordinate, coordinate: exactCoordinate }],
+        items: experimentIds.map((experimentId) => {
+          const row = rows.find((item) => item.id === experimentId)
+          return {
+            experimentId,
+            sourceLocked: Boolean(row?.sourceLocked),
+            derivedCounts: row?.derivedCounts,
+          }
+        }),
       })
     }
-    const repository = {
-      id: 11,
-      user_id: user.id,
-      namespace: 'designer',
-      slug: 'forks',
-      description: null,
-      archived_at: null,
-      created_at: timestamp,
-      updated_at: timestamp,
+    if (path === '/experiment/' && route.request().method() === 'DELETE') {
+      const ids = route.request().postDataJSON() as number[]
+      rows = rows.filter((row) => !ids.includes(row.id as number))
+      return json(route, null)
     }
-    if (path === '/geometry/repositories' && route.request().method() === 'POST') {
-      repositoryCreated = true
-      return json(route, {
-        id: repository.id,
-        userId: repository.user_id,
-        namespace: repository.namespace,
-        slug: repository.slug,
-        description: repository.description,
-        archivedAt: null,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      })
-    }
-    const geometryPackage = {
-      id: 12,
-      repository_id: repository.id,
-      name: 'basketball-goal',
-      user_id: user.id,
-      namespace: repository.namespace,
-      repository: repository.slug,
-      repository_archived_at: null,
-      version_count: 1,
-      latest_version: '0.1.0',
-      created_at: timestamp,
-      updated_at: timestamp,
-    }
-    if (path === '/geometry/repositories/list') {
-      return json(route, {
-        total: repositoryCreated ? 1 : 0,
-        items: repositoryCreated
-          ? [{ ...repository, package_count: published ? 1 : 0, version_count: published ? 1 : 0 }]
-          : [],
-      })
-    }
-    if (path === '/geometry/packages/list') {
-      return json(route, { total: published ? 1 : 0, items: published ? [geometryPackage] : [] })
-    }
-    if (path === '/geometry/versions/list') {
-      return json(route, {
-        total: published ? 1 : 0,
-        items: published
-          ? [
-              {
-                id: 13,
-                package_id: geometryPackage.id,
-                version_major: 0,
-                version_minor: 1,
-                version_patch: 0,
-                description: publishedDescription,
-                source: publishedSource,
-                source_hash: publishedSourceHash,
-                module_hash: publishedModuleHash,
-                module_format_version: 4,
-                cad_api_version: 8,
-                archived_at: null,
-                repository_id: repository.id,
-                namespace: repository.namespace,
-                repository: repository.slug,
-                package_name: geometryPackage.name,
-                coordinate: exactCoordinate,
-                version: '0.1.0',
-                created_at: timestamp,
-                updated_at: timestamp,
-              },
-            ]
-          : [],
-      })
-    }
-    if (path === '/geometry/versions/13/resolve') {
-      return json(route, {
-        schemaVersion: 2,
-        root: {
-          geometryVersionId: 13,
-          coordinate: exactCoordinate,
-          moduleHash: publishedModuleHash,
-          exports: ['BasketballGoal'],
-        },
-        modules: [
-          {
-            geometryVersionId: 13,
-            coordinate: exactCoordinate,
-            moduleFormatVersion: 4,
-            cadApiVersion: 8,
-            description: publishedDescription,
-            source: publishedSource,
-            sourceHash: publishedSourceHash,
-            moduleHash: publishedModuleHash,
-            imports: [],
-          },
-        ],
-      })
-    }
-    if (path === '/geometry/versions/usage') return json(route, { items: [] })
-    if (path.endsWith('/dependents/list') || path.endsWith('/experiments/list')) {
-      return json(route, { total: 0, items: [] })
-    }
-    if (path === '/web/jobs') return json(route, [])
-    if (path === '/web/launchers/runtime') return json(route, [])
-    if (path.endsWith('/list')) return json(route, { total: 0, items: [] })
-    return json(route, { detail: `Unexpected mocked endpoint: ${path}` }, 404)
+    return route.fallback()
   })
-  await mockCanonicalCatalog(page)
 
   await page.goto('/')
+  const workbenchFooter = page.locator('footer.h-7')
   await page.getByRole('menuitem', { name: 'Source' }).click()
-  await page.getByRole('menuitem', { name: 'Geometry Manager' }).click()
-  const manager = page.getByLabel('Geometry Manager')
-  const geometryRibbon = page.getByRole('region', { name: 'Geometry 리본' })
-  await manager.getByRole('button', { name: /Basketball Goal/ }).click()
-  await manager.getByRole('button', { name: '개인 Repository로 Fork' }).click()
-  const forkDialog = page.getByRole('dialog', { name: '개인 Repository로 Fork' })
-  await forkDialog.getByRole('button', { name: '새 Repository' }).click()
-  const repositoryDialog = page.getByRole('dialog', { name: '새 Repository' })
-  await repositoryDialog.getByLabel('Repository 이름').fill('forks')
-  await repositoryDialog.getByRole('button', { name: '만들기' }).click()
-  await expect(repositoryDialog).toBeHidden()
-  await forkDialog.getByRole('button', { name: /Draft Version 만들기/ }).click()
+  await page.getByRole('menuitem', { name: 'Load Experiment' }).click()
+  const manager = page.getByLabel('Experiment Manager')
+  await expect(manager).toContainText('caemble:experiment/caemble/getting-started/basketball-goal@1.0.0')
 
-  await expect(geometryRibbon.getByRole('combobox', { name: 'Namespace' })).toHaveValue('examples')
-  await expect(geometryRibbon.getByRole('combobox', { name: 'Repository' })).toHaveValue('all')
-  const draftEditor = manager.getByRole('region', { name: 'Draft Version editor' })
-  await expect(draftEditor).toBeVisible()
-  await expect(page.locator('footer').last()).toContainText('Draft Versions · 1')
-  await expect(draftEditor.getByRole('button', { name: '새 Version 발행' })).toBeEnabled({ timeout: 30_000 })
-  await draftEditor.getByRole('button', { name: '새 Version 발행' }).click()
-  const publishDialog = page.getByRole('dialog', { name: 'Geometry 발행 계획' })
-  await expect(publishDialog).toContainText(exactCoordinate)
-  await publishDialog.getByRole('button', { name: '계획대로 발행' }).click()
-
-  await expect(manager.getByRole('button', { name: 'v0.1.0' })).toBeVisible({ timeout: 15_000 })
-  await expect(page.locator('footer').last()).toContainText('Draft Versions · 0')
-})
-
-test('opens Geometry export publishing from the Source menu and Experiment ribbon', async ({ page }) => {
-  await mockApi(page, true)
-  const coordinate = 'caemble:geometry/designer/common/starter-structure@0.1.0'
-  const localCoordinate = 'caemble:geometry/designer/common/starter-structure@local'
-  const sourceHash = 'a'.repeat(64)
-  const moduleHash = 'b'.repeat(64)
-  const planHash = 'c'.repeat(64)
-  await page.route(/\/api\/geometry\/publish\/plan$/, async (route) => {
-    const request = route.request().postDataJSON() as {
-      targetDraftId: string
-      drafts: Array<{
-        description: string | null
-        draftId: string
-        repository: string
-        repositoryId: number | null
-        package: string
-        source: string
-      }>
-    }
-    const draft = request.drafts[0]
-    await json(route, {
-      planHash,
-      steps: [
-        {
-          ...draft,
-          baseGeometryVersionId: null,
-          version: '0.1.0',
-          coordinate,
-          localCoordinate,
-          sourceHash,
-          moduleHash,
-          exports: ['StarterStructure'],
-          imports: [],
-        },
-      ],
-      replacements: [{ draftId: request.targetDraftId, localCoordinate, coordinate }],
-    })
-  })
-  await page.route(/\/api\/geometry\/publish$/, async (route) => {
-    const request = route.request().postDataJSON() as { targetDraftId: string; planHash: string }
-    expect(request.planHash).toBe(planHash)
-    await json(route, {
-      planHash,
-      published: [
-        {
-          id: 42,
-          packageId: 7,
-          coordinate,
-          version: '0.1.0',
-          description: null,
-          sourceHash,
-          moduleHash,
-          moduleFormatVersion: 4,
-          cadApiVersion: 8,
-          archivedAt: null,
-          createdAt: '2026-08-14T00:00:00Z',
-        },
-      ],
-      replacements: [{ draftId: request.targetDraftId, localCoordinate, coordinate }],
-    })
-  })
-  await page.route(/\/api\/geometry\/versions\/42\/resolve$/, (route) =>
-    json(route, {
-      schemaVersion: 2,
-      root: { geometryVersionId: 42, coordinate, moduleHash, exports: ['StarterStructure'] },
-      modules: [],
-    }),
-  )
-  await page.goto('/')
+  await manager.getByRole('textbox', { name: 'Experiment namespace' }).fill('design-lab')
+  await manager.getByRole('button', { name: 'Namespace 저장' }).click()
+  await manager.getByRole('button', { name: 'Basketball Goal 열기' }).click()
+  await expect(workbenchFooter).toContainText('Preview only · Task 없음')
 
   await page.getByRole('menuitem', { name: 'Source' }).click()
-  await page.getByRole('menuitem', { name: 'Publish geometry.tsx Export' }).click()
-  const dialog = page.getByRole('dialog', { name: 'Publish geometry.tsx Export' })
-  await expect(dialog.getByRole('combobox', { name: 'Export', exact: true })).toHaveValue('StarterStructure')
-  await expect(dialog.getByLabel('Package name')).toHaveValue('starter-structure')
-  await expect(dialog.getByLabel('Reconstructed TSX source')).toHaveValue(/export const StarterStructure/)
-  await dialog.getByRole('button', { name: '취소' }).click()
+  await page.getByRole('menuitem', { name: 'Save Experiment', exact: true }).click()
+  const createDialog = page.getByRole('dialog', { name: 'Save Experiment' })
+  await createDialog.getByRole('textbox', { name: 'Repository' }).fill('prototypes')
+  await createDialog.getByRole('textbox', { name: 'Experiment key' }).fill('basketball-goal')
+  await createDialog.getByRole('button', { name: 'Experiment 저장' }).click()
+  await expect(workbenchFooter).toContainText('caemble:experiment/design-lab/prototypes/basketball-goal@0.1.0')
 
-  const ribbon = page.getByRole('region', { name: 'Experiment 리본' })
-  await ribbon.getByRole('button', { name: 'Publish geometry.tsx Export' }).click()
-  const ribbonDialog = page.getByRole('dialog', { name: 'Publish geometry.tsx Export' })
-  await ribbonDialog.getByRole('button', { name: 'Geometry 발행' }).click()
-  const publishedDialog = page.getByRole('dialog', { name: 'Geometry 발행 완료' })
-  await expect(publishedDialog).toBeVisible({ timeout: 15_000 })
-  await expect(
-    publishedDialog.getByText(`import { StarterStructure } from "${coordinate}"`, { exact: true }),
-  ).toBeVisible()
+  await page.getByRole('menuitem', { name: 'Source' }).click()
+  await page.getByRole('menuitem', { name: 'Save New Version' }).click()
+  const versionDialog = page.getByRole('dialog', { name: 'Save New Version' })
+  await versionDialog.getByRole('combobox', { name: 'Version 증가' }).selectOption('minor')
+  await versionDialog.getByRole('button', { name: '새 Version 저장' }).click()
+  await expect(workbenchFooter).toContainText('@0.2.0')
+
+  await page.getByRole('menuitem', { name: 'Source' }).click()
+  await page.getByRole('menuitem', { name: 'Experiment Manager' }).click()
+  await manager.getByRole('tab', { name: 'Saved Experiments' }).click()
+  await expect(manager).toContainText('design-lab/prototypes/basketball-goal')
+  await expect(manager).toContainText('Locked')
+  await expect(manager).toContainText('연결 데이터 3')
+
+  page.once('dialog', (dialog) => dialog.accept())
+  await manager.getByRole('button', { name: 'Basketball Goal v0.1.0 삭제' }).click()
+  await expect(manager.getByRole('button', { name: 'Basketball Goal v0.1.0 삭제' })).toHaveCount(0)
+  await expect(manager).toContainText('v0.2.0')
 })
 
 test('opens authenticated Launchers from Settings and Jobs from the shared Toolbar actions', async ({ page }) => {
@@ -794,455 +562,4 @@ test('opens authenticated Launchers from Settings and Jobs from the shared Toolb
 
   await toolbar.getByRole('button', { name: 'Jobs' }).click()
   await expect(page.getByRole('dialog', { name: 'Jobs' })).toContainText('cae.simulation.start')
-})
-
-test('manages Geometry packages and previews an editable Geometry without Monaco model conflicts', async ({ page }) => {
-  test.setTimeout(90_000)
-  const timestamp = '2026-08-13T00:00:00Z'
-  const coordinate = 'caemble:geometry/designer/common/plate@1.2.3'
-  const nextCoordinate = 'caemble:geometry/designer/common/plate@1.2.4'
-  const localCoordinate = 'caemble:geometry/designer/common/plate@local'
-  const planHash = 'f'.repeat(64)
-  const geometrySource = `import { type Geometry } from '@caemble/core'
-export const Plate: Geometry = () => <box size={[1, 1, 1]} />
-export const Sphere: Geometry = () => <sphere radius={1} />
-`
-  const sourceHash = createHash('sha256').update(geometrySource).digest('hex')
-  const moduleHash = createHash('sha256')
-    .update(
-      JSON.stringify({
-        schemaVersion: 2,
-        moduleFormatVersion: 4,
-        cadApiVersion: 8,
-        coordinate,
-        sourceHash,
-        imports: [],
-      }),
-    )
-    .digest('hex')
-  let publishedSource = geometrySource
-  let publishedSourceHash = sourceHash
-  let publishedModuleHash = moduleHash
-  let published = false
-  let repositoryArchived = false
-  let repositoryDescription = 'Reusable parts'
-  let repositoryDeleteRequests = 0
-  const repository = {
-    id: 1,
-    user_id: user.id,
-    namespace: 'designer',
-    slug: 'common',
-    description: repositoryDescription,
-    archived_at: null,
-    created_at: timestamp,
-    updated_at: timestamp,
-  }
-  const geometryPackage = {
-    id: 2,
-    repository_id: repository.id,
-    name: 'plate',
-    user_id: user.id,
-    namespace: repository.namespace,
-    repository: repository.slug,
-    repository_archived_at: null,
-    version_count: 1,
-    latest_version: '1.2.3',
-    created_at: timestamp,
-    updated_at: timestamp,
-  }
-  const version = {
-    id: 3,
-    package_id: geometryPackage.id,
-    version_major: 1,
-    version_minor: 2,
-    version_patch: 3,
-    description: 'Stable plate',
-    source: geometrySource,
-    source_hash: sourceHash,
-    module_hash: moduleHash,
-    module_format_version: 4,
-    cad_api_version: 8,
-    archived_at: null,
-    repository_id: repository.id,
-    namespace: repository.namespace,
-    repository: repository.slug,
-    package_name: geometryPackage.name,
-    coordinate,
-    version: '1.2.3',
-    created_at: timestamp,
-    updated_at: timestamp,
-  }
-  let experimentSearch: string | null = null
-
-  await page.route(apiPattern, async (route) => {
-    const path = new URL(route.request().url()).pathname.replace(/^\/api/, '')
-    if (path === '/auth/me') return json(route, user)
-    if (path === '/auth/refresh') return json(route, { detail: 'Unexpected refresh' }, 401)
-    if (path === '/web/auth/csrf') return json(route, { csrf_token: 'csrf-geometry-manager' })
-    if (path === '/auth/geometry-namespace') {
-      const body = route.request().postDataJSON() as { namespace: string }
-      return json(route, { ...user, geometry_namespace: body.namespace })
-    }
-    if (path === `/geometry/repositories/${repository.id}/archive`) {
-      repositoryArchived = true
-      return json(route, {
-        id: repository.id,
-        userId: repository.user_id,
-        namespace: repository.namespace,
-        slug: repository.slug,
-        description: repositoryDescription,
-        archivedAt: timestamp,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      })
-    }
-    if (path === `/geometry/repositories/${repository.id}/restore`) {
-      repositoryArchived = false
-      return json(route, {
-        id: repository.id,
-        userId: repository.user_id,
-        namespace: repository.namespace,
-        slug: repository.slug,
-        description: repositoryDescription,
-        archivedAt: null,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      })
-    }
-    if (path === `/geometry/repositories/${repository.id}` && route.request().method() === 'PUT') {
-      repositoryDescription = (route.request().postDataJSON() as { description: string }).description
-      return json(route, {
-        id: repository.id,
-        userId: repository.user_id,
-        namespace: repository.namespace,
-        slug: repository.slug,
-        description: repositoryDescription,
-        archivedAt: repositoryArchived ? timestamp : null,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      })
-    }
-    if (path === `/geometry/repositories/${repository.id}` && route.request().method() === 'DELETE') {
-      repositoryDeleteRequests += 1
-      return json(route, null)
-    }
-    if (path === '/geometry/publish/plan') {
-      const request = route.request().postDataJSON() as {
-        targetDraftId: string
-        drafts: Array<Record<string, unknown> & { draftId: string; source: string }>
-      }
-      const draft = request.drafts[0]!
-      publishedSource = draft.source
-      publishedSourceHash = createHash('sha256').update(publishedSource).digest('hex')
-      publishedModuleHash = createHash('sha256')
-        .update(
-          JSON.stringify({
-            schemaVersion: 2,
-            moduleFormatVersion: 4,
-            cadApiVersion: 8,
-            coordinate: nextCoordinate,
-            sourceHash: publishedSourceHash,
-            imports: [],
-          }),
-        )
-        .digest('hex')
-      return json(route, {
-        planHash,
-        steps: [
-          {
-            ...draft,
-            baseGeometryVersionId: version.id,
-            repositoryId: repository.id,
-            repository: repository.slug,
-            package: geometryPackage.name,
-            version: '1.2.4',
-            coordinate: nextCoordinate,
-            localCoordinate,
-            description: version.description,
-            sourceHash: publishedSourceHash,
-            moduleHash: publishedModuleHash,
-            exports: ['Plate', 'Sphere'],
-            imports: [],
-          },
-        ],
-        replacements: [{ draftId: request.targetDraftId, localCoordinate, coordinate: nextCoordinate }],
-      })
-    }
-    if (path === '/geometry/publish') {
-      const request = route.request().postDataJSON() as { targetDraftId: string; planHash: string }
-      expect(request.planHash).toBe(planHash)
-      published = true
-      return json(route, {
-        planHash,
-        published: [
-          {
-            id: 4,
-            packageId: geometryPackage.id,
-            coordinate: nextCoordinate,
-            version: '1.2.4',
-            description: version.description,
-            sourceHash: publishedSourceHash,
-            moduleHash: publishedModuleHash,
-            moduleFormatVersion: 4,
-            cadApiVersion: 8,
-            archivedAt: null,
-            createdAt: timestamp,
-          },
-        ],
-        replacements: [{ draftId: request.targetDraftId, localCoordinate, coordinate: nextCoordinate }],
-      })
-    }
-    if (path === '/geometry/repositories/list') {
-      return json(route, {
-        total: 1,
-        items: [
-          {
-            ...repository,
-            description: repositoryDescription,
-            archived_at: repositoryArchived ? timestamp : null,
-            package_count: 1,
-            version_count: published ? 2 : 1,
-          },
-        ],
-      })
-    }
-    if (path === '/geometry/packages/list') return json(route, { total: 1, items: [geometryPackage] })
-    if (path === '/geometry/versions/list') {
-      const nextVersion = {
-        ...version,
-        id: 4,
-        version_patch: 4,
-        description: version.description,
-        source: publishedSource,
-        source_hash: publishedSourceHash,
-        module_hash: publishedModuleHash,
-        coordinate: nextCoordinate,
-        version: '1.2.4',
-      }
-      return json(route, { total: published ? 2 : 1, items: published ? [nextVersion, version] : [version] })
-    }
-    if (path === `/geometry/versions/${version.id}/resolve`) {
-      return json(route, {
-        schemaVersion: 2,
-        root: { geometryVersionId: version.id, coordinate, moduleHash, exports: ['Plate'] },
-        modules: [
-          {
-            geometryVersionId: version.id,
-            coordinate,
-            moduleFormatVersion: 4,
-            cadApiVersion: 8,
-            description: version.description,
-            source: version.source,
-            sourceHash,
-            moduleHash,
-            imports: [],
-          },
-        ],
-      })
-    }
-    if (path === '/geometry/versions/4/resolve') {
-      return json(route, {
-        schemaVersion: 2,
-        root: {
-          geometryVersionId: 4,
-          coordinate: nextCoordinate,
-          moduleHash: publishedModuleHash,
-          exports: ['Plate', 'Sphere'],
-        },
-        modules: [
-          {
-            geometryVersionId: 4,
-            coordinate: nextCoordinate,
-            moduleFormatVersion: 4,
-            cadApiVersion: 8,
-            description: version.description,
-            source: publishedSource,
-            sourceHash: publishedSourceHash,
-            moduleHash: publishedModuleHash,
-            imports: [],
-          },
-        ],
-      })
-    }
-    if (path === '/geometry/versions/usage') {
-      return json(route, {
-        items: [
-          {
-            versionId: version.id,
-            dependentVersionIds: [],
-            dependentVersionCount: 0,
-            experimentCount: 1,
-            deletable: false,
-          },
-        ],
-      })
-    }
-    if (path === `/geometry/versions/${version.id}/dependents/list`) {
-      return json(route, { total: 0, items: [] })
-    }
-    if (path === `/geometry/versions/${version.id}/experiments/list`) {
-      experimentSearch = (route.request().postDataJSON() as { search_text: string | null }).search_text
-      return json(route, {
-        total: 1,
-        items: [
-          {
-            id: 7,
-            user_id: user.id,
-            parent_id: null,
-            name: 'Bracket study',
-            description: 'Uses the plate indirectly',
-            entry_alias: null,
-            created_at: timestamp,
-            updated_at: timestamp,
-          },
-        ],
-      })
-    }
-    if (path === '/web/jobs') return json(route, [])
-    if (path === '/web/launchers/runtime') return json(route, [])
-    if (path.endsWith('/list')) return json(route, { total: 0, items: [] })
-    return json(route, { detail: `Unexpected mocked endpoint: ${path}` }, 404)
-  })
-  await mockCanonicalCatalog(page)
-
-  await page.goto('/')
-  await page.getByRole('menuitem', { name: 'Source' }).click()
-  await page.getByRole('menuitem', { name: 'Load Experiment' }).click()
-  await page
-    .getByRole('dialog', { name: 'Experiment 불러오기' })
-    .getByRole('button', { name: /DC Uniform Bar/ })
-    .click()
-  await expect(page.getByRole('tab', { name: 'experiment.tsx' })).toHaveAttribute('aria-selected', 'true')
-  await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('Conductor')
-  await page.waitForTimeout(1_000)
-  await expect(page.locator('.monaco-editor:visible .squiggly-error')).toHaveCount(0)
-  await page.getByRole('tab', { name: 'tasks/solveCurrent.tsx' }).click()
-  await expect(page.locator('.monaco-editor:visible .view-lines')).toContainText('Probe')
-  await page.waitForTimeout(1_000)
-  await expect(page.locator('.monaco-editor:visible .squiggly-error')).toHaveCount(0)
-  await page.getByRole('tab', { name: 'experiment.tsx' }).click()
-  await page.getByRole('menuitem', { name: 'Source' }).click()
-  await page.getByRole('menuitem', { name: 'Geometry Manager' }).click()
-  const manager = page.getByLabel('Geometry Manager')
-  const geometryRibbon = page.getByRole('region', { name: 'Geometry 리본' })
-  await expect(manager).toBeVisible()
-  await geometryRibbon.getByRole('combobox', { name: 'Namespace' }).selectOption('designer')
-  await expect(manager).toContainText('designer/common/plate')
-  await manager.getByRole('button', { name: /designer\/common\/plate/ }).click()
-  await expect(manager).toContainText(coordinate)
-  await expect(geometryRibbon.getByRole('combobox', { name: 'Repository' })).toHaveValue('all')
-
-  page.once('dialog', (prompt) => prompt.accept('PlateRoot'))
-  await expect(geometryRibbon.getByRole('button', { name: 'Experiment에서 사용' })).toBeEnabled({ timeout: 30_000 })
-  await geometryRibbon.getByRole('button', { name: 'Experiment에서 사용' }).click()
-  const usageDialog = page.getByRole('dialog', { name: 'Experiment에서 Geometry 사용' })
-  await expect(usageDialog).toContainText(`import { Plate as PlateRoot } from "${coordinate}"`)
-  await usageDialog.getByRole('button', { name: 'geometry.tsx 열기' }).click()
-  await expect(usageDialog).toBeHidden()
-  await expect(manager).toBeHidden()
-
-  const geometryEditor = page.locator('.monaco-editor:visible .view-lines')
-  await expect(page.getByRole('tab', { name: 'geometry.tsx' })).toHaveAttribute('aria-selected', 'true')
-  await geometryEditor.click({ position: { x: 100, y: 30 } })
-  await page.keyboard.press('Control+A')
-  await page.keyboard.insertText(`import { Plate as PlateRoot } from "${coordinate}"
-export { PlateRoot }
-`)
-  await expect(page.locator('.monaco-editor .squiggly-error')).toHaveCount(0, { timeout: 10_000 })
-
-  await page.getByRole('tab', { name: 'Geometry', exact: true }).click()
-  await expect(manager).toBeVisible()
-  await expect(geometryRibbon.getByRole('combobox', { name: 'Namespace' })).toHaveValue('designer')
-  await expect(geometryRibbon.getByRole('combobox', { name: 'Repository' })).toHaveValue('all')
-
-  await geometryRibbon.getByRole('button', { name: 'Repository 관리' }).click()
-  const repositoryManager = page.getByRole('dialog', { name: 'Repository 관리' })
-  await expect(repositoryManager).toContainText('1 packages · 1 versions')
-  await repositoryManager.getByLabel('common 설명').fill('Updated repository')
-  await repositoryManager.getByRole('button', { name: '저장' }).click()
-  await expect(repositoryManager.getByLabel('common 설명')).toHaveValue('Updated repository')
-  await repositoryManager.getByRole('button', { name: 'Archive' }).click()
-  await expect(repositoryManager.getByRole('button', { name: 'Restore' })).toBeVisible()
-  await repositoryManager.getByRole('button', { name: 'Restore' }).click()
-  await expect(repositoryManager.getByRole('button', { name: 'Archive' })).toBeVisible()
-  page.once('dialog', (dialog) => dialog.accept())
-  await repositoryManager.getByRole('button', { name: '삭제' }).click()
-  await expect(page.getByText(/현재 .* 참조하는 Repository는 삭제할 수 없습니다/)).toBeVisible()
-  expect(repositoryDeleteRequests).toBe(0)
-  await repositoryManager.getByRole('button', { name: '닫기' }).click()
-
-  await manager.getByRole('tab', { name: 'References' }).click()
-  await expect(manager).toContainText('Bracket study')
-  await expect(manager).toContainText('Indirect')
-  const referenceSearch = manager.getByRole('textbox', { name: /Experiment/ })
-  await referenceSearch.fill('plate study')
-  await expect.poll(() => experimentSearch).toBe('plate study')
-
-  await geometryRibbon.getByRole('button', { name: 'Workspace 설정' }).click()
-  const workspaceSettings = page.getByRole('dialog', { name: 'Workspace 설정' })
-  const namespaceInput = workspaceSettings.getByRole('textbox', { name: '기본 Geometry namespace' })
-  await expect(namespaceInput).toHaveValue('designer')
-  await namespaceInput.fill('designer-next')
-  await workspaceSettings.getByRole('button', { name: '변경' }).click()
-  await expect(workspaceSettings).toBeHidden()
-  await expect(geometryRibbon.getByRole('button', { name: 'Workspace 설정' })).toBeVisible()
-  await expect(manager).toContainText(coordinate)
-
-  await page.getByRole('tab', { name: 'Experiment', exact: true }).click()
-  await page.getByRole('tab', { name: 'experiment.tsx' }).click()
-  const experimentEditor = page.locator('.monaco-editor:visible .view-lines')
-  await experimentEditor.click({ position: { x: 100, y: 30 } })
-  await page.keyboard.press('Control+A')
-  await page.keyboard.insertText(`import { experiment } from '@caemble/core'
-import { PlateRoot } from './geometry'
-
-export default experiment({
-  lengthUnit: 'mm',
-  varsSchema: {},
-  geometry: () => <PlateRoot id="plate" />,
-  recordedData: {},
-})`)
-  await expect(page.locator('.monaco-editor .squiggly-error')).toHaveCount(0, { timeout: 10_000 })
-
-  await page.getByRole('tab', { name: 'Geometry', exact: true }).click()
-  await expect(geometryRibbon.getByRole('combobox', { name: 'Namespace' })).toHaveValue('designer')
-  await manager.getByRole('tab', { name: 'Source' }).click()
-  await geometryRibbon.getByRole('button', { name: '새 Version 편집' }).click()
-
-  const workspace = page.getByRole('region', { name: 'Draft Version editor' })
-  await expect(workspace).toBeVisible()
-  await expect(manager.getByRole('button', { name: /Draft Draft Version/ })).toBeVisible()
-
-  const saveGeometry = workspace.getByRole('button', { name: '새 Version 발행' })
-  await expect(saveGeometry).toBeEnabled({ timeout: 30_000 })
-  await expect(workspace.getByText('Preview current', { exact: true })).toBeVisible()
-  await expect(workspace.getByRole('alert')).toHaveCount(0)
-
-  const previewExport = workspace.getByRole('combobox', { name: 'Preview export' })
-  await expect(previewExport).toHaveValue('Plate')
-  await previewExport.selectOption('Sphere')
-  await expect(previewExport).toHaveValue('Sphere')
-  await expect(workspace.getByText('Preview current', { exact: true })).toBeVisible()
-  await previewExport.selectOption('Plate')
-  await expect(previewExport).toHaveValue('Plate')
-
-  const draftEditor = workspace.locator('.monaco-editor:visible')
-  await draftEditor.getByRole('textbox', { name: 'Editor content' }).focus()
-  await page.keyboard.press('Control+A')
-  await page.keyboard.insertText('export const Broken = (')
-  await expect(workspace.getByRole('alert')).toContainText('마지막 정상 Viewer scene을 유지합니다.')
-  await expect(saveGeometry).toBeDisabled()
-
-  await draftEditor.getByRole('textbox', { name: 'Editor content' }).focus()
-  await page.keyboard.press('Control+A')
-  await page.keyboard.insertText(`${geometrySource}// manager-version-edit\n`)
-  await expect(workspace.getByText('Preview current', { exact: true })).toBeVisible({ timeout: 15_000 })
-  await expect(saveGeometry).toBeEnabled({ timeout: 30_000 })
-  await saveGeometry.click()
-  const publishDialog = page.getByRole('dialog', { name: 'Geometry 발행 계획' })
-  await expect(publishDialog).toContainText(nextCoordinate)
-  await publishDialog.getByRole('button', { name: '계획대로 발행' }).click()
-  await expect(manager.getByRole('button', { name: 'v1.2.4' })).toBeVisible({ timeout: 15_000 })
-  await expect(manager.getByRole('button', { name: /Draft Draft Version/ })).toHaveCount(0)
-  await expect(page.locator('footer').last()).toContainText('Draft Versions · 0')
 })

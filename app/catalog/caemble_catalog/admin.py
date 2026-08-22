@@ -12,7 +12,7 @@ from typing import Any, Iterable
 
 from .database import Catalog, catalog_path
 from .errors import CatalogError, CatalogIntegrityError, CatalogNotFoundError
-from .schema import create_schema, upgrade_schema
+from .schema import create_schema, parse_experiment_version, upgrade_schema
 from .validation import validate_catalog_content
 
 
@@ -204,87 +204,59 @@ def insert_solver_manifest(connection: sqlite3.Connection, manifest: dict[str, A
                 )
 
 
-def insert_geometry(connection: sqlite3.Connection, geometry: dict[str, Any]) -> None:
-    source = geometry["source"]
-    repository = geometry.get("repository")
-    if repository is None:
-        row = connection.execute("SELECT slug FROM geometry_repositories ORDER BY ordinal LIMIT 1").fetchone()
-        if row is None:
-            raise CatalogError("At least one Geometry Repository is required before inserting Geometry examples.")
-        repository = row[0]
-    connection.execute(
-        """INSERT INTO geometries(
-               key, title, description, cad_api_version, module_format_version,
-               length_unit, export_name, source, source_hash, repository_slug
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            geometry["key"],
-            geometry["title"],
-            geometry["description"],
-            geometry.get("cadApiVersion", 8),
-            geometry.get("moduleFormatVersion", 4),
-            geometry["lengthUnit"],
-            geometry["exportName"],
-            source,
-            hashlib.sha256(source.encode("utf-8")).hexdigest(),
-            repository,
-        ),
-    )
-    connection.executemany(
-        "INSERT INTO geometry_concepts VALUES (?, ?, ?)",
-        [(geometry["key"], ordinal, value) for ordinal, value in enumerate(geometry.get("concepts", []))],
-    )
-    connection.executemany(
-        "INSERT INTO geometry_material_roles VALUES (?, ?, ?, ?)",
-        [
-            (geometry["key"], ordinal, value["role"], value["description"])
-            for ordinal, value in enumerate(geometry.get("materialRoles", []))
-        ],
-    )
-    connection.executemany(
-        "INSERT INTO geometry_elements VALUES (?, ?, ?)",
-        [(geometry["key"], ordinal, value) for ordinal, value in enumerate(geometry.get("relatedElements", []))],
-    )
-
-
 def insert_experiment(connection: sqlite3.Connection, experiment: dict[str, Any]) -> None:
     bundle = experiment["sourceBundle"]
     bundle_hash = hashlib.sha256(canonical_json(bundle).encode("utf-8")).hexdigest()
-    connection.execute(
-        "INSERT INTO experiments VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    try:
+        version = parse_experiment_version(experiment.get("version", "1.0.0"))
+    except ValueError as error:
+        raise CatalogError(str(error)) from error
+    cursor = connection.execute(
+        """INSERT INTO experiments(
+               key, namespace, repository_slug, version_major, version_minor, version_patch,
+               title, description, cad_api_version, source_format_version, bundle_format_version,
+               verification_json, bundle_hash
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             experiment["key"],
+            experiment.get("namespace", "caemble"),
+            experiment.get("repository", "verified"),
+            *version,
             experiment["title"],
             experiment["description"],
             experiment.get("cadApiVersion", 8),
             experiment.get("sourceFormatVersion", 2),
             bundle["formatVersion"],
-            canonical_json(bundle["geometrySnapshot"]),
             canonical_json(experiment["verification"]),
             bundle_hash,
         ),
     )
+    experiment_id = cursor.lastrowid
     connection.executemany(
-        "INSERT INTO experiment_files VALUES (?, ?, ?, ?)",
+        "INSERT INTO experiment_files(experiment_id, ordinal, path, source) VALUES (?, ?, ?, ?)",
         [
-            (experiment["key"], ordinal, path, source)
+            (experiment_id, ordinal, path, source)
             for ordinal, (path, source) in enumerate(sorted(bundle["files"].items()))
         ],
     )
     connection.executemany(
-        "INSERT INTO experiment_concepts VALUES (?, ?, ?)",
-        [(experiment["key"], ordinal, value) for ordinal, value in enumerate(experiment.get("concepts", []))],
+        "INSERT INTO experiment_concepts(experiment_id, ordinal, concept) VALUES (?, ?, ?)",
+        [(experiment_id, ordinal, value) for ordinal, value in enumerate(experiment.get("concepts", []))],
     )
     connection.executemany(
-        "INSERT INTO experiment_solvers VALUES (?, ?, ?, ?)",
+        """INSERT INTO experiment_solvers(
+               experiment_id, ordinal, solver_name, solver_version
+           ) VALUES (?, ?, ?, ?)""",
         [
-            (experiment["key"], ordinal, value["name"], value["version"])
-            for ordinal, value in enumerate(experiment["relatedSolvers"])
+            (experiment_id, ordinal, value["name"], value["version"])
+            for ordinal, value in enumerate(experiment.get("relatedSolvers", []))
         ],
     )
 
 
 def create_database(path: Path, dataset: dict[str, Any]) -> None:
+    if dataset.get("geometryRepositories") or dataset.get("geometries"):
+        raise CatalogError("Geometry catalog rows are no longer supported; convert them to Experiment bundles")
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         path.unlink()
@@ -344,27 +316,6 @@ def create_database(path: Path, dataset: dict[str, Any]) -> None:
                 )
             for manifest in dataset["solverManifests"]:
                 insert_solver_manifest(connection, manifest)
-            geometry_repositories = dataset.get("geometryRepositories", [])
-            if dataset.get("geometries") and not geometry_repositories:
-                geometry_repositories = [
-                    {
-                        "slug": "general",
-                        "title": "General",
-                        "description": "Imported Geometry examples",
-                    }
-                ]
-            for ordinal, repository in enumerate(geometry_repositories):
-                connection.execute(
-                    "INSERT INTO geometry_repositories VALUES (?, ?, ?, ?)",
-                    (
-                        repository["slug"],
-                        repository["title"],
-                        repository["description"],
-                        repository.get("ordinal", ordinal),
-                    ),
-                )
-            for geometry in dataset.get("geometries", []):
-                insert_geometry(connection, geometry)
             for experiment in dataset.get("experiments", []):
                 insert_experiment(connection, experiment)
             revision_source = {
@@ -462,6 +413,12 @@ def upgrade_database(path: Path) -> None:
         upgrade_schema(connection)
     refresh_derived_data(path)
     validate_database(path)
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("PRAGMA journal_mode = DELETE")
+        connection.execute("VACUUM")
+    finally:
+        connection.close()
 
 
 def create_draft(destination: Path, source: Path | None = None) -> None:
@@ -532,16 +489,14 @@ def semantic_snapshot(path: Path) -> dict[str, Any]:
                 f"{item['descriptor']['name']}@{item['descriptor']['version']}": item
                 for item in catalog.solver_manifests()
             },
-            "geometryRepositories": {
-                item["slug"]: item for item in catalog.list_geometry_repositories()
-            },
-            "geometries": {
-                row["key"]: catalog.geometry(row["key"])
-                for row in catalog._all("SELECT key FROM geometries ORDER BY key")
-            },
             "experiments": {
-                row["key"]: catalog.experiment(row["key"])
-                for row in catalog._all("SELECT key FROM experiments ORDER BY key")
+                item["coordinate"]: catalog.experiment(
+                    item["key"],
+                    namespace=item["namespace"],
+                    repository=item["repository"],
+                    version=item["version"],
+                )
+                for item in catalog.list_experiments(limit=10_000)[0]
             },
         }
 
@@ -555,8 +510,6 @@ def semantic_diff(candidate: Path, baseline: Path | None = None) -> list[str]:
         "materialParameters",
         "materialModels",
         "solvers",
-        "geometryRepositories",
-        "geometries",
         "experiments",
     ):
         before_items = before[section]
@@ -663,14 +616,14 @@ def _revision_payload(path: Path) -> dict[str, Any]:
                 for row in catalog._all("SELECT key, description FROM material_design_rules ORDER BY key")
             },
             "solverManifests": catalog.solver_manifests(),
-            "geometryRepositories": catalog.list_geometry_repositories(),
-            "geometries": [
-                catalog.geometry(row["key"])
-                for row in catalog._all("SELECT key FROM geometries ORDER BY key")
-            ],
             "experiments": [
-                catalog.experiment(row["key"])
-                for row in catalog._all("SELECT key FROM experiments ORDER BY key")
+                catalog.experiment(
+                    item["key"],
+                    namespace=item["namespace"],
+                    repository=item["repository"],
+                    version=item["version"],
+                )
+                for item in catalog.list_experiments(limit=10_000)[0]
             ],
         }
 

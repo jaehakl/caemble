@@ -6,8 +6,15 @@ import threading
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 
-from .errors import CatalogIntegrityError, CatalogNotFoundError
-from .schema import APPLICATION_ID, RUNTIME_SLICE_SCHEMA_VERSION, SCHEMA_VERSION
+from .errors import CatalogAmbiguousError, CatalogIntegrityError, CatalogNotFoundError
+from .schema import (
+    APPLICATION_ID,
+    EXPERIMENT_COORDINATE_PREFIX,
+    RUNTIME_SLICE_SCHEMA_VERSION,
+    SCHEMA_VERSION,
+    parse_experiment_coordinate,
+    parse_experiment_version,
+)
 
 
 def catalog_path() -> Path:
@@ -95,7 +102,6 @@ class Catalog:
               (SELECT count(*) FROM material_parameters) AS material_parameter_count,
               (SELECT count(*) FROM material_models) AS material_model_count,
               (SELECT count(*) FROM solvers) AS solver_count,
-              (SELECT count(*) FROM geometries) AS geometry_count,
               (SELECT count(*) FROM experiments) AS experiment_count
             """
         )
@@ -115,7 +121,6 @@ class Catalog:
             "materialParameterCount": counts["material_parameter_count"],
             "materialModelCount": counts["material_model_count"],
             "solverCount": counts["solver_count"],
-            "geometryCount": counts["geometry_count"],
             "experimentCount": counts["experiment_count"],
             "materialGlobalQualifiers": global_qualifiers,
             "materialDesignRules": design_rules,
@@ -621,95 +626,71 @@ class Catalog:
             "consumesArtifacts": consumed_items,
         }
 
-    def geometry(self, key: str, *, include_source: bool = True) -> dict[str, Any]:
-        row = self._one("SELECT * FROM geometries WHERE key = ?", (key,))
-        if row is None:
-            raise CatalogNotFoundError(f"Unknown Geometry: {key}")
-        result: dict[str, Any] = {
-            "key": row["key"],
-            "title": row["title"],
-            "description": row["description"],
-            "cadApiVersion": row["cad_api_version"],
-            "moduleFormatVersion": row["module_format_version"],
-            "lengthUnit": row["length_unit"],
-            "exportName": row["export_name"],
-            "sourceHash": row["source_hash"],
-            "repository": row["repository_slug"],
-            "concepts": [
-                item["concept"]
-                for item in self._all(
-                    "SELECT concept FROM geometry_concepts WHERE geometry_key = ? ORDER BY ordinal", (key,)
-                )
-            ],
-            "materialRoles": [
-                {"role": item["role"], "description": item["description"]}
-                for item in self._all(
-                    "SELECT role, description FROM geometry_material_roles WHERE geometry_key = ? ORDER BY ordinal",
-                    (key,),
-                )
-            ],
-            "relatedElements": [
-                item["element"]
-                for item in self._all(
-                    "SELECT element FROM geometry_elements WHERE geometry_key = ? ORDER BY ordinal", (key,)
-                )
-            ],
-        }
-        if include_source:
-            result["source"] = row["source"]
-        return result
-
-    def list_geometry_repositories(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "slug": row["slug"],
-                "title": row["title"],
-                "description": row["description"],
-                "ordinal": row["ordinal"],
-            }
-            for row in self._all("SELECT * FROM geometry_repositories ORDER BY ordinal, slug")
-        ]
-
-    def list_geometries(
+    def experiment(
         self,
+        key: str,
         *,
-        query: str | None = None,
-        element: str | None = None,
+        namespace: str | None = None,
         repository: str | None = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> tuple[list[dict[str, Any]], int]:
-        joins = ""
-        clauses: list[str] = []
-        parameters: list[object] = []
-        if element is not None:
-            joins = " JOIN geometry_elements ge ON ge.geometry_key = g.key"
-            clauses.append("ge.element = ?")
-            parameters.append(element)
-        if repository is not None:
-            clauses.append("g.repository_slug = ?")
-            parameters.append(repository)
-        if query:
-            escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            like = f"%{escaped}%"
-            clauses.append("(g.key LIKE ? ESCAPE '\\' OR g.title LIKE ? ESCAPE '\\' OR g.description LIKE ? ESCAPE '\\')")
-            parameters.extend((like, like, like))
-        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-        total = self._one(
-            f"SELECT count(DISTINCT g.key) AS value FROM geometries g{joins}{where}", parameters
-        )["value"]
-        rows = self._all(
-            f"SELECT DISTINCT g.key FROM geometries g{joins}{where} ORDER BY g.key LIMIT ? OFFSET ?",
-            (*parameters, limit, offset),
-        )
-        return [self.geometry(row["key"], include_source=False) for row in rows], total
+        version: str | None = None,
+        include_bundle: bool = True,
+    ) -> dict[str, Any]:
+        identifier = key
+        if key.startswith(EXPERIMENT_COORDINATE_PREFIX):
+            try:
+                coordinate_namespace, coordinate_repository, coordinate_key, coordinate_version = (
+                    parse_experiment_coordinate(key)
+                )
+            except ValueError as error:
+                raise CatalogNotFoundError(f"Invalid Experiment coordinate: {key}: {error}") from error
+            if (
+                (namespace is not None and namespace != coordinate_namespace)
+                or (repository is not None and repository != coordinate_repository)
+                or (version is not None and version != coordinate_version)
+            ):
+                raise CatalogNotFoundError(f"Conflicting Experiment coordinate selector: {key}")
+            namespace = coordinate_namespace
+            repository = coordinate_repository
+            key = coordinate_key
+            version = coordinate_version
 
-    def experiment(self, key: str, *, include_bundle: bool = True) -> dict[str, Any]:
-        row = self._one("SELECT * FROM experiments WHERE key = ?", (key,))
-        if row is None:
-            raise CatalogNotFoundError(f"Unknown Experiment: {key}")
+        clauses = ["key = ?"]
+        parameters: list[object] = [key]
+        if namespace is not None:
+            clauses.append("namespace = ?")
+            parameters.append(namespace)
+        if repository is not None:
+            clauses.append("repository_slug = ?")
+            parameters.append(repository)
+        if version is not None:
+            try:
+                parts = parse_experiment_version(version)
+            except ValueError as error:
+                raise CatalogNotFoundError(str(error)) from error
+            clauses.extend(("version_major = ?", "version_minor = ?", "version_patch = ?"))
+            parameters.extend(parts)
+        matches = self._all(
+            f"SELECT * FROM experiments WHERE {' AND '.join(clauses)} "
+            "ORDER BY namespace, repository_slug, version_major DESC, version_minor DESC, version_patch DESC LIMIT 2",
+            parameters,
+        )
+        if not matches:
+            raise CatalogNotFoundError(f"Unknown Experiment: {identifier}")
+        if len(matches) > 1:
+            raise CatalogAmbiguousError(
+                f"Ambiguous Experiment key: {identifier}; provide namespace, repository, and version"
+            )
+        row = matches[0]
+        experiment_id = row["id"]
         result: dict[str, Any] = {
             "key": row["key"],
+            "namespace": row["namespace"],
+            "repository": row["repository_slug"],
+            "version": f"{row['version_major']}.{row['version_minor']}.{row['version_patch']}",
+            "coordinate": (
+                f"caemble:experiment/{row['namespace']}/{row['repository_slug']}/{row['key']}"
+                f"@{row['version_major']}.{row['version_minor']}.{row['version_patch']}"
+            ),
             "title": row["title"],
             "description": row["description"],
             "cadApiVersion": row["cad_api_version"],
@@ -719,7 +700,8 @@ class Catalog:
             "concepts": [
                 item["concept"]
                 for item in self._all(
-                    "SELECT concept FROM experiment_concepts WHERE experiment_key = ? ORDER BY ordinal", (key,)
+                    "SELECT concept FROM experiment_concepts WHERE experiment_id = ? ORDER BY ordinal",
+                    (experiment_id,),
                 )
             ],
             "relatedSolvers": [
@@ -733,9 +715,9 @@ class Catalog:
                     SELECT es.solver_name, es.solver_version, s.description
                     FROM experiment_solvers es
                     JOIN solvers s ON s.name = es.solver_name AND s.version = es.solver_version
-                    WHERE es.experiment_key = ? ORDER BY es.ordinal
+                    WHERE es.experiment_id = ? ORDER BY es.ordinal
                     """,
-                    (key,),
+                    (experiment_id,),
                 )
             ],
         }
@@ -746,10 +728,10 @@ class Catalog:
                 "files": {
                     item["path"]: item["source"]
                     for item in self._all(
-                        "SELECT path, source FROM experiment_files WHERE experiment_key = ? ORDER BY ordinal", (key,)
+                        "SELECT path, source FROM experiment_files WHERE experiment_id = ? ORDER BY ordinal",
+                        (experiment_id,),
                     )
                 },
-                "geometrySnapshot": _json(row["geometry_snapshot_json"]),
             }
         return result
 
@@ -759,6 +741,8 @@ class Catalog:
         query: str | None = None,
         solver_name: str | None = None,
         solver_version: str | None = None,
+        namespace: str | None = None,
+        repository: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[dict[str, Any]], int]:
@@ -766,27 +750,53 @@ class Catalog:
         clauses: list[str] = []
         parameters: list[object] = []
         if solver_name is not None or solver_version is not None:
-            joins = " JOIN experiment_solvers es ON es.experiment_key = e.key"
+            joins = " JOIN experiment_solvers es ON es.experiment_id = e.id"
         if solver_name is not None:
             clauses.append("es.solver_name = ?")
             parameters.append(solver_name)
         if solver_version is not None:
             clauses.append("es.solver_version = ?")
             parameters.append(solver_version)
+        if namespace is not None:
+            clauses.append("e.namespace = ?")
+            parameters.append(namespace)
+        if repository is not None:
+            clauses.append("e.repository_slug = ?")
+            parameters.append(repository)
         if query:
             escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             like = f"%{escaped}%"
-            clauses.append("(e.key LIKE ? ESCAPE '\\' OR e.title LIKE ? ESCAPE '\\' OR e.description LIKE ? ESCAPE '\\')")
-            parameters.extend((like, like, like))
+            clauses.append(
+                """(e.key LIKE ? ESCAPE '\\' OR e.namespace LIKE ? ESCAPE '\\'
+                     OR e.repository_slug LIKE ? ESCAPE '\\' OR e.title LIKE ? ESCAPE '\\'
+                     OR e.description LIKE ? ESCAPE '\\'
+                     OR ('caemble:experiment/' || e.namespace || '/' || e.repository_slug || '/' || e.key || '@' ||
+                         e.version_major || '.' || e.version_minor || '.' || e.version_patch) LIKE ? ESCAPE '\\')"""
+            )
+            parameters.extend((like, like, like, like, like, like))
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         total = self._one(
-            f"SELECT count(DISTINCT e.key) AS value FROM experiments e{joins}{where}", parameters
+            f"SELECT count(DISTINCT e.id) AS value FROM experiments e{joins}{where}", parameters
         )["value"]
         rows = self._all(
-            f"SELECT DISTINCT e.key FROM experiments e{joins}{where} ORDER BY e.key LIMIT ? OFFSET ?",
+            f"""SELECT DISTINCT e.key, e.namespace, e.repository_slug,
+                       e.version_major, e.version_minor, e.version_patch
+                FROM experiments e{joins}{where}
+                ORDER BY e.namespace, e.repository_slug, e.key,
+                         e.version_major DESC, e.version_minor DESC, e.version_patch DESC
+                LIMIT ? OFFSET ?""",
             (*parameters, limit, offset),
         )
-        return [self.experiment(row["key"], include_bundle=False) for row in rows], total
+        return [
+            self.experiment(
+                row["key"],
+                namespace=row["namespace"],
+                repository=row["repository_slug"],
+                version=f"{row['version_major']}.{row['version_minor']}.{row['version_patch']}",
+                include_bundle=False,
+            )
+            for row in rows
+        ], total
 
     def search(self, query: str, *, limit: int = 30) -> list[dict[str, str]]:
         escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -807,14 +817,21 @@ class Catalog:
               SELECT 'solver', name || '@' || version, name, version || ' · Solver', name
               FROM solvers WHERE name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\'
               UNION ALL
-              SELECT 'geometry', key, title, 'Example Geometry', key
-              FROM geometries WHERE key LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\'
-              UNION ALL
-              SELECT 'experiment', key, title, 'Official Experiment', key
-              FROM experiments WHERE key LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\'
+              SELECT 'experiment',
+                     'caemble:experiment/' || namespace || '/' || repository_slug || '/' || key || '@' ||
+                       version_major || '.' || version_minor || '.' || version_patch,
+                     title,
+                     'Official Experiment · ' || namespace || '/' || repository_slug || '@' ||
+                       version_major || '.' || version_minor || '.' || version_patch,
+                     namespace || '/' || repository_slug || '/' || key || '@' ||
+                       version_major || '.' || version_minor || '.' || version_patch
+              FROM experiments
+              WHERE key LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\'
+                 OR ('caemble:experiment/' || namespace || '/' || repository_slug || '/' || key || '@' ||
+                     version_major || '.' || version_minor || '.' || version_patch) LIKE ? ESCAPE '\\'
             ) ORDER BY sort_key, kind LIMIT ?
             """,
-            (like, like, like, like, like, like, like, like, like, like, like, like, like, like, limit),
+            (like, like, like, like, like, like, like, like, like, like, like, like, limit),
         )
         return [dict(row) for row in rows]
 

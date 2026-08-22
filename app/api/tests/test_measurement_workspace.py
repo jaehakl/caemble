@@ -1,5 +1,6 @@
 import hashlib
 import json
+import uuid
 
 import pytest
 from sqlalchemy import func, select
@@ -17,13 +18,21 @@ def source_hash(bundle: dict) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-async def create_experiment(db_session, user_id, *, public=False):
+async def create_experiment(db_session, user, *, taskless=False):
     bundle = experiment_source_bundle()
+    if taskless:
+        bundle["files"].pop("tasks/main.tsx")
     experiment = Experiment(
+        user_id=user.id,
+        namespace=user.experiment_namespace,
+        repository_slug="tests",
+        experiment_key=f"experiment-{uuid.uuid4().hex[:12]}",
+        version_major=0,
+        version_minor=1,
+        version_patch=0,
         name="Experiment",
         source_bundle=bundle,
         source_hash=source_hash(bundle),
-        user_id=None if public else user_id,
     )
     db_session.add(experiment)
     await db_session.commit()
@@ -71,7 +80,7 @@ def recorded_payload(name="Current"):
 async def test_create_always_inserts_complete_immutable_input_snapshot(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
-    experiment = await create_experiment(db_session, owner.id)
+    experiment = await create_experiment(db_session, owner)
     headers = auth_headers(owner)
 
     first = await client.post("/measurement/create", headers=headers, json=create_payload(experiment))
@@ -97,7 +106,7 @@ async def test_create_rejects_source_change_and_hidden_experiment(client, db_ses
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
     other = await create_user(db_session)
-    experiment = await create_experiment(db_session, other.id)
+    experiment = await create_experiment(db_session, other)
 
     hidden = await client.post(
         "/measurement/create",
@@ -115,24 +124,25 @@ async def test_create_rejects_source_change_and_hidden_experiment(client, db_ses
 
 
 @pytest.mark.asyncio
-async def test_create_allows_visible_public_experiment(client, db_session, monkeypatch):
+async def test_create_rejects_taskless_experiment(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
-    experiment = await create_experiment(db_session, owner.id, public=True)
+    experiment = await create_experiment(db_session, owner, taskless=True)
+    payload = create_payload(experiment)
+    payload["material_parameters"]["tasks"] = {}
     response = await client.post(
         "/measurement/create",
         headers=auth_headers(owner),
-        json=create_payload(experiment),
+        json=payload,
     )
-    assert response.status_code == 200
-    assert (await db_session.get(Measurement, response.json()["id"])).user_id == owner.id
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
 async def test_create_rejects_non_v2_material_snapshot_and_seed_fields(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
-    experiment = await create_experiment(db_session, owner.id)
+    experiment = await create_experiment(db_session, owner)
     headers = auth_headers(owner)
 
     legacy = create_payload(experiment)
@@ -161,7 +171,7 @@ async def test_record_is_atomic_and_only_allowed_once(client, db_session, monkey
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
     owner_id = owner.id
-    experiment = await create_experiment(db_session, owner.id)
+    experiment = await create_experiment(db_session, owner)
     headers = auth_headers(owner)
     created = await client.post("/measurement/create", headers=headers, json=create_payload(experiment))
     measurement_id = created.json()["id"]
@@ -196,7 +206,7 @@ async def test_record_is_atomic_and_only_allowed_once(client, db_session, monkey
 async def test_empty_recording_marks_measurement_complete(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
-    experiment = await create_experiment(db_session, owner.id)
+    experiment = await create_experiment(db_session, owner)
     headers = auth_headers(owner)
     created = await client.post("/measurement/create", headers=headers, json=create_payload(experiment))
     measurement_id = created.json()["id"]
@@ -214,7 +224,7 @@ async def test_empty_recording_marks_measurement_complete(client, db_session, mo
 async def test_record_rejects_duplicate_names_before_writing(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
-    experiment = await create_experiment(db_session, owner.id)
+    experiment = await create_experiment(db_session, owner)
     headers = auth_headers(owner)
     created = await client.post("/measurement/create", headers=headers, json=create_payload(experiment))
     measurement_id = created.json()["id"]
@@ -233,7 +243,7 @@ async def test_record_rejects_duplicate_names_before_writing(client, db_session,
 async def test_record_rolls_back_completion_and_data_when_commit_fails(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
-    experiment = await create_experiment(db_session, owner.id)
+    experiment = await create_experiment(db_session, owner)
     headers = auth_headers(owner)
     created = await client.post("/measurement/create", headers=headers, json=create_payload(experiment))
     measurement_id = created.json()["id"]
@@ -259,7 +269,7 @@ async def test_record_rolls_back_completion_and_data_when_commit_fails(client, d
 async def test_recorded_data_is_read_only_and_measurement_delete_cascades(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
-    experiment = await create_experiment(db_session, owner.id)
+    experiment = await create_experiment(db_session, owner)
     headers = auth_headers(owner)
     created = await client.post("/measurement/create", headers=headers, json=create_payload(experiment))
     measurement_id = created.json()["id"]
@@ -281,13 +291,14 @@ async def test_recorded_data_is_read_only_and_measurement_delete_cascades(client
 
 
 @pytest.mark.asyncio
-async def test_experiment_with_measurement_cannot_be_deleted(client, db_session, monkeypatch):
+async def test_experiment_delete_cascades_measurement(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
-    experiment = await create_experiment(db_session, owner.id)
+    experiment = await create_experiment(db_session, owner)
     experiment_id = experiment.id
     headers = auth_headers(owner)
     await client.post("/measurement/create", headers=headers, json=create_payload(experiment))
     response = await client.request("DELETE", "/experiment/", headers=headers, json=[experiment_id])
-    assert response.status_code == 409
-    assert await db_session.get(Experiment, experiment_id) is not None
+    assert response.status_code == 200
+    db_session.expire_all()
+    assert await db_session.get(Experiment, experiment_id) is None

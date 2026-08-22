@@ -126,6 +126,8 @@ files = []
 develop = true
 
 [package.dependencies]
+tree-sitter = ">=0.25,<0.27"
+tree-sitter-typescript = ">=0.23,<0.24"
 ucumvert = "0.3.1"
 
 [package.source]
@@ -1995,4 +1997,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "c3d1151a372fe2e18b9002e57c858d590c5e1c9df639a228dde6b9877694aaec"
+content-hash = "4f9b25be332a0e007b8e9518a2fad2e1e8bfbc2184057a46cacd83f7e14bb028"

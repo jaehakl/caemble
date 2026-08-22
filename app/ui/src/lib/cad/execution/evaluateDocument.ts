@@ -8,13 +8,9 @@ import {
 import {
   EXPERIMENT_SIMULATION_PATH,
   assertCadSourceDocument,
-  createCadSourceDocument,
-  createExperimentSourceBundle,
   type CadEvaluationInput,
   type ExperimentSourceDocument,
 } from '../source/document'
-import type { GeometryDraftOverlay, GeometryModuleCoordinate } from '../source/effectiveGeometryGraph'
-import type { GeometrySnapshot } from '../source/geometrySnapshot'
 import type { UcumUnit } from '../model/units'
 import { deserializeCadScene } from './mesh'
 import type { CadScene } from '../evaluation/types'
@@ -36,19 +32,18 @@ import type { CatalogRuntimeSlice } from '@/contracts/catalog'
 export type EvaluateDocumentOptions = Readonly<{
   signal?: AbortSignal
   timeoutMs?: 3000 | 10000 | 30000
-  geometryDrafts?: GeometryDraftOverlay
   catalog?: CatalogRuntimeSlice
 }>
 
 export type GeometryModuleEvaluationOptions = Readonly<{
   signal?: AbortSignal
   timeoutMs?: 3000 | 10000 | 30000
-  geometryDrafts?: GeometryDraftOverlay
+  catalog?: CatalogRuntimeSlice
   lengthUnit?: UcumUnit
 }>
 
 export type GeometryModulePreview = Readonly<{
-  coordinate: GeometryModuleCoordinate
+  path: string
   exportName: string
   sourceHash: string
   scene: CadScene
@@ -125,7 +120,11 @@ export async function inspectDocument(
   assertCadSourceDocument(document)
   const catalog = options.catalog ?? (await fetchCatalogRuntimeSlice(document.sourceBundle))
   installCatalogRuntimeSlice(catalog)
-  const compiledDocument = await compileCadDocument(document, { ...options, catalogRevision: catalog.catalogRevision, catalog })
+  const compiledDocument = await compileCadDocument(document, {
+    ...options,
+    catalogRevision: catalog.catalogRevision,
+    catalog,
+  })
   registerSourceCatalogRuntimeSlice(compiledDocument.sourceHash, catalog)
   const request: CadInspectionRequest = {
     type: 'inspect',
@@ -153,7 +152,11 @@ export async function evaluateDocument(
   assertCadSourceDocument(input.document)
   const catalog = options.catalog ?? (await fetchCatalogRuntimeSlice(input.document.sourceBundle))
   installCatalogRuntimeSlice(catalog)
-  const compiledDocument = await compileCadDocument(input.document, { ...options, catalogRevision: catalog.catalogRevision, catalog })
+  const compiledDocument = await compileCadDocument(input.document, {
+    ...options,
+    catalogRevision: catalog.catalogRevision,
+    catalog,
+  })
   registerSourceCatalogRuntimeSlice(compiledDocument.sourceHash, catalog)
   const request: CadEvaluationRequest = {
     type: 'evaluate',
@@ -175,34 +178,23 @@ export async function evaluateDocument(
   )
 }
 
-const geometryPreviewFiles = Object.freeze({
-  'experiment.tsx': `import { experiment } from '@caemble/core'
-export default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => null, recordedData: {} })
-`,
-  'simulate.py': 'async def simulate(*, sim, tasks, vars):\n    return None\n',
-  'tasks/preview.tsx': `import { defineTask } from '@caemble/core'
-export default defineTask({ kernel: { name: 'preview', version: '1.0.0' }, config: () => ({}) })
-`,
-})
-
 export async function evaluateGeometryModule(
-  snapshot: GeometrySnapshot,
-  coordinate: GeometryModuleCoordinate,
+  document: ExperimentSourceDocument,
+  path: string,
   exportName: string,
   options: GeometryModuleEvaluationOptions = {},
 ): Promise<GeometryModulePreview> {
-  const files = {
-    ...geometryPreviewFiles,
-    'geometry.tsx': `import { ${exportName} } from ${JSON.stringify(coordinate)}\nexport { ${exportName} }\n`,
-  }
-  const document = createCadSourceDocument('experiment', createExperimentSourceBundle(files, snapshot))
+  assertCadSourceDocument(document)
+  const catalog = options.catalog ?? (await fetchCatalogRuntimeSlice(document.sourceBundle))
   const compiledDocument = await compileCadDocument(document, {
-    geometryDrafts: options.geometryDrafts,
+    catalogRevision: catalog.catalogRevision,
+    catalog,
   })
   const request: CadGeometryPreviewRequest = {
     type: 'preview-geometry',
+    catalog,
     compiledDocument,
-    coordinate,
+    path,
     exportName,
     lengthUnit: options.lengthUnit ?? 'mm',
     requestId: `preview-geometry-${crypto.randomUUID()}`,
@@ -216,7 +208,7 @@ export async function evaluateGeometryModule(
       if (response.type === 'geometry-preview-success') {
         resolve(
           Object.freeze({
-            coordinate,
+            path,
             exportName,
             sourceHash: response.sourceHash,
             scene: deserializeCadScene(response.scene),

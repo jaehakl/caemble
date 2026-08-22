@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import re
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -16,6 +17,9 @@ from utils.crud.common import is_admin_user
 
 class MeasurementAlreadyRecordedError(Exception):
     pass
+
+
+TASK_PATH = re.compile(r"^tasks/([A-Za-z][A-Za-z0-9_-]*)\.tsx$")
 
 
 class MeasurementService:
@@ -78,7 +82,9 @@ class MeasurementService:
                 )
 
         experiment = await db.scalar(
-            select(Experiment).where(Experiment.id == request.experiment_id)
+            select(Experiment)
+            .where(Experiment.id == request.experiment_id)
+            .with_for_update()
         )
         if experiment is None or (
             not is_admin_user(user)
@@ -92,10 +98,15 @@ class MeasurementService:
             )
         files = experiment.source_bundle.get("files", {})
         task_names = {
-            path.removeprefix("tasks/").removesuffix(".tsx")
+            match.group(1)
             for path in files
-            if path.startswith("tasks/") and path.endswith(".tsx")
+            if (match := TASK_PATH.fullmatch(path)) is not None
         }
+        if not task_names:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Experiment requires at least one Task before Measurement creation.",
+            )
         if set(task_snapshots) != task_names:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

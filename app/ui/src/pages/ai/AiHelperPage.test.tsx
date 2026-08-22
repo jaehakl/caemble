@@ -123,7 +123,7 @@ describe('AiHelperWorkspace Agent transport', () => {
           experimentId: 7,
           document: expect.objectContaining({ kind: 'experiment' }),
           baseHash: 'base-hash',
-          geometryContextVersion: 'geometry-v1',
+          experimentContextVersion: 'experiment-v1',
           activeFile: 'tasks/thermal.tsx',
           workspaceSession: 11,
         }),
@@ -175,7 +175,7 @@ describe('AiHelperWorkspace Agent transport', () => {
       baseHash: 'base-hash',
       sourceHash: 'staged-hash',
       stagedRevision: 3,
-      geometryContextVersion: 'geometry-v1',
+      experimentContextVersion: 'experiment-v1',
       sessionContextEnvelope: 'sealed-after',
       contextUsage: { contextTokens: 1200, cachedTokens: 400, cacheWriteTokens: 100, compacted: true },
       provenance: [{ kind: 'catalog', label: 'Steady-state heat solver', resourceId: 9 }],
@@ -228,7 +228,7 @@ describe('AiHelperWorkspace Agent transport', () => {
       baseHash: 'base-hash',
       sourceHash: 'next-hash',
       stagedRevision: 1,
-      geometryContextVersion: 'geometry-v1',
+      experimentContextVersion: 'experiment-v1',
       sessionContextEnvelope: null,
       contextUsage: null,
       provenance: [],
@@ -259,7 +259,7 @@ describe('AiHelperWorkspace Agent transport', () => {
       baseHash: 'base-hash',
       sourceHash: 'revision-hash',
       stagedRevision: 1,
-      geometryContextVersion: 'geometry-v1',
+      experimentContextVersion: 'experiment-v1',
       sessionContextEnvelope: 'must-not-save',
       contextUsage: null,
       provenance: [],
@@ -292,7 +292,7 @@ describe('AiHelperWorkspace Agent transport', () => {
     mocks.listProviders.mockResolvedValue([provider(false)])
     const onRequestLogin = vi.fn()
     const user = userEvent.setup()
-    renderWorkspace({ baseHash: null, geometryContextVersion: null, onRequestLogin })
+    renderWorkspace({ baseHash: null, experimentContextVersion: null, onRequestLogin })
 
     expect(await screen.findByText(/API key를 등록해야 Agent를 실행할 수 있습니다/)).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Account 열기' }))
@@ -321,12 +321,12 @@ function provider(configured: boolean) {
 
 function renderWorkspace({
   baseHash = 'base-hash',
-  geometryContextVersion = 'geometry-v1',
+  experimentContextVersion = 'experiment-v1',
   onApplyStagedBundle,
   onRequestLogin,
 }: {
   baseHash?: string | null
-  geometryContextVersion?: string | null
+  experimentContextVersion?: string | null
   onApplyStagedBundle?: Parameters<typeof AiHelperWorkspace>[0]['onApplyStagedBundle']
   onRequestLogin?: () => void
 } = {}) {
@@ -362,7 +362,7 @@ function renderWorkspace({
         activeExperimentFile="tasks/thermal.tsx"
         activeTab="ai-helper"
         baseHash={baseHash}
-        geometryContextVersion={geometryContextVersion}
+        experimentContextVersion={experimentContextVersion}
         onApplyStagedBundle={onApplyStagedBundle}
         onRequestLogin={onRequestLogin}
         workbench={workbench}

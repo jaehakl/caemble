@@ -4,7 +4,6 @@ import type { Tensor } from '../model/types'
 import type { UcumUnit } from '../model/units'
 import type { VarsSchemaEntry } from '../model/vars'
 import type { SerializableCadScene } from '../execution/meshValidation'
-import type { GeometryModuleCoordinate } from '../source/effectiveGeometryGraph'
 import type { CatalogRuntimeSlice } from '@/contracts/catalog'
 
 export type CadDocumentType = 'experiment'
@@ -44,7 +43,8 @@ export type CadEvaluationRequest = CadRequestIdentity &
 export type CadGeometryPreviewRequest = CadRequestIdentity &
   Readonly<{
     type: 'preview-geometry'
-    coordinate: GeometryModuleCoordinate
+    catalog: CatalogRuntimeSlice
+    path: string
     exportName: string
     lengthUnit: UcumUnit
   }>

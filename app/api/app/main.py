@@ -6,7 +6,6 @@ from routers import (
     catalog,
     designer_model,
     experiment,
-    geometry,
     material,
     measurement,
     predictor_model,
@@ -20,7 +19,6 @@ app = server()
 app.include_router(ai_router)
 app.include_router(catalog.router)
 app.include_router(material.router)
-app.include_router(geometry.router)
 app.include_router(experiment.router)
 app.include_router(measurement.router)
 app.include_router(recorded_data.router)

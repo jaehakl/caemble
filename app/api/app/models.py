@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 
 class RoleEnum(str, Enum):
@@ -18,7 +18,7 @@ class UserData(BaseModel):
     is_active: Optional[bool] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-    geometry_namespace: Optional[str] = None
+    experiment_namespace: Optional[str] = None
     roles: List[RoleEnum]
 
 
@@ -59,120 +59,10 @@ class OwnedTimestampFields(TimestampFields):
     user_id: Optional[str] = None
 
 
-class GeometryNamespaceRequest(BaseModel):
+class ExperimentNamespaceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     namespace: str
-
-
-class GeometrySnapshotImport(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    exportName: str
-    alias: str
-    geometryVersionId: int = Field(..., gt=0)
-    coordinate: str
-    moduleHash: str
-
-
-class GeometryModuleSnapshot(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    geometryVersionId: int = Field(..., gt=0)
-    coordinate: str
-    moduleFormatVersion: Literal[4]
-    cadApiVersion: Literal[7, 8]
-    description: Optional[str]
-    source: str = Field(..., min_length=1)
-    sourceHash: str
-    moduleHash: str
-    imports: List[GeometrySnapshotImport] = Field(default_factory=list, max_length=64)
-
-
-class GeometrySnapshot(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    schemaVersion: Literal[2]
-    entryImports: List[GeometrySnapshotImport] = Field(default_factory=list, max_length=64)
-    modules: List[GeometryModuleSnapshot] = Field(default_factory=list, max_length=256)
-
-
-class GeometryRepositoryCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    slug: str
-    description: Optional[str] = None
-
-
-class GeometryRepositoryRow(OwnedTimestampFields):
-    namespace: str
-    slug: str
-    description: Optional[str] = None
-    archived_at: Optional[datetime] = None
-    package_count: int = 0
-    version_count: int = 0
-
-
-class GeometryPackageRow(TimestampFields):
-    repository_id: int
-    name: str
-    user_id: Optional[str] = None
-    namespace: Optional[str] = None
-    repository_archived_at: Optional[datetime] = None
-    version_count: int = 0
-    latest_version: Optional[str] = None
-
-
-class GeometryVersionRow(TimestampFields):
-    package_id: int
-    version_major: int
-    version_minor: int
-    version_patch: int
-    description: Optional[str] = None
-    source: str
-    source_hash: str
-    module_hash: str
-    module_format_version: Literal[4]
-    cad_api_version: Literal[7, 8]
-    archived_at: Optional[datetime] = None
-    repository_id: Optional[int] = None
-    namespace: Optional[str] = None
-    repository: Optional[str] = None
-    package_name: Optional[str] = None
-    coordinate: Optional[str] = None
-    version: Optional[str] = None
-
-
-class GeometryExperimentReferenceRow(OwnedTimestampFields):
-    parent_id: Optional[int] = None
-    name: str
-    description: Optional[str] = None
-    entry_alias: Optional[str] = None
-
-
-class GeometryPublishDraft(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    draftId: str = Field(..., min_length=1, max_length=128)
-    baseGeometryVersionId: Optional[int] = Field(default=None, gt=0)
-    repositoryId: Optional[int] = Field(default=None, gt=0)
-    repository: str
-    package: str
-    bump: Literal["patch", "minor", "major"] = "patch"
-    version: Optional[str] = None
-    description: Optional[str] = None
-    source: str = Field(..., min_length=1)
-
-
-class GeometryPublishPlanRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    targetDraftId: str = Field(..., min_length=1, max_length=128)
-    drafts: List[GeometryPublishDraft] = Field(..., min_length=1, max_length=256)
-
-
-class GeometryPublishRequest(GeometryPublishPlanRequest):
-    planHash: str
 
 
 class MaterialBase(OwnedTimestampFields):
@@ -207,13 +97,18 @@ class MaterialParameterQualifierBase(TimestampFields):
 class ExperimentSourceBundle(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    formatVersion: Literal[5]
+    formatVersion: Literal[6]
     files: Dict[str, str]
-    geometrySnapshot: GeometrySnapshot
 
 
 class ExperimentBase(OwnedTimestampFields):
-    parent_id: Optional[int] = None
+    user_id: str
+    namespace: str
+    repository_slug: str
+    experiment_key: str
+    version_major: int
+    version_minor: int
+    version_patch: int
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
     source_bundle: ExperimentSourceBundle
@@ -223,22 +118,71 @@ class ExperimentBase(OwnedTimestampFields):
 class SaveExperimentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: Optional[int] = None
+    mode: Literal["create", "overwrite", "new_version"]
+    repository: Optional[str] = None
+    key: Optional[str] = None
+    initialVersion: Optional[str] = "0.1.0"
+    experimentId: Optional[int] = Field(default=None, gt=0)
+    baseBundleHash: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    bump: Optional[Literal["patch", "minor", "major"]] = None
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
     sourceBundle: ExperimentSourceBundle
     bundleHash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
-    baseBundleHash: Optional[str] = Field(
-        default=None,
-        pattern=r"^[0-9a-f]{64}$",
-    )
+
+    @model_validator(mode="after")
+    def validate_mode_fields(self) -> "SaveExperimentRequest":
+        if self.mode == "create":
+            if not self.repository or not self.key:
+                raise ValueError("create requires repository and key")
+            if self.experimentId is not None or self.baseBundleHash is not None or self.bump is not None:
+                raise ValueError("create does not accept experimentId, baseBundleHash, or bump")
+        elif self.mode == "overwrite":
+            if self.experimentId is None or self.baseBundleHash is None:
+                raise ValueError("overwrite requires experimentId and baseBundleHash")
+            if (
+                self.repository is not None
+                or self.key is not None
+                or self.bump is not None
+                or "initialVersion" in self.model_fields_set
+            ):
+                raise ValueError("overwrite does not accept repository, key, initialVersion, or bump")
+        else:
+            if self.experimentId is None or self.baseBundleHash is None or self.bump is None:
+                raise ValueError("new_version requires experimentId, baseBundleHash, and bump")
+            if (
+                self.repository is not None
+                or self.key is not None
+                or "initialVersion" in self.model_fields_set
+            ):
+                raise ValueError("new_version does not accept repository, key, or initialVersion")
+        return self
 
 
-class SaveCodeEntityResponse(BaseModel):
+class ExperimentDerivedCounts(BaseModel):
+    measurements: int = 0
+    recordedData: int = 0
+    designerModels: int = 0
+    predictorModels: int = 0
+
+
+class SaveExperimentResponse(BaseModel):
     id: int
-    action: Literal["created", "updated", "forked"]
-    parentId: Optional[int] = None
-    sourceHash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    action: Literal["create", "overwrite", "new_version"]
+    namespace: str
+    repository: str
+    key: str
+    version: str
+    coordinate: str
+    bundleHash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    sourceLocked: bool
+    derivedCounts: ExperimentDerivedCounts
+
+
+class ExperimentUsageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    experimentIds: List[int] = Field(default_factory=list, max_length=256)
 
 
 class MeasurementBase(OwnedTimestampFields):
@@ -247,23 +191,6 @@ class MeasurementBase(OwnedTimestampFields):
     vars: Dict[str, Any]
     material_parameters: Dict[str, Any]
     recorded_at: Optional[datetime] = None
-
-
-class CodeEntityHistoryRequest(BaseModel):
-    id: int = Field(..., gt=0)
-
-
-class CodeEntityHistoryItem(OwnedTimestampFields):
-    id: int
-    parent_id: Optional[int] = None
-    name: str
-    description: Optional[str] = None
-
-
-class CodeEntityHistoryResponse(BaseModel):
-    selected_id: int
-    root_id: int
-    items: List[CodeEntityHistoryItem]
 
 
 class MeasurementSaveRecordedData(BaseModel):

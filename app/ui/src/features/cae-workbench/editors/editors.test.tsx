@@ -76,7 +76,7 @@ const document: ExperimentSourceDocument = {
   formatVersion: 2,
   kind: 'experiment',
   sourceBundle: {
-    formatVersion: 5,
+    formatVersion: 6,
     files: {
       'experiment.tsx': 'experiment source',
       'geometry.tsx': 'export {}',
@@ -85,7 +85,6 @@ const document: ExperimentSourceDocument = {
       'tasks/zeta.tsx': 'zeta task',
       'tasks/alpha.tsx': 'alpha task',
     },
-    geometrySnapshot: { schemaVersion: 2, entryImports: [], modules: [] },
   },
 }
 
@@ -95,8 +94,10 @@ function controller(overrides: Partial<CadDocumentController> = {}) {
     draftTaskNames: [],
     error: null,
     handleAddExperimentTask: vi.fn(),
+    handleAddExperimentFile: vi.fn(),
     handleExperimentFileChange: vi.fn(),
     handleRemoveExperimentTask: vi.fn(),
+    handleRemoveExperimentFile: vi.fn(),
     materialWarnings: [],
     sourceReadOnly: false,
     status: 'Ready',

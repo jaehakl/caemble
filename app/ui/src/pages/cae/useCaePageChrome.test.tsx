@@ -17,15 +17,13 @@ function workbench(newExperiment = vi.fn()) {
       status: 'Ready',
       variables: null,
     },
-    experimentGraphDirty: false,
+    hasTasks: true,
     experimentId: 42,
     experimentManageable: true,
     experimentName: 'Edited Experiment',
     experimentRecord: null,
     experimentStatus: 'Edited',
-    geometry: { busy: false, draftVersions: {}, entryExports: [] },
-    geometryGraphDirty: false,
-    geometryLocalDraftDirty: false,
+    sourceLocked: false,
     measurementActions: {
       busy: false,
       cancel: vi.fn(),
@@ -54,7 +52,6 @@ describe('CAE page source actions', () => {
       useCaePageChrome({
         authenticated: false,
         experimentAuthoringState: null,
-        geometryAuthoringState: null,
         guardReplacement,
         openTab,
         requestRunSelected: vi.fn(),
@@ -76,6 +73,53 @@ describe('CAE page source actions', () => {
 
     expect(loadAction.disabled).not.toBe(true)
     act(() => loadAction.onSelect())
-    expect(setDialog).toHaveBeenCalledWith('load-experiment')
+    expect(openTab).toHaveBeenCalledWith('experiments')
+  })
+
+  it('allows metadata Save for a clean locked Version and blocks dirty source', () => {
+    const setDialog = vi.fn()
+    const lockedClean = {
+      ...workbench(),
+      experimentClean: true,
+      experimentDirty: false,
+      experimentRecord: { id: 42 },
+      sourceLocked: true,
+    } as unknown as CaeWorkbenchState
+    const { result, unmount } = renderHook(() =>
+      useCaePageChrome({
+        authenticated: true,
+        experimentAuthoringState: null,
+        guardReplacement: vi.fn(),
+        openTab: vi.fn(),
+        requestRunSelected: vi.fn(),
+        runSafely: vi.fn(),
+        setDialog,
+        workbench: lockedClean,
+      }),
+    )
+
+    const cleanSave = result.current.toolbar[2]
+    expect(cleanSave.disabled).not.toBe(true)
+    act(() => cleanSave.onSelect())
+    expect(setDialog).toHaveBeenCalledWith('save-experiment')
+    unmount()
+
+    const lockedDirty = { ...lockedClean, experimentClean: false, experimentDirty: true }
+    const dirty = renderHook(() =>
+      useCaePageChrome({
+        authenticated: true,
+        experimentAuthoringState: null,
+        guardReplacement: vi.fn(),
+        openTab: vi.fn(),
+        requestRunSelected: vi.fn(),
+        runSafely: vi.fn(),
+        setDialog,
+        workbench: lockedDirty,
+      }),
+    )
+    expect(dirty.result.current.toolbar[2]).toMatchObject({
+      disabled: true,
+      disabledReason: '연결 데이터가 있는 Version은 잠겨 있습니다. Save New Version을 사용하세요.',
+    })
   })
 })

@@ -1,15 +1,11 @@
 import { originalPositionFor, TraceMap } from '@jridgewell/trace-mapping'
 import type { CompiledCadSource } from '../compiler/types'
-import { isGeometryCoordinate } from '../source/geometrySnapshot'
 import type { CadDiagnostic } from '../worker/protocol'
 
 export function runtimeDiagnostic(error: Error, compiledSource: CompiledCadSource): CadDiagnostic | undefined {
   const stackFrame = error.stack?.match(/caemble:\/\/([0-9a-f]{64})\/(.+?):(\d+):(\d+)/)
   if (!stackFrame || stackFrame[1] !== compiledSource.sourceHash) return undefined
-  const expectedPath = isGeometryCoordinate(compiledSource.entryFile)
-    ? `geometry/${encodeURIComponent(compiledSource.entryFile)}`
-    : compiledSource.entryFile
-  if (stackFrame[2] !== expectedPath) return undefined
+  if (stackFrame[2] !== compiledSource.entryFile) return undefined
   const generatedLine = Math.max(1, Number(stackFrame[3]) - 2)
   const generatedColumn = Math.max(0, Number(stackFrame[4]) - 1)
   let file = compiledSource.entryFile
@@ -21,9 +17,7 @@ export function runtimeDiagnostic(error: Error, compiledSource: CompiledCadSourc
       column: generatedColumn,
     })
     if (original.source && original.line !== null && original.column !== null) {
-      if (!isGeometryCoordinate(compiledSource.entryFile)) {
-        file = original.source.replace(/^.*\/caemble-(?:project|source)\/[0-9a-f]{64}\//, '')
-      }
+      file = original.source.replace(/^.*\/caemble-(?:project|source)\/[0-9a-f]{64}\//, '')
       line = original.line
       column = original.column
     }

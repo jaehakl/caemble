@@ -187,157 +187,44 @@ class MaterialParameterQualifier(TimestampMixin, Base):
     material_parameter: Mapped["MaterialParameter"] = relationship(back_populates="qualifiers")
 
 
-class GeometryRepository(TimestampMixin, Base):
-    __tablename__ = "geometry_repositories"
-    __table_args__ = (
-        UniqueConstraint("namespace", "slug", name="uq_geometry_repositories_namespace_slug"),
-        CheckConstraint(
-            "slug ~ '^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$'",
-            name="slug_format",
-        ),
-        CheckConstraint(
-            "namespace ~ '^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$'",
-            name="namespace_format",
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[Optional[str]] = mapped_column(
-        UUID(as_uuid=False),
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    namespace: Mapped[str] = mapped_column(Text, nullable=False)
-    slug: Mapped[str] = mapped_column(Text, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    user: Mapped[Optional["User"]] = relationship("User", back_populates="geometry_repositories")
-    packages: Mapped[List["GeometryPackage"]] = relationship(
-        back_populates="repository",
-        passive_deletes=True,
-    )
-
-
-class GeometryPackage(TimestampMixin, Base):
-    __tablename__ = "geometry_packages"
-    __table_args__ = (
-        UniqueConstraint("repository_id", "name", name="uq_geometry_packages_repository_id_name"),
-        CheckConstraint(
-            "name ~ '^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$'",
-            name="name_format",
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    repository_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("geometry_repositories.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-
-    repository: Mapped["GeometryRepository"] = relationship(back_populates="packages")
-    versions: Mapped[List["GeometryVersion"]] = relationship(
-        back_populates="package",
-        passive_deletes=True,
-    )
-
-
-class GeometryVersion(TimestampMixin, Base):
-    __tablename__ = "geometry_versions"
+class Experiment(TimestampMixin, Base):
+    __tablename__ = "experiments"
     __table_args__ = (
         UniqueConstraint(
-            "package_id",
+            "namespace",
+            "repository_slug",
+            "experiment_key",
             "version_major",
             "version_minor",
             "version_patch",
-            name="uq_geometry_versions_package_id_semver",
+            name="uq_experiments_coordinate_semver",
+        ),
+        Index("ix_experiments_user_id_updated_at", "user_id", "updated_at"),
+        Index(
+            "ix_experiments_repository_versions",
+            "namespace",
+            "repository_slug",
+            "experiment_key",
+            "version_major",
+            "version_minor",
+            "version_patch",
+        ),
+        CheckConstraint(
+            "namespace <> 'caemble' AND "
+            "namespace ~ '^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$'",
+            name="namespace_format",
+        ),
+        CheckConstraint(
+            "repository_slug ~ '^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$'",
+            name="repository_slug_format",
+        ),
+        CheckConstraint(
+            "experiment_key ~ '^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$'",
+            name="experiment_key_format",
         ),
         CheckConstraint("version_major >= 0", name="version_major_nonnegative"),
         CheckConstraint("version_minor >= 0", name="version_minor_nonnegative"),
         CheckConstraint("version_patch >= 0", name="version_patch_nonnegative"),
-        CheckConstraint("source_hash ~ '^[0-9a-f]{64}$'", name="source_hash_sha256"),
-        CheckConstraint("module_hash ~ '^[0-9a-f]{64}$'", name="module_hash_sha256"),
-        CheckConstraint("module_format_version = 4", name="module_format_version_supported"),
-        CheckConstraint("cad_api_version IN (7, 8)", name="cad_api_version_supported"),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    package_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("geometry_packages.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    version_major: Mapped[int] = mapped_column(Integer, nullable=False)
-    version_minor: Mapped[int] = mapped_column(Integer, nullable=False)
-    version_patch: Mapped[int] = mapped_column(Integer, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    source: Mapped[str] = mapped_column(Text, nullable=False)
-    source_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    module_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    module_format_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="4")
-    cad_api_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="8")
-    archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    package: Mapped["GeometryPackage"] = relationship(back_populates="versions")
-    imports: Mapped[List["GeometryImport"]] = relationship(
-        foreign_keys="GeometryImport.importer_geometry_version_id",
-        back_populates="importer",
-        passive_deletes=True,
-    )
-    imported_by: Mapped[List["GeometryImport"]] = relationship(
-        foreign_keys="GeometryImport.imported_geometry_version_id",
-        back_populates="imported",
-        passive_deletes=True,
-    )
-
-
-class GeometryImport(Base):
-    __tablename__ = "geometry_imports"
-    __table_args__ = (
-        CheckConstraint(
-            "importer_geometry_version_id <> imported_geometry_version_id",
-            name="not_self",
-        ),
-        CheckConstraint(
-            "alias ~ '^[A-Z][A-Za-z0-9_]*$'",
-            name="alias_pascal_case",
-        ),
-        CheckConstraint(
-            "export_name ~ '^[A-Z][A-Za-z0-9_]*$'",
-            name="export_name_pascal_case",
-        ),
-    )
-
-    importer_geometry_version_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("geometry_versions.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    imported_geometry_version_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("geometry_versions.id", ondelete="RESTRICT"),
-        nullable=False,
-        index=True,
-    )
-    export_name: Mapped[str] = mapped_column(Text, nullable=False)
-    alias: Mapped[str] = mapped_column(Text, primary_key=True)
-
-    importer: Mapped["GeometryVersion"] = relationship(
-        foreign_keys=[importer_geometry_version_id],
-        back_populates="imports",
-    )
-    imported: Mapped["GeometryVersion"] = relationship(
-        foreign_keys=[imported_geometry_version_id],
-        back_populates="imported_by",
-    )
-
-
-class Experiment(TimestampMixin, Base):
-    __tablename__ = "experiments"
-    __table_args__ = (
         CheckConstraint(
             "source_hash ~ '^[0-9a-f]{64}$'",
             name="source_hash_sha256",
@@ -345,17 +232,17 @@ class Experiment(TimestampMixin, Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[Optional[str]] = mapped_column(
+    user_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
         ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=True,
+        nullable=False,
     )
-    parent_id: Mapped[Optional[int]] = mapped_column(
-        Integer,
-        ForeignKey("experiments.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
+    namespace: Mapped[str] = mapped_column(Text, nullable=False)
+    repository_slug: Mapped[str] = mapped_column(Text, nullable=False)
+    experiment_key: Mapped[str] = mapped_column(Text, nullable=False)
+    version_major: Mapped[int] = mapped_column(Integer, nullable=False)
+    version_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    version_patch: Mapped[int] = mapped_column(Integer, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     source_bundle: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
@@ -366,15 +253,7 @@ class Experiment(TimestampMixin, Base):
         deferred=True,
     )
 
-    user: Mapped[Optional["User"]] = relationship("User", back_populates="experiments")
-    parent: Mapped[Optional["Experiment"]] = relationship(
-        remote_side="Experiment.id",
-        back_populates="children",
-    )
-    children: Mapped[List["Experiment"]] = relationship(
-        back_populates="parent",
-        passive_deletes=True,
-    )
+    user: Mapped["User"] = relationship("User", back_populates="experiments")
     measurements: Mapped[List["Measurement"]] = relationship(
         back_populates="experiment",
         passive_deletes=True,
@@ -389,66 +268,6 @@ class Experiment(TimestampMixin, Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    geometry_imports: Mapped[List["ExperimentGeometryImport"]] = relationship(
-        back_populates="experiment",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
-    geometry_modules: Mapped[List["ExperimentGeometryModule"]] = relationship(
-        back_populates="experiment",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
-
-
-class ExperimentGeometryImport(Base):
-    __tablename__ = "experiment_geometry_imports"
-    __table_args__ = (
-        CheckConstraint(
-            "alias ~ '^[A-Z][A-Za-z0-9_]*$'",
-            name="alias_pascal_case",
-        ),
-        CheckConstraint(
-            "export_name ~ '^[A-Z][A-Za-z0-9_]*$'",
-            name="export_name_pascal_case",
-        ),
-    )
-
-    experiment_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("experiments.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    alias: Mapped[str] = mapped_column(Text, primary_key=True)
-    export_name: Mapped[str] = mapped_column(Text, nullable=False)
-    geometry_version_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("geometry_versions.id", ondelete="RESTRICT"),
-        nullable=False,
-        index=True,
-    )
-
-    experiment: Mapped["Experiment"] = relationship(back_populates="geometry_imports")
-    geometry_version: Mapped["GeometryVersion"] = relationship()
-
-
-class ExperimentGeometryModule(Base):
-    __tablename__ = "experiment_geometry_modules"
-
-    experiment_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("experiments.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    geometry_version_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("geometry_versions.id", ondelete="RESTRICT"),
-        primary_key=True,
-        index=True,
-    )
-
-    experiment: Mapped["Experiment"] = relationship(back_populates="geometry_modules")
-    geometry_version: Mapped["GeometryVersion"] = relationship()
 
 
 class Measurement(TimestampMixin, Base):
@@ -484,7 +303,7 @@ class Measurement(TimestampMixin, Base):
     )
     experiment_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("experiments.id", ondelete="RESTRICT"),
+        ForeignKey("experiments.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -556,6 +375,7 @@ class DesignerModel(TimestampMixin, Base):
         Integer,
         ForeignKey("experiments.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     model_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     file_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
@@ -580,6 +400,7 @@ class PredictorModel(TimestampMixin, Base):
         Integer,
         ForeignKey("experiments.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     model_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     file_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)

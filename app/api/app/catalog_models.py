@@ -13,7 +13,7 @@ class CatalogModel(BaseModel):
 
 
 class CatalogMeta(CatalogModel):
-    schema_version: Literal[3]
+    schema_version: Literal[4]
     catalog_revision: str
     quantity_kind_data_version: str
     material_catalog_version: str
@@ -21,7 +21,6 @@ class CatalogMeta(CatalogModel):
     material_parameter_count: int
     material_model_count: int
     solver_count: int
-    geometry_count: int
     experiment_count: int
     material_global_qualifiers: list[str]
     material_design_rules: dict[str, str]
@@ -135,37 +134,6 @@ class SolverDetail(SolverSummary):
     consumes_artifacts: list[ConsumedArtifact]
 
 
-class GeometryMaterialRole(CatalogModel):
-    role: str
-    description: str
-
-
-class GeometryRepository(CatalogModel):
-    slug: str
-    title: str
-    description: str
-    ordinal: int
-
-
-class GeometrySummary(CatalogModel):
-    key: str
-    title: str
-    description: str
-    repository: str
-    cad_api_version: Literal[8]
-    module_format_version: Literal[4]
-    length_unit: str
-    export_name: str
-    source_hash: str
-    concepts: list[str]
-    material_roles: list[GeometryMaterialRole]
-    related_elements: list[str]
-
-
-class GeometryDetail(GeometrySummary):
-    source: str
-
-
 class ExperimentSolver(CatalogModel):
     name: str
     version: str
@@ -174,11 +142,15 @@ class ExperimentSolver(CatalogModel):
 
 class ExperimentSummary(CatalogModel):
     key: str
+    namespace: str
+    repository: str
+    version: str
+    coordinate: str
     title: str
     description: str
     cad_api_version: Literal[8]
     source_format_version: Literal[2]
-    bundle_format_version: Literal[5]
+    bundle_format_version: Literal[6]
     bundle_hash: str
     concepts: list[str]
     related_solvers: list[ExperimentSolver]
@@ -216,7 +188,7 @@ class ExperimentDetail(ExperimentSummary):
 
 
 class CatalogSearchItem(CatalogModel):
-    kind: Literal["quantityKind", "materialParameter", "materialModel", "solver", "geometry", "experiment"]
+    kind: Literal["quantityKind", "materialParameter", "materialModel", "solver", "experiment"]
     key: str
     title: str
     subtitle: str

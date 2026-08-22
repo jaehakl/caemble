@@ -131,7 +131,7 @@ import되어야 한다. Solver를 등록하기 위한 registry 조건문이나 �
 
 ```powershell
 Push-Location app/ui
-npm run export:cae-fixture -- --example <example-id> --out ../slaves/cae/tests/fixtures/<fixture-id>
+npm run export:cae-fixture -- --example <experiment-coordinate> --out ../slaves/cae/tests/fixtures/<fixture-id>
 Pop-Location
 
 Push-Location app/slaves/cae

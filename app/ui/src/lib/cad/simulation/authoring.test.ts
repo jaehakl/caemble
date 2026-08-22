@@ -2,11 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { installSyntheticCatalog } from '@/test/syntheticCatalog'
 import { identityCartesianBasis } from '../../quantitykind/identityBasis'
 import { simulationProgramManifest } from './authoring'
+import { assertSimulationProgramManifest } from './validation'
 
 installSyntheticCatalog({
-  quantityKinds: [
-    { name: 'electromagnetism.ElectricCurrentDensity', tensorOrder: 1, applicableUnits: ['A.m-2'] },
-  ],
+  quantityKinds: [{ name: 'electromagnetism.ElectricCurrentDensity', tensorOrder: 1, applicableUnits: ['A.m-2'] }],
 })
 
 describe('simulationProgramManifest', () => {
@@ -27,5 +26,7 @@ describe('simulationProgramManifest', () => {
     expect(manifest.simulationApiVersion).toBe(3)
     expect(manifest.recordedData.currentDensity.basis).toEqual(identityCartesianBasis)
     expect(manifest.recordedData.currentDensity.tensorOrder).toBe(1)
+    expect(() => assertSimulationProgramManifest(manifest)).toThrow('invalid')
+    expect(() => assertSimulationProgramManifest(manifest, { allowTaskless: true })).not.toThrow()
   })
 })

@@ -12,9 +12,6 @@ from service.material.manager import (
     upsert_material_parameters,
     upsert_materials,
 )
-from service.material.source import validate_material_source_imports
-
-
 __all__ = [
     "delete_material_names",
     "delete_material_parameter_qualifiers",
@@ -28,5 +25,4 @@ __all__ = [
     "upsert_material_parameter_qualifiers",
     "upsert_material_parameters",
     "upsert_materials",
-    "validate_material_source_imports",
 ]

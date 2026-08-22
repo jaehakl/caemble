@@ -12,13 +12,12 @@ import {
 } from '@/features/cae-workbench/chrome'
 import { ConfirmWorkbenchDialog } from '@/features/cae-workbench/dialogs'
 import { ExperimentEditor, RecordedDataEditor } from '@/features/cae-workbench/editors'
-import { GeometryManager } from '@/features/cae-workbench/geometry'
-import type { GeometryManagerRibbonState } from '@/features/cae-workbench/geometry/geometryManagerTypes'
+import { ExperimentManager } from '@/features/cae-workbench/experiments'
 import { useCaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { WorkbenchTabId } from '@/features/cae-workbench/types'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
-import { EXPERIMENT_GEOMETRY_PATH, type RecordedDataRule } from '@/lib/cad'
+import type { RecordedDataRule } from '@/lib/cad'
 import { NotFoundPage } from '@/pages/not-found/NotFoundPage'
 import { CaeWorkbenchDialogs } from './CaeWorkbenchDialogs'
 import { useCaePageChrome } from './useCaePageChrome'
@@ -43,13 +42,9 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const workbench = useCaeWorkbenchState(auth.user, auth.isAuthenticated)
   const page = useCaePageSession(workbench)
   const [experimentAuthoringState, setExperimentAuthoringState] = useState<CadEditorAuthoringState | null>(null)
-  const [geometryAuthoringState, setGeometryAuthoringState] = useState<CadEditorAuthoringState | null>(null)
-  const [geometryManagerRibbonState, setGeometryManagerRibbonState] = useState<GeometryManagerRibbonState | null>(null)
   const chrome = useCaePageChrome({
     authenticated: auth.isAuthenticated,
     experimentAuthoringState,
-    geometryAuthoringState,
-    geometryManagerRibbonState,
     guardReplacement: page.guardReplacement,
     openTab: page.openTab,
     requestRunSelected: page.requestRunSelected,
@@ -72,10 +67,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     [workbench.experimentDocument.simulationProgram],
   )
   const pendingResult = workbench.measurementActions.pendingRecordMeasurementId !== null
-  const openGeometrySource = () => {
-    page.setActiveExperimentFile(EXPERIMENT_GEOMETRY_PATH)
-    page.openTab('experiment')
-  }
   const applyAgentBundle = async (request: AiAgentApplyRequest) => {
     const result = await workbench.applyAgentBundle(request)
     if (result.firstChangedFile) {
@@ -93,8 +84,8 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       label:
         tab === 'experiment'
           ? 'Experiment'
-          : tab === 'geometry'
-            ? 'Geometry'
+          : tab === 'experiments'
+            ? 'Experiments'
             : tab === 'recorded-data'
               ? 'RecordedData'
               : 'AI Helper',
@@ -112,20 +103,24 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             onAuthoringStateChange={setExperimentAuthoringState}
             onUndoAgentChange={workbench.undoAgentChange}
           />
-        ) : tab === 'geometry' ? (
-          <GeometryManager
-            geometry={workbench.geometry}
-            onAuthoringStateChange={setGeometryAuthoringState}
-            onRibbonStateChange={setGeometryManagerRibbonState}
-            onOpenExperiment={(experimentId) =>
+        ) : tab === 'experiments' ? (
+          <ExperimentManager
+            authenticated={auth.isAuthenticated}
+            busy={workbench.saving !== null || workbench.measurementActions.busy}
+            selectedId={workbench.experimentId}
+            user={auth.user}
+            onDeleteSelected={workbench.detachDeletedExperiment}
+            onOpenSaved={(row) =>
               page.guardReplacement(async () => {
-                await workbench.loadExperiment(experimentId)
+                await workbench.loadExperiment(row)
                 page.openTab('experiment')
               })
             }
-            onOpenGeometrySource={openGeometrySource}
-            onUse={(versionId, exportName, alias) =>
-              workbench.geometry.usePublishedExport(versionId, exportName, alias)
+            onOpenCatalog={(sourceBundle, name, description) =>
+              page.guardReplacement(() => {
+                workbench.newExperiment(sourceBundle, name, description)
+                page.openTab('experiment')
+              })
             }
           />
         ) : tab === 'recorded-data' ? (
@@ -144,7 +139,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               activeExperimentFile={page.activeExperimentFile}
               activeTab={page.activeTab}
               baseHash={workbench.agentWorkspaceIdentity?.baseHash}
-              geometryContextVersion={workbench.agentWorkspaceIdentity?.geometryContextVersion}
+              experimentContextVersion={workbench.agentWorkspaceIdentity?.experimentContextVersion}
               workbench={workbench}
               onApplyStagedBundle={applyAgentBundle}
               onRequestLogin={() => page.setDialog('account')}
@@ -188,13 +183,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               activeTab={page.activeTab}
               experiment={workbench.experiment}
               experimentDocument={workbench.experimentDocument}
-              geometryPreview={{
-                busy: workbench.geometry.previewBusy,
-                error: workbench.geometry.previewError,
-                scene: workbench.geometry.previewScene,
-                sceneHash: workbench.geometry.previewSceneHash,
-                stale: workbench.geometry.previewStale,
-              }}
             />
           }
           viewerPercent={page.viewerPercent}
@@ -213,17 +201,20 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       </div>
       <footer className="flex h-7 shrink-0 items-center justify-between gap-3 border-t bg-muted/35 px-3 text-[11px] text-muted-foreground">
         <span className="flex min-w-0 items-center gap-2 truncate">
-          <Badge className={`h-5 rounded-sm px-1.5 ${workbench.experimentDirty ? 'bg-destructive text-white' : ''}`}>
-            Experiment{' '}
-            {workbench.experimentDirty ? 'edited' : workbench.experimentId ? `#${workbench.experimentId}` : 'local'}
+          <Badge className="h-5 max-w-[38vw] truncate rounded-sm px-1.5 font-mono">
+            {workbench.experimentCoordinate ?? 'local Experiment'}
           </Badge>
-          <Badge
-            className={`h-5 rounded-sm px-1.5 ${workbench.geometryLocalDraftDirty ? 'bg-amber-500 text-white' : 'bg-muted'}`}
-          >
-            Draft Versions · {Object.keys(workbench.geometry.draftVersions).length}
-          </Badge>
-          {workbench.geometryGraphDirty ? (
-            <Badge className="h-5 rounded-sm bg-muted px-1.5">Experiment Geometry graph edited</Badge>
+          {workbench.experimentVersion ? (
+            <Badge className="h-5 rounded-sm px-1.5">v{workbench.experimentVersion}</Badge>
+          ) : null}
+          {workbench.experimentDirty ? (
+            <Badge className="h-5 rounded-sm bg-destructive px-1.5 text-white">Dirty</Badge>
+          ) : null}
+          {workbench.sourceLocked ? (
+            <Badge className="h-5 rounded-sm bg-amber-600 px-1.5 text-white">Locked</Badge>
+          ) : null}
+          {!workbench.hasTasks ? (
+            <Badge className="h-5 rounded-sm bg-muted px-1.5">Preview only · Task 없음</Badge>
           ) : null}
           <Badge className="h-5 rounded-sm px-1.5">
             {workbench.measurementActions.pendingRecordMeasurementId
@@ -257,10 +248,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       </footer>
 
       <CaeWorkbenchDialogs
-        authenticated={auth.isAuthenticated}
         dialog={page.dialog}
-        guardReplacement={page.guardReplacement}
-        openTab={page.openTab}
         runSafely={page.runSafely}
         setDialog={page.setDialog}
         workbench={workbench}

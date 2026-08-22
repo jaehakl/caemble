@@ -2,12 +2,6 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createCadSourceDocument, createExperimentSourceBundle } from '../source/document'
-import {
-  createGeometrySnapshot,
-  geometryModuleHash,
-  geometrySourceHash,
-  type GeometryCoordinate,
-} from '../source/geometrySnapshot'
 import { compileCadDocument } from './monacoCompiler'
 
 const monacoMocks = vi.hoisted(() => {
@@ -51,47 +45,24 @@ const monacoMocks = vi.hoisted(() => {
 
 vi.mock('./monacoRuntime', () => ({ loadMonaco: async () => monacoMocks.monaco }))
 
-const coordinate = 'caemble:geometry/jlee/common/part@1.0.0' as GeometryCoordinate
-const geometrySource = `import { type Geometry } from '@caemble/core'
+const helperSource = `import { type Geometry } from '@caemble/core'
 export const Part: Geometry = () => <box size={[1, 1, 1]} />
 `
 
-async function document(variant: string) {
-  const sourceHash = await geometrySourceHash(geometrySource)
-  const base = {
-    geometryVersionId: 1,
-    coordinate,
-    moduleFormatVersion: 4 as const,
-    cadApiVersion: 7 as const,
-    description: null,
-    source: geometrySource,
-    sourceHash,
-    imports: [],
-  }
-  const module = { ...base, moduleHash: await geometryModuleHash(base) }
-  const snapshot = createGeometrySnapshot(
-    [{ exportName: 'Part', alias: 'Part', geometryVersionId: 1, coordinate, moduleHash: module.moduleHash }],
-    [module],
-  )
+function document(variant: string) {
   return createCadSourceDocument(
     'experiment',
-    createExperimentSourceBundle(
-      {
-        'experiment.tsx': `import { experiment } from '@caemble/core'
+    createExperimentSourceBundle({
+      'experiment.tsx': `import { experiment } from '@caemble/core'
 import { Part } from './geometry'
 export default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => <Part id="part" />, recordedData: {} })
 // ${variant}
 `,
-        'geometry.tsx': `import { Part } from ${JSON.stringify(coordinate)}
-export { Part }
-`,
-        'simulate.py': 'async def simulate(*, sim, tasks, vars):\n    return None\n',
-        'tasks/main.tsx': `import { defineTask } from '@caemble/core'
-export default defineTask({ kernel: { name: 'preview', version: '1.0.0' }, config: () => ({}) })
-`,
-      },
-      snapshot,
-    ),
+      'geometry.tsx': `export { Part } from './shared/part'`,
+      'shared/part.tsx': helperSource,
+      'shared/value.ts': 'export const value = 1',
+      'simulate.py': 'async def simulate(*, sim, tasks, vars):\n    return None\n',
+    }),
   )
 }
 
@@ -101,32 +72,36 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
-describe('Monaco compiler model ownership', () => {
-  it('keeps an open Geometry authoring model isolated from compilation', async () => {
-    const authoringUri = `file:///geometries/${encodeURIComponent(coordinate)}.tsx`
-    const authoringModel = monacoMocks.createModel(geometrySource, 'typescript', monacoMocks.parse(authoringUri))
+describe('Monaco bundle compiler model ownership', () => {
+  it('keeps an open authoring model isolated and compiles every TS/TSX bundle file', async () => {
+    const authoringUri = 'file:///authoring/shared/part.tsx'
+    const authoringModel = monacoMocks.createModel(helperSource, 'typescript', monacoMocks.parse(authoringUri))
 
-    await expect(compileCadDocument(await document('authoring-open'))).resolves.toBeDefined()
+    const compiled = await compileCadDocument(document('authoring-open'))
 
     expect(monacoMocks.models.get(authoringUri)).toBe(authoringModel)
     expect(authoringModel.dispose).not.toHaveBeenCalled()
+    expect(Object.keys(compiled.sources)).toEqual([
+      'experiment.tsx',
+      'geometry.tsx',
+      'material.tsx',
+      'shared/part.tsx',
+      'shared/value.ts',
+    ])
     expect(monacoMocks.createdUris).toContainEqual(
-      expect.stringMatching(/^file:\/\/\/caemble-source\/[0-9a-f]{64}\/geometries\//u),
-    )
-    expect(monacoMocks.createdUris).toContainEqual(
-      expect.stringMatching(/^file:\/\/\/caemble-source\/[0-9a-f]{64}\/material\.tsx$/u),
+      expect.stringMatching(/^file:\/\/\/caemble-source\/[0-9a-f]{64}\/shared\/part\.tsx$/u),
     )
   })
 
-  it('uses distinct Geometry model URIs for overlapping source hashes', async () => {
-    const [first, second] = await Promise.all([document('first'), document('second')])
+  it('uses distinct model URIs for overlapping bundle paths from different source hashes', async () => {
+    await expect(
+      Promise.all([compileCadDocument(document('first')), compileCadDocument(document('second'))]),
+    ).resolves.toHaveLength(2)
 
-    await expect(Promise.all([compileCadDocument(first), compileCadDocument(second)])).resolves.toHaveLength(2)
-
-    const geometryUris = monacoMocks.createdUris.filter(
-      (uri) => uri.startsWith('file:///caemble-source/') && uri.includes('/geometries/'),
+    const helperUris = monacoMocks.createdUris.filter(
+      (uri) => uri.startsWith('file:///caemble-source/') && uri.endsWith('/shared/part.tsx'),
     )
-    expect(geometryUris).toHaveLength(2)
-    expect(new Set(geometryUris).size).toBe(2)
+    expect(helperUris).toHaveLength(2)
+    expect(new Set(helperUris).size).toBe(2)
   })
 })

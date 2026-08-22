@@ -3,7 +3,7 @@ import { catalogApi, type CatalogRuntimeSlice } from '@/api/catalog'
 import { createExperimentSourceBundle, type ExperimentSourceBundle } from '../cad/source/document'
 import { extractCatalogSourceReferences, fetchCatalogRuntimeSlice } from './references'
 
-function bundle(overrides: Partial<Record<'experiment.tsx' | 'material.tsx' | 'tasks/main.tsx', string>> = {}) {
+function bundle(overrides: Partial<Record<string, string>> = {}) {
   return createExperimentSourceBundle({
     'experiment.tsx':
       overrides['experiment.tsx'] ??
@@ -40,6 +40,7 @@ export default defineTask({
   config: () => ({ parameters: {}, initializations: [], boundaryConditions: [], outputs: [] }),
 })
 `,
+    ...overrides,
   })
 }
 
@@ -51,6 +52,42 @@ describe('runtime catalog source references', () => {
       quantityKinds: ['geometry.Length'],
       materialParameters: ['electrical.conductivity'],
       materialModels: ['model.magnetic.b_h'],
+    })
+  })
+
+  it('collects references from arbitrary helper modules', () => {
+    expect(
+      extractCatalogSourceReferences(
+        bundle({
+          'shared/catalog.ts': `import { Material } from '@caemble/core'
+export const helper = new Material('Helper', {
+  'mechanical.density': { dtype: 'float64', value: 1, unit: 'kg.m-3' },
+  'model.mechanical.elastic': { kind: 'sampled_relation', input: {}, output: {} },
+})
+export const schema = { dtype: 'float64', unit: 'K', quantityKind: 'thermodynamics.Temperature' }`,
+        }),
+      ),
+    ).toMatchObject({
+      quantityKinds: expect.arrayContaining(['thermodynamics.Temperature']),
+      materialParameters: expect.arrayContaining(['mechanical.density']),
+      materialModels: expect.arrayContaining(['model.mechanical.elastic']),
+    })
+  })
+
+  it('collects Material references through an aliased core import', () => {
+    expect(
+      extractCatalogSourceReferences(
+        bundle({
+          'shared/aliased-material.ts': `import { Material as MaterialDefinition } from '@caemble/core'
+export const helper = new MaterialDefinition('Helper', {
+  'mechanical.density': { dtype: 'float64', value: 1, unit: 'kg.m-3' },
+  'model.mechanical.elastic': { kind: 'sampled_relation', input: {}, output: {} },
+})`,
+        }),
+      ),
+    ).toMatchObject({
+      materialParameters: expect.arrayContaining(['mechanical.density']),
+      materialModels: expect.arrayContaining(['model.mechanical.elastic']),
     })
   })
 
@@ -132,6 +169,18 @@ export default defineTask({
     expect(Object.isFrozen(first.materialModels)).toBe(true)
     expect(Object.isFrozen(first.materialGlobalQualifiers)).toBe(true)
     expect(Object.isFrozen(first.warnings)).toBe(true)
+    request.mockRestore()
+  })
+
+  it('returns the empty slice for a reference-free bundle with no Tasks', async () => {
+    const taskless = createExperimentSourceBundle({
+      'experiment.tsx': `import { experiment } from '@caemble/core'
+export default experiment({ lengthUnit: 'm', varsSchema: {}, geometry: () => null, recordedData: {} })`,
+      'simulate.py': 'async def simulate(*, sim, tasks, vars):\n    return None\n',
+    })
+    const request = vi.spyOn(catalogApi, 'runtimeSlice')
+    await expect(fetchCatalogRuntimeSlice(taskless)).resolves.toMatchObject({ solvers: [], quantityKinds: [] })
+    expect(request).not.toHaveBeenCalled()
     request.mockRestore()
   })
 

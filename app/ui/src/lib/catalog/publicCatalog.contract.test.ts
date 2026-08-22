@@ -1,16 +1,10 @@
-import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { experimentDetailSchema } from '@/contracts/catalog'
 import { scenePartColor } from '@/features/viewer/viewer/materialColor'
-import { cadElementCatalog } from '@/lib/cad'
 import { assertSimulationProgramManifest } from '@/lib/cad/simulation'
 import { installSyntheticCatalog } from '@/test/syntheticCatalog'
-import {
-  evaluatePublicExampleBundle,
-  expectReliablePublicScene,
-  standaloneGeometryBundle,
-} from '@/test/publicExampleHarness'
-import { officialExperiment, officialExperimentKeys, officialGeometry, officialGeometryKeys } from './catalogTestData'
+import { evaluatePublicExampleBundle, expectReliablePublicScene } from '@/test/publicExampleHarness'
+import { officialExperiment, officialExperimentKeys } from './catalogTestData'
 
 installSyntheticCatalog({
   quantityKinds: [
@@ -27,33 +21,6 @@ installSyntheticCatalog({
     { key: 'electrical.conductivity', quantityKind: 'electromagnetism.ElectricConductivity' },
     { key: 'thermal.conductivity', quantityKind: 'synthetic.ThermalConductivity' },
   ],
-})
-
-describe('canonical public Geometry catalog', () => {
-  it.each(officialGeometryKeys)('compiles and evaluates %s as a CAD API v8 named export', async (key) => {
-    const item = officialGeometry(key)
-    const sourceHash = createHash('sha256').update(item.source, 'utf8').digest('hex')
-    const result = await evaluatePublicExampleBundle(
-      standaloneGeometryBundle(item.source, item.exportName, item.lengthUnit),
-    )
-
-    expect(item.cadApiVersion).toBe(8)
-    expect(item.moduleFormatVersion).toBe(4)
-    expect(sourceHash).toBe(item.sourceHash)
-    expectReliablePublicScene(result.scene)
-    const knownTags = new Set(cadElementCatalog.map((element) => element.tag))
-    item.relatedElements.forEach((element) => expect(knownTags).toContain(element))
-  })
-
-  it('preserves wheel Material roles and gives them distinct automatic Viewer colors', async () => {
-    const item = officialGeometry('two-material-wheel-assembly')
-    const result = await evaluatePublicExampleBundle(
-      standaloneGeometryBundle(item.source, item.exportName, item.lengthUnit),
-    )
-    expect(item.materialRoles.map(({ role }) => role)).toEqual(['tire', 'wheel'])
-    expect(result.scene.parts.map(({ materialRole }) => materialRole)).toEqual(['tire', 'wheel'])
-    expect(new Set(result.scene.parts.map(scenePartColor)).size).toBe(2)
-  })
 })
 
 describe('canonical public Experiment catalog', () => {
@@ -80,7 +47,7 @@ describe('canonical public Experiment catalog', () => {
 
     expect(item.cadApiVersion).toBe(8)
     expect(item.sourceFormatVersion).toBe(2)
-    expect(item.bundleFormatVersion).toBe(5)
+    expect(item.bundleFormatVersion).toBe(6)
     expect(manifest).toMatchObject({
       formatVersion: 5,
       simulationApiVersion: 3,
@@ -88,12 +55,23 @@ describe('canonical public Experiment catalog', () => {
     })
     expect(Object.keys(manifest.tasks)).toEqual(item.verification.kernelTasks)
     expect(Object.keys(manifest.recordedData)).toEqual(item.verification.recordedData)
-    expect(() => assertSimulationProgramManifest(manifest)).not.toThrow()
+    expect(() => assertSimulationProgramManifest(manifest, { allowTaskless: true })).not.toThrow()
+    if (item.verification.kernelTasks.length === 0) {
+      expect(() => assertSimulationProgramManifest(manifest)).toThrow()
+    } else {
+      expect(() => assertSimulationProgramManifest(manifest)).not.toThrow()
+    }
     expect(Object.keys(item.sourceBundle.files).filter((path) => path.startsWith('tasks/'))).toHaveLength(
       item.verification.kernelTasks.length,
     )
     expectReliablePublicScene(result.scene)
     Object.values(result.taskScenes).forEach((scene) => expectReliablePublicScene(scene))
+  })
+
+  it('preserves wheel Material roles and gives them distinct automatic Viewer colors', async () => {
+    const result = await evaluatePublicExampleBundle(officialExperiment('two-material-wheel-assembly').sourceBundle)
+    expect(result.scene.parts.map(({ materialRole }) => materialRole)).toEqual(['tire', 'wheel'])
+    expect(new Set(result.scene.parts.map(scenePartColor)).size).toBe(2)
   })
 
   it.each(officialExperimentKeys)('keeps %s orchestration in the Python v3 ABI', (key) => {

@@ -92,7 +92,10 @@ function assertRecordedDataSpec(value: unknown, path: string): asserts value is 
   })
 }
 
-export function assertSimulationProgramManifest(value: unknown): asserts value is SimulationProgramManifest {
+export function assertSimulationProgramManifest(
+  value: unknown,
+  options: Readonly<{ allowTaskless?: boolean }> = {},
+): asserts value is SimulationProgramManifest {
   if (
     !isPlainObject(value) ||
     value.formatVersion !== 5 ||
@@ -100,7 +103,7 @@ export function assertSimulationProgramManifest(value: unknown): asserts value i
     typeof value.pythonSource !== 'string' ||
     !value.pythonSource.trim() ||
     !isPlainObject(value.tasks) ||
-    Object.keys(value.tasks).length === 0 ||
+    (!options.allowTaskless && Object.keys(value.tasks).length === 0) ||
     !isPlainObject(value.recordedData)
   ) {
     throw new Error('Simulation Program manifest is invalid.')

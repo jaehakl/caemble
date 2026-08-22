@@ -46,15 +46,15 @@ class User(TimestampMixin, Base):
     __table_args__ = (
         Index("uq_users_email_lower", func.lower(email), unique=True),
         CheckConstraint(
-            "geometry_namespace IS NULL OR geometry_namespace ~ "
-            "'^[a-z0-9]([a-z0-9-]{1,30}[a-z0-9])$'",
-            name="geometry_namespace_format",
+            "experiment_namespace IS NULL OR (experiment_namespace <> 'caemble' AND "
+            "experiment_namespace ~ '^[a-z0-9]([a-z0-9-]{1,30}[a-z0-9])$')",
+            name="experiment_namespace_format",
         ),
     )
     email_verified_at: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True))
     display_name: Mapped[Optional[str]] = mapped_column(Text)
     picture_url: Mapped[Optional[str]] = mapped_column(Text)
-    geometry_namespace: Mapped[Optional[str]] = mapped_column(Text, unique=True)
+    experiment_namespace: Mapped[Optional[str]] = mapped_column(Text, unique=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     identities: Mapped[List["Identity"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="selectin")
     sessions: Mapped[List["Session"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="selectin")
@@ -66,7 +66,6 @@ class User(TimestampMixin, Base):
     materials: Mapped[List["Material"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     material_names: Mapped[List["MaterialName"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     material_parameters: Mapped[List["MaterialParameter"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
-    geometry_repositories: Mapped[List["GeometryRepository"]] = relationship(back_populates="user", passive_deletes=True)
     experiments: Mapped[List["Experiment"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     measurements: Mapped[List["Measurement"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     recorded_data: Mapped[List["RecordedData"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)

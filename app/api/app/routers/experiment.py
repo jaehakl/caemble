@@ -1,35 +1,64 @@
-from fastapi import APIRouter, Body, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Body, Depends
 from gpstation.utils.csrf import require_web_csrf
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import Experiment
 from models import (
-    CodeEntityHistoryRequest,
-    CodeEntityHistoryResponse,
     ExperimentBase,
+    ExperimentUsageRequest,
     GetListRequestBase,
     GetListResponseBase,
-    SaveCodeEntityResponse,
     SaveExperimentRequest,
+    SaveExperimentResponse,
     UserData,
+)
+from service.experiment import (
+    delete_experiment_versions,
+    enrich_experiment_list,
+    experiment_usage,
+    experiment_versions,
+    save_experiment as save_experiment_entity,
 )
 from user_auth.routes import get_db
 from user_auth.utils.auth_wrapper import require_roles
-from service.experiment import get_experiment_history, save_experiment as save_experiment_entity
-from utils.crud import CrudSpec, delete_items, get_list_response
+from utils.crud import CrudSpec, get_list_response
 
 
 router = APIRouter(prefix="/experiment", tags=["experiment"])
 CRUD_SPEC = CrudSpec(
     model=Experiment,
     schema=ExperimentBase,
-    tree_parent_field="parent_id",
-    immutable_update_fields=("source_bundle",),
-    search_aliases={"workbench": ("name", "description", "source_bundle")},
+    immutable_update_fields=(
+        "user_id",
+        "namespace",
+        "repository_slug",
+        "experiment_key",
+        "version_major",
+        "version_minor",
+        "version_patch",
+        "source_bundle",
+        "source_hash",
+    ),
+    search_aliases={
+        "workbench": (
+            "name",
+            "description",
+            "namespace",
+            "repository_slug",
+            "experiment_key",
+            "source_bundle",
+        ),
+        "repository": ("repository_slug",),
+        "key": ("experiment_key",),
+    },
 )
 
 
-@router.post("/save", response_model=SaveCodeEntityResponse, dependencies=[Depends(require_web_csrf)])
+@router.post(
+    "/save",
+    response_model=SaveExperimentResponse,
+    dependencies=[Depends(require_web_csrf)],
+)
 async def save_experiment(
     request: SaveExperimentRequest,
     db: AsyncSession = Depends(get_db),
@@ -38,35 +67,39 @@ async def save_experiment(
     return await save_experiment_entity(db, request, user=user)
 
 
-@router.post("/history", response_model=CodeEntityHistoryResponse)
-async def experiment_history(
-    request: CodeEntityHistoryRequest,
-    db: AsyncSession = Depends(get_db),
-    user: UserData = Depends(require_roles(["admin", "user"])),
-):
-    try:
-        return await get_experiment_history(db, request.id, user=user)
-    except LookupError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(error),
-        ) from error
-
-
 @router.post("/list", response_model=GetListResponseBase)
 async def list_experiments(
     request: GetListRequestBase,
     db: AsyncSession = Depends(get_db),
     user: UserData | None = Depends(require_roles(["*"])),
 ):
-    return await get_list_response(db, request, CRUD_SPEC, user=user)
+    response = await get_list_response(db, request, CRUD_SPEC, user=user)
+    return await enrich_experiment_list(db, response)
 
 
-@router.delete("/", status_code=200)
+@router.post("/usage")
+async def get_experiment_usage(
+    request: ExperimentUsageRequest,
+    db: AsyncSession = Depends(get_db),
+    user: UserData = Depends(require_roles(["admin", "user"])),
+):
+    return await experiment_usage(db, request.experimentIds, user=user)
+
+
+@router.get("/{experiment_id}/versions")
+async def list_experiment_versions(
+    experiment_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: UserData = Depends(require_roles(["admin", "user"])),
+):
+    return await experiment_versions(db, experiment_id, user=user)
+
+
+@router.delete("/", status_code=200, dependencies=[Depends(require_web_csrf)])
 async def delete_experiments(
     ids: list[int] = Body(...),
     db: AsyncSession = Depends(get_db),
     user: UserData = Depends(require_roles(["admin", "user"])),
 ):
-    await delete_items(db, CRUD_SPEC, ids, user=user)
+    await delete_experiment_versions(db, ids, user=user)
     return None

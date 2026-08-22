@@ -167,7 +167,6 @@ export class ExperimentDefinition<
     pythonSource: string,
     taskDefinitions: Readonly<Record<string, TaskDefinition>>,
   ) {
-    if (Object.keys(taskDefinitions).length === 0) throw new CadModelError('Experiment requires at least one Task.')
     const tasks = Object.freeze(
       Object.fromEntries(
         Object.entries(taskDefinitions).map(([name, task]) => {

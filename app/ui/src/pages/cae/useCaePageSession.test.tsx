@@ -23,7 +23,7 @@ vi.mock('sonner', () => ({ toast: { error: mocks.toastError } }))
 function workbench(overrides: Record<string, unknown> = {}) {
   return {
     applyExperiment: vi.fn(),
-    draft: vi.fn(() => ({ version: 13 })),
+    draft: vi.fn(() => ({ version: 14 })),
     experimentDirty: false,
     hasUnsavedWork: false,
     hasUnsavedExperimentWork: false,
@@ -107,7 +107,7 @@ describe('useCaePageSession', () => {
     await waitFor(() => expect(result.current.initialized).toBe(true))
     expect(state.restoreDraft).toHaveBeenCalledWith(
       expect.objectContaining({
-        version: 13,
+        version: 14,
         experiment: expect.objectContaining({
           name: 'Starter Experiment',
           baselineBundle: expect.objectContaining({ files: expect.any(Object) }),
@@ -115,19 +115,6 @@ describe('useCaePageSession', () => {
         }),
         candidate: { vars: null, materialParameters: null },
         selection: { measurementId: null },
-        geometryManager: {
-          draftVersions: {},
-          resolvedModules: [],
-          selection: {
-            view: 'examples',
-            namespace: 'examples',
-            repository: 'all',
-            catalogKey: null,
-            coordinate: null,
-            exportName: null,
-          },
-        },
-        experimentGeometry: { stagedModules: [] },
         layout: expect.objectContaining({ activeTab: 'experiment' }),
       }),
     )
@@ -146,8 +133,8 @@ describe('useCaePageSession', () => {
     expect(result.current.confirmation?.title).toContain('저장하지 않은 편집')
   })
 
-  it('does not guard Experiment replacement for an independent Geometry Manager draft', async () => {
-    const state = workbench({ hasUnsavedWork: true, hasUnsavedExperimentWork: false })
+  it('does not guard replacement when the Experiment source is clean', async () => {
+    const state = workbench({ hasUnsavedWork: false, hasUnsavedExperimentWork: false })
     const { result } = renderHook(() => useCaePageSession(state), { wrapper: wrapper() })
     await waitFor(() => expect(result.current.initialized).toBe(true))
     const replace = vi.fn()

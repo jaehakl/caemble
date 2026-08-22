@@ -14,6 +14,7 @@ import type {
   TSType,
   TSTypeAliasDeclaration,
 } from '@babel/types'
+import { resolveExperimentModuleSpecifier } from './moduleResolution'
 
 export class SourceAnalysisError extends Error {
   constructor(message: string) {
@@ -40,7 +41,7 @@ export type GeometrySourceAnalysis = Readonly<{
   imports: readonly Readonly<{
     exportName: string
     alias: string
-    coordinate: string
+    specifier: string
     specifierStart: number
     specifierEnd: number
   }>[]
@@ -51,18 +52,9 @@ export type MaterialSourceAnalysis = Readonly<{
   exports: readonly string[]
 }>
 
-type CadSourcePolicy = 'experiment' | 'task' | 'geometry' | 'material'
+type CadSourcePolicy = 'experiment' | 'task' | 'geometry' | 'material' | 'module'
 
-const geometrySharedProps = new Set([
-  'children',
-  'id',
-  'materials',
-  'pos',
-  'position',
-  'rotate',
-  'rotation',
-  'scale',
-])
+const geometrySharedProps = new Set(['children', 'id', 'materials', 'pos', 'position', 'rotate', 'rotation', 'scale'])
 
 function propertyName(node: t.Expression | t.PrivateName): string | null {
   if (node.type === 'Identifier') return node.name
@@ -120,7 +112,11 @@ function componentPropNames(
   annotation: TSType | null,
   declarations: ReadonlyMap<string, TSTypeAliasDeclaration | TSInterfaceDeclaration>,
 ) {
-  if (annotation?.type === 'TSTypeReference' && annotation.typeName.type === 'Identifier' && annotation.typeName.name === 'Geometry') {
+  if (
+    annotation?.type === 'TSTypeReference' &&
+    annotation.typeName.type === 'Identifier' &&
+    annotation.typeName.name === 'Geometry'
+  ) {
     const propsType = annotation.typeParameters?.params[0]
     if (!propsType) return []
     const names = geometryPropNames(propsType, declarations)
@@ -147,7 +143,9 @@ function componentPropNames(
   }
   const names = geometryPropNames(parameterType, declarations)
   if (names === null) {
-    throw new SourceAnalysisError(`Geometry ${name} props must use a statically enumerable inline or local object type.`)
+    throw new SourceAnalysisError(
+      `Geometry ${name} props must use a statically enumerable inline or local object type.`,
+    )
   }
   return names.filter((item) => !geometrySharedProps.has(item))
 }
@@ -162,7 +160,9 @@ function assertGeometryPropDefaults(
   const firstParameter = component.params[0]
   if (!firstParameter) {
     if (customProps.length) {
-      throw new SourceAnalysisError(`Geometry ${name} must provide defaults for custom props: ${customProps.join(', ')}.`)
+      throw new SourceAnalysisError(
+        `Geometry ${name} must provide defaults for custom props: ${customProps.join(', ')}.`,
+      )
     }
     return
   }
@@ -273,6 +273,7 @@ function assertStaticImport(statement: Extract<Statement, { type: 'ImportDeclara
     }
     if (
       policy !== 'material' &&
+      policy !== 'module' &&
       statement.importKind !== 'type' &&
       statement.specifiers.some((specifier) => {
         if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') return false
@@ -285,38 +286,30 @@ function assertStaticImport(statement: Extract<Statement, { type: 'ImportDeclara
     }
     return
   }
-  if (policy === 'geometry' && /^caemble:geometry\/.+@(?:local|\d+\.\d+\.\d+)$/u.test(source)) {
-    if (
-      statement.specifiers.length === 0 ||
-      statement.specifiers.some((specifier) => specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type')
-    ) {
-      throw new SourceAnalysisError('Geometry dependencies must use named runtime imports.')
-    }
-    return
+  if (source.startsWith('./') || source.startsWith('../')) return
+  throw new SourceAnalysisError(`Caemble sources may only import @caemble/core or bundle-relative modules: ${source}`)
+}
+
+function assertStaticReExport(
+  statement: Extract<Statement, { type: 'ExportAllDeclaration' | 'ExportNamedDeclaration' }>,
+) {
+  const source = statement.source?.value
+  if (source === undefined) return
+  const raw = statement.source?.extra?.raw
+  if (raw !== JSON.stringify(source) && raw !== `'${source}'`) {
+    throw new SourceAnalysisError(`Export specifiers must use plain, unescaped string literals: ${source}`)
   }
-  const relativeModule =
-    (policy === 'experiment' && source === './geometry') || (policy === 'task' && source === '../geometry')
-      ? 'geometry.tsx'
-      : (policy === 'experiment' && source === './material') || (policy === 'task' && source === '../material')
-        ? 'material.tsx'
-        : null
-  if (relativeModule !== null) {
-    if (statement.specifiers.length === 0 || statement.specifiers.some((item) => item.type !== 'ImportSpecifier')) {
-      throw new SourceAnalysisError(`${relativeModule} must be used through named imports.`)
-    }
-    return
-  }
-  const message =
-    policy === 'geometry'
-      ? `Geometry modules may only import @caemble/core or named Geometry coordinates: ${source}`
-      : policy === 'material'
-        ? `Material modules may only import @caemble/core: ${source}`
-        : `Import is not allowed in an independent Caemble TSX source: ${source}`
-  throw new SourceAnalysisError(message)
+  if (source === '@caemble/core' || source.startsWith('./') || source.startsWith('../')) return
+  throw new SourceAnalysisError(
+    `Caemble sources may only re-export @caemble/core or bundle-relative modules: ${source}`,
+  )
 }
 
 function assertImportPolicy(ast: File, policy: CadSourcePolicy) {
   ast.program.body.forEach((statement) => {
+    if (statement.type === 'TSImportEqualsDeclaration' || statement.type === 'TSExportAssignment') {
+      throw new SourceAnalysisError('TypeScript import-equals and export-assignment syntax is not supported.')
+    }
     if (statement.type === 'ImportDeclaration') {
       assertStaticImport(statement, policy)
       return
@@ -325,114 +318,115 @@ function assertImportPolicy(ast: File, policy: CadSourcePolicy) {
       (statement.type === 'ExportAllDeclaration' || statement.type === 'ExportNamedDeclaration') &&
       statement.source
     ) {
-      throw new SourceAnalysisError(`Re-export is not supported in Caemble sources: ${statement.source.value}`)
+      assertStaticReExport(statement)
     }
   })
 
-  const visit = (value: unknown) => {
-    if (!value || typeof value !== 'object') return
-    if (Array.isArray(value)) {
-      value.forEach(visit)
-      return
-    }
-    const node = value as Record<string, unknown>
-    if (
-      node.type === 'ImportExpression' ||
-      (node.type === 'CallExpression' && (node.callee as { type?: string })?.type === 'Import')
-    ) {
-      throw new SourceAnalysisError('Dynamic import is not supported in Caemble CAD sources.')
-    }
-    if (
-      node.type === 'CallExpression' &&
-      (node.callee as { name?: string; type?: string })?.type === 'Identifier' &&
-      (node.callee as { name?: string }).name === 'require'
-    ) {
-      throw new SourceAnalysisError('Source-level require() is not supported in Caemble CAD sources.')
-    }
-    if (
-      (node.type === 'CallExpression' || node.type === 'NewExpression') &&
-      (node.callee as { type?: string; name?: string })?.type === 'Identifier' &&
-      [
-        'Date',
-        'Function',
-        'SharedWorker',
-        'WebSocket',
-        'Worker',
-        'XMLHttpRequest',
-        'clearInterval',
-        'clearTimeout',
-        'eval',
-        'fetch',
-        'queueMicrotask',
-        'setInterval',
-        'setTimeout',
-      ].includes((node.callee as { name: string }).name)
-    ) {
-      throw new SourceAnalysisError(
-        `Hidden nondeterminism is not supported in Caemble sources: ${(node.callee as { name: string }).name}.`,
-      )
-    }
-    if (node.type === 'MemberExpression') {
-      const object = node.object as { type?: string; name?: string }
-      const property = node.property as { type?: string; name?: string; value?: unknown }
-      const propertyName = property.type === 'Identifier' ? property.name : property.value
-      if (['__proto__', 'constructor', 'prototype'].includes(String(propertyName))) {
-        throw new SourceAnalysisError(`Prototype access is not supported in Caemble sources: ${String(propertyName)}.`)
+  const blockedRuntimeGlobals = new Set([
+    'BroadcastChannel',
+    'Date',
+    'EventSource',
+    'Function',
+    'MessageChannel',
+    'MessageEvent',
+    'MessagePort',
+    'RTCDataChannel',
+    'RTCPeerConnection',
+    'SharedWorker',
+    'WebSocket',
+    'WebSocketStream',
+    'WebTransport',
+    'Worker',
+    'XMLHttpRequest',
+    'addEventListener',
+    'caches',
+    'clearInterval',
+    'clearTimeout',
+    'close',
+    'cookieStore',
+    'crypto',
+    'dispatchEvent',
+    'eval',
+    'fetch',
+    'global',
+    'globalThis',
+    'importScripts',
+    'indexedDB',
+    'location',
+    'navigator',
+    'onmessage',
+    'onmessageerror',
+    'performance',
+    'postMessage',
+    'process',
+    'queueMicrotask',
+    'removeEventListener',
+    'require',
+    'self',
+    'setInterval',
+    'setTimeout',
+    'window',
+  ])
+  traverse(ast, {
+    CallExpression(path) {
+      if (path.node.callee.type === 'Import') {
+        throw new SourceAnalysisError('Dynamic import is not supported in Caemble CAD sources.')
       }
-      if (object.type === 'Identifier' && object.name === 'Math' && propertyName === 'random') {
+      if (path.node.callee.type === 'Identifier' && path.node.callee.name === 'require') {
+        throw new SourceAnalysisError('Source-level require() is not supported in Caemble CAD sources.')
+      }
+    },
+    ImportExpression() {
+      throw new SourceAnalysisError('Dynamic import is not supported in Caemble CAD sources.')
+    },
+    'MemberExpression|OptionalMemberExpression'(path) {
+      const node = path.node as t.MemberExpression | t.OptionalMemberExpression
+      let memberName: unknown = null
+      if (!node.computed && node.property.type === 'Identifier') memberName = node.property.name
+      else if (node.property.type === 'StringLiteral' || node.property.type === 'NumericLiteral') {
+        memberName = node.property.value
+      } else if (node.computed && node.property.type !== 'PrivateName') {
+        const evaluated = (path.get('property') as NodePath<t.Expression>).evaluate()
+        if (evaluated.confident) memberName = evaluated.value
+      }
+      if (['__proto__', 'constructor', 'prototype'].includes(String(memberName))) {
+        throw new SourceAnalysisError(`Prototype access is not supported in Caemble sources: ${String(memberName)}.`)
+      }
+      if (node.object.type !== 'Identifier' || node.object.name !== 'Math' || path.scope.getBinding('Math')) return
+      if (memberName === 'random') {
         throw new SourceAnalysisError('Hidden nondeterminism is not supported in Caemble sources: Math.random.')
       }
-      if (object.type === 'Identifier' && ['Date', 'crypto', 'performance'].includes(object.name ?? '')) {
-        throw new SourceAnalysisError(`Hidden nondeterminism is not supported in Caemble sources: ${object.name}.`)
+      if (memberName === null) {
+        throw new SourceAnalysisError('Computed Math members must use a fixed deterministic property name.')
       }
-    }
-    if (
-      node.type === 'Identifier' &&
-      [
-        'Date',
-        'SharedWorker',
-        'WebSocket',
-        'Worker',
-        'XMLHttpRequest',
-        'crypto',
-        'global',
-        'globalThis',
-        'performance',
-        'process',
-        'self',
-        'window',
-      ].includes(String(node.name))
-    ) {
-      throw new SourceAnalysisError(`Global runtime access is not supported in Caemble sources: ${node.name}.`)
-    }
-    if (
-      node.type === 'VariableDeclarator' &&
-      (node.id as { type?: string }).type !== 'Identifier' &&
-      (node.init as { type?: string; name?: string } | null)?.type === 'Identifier' &&
-      ['Math', 'Date', 'crypto', 'performance'].includes((node.init as { name: string }).name)
-    ) {
-      throw new SourceAnalysisError('Destructuring runtime globals is not supported in Caemble sources.')
-    }
-    if (
-      node.type === 'VariableDeclarator' &&
-      (node.init as { type?: string; name?: string } | null)?.type === 'Identifier' &&
-      (node.init as { name: string }).name === 'Math'
-    ) {
-      throw new SourceAnalysisError(
-        'Aliasing Math is not supported in Caemble sources; call deterministic Math members directly.',
-      )
-    }
-    Object.entries(node).forEach(([key, child]) => {
-      if (key !== 'loc' && key !== 'start' && key !== 'end') visit(child)
-    })
-  }
-  visit(ast.program)
+    },
+    ReferencedIdentifier(path) {
+      const name = path.node.name
+      if (path.findParent((parent) => parent.isTSType())) return
+      if (path.scope.getBinding(name)) return
+      if (name === 'Math') {
+        const parent = path.parentPath
+        if ((parent.isMemberExpression() || parent.isOptionalMemberExpression()) && parent.node.object === path.node) {
+          return
+        }
+        throw new SourceAnalysisError(
+          'Aliasing Math is not supported in Caemble sources; call deterministic Math members directly.',
+        )
+      }
+      if (blockedRuntimeGlobals.has(name)) {
+        throw new SourceAnalysisError(`Global runtime access is not supported in Caemble sources: ${name}.`)
+      }
+    },
+  })
 }
 
-export function parseCadSource(source: string, policy: CadSourcePolicy = 'experiment') {
+export function parseCadSource(source: string, policy: CadSourcePolicy = 'experiment', path = 'source.tsx') {
   let ast: File
   try {
-    ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] })
+    ast = parse(source, {
+      sourceType: 'module',
+      plugins: path.endsWith('.tsx') ? ['typescript', 'jsx'] : ['typescript'],
+    })
   } catch (error) {
     throw new SourceAnalysisError(error instanceof Error ? error.message : 'The CAD source could not be parsed.')
   }
@@ -451,6 +445,83 @@ export function staticCadSourceImports(source: string, policy: CadSourcePolicy =
       return []
     return statement.source ? [statement.source.value] : []
   })
+}
+
+function runtimeStaticImports(ast: File) {
+  return ast.program.body.flatMap((statement) => {
+    if (statement.type === 'ImportDeclaration') {
+      if (
+        statement.importKind === 'type' ||
+        (statement.specifiers.length > 0 &&
+          statement.specifiers.every(
+            (specifier) => specifier.type === 'ImportSpecifier' && specifier.importKind === 'type',
+          ))
+      ) {
+        return []
+      }
+      return [statement.source.value]
+    }
+    if (statement.type === 'ExportAllDeclaration') {
+      return statement.exportKind === 'type' ? [] : [statement.source.value]
+    }
+    if (statement.type !== 'ExportNamedDeclaration' || !statement.source || statement.exportKind === 'type') return []
+    if (
+      statement.specifiers.length > 0 &&
+      statement.specifiers.every((specifier) => specifier.type === 'ExportSpecifier' && specifier.exportKind === 'type')
+    ) {
+      return []
+    }
+    return [statement.source.value]
+  })
+}
+
+export function analyzeBundleModuleSource(source: string, path: string) {
+  return Object.freeze({ ast: parseCadSource(source, 'module', path) })
+}
+
+export function assertExperimentModuleGraph(files: Readonly<Record<string, string>>) {
+  const modules = Object.fromEntries(
+    Object.entries(files).filter(([path]) => path.endsWith('.ts') || path.endsWith('.tsx')),
+  )
+  const dependencies = new Map<string, readonly string[]>()
+  Object.entries(modules).forEach(([path, source]) => {
+    const policy: CadSourcePolicy =
+      path === 'experiment.tsx'
+        ? 'experiment'
+        : path === 'geometry.tsx'
+          ? 'geometry'
+          : path === 'material.tsx'
+            ? 'material'
+            : /^tasks\/[A-Za-z][A-Za-z0-9_-]*\.tsx$/u.test(path)
+              ? 'task'
+              : 'module'
+    const ast = parseCadSource(source, policy, path)
+    dependencies.set(
+      path,
+      Object.freeze(
+        runtimeStaticImports(ast)
+          .filter((specifier) => specifier !== '@caemble/core')
+          .map((specifier) => resolveExperimentModuleSpecifier(modules, path, specifier)),
+      ),
+    )
+  })
+
+  const complete = new Set<string>()
+  const visiting = new Set<string>()
+  const visit = (path: string, chain: readonly string[]) => {
+    if (complete.has(path)) return
+    if (visiting.has(path)) {
+      throw new SourceAnalysisError(`Experiment module dependency cycle detected: ${[...chain, path].join(' -> ')}`)
+    }
+    visiting.add(path)
+    try {
+      dependencies.get(path)?.forEach((dependency) => visit(dependency, [...chain, path]))
+      complete.add(path)
+    } finally {
+      visiting.delete(path)
+    }
+  }
+  ;[...dependencies.keys()].sort().forEach((path) => visit(path, []))
 }
 
 function analyzeFactorySource(source: string, factoryName: 'defineTask' | 'experiment'): SourceAnalysis {
@@ -505,16 +576,12 @@ export function analyzeTaskSource(source: string): SourceAnalysis {
 
 export function analyzeMaterialSource(source: string): MaterialSourceAnalysis {
   const ast = parseCadSource(source, 'material')
-  const importedBindings = new Set(
-    ast.program.body.flatMap((statement) =>
-      statement.type === 'ImportDeclaration' ? statement.specifiers.map((specifier) => specifier.local.name) : [],
-    ),
-  )
   const exports: string[] = []
   ast.program.body.forEach((statement) => {
-    if (statement.type === 'ExportDefaultDeclaration' || statement.type === 'ExportAllDeclaration') {
+    if (statement.type === 'ExportDefaultDeclaration') {
       throw new SourceAnalysisError('material.tsx only supports named Material object or factory exports.')
     }
+    if (statement.type === 'ExportAllDeclaration') return
     if (statement.type !== 'ExportNamedDeclaration') return
     if (statement.exportKind === 'type') return
     const declaration = statement.declaration
@@ -545,14 +612,10 @@ export function analyzeMaterialSource(source: string): MaterialSourceAnalysis {
         throw new SourceAnalysisError('material.tsx only supports named local exports.')
       }
       if (specifier.exportKind === 'type') return
-      const localName = specifier.local.name
       const name = specifier.exported.type === 'Identifier' ? specifier.exported.name : null
       if (!name) throw new SourceAnalysisError('Material exports must use identifier names.')
       if (name === 'default') {
         throw new SourceAnalysisError('material.tsx only supports named Material object or factory exports.')
-      }
-      if (importedBindings.has(localName)) {
-        throw new SourceAnalysisError('Material exports must be defined locally in material.tsx.')
       }
       exports.push(name)
     })
@@ -565,40 +628,37 @@ export function analyzeMaterialSource(source: string): MaterialSourceAnalysis {
 
 export function analyzeGeometrySource(
   source: string,
-  options: Readonly<{ allowEmpty?: boolean; allowLocal?: boolean }> = {},
+  options: Readonly<{ allowEmpty?: boolean }> = {},
 ): GeometrySourceAnalysis {
   const ast = parseCadSource(source, 'geometry')
-  const coordinatePattern =
-    /^caemble:geometry\/[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])\/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?@(local|\d+\.\d+\.\d+)$/u
   const componentNamePattern = /^[A-Z][A-Za-z0-9_]*$/u
   const imports: {
     exportName: string
     alias: string
-    coordinate: string
+    specifier: string
     specifierStart: number
     specifierEnd: number
   }[] = []
   const importedBindings = new Set<string>()
   ast.program.body.forEach((statement) => {
     if (statement.type !== 'ImportDeclaration' || statement.source.value === '@caemble/core') return
-    const match = coordinatePattern.exec(statement.source.value)
-    if (!match || (match[1] === 'local' && !options.allowLocal)) {
-      throw new SourceAnalysisError(`Geometry import must use an exact coordinate: ${statement.source.value}`)
-    }
+    if (statement.importKind === 'type') return
     statement.specifiers.forEach((specifier) => {
-      if (specifier.type !== 'ImportSpecifier') {
-        throw new SourceAnalysisError('Geometry dependencies must use named imports.')
-      }
-      const exportName = specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value
+      if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') return
+      const exportName =
+        specifier.type === 'ImportSpecifier'
+          ? specifier.imported.type === 'Identifier'
+            ? specifier.imported.name
+            : specifier.imported.value
+          : specifier.type === 'ImportDefaultSpecifier'
+            ? 'default'
+            : '*'
       const alias = specifier.local.name
-      if (!componentNamePattern.test(exportName) || !componentNamePattern.test(alias)) {
-        throw new SourceAnalysisError('Geometry export names and aliases must be PascalCase identifiers.')
-      }
       importedBindings.add(alias)
       imports.push({
         exportName,
         alias,
-        coordinate: statement.source.value,
+        specifier: statement.source.value,
         specifierStart: statement.source.start! + 1,
         specifierEnd: statement.source.end! - 1,
       })
@@ -638,7 +698,8 @@ export function analyzeGeometrySource(
     if (declaration?.type !== 'VariableDeclaration' || declaration.kind !== 'const') return
     declaration.declarations.forEach((item) => {
       if (item.id.type !== 'Identifier' || !item.init) return
-      const annotation = item.id.typeAnnotation?.type === 'TSTypeAnnotation' ? item.id.typeAnnotation.typeAnnotation : null
+      const annotation =
+        item.id.typeAnnotation?.type === 'TSTypeAnnotation' ? item.id.typeAnnotation.typeAnnotation : null
       if (annotation) componentAnnotations.set(item.id.name, annotation)
       if (statement.type === 'ExportNamedDeclaration') {
         bindings.set(item.id.name, sourceExpression(item.init, item.id.name))
@@ -657,21 +718,18 @@ export function analyzeGeometrySource(
   bindings.forEach((binding, name) => {
     if (!componentNamePattern.test(name) || functions.has(name)) return
     const resolved = resolveSourceBinding(binding, bindings).expression
-    if (
-      resolved.type === 'ArrowFunctionExpression' ||
-      resolved.type === 'FunctionExpression'
-    ) {
+    if (resolved.type === 'ArrowFunctionExpression' || resolved.type === 'FunctionExpression') {
       assertGeometryPropDefaults(name, resolved, componentAnnotations.get(name) ?? null, typeDeclarations)
     }
   })
 
   const exported: { localName: string; name: string }[] = []
   ast.program.body.forEach((statement) => {
-    if (statement.type === 'ExportDefaultDeclaration' || statement.type === 'ExportAllDeclaration') {
+    if (statement.type === 'ExportDefaultDeclaration') {
       throw new SourceAnalysisError('Geometry modules only support named Geometry component exports.')
     }
+    if (statement.type === 'ExportAllDeclaration') return
     if (statement.type !== 'ExportNamedDeclaration') return
-    if (statement.source) throw new SourceAnalysisError('Geometry re-exports must use an imported local binding.')
     if (statement.declaration?.type === 'VariableDeclaration') {
       if (statement.declaration.kind !== 'const') {
         throw new SourceAnalysisError('Exported Geometry bindings must be const functions.')
@@ -694,6 +752,7 @@ export function analyzeGeometrySource(
       }
       const localName = specifier.local.name
       const name = specifier.exported.type === 'Identifier' ? specifier.exported.name : specifier.exported.value
+      if (statement.source) importedBindings.add(localName)
       exported.push({ localName, name })
     })
   })
@@ -701,7 +760,7 @@ export function analyzeGeometrySource(
     throw new SourceAnalysisError('Geometry export names must be unique.')
   }
   if (exported.length === 0 && !options.allowEmpty) {
-    throw new SourceAnalysisError('Published Geometry modules must export at least one named component.')
+    throw new SourceAnalysisError('Geometry modules must export at least one named component.')
   }
 
   const exports = exported.map(({ localName, name }) => {
@@ -826,7 +885,7 @@ function assertProjectableTopLevel(ast: File) {
 }
 
 export function projectGeometryExportSource(source: string, exportName: string) {
-  const analysis = analyzeGeometrySource(source, { allowEmpty: true, allowLocal: true })
+  const analysis = analyzeGeometrySource(source, { allowEmpty: true })
   if (!analysis.exports.some((item) => item.name === exportName)) {
     throw new SourceAnalysisError(`Geometry export was not found: ${exportName}`)
   }
@@ -983,15 +1042,9 @@ export function projectGeometryExportSource(source: string, exportName: string) 
   const projectedAst = t.cloneNode(analysis.ast, true)
   projectedAst.program.body = projectedBody
   const result = `${generate(projectedAst, { comments: true }).code.trim()}\n`
-  const projected = analyzeGeometrySource(result, { allowLocal: true })
+  const projected = analyzeGeometrySource(result)
   if (projected.exports.length !== 1 || projected.exports[0]?.name !== exportName) {
     throw new SourceAnalysisError(`Projected Geometry source must export only ${exportName}.`)
-  }
-  const localImport = projected.imports.find((item) => item.coordinate.endsWith('@local'))
-  if (localImport) {
-    throw new SourceAnalysisError(
-      `Publish local Geometry dependency first, then retry with an exact import: ${localImport.coordinate}`,
-    )
   }
   return result
 }

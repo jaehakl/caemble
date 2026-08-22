@@ -29,14 +29,29 @@ def list_payload(**extra):
     }
 
 
+def experiment_row(user, name: str, key: str, bundle: dict, version: tuple[int, int, int] = (0, 1, 0)):
+    return Experiment(
+        user_id=user.id,
+        namespace=user.experiment_namespace,
+        repository_slug="tests",
+        experiment_key=key,
+        version_major=version[0],
+        version_minor=version[1],
+        version_patch=version[2],
+        name=name,
+        source_bundle=bundle,
+        source_hash=source_hash(bundle),
+    )
+
+
 @pytest.mark.asyncio
 async def test_measurements_list_by_experiment_without_pair_contract(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
     first_bundle = experiment_source_bundle("first")
     second_bundle = experiment_source_bundle("second")
-    first = Experiment(name="First", source_bundle=first_bundle, source_hash=source_hash(first_bundle), user_id=owner.id)
-    second = Experiment(name="Second", source_bundle=second_bundle, source_hash=source_hash(second_bundle), user_id=owner.id)
+    first = experiment_row(owner, "First", "first", first_bundle)
+    second = experiment_row(owner, "Second", "second", second_bundle)
     db_session.add_all([first, second])
     await db_session.flush()
     db_session.add_all(
@@ -62,29 +77,19 @@ async def test_measurements_list_by_experiment_without_pair_contract(client, db_
 
 
 @pytest.mark.asyncio
-async def test_experiment_history_remains_single_unified_lineage(client, db_session, monkeypatch):
+async def test_experiment_versions_replace_parent_lineage(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
     root_bundle = experiment_source_bundle("root")
     child_bundle = experiment_source_bundle("child")
-    root = Experiment(name="Root", source_bundle=root_bundle, source_hash=source_hash(root_bundle), user_id=owner.id)
+    root = experiment_row(owner, "Root", "lineage", root_bundle)
     db_session.add(root)
     await db_session.flush()
-    child = Experiment(
-        name="Child",
-        parent_id=root.id,
-        source_bundle=child_bundle,
-        source_hash=source_hash(child_bundle),
-        user_id=owner.id,
-    )
+    child = experiment_row(owner, "Child", "lineage", child_bundle, (0, 2, 0))
     db_session.add(child)
     await db_session.commit()
 
-    response = await client.post(
-        "/experiment/history",
-        headers=auth_headers(owner),
-        json={"id": child.id},
-    )
+    assert (await client.post("/experiment/history", headers=auth_headers(owner), json={"id": child.id})).status_code == 404
+    response = await client.get(f"/experiment/{child.id}/versions", headers=auth_headers(owner))
     assert response.status_code == 200
-    assert response.json()["root_id"] == root.id
-    assert [item["id"] for item in response.json()["items"]] == [root.id, child.id]
+    assert [item["id"] for item in response.json()["items"]] == [child.id, root.id]

@@ -6,7 +6,6 @@ from types import SimpleNamespace
 import pytest
 from cryptography.fernet import Fernet
 
-import ai.workspace as agent_workspace
 from ai.cad_reference import CAD_AUTHORING_CORE, CAD_AUTHORING_REFERENCE_HASH
 from ai.agent import (
     MAX_AGENT_STEPS,
@@ -26,7 +25,7 @@ from models import ExperimentSourceBundle
 def source_bundle() -> ExperimentSourceBundle:
     return ExperimentSourceBundle.model_validate(
         {
-            "formatVersion": 5,
+            "formatVersion": 6,
             "files": {
                 "experiment.tsx": "export default () => <Main />",
                 "geometry.tsx": "export const Geometry = () => <box />",
@@ -34,7 +33,6 @@ def source_bundle() -> ExperimentSourceBundle:
                 "simulate.py": "async def simulate(*, sim, tasks, vars):\n    return {}\n",
                 "tasks/main.tsx": "export const Main = () => <task />",
             },
-            "geometrySnapshot": {"schemaVersion": 2, "entryImports": [], "modules": []},
         }
     )
 
@@ -57,7 +55,7 @@ def run_start(bundle: ExperimentSourceBundle | None = None) -> RunStart:
                     "sourceBundle": bundle.model_dump(mode="json"),
                 },
                 "baseHash": bundle_hash(bundle),
-                "geometryContextVersion": "geometry-v1",
+                "experimentContextVersion": "experiment-v1",
                 "workspaceSession": 2,
                 "activeFile": "tasks/main.tsx",
             },
@@ -281,10 +279,6 @@ async def test_agent_reads_official_cad_reference_before_staging_geometry(monkey
     workspace = StagedExperiment(start.workspace.document.sourceBundle)
     tools = ToolExecutor(data=Data(), catalog=None, workspace=workspace)
 
-    async def skip_snapshot_refresh():
-        pass
-
-    monkeypatch.setattr(tools, "_refresh_geometry_snapshot", skip_snapshot_refresh)
     runner = AgentRunner(
         run_id="run-geometry",
         user_id="user-1",
@@ -562,58 +556,12 @@ def test_client_validation_results_are_not_part_of_the_protocol():
         parse_client_message({"type": "client_tool.result"})
 
 
-def test_workspace_geometry_graph_sources_are_bounded(monkeypatch):
+def test_workspace_rejects_legacy_geometry_snapshot():
     value = run_start().model_dump(mode="json")
-    module = {
-        "geometryVersionId": 1,
-        "coordinate": "caemble:geometry/user/repo/package@1.0.0",
-        "moduleFormatVersion": 4,
-        "cadApiVersion": 7,
-        "description": None,
-        "source": "x" * 11,
-        "sourceHash": "a" * 64,
-        "moduleHash": "b" * 64,
-        "imports": [],
+    value["workspace"]["document"]["sourceBundle"]["geometrySnapshot"] = {
+        "schemaVersion": 2,
+        "entryImports": [],
+        "modules": [],
     }
-    value["workspace"]["document"]["sourceBundle"]["geometrySnapshot"]["modules"] = [module]
-    monkeypatch.setattr(agent_workspace, "MAX_GEOMETRY_MODULE_SOURCE_BYTES", 10)
-    with pytest.raises(ValueError, match="module source"):
-        RunStart.model_validate(value)
-
-    monkeypatch.setattr(agent_workspace, "MAX_GEOMETRY_MODULE_SOURCE_BYTES", 20)
-    monkeypatch.setattr(agent_workspace, "MAX_GEOMETRY_GRAPH_SOURCE_BYTES", 10)
-    with pytest.raises(ValueError, match="graph source"):
-        RunStart.model_validate(value)
-
-    monkeypatch.setattr(agent_workspace, "MAX_GEOMETRY_GRAPH_SOURCE_BYTES", 20)
-    monkeypatch.setattr(agent_workspace, "MAX_GEOMETRY_SNAPSHOT_BYTES", 100)
-    with pytest.raises(ValueError, match="Geometry snapshot exceeds"):
-        RunStart.model_validate(value)
-
-
-def test_workspace_geometry_graph_aggregate_items_are_bounded(monkeypatch):
-    value = run_start().model_dump(mode="json")
-    module_import = {
-        "exportName": "Imported",
-        "alias": "Imported",
-        "geometryVersionId": 2,
-        "coordinate": "caemble:geometry/user/repo/imported@1.0.0",
-        "moduleHash": "c" * 64,
-    }
-    value["workspace"]["document"]["sourceBundle"]["geometrySnapshot"]["modules"] = [
-        {
-            "geometryVersionId": 1,
-            "coordinate": "caemble:geometry/user/repo/package@1.0.0",
-            "moduleFormatVersion": 4,
-            "cadApiVersion": 7,
-            "description": None,
-            "source": "export const Geometry = () => null",
-            "sourceHash": "a" * 64,
-            "moduleHash": "b" * 64,
-            "imports": [module_import, {**module_import, "alias": "ImportedAgain"}],
-        }
-    ]
-    monkeypatch.setattr(agent_workspace, "MAX_GEOMETRY_GRAPH_ITEMS", 2)
-
-    with pytest.raises(ValueError, match="too many graph items"):
+    with pytest.raises(ValueError, match="Extra inputs"):
         RunStart.model_validate(value)

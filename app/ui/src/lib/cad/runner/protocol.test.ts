@@ -24,43 +24,28 @@ const syntheticCatalog = {
   materialGlobalQualifiers: [],
   warnings: [],
 } as const
+const compiledSource = (entryFile: string, code = 'module.exports = {}') => ({
+  apiVersion: 8 as const,
+  compilerVersion: CAD_COMPILER_VERSION,
+  entryFile,
+  code,
+  sourceHash,
+})
 const compiledExperiment: CompiledCadDocument = {
   apiVersion: 8,
   compilerVersion: CAD_COMPILER_VERSION,
   sourceHash,
   sources: {
-    'experiment.tsx': {
-      apiVersion: 8,
-      compilerVersion: CAD_COMPILER_VERSION,
-      entryFile: 'experiment.tsx',
-      code: 'module.exports.default = {}',
-      sourceHash,
-    },
-  },
-}
-const geometryCoordinate = 'caemble:geometry/tester/synthetic/box@local'
-const compiledGeometry = {
-  ...compiledExperiment,
-  geometryGraph: {
-    graphHash: 'c'.repeat(64),
-    entryImports: [{ exportName: 'Box', alias: 'Box', coordinate: geometryCoordinate, moduleHash: 'd'.repeat(64) }],
-    modules: {
-      [geometryCoordinate]: {
-        apiVersion: 8,
-        compilerVersion: CAD_COMPILER_VERSION,
-        entryFile: geometryCoordinate,
-        code: `exports.Box = ({ id = 'preview' }) => h('box', { id, size: [1, 1, 1] })`,
-        sourceHash,
-        geometrySourceHash: 'e'.repeat(64),
-        moduleHash: 'd'.repeat(64),
-        exports: ['Box'],
-        imports: [],
-      },
-    },
+    'experiment.tsx': compiledSource('experiment.tsx', 'module.exports.default = {}'),
+    'geometry.tsx': compiledSource(
+      'geometry.tsx',
+      `exports.Box = ({ id = 'preview' }) => h('box', { id, size: [1, 1, 1] })`,
+    ),
+    'material.tsx': compiledSource('material.tsx'),
   },
 }
 
-describe('isolated runner protocol v5', () => {
+describe('isolated runner protocol for Experiment bundles', () => {
   it('accepts exact inspect, evaluate, start, result, and cancel messages', () => {
     const inspect = {
       type: 'inspect' as const,
@@ -220,19 +205,20 @@ describe('isolated runner protocol v5', () => {
     expect(runnerOperationRejectionEnvelope({ type: 'inspect' }, validationError)).toBeUndefined()
   })
 
-  it('keeps Geometry preview catalog-free', () => {
+  it('validates the catalog slice needed by a full-bundle Geometry preview', () => {
     const preview = {
       type: 'preview-geometry',
       requestId: 'preview-1',
       revision: 3,
-      compiledDocument: compiledGeometry,
-      coordinate: geometryCoordinate,
+      catalog: syntheticCatalog,
+      compiledDocument: compiledExperiment,
+      path: 'geometry.tsx',
       exportName: 'Box',
       lengthUnit: 'mm',
     }
     expect(() => assertCadGeometryPreviewRequest(preview)).not.toThrow()
-    expect(() => assertCadGeometryPreviewRequest({ ...preview, catalog: syntheticCatalog })).toThrow(
-      'request.catalog is not allowed',
-    )
+    const { catalog, ...withoutCatalog } = preview
+    expect(catalog).toBe(syntheticCatalog)
+    expect(() => assertCadGeometryPreviewRequest(withoutCatalog)).toThrow()
   })
 })

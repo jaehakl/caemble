@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  addExperimentSourceFile,
   addExperimentTask,
   assertCadSourceDocument,
   assertExperimentSourceBundle,
@@ -7,76 +8,76 @@ import {
   createCadSourceDocument,
   createExperimentSourceBundle,
   experimentTaskPaths,
+  removeExperimentSourceFile,
   removeExperimentTask,
   updateExperimentSourceFile,
 } from './document'
 
 const files = {
-  'experiment.tsx': 'import { Assembly } from "./geometry"\nvoid Assembly',
+  'experiment.tsx': 'export default 1',
   'simulate.py': 'async def simulate(*, sim, tasks, vars):\n  pass',
-  'tasks/main.tsx': 'import { Assembly } from "../geometry"\nvoid Assembly',
 }
 
-describe('Experiment source bundle v5', () => {
-  it('always adds geometry.tsx, material.tsx, and an empty snapshot v2', () => {
+describe('Experiment source bundle v6', () => {
+  it('adds the required TypeScript core files and permits zero Tasks', () => {
     const bundle = createExperimentSourceBundle(files)
-    expect(bundle.formatVersion).toBe(5)
-    expect(bundle.files['geometry.tsx']).toBe('export {}\n')
-    expect(bundle.files['material.tsx']).toBe('export {}\n')
-    expect(bundle.geometrySnapshot).toEqual({ schemaVersion: 2, entryImports: [], modules: [] })
-    expect(Object.keys(bundle.files)).toEqual([
-      'experiment.tsx',
-      'geometry.tsx',
-      'material.tsx',
-      'simulate.py',
-      'tasks/main.tsx',
-    ])
+    expect(bundle).toEqual({
+      formatVersion: 6,
+      files: {
+        'experiment.tsx': files['experiment.tsx'],
+        'geometry.tsx': 'export {}\n',
+        'material.tsx': 'export {}\n',
+        'simulate.py': files['simulate.py'],
+      },
+    })
+    expect(experimentTaskPaths(bundle)).toEqual([])
   })
 
-  it('rejects legacy bundles and missing required files', () => {
-    expect(() =>
-      assertExperimentSourceBundle({
-        formatVersion: 4,
-        files,
-        geometrySnapshot: { schemaVersion: 2, entryImports: [], modules: [] },
-      }),
-    ).toThrow('version 5')
+  it('rejects legacy graph fields, missing core files, unsafe paths, and case collisions', () => {
     expect(() =>
       assertExperimentSourceBundle({
         formatVersion: 5,
-        files: { 'experiment.tsx': 'x' },
+        files,
         geometrySnapshot: { schemaVersion: 2, entryImports: [], modules: [] },
       }),
-    ).toThrow('requires')
+    ).toThrow('geometrySnapshot')
+    expect(() => assertExperimentSourceBundle({ formatVersion: 6, files: { 'experiment.tsx': 'x' } })).toThrow(
+      'requires',
+    )
+    expect(() => createExperimentSourceBundle({ ...files, '../escape.ts': 'export {}' })).toThrow('path is invalid')
+    expect(() =>
+      createExperimentSourceBundle({ ...files, 'shared/Part.ts': 'export {}', 'shared/part.ts': 'export {}' }),
+    ).toThrow('differ only by case')
   })
 
-  it('preserves geometry snapshot while editing and managing tasks', () => {
+  it('edits Tasks and arbitrary TS/TSX files while protecting the four core files', () => {
     const document = createCadSourceDocument('experiment', createExperimentSourceBundle(files))
     expect(document.apiVersion).toBe(8)
-    expect(() => assertCadSourceDocument({ ...document, apiVersion: 7 })).not.toThrow()
-    expect(() => assertCadSourceDocument({ ...document, apiVersion: 8 })).not.toThrow()
+    expect(() => assertCadSourceDocument(document)).not.toThrow()
     const edited = updateExperimentSourceFile(document, 'geometry.tsx', 'export {}\n// changed')
-    expect(edited.sourceBundle.geometrySnapshot).toEqual(document.sourceBundle.geometrySnapshot)
-    const added = addExperimentTask(edited, 'electric', 'export default 1')
-    expect(experimentTaskPaths(added.sourceBundle)).toEqual(['tasks/electric.tsx', 'tasks/main.tsx'])
-    expect(removeExperimentTask(added, 'electric').sourceBundle.files['tasks/electric.tsx']).toBeUndefined()
-    expect(() => removeExperimentTask(document, 'main')).toThrow('at least one Task')
+    const withHelper = addExperimentSourceFile(edited, 'shared/shape.tsx', 'export const Shape = () => null')
+    const withTask = addExperimentTask(withHelper, 'electric', 'export default 1')
+    expect(experimentTaskPaths(withTask.sourceBundle)).toEqual(['tasks/electric.tsx'])
+    expect(removeExperimentTask(withTask, 'electric').sourceBundle.files['tasks/electric.tsx']).toBeUndefined()
+    expect(
+      removeExperimentSourceFile(withTask, 'shared/shape.tsx').sourceBundle.files['shared/shape.tsx'],
+    ).toBeUndefined()
+    expect(() => removeExperimentSourceFile(withTask, 'simulate.py')).toThrow('cannot be removed')
   })
 
-  it('shares the Agent bundle hash contract with the backend', async () => {
-    const document = createCadSourceDocument(
+  it('uses the canonical v6 bundle hash regardless of file insertion order', async () => {
+    const first = createCadSourceDocument(
+      'experiment',
+      createExperimentSourceBundle({ ...files, 'shared/value.ts': 'export const value = 1' }),
+    )
+    const second = createCadSourceDocument(
       'experiment',
       createExperimentSourceBundle({
-        'experiment.tsx': 'export default () => <Main />',
-        'geometry.tsx': 'export const Geometry = () => <box />',
-        'material.tsx': 'export const steel = {}',
-        'simulate.py': 'async def simulate(*, sim, tasks, vars):\n    return {}\n',
-        'tasks/main.tsx': 'export const Main = () => <task />',
+        'shared/value.ts': 'export const value = 1',
+        'simulate.py': files['simulate.py'],
+        'experiment.tsx': files['experiment.tsx'],
       }),
     )
-
-    await expect(cadSourceHash(document)).resolves.toBe(
-      '50bf96de0f339ad8593292bf872b720fad1677610e17b33f4470b54769cc0008',
-    )
+    await expect(cadSourceHash(first)).resolves.toBe(await cadSourceHash(second))
   })
 })

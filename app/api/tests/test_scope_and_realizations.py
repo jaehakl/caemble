@@ -28,27 +28,40 @@ def list_payload(scope="visible"):
     }
 
 
+def experiment_row(user, name: str, key: str, bundle: dict) -> Experiment:
+    return Experiment(
+        user_id=user.id,
+        namespace=user.experiment_namespace,
+        repository_slug="tests",
+        experiment_key=key,
+        version_major=0,
+        version_minor=1,
+        version_patch=0,
+        name=name,
+        source_bundle=bundle,
+        source_hash=bundle_hash(bundle),
+    )
+
+
 @pytest.mark.asyncio
 async def test_experiment_visibility_and_removed_split_endpoints(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
     other = await create_user(db_session)
-    public_bundle = experiment_source_bundle("public")
     mine_bundle = experiment_source_bundle("mine")
     other_bundle = experiment_source_bundle("other")
     db_session.add_all(
         [
-            Experiment(name="Public", source_bundle=public_bundle, source_hash=bundle_hash(public_bundle), user_id=None),
-            Experiment(name="Mine", source_bundle=mine_bundle, source_hash=bundle_hash(mine_bundle), user_id=owner.id),
-            Experiment(name="Other", source_bundle=other_bundle, source_hash=bundle_hash(other_bundle), user_id=other.id),
+            experiment_row(owner, "Mine", "mine", mine_bundle),
+            experiment_row(other, "Other", "other", other_bundle),
         ]
     )
     await db_session.commit()
 
-    assert {item["name"] for item in (await client.post("/experiment/list", json=list_payload())).json()["items"]} == {"Public"}
+    assert (await client.post("/experiment/list", json=list_payload())).json()["items"] == []
     headers = auth_headers(owner)
     visible = await client.post("/experiment/list", headers=headers, json=list_payload())
-    assert {item["name"] for item in visible.json()["items"]} == {"Public", "Mine"}
+    assert {item["name"] for item in visible.json()["items"]} == {"Mine"}
     assert all(len(item["source_hash"]) == 64 for item in visible.json()["items"])
 
     for endpoint in ("structure", "sample", "setup"):
@@ -61,10 +74,12 @@ async def test_model_artifacts_are_scoped_only_by_experiment(client, db_session,
     owner = await create_user(db_session)
     other = await create_user(db_session)
     mine_bundle = experiment_source_bundle("mine")
+    target_bundle = experiment_source_bundle("target")
     other_bundle = experiment_source_bundle("other")
-    mine = Experiment(name="Mine", source_bundle=mine_bundle, source_hash=bundle_hash(mine_bundle), user_id=owner.id)
-    hidden = Experiment(name="Hidden", source_bundle=other_bundle, source_hash=bundle_hash(other_bundle), user_id=other.id)
-    db_session.add_all([mine, hidden])
+    mine = experiment_row(owner, "Mine", "mine-model", mine_bundle)
+    target = experiment_row(owner, "Target", "target-model", target_bundle)
+    hidden = experiment_row(other, "Hidden", "hidden-model", other_bundle)
+    db_session.add_all([mine, target, hidden])
     await db_session.commit()
     headers = auth_headers(owner)
 
@@ -81,6 +96,25 @@ async def test_model_artifacts_are_scoped_only_by_experiment(client, db_session,
     assert designer.status_code == predictor.status_code == 200
     assert (await db_session.get(DesignerModel, designer.json()[0]["id"])).experiment_id == mine.id
     assert (await db_session.get(PredictorModel, predictor.json()[0]["id"])).experiment_id == mine.id
+
+    for endpoint, response in (("designer_model", designer), ("predictor_model", predictor)):
+        reparented = await client.post(
+            f"/{endpoint}/upsert",
+            headers=headers,
+            json=[
+                {
+                    "id": response.json()[0]["id"],
+                    "experiment_id": target.id,
+                    "model_url": "moved.bin",
+                }
+            ],
+        )
+        assert reparented.status_code == 409
+        assert "experiment_id cannot be changed" in reparented.json()["detail"]
+    mine_id = mine.id
+    db_session.expire_all()
+    assert (await db_session.get(DesignerModel, designer.json()[0]["id"])).experiment_id == mine_id
+    assert (await db_session.get(PredictorModel, predictor.json()[0]["id"])).experiment_id == mine_id
 
     forbidden = await client.post(
         "/designer_model/upsert",

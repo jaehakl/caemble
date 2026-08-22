@@ -3,19 +3,17 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import posixpath
 import re
 from dataclasses import dataclass
 from typing import Any
 
-from models import ExperimentSourceBundle, GeometrySnapshot
+from models import ExperimentSourceBundle
 
 MAX_SOURCE_BYTES = 1024 * 1024
-MAX_GEOMETRY_MODULE_SOURCE_BYTES = 1024 * 1024
-MAX_GEOMETRY_GRAPH_SOURCE_BYTES = 8 * 1024 * 1024
-MAX_GEOMETRY_SNAPSHOT_BYTES = 10 * 1024 * 1024
-MAX_GEOMETRY_GRAPH_ITEMS = 4096
+MAX_SOURCE_FILES = 256
 REQUIRED_PATHS = frozenset({"experiment.tsx", "geometry.tsx", "material.tsx", "simulate.py"})
-TASK_PATH = re.compile(r"^tasks/[A-Za-z][A-Za-z0-9_-]*\.tsx$")
+SOURCE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$")
 
 
 class WorkspaceEditError(ValueError):
@@ -106,9 +104,8 @@ class StagedExperiment:
         files = dict(self._bundle.files)
         files[path] = content
         candidate = ExperimentSourceBundle(
-            formatVersion=5,
+            formatVersion=6,
             files=files,
-            geometrySnapshot=self._bundle.geometrySnapshot,
         )
         validate_bundle_structure(candidate)
         self._bundle = candidate
@@ -121,20 +118,20 @@ class StagedExperiment:
             "sourceHash": self.source_hash,
         }
 
-    def delete_task(self, path: str, expected_sha256: str) -> dict[str, Any]:
-        if TASK_PATH.fullmatch(path) is None:
-            raise WorkspaceEditError("Only Task source files can be deleted")
+    def delete_file(self, path: str, expected_sha256: str) -> dict[str, Any]:
+        validate_source_path(path)
+        if path in REQUIRED_PATHS:
+            raise WorkspaceEditError("Required Experiment source files cannot be deleted")
         current = self._bundle.files.get(path)
         if current is None:
-            raise WorkspaceEditError("Experiment Task source file was not found")
+            raise WorkspaceEditError("Experiment source file was not found")
         if not _secure_equal(text_hash(current), expected_sha256):
             raise WorkspaceEditError("Experiment source changed before this delete")
         files = dict(self._bundle.files)
         del files[path]
         candidate = ExperimentSourceBundle(
-            formatVersion=5,
+            formatVersion=6,
             files=files,
-            geometrySnapshot=self._bundle.geometrySnapshot,
         )
         validate_bundle_structure(candidate)
         self._bundle = candidate
@@ -147,30 +144,37 @@ class StagedExperiment:
             "sourceHash": self.source_hash,
         }
 
-    def replace_geometry_snapshot(self, snapshot: GeometrySnapshot) -> None:
-        """Replace only server-resolved snapshot data without creating an Agent edit."""
-        validate_geometry_snapshot(snapshot)
-        self._bundle = ExperimentSourceBundle(
-            formatVersion=5,
-            files=dict(self._bundle.files),
-            geometrySnapshot=GeometrySnapshot.model_validate(snapshot.model_dump(mode="json")),
-        )
-        self._source_hash = bundle_hash(self._bundle)
-
 
 def validate_source_path(path: str) -> None:
-    if path not in REQUIRED_PATHS and TASK_PATH.fullmatch(path) is None:
+    if (
+        not path
+        or len(path) > 256
+        or "\\" in path
+        or path.startswith("/")
+        or posixpath.normpath(path) != path
+        or path.startswith("../")
+        or path.endswith(".d.ts")
+        or any(
+            segment in {"", ".", ".."} or SOURCE_SEGMENT_RE.fullmatch(segment) is None
+            for segment in path.split("/")
+        )
+        or (path != "simulate.py" and not path.endswith((".ts", ".tsx")))
+    ):
         raise WorkspaceEditError("Experiment source file path is not allowed")
 
 
 def validate_bundle_structure(bundle: ExperimentSourceBundle) -> None:
-    validate_geometry_snapshot(bundle.geometrySnapshot)
+    if len(bundle.files) > MAX_SOURCE_FILES:
+        raise WorkspaceEditError("Experiment source bundle exceeds 256 files")
+    folded_paths: set[str] = set()
     for path in bundle.files:
         validate_source_path(path)
+        folded = path.casefold()
+        if folded in folded_paths:
+            raise WorkspaceEditError("Experiment source paths differ only by case")
+        folded_paths.add(folded)
     if not REQUIRED_PATHS.issubset(bundle.files):
         raise WorkspaceEditError("Experiment source bundle is missing a required file")
-    if not any(TASK_PATH.fullmatch(path) for path in bundle.files):
-        raise WorkspaceEditError("Experiment source bundle requires at least one Task file")
     total = 0
     for path, source in bundle.files.items():
         try:
@@ -186,62 +190,15 @@ def validate_bundle_structure(bundle: ExperimentSourceBundle) -> None:
         raise WorkspaceEditError("Experiment program sources must not be empty")
 
 
-def validate_geometry_snapshot(snapshot: GeometrySnapshot) -> None:
-    graph_items = (
-        len(snapshot.modules)
-        + len(snapshot.entryImports)
-        + sum(len(module.imports) for module in snapshot.modules)
-    )
-    if graph_items > MAX_GEOMETRY_GRAPH_ITEMS:
-        raise WorkspaceEditError("Geometry snapshot contains too many graph items")
-    graph_source_bytes = 0
-    for module in snapshot.modules:
-        try:
-            source_bytes = len(module.source.encode("utf-8", errors="strict"))
-        except UnicodeEncodeError as error:
-            raise WorkspaceEditError("Geometry snapshot module source must be valid UTF-8") from error
-        if source_bytes > MAX_GEOMETRY_MODULE_SOURCE_BYTES:
-            raise WorkspaceEditError("Geometry snapshot module source exceeds 1 MiB")
-        graph_source_bytes += source_bytes
-    if graph_source_bytes > MAX_GEOMETRY_GRAPH_SOURCE_BYTES:
-        raise WorkspaceEditError("Geometry snapshot graph source exceeds 8 MiB")
-    snapshot_bytes = len(
-        json.dumps(
-            snapshot.model_dump(mode="json"),
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    )
-    if snapshot_bytes > MAX_GEOMETRY_SNAPSHOT_BYTES:
-        raise WorkspaceEditError("Geometry snapshot exceeds 10 MiB")
-
-
 def bundle_hash(bundle: ExperimentSourceBundle) -> str:
-    snapshot = bundle.geometrySnapshot.model_dump(mode="json")
-    snapshot["entryImports"] = sorted(
-        snapshot["entryImports"],
-        key=lambda item: (item["alias"], item["exportName"], item["coordinate"]),
-    )
-    modules = []
-    for module in snapshot["modules"]:
-        module["imports"] = sorted(
-            module["imports"],
-            key=lambda item: (item["alias"], item["exportName"], item["coordinate"]),
-        )
-        modules.append(module)
-    snapshot["modules"] = sorted(modules, key=lambda item: item["coordinate"])
-    canonical_document = {
-        "apiVersion": 8,
-        "formatVersion": 2,
-        "sourceBundle": {
-            "formatVersion": bundle.formatVersion,
-            "files": {path: bundle.files[path] for path in sorted(bundle.files)},
-            "geometrySnapshot": snapshot,
-        },
+    canonical_bundle = {
+        "formatVersion": bundle.formatVersion,
+        "files": {path: bundle.files[path] for path in sorted(bundle.files)},
     }
     canonical = json.dumps(
-        canonical_document,
+        canonical_bundle,
         ensure_ascii=False,
+        sort_keys=True,
         separators=(",", ":"),
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

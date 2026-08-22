@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { releaseRecordedDataAttachments, simulate } from '@/features/cae/client'
 import {
   EXPERIMENT_SIMULATION_PATH,
+  addExperimentSourceFile,
   addExperimentTask,
   applyFrozenMaterialParameters,
   buildMeasurement,
@@ -13,6 +14,7 @@ import {
   inspectDocument,
   normalizeVars,
   normalizeVarsSchema,
+  removeExperimentSourceFile,
   removeExperimentTask,
   unresolvedMeasurementMaterialRoles,
   updateCadSource,
@@ -23,7 +25,6 @@ import {
   type CadScene,
   type EvaluatedExperimentSnapshot,
   type ExperimentSourceDocument,
-  type GeometryDraftOverlay,
   type RecordedData,
   type Vars,
 } from '@/lib/cad'
@@ -73,8 +74,10 @@ export type CadDocumentController = Readonly<{
   evaluatedSnapshot: EvaluatedExperimentSnapshot | null
   evaluationTimeoutMs: EvaluationTimeoutMs
   generateCandidate: () => void
+  handleAddExperimentFile: (path: string, source: string) => void
   handleAddExperimentTask: (taskName: string, source: string) => void
   handleExperimentFileChange: (path: string, source: string) => void
+  handleRemoveExperimentFile: (path: string) => void
   handleRemoveExperimentTask: (taskName: string) => void
   handleRenderEnd: () => void
   handleRenderError: (message: string) => void
@@ -123,7 +126,6 @@ export type UseCadWorkspaceOptions = Readonly<{
   candidateProvenance?: CandidateProvenance
   frozenMaterialSnapshot?: unknown | null
   runtimeEnabled?: boolean
-  geometryDrafts?: GeometryDraftOverlay
   resetKey?: string | number
   sourceOnlyMaterials?: boolean
   onCandidateVarsRegenerated?: (event: CandidateVarsRegeneratedEvent) => void
@@ -145,7 +147,6 @@ export function useCadWorkspace(
     candidateProvenance = 'editable',
     frozenMaterialSnapshot = null,
     runtimeEnabled = true,
-    geometryDrafts,
     resetKey = 'default',
     sourceOnlyMaterials = false,
     onCandidateVarsRegenerated,
@@ -286,7 +287,6 @@ export function useCadWorkspace(
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
         const inspection = await inspectDocument(evaluationDocument, {
           catalog,
-          geometryDrafts,
           signal: abort.signal,
           timeoutMs: evaluationTimeoutRef.current,
         })
@@ -349,7 +349,7 @@ export function useCadWorkspace(
         updateStatus('Evaluating')
         const snapshot = await evaluateDocument(
           { document: evaluationDocument, vars: nextVars },
-          { catalog, geometryDrafts, signal: abort.signal, timeoutMs: evaluationTimeoutRef.current },
+          { catalog, signal: abort.signal, timeoutMs: evaluationTimeoutRef.current },
         )
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
         updateStatus('Resolving Materials')
@@ -471,7 +471,6 @@ export function useCadWorkspace(
     candidateProvenance,
     candidateVarsPending,
     generation,
-    geometryDrafts,
     invalidateSimulation,
     materialsKey,
     resetKey,
@@ -520,9 +519,21 @@ export function useCadWorkspace(
     },
     [experiment, onExperimentChange],
   )
+  const handleAddExperimentFile = useCallback(
+    (path: string, source: string) => {
+      if (experiment && onExperimentChange) onExperimentChange(addExperimentSourceFile(experiment, path, source))
+    },
+    [experiment, onExperimentChange],
+  )
   const handleRemoveExperimentTask = useCallback(
     (taskName: string) => {
       if (experiment && onExperimentChange) onExperimentChange(removeExperimentTask(experiment, taskName))
+    },
+    [experiment, onExperimentChange],
+  )
+  const handleRemoveExperimentFile = useCallback(
+    (path: string) => {
+      if (experiment && onExperimentChange) onExperimentChange(removeExperimentSourceFile(experiment, path))
     },
     [experiment, onExperimentChange],
   )
@@ -548,7 +559,8 @@ export function useCadWorkspace(
     status === 'Ready' &&
     successfulRevision === revision &&
     builtMeasurement &&
-    simulationProgram,
+    simulationProgram &&
+    Object.keys(simulationProgram.tasks).length > 0,
   )
 
   const run = useCallback(() => {
@@ -705,8 +717,10 @@ export function useCadWorkspace(
     evaluatedSnapshot,
     evaluationTimeoutMs,
     generateCandidate,
+    handleAddExperimentFile,
     handleAddExperimentTask,
     handleExperimentFileChange,
+    handleRemoveExperimentFile,
     handleRemoveExperimentTask,
     handleRenderEnd,
     handleRenderError,

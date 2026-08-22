@@ -1,100 +1,89 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
 
 APPLICATION_ID = 0x4341454D  # "CAEM"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 RUNTIME_SLICE_SCHEMA_VERSION = 1
+SEMVER_COMPONENT_MAX = 2_147_483_647
+EXPERIMENT_COORDINATE_PREFIX = "caemble:experiment/"
+
+
+def parse_experiment_version(value: str) -> tuple[int, int, int]:
+    parts = value.split(".")
+    if (
+        len(parts) != 3
+        or any(not part.isascii() or not part.isdigit() or (len(part) > 1 and part.startswith("0")) for part in parts)
+    ):
+        raise ValueError("Experiment version must be a release-only three-part SemVer")
+    values = tuple(int(part) for part in parts)
+    if any(part > SEMVER_COMPONENT_MAX for part in values):
+        raise ValueError(f"Experiment SemVer components must not exceed {SEMVER_COMPONENT_MAX}")
+    return values  # type: ignore[return-value]
+
+
+def parse_experiment_coordinate(value: str) -> tuple[str, str, str, str]:
+    if not value.startswith(EXPERIMENT_COORDINATE_PREFIX):
+        raise ValueError("Experiment coordinate must start with caemble:experiment/")
+    path, separator, version = value[len(EXPERIMENT_COORDINATE_PREFIX) :].rpartition("@")
+    parts = path.split("/")
+    if not separator or len(parts) != 3 or any(not part for part in parts):
+        raise ValueError("Experiment coordinate must use namespace/repository/key@version")
+    parse_experiment_version(version)
+    return parts[0], parts[1], parts[2], version
 
 CATALOG_ENTITY_SCHEMA_SQL = r"""
-CREATE TABLE geometry_repositories (
-    slug TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    description TEXT NOT NULL,
-    ordinal INTEGER NOT NULL UNIQUE CHECK (ordinal >= 0)
-) STRICT;
-
-CREATE TABLE geometries (
-    key TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    description TEXT NOT NULL,
-    cad_api_version INTEGER NOT NULL CHECK (cad_api_version = 8),
-    module_format_version INTEGER NOT NULL CHECK (module_format_version = 4),
-    length_unit TEXT NOT NULL,
-    export_name TEXT NOT NULL,
-    source TEXT NOT NULL,
-    source_hash TEXT NOT NULL CHECK (length(source_hash) = 64),
-    repository_slug TEXT NOT NULL REFERENCES geometry_repositories(slug)
-) STRICT;
-
-CREATE TABLE geometry_concepts (
-    geometry_key TEXT NOT NULL REFERENCES geometries(key) ON DELETE CASCADE,
-    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
-    concept TEXT NOT NULL,
-    PRIMARY KEY (geometry_key, ordinal),
-    UNIQUE (geometry_key, concept)
-) STRICT;
-
-CREATE TABLE geometry_material_roles (
-    geometry_key TEXT NOT NULL REFERENCES geometries(key) ON DELETE CASCADE,
-    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
-    role TEXT NOT NULL,
-    description TEXT NOT NULL,
-    PRIMARY KEY (geometry_key, role),
-    UNIQUE (geometry_key, ordinal)
-) STRICT;
-
-CREATE TABLE geometry_elements (
-    geometry_key TEXT NOT NULL REFERENCES geometries(key) ON DELETE CASCADE,
-    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
-    element TEXT NOT NULL,
-    PRIMARY KEY (geometry_key, element),
-    UNIQUE (geometry_key, ordinal)
-) STRICT;
-
-CREATE INDEX geometry_elements_element_idx ON geometry_elements(element, geometry_key);
-
 CREATE TABLE experiments (
-    key TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY,
+    key TEXT NOT NULL,
+    namespace TEXT NOT NULL,
+    repository_slug TEXT NOT NULL,
+    version_major INTEGER NOT NULL CHECK (version_major BETWEEN 0 AND 2147483647),
+    version_minor INTEGER NOT NULL CHECK (version_minor BETWEEN 0 AND 2147483647),
+    version_patch INTEGER NOT NULL CHECK (version_patch BETWEEN 0 AND 2147483647),
     title TEXT NOT NULL,
     description TEXT NOT NULL,
     cad_api_version INTEGER NOT NULL CHECK (cad_api_version = 8),
     source_format_version INTEGER NOT NULL CHECK (source_format_version = 2),
-    bundle_format_version INTEGER NOT NULL CHECK (bundle_format_version = 5),
-    geometry_snapshot_json TEXT NOT NULL CHECK (json_valid(geometry_snapshot_json)),
+    bundle_format_version INTEGER NOT NULL CHECK (bundle_format_version = 6),
     verification_json TEXT NOT NULL CHECK (json_valid(verification_json)),
-    bundle_hash TEXT NOT NULL CHECK (length(bundle_hash) = 64)
+    bundle_hash TEXT NOT NULL CHECK (length(bundle_hash) = 64),
+    UNIQUE (namespace, repository_slug, key, version_major, version_minor, version_patch)
 ) STRICT;
 
 CREATE TABLE experiment_files (
-    experiment_key TEXT NOT NULL REFERENCES experiments(key) ON DELETE CASCADE,
+    experiment_id INTEGER NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
     ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
     path TEXT NOT NULL,
     source TEXT NOT NULL,
-    PRIMARY KEY (experiment_key, path),
-    UNIQUE (experiment_key, ordinal)
+    PRIMARY KEY (experiment_id, path),
+    UNIQUE (experiment_id, ordinal)
 ) STRICT;
 
 CREATE TABLE experiment_concepts (
-    experiment_key TEXT NOT NULL REFERENCES experiments(key) ON DELETE CASCADE,
+    experiment_id INTEGER NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
     ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
     concept TEXT NOT NULL,
-    PRIMARY KEY (experiment_key, ordinal),
-    UNIQUE (experiment_key, concept)
+    PRIMARY KEY (experiment_id, ordinal),
+    UNIQUE (experiment_id, concept)
 ) STRICT;
 
 CREATE TABLE experiment_solvers (
-    experiment_key TEXT NOT NULL REFERENCES experiments(key) ON DELETE CASCADE,
+    experiment_id INTEGER NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
     ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
     solver_name TEXT NOT NULL,
     solver_version TEXT NOT NULL,
-    PRIMARY KEY (experiment_key, solver_name, solver_version),
-    UNIQUE (experiment_key, ordinal),
+    PRIMARY KEY (experiment_id, solver_name, solver_version),
+    UNIQUE (experiment_id, ordinal),
     FOREIGN KEY (solver_name, solver_version) REFERENCES solvers(name, version)
 ) STRICT;
 
 CREATE INDEX experiment_solvers_solver_idx
-ON experiment_solvers(solver_name, solver_version, experiment_key);
+ON experiment_solvers(solver_name, solver_version, experiment_id);
+
+CREATE INDEX experiments_key_idx ON experiments(key);
 """
 
 SCHEMA_SQL = r"""
@@ -334,30 +323,145 @@ def create_schema(connection: sqlite3.Connection) -> None:
 def upgrade_schema(connection: sqlite3.Connection) -> None:
     application_id = connection.execute("PRAGMA application_id").fetchone()[0]
     user_version = connection.execute("PRAGMA user_version").fetchone()[0]
-    if application_id != APPLICATION_ID or user_version not in (1, 2):
+    if application_id != APPLICATION_ID or user_version != 3:
         raise ValueError(
-            f"Only a CAEM catalog schema v1 or v2 database can be upgraded: "
+            f"Only a CAEM catalog schema v3 database can be upgraded: "
             f"application_id={application_id}, user_version={user_version}"
         )
-    if user_version == 1:
-        connection.executescript(CATALOG_ENTITY_SCHEMA_SQL)
-    else:
-        connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS geometry_repositories (
-                slug TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                description TEXT NOT NULL,
-                ordinal INTEGER NOT NULL UNIQUE CHECK (ordinal >= 0)
-            ) STRICT;
-            INSERT OR IGNORE INTO geometry_repositories
-                VALUES ('general', 'General', 'General Geometry examples.', 0);
-            """
-        )
-        columns = {row[1] for row in connection.execute("PRAGMA table_info(geometries)")}
-        if "repository_slug" not in columns:
-            connection.execute(
-                "ALTER TABLE geometries ADD COLUMN repository_slug TEXT REFERENCES geometry_repositories(slug)"
+    connection.row_factory = sqlite3.Row
+    experiments = []
+    for row in connection.execute("SELECT * FROM experiments ORDER BY key"):
+        files = {
+            item["path"]: item["source"]
+            for item in connection.execute(
+                "SELECT path, source FROM experiment_files WHERE experiment_key = ? ORDER BY ordinal", (row["key"],)
             )
-        connection.execute("UPDATE geometries SET repository_slug = 'general' WHERE repository_slug IS NULL")
+        }
+        concepts = [
+            item["concept"]
+            for item in connection.execute(
+                "SELECT concept FROM experiment_concepts WHERE experiment_key = ? ORDER BY ordinal", (row["key"],)
+            )
+        ]
+        solvers = [
+            (item["solver_name"], item["solver_version"])
+            for item in connection.execute(
+                "SELECT solver_name, solver_version FROM experiment_solvers WHERE experiment_key = ? ORDER BY ordinal",
+                (row["key"],),
+            )
+        ]
+        experiments.append(
+            {
+                "key": row["key"],
+                "namespace": "caemble",
+                "repository": "verified",
+                "title": row["title"],
+                "description": row["description"],
+                "cad_api_version": row["cad_api_version"],
+                "source_format_version": row["source_format_version"],
+                "verification": row["verification_json"],
+                "files": files,
+                "concepts": concepts,
+                "solvers": solvers,
+            }
+        )
+    for row in connection.execute("SELECT * FROM geometries ORDER BY key"):
+        concepts = [
+            item["concept"]
+            for item in connection.execute(
+                "SELECT concept FROM geometry_concepts WHERE geometry_key = ? ORDER BY ordinal", (row["key"],)
+            )
+        ]
+        experiment_source = (
+            "import { experiment } from '@caemble/core'\n"
+            f"import {{ {row['export_name']} }} from './geometry'\n\n"
+            "export default experiment({\n"
+            f"  lengthUnit: {json.dumps(row['length_unit'])},\n"
+            "  varsSchema: {},\n"
+            f"  geometry: () => <{row['export_name']} id=\"catalog-preview\" />,\n"
+            "  recordedData: {},\n"
+            "})\n"
+        )
+        experiments.append(
+            {
+                "key": row["key"],
+                "namespace": "caemble",
+                "repository": row["repository_slug"],
+                "title": row["title"],
+                "description": row["description"],
+                "cad_api_version": row["cad_api_version"],
+                "source_format_version": 2,
+                "verification": json.dumps(
+                    {"kernelTasks": [], "recordedData": [], "expectations": []},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                "files": {
+                    "experiment.tsx": experiment_source,
+                    "geometry.tsx": row["source"],
+                    "material.tsx": "export {}\n",
+                    "simulate.py": "async def simulate(*, sim, tasks, vars):\n    return None\n",
+                },
+                "concepts": concepts,
+                "solvers": [],
+            }
+        )
+    connection.executescript(
+        """
+        DROP TABLE experiment_solvers;
+        DROP TABLE experiment_concepts;
+        DROP TABLE experiment_files;
+        DROP TABLE experiments;
+        DROP TABLE geometry_elements;
+        DROP TABLE geometry_material_roles;
+        DROP TABLE geometry_concepts;
+        DROP TABLE geometries;
+        DROP TABLE geometry_repositories;
+        """
+    )
+    connection.executescript(CATALOG_ENTITY_SCHEMA_SQL)
+    for experiment in experiments:
+        bundle = {"formatVersion": 6, "files": experiment["files"]}
+        cursor = connection.execute(
+            """INSERT INTO experiments(
+                   key, namespace, repository_slug, version_major, version_minor, version_patch,
+                   title, description, cad_api_version, source_format_version, bundle_format_version,
+                   verification_json, bundle_hash
+               ) VALUES (?, ?, ?, 1, 0, 0, ?, ?, ?, ?, 6, ?, ?)""",
+            (
+                experiment["key"],
+                experiment["namespace"],
+                experiment["repository"],
+                experiment["title"],
+                experiment["description"],
+                experiment["cad_api_version"],
+                experiment["source_format_version"],
+                experiment["verification"],
+                hashlib.sha256(
+                    json.dumps(bundle, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                ).hexdigest(),
+            ),
+        )
+        experiment_id = cursor.lastrowid
+        connection.executemany(
+            "INSERT INTO experiment_files(experiment_id, ordinal, path, source) VALUES (?, ?, ?, ?)",
+            [
+                (experiment_id, ordinal, path, source)
+                for ordinal, (path, source) in enumerate(sorted(experiment["files"].items()))
+            ],
+        )
+        connection.executemany(
+            "INSERT INTO experiment_concepts(experiment_id, ordinal, concept) VALUES (?, ?, ?)",
+            [(experiment_id, ordinal, concept) for ordinal, concept in enumerate(experiment["concepts"])],
+        )
+        connection.executemany(
+            """INSERT INTO experiment_solvers(
+                   experiment_id, ordinal, solver_name, solver_version
+               ) VALUES (?, ?, ?, ?)""",
+            [
+                (experiment_id, ordinal, name, version)
+                for ordinal, (name, version) in enumerate(experiment["solvers"])
+            ],
+        )
     connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

@@ -21,7 +21,7 @@ if [[ ! -d "$APP_DIR/.git" ]]; then
     exit 1
 fi
 
-echo "[1/10] Pull latest code and UI artifact"
+echo "[1/8] Pull latest code and UI artifact"
 cd "$APP_DIR"
 git pull --ff-only
 
@@ -47,68 +47,20 @@ if [[ ! -f "$API_DIR/.env" ]]; then
     exit 1
 fi
 
-echo "[2/10] Install API dependencies"
+echo "[2/8] Install API dependencies"
 cd "$API_DIR"
 poetry install --only main
 
-echo "[3/10] Validate the versioned SQLite catalog before the maintenance window"
-poetry run python - <<'PY'
-from caemble_catalog import catalog_path, open_catalog
-from caemble_catalog.admin import validate_database
-
-
-validate_database(catalog_path())
-with open_catalog() as catalog:
-    metadata = catalog.meta()
-    print(
-        "Catalog validated: "
-        f"revision={metadata['catalogRevision']} "
-        f"quantityKinds={metadata['quantityKindCount']} "
-        f"materials={metadata['materialParameterCount']} "
-        f"solvers={metadata['solverCount']}"
-    )
-PY
-
-echo "[4/10] Verify that the Geometry migration can start safely"
-poetry run python - <<'PY'
-import asyncio
-import sys
-
-from sqlalchemy import text
-
-sys.path.insert(0, "app")
-from db import engine  # noqa: E402
-
-
-async def verify_legacy_geometry_data() -> None:
-    try:
-        async with engine.connect() as connection:
-            legacy_table_exists = await connection.scalar(
-                text("SELECT to_regclass('geometries') IS NOT NULL")
-            )
-            if not legacy_table_exists:
-                return
-            legacy_count = await connection.scalar(text("SELECT count(*) FROM geometries"))
-            if legacy_count:
-                raise SystemExit(
-                    "Deployment stopped before the maintenance window: geometries contains "
-                    f"{legacy_count} legacy row(s). Export them and complete the manual "
-                    "repository/package/version mapping before retrying."
-                )
-    finally:
-        await engine.dispose()
-
-
-asyncio.run(verify_legacy_geometry_data())
-PY
+echo "[3/8] Validate the versioned SQLite catalog"
+poetry run catalogctl --database ../catalog/caemble_catalog/catalog.sqlite3 validate
 
 api_service_installed=false
 if sudo systemctl cat "$API_SERVICE" >/dev/null 2>&1; then
     api_service_installed=true
-    echo "[5/10] Stop API service for the schema maintenance window"
+    echo "[4/8] Stop API service for database migration"
     sudo systemctl stop "$API_SERVICE"
 else
-    echo "[5/10] API service is not installed yet; no maintenance stop is required"
+    echo "[4/8] API service is not installed yet; no migration stop is required"
 fi
 
 migration_succeeded=false
@@ -127,11 +79,11 @@ restart_api_on_failure() {
 }
 trap restart_api_on_failure EXIT
 
-echo "[6/10] Apply database migrations"
+echo "[5/8] Apply database migrations"
 poetry run alembic upgrade head
 migration_succeeded=true
 
-echo "[7/10] Publish an atomic static release"
+echo "[6/8] Publish an atomic static release"
 release_name="$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "$APP_DIR" rev-parse --short HEAD)"
 releases_dir="$WEB_ROOT/releases"
 release_dir="$releases_dir/$release_name"
@@ -147,14 +99,14 @@ sudo find "$release_dir" -type f -exec chmod 644 {} \;
 sudo ln -s "$release_dir" "$next_link"
 sudo mv -Tf "$next_link" "$WEB_ROOT/current"
 
-echo "[8/10] Start API service"
+echo "[7/8] Start API service"
 if [[ "$api_service_installed" == true ]]; then
     sudo systemctl restart "$API_SERVICE"
 else
     echo "API service is not installed yet; skipping restart: $API_SERVICE"
 fi
 
-echo "[9/10] Install, validate and reload Nginx"
+echo "[8/8] Install, validate and reload Nginx"
 if sudo test -f "$NGINX_CONFIG_TARGET"; then
     sudo install -m 644 "$NGINX_CONFIG_SOURCE" "$NGINX_CONFIG_TARGET"
 else
@@ -163,6 +115,5 @@ fi
 sudo nginx -t
 sudo systemctl reload nginx
 
-echo "[10/10] Keep the tracked UI artifact for the next git pull"
 echo "Deployment complete: $release_dir"
 trap - EXIT

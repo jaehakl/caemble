@@ -16,7 +16,7 @@ const authoringManifestPath = path.join(root, 'src/lib/cad/api/authoring-manifes
 const elementManifest = JSON.parse(await readFile(elementManifestPath, 'utf8'))
 const authoringManifest = JSON.parse(await readFile(authoringManifestPath, 'utf8'))
 
-function catalogQuery(resource, key) {
+function catalogQuery(resource, key, ...identityArguments) {
   const catalogRoot = path.resolve(root, '../catalog')
   const executable = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3')
   const output = execFileSync(
@@ -29,6 +29,7 @@ function catalogQuery(resource, key) {
       'query',
       resource,
       key,
+      ...identityArguments,
     ],
     {
       cwd: catalogRoot,
@@ -494,12 +495,24 @@ const [authoringReferenceModule, authoringContractModule] = await Promise.all([
   loadBundledModule(path.join(root, 'src/lib/cad/authoringReference.ts')),
   loadBundledModule(path.join(root, 'src/lib/cad/elements/authoringContract.ts')),
 ])
-const geometrySkeleton = catalogQuery('geometry', 'geometry-authoring-skeleton')
+const geometrySkeletonExperiment = catalogQuery(
+  'experiment',
+  'geometry-authoring-skeleton',
+  '1.0.0',
+  '--namespace',
+  'caemble',
+  '--repository',
+  'getting-started',
+)
+const geometrySkeleton = geometrySkeletonExperiment.sourceBundle?.files?.['geometry.tsx']
+if (typeof geometrySkeleton !== 'string') {
+  throw new Error('The Geometry Authoring Skeleton Experiment must contain geometry.tsx.')
+}
 const authoringReferencePayload = authoringReferenceModule.buildCadAuthoringReference({
   authoringContract: authoringContractModule.cadAuthoringContract,
   declarationFingerprint,
   elements: elementCatalog,
-  geometrySkeleton: geometrySkeleton.source,
+  geometrySkeleton,
 })
 const authoringReferenceHash = sha256(JSON.stringify(authoringReferencePayload))
 const aiAgentPromptToolVersion = `caemble-ai-agent-v4-${authoringReferenceHash.slice(0, 12)}`

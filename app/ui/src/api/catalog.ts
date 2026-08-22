@@ -3,9 +3,6 @@ import {
   catalogMetaSchema,
   experimentDetailSchema,
   experimentListItemSchema,
-  geometryDetailSchema,
-  geometryListItemSchema,
-  geometryRepositorySchema,
   listSchema,
   materialModelSchema,
   materialParameterDetailSchema,
@@ -20,6 +17,14 @@ import {
   type ListQuery,
 } from '@/contracts/catalog'
 import { request } from './http'
+
+export type CatalogExperimentIdentity = Readonly<{
+  key: string
+  namespace: string
+  repository: string
+  version: string
+  coordinate: string
+}>
 
 function catalogUrl(path: string, query: ListQuery = {}) {
   const params = new URLSearchParams()
@@ -37,9 +42,6 @@ export type {
   CatalogMeta,
   CatalogExperimentDetail,
   CatalogExperimentListItem,
-  CatalogGeometryDetail,
-  CatalogGeometryListItem,
-  CatalogGeometryRepository,
   CatalogQuantityKind,
   CatalogQuantityKindDetail,
   CatalogRuntimeSlice,
@@ -59,11 +61,9 @@ export const catalogQueryKeys = {
   materialModels: (query: ListQuery) => ['catalog', 'material-models', query] as const,
   solvers: (query: ListQuery) => ['catalog', 'solvers', query] as const,
   solver: (name: string, version: string) => ['catalog', 'solver', name, version] as const,
-  geometries: (query: ListQuery) => ['catalog', 'geometries', query] as const,
-  geometryRepositories: ['catalog', 'geometry-repositories'] as const,
-  geometry: (key: string) => ['catalog', 'geometry', key] as const,
   experiments: (query: ListQuery) => ['catalog', 'experiments', query] as const,
-  experiment: (key: string) => ['catalog', 'experiment', key] as const,
+  experiment: (identity: string | CatalogExperimentIdentity) =>
+    ['catalog', 'experiment', typeof identity === 'string' ? identity : identity.coordinate] as const,
   search: (query: string) => ['catalog', 'search', query] as const,
 } as const
 
@@ -105,23 +105,28 @@ export const catalogApi = {
       await request<unknown>('get', catalogUrl(`/solvers/${encodeURIComponent(name)}/${encodeURIComponent(version)}`)),
     )
   },
-  async listGeometries(query: ListQuery = {}) {
-    return listSchema(geometryListItemSchema).parse(await request<unknown>('get', catalogUrl('/geometries', query)))
-  },
-  async listGeometryRepositories() {
-    return z.array(geometryRepositorySchema).parse(await request<unknown>('get', catalogUrl('/geometry-repositories')))
-  },
-  async getGeometry(key: string) {
-    return geometryDetailSchema.parse(
-      await request<unknown>('get', catalogUrl(`/geometries/${encodeURIComponent(key)}`)),
-    )
-  },
   async listExperiments(query: ListQuery = {}) {
     return listSchema(experimentListItemSchema).parse(await request<unknown>('get', catalogUrl('/experiments', query)))
   },
-  async getExperiment(key: string) {
+  async getExperiment(identity: string | CatalogExperimentIdentity) {
+    let key: string
+    let query: ListQuery = {}
+    if (typeof identity === 'string') {
+      const coordinate = identity.match(
+        /^caemble:experiment\/([^/]+)\/([^/]+)\/([^/@]+)@((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))$/u,
+      )
+      if (coordinate) {
+        key = coordinate[3]
+        query = { namespace: coordinate[1], repository: coordinate[2], version: coordinate[4] }
+      } else {
+        key = identity
+      }
+    } else {
+      key = identity.key
+      query = { namespace: identity.namespace, repository: identity.repository, version: identity.version }
+    }
     return experimentDetailSchema.parse(
-      await request<unknown>('get', catalogUrl(`/experiments/${encodeURIComponent(key)}`)),
+      await request<unknown>('get', catalogUrl(`/experiments/${encodeURIComponent(key)}`, query)),
     )
   },
   async search(q: string, limit = 50) {

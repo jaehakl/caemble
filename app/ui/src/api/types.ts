@@ -3,8 +3,6 @@ import type { dbTables, DbTableRecord } from './api'
 export type {
   DbTableName,
   DbTableRecord,
-  CodeEntityHistoryItem,
-  CodeEntityHistoryResponse,
   AccessKeyRecord,
   AccessKeyScope,
   GetListRequest,
@@ -15,7 +13,7 @@ export type {
   LauncherRuntime,
   MeasurementCreateRequest,
   MeasurementRecordRequest,
-  SaveCodeEntityResponse,
+  SaveExperimentResponse,
   SaveExperimentRequest,
   UpsertResponse,
 } from './api'
@@ -25,9 +23,6 @@ export type MaterialRecord = DbTableRecord<'Material'>
 export type MaterialNameRecord = DbTableRecord<'MaterialName'>
 export type MaterialParameterRecord = DbTableRecord<'MaterialParameter'>
 export type MaterialParameterQualifierRecord = DbTableRecord<'MaterialParameterQualifier'>
-export type GeometryRepositoryRecord = DbTableRecord<'GeometryRepository'>
-export type GeometryPackageRecord = DbTableRecord<'GeometryPackage'>
-export type GeometryVersionRecord = DbTableRecord<'GeometryVersion'>
 export type ExperimentRecord = DbTableRecord<'Experiment'>
 export type MeasurementRecord = DbTableRecord<'Measurement'>
 export type RecordedDataRecord = DbTableRecord<'RecordedData'>

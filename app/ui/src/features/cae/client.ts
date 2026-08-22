@@ -33,10 +33,7 @@ type NextPayload = CaeRecordPayload | CaeCompletePayload | CaeFailedPayload
 
 export { CaeSimulationError } from './errors'
 
-export function simulate(
-  measurement: BuiltMeasurement,
-  options: CaeSimulationOptions = {},
-): Promise<RecordedData> {
+export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOptions = {}): Promise<RecordedData> {
   let cancelled = options.signal?.aborted ?? false
   let jobId: string | null = null
   let session: JobSession | null = null
@@ -63,13 +60,10 @@ export function simulate(
   const promise = (async () => {
     if (cancelled) throw abortError()
     const manifest = measurement.experiment.simulationProgram
-    if (!manifest || manifest.formatVersion !== 5) {
+    if (!manifest || manifest.formatVersion !== 5 || Object.keys(manifest.tasks).length === 0) {
       throw new CaeSimulationError('program_required', 'Python simulationProgram v5가 필요합니다.')
     }
-    const request = serializeCaeRequest(
-      measurement,
-      sourceCatalogSolverContracts(measurement.experiment.sourceHash),
-    )
+    const request = serializeCaeRequest(measurement, sourceCatalogSolverContracts(measurement.experiment.sourceHash))
     const requestAttachments = request.attachments.map(({ bytes, ...attachment }) => ({
       ...attachment,
       blob: new Blob([bytes.slice().buffer as ArrayBuffer], { type: attachment.mimeType }),

@@ -24,7 +24,7 @@ measurement, catalog, or wire boundary changes:
 
 ```powershell
 Push-Location ../../ui
-npm run export:cae-fixture -- --example dc-uniform-bar --out ../slaves/cae/tests/fixtures/dc-uniform-bar
+npm run export:cae-fixture -- --example caemble:experiment/caemble/verified/dc-uniform-bar@1.0.0 --out ../slaves/cae/tests/fixtures/dc-uniform-bar
 Pop-Location
 
 poetry run pytest -q tests/test_fixture_e2e.py -k dc_uniform_bar

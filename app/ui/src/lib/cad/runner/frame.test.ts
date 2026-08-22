@@ -38,6 +38,20 @@ const compiled: CompiledCadDocument = {
       code: '',
       sourceHash,
     },
+    'geometry.tsx': {
+      apiVersion: 8,
+      compilerVersion: CAD_COMPILER_VERSION,
+      entryFile: 'geometry.tsx',
+      code: '',
+      sourceHash,
+    },
+    'material.tsx': {
+      apiVersion: 8,
+      compilerVersion: CAD_COMPILER_VERSION,
+      entryFile: 'material.tsx',
+      code: '',
+      sourceHash,
+    },
   },
 }
 const inspection: RunnerOperationEnvelope = {

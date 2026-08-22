@@ -1,7 +1,6 @@
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
-import { CAD_COMPILER_VERSION, type CompiledCadSource, type CompiledGeometryModule } from '../compiler/types'
-import type { GeometryCoordinate } from '../source/geometrySnapshot'
+import { CAD_COMPILER_VERSION, type CompiledCadSource } from '../compiler/types'
 import { runtimeDiagnostic } from './runtimeDiagnostics'
 
 const sourceHash = 'c'.repeat(64)
@@ -61,24 +60,20 @@ fail()
     expect(runtimeDiagnostic(error, source)).toBeUndefined()
   })
 
-  it('attributes encoded Geometry module frames to their exact coordinate', () => {
-    const coordinate = 'caemble:geometry/jlee/demo/block@1.0.0' as GeometryCoordinate
-    const source: CompiledGeometryModule = {
+  it('attributes helper module frames to their exact bundle path', () => {
+    const path = 'shared/block.tsx'
+    const source: CompiledCadSource = {
       apiVersion: 8,
       compilerVersion: CAD_COMPILER_VERSION,
-      entryFile: coordinate,
+      entryFile: path,
       code: '',
       sourceHash,
-      geometrySourceHash: 'd'.repeat(64),
-      moduleHash: 'e'.repeat(64),
-      exports: ['Block'],
-      imports: [],
     }
     const error = new Error('geometry boom')
-    error.stack = `Error: geometry boom\n    at caemble://${sourceHash}/geometry/${encodeURIComponent(coordinate)}:5:3`
+    error.stack = `Error: geometry boom\n    at caemble://${sourceHash}/${path}:5:3`
 
     expect(runtimeDiagnostic(error, source)).toMatchObject({
-      file: coordinate,
+      file: path,
       message: 'geometry boom',
       range: { startLineNumber: 3, startColumn: 3 },
     })

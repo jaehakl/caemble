@@ -76,7 +76,7 @@ export type AiAgentApplyRequest = Readonly<{
   baseHash: string
   sourceHash: string
   stagedRevision: number
-  geometryContextVersion: string
+  experimentContextVersion: string
   provenance: readonly AiAgentProvenance[]
 }>
 
@@ -100,7 +100,7 @@ export type AiAgentRunStart = Readonly<{
     experimentId: number | null
     document: AiAgentSourceDocument
     baseHash: string
-    geometryContextVersion: string
+    experimentContextVersion: string
     activeFile: string | null
     workspaceSession: number
   }>
@@ -152,7 +152,7 @@ export type AiAgentServerEvent =
         baseHash: string
         sourceHash: string | null
         stagedRevision: number
-        geometryContextVersion: string
+        experimentContextVersion: string
         sessionContextEnvelope: string | null
         contextUsage: AiAgentContextUsage | null
         provenance: readonly AiAgentProvenance[]
@@ -449,7 +449,7 @@ function parseAiAgentServerEvent(value: unknown): AiAgentServerEvent | null {
       baseHash: stringValue(record.baseHash, record.base_hash) || '',
       sourceHash: stringValue(record.sourceHash, record.source_hash) || null,
       stagedRevision,
-      geometryContextVersion: stringValue(record.geometryContextVersion, record.geometry_context_version) || '',
+      experimentContextVersion: stringValue(record.experimentContextVersion, record.experiment_context_version) || '',
       sessionContextEnvelope: stringValue(record.sessionContextEnvelope, record.session_context_envelope) || null,
       contextUsage: normalizeContextUsage(record.contextUsage ?? record.context_usage),
       provenance: normalizeProvenance(record.provenance),
