@@ -108,7 +108,7 @@ beforeEach(() => vi.clearAllMocks())
 describe('useCaeWorkbenchState', () => {
   it('stores a files-only v16 draft and exposes Experiment coordinate state', async () => {
     const { result } = renderHook(
-      () => useCaeWorkbenchState({ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never, true),
+      () => useCaeWorkbenchState({ id: 'user-1', roles: ['user'], experiment_namespaces: ['jlee'] } as never, true),
       { wrapper: wrapper() },
     )
 
@@ -146,6 +146,7 @@ describe('useCaeWorkbenchState', () => {
   it('allows metadata overwrite on a source-locked Version but blocks changed source', async () => {
     const locked = { ...savedExperiment(7), sourceLocked: true }
     const values = {
+      namespace: 'jlee',
       name: 'Renamed Experiment',
       description: 'Metadata only',
       repository: 'examples',
@@ -166,7 +167,7 @@ describe('useCaeWorkbenchState', () => {
       sourceBundle: starterExperimentSourceBundle,
     })
     const { result } = renderHook(
-      () => useCaeWorkbenchState({ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never, true),
+      () => useCaeWorkbenchState({ id: 'user-1', roles: ['user'], experiment_namespaces: ['jlee'] } as never, true),
       { wrapper: wrapper() },
     )
 
@@ -210,7 +211,7 @@ describe('useCaeWorkbenchState', () => {
     })
     mocks.experimentList.mockReturnValueOnce(old).mockResolvedValueOnce({ total: 1, items: [savedExperiment(2)] })
     const { result } = renderHook(
-      () => useCaeWorkbenchState({ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never, true),
+      () => useCaeWorkbenchState({ id: 'user-1', roles: ['user'], experiment_namespaces: ['jlee'] } as never, true),
       { wrapper: wrapper() },
     )
 
@@ -254,7 +255,7 @@ describe('useCaeWorkbenchState', () => {
       }),
     )
     const { result } = renderHook(
-      () => useCaeWorkbenchState({ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never, true),
+      () => useCaeWorkbenchState({ id: 'user-1', roles: ['user'], experiment_namespaces: ['jlee'] } as never, true),
       { wrapper: wrapper() },
     )
 
@@ -263,6 +264,7 @@ describe('useCaeWorkbenchState', () => {
     act(() => {
       savePromise = result.current.saveExperiment(
         {
+          namespace: 'jlee',
           name: 'In-flight',
           description: '',
           repository: 'examples',
@@ -290,7 +292,7 @@ describe('useCaeWorkbenchState', () => {
       'geometry.tsx': 'export const Changed = () => <sphere radius={2} />',
     })
     const { result } = renderHook(
-      () => useCaeWorkbenchState({ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never, true),
+      () => useCaeWorkbenchState({ id: 'user-1', roles: ['user'], experiment_namespaces: ['jlee'] } as never, true),
       { wrapper: wrapper() },
     )
 

@@ -37,7 +37,7 @@ const authenticatedUserSchema = z.object({
   roles: z.array(z.string()),
   created_at: z.string().nullable().optional(),
   updated_at: z.string().nullable().optional(),
-  experiment_namespace: z.string().nullable(),
+  experiment_namespaces: z.array(z.string()),
 })
 const accessKeyScopeSchema = z.enum(['client', 'launcher'])
 const runtimeCrudListRequestSchema = z.object({
@@ -133,6 +133,9 @@ export const experimentSourceBundleSchema = z
   .strict()
 const experimentHashSchema = z.string().regex(/^[0-9a-f]{64}$/)
 const experimentMetadataSchema = z.object({
+  namespace: z.string().trim().min(1),
+  repository: z.string().trim().min(1),
+  key: z.string().trim().min(1),
   name: z.string().trim().min(1),
   description: z.string().trim().nullable(),
   sourceBundle: experimentSourceBundleSchema,
@@ -141,8 +144,6 @@ const experimentMetadataSchema = z.object({
 const saveExperimentRequestSchema = z.discriminatedUnion('mode', [
   experimentMetadataSchema.extend({
     mode: z.literal('create'),
-    repository: z.string().trim().min(1),
-    key: z.string().trim().min(1),
     initialVersion: z.literal('0.1.0').optional(),
   }),
   experimentMetadataSchema.extend({
@@ -295,7 +296,7 @@ export const dbTables = {
       roles: z.array(z.string()),
       created_at: z.string().nullable().optional(),
       updated_at: z.string().nullable().optional(),
-      experiment_namespace: z.string().nullable(),
+      experiment_namespaces: z.array(z.string()),
     }),
     async fetchMe() {
       return authenticatedUserSchema.parse(await request<unknown>('get', '/auth/me'))
@@ -671,16 +672,6 @@ export function startGoogleLogin(returnTo?: string) {
 
 export async function logout() {
   return logoutResponseSchema.parse(await request<unknown>('post', '/auth/logout'))
-}
-
-export const experimentApi = {
-  async setNamespace(namespace: string) {
-    return authenticatedUserSchema.parse(
-      await request<unknown>('put', '/auth/experiment-namespace', {
-        namespace: z.string().trim().min(1).parse(namespace),
-      }),
-    )
-  },
 }
 
 export function getListRequest(

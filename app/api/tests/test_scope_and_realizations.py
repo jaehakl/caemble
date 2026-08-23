@@ -5,7 +5,7 @@ import pytest
 
 from db import DesignerModel, Experiment, PredictorModel
 from settings import settings
-from tests.helpers import auth_headers, create_user, experiment_source_bundle
+from tests.helpers import auth_headers, create_experiment_namespace, create_user, experiment_source_bundle
 
 pytestmark = pytest.mark.slow
 
@@ -28,10 +28,10 @@ def list_payload(scope="visible"):
     }
 
 
-def experiment_row(user, name: str, key: str, bundle: dict) -> Experiment:
+def experiment_row(user, namespace: str, name: str, key: str, bundle: dict) -> Experiment:
     return Experiment(
         user_id=user.id,
-        namespace=user.experiment_namespace,
+        namespace=namespace,
         repository_slug="tests",
         experiment_key=key,
         version_major=0,
@@ -48,12 +48,14 @@ async def test_experiment_visibility_and_removed_split_endpoints(client, db_sess
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
     other = await create_user(db_session)
+    owner_namespace = await create_experiment_namespace(db_session, owner)
+    other_namespace = await create_experiment_namespace(db_session, other)
     mine_bundle = experiment_source_bundle("mine")
     other_bundle = experiment_source_bundle("other")
     db_session.add_all(
         [
-            experiment_row(owner, "Mine", "mine", mine_bundle),
-            experiment_row(other, "Other", "other", other_bundle),
+            experiment_row(owner, owner_namespace, "Mine", "mine", mine_bundle),
+            experiment_row(other, other_namespace, "Other", "other", other_bundle),
         ]
     )
     await db_session.commit()
@@ -73,12 +75,14 @@ async def test_model_artifacts_are_scoped_only_by_experiment(client, db_session,
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
     other = await create_user(db_session)
+    owner_namespace = await create_experiment_namespace(db_session, owner)
+    other_namespace = await create_experiment_namespace(db_session, other)
     mine_bundle = experiment_source_bundle("mine")
     target_bundle = experiment_source_bundle("target")
     other_bundle = experiment_source_bundle("other")
-    mine = experiment_row(owner, "Mine", "mine-model", mine_bundle)
-    target = experiment_row(owner, "Target", "target-model", target_bundle)
-    hidden = experiment_row(other, "Hidden", "hidden-model", other_bundle)
+    mine = experiment_row(owner, owner_namespace, "Mine", "mine-model", mine_bundle)
+    target = experiment_row(owner, owner_namespace, "Target", "target-model", target_bundle)
+    hidden = experiment_row(other, other_namespace, "Hidden", "hidden-model", other_bundle)
     db_session.add_all([mine, target, hidden])
     await db_session.commit()
     headers = auth_headers(owner)

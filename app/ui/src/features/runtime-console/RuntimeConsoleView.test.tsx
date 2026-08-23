@@ -18,7 +18,7 @@ describe('RuntimeConsoleView', () => {
     scrollIntoView.mockReset()
   })
 
-  it('filters events, shows safe details, and clears the store', async () => {
+  it('renders compact expandable rows, filters events, and clears the store', async () => {
     const user = userEvent.setup()
     const store = createRuntimeConsoleStore()
     store.append({
@@ -28,7 +28,10 @@ describe('RuntimeConsoleView', () => {
       level: 'info',
       phase: 'evaluate.completed',
       message: 'CAD 평가 완료',
-      details: { revision: 2 },
+      jobId: 'job-1',
+      runId: 'run-1',
+      progress: 0.5,
+      details: { revision: 2, taskCount: 1, sourceHash: '5886228f12a6931d9d7ca3fab3a3027d6' },
     })
     store.append({
       id: 'cae-1',
@@ -42,7 +45,29 @@ describe('RuntimeConsoleView', () => {
     render(<RuntimeConsoleView store={store} />)
 
     expect(screen.getByRole('log')).toHaveTextContent('CAD 평가 완료')
-    expect(screen.getByRole('log')).toHaveTextContent('revision=')
+    expect(screen.getByRole('log')).not.toHaveTextContent('revision=')
+    expect(screen.getByRole('log')).not.toHaveTextContent('taskCount=')
+    expect(screen.getByRole('log')).not.toHaveTextContent('sourceHash=')
+    expect(screen.getByRole('log')).not.toHaveTextContent('job=job-1')
+    expect(screen.getByRole('log')).not.toHaveTextContent('run=run-1')
+    expect(screen.getByText('50%')).toBeInTheDocument()
+
+    const toggle = screen.getByRole('button', { name: 'CAD 평가 완료 이벤트 펼치기' })
+    const content = document.getElementById(toggle.getAttribute('aria-controls') ?? '')
+    const message = content?.querySelector('p')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(message).toHaveClass('truncate', 'whitespace-nowrap')
+    await user.click(content!)
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await user.click(toggle)
+    expect(screen.getByRole('button', { name: 'CAD 평가 완료 이벤트 접기' })).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('button', { name: 'CAE 실행 실패 이벤트 펼치기' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    )
+    expect(message).toHaveClass('whitespace-pre-wrap', 'break-words')
+    expect(message).not.toHaveClass('truncate')
+
     await user.selectOptions(screen.getByLabelText('Source 필터'), 'cae')
     expect(screen.queryByText('CAD 평가 완료')).not.toBeInTheDocument()
     expect(screen.getByText('CAE 실행 실패')).toBeInTheDocument()

@@ -15,8 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from db import SessionLocal
-from models import AuthenticatedUserData, ExperimentNamespaceRequest, UserData
-from service.experiment import change_experiment_namespace
+from models import AuthenticatedUserData, UserData
 from settings import settings
 from user_auth.db import Identity, OAuthProvider, OAuthState, Role, User, UserRole
 from user_auth.utils.auth_utils import (
@@ -72,7 +71,7 @@ def user_data(user: User) -> UserData:
         is_active=user.is_active,
         created_at=user.created_at,
         updated_at=user.updated_at,
-        experiment_namespace=user.experiment_namespace,
+        experiment_namespaces=sorted(item.namespace for item in user.experiment_namespaces),
         roles=[entry.role.name for entry in user.user_roles],
     )
 
@@ -283,22 +282,6 @@ async def check_user(request: Request, db: AsyncSession = Depends(get_db)) -> Au
     ).where(User.id == claims["sub"]).execution_options(populate_existing=True))
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User inactive")
-    return authenticated_user_data(user)
-
-
-@router.put("/experiment-namespace", response_model=AuthenticatedUserData)
-async def set_experiment_namespace(
-    payload: ExperimentNamespaceRequest,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    _csrf: None = Depends(require_web_csrf),
-) -> AuthenticatedUserData:
-    authenticated = await check_user(request, db)
-    user = await change_experiment_namespace(
-        db,
-        authenticated.id,
-        payload.namespace,
-    )
     return authenticated_user_data(user)
 
 

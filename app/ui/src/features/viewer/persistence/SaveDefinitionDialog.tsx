@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useId, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,11 @@ import {
 import { Input } from '@/components/ui/input'
 
 const definitionFormSchema = z.object({
+  namespace: z
+    .string()
+    .trim()
+    .regex(/^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$/, '3~32자의 소문자, 숫자, -로 Namespace를 입력하세요.')
+    .refine((value) => value !== 'caemble', 'caemble Namespace는 Example 전용입니다.'),
   name: z.string().trim().min(1, '이름을 입력하세요.').max(200, '이름은 200자 이하여야 합니다.'),
   description: z.string().trim().max(2_000, '설명은 2,000자 이하여야 합니다.'),
   repository: z
@@ -35,6 +40,7 @@ export function SaveDefinitionDialog({
   description,
   context,
   mode,
+  namespaceOptions = [],
   onOpenChange,
   onSubmit,
   open,
@@ -46,6 +52,7 @@ export function SaveDefinitionDialog({
   description?: string
   context?: ReactNode
   mode: ExperimentSaveMode
+  namespaceOptions?: readonly string[]
   onOpenChange: (open: boolean) => void
   onSubmit: (values: DefinitionFormValues) => Promise<void>
   open: boolean
@@ -53,11 +60,13 @@ export function SaveDefinitionDialog({
   submitLabel?: string
   title?: string
 }) {
+  const namespaceListId = useId()
   const form = useForm<DefinitionFormValues>({ resolver: zodResolver(definitionFormSchema), defaultValues: defaults })
   const defaultBump = defaults.bump
   const defaultDescription = defaults.description
   const defaultKey = defaults.key
   const defaultName = defaults.name
+  const defaultNamespace = defaults.namespace
   const defaultRepository = defaults.repository
   useEffect(() => {
     if (open) {
@@ -66,10 +75,11 @@ export function SaveDefinitionDialog({
         description: defaultDescription,
         key: defaultKey,
         name: defaultName,
+        namespace: defaultNamespace,
         repository: defaultRepository,
       })
     }
-  }, [defaultBump, defaultDescription, defaultKey, defaultName, defaultRepository, form, open])
+  }, [defaultBump, defaultDescription, defaultKey, defaultName, defaultNamespace, defaultRepository, form, open])
 
   return (
     <Dialog
@@ -87,24 +97,39 @@ export function SaveDefinitionDialog({
         </DialogHeader>
         {context}
         <form className="space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
-          {mode === 'create' ? (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="grid gap-1.5 text-sm font-medium">
-                Repository
-                <Input disabled={pending} {...form.register('repository')} />
-                {form.formState.errors.repository ? (
-                  <span className="text-xs text-destructive">{form.formState.errors.repository.message}</span>
-                ) : null}
-              </label>
-              <label className="grid gap-1.5 text-sm font-medium">
-                Experiment key
-                <Input disabled={pending} {...form.register('key')} />
-                {form.formState.errors.key ? (
-                  <span className="text-xs text-destructive">{form.formState.errors.key.message}</span>
-                ) : null}
-              </label>
-            </div>
-          ) : null}
+          <div className="grid gap-4 sm:grid-cols-3">
+            <label className="grid gap-1.5 text-sm font-medium">
+              Namespace
+              <Input autoFocus disabled={pending} list={namespaceListId} {...form.register('namespace')} />
+              <datalist id={namespaceListId}>
+                {namespaceOptions.map((namespace) => (
+                  <option key={namespace} value={namespace} />
+                ))}
+              </datalist>
+              {form.formState.errors.namespace ? (
+                <span className="text-xs text-destructive">{form.formState.errors.namespace.message}</span>
+              ) : null}
+            </label>
+            <label className="grid gap-1.5 text-sm font-medium">
+              Repository
+              <Input disabled={pending} {...form.register('repository')} />
+              {form.formState.errors.repository ? (
+                <span className="text-xs text-destructive">{form.formState.errors.repository.message}</span>
+              ) : null}
+            </label>
+            <label className="grid gap-1.5 text-sm font-medium">
+              Experiment key
+              <Input disabled={pending} {...form.register('key')} />
+              {form.formState.errors.key ? (
+                <span className="text-xs text-destructive">{form.formState.errors.key.message}</span>
+              ) : null}
+            </label>
+          </div>
+          {mode === 'create' ? null : (
+            <p className="text-xs text-muted-foreground">
+              Namespace, Repository 또는 Experiment key 변경은 모든 Version에 적용됩니다.
+            </p>
+          )}
           {mode === 'new_version' ? (
             <label className="grid gap-1.5 text-sm font-medium">
               Version 증가
@@ -121,7 +146,7 @@ export function SaveDefinitionDialog({
           ) : null}
           <label className="grid gap-1.5 text-sm font-medium">
             이름
-            <Input autoFocus disabled={pending} {...form.register('name')} />
+            <Input disabled={pending} {...form.register('name')} />
             {form.formState.errors.name ? (
               <span className="text-xs text-destructive">{form.formState.errors.name.message}</span>
             ) : null}

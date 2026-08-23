@@ -1,22 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { LoaderCircle, Search, Settings2, Trash2 } from 'lucide-react'
+import { LoaderCircle, Search, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import {
-  dbTables,
-  experimentApi,
-  getListRequest,
-  type ExperimentRecord,
-  type GetListRequest,
-  type UserData,
-} from '@/api'
+import { dbTables, getListRequest, type ExperimentRecord, type GetListRequest, type UserData } from '@/api'
 import { catalogApi, catalogQueryKeys, type CatalogExperimentListItem } from '@/api/catalog'
-import { authQueryKey } from '@/features/auth/use-auth'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { assertExperimentSourceBundle } from '@/lib/cad'
+import { authQueryKey } from '@/features/auth/use-auth'
 import type { SavedExperiment } from '../types'
 
 type ExperimentManagerProps = {
@@ -70,13 +63,9 @@ export function ExperimentManager({
 }: ExperimentManagerProps) {
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
-  const [scope, setScope] = useState<'visible' | 'mine'>('mine')
   const [namespace, setNamespace] = useState('all')
   const [repository, setRepository] = useState('all')
-  const [namespaceDraft, setNamespaceDraft] = useState(user?.experiment_namespace ?? '')
   const [loadingExample, setLoadingExample] = useState<string | null>(null)
-
-  useEffect(() => setNamespaceDraft(user?.experiment_namespace ?? ''), [user?.experiment_namespace])
 
   const exampleQuery = useQuery({
     queryKey: catalogQueryKeys.experiments({ q: search.trim(), limit: 100 }),
@@ -84,7 +73,7 @@ export function ExperimentManager({
   })
   const savedRequest = useMemo<GetListRequest>(
     () => ({
-      ...getListRequest(user?.roles.includes('admin') ? scope : 'mine'),
+      ...getListRequest('mine'),
       limit: null,
       search_text: search.trim() || null,
       text_filter: search.trim() ? { workbench: [search.trim()] } : ({} as Record<string, string[]>),
@@ -97,7 +86,7 @@ export function ExperimentManager({
         ['version_patch', 'desc'],
       ],
     }),
-    [scope, search, user?.roles],
+    [search],
   )
   const savedQuery = useQuery({
     queryKey: ['cae-workbench', 'experiments', savedRequest],
@@ -189,26 +178,6 @@ export function ExperimentManager({
     if (filtersReady && repository !== 'all' && !repositories.includes(repository)) setRepository('all')
   }, [filtersReady, repositories, repository])
 
-  const namespaceMutation = useMutation({
-    mutationFn: (value: string) => {
-      const nextNamespace = value.trim()
-      if (nextNamespace === 'caemble') {
-        throw new Error('caemble namespace는 Example 전용입니다.')
-      }
-      if (!/^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$/.test(nextNamespace)) {
-        throw new Error('Experiment namespace는 3~32자의 소문자 영숫자와 하이픈으로 입력하세요.')
-      }
-      return experimentApi.setNamespace(nextNamespace)
-    },
-    onSuccess: (nextUser) => {
-      queryClient.setQueryData(authQueryKey, nextUser)
-      setNamespaceDraft(nextUser.experiment_namespace ?? '')
-      toast.success(`Experiment namespace를 ${nextUser.experiment_namespace}(으)로 설정했습니다.`)
-    },
-    onError: (cause: unknown) => {
-      toast.error(cause instanceof Error ? cause.message : 'Experiment namespace를 설정하지 못했습니다.')
-    },
-  })
   const deleteMutation = useMutation({
     mutationFn: async (row: ExperimentRecord) => {
       const usage = (await dbTables.Experiment.usage([row.id])).items[0]
@@ -234,6 +203,7 @@ export function ExperimentManager({
       if (!deleted) return
       if (row.id === selectedId) onDeleteSelected?.(row as SavedExperiment)
       await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] })
+      await queryClient.invalidateQueries({ queryKey: authQueryKey })
       toast.success('Experiment Version을 삭제했습니다.')
     },
     onError: (cause: unknown) => {
@@ -257,36 +227,7 @@ export function ExperimentManager({
   return (
     <section aria-label="Experiment Manager" className="flex h-full min-h-0 flex-col bg-background">
       <header className={`space-y-3 border-b ${compact ? 'p-3' : 'p-4'}`}>
-        <div className={compact ? 'space-y-3' : 'flex flex-wrap items-start justify-between gap-3'}>
-          <h2 className="font-semibold">Experiment Manager</h2>
-          {authenticated ? (
-            <form
-              className={compact ? 'grid grid-cols-[auto_minmax(0,1fr)] gap-2' : 'flex items-center gap-2'}
-              onSubmit={(event) => {
-                event.preventDefault()
-                namespaceMutation.mutate(namespaceDraft)
-              }}
-            >
-              <Settings2 className="size-4 text-muted-foreground" />
-              <Input
-                aria-label="Experiment namespace"
-                className={compact ? 'h-8 min-w-0 font-mono text-xs' : 'h-8 w-44 font-mono text-xs'}
-                disabled={namespaceMutation.isPending}
-                placeholder="namespace"
-                value={namespaceDraft}
-                onChange={(event) => setNamespaceDraft(event.target.value)}
-              />
-              <Button
-                className={compact ? 'col-span-2' : undefined}
-                disabled={!namespaceDraft.trim() || namespaceMutation.isPending}
-                size="sm"
-                type="submit"
-              >
-                Namespace 저장
-              </Button>
-            </form>
-          ) : null}
-        </div>
+        <h2 className="font-semibold">Experiment Manager</h2>
         <label className="relative block">
           <Search className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground" />
           <Input
@@ -333,17 +274,6 @@ export function ExperimentManager({
         </div>
       </header>
       <div className={`flex min-h-0 flex-1 flex-col gap-3 ${compact ? 'p-2' : 'p-4'}`}>
-        {authenticated && user?.roles.includes('admin') ? (
-          <Select value={scope} onValueChange={(value) => setScope(value as typeof scope)}>
-            <SelectTrigger aria-label="소유 범위" className="w-full sm:w-56">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="visible">전체 사용자</SelectItem>
-              <SelectItem value="mine">내 Experiment</SelectItem>
-            </SelectContent>
-          </Select>
-        ) : null}
         <div className="min-h-0 flex-1 overflow-auto rounded-md border">
           {exampleQuery.isError ? (
             <div

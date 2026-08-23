@@ -41,6 +41,7 @@ describe('saveCadDefinition', () => {
       savedSourceBundle: baseBundle,
       selectedId: 8,
       values: {
+        namespace: 'jlee',
         name: 'Python child',
         description: 'atomic sources',
         repository: 'examples',
@@ -52,6 +53,9 @@ describe('saveCadDefinition', () => {
     expect(mocks.experimentSave).toHaveBeenCalledWith({
       mode: 'new_version',
       experimentId: 8,
+      namespace: 'jlee',
+      repository: 'examples',
+      key: 'python',
       name: 'Python child',
       description: 'atomic sources',
       sourceBundle,
@@ -74,13 +78,21 @@ describe('saveCadDefinition', () => {
       mode: 'create',
       savedSourceBundle: sourceBundle,
       selectedId: 8,
-      values: { name: 'New root', description: '', repository: 'common', key: 'new-root', bump: 'patch' },
+      values: {
+        namespace: 'new-space',
+        name: 'New root',
+        description: '',
+        repository: 'common',
+        key: 'new-root',
+        bump: 'patch',
+      },
     })
 
     expect(mocks.experimentSave).toHaveBeenCalledWith({
       name: 'New root',
       description: null,
       mode: 'create',
+      namespace: 'new-space',
       repository: 'common',
       key: 'new-root',
       initialVersion: '0.1.0',

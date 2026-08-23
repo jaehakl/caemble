@@ -82,6 +82,9 @@ describe('integrated Experiment API facade', () => {
       dbTables.Experiment.save({
         mode: 'new_version',
         experimentId: 4,
+        namespace: 'jlee',
+        repository: 'examples',
+        key: 'integrated',
         name: 'Experiment',
         description: null,
         sourceBundle,

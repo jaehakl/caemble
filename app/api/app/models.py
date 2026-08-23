@@ -18,7 +18,7 @@ class UserData(BaseModel):
     is_active: Optional[bool] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-    experiment_namespace: Optional[str] = None
+    experiment_namespaces: List[str] = Field(default_factory=list)
     roles: List[RoleEnum]
 
 
@@ -57,12 +57,6 @@ class TimestampFields(BaseModel):
 
 class OwnedTimestampFields(TimestampFields):
     user_id: Optional[str] = None
-
-
-class ExperimentNamespaceRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    namespace: str
 
 
 class MaterialBase(OwnedTimestampFields):
@@ -119,8 +113,9 @@ class SaveExperimentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     mode: Literal["create", "overwrite", "new_version"]
-    repository: Optional[str] = None
-    key: Optional[str] = None
+    namespace: str
+    repository: str
+    key: str
     initialVersion: Optional[str] = "0.1.0"
     experimentId: Optional[int] = Field(default=None, gt=0)
     baseBundleHash: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$")
@@ -133,29 +128,21 @@ class SaveExperimentRequest(BaseModel):
     @model_validator(mode="after")
     def validate_mode_fields(self) -> "SaveExperimentRequest":
         if self.mode == "create":
-            if not self.repository or not self.key:
-                raise ValueError("create requires repository and key")
             if self.experimentId is not None or self.baseBundleHash is not None or self.bump is not None:
                 raise ValueError("create does not accept experimentId, baseBundleHash, or bump")
         elif self.mode == "overwrite":
             if self.experimentId is None or self.baseBundleHash is None:
                 raise ValueError("overwrite requires experimentId and baseBundleHash")
             if (
-                self.repository is not None
-                or self.key is not None
-                or self.bump is not None
+                self.bump is not None
                 or "initialVersion" in self.model_fields_set
             ):
-                raise ValueError("overwrite does not accept repository, key, initialVersion, or bump")
+                raise ValueError("overwrite does not accept initialVersion or bump")
         else:
             if self.experimentId is None or self.baseBundleHash is None or self.bump is None:
                 raise ValueError("new_version requires experimentId, baseBundleHash, and bump")
-            if (
-                self.repository is not None
-                or self.key is not None
-                or "initialVersion" in self.model_fields_set
-            ):
-                raise ValueError("new_version does not accept repository, key, or initialVersion")
+            if "initialVersion" in self.model_fields_set:
+                raise ValueError("new_version does not accept initialVersion")
         return self
 
 

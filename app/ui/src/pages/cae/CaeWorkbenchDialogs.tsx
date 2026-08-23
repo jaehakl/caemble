@@ -15,6 +15,13 @@ export function CaeWorkbenchDialogs({
   workbench: CaeWorkbenchState
 }) {
   const closeDialog = (open: boolean) => !open && setDialog(null)
+  const namespaceOptions = [
+    ...new Set(
+      [workbench.experimentRecord?.namespace, ...workbench.experimentNamespaces].filter(
+        (namespace): namespace is string => Boolean(namespace),
+      ),
+    ),
+  ].sort()
   return (
     <>
       <SaveDefinitionDialog
@@ -28,6 +35,7 @@ export function CaeWorkbenchDialogs({
           ) : null
         }
         defaults={{
+          namespace: workbench.experimentRecord?.namespace ?? namespaceOptions[0] ?? '',
           name: workbench.experimentName,
           description: workbench.experimentDescription,
           repository: workbench.experimentRecord?.repository_slug ?? 'experiments',
@@ -41,6 +49,7 @@ export function CaeWorkbenchDialogs({
               'untitled-experiment'),
           bump: 'patch',
         }}
+        namespaceOptions={namespaceOptions}
         description={
           dialog === 'save-experiment-as'
             ? '현재 source bundle을 새 namespace / repository / key의 Experiment로 저장합니다.'

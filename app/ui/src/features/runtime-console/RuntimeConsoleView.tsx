@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { Trash2 } from 'lucide-react'
+import { ChevronRight, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { RuntimeActivityLevel, RuntimeActivitySource } from './types'
 import type { RuntimeConsoleStore } from './store'
@@ -16,6 +16,7 @@ export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
   const [level, setLevel] = useState<RuntimeActivityLevel | 'all'>('all')
   const [query, setQuery] = useState('')
   const [autoScroll, setAutoScroll] = useState(true)
+  const [expandedEventIds, setExpandedEventIds] = useState<ReadonlySet<string>>(() => new Set())
   const endRef = useRef<HTMLDivElement>(null)
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const events = useMemo(
@@ -98,58 +99,74 @@ export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
       <div className="min-h-0 flex-1 overflow-auto font-mono text-xs" role="log" aria-live="polite">
         {events.length ? (
           <ol aria-label="Runtime Console 이벤트" className="divide-y divide-zinc-900">
-            {events.map((event) => (
-              <li className="grid gap-1 px-3 py-2 sm:grid-cols-[6.5rem_5.5rem_minmax(0,1fr)]" key={event.id}>
-                <time className="text-zinc-500" dateTime={new Date(event.timestamp).toISOString()}>
-                  {new Date(event.timestamp).toISOString().slice(11, 23)}
-                </time>
-                <span
-                  className={
-                    event.level === 'error'
-                      ? 'text-red-400'
-                      : event.level === 'warning'
-                        ? 'text-amber-300'
-                        : 'text-sky-300'
-                  }
+            {events.map((event, index) => {
+              const expanded = expandedEventIds.has(event.id)
+              const contentId = `runtime-console-event-${index}`
+              return (
+                <li
+                  className="grid grid-cols-[1.25rem_6.5rem_8.5rem_minmax(0,1fr)] items-start gap-1 px-3 py-2"
+                  key={event.id}
                 >
-                  {sourceLabels[event.source]} · {event.level}
-                </span>
-                <div className="min-w-0">
-                  <p className="break-words">
-                    {event.phase ? <span className="mr-2 text-zinc-500">[{event.phase}]</span> : null}
-                    {event.message}
-                  </p>
-                  {event.progress !== undefined ? (
-                    <div className="mt-1 flex items-center gap-2 text-zinc-400">
-                      <progress
-                        aria-label={`${event.message} 진행률`}
-                        className="h-1.5 max-w-44 flex-1 accent-orange-500"
-                        max={1}
-                        value={event.progress}
-                      />
-                      <span>{Math.round(event.progress * 100)}%</span>
-                    </div>
-                  ) : null}
-                  {event.jobId || event.runId ? (
-                    <p className="mt-1 break-all text-zinc-500">
-                      {[event.jobId ? `job=${event.jobId}` : null, event.runId ? `run=${event.runId}` : null]
-                        .filter(Boolean)
-                        .join(' · ')}
+                  <button
+                    aria-controls={contentId}
+                    aria-expanded={expanded}
+                    aria-label={`${event.message} 이벤트 ${expanded ? '접기' : '펼치기'}`}
+                    className="mt-px flex size-4 items-center justify-center rounded text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:outline-none"
+                    type="button"
+                    onClick={() =>
+                      setExpandedEventIds((current) => {
+                        const next = new Set(current)
+                        if (next.has(event.id)) next.delete(event.id)
+                        else next.add(event.id)
+                        return next
+                      })
+                    }
+                  >
+                    <ChevronRight
+                      aria-hidden="true"
+                      className={`size-3.5 transition-transform ${expanded ? 'rotate-90' : ''}`}
+                    />
+                  </button>
+                  <time className="whitespace-nowrap text-zinc-500" dateTime={new Date(event.timestamp).toISOString()}>
+                    {new Date(event.timestamp).toISOString().slice(11, 23)}
+                  </time>
+                  <span
+                    className={`whitespace-nowrap ${
+                      event.level === 'error'
+                        ? 'text-red-400'
+                        : event.level === 'warning'
+                          ? 'text-amber-300'
+                          : 'text-sky-300'
+                    }`}
+                  >
+                    {sourceLabels[event.source]} · {event.level}
+                  </span>
+                  <div className="flex min-w-0 items-start gap-2" id={contentId}>
+                    <p
+                      className={
+                        expanded
+                          ? 'min-w-0 flex-1 break-words whitespace-pre-wrap'
+                          : 'min-w-0 flex-1 truncate whitespace-nowrap'
+                      }
+                    >
+                      {event.phase ? <span className="mr-2 text-zinc-500">[{event.phase}]</span> : null}
+                      {event.message}
                     </p>
-                  ) : null}
-                  {event.details ? (
-                    <dl className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-zinc-500">
-                      {Object.entries(event.details).map(([key, value]) => (
-                        <div className="flex gap-1" key={key}>
-                          <dt>{key}=</dt>
-                          <dd className="break-all">{String(value)}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                  ) : null}
-                </div>
-              </li>
-            ))}
+                    {event.progress !== undefined ? (
+                      <div className="flex shrink-0 items-center gap-2 text-zinc-400">
+                        <progress
+                          aria-label={`${event.message} 진행률`}
+                          className="h-1.5 w-28 accent-orange-500"
+                          max={1}
+                          value={event.progress}
+                        />
+                        <span>{Math.round(event.progress * 100)}%</span>
+                      </div>
+                    ) : null}
+                  </div>
+                </li>
+              )
+            })}
           </ol>
         ) : (
           <p className="px-3 py-6 text-center text-zinc-500">

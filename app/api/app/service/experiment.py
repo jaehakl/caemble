@@ -13,18 +13,18 @@ from caemble_catalog.experiment_bundle import (
 )
 from fastapi import HTTPException, status
 from sqlalchemy import delete, func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from db import DesignerModel, Experiment, Measurement, PredictorModel, RecordedData
+from db import DesignerModel, Experiment, ExperimentNamespace, Measurement, PredictorModel, RecordedData
 from models import (
     ExperimentDerivedCounts,
     ExperimentSourceBundle,
     SaveExperimentRequest,
     SaveExperimentResponse,
 )
-from user_auth.db import User, UserRole
+from user_auth.db import User
 from utils.crud.common import is_admin_user, normalize_int_ids
 
 
@@ -121,47 +121,41 @@ def validate_source_bundle(bundle: ExperimentSourceBundle) -> dict[str, Any]:
     return bundle.model_dump(mode="json")
 
 
-async def change_experiment_namespace(db: AsyncSession, user_id: str, namespace: str) -> User:
-    if NAMESPACE_RE.fullmatch(namespace) is None:
-        raise _bad("Experiment namespace format is invalid.")
-    if namespace == "caemble":
-        raise _bad(
-            "The caemble namespace is reserved for Examples.",
-            code=status.HTTP_409_CONFLICT,
-        )
-    user = await db.scalar(
-        select(User)
-        .options(selectinload(User.user_roles).selectinload(UserRole.role))
-        .where(User.id == user_id)
+async def _claim_namespace(db: AsyncSession, user_id: str, namespace: str) -> None:
+    inserted_owner = await db.scalar(
+        pg_insert(ExperimentNamespace)
+        .values(namespace=namespace, user_id=user_id)
+        .on_conflict_do_nothing(index_elements=[ExperimentNamespace.namespace])
+        .returning(ExperimentNamespace.user_id)
+    )
+    if inserted_owner is not None:
+        return
+    owner_id = await db.scalar(
+        select(ExperimentNamespace.user_id)
+        .where(ExperimentNamespace.namespace == namespace)
         .with_for_update()
     )
-    if user is None:
-        raise _bad("User inactive", code=status.HTTP_401_UNAUTHORIZED)
-    if user.experiment_namespace == namespace:
-        return user
-    reserved = await db.scalar(
-        select(func.count()).select_from(Experiment).where(
-            Experiment.namespace == namespace,
-            Experiment.user_id != user_id,
+    if owner_id != user_id:
+        raise _bad("Experiment namespace is already in use.", code=status.HTTP_409_CONFLICT)
+
+
+async def _cleanup_empty_namespaces(db: AsyncSession, user_id: str, namespaces: Iterable[str]) -> None:
+    values = sorted(set(namespaces))
+    if not values:
+        return
+    await db.flush()
+    await db.execute(
+        delete(ExperimentNamespace).where(
+            ExperimentNamespace.user_id == user_id,
+            ExperimentNamespace.namespace.in_(values),
+            ~select(Experiment.id)
+            .where(
+                Experiment.user_id == ExperimentNamespace.user_id,
+                Experiment.namespace == ExperimentNamespace.namespace,
+            )
+            .exists(),
         )
     )
-    if reserved:
-        raise _bad("Experiment namespace is already in use.", code=status.HTTP_409_CONFLICT)
-    user.experiment_namespace = namespace
-    try:
-        await db.commit()
-    except IntegrityError as error:
-        await db.rollback()
-        raise _bad("Experiment namespace is already in use.", code=status.HTTP_409_CONFLICT) from error
-    refreshed = await db.scalar(
-        select(User)
-        .options(selectinload(User.user_roles).selectinload(UserRole.role))
-        .where(User.id == user_id)
-        .execution_options(populate_existing=True)
-    )
-    if refreshed is None:
-        raise _bad("User inactive", code=status.HTTP_401_UNAUTHORIZED)
-    return refreshed
 
 
 async def _derived_counts(
@@ -241,22 +235,43 @@ async def save_experiment(
     name = request.name.strip()
     if not name:
         raise _bad("Experiment name must not be blank.")
+    namespace = request.namespace.strip()
+    repository = request.repository.strip()
+    key = request.key.strip()
+    if NAMESPACE_RE.fullmatch(namespace) is None:
+        raise _bad("Experiment namespace format is invalid.")
+    if namespace == "caemble":
+        raise _bad("The caemble namespace is reserved for Examples.", code=status.HTTP_409_CONFLICT)
+    if SLUG_RE.fullmatch(repository) is None:
+        raise _bad("Experiment repository format is invalid.")
+    if SLUG_RE.fullmatch(key) is None:
+        raise _bad("Experiment key format is invalid.")
 
     counts = ExperimentDerivedCounts()
     if request.mode == "create":
-        owner = await db.scalar(select(User).where(User.id == user.id).with_for_update())
-        if owner is None or owner.experiment_namespace is None:
-            raise _bad("Set an Experiment namespace before saving.", code=status.HTTP_409_CONFLICT)
-        if SLUG_RE.fullmatch(request.repository or "") is None:
-            raise _bad("Experiment repository format is invalid.")
-        if SLUG_RE.fullmatch(request.key or "") is None:
-            raise _bad("Experiment key format is invalid.")
         major, minor, patch = _parse_version(request.initialVersion)
+        owner = await db.scalar(select(User).where(User.id == user.id).with_for_update())
+        if owner is None:
+            raise _bad("User inactive", code=status.HTTP_401_UNAUTHORIZED)
+        await _claim_namespace(db, owner.id, namespace)
+        target_exists = await db.scalar(
+            select(Experiment.id)
+            .where(
+                Experiment.user_id == owner.id,
+                Experiment.namespace == namespace,
+                Experiment.repository_slug == repository,
+                Experiment.experiment_key == key,
+            )
+            .limit(1)
+            .with_for_update()
+        )
+        if target_exists is not None:
+            raise _bad("Experiment identity is already in use.", code=status.HTTP_409_CONFLICT)
         experiment = Experiment(
             user_id=user.id,
-            namespace=owner.experiment_namespace,
-            repository_slug=request.repository,
-            experiment_key=request.key,
+            namespace=namespace,
+            repository_slug=repository,
+            experiment_key=key,
             version_major=major,
             version_minor=minor,
             version_patch=patch,
@@ -289,6 +304,26 @@ async def save_experiment(
                 "The saved source bundle changed before this save.",
                 code=status.HTTP_409_CONFLICT,
             )
+        previous_namespace = experiment.namespace
+        previous_repository = experiment.repository_slug
+        previous_key = experiment.experiment_key
+        family = list(
+            (
+                await db.scalars(
+                    select(Experiment)
+                    .where(
+                        Experiment.user_id == owner.id,
+                        Experiment.namespace == previous_namespace,
+                        Experiment.repository_slug == previous_repository,
+                        Experiment.experiment_key == previous_key,
+                    )
+                    .order_by(Experiment.id)
+                    .with_for_update()
+                )
+            ).all()
+        )
+        if not family:
+            raise _bad("Experiment not found.", code=status.HTTP_404_NOT_FOUND)
         if request.mode == "overwrite":
             counts = (await _derived_counts(db, [experiment.id]))[experiment.id]
             if source_hash != experiment.source_hash and _source_locked(counts):
@@ -300,35 +335,45 @@ async def save_experiment(
                     },
                     code=status.HTTP_409_CONFLICT,
                 )
+        else:
+            latest = max(
+                family,
+                key=lambda item: (item.version_major, item.version_minor, item.version_patch),
+            )
+            major, minor, patch = _bump_version(latest, request.bump or "patch")
+
+        identity_changed = (previous_namespace, previous_repository, previous_key) != (namespace, repository, key)
+        if identity_changed:
+            target_exists = await db.scalar(
+                select(func.count())
+                .select_from(Experiment)
+                .where(
+                    Experiment.user_id == owner.id,
+                    Experiment.namespace == namespace,
+                    Experiment.repository_slug == repository,
+                    Experiment.experiment_key == key,
+                    Experiment.id.not_in([item.id for item in family]),
+                )
+            )
+            if target_exists:
+                raise _bad("Experiment identity is already in use.", code=status.HTTP_409_CONFLICT)
+        await _claim_namespace(db, owner.id, namespace)
+        for version in family:
+            version.namespace = namespace
+            version.repository_slug = repository
+            version.experiment_key = key
+
+        if request.mode == "overwrite":
             experiment.name = name
             experiment.description = request.description
             experiment.source_bundle = source_bundle
             experiment.source_hash = source_hash
         else:
-            latest = await db.scalar(
-                select(Experiment)
-                .where(
-                    Experiment.user_id == experiment.user_id,
-                    Experiment.namespace == experiment.namespace,
-                    Experiment.repository_slug == experiment.repository_slug,
-                    Experiment.experiment_key == experiment.experiment_key,
-                )
-                .order_by(
-                    Experiment.version_major.desc(),
-                    Experiment.version_minor.desc(),
-                    Experiment.version_patch.desc(),
-                )
-                .limit(1)
-                .with_for_update()
-            )
-            if latest is None:
-                raise _bad("Experiment not found.", code=status.HTTP_404_NOT_FOUND)
-            major, minor, patch = _bump_version(latest, request.bump or "patch")
             experiment = Experiment(
                 user_id=experiment.user_id,
-                namespace=experiment.namespace,
-                repository_slug=experiment.repository_slug,
-                experiment_key=experiment.experiment_key,
+                namespace=namespace,
+                repository_slug=repository,
+                experiment_key=key,
                 version_major=major,
                 version_minor=minor,
                 version_patch=patch,
@@ -338,6 +383,8 @@ async def save_experiment(
                 source_hash=source_hash,
             )
             db.add(experiment)
+        if identity_changed:
+            await _cleanup_empty_namespaces(db, owner.id, [previous_namespace])
     try:
         await db.flush()
         await db.commit()
@@ -368,7 +415,12 @@ async def delete_experiment_versions(
     if {row.id for row in rows} != set(ids):
         raise _bad("Experiment not found.", code=status.HTTP_404_NOT_FOUND)
     await _derived_counts(db, ids)
+    namespaces_by_owner: dict[str, set[str]] = {}
+    for row in rows:
+        namespaces_by_owner.setdefault(row.user_id, set()).add(row.namespace)
     await db.execute(delete(Experiment).where(Experiment.id.in_(ids)))
+    for owner_id, namespaces in namespaces_by_owner.items():
+        await _cleanup_empty_namespaces(db, owner_id, namespaces)
     await db.commit()
 
 

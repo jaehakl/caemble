@@ -12,7 +12,6 @@ const mocks = vi.hoisted(() => ({
   getExperiment: vi.fn(),
   listExperiments: vi.fn(),
   listRows: vi.fn(),
-  setNamespace: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
   usage: vi.fn(),
@@ -31,7 +30,6 @@ vi.mock('@/api', async (importOriginal) => {
         usage: mocks.usage,
       },
     },
-    experimentApi: { setNamespace: mocks.setNamespace },
   }
 })
 vi.mock('@/api/catalog', async (importOriginal) => {
@@ -160,7 +158,7 @@ describe('ExperimentManager', () => {
       <ExperimentManager
         authenticated
         selectedId={2}
-        user={{ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never}
+        user={{ id: 'user-1', roles: ['user'], experiment_namespaces: ['jlee'] } as never}
         onOpenExample={onOpenExample}
         onOpenSaved={vi.fn()}
       />,
@@ -213,7 +211,7 @@ describe('ExperimentManager', () => {
       <ExperimentManager
         authenticated
         selectedId={2}
-        user={{ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never}
+        user={{ id: 'user-1', roles: ['user'], experiment_namespaces: ['jlee'] } as never}
         onOpenExample={vi.fn()}
         onOpenSaved={vi.fn()}
       />,
@@ -242,13 +240,32 @@ describe('ExperimentManager', () => {
     expect(screen.queryByText('Basketball structure Example description.')).not.toBeInTheDocument()
   })
 
+  it('keeps saved Experiment scope fixed to mine without showing an owner scope control to admins', async () => {
+    render(
+      <ExperimentManager
+        authenticated
+        selectedId={null}
+        user={{ id: 'admin-1', roles: ['admin'], experiment_namespaces: ['admin-space'] } as never}
+        onOpenExample={vi.fn()}
+        onOpenSaved={vi.fn()}
+      />,
+      { wrapper },
+    )
+
+    expect(
+      await screen.findByText('Saved plate description that remains readable in the compact Workbench list.'),
+    ).toBeVisible()
+    expect(screen.queryByRole('combobox', { name: '소유 범위' })).not.toBeInTheDocument()
+    expect(mocks.listRows).toHaveBeenCalledWith(expect.objectContaining({ scope: 'mine' }))
+  })
+
   it('keeps saved results available when the Example query fails', async () => {
     mocks.listExperiments.mockRejectedValueOnce(new Error('example failed'))
     render(
       <ExperimentManager
         authenticated
         selectedId={2}
-        user={{ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never}
+        user={{ id: 'user-1', roles: ['user'], experiment_namespaces: ['jlee'] } as never}
         onOpenExample={vi.fn()}
         onOpenSaved={vi.fn()}
       />,
@@ -267,7 +284,7 @@ describe('ExperimentManager', () => {
       <ExperimentManager
         authenticated
         selectedId={null}
-        user={{ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never}
+        user={{ id: 'user-1', roles: ['user'], experiment_namespaces: ['jlee'] } as never}
         onOpenExample={vi.fn()}
         onOpenSaved={vi.fn()}
       />,
@@ -298,7 +315,7 @@ describe('ExperimentManager', () => {
     expect(screen.queryByRole('textbox', { name: 'Experiment namespace' })).not.toBeInTheDocument()
   })
 
-  it('syncs asynchronously loaded namespace and deletes one Version after usage confirmation', async () => {
+  it('does not show namespace management controls and deletes one Version after usage confirmation', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const user = userEvent.setup()
     const props = {
@@ -312,68 +329,16 @@ describe('ExperimentManager', () => {
     rerender(
       <ExperimentManager
         {...props}
-        user={{ id: 'user-1', roles: ['user'], experiment_namespace: 'late-user' } as never}
+        user={{ id: 'user-1', roles: ['user'], experiment_namespaces: ['late-user'] } as never}
       />,
     )
-    expect(screen.getByRole('textbox', { name: 'Experiment namespace' })).toHaveValue('late-user')
+    expect(screen.queryByRole('textbox', { name: 'Experiment namespace' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Namespace 저장' })).not.toBeInTheDocument()
     await user.click(await screen.findByRole('button', { name: 'Plate v1.0.0 삭제' }))
 
     await waitFor(() => expect(mocks.usage).toHaveBeenCalledWith([1]))
     expect(mocks.deleteRows).toHaveBeenCalledWith([1])
     expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('연결 데이터 3개도 함께 삭제'))
-  })
-
-  it('validates namespace input before sending it to the API', async () => {
-    const user = userEvent.setup()
-    render(
-      <ExperimentManager
-        authenticated
-        selectedId={2}
-        user={{ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never}
-        onOpenExample={vi.fn()}
-        onOpenSaved={vi.fn()}
-      />,
-      { wrapper },
-    )
-
-    const input = screen.getByRole('textbox', { name: 'Experiment namespace' })
-    await user.clear(input)
-    await user.type(input, 'Bad_Name')
-    await user.click(screen.getByRole('button', { name: 'Namespace 저장' }))
-
-    await waitFor(() =>
-      expect(mocks.toastError).toHaveBeenCalledWith(
-        'Experiment namespace는 3~32자의 소문자 영숫자와 하이픈으로 입력하세요.',
-      ),
-    )
-    await user.clear(input)
-    await user.type(input, 'caemble')
-    await user.click(screen.getByRole('button', { name: 'Namespace 저장' }))
-    await waitFor(() => expect(mocks.toastError).toHaveBeenLastCalledWith('caemble namespace는 Example 전용입니다.'))
-    expect(mocks.setNamespace).not.toHaveBeenCalled()
-  })
-
-  it('shows namespace request failures', async () => {
-    mocks.setNamespace.mockRejectedValueOnce(new Error('namespace conflict'))
-    const user = userEvent.setup()
-    render(
-      <ExperimentManager
-        authenticated
-        selectedId={2}
-        user={{ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never}
-        onOpenExample={vi.fn()}
-        onOpenSaved={vi.fn()}
-      />,
-      { wrapper },
-    )
-
-    const input = screen.getByRole('textbox', { name: 'Experiment namespace' })
-    await user.clear(input)
-    await user.type(input, 'new-space')
-    await user.click(screen.getByRole('button', { name: 'Namespace 저장' }))
-
-    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith('namespace conflict'))
-    expect(mocks.setNamespace).toHaveBeenCalledWith('new-space')
   })
 
   it('shows usage lookup failures before deletion', async () => {
@@ -384,7 +349,7 @@ describe('ExperimentManager', () => {
       <ExperimentManager
         authenticated
         selectedId={2}
-        user={{ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never}
+        user={{ id: 'user-1', roles: ['user'], experiment_namespaces: ['jlee'] } as never}
         onOpenExample={vi.fn()}
         onOpenSaved={vi.fn()}
       />,
@@ -406,7 +371,7 @@ describe('ExperimentManager', () => {
       <ExperimentManager
         authenticated
         selectedId={2}
-        user={{ id: 'user-1', roles: ['user'], experiment_namespace: 'jlee' } as never}
+        user={{ id: 'user-1', roles: ['user'], experiment_namespaces: ['jlee'] } as never}
         onOpenExample={vi.fn()}
         onOpenSaved={vi.fn()}
       />,

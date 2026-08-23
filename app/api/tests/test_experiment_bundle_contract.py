@@ -178,6 +178,9 @@ def test_initial_version_is_create_only(mode: str, mode_fields: dict[str, object
     source_bundle = bundle()
     common = {
         "mode": mode,
+        "namespace": "test-space",
+        "repository": "examples",
+        "key": "beam",
         "name": "Beam",
         "sourceBundle": source_bundle,
         "bundleHash": "1" * 64,

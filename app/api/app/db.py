@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     MetaData,
@@ -187,6 +188,21 @@ class MaterialParameterQualifier(TimestampMixin, Base):
     material_parameter: Mapped["MaterialParameter"] = relationship(back_populates="qualifiers")
 
 
+class ExperimentNamespace(TimestampMixin, Base):
+    __tablename__ = "experiment_namespaces"
+    __table_args__ = (UniqueConstraint("namespace", "user_id", name="uq_experiment_namespaces_namespace_user_id"),)
+
+    namespace: Mapped[str] = mapped_column(Text, primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    user: Mapped["User"] = relationship("User", back_populates="experiment_namespaces")
+
+
 class Experiment(TimestampMixin, Base):
     __tablename__ = "experiments"
     __table_args__ = (
@@ -198,6 +214,12 @@ class Experiment(TimestampMixin, Base):
             "version_minor",
             "version_patch",
             name="uq_experiments_coordinate_semver",
+        ),
+        ForeignKeyConstraint(
+            ["namespace", "user_id"],
+            ["experiment_namespaces.namespace", "experiment_namespaces.user_id"],
+            name="fk_experiments_namespace_user_id_experiment_namespaces",
+            ondelete="RESTRICT",
         ),
         Index("ix_experiments_user_id_updated_at", "user_id", "updated_at"),
         Index(

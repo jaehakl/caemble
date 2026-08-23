@@ -4,7 +4,7 @@ import json
 import pytest
 from sqlalchemy import select
 
-from db import Experiment, Measurement, RecordedData
+from db import Experiment, ExperimentNamespace, Measurement, RecordedData
 from settings import settings
 from tests.helpers import auth_headers, create_user, experiment_source_bundle
 
@@ -20,6 +20,7 @@ def bundle_hash(bundle: dict) -> str:
 def create_payload(bundle: dict, **extra) -> dict:
     return {
         "mode": "create",
+        "namespace": "test-space",
         "repository": "examples",
         "key": "beam",
         "initialVersion": "0.1.0",
@@ -34,6 +35,9 @@ def create_payload(bundle: dict, **extra) -> dict:
 def update_payload(mode: str, experiment_id: int, base_hash: str, bundle: dict, **extra) -> dict:
     return {
         "mode": mode,
+        "namespace": "test-space",
+        "repository": "examples",
+        "key": "beam",
         "experimentId": experiment_id,
         "baseBundleHash": base_hash,
         "name": "Experiment",
@@ -55,7 +59,7 @@ async def test_experiment_save_modes_versions_and_latest_semver(client, db_sessi
     body = created.json()
     assert body["action"] == "create"
     assert body["version"] == "0.1.0"
-    assert body["coordinate"].startswith(f"caemble:experiment/{owner.experiment_namespace}/examples/beam@")
+    assert body["coordinate"].startswith("caemble:experiment/test-space/examples/beam@")
     assert body["bundleHash"] == bundle_hash(first)
 
     metadata = await client.post(
@@ -166,10 +170,14 @@ async def test_overwrite_source_lock_usage_and_hard_delete_cascade(client, db_se
             experiment_id,
             saved.json()["bundleHash"],
             changed,
+            namespace="blocked-space",
         ),
     )
     assert blocked.status_code == 409
     assert blocked.json()["detail"]["code"] == "experiment_source_locked"
+    assert await db_session.get(ExperimentNamespace, "blocked-space") is None
+    persisted = await db_session.get(Experiment, experiment_id)
+    assert persisted is not None and persisted.namespace == "test-space"
 
     metadata = await client.post(
         "/experiment/save",

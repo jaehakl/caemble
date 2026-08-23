@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { dbTables, getListRequest, type UserData } from '@/api'
+import { authQueryKey } from '@/features/auth/use-auth'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
 import { useCurrentCadSelection } from '@/features/viewer/current-cad-selection'
 import type { DefinitionFormValues, ExperimentSaveMode } from '@/features/viewer/persistence/SaveDefinitionDialog'
@@ -462,6 +463,7 @@ export function useCaeWorkbenchState(
       queryClient.invalidateQueries({ queryKey: ['work', 'experiments'] }),
       queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiment'] }),
       queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] }),
+      queryClient.invalidateQueries({ queryKey: authQueryKey }),
     ])
   }, [queryClient])
 
@@ -614,6 +616,7 @@ export function useCaeWorkbenchState(
     experimentManageable,
     experimentCoordinate,
     experimentVersion,
+    experimentNamespaces: user?.experiment_namespaces ?? [],
     sourceLocked,
     hasTasks,
     agentChange,

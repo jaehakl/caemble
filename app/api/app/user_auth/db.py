@@ -45,16 +45,10 @@ class User(TimestampMixin, Base):
     email: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     __table_args__ = (
         Index("uq_users_email_lower", func.lower(email), unique=True),
-        CheckConstraint(
-            "experiment_namespace IS NULL OR (experiment_namespace <> 'caemble' AND "
-            "experiment_namespace ~ '^[a-z0-9]([a-z0-9-]{1,30}[a-z0-9])$')",
-            name="experiment_namespace_format",
-        ),
     )
     email_verified_at: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True))
     display_name: Mapped[Optional[str]] = mapped_column(Text)
     picture_url: Mapped[Optional[str]] = mapped_column(Text)
-    experiment_namespace: Mapped[Optional[str]] = mapped_column(Text, unique=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     identities: Mapped[List["Identity"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="selectin")
     sessions: Mapped[List["Session"]] = relationship(back_populates="user", cascade="all, delete-orphan", lazy="selectin")
@@ -71,6 +65,12 @@ class User(TimestampMixin, Base):
     recorded_data: Mapped[List["RecordedData"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     designer_models: Mapped[List["DesignerModel"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     predictor_models: Mapped[List["PredictorModel"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+    experiment_namespaces: Mapped[List["ExperimentNamespace"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="selectin",
+    )
     ai_provider_credentials: Mapped[List["AIProviderCredential"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",

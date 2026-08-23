@@ -52,8 +52,11 @@ export async function saveCadDefinition({
     baseBundle === null ? Promise.resolve(undefined) : experimentSourceBundleHash(baseBundle),
   ])
   const result = await dbTables.Experiment.save({
+    namespace: values.namespace,
+    repository: values.repository,
+    key: values.key,
     ...(mode === 'create'
-      ? { mode, repository: values.repository, key: values.key, initialVersion: '0.1.0' as const }
+      ? { mode, initialVersion: '0.1.0' as const }
       : mode === 'overwrite'
         ? { mode, experimentId: selectedId!, baseBundleHash: baseBundleHash! }
         : { mode, experimentId: selectedId!, baseBundleHash: baseBundleHash!, bump: values.bump }),

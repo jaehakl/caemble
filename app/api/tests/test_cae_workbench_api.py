@@ -5,7 +5,7 @@ import pytest
 
 from db import Experiment, Measurement
 from settings import settings
-from tests.helpers import auth_headers, create_user, experiment_source_bundle
+from tests.helpers import auth_headers, create_experiment_namespace, create_user, experiment_source_bundle
 
 pytestmark = pytest.mark.slow
 
@@ -29,10 +29,10 @@ def list_payload(**extra):
     }
 
 
-def experiment_row(user, name: str, key: str, bundle: dict, version: tuple[int, int, int] = (0, 1, 0)):
+def experiment_row(user, namespace: str, name: str, key: str, bundle: dict, version: tuple[int, int, int] = (0, 1, 0)):
     return Experiment(
         user_id=user.id,
-        namespace=user.experiment_namespace,
+        namespace=namespace,
         repository_slug="tests",
         experiment_key=key,
         version_major=version[0],
@@ -48,10 +48,11 @@ def experiment_row(user, name: str, key: str, bundle: dict, version: tuple[int, 
 async def test_measurements_list_by_experiment_without_pair_contract(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
+    namespace = await create_experiment_namespace(db_session, owner)
     first_bundle = experiment_source_bundle("first")
     second_bundle = experiment_source_bundle("second")
-    first = experiment_row(owner, "First", "first", first_bundle)
-    second = experiment_row(owner, "Second", "second", second_bundle)
+    first = experiment_row(owner, namespace, "First", "first", first_bundle)
+    second = experiment_row(owner, namespace, "Second", "second", second_bundle)
     db_session.add_all([first, second])
     await db_session.flush()
     db_session.add_all(
@@ -80,12 +81,13 @@ async def test_measurements_list_by_experiment_without_pair_contract(client, db_
 async def test_experiment_versions_replace_parent_lineage(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)
+    namespace = await create_experiment_namespace(db_session, owner)
     root_bundle = experiment_source_bundle("root")
     child_bundle = experiment_source_bundle("child")
-    root = experiment_row(owner, "Root", "lineage", root_bundle)
+    root = experiment_row(owner, namespace, "Root", "lineage", root_bundle)
     db_session.add(root)
     await db_session.flush()
-    child = experiment_row(owner, "Child", "lineage", child_bundle, (0, 2, 0))
+    child = experiment_row(owner, namespace, "Child", "lineage", child_bundle, (0, 2, 0))
     db_session.add(child)
     await db_session.commit()
 

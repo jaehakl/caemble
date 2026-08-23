@@ -60,6 +60,36 @@ def test_experiment_versioning_downgrade_renders_data_loss_guard(capsys):
     assert "CREATE TABLE geometry_repositories" in sql
 
 
+def test_multi_namespace_migration_uses_only_existing_experiments(capsys):
+    command.upgrade(
+        alembic_config(),
+        "c5e2a9d7f410:e4a1b7c9d2f0",
+        sql=True,
+    )
+    sql = capsys.readouterr().out
+
+    assert "CREATE TABLE experiment_namespaces" in sql
+    assert "SELECT namespace, min(user_id::text)::uuid" in sql
+    assert "HAVING count(DISTINCT user_id) = 1" in sql
+    assert "Cannot migrate Experiment namespace owned by multiple users" in sql
+    assert "fk_experiments_namespace_user_id_experiment_namespaces" in sql
+    assert "DROP COLUMN experiment_namespace" in sql
+
+
+def test_multi_namespace_downgrade_restores_single_namespace_guards(capsys):
+    command.downgrade(
+        alembic_config(),
+        "e4a1b7c9d2f0:c5e2a9d7f410",
+        sql=True,
+    )
+    sql = capsys.readouterr().out
+
+    assert "ADD COLUMN experiment_namespace" in sql
+    assert "CREATE FUNCTION guard_experiment_namespace_reservation()" in sql
+    assert "CREATE FUNCTION validate_experiment_owner_namespace()" in sql
+    assert "DROP TABLE experiment_namespaces" in sql
+
+
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_configured_database_is_at_the_alembic_head(db_session):

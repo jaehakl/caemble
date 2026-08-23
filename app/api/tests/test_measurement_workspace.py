@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 
 from db import Experiment, Measurement, RecordedData
 from settings import settings
-from tests.helpers import auth_headers, create_user, experiment_source_bundle
+from tests.helpers import auth_headers, create_experiment_namespace, create_user, experiment_source_bundle
 
 pytestmark = pytest.mark.slow
 
@@ -22,9 +22,10 @@ async def create_experiment(db_session, user, *, taskless=False):
     bundle = experiment_source_bundle()
     if taskless:
         bundle["files"].pop("tasks/main.tsx")
+    namespace = await create_experiment_namespace(db_session, user)
     experiment = Experiment(
         user_id=user.id,
-        namespace=user.experiment_namespace,
+        namespace=namespace,
         repository_slug="tests",
         experiment_key=f"experiment-{uuid.uuid4().hex[:12]}",
         version_major=0,

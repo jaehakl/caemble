@@ -11,7 +11,7 @@ const user = {
   is_active: true,
   created_at: '2026-07-21T00:00:00Z',
   updated_at: '2026-07-21T00:00:00Z',
-  experiment_namespace: 'designer',
+  experiment_namespaces: ['designer'],
   roles: ['user'],
 }
 const apiPattern = /^http:\/\/127\.0\.0\.1:\d+\/api\//
@@ -375,7 +375,7 @@ for (const [title, sourceMarker] of exampleExperimentTemplates) {
 
 test('manages Experiment namespace, SemVer saves, locks, and version deletion', async ({ page }) => {
   test.setTimeout(90_000)
-  let namespace = 'designer'
+  let namespaces = ['designer']
   let nextId = 1
   let rows: Array<Record<string, unknown>> = []
 
@@ -383,10 +383,7 @@ test('manages Experiment namespace, SemVer saves, locks, and version deletion', 
   await mockCanonicalCatalog(page)
   await page.route(apiPattern, async (route) => {
     const path = new URL(route.request().url()).pathname.replace(/^\/api/, '')
-    if (path === '/auth/experiment-namespace') {
-      namespace = (route.request().postDataJSON() as { namespace: string }).namespace
-      return json(route, { ...user, experiment_namespace: namespace })
-    }
+    if (path === '/auth/me') return json(route, { ...user, experiment_namespaces: namespaces })
     if (path === '/experiment/list') {
       const body = route.request().postDataJSON() as { selected_ids?: number[] }
       const selected = body.selected_ids ?? []
@@ -398,8 +395,10 @@ test('manages Experiment namespace, SemVer saves, locks, and version deletion', 
       const action = body.mode as 'create' | 'overwrite' | 'new_version'
       const sourceBundle = body.sourceBundle as Record<string, unknown>
       const previous = action === 'new_version' ? rows.find((row) => row.id === body.experimentId) : null
-      const repository = action === 'create' ? String(body.repository) : String(previous?.repository_slug)
-      const key = action === 'create' ? String(body.key) : String(previous?.experiment_key)
+      const namespace = String(body.namespace)
+      const repository = String(body.repository)
+      const key = String(body.key)
+      namespaces = [...new Set([...namespaces, namespace])].sort()
       const version = action === 'new_version' ? '0.2.0' : '0.1.0'
       if (action === 'new_version' && previous) {
         previous.sourceLocked = true
@@ -459,6 +458,7 @@ test('manages Experiment namespace, SemVer saves, locks, and version deletion', 
     if (path === '/experiment/' && route.request().method() === 'DELETE') {
       const ids = route.request().postDataJSON() as number[]
       rows = rows.filter((row) => !ids.includes(row.id as number))
+      namespaces = namespaces.filter((item) => rows.some((row) => row.namespace === item))
       return json(route, null)
     }
     return route.fallback()
@@ -467,16 +467,16 @@ test('manages Experiment namespace, SemVer saves, locks, and version deletion', 
   await page.goto('/')
   const workbenchFooter = page.locator('footer.h-7')
   const manager = page.getByLabel('Experiment Manager')
-  await expect(manager).toContainText('caemble:experiment/caemble/getting-started/basketball-goal@1.0.0')
+  await expect(manager).not.toContainText('caemble:experiment/caemble/getting-started/basketball-goal@1.0.0')
+  await expect(manager.getByRole('textbox', { name: 'Experiment namespace' })).toHaveCount(0)
 
-  await manager.getByRole('textbox', { name: 'Experiment namespace' }).fill('design-lab')
-  await manager.getByRole('button', { name: 'Namespace 저장' }).click()
   await manager.getByRole('button', { name: /Basketball Goal v1\.0\.0/ }).click()
   await expect(workbenchFooter).toContainText('Preview only · Task 없음')
 
   const experimentRibbon = page.getByRole('region', { name: 'Experiment 리본' })
   await experimentRibbon.getByRole('button', { name: 'Save', exact: true }).click()
   const createDialog = page.getByRole('dialog', { name: 'Save Experiment' })
+  await createDialog.getByRole('combobox', { name: 'Namespace' }).fill('design-lab')
   await createDialog.getByRole('textbox', { name: 'Repository' }).fill('prototypes')
   await createDialog.getByRole('textbox', { name: 'Experiment key' }).fill('basketball-goal')
   await createDialog.getByRole('button', { name: 'Experiment 저장' }).click()
@@ -488,7 +488,7 @@ test('manages Experiment namespace, SemVer saves, locks, and version deletion', 
   await versionDialog.getByRole('button', { name: '새 Version 저장' }).click()
   await expect(workbenchFooter).toContainText('@0.2.0')
 
-  await expect(manager).toContainText('design-lab/prototypes/basketball-goal')
+  await expect(manager).not.toContainText('design-lab/prototypes/basketball-goal')
   await expect(manager).toContainText('Locked')
   await expect(manager).toContainText('연결 데이터 3')
 
