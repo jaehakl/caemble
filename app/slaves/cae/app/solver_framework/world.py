@@ -17,6 +17,13 @@ def experiment_scene(world: dict[str, Any]) -> dict[str, Any]:
     return scene
 
 
+def task_scene(world: dict[str, Any]) -> dict[str, Any]:
+    scene = world.get("task")
+    if not isinstance(scene, dict):
+        raise CaeError("invalid_input", "BuiltMeasurement Task scene is missing")
+    return scene
+
+
 def single_method(config: dict[str, Any], category: str, method: str) -> dict[str, Any]:
     matches = [
         item
@@ -28,27 +35,39 @@ def single_method(config: dict[str, Any], category: str, method: str) -> dict[st
     return matches[0]
 
 
-def target_group(rule: dict[str, Any], kind: str) -> str:
+def target_group(rule: dict[str, Any], kind: str, source: str = "experiment") -> str:
     target = rule.get("target")
-    prefix = f"experiment.{kind}."
+    prefix = f"{source}.{kind}."
     if not isinstance(target, list) or len(target) != 1 or not isinstance(target[0], str) or not target[0].startswith(prefix):
         raise CaeError("invalid_task", f"target must match {prefix}<group>")
     return target[0][len(prefix) :]
 
 
 def geometry_part(scene: dict[str, Any], group_name: str) -> dict[str, Any]:
+    parts = geometry_parts(scene, group_name)
+    if len(parts) != 1:
+        raise CaeError("invalid_task", f"geometry group {group_name!r} must resolve to one part")
+    return parts[0]
+
+
+def geometry_parts(scene: dict[str, Any], group_name: str) -> list[dict[str, Any]]:
     groups = [
         group
         for group in scene.get("geometryGroups", [])
         if isinstance(group, dict) and group.get("name") == group_name
     ]
     ids = groups[0].get("geometryIds") if len(groups) == 1 else None
-    if not isinstance(ids, list) or len(ids) != 1:
-        raise CaeError("invalid_task", f"geometry group {group_name!r} must resolve to one part")
-    for part in scene.get("parts", []):
-        if isinstance(part, dict) and part.get("id") == ids[0]:
-            return part
-    raise CaeError("invalid_input", f"geometry part {ids[0]!r} is missing")
+    if not isinstance(ids, list) or not ids:
+        raise CaeError("invalid_task", f"geometry group {group_name!r} must resolve to at least one part")
+    parts_by_id = {
+        part.get("id"): part
+        for part in scene.get("parts", [])
+        if isinstance(part, dict) and isinstance(part.get("id"), str)
+    }
+    missing = next((part_id for part_id in ids if part_id not in parts_by_id), None)
+    if missing is not None:
+        raise CaeError("invalid_input", f"geometry part {missing!r} is missing")
+    return [parts_by_id[part_id] for part_id in ids]
 
 
 def surface(
@@ -103,12 +122,13 @@ def material_scalar(
     part: dict[str, Any],
     solver_descriptor: dict[str, Any],
     property_name: str,
+    source: str = "experiment",
 ) -> float:
     material = part.get("material")
     material_name = material.get("name") if isinstance(material, dict) else None
     materials_by_target = world.get("materials")
-    experiment_materials = materials_by_target.get("experiment") if isinstance(materials_by_target, dict) else None
-    frozen = experiment_materials.get("parameters") if isinstance(experiment_materials, dict) else None
+    source_materials = materials_by_target.get(source) if isinstance(materials_by_target, dict) else None
+    frozen = source_materials.get("parameters") if isinstance(source_materials, dict) else None
     materials = frozen.get("materials") if isinstance(frozen, dict) else None
     entry = materials.get(material_name, {}).get(property_name) if isinstance(materials, dict) else None
     descriptor = entry.get("value") if isinstance(entry, dict) else None

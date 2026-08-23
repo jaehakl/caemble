@@ -1,0 +1,31 @@
+{
+  "formatVersion": 1,
+  "records": [
+    {
+      "dtype": "float64",
+      "finite": true,
+      "name": "currentDensity",
+      "nonzero": true,
+      "shape": [
+        31,
+        31,
+        3
+      ]
+    },
+    {
+      "dtype": "float64",
+      "finite": true,
+      "minimumExclusive": 0,
+      "name": "totalCurrent",
+      "shape": []
+    }
+  ],
+  "terminal": {
+    "kind": "complete",
+    "recordSequences": [
+      1,
+      2
+    ],
+    "sequence": 3
+  }
+}

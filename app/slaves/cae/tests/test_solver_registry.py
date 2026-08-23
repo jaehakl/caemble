@@ -135,7 +135,7 @@ async def test_test_only_solver_is_loaded_lazily_and_run_from_catalog_contract(t
     assert module_name not in sys.modules
     result = await discovered.run(
         {
-            "kernel": {"name": "test-echo", "version": "0.1.0"},
+            "kernel": {"name": "test-echo", "version": manifest["descriptor"]["version"]},
             "config": {"value": 7},
         },
         {"revision": 1},

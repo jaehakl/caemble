@@ -9,20 +9,23 @@ from sdk.slave import SlaveContext
 from app.handlers import cae_simulation_next, cae_simulation_start
 
 
-FIXTURE_DIRECTORY = Path(__file__).parent / "fixtures" / "dc-uniform-bar"
+FIXTURE_DIRECTORIES = [
+    Path(__file__).parent / "fixtures" / "dc-uniform-bar",
+    Path(__file__).parent / "fixtures" / "fiber-bundle",
+]
 
 
-def load_json(name: str):
-    return json.loads((FIXTURE_DIRECTORY / name).read_text(encoding="utf-8"))
+def load_json(directory: Path, name: str):
+    return json.loads((directory / name).read_text(encoding="utf-8"))
 
 
-def load_request():
-    request = load_json("request.json")
+def load_request(directory: Path):
+    request = load_json(directory, "request.json")
     assert request["formatVersion"] == 1
     attachments = []
     for metadata in request["attachments"]:
-        file_path = (FIXTURE_DIRECTORY / metadata["file"]).resolve()
-        assert file_path.is_relative_to(FIXTURE_DIRECTORY.resolve())
+        file_path = (directory / metadata["file"]).resolve()
+        assert file_path.is_relative_to(directory.resolve())
         data = file_path.read_bytes()
         assert len(data) == metadata["byteLength"]
         attachments.append(
@@ -55,9 +58,10 @@ def materialize_record(response: DataChannelMessage, expected: dict):
 
 @pytest.mark.slow
 @pytest.mark.asyncio
-async def test_dc_uniform_bar_ui_fixture_runs_through_cae_handlers():
-    payload, attachments = load_request()
-    expected = load_json("expected.json")
+@pytest.mark.parametrize("fixture_directory", FIXTURE_DIRECTORIES, ids=lambda path: path.name)
+async def test_ui_fixture_runs_through_cae_handlers(fixture_directory):
+    payload, attachments = load_request(fixture_directory)
+    expected = load_json(fixture_directory, "expected.json")
     assert expected["formatVersion"] == 1
     expected_records = expected["records"]
     recorded_schemas = payload["measurement"]["experiment"]["simulationProgram"]["recordedData"]
@@ -77,7 +81,7 @@ async def test_dc_uniform_bar_ui_fixture_runs_through_cae_handlers():
         memory,
         SlaveContext(session_id="fixture-job", ttl_seconds=30, call_id="start", _event_sender=send_event),
     )
-    assert start.payload["kind"] == "started"
+    assert start.payload["kind"] == "started", start.payload
     assert start.attachments == []
 
     run_id = start.payload["runId"]
@@ -98,16 +102,25 @@ async def test_dc_uniform_bar_ui_fixture_runs_through_cae_handlers():
                 _event_sender=send_event,
             ),
         )
-        assert response.payload["kind"] == "record"
+        assert response.payload["kind"] == "record", response.payload
         assert response.payload["name"] == expected_record["name"]
         assert recorded_schemas[expected_record["name"]]["dtype"] == expected_record["dtype"]
         value = materialize_record(response, expected_record)
-        np.testing.assert_allclose(
-            value,
-            expected_record["value"],
-            rtol=0,
-            atol=expected_record["absoluteTolerance"],
-        )
+        if "value" in expected_record:
+            np.testing.assert_allclose(
+                value,
+                expected_record["value"],
+                rtol=0,
+                atol=expected_record["absoluteTolerance"],
+            )
+        else:
+            array = np.asarray(value)
+            if expected_record.get("finite"):
+                assert np.all(np.isfinite(array))
+            if expected_record.get("nonzero"):
+                assert np.any(array != 0)
+            if "minimumExclusive" in expected_record:
+                assert np.all(array > expected_record["minimumExclusive"])
         ack_sequence = response.payload["sequence"]
         actual_sequences.append(ack_sequence)
 

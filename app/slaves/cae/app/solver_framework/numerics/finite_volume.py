@@ -17,10 +17,25 @@ def create_scalar_finite_volume_system(
     source_value: float,
     reference_value: float,
     volume_source: np.ndarray[Any, Any] | None = None,
+    fixed_values: np.ndarray[Any, Any] | None = None,
 ) -> FiniteVolumeSystem:
     occupancy = domain.occupancy
     shape = domain.shape
-    active_cells = np.flatnonzero(occupancy).astype(np.int64)
+    if fixed_values is not None:
+        fixed_values = np.asarray(fixed_values, dtype=np.float64).reshape(-1)
+        invalid = ~np.isnan(fixed_values) & ~np.isfinite(fixed_values)
+        if (
+            fixed_values.size != occupancy.size
+            or np.any(invalid)
+            or np.any(np.isfinite(fixed_values) & ~occupancy.astype(bool))
+        ):
+            raise CaeError("invalid_geometry", "fixed-potential mask must match occupied conductor cells")
+        if not np.any(np.isfinite(fixed_values)):
+            raise CaeError("invalid_geometry", "fixed-potential domain requires at least one fixed cell")
+    free = occupancy.astype(bool) if fixed_values is None else occupancy.astype(bool) & ~np.isfinite(fixed_values)
+    active_cells = np.flatnonzero(free).astype(np.int64)
+    if active_cells.size == 0:
+        raise CaeError("invalid_geometry", "finite-volume domain requires at least one free conductor cell")
     active_index = np.full(occupancy.size, -1, dtype=np.int64)
     active_index[active_cells] = np.arange(active_cells.size)
     spacings = (domain.axial_spacing, domain.u_spacing, domain.v_spacing)
@@ -46,11 +61,15 @@ def create_scalar_finite_volume_system(
             if not occupancy[global_neighbor]:
                 continue
             diagonal[active] += neighbor_weights[slot]
-            neighbors[active, slot] = active_index[global_neighbor]
-        if i == 0:
+            neighbor_active = active_index[global_neighbor]
+            if neighbor_active >= 0:
+                neighbors[active, slot] = neighbor_active
+            else:
+                right_hand_side[active] += neighbor_weights[slot] * fixed_values[global_neighbor]
+        if fixed_values is None and i == 0:
             diagonal[active] += 2 * weights[0]
             right_hand_side[active] += 2 * weights[0] * source_value
-        if i == shape[0] - 1:
+        if fixed_values is None and i == shape[0] - 1:
             diagonal[active] += 2 * weights[0]
             right_hand_side[active] += 2 * weights[0] * reference_value
         if not math.isfinite(diagonal[active]) or diagonal[active] <= 0:

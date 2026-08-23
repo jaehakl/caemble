@@ -127,7 +127,7 @@ def test_example_experiment_catalog_contracts():
         assert coupled["cadApiVersion"] == 8
         assert coupled["sourceFormatVersion"] == 2
         assert [(item["name"], item["version"]) for item in coupled["relatedSolvers"]] == [
-            ("dc-current-density", "0.1.0"),
+            ("dc-current-density", "0.2.0"),
             ("steady-state-heat", "0.1.0"),
         ]
         assert set(coupled["sourceBundle"]["files"]) >= {
@@ -283,7 +283,7 @@ def test_contract_digest_changes_only_for_referenced_catalog_rows(tmp_path: Path
     with Catalog.open_readonly(draft, immutable=False) as catalog:
         changed = catalog.solver_contracts()
         assert changed[("steady-state-heat", "0.1.0")] != original[("steady-state-heat", "0.1.0")]
-        assert changed[("dc-current-density", "0.1.0")] == original[("dc-current-density", "0.1.0")]
+        assert changed[("dc-current-density", "0.2.0")] == original[("dc-current-density", "0.2.0")]
 
 
 def test_draft_diff_publish_and_released_solver_identity_policy(tmp_path: Path):

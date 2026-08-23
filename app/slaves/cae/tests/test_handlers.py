@@ -181,7 +181,12 @@ def task_config(kernel: str, output_method: str, output_key: str):
     }
 
 
-def solver_contract(name, version="0.1.0"):
+def solver_contract(name, version=None):
+    version = version or next(
+        manifest["descriptor"]["version"]
+        for manifest in registry.manifests()
+        if manifest["descriptor"]["name"] == name
+    )
     return {
         "name": name,
         "version": version,
@@ -232,7 +237,7 @@ def payload():
                         "electric": {
                             "kernel": {
                                 "name": "dc-current-density",
-                                "version": "0.1.0",
+                                "version": "0.2.0",
                             },
                             "config": task_config(
                                 "dc-current-density",
@@ -262,7 +267,7 @@ def artifact_chain_payload(
     program = request["measurement"]["experiment"]["simulationProgram"]
     program["tasks"] = {
         "producer": {
-            "kernel": {"name": "dc-current-density", "version": "0.1.0"},
+            "kernel": {"name": "dc-current-density", "version": "0.2.0"},
             "config": task_config("dc-current-density", producer_method, "heatSource"),
         },
         "consumer": {
@@ -366,7 +371,7 @@ async def test_start_rejects_solver_contract_digest_mismatch_before_run_creation
     assert response.payload["kind"] == "failed"
     assert response.payload["error"] == {
         "code": "catalog_mismatch",
-        "message": "solver contract digest differs for dc-current-density@0.1.0",
+        "message": "solver contract digest differs for dc-current-density@0.2.0",
     }
 
 
@@ -821,7 +826,7 @@ async def test_sim_run_forwards_state_and_owned_artifact_to_registered_kernel(
     program = request["measurement"]["experiment"]["simulationProgram"]
     program["tasks"] = {
         "solveCoarse": {
-            "kernel": {"name": "dc-current-density", "version": "0.1.0"},
+            "kernel": {"name": "dc-current-density", "version": "0.2.0"},
             "config": task_config("dc-current-density", "dc.joule-heating", "heatSource"),
         },
         "solveFine": {

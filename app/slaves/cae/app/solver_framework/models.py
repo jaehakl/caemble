@@ -31,6 +31,14 @@ class VoxelDomain:
 
 
 @dataclass(frozen=True, slots=True)
+class ElectrodeVoxelDomain:
+    domain: VoxelDomain
+    conductor: np.ndarray[Any, Any]
+    source_electrode: np.ndarray[Any, Any]
+    reference_electrode: np.ndarray[Any, Any]
+
+
+@dataclass(frozen=True, slots=True)
 class FiniteVolumeSystem:
     active_cells: np.ndarray[Any, Any]
     active_index: np.ndarray[Any, Any]

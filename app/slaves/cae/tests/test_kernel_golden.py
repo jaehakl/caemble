@@ -95,7 +95,7 @@ def descriptor(value, unit=None, quantity_kind=None):
 
 def dc_task():
     return {
-        "kernel": {"name": "dc-current-density", "version": "0.1.0"},
+        "kernel": {"name": "dc-current-density", "version": "0.2.0"},
         "config": {
             "parameters": {
                 "relativeTolerance": descriptor(1e-10, "{fraction}", "DimensionlessRatio"),

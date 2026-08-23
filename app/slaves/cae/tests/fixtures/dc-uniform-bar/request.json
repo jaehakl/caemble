@@ -5,7 +5,7 @@
       "kind": "measurement",
       "experiment": {
         "kind": "experiment",
-        "sourceHash": "932d37c881e4cbd45895666b3b2d0b42650b15b70e6576729a33218a378a6e48",
+        "sourceHash": "8725d81c3d0d58c71e689554dc80802d4807ebbc820a855479576fecc19d5f4f",
         "variables": {
           "conductorSize": [
             100,
@@ -481,7 +481,7 @@
             "solveCurrent": {
               "kernel": {
                 "name": "dc-current-density",
-                "version": "0.1.0"
+                "version": "0.2.0"
               },
               "config": {
                 "boundaryConditions": [
@@ -664,8 +664,8 @@
     "solverContracts": [
       {
         "name": "dc-current-density",
-        "version": "0.1.0",
-        "contractDigest": "9962cb167fc38f7899ece5578300683d9c226b7054843cce446b24c42b5c59c4"
+        "version": "0.2.0",
+        "contractDigest": "3a9cdb7d76f0aa4ccb77ac18cafb2feb7852e0c5d75cdcd7bccc91280bd3ee1c"
       }
     ]
   },

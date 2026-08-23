@@ -1,6 +1,6 @@
-import generate from '@babel/generator'
+import generateModule from '@babel/generator'
 import { parse } from '@babel/parser'
-import traverse, { type Binding, type NodePath } from '@babel/traverse'
+import traverseModule, { type Binding, type NodePath } from '@babel/traverse'
 import * as t from '@babel/types'
 import type {
   Expression,
@@ -15,6 +15,9 @@ import type {
   TSTypeAliasDeclaration,
 } from '@babel/types'
 import { resolveExperimentModuleSpecifier } from './moduleResolution'
+
+const generate = (generateModule as unknown as { default?: typeof generateModule }).default ?? generateModule
+const traverse = (traverseModule as unknown as { default?: typeof traverseModule }).default ?? traverseModule
 
 export class SourceAnalysisError extends Error {
   constructor(message: string) {
