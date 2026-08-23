@@ -265,6 +265,69 @@ def _validate_verification(key: str, verification: Any) -> None:
         raise CatalogIntegrityError(f"Experiment {key} verification.fixture is invalid")
     if not isinstance(fixture["records"], list) or not isinstance(fixture["terminal"], dict):
         raise CatalogIntegrityError(f"Experiment {key} verification.fixture is invalid")
+    common_fields = {"name", "dtype", "shape"}
+    exact_fields = common_fields | {"value", "absoluteTolerance"}
+    assertion_fields = common_fields | {"finite", "nonzero", "minimumExclusive"}
+    for index, record in enumerate(fixture["records"]):
+        path = f"Experiment {key} verification.fixture.records[{index}]"
+        if not isinstance(record, dict):
+            raise CatalogIntegrityError(f"{path} must be an object")
+        fields = set(record)
+        exact = fields == exact_fields
+        assertion = common_fields <= fields <= assertion_fields and bool(fields - common_fields)
+        if not exact and not assertion:
+            raise CatalogIntegrityError(f"{path} must be exactly one exact-value or assertion record")
+        for field in ("name", "dtype"):
+            value = record[field]
+            if not isinstance(value, str):
+                raise CatalogIntegrityError(f"{path}.{field} must be a non-empty string")
+            _validate_text(value, f"{path}.{field}")
+        shape = record["shape"]
+        if not isinstance(shape, list) or not all(
+            isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 9_007_199_254_740_991
+            for value in shape
+        ):
+            raise CatalogIntegrityError(f"{path}.shape must be an array of non-negative safe integers")
+        if exact:
+            tolerance = record["absoluteTolerance"]
+            if (
+                not isinstance(tolerance, (int, float))
+                or isinstance(tolerance, bool)
+                or not math.isfinite(tolerance)
+                or tolerance < 0
+            ):
+                raise CatalogIntegrityError(f"{path}.absoluteTolerance must be finite and non-negative")
+            continue
+        if "finite" in record and record["finite"] is not True:
+            raise CatalogIntegrityError(f"{path}.finite must be true when present")
+        if "nonzero" in record and record["nonzero"] is not True:
+            raise CatalogIntegrityError(f"{path}.nonzero must be true when present")
+        if "minimumExclusive" in record:
+            minimum = record["minimumExclusive"]
+            if (
+                not isinstance(minimum, (int, float))
+                or isinstance(minimum, bool)
+                or not math.isfinite(minimum)
+            ):
+                raise CatalogIntegrityError(f"{path}.minimumExclusive must be finite")
+
+    terminal = fixture["terminal"]
+    terminal_path = f"Experiment {key} verification.fixture.terminal"
+    if set(terminal) != {"kind", "sequence", "recordSequences"} or terminal.get("kind") != "complete":
+        raise CatalogIntegrityError(f"{terminal_path} is invalid")
+    sequence = terminal["sequence"]
+    record_sequences = terminal["recordSequences"]
+    if (
+        not isinstance(sequence, int)
+        or isinstance(sequence, bool)
+        or not 0 <= sequence <= 9_007_199_254_740_991
+        or not isinstance(record_sequences, list)
+        or not all(
+            isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 9_007_199_254_740_991
+            for value in record_sequences
+        )
+    ):
+        raise CatalogIntegrityError(f"{terminal_path} sequences must be non-negative safe integers")
 
 
 def _validate_experiments(catalog: Catalog) -> None:

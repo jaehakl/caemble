@@ -112,6 +112,7 @@ async def test_model_artifacts_are_scoped_only_by_experiment(client, db_session,
         assert reparented.status_code == 409
         assert "experiment_id cannot be changed" in reparented.json()["detail"]
     mine_id = mine.id
+    hidden_id = hidden.id
     db_session.expire_all()
     assert (await db_session.get(DesignerModel, designer.json()[0]["id"])).experiment_id == mine_id
     assert (await db_session.get(PredictorModel, predictor.json()[0]["id"])).experiment_id == mine_id
@@ -119,6 +120,6 @@ async def test_model_artifacts_are_scoped_only_by_experiment(client, db_session,
     forbidden = await client.post(
         "/designer_model/upsert",
         headers=headers,
-        json=[{"experiment_id": hidden.id}],
+        json=[{"experiment_id": hidden_id}],
     )
     assert forbidden.status_code == 404

@@ -30,6 +30,7 @@ with Catalog.open_readonly() as catalog:
 json.dump(result, sys.stdout)
 `
 const exampleExperimentTemplates = [
+  ['Fiber Bundle', 'fiberBundle'],
   ['DC Uniform Bar', 'referenceVoltage'],
   ['DC Notched Current Density', 'NotchedConductor'],
   ['DC Resolution Study', 'sourceVoltage'],

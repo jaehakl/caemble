@@ -256,6 +256,34 @@ const experimentSourceBundleSchema = z.object({
   files: z.record(z.string(), z.string()),
 })
 
+const verificationRecordSchema = z.object({
+  name: z.string().min(1),
+  dtype: z.string().min(1),
+  shape: z.array(z.number().int().nonnegative()),
+})
+
+const exactVerificationRecordSchema = verificationRecordSchema
+  .extend({
+    value: z.unknown(),
+    absoluteTolerance: z.number().finite().nonnegative(),
+  })
+  .strict()
+  .refine((record) => Object.prototype.hasOwnProperty.call(record, 'value'), {
+    message: 'Exact verification records require value.',
+  })
+
+const assertionVerificationRecordSchema = verificationRecordSchema
+  .extend({
+    finite: z.literal(true).optional(),
+    nonzero: z.literal(true).optional(),
+    minimumExclusive: z.number().finite().optional(),
+  })
+  .strict()
+  .refine(
+    (record) => record.finite === true || record.nonzero === true || record.minimumExclusive !== undefined,
+    { message: 'Assertion verification records require at least one assertion.' },
+  )
+
 const experimentVerificationSchema = z.object({
   kernelTasks: z.array(z.string()),
   recordedData: z.array(z.string()),
@@ -263,20 +291,14 @@ const experimentVerificationSchema = z.object({
   fixture: z
     .object({
       records: z.array(
-        z.object({
-          name: z.string(),
-          dtype: z.string(),
-          shape: z.array(z.number().int().nonnegative()),
-          value: z.unknown(),
-          absoluteTolerance: z.number().nonnegative(),
-        }),
+        z.union([exactVerificationRecordSchema, assertionVerificationRecordSchema]),
       ),
       terminal: z.object({
         kind: z.literal('complete'),
         sequence: z.number().int().nonnegative(),
         recordSequences: z.array(z.number().int().nonnegative()),
-      }),
-    })
+      }).strict(),
+    }).strict()
     .nullable()
     .optional(),
 })

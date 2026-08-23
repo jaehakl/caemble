@@ -401,6 +401,44 @@ def test_validate_rejects_invalid_example_source_bundle_and_solver_relations(
         validate_database(draft)
 
 
+@pytest.mark.parametrize(
+    ("mutation", "match"),
+    [
+        ("hybrid", "must be exactly one exact-value or assertion record"),
+        ("empty_assertion", "must be exactly one exact-value or assertion record"),
+        ("terminal", "verification.fixture.terminal is invalid"),
+    ],
+)
+def test_validate_rejects_invalid_experiment_fixture_records_and_terminal(
+    tmp_path: Path,
+    mutation: str,
+    match: str,
+):
+    draft = tmp_path / f"invalid-{mutation}.sqlite3"
+    create_draft(draft)
+    with Catalog.open_readonly(draft, immutable=False) as catalog:
+        verification = catalog.experiment("fiber-bundle")["verification"]
+
+    if mutation == "hybrid":
+        verification["fixture"]["records"][0].update({"value": [], "absoluteTolerance": 0})
+    elif mutation == "empty_assertion":
+        verification["fixture"]["records"][0] = {
+            "name": "currentDensity",
+            "dtype": "float64",
+            "shape": [31, 31, 3],
+        }
+    else:
+        verification["fixture"]["terminal"]["unexpected"] = True
+
+    with writable_connection(draft) as connection:
+        connection.execute(
+            "UPDATE experiments SET verification_json = ? WHERE key = 'fiber-bundle'",
+            (json.dumps(verification),),
+        )
+    with pytest.raises(CatalogIntegrityError, match=match):
+        validate_database(draft)
+
+
 def test_example_experiment_module_policy_accepts_ts_syntax_and_type_only_cycles():
     files = {
         "experiment.tsx": "import { value } from './lib/value'\nexport default value\n",

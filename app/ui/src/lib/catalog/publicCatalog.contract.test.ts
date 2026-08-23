@@ -26,10 +26,17 @@ installSyntheticCatalog({
 describe('canonical public Experiment catalog', () => {
   it('accepts fixture objects, explicit null, and omitted fixture fields from catalog transports', () => {
     const withFixture = exampleExperiment('dc-uniform-bar')
+    const withAssertions = exampleExperiment('fiber-bundle')
     const withoutFixture = exampleExperiment('dc-notched-current-density')
 
     expect(experimentDetailSchema.parse(withFixture).verification.fixture).toMatchObject({
       records: [{ name: 'totalCurrent' }],
+    })
+    expect(experimentDetailSchema.parse(withAssertions).verification.fixture).toMatchObject({
+      records: [
+        { name: 'currentDensity', shape: [31, 31, 3], finite: true, nonzero: true },
+        { name: 'totalCurrent', shape: [], finite: true, minimumExclusive: 0 },
+      ],
     })
     expect(experimentDetailSchema.parse(withoutFixture).verification.fixture).toBeUndefined()
     expect(
@@ -38,6 +45,28 @@ describe('canonical public Experiment catalog', () => {
         verification: { ...withoutFixture.verification, fixture: null },
       }).verification.fixture,
     ).toBeNull()
+  })
+
+  it('rejects mixed, empty assertion, and unknown fixture record fields', () => {
+    const item = exampleExperiment('fiber-bundle')
+    const [currentDensity] = item.verification.fixture!.records
+    const invalidRecords = [
+      { ...currentDensity, value: [], absoluteTolerance: 0 },
+      { name: 'currentDensity', dtype: 'float64', shape: [31, 31, 3] },
+      { ...currentDensity, unexpected: true },
+    ]
+
+    invalidRecords.forEach((record) =>
+      expect(() =>
+        experimentDetailSchema.parse({
+          ...item,
+          verification: {
+            ...item.verification,
+            fixture: { ...item.verification.fixture, records: [record] },
+          },
+        }),
+      ).toThrow(),
+    )
   })
 
   it.each(exampleExperimentKeys)('validates %s bundle, tasks, RecordedData, and verification', async (key) => {

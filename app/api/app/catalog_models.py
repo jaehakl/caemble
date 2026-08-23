@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Generic, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from pydantic.alias_generators import to_camel
 
 from models import ExperimentSourceBundle
@@ -157,21 +157,43 @@ class ExperimentSummary(CatalogModel):
 
 
 class VerificationRecord(CatalogModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
     name: str
     dtype: str
-    shape: list[int]
+    shape: list[Annotated[int, Field(strict=True, ge=0)]]
+
+
+class ExactVerificationRecord(VerificationRecord):
     value: Any
-    absolute_tolerance: float
+    absolute_tolerance: Annotated[float, Field(ge=0, allow_inf_nan=False)]
+
+
+class AssertionVerificationRecord(VerificationRecord):
+    finite: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
+    nonzero: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
+    minimum_exclusive: Annotated[float, Field(allow_inf_nan=False)] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+
+    @model_validator(mode="after")
+    def require_assertion(self) -> AssertionVerificationRecord:
+        if self.finite is None and self.nonzero is None and self.minimum_exclusive is None:
+            raise ValueError("Assertion verification records require at least one assertion")
+        return self
 
 
 class VerificationTerminal(CatalogModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
     kind: Literal["complete"]
-    sequence: int
-    record_sequences: list[int]
+    sequence: Annotated[int, Field(strict=True, ge=0)]
+    record_sequences: list[Annotated[int, Field(strict=True, ge=0)]]
 
 
 class ExperimentFixture(CatalogModel):
-    records: list[VerificationRecord]
+    records: list[ExactVerificationRecord | AssertionVerificationRecord]
     terminal: VerificationTerminal
 
 

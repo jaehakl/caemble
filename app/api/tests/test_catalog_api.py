@@ -67,7 +67,7 @@ async def test_catalog_relations_and_artifact_compatibility(catalog_client: http
     assert material.json()["quantityKindDefinition"]["name"] == "thermodynamics.ThermalConductivity"
     assert material.json()["solverRequirements"][0]["role"] == "thermalDomain"
 
-    dc = await catalog_client.get("/catalog/solvers/dc-current-density/0.1.0")
+    dc = await catalog_client.get("/catalog/solvers/dc-current-density/0.2.0")
     joule = next(item for item in dc.json()["producesArtifacts"] if item["artifactType"] == "caemble.dc/joule-heating@1")
     assert joule["consumers"] == [
         {"solverName": "steady-state-heat", "solverVersion": "0.1.0", "inputPort": "heatSource"}
@@ -119,6 +119,28 @@ async def test_example_experiments_are_public_filterable_and_cacheable(
     assert detail.json()["coordinate"].startswith("caemble:experiment/caemble/")
     assert detail.json()["verification"]["kernelTasks"] == ["solveCurrent"]
     assert detail.json()["verification"]["fixture"]["records"][0]["name"] == "totalCurrent"
+
+    fiber = await catalog_client.get(
+        "/catalog/experiments/fiber-bundle",
+        params={"namespace": "caemble", "repository": "advanced-shapes", "version": "1.0.0"},
+    )
+    assert fiber.status_code == 200, fiber.text
+    assert fiber.json()["verification"]["fixture"]["records"] == [
+        {
+            "name": "currentDensity",
+            "dtype": "float64",
+            "shape": [31, 31, 3],
+            "finite": True,
+            "nonzero": True,
+        },
+        {
+            "name": "totalCurrent",
+            "dtype": "float64",
+            "shape": [],
+            "finite": True,
+            "minimumExclusive": 0.0,
+        },
+    ]
 
     for key in ("dc-notched-current-density", "dc-resolution-study", "electro-thermal-uniform-bar"):
         without_fixture = await catalog_client.get(f"/catalog/experiments/{key}")
