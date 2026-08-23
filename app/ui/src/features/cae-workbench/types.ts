@@ -40,24 +40,22 @@ export const workbenchLayoutLimits = Object.freeze({
   appMinWidthPx: 1280,
   resizeHandlePx: 8,
   leftMinWidthPx: 220,
-  leftMaxWidthPx: 420,
   rightMinWidthPx: 340,
-  rightMaxWidthPx: 720,
   viewerMinWidthPx: 520,
   viewerMinHeightPx: 300,
   bottomCollapsedHeightPx: 32,
   bottomMinHeightPx: 160,
-  bottomMaxHeightPx: 480,
 })
 
 export type WorkbenchLayoutState = Readonly<{
   activeSection: WorkbenchSectionId
   activeExperimentFile: string | null
   materialId: number | null
-  leftWidthPx: number
-  rightWidthPx: number
+  leftWidthRatio: number
+  rightWidthRatio: number
   bottomMode: BottomDockMode
-  bottomHeightPx: number
+  bottomHeightRatio: number
+  viewerExpanded: boolean
   rightTabs: Readonly<{
     experiment: ExperimentRightTabId
     measurement: MeasurementRightTabId
@@ -73,10 +71,11 @@ export const defaultWorkbenchLayoutState: WorkbenchLayoutState = Object.freeze({
   activeSection: 'experiment',
   activeExperimentFile: 'experiment.tsx',
   materialId: null,
-  leftWidthPx: 280,
-  rightWidthPx: 420,
-  bottomMode: 'hidden',
-  bottomHeightPx: 220,
+  leftWidthRatio: 0.234,
+  rightWidthRatio: 0.5,
+  bottomMode: 'console',
+  bottomHeightRatio: 0.5,
+  viewerExpanded: false,
   rightTabs: Object.freeze({ experiment: 'source', measurement: 'recorded-data' }),
   analysisTab: 'overview',
   help: Object.freeze({ kind: 'manual', item: 'program-overview' }),
@@ -111,8 +110,19 @@ export type WorkbenchDraftV14 = WorkbenchDraftDomain &
     }>
   }>
 
-export type WorkbenchDraft = WorkbenchDraftDomain &
+export type WorkbenchDraftV15 = WorkbenchDraftDomain &
   Readonly<{
     version: 15
+    layout: Omit<WorkbenchLayoutState, 'leftWidthRatio' | 'rightWidthRatio' | 'bottomHeightRatio'> &
+      Readonly<{
+        leftWidthPx: number
+        rightWidthPx: number
+        bottomHeightPx: number
+      }>
+  }>
+
+export type WorkbenchDraft = WorkbenchDraftDomain &
+  Readonly<{
+    version: 16
     layout: WorkbenchLayoutState
   }>

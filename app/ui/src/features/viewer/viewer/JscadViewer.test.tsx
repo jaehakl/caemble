@@ -10,9 +10,11 @@ describe('geometry-only Viewer toolbar', () => {
     const markup = renderToStaticMarkup(
       <ViewerToolbar
         availableSources={['experiment', 'task']}
+        viewerExpanded={false}
         visibleSources={['experiment']}
         onSetCameraView={() => undefined}
         onToggleSource={onToggleSource}
+        onToggleViewerExpanded={() => undefined}
       />,
     )
 
@@ -20,10 +22,21 @@ describe('geometry-only Viewer toolbar', () => {
     expect(markup).toContain('aria-label="Set default camera view"')
     expect(markup).toContain('aria-label="Toggle experiment"')
     expect(markup).toContain('aria-label="Toggle task"')
+    expect(markup).toContain('aria-label="Viewer 확장"')
+    expect(markup).toContain('aria-pressed="false"')
     expect(markup).not.toContain('role="tab"')
     expect(markup).not.toContain('Material Grid')
     expect(markup).not.toContain('Results')
     expect(markup).not.toContain('Simulation')
+  })
+
+  it('exposes the restore action while the Viewer is expanded', () => {
+    const markup = renderToStaticMarkup(
+      <ViewerToolbar viewerExpanded onSetCameraView={() => undefined} onToggleViewerExpanded={() => undefined} />,
+    )
+
+    expect(markup).toContain('aria-label="Viewer 영역 복원"')
+    expect(markup).toContain('aria-pressed="true"')
   })
 })
 

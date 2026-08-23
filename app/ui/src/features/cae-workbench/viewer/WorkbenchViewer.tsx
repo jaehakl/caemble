@@ -8,10 +8,14 @@ export function WorkbenchViewer({
   activeExperimentTaskName,
   experiment,
   experimentDocument,
+  onToggleViewerExpanded,
+  viewerExpanded,
 }: {
   activeExperimentTaskName?: string | null
   experiment: ExperimentSourceDocument | null
   experimentDocument: CadDocumentController
+  onToggleViewerExpanded: () => void
+  viewerExpanded: boolean
 }) {
   const viewerDocument = useMemo(
     () =>
@@ -49,6 +53,8 @@ export function WorkbenchViewer({
         onRenderEnd={handleRenderEnd}
         onRenderError={handleRenderError}
         onRenderStart={handleRenderStart}
+        onToggleViewerExpanded={onToggleViewerExpanded}
+        viewerExpanded={viewerExpanded}
       />
       {stale ? (
         <div className="pointer-events-none absolute top-3 left-3 flex max-w-[calc(100%-1.5rem)] items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50/95 px-2 py-1 text-xs text-amber-900 shadow-sm">

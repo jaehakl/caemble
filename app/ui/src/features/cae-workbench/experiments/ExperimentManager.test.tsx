@@ -74,7 +74,7 @@ const rows = [
     version_minor: 1,
     version_patch: 0,
     name: 'Plate',
-    description: null,
+    description: 'Saved plate description that remains readable in the compact Workbench list.',
     source_bundle: sourceBundle,
     source_hash: 'b'.repeat(64),
     version: '1.1.0',
@@ -128,7 +128,7 @@ beforeEach(() => {
         version: '1.0.0',
         coordinate: 'caemble:experiment/caemble/getting-started/basketball-goal@1.0.0',
         title: 'Basketball Goal',
-        description: 'Example',
+        description: 'Basketball structure Example description.',
         cadApiVersion: 8,
         sourceFormatVersion: 2,
         bundleFormatVersion: 6,
@@ -145,7 +145,7 @@ beforeEach(() => {
     version: '1.0.0',
     coordinate: 'caemble:experiment/caemble/getting-started/basketball-goal@1.0.0',
     title: 'Basketball Goal',
-    description: 'Example',
+    description: 'Basketball structure Example description.',
     sourceBundle,
   })
   mocks.listRows.mockResolvedValue({ total: rows.length, items: rows })
@@ -153,7 +153,7 @@ beforeEach(() => {
 })
 
 describe('ExperimentManager', () => {
-  it('shows Example and saved coordinates together with grouped SemVer lock impact', async () => {
+  it('shows abbreviated descriptions without exposing coordinates and keeps SemVer lock impact', async () => {
     const user = userEvent.setup()
     const onOpenExample = vi.fn()
     render(
@@ -167,7 +167,10 @@ describe('ExperimentManager', () => {
       { wrapper },
     )
 
-    expect(await screen.findByText('caemble:experiment/caemble/getting-started/basketball-goal@1.0.0')).toBeVisible()
+    const exampleDescription = await screen.findByText('Basketball structure Example description.')
+    expect(exampleDescription).toBeVisible()
+    expect(exampleDescription).toHaveClass('line-clamp-2')
+    expect(exampleDescription).toHaveAttribute('title', 'Basketball structure Example description.')
     await user.click(screen.getByText('Basketball Goal').closest('button')!)
     await waitFor(() =>
       expect(mocks.getExperiment).toHaveBeenCalledWith(
@@ -179,12 +182,27 @@ describe('ExperimentManager', () => {
         }),
       ),
     )
-    expect(onOpenExample).toHaveBeenCalledWith(sourceBundle, 'Basketball Goal', 'Example')
-    expect(await screen.findByText('jlee/lab/plate')).toBeVisible()
+    expect(onOpenExample).toHaveBeenCalledWith(
+      sourceBundle,
+      'Basketball Goal',
+      'Basketball structure Example description.',
+    )
+    expect(
+      await screen.findByText('Saved plate description that remains readable in the compact Workbench list.'),
+    ).toBeVisible()
+    expect(screen.getByText('설명 없음')).toBeVisible()
     expect(screen.getByText('v1.1.0')).toBeVisible()
     expect(screen.getAllByText('v1.0.0')).toHaveLength(2)
     expect(screen.getByText('Locked')).toBeVisible()
     expect(screen.getByText('연결 데이터 3')).toBeVisible()
+    expect(screen.queryByText('caemble/getting-started/basketball-goal')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('caemble:experiment/caemble/getting-started/basketball-goal@1.0.0'),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText('jlee/lab/plate')).not.toBeInTheDocument()
+    expect(screen.queryByText('caemble:experiment/jlee/lab/plate@1.1.0')).not.toBeInTheDocument()
+    expect(screen.getByPlaceholderText('이름 또는 설명 검색')).toBeVisible()
+    expect(screen.queryByText(/Example과 저장된 namespace/)).not.toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: '소유 범위' })).not.toBeInTheDocument()
     expect(screen.queryByRole('tab')).not.toBeInTheDocument()
   })
@@ -202,20 +220,26 @@ describe('ExperimentManager', () => {
       { wrapper },
     )
 
-    expect(await screen.findByText('jlee/lab/plate')).toBeVisible()
-    expect(screen.getByText('caemble/getting-started/basketball-goal')).toBeVisible()
+    expect(
+      await screen.findByText('Saved plate description that remains readable in the compact Workbench list.'),
+    ).toBeVisible()
+    expect(screen.getByText('Basketball structure Example description.')).toBeVisible()
 
     screen.getByRole('combobox', { name: 'Namespace 필터' }).focus()
     await user.keyboard('{Enter}{ArrowDown}{Enter}')
-    expect(screen.queryByText('jlee/lab/plate')).not.toBeInTheDocument()
-    expect(screen.getByText('caemble/getting-started/basketball-goal')).toBeVisible()
+    expect(
+      screen.queryByText('Saved plate description that remains readable in the compact Workbench list.'),
+    ).not.toBeInTheDocument()
+    expect(screen.getByText('Basketball structure Example description.')).toBeVisible()
 
     screen.getByRole('combobox', { name: 'Namespace 필터' }).focus()
     await user.keyboard('{Enter}{ArrowDown}{Enter}')
     screen.getByRole('combobox', { name: 'Repository 필터' }).focus()
     await user.keyboard('{Enter}{ArrowDown}{Enter}')
-    expect(screen.getByText('jlee/lab/plate')).toBeVisible()
-    expect(screen.queryByText('caemble/getting-started/basketball-goal')).not.toBeInTheDocument()
+    expect(
+      screen.getByText('Saved plate description that remains readable in the compact Workbench list.'),
+    ).toBeVisible()
+    expect(screen.queryByText('Basketball structure Example description.')).not.toBeInTheDocument()
   })
 
   it('keeps saved results available when the Example query fails', async () => {
@@ -232,7 +256,9 @@ describe('ExperimentManager', () => {
     )
 
     expect(await screen.findByText('Example 목록을 불러오지 못했습니다.')).toBeVisible()
-    expect(await screen.findByText('jlee/lab/plate')).toBeVisible()
+    expect(
+      await screen.findByText('Saved plate description that remains readable in the compact Workbench list.'),
+    ).toBeVisible()
   })
 
   it('keeps Examples available when the saved query fails', async () => {
@@ -249,7 +275,7 @@ describe('ExperimentManager', () => {
     )
 
     expect(await screen.findByText('저장된 Experiment 목록을 불러오지 못했습니다.')).toBeVisible()
-    expect(await screen.findByText('caemble/getting-started/basketball-goal')).toBeVisible()
+    expect(await screen.findByText('Basketball structure Example description.')).toBeVisible()
   })
 
   it('loads only Examples for unauthenticated users', async () => {
@@ -264,9 +290,11 @@ describe('ExperimentManager', () => {
       { wrapper },
     )
 
-    expect(await screen.findByText('caemble/getting-started/basketball-goal')).toBeVisible()
+    expect(await screen.findByText('Basketball structure Example description.')).toBeVisible()
     expect(mocks.listRows).not.toHaveBeenCalled()
-    expect(screen.queryByText('jlee/lab/plate')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('Saved plate description that remains readable in the compact Workbench list.'),
+    ).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: 'Experiment namespace' })).not.toBeInTheDocument()
   })
 

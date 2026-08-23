@@ -62,19 +62,21 @@ describe('AiHelperWorkspace Agent transport', () => {
     })
   })
 
-  it('shows only provider, model and reasoning settings with the external-data privacy notice', async () => {
+  it('shows compact provider, model and reasoning settings without repeated helper notices', async () => {
     const user = userEvent.setup()
     renderWorkspace()
 
     expect(await screen.findByText('OpenAI · gpt-5.6-luna')).toBeVisible()
-    expect(screen.getByText(/Visible DB·카탈로그 데이터가 선택한 외부 AI/)).toBeVisible()
-    expect(screen.getByText(/store=false.*최대 30일/)).toBeVisible()
+    expect(screen.queryByText(/Visible DB·카탈로그 데이터가 선택한 외부 AI/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/store=false.*최대 30일/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Agent는 허용된 데이터와 카탈로그를 검색/)).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '설정' }))
 
     expect(screen.getAllByRole('combobox')).toHaveLength(3)
     expect(screen.getByLabelText('AI Provider')).toHaveValue('openai')
     expect(screen.getByLabelText('AI Model')).toHaveValue('gpt-5.6-luna')
     expect(screen.getByLabelText('Reasoning effort')).toHaveValue('medium')
+    expect(screen.queryByText(/Reasoning을 높이면/)).not.toBeInTheDocument()
     expect(screen.queryByText('Temperature')).not.toBeInTheDocument()
     expect(screen.queryByText('Top P')).not.toBeInTheDocument()
   })

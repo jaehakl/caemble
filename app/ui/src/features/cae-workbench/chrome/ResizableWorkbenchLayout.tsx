@@ -14,7 +14,7 @@ import { defaultWorkbenchLayoutState, workbenchLayoutLimits, type BottomDockMode
 type DragState = Readonly<{
   pane: 'left' | 'right' | 'bottom'
   startClient: number
-  startValue: number
+  startValuePx: number
 }>
 
 const clamp = (value: number, minimum: number, maximum: number) => Math.min(Math.max(value, minimum), maximum)
@@ -71,12 +71,13 @@ export function ResizableWorkbenchLayout({
   right,
   bottom,
   bottomMode,
-  leftWidthPx = defaultWorkbenchLayoutState.leftWidthPx,
-  rightWidthPx = defaultWorkbenchLayoutState.rightWidthPx,
-  bottomHeightPx = defaultWorkbenchLayoutState.bottomHeightPx,
-  onLeftWidthChange,
-  onRightWidthChange,
-  onBottomHeightChange,
+  leftWidthRatio = defaultWorkbenchLayoutState.leftWidthRatio,
+  rightWidthRatio = defaultWorkbenchLayoutState.rightWidthRatio,
+  bottomHeightRatio = defaultWorkbenchLayoutState.bottomHeightRatio,
+  viewerExpanded = defaultWorkbenchLayoutState.viewerExpanded,
+  onLeftWidthRatioChange,
+  onRightWidthRatioChange,
+  onBottomHeightRatioChange,
   leftLabel = '목록',
   viewerLabel = '3D CAD View',
   rightLabel = 'Detail',
@@ -87,12 +88,13 @@ export function ResizableWorkbenchLayout({
   right: ReactNode
   bottom: ReactNode
   bottomMode: BottomDockMode
-  leftWidthPx?: number
-  rightWidthPx?: number
-  bottomHeightPx?: number
-  onLeftWidthChange?: (widthPx: number) => void
-  onRightWidthChange?: (widthPx: number) => void
-  onBottomHeightChange?: (heightPx: number) => void
+  leftWidthRatio?: number
+  rightWidthRatio?: number
+  bottomHeightRatio?: number
+  viewerExpanded?: boolean
+  onLeftWidthRatioChange?: (ratio: number) => void
+  onRightWidthRatioChange?: (ratio: number) => void
+  onBottomHeightRatioChange?: (ratio: number) => void
   leftLabel?: string
   viewerLabel?: string
   rightLabel?: string
@@ -127,50 +129,60 @@ export function ResizableWorkbenchLayout({
   const sideSpace = workbenchLayoutLimits.resizeHandlePx * 2 + workbenchLayoutLimits.viewerMinWidthPx
   const leftMaximum = Math.max(
     workbenchLayoutLimits.leftMinWidthPx,
-    Math.min(
-      workbenchLayoutLimits.leftMaxWidthPx,
-      containerSize.width - sideSpace - workbenchLayoutLimits.rightMinWidthPx,
-    ),
+    containerSize.width - sideSpace - workbenchLayoutLimits.rightMinWidthPx,
   )
-  const effectiveLeftWidth = clamp(leftWidthPx, workbenchLayoutLimits.leftMinWidthPx, leftMaximum)
+  const effectiveLeftWidth = clamp(
+    leftWidthRatio * containerSize.width,
+    workbenchLayoutLimits.leftMinWidthPx,
+    leftMaximum,
+  )
   const rightMaximum = Math.max(
     workbenchLayoutLimits.rightMinWidthPx,
-    Math.min(workbenchLayoutLimits.rightMaxWidthPx, containerSize.width - sideSpace - effectiveLeftWidth),
+    containerSize.width - sideSpace - effectiveLeftWidth,
   )
-  const effectiveRightWidth = clamp(rightWidthPx, workbenchLayoutLimits.rightMinWidthPx, rightMaximum)
+  const effectiveRightWidth = clamp(
+    rightWidthRatio * containerSize.width,
+    workbenchLayoutLimits.rightMinWidthPx,
+    rightMaximum,
+  )
   const bottomMaximum = Math.max(
     workbenchLayoutLimits.bottomMinHeightPx,
-    Math.min(
-      workbenchLayoutLimits.bottomMaxHeightPx,
-      containerSize.height - workbenchLayoutLimits.resizeHandlePx - workbenchLayoutLimits.viewerMinHeightPx,
-    ),
+    containerSize.height - workbenchLayoutLimits.resizeHandlePx - workbenchLayoutLimits.viewerMinHeightPx,
   )
-  const effectiveBottomHeight = clamp(bottomHeightPx, workbenchLayoutLimits.bottomMinHeightPx, bottomMaximum)
+  const effectiveBottomHeight = clamp(
+    bottomHeightRatio * containerSize.height,
+    workbenchLayoutLimits.bottomMinHeightPx,
+    bottomMaximum,
+  )
 
   useEffect(() => {
     if (!drag) return
     const handlePointerMove = (event: PointerEvent) => {
       if (drag.pane === 'left') {
-        onLeftWidthChange?.(
-          clamp(drag.startValue + event.clientX - drag.startClient, workbenchLayoutLimits.leftMinWidthPx, leftMaximum),
+        onLeftWidthRatioChange?.(
+          clamp(
+            drag.startValuePx + event.clientX - drag.startClient,
+            workbenchLayoutLimits.leftMinWidthPx,
+            leftMaximum,
+          ) / containerSize.width,
         )
       }
       if (drag.pane === 'right') {
-        onRightWidthChange?.(
+        onRightWidthRatioChange?.(
           clamp(
-            drag.startValue - event.clientX + drag.startClient,
+            drag.startValuePx - event.clientX + drag.startClient,
             workbenchLayoutLimits.rightMinWidthPx,
             rightMaximum,
-          ),
+          ) / containerSize.width,
         )
       }
       if (drag.pane === 'bottom') {
-        onBottomHeightChange?.(
+        onBottomHeightRatioChange?.(
           clamp(
-            drag.startValue - event.clientY + drag.startClient,
+            drag.startValuePx - event.clientY + drag.startClient,
             workbenchLayoutLimits.bottomMinHeightPx,
             bottomMaximum,
-          ),
+          ) / containerSize.height,
         )
       }
     }
@@ -187,7 +199,17 @@ export function ResizableWorkbenchLayout({
       window.removeEventListener('pointerup', stopDragging)
       window.removeEventListener('pointercancel', stopDragging)
     }
-  }, [bottomMaximum, drag, leftMaximum, onBottomHeightChange, onLeftWidthChange, onRightWidthChange, rightMaximum])
+  }, [
+    bottomMaximum,
+    containerSize.height,
+    containerSize.width,
+    drag,
+    leftMaximum,
+    onBottomHeightRatioChange,
+    onLeftWidthRatioChange,
+    onRightWidthRatioChange,
+    rightMaximum,
+  ])
 
   const resizeWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>, pane: DragState['pane']) => {
     const step = event.shiftKey ? 64 : 16
@@ -197,34 +219,48 @@ export function ResizableWorkbenchLayout({
       if (event.key === 'ArrowRight') next = effectiveLeftWidth + step
       if (event.key === 'Home') next = workbenchLayoutLimits.leftMinWidthPx
       if (event.key === 'End') next = leftMaximum
-      if (next !== null) onLeftWidthChange?.(clamp(next, workbenchLayoutLimits.leftMinWidthPx, leftMaximum))
+      if (next !== null) {
+        onLeftWidthRatioChange?.(clamp(next, workbenchLayoutLimits.leftMinWidthPx, leftMaximum) / containerSize.width)
+      }
     }
     if (pane === 'right') {
       if (event.key === 'ArrowRight') next = effectiveRightWidth - step
       if (event.key === 'ArrowLeft') next = effectiveRightWidth + step
       if (event.key === 'Home') next = workbenchLayoutLimits.rightMinWidthPx
       if (event.key === 'End') next = rightMaximum
-      if (next !== null) onRightWidthChange?.(clamp(next, workbenchLayoutLimits.rightMinWidthPx, rightMaximum))
+      if (next !== null) {
+        onRightWidthRatioChange?.(
+          clamp(next, workbenchLayoutLimits.rightMinWidthPx, rightMaximum) / containerSize.width,
+        )
+      }
     }
     if (pane === 'bottom') {
       if (event.key === 'ArrowDown') next = effectiveBottomHeight - step
       if (event.key === 'ArrowUp') next = effectiveBottomHeight + step
       if (event.key === 'Home') next = workbenchLayoutLimits.bottomMinHeightPx
       if (event.key === 'End') next = bottomMaximum
-      if (next !== null) onBottomHeightChange?.(clamp(next, workbenchLayoutLimits.bottomMinHeightPx, bottomMaximum))
+      if (next !== null) {
+        onBottomHeightRatioChange?.(
+          clamp(next, workbenchLayoutLimits.bottomMinHeightPx, bottomMaximum) / containerSize.height,
+        )
+      }
     }
     if (next !== null) event.preventDefault()
   }
 
-  const columns = `${effectiveLeftWidth}px ${workbenchLayoutLimits.resizeHandlePx}px minmax(${workbenchLayoutLimits.viewerMinWidthPx}px, 1fr) ${workbenchLayoutLimits.resizeHandlePx}px ${effectiveRightWidth}px`
-  const centerRows =
-    bottomMode === 'hidden'
+  const columns = viewerExpanded
+    ? `minmax(${workbenchLayoutLimits.viewerMinWidthPx}px, 1fr) ${workbenchLayoutLimits.resizeHandlePx}px ${effectiveRightWidth}px`
+    : `${effectiveLeftWidth}px ${workbenchLayoutLimits.resizeHandlePx}px minmax(${workbenchLayoutLimits.viewerMinWidthPx}px, 1fr) ${workbenchLayoutLimits.resizeHandlePx}px ${effectiveRightWidth}px`
+  const centerRows = viewerExpanded
+    ? `minmax(${workbenchLayoutLimits.viewerMinHeightPx}px, 1fr)`
+    : bottomMode === 'hidden'
       ? `minmax(${workbenchLayoutLimits.viewerMinHeightPx}px, 1fr) ${workbenchLayoutLimits.bottomCollapsedHeightPx}px`
       : `minmax(${workbenchLayoutLimits.viewerMinHeightPx}px, 1fr) ${workbenchLayoutLimits.resizeHandlePx}px ${effectiveBottomHeight}px`
-  const minimumHeight =
-    workbenchLayoutLimits.viewerMinHeightPx +
-    workbenchLayoutLimits.resizeHandlePx +
-    workbenchLayoutLimits.bottomMinHeightPx
+  const minimumHeight = viewerExpanded
+    ? workbenchLayoutLimits.viewerMinHeightPx
+    : workbenchLayoutLimits.viewerMinHeightPx +
+      workbenchLayoutLimits.resizeHandlePx +
+      workbenchLayoutLimits.bottomMinHeightPx
 
   return (
     <div
@@ -238,27 +274,29 @@ export function ResizableWorkbenchLayout({
         } satisfies CSSProperties
       }
     >
-      <section aria-label={leftLabel} className="min-h-0 min-w-0 overflow-hidden">
+      <section aria-label={leftLabel} className="min-h-0 min-w-0 overflow-hidden" hidden={viewerExpanded}>
         {left}
       </section>
-      <ResizeHandle
-        label="왼쪽 목록 너비 조절"
-        maximum={leftMaximum}
-        minimum={workbenchLayoutLimits.leftMinWidthPx}
-        onKeyDown={(event) => resizeWithKeyboard(event, 'left')}
-        onPointerDown={(event) => {
-          if (event.button !== 0) return
-          event.preventDefault()
-          setDrag({ pane: 'left', startClient: event.clientX, startValue: effectiveLeftWidth })
-        }}
-        orientation="vertical"
-        value={effectiveLeftWidth}
-      />
+      {viewerExpanded ? null : (
+        <ResizeHandle
+          label="왼쪽 목록 너비 조절"
+          maximum={leftMaximum}
+          minimum={workbenchLayoutLimits.leftMinWidthPx}
+          onKeyDown={(event) => resizeWithKeyboard(event, 'left')}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return
+            event.preventDefault()
+            setDrag({ pane: 'left', startClient: event.clientX, startValuePx: effectiveLeftWidth })
+          }}
+          orientation="vertical"
+          value={effectiveLeftWidth}
+        />
+      )}
       <div className="grid min-h-0 min-w-0 overflow-hidden" style={{ gridTemplateRows: centerRows }}>
         <section aria-label={viewerLabel} className="min-h-0 min-w-0 overflow-hidden">
           {viewer}
         </section>
-        {bottomMode === 'hidden' ? null : (
+        {viewerExpanded || bottomMode === 'hidden' ? null : (
           <ResizeHandle
             label="3D CAD View와 하단 도크 높이 조절"
             maximum={bottomMaximum}
@@ -267,13 +305,15 @@ export function ResizableWorkbenchLayout({
             onPointerDown={(event) => {
               if (event.button !== 0) return
               event.preventDefault()
-              setDrag({ pane: 'bottom', startClient: event.clientY, startValue: effectiveBottomHeight })
+              setDrag({ pane: 'bottom', startClient: event.clientY, startValuePx: effectiveBottomHeight })
             }}
             orientation="horizontal"
             value={effectiveBottomHeight}
           />
         )}
-        <div className="min-h-0 min-w-0 overflow-hidden">{bottom}</div>
+        <div className="min-h-0 min-w-0 overflow-hidden" hidden={viewerExpanded}>
+          {bottom}
+        </div>
       </div>
       <ResizeHandle
         label="오른쪽 Detail 너비 조절"
@@ -283,7 +323,7 @@ export function ResizableWorkbenchLayout({
         onPointerDown={(event) => {
           if (event.button !== 0) return
           event.preventDefault()
-          setDrag({ pane: 'right', startClient: event.clientX, startValue: effectiveRightWidth })
+          setDrag({ pane: 'right', startClient: event.clientX, startValuePx: effectiveRightWidth })
         }}
         orientation="vertical"
         value={effectiveRightWidth}

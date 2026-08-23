@@ -22,7 +22,7 @@ export function MeasurementPickerDialog({
       <DialogContent className="flex max-h-[85dvh] flex-col overflow-hidden sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>Measurement 선택</DialogTitle>
-          <DialogDescription>현재 Experiment에 준비된 고정 입력 조건을 선택합니다.</DialogDescription>
+          <DialogDescription className="sr-only">Measurement 선택</DialogDescription>
         </DialogHeader>
         <MeasurementExplorer
           className="min-h-64"

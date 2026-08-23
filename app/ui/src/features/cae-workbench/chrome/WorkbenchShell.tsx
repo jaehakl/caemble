@@ -11,12 +11,13 @@ export function WorkbenchShell({
   right,
   bottom,
   bottomMode,
-  leftWidthPx = defaultWorkbenchLayoutState.leftWidthPx,
-  rightWidthPx = defaultWorkbenchLayoutState.rightWidthPx,
-  bottomHeightPx = defaultWorkbenchLayoutState.bottomHeightPx,
-  onLeftWidthChange,
-  onRightWidthChange,
-  onBottomHeightChange,
+  leftWidthRatio = defaultWorkbenchLayoutState.leftWidthRatio,
+  rightWidthRatio = defaultWorkbenchLayoutState.rightWidthRatio,
+  bottomHeightRatio = defaultWorkbenchLayoutState.bottomHeightRatio,
+  viewerExpanded = defaultWorkbenchLayoutState.viewerExpanded,
+  onLeftWidthRatioChange,
+  onRightWidthRatioChange,
+  onBottomHeightRatioChange,
   leftLabel,
   viewerLabel,
   rightLabel,
@@ -29,12 +30,13 @@ export function WorkbenchShell({
   right: ReactNode
   bottom: ReactNode
   bottomMode: BottomDockMode
-  leftWidthPx?: number
-  rightWidthPx?: number
-  bottomHeightPx?: number
-  onLeftWidthChange?: (widthPx: number) => void
-  onRightWidthChange?: (widthPx: number) => void
-  onBottomHeightChange?: (heightPx: number) => void
+  leftWidthRatio?: number
+  rightWidthRatio?: number
+  bottomHeightRatio?: number
+  viewerExpanded?: boolean
+  onLeftWidthRatioChange?: (ratio: number) => void
+  onRightWidthRatioChange?: (ratio: number) => void
+  onBottomHeightRatioChange?: (ratio: number) => void
   leftLabel?: string
   viewerLabel?: string
   rightLabel?: string
@@ -51,17 +53,18 @@ export function WorkbenchShell({
       </header>
       <ResizableWorkbenchLayout
         bottom={bottom}
-        bottomHeightPx={bottomHeightPx}
+        bottomHeightRatio={bottomHeightRatio}
         bottomMode={bottomMode}
+        viewerExpanded={viewerExpanded}
         left={left}
         leftLabel={leftLabel}
-        leftWidthPx={leftWidthPx}
-        onBottomHeightChange={onBottomHeightChange}
-        onLeftWidthChange={onLeftWidthChange}
-        onRightWidthChange={onRightWidthChange}
+        leftWidthRatio={leftWidthRatio}
+        onBottomHeightRatioChange={onBottomHeightRatioChange}
+        onLeftWidthRatioChange={onLeftWidthRatioChange}
+        onRightWidthRatioChange={onRightWidthRatioChange}
         right={right}
         rightLabel={rightLabel}
-        rightWidthPx={rightWidthPx}
+        rightWidthRatio={rightWidthRatio}
         viewer={viewer}
         viewerLabel={viewerLabel}
       />

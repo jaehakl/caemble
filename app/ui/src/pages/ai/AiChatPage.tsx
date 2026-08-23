@@ -74,7 +74,7 @@ export function AiChatWorkspace({
 export function ChatWorkspace({
   command,
   defaultSystemPrompt = 'You are a helpful engineering assistant.',
-  emptyDescription = '대화가 열리면 같은 JobSession에서 문맥을 유지합니다.',
+  emptyDescription,
   emptyTitle = '무엇이든 물어보세요.',
   embedded = false,
   fixedReference = false,
@@ -567,7 +567,7 @@ export function ChatWorkspace({
             <div className="flex h-full min-h-48 flex-col items-center justify-center text-center">
               <MessageCircle className="mb-3 size-9 text-muted-foreground" />
               <p className="font-medium">{emptyTitle}</p>
-              <p className="mt-1 text-sm text-muted-foreground">{emptyDescription}</p>
+              {emptyDescription ? <p className="mt-1 text-sm text-muted-foreground">{emptyDescription}</p> : null}
             </div>
           )}
         </div>
@@ -641,7 +641,6 @@ export function ChatWorkspace({
           <div className="h-full overflow-y-auto p-4">
             <div className="mb-4 space-y-1">
               <h2 className="font-semibold">{title} 설정</h2>
-              <p className="text-sm text-muted-foreground">모델과 생성 옵션은 현재 대화에 적용됩니다.</p>
             </div>
             {settingsFields}
           </div>,
@@ -652,7 +651,7 @@ export function ChatWorkspace({
           <DialogContent className="sm:max-w-2xl">
             <DialogHeader>
               <DialogTitle>{title} 설정</DialogTitle>
-              <DialogDescription>모델과 생성 옵션은 현재 대화에 적용됩니다.</DialogDescription>
+              <DialogDescription className="sr-only">{title} 모델 설정</DialogDescription>
             </DialogHeader>
             {settingsFields}
           </DialogContent>

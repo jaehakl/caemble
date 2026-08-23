@@ -110,7 +110,7 @@ export function ExperimentManager({
       return {
         kind: 'example',
         coordinate: item.coordinate,
-        description: item.description,
+        description: item.description || '설명 없음',
         experimentKey: item.key,
         identity: `${item.namespace}/${item.repository}/${item.key}`,
         name: item.title,
@@ -154,7 +154,7 @@ export function ExperimentManager({
       ].sort(),
     [managedVersions, namespace],
   )
-  const groups = useMemo(() => {
+  const visibleVersions = useMemo(() => {
     const grouped = new Map<string, ManagedExperimentVersion[]>()
     managedVersions
       .filter(
@@ -167,14 +167,14 @@ export function ExperimentManager({
       })
     return [...grouped.entries()]
       .sort(([left], [right]) => left.localeCompare(right))
-      .map(([identity, versions]) => {
+      .flatMap(([, versions]) => {
         versions.sort(
           (left, right) =>
             right.versionParts[0] - left.versionParts[0] ||
             right.versionParts[1] - left.versionParts[1] ||
             right.versionParts[2] - left.versionParts[2],
         )
-        return [identity, versions] as const
+        return versions
       })
   }, [managedVersions, namespace, repository])
 
@@ -258,12 +258,7 @@ export function ExperimentManager({
     <section aria-label="Experiment Manager" className="flex h-full min-h-0 flex-col bg-background">
       <header className={`space-y-3 border-b ${compact ? 'p-3' : 'p-4'}`}>
         <div className={compact ? 'space-y-3' : 'flex flex-wrap items-start justify-between gap-3'}>
-          <div>
-            <h2 className="font-semibold">Experiment Manager</h2>
-            <p className="text-sm text-muted-foreground">
-              Example과 저장된 namespace / repository / SemVer 목록을 한곳에서 관리합니다.
-            </p>
-          </div>
+          <h2 className="font-semibold">Experiment Manager</h2>
           {authenticated ? (
             <form
               className={compact ? 'grid grid-cols-[auto_minmax(0,1fr)] gap-2' : 'flex items-center gap-2'}
@@ -297,7 +292,7 @@ export function ExperimentManager({
           <Input
             aria-label="Experiment 검색"
             className="pl-9"
-            placeholder="이름, 설명, coordinate 검색"
+            placeholder="이름 또는 설명 검색"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
@@ -366,82 +361,66 @@ export function ExperimentManager({
               저장된 Experiment 목록을 불러오지 못했습니다.
             </div>
           ) : null}
-          {groups.length ? (
+          {visibleVersions.length ? (
             <ul className="divide-y">
-              {groups.map(([identity, versions]) => (
-                <li key={identity}>
-                  <div className="border-b bg-muted/35 px-3 py-2 font-mono text-xs font-semibold break-all">
-                    {identity}
-                  </div>
-                  <ul className="divide-y">
-                    {versions.map((item) => {
-                      const savedRow = item.kind === 'saved' ? item.row : null
-                      const manageable = Boolean(
-                        savedRow && user && (savedRow.user_id === user.id || user.roles.includes('admin')),
-                      )
-                      const counts = savedRow?.derivedCounts
-                      const linked = counts
-                        ? counts.measurements + counts.recordedData + counts.designerModels + counts.predictorModels
-                        : 0
-                      return (
-                        <li
-                          className={savedRow?.id === selectedId ? 'bg-orange-50/70' : undefined}
-                          key={item.coordinate}
+              {visibleVersions.map((item) => {
+                const savedRow = item.kind === 'saved' ? item.row : null
+                const manageable = Boolean(
+                  savedRow && user && (savedRow.user_id === user.id || user.roles.includes('admin')),
+                )
+                const counts = savedRow?.derivedCounts
+                const linked = counts
+                  ? counts.measurements + counts.recordedData + counts.designerModels + counts.predictorModels
+                  : 0
+                return (
+                  <li className={savedRow?.id === selectedId ? 'bg-orange-50/70' : undefined} key={item.coordinate}>
+                    <div className={`flex items-start gap-3 ${compact ? 'p-3' : 'p-4'}`}>
+                      <button
+                        className="min-w-0 flex-1 text-left disabled:opacity-50"
+                        disabled={busy || (item.kind === 'example' && loadingExample !== null)}
+                        type="button"
+                        onClick={() =>
+                          item.kind === 'example'
+                            ? void openExample(item.item)
+                            : onOpenSaved(item.row as SavedExperiment)
+                        }
+                      >
+                        <span className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium">{item.name}</span>
+                          <Badge className="bg-muted text-foreground">v{item.version}</Badge>
+                          {item.kind === 'example' && loadingExample === item.coordinate ? (
+                            <LoaderCircle className="size-4 animate-spin" />
+                          ) : null}
+                          {savedRow?.sourceLocked ? <Badge className="bg-amber-600 text-white">Locked</Badge> : null}
+                          {linked ? (
+                            <Badge className="border bg-transparent text-foreground">
+                              연결 데이터 {linked.toLocaleString()}
+                            </Badge>
+                          ) : null}
+                        </span>
+                        <span
+                          className={`mt-1 line-clamp-2 block text-muted-foreground ${compact ? 'text-xs leading-5' : 'text-sm'}`}
+                          title={item.description}
                         >
-                          <div className={`flex items-start gap-3 ${compact ? 'p-3' : 'p-4 pl-6'}`}>
-                            <button
-                              className="min-w-0 flex-1 text-left disabled:opacity-50"
-                              disabled={busy || (item.kind === 'example' && loadingExample !== null)}
-                              type="button"
-                              onClick={() =>
-                                item.kind === 'example'
-                                  ? void openExample(item.item)
-                                  : onOpenSaved(item.row as SavedExperiment)
-                              }
-                            >
-                              <span className="flex flex-wrap items-center gap-2">
-                                <span className="font-medium">{item.name}</span>
-                                <Badge className="bg-muted text-foreground">v{item.version}</Badge>
-                                {item.kind === 'example' && loadingExample === item.coordinate ? (
-                                  <LoaderCircle className="size-4 animate-spin" />
-                                ) : null}
-                                {savedRow?.sourceLocked ? (
-                                  <Badge className="bg-amber-600 text-white">Locked</Badge>
-                                ) : null}
-                                {linked ? (
-                                  <Badge className="border bg-transparent text-foreground">
-                                    연결 데이터 {linked.toLocaleString()}
-                                  </Badge>
-                                ) : null}
-                              </span>
-                              <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">
-                                {item.coordinate}
-                              </span>
-                              {!compact ? (
-                                <span className="mt-1 line-clamp-2 block text-sm text-muted-foreground">
-                                  {item.description}
-                                </span>
-                              ) : null}
-                            </button>
-                            {manageable && savedRow ? (
-                              <Button
-                                aria-label={`${savedRow.name} v${item.version} 삭제`}
-                                disabled={busy || deleteMutation.isPending}
-                                size="icon"
-                                type="button"
-                                variant="ghost"
-                                onClick={() => deleteMutation.mutate(savedRow)}
-                              >
-                                <Trash2 className="text-destructive" />
-                              </Button>
-                            ) : null}
-                          </div>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                </li>
-              ))}
+                          {item.description}
+                        </span>
+                      </button>
+                      {manageable && savedRow ? (
+                        <Button
+                          aria-label={`${savedRow.name} v${item.version} 삭제`}
+                          disabled={busy || deleteMutation.isPending}
+                          size="icon"
+                          type="button"
+                          variant="ghost"
+                          onClick={() => deleteMutation.mutate(savedRow)}
+                        >
+                          <Trash2 className="text-destructive" />
+                        </Button>
+                      ) : null}
+                    </div>
+                  </li>
+                )
+              })}
             </ul>
           ) : exampleQuery.isPending || (authenticated && savedQuery.isPending) ? (
             <ManagerMessage loading>Experiment 목록을 불러오는 중…</ManagerMessage>

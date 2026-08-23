@@ -81,7 +81,7 @@ export function SaveDefinitionDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title ?? 'Experiment 저장'}</DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="sr-only">
             {description ?? '이름, 설명과 현재 Source code를 저장합니다. 평가된 vars는 별도 실현값으로 저장하세요.'}
           </DialogDescription>
         </DialogHeader>

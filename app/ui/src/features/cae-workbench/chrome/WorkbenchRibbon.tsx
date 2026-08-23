@@ -72,12 +72,8 @@ export function WorkbenchRibbonGroup({
   className?: string
 }) {
   return (
-    <section
-      aria-label={label}
-      className={cn('flex min-h-[76px] shrink-0 flex-col border-r px-1 last:border-r-0', className)}
-    >
-      <div className="flex min-h-0 flex-1 items-center">{children}</div>
-      <div className="truncate px-1 text-center text-[10px] leading-3 text-muted-foreground">{label}</div>
+    <section aria-label={label} className={cn('flex shrink-0 items-center border-r px-1 last:border-r-0', className)}>
+      {children}
     </section>
   )
 }
@@ -98,7 +94,7 @@ export function WorkbenchRibbon({
   return (
     <section
       aria-label={activePanel ? `${activePanel.label} 리본` : 'CAE 리본'}
-      className={cn('min-h-20 overflow-x-auto border-b bg-background px-2 py-1', className)}
+      className={cn('overflow-x-auto border-b bg-background px-2 py-1', className)}
     >
       {activePanel ? (
         <div className="flex min-w-max items-stretch">{activePanel.content}</div>

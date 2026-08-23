@@ -6,7 +6,7 @@ import { Beaker } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import type { BottomDockMode, WorkbenchSectionId } from '../types'
+import { defaultWorkbenchLayoutState, type BottomDockMode, type WorkbenchSectionId } from '../types'
 import { EditorDock, type EditorDockTab } from './EditorDock'
 import { WorkbenchBottomDock } from './WorkbenchBottomDock'
 import { WorkbenchMenubar } from './WorkbenchMenubar'
@@ -44,7 +44,7 @@ describe('workbench action chrome', () => {
         sectionId: 'experiment' as const,
         label: 'Experiment',
         content: (
-          <WorkbenchRibbonGroup label="실행">
+          <WorkbenchRibbonGroup label="명령 그룹">
             <WorkbenchRibbonActions
               actions={[
                 { id: 'run', label: '실행', icon: <Beaker />, onSelect: run },
@@ -74,7 +74,9 @@ describe('workbench action chrome', () => {
     )
 
     const runButton = screen.getByRole('button', { name: '실행' })
+    const commandGroup = screen.getByRole('region', { name: '명령 그룹' })
     expect(runButton).toHaveClass('h-[68px]')
+    expect(commandGroup).not.toHaveTextContent('명령 그룹')
     await user.click(runButton)
     await user.click(screen.getByRole('button', { name: /측정: Prepared Measurement가 필요합니다/ }))
     expect(run).toHaveBeenCalledOnce()
@@ -177,27 +179,38 @@ describe('EditorDock', () => {
 })
 
 describe('fixed desktop workbench layout', () => {
-  it('keeps three panes visible and keyboard-resizes every open split', async () => {
+  it('uses UHD ratio defaults without fixed maximums and keyboard-resizes every open split', async () => {
     const user = userEvent.setup()
+    const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 2000,
+      height: 2000,
+      left: 0,
+      right: 3840,
+      top: 0,
+      width: 3840,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
 
     function LayoutHarness() {
-      const [leftWidth, setLeftWidth] = useState(280)
-      const [rightWidth, setRightWidth] = useState(420)
-      const [bottomHeight, setBottomHeight] = useState(220)
+      const [leftWidthRatio, setLeftWidthRatio] = useState(defaultWorkbenchLayoutState.leftWidthRatio)
+      const [rightWidthRatio, setRightWidthRatio] = useState(defaultWorkbenchLayoutState.rightWidthRatio)
+      const [bottomHeightRatio, setBottomHeightRatio] = useState(defaultWorkbenchLayoutState.bottomHeightRatio)
       return (
         <WorkbenchShell
           bottom={<div>Bottom content</div>}
-          bottomHeightPx={bottomHeight}
+          bottomHeightRatio={bottomHeightRatio}
           bottomMode="console"
           left={<div>Experiment list</div>}
-          leftWidthPx={leftWidth}
+          leftWidthRatio={leftWidthRatio}
           menubar={<div>Menubar</div>}
-          onBottomHeightChange={setBottomHeight}
-          onLeftWidthChange={setLeftWidth}
-          onRightWidthChange={setRightWidth}
+          onBottomHeightRatioChange={setBottomHeightRatio}
+          onLeftWidthRatioChange={setLeftWidthRatio}
+          onRightWidthRatioChange={setRightWidthRatio}
           ribbon={<div>Ribbon</div>}
           right={<div>Experiment detail</div>}
-          rightWidthPx={rightWidth}
+          rightWidthRatio={rightWidthRatio}
           viewer={<div>Viewer content</div>}
         />
       )
@@ -210,19 +223,110 @@ describe('fixed desktop workbench layout', () => {
     expect(container.firstElementChild).toHaveStyle({ minWidth: '1280px' })
 
     const leftSeparator = screen.getByRole('separator', { name: '왼쪽 목록 너비 조절' })
+    expect(leftSeparator).toHaveAttribute('aria-valuenow', '899')
+    expect(Number(leftSeparator.getAttribute('aria-valuemax'))).toBeGreaterThan(899)
     leftSeparator.focus()
     await user.keyboard('{ArrowRight}')
-    expect(leftSeparator).toHaveAttribute('aria-valuenow', '296')
+    expect(leftSeparator).toHaveAttribute('aria-valuenow', '915')
 
     const rightSeparator = screen.getByRole('separator', { name: '오른쪽 Detail 너비 조절' })
+    expect(rightSeparator).toHaveAttribute('aria-valuenow', '1920')
+    expect(Number(rightSeparator.getAttribute('aria-valuemax'))).toBeGreaterThan(1920)
     rightSeparator.focus()
     await user.keyboard('{ArrowLeft}')
-    expect(rightSeparator).toHaveAttribute('aria-valuenow', '436')
+    expect(rightSeparator).toHaveAttribute('aria-valuenow', '1936')
 
     const bottomSeparator = screen.getByRole('separator', { name: '3D CAD View와 하단 도크 높이 조절' })
+    expect(bottomSeparator).toHaveAttribute('aria-valuenow', '1000')
+    expect(Number(bottomSeparator.getAttribute('aria-valuemax'))).toBeGreaterThan(1000)
     bottomSeparator.focus()
     await user.keyboard('{ArrowUp}')
-    expect(bottomSeparator).toHaveAttribute('aria-valuenow', '236')
+    expect(bottomSeparator).toHaveAttribute('aria-valuenow', '1016')
+
+    leftSeparator.focus()
+    await user.keyboard('{End}')
+    expect(Number(leftSeparator.getAttribute('aria-valuenow'))).toBeGreaterThan(899)
+    bounds.mockRestore()
+  })
+
+  it('keeps minimum pane sizes when ratio defaults are smaller on a compact desktop', () => {
+    const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 1000,
+      height: 1000,
+      left: 0,
+      right: 1920,
+      top: 0,
+      width: 1920,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+
+    render(
+      <WorkbenchShell
+        bottom={<div>Bottom</div>}
+        bottomMode="console"
+        left={<div>Left</div>}
+        menubar={<div>Menubar</div>}
+        ribbon={<div>Ribbon</div>}
+        right={<div>Right</div>}
+        viewer={<div>Viewer</div>}
+      />,
+    )
+
+    expect(screen.getByRole('separator', { name: '왼쪽 목록 너비 조절' })).toHaveAttribute('aria-valuenow', '449')
+    expect(screen.getByRole('separator', { name: '오른쪽 Detail 너비 조절' })).toHaveAttribute('aria-valuenow', '935')
+    expect(screen.getByRole('separator', { name: '3D CAD View와 하단 도크 높이 조절' })).toHaveAttribute(
+      'aria-valuenow',
+      '500',
+    )
+    bounds.mockRestore()
+  })
+
+  it('expands the Viewer by hiding the left and bottom panes without unmounting their content', async () => {
+    const user = userEvent.setup()
+    const cleanupBottom = vi.fn()
+
+    function BottomContent() {
+      const [count, setCount] = useState(0)
+      useEffect(() => cleanupBottom, [])
+      return <button onClick={() => setCount((current) => current + 1)}>Bottom state {count}</button>
+    }
+
+    function ExpandedViewerHarness() {
+      const [viewerExpanded, setViewerExpanded] = useState(false)
+      return (
+        <WorkbenchShell
+          bottom={<BottomContent />}
+          bottomMode="console"
+          left={<div>Left tools</div>}
+          menubar={<div>Menubar</div>}
+          ribbon={<div>Ribbon</div>}
+          right={<div>Right detail</div>}
+          viewer={
+            <button onClick={() => setViewerExpanded((current) => !current)}>
+              {viewerExpanded ? 'Viewer 영역 복원' : 'Viewer 확장'}
+            </button>
+          }
+          viewerExpanded={viewerExpanded}
+        />
+      )
+    }
+
+    render(<ExpandedViewerHarness />)
+    await user.click(screen.getByRole('button', { name: 'Bottom state 0' }))
+    await user.click(screen.getByRole('button', { name: 'Viewer 확장' }))
+
+    expect(screen.getByText('Left tools')).not.toBeVisible()
+    expect(screen.getByText('Bottom state 1')).not.toBeVisible()
+    expect(screen.getByRole('region', { name: 'Detail' })).toBeVisible()
+    expect(screen.queryByRole('separator', { name: '왼쪽 목록 너비 조절' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('separator', { name: '3D CAD View와 하단 도크 높이 조절' })).not.toBeInTheDocument()
+    expect(cleanupBottom).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Viewer 영역 복원' }))
+    expect(screen.getByRole('button', { name: 'Bottom state 1' })).toBeVisible()
+    expect(screen.getByRole('separator', { name: '왼쪽 목록 너비 조절' })).toBeInTheDocument()
   })
 
   it('keeps the AI Agent mounted while switching or hiding the center-only dock', async () => {

@@ -562,7 +562,7 @@ export function useCaeWorkbenchState(
 
   const draft = useCallback(
     (layout: WorkbenchLayoutState): WorkbenchDraft => ({
-      version: 15,
+      version: 16,
       savedAt: Date.now(),
       experiment: {
         record: experimentRecord,

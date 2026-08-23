@@ -11,8 +11,6 @@ import {
   RotateCcw,
   Send,
   Settings,
-  ShieldCheck,
-  Wrench,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
@@ -609,10 +607,6 @@ export function AiHelperWorkspace({
           <div className="flex h-full min-h-52 flex-col items-center justify-center text-center">
             <Bot className="mb-3 size-10 text-muted-foreground" />
             <p className="font-medium">현재 Experiment를 Agent와 함께 편집하세요.</p>
-            <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-              Agent는 허용된 데이터와 카탈로그를 검색해 source를 수정하고, 생성된 최종 코드를 미검증 상태로 편집기에
-              바로 반영합니다. 결과는 Workbench에서 확인하세요.
-            </p>
           </div>
         )}
       </div>
@@ -624,15 +618,6 @@ export function AiHelperWorkspace({
           if (!busy) void sendPrompt()
         }}
       >
-        <div className="mb-3 flex items-start gap-2 rounded-md border bg-muted/20 px-3 py-2 text-xs leading-5 text-muted-foreground">
-          <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-primary" />
-          <span>
-            질문, 현재 Experiment source, Agent가 조회한 Visible DB·카탈로그 데이터가 선택한 외부 AI 제공자에
-            전송됩니다. API key는 Caemble 백엔드에서만 사용됩니다. Caemble은 store=false로 요청하고 대화를 DB에 저장하지
-            않지만, 일시적인 prompt cache와 최대 30일의 abuse-monitoring 로그가 provider data controls에 따라 남을 수
-            있습니다. Caemble 세션 삭제가 provider의 cache나 로그 삭제를 뜻하지 않습니다.
-          </span>
-        </div>
         {providers.isError || error ? (
           <p className="mb-2 text-sm text-destructive">
             {error || runtimeErrorMessage(providers.error, 'AI provider 상태를 불러오지 못했습니다.')}
@@ -689,9 +674,7 @@ export function AiHelperWorkspace({
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>AI Helper Agent 설정</DialogTitle>
-            <DialogDescription>
-              Provider, Model과 추론 강도만 선택합니다. 나머지 실행 한도는 Caemble이 관리합니다.
-            </DialogDescription>
+            <DialogDescription className="sr-only">AI Agent 모델 설정</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4">
             <label className="grid gap-1.5 text-sm">
@@ -751,11 +734,6 @@ export function AiHelperWorkspace({
                 ))}
               </select>
             </label>
-            <p className="flex items-start gap-2 rounded-md bg-muted/40 p-3 text-xs leading-5 text-muted-foreground">
-              <Wrench className="mt-0.5 size-3.5 shrink-0" />
-              Reasoning을 높이면 복잡한 조회와 편집에 도움이 될 수 있지만 응답 시간과 사용량이 증가합니다. 기본값은
-              MEDIUM입니다.
-            </p>
           </div>
         </DialogContent>
       </Dialog>

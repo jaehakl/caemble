@@ -11,6 +11,8 @@ export type CadViewerProps = {
   onRenderEnd: (sources: readonly CadViewerSource[]) => void
   onRenderError: (message: string, sources: readonly CadViewerSource[]) => void
   onRenderStart: (sources: readonly CadViewerSource[]) => void
+  onToggleViewerExpanded?: () => void
+  viewerExpanded?: boolean
 }
 
 export function CadViewer({
@@ -19,6 +21,8 @@ export function CadViewer({
   onRenderEnd,
   onRenderError,
   onRenderStart,
+  onToggleViewerExpanded,
+  viewerExpanded,
 }: CadViewerProps) {
   const [experimentVisible, setExperimentVisible] = useState(true)
   const [taskVisible, setTaskVisible] = useState(true)
@@ -47,6 +51,8 @@ export function CadViewer({
         onRenderEnd={handleRenderEnd}
         onRenderError={handleRenderError}
         onRenderStart={handleRenderStart}
+        onToggleViewerExpanded={onToggleViewerExpanded}
+        viewerExpanded={viewerExpanded}
         onToggleSource={(source) => {
           if (source === 'experiment') setExperimentVisible((current) => !current)
           else setTaskVisible((current) => !current)

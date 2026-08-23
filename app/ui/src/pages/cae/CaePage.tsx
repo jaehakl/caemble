@@ -201,10 +201,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       />
     ) : page.activeSection === 'measurement' ? (
       <div className="flex h-full min-h-0 flex-col gap-3 p-3">
-        <div>
-          <h2 className="font-semibold">Measurements</h2>
-          <p className="mt-1 text-xs text-muted-foreground">현재 Experiment의 Prepared·Recorded 조건</p>
-        </div>
+        <h2 className="font-semibold">Measurements</h2>
         <MeasurementExplorer
           enabled={auth.isAuthenticated}
           experimentId={workbench.experimentId}
@@ -318,11 +315,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           onRequestLogin={() => page.setDialog('account')}
         />
       ) : (
-        <PaneEmpty
-          icon={<Database />}
-          title="Material을 선택하세요"
-          description="왼쪽 목록에서 Material Detail을 엽니다."
-        />
+        <PaneEmpty icon={<Database />} title="Material을 선택하세요" />
       )
     ) : page.activeSection === 'analysis' ? (
       <Suspense fallback={<PaneLoading label="Analysis를 불러오는 중입니다." />}>
@@ -386,37 +379,40 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                     />
                   </Suspense>
                 ) : (
-                  <PaneEmpty
-                    icon={<Bot />}
-                    title="AI Agent"
-                    description="AI Agent 탭을 열면 현재 Experiment 문맥으로 시작합니다."
-                  />
+                  <PaneEmpty icon={<Bot />} title="AI Agent" />
                 )
               }
               console={<RuntimeConsoleView store={runtimeConsole} />}
             />
           }
-          bottomHeightPx={page.bottomHeightPx}
+          bottomHeightRatio={page.bottomHeightRatio}
           bottomMode={page.bottomMode}
+          viewerExpanded={page.viewerExpanded}
           className="h-full min-h-0"
           left={leftPane}
           leftLabel={`${page.activeSection} 목록 및 설정`}
-          leftWidthPx={page.leftWidthPx}
+          leftWidthRatio={page.leftWidthRatio}
           menubar={<WorkbenchMenubar activeSectionId={page.activeSection} onActiveSectionChange={setActiveSection} />}
           ribbon={<WorkbenchRibbon activeSectionId={page.activeSection} panels={chrome.ribbonPanels} />}
           right={rightPane}
           rightLabel={`${page.activeSection} Detail`}
-          rightWidthPx={page.rightWidthPx}
+          rightWidthRatio={page.rightWidthRatio}
           viewer={
             <WorkbenchViewer
               activeExperimentTaskName={page.activeExperimentFile}
               experiment={workbench.experiment}
               experimentDocument={workbench.experimentDocument}
+              onToggleViewerExpanded={() =>
+                page.setLayout((current) => ({ ...current, viewerExpanded: !current.viewerExpanded }))
+              }
+              viewerExpanded={page.viewerExpanded}
             />
           }
-          onBottomHeightChange={(bottomHeightPx) => page.setLayout((current) => ({ ...current, bottomHeightPx }))}
-          onLeftWidthChange={(leftWidthPx) => page.setLayout((current) => ({ ...current, leftWidthPx }))}
-          onRightWidthChange={(rightWidthPx) => page.setLayout((current) => ({ ...current, rightWidthPx }))}
+          onBottomHeightRatioChange={(bottomHeightRatio) =>
+            page.setLayout((current) => ({ ...current, bottomHeightRatio }))
+          }
+          onLeftWidthRatioChange={(leftWidthRatio) => page.setLayout((current) => ({ ...current, leftWidthRatio }))}
+          onRightWidthRatioChange={(rightWidthRatio) => page.setLayout((current) => ({ ...current, rightWidthRatio }))}
         />
         {!page.initialized ? (
           <div
@@ -452,7 +448,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 ? `Measurement #${workbench.selection.measurement.id} · ${workbench.selection.measurement.recorded_at ? 'Recorded' : 'Prepared'}`
                 : 'Candidate preview'}
           </Badge>
-          <span>{page.initialized ? '현재 브라우저 세션에 Draft 자동 저장' : '작업 복원 중…'}</span>
         </span>
         {workbench.measurementActions.busy ? (
           <span className="flex items-center gap-2">
@@ -531,13 +526,13 @@ function PaneTabs({
   )
 }
 
-function PaneEmpty({ description, icon, title }: { description: string; icon: ReactNode; title: string }) {
+function PaneEmpty({ description, icon, title }: { description?: string; icon: ReactNode; title: string }) {
   return (
     <div className="grid h-full place-items-center p-6 text-center">
       <div className="max-w-xs text-muted-foreground [&_svg]:mx-auto [&_svg]:size-8">
         {icon}
         <p className="mt-3 font-medium text-foreground">{title}</p>
-        <p className="mt-1 text-sm">{description}</p>
+        {description ? <p className="mt-1 text-sm">{description}</p> : null}
       </div>
     </div>
   )

@@ -23,7 +23,7 @@ vi.mock('sonner', () => ({ toast: { error: mocks.toastError } }))
 function workbench(overrides: Record<string, unknown> = {}) {
   return {
     applyExperiment: vi.fn(),
-    draft: vi.fn(() => ({ version: 15 })),
+    draft: vi.fn(() => ({ version: 16 })),
     experimentDirty: false,
     hasUnsavedWork: false,
     hasUnsavedExperimentWork: false,
@@ -107,7 +107,7 @@ describe('useCaePageSession', () => {
     await waitFor(() => expect(result.current.initialized).toBe(true))
     expect(state.restoreDraft).toHaveBeenCalledWith(
       expect.objectContaining({
-        version: 15,
+        version: 16,
         experiment: expect.objectContaining({
           name: 'Starter Experiment',
           baselineBundle: expect.objectContaining({ files: expect.any(Object) }),
@@ -115,7 +115,7 @@ describe('useCaePageSession', () => {
         }),
         candidate: { vars: null, materialParameters: null },
         selection: { measurementId: null },
-        layout: expect.objectContaining({ activeSection: 'experiment', bottomMode: 'hidden' }),
+        layout: expect.objectContaining({ activeSection: 'experiment', bottomMode: 'console' }),
       }),
     )
     expect(result.current.activeSection).toBe('experiment')

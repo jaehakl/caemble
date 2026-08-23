@@ -6,7 +6,6 @@ import {
   experimentRightTabIds,
   helpKindIds,
   measurementRightTabIds,
-  workbenchLayoutLimits,
   workbenchSectionIds,
   type AnalysisTabId,
   type BottomDockMode,
@@ -16,12 +15,13 @@ import {
   type WorkbenchDraft,
   type WorkbenchDraftDomain,
   type WorkbenchDraftV14,
+  type WorkbenchDraftV15,
   type WorkbenchLayoutState,
   type WorkbenchSectionId,
   type WorkbenchTabId,
 } from '../types'
 
-export const WORKBENCH_DRAFT_VERSION = 15 as const
+export const WORKBENCH_DRAFT_VERSION = 16 as const
 export const WORKBENCH_DRAFT_STORAGE_KEY = 'caemble:cae-workbench-draft'
 
 const v14Tabs: readonly WorkbenchTabId[] = ['experiment', 'experiments', 'recorded-data', 'ai-helper']
@@ -34,9 +34,9 @@ function validOptionalId(value: unknown) {
   return value === null || (Number.isSafeInteger(value) && Number(value) > 0)
 }
 
-function normalizeNumber(value: unknown, fallback: number, minimum: number, maximum: number) {
+function normalizeRatio(value: unknown, fallback: number) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
-  return Math.min(Math.max(value, minimum), maximum)
+  return Math.min(Math.max(value, 0), 1)
 }
 
 function readDomain(value: Record<string, unknown>): WorkbenchDraftDomain | null {
@@ -109,30 +109,35 @@ function normalizeLayout(value: unknown): WorkbenchLayoutState {
     materialId: validOptionalId(layout.materialId)
       ? (layout.materialId as number | null)
       : defaultWorkbenchLayoutState.materialId,
-    leftWidthPx: normalizeNumber(
-      layout.leftWidthPx,
-      defaultWorkbenchLayoutState.leftWidthPx,
-      workbenchLayoutLimits.leftMinWidthPx,
-      workbenchLayoutLimits.leftMaxWidthPx,
-    ),
-    rightWidthPx: normalizeNumber(
-      layout.rightWidthPx,
-      defaultWorkbenchLayoutState.rightWidthPx,
-      workbenchLayoutLimits.rightMinWidthPx,
-      workbenchLayoutLimits.rightMaxWidthPx,
-    ),
+    leftWidthRatio: normalizeRatio(layout.leftWidthRatio, defaultWorkbenchLayoutState.leftWidthRatio),
+    rightWidthRatio: normalizeRatio(layout.rightWidthRatio, defaultWorkbenchLayoutState.rightWidthRatio),
     bottomMode,
-    bottomHeightPx: normalizeNumber(
-      layout.bottomHeightPx,
-      defaultWorkbenchLayoutState.bottomHeightPx,
-      workbenchLayoutLimits.bottomMinHeightPx,
-      workbenchLayoutLimits.bottomMaxHeightPx,
-    ),
+    bottomHeightRatio: normalizeRatio(layout.bottomHeightRatio, defaultWorkbenchLayoutState.bottomHeightRatio),
+    viewerExpanded:
+      typeof layout.viewerExpanded === 'boolean' ? layout.viewerExpanded : defaultWorkbenchLayoutState.viewerExpanded,
     rightTabs: { experiment: experimentRightTab, measurement: measurementRightTab },
     analysisTab,
     help: {
       kind: helpKind,
       item: help.item === null || typeof help.item === 'string' ? help.item : defaultWorkbenchLayoutState.help.item,
+    },
+  }
+}
+
+function readV15(value: Record<string, unknown>, domain: WorkbenchDraftDomain): WorkbenchDraftV15 | null {
+  if (value.version !== 15 || !plainObject(value.layout)) return null
+  return { ...domain, version: 15, layout: value.layout as WorkbenchDraftV15['layout'] }
+}
+
+function migrateV15(draft: WorkbenchDraftV15): WorkbenchDraft {
+  return {
+    ...draft,
+    version: WORKBENCH_DRAFT_VERSION,
+    layout: {
+      ...normalizeLayout(draft.layout),
+      leftWidthRatio: defaultWorkbenchLayoutState.leftWidthRatio,
+      rightWidthRatio: defaultWorkbenchLayoutState.rightWidthRatio,
+      bottomHeightRatio: defaultWorkbenchLayoutState.bottomHeightRatio,
     },
   }
 }
@@ -192,9 +197,10 @@ export async function loadWorkbenchDraft(): Promise<WorkbenchDraft | null> {
       }
     }
 
+    const v15 = readV15(stored, domain)
     const v14 = readV14(stored, domain)
-    if (!v14) throw new Error('Unsupported Workbench draft version.')
-    const migrated = migrateV14(v14)
+    const migrated = v15 ? migrateV15(v15) : v14 ? migrateV14(v14) : null
+    if (!migrated) throw new Error('Unsupported Workbench draft version.')
     sessionStorage.setItem(WORKBENCH_DRAFT_STORAGE_KEY, JSON.stringify(migrated))
     return migrated
   } catch {

@@ -2,7 +2,12 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createCadSourceDocument, createExperimentSourceBundle } from '@/lib/cad'
-import { defaultWorkbenchLayoutState, type WorkbenchDraft, type WorkbenchDraftV14 } from '../types'
+import {
+  defaultWorkbenchLayoutState,
+  type WorkbenchDraft,
+  type WorkbenchDraftV14,
+  type WorkbenchDraftV15,
+} from '../types'
 import {
   clearWorkbenchDraft,
   loadWorkbenchDraft,
@@ -21,7 +26,7 @@ const sourceBundle = createExperimentSourceBundle({
 
 function draft(): WorkbenchDraft {
   return {
-    version: 15,
+    version: 16,
     savedAt: 1,
     experiment: {
       record: null,
@@ -38,6 +43,23 @@ function draft(): WorkbenchDraft {
       materialId: 7,
       rightTabs: { ...defaultWorkbenchLayoutState.rightTabs },
       help: { ...defaultWorkbenchLayoutState.help },
+    },
+  }
+}
+
+function v15Draft(): WorkbenchDraftV15 {
+  const current = draft()
+  return {
+    version: 15,
+    savedAt: current.savedAt,
+    experiment: current.experiment,
+    candidate: current.candidate,
+    selection: current.selection,
+    layout: {
+      ...current.layout,
+      leftWidthPx: 420,
+      rightWidthPx: 720,
+      bottomHeightPx: 480,
     },
   }
 }
@@ -61,12 +83,12 @@ function v14Draft(activeTab: WorkbenchDraftV14['layout']['activeTab']): Workbenc
 
 beforeEach(() => sessionStorage.clear())
 
-describe('Workbench sessionStorage v15', () => {
+describe('Workbench sessionStorage v16', () => {
   it('stores and restores the complete source and session layout', async () => {
     await saveWorkbenchDraft(draft())
     const restored = await loadWorkbenchDraft()
 
-    expect(WORKBENCH_DRAFT_VERSION).toBe(15)
+    expect(WORKBENCH_DRAFT_VERSION).toBe(16)
     expect(restored).toEqual(draft())
     expect(restored?.experiment.document?.sourceBundle.files['lib/profile.ts']).toContain('profile')
   })
@@ -77,7 +99,7 @@ describe('Workbench sessionStorage v15', () => {
 
     const restored = await loadWorkbenchDraft()
 
-    expect(restored?.version).toBe(15)
+    expect(restored?.version).toBe(16)
     expect(restored?.experiment).toEqual(legacy.experiment)
     expect(restored?.candidate).toEqual(legacy.candidate)
     expect(restored?.selection).toEqual(legacy.selection)
@@ -100,17 +122,38 @@ describe('Workbench sessionStorage v15', () => {
     expect(restored?.layout.bottomMode).toBe('agent')
   })
 
-  it('normalizes invalid v15 layout fields independently while retaining valid source data', async () => {
+  it('migrates v15 content while resetting pixel dimensions to the ratio defaults', async () => {
+    const legacy = v15Draft()
+    sessionStorage.setItem(WORKBENCH_DRAFT_STORAGE_KEY, JSON.stringify(legacy))
+
+    const restored = await loadWorkbenchDraft()
+
+    expect(restored?.version).toBe(16)
+    expect(restored?.experiment).toEqual(legacy.experiment)
+    expect(restored?.layout).toMatchObject({
+      activeExperimentFile: 'lib/profile.ts',
+      materialId: 7,
+      leftWidthRatio: defaultWorkbenchLayoutState.leftWidthRatio,
+      rightWidthRatio: defaultWorkbenchLayoutState.rightWidthRatio,
+      bottomHeightRatio: defaultWorkbenchLayoutState.bottomHeightRatio,
+    })
+    expect(restored?.layout).not.toHaveProperty('leftWidthPx')
+    expect(restored?.layout).not.toHaveProperty('rightWidthPx')
+    expect(restored?.layout).not.toHaveProperty('bottomHeightPx')
+    expect(JSON.parse(sessionStorage.getItem(WORKBENCH_DRAFT_STORAGE_KEY) ?? '{}')).toEqual(restored)
+  })
+
+  it('normalizes invalid v16 layout fields independently while retaining valid source data', async () => {
     const invalid = {
       ...draft(),
       layout: {
         activeSection: 'unknown',
         activeExperimentFile: 42,
         materialId: -9,
-        leftWidthPx: -100,
-        rightWidthPx: null,
+        leftWidthRatio: -1,
+        rightWidthRatio: null,
         bottomMode: 'large',
-        bottomHeightPx: 900,
+        bottomHeightRatio: 9,
         rightTabs: { experiment: 'unknown', measurement: 'detail' },
         analysisTab: 'prediction',
         help: { kind: 'solvers', item: 9 },
@@ -125,10 +168,11 @@ describe('Workbench sessionStorage v15', () => {
       activeSection: 'experiment',
       activeExperimentFile: 'experiment.tsx',
       materialId: null,
-      leftWidthPx: 220,
-      rightWidthPx: 420,
-      bottomMode: 'hidden',
-      bottomHeightPx: 480,
+      leftWidthRatio: 0,
+      rightWidthRatio: defaultWorkbenchLayoutState.rightWidthRatio,
+      bottomMode: 'console',
+      bottomHeightRatio: 1,
+      viewerExpanded: false,
       rightTabs: { experiment: 'source', measurement: 'detail' },
       analysisTab: 'prediction',
       help: { kind: 'solvers', item: 'program-overview' },

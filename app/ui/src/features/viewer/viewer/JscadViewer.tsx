@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import * as reglRenderer from '@jscad/regl-renderer'
+import { Maximize2, Minimize2 } from 'lucide-react'
 import type { CadScenePart, UcumUnit } from '@/lib/cad'
 import { scenePartColor, unassignedGeometryColor } from './materialColor'
 import { createWireframeGeometries } from './renderParts'
@@ -66,6 +67,8 @@ type JscadViewerProps = {
   onRenderError: (message: string) => void
   onRenderStart: () => void
   onToggleSource?: (source: CadViewerSource) => void
+  onToggleViewerExpanded?: () => void
+  viewerExpanded?: boolean
   visibleSources?: readonly CadViewerSource[]
 }
 
@@ -81,11 +84,15 @@ export function ViewerToolbar({
   availableSources = [],
   onSetCameraView,
   onToggleSource,
+  onToggleViewerExpanded,
+  viewerExpanded = false,
   visibleSources = [],
 }: {
   availableSources?: readonly CadViewerSource[]
   onSetCameraView: (view: CameraView) => void
   onToggleSource?: (source: CadViewerSource) => void
+  onToggleViewerExpanded?: () => void
+  viewerExpanded?: boolean
   visibleSources?: readonly CadViewerSource[]
 }) {
   return (
@@ -129,6 +136,19 @@ export function ViewerToolbar({
           })}
         </div>
       ) : null}
+
+      {onToggleViewerExpanded ? (
+        <button
+          aria-label={viewerExpanded ? 'Viewer 영역 복원' : 'Viewer 확장'}
+          aria-pressed={viewerExpanded}
+          className="ml-auto flex size-7 items-center justify-center rounded border border-slate-300 bg-white text-slate-700 shadow-sm hover:border-slate-400 hover:text-slate-950"
+          title={viewerExpanded ? '좌측 및 하단 영역 복원' : '좌측 및 하단 영역 숨기기'}
+          type="button"
+          onClick={onToggleViewerExpanded}
+        >
+          {viewerExpanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+        </button>
+      ) : null}
     </div>
   )
 }
@@ -142,6 +162,8 @@ function JscadViewer({
   onRenderError,
   onRenderStart,
   onToggleSource,
+  onToggleViewerExpanded,
+  viewerExpanded,
   visibleSources,
 }: JscadViewerProps) {
   const displayLayers = useMemo(() => scaleViewerLayers(layers, lengthUnit), [layers, lengthUnit])
@@ -413,6 +435,8 @@ function JscadViewer({
         visibleSources={visibleSources}
         onSetCameraView={setCameraView}
         onToggleSource={onToggleSource}
+        onToggleViewerExpanded={onToggleViewerExpanded}
+        viewerExpanded={viewerExpanded}
       />
 
       <div aria-label="Geometry Viewer" className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
