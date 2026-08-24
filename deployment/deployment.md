@@ -348,6 +348,9 @@ sudo systemctl reload nginx
 - 메인 CSP는 `code-to-cad.caemble.com`만 frame으로 허용한다. 3D Viewer의
   `@jscad/regl-renderer`가 WebGL command를 생성할 때 `Function.apply`를 사용하므로
   `script-src`에는 `'unsafe-eval'`이 필요하다.
+- 메인 origin의 asset Worker는 `connect-src 'self'`로 같은 origin의 `/api/*`만 호출할
+  수 있다. Analysis Worker의 Measurement 조회가 이 경계를 사용하며 외부 origin 연결은
+  허용하지 않는다.
 - runner CSP는 코드의 production 검사와 동일한 값이며 `connect-src 'none'`을 유지한다.
 - 사용자 TSX 평가는 메인 앱에서 실행하지 않고 계속 별도 runner Worker에서만 실행한다.
 - runner origin의 `/`와 `/api/*`는 `404`이며 쿠키나 일반 앱 route를 제공하지 않는다.
@@ -373,6 +376,11 @@ test "$(curl -sS -o /dev/null -w '%{http_code}' https://code-to-cad.caemble.com/
 curl -sSI https://code-to-cad.caemble.com/runner.html
 curl -I "https://www.caemble.com/api/auth/google/start?return_to=https%3A%2F%2Fwww.caemble.com%2F"
 
+analysis_worker="$(find /var/www/caemble/current/assets -maxdepth 1 -type f -name 'analysis.worker-*.js' -printf '%f\n' | head -n 1)"
+test -n "$analysis_worker"
+curl -sSI "https://www.caemble.com/assets/$analysis_worker" | grep -F "connect-src 'self'"
+curl -sSI https://code-to-cad.caemble.com/runner.html | grep -F "connect-src 'none'"
+
 sudo systemctl status caemble-api --no-pager
 sudo nginx -t
 ```
@@ -383,6 +391,7 @@ sudo nginx -t
 - `/api/openapi.json`은 FastAPI schema를 반환한다.
 - 비로그인 `/api/auth/me`는 예상된 `401`을 반환한다.
 - runner의 `/runner.html`만 `200`이며 정확한 CSP와 `Cache-Control: no-store`가 있다.
+- Analysis Worker asset에는 `connect-src 'self'`, runner에는 `connect-src 'none'`이 있다.
 - Google OAuth 시작 route는 Google로 redirect하고 callback 후 `www.caemble.com`으로 돌아온다.
 - 브라우저 Viewer에서 runner iframe이 로드되고 TSX preview가 실행된다.
 - 브라우저에 CSP, cross-origin, cookie 경고가 없다.
