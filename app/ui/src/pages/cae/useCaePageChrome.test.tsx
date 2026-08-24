@@ -33,6 +33,7 @@ function workbench(newExperiment = vi.fn()) {
       cancel: vi.fn(),
       cancelable: false,
       deleteMeasurements: vi.fn(),
+      generateAndRun: vi.fn(),
       generateCandidate: vi.fn(),
       operation: null,
       pendingRecordMeasurementId: null,
@@ -139,6 +140,48 @@ describe('CAE page contextual ribbon actions', () => {
     expect(params.requestMaterialCommand).toHaveBeenNthCalledWith(2, 'delete')
     expect(params.requestLabCommand).toHaveBeenCalledWith('end')
     expect(params.requestAnalysisCommand).toHaveBeenCalledWith('reload')
+  })
+
+  it('places Generate & Run before Run and turns it into Cancel only during its Simulation phase', () => {
+    const state = workbench()
+    const generateAndRun = vi.fn()
+    const eligible = {
+      ...state,
+      experimentClean: true,
+      experimentDocument: { ...state.experimentDocument, draftTaskNames: [], runIsBusy: false },
+      measurementActions: { ...state.measurementActions, generateAndRun },
+    } as unknown as CaeWorkbenchState
+    const params = options(eligible, { authenticated: true })
+    const { result, unmount } = renderHook(() => useCaePageChrome(params))
+    const measurement = result.current.ribbonPanels.find((panel) => panel.sectionId === 'measurement')!
+
+    render(<TooltipProvider delayDuration={0}>{measurement.content}</TooltipProvider>)
+    const generateButton = screen.getByRole('button', { name: 'Generate & Run' })
+    const runButton = screen.getByRole('button', { name: /^Run:/ })
+    expect(generateButton.compareDocumentPosition(runButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    act(() => generateButton.click())
+    expect(params.runSafely).toHaveBeenCalledOnce()
+    expect(generateAndRun).toHaveBeenCalledOnce()
+    unmount()
+    cleanup()
+
+    const cancel = vi.fn()
+    const running = {
+      ...eligible,
+      measurementActions: {
+        ...eligible.measurementActions,
+        busy: true,
+        cancel,
+        cancelable: true,
+        operation: 'generate-and-run',
+      },
+    } as unknown as CaeWorkbenchState
+    const cancelling = renderHook(() => useCaePageChrome(options(running, { authenticated: true })))
+    const runningPanel = cancelling.result.current.ribbonPanels.find((panel) => panel.sectionId === 'measurement')!
+    render(<TooltipProvider delayDuration={0}>{runningPanel.content}</TooltipProvider>)
+
+    act(() => screen.getByRole('button', { name: 'Cancel' }).click())
+    expect(cancel).toHaveBeenCalledOnce()
   })
 
   it('marks only the selected Analysis and Help ribbon selectors as pressed', () => {

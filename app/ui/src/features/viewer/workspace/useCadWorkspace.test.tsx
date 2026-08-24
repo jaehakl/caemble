@@ -184,6 +184,74 @@ describe('useCadWorkspace unified Experiment', () => {
     render.unmount()
   })
 
+  it('keeps an explicit Candidate generation across persisted Measurement detachment', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.75)
+    const initialMaterials = {
+      schemaVersion: 2,
+      experiment: emptyMaterials,
+      tasks: { electric: emptyMaterials },
+    } as const
+    const initialProps: {
+      candidateVars: Readonly<Vars> | undefined
+      materialSnapshot: unknown
+      provenance: 'editable' | 'persisted-measurement'
+    } = {
+      candidateVars: { fixed: 4, width: 2 },
+      materialSnapshot: initialMaterials,
+      provenance: 'persisted-measurement',
+    }
+    const render = renderHook(
+      ({ candidateVars, materialSnapshot, provenance }) =>
+        useCadWorkspace(document, vi.fn(), {
+          candidateVars,
+          candidateProvenance: provenance,
+          frozenMaterialSnapshot: materialSnapshot,
+        }),
+      { initialProps },
+    )
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
+
+    const evaluate = vi.mocked(evaluateDocument)
+    const evaluateImmediately = evaluate.getMockImplementation()!
+    let releaseInterruptedEvaluation!: () => void
+    evaluate.mockImplementationOnce(async (...args) => {
+      await new Promise<void>((resolve) => {
+        releaseInterruptedEvaluation = resolve
+      })
+      return evaluateImmediately(...args)
+    })
+
+    let generation: number | null = null
+    act(() => {
+      generation = render.result.current.experimentDocument.generateCandidate()
+    })
+    expect(generation).toBe(1)
+    await waitFor(() => expect(evaluate).toHaveBeenCalledTimes(2))
+    expect(render.result.current.experimentDocument.completedCandidateGeneration).toBe(0)
+
+    render.rerender({ candidateVars: undefined, materialSnapshot: null, provenance: 'editable' })
+    await waitFor(() => expect(evaluate).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
+
+    expect(evaluate.mock.calls[1][0].vars).toEqual({ fixed: 4, width: 7.75 })
+    expect(evaluate.mock.calls[2][0].vars).toEqual({ fixed: 4, width: 7.75 })
+    expect(evaluate.mock.calls[2][0].vars).not.toEqual(initialProps.candidateVars)
+    expect(render.result.current.experimentDocument.completedCandidateGeneration).toBe(1)
+    expect(render.result.current.experimentDocument.successfulCandidateGeneration).toBe(1)
+    expect(Math.random).toHaveBeenCalledOnce()
+
+    render.rerender({
+      candidateVars: render.result.current.experimentDocument.variables!,
+      materialSnapshot: render.result.current.experimentDocument.materialParameters,
+      provenance: 'editable',
+    })
+    expect(evaluate).toHaveBeenCalledTimes(3)
+
+    releaseInterruptedEvaluation()
+    await act(async () => await Promise.resolve())
+    render.unmount()
+  })
+
   it('does not reevaluate when the Workbench echoes a generated editable Candidate and material snapshot', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.75)
     const initialMaterials = {

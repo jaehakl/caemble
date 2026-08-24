@@ -319,8 +319,9 @@ export function useCaeWorkbenchState(
 
   const generateCandidate = useCallback(() => {
     clearMeasurement()
+    setCandidateVars(null)
     setCandidateMaterialParameters(null)
-    experimentDocument.generateCandidate()
+    return experimentDocument.generateCandidate()
   }, [clearMeasurement, experimentDocument])
 
   const measurementActions = useCaeMeasurementActions({

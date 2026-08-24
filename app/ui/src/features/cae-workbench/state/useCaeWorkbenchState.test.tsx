@@ -15,16 +15,21 @@ const mocks = vi.hoisted(() => ({
   saveDefinition: vi.fn(),
   setCurrentExperimentId: vi.fn(),
   sourceHash: vi.fn(async () => 'source-v1'),
+  measurementActions: vi.fn(),
+  workspaceOptions: vi.fn(),
   workspaceChange: vi.fn(),
 }))
 
 const controller = {
+  candidateGeneration: 0,
+  completedCandidateGeneration: 0,
   draftTaskNames: [],
-  generateCandidate: vi.fn(),
+  generateCandidate: vi.fn(() => 1),
   materialParameters: null,
   revision: 1,
   runIsBusy: false,
   status: 'Ready',
+  successfulCandidateGeneration: 0,
   successfulRevision: -1,
   variables: null,
 }
@@ -52,7 +57,12 @@ vi.mock('@/features/viewer/current-cad-selection', () => ({
 }))
 vi.mock('@/features/viewer/persistence/saveDefinition', () => ({ saveCadDefinition: mocks.saveDefinition }))
 vi.mock('@/features/viewer/workspace/useCadWorkspace', () => ({
-  useCadWorkspace: (_experiment: unknown, onExperimentChange: (document: ExperimentSourceDocument) => void) => {
+  useCadWorkspace: (
+    _experiment: unknown,
+    onExperimentChange: (document: ExperimentSourceDocument) => void,
+    options: unknown,
+  ) => {
+    mocks.workspaceOptions(options)
     mocks.workspaceChange.mockImplementation(onExperimentChange)
     return { experimentDocument: controller, simulation: {} }
   },
@@ -64,18 +74,22 @@ vi.mock('@/lib/cad', async (importOriginal) => ({
 vi.mock('../agent/agentWorkspace', () => ({ agentExperimentContextVersion: mocks.agentContext }))
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), info: vi.fn(), success: vi.fn() } }))
 vi.mock('../measurement/useCaeMeasurementActions', () => ({
-  useCaeMeasurementActions: () => ({
-    busy: false,
-    cancel: vi.fn(),
-    cancelable: false,
-    deleteMeasurements: vi.fn(),
-    generateCandidate: vi.fn(),
-    operation: null,
-    pendingRecordMeasurementId: null,
-    retryRecord: vi.fn(),
-    saveCurrent: vi.fn(),
-    stage: null,
-  }),
+  useCaeMeasurementActions: (options: unknown) => {
+    mocks.measurementActions(options)
+    return {
+      busy: false,
+      cancel: vi.fn(),
+      cancelable: false,
+      deleteMeasurements: vi.fn(),
+      generateAndRun: vi.fn(),
+      generateCandidate: vi.fn(),
+      operation: null,
+      pendingRecordMeasurementId: null,
+      retryRecord: vi.fn(),
+      saveCurrent: vi.fn(),
+      stage: null,
+    }
+  },
 }))
 
 function savedExperiment(id: number, name = `Experiment ${id}`): SavedExperiment {
@@ -124,6 +138,61 @@ describe('useCaeWorkbenchState', () => {
         activeExperimentFile: 'geometry.tsx',
       }),
     ).toMatchObject({ version: 16, experiment: { record: { id: 7 } } })
+  })
+
+  it('clears inherited Candidate inputs before requesting an explicit generation', async () => {
+    const row = savedExperiment(7)
+    const materialParameters = {
+      schemaVersion: 2 as const,
+      experiment: { schemaVersion: 1 as const, materials: {} },
+      tasks: {},
+    }
+    const { result } = renderHook(
+      () => useCaeWorkbenchState({ id: 'user-1', roles: ['user'], experiment_namespaces: ['jlee'] } as never, true),
+      { wrapper: wrapper() },
+    )
+
+    act(() =>
+      result.current.restoreDraft({
+        version: 16,
+        savedAt: Date.now(),
+        experiment: {
+          record: row,
+          baselineBundle: row.source_bundle,
+          document: createCadSourceDocument('experiment', row.source_bundle),
+          name: row.name,
+          description: row.description ?? '',
+        },
+        candidate: { vars: { width: 2 }, materialParameters },
+        selection: { measurementId: null },
+        layout: defaultWorkbenchLayoutState,
+      }),
+    )
+    await waitFor(() =>
+      expect(mocks.workspaceOptions.mock.lastCall?.[0]).toMatchObject({
+        candidateVars: { width: 2 },
+        frozenMaterialSnapshot: materialParameters,
+      }),
+    )
+
+    const actions = mocks.measurementActions.mock.lastCall?.[0] as {
+      onGenerateCandidate: () => number | null
+    }
+    let generation: number | null = null
+    act(() => {
+      generation = actions.onGenerateCandidate()
+    })
+
+    expect(generation).toBe(1)
+    expect(controller.generateCandidate).toHaveBeenCalledOnce()
+    await waitFor(() => {
+      const options = mocks.workspaceOptions.mock.lastCall?.[0] as {
+        candidateVars?: unknown
+        frozenMaterialSnapshot?: unknown
+      }
+      expect(options.candidateVars).toBeUndefined()
+      expect(options.frozenMaterialSnapshot).toBeNull()
+    })
   })
 
   it('allows a taskless local Experiment for preview and source saving state', () => {

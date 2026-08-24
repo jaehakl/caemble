@@ -71,6 +71,8 @@ function stableInput(value: unknown) {
 }
 
 export type CadDocumentController = Readonly<{
+  candidateGeneration: number
+  completedCandidateGeneration: number
   compiledSource: null
   diagnostics: readonly CadDiagnostic[]
   documentType: 'experiment'
@@ -78,7 +80,7 @@ export type CadDocumentController = Readonly<{
   error: RunError | null
   evaluatedSnapshot: EvaluatedExperimentSnapshot | null
   evaluationTimeoutMs: EvaluationTimeoutMs
-  generateCandidate: () => void
+  generateCandidate: () => number | null
   handleAddExperimentFile: (path: string, source: string) => void
   handleAddExperimentTask: (taskName: string, source: string) => void
   handleExperimentFileChange: (path: string, source: string) => void
@@ -101,6 +103,7 @@ export type CadDocumentController = Readonly<{
   simulationProgram: SimulationProgramManifest | null
   sourceReadOnly: boolean
   status: AppStatus
+  successfulCandidateGeneration: number
   successfulRevision: number
   taskSceneHashes: Readonly<Record<string, string>>
   taskScenes: Readonly<Record<string, CadScene>>
@@ -164,6 +167,7 @@ export function useCadWorkspace(
   const [evaluatedSnapshot, setEvaluatedSnapshot] = useState<EvaluatedExperimentSnapshot | null>(null)
   const [evaluationTimeoutMs, setEvaluationTimeoutMs] = useState<EvaluationTimeoutMs>(3000)
   const [generation, setGeneration] = useState(0)
+  const [completedCandidateGeneration, setCompletedCandidateGeneration] = useState(0)
   const [materialParameters, setMaterialParameters] = useState<MeasurementMaterialParameters | null>(null)
   const [materialWarnings, setMaterialWarnings] = useState<readonly string[]>([])
   const [builtMeasurement, setBuiltMeasurement] = useState<BuiltMeasurement | null>(null)
@@ -171,6 +175,7 @@ export function useCadWorkspace(
   const [scene, setScene] = useState<CadScene | null>(null)
   const [simulationProgram, setSimulationProgram] = useState<SimulationProgramManifest | null>(null)
   const [status, setStatus] = useState<AppStatus>('Ready')
+  const [successfulCandidateGeneration, setSuccessfulCandidateGeneration] = useState(0)
   const [successfulRevision, setSuccessfulRevision] = useState(-1)
   const [taskScenes, setTaskScenes] = useState<Readonly<Record<string, CadScene>>>(Object.freeze({}))
   const [variables, setVariables] = useState<Readonly<Vars> | null>(null)
@@ -191,11 +196,13 @@ export function useCadWorkspace(
     dependencyKey: string
     document: ExperimentSourceDocument
     fingerprint: string
+    generation: number | null
     inputKey: string
     resetKey: string | number
     vars: Readonly<Vars>
     varsKey: string
   }> | null>(null)
+  const completedCandidateGenerationRef = useRef(0)
   const editableMaterialEchoRef = useRef<Readonly<{
     dependencyKey: string
     document: ExperimentSourceDocument
@@ -204,7 +211,7 @@ export function useCadWorkspace(
     sourceOnlyMaterials: boolean
   }> | null>(null)
   const evaluationTimeoutRef = useRef<EvaluationTimeoutMs>(evaluationTimeoutMs)
-  const lastHandledGenerationRef = useRef(0)
+  const generationRef = useRef(0)
   const lastSchemaFingerprintRef = useRef<string | null>(null)
   const onActivityRef = useRef(onActivity)
   const onCandidateVarsRegeneratedRef = useRef(onCandidateVarsRegenerated)
@@ -221,7 +228,9 @@ export function useCadWorkspace(
   }> | null>(null)
 
   builtMeasurementRef.current = builtMeasurement
+  completedCandidateGenerationRef.current = completedCandidateGeneration
   evaluationTimeoutRef.current = evaluationTimeoutMs
+  generationRef.current = generation
   onActivityRef.current = onActivity
   onCandidateVarsRegeneratedRef.current = onCandidateVarsRegenerated
   recordedDataRef.current = recordedData
@@ -326,7 +335,7 @@ export function useCadWorkspace(
 
     const abort = new AbortController()
     activeEvaluationRef.current = abort
-    const explicitGeneration = generation !== lastHandledGenerationRef.current
+    const explicitGeneration = generation !== completedCandidateGenerationRef.current
     const prepared =
       preparedDocumentRef.current?.document === evaluationDocument && preparedDocumentRef.current.resetKey === resetKey
         ? preparedDocumentRef.current
@@ -387,13 +396,30 @@ export function useCadWorkspace(
           cached?.fingerprint === fingerprint && (cached.inputKey === varsKey || cached.varsKey === varsKey)
             ? cached.vars
             : null
+        const pendingGeneratedCandidate =
+          explicitGeneration &&
+          cached?.document === evaluationDocument &&
+          cached.resetKey === resetKey &&
+          cached.fingerprint === fingerprint &&
+          cached.generation === generation
+            ? cached.vars
+            : null
         const generateCandidateVars = (reason?: CandidateVarsRegeneratedEvent['reason']) => {
+          if (pendingGeneratedCandidate && cached) {
+            candidateCacheRef.current = Object.freeze({
+              ...cached,
+              dependencyKey: candidateDependencyKey,
+              inputKey: varsKey,
+            })
+            return pendingGeneratedCandidate
+          }
           if (reusableCachedCandidate && !explicitGeneration) return reusableCachedCandidate
           const generated = generateRandomVars(inspection.varsSchema)
           candidateCacheRef.current = Object.freeze({
             dependencyKey: candidateDependencyKey,
             document: evaluationDocument,
             fingerprint,
+            generation: explicitGeneration ? generation : null,
             inputKey: varsKey,
             resetKey,
             vars: generated,
@@ -407,7 +433,6 @@ export function useCadWorkspace(
           updateStatus('Checking')
           return
         } else if (explicitGeneration) {
-          lastHandledGenerationRef.current = generation
           nextVars = generateCandidateVars()
         } else if (candidateProvenance === 'persisted-measurement') {
           candidateCacheRef.current = null
@@ -502,6 +527,12 @@ export function useCadWorkspace(
             message: 'CAD 구조가 준비되었습니다.',
             details,
           })
+        const completeCandidateGeneration = () => {
+          if (!explicitGeneration) return
+          completedCandidateGenerationRef.current = generation
+          setCompletedCandidateGeneration(generation)
+          setSuccessfulCandidateGeneration(generation)
+        }
         const rememberEditableMaterialOutput = (outputKey: string) => {
           if (candidateProvenance !== 'editable') return
           editableMaterialEchoRef.current = Object.freeze({
@@ -528,6 +559,7 @@ export function useCadWorkspace(
             ]),
           )
           rememberEditableMaterialOutput(materialsKey)
+          completeCandidateGeneration()
           successfulRevisionRef.current = requestRevision
           setSuccessfulRevision(requestRevision)
           updateStatus('Ready')
@@ -549,6 +581,7 @@ export function useCadWorkspace(
           setMaterialParameters(null)
           setMaterialWarnings(resolutionWarnings)
           rememberEditableMaterialOutput(materialsKey)
+          completeCandidateGeneration()
           successfulRevisionRef.current = requestRevision
           setSuccessfulRevision(requestRevision)
           updateStatus('Ready')
@@ -572,6 +605,7 @@ export function useCadWorkspace(
         setMaterialParameters(persistedMaterials)
         setMaterialWarnings(resolutionWarnings)
         rememberEditableMaterialOutput(stableInput(persistedMaterials))
+        completeCandidateGeneration()
         successfulRevisionRef.current = requestRevision
         setSuccessfulRevision(requestRevision)
         updateStatus('Ready')
@@ -579,6 +613,10 @@ export function useCadWorkspace(
       })
       .catch((cause: unknown) => {
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
+        if (explicitGeneration) {
+          completedCandidateGenerationRef.current = generation
+          setCompletedCandidateGeneration(generation)
+        }
         const compilation = cause instanceof CadCompilationError ? cause : null
         const evaluation = cause instanceof CadDocumentEvaluationError ? cause : null
         const measurementVars = cause instanceof MeasurementVarsError
@@ -640,8 +678,11 @@ export function useCadWorkspace(
 
   const sourceReadOnly = !onExperimentChange
   const generateCandidate = useCallback(() => {
-    if (!experiment || statusRef.current === 'Rendering') return
-    setGeneration((value) => value + 1)
+    if (!experiment || statusRef.current === 'Rendering') return null
+    const nextGeneration = generationRef.current + 1
+    generationRef.current = nextGeneration
+    setGeneration(nextGeneration)
+    return nextGeneration
   }, [experiment])
   const handleSourceChange = useCallback(
     (source: string) => {
@@ -880,6 +921,8 @@ export function useCadWorkspace(
   )
   const runIsBusy = ['Checking', 'Compiling', 'Evaluating', 'Resolving Materials', 'Rendering'].includes(status)
   const experimentDocument: CadDocumentController = {
+    candidateGeneration: generation,
+    completedCandidateGeneration,
     compiledSource: null,
     diagnostics,
     documentType: 'experiment',
@@ -910,6 +953,7 @@ export function useCadWorkspace(
     simulationProgram,
     sourceReadOnly,
     status,
+    successfulCandidateGeneration,
     successfulRevision,
     taskSceneHashes,
     taskScenes,

@@ -31,6 +31,9 @@ describe('documentation knowledge registry', () => {
         .map(({ content }) => content)
         .join('\n'),
     ).not.toContain('복제')
+    const quickstart = manualDocsKnowledge.find(({ id }) => id === 'workbench-quickstart')?.content
+    expect(quickstart).toContain('**Generate & Run**')
+    expect(quickstart).toContain('Prepared 상태로 남습니다')
   })
 
   it('links manual examples to canonical catalog detail instead of duplicating full source', () => {
