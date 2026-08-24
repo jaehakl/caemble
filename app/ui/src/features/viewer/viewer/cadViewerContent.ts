@@ -1,4 +1,4 @@
-import type { CadScene, Vars } from '@/lib/cad'
+import type { CadScene } from '@/lib/cad'
 import type { JscadViewerLayer } from './sourceLayers'
 
 export type CadViewerDocument = Readonly<{
@@ -6,7 +6,6 @@ export type CadViewerDocument = Readonly<{
   sceneHash?: string | null
   taskScenes?: Readonly<Record<string, CadScene>>
   taskSceneHashes?: Readonly<Record<string, string>>
-  variables: Readonly<Vars> | null
 }>
 
 export function resolveCadViewerContent(

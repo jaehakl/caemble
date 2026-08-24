@@ -92,7 +92,6 @@ export type CadDocumentController = Readonly<{
   materialParameters: MeasurementMaterialParameters | null
   materialWarnings: readonly string[]
   readOnly: boolean
-  previewStale: boolean
   measurement: BuiltMeasurement | null
   revision: number
   runIsBusy: boolean
@@ -189,10 +188,20 @@ export function useCadWorkspace(
   }> | null>(null)
   const builtMeasurementRef = useRef<BuiltMeasurement | null>(null)
   const candidateCacheRef = useRef<Readonly<{
+    dependencyKey: string
+    document: ExperimentSourceDocument
     fingerprint: string
     inputKey: string
+    resetKey: string | number
     vars: Readonly<Vars>
     varsKey: string
+  }> | null>(null)
+  const editableMaterialEchoRef = useRef<Readonly<{
+    dependencyKey: string
+    document: ExperimentSourceDocument
+    outputKey: string
+    resetKey: string | number
+    sourceOnlyMaterials: boolean
   }> | null>(null)
   const evaluationTimeoutRef = useRef<EvaluationTimeoutMs>(evaluationTimeoutMs)
   const lastHandledGenerationRef = useRef(0)
@@ -204,6 +213,12 @@ export function useCadWorkspace(
   const statusRef = useRef<AppStatus>('Ready')
   const successfulRevisionRef = useRef(-1)
   const resetKeyRef = useRef<string | number>(resetKey)
+  const preparedDocumentRef = useRef<Readonly<{
+    catalog: Awaited<ReturnType<typeof fetchCatalogRuntimeSlice>>
+    document: ExperimentSourceDocument
+    inspection: Awaited<ReturnType<typeof inspectDocument>>
+    resetKey: string | number
+  }> | null>(null)
 
   builtMeasurementRef.current = builtMeasurement
   evaluationTimeoutRef.current = evaluationTimeoutMs
@@ -237,8 +252,27 @@ export function useCadWorkspace(
     )
   }, [])
 
-  const varsKey = stableInput(candidateVars ?? null)
-  const materialsKey = stableInput(frozenMaterialSnapshot)
+  const varsKey = useMemo(() => stableInput(candidateVars ?? null), [candidateVars])
+  const materialsKey = useMemo(() => stableInput(frozenMaterialSnapshot), [frozenMaterialSnapshot])
+  const cachedCandidate = candidateCacheRef.current
+  const editableMaterialEcho = editableMaterialEchoRef.current
+  const candidateDependencyKey =
+    candidateProvenance === 'editable' &&
+    cachedCandidate &&
+    cachedCandidate.document === experiment &&
+    cachedCandidate.resetKey === resetKey &&
+    (cachedCandidate.inputKey === varsKey || cachedCandidate.varsKey === varsKey)
+      ? cachedCandidate.dependencyKey
+      : varsKey
+  const materialDependencyKey =
+    candidateProvenance === 'editable' &&
+    editableMaterialEcho !== null &&
+    editableMaterialEcho.document === experiment &&
+    editableMaterialEcho.resetKey === resetKey &&
+    editableMaterialEcho.sourceOnlyMaterials === sourceOnlyMaterials &&
+    editableMaterialEcho.outputKey === materialsKey
+      ? editableMaterialEcho.dependencyKey
+      : materialsKey
 
   useEffect(() => {
     if (!runtimeEnabled) invalidateSimulation()
@@ -259,7 +293,9 @@ export function useCadWorkspace(
     resetKeyRef.current = resetKey
     if (resetPreview) {
       candidateCacheRef.current = null
+      editableMaterialEchoRef.current = null
       lastSchemaFingerprintRef.current = null
+      preparedDocumentRef.current = null
       setEvaluatedSnapshot(null)
     }
     setBuiltMeasurement(null)
@@ -275,7 +311,9 @@ export function useCadWorkspace(
 
     if (!experiment) {
       candidateCacheRef.current = null
+      editableMaterialEchoRef.current = null
       lastSchemaFingerprintRef.current = null
+      preparedDocumentRef.current = null
       setEvaluatedSnapshot(null)
       setScene(null)
       setTaskScenes(Object.freeze({}))
@@ -288,39 +326,57 @@ export function useCadWorkspace(
 
     const abort = new AbortController()
     activeEvaluationRef.current = abort
-    updateStatus('Checking')
-    emitRuntimeActivity(onActivityRef.current, {
-      source: 'cad',
-      level: 'info',
-      phase: 'source.checking',
-      message: 'Experiment source 검사를 시작했습니다.',
-      details: { revision: requestRevision },
-    })
     const explicitGeneration = generation !== lastHandledGenerationRef.current
+    const prepared =
+      preparedDocumentRef.current?.document === evaluationDocument && preparedDocumentRef.current.resetKey === resetKey
+        ? preparedDocumentRef.current
+        : null
+    if (candidateProvenance !== 'editable') editableMaterialEchoRef.current = null
+    if (prepared) {
+      updateStatus('Evaluating')
+    } else {
+      updateStatus('Checking')
+      emitRuntimeActivity(onActivityRef.current, {
+        source: 'cad',
+        level: 'info',
+        phase: 'source.checking',
+        message: 'Experiment source 검사를 시작했습니다.',
+        details: { revision: requestRevision },
+      })
+    }
 
-    void fetchCatalogRuntimeSlice(evaluationDocument.sourceBundle)
-      .then(async (catalog) => {
+    void (
+      prepared
+        ? Promise.resolve(prepared)
+        : fetchCatalogRuntimeSlice(evaluationDocument.sourceBundle).then(async (catalog) => {
+            if (abort.signal.aborted || revisionRef.current !== requestRevision) throw abort.signal.reason
+            emitRuntimeActivity(onActivityRef.current, {
+              source: 'cad',
+              level: 'info',
+              phase: 'compile.started',
+              message: 'CAD source compile을 시작했습니다.',
+              details: { revision: requestRevision, catalogRevision: catalog.catalogRevision },
+            })
+            const inspection = await inspectDocument(evaluationDocument, {
+              catalog,
+              signal: abort.signal,
+              timeoutMs: evaluationTimeoutRef.current,
+            })
+            if (abort.signal.aborted || revisionRef.current !== requestRevision) throw abort.signal.reason
+            emitRuntimeActivity(onActivityRef.current, {
+              source: 'cad',
+              level: 'info',
+              phase: 'compile.completed',
+              message: 'CAD source compile을 완료했습니다.',
+              details: { revision: requestRevision, variableCount: Object.keys(inspection.varsSchema).length },
+            })
+            const nextPrepared = Object.freeze({ catalog, document: evaluationDocument, inspection, resetKey })
+            preparedDocumentRef.current = nextPrepared
+            return nextPrepared
+          })
+    )
+      .then(async ({ catalog, inspection }) => {
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
-        emitRuntimeActivity(onActivityRef.current, {
-          source: 'cad',
-          level: 'info',
-          phase: 'compile.started',
-          message: 'CAD source compile을 시작했습니다.',
-          details: { revision: requestRevision, catalogRevision: catalog.catalogRevision },
-        })
-        const inspection = await inspectDocument(evaluationDocument, {
-          catalog,
-          signal: abort.signal,
-          timeoutMs: evaluationTimeoutRef.current,
-        })
-        if (abort.signal.aborted || revisionRef.current !== requestRevision) return
-        emitRuntimeActivity(onActivityRef.current, {
-          source: 'cad',
-          level: 'info',
-          phase: 'compile.completed',
-          message: 'CAD source compile을 완료했습니다.',
-          details: { revision: requestRevision, variableCount: Object.keys(inspection.varsSchema).length },
-        })
         setVarsSchema(inspection.varsSchema)
         const fingerprint = varsSchemaFingerprint(inspection.varsSchema)
         const schemaChanged =
@@ -335,8 +391,11 @@ export function useCadWorkspace(
           if (reusableCachedCandidate && !explicitGeneration) return reusableCachedCandidate
           const generated = generateRandomVars(inspection.varsSchema)
           candidateCacheRef.current = Object.freeze({
+            dependencyKey: candidateDependencyKey,
+            document: evaluationDocument,
             fingerprint,
             inputKey: varsKey,
+            resetKey,
             vars: generated,
             varsKey: stableInput(generated),
           })
@@ -345,6 +404,7 @@ export function useCadWorkspace(
         }
         let nextVars: Readonly<Vars>
         if (candidateProvenance === 'persisted-measurement' && candidateVarsPending && candidateVars === undefined) {
+          updateStatus('Checking')
           return
         } else if (explicitGeneration) {
           lastHandledGenerationRef.current = generation
@@ -442,6 +502,16 @@ export function useCadWorkspace(
             message: 'CAD 구조가 준비되었습니다.',
             details,
           })
+        const rememberEditableMaterialOutput = (outputKey: string) => {
+          if (candidateProvenance !== 'editable') return
+          editableMaterialEchoRef.current = Object.freeze({
+            dependencyKey: materialDependencyKey,
+            document: evaluationDocument,
+            outputKey,
+            resetKey,
+            sourceOnlyMaterials,
+          })
+        }
         if (unresolved.length > 0) {
           const nextDraftTaskNames = assertCatalogKernelTasks(registeredCatalog, snapshot.simulationProgram)
           setEvaluatedSnapshot(snapshot)
@@ -457,6 +527,7 @@ export function useCadWorkspace(
               `Measurement requires resolved Material roles: ${unresolved.join(', ')}.`,
             ]),
           )
+          rememberEditableMaterialOutput(materialsKey)
           successfulRevisionRef.current = requestRevision
           setSuccessfulRevision(requestRevision)
           updateStatus('Ready')
@@ -477,6 +548,7 @@ export function useCadWorkspace(
           setSimulationProgram(null)
           setMaterialParameters(null)
           setMaterialWarnings(resolutionWarnings)
+          rememberEditableMaterialOutput(materialsKey)
           successfulRevisionRef.current = requestRevision
           setSuccessfulRevision(requestRevision)
           updateStatus('Ready')
@@ -499,6 +571,7 @@ export function useCadWorkspace(
         setSimulationProgram(snapshot.simulationProgram)
         setMaterialParameters(persistedMaterials)
         setMaterialWarnings(resolutionWarnings)
+        rememberEditableMaterialOutput(stableInput(persistedMaterials))
         successfulRevisionRef.current = requestRevision
         setSuccessfulRevision(requestRevision)
         updateStatus('Ready')
@@ -541,7 +614,7 @@ export function useCadWorkspace(
       abort.abort()
       if (activeEvaluationRef.current === abort) activeEvaluationRef.current = null
     }
-    // Canonical keys deliberately avoid reevaluating when parent state reuses the same persisted values.
+    // Canonical dependency keys keep generated Candidate/material echoes from restarting the same evaluation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     experiment,
@@ -549,11 +622,11 @@ export function useCadWorkspace(
     candidateVarsPending,
     generation,
     invalidateSimulation,
-    materialsKey,
+    materialDependencyKey,
     resetKey,
     sourceOnlyMaterials,
     updateStatus,
-    varsKey,
+    candidateDependencyKey,
   ])
 
   useEffect(
@@ -828,7 +901,6 @@ export function useCadWorkspace(
     materialParameters,
     materialWarnings,
     readOnly: sourceReadOnly,
-    previewStale: Boolean(scene && successfulRevision !== revision),
     measurement: builtMeasurement,
     revision,
     runIsBusy,

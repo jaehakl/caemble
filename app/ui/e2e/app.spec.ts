@@ -346,6 +346,7 @@ export default experiment({
     .getByRole('button', { name: 'Candidate' })
   await expect(generateCandidate).toBeEnabled()
   await generateCandidate.click()
+  await expect(page.getByText('마지막 정상 Scene · 현재 source에 오류가 있습니다.', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Toggle Experiment' })).toBeEnabled()
   await expect(page.locator('footer [role="alert"]')).toHaveCount(0)
   await expect(page.getByText('Draft preview · Solver 미선택')).toBeVisible({ timeout: 15_000 })

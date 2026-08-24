@@ -10,6 +10,7 @@ import {
   inspectDocument,
   serializeCadScene,
   updateExperimentSourceFile,
+  type Vars,
   type VarsSchemaEntry,
 } from '@/lib/cad'
 import { fetchCatalogRuntimeSlice } from '@/lib/catalog/references'
@@ -171,10 +172,112 @@ describe('useCadWorkspace unified Experiment', () => {
 
     act(() => render.result.current.experimentDocument.generateCandidate())
     await waitFor(() => expect(evaluateDocument).toHaveBeenCalledTimes(2))
+    expect(fetchCatalogRuntimeSlice).toHaveBeenCalledOnce()
+    expect(inspectDocument).toHaveBeenCalledOnce()
     expect(vi.mocked(evaluateDocument).mock.calls[1][0].document).toBe(document)
     expect(vi.mocked(evaluateDocument).mock.calls[1][0].vars).toEqual({ fixed: 4, width: 7.75 })
     expect(resolveDocumentMaterials).toHaveBeenLastCalledWith(expect.anything(), null, false)
     expect(onChange).not.toHaveBeenCalled()
+    render.unmount()
+  })
+
+  it('does not reevaluate when the Workbench echoes a generated editable Candidate and material snapshot', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.75)
+    const initialMaterials = {
+      schemaVersion: 2,
+      experiment: emptyMaterials,
+      tasks: { electric: emptyMaterials },
+    } as const
+    const render = renderHook(
+      ({ candidateVars, materialSnapshot }: { candidateVars: Readonly<Vars>; materialSnapshot: unknown }) =>
+        useCadWorkspace(document, vi.fn(), {
+          candidateVars,
+          frozenMaterialSnapshot: materialSnapshot,
+        }),
+      { initialProps: { candidateVars: { fixed: 4, width: 2 }, materialSnapshot: initialMaterials as unknown } },
+    )
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
+
+    act(() => render.result.current.experimentDocument.generateCandidate())
+    await waitFor(() => expect(evaluateDocument).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(render.result.current.experimentDocument.successfulRevision).toBe(
+        render.result.current.experimentDocument.revision,
+      ),
+    )
+    const generatedVars = render.result.current.experimentDocument.variables!
+    const generatedMaterials = render.result.current.experimentDocument.materialParameters
+
+    render.rerender({
+      candidateVars: generatedVars as Readonly<{ fixed: number; width: number }>,
+      materialSnapshot: generatedMaterials,
+    })
+
+    expect(fetchCatalogRuntimeSlice).toHaveBeenCalledOnce()
+    expect(inspectDocument).toHaveBeenCalledOnce()
+    expect(evaluateDocument).toHaveBeenCalledTimes(2)
+    expect(resolveDocumentMaterials).toHaveBeenCalledTimes(2)
+    render.unmount()
+  })
+
+  it('evaluates each newly selected Experiment once when Candidate state is echoed by the Workbench', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    const initialProps: {
+      candidateVars: Readonly<Vars> | undefined
+      materialSnapshot: unknown
+      resetKey: number
+      source: typeof document
+    } = {
+      candidateVars: undefined,
+      materialSnapshot: null,
+      resetKey: 1,
+      source: document,
+    }
+    const render = renderHook(
+      ({ candidateVars, materialSnapshot, resetKey, source }) =>
+        useCadWorkspace(source, vi.fn(), {
+          candidateVars,
+          frozenMaterialSnapshot: materialSnapshot,
+          resetKey,
+        }),
+      { initialProps },
+    )
+    await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
+    const generatedVars = render.result.current.experimentDocument.variables!
+    const generatedMaterials = render.result.current.experimentDocument.materialParameters
+
+    render.rerender({ ...initialProps, candidateVars: generatedVars, materialSnapshot: generatedMaterials })
+
+    expect(fetchCatalogRuntimeSlice).toHaveBeenCalledOnce()
+    expect(inspectDocument).toHaveBeenCalledOnce()
+    expect(evaluateDocument).toHaveBeenCalledOnce()
+    expect(resolveDocumentMaterials).toHaveBeenCalledOnce()
+
+    const replacement = updateExperimentSourceFile(document, 'experiment.tsx', 'replacement')
+    render.rerender({
+      candidateVars: generatedVars,
+      materialSnapshot: generatedMaterials,
+      resetKey: 2,
+      source: replacement,
+    })
+    await waitFor(() => expect(evaluateDocument).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(render.result.current.experimentDocument.successfulRevision).toBe(
+        render.result.current.experimentDocument.revision,
+      ),
+    )
+
+    render.rerender({
+      candidateVars: render.result.current.experimentDocument.variables!,
+      materialSnapshot: render.result.current.experimentDocument.materialParameters,
+      resetKey: 2,
+      source: replacement,
+    })
+
+    expect(fetchCatalogRuntimeSlice).toHaveBeenCalledTimes(2)
+    expect(inspectDocument).toHaveBeenCalledTimes(2)
+    expect(evaluateDocument).toHaveBeenCalledTimes(2)
+    expect(resolveDocumentMaterials).toHaveBeenCalledTimes(2)
     render.unmount()
   })
 
@@ -195,6 +298,8 @@ describe('useCadWorkspace unified Experiment', () => {
     render.rerender({ source: updateExperimentSourceFile(document, 'experiment.tsx', 'same schema') })
 
     await waitFor(() => expect(evaluateDocument).toHaveBeenCalledTimes(2))
+    expect(fetchCatalogRuntimeSlice).toHaveBeenCalledTimes(2)
+    expect(inspectDocument).toHaveBeenCalledTimes(2)
     expect(vi.mocked(evaluateDocument).mock.calls[1][0].vars).toEqual({ fixed: 4, width: 2 })
     expect(onRegenerated).not.toHaveBeenCalled()
     expect(random).not.toHaveBeenCalled()
@@ -384,7 +489,7 @@ describe('useCadWorkspace unified Experiment', () => {
     await waitFor(() => expect(render.result.current.experimentDocument.varsSchema).toEqual(varsSchema))
 
     act(() => render.result.current.experimentDocument.generateCandidate())
-    await waitFor(() => expect(inspectDocument).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(inspectDocument).toHaveBeenCalledOnce())
     expect(evaluateDocument).not.toHaveBeenCalled()
     expect(random).not.toHaveBeenCalled()
 
@@ -411,7 +516,7 @@ describe('useCadWorkspace unified Experiment', () => {
 
     await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Error'))
     expect(render.result.current.experimentDocument.scene).toBe(lastScene)
-    expect(render.result.current.experimentDocument.previewStale).toBe(true)
+    expect(render.result.current.experimentDocument.error?.message).toBe('syntax failed')
     render.unmount()
   })
 

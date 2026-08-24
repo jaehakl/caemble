@@ -24,7 +24,7 @@ describe('CadViewer', () => {
   it('defaults common Experiment and Task geometry to visible', () => {
     const markup = renderToStaticMarkup(
       <CadViewer
-        experiment={{ scene: experimentScene, taskScenes: { electric: taskScene }, variables: { duration: 1 } }}
+        experiment={{ scene: experimentScene, taskScenes: { electric: taskScene } }}
         onRenderEnd={() => undefined}
         onRenderError={() => undefined}
         onRenderStart={() => undefined}
@@ -42,7 +42,7 @@ describe('CadViewer', () => {
   })
 
   it('keeps common Experiment geometry visible without Tasks', () => {
-    const experiment = { scene: experimentScene, taskScenes: {}, variables: {} }
+    const experiment = { scene: experimentScene, taskScenes: {} }
     const content = resolveCadViewerContent(experiment, true, true)
     const markup = renderToStaticMarkup(
       <CadViewer
@@ -77,13 +77,9 @@ describe('CadViewer', () => {
   })
 
   it('builds common Experiment then Task layers and an explicit all-hidden state', () => {
-    const visible = resolveCadViewerContent(
-      { scene: experimentScene, taskScenes: { electric: taskScene }, variables: { duration: 1 } },
-      true,
-      true,
-    )
+    const visible = resolveCadViewerContent({ scene: experimentScene, taskScenes: { electric: taskScene } }, true, true)
     const hidden = resolveCadViewerContent(
-      { scene: experimentScene, taskScenes: { electric: taskScene }, variables: { duration: 1 } },
+      { scene: experimentScene, taskScenes: { electric: taskScene } },
       false,
       false,
     )
@@ -99,7 +95,7 @@ describe('CadViewer', () => {
   it('prefers the common Experiment display unit while preserving each layer unit', () => {
     const meterTaskScene = { ...taskScene, lengthUnit: 'm' } as const
     const content = resolveCadViewerContent(
-      { scene: experimentScene, taskScenes: { electric: meterTaskScene }, variables: {} },
+      { scene: experimentScene, taskScenes: { electric: meterTaskScene } },
       true,
       true,
     )
