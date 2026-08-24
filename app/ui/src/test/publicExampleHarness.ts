@@ -80,7 +80,7 @@ export function inspectPublicExampleBundle(bundle: ExperimentSourceBundle) {
       else if (experimentTaskName(entryFile) !== null) analyzeTaskSource(source)
       else analyzeBundleModuleSource(source, entryFile)
       const compiled: CompiledCadSource = {
-        apiVersion: 8,
+        apiVersion: 9,
         compilerVersion: CAD_COMPILER_VERSION,
         entryFile,
         code: compileSource(source, entryFile),
@@ -90,7 +90,7 @@ export function inspectPublicExampleBundle(bundle: ExperimentSourceBundle) {
     }),
   )
   const document: CompiledCadDocument = {
-    apiVersion: 8,
+    apiVersion: 9,
     compilerVersion: CAD_COMPILER_VERSION,
     sourceHash,
     sources,

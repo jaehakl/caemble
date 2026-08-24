@@ -26,7 +26,7 @@ fail()
     const throwLine = generatedLines.findIndex((line) => line.includes("throw new Error('boom')")) + 1
     const throwColumn = generatedLines[throwLine - 1].indexOf('throw') + 1
     const source: CompiledCadSource = {
-      apiVersion: 8,
+      apiVersion: 9,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'structure.tsx',
       code: emitted.outputText,
@@ -48,7 +48,7 @@ fail()
 
   it('ignores stack frames from another compiled project', () => {
     const source: CompiledCadSource = {
-      apiVersion: 8,
+      apiVersion: 9,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'structure.tsx',
       code: '',
@@ -63,7 +63,7 @@ fail()
   it('attributes helper module frames to their exact bundle path', () => {
     const path = 'shared/block.tsx'
     const source: CompiledCadSource = {
-      apiVersion: 8,
+      apiVersion: 9,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: path,
       code: '',

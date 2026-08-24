@@ -13,38 +13,38 @@ const workerScope = {
 const nonce = '12345678-90ab-cdef-1234-567890abcdef'
 const sourceHash = 'c'.repeat(64)
 const compiledExperiment: CompiledCadDocument = {
-  apiVersion: 8,
+  apiVersion: 9,
   compilerVersion: CAD_COMPILER_VERSION,
   sourceHash,
   sources: {
     'geometry.tsx': {
-      apiVersion: 8,
+      apiVersion: 9,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'geometry.tsx',
       sourceHash,
       code: 'module.exports = {}',
     },
     'material.tsx': {
-      apiVersion: 8,
+      apiVersion: 9,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'material.tsx',
       sourceHash,
       code: 'module.exports = {}',
     },
     'experiment.tsx': {
-      apiVersion: 8,
+      apiVersion: 9,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'experiment.tsx',
       sourceHash,
       code: `const { experiment } = require('@caemble/core')
 const Box = ({ id, size }) => h('box', { id, size })
 module.exports.default = experiment({
-  lengthUnit: 'mm', varsSchema: { width: { min: 1, max: 10 } },
+  lengthUnit: 'mm', varsSchema: { width: { shape: [], min: 1, max: 10 } },
   geometry: ({ vars }) => h(Box, { id: 'body', size: [vars.width, 1, 1] }), recordedData: {},
 })`,
     },
     'tasks/electric.tsx': {
-      apiVersion: 8,
+      apiVersion: 9,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'tasks/electric.tsx',
       sourceHash,
@@ -90,7 +90,7 @@ describe('CAD runner Worker', () => {
       type: 'operation-result',
       operation: 'inspect',
       nonce,
-      response: { type: 'inspection-success', sourceHash, varsSchema: { width: { min: 1, max: 10 } } },
+      response: { type: 'inspection-success', sourceHash, varsSchema: { width: { shape: [], min: 1, max: 10 } } },
     })
   })
 

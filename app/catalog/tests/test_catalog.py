@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+import caemble_catalog.admin as catalog_admin
+
 from caemble_catalog import (
     Catalog,
     CatalogAmbiguousError,
@@ -31,7 +33,7 @@ from caemble_catalog.schema import parse_experiment_version
 def test_canonical_catalog_is_normalized_and_complete():
     with Catalog.open_readonly() as catalog:
         assert catalog.meta() == {
-            "schemaVersion": 4,
+            "schemaVersion": 5,
             "catalogRevision": catalog.meta()["catalogRevision"],
             "quantityKindDataVersion": "0.0.1",
             "materialCatalogVersion": "0.0.0",
@@ -115,7 +117,7 @@ def test_example_experiment_catalog_contracts():
         assert wheel["repository"] == "assemblies"
         assert wheel["version"] == "1.0.0"
         assert wheel["coordinate"] == "caemble:experiment/caemble/assemblies/two-material-wheel-assembly@1.0.0"
-        assert wheel["cadApiVersion"] == 8
+        assert wheel["cadApiVersion"] == 9
         assert wheel["sourceBundle"]["formatVersion"] == 6
         assert not any(path.startswith("tasks/") for path in wheel["sourceBundle"]["files"])
         assert wheel["relatedSolvers"] == []
@@ -124,7 +126,7 @@ def test_example_experiment_catalog_contracts():
         coupled = catalog.experiment("electro-thermal-uniform-bar")
         assert coupled["sourceBundle"]["formatVersion"] == 6
         assert "geometrySnapshot" not in coupled["sourceBundle"]
-        assert coupled["cadApiVersion"] == 8
+        assert coupled["cadApiVersion"] == 9
         assert coupled["sourceFormatVersion"] == 2
         assert [(item["name"], item["version"]) for item in coupled["relatedSolvers"]] == [
             ("dc-current-density", "0.2.0"),
@@ -333,6 +335,45 @@ def test_draft_diff_publish_and_released_solver_identity_policy(tmp_path: Path):
     with Catalog.open_readonly(baseline, immutable=False) as catalog:
         assert ("steady-state-heat", "0.2.0") in catalog.solver_contracts()
         assert ("steady-state-heat", "0.1.0") not in catalog.solver_contracts()
+
+
+def test_create_draft_upgrades_schema_v4_to_v5(tmp_path: Path):
+    baseline = tmp_path / "catalog-v4.sqlite3"
+    draft = tmp_path / "draft.sqlite3"
+    shutil.copy2(catalog_path(), baseline)
+    connection = sqlite3.connect(baseline)
+    connection.execute("PRAGMA ignore_check_constraints = ON")
+    connection.execute("UPDATE experiments SET cad_api_version = 8")
+    connection.execute("PRAGMA writable_schema = ON")
+    connection.execute(
+        "UPDATE sqlite_schema SET sql = replace(sql, 'cad_api_version = 9', 'cad_api_version = 8') "
+        "WHERE type = 'table' AND name = 'experiments'"
+    )
+    connection.execute("PRAGMA writable_schema = OFF")
+    connection.execute("PRAGMA user_version = 4")
+    connection.commit()
+    connection.close()
+
+    create_draft(draft, baseline)
+
+    with Catalog.open_readonly(draft, immutable=False) as catalog:
+        assert catalog.meta()["schemaVersion"] == 5
+        assert {row["cad_api_version"] for row in catalog._all("SELECT cad_api_version FROM experiments")} == {9}
+
+
+def test_publish_uses_sqlite_backup_when_windows_blocks_atomic_replace(tmp_path: Path, monkeypatch):
+    destination = tmp_path / "canonical.sqlite3"
+    draft = tmp_path / "draft.sqlite3"
+    shutil.copy2(catalog_path(), destination)
+    create_draft(draft, destination)
+    with writable_connection(draft) as connection:
+        connection.execute("UPDATE experiments SET title = 'Published title' WHERE key = 'basketball-goal'")
+
+    monkeypatch.setattr(catalog_admin.os, "replace", lambda *_: (_ for _ in ()).throw(PermissionError()))
+    publish_draft(draft, destination)
+
+    with Catalog.open_readonly(destination, immutable=False) as catalog:
+        assert catalog.experiment("basketball-goal")["title"] == "Published title"
 
 
 def test_publish_does_not_replace_destination_with_invalid_database(tmp_path: Path):

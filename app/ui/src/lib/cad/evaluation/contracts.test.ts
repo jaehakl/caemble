@@ -35,7 +35,7 @@ describe('CAD registry contracts', () => {
 
   it('keeps complete element metadata separate from the shared identity and transform contract', () => {
     expect(cadAuthoringContract).toMatchObject({
-      apiVersion: 8,
+      apiVersion: 9,
       identity: { name: 'id', pathExample: 'goal.pole' },
       transforms: { applicationOrder: ['scale', 'rotation', 'position'] },
     })

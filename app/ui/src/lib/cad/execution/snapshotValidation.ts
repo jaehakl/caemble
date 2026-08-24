@@ -89,7 +89,7 @@ export function assertEvaluatedDocumentSnapshot(value: unknown): asserts value i
     throw new CadModelError('Evaluated Experiment snapshot provenance is invalid.')
   }
   const schema = normalizeVarsSchema(snapshot.varsSchema, 'Evaluated Experiment snapshot')
-  normalizeVars(schema.normalized, snapshot.variables, 'Evaluated Experiment snapshot')
+  normalizeVars(schema, snapshot.variables, 'Evaluated Experiment snapshot')
   assertSerializableCadScene(snapshot.scene)
   if (typeof snapshot.taskScenes !== 'object' || snapshot.taskScenes === null || Array.isArray(snapshot.taskScenes)) {
     throw new CadModelError('Evaluated Experiment snapshot Task scenes are invalid.')

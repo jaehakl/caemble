@@ -11,7 +11,7 @@ those details in Markdown.
 | --- | ---: | --- |
 | Experiment source bundle | 6 | UI/API source document model |
 | CAD document | 2 | UI Code-to-CAD runner |
-| CAD authoring API | 8 | generated UI declaration and element registry |
+| CAD authoring API | 9 | generated UI declaration and element registry |
 | Simulation manifest | 5 | UI evaluation and CAE runtime |
 | Python simulation API | 3 | CAE program runtime |
 | Material snapshot | 2 | UI Measurement builder |
@@ -40,7 +40,7 @@ Persisted versions use
 repository, key, and SemVer are stored on the Experiment row; repository lists
 are derived from those rows rather than maintained as separate entities.
 
-CAD API v8 uses `position`, `rotation`, and `scale` as canonical transforms.
+CAD API v9 uses `position`, `rotation`, and `scale` as canonical transforms.
 Material assignment uses named roles such as `body`, `tire`, or `shell`, not
 positional arrays. TypeScript sources may statically import `@caemble/core` and
 relative `.ts`/`.tsx` modules stored in the same bundle; there is no external

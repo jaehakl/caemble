@@ -5,39 +5,43 @@
       "kind": "measurement",
       "experiment": {
         "kind": "experiment",
-        "sourceHash": "cf5fef1c0a482e48e87f23ebd000885039bac24b1f52853c05ad16b17180f8fa",
+        "sourceHash": "1eacb81124f0895012431593b35f1adb1b47921d39a0ea25a7547655a3ed88ba",
         "variables": {
-          "conductorSize": [
-            100,
-            5,
-            5
-          ],
+          "conductorLength": 100,
+          "conductorWidth": 5,
+          "conductorHeight": 5,
           "electricalConductivity": 59600000,
           "sourceVoltage": 1,
           "referenceVoltage": 0
         },
         "varsSchema": {
-          "conductorSize": {
-            "min": [
-              80,
-              3,
-              3
-            ],
-            "max": [
-              120,
-              7,
-              7
-            ]
+          "conductorLength": {
+            "shape": [],
+            "min": 80,
+            "max": 120
+          },
+          "conductorWidth": {
+            "shape": [],
+            "min": 3,
+            "max": 7
+          },
+          "conductorHeight": {
+            "shape": [],
+            "min": 3,
+            "max": 7
           },
           "electricalConductivity": {
+            "shape": [],
             "min": 59600000,
             "max": 59600000
           },
           "sourceVoltage": {
+            "shape": [],
             "min": 1,
             "max": 1
           },
           "referenceVoltage": {
+            "shape": [],
             "min": 0,
             "max": 0
           }

@@ -30,7 +30,7 @@ with Catalog.open_readonly() as catalog:
 json.dump(result, sys.stdout)
 `
 const exampleExperimentTemplates = [
-  ['Fiber Bundle', 'fiberBundle'],
+  ['Fiber Bundle', 'fourierAmplitude1'],
   ['DC Uniform Bar', 'referenceVoltage'],
   ['DC Notched Current Density', 'NotchedConductor'],
   ['DC Resolution Study', 'sourceVoltage'],
@@ -333,7 +333,7 @@ import { PaperBox } from './geometry'
 export default experiment({
   lengthUnit: 'mm',
   varsSchema: {
-    openness: { min: 0, max: 1 },
+    openness: { shape: [], min: 0, max: 1 },
   },
   geometry: ({ vars }) => <PaperBox id="paperBox" openness={vars.openness} />,
   recordedData: {},

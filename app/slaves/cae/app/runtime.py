@@ -34,6 +34,7 @@ RECORD_ACK_TIMEOUT_SECONDS = 120
 DEFAULT_MAX_RUN_SECONDS = 2 * 60 * 60
 HEARTBEAT_SECONDS = 5
 LIVENESS_SECONDS = 5 * 60
+MAX_VARS_TENSOR_ELEMENTS = 65_536
 logger = logging.getLogger(__name__)
 
 
@@ -883,31 +884,50 @@ def _validate_variables(variables: dict[str, Any], schema: dict[str, Any], path:
     if set(variables) != set(schema):
         raise CaeError("invalid_input", f"{path} variables must exactly match varsSchema")
     for name, entry in schema.items():
-        if (
-            not isinstance(name, str)
-            or not name.strip()
-            or not isinstance(entry, dict)
-            or set(entry) != {"min", "max"}
-        ):
+        if not isinstance(name, str) or not name.strip() or not isinstance(entry, dict):
             raise CaeError("invalid_input", f"{path}.varsSchema.{name} is invalid")
-        minimum_shape = _numeric_tensor_shape(entry["min"], f"{path}.varsSchema.{name}.min")
-        maximum_shape = _numeric_tensor_shape(entry["max"], f"{path}.varsSchema.{name}.max")
-        shape = maximum_shape if not minimum_shape else minimum_shape
-        if minimum_shape and maximum_shape and minimum_shape != maximum_shape:
+        if "shape" not in entry:
             raise CaeError(
                 "invalid_input",
-                f"{path}.varsSchema.{name} bounds have different shapes",
+                f"{path}.varsSchema.{name}.shape is required by CAD API v9; update the Experiment source",
             )
-        _validate_numeric_shape(entry["min"], shape, f"{path}.varsSchema.{name}.min", allow_scalar=True)
-        _validate_numeric_shape(entry["max"], shape, f"{path}.varsSchema.{name}.max", allow_scalar=True)
+        if set(entry) != {"shape", "min", "max"}:
+            raise CaeError("invalid_input", f"{path}.varsSchema.{name} must define only shape, min, and max")
+        shape = _validate_vars_shape(entry["shape"], f"{path}.varsSchema.{name}.shape")
+        minimum = entry["min"]
+        maximum = entry["max"]
+        if not _is_finite_number(minimum):
+            raise CaeError("invalid_input", f"{path}.varsSchema.{name}.min must be a finite number")
+        if not _is_finite_number(maximum):
+            raise CaeError("invalid_input", f"{path}.varsSchema.{name}.max must be a finite number")
+        if minimum > maximum:
+            raise CaeError("invalid_input", f"{path}.varsSchema.{name} min exceeds max")
         _validate_numeric_shape(variables[name], shape, f"{path}.variables.{name}")
         _validate_numeric_range(
             variables[name],
-            entry["min"],
-            entry["max"],
+            minimum,
+            maximum,
             shape,
             f"{path}.variables.{name}",
         )
+
+
+def _validate_vars_shape(value: Any, path: str) -> tuple[int, ...]:
+    if not isinstance(value, list):
+        raise CaeError("invalid_input", f"{path} must be an array of positive safe integers")
+    elements = 1
+    shape = []
+    for index, size in enumerate(value):
+        if not isinstance(size, int) or isinstance(size, bool) or size <= 0 or size > MAX_SAFE_INTEGER:
+            raise CaeError("invalid_input", f"{path}[{index}] must be a positive safe integer")
+        elements *= size
+        if elements > MAX_VARS_TENSOR_ELEMENTS:
+            raise CaeError(
+                "invalid_input",
+                f"{path} must contain at most {MAX_VARS_TENSOR_ELEMENTS} elements",
+            )
+        shape.append(size)
+    return tuple(shape)
 
 
 def _numeric_tensor_shape(value: Any, path: str) -> tuple[int, ...]:
@@ -942,22 +962,20 @@ def _validate_numeric_shape(
 
 def _validate_numeric_range(
     value: Any,
-    minimum: Any,
-    maximum: Any,
+    minimum: float,
+    maximum: float,
     shape: tuple[int, ...],
     path: str,
 ) -> None:
     if not shape:
-        if minimum > maximum:
-            raise CaeError("invalid_input", f"{path} varsSchema min exceeds max")
         if value < minimum or value > maximum:
             raise CaeError("invalid_input", f"{path} is outside varsSchema range")
         return
     for index, item in enumerate(value):
         _validate_numeric_range(
             item,
-            minimum[index] if isinstance(minimum, list) else minimum,
-            maximum[index] if isinstance(maximum, list) else maximum,
+            minimum,
+            maximum,
             shape[1:],
             f"{path}[{index}]",
         )

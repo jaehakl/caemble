@@ -5,29 +5,25 @@
       "kind": "measurement",
       "experiment": {
         "kind": "experiment",
-        "sourceHash": "d8d984136c2ea7482f42bb90ce5ffdc1ff177dfc187fde310052d912e2a190e6",
+        "sourceHash": "91495a5bdde3fd84b9bc7d23559475fc9161ddae0d979d2b1b066830a4afa581",
         "variables": {
-          "bend": [
-            0,
-            0,
-            0
-          ],
+          "bendX": 0,
+          "bendY": 0,
+          "bendZ": 0,
           "bundleRadius": 5,
           "fiberRadius": 1.2000000000000002,
-          "fourierAmplitudes": [
-            0.6000000000000001,
-            0.30000000000000004,
-            0.15000000000000002
-          ],
+          "fourierAmplitude1": 0.6000000000000001,
+          "fourierAmplitude2": 0.30000000000000004,
+          "fourierAmplitude3": 0.15000000000000002,
           "fourierPhases": [
             3.141592653589793,
             3.141592653589793,
             3.141592653589793
           ],
-          "strandPhases": [
+          "strandPhaseJitter": [
             0,
-            2.0943951023931953,
-            4.1887902047863905
+            0,
+            0
           ],
           "turns": 8,
           "taper": 0.6000000000000001,
@@ -37,83 +33,87 @@
           "sourceVoltage": 1
         },
         "varsSchema": {
-          "bend": {
-            "min": [
-              -4,
-              -3,
-              -2
-            ],
-            "max": [
-              4,
-              3,
-              2
-            ]
+          "bendX": {
+            "shape": [],
+            "min": -4,
+            "max": 4
+          },
+          "bendY": {
+            "shape": [],
+            "min": -3,
+            "max": 3
+          },
+          "bendZ": {
+            "shape": [],
+            "min": -2,
+            "max": 2
           },
           "bundleRadius": {
+            "shape": [],
             "min": 3.5,
             "max": 6.5
           },
           "fiberRadius": {
+            "shape": [],
             "min": 0.8,
             "max": 1.6
           },
-          "fourierAmplitudes": {
-            "min": [
-              0.3,
-              0.15,
-              0.075
-            ],
-            "max": [
-              0.9,
-              0.45,
-              0.225
-            ]
+          "fourierAmplitude1": {
+            "shape": [],
+            "min": 0.3,
+            "max": 0.9
+          },
+          "fourierAmplitude2": {
+            "shape": [],
+            "min": 0.15,
+            "max": 0.45
+          },
+          "fourierAmplitude3": {
+            "shape": [],
+            "min": 0.075,
+            "max": 0.225
           },
           "fourierPhases": {
-            "min": [
-              0,
-              0,
-              0
+            "shape": [
+              3
             ],
-            "max": [
-              6.283185307179586,
-              6.283185307179586,
-              6.283185307179586
-            ]
+            "min": 0,
+            "max": 6.283185307179586
           },
-          "strandPhases": {
-            "min": [
-              -0.2,
-              1.8943951023931953,
-              3.9887902047863903
+          "strandPhaseJitter": {
+            "shape": [
+              3
             ],
-            "max": [
-              0.2,
-              2.2943951023931954,
-              4.388790204786391
-            ]
+            "min": -0.2,
+            "max": 0.2
           },
           "turns": {
+            "shape": [],
             "min": 5,
             "max": 11
           },
           "taper": {
+            "shape": [],
             "min": 0.4,
             "max": 0.8
           },
           "helixModulation": {
+            "shape": [],
             "min": 0,
             "max": 0.16
           },
           "envelopePower": {
+            "shape": [],
             "min": 1,
             "max": 3
           },
           "electricalConductivity": {
+            "shape": [],
             "min": 59600000,
             "max": 59600000
           },
           "sourceVoltage": {
+            "shape": [],
             "min": 1,
             "max": 1
           }

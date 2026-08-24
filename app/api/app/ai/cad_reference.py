@@ -11,7 +11,7 @@ CAD_AUTHORING_REFERENCE = json.loads(_REFERENCE_PATH.read_text(encoding="utf-8")
 if (
     not isinstance(CAD_AUTHORING_REFERENCE, dict)
     or CAD_AUTHORING_REFERENCE.get("schemaVersion") != 1
-    or CAD_AUTHORING_REFERENCE.get("apiVersion") != 8
+    or CAD_AUTHORING_REFERENCE.get("apiVersion") != 9
     or not isinstance(CAD_AUTHORING_REFERENCE.get("core"), str)
     or not isinstance(CAD_AUTHORING_REFERENCE.get("elements"), list)
     or len(CAD_AUTHORING_REFERENCE["elements"]) != 14

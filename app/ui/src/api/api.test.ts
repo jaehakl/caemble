@@ -159,7 +159,7 @@ describe('Example Experiment catalog identity', () => {
       ...identity,
       title: 'Integrated',
       description: 'Example Experiment.',
-      cadApiVersion: 8,
+      cadApiVersion: 9,
       sourceFormatVersion: 2,
       bundleFormatVersion: 6,
       bundleHash: sourceHash,

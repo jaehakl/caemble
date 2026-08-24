@@ -188,7 +188,7 @@ async function compile(
             throw new CadCompilationError('compile', `TypeScript did not emit JavaScript for ${path}.`, diagnostics)
           }
           const compiledSource: CompiledCadSource = Object.freeze({
-            apiVersion: 8,
+            apiVersion: 9,
             compilerVersion: CAD_COMPILER_VERSION,
             entryFile: path,
             code: `${code.replace(/\r?\n\/\/# sourceMappingURL=.*?(?:\r?\n)?$/u, '')}\n//# sourceURL=caemble://${sourceHash}/${path}`,
@@ -199,7 +199,7 @@ async function compile(
         }),
       )
       return Object.freeze({
-        apiVersion: 8 as const,
+        apiVersion: 9 as const,
         compilerVersion: CAD_COMPILER_VERSION,
         sourceHash,
         sources: Object.freeze(Object.fromEntries(entries)),

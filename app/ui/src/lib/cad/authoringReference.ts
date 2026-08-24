@@ -1,22 +1,29 @@
 import type { CadAuthoringContract, CadElementManifest } from './evaluation/types'
 
 export const CAD_AUTHORING_REFERENCE_SCHEMA_VERSION = 1 as const
-export const CAD_GRAMMAR_CORE_MAX_BYTES = 5 * 1024
+export const CAD_GRAMMAR_CORE_MAX_BYTES = 8 * 1024
 
 export function buildCadAuthoringReference({
   authoringContract,
   declarationFingerprint,
   elements,
+  experimentSkeleton,
   geometrySkeleton,
 }: Readonly<{
   authoringContract: CadAuthoringContract
   declarationFingerprint: string
   elements: readonly CadElementManifest[]
+  experimentSkeleton: string
   geometrySkeleton: string
 }>) {
   const core = [
     `# Official CAD authoring grammar — API v${authoringContract.apiVersion}`,
     'Authority: Caemble app contract. Manuals: /docs?section=reference and /docs?section=geometry.',
+    '',
+    '## Complete experiment.tsx skeleton',
+    '```tsx',
+    ...experimentSkeleton.trim().split('\n'),
+    '```',
     '',
     '## Complete geometry.tsx skeleton',
     '```tsx',
@@ -24,6 +31,7 @@ export function buildCadAuthoringReference({
     '```',
     '',
     '## Required rules',
+    '- Every `varsSchema` entry is exactly `{ shape, min, max }`. Use `shape: []` for a scalar and a literal positive-safe-integer shape such as `[3]` or `[4, 4, 1]` for a tensor. `min` and `max` are finite scalar numbers applied uniformly to all elements; tensor bounds, inferred shapes, and broadcasting are invalid. A tensor shape may contain at most 65,536 elements.',
     `- New code uses only canonical v${authoringContract.apiVersion} transforms: ${authoringContract.transforms.canonicalProperties.map(({ name, type }) => `\`${name}?: ${type}\``).join(', ')}. ${authoringContract.transforms.rotationConvention} Effective order: ${authoringContract.transforms.applicationOrder.join(', ')}.`,
     '- Group transforms with lowercase `<translate offset={Vec3}>`, `<rotate axis={Vec3} angle={radians(degrees)}>`, and `<scale x={sx} y={sy} z={sz}>`; wrappers reject direct transform props.',
     `- Never generate \`translation\`. ${authoringContract.transforms.legacyProperties.map(({ name }) => `\`${name}\``).join(' and ')} and lowercase primitive JSX are deprecated compatibility syntax; do not emit them. ${authoringContract.transforms.mixing}`,

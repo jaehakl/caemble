@@ -11,12 +11,18 @@ import jsxTypes from './cad-jsx.d.ts?raw'
 const catalogExperiment = exampleExperiment('dc-notched-current-density')
 const catalogExperimentProgramCode = catalogExperiment.sourceBundle.files['experiment.tsx']
 const catalogExperimentTaskCode = catalogExperiment.sourceBundle.files['tasks/solveField.tsx']
+const starterExperimentProgramCode = starterExperimentSourceBundle.files['experiment.tsx']
 const catalogGeometryFiles = Object.fromEntries(
   Object.entries(catalogExperiment.sourceBundle.files)
     .filter(
       ([path]) =>
         path !== 'experiment.tsx' && !path.startsWith('tasks/') && (path.endsWith('.ts') || path.endsWith('.tsx')),
     )
+    .map(([path, source]) => [`C:/caemble-source/hash/${path}`, source]),
+)
+const starterGeometryFiles = Object.fromEntries(
+  Object.entries(starterExperimentSourceBundle.files)
+    .filter(([path]) => path !== 'experiment.tsx' && (path.endsWith('.ts') || path.endsWith('.tsx')))
     .map(([path, source]) => [`C:/caemble-source/hash/${path}`, source]),
 )
 
@@ -95,7 +101,7 @@ describe('unversioned CAD authoring declarations', () => {
     expect(jsxTypes).not.toContain('const Fragment: unknown')
   })
 
-  it('type-checks the v8 Experiment and Task defaults', () => {
+  it('type-checks the v9 Experiment and Task defaults', () => {
     expect(diagnosticsFor(catalogExperimentProgramCode)).toEqual([])
     expect(
       diagnosticsFor(catalogExperimentTaskCode, catalogGeometryFiles, 'C:/caemble-source/hash/tasks/electric.tsx'),
@@ -227,11 +233,18 @@ export const Notched: Geometry<{ size: Vec3; thickness: number }> = ({ size = [1
   })
 
   it('rejects unknown vars and tuple shapes', () => {
-    const unknownVar = catalogExperimentProgramCode.replace('size={vars.conductorSize}', 'size={vars.unknownSize}')
-    const wrongTuple = catalogExperimentProgramCode.replace('size={vars.conductorSize}', 'size={[1, 2]}')
+    const unknownVar = starterExperimentProgramCode.replace(
+      'position={vars.position}',
+      'position={vars.unknownPosition}',
+    )
+    const wrongTuple = starterExperimentProgramCode.replace('position={vars.position}', 'position={[1, 2]}')
 
-    expect(diagnosticsFor(unknownVar).join('\n')).toContain("Property 'unknownSize' does not exist")
-    expect(diagnosticsFor(wrongTuple).join('\n')).toContain('Source has 2 element(s) but target requires 3')
+    expect(diagnosticsFor(unknownVar, starterGeometryFiles).join('\n')).toContain(
+      "Property 'unknownPosition' does not exist",
+    )
+    expect(diagnosticsFor(wrongTuple, starterGeometryFiles).join('\n')).toContain(
+      'Source has 2 element(s) but target requires 3',
+    )
   })
 
   it('keeps solver config generic so CAE performs contract validation', () => {

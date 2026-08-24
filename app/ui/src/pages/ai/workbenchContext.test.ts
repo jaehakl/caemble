@@ -18,7 +18,7 @@ describe('buildWorkbenchReferenceContext', () => {
         evaluation: {
           revision: 3,
           vars: { width: 2 },
-          varsSchema: { width: { min: 1, max: 4 } },
+          varsSchema: { width: { shape: [], min: 1, max: 4 } },
           materialWarnings: [],
         },
       },

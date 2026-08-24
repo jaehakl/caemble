@@ -52,7 +52,7 @@ describe('Experiment source bundle v6', () => {
 
   it('edits Tasks and arbitrary TS/TSX files while protecting the four core files', () => {
     const document = createCadSourceDocument('experiment', createExperimentSourceBundle(files))
-    expect(document.apiVersion).toBe(8)
+    expect(document.apiVersion).toBe(9)
     expect(() => assertCadSourceDocument(document)).not.toThrow()
     const edited = updateExperimentSourceFile(document, 'geometry.tsx', 'export {}\n// changed')
     const withHelper = addExperimentSourceFile(edited, 'shared/shape.tsx', 'export const Shape = () => null')

@@ -4,19 +4,32 @@ import { CadModelError } from './errors'
 import { normalizeGeometryGroup, type GeometryGroupMap } from './structure'
 import type { Tensor, Vars } from './types'
 import { assertUcumUnitComparable, normalizeUcumUnit, type UcumUnit } from './units'
-import { normalizeVars, normalizeVarsSchema, type NormalizedVarsSchema, type VarsSchemaEntry } from './vars'
+import { normalizeVars, normalizeVarsSchema, type VarsSchema, type VarsSchemaEntry } from './vars'
 
 export type VarsSchemaDefinition = Readonly<Record<string, Readonly<VarsSchemaEntry>>>
 
-type ShapeSource<Entry extends VarsSchemaEntry> = Entry['min'] extends readonly unknown[] ? Entry['min'] : Entry['max']
-type WidenTensor<Value> = Value extends number
-  ? number
-  : Value extends readonly unknown[]
-    ? { readonly [Index in keyof Value]: WidenTensor<Value[Index]> }
-    : never
+type FixedLengthTensor<
+  Length extends number,
+  Value,
+  Result extends readonly Value[] = readonly [],
+> = number extends Length
+  ? readonly Value[]
+  : Result['length'] extends Length
+    ? Result
+    : Result['length'] extends 32
+      ? readonly Value[]
+      : FixedLengthTensor<Length, Value, readonly [...Result, Value]>
+
+type TensorForShape<Shape extends readonly number[]> = number extends Shape['length']
+  ? Tensor
+  : Shape extends readonly []
+    ? number
+    : Shape extends readonly [infer Length extends number, ...infer Rest extends readonly number[]]
+      ? FixedLengthTensor<Length, TensorForShape<Rest>>
+      : never
 
 export type InferVars<Schema extends VarsSchemaDefinition> = Readonly<{
-  [Key in keyof Schema]: WidenTensor<ShapeSource<Schema[Key]>>
+  [Key in keyof Schema]: TensorForShape<Schema[Key]['shape']>
 }>
 
 export type ModelContext<Schema extends VarsSchemaDefinition> = Readonly<{ vars: InferVars<Schema> }>
@@ -61,7 +74,7 @@ function normalizeLengthUnit(value: unknown, objectName: string) {
 }
 
 export class TaskDefinition<Config = unknown> {
-  readonly apiVersion = 8 as const
+  readonly apiVersion = 9 as const
   readonly documentType = 'task' as const
   readonly kernel: KernelIdentity
   readonly lengthUnit?: UcumUnit
@@ -117,7 +130,7 @@ export class ExperimentDefinition<
   Schema extends VarsSchemaDefinition = VarsSchemaDefinition,
   Recorded extends Readonly<Record<string, RecordedDataSpec>> = Readonly<Record<string, RecordedDataSpec>>,
 > {
-  readonly apiVersion = 8 as const
+  readonly apiVersion = 9 as const
   readonly documentType = 'experiment' as const
   readonly lengthUnit: UcumUnit
   readonly varsSchema: Readonly<Record<string, VarsSchemaEntry>>
@@ -125,7 +138,7 @@ export class ExperimentDefinition<
   readonly surfaceGroup: GeometryGroupMap
   readonly recordedData: Recorded
   readonly geometryFactory: (context: ModelContext<Schema>) => unknown
-  private readonly normalizedVarsSchema: NormalizedVarsSchema
+  private readonly normalizedVarsSchema: VarsSchema
 
   constructor(options: ExperimentDefinitionOptions<Schema, Recorded>) {
     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -137,8 +150,8 @@ export class ExperimentDefinition<
     }
     const varsSchema = normalizeVarsSchema(options.varsSchema, 'Experiment')
     this.lengthUnit = normalizeLengthUnit(options.lengthUnit, 'Experiment')
-    this.varsSchema = varsSchema.schema
-    this.normalizedVarsSchema = varsSchema.normalized
+    this.varsSchema = varsSchema
+    this.normalizedVarsSchema = varsSchema
     this.geometryGroup = normalizeGeometryGroup(options.geometryGroup, 'geometryGroup', 'Experiment')
     this.surfaceGroup = normalizeGeometryGroup(options.surfaceGroup, 'surfaceGroup', 'Experiment')
     this.recordedData = freezeRecordedData(options.recordedData)

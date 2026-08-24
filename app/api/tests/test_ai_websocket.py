@@ -47,7 +47,7 @@ def start_payload():
             "document": {
                 "kind": "experiment",
                 "formatVersion": 2,
-                "apiVersion": 8,
+                "apiVersion": 9,
                 "sourceBundle": source_bundle,
             },
             "baseHash": source_hash,

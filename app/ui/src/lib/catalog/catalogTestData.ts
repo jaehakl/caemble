@@ -44,7 +44,7 @@ function catalogQuery(key: (typeof exampleExperimentKeys)[number]) {
       '-m',
       'caemble_catalog',
       '--database',
-      path.join(catalogRoot, 'caemble_catalog/catalog.sqlite3'),
+      process.env.CAEMBLE_CATALOG_DATABASE ?? path.join(catalogRoot, 'caemble_catalog/catalog.sqlite3'),
       'query',
       'experiment',
       key,

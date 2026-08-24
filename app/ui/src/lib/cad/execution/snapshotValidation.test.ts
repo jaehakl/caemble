@@ -45,7 +45,7 @@ describe('Experiment snapshot validation', () => {
       simulationProgram: program,
       sourceHash: 'a'.repeat(64),
       variables: { width: 4 },
-      varsSchema: { width: { min: 1, max: 10 } },
+      varsSchema: { width: { shape: [], min: 1, max: 10 } },
     })
     expect(snapshot.scene.parts[0].material).toBe(snapshot.scene.parts[1].material)
     expect(snapshot).not.toHaveProperty('seed')
@@ -53,6 +53,19 @@ describe('Experiment snapshot validation', () => {
     expect(() => assertEvaluatedDocumentSnapshot({ ...snapshot, variables: { width: 20 } })).toThrow(
       'less than or equal to 10',
     )
+    expect(() =>
+      assertEvaluatedDocumentSnapshot({
+        ...snapshot,
+        varsSchema: { width: { min: 1, max: 10 } },
+      }),
+    ).toThrow('shape is required by CAD API v9')
+    expect(() =>
+      assertEvaluatedDocumentSnapshot({
+        ...snapshot,
+        varsSchema: { width: { shape: [2], min: 1, max: 10 } },
+        variables: { width: [4] },
+      }),
+    ).toThrow('must have shape [2]')
   })
 
   it('accepts a common scene when the Experiment has no Tasks', () => {

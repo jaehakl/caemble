@@ -11,7 +11,7 @@ from sdk.slave import SlaveContext
 
 from app.errors import CaeError, ProtocolError
 from app.handlers import cae_simulation_next, cae_simulation_start, cae_solver_manifests
-from app.runtime import SimulationApi
+from app.runtime import SimulationApi, _validate_variables
 from app.solver_framework.registry import registry
 
 
@@ -1201,7 +1201,7 @@ async def test_start_maps_invalid_variables_to_invalid_input():
     request = payload()
     request["measurement"]["experiment"]["variables"] = {"width": 11}
     request["measurement"]["experiment"]["varsSchema"] = {
-        "width": {"min": 1, "max": 10}
+        "width": {"shape": [], "min": 1, "max": 10}
     }
 
     response = await cae_simulation_start(
@@ -1212,6 +1212,44 @@ async def test_start_maps_invalid_variables_to_invalid_input():
 
     assert response.payload["kind"] == "failed"
     assert response.payload["error"]["code"] == "invalid_input"
+
+
+@pytest.mark.parametrize(
+    ("entry", "variables", "message"),
+    [
+        ({"min": 1, "max": 10}, 4, "shape is required by CAD API v9"),
+        ({"shape": [2], "min": [1, 1], "max": 10}, [4, 5], "min must be a finite number"),
+        ({"shape": [], "min": 1, "max": 10, "legacy": True}, 4, "must define only shape, min, and max"),
+        ({"shape": [0], "min": 1, "max": 10}, [], "must be a positive safe integer"),
+        ({"shape": [65_537], "min": 1, "max": 10}, [], "must contain at most 65536 elements"),
+        ({"shape": [2], "min": 1, "max": 10}, [4], "must have shape"),
+        ({"shape": [], "min": 1, "max": 10}, 11, "is outside varsSchema range"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_start_rejects_non_v9_vars_contract(entry, variables, message):
+    request = payload()
+    request["measurement"]["experiment"]["variables"] = {"width": variables}
+    request["measurement"]["experiment"]["varsSchema"] = {"width": entry}
+
+    response = await cae_simulation_start(
+        DataChannelMessage(id="start", type="cae.simulation.start", payload=request),
+        {"runs": {}},
+        SlaveContext(session_id="session", ttl_seconds=10, call_id="start"),
+    )
+
+    assert response.payload["kind"] == "failed"
+    assert response.payload["error"]["code"] == "invalid_input"
+    assert message in response.payload["error"]["message"]
+
+
+def test_runtime_rejects_non_finite_v9_bounds():
+    with pytest.raises(CaeError, match="min must be a finite number"):
+        _validate_variables(
+            {"width": 4},
+            {"width": {"shape": [], "min": float("inf"), "max": 10}},
+            "Built Experiment",
+        )
 
 
 @pytest.mark.asyncio
@@ -1249,7 +1287,7 @@ async def test_start_accepts_canonical_variables_and_material_snapshot(monkeypat
     request = payload()
     request["measurement"]["experiment"]["variables"] = {"width": [4, 5]}
     request["measurement"]["experiment"]["varsSchema"] = {
-        "width": {"min": 1, "max": [10, 12]}
+        "width": {"shape": [2], "min": 1, "max": 12}
     }
     request["measurement"]["materialParameters"]["materials"] = {
         "Copper": {

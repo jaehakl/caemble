@@ -38,7 +38,7 @@ async def test_catalog_is_anonymous_cacheable_and_paginated(catalog_client: http
     meta = await catalog_client.get("/catalog/meta")
     assert meta.status_code == 200
     assert meta.json()["quantityKindCount"] == 1_216
-    assert meta.json()["schemaVersion"] == 4
+    assert meta.json()["schemaVersion"] == 5
     assert "geometryCount" not in meta.json()
     assert meta.json()["experimentCount"] == 11
     assert meta.json()["materialGlobalQualifiers"][0] == "temperature"

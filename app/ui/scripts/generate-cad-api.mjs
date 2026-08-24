@@ -505,13 +505,15 @@ const geometrySkeletonExperiment = catalogQuery(
   'getting-started',
 )
 const geometrySkeleton = geometrySkeletonExperiment.sourceBundle?.files?.['geometry.tsx']
-if (typeof geometrySkeleton !== 'string') {
-  throw new Error('The Geometry Authoring Skeleton Experiment must contain geometry.tsx.')
+const experimentSkeleton = geometrySkeletonExperiment.sourceBundle?.files?.['experiment.tsx']
+if (typeof geometrySkeleton !== 'string' || typeof experimentSkeleton !== 'string') {
+  throw new Error('The Geometry Authoring Skeleton Experiment must contain experiment.tsx and geometry.tsx.')
 }
 const authoringReferencePayload = authoringReferenceModule.buildCadAuthoringReference({
   authoringContract: authoringContractModule.cadAuthoringContract,
   declarationFingerprint,
   elements: elementCatalog,
+  experimentSkeleton,
   geometrySkeleton,
 })
 const authoringReferenceHash = sha256(JSON.stringify(authoringReferencePayload))

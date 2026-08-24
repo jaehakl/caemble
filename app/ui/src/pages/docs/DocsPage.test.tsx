@@ -93,7 +93,7 @@ beforeEach(() => {
     coordinate: 'caemble:experiment/caemble/examples/dc-uniform-bar@1.0.0',
     title: 'DC Uniform Bar',
     description: 'Example Experiment.',
-    cadApiVersion: 8,
+    cadApiVersion: 9,
     sourceFormatVersion: 2,
     bundleFormatVersion: 6,
     bundleHash: 'c'.repeat(64),

@@ -26,14 +26,14 @@ const syntheticCatalog = {
   warnings: [],
 } as const
 const compiledSource = (entryFile: string, code = 'module.exports = {}') => ({
-  apiVersion: 8 as const,
+  apiVersion: 9 as const,
   compilerVersion: CAD_COMPILER_VERSION,
   entryFile,
   code,
   sourceHash,
 })
 const compiledExperiment: CompiledCadDocument = {
-  apiVersion: 8,
+  apiVersion: 9,
   compilerVersion: CAD_COMPILER_VERSION,
   sourceHash,
   sources: {
@@ -128,10 +128,25 @@ describe('isolated runner protocol for Experiment bundles', () => {
           revision: inspect.revision,
           documentType: 'experiment',
           sourceHash,
-          varsSchema: { width: { min: 1, max: 3 } },
+          varsSchema: { width: { shape: [], min: 1, max: 3 } },
         },
       }),
     ).not.toThrow()
+    expect(() =>
+      assertRunnerOperationResultEnvelope({
+        type: 'operation-result',
+        operation: 'inspect',
+        nonce,
+        response: {
+          type: 'inspection-success',
+          requestId: inspect.requestId,
+          revision: inspect.revision,
+          documentType: 'experiment',
+          sourceHash,
+          varsSchema: { width: { min: 1, max: 3 } },
+        },
+      }),
+    ).toThrow('shape is required by CAD API v9')
     expect(() =>
       assertRunnerCancelOperationEnvelope({ type: 'cancel-operation', nonce, requestId: inspect.requestId }),
     ).not.toThrow()

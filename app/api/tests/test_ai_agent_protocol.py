@@ -51,7 +51,7 @@ def run_start(bundle: ExperimentSourceBundle | None = None) -> RunStart:
                 "document": {
                     "kind": "experiment",
                     "formatVersion": 2,
-                    "apiVersion": 8,
+                    "apiVersion": 9,
                     "sourceBundle": bundle.model_dump(mode="json"),
                 },
                 "baseHash": bundle_hash(bundle),

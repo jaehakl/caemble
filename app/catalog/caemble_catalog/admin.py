@@ -224,7 +224,7 @@ def insert_experiment(connection: sqlite3.Connection, experiment: dict[str, Any]
             *version,
             experiment["title"],
             experiment["description"],
-            experiment.get("cadApiVersion", 8),
+            experiment.get("cadApiVersion", 9),
             experiment.get("sourceFormatVersion", 2),
             bundle["formatVersion"],
             canonical_json(experiment["verification"]),
@@ -437,6 +437,7 @@ def create_draft(destination: Path, source: Path | None = None) -> None:
         target_connection.close()
         source_connection.close()
     os.replace(temporary, destination)
+    upgrade_database(destination)
 
 
 def publish_draft(source: Path, destination: Path | None = None) -> dict[str, Any]:
@@ -444,20 +445,24 @@ def publish_draft(source: Path, destination: Path | None = None) -> dict[str, An
     refresh_derived_data(source)
     meta = validate_database(source)
     if destination_path.is_file():
-        baseline = semantic_snapshot(destination_path)["solvers"]
-        candidate = semantic_snapshot(source)["solvers"]
-        with Catalog.open_readonly(destination_path, immutable=False) as catalog:
-            baseline_contracts = catalog.solver_contracts()
-        with Catalog.open_readonly(source, immutable=False) as catalog:
-            candidate_contracts = catalog.solver_contracts()
-        for identity in baseline.keys() & candidate.keys():
-            name, version = identity.rsplit("@", 1)
-            if baseline[identity] != candidate[identity] or baseline_contracts[(name, version)] != candidate_contracts[
-                (name, version)
-            ]:
-                raise CatalogIntegrityError(
-                    f"Released Solver contract {identity} is immutable; replace it with a new version"
-                )
+        with tempfile.TemporaryDirectory(prefix="catalog-baseline-") as baseline_directory:
+            baseline_path = Path(baseline_directory) / "catalog.sqlite3"
+            shutil.copy2(destination_path, baseline_path)
+            upgrade_database(baseline_path)
+            baseline = semantic_snapshot(baseline_path)["solvers"]
+            candidate = semantic_snapshot(source)["solvers"]
+            with Catalog.open_readonly(baseline_path, immutable=False) as catalog:
+                baseline_contracts = catalog.solver_contracts()
+            with Catalog.open_readonly(source, immutable=False) as catalog:
+                candidate_contracts = catalog.solver_contracts()
+            for identity in baseline.keys() & candidate.keys():
+                name, version = identity.rsplit("@", 1)
+                if baseline[identity] != candidate[identity] or baseline_contracts[(name, version)] != candidate_contracts[
+                    (name, version)
+                ]:
+                    raise CatalogIntegrityError(
+                        f"Released Solver contract {identity} is immutable; replace it with a new version"
+                    )
     destination_path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary_name = tempfile.mkstemp(prefix="catalog-", suffix=".sqlite3", dir=destination_path.parent)
     os.close(fd)
@@ -465,7 +470,17 @@ def publish_draft(source: Path, destination: Path | None = None) -> dict[str, An
     try:
         shutil.copy2(source, temporary)
         validate_database(temporary)
-        os.replace(temporary, destination_path)
+        try:
+            os.replace(temporary, destination_path)
+        except PermissionError:
+            source_connection = sqlite3.connect(temporary)
+            destination_connection = sqlite3.connect(destination_path)
+            try:
+                source_connection.backup(destination_connection)
+            finally:
+                destination_connection.close()
+                source_connection.close()
+            validate_database(destination_path)
     finally:
         if temporary.exists():
             temporary.unlink()
@@ -502,7 +517,12 @@ def semantic_snapshot(path: Path) -> dict[str, Any]:
 
 
 def semantic_diff(candidate: Path, baseline: Path | None = None) -> list[str]:
-    before = semantic_snapshot((baseline or catalog_path()).resolve())
+    baseline_path = (baseline or catalog_path()).resolve()
+    with tempfile.TemporaryDirectory(prefix="catalog-diff-") as baseline_directory:
+        compatible_baseline = Path(baseline_directory) / "catalog.sqlite3"
+        shutil.copy2(baseline_path, compatible_baseline)
+        upgrade_database(compatible_baseline)
+        before = semantic_snapshot(compatible_baseline)
     after = semantic_snapshot(candidate.resolve())
     changes: list[str] = []
     for section in (

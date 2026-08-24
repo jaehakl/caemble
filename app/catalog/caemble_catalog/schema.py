@@ -5,7 +5,7 @@ import json
 import sqlite3
 
 APPLICATION_ID = 0x4341454D  # "CAEM"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 RUNTIME_SLICE_SCHEMA_VERSION = 1
 SEMVER_COMPONENT_MAX = 2_147_483_647
 EXPERIMENT_COORDINATE_PREFIX = "caemble:experiment/"
@@ -45,7 +45,7 @@ CREATE TABLE experiments (
     version_patch INTEGER NOT NULL CHECK (version_patch BETWEEN 0 AND 2147483647),
     title TEXT NOT NULL,
     description TEXT NOT NULL,
-    cad_api_version INTEGER NOT NULL CHECK (cad_api_version = 8),
+    cad_api_version INTEGER NOT NULL CHECK (cad_api_version = 9),
     source_format_version INTEGER NOT NULL CHECK (source_format_version = 2),
     bundle_format_version INTEGER NOT NULL CHECK (bundle_format_version = 6),
     verification_json TEXT NOT NULL CHECK (json_valid(verification_json)),
@@ -323,9 +323,61 @@ def create_schema(connection: sqlite3.Connection) -> None:
 def upgrade_schema(connection: sqlite3.Connection) -> None:
     application_id = connection.execute("PRAGMA application_id").fetchone()[0]
     user_version = connection.execute("PRAGMA user_version").fetchone()[0]
-    if application_id != APPLICATION_ID or user_version != 3:
+    if application_id != APPLICATION_ID:
         raise ValueError(
-            f"Only a CAEM catalog schema v3 database can be upgraded: "
+            f"Only a CAEM catalog database can be upgraded: "
+            f"application_id={application_id}, user_version={user_version}"
+        )
+    if user_version == SCHEMA_VERSION:
+        return
+    if user_version == 4:
+        connection.executescript(
+            """
+            ALTER TABLE experiment_solvers RENAME TO experiment_solvers_v4;
+            ALTER TABLE experiment_concepts RENAME TO experiment_concepts_v4;
+            ALTER TABLE experiment_files RENAME TO experiment_files_v4;
+            ALTER TABLE experiments RENAME TO experiments_v4;
+            DROP INDEX experiment_solvers_solver_idx;
+            DROP INDEX experiments_key_idx;
+            """
+        )
+        connection.executescript(CATALOG_ENTITY_SCHEMA_SQL)
+        connection.execute(
+            """INSERT INTO experiments(
+                   id, key, namespace, repository_slug, version_major, version_minor, version_patch,
+                   title, description, cad_api_version, source_format_version, bundle_format_version,
+                   verification_json, bundle_hash
+               )
+               SELECT id, key, namespace, repository_slug, version_major, version_minor, version_patch,
+                      title, description, 9, source_format_version, bundle_format_version,
+                      verification_json, bundle_hash
+               FROM experiments_v4"""
+        )
+        connection.execute(
+            """INSERT INTO experiment_files(experiment_id, ordinal, path, source)
+               SELECT experiment_id, ordinal, path, source FROM experiment_files_v4"""
+        )
+        connection.execute(
+            """INSERT INTO experiment_concepts(experiment_id, ordinal, concept)
+               SELECT experiment_id, ordinal, concept FROM experiment_concepts_v4"""
+        )
+        connection.execute(
+            """INSERT INTO experiment_solvers(experiment_id, ordinal, solver_name, solver_version)
+               SELECT experiment_id, ordinal, solver_name, solver_version FROM experiment_solvers_v4"""
+        )
+        connection.executescript(
+            """
+            DROP TABLE experiment_solvers_v4;
+            DROP TABLE experiment_concepts_v4;
+            DROP TABLE experiment_files_v4;
+            DROP TABLE experiments_v4;
+            """
+        )
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        return
+    if user_version != 3:
+        raise ValueError(
+            f"Only a CAEM catalog schema v3 or v4 database can be upgraded: "
             f"application_id={application_id}, user_version={user_version}"
         )
     connection.row_factory = sqlite3.Row
@@ -357,7 +409,7 @@ def upgrade_schema(connection: sqlite3.Connection) -> None:
                 "repository": "verified",
                 "title": row["title"],
                 "description": row["description"],
-                "cad_api_version": row["cad_api_version"],
+                "cad_api_version": 9,
                 "source_format_version": row["source_format_version"],
                 "verification": row["verification_json"],
                 "files": files,
@@ -389,7 +441,7 @@ def upgrade_schema(connection: sqlite3.Connection) -> None:
                 "repository": row["repository_slug"],
                 "title": row["title"],
                 "description": row["description"],
-                "cad_api_version": row["cad_api_version"],
+                "cad_api_version": 9,
                 "source_format_version": 2,
                 "verification": json.dumps(
                     {"kernelTasks": [], "recordedData": [], "expectations": []},

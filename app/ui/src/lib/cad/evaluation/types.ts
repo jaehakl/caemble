@@ -99,7 +99,7 @@ export type CadElementChildrenManifest = Readonly<{
 }>
 
 export type CadAuthoringContract = Readonly<{
-  apiVersion: 8
+  apiVersion: 9
   identity: CadElementPropertyManifest & Readonly<{ pathExample: string }>
   transforms: Readonly<{
     applicationOrder: readonly ['scale', 'rotation', 'position']

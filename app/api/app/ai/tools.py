@@ -287,7 +287,7 @@ def agent_tool_definitions() -> list[dict[str, Any]]:
     return [
         _tool(
             "get_cad_authoring_reference",
-            "Read the server-bundled official CAD API v8 authoring contracts for primitives and operations before creating or editing geometry.tsx.",
+            "Read the server-bundled official CAD API v9 authoring contracts for primitives and operations before creating or editing geometry.tsx.",
             {
                 "elements": {
                     "type": "array",

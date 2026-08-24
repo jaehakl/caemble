@@ -47,7 +47,7 @@ async function compiledDocument(
       .filter(([path]) => path.endsWith('.ts') || path.endsWith('.tsx'))
       .map(async ([entryFile, source]) => {
         const compiled: CompiledCadSource = {
-          apiVersion: 8,
+          apiVersion: 9,
           compilerVersion: CAD_COMPILER_VERSION,
           entryFile,
           code: await compile(source, entryFile),
@@ -56,7 +56,7 @@ async function compiledDocument(
         return [entryFile, compiled] as const
       }),
   )
-  return { apiVersion: 8, compilerVersion: CAD_COMPILER_VERSION, sourceHash, sources: Object.fromEntries(entries) }
+  return { apiVersion: 9, compilerVersion: CAD_COMPILER_VERSION, sourceHash, sources: Object.fromEntries(entries) }
 }
 
 describe('compiled Experiment bundle execution', () => {

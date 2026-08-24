@@ -32,7 +32,10 @@ const catalog = buildSyntheticCatalog({ solvers: [buildSyntheticSolver('test', '
 const draftCatalog = buildSyntheticCatalog()
 const emptyMaterials = { schemaVersion: 1, materials: {} } as const
 const emptyTaskConfig = { parameters: {}, initializations: [], boundaryConditions: [], outputs: [] } as const
-const varsSchema = { fixed: { min: 4, max: 4 }, width: { min: 1, max: 10 } } as const
+const varsSchema = {
+  fixed: { shape: [], min: 4, max: 4 },
+  width: { shape: [], min: 1, max: 10 },
+} as const
 let currentVarsSchema: Readonly<Record<string, VarsSchemaEntry>> = varsSchema
 const serializedScene = serializeCadScene({
   geometryGroups: [],
@@ -319,7 +322,7 @@ describe('useCadWorkspace unified Experiment', () => {
     )
     await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
 
-    currentVarsSchema = { ...varsSchema, openness: { min: 0, max: 1 } }
+    currentVarsSchema = { ...varsSchema, openness: { shape: [], min: 0, max: 1 } }
     render.rerender({ source: updateExperimentSourceFile(document, 'experiment.tsx', 'with openness') })
 
     await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
@@ -343,7 +346,7 @@ describe('useCadWorkspace unified Experiment', () => {
     )
     await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
 
-    currentVarsSchema = { ...varsSchema, openness: { min: 0, max: 1 } }
+    currentVarsSchema = { ...varsSchema, openness: { shape: [], min: 0, max: 1 } }
     vi.mocked(evaluateDocument).mockRejectedValueOnce(new Error('geometry failed'))
     render.rerender({ source: updateExperimentSourceFile(document, 'experiment.tsx', 'failing geometry') })
     await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Error'))
@@ -377,7 +380,7 @@ describe('useCadWorkspace unified Experiment', () => {
     )
     await waitFor(() => expect(render.result.current.experimentDocument.status).toBe('Ready'))
 
-    currentVarsSchema = { ...varsSchema, openness: { min: 0, max: 1 } }
+    currentVarsSchema = { ...varsSchema, openness: { shape: [], min: 0, max: 1 } }
     const edited = updateExperimentSourceFile(document, 'experiment.tsx', 'failing geometry')
     vi.mocked(evaluateDocument).mockRejectedValueOnce(new Error('geometry failed'))
     render.rerender({ resetKey: 1, source: edited })

@@ -1,40 +1,34 @@
 import { CadModelError } from './errors'
 import type { Tensor, Vars } from './types'
 
-export type VarsSchemaEntry = {
-  min: Tensor
-  max: Tensor
-}
+export const MAX_VARS_TENSOR_ELEMENTS = 65_536
 
-export type NormalizedVarsSchemaEntry = Readonly<VarsSchemaEntry & { shape: readonly number[] }>
-export type NormalizedVarsSchema = Readonly<Record<string, NormalizedVarsSchemaEntry>>
+export type VarsSchemaEntry = Readonly<{
+  shape: readonly number[]
+  min: number
+  max: number
+}>
+
+export type VarsSchema = Readonly<Record<string, VarsSchemaEntry>>
 
 function cloneTensor(value: Tensor): Tensor {
   return Array.isArray(value) ? value.map(cloneTensor) : value
 }
 
-function freezeTensor(value: Tensor): Tensor {
-  if (!Array.isArray(value)) return value
-  value.forEach(freezeTensor)
-  return Object.freeze(value)
-}
-
-function inferTensorShape(value: unknown, path: string): readonly number[] {
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new CadModelError(`${path} must contain only finite numbers.`)
-    return Object.freeze([])
-  }
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new CadModelError(`${path} must be a finite number or a non-empty rectangular tensor.`)
-  }
-  const childShape = inferTensorShape(value[0], `${path}[0]`)
-  value.slice(1).forEach((item, index) => {
-    const itemShape = inferTensorShape(item, `${path}[${index + 1}]`)
-    if (itemShape.length !== childShape.length || itemShape.some((size, axis) => size !== childShape[axis])) {
-      throw new CadModelError(`${path} must be a rectangular tensor.`)
+function normalizeShape(value: unknown, path: string) {
+  if (!Array.isArray(value)) throw new CadModelError(`${path} must be an array of positive safe integers.`)
+  let elements = 1
+  const shape = value.map((size, index) => {
+    if (!Number.isSafeInteger(size) || (size as number) <= 0) {
+      throw new CadModelError(`${path}[${index}] must be a positive safe integer.`)
     }
+    elements *= size as number
+    if (!Number.isSafeInteger(elements) || elements > MAX_VARS_TENSOR_ELEMENTS) {
+      throw new CadModelError(`${path} must contain at most ${MAX_VARS_TENSOR_ELEMENTS} elements.`)
+    }
+    return size as number
   })
-  return Object.freeze([value.length, ...childShape])
+  return Object.freeze(shape)
 }
 
 function validateTensor(value: unknown, shape: readonly number[], path: string): asserts value is Tensor {
@@ -50,78 +44,61 @@ function validateTensor(value: unknown, shape: readonly number[], path: string):
   value.forEach((item, index) => validateTensor(item, shape.slice(1), `${path}[${index}]`))
 }
 
-function validateBound(value: unknown, shape: readonly number[], path: string): asserts value is Tensor {
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new CadModelError(`${path} must be a finite number.`)
-    return
-  }
-  validateTensor(value, shape, path)
+function freezeTensor(value: Tensor): Tensor {
+  if (!Array.isArray(value)) return value
+  value.forEach(freezeTensor)
+  return Object.freeze(value)
 }
 
-function boundAt(bound: Tensor, index: number): Tensor {
-  return Array.isArray(bound) ? bound[index] : bound
-}
-
-function validateRange(value: Tensor, min: Tensor, max: Tensor, shape: readonly number[], path: string) {
+function validateRange(value: Tensor, min: number, max: number, shape: readonly number[], path: string) {
   if (shape.length === 0) {
     const scalar = value as number
-    const minimum = min as number
-    const maximum = max as number
-    if (minimum > maximum) throw new CadModelError(`${path} has min greater than max.`)
-    if (scalar < minimum) throw new CadModelError(`${path} must be greater than or equal to ${minimum}.`)
-    if (scalar > maximum) throw new CadModelError(`${path} must be less than or equal to ${maximum}.`)
+    if (scalar < min) throw new CadModelError(`${path} must be greater than or equal to ${min}.`)
+    if (scalar > max) throw new CadModelError(`${path} must be less than or equal to ${max}.`)
     return
   }
   ;(value as readonly Tensor[]).forEach((item, index) =>
-    validateRange(item, boundAt(min, index), boundAt(max, index), shape.slice(1), `${path}[${index}]`),
+    validateRange(item, min, max, shape.slice(1), `${path}[${index}]`),
   )
 }
 
-function validateBounds(min: Tensor, max: Tensor, shape: readonly number[], path: string) {
-  if (shape.length === 0) {
-    if ((min as number) > (max as number)) throw new CadModelError(`${path} has min greater than max.`)
-    return
-  }
-  Array.from({ length: shape[0] }, (_, index) => {
-    validateBounds(boundAt(min, index), boundAt(max, index), shape.slice(1), `${path}[${index}]`)
-  })
-}
-
-export function normalizeVarsSchema(rawSchema: unknown, objectName: string) {
+export function normalizeVarsSchema(rawSchema: unknown, objectName: string): VarsSchema {
   if (typeof rawSchema !== 'object' || rawSchema === null || Array.isArray(rawSchema)) {
     throw new CadModelError(`${objectName} varsSchema must be an object.`)
   }
   const schema: Record<string, VarsSchemaEntry> = {}
-  const normalized: Record<string, NormalizedVarsSchemaEntry> = {}
   Object.entries(rawSchema).forEach(([key, rawEntry]) => {
     if (!key.trim()) throw new CadModelError('varsSchema keys must not be empty.')
     if (typeof rawEntry !== 'object' || rawEntry === null || Array.isArray(rawEntry)) {
       throw new CadModelError(`varsSchema.${key} must be an object.`)
     }
     const entry = rawEntry as Record<string, unknown>
-    const unsupportedKey = Object.keys(entry).find((entryKey) => entryKey !== 'min' && entryKey !== 'max')
+    const unsupportedKey = Object.keys(entry).find((entryKey) => !['shape', 'min', 'max'].includes(entryKey))
     if (unsupportedKey) {
-      throw new CadModelError(`varsSchema.${key}.${unsupportedKey} is not supported; define only min and max.`)
+      throw new CadModelError(`varsSchema.${key}.${unsupportedKey} is not supported; define only shape, min, and max.`)
+    }
+    if (entry.shape === undefined) {
+      throw new CadModelError(
+        `varsSchema.${key}.shape is required by CAD API v9; update the Experiment source to define shape, min, and max.`,
+      )
     }
     if (entry.min === undefined || entry.max === undefined) {
-      throw new CadModelError(`varsSchema.${key} must define both min and max.`)
+      throw new CadModelError(`varsSchema.${key} must define shape, min, and max.`)
     }
-    const minShape = inferTensorShape(entry.min, `varsSchema.${key}.min`)
-    const maxShape = inferTensorShape(entry.max, `varsSchema.${key}.max`)
-    const shape = minShape.length === 0 ? maxShape : minShape
-    if (minShape.length > 0 && maxShape.length > 0) validateTensor(entry.max, minShape, `varsSchema.${key}.max`)
-    validateBound(entry.min, shape, `varsSchema.${key}.min`)
-    validateBound(entry.max, shape, `varsSchema.${key}.max`)
-    const min = freezeTensor(cloneTensor(entry.min as Tensor))
-    const max = freezeTensor(cloneTensor(entry.max as Tensor))
-    validateBounds(min, max, shape, `varsSchema.${key}`)
-    schema[key] = Object.freeze({ min, max })
-    normalized[key] = Object.freeze({ shape, min, max })
+    const shape = normalizeShape(entry.shape, `varsSchema.${key}.shape`)
+    if (typeof entry.min !== 'number' || !Number.isFinite(entry.min)) {
+      throw new CadModelError(`varsSchema.${key}.min must be a finite number.`)
+    }
+    if (typeof entry.max !== 'number' || !Number.isFinite(entry.max)) {
+      throw new CadModelError(`varsSchema.${key}.max must be a finite number.`)
+    }
+    if (entry.min > entry.max) throw new CadModelError(`varsSchema.${key} has min greater than max.`)
+    schema[key] = Object.freeze({ shape, min: entry.min, max: entry.max })
   })
-  return Object.freeze({ schema: Object.freeze(schema), normalized: Object.freeze(normalized) })
+  return Object.freeze(schema)
 }
 
-export function normalizeVars(schema: NormalizedVarsSchema, rawVars: unknown, variableObjectName: string) {
+export function normalizeVars(schema: VarsSchema, rawVars: unknown, variableObjectName: string) {
   if (typeof rawVars !== 'object' || rawVars === null || Array.isArray(rawVars)) {
     throw new CadModelError(`${variableObjectName} vars must be an object.`)
   }
@@ -143,39 +120,30 @@ export function normalizeVars(schema: NormalizedVarsSchema, rawVars: unknown, va
   return Object.freeze(normalized)
 }
 
-function expandBound(bound: Tensor, shape: readonly number[]): Tensor {
-  if (shape.length === 0) return bound as number
-  return Array.from({ length: shape[0] }, (_, index) => expandBound(boundAt(bound, index), shape.slice(1)))
-}
-
-export function varsSchemaFingerprint(rawSchema: Readonly<Record<string, VarsSchemaEntry>>) {
-  const { normalized } = normalizeVarsSchema(rawSchema, 'Experiment')
+export function varsSchemaFingerprint(rawSchema: VarsSchema) {
+  const schema = normalizeVarsSchema(rawSchema, 'Experiment')
   return JSON.stringify(
-    Object.keys(normalized)
+    Object.keys(schema)
       .sort()
       .map((key) => {
-        const entry = normalized[key]
-        return [key, expandBound(entry.min, entry.shape), expandBound(entry.max, entry.shape)]
+        const entry = schema[key]
+        return [key, entry.shape, entry.min, entry.max]
       }),
   )
 }
 
-function randomTensor(shape: readonly number[], min: Tensor, max: Tensor): Tensor {
+function randomTensor(shape: readonly number[], min: number, max: number): Tensor {
   if (shape.length === 0) {
-    const minimum = min as number
-    const maximum = max as number
-    if (minimum === maximum) return minimum
-    return minimum + Math.random() * (maximum - minimum)
+    if (min === max) return min
+    return min + Math.random() * (max - min)
   }
-  return Array.from({ length: shape[0] }, (_, index) =>
-    randomTensor(shape.slice(1), boundAt(min, index), boundAt(max, index)),
-  )
+  return Array.from({ length: shape[0] }, () => randomTensor(shape.slice(1), min, max))
 }
 
-export function generateRandomVars(rawSchema: Readonly<Record<string, VarsSchemaEntry>>) {
+export function generateRandomVars(rawSchema: VarsSchema) {
   const schema = normalizeVarsSchema(rawSchema, 'Experiment')
   const generated = Object.fromEntries(
-    Object.entries(schema.normalized).map(([key, entry]) => [key, randomTensor(entry.shape, entry.min, entry.max)]),
+    Object.entries(schema).map(([key, entry]) => [key, randomTensor(entry.shape, entry.min, entry.max)]),
   )
-  return normalizeVars(schema.normalized, generated, 'Experiment')
+  return normalizeVars(schema, generated, 'Experiment')
 }

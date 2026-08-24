@@ -28,6 +28,11 @@ installSyntheticCatalog({
   ],
 })
 
+function filledTensor(shape: readonly number[], value: number): Tensor {
+  if (shape.length === 0) return value
+  return Array.from({ length: shape[0] }, () => filledTensor(shape.slice(1), value))
+}
+
 describe('canonical public Experiment catalog', () => {
   it('accepts fixture objects, explicit null, and omitted fixture fields from catalog transports', () => {
     const withFixture = exampleExperiment('dc-uniform-bar')
@@ -79,7 +84,7 @@ describe('canonical public Experiment catalog', () => {
     const result = await evaluatePublicExampleBundle(item.sourceBundle)
     const manifest = result.simulationProgram
 
-    expect(item.cadApiVersion).toBe(8)
+    expect(item.cadApiVersion).toBe(9)
     expect(item.sourceFormatVersion).toBe(2)
     expect(item.bundleFormatVersion).toBe(6)
     expect(manifest).toMatchObject({
@@ -110,10 +115,10 @@ describe('canonical public Experiment catalog', () => {
     ).toBe(true)
 
     const minimum = Object.fromEntries(
-      Object.entries(inspection.varsSchema).map(([name, entry]) => [name, entry.min]),
+      Object.entries(inspection.varsSchema).map(([name, entry]) => [name, filledTensor(entry.shape, entry.min)]),
     ) as Vars
     const maximum = Object.fromEntries(
-      Object.entries(inspection.varsSchema).map(([name, entry]) => [name, entry.max]),
+      Object.entries(inspection.varsSchema).map(([name, entry]) => [name, filledTensor(entry.shape, entry.max)]),
     ) as Vars
     const generated: Vars[] = []
     for (const sampler of [
@@ -144,41 +149,30 @@ describe('canonical public Experiment catalog', () => {
     }
   })
 
-  it('uses full array-shaped tensor bounds for every per-cell variable', () => {
+  it('uses explicit array shapes and scalar bounds for every per-cell variable', () => {
     const cases = [
       {
         key: 'random-curved-edge-cylinder-array' as const,
         scalarShape: [4, 4, 1],
-        vectorShape: [4, 4, 1, 3],
-        vectorKeys: ['cellPosition', 'cellRotation'],
       },
       {
         key: 'random-curved-surface-sphere-hcp-array' as const,
         scalarShape: [4, 4, 3],
-        vectorShape: [4, 4, 3, 3],
-        vectorKeys: ['cellPositionOffsets', 'cellRotation'],
       },
     ]
 
-    cases.forEach(({ key, scalarShape, vectorShape, vectorKeys }) => {
-      const schema = inspectPublicExampleBundle(exampleExperiment(key).sourceBundle).inspection.varsSchema
+    cases.forEach(({ key, scalarShape }) => {
+      const bundle = exampleExperiment(key).sourceBundle
+      const schema = inspectPublicExampleBundle(bundle).inspection.varsSchema
       Object.entries(schema)
         .filter(([name]) => name.startsWith('cell'))
         .forEach(([name, entry]) => {
-          const expectedShape = vectorKeys.includes(name) ? vectorShape : scalarShape
-          const [minimumShape, maximumShape] = [entry.min, entry.max].map((value) => {
-            const shape: number[] = []
-            let cursor: Tensor = value
-            while (Array.isArray(cursor)) {
-              shape.push(cursor.length)
-              cursor = cursor[0]
-            }
-            return shape
-          })
-          expect(minimumShape, `${key}.${name}.min`).toEqual(expectedShape)
-          expect(maximumShape, `${key}.${name}.max`).toEqual(expectedShape)
+          expect(entry.shape, `${key}.${name}.shape`).toEqual(scalarShape)
+          expect(typeof entry.min, `${key}.${name}.min`).toBe('number')
+          expect(typeof entry.max, `${key}.${name}.max`).toBe('number')
           expect(entry.min).not.toEqual(entry.max)
         })
+      expect(bundle.files['experiment.tsx']).not.toMatch(/cell(?:Vector)?Tensor/u)
     })
   })
 

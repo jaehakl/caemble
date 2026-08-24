@@ -3,7 +3,7 @@ import type { Tensor } from '../model/types'
 import { assertExperimentSourcePath, assertExperimentSourcePaths } from './moduleResolution'
 
 export const CAD_SOURCE_FORMAT_VERSION = 2 as const
-export const CAD_SOURCE_API_VERSION = 8 as const
+export const CAD_SOURCE_API_VERSION = 9 as const
 export const EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION = 6 as const
 export const MAX_CAD_SOURCE_BYTES = 1024 * 1024
 
@@ -23,7 +23,7 @@ export type ExperimentSourceBundle = Readonly<{
 export type ExperimentSourceDocument = Readonly<{
   kind: 'experiment'
   formatVersion: typeof CAD_SOURCE_FORMAT_VERSION
-  apiVersion: 7 | typeof CAD_SOURCE_API_VERSION
+  apiVersion: 7 | 8 | typeof CAD_SOURCE_API_VERSION
   sourceBundle: ExperimentSourceBundle
 }>
 
@@ -154,9 +154,9 @@ export function assertCadSourceDocument(value: unknown): asserts value is Experi
   if (
     document.kind !== 'experiment' ||
     document.formatVersion !== CAD_SOURCE_FORMAT_VERSION ||
-    (document.apiVersion !== 7 && document.apiVersion !== CAD_SOURCE_API_VERSION)
+    (document.apiVersion !== 7 && document.apiVersion !== 8 && document.apiVersion !== CAD_SOURCE_API_VERSION)
   ) {
-    throw new CadModelError('Only Experiment source format version 2 and API version 7 or 8 are supported.')
+    throw new CadModelError('Only Experiment source format version 2 and API version 7, 8, or 9 are supported.')
   }
   assertExperimentSourceBundle(document.sourceBundle)
 }

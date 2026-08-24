@@ -414,7 +414,7 @@ export function useCadWorkspace(
           try {
             if (candidateVars === undefined) throw new Error('The saved Measurement does not contain Candidate vars.')
             const normalizedSchema = normalizeVarsSchema(inspection.varsSchema, 'Experiment')
-            nextVars = normalizeVars(normalizedSchema.normalized, candidateVars, 'Measurement')
+            nextVars = normalizeVars(normalizedSchema, candidateVars, 'Measurement')
           } catch (cause: unknown) {
             const detail = cause instanceof Error ? cause.message : String(cause)
             throw new MeasurementVarsError(
@@ -430,7 +430,7 @@ export function useCadWorkspace(
         } else {
           try {
             const normalizedSchema = normalizeVarsSchema(inspection.varsSchema, 'Experiment')
-            nextVars = normalizeVars(normalizedSchema.normalized, candidateVars, 'Candidate')
+            nextVars = normalizeVars(normalizedSchema, candidateVars, 'Candidate')
             candidateCacheRef.current = null
           } catch {
             nextVars = generateCandidateVars('invalid-candidate')

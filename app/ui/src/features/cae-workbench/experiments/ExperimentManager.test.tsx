@@ -127,7 +127,7 @@ beforeEach(() => {
         coordinate: 'caemble:experiment/caemble/getting-started/basketball-goal@1.0.0',
         title: 'Basketball Goal',
         description: 'Basketball structure Example description.',
-        cadApiVersion: 8,
+        cadApiVersion: 9,
         sourceFormatVersion: 2,
         bundleFormatVersion: 6,
         bundleHash: 'c'.repeat(64),

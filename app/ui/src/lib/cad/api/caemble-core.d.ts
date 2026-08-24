@@ -1,4 +1,4 @@
-// @caemble/core declaration version: 0.5.0
+// @caemble/core declaration version: 0.6.0
 export type Tensor = number | readonly Tensor[]
 export type Vars = Readonly<Record<string, Tensor>>
 export type Vec3 = readonly [number, number, number]
@@ -35,8 +35,9 @@ export type GeometryIdentityAttributes = Readonly<{ id?: string }>
 export type IntrinsicGeometryAttributes = GeometryIdentityAttributes & GeometryTransformAttributes
 export type GeometryGroupMap = Readonly<Record<string, readonly string[]>>
 export type VarsSchemaEntry = Readonly<{
-  min: Tensor
-  max: Tensor
+  shape: readonly number[]
+  min: number
+  max: number
 }>
 export type ExperimentTarget = `${'experiment' | 'task'}.${'geometry' | 'surface'}.${string}`
 export type DataDType =
@@ -406,16 +407,28 @@ export class Material {
 
 export type VarsSchemaDefinition = Readonly<Record<string, Readonly<VarsSchemaEntry>>>
 
-type ShapeSource<Entry extends VarsSchemaEntry> = Entry['min'] extends readonly unknown[] ? Entry['min'] : Entry['max']
+type FixedLengthTensor<
+  Length extends number,
+  Value,
+  Result extends readonly Value[] = readonly [],
+> = number extends Length
+  ? readonly Value[]
+  : Result['length'] extends Length
+    ? Result
+    : Result['length'] extends 32
+      ? readonly Value[]
+      : FixedLengthTensor<Length, Value, readonly [...Result, Value]>
 
-type WidenTensor<Value> = Value extends number
-  ? number
-  : Value extends readonly unknown[]
-    ? { readonly [Index in keyof Value]: WidenTensor<Value[Index]> }
-    : never
+type TensorForShape<Shape extends readonly number[]> = number extends Shape['length']
+  ? Tensor
+  : Shape extends readonly []
+    ? number
+    : Shape extends readonly [infer Length extends number, ...infer Rest extends readonly number[]]
+      ? FixedLengthTensor<Length, TensorForShape<Rest>>
+      : never
 
 export type InferVars<Schema extends VarsSchemaDefinition> = Readonly<{
-  [Key in keyof Schema]: WidenTensor<ShapeSource<Schema[Key]>>
+  [Key in keyof Schema]: TensorForShape<Schema[Key]['shape']>
 }>
 
 export type ModelContext<Schema extends VarsSchemaDefinition> = Readonly<{
@@ -457,7 +470,7 @@ export class ExperimentDefinition<
   Recorded extends Readonly<Record<string, RecordedDataSpec>> = Readonly<Record<string, RecordedDataSpec>>,
 > {
   constructor(options: ExperimentDefinitionOptions<Schema, Recorded>)
-  readonly apiVersion: 8
+  readonly apiVersion: 9
   readonly documentType: 'experiment'
   readonly varsSchema: Schema
   readonly lengthUnit: UcumUnit
@@ -468,7 +481,7 @@ export class ExperimentDefinition<
 
 export class TaskDefinition<Config = unknown> {
   constructor(options: TaskDefinitionOptions<Config>)
-  readonly apiVersion: 8
+  readonly apiVersion: 9
   readonly documentType: 'task'
   readonly kernel: KernelIdentity
   readonly lengthUnit?: UcumUnit

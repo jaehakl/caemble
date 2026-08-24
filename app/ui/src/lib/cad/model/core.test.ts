@@ -121,20 +121,16 @@ function createExperiment() {
     geometry: () => null,
     recordedData: {},
     varsSchema: {
-      width: { min: 10, max: 30 },
+      width: { shape: [], min: 10, max: 30 },
       offset: {
+        shape: [2],
         min: -2,
-        max: [2, 3],
+        max: 3,
       },
       fixed: {
-        min: [
-          [1, 2],
-          [3, 4],
-        ],
-        max: [
-          [1, 2],
-          [3, 4],
-        ],
+        shape: [2, 2],
+        min: 2,
+        max: 2,
       },
     },
   })
@@ -146,8 +142,8 @@ describe('Experiment vars and groups', () => {
       width: 25,
       offset: [0, 1],
       fixed: [
-        [1, 2],
-        [3, 4],
+        [2, 2],
+        [2, 2],
       ],
     })
 
@@ -155,8 +151,8 @@ describe('Experiment vars and groups', () => {
       width: 25,
       offset: [0, 1],
       fixed: [
-        [1, 2],
-        [3, 4],
+        [2, 2],
+        [2, 2],
       ],
     })
     expect(Object.isFrozen(resolved)).toBe(true)
@@ -182,7 +178,7 @@ describe('Experiment vars and groups', () => {
     expect(() => experiment.resolveExternal({ width: 25 })).toThrow('vars.offset')
   })
 
-  it('infers shapes and rejects invalid or legacy bounds', () => {
+  it('requires explicit shapes and scalar bounds', () => {
     expect(
       () =>
         new ExperimentDefinition({
@@ -190,7 +186,7 @@ describe('Experiment vars and groups', () => {
           geometry: () => null,
           recordedData: {},
           varsSchema: {
-            invalid: { min: [0, 3], max: [2, 2] },
+            invalid: { shape: [2], min: 3, max: 2 },
           },
         }),
     ).toThrow('min greater than max')
@@ -202,10 +198,10 @@ describe('Experiment vars and groups', () => {
           geometry: () => null,
           recordedData: {},
           varsSchema: {
-            invalid: { min: 0 } as never,
+            invalid: { shape: [], min: 0 } as never,
           },
         }),
-    ).toThrow('must define both min and max')
+    ).toThrow('must define shape, min, and max')
 
     expect(
       () =>
@@ -214,10 +210,10 @@ describe('Experiment vars and groups', () => {
           geometry: () => null,
           recordedData: {},
           varsSchema: {
-            legacy: { shape: [], default: 1, min: 0, max: 2 } as never,
+            legacy: { min: 0, max: 2 } as never,
           },
         }),
-    ).toThrow('shape is not supported')
+    ).toThrow('shape is required by CAD API v9')
     expect(
       () =>
         new ExperimentDefinition({
@@ -225,10 +221,10 @@ describe('Experiment vars and groups', () => {
           geometry: () => null,
           recordedData: {},
           varsSchema: {
-            ragged: { min: [[0], [1, 2]], max: 3 },
+            tensorBound: { shape: [2], min: [0, 0], max: 3 } as never,
           },
         }),
-    ).toThrow('must be a rectangular tensor')
+    ).toThrow('min must be a finite number')
     expect(
       () =>
         new ExperimentDefinition({
@@ -236,10 +232,10 @@ describe('Experiment vars and groups', () => {
           geometry: () => null,
           recordedData: {},
           varsSchema: {
-            mismatch: { min: [0, 0], max: [[1, 1]] },
+            invalidShape: { shape: [2, 0], min: 0, max: 1 },
           },
         }),
-    ).toThrow('must have shape [2]')
+    ).toThrow('shape[1] must be a positive safe integer')
     expect(
       () =>
         new ExperimentDefinition({
@@ -247,13 +243,58 @@ describe('Experiment vars and groups', () => {
           geometry: () => null,
           recordedData: {},
           varsSchema: {
-            nonFinite: { min: Number.NaN, max: 1 },
+            invalidShape: { shape: [1.5], min: 0, max: 1 },
           },
         }),
-    ).toThrow('must contain only finite numbers')
+    ).toThrow('shape[0] must be a positive safe integer')
+    expect(
+      () =>
+        new ExperimentDefinition({
+          lengthUnit: 'mm',
+          geometry: () => null,
+          recordedData: {},
+          varsSchema: {
+            extraField: { shape: [], min: 0, max: 1, legacy: true } as never,
+          },
+        }),
+    ).toThrow('legacy is not supported; define only shape, min, and max')
+    expect(
+      () =>
+        new ExperimentDefinition({
+          lengthUnit: 'mm',
+          geometry: () => null,
+          recordedData: {},
+          varsSchema: {
+            nonFinite: { shape: [], min: Number.NaN, max: 1 },
+          },
+        }),
+    ).toThrow('min must be a finite number')
+
+    expect(
+      () =>
+        new ExperimentDefinition({
+          lengthUnit: 'mm',
+          geometry: () => null,
+          recordedData: {},
+          varsSchema: {
+            oversized: { shape: [257, 256], min: 0, max: 1 },
+          },
+        }),
+    ).toThrow('must contain at most 65536 elements')
+    expect(
+      () =>
+        new ExperimentDefinition({
+          lengthUnit: 'mm',
+          geometry: () => null,
+          recordedData: {},
+          varsSchema: {
+            maximum: { shape: [256, 256], min: 0, max: 1 },
+          },
+        }),
+    ).not.toThrow()
   })
 
-  it('generates fresh unseeded vars within scalar-broadcast and tensor bounds', () => {
+  it('generates fresh unseeded vars within explicit tensor shapes and uniform scalar bounds', () => {
     const experiment = createExperiment()
     const random = vi.spyOn(Math, 'random').mockReturnValue(0.25)
     const first = generateRandomVars(experiment.varsSchema)
@@ -265,11 +306,11 @@ describe('Experiment vars and groups', () => {
     expect(first.width).toBeGreaterThanOrEqual(10)
     expect(first.width).toBeLessThanOrEqual(30)
     expect((first.offset as readonly number[])[0]).toBeGreaterThanOrEqual(-2)
-    expect((first.offset as readonly number[])[0]).toBeLessThanOrEqual(2)
+    expect((first.offset as readonly number[])[0]).toBeLessThanOrEqual(3)
     expect((first.offset as readonly number[])[1]).toBeLessThanOrEqual(3)
     expect(first.fixed).toEqual([
-      [1, 2],
-      [3, 4],
+      [2, 2],
+      [2, 2],
     ])
   })
 
@@ -279,22 +320,30 @@ describe('Experiment vars and groups', () => {
     )
   })
 
-  it('fingerprints semantic varsSchema content independently of key order and scalar bound broadcasting', () => {
+  it('fingerprints explicit varsSchema content independently of key order', () => {
     const canonical = varsSchemaFingerprint({
-      width: { min: 0, max: 10 },
-      offset: { min: -1, max: [1, 1] },
+      width: { shape: [], min: 0, max: 10 },
+      offset: { shape: [2], min: -1, max: 1 },
     })
     expect(
       varsSchemaFingerprint({
-        offset: { min: [-1, -1], max: [1, 1] },
-        width: { min: 0, max: 10 },
+        offset: { shape: [2], min: -1, max: 1 },
+        width: { shape: [], min: 0, max: 10 },
       }),
     ).toBe(canonical)
-    expect(varsSchemaFingerprint({ width: { min: 0, max: 11 }, offset: { min: -1, max: [1, 1] } })).not.toBe(canonical)
-    expect(varsSchemaFingerprint({ width: { min: 0, max: 10 } })).not.toBe(canonical)
-    expect(varsSchemaFingerprint({ width: { min: [0], max: [10] }, offset: { min: -1, max: [1, 1] } })).not.toBe(
-      canonical,
-    )
+    expect(
+      varsSchemaFingerprint({
+        width: { shape: [], min: 0, max: 11 },
+        offset: { shape: [2], min: -1, max: 1 },
+      }),
+    ).not.toBe(canonical)
+    expect(varsSchemaFingerprint({ width: { shape: [], min: 0, max: 10 } })).not.toBe(canonical)
+    expect(
+      varsSchemaFingerprint({
+        width: { shape: [], min: 0, max: 10 },
+        offset: { shape: [3], min: -1, max: 1 },
+      }),
+    ).not.toBe(canonical)
   })
 
   it('normalizes, deduplicates, and deeply freezes Experiment groups', () => {

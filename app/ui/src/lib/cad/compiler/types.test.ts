@@ -11,7 +11,7 @@ const sourceHash = 'a'.repeat(64)
 
 function compiled(entryFile = 'experiment.tsx'): CompiledCadSource {
   return {
-    apiVersion: 8,
+    apiVersion: 9,
     compilerVersion: CAD_COMPILER_VERSION,
     entryFile,
     code: '"use strict";',
@@ -21,7 +21,7 @@ function compiled(entryFile = 'experiment.tsx'): CompiledCadSource {
 
 function compiledDocument(extra: Readonly<Record<string, CompiledCadSource>> = {}) {
   return {
-    apiVersion: 8 as const,
+    apiVersion: 9 as const,
     compilerVersion: CAD_COMPILER_VERSION,
     sourceHash,
     sources: {
@@ -36,7 +36,7 @@ function compiledDocument(extra: Readonly<Record<string, CompiledCadSource>> = {
 describe('compiled Experiment bundle', () => {
   it('binds compiler provenance to generated declarations and accepts arbitrary TS/TSX modules', () => {
     expect(CAD_API_DECLARATION_FINGERPRINT).toMatch(/^[0-9a-f]{64}$/)
-    expect(CAD_COMPILER_VERSION).toContain('-api-8-')
+    expect(CAD_COMPILER_VERSION).toContain('-api-9-')
     expect(CAD_COMPILER_VERSION).toContain(CAD_API_DECLARATION_FINGERPRINT)
     expect(() => assertCompiledCadSource(compiled('shared/helper.ts'))).not.toThrow()
     expect(() =>

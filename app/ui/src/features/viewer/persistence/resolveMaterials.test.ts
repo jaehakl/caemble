@@ -42,7 +42,7 @@ function materialSnapshot(): EvaluatedExperimentSnapshot {
     },
     sourceHash: 'e'.repeat(64),
     variables: { width: 2 },
-    varsSchema: { width: { min: 1, max: 10 } },
+    varsSchema: { width: { shape: [], min: 1, max: 10 } },
   }
 }
 

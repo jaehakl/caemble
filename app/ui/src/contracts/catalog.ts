@@ -166,7 +166,7 @@ const materialRequirementSchema = z.object({
 })
 
 export const catalogMetaSchema = z.object({
-  schemaVersion: z.literal(4),
+  schemaVersion: z.literal(5),
   catalogRevision: z.string().min(1),
   quantityKindCount: z.number().int().nonnegative(),
   materialParameterCount: z.number().int().nonnegative(),
@@ -243,7 +243,7 @@ export const experimentListItemSchema = z.object({
   coordinate: z.string().min(1),
   title: z.string().min(1),
   description: z.string().min(1),
-  cadApiVersion: z.literal(8),
+  cadApiVersion: z.literal(9),
   sourceFormatVersion: z.literal(2),
   bundleFormatVersion: z.literal(6),
   bundleHash: z.string().regex(/^[0-9a-f]{64}$/),
@@ -279,10 +279,9 @@ const assertionVerificationRecordSchema = verificationRecordSchema
     minimumExclusive: z.number().finite().optional(),
   })
   .strict()
-  .refine(
-    (record) => record.finite === true || record.nonzero === true || record.minimumExclusive !== undefined,
-    { message: 'Assertion verification records require at least one assertion.' },
-  )
+  .refine((record) => record.finite === true || record.nonzero === true || record.minimumExclusive !== undefined, {
+    message: 'Assertion verification records require at least one assertion.',
+  })
 
 const experimentVerificationSchema = z.object({
   kernelTasks: z.array(z.string()),
@@ -290,15 +289,16 @@ const experimentVerificationSchema = z.object({
   expectations: z.array(z.string()),
   fixture: z
     .object({
-      records: z.array(
-        z.union([exactVerificationRecordSchema, assertionVerificationRecordSchema]),
-      ),
-      terminal: z.object({
-        kind: z.literal('complete'),
-        sequence: z.number().int().nonnegative(),
-        recordSequences: z.array(z.number().int().nonnegative()),
-      }).strict(),
-    }).strict()
+      records: z.array(z.union([exactVerificationRecordSchema, assertionVerificationRecordSchema])),
+      terminal: z
+        .object({
+          kind: z.literal('complete'),
+          sequence: z.number().int().nonnegative(),
+          recordSequences: z.array(z.number().int().nonnegative()),
+        })
+        .strict(),
+    })
+    .strict()
     .nullable()
     .optional(),
 })
