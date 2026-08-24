@@ -34,6 +34,7 @@ import type {
   AnalysisWorkerRequest,
   AnalysisWorkerResponse,
 } from './analysis-types'
+import analysisWorkerAssetUrl from './analysis.worker.ts?worker&url'
 
 export type AnalysisTab = AnalysisTabId
 
@@ -524,7 +525,9 @@ export function AnalysisWorkspace({
 
   useEffect(() => {
     if (!auth.isAuthenticated || experimentId === null) return
-    const worker = new Worker(new URL('./analysis.worker.ts', import.meta.url), { type: 'module' })
+    const workerUrl = new URL(analysisWorkerAssetUrl, window.location.href)
+    workerUrl.searchParams.set('response-policy', 'connect-self-v1')
+    const worker = new Worker(workerUrl, { type: 'module' })
     workerRef.current = worker
     setProfile(null)
     setRelationships(null)

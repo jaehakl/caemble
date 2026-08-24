@@ -53,6 +53,12 @@ if (legacySourceMatches.length > 0) {
 }
 
 const assetNames = await readdir(assets)
+if (!assetNames.some((name) => /^analysis\.worker-.*\.js$/.test(name))) {
+  throw new Error('The Analysis Worker must be emitted as a bundled JavaScript asset.')
+}
+if (assetNames.some((name) => /^analysis\.worker-.*\.ts$/.test(name))) {
+  throw new Error('The Analysis Worker source must not be copied to production as TypeScript.')
+}
 const textFiles = ['index.html', 'runner.html', ...assetNames.filter((name) => /\.(?:css|js)$/.test(name))]
 const contents = new Map(
   await Promise.all(
@@ -77,6 +83,16 @@ if (!runnerHtml?.includes(runnerCsp) || !runnerHeaders.includes(runnerCsp)) {
 }
 if (!runnerHeaders.includes(hostAssetCsp) || !deploymentConfig.includes(hostAssetCsp)) {
   throw new Error('Main-origin Worker responses must allow only same-origin API connections.')
+}
+const revisionedAnalysisHostAsset = [...contents.entries()].find(
+  ([name, source]) =>
+    name.endsWith('.js') &&
+    !name.startsWith('analysis.worker-') &&
+    source.includes('response-policy') &&
+    source.includes('connect-self-v1'),
+)
+if (!revisionedAnalysisHostAsset) {
+  throw new Error('The Analysis host bundle must revision the Worker URL when its response policy changes.')
 }
 if (runnerHtml.includes('@vite/client') || runnerHtml.includes('react-refresh')) {
   throw new Error('The production runner HTML contains development client code.')

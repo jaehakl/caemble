@@ -36,8 +36,10 @@ class AnalysisWorkerMock {
   onmessage: ((event: MessageEvent<AnalysisWorkerResponse>) => void) | null = null
   postMessage = vi.fn()
   terminate = vi.fn()
+  url: string | URL
 
-  constructor() {
+  constructor(url: string | URL) {
+    this.url = url
     AnalysisWorkerMock.instances.push(this)
   }
 
@@ -183,6 +185,15 @@ afterEach(() => {
 })
 
 describe('AnalysisWorkspace split-pane integration', () => {
+  it('uses a revisioned Worker URL so response-policy changes bypass immutable caches', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(workspace(client, 'explore'))
+
+    await waitFor(() => expect(AnalysisWorkerMock.instances).toHaveLength(1))
+    const workerUrl = new URL(AnalysisWorkerMock.instances[0].url)
+    expect(workerUrl.searchParams.get('response-policy')).toBe('connect-self-v1')
+  })
+
   it('portals the active tab settings and omits its internal tab strip', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const settingsContainer = document.createElement('aside')
