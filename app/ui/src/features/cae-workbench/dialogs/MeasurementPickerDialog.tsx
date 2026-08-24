@@ -4,14 +4,12 @@ import type { SavedMeasurement } from '../types'
 
 export function MeasurementPickerDialog({
   experimentId,
-  onDuplicate,
   onOpenChange,
   onSelect,
   open,
   selectedId,
 }: {
   experimentId: number | null
-  onDuplicate: (row: SavedMeasurement) => void
   onOpenChange: (open: boolean) => void
   onSelect: (row: SavedMeasurement) => void
   open: boolean
@@ -28,7 +26,6 @@ export function MeasurementPickerDialog({
           className="min-h-64"
           enabled={open}
           experimentId={experimentId}
-          onDuplicate={onDuplicate}
           onSelect={(row) => {
             onSelect(row)
             onOpenChange(false)

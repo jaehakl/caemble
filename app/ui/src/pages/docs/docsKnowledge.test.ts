@@ -25,6 +25,12 @@ describe('documentation knowledge registry', () => {
       new Set(['workbench', 'program', 'reference', 'troubleshooting']),
     )
     expect(manualDocsKnowledge.every(({ content, href }) => content && href.startsWith('/docs?section='))).toBe(true)
+    expect(
+      manualDocsKnowledge
+        .filter(({ section }) => section === 'workbench')
+        .map(({ content }) => content)
+        .join('\n'),
+    ).not.toContain('복제')
   })
 
   it('links manual examples to canonical catalog detail instead of duplicating full source', () => {

@@ -203,10 +203,12 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       <div className="flex h-full min-h-0 flex-col gap-3 p-3">
         <h2 className="font-semibold">Measurements</h2>
         <MeasurementExplorer
+          busy={workbench.measurementActions.busy || Boolean(workbench.measurementActions.pendingRecordMeasurementId)}
           enabled={auth.isAuthenticated}
           experimentId={workbench.experimentId}
           selectedId={workbench.selection.measurement?.id}
-          onDuplicate={(row) => page.runSafely(() => workbench.measurementActions.duplicateMeasurement(row))}
+          onClearSelection={workbench.selection.clearMeasurement}
+          onDelete={(rows) => workbench.measurementActions.deleteMeasurements(rows)}
           onSelect={(row) => page.runSafely(() => workbench.selection.loadMeasurement(row))}
         />
       </div>

@@ -32,7 +32,7 @@ function workbench(newExperiment = vi.fn()) {
       busy: false,
       cancel: vi.fn(),
       cancelable: false,
-      duplicateMeasurement: vi.fn(),
+      deleteMeasurements: vi.fn(),
       generateCandidate: vi.fn(),
       operation: null,
       pendingRecordMeasurementId: null,
@@ -94,6 +94,7 @@ describe('CAE page contextual ribbon actions', () => {
       'help',
       'setting',
     ])
+    expect(result.current.actions).not.toHaveProperty('duplicateMeasurement')
   })
 
   it('allows metadata Save for a clean locked Version and blocks dirty source', () => {
@@ -138,48 +139,6 @@ describe('CAE page contextual ribbon actions', () => {
     expect(params.requestMaterialCommand).toHaveBeenNthCalledWith(2, 'delete')
     expect(params.requestLabCommand).toHaveBeenCalledWith('end')
     expect(params.requestAnalysisCommand).toHaveBeenCalledWith('reload')
-  })
-
-  it('guards Duplicate until an eligible Measurement is selected', () => {
-    const base = workbench()
-    const duplicateMeasurement = vi.fn()
-    const eligibleWithoutSelection = {
-      ...base,
-      experimentClean: true,
-      experimentDocument: {
-        ...base.experimentDocument,
-        draftTaskNames: [],
-        materialParameters: {},
-        variables: {},
-      },
-      measurementActions: { ...base.measurementActions, duplicateMeasurement },
-      selection: { measurement: null },
-      simulation: { ...base.simulation, canRun: true },
-    } as unknown as CaeWorkbenchState
-    const withoutSelection = options(eligibleWithoutSelection, { authenticated: true })
-    const first = renderHook(() => useCaePageChrome(withoutSelection))
-
-    expect(first.result.current.actions.duplicateMeasurement).toMatchObject({
-      disabled: true,
-      disabledReason: '복제할 Measurement를 선택하세요.',
-    })
-    act(() => first.result.current.actions.duplicateMeasurement.onSelect())
-    expect(withoutSelection.runSafely).not.toHaveBeenCalled()
-    expect(duplicateMeasurement).not.toHaveBeenCalled()
-    first.unmount()
-
-    const selected = { id: 9, recorded_at: null }
-    const eligibleWithSelection = {
-      ...eligibleWithoutSelection,
-      selection: { measurement: selected },
-    } as unknown as CaeWorkbenchState
-    const withSelection = options(eligibleWithSelection, { authenticated: true })
-    const second = renderHook(() => useCaePageChrome(withSelection))
-
-    expect(second.result.current.actions.duplicateMeasurement.disabled).not.toBe(true)
-    act(() => second.result.current.actions.duplicateMeasurement.onSelect())
-    expect(withSelection.runSafely).toHaveBeenCalledOnce()
-    expect(duplicateMeasurement).toHaveBeenCalledWith(selected)
   })
 
   it('marks only the selected Analysis and Help ribbon selectors as pressed', () => {

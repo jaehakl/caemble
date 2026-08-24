@@ -68,7 +68,7 @@ vi.mock('../measurement/useCaeMeasurementActions', () => ({
     busy: false,
     cancel: vi.fn(),
     cancelable: false,
-    duplicateMeasurement: vi.fn(),
+    deleteMeasurements: vi.fn(),
     generateCandidate: vi.fn(),
     operation: null,
     pendingRecordMeasurementId: null,

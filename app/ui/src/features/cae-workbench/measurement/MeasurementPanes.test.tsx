@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SavedMeasurement } from '../types'
@@ -39,38 +39,95 @@ const measurement: SavedMeasurement = {
   recorded_at: '2026-08-20T03:00:00Z',
 }
 
+const measurements = [
+  measurement,
+  { ...measurement, id: 12, recorded_at: null },
+  { ...measurement, id: 13, recorded_at: null },
+  { ...measurement, id: 14, recorded_at: null },
+]
+
 beforeEach(() => {
   api.listRows.mockReset()
-  api.listRows.mockResolvedValue({ items: [measurement], total: 1 })
+  api.listRows.mockResolvedValue({ items: measurements, total: measurements.length })
 })
 
 afterEach(cleanup)
 
 describe('Measurement panes', () => {
-  it('keeps the explorer mounted while selecting, searching, and duplicating rows', async () => {
+  it('renders square points and supports single, additive, range, and additive range selection', async () => {
     const onSelect = vi.fn()
-    const onDuplicate = vi.fn()
+    const onDelete = vi.fn(async () => true)
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
       <QueryClientProvider client={client}>
-        <MeasurementExplorer
-          experimentId={7}
-          onDuplicate={onDuplicate}
-          onSelect={onSelect}
-          selectedId={measurement.id}
-        />
+        <MeasurementExplorer experimentId={7} onDelete={onDelete} onSelect={onSelect} selectedId={measurement.id} />
       </QueryClientProvider>,
     )
 
-    await userEvent.click(await screen.findByText('Measurement #11'))
+    const first = await screen.findByRole('button', { name: 'Measurement #11 Recorded' })
+    const second = screen.getByRole('button', { name: 'Measurement #12 Prepared' })
+    const third = screen.getByRole('button', { name: 'Measurement #13 Prepared' })
+    const fourth = screen.getByRole('button', { name: 'Measurement #14 Prepared' })
+
+    await userEvent.click(first)
     expect(onSelect).toHaveBeenCalledWith(measurement)
-    expect(screen.getByRole('region', { name: 'Measurement 목록' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^Measurement #11 Recorded/ })).toHaveAttribute('aria-current', 'true')
+    expect(first).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByText('Measurement #11')).not.toBeInTheDocument()
+    expect(screen.queryByText(JSON.stringify(measurement.vars))).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Measurement #11 복제' }))
-    expect(onDuplicate).toHaveBeenCalledWith(measurement)
+    fireEvent.click(third, { ctrlKey: true })
+    expect(first).toHaveAttribute('aria-pressed', 'true')
+    expect(third).toHaveAttribute('aria-pressed', 'true')
 
+    fireEvent.click(fourth, { shiftKey: true })
+    expect(first).toHaveAttribute('aria-pressed', 'false')
+    expect(second).toHaveAttribute('aria-pressed', 'false')
+    expect(third).toHaveAttribute('aria-pressed', 'true')
+    expect(fourth).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(first, { ctrlKey: true, shiftKey: true })
+    ;[first, second, third, fourth].forEach((button) => expect(button).toHaveAttribute('aria-pressed', 'true'))
+    expect(screen.getByText('4개 선택')).toBeVisible()
+  })
+
+  it('confirms and deletes all selected rows, retaining selection when deletion fails', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const onDelete = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <MeasurementExplorer experimentId={7} onDelete={onDelete} onSelect={vi.fn()} selectedId={measurement.id} />
+      </QueryClientProvider>,
+    )
+
+    const first = await screen.findByRole('button', { name: 'Measurement #11 Recorded' })
+    const second = screen.getByRole('button', { name: 'Measurement #12 Prepared' })
+    await userEvent.click(first)
+    fireEvent.click(second, { ctrlKey: true })
+    await userEvent.click(screen.getByRole('button', { name: '삭제' }))
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Measurement 2개'))
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Recorded Measurement 1개'))
+    expect(onDelete).toHaveBeenNthCalledWith(1, [measurement, measurements[1]])
+    expect(screen.getByText('2개 선택')).toBeVisible()
+
+    await userEvent.click(screen.getByRole('button', { name: '삭제' }))
+    await waitFor(() => expect(screen.getByText('0개 선택')).toBeVisible())
+    expect(onDelete).toHaveBeenNthCalledWith(2, [measurement, measurements[1]])
+  })
+
+  it('keeps selections across searches and clears them when the Experiment changes', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <MeasurementExplorer experimentId={7} onDelete={vi.fn()} onSelect={vi.fn()} />
+      </QueryClientProvider>,
+    )
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Measurement #11 Recorded' }))
     await userEvent.type(screen.getByRole('textbox', { name: 'Measurement 검색' }), 'width')
+    expect(screen.getByText('1개 선택')).toBeVisible()
+
     await waitFor(() =>
       expect(api.listRows).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -78,6 +135,47 @@ describe('Measurement panes', () => {
           text_filter: { vars: ['width'], material_parameters: ['width'] },
         }),
       ),
+    )
+
+    rerender(
+      <QueryClientProvider client={client}>
+        <MeasurementExplorer experimentId={8} onDelete={vi.fn()} onSelect={vi.fn()} />
+      </QueryClientProvider>,
+    )
+    await waitFor(() => expect(screen.getByText('0개 선택')).toBeVisible())
+  })
+
+  it('retains selections across pages and returns from an emptied last page after deletion', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    let available = Array.from({ length: 13 }, (_, index) => ({ ...measurement, id: index + 1, recorded_at: null }))
+    api.listRows.mockImplementation(async (request: { offset: number; limit: number }) => ({
+      items: available.slice(request.offset, request.offset + request.limit),
+      total: available.length,
+    }))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const onDelete = vi.fn(async (rows: readonly SavedMeasurement[]) => {
+      const ids = new Set(rows.map((row) => row.id))
+      available = available.filter((row) => !ids.has(row.id))
+      await client.invalidateQueries({ queryKey: ['cae-workbench', 'measurements'] })
+      return true
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <MeasurementExplorer experimentId={7} onDelete={onDelete} onSelect={vi.fn()} />
+      </QueryClientProvider>,
+    )
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Measurement #1 Prepared' }))
+    await userEvent.click(screen.getByRole('button', { name: '다음' }))
+    const last = await screen.findByRole('button', { name: 'Measurement #13 Prepared' })
+    fireEvent.click(last, { ctrlKey: true })
+    expect(screen.getByText('2개 선택')).toBeVisible()
+
+    await userEvent.click(screen.getByRole('button', { name: '삭제' }))
+    await screen.findByRole('button', { name: 'Measurement #2 Prepared' })
+    expect(screen.getByRole('button', { name: '이전' })).toBeDisabled()
+    expect(onDelete).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ id: 1 }), expect.objectContaining({ id: 13 })]),
     )
   })
 

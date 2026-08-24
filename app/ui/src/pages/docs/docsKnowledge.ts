@@ -40,7 +40,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       '3. source 상태가 `Ready`가 될 때까지 compile/evaluate 오류를 해결합니다.',
       '4. **Generate Candidate**로 `varsSchema` 범위의 새 변수 조건과 frozen Material 값을 미리 봅니다.',
       '5. 원하는 조건이면 **Save Current Measurement**로 변수와 Material snapshot을 고정합니다. 이 단계는 solver를 실행하지 않습니다.',
-      '6. 상단 **Measurement** 메뉴의 왼쪽 목록에서 prepared Measurement를 선택하거나 복제합니다.',
+      '6. 상단 **Measurement** 메뉴의 왼쪽 점 배열에서 prepared Measurement를 선택합니다. Ctrl/Cmd+클릭으로 여러 항목을 선택하고 Shift+클릭으로 현재 페이지의 범위를 선택할 수 있습니다.',
       '7. **Run Selected**로 선택한 prepared Measurement를 한 번 실행합니다.',
       '8. 성공하면 RecordedData가 원자적으로 기록되고 Measurement는 Recorded 상태가 됩니다. 결과 저장만 실패하면 세션 결과를 유지한 채 **Retry Saving Results**로 저장을 다시 시도합니다.',
       '',
@@ -74,7 +74,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       '- **Save Current Measurement**는 현재 vars와 Material snapshot을 고정하지만 solver를 실행하지 않습니다.',
       '- 선택한 prepared Measurement만 실행할 수 있고, Recorded 상태가 된 Measurement는 다시 실행할 수 없습니다.',
       '',
-      '새 조건으로 다시 계산하려면 기존 Measurement를 덮어쓰지 말고 복제하거나 새 Candidate를 저장하세요.',
+      '새 조건으로 다시 계산하려면 기존 Measurement를 덮어쓰지 말고 새 Candidate를 생성한 뒤 새 Measurement로 저장하세요.',
     ].join('\n'),
   }),
   manualChunk({

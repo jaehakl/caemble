@@ -6,7 +6,6 @@ import {
   BrainCircuit,
   ChartNoAxesCombined,
   CircleUserRound,
-  Copy,
   Database,
   Download,
   FlaskConical,
@@ -207,32 +206,6 @@ export function useCaePageChrome({
               ? savedReason
               : (draftPreviewReason ?? pendingResultReason ?? candidateEvaluationReason ?? evaluationBusyReason))),
         onSelect: () => runSafely(workbench.measurementActions.saveCurrent),
-      },
-      duplicateMeasurement: {
-        id: 'duplicate-measurement',
-        label: 'Duplicate',
-        icon: <Copy />,
-        disabled:
-          !authenticated ||
-          !workbench.hasTasks ||
-          !workbench.experimentClean ||
-          workbench.experimentDocument.draftTaskNames.length > 0 ||
-          workbench.experimentDocument.status !== 'Ready' ||
-          workbench.experimentDocument.successfulRevision !== workbench.experimentDocument.revision ||
-          !workbench.experimentDocument.variables ||
-          !workbench.experimentDocument.materialParameters ||
-          !selected ||
-          workbench.measurementActions.busy ||
-          Boolean(workbench.measurementActions.pendingRecordMeasurementId),
-        disabledReason: !authenticated
-          ? loginReason
-          : (tasklessReason ??
-            (!workbench.experimentClean
-              ? savedReason
-              : (draftPreviewReason ??
-                candidateEvaluationReason ??
-                (!selected ? '복제할 Measurement를 선택하세요.' : (pendingResultReason ?? busyReason))))),
-        onSelect: () => selected && runSafely(() => workbench.measurementActions.duplicateMeasurement(selected)),
       },
       runSelected: {
         id: 'run-selected',
@@ -485,9 +458,7 @@ export function useCaePageChrome({
       content: (
         <>
           <WorkbenchRibbonGroup label="Measurement">
-            <WorkbenchRibbonActions
-              actions={[actions.generateCandidate, actions.saveCurrentMeasurement, actions.duplicateMeasurement]}
-            />
+            <WorkbenchRibbonActions actions={[actions.generateCandidate, actions.saveCurrentMeasurement]} />
           </WorkbenchRibbonGroup>
           <WorkbenchRibbonGroup label="Run">
             <WorkbenchRibbonActions

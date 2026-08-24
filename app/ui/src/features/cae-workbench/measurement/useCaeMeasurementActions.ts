@@ -57,7 +57,7 @@ export function useCaeMeasurementActions({
   simulation: SimulationController
 }) {
   const queryClient = useQueryClient()
-  const [operation, setOperation] = useState<'candidate' | 'duplicate' | 'measurement' | 'record' | 'save' | null>(null)
+  const [operation, setOperation] = useState<'candidate' | 'delete' | 'measurement' | 'record' | 'save' | null>(null)
   const [stage, setStage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pendingRecordMeasurementId, setPendingRecordMeasurementId] = useState<number | null>(null)
@@ -165,36 +165,28 @@ export function useCaeMeasurementActions({
     }
   }, [fail, operation, pendingRecordMeasurementId, refreshPersistedMeasurement, requireSavableCandidate])
 
-  const duplicateMeasurement = useCallback(
-    async (row: SavedMeasurement) => {
-      if (operation || pendingRecordMeasurementId) return null
+  const deleteMeasurements = useCallback(
+    async (rows: readonly SavedMeasurement[]) => {
+      if (operation || pendingRecordMeasurementId) return false
       setError(null)
-      setOperation('duplicate')
-      setStage('Measurement 복제')
+      setOperation('delete')
+      setStage('Measurement 삭제')
       try {
-        const current = requireSavableCandidate()
-        if (row.experiment_id !== current.experiment_id) {
-          throw new Error('현재 저장된 Experiment의 Measurement만 복제할 수 있습니다.')
-        }
-        const { id } = await dbTables.Measurement.create({
-          experiment_id: current.experiment_id,
-          experiment_source_hash: current.experiment_source_hash,
-          vars: row.vars,
-          material_parameters: row.material_parameters,
-        })
-        if (await refreshPersistedMeasurement(id, current.experiment_id)) {
-          toast.success(`Measurement #${row.id}을 #${id}으로 복제했습니다.`)
-        }
-        return id
+        const ids = rows.map((row) => row.id)
+        await dbTables.Measurement.deleteRows(ids)
+        if (selection.measurement && ids.includes(selection.measurement.id)) selection.clearMeasurement()
+        await invalidate().catch(() => undefined)
+        toast.success(`Measurement ${ids.length.toLocaleString()}개를 삭제했습니다.`)
+        return true
       } catch (cause) {
-        fail(cause, 'Measurement를 복제하지 못했습니다.')
-        return null
+        fail(cause, 'Measurement를 삭제하지 못했습니다.')
+        return false
       } finally {
         setOperation(null)
         setStage(null)
       }
     },
-    [fail, operation, pendingRecordMeasurementId, refreshPersistedMeasurement, requireSavableCandidate],
+    [fail, invalidate, operation, pendingRecordMeasurementId, selection],
   )
 
   const runSelected = useCallback(() => {
@@ -319,7 +311,7 @@ export function useCaeMeasurementActions({
     busy: operation !== null,
     cancel,
     cancelable: operation === 'measurement' && ['preparing', 'running'].includes(simulation.process.status),
-    duplicateMeasurement,
+    deleteMeasurements,
     error,
     generateCandidate,
     operation,

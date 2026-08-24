@@ -11,13 +11,14 @@ import { useCaeMeasurementActions } from './useCaeMeasurementActions'
 
 const mocks = vi.hoisted(() => ({
   create: vi.fn(),
+  deleteRows: vi.fn(),
   record: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
 }))
 
 vi.mock('@/api', () => ({
-  dbTables: { Measurement: { create: mocks.create, record: mocks.record } },
+  dbTables: { Measurement: { create: mocks.create, deleteRows: mocks.deleteRows, record: mocks.record } },
 }))
 vi.mock('sonner', () => ({ toast: { error: mocks.toastError, success: mocks.toastSuccess } }))
 
@@ -97,6 +98,7 @@ function wrapper() {
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.record.mockReset()
+  mocks.deleteRows.mockResolvedValue(undefined)
   mocks.create.mockResolvedValue({ id: 12 })
 })
 
@@ -157,8 +159,9 @@ describe('useCaeMeasurementActions', () => {
     expect(mocks.create).not.toHaveBeenCalled()
   })
 
-  it('duplicates persisted values only after the current catalog-backed evaluation is ready', async () => {
-    const currentSelection = selection()
+  it('deletes multiple Measurements and clears the active detail when it is included', async () => {
+    const currentSelection = selection({ measurement: prepared })
+    const recorded = { ...prepared, id: 12, recorded_at: '2026-08-12T00:00:00Z' }
     const { result } = renderHook(
       () =>
         useCaeMeasurementActions({
@@ -174,39 +177,38 @@ describe('useCaeMeasurementActions', () => {
       { wrapper: wrapper() },
     )
 
-    await act(async () => void (await result.current.duplicateMeasurement(prepared)))
+    await act(async () => expect(await result.current.deleteMeasurements([prepared, recorded])).toBe(true))
 
-    expect(mocks.create).toHaveBeenCalledWith({
-      experiment_id: 7,
-      experiment_source_hash: sourceHash,
-      vars: prepared.vars,
-      material_parameters: prepared.material_parameters,
-    })
+    expect(mocks.deleteRows).toHaveBeenCalledWith([11, 12])
+    expect(currentSelection.clearMeasurement).toHaveBeenCalledOnce()
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('Measurement 2개를 삭제했습니다.')
   })
 
-  it('blocks duplicate writes when catalog-backed evaluation is unavailable', async () => {
+  it('reports deletion failures without clearing the active detail', async () => {
+    mocks.deleteRows.mockRejectedValueOnce(new Error('delete failed'))
+    const currentSelection = selection({ measurement: prepared })
     const { result } = renderHook(
       () =>
         useCaeMeasurementActions({
           authenticated: true,
           experimentClean: true,
-          experimentDocument: documentController({ status: 'Error', materialParameters: null }),
+          experimentDocument: documentController(),
           experimentId: 7,
           experimentSourceHash: sourceHash,
           onGenerateCandidate: vi.fn(),
-          selection: selection(),
+          selection: currentSelection,
           simulation: simulationController(),
         }),
       { wrapper: wrapper() },
     )
 
-    await act(async () => void (await result.current.duplicateMeasurement(prepared)))
+    await act(async () => expect(await result.current.deleteMeasurements([prepared])).toBe(false))
 
-    expect(mocks.create).not.toHaveBeenCalled()
-    expect(mocks.toastError).toHaveBeenCalledWith('저장할 Candidate 평가가 완료되지 않았습니다.')
+    expect(currentSelection.clearMeasurement).not.toHaveBeenCalled()
+    expect(mocks.toastError).toHaveBeenCalledWith('delete failed')
   })
 
-  it('blocks Measurement saves and duplicates for a Solver-less Draft preview', async () => {
+  it('blocks Measurement saves for a Solver-less Draft preview', async () => {
     const { result } = renderHook(
       () =>
         useCaeMeasurementActions({
@@ -223,11 +225,10 @@ describe('useCaeMeasurementActions', () => {
     )
 
     await act(async () => void (await result.current.saveCurrent()))
-    await act(async () => void (await result.current.duplicateMeasurement(prepared)))
 
     expect(mocks.create).not.toHaveBeenCalled()
-    expect(mocks.toastError).toHaveBeenCalledTimes(2)
-    expect(mocks.toastError).toHaveBeenLastCalledWith(
+    expect(mocks.toastError).toHaveBeenCalledOnce()
+    expect(mocks.toastError).toHaveBeenCalledWith(
       'Solver가 선택되지 않은 Draft Task가 있어 Measurement를 저장할 수 없습니다.',
     )
   })
