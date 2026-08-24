@@ -142,8 +142,16 @@ async function buildMeasurement(example: CatalogExperiment) {
   }
   const simulationSource = example.sourceBundle.files[EXPERIMENT_SIMULATION_PATH]
   const inspection = inspectCompiledDocument(compiled)
+  const originalRandom = Math.random
+  let variables: ReturnType<typeof generateRandomVars>
+  try {
+    Math.random = () => 0.5
+    variables = generateRandomVars(inspection.varsSchema)
+  } finally {
+    Math.random = originalRandom
+  }
   const experiment = serializeEvaluatedDocumentSnapshot(
-    executeCompiledDocument(compiled, generateRandomVars(inspection.varsSchema), simulationSource),
+    executeCompiledDocument(compiled, variables, simulationSource),
   )
   return buildSourceOnlyMeasurement(experiment)
 }

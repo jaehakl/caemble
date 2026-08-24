@@ -1,9 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { experimentDetailSchema } from '@/contracts/catalog'
 import { scenePartColor } from '@/features/viewer/viewer/materialColor'
 import { assertSimulationProgramManifest } from '@/lib/cad/simulation'
 import { installSyntheticCatalog } from '@/test/syntheticCatalog'
-import { evaluatePublicExampleBundle, expectReliablePublicScene } from '@/test/publicExampleHarness'
+import { generateRandomVars, type Tensor, type Vars } from '@/lib/cad'
+import {
+  evaluatePublicExampleBundle,
+  expectReliablePublicScene,
+  inspectPublicExampleBundle,
+} from '@/test/publicExampleHarness'
 import { exampleExperiment, exampleExperimentKeys } from './catalogTestData'
 
 installSyntheticCatalog({
@@ -95,6 +100,85 @@ describe('canonical public Experiment catalog', () => {
     )
     expectReliablePublicScene(result.scene)
     Object.values(result.taskScenes).forEach((scene) => expectReliablePublicScene(scene))
+  })
+
+  it.each(exampleExperimentKeys)('evaluates %s at min, midpoint, max, and alternating geometry bounds', async (key) => {
+    const bundle = exampleExperiment(key).sourceBundle
+    const { inspection } = inspectPublicExampleBundle(bundle)
+    expect(Object.values(inspection.varsSchema).some(({ min, max }) => JSON.stringify(min) !== JSON.stringify(max))).toBe(
+      true,
+    )
+
+    const minimum = Object.fromEntries(
+      Object.entries(inspection.varsSchema).map(([name, entry]) => [name, entry.min]),
+    ) as Vars
+    const maximum = Object.fromEntries(
+      Object.entries(inspection.varsSchema).map(([name, entry]) => [name, entry.max]),
+    ) as Vars
+    const generated: Vars[] = []
+    for (const sampler of [
+      () => 0.5,
+      (() => {
+        let index = 0
+        return () => (index++ % 2 === 0 ? 0 : 1 - Number.EPSILON)
+      })(),
+    ]) {
+      const random = vi.spyOn(Math, 'random').mockImplementation(sampler)
+      generated.push(generateRandomVars(inspection.varsSchema))
+      random.mockRestore()
+    }
+    for (const [candidate, variables] of [
+      ['minimum', minimum],
+      ['midpoint', generated[0]],
+      ['alternating', generated[1]],
+      ['maximum', maximum],
+    ] as const) {
+      const result = await evaluatePublicExampleBundle(bundle, variables)
+      try {
+        expectReliablePublicScene(result.scene)
+        Object.values(result.taskScenes).forEach((scene) => expectReliablePublicScene(scene))
+      } catch (error) {
+        throw new Error(`${key} ${candidate} Candidate is not reliable: ${JSON.stringify(variables)}`, { cause: error })
+      }
+    }
+  })
+
+  it('uses full array-shaped tensor bounds for every per-cell variable', () => {
+    const cases = [
+      {
+        key: 'random-curved-edge-cylinder-array' as const,
+        scalarShape: [4, 4, 1],
+        vectorShape: [4, 4, 1, 3],
+        vectorKeys: ['cellPosition', 'cellRotation'],
+      },
+      {
+        key: 'random-curved-surface-sphere-hcp-array' as const,
+        scalarShape: [4, 4, 3],
+        vectorShape: [4, 4, 3, 3],
+        vectorKeys: ['cellPositionOffsets', 'cellRotation'],
+      },
+    ]
+
+    cases.forEach(({ key, scalarShape, vectorShape, vectorKeys }) => {
+      const schema = inspectPublicExampleBundle(exampleExperiment(key).sourceBundle).inspection.varsSchema
+      Object.entries(schema)
+        .filter(([name]) => name.startsWith('cell'))
+        .forEach(([name, entry]) => {
+          const expectedShape = vectorKeys.includes(name) ? vectorShape : scalarShape
+          const [minimumShape, maximumShape] = [entry.min, entry.max].map((value) => {
+            const shape: number[] = []
+            let cursor: Tensor = value
+            while (Array.isArray(cursor)) {
+              shape.push(cursor.length)
+              cursor = cursor[0]
+            }
+            return shape
+          })
+          expect(minimumShape, `${key}.${name}.min`).toEqual(expectedShape)
+          expect(maximumShape, `${key}.${name}.max`).toEqual(expectedShape)
+          expect(entry.min).not.toEqual(entry.max)
+        })
+    })
   })
 
   it('preserves wheel Material roles and gives them distinct automatic Viewer colors', async () => {

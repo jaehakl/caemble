@@ -5,7 +5,7 @@
       "kind": "measurement",
       "experiment": {
         "kind": "experiment",
-        "sourceHash": "8725d81c3d0d58c71e689554dc80802d4807ebbc820a855479576fecc19d5f4f",
+        "sourceHash": "cf5fef1c0a482e48e87f23ebd000885039bac24b1f52853c05ad16b17180f8fa",
         "variables": {
           "conductorSize": [
             100,
@@ -19,14 +19,14 @@
         "varsSchema": {
           "conductorSize": {
             "min": [
-              100,
-              5,
-              5
+              80,
+              3,
+              3
             ],
             "max": [
-              100,
-              5,
-              5
+              120,
+              7,
+              7
             ]
           },
           "electricalConductivity": {

@@ -20,6 +20,7 @@ import {
   type ExperimentSourceBundle,
 } from '@/lib/cad/source/document'
 import { experimentTypeScriptPaths } from '@/lib/cad/source/moduleResolution'
+import type { Vars } from '@/lib/cad/model/types'
 
 const previewPythonSource = 'async def simulate(*, sim, tasks, vars):\n    return None\n'
 const previewTaskSource = `import { defineTask } from '@caemble/core'
@@ -66,7 +67,7 @@ export function standalonePublicExampleBundle(experimentSource: string) {
   })
 }
 
-export async function evaluatePublicExampleBundle(bundle: ExperimentSourceBundle) {
+export function inspectPublicExampleBundle(bundle: ExperimentSourceBundle) {
   assertExperimentSourceBundle(bundle)
   assertExperimentModuleGraph(bundle.files)
   const sourceHash = 'e'.repeat(64)
@@ -94,8 +95,16 @@ export async function evaluatePublicExampleBundle(bundle: ExperimentSourceBundle
     sourceHash,
     sources,
   }
-  const inspection = inspectCompiledDocument(document)
-  return executeCompiledDocument(document, generateRandomVars(inspection.varsSchema), bundle.files['simulate.py'])
+  return { document, inspection: inspectCompiledDocument(document) }
+}
+
+export async function evaluatePublicExampleBundle(bundle: ExperimentSourceBundle, variables?: Readonly<Vars>) {
+  const { document, inspection } = inspectPublicExampleBundle(bundle)
+  return executeCompiledDocument(
+    document,
+    variables ?? generateRandomVars(inspection.varsSchema),
+    bundle.files['simulate.py'],
+  )
 }
 
 export function expectReliablePublicScene(scene: CadScene, options: { allowEmpty?: boolean } = {}) {
@@ -110,7 +119,7 @@ export function expectReliablePublicScene(scene: CadScene, options: { allowEmpty
 
   scene.parts.forEach((part) => {
     expect(geometries.geom3.isA(part.geometry)).toBe(true)
-    expect(measurements.measureVolume(part.geometry)).toBeGreaterThan(0)
+    expect(measurements.measureVolume(part.geometry), part.id).toBeGreaterThan(0)
     expect(part.surfaces.length).toBeGreaterThan(0)
   })
 }
