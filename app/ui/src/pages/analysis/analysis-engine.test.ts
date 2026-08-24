@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import type { MeasurementRecord, RecordedDataRecord } from '@/api'
 import {
+  analyzeRelationships,
   buildAnalysisDataset,
   collectAnalysisQuantityKindNames,
   createCsv,
   createMeasurementRanges,
+  getRelationshipPlot,
   getTablePage,
   mineDataset,
   predictDataset,
+  predictWhatIf,
 } from './analysis-engine'
 
 const scalarQuantityKinds = new Map([['Dimensionless', 0]])
@@ -232,14 +235,21 @@ describe('Analysis engine', () => {
     expect(dataset.rows[0].inputFingerprint).not.toBe(dataset.rows[2].inputFingerprint)
   })
 
-  it('결과 기반 상관 분석에서 prepared Measurement를 제외한다', () => {
+  it('input vars×Recorded Data만 절대 상관 순으로 정렬하고 유효 표본 수를 보존한다', () => {
     const measurements: MeasurementRecord[] = [1, 2, 3, 100, 200].map((value, index) => ({
       id: index + 1,
       experiment_id: 22,
-      vars: { x: value, y: value ** 2 },
+      vars: { constant: 1, negative: value, tieA: value ** 2, tieB: value ** 2 },
       material_parameters: {
         schemaVersion: 2,
-        experiment: { schemaVersion: 1, materials: {} },
+        experiment: {
+          schemaVersion: 1,
+          materials: {
+            Copper: {
+              density: { value: { quantityKind: 'Dimensionless', unit: '1', value } },
+            },
+          },
+        },
         tasks: { main: { schemaVersion: 1, materials: {} } },
       },
       recorded_at: index < 3 ? '2026-08-12T00:00:00Z' : null,
@@ -252,19 +262,26 @@ describe('Analysis engine', () => {
       tensor_order: 0,
       dtype: 'float64',
       data_schema: { dtype: 'float64' },
-      data: { value },
+      data: { value: -value },
     }))
     const dataset = buildAnalysisDataset({ experimentId: 22, fingerprint: 'recorded-only', measurements, recordedData })
-    const result = mineDataset(dataset, {
-      featureKeys: ['measurement.vars.x', 'measurement.vars.y'],
-      targetKey: 'target:response',
-      xKey: null,
-      yKey: null,
-      outlierFraction: 0.05,
-    })
+    const result = analyzeRelationships(dataset)
+    const plot = getRelationshipPlot(dataset, 'measurement.vars.negative', 'target:response')
 
-    expect(result.correlations[0][2]).toBeCloseTo(1)
-    expect(result.spearmanCorrelations[0][2]).toBeCloseTo(1)
+    expect(result.pairs[0]).toMatchObject({
+      inputKey: 'measurement.vars.negative',
+      targetKey: 'target:response',
+      pearson: -1,
+      spearman: -1,
+      count: 3,
+    })
+    expect(result.pairs.findIndex((pair) => pair.inputKey === 'measurement.vars.tieA')).toBeLessThan(
+      result.pairs.findIndex((pair) => pair.inputKey === 'measurement.vars.tieB'),
+    )
+    expect(result.pairs.some((pair) => pair.inputKey.includes('material'))).toBe(false)
+    expect(result.pairs.some((pair) => pair.inputKey.endsWith('.constant'))).toBe(false)
+    expect(plot).toMatchObject({ count: 3, pearson: -1, spearman: -1 })
+    expect(plot.points.map((point) => point.measurementId)).toEqual([1, 2, 3])
   })
 
   it('streams a large persisted DataTensor through its accessor without materializing the tensor', () => {
@@ -331,9 +348,6 @@ describe('Analysis engine', () => {
     const options = {
       featureKeys: ['measurement.vars.width', 'measurement.vars.nested.offset', 'measurement.vars.voltage'],
       outlierFraction: 0.05,
-      targetKey: 'target:response',
-      xKey: 'measurement.vars.width',
-      yKey: 'target:response',
     }
 
     const first = mineDataset(firstDataset, options)
@@ -368,6 +382,14 @@ describe('Analysis engine', () => {
     expect(result.interval[0]).toBeLessThanOrEqual(result.prediction)
     expect(result.interval[1]).toBeGreaterThanOrEqual(result.prediction)
     expect(result.extrapolatedFeatureKeys).toContain('measurement.vars.width')
+    expect(dataset.profile.columns.find((column) => column.key === 'target:response')?.distinctInputCount).toBe(30)
+
+    const cached = predictWhatIf(dataset, { 'measurement.vars.width': 3, 'measurement.vars.voltage': 4 })
+    expect(cached.prediction).toBeTypeOf('number')
+  })
+
+  it('학습 전 What-if 요청을 명확하게 거절한다', () => {
+    expect(() => predictWhatIf(createDataset(), {})).toThrow('먼저 Prediction 모델을 학습')
   })
 
   it('비선형 target에서는 Random Forest importance까지 계산한다', () => {

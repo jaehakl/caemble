@@ -5,13 +5,16 @@ import { catalogApi } from '@/api/catalog'
 import type { MeasurementRecord, RecordedDataRecord } from '@/api'
 import {
   ANALYSIS_MAX_ROWS,
+  analyzeRelationships,
   buildAnalysisDataset,
   collectAnalysisQuantityKindNames,
   createCsv,
   createMeasurementRanges,
   getTablePage,
+  getRelationshipPlot,
   mineDataset,
   predictDataset,
+  predictWhatIf,
   stableSignature,
 } from './analysis-engine'
 import type { AnalysisProgressStage, AnalysisWorkerRequest, AnalysisWorkerResponse } from './analysis-types'
@@ -177,14 +180,27 @@ async function handleRequest(request: AnalysisWorkerRequest) {
   }
 
   const currentDataset = requireDataset()
+  if (request.type === 'relationships') {
+    postProgress(request.requestId, '상관 분석', 0, 0)
+    const result = analyzeRelationships(currentDataset, (completed, total) =>
+      postProgress(request.requestId, '상관 분석', completed, total),
+    )
+    postResponse({ type: 'relationships', requestId: request.requestId, result })
+    return
+  }
+  if (request.type === 'relationship-plot') {
+    postResponse({
+      type: 'relationship-plot',
+      requestId: request.requestId,
+      result: getRelationshipPlot(currentDataset, request.inputKey, request.targetKey),
+    })
+    return
+  }
   if (request.type === 'mine') {
     postProgress(request.requestId, '통계 계산')
     postProgress(request.requestId, 'PCA·군집')
     const result = mineDataset(currentDataset, {
       featureKeys: request.featureKeys,
-      xKey: request.xKey,
-      yKey: request.yKey,
-      targetKey: request.targetKey,
       outlierFraction: request.outlierFraction,
     })
     postResponse({ type: 'mining', requestId: request.requestId, result })
@@ -202,6 +218,14 @@ async function handleRequest(request: AnalysisWorkerRequest) {
       () => postProgress(request.requestId, '최종 학습'),
     )
     postResponse({ type: 'prediction', requestId: request.requestId, result })
+    return
+  }
+  if (request.type === 'predict-what-if') {
+    postResponse({
+      type: 'prediction-what-if',
+      requestId: request.requestId,
+      result: predictWhatIf(currentDataset, request.whatIf),
+    })
     return
   }
   if (request.type === 'table-page') {

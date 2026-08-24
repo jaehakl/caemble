@@ -93,9 +93,12 @@ function normalizeLayout(value: unknown): WorkbenchLayoutState {
   const measurementRightTab = measurementRightTabIds.includes(rightTabs.measurement as MeasurementRightTabId)
     ? (rightTabs.measurement as MeasurementRightTabId)
     : defaultWorkbenchLayoutState.rightTabs.measurement
-  const analysisTab = analysisTabIds.includes(layout.analysisTab as AnalysisTabId)
-    ? (layout.analysisTab as AnalysisTabId)
-    : defaultWorkbenchLayoutState.analysisTab
+  const analysisTab =
+    layout.analysisTab === 'overview' || layout.analysisTab === 'relationships'
+      ? 'explore'
+      : analysisTabIds.includes(layout.analysisTab as AnalysisTabId)
+        ? (layout.analysisTab as AnalysisTabId)
+        : defaultWorkbenchLayoutState.analysisTab
   const helpKind = helpKindIds.includes(help.kind as HelpKindId)
     ? (help.kind as HelpKindId)
     : defaultWorkbenchLayoutState.help.kind

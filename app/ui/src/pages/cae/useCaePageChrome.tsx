@@ -1,4 +1,4 @@
-import { useMemo, type Dispatch, type SetStateAction } from 'react'
+import { useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import {
   Beaker,
   BookOpenText,
@@ -79,6 +79,9 @@ export function useCaePageChrome({
   setHelpKind: (kind: HelpKindId) => void
   workbench: CaeWorkbenchState
 }) {
+  const [repeatCountInput, setRepeatCountInput] = useState('10')
+  const repeatCount = Number(repeatCountInput)
+  const repeatCountValid = repeatCountInput.trim() !== '' && Number.isSafeInteger(repeatCount) && repeatCount > 0
   const actions = useMemo<Record<string, WorkbenchAction>>(() => {
     const loginReason = '로그인 후 사용할 수 있습니다.'
     const savedReason = '저장되고 편집되지 않은 Experiment가 필요합니다.'
@@ -108,7 +111,13 @@ export function useCaePageChrome({
     const cancellingSelectedRun =
       workbench.measurementActions.operation === 'measurement' && workbench.measurementActions.cancelable
     const cancellingGeneratedRun =
-      workbench.measurementActions.operation === 'generate-and-run' && workbench.measurementActions.cancelable
+      workbench.measurementActions.operation === 'generate-and-run' &&
+      workbench.measurementActions.cancelable &&
+      !workbench.measurementActions.generateAndRunBatch?.repeat
+    const cancellingRepeatRun =
+      workbench.measurementActions.operation === 'generate-and-run' &&
+      workbench.measurementActions.cancelable &&
+      Boolean(workbench.measurementActions.generateAndRunBatch?.repeat)
 
     const defined: Record<string, WorkbenchAction> = {
       newExperiment: {
@@ -238,6 +247,38 @@ export function useCaePageChrome({
         onSelect: cancellingGeneratedRun
           ? workbench.measurementActions.cancel
           : () => runSafely(workbench.measurementActions.generateAndRun),
+      },
+      repeatGenerateAndRun: {
+        id: 'repeat-generate-and-run',
+        label: cancellingRepeatRun ? 'Cancel' : 'Repeat Run',
+        icon: cancellingRepeatRun ? <Square /> : <RefreshCw />,
+        disabled:
+          !cancellingRepeatRun &&
+          (!repeatCountValid ||
+            !authenticated ||
+            !workbench.experiment ||
+            !workbench.hasTasks ||
+            !workbench.experimentClean ||
+            workbench.experimentDocument.draftTaskNames.length > 0 ||
+            workbench.experimentDocument.runIsBusy ||
+            workbench.measurementActions.busy ||
+            Boolean(workbench.measurementActions.pendingRecordMeasurementId) ||
+            workbench.saving !== null),
+        disabledReason: cancellingRepeatRun
+          ? undefined
+          : !repeatCountValid
+            ? '반복 횟수는 양의 정수여야 합니다.'
+            : !authenticated
+              ? loginReason
+              : !workbench.experiment
+                ? 'Experiment source가 없습니다.'
+                : (tasklessReason ??
+                  (!workbench.experimentClean
+                    ? savedReason
+                    : (draftPreviewReason ?? pendingResultReason ?? evaluationBusyReason ?? sourceLockReason))),
+        onSelect: cancellingRepeatRun
+          ? workbench.measurementActions.cancel
+          : () => runSafely(() => workbench.measurementActions.repeatGenerateAndRun(repeatCount)),
       },
       runSelected: {
         id: 'run-selected',
@@ -407,16 +448,17 @@ export function useCaePageChrome({
     requestMaterialCommand,
     refreshRuntime,
     requestRunSelected,
+    repeatCount,
+    repeatCountValid,
     runSafely,
     setActiveSection,
     setDialog,
     workbench,
   ])
 
-  const analysisActions = (['overview', 'relationships', 'mining', 'prediction', 'data'] as const).map((tab) => ({
+  const analysisActions = (['explore', 'mining', 'prediction', 'data'] as const).map((tab) => ({
     id: `analysis-${tab}`,
-    label:
-      tab === 'overview' ? 'Overview' : tab === 'relationships' ? 'Relations' : tab[0].toUpperCase() + tab.slice(1),
+    label: tab[0].toUpperCase() + tab.slice(1),
     icon: tab === 'prediction' ? <BrainCircuit /> : tab === 'mining' ? <Sparkles /> : <ChartNoAxesCombined />,
     pressed: analysisTab === tab,
     onSelect: () => setAnalysisTab(tab),
@@ -493,9 +535,24 @@ export function useCaePageChrome({
             <WorkbenchRibbonActions actions={[actions.generateCandidate, actions.saveCurrentMeasurement]} />
           </WorkbenchRibbonGroup>
           <WorkbenchRibbonGroup label="Run">
+            <WorkbenchRibbonActions actions={[actions.generateAndRun]} />
+            <label className="flex h-[68px] w-16 shrink-0 flex-col items-center justify-center gap-1 text-[10px] text-muted-foreground">
+              <input
+                aria-label="Repeat Run 횟수"
+                aria-invalid={!repeatCountValid}
+                className="h-7 w-14 rounded border border-border bg-background px-1 text-center text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={workbench.measurementActions.busy}
+                min="1"
+                step="1"
+                type="number"
+                value={repeatCountInput}
+                onChange={(event) => setRepeatCountInput(event.target.value)}
+              />
+              <span>Times</span>
+            </label>
             <WorkbenchRibbonActions
               actions={[
-                actions.generateAndRun,
+                actions.repeatGenerateAndRun,
                 actions.runSelected,
                 ...(workbench.measurementActions.pendingRecordMeasurementId ? [actions.retryRecord] : []),
                 actions.analyzeMeasurements,

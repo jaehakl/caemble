@@ -7,6 +7,7 @@ export type AnalysisColumnDescriptor = Readonly<{
   source: 'measurement-material' | 'measurement-vars' | 'recorded-data'
   count: number
   distinctCount: number
+  distinctInputCount?: number
   missingRatio: number
   eligible: boolean
   exclusionReason?: string
@@ -46,9 +47,6 @@ export type AnalysisProfile = Readonly<{
 export type AnalysisMiningResult = Readonly<{
   fingerprint: string
   featureKeys: readonly string[]
-  correlationKeys: readonly string[]
-  correlations: readonly (readonly (number | null)[])[]
-  spearmanCorrelations: readonly (readonly (number | null)[])[]
   explainedVariance: readonly number[]
   loadings: readonly Readonly<{ key: string; pc1: number; pc2: number }>[]
   points: readonly Readonly<{
@@ -59,12 +57,37 @@ export type AnalysisMiningResult = Readonly<{
     cluster: number
     anomalyScore: number
     outlier: boolean
-    x?: number
-    y?: number
   }>[]
   clusterCount: number
   silhouette: number
   outlierFraction: number
+}>
+
+export type AnalysisRelationshipPair = Readonly<{
+  inputKey: string
+  targetKey: string
+  pearson: number
+  spearman: number
+  count: number
+}>
+
+export type AnalysisRelationshipsResult = Readonly<{
+  fingerprint: string
+  pairs: readonly AnalysisRelationshipPair[]
+}>
+
+export type AnalysisRelationshipPlot = Readonly<{
+  fingerprint: string
+  inputKey: string
+  targetKey: string
+  pearson: number | null
+  spearman: number | null
+  count: number
+  points: readonly Readonly<{
+    measurementId: number
+    x: number
+    y: number
+  }>[]
 }>
 
 export type AnalysisPredictionResult = Readonly<{
@@ -92,6 +115,13 @@ export type AnalysisPredictionResult = Readonly<{
   extrapolatedFeatureKeys: readonly string[]
 }>
 
+export type AnalysisWhatIfResult = Readonly<{
+  fingerprint: string
+  prediction: number
+  interval: readonly [number, number]
+  extrapolatedFeatureKeys: readonly string[]
+}>
+
 export type AnalysisTablePage = Readonly<{
   fingerprint: string
   offset: number
@@ -110,6 +140,7 @@ export type AnalysisProgressStage =
   | 'Catalog 조회'
   | '데이터셋 구성'
   | '통계 계산'
+  | '상관 분석'
   | 'PCA·군집'
   | '교차 검증'
   | '최종 학습'
@@ -125,13 +156,25 @@ export type AnalysisWorkerRequest =
       requestId: string
     }>
   | Readonly<{
+      type: 'relationships'
+      requestId: string
+    }>
+  | Readonly<{
+      type: 'relationship-plot'
+      requestId: string
+      inputKey: string
+      targetKey: string
+    }>
+  | Readonly<{
       type: 'mine'
       requestId: string
       featureKeys: readonly string[]
-      xKey: string | null
-      yKey: string | null
-      targetKey: string | null
       outlierFraction: number
+    }>
+  | Readonly<{
+      type: 'predict-what-if'
+      requestId: string
+      whatIf: Readonly<Record<string, number>>
     }>
   | Readonly<{
       type: 'predict'
@@ -173,9 +216,24 @@ export type AnalysisWorkerResponse =
       stale: boolean
     }>
   | Readonly<{
+      type: 'relationships'
+      requestId: string
+      result: AnalysisRelationshipsResult
+    }>
+  | Readonly<{
+      type: 'relationship-plot'
+      requestId: string
+      result: AnalysisRelationshipPlot
+    }>
+  | Readonly<{
       type: 'mining'
       requestId: string
       result: AnalysisMiningResult
+    }>
+  | Readonly<{
+      type: 'prediction-what-if'
+      requestId: string
+      result: AnalysisWhatIfResult
     }>
   | Readonly<{
       type: 'prediction'

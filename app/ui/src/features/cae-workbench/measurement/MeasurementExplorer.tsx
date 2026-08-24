@@ -1,13 +1,16 @@
 import { useQuery } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight, LoaderCircle, Search, Trash2 } from 'lucide-react'
-import { useEffect, useMemo, useState, type MouseEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { dbTables, getListRequest } from '@/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import type { SavedMeasurement } from '../types'
 
-const pageSize = 12
+const fallbackPageSize = 12
+const pointGapPx = 12
+const pointPaddingPx = 12
+const pointSizePx = 32
 
 export function MeasurementExplorer({
   busy = false,
@@ -29,17 +32,44 @@ export function MeasurementExplorer({
   selectedId?: number | null
 }) {
   const [search, setSearch] = useState('')
-  const [page, setPage] = useState(0)
+  const [pagination, setPagination] = useState({ page: 0, pageSize: fallbackPageSize })
   const [anchorId, setAnchorId] = useState<number | null>(null)
   const [selectedRows, setSelectedRows] = useState<ReadonlyMap<number, SavedMeasurement>>(new Map())
   const [deleting, setDeleting] = useState(false)
+  const pointsViewportRef = useRef<HTMLDivElement>(null)
+  const { page, pageSize } = pagination
+
+  useLayoutEffect(() => {
+    const viewport = pointsViewportRef.current
+    if (!viewport) return
+    const updatePageSize = (width: number, height: number) => {
+      if (width <= 0 || height <= 0) return
+      const columns = Math.max(1, Math.floor((width - pointPaddingPx * 2 + pointGapPx) / (pointSizePx + pointGapPx)))
+      const rows = Math.max(1, Math.floor((height - pointPaddingPx * 2 + pointGapPx) / (pointSizePx + pointGapPx)))
+      const nextPageSize = columns * rows
+      setPagination((current) => {
+        if (current.pageSize === nextPageSize) return current
+        const firstVisibleOffset = current.page * current.pageSize
+        return { page: Math.floor(firstVisibleOffset / nextPageSize), pageSize: nextPageSize }
+      })
+    }
+
+    const bounds = viewport.getBoundingClientRect()
+    updatePageSize(bounds.width, bounds.height)
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) updatePageSize(entry.contentRect.width, entry.contentRect.height)
+    })
+    observer.observe(viewport)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
-    setPage(0)
+    setPagination((current) => (current.page === 0 ? current : { ...current, page: 0 }))
     setAnchorId(null)
   }, [search])
   useEffect(() => {
-    setPage(0)
+    setPagination((current) => (current.page === 0 ? current : { ...current, page: 0 }))
     setAnchorId(null)
     setSelectedRows(new Map())
   }, [experimentId])
@@ -59,7 +89,7 @@ export function MeasurementExplorer({
       filter: { experiment_id: [experimentId, experimentId] },
       sort: ['updated_at', 'desc'] as [string, 'desc'],
     }
-  }, [experimentId, page, search])
+  }, [experimentId, page, pageSize, search])
   const query = useQuery({
     queryKey: ['cae-workbench', 'measurements', request],
     queryFn: () => dbTables.Measurement.listRows(request),
@@ -69,9 +99,11 @@ export function MeasurementExplorer({
   const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1)
   const rows = useMemo(() => (query.data?.items ?? []) as SavedMeasurement[], [query.data?.items])
 
-  useEffect(() => setAnchorId(null), [page])
+  useEffect(() => setAnchorId(null), [page, pageSize])
   useEffect(() => {
-    if (!query.isFetching && page > lastPage) setPage(lastPage)
+    if (!query.isFetching && page > lastPage) {
+      setPagination((current) => ({ ...current, page: lastPage }))
+    }
   }, [lastPage, page, query.isFetching])
   useEffect(() => {
     setSelectedRows((current) => {
@@ -182,7 +214,7 @@ export function MeasurementExplorer({
           </Button>
         ) : null}
       </div>
-      <div className="min-h-48 flex-1 overflow-y-auto rounded-md border">
+      <div ref={pointsViewportRef} className="min-h-48 flex-1 overflow-y-auto rounded-md border">
         {experimentId === null ? (
           <div className="grid min-h-48 place-items-center px-4 text-center text-sm text-muted-foreground">
             먼저 저장된 Experiment를 불러오세요.
@@ -199,7 +231,12 @@ export function MeasurementExplorer({
         ) : rows.length ? (
           <ul
             aria-label="Measurement 점 배열"
-            className="grid grid-cols-[repeat(auto-fill,2rem)] content-start gap-3 p-3"
+            className="grid content-start"
+            style={{
+              gap: pointGapPx,
+              gridTemplateColumns: `repeat(auto-fill, ${pointSizePx}px)`,
+              padding: pointPaddingPx,
+            }}
           >
             {rows.map((row) => {
               const selected = selectedRows.has(row.id)
@@ -235,7 +272,13 @@ export function MeasurementExplorer({
       <footer className="flex shrink-0 items-center justify-between gap-3">
         <span className="text-xs text-muted-foreground">{total.toLocaleString()}개</span>
         <div className="flex gap-2">
-          <Button disabled={page === 0} size="sm" type="button" variant="outline" onClick={() => setPage(page - 1)}>
+          <Button
+            disabled={page === 0}
+            size="sm"
+            type="button"
+            variant="outline"
+            onClick={() => setPagination((current) => ({ ...current, page: current.page - 1 }))}
+          >
             <ChevronLeft /> 이전
           </Button>
           <Button
@@ -243,7 +286,7 @@ export function MeasurementExplorer({
             size="sm"
             type="button"
             variant="outline"
-            onClick={() => setPage(page + 1)}
+            onClick={() => setPagination((current) => ({ ...current, page: current.page + 1 }))}
           >
             다음 <ChevronRight />
           </Button>

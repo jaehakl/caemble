@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, renderHook, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
@@ -34,10 +34,12 @@ function workbench(newExperiment = vi.fn()) {
       cancelable: false,
       deleteMeasurements: vi.fn(),
       generateAndRun: vi.fn(),
+      generateAndRunBatch: null,
       generateCandidate: vi.fn(),
       operation: null,
       pendingRecordMeasurementId: null,
       retryRecord: vi.fn(),
+      repeatGenerateAndRun: vi.fn(),
       saveCurrent: vi.fn(),
     },
     newExperiment,
@@ -49,7 +51,7 @@ function workbench(newExperiment = vi.fn()) {
 
 function options(state: CaeWorkbenchState, overrides: Record<string, unknown> = {}) {
   return {
-    analysisTab: 'overview',
+    analysisTab: 'explore',
     authenticated: false,
     experimentAuthoringState: null,
     guardReplacement: vi.fn((run: () => unknown) => run()),
@@ -142,14 +144,15 @@ describe('CAE page contextual ribbon actions', () => {
     expect(params.requestAnalysisCommand).toHaveBeenCalledWith('reload')
   })
 
-  it('places Generate & Run before Run and turns it into Cancel only during its Simulation phase', () => {
+  it('places Generate & Run, the default repeat count, Repeat Run, and Run in order', () => {
     const state = workbench()
     const generateAndRun = vi.fn()
+    const repeatGenerateAndRun = vi.fn()
     const eligible = {
       ...state,
       experimentClean: true,
       experimentDocument: { ...state.experimentDocument, draftTaskNames: [], runIsBusy: false },
-      measurementActions: { ...state.measurementActions, generateAndRun },
+      measurementActions: { ...state.measurementActions, generateAndRun, repeatGenerateAndRun },
     } as unknown as CaeWorkbenchState
     const params = options(eligible, { authenticated: true })
     const { result, unmount } = renderHook(() => useCaePageChrome(params))
@@ -157,11 +160,19 @@ describe('CAE page contextual ribbon actions', () => {
 
     render(<TooltipProvider delayDuration={0}>{measurement.content}</TooltipProvider>)
     const generateButton = screen.getByRole('button', { name: 'Generate & Run' })
+    const repeatInput = screen.getByRole('spinbutton', { name: 'Repeat Run 횟수' })
+    const repeatButton = screen.getByRole('button', { name: 'Repeat Run' })
     const runButton = screen.getByRole('button', { name: /^Run:/ })
-    expect(generateButton.compareDocumentPosition(runButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(repeatInput).toHaveValue(10)
+    expect(repeatInput).not.toHaveAttribute('max')
+    expect(generateButton.compareDocumentPosition(repeatInput) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(repeatInput.compareDocumentPosition(repeatButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(repeatButton.compareDocumentPosition(runButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     act(() => generateButton.click())
-    expect(params.runSafely).toHaveBeenCalledOnce()
+    act(() => repeatButton.click())
+    expect(params.runSafely).toHaveBeenCalledTimes(2)
     expect(generateAndRun).toHaveBeenCalledOnce()
+    expect(repeatGenerateAndRun).toHaveBeenCalledWith(10)
     unmount()
     cleanup()
 
@@ -184,6 +195,61 @@ describe('CAE page contextual ribbon actions', () => {
     expect(cancel).toHaveBeenCalledOnce()
   })
 
+  it('validates positive safe repeat counts and assigns Cancel to the active Repeat Run only', () => {
+    const state = workbench()
+    const eligible = {
+      ...state,
+      experimentClean: true,
+      experimentDocument: { ...state.experimentDocument, draftTaskNames: [], runIsBusy: false },
+    } as unknown as CaeWorkbenchState
+    const hook = renderHook(() => useCaePageChrome(options(eligible, { authenticated: true })))
+    let measurement = hook.result.current.ribbonPanels.find((panel) => panel.sectionId === 'measurement')!
+    const view = render(<TooltipProvider delayDuration={0}>{measurement.content}</TooltipProvider>)
+    const input = screen.getByRole('spinbutton', { name: 'Repeat Run 횟수' })
+
+    fireEvent.change(input, { target: { value: '0' } })
+    measurement = hook.result.current.ribbonPanels.find((panel) => panel.sectionId === 'measurement')!
+    view.rerender(<TooltipProvider delayDuration={0}>{measurement.content}</TooltipProvider>)
+    expect(screen.getByRole('spinbutton', { name: 'Repeat Run 횟수' })).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByRole('button', { name: /Repeat Run: 반복 횟수는 양의 정수여야 합니다/ })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Repeat Run 횟수' }), {
+      target: { value: String(Number.MAX_SAFE_INTEGER) },
+    })
+    measurement = hook.result.current.ribbonPanels.find((panel) => panel.sectionId === 'measurement')!
+    view.rerender(<TooltipProvider delayDuration={0}>{measurement.content}</TooltipProvider>)
+    expect(screen.getByRole('button', { name: 'Repeat Run' })).not.toHaveAttribute('aria-disabled', 'true')
+    hook.unmount()
+    cleanup()
+
+    const cancel = vi.fn()
+    const repeating = {
+      ...eligible,
+      measurementActions: {
+        ...eligible.measurementActions,
+        busy: true,
+        cancel,
+        cancelable: true,
+        generateAndRunBatch: { attempt: 3, failures: 1, repeat: true, successes: 1, total: 10 },
+        operation: 'generate-and-run',
+      },
+    } as unknown as CaeWorkbenchState
+    const running = renderHook(() => useCaePageChrome(options(repeating, { authenticated: true })))
+    const runningPanel = running.result.current.ribbonPanels.find((panel) => panel.sectionId === 'measurement')!
+    render(<TooltipProvider delayDuration={0}>{runningPanel.content}</TooltipProvider>)
+
+    expect(screen.getByRole('button', { name: 'Generate & Run: 다른 CAE 작업이 진행 중입니다.' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+    expect(screen.getByRole('spinbutton', { name: 'Repeat Run 횟수' })).toBeDisabled()
+    act(() => screen.getByRole('button', { name: 'Cancel' }).click())
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+
   it('marks only the selected Analysis and Help ribbon selectors as pressed', () => {
     const params = options(workbench(), { analysisTab: 'prediction', helpKind: 'solvers' })
     const { result } = renderHook(() => useCaePageChrome(params))
@@ -198,7 +264,7 @@ describe('CAE page contextual ribbon actions', () => {
     )
 
     expect(screen.getByRole('button', { name: 'Prediction' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('button', { name: 'Overview' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: 'Explore' })).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByRole('button', { name: 'Solvers' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: 'Manual' })).toHaveAttribute('aria-pressed', 'false')
   })

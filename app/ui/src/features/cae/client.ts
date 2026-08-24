@@ -251,7 +251,6 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
           message: 'CAE 실행이 완료되었습니다.',
           jobId,
           runId,
-          progress: 1,
           details: { recordCount: recordSequences.length },
         })
         report({
@@ -467,6 +466,7 @@ function handleEvent(event: JobEvent, runId: string, jobId: string | null, callb
   })
   callbacks.onProgress?.(normalized)
   emitRuntimeActivity(callbacks.onActivity, {
+    id: `cae-progress:${runId}:${normalized.task}`,
     source: 'cae',
     level: 'info',
     phase: 'run.progress',

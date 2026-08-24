@@ -83,8 +83,9 @@ export function createRuntimeConsoleStore(dependencies: StoreDependencies = {}):
         ? Math.min(1, Math.max(0, activity.progress))
         : undefined
     const details = safeDetails(activity.details)
+    const requestedId = boundedString(activity.id, maxIdentifierLength)
     const event: RuntimeActivityEvent = Object.freeze({
-      id: boundedString(activity.id, maxIdentifierLength) || boundedString(createId(), maxIdentifierLength),
+      id: requestedId || boundedString(createId(), maxIdentifierLength),
       timestamp,
       source: sources.has(activity.source) ? activity.source : 'cad',
       level: levels.has(activity.level) ? activity.level : 'info',
@@ -95,8 +96,20 @@ export function createRuntimeConsoleStore(dependencies: StoreDependencies = {}):
       ...(progress === undefined ? {} : { progress }),
       ...(details ? { details } : {}),
     })
-    const nextEvents = [...snapshot.events, event]
-    sizes = [...sizes, eventByteLength(event)]
+    const replacementIndex =
+      progress === undefined || !requestedId
+        ? -1
+        : snapshot.events.findIndex((current) => current.id === event.id && current.progress !== undefined)
+    const nextEvents = [...snapshot.events]
+    const nextSizes = [...sizes]
+    if (replacementIndex >= 0) {
+      nextEvents[replacementIndex] = event
+      nextSizes[replacementIndex] = eventByteLength(event)
+    } else {
+      nextEvents.push(event)
+      nextSizes.push(eventByteLength(event))
+    }
+    sizes = nextSizes
     let byteLength = sizes.reduce((total, size) => total + size, 0)
     while (nextEvents.length > RUNTIME_CONSOLE_MAX_EVENTS || byteLength > RUNTIME_CONSOLE_MAX_BYTES) {
       nextEvents.shift()

@@ -1,19 +1,17 @@
-import { useQuery } from '@tanstack/react-query'
 import {
   AlertTriangle,
   BrainCircuit,
-  ChartNoAxesCombined,
+  Check,
   Download,
   LoaderCircle,
   LogIn,
   RefreshCw,
+  Search,
   Sparkles,
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { dbTables, getListRequest } from '@/api'
-import type { ExperimentRecord } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -22,6 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuth } from '@/features/auth/use-auth'
+import type { AnalysisTabId } from '@/features/cae-workbench/types'
 import { cn } from '@/lib/utils'
 import type {
   AnalysisColumnDescriptor,
@@ -29,12 +28,14 @@ import type {
   AnalysisPredictionResult,
   AnalysisProfile,
   AnalysisProgressStage,
+  AnalysisRelationshipPlot,
+  AnalysisRelationshipsResult,
   AnalysisTablePage,
   AnalysisWorkerRequest,
   AnalysisWorkerResponse,
 } from './analysis-types'
 
-export type AnalysisTab = 'overview' | 'relationships' | 'mining' | 'prediction' | 'data'
+export type AnalysisTab = AnalysisTabId
 
 export type AnalysisCommand = Readonly<{
   id: number | string
@@ -45,15 +46,13 @@ export type AnalysisWorkspaceProps = {
   command?: AnalysisCommand | null
   experimentId: number | null
   embedded?: boolean
-  initialTargetKey?: string | null
   onRequestLogin?: () => void
-  onExperimentIdChange?: (id: number) => void
   onTabChange?: (tab: AnalysisTab) => void
-  onTargetKeyChange?: (key: string | null) => void
   settingsContainer?: Element | null
-  showContextSelectors?: boolean
   tab?: AnalysisTab
 }
+
+const RELATIONSHIP_PAGE_SIZE = 50
 
 function AnalysisSettingsSlot({
   children,
@@ -73,11 +72,11 @@ function AnalysisSettingsSlot({
     <div className="p-3" data-analysis-settings={id}>
       {title ? (
         <Card>
-          <CardHeader className="p-3 pb-0">
-            <CardTitle className="text-sm">{title}</CardTitle>
-            {description ? <CardDescription className="text-xs">{description}</CardDescription> : null}
+          <CardHeader className="p-4 pb-0">
+            <CardTitle className="text-base">{title}</CardTitle>
+            {description ? <CardDescription className="text-xs leading-5">{description}</CardDescription> : null}
           </CardHeader>
-          <CardContent className="space-y-3 p-3">{children}</CardContent>
+          <CardContent className="space-y-4 p-4">{children}</CardContent>
         </Card>
       ) : (
         children
@@ -87,233 +86,417 @@ function AnalysisSettingsSlot({
   )
 }
 
-function formatNumber(value: number | undefined) {
-  if (value === undefined || !Number.isFinite(value)) return '—'
+function formatNumber(value: number | undefined | null) {
+  if (value === undefined || value === null || !Number.isFinite(value)) return '—'
   const absolute = Math.abs(value)
   if ((absolute > 0 && absolute < 0.001) || absolute >= 1_000_000) return value.toExponential(3)
   return new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 4 }).format(value)
 }
 
+function columnLabel(column: AnalysisColumnDescriptor | undefined) {
+  if (!column) return '—'
+  if (column.source === 'measurement-vars') return column.label.replace(/^measurement\.vars\./, '')
+  return column.label
+}
+
+function columnMeta(column: AnalysisColumnDescriptor | undefined) {
+  if (!column) return ''
+  return [column.unit, column.quantityKind, column.source].find(Boolean) ?? column.source
+}
+
+function MetricCard({ label, value, detail }: { label: string; value: number | string; detail?: string }) {
+  return (
+    <div className="min-w-0 rounded-xl border bg-muted/15 p-3.5">
+      <p className="truncate text-xs font-medium text-muted-foreground">{label}</p>
+      <p className="mt-1 text-xl font-semibold tabular-nums">
+        {typeof value === 'number' ? formatNumber(value) : value}
+      </p>
+      {detail ? <p className="mt-1 truncate text-xs text-muted-foreground">{detail}</p> : null}
+    </div>
+  )
+}
+
 function Histogram({ column }: { column: AnalysisColumnDescriptor }) {
   const bins = column.histogram ?? []
   const maximum = Math.max(1, ...bins.map((bin) => bin.count))
-  if (bins.length === 0) return <p className="text-sm text-muted-foreground">표시할 숫자 값이 없습니다.</p>
+  if (bins.length === 0) return <p className="py-10 text-center text-sm text-muted-foreground">표시할 값이 없습니다.</p>
   return (
-    <div>
-      <svg aria-label={`${column.label} histogram`} className="h-56 w-full" role="img" viewBox="0 0 640 220">
-        <line stroke="currentColor" strokeOpacity="0.2" x1="36" x2="620" y1="190" y2="190" />
+    <div className="overflow-x-auto">
+      <svg
+        aria-label={`${columnLabel(column)} histogram`}
+        className="h-56 w-full min-w-[480px]"
+        role="img"
+        viewBox="0 0 640 220"
+      >
+        <line stroke="currentColor" strokeOpacity="0.18" x1="36" x2="620" y1="190" y2="190" />
         {bins.map((bin, index) => {
           const width = 570 / bins.length
           const height = (bin.count / maximum) * 160
           return (
-            <g key={`${bin.min}-${bin.max}`}>
-              <rect
-                className="fill-primary/75"
-                height={height}
-                rx="2"
-                width={Math.max(2, width - 4)}
-                x={40 + index * width}
-                y={190 - height}
-              />
+            <rect
+              className="fill-primary/75"
+              height={height}
+              key={`${bin.min}-${bin.max}`}
+              rx="2"
+              width={Math.max(2, width - 4)}
+              x={40 + index * width}
+              y={190 - height}
+            >
               <title>{`${formatNumber(bin.min)}–${formatNumber(bin.max)}: ${bin.count}`}</title>
+            </rect>
+          )
+        })}
+        <text className="fill-muted-foreground" fontSize="11" textAnchor="start" x="38" y="211">
+          {formatNumber(column.min)}
+        </text>
+        <text className="fill-muted-foreground" fontSize="11" textAnchor="end" x="618" y="211">
+          {formatNumber(column.max)}
+        </text>
+      </svg>
+    </div>
+  )
+}
+
+type ScatterPoint = Readonly<{
+  x: number
+  y: number
+  measurementId?: number
+  cluster?: number
+  outlier?: boolean
+}>
+
+function ScatterPlot({
+  diagonal = false,
+  label,
+  points,
+  xLabel,
+  yLabel,
+}: {
+  diagonal?: boolean
+  label: string
+  points: readonly ScatterPoint[]
+  xLabel: string
+  yLabel: string
+}) {
+  const finite = points.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+  if (finite.length === 0)
+    return <p className="py-16 text-center text-sm text-muted-foreground">표시할 좌표가 없습니다.</p>
+  const rawMinX = Math.min(...finite.map((point) => point.x))
+  const rawMaxX = Math.max(...finite.map((point) => point.x))
+  const rawMinY = Math.min(...finite.map((point) => point.y))
+  const rawMaxY = Math.max(...finite.map((point) => point.y))
+  const paddingX = (rawMaxX - rawMinX || Math.abs(rawMinX) || 1) * 0.06
+  const paddingY = (rawMaxY - rawMinY || Math.abs(rawMinY) || 1) * 0.08
+  const minX = rawMinX - paddingX
+  const maxX = rawMaxX + paddingX
+  const minY = rawMinY - paddingY
+  const maxY = rawMaxY + paddingY
+  const left = 78
+  const right = 704
+  const top = 18
+  const bottom = 326
+  const scaleX = (value: number) => left + ((value - minX) / (maxX - minX || 1)) * (right - left)
+  const scaleY = (value: number) => bottom - ((value - minY) / (maxY - minY || 1)) * (bottom - top)
+  const ticks = Array.from({ length: 5 }, (_, index) => index / 4)
+  const colors = ['#ea580c', '#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#dc2626', '#4f46e5']
+  const diagonalStart = Math.max(minX, minY)
+  const diagonalEnd = Math.min(maxX, maxY)
+  return (
+    <div className="overflow-x-auto">
+      <svg aria-label={label} className="h-[380px] w-full min-w-[560px]" role="img" viewBox="0 0 730 390">
+        {ticks.map((ratio) => {
+          const x = left + ratio * (right - left)
+          const y = bottom - ratio * (bottom - top)
+          return (
+            <g key={ratio}>
+              <line stroke="currentColor" strokeOpacity="0.08" x1={x} x2={x} y1={top} y2={bottom} />
+              <line stroke="currentColor" strokeOpacity="0.08" x1={left} x2={right} y1={y} y2={y} />
+              <text className="fill-muted-foreground" fontSize="10" textAnchor="middle" x={x} y={bottom + 18}>
+                {formatNumber(minX + ratio * (maxX - minX))}
+              </text>
+              <text
+                className="fill-muted-foreground"
+                dominantBaseline="middle"
+                fontSize="10"
+                textAnchor="end"
+                x={left - 8}
+                y={y}
+              >
+                {formatNumber(minY + ratio * (maxY - minY))}
+              </text>
             </g>
           )
         })}
-      </svg>
-      <div className="flex justify-between text-xs text-muted-foreground">
-        <span>{formatNumber(column.min)}</span>
-        <span>{formatNumber(column.max)}</span>
-      </div>
-    </div>
-  )
-}
-
-function ScatterPlot({
-  label,
-  points,
-}: {
-  label: string
-  points: readonly Readonly<{ x: number; y: number; cluster?: number; outlier?: boolean }>[]
-}) {
-  const finite = points.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
-  if (finite.length === 0) return <p className="text-sm text-muted-foreground">표시할 좌표가 없습니다.</p>
-  const minX = Math.min(...finite.map((point) => point.x))
-  const maxX = Math.max(...finite.map((point) => point.x))
-  const minY = Math.min(...finite.map((point) => point.y))
-  const maxY = Math.max(...finite.map((point) => point.y))
-  const scaleX = (value: number) => 35 + ((value - minX) / (maxX - minX || 1)) * 580
-  const scaleY = (value: number) => 285 - ((value - minY) / (maxY - minY || 1)) * 250
-  const colors = ['#2563eb', '#db2777', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#dc2626', '#4f46e5']
-  return (
-    <svg aria-label={label} className="h-80 w-full" role="img" viewBox="0 0 640 320">
-      <line stroke="currentColor" strokeOpacity="0.18" x1="35" x2="615" y1="285" y2="285" />
-      <line stroke="currentColor" strokeOpacity="0.18" x1="35" x2="35" y1="35" y2="285" />
-      {finite.map((point, index) => (
-        <circle
-          cx={scaleX(point.x)}
-          cy={scaleY(point.y)}
-          fill={colors[(point.cluster ?? 0) % colors.length]}
-          key={index}
-          opacity="0.72"
-          r={point.outlier ? 5 : 3.5}
-          stroke={point.outlier ? '#111827' : 'none'}
-          strokeWidth="1.5"
-        >
-          <title>{`${formatNumber(point.x)}, ${formatNumber(point.y)}${point.outlier ? ' · 이상치' : ''}`}</title>
-        </circle>
-      ))}
-    </svg>
-  )
-}
-
-function CorrelationHeatmap({
-  keys,
-  matrix,
-}: {
-  keys: readonly string[]
-  matrix: readonly (readonly (number | null)[])[]
-}) {
-  const shownKeys = keys.slice(0, 15)
-  if (shownKeys.length === 0) return <p className="text-sm text-muted-foreground">상관계수 결과가 없습니다.</p>
-  const size = 28
-  const margin = 145
-  return (
-    <div className="overflow-x-auto">
-      <svg
-        aria-label="Pearson correlation heatmap"
-        className="min-w-max"
-        role="img"
-        viewBox={`0 0 ${margin + size * shownKeys.length + 10} ${margin + size * shownKeys.length + 10}`}
-        width={margin + size * shownKeys.length + 10}
-      >
-        {shownKeys.map((key, index) => (
-          <g key={key}>
-            <text fontSize="9" textAnchor="end" x={margin - 7} y={margin + index * size + 18}>
-              {key.slice(-20)}
-            </text>
-            <text
-              fontSize="9"
-              textAnchor="start"
-              transform={`rotate(-50 ${margin + index * size + 14} ${margin - 8})`}
-              x={margin + index * size + 14}
-              y={margin - 8}
-            >
-              {key.slice(-20)}
-            </text>
-          </g>
+        <line stroke="currentColor" strokeOpacity="0.35" x1={left} x2={right} y1={bottom} y2={bottom} />
+        <line stroke="currentColor" strokeOpacity="0.35" x1={left} x2={left} y1={top} y2={bottom} />
+        {diagonal && diagonalStart < diagonalEnd ? (
+          <line
+            stroke="currentColor"
+            strokeDasharray="6 5"
+            strokeOpacity="0.45"
+            x1={scaleX(diagonalStart)}
+            x2={scaleX(diagonalEnd)}
+            y1={scaleY(diagonalStart)}
+            y2={scaleY(diagonalEnd)}
+          />
+        ) : null}
+        {finite.map((point, index) => (
+          <circle
+            cx={scaleX(point.x)}
+            cy={scaleY(point.y)}
+            fill={colors[(point.cluster ?? 0) % colors.length]}
+            key={`${point.measurementId ?? index}-${index}`}
+            opacity="0.76"
+            r={point.outlier ? 5 : 3.8}
+            stroke={point.outlier ? '#111827' : 'white'}
+            strokeWidth={point.outlier ? 1.5 : 0.7}
+          >
+            <title>{`${point.measurementId ? `Measurement #${point.measurementId} · ` : ''}${formatNumber(point.x)}, ${formatNumber(point.y)}${point.outlier ? ' · 이상치' : ''}`}</title>
+          </circle>
         ))}
-        {shownKeys.flatMap((_, row) =>
-          shownKeys.map((__, column) => {
-            const value = matrix[row]?.[column]
-            const intensity = value === null || value === undefined ? 0 : Math.abs(value)
-            const color =
-              value !== null && value < 0 ? `rgba(37, 99, 235, ${intensity})` : `rgba(220, 38, 38, ${intensity})`
-            return (
-              <rect
-                fill={color}
-                height={size - 1}
-                key={`${row}-${column}`}
-                width={size - 1}
-                x={margin + column * size}
-                y={margin + row * size}
-              >
-                <title>{value === null || value === undefined ? '계산 불가' : formatNumber(value)}</title>
-              </rect>
-            )
-          }),
-        )}
+        <text
+          className="fill-foreground"
+          fontSize="12"
+          fontWeight="600"
+          textAnchor="middle"
+          x={(left + right) / 2}
+          y="378"
+        >
+          {xLabel}
+        </text>
+        <text
+          className="fill-foreground"
+          fontSize="12"
+          fontWeight="600"
+          textAnchor="middle"
+          transform="rotate(-90 18 172)"
+          x="18"
+          y="172"
+        >
+          {yLabel}
+        </text>
       </svg>
-      {keys.length > shownKeys.length ? (
-        <p className="mt-2 text-xs text-muted-foreground">가독성을 위해 선택한 열 중 앞의 15개만 표시합니다.</p>
-      ) : null}
     </div>
   )
 }
 
-function FeaturePicker({
+function ColumnPicker({
   columns,
   disabled,
+  max = 500,
   selected,
   onChange,
 }: {
   columns: readonly AnalysisColumnDescriptor[]
   disabled: boolean
+  max?: number
   selected: readonly string[]
   onChange: (keys: readonly string[]) => void
 }) {
+  const [query, setQuery] = useState('')
+  const available = columns.filter((column) => column.eligible)
+  const shown = columns.filter((column) => {
+    const needle = query.trim().toLocaleLowerCase()
+    return !needle || `${column.label} ${column.key} ${column.source}`.toLocaleLowerCase().includes(needle)
+  })
   return (
-    <div className="grid max-h-64 gap-2 overflow-y-auto rounded-lg border p-3 sm:grid-cols-2 xl:grid-cols-3">
-      {columns.map((column) => {
-        const checked = selected.includes(column.key)
-        return (
-          <label className={cn('flex gap-2 text-sm', !column.eligible && 'text-muted-foreground')} key={column.key}>
-            <input
-              checked={checked}
-              disabled={disabled || !column.eligible}
-              onChange={(event) => {
-                if (!event.target.checked) {
-                  onChange(selected.filter((key) => key !== column.key))
-                  return
-                }
-                if (selected.length < 50) onChange([...selected, column.key])
-              }}
-              type="checkbox"
-            />
-            <span className="min-w-0">
-              <span className="block truncate" title={column.label}>
-                {column.label}
-              </span>
-              <span className="block text-xs text-muted-foreground">
-                {column.source} · 누락 {(column.missingRatio * 100).toFixed(1)}%
-                {column.exclusionReason ? ` · ${column.exclusionReason}` : ''}
-              </span>
-            </span>
-          </label>
-        )
-      })}
+    <div className="space-y-3">
+      <div className="relative">
+        <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          aria-label="분석 열 검색"
+          className="pl-9"
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="이름 또는 source 검색"
+          value={query}
+        />
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          disabled={disabled || available.length === 0}
+          onClick={() => onChange(available.slice(0, max).map((column) => column.key))}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          사용 가능 전체
+        </Button>
+        <Button
+          disabled={disabled || selected.length === 0}
+          onClick={() => onChange([])}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          초기화
+        </Button>
+        <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+          {selected.length}/{max}
+        </span>
+      </div>
+      <div className="max-h-80 space-y-3 overflow-y-auto rounded-lg border p-2">
+        {(['measurement-vars', 'measurement-material', 'recorded-data'] as const).map((source) => {
+          const group = shown.filter((column) => column.source === source)
+          if (group.length === 0) return null
+          return (
+            <div className="space-y-1" key={source}>
+              <p className="px-2 pt-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+                {source === 'measurement-vars'
+                  ? 'Input vars'
+                  : source === 'measurement-material'
+                    ? 'Material'
+                    : 'Recorded Data'}
+              </p>
+              {group.map((column) => {
+                const checked = selected.includes(column.key)
+                return (
+                  <label
+                    className={cn(
+                      'flex cursor-pointer items-start gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted/60',
+                      !column.eligible && 'cursor-not-allowed opacity-55',
+                    )}
+                    key={column.key}
+                  >
+                    <input
+                      checked={checked}
+                      className="mt-0.5 accent-primary"
+                      disabled={disabled || !column.eligible}
+                      onChange={(event) => {
+                        if (!event.target.checked) onChange(selected.filter((key) => key !== column.key))
+                        else if (selected.length < max) onChange([...selected, column.key])
+                      }}
+                      type="checkbox"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium" title={column.key}>
+                        {columnLabel(column)}
+                      </span>
+                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                        누락 {(column.missingRatio * 100).toFixed(1)}%{column.unit ? ` · ${column.unit}` : ''}
+                      </span>
+                      {column.exclusionReason ? (
+                        <span className="mt-0.5 block text-xs text-amber-700">{column.exclusionReason}</span>
+                      ) : null}
+                    </span>
+                  </label>
+                )
+              })}
+            </div>
+          )
+        })}
+        {shown.length === 0 ? (
+          <p className="px-2 py-8 text-center text-xs text-muted-foreground">일치하는 열이 없습니다.</p>
+        ) : null}
+      </div>
     </div>
   )
 }
 
-function MetricCard({ label, value }: { label: string; value: number }) {
+function SearchableColumnSelect({
+  columns,
+  label,
+  onChange,
+  value,
+}: {
+  columns: readonly AnalysisColumnDescriptor[]
+  label: string
+  onChange: (key: string) => void
+  value: string
+}) {
+  const [query, setQuery] = useState('')
+  const needle = query.trim().toLocaleLowerCase()
+  const shown = columns.filter(
+    (column) =>
+      !needle || `${columnLabel(column)} ${column.key} ${column.unit ?? ''}`.toLocaleLowerCase().includes(needle),
+  )
   return (
-    <div className="rounded-lg border bg-muted/20 p-3">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 text-lg font-semibold tabular-nums">{formatNumber(value)}</p>
+    <div className="space-y-2">
+      <p className="text-sm font-medium">{label}</p>
+      <div className="relative">
+        <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          aria-label={`${label} 검색`}
+          className="pl-9"
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="이름 검색"
+          value={query}
+        />
+      </div>
+      <div aria-label={label} className="max-h-44 space-y-1 overflow-y-auto rounded-lg border p-1.5" role="listbox">
+        {shown.map((column) => (
+          <button
+            aria-selected={column.key === value}
+            className={cn(
+              'flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-muted/60',
+              column.key === value && 'bg-primary/10 text-primary',
+            )}
+            key={column.key}
+            onClick={() => onChange(column.key)}
+            role="option"
+            type="button"
+          >
+            <Check className={cn('size-4 shrink-0', column.key !== value && 'invisible')} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-medium">{columnLabel(column)}</span>
+              <span className="block truncate text-xs text-muted-foreground">
+                {column.unit ?? column.quantityKind ?? column.source}
+              </span>
+            </span>
+          </button>
+        ))}
+        {shown.length === 0 ? (
+          <p className="px-2 py-6 text-center text-xs text-muted-foreground">일치하는 열이 없습니다.</p>
+        ) : null}
+      </div>
     </div>
+  )
+}
+
+function EmptyResult({ children }: { children: ReactNode }) {
+  return (
+    <Card>
+      <CardContent className="flex min-h-44 items-center justify-center px-6 text-center text-sm leading-6 text-muted-foreground">
+        {children}
+      </CardContent>
+    </Card>
   )
 }
 
 export function AnalysisWorkspace({
   command,
-  experimentId: selectedExperimentId,
+  experimentId,
   embedded = false,
-  initialTargetKey = null,
   onRequestLogin,
-  onExperimentIdChange,
   onTabChange,
-  onTargetKeyChange,
   settingsContainer,
-  showContextSelectors = false,
   tab: controlledTab,
 }: AnalysisWorkspaceProps) {
   const auth = useAuth()
-  const [workspaceTab, setWorkspaceTab] = useState<AnalysisTab>(controlledTab ?? 'overview')
+  const [workspaceTab, setWorkspaceTab] = useState<AnalysisTab>(controlledTab ?? 'explore')
   const tab = controlledTab ?? workspaceTab
-
   const [profile, setProfile] = useState<AnalysisProfile | null>(null)
+  const [relationships, setRelationships] = useState<AnalysisRelationshipsResult | null>(null)
+  const [relationshipPlot, setRelationshipPlot] = useState<AnalysisRelationshipPlot | null>(null)
   const [mining, setMining] = useState<AnalysisMiningResult | null>(null)
   const [prediction, setPrediction] = useState<AnalysisPredictionResult | null>(null)
   const [tablePage, setTablePage] = useState<AnalysisTablePage | null>(null)
   const [tableOffset, setTableOffset] = useState(0)
-  const [selectedFeatureKeys, setSelectedFeatureKeys] = useState<readonly string[]>([])
-  const [selectedTargetKey, setSelectedTargetKey] = useState('')
+  const [relationshipOffset, setRelationshipOffset] = useState(0)
+  const [exploreInputKey, setExploreInputKey] = useState('')
+  const [exploreTargetKey, setExploreTargetKey] = useState('')
+  const [miningFeatureKeys, setMiningFeatureKeys] = useState<readonly string[]>([])
+  const [predictionFeatureKeys, setPredictionFeatureKeys] = useState<readonly string[]>([])
+  const [predictionTargetKey, setPredictionTargetKey] = useState('')
+  const [dataColumnKeys, setDataColumnKeys] = useState<readonly string[]>([])
   const [histogramKey, setHistogramKey] = useState('')
-  const [xKey, setXKey] = useState('')
-  const [yKey, setYKey] = useState('')
+  const [profileSearch, setProfileSearch] = useState('')
+  const [profileSource, setProfileSource] = useState<'all' | AnalysisColumnDescriptor['source']>('all')
+  const [profileStatus, setProfileStatus] = useState<'all' | 'eligible' | 'excluded'>('all')
   const [whatIf, setWhatIf] = useState<Readonly<Record<string, number>>>({})
   const [outlierPercent, setOutlierPercent] = useState(5)
-  const [busy, setBusy] = useState<'export' | 'load' | 'mine' | 'predict' | null>(null)
+  const [busy, setBusy] = useState<'export' | 'load' | 'mine' | 'predict' | 'what-if' | null>(null)
+  const [relationshipsBusy, setRelationshipsBusy] = useState(false)
+  const [plotBusy, setPlotBusy] = useState(false)
   const [progress, setProgress] = useState<AnalysisProgressStage | null>(null)
   const [progressCount, setProgressCount] = useState<Readonly<{ completed: number; total: number }> | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -323,24 +506,16 @@ export function AnalysisWorkspace({
   const requestSequence = useRef(0)
   const loadRequestId = useRef('')
   const activeRequestId = useRef('')
+  const relationshipsRequestId = useRef('')
+  const plotRequestId = useRef('')
   const tableRequestId = useRef('')
   const staleRequestId = useRef('')
   const handledCommandId = useRef<AnalysisCommand['id'] | null>(null)
-  const targetQueryRef = useRef(initialTargetKey)
-  targetQueryRef.current = initialTargetKey
+  const exploreInputRef = useRef('')
+  const exploreTargetRef = useRef('')
 
-  const experimentsQuery = useQuery({
-    queryKey: ['analysis', 'experiments'],
-    queryFn: () => dbTables.Experiment.listRows({ ...getListRequest('visible'), limit: null }),
-    enabled: auth.isAuthenticated && showContextSelectors,
-  })
-  const experiments = useMemo(
-    () =>
-      (experimentsQuery.data?.items ?? []).filter(
-        (row): row is ExperimentRecord & { id: number } => row.id !== undefined,
-      ),
-    [experimentsQuery.data?.items],
-  )
+  exploreInputRef.current = exploreInputKey
+  exploreTargetRef.current = exploreTargetKey
 
   const nextRequestId = useCallback((kind: string) => {
     requestSequence.current += 1
@@ -348,20 +523,20 @@ export function AnalysisWorkspace({
   }, [])
 
   useEffect(() => {
-    if (profile) onTargetKeyChange?.(selectedTargetKey || null)
-  }, [onTargetKeyChange, profile, selectedTargetKey])
-
-  useEffect(() => {
-    if (!auth.isAuthenticated || selectedExperimentId === null) return
+    if (!auth.isAuthenticated || experimentId === null) return
     const worker = new Worker(new URL('./analysis.worker.ts', import.meta.url), { type: 'module' })
     workerRef.current = worker
     setProfile(null)
+    setRelationships(null)
+    setRelationshipPlot(null)
     setMining(null)
     setPrediction(null)
     setTablePage(null)
     setError(null)
     setStale(false)
     setBusy('load')
+    setRelationshipsBusy(false)
+    setPlotBusy(false)
     setProgress('Measurement 조회')
     const requestId = nextRequestId('load')
     loadRequestId.current = requestId
@@ -369,7 +544,9 @@ export function AnalysisWorkspace({
     worker.onmessage = (event: MessageEvent<AnalysisWorkerResponse>) => {
       const response = event.data
       if (response.type === 'progress') {
-        if (response.requestId === loadRequestId.current || response.requestId === activeRequestId.current) {
+        if (
+          [loadRequestId.current, activeRequestId.current, relationshipsRequestId.current].includes(response.requestId)
+        ) {
           setProgress(response.stage)
           setProgressCount(
             response.completed === undefined || response.total === undefined
@@ -382,27 +559,66 @@ export function AnalysisWorkspace({
       if (response.type === 'profile' && response.requestId === loadRequestId.current) {
         const features = response.profile.columns
           .filter((column) => column.kind === 'feature' && column.eligible)
-          .sort((left, right) => {
-            const leftVars = left.source.endsWith('vars') ? 0 : 1
-            const rightVars = right.source.endsWith('vars') ? 0 : 1
-            return leftVars - rightVars || left.missingRatio - right.missingRatio
-          })
-          .slice(0, 50)
+          .sort(
+            (left, right) =>
+              Number(left.source !== 'measurement-vars') - Number(right.source !== 'measurement-vars') ||
+              left.key.localeCompare(right.key),
+          )
+        const inputs = features.filter((column) => column.source === 'measurement-vars')
         const targets = response.profile.columns.filter((column) => column.kind === 'target' && column.eligible)
-        const requestedTarget = targetQueryRef.current
-        const initialTarget = targets.some((column) => column.key === requestedTarget)
-          ? (requestedTarget ?? '')
-          : (targets[0]?.key ?? '')
+        const initialInput = inputs[0]?.key ?? ''
+        const initialTarget = targets[0]?.key ?? ''
+        const defaultFeatures = features.slice(0, 50).map((column) => column.key)
         setProfile(response.profile)
-        setSelectedFeatureKeys(features.map((column) => column.key))
-        setSelectedTargetKey(initialTarget)
-        setHistogramKey(initialTarget || features[0]?.key || '')
-        setXKey(features[0]?.key ?? '')
-        setYKey(features[1]?.key ?? features[0]?.key ?? '')
+        setExploreInputKey(initialInput)
+        setExploreTargetKey(initialTarget)
+        exploreInputRef.current = initialInput
+        exploreTargetRef.current = initialTarget
+        setPredictionTargetKey(initialTarget)
+        setMiningFeatureKeys(defaultFeatures)
+        setPredictionFeatureKeys(defaultFeatures)
+        setDataColumnKeys([initialInput, initialTarget].filter(Boolean))
+        setHistogramKey(initialTarget || initialInput)
         setWhatIf(Object.fromEntries(features.map((column) => [column.key, column.p50 ?? 0])))
         setBusy(null)
         setProgress(null)
         setProgressCount(null)
+        const relationshipsId = nextRequestId('relationships')
+        relationshipsRequestId.current = relationshipsId
+        setRelationshipsBusy(true)
+        setProgress('상관 분석')
+        worker.postMessage({ type: 'relationships', requestId: relationshipsId } satisfies AnalysisWorkerRequest)
+        return
+      }
+      if (response.type === 'relationships' && response.requestId === relationshipsRequestId.current) {
+        setRelationships(response.result)
+        setRelationshipOffset(0)
+        setRelationshipsBusy(false)
+        setProgress(null)
+        setProgressCount(null)
+        const first = response.result.pairs[0]
+        const inputKey = first?.inputKey ?? exploreInputRef.current
+        const targetKey = first?.targetKey ?? exploreTargetRef.current
+        if (inputKey && targetKey) {
+          setExploreInputKey(inputKey)
+          setExploreTargetKey(targetKey)
+          exploreInputRef.current = inputKey
+          exploreTargetRef.current = targetKey
+          const plotId = nextRequestId('plot')
+          plotRequestId.current = plotId
+          setPlotBusy(true)
+          worker.postMessage({
+            type: 'relationship-plot',
+            requestId: plotId,
+            inputKey,
+            targetKey,
+          } satisfies AnalysisWorkerRequest)
+        }
+        return
+      }
+      if (response.type === 'relationship-plot' && response.requestId === plotRequestId.current) {
+        setRelationshipPlot(response.result)
+        setPlotBusy(false)
         return
       }
       if (response.type === 'mining' && response.requestId === activeRequestId.current) {
@@ -415,6 +631,20 @@ export function AnalysisWorkspace({
         setPrediction(response.result)
         setBusy(null)
         setProgress(null)
+        return
+      }
+      if (response.type === 'prediction-what-if' && response.requestId === activeRequestId.current) {
+        setPrediction((current) =>
+          current
+            ? {
+                ...current,
+                prediction: response.result.prediction,
+                interval: response.result.interval,
+                extrapolatedFeatureKeys: response.result.extrapolatedFeatureKeys,
+              }
+            : current,
+        )
+        setBusy(null)
         return
       }
       if (response.type === 'table-page' && response.requestId === tableRequestId.current) {
@@ -433,17 +663,22 @@ export function AnalysisWorkspace({
         anchor.click()
         URL.revokeObjectURL(url)
         setBusy(null)
-        setProgress(null)
         return
       }
       if (response.type === 'error') {
         if (
-          response.requestId === loadRequestId.current ||
-          response.requestId === activeRequestId.current ||
-          response.requestId === tableRequestId.current
+          [
+            loadRequestId.current,
+            activeRequestId.current,
+            relationshipsRequestId.current,
+            plotRequestId.current,
+            tableRequestId.current,
+          ].includes(response.requestId)
         ) {
           setError(response.message)
           setBusy(null)
+          setRelationshipsBusy(false)
+          setPlotBusy(false)
           setProgress(null)
         }
       }
@@ -451,34 +686,24 @@ export function AnalysisWorkspace({
     worker.onerror = () => {
       setError('Analysis Worker를 실행하지 못했습니다.')
       setBusy(null)
-      setProgress(null)
+      setRelationshipsBusy(false)
+      setPlotBusy(false)
     }
-    worker.postMessage({
-      type: 'load-context',
-      requestId,
-      experimentId: selectedExperimentId,
-    } satisfies AnalysisWorkerRequest)
+    worker.postMessage({ type: 'load-context', requestId, experimentId } satisfies AnalysisWorkerRequest)
     return () => {
       worker.terminate()
       if (workerRef.current === worker) workerRef.current = null
     }
-  }, [auth.isAuthenticated, nextRequestId, selectedExperimentId, workerGeneration])
+  }, [auth.isAuthenticated, experimentId, nextRequestId, workerGeneration])
 
-  const dataColumnKeys = useMemo(
-    () => [...selectedFeatureKeys, ...(selectedTargetKey ? [selectedTargetKey] : [])],
-    [selectedFeatureKeys, selectedTargetKey],
-  )
+  useEffect(() => setMining(null), [outlierPercent, miningFeatureKeys])
+  useEffect(() => setPrediction(null), [predictionFeatureKeys, predictionTargetKey])
 
   useEffect(() => {
-    setMining(null)
-  }, [outlierPercent, selectedFeatureKeys, selectedTargetKey, xKey, yKey])
-
-  useEffect(() => {
-    setPrediction(null)
-  }, [selectedFeatureKeys, selectedTargetKey])
-
-  useEffect(() => {
-    if (tab !== 'data' || !profile || !workerRef.current || dataColumnKeys.length === 0) return
+    if (tab !== 'data' || !profile || !workerRef.current || dataColumnKeys.length === 0) {
+      if (dataColumnKeys.length === 0) setTablePage(null)
+      return
+    }
     const requestId = nextRequestId('table')
     tableRequestId.current = requestId
     workerRef.current.postMessage({
@@ -504,23 +729,58 @@ export function AnalysisWorkspace({
   }, [busy, nextRequestId, profile])
 
   const featureColumns = useMemo(() => profile?.columns.filter((column) => column.kind === 'feature') ?? [], [profile])
+  const inputColumns = useMemo(
+    () => featureColumns.filter((column) => column.source === 'measurement-vars' && column.eligible),
+    [featureColumns],
+  )
   const targetColumns = useMemo(
     () => profile?.columns.filter((column) => column.kind === 'target' && column.eligible) ?? [],
     [profile],
   )
-  const selectedTarget = targetColumns.find((column) => column.key === selectedTargetKey)
+  const exploreInput = inputColumns.find((column) => column.key === exploreInputKey)
+  const exploreTarget = targetColumns.find((column) => column.key === exploreTargetKey)
+  const predictionTarget = targetColumns.find((column) => column.key === predictionTargetKey)
   const histogramColumn = profile?.columns.find((column) => column.key === histogramKey)
   const predictionReady = Boolean(
-    profile &&
-    profile.rowCount >= 20 &&
-    profile.recordedMeasurementCount >= 5 &&
-    selectedTarget &&
-    selectedTarget.distinctCount >= 5 &&
-    selectedFeatureKeys.length > 0,
+    predictionTarget &&
+    predictionTarget.count >= 20 &&
+    predictionTarget.distinctCount >= 5 &&
+    (predictionTarget.distinctInputCount ?? 0) >= 5 &&
+    predictionFeatureKeys.length > 0,
   )
+  const filteredProfileColumns = useMemo(() => {
+    const needle = profileSearch.trim().toLocaleLowerCase()
+    return (
+      profile?.columns.filter(
+        (column) =>
+          (profileSource === 'all' || column.source === profileSource) &&
+          (profileStatus === 'all' || (profileStatus === 'eligible' ? column.eligible : !column.eligible)) &&
+          (!needle || `${column.label} ${column.key}`.toLocaleLowerCase().includes(needle)),
+      ) ?? []
+    )
+  }, [profile, profileSearch, profileSource, profileStatus])
+
+  const requestRelationshipPlot = (inputKey: string, targetKey: string) => {
+    if (!workerRef.current || !inputKey || !targetKey) return
+    setExploreInputKey(inputKey)
+    setExploreTargetKey(targetKey)
+    exploreInputRef.current = inputKey
+    exploreTargetRef.current = targetKey
+    setRelationshipPlot(null)
+    setPlotBusy(true)
+    setError(null)
+    const requestId = nextRequestId('plot')
+    plotRequestId.current = requestId
+    workerRef.current.postMessage({
+      type: 'relationship-plot',
+      requestId,
+      inputKey,
+      targetKey,
+    } satisfies AnalysisWorkerRequest)
+  }
 
   const runMining = () => {
-    if (!workerRef.current || selectedFeatureKeys.length < 2) return
+    if (!workerRef.current || miningFeatureKeys.length < 2) return
     const requestId = nextRequestId('mine')
     activeRequestId.current = requestId
     setBusy('mine')
@@ -528,16 +788,13 @@ export function AnalysisWorkspace({
     workerRef.current.postMessage({
       type: 'mine',
       requestId,
-      featureKeys: selectedFeatureKeys,
-      xKey: xKey || null,
-      yKey: yKey || null,
-      targetKey: selectedTargetKey || null,
+      featureKeys: miningFeatureKeys,
       outlierFraction: outlierPercent / 100,
     } satisfies AnalysisWorkerRequest)
   }
 
   const runPrediction = () => {
-    if (!workerRef.current || !selectedTargetKey || !predictionReady) return
+    if (!workerRef.current || !predictionTargetKey || !predictionReady) return
     const requestId = nextRequestId('predict')
     activeRequestId.current = requestId
     setBusy('predict')
@@ -545,15 +802,24 @@ export function AnalysisWorkspace({
     workerRef.current.postMessage({
       type: 'predict',
       requestId,
-      featureKeys: selectedFeatureKeys,
-      targetKey: selectedTargetKey,
+      featureKeys: predictionFeatureKeys,
+      targetKey: predictionTargetKey,
       whatIf,
     } satisfies AnalysisWorkerRequest)
   }
 
+  const runWhatIf = () => {
+    if (!workerRef.current || !prediction) return
+    const requestId = nextRequestId('what-if')
+    activeRequestId.current = requestId
+    setBusy('what-if')
+    setError(null)
+    workerRef.current.postMessage({ type: 'predict-what-if', requestId, whatIf } satisfies AnalysisWorkerRequest)
+  }
+
   const exportCsv = useCallback(
     (kind: 'dataset' | 'prediction') => {
-      if (!workerRef.current) return
+      if (!workerRef.current || (kind === 'dataset' && dataColumnKeys.length === 0)) return
       const requestId = nextRequestId('export')
       activeRequestId.current = requestId
       setBusy('export')
@@ -568,11 +834,7 @@ export function AnalysisWorkspace({
     [dataColumnKeys, nextRequestId],
   )
 
-  const restartWorker = useCallback(() => {
-    workerRef.current?.terminate()
-    workerRef.current = null
-    setWorkerGeneration((generation) => generation + 1)
-  }, [])
+  const restartWorker = useCallback(() => setWorkerGeneration((generation) => generation + 1), [])
 
   useEffect(() => {
     if (!command || handledCommandId.current === command.id) return
@@ -582,13 +844,12 @@ export function AnalysisWorkspace({
     else exportCsv('prediction')
   }, [command, exportCsv, restartWorker])
 
-  if (auth.isLoading) {
+  if (auth.isLoading)
     return (
       <div className="flex min-h-[420px] items-center justify-center">
         <LoaderCircle className="size-7 animate-spin text-muted-foreground" />
       </div>
     )
-  }
 
   if (!auth.isAuthenticated) {
     return (
@@ -609,58 +870,46 @@ export function AnalysisWorkspace({
     )
   }
 
-  return (
-    <div className={cn('space-y-5', !embedded && 'mx-auto max-w-[1500px] px-4 py-6 sm:px-6')}>
-      <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
-        <div>
-          <p className="text-sm font-medium text-primary">Browser analysis workspace</p>
-          <h2 className="mt-1 text-2xl font-semibold tracking-tight">Analysis</h2>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            같은 Experiment의 Measurement를 통계·마이닝하고 예측 모델을 학습합니다. 데이터와 모델은 이 브라우저 탭의
-            Worker 메모리에만 유지됩니다.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button disabled={!profile || busy !== null} onClick={() => exportCsv('dataset')} variant="outline">
-            <Download />
-            분석 데이터 CSV
-          </Button>
-          <Button disabled={!prediction || busy !== null} onClick={() => exportCsv('prediction')} variant="outline">
-            <Download />
-            Prediction CSV
-          </Button>
-        </div>
-      </div>
+  const currentTabLabel = tab === 'explore' ? 'Explore' : tab[0].toUpperCase() + tab.slice(1)
+  const relationshipPage =
+    relationships?.pairs.slice(relationshipOffset, relationshipOffset + RELATIONSHIP_PAGE_SIZE) ?? []
 
-      {showContextSelectors ? (
-        <AnalysisSettingsSlot container={settingsContainer} id="context">
-          <Card>
-            <CardContent className="pt-6">
-              <label className="space-y-1.5 text-sm">
-                <span className="font-medium">Experiment</span>
-                <Select
-                  onValueChange={(value) => {
-                    const id = Number(value)
-                    onExperimentIdChange?.(id)
-                  }}
-                  value={selectedExperimentId ? String(selectedExperimentId) : undefined}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Experiment 선택" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {experiments.map((experiment) => (
-                      <SelectItem key={experiment.id} value={String(experiment.id)}>
-                        {experiment.name} · #{experiment.id}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </label>
-            </CardContent>
-          </Card>
-        </AnalysisSettingsSlot>
-      ) : null}
+  return (
+    <div
+      className={cn(
+        'space-y-4',
+        embedded ? 'h-full min-h-0 overflow-y-auto p-4' : 'mx-auto max-w-[1500px] px-4 py-6 sm:px-6',
+      )}
+    >
+      <header
+        className={cn('flex flex-col justify-between gap-3 border-b pb-3', !embedded && 'lg:flex-row lg:items-end')}
+      >
+        <div>
+          <p className="text-xs font-semibold tracking-wide text-primary uppercase">Browser analysis</p>
+          <h2 className="mt-1 text-xl font-semibold tracking-tight">Analysis · {currentTabLabel}</h2>
+          {!embedded ? (
+            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+              같은 Experiment의 Measurement와 Recorded Data를 브라우저 Worker에서 분석합니다.
+            </p>
+          ) : null}
+        </div>
+        {!embedded ? (
+          <div className="flex flex-wrap gap-2">
+            <Button
+              disabled={!profile || dataColumnKeys.length === 0 || busy !== null}
+              onClick={() => exportCsv('dataset')}
+              variant="outline"
+            >
+              <Download />
+              선택 데이터 CSV
+            </Button>
+            <Button disabled={!prediction || busy !== null} onClick={() => exportCsv('prediction')} variant="outline">
+              <Download />
+              Prediction CSV
+            </Button>
+          </div>
+        ) : null}
+      </header>
 
       {stale ? (
         <div className="flex flex-col gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950 sm:flex-row sm:items-center">
@@ -674,23 +923,15 @@ export function AnalysisWorkspace({
           </Button>
         </div>
       ) : null}
-
-      {selectedExperimentId === null ? (
-        <Card>
-          <CardContent className="py-14 text-center text-sm text-muted-foreground">
-            분석할 Experiment를 선택하세요.
-          </CardContent>
-        </Card>
-      ) : null}
-
+      {experimentId === null ? <EmptyResult>분석할 Experiment를 먼저 여세요.</EmptyResult> : null}
       {busy === 'load' ? (
         <Card>
           <CardContent className="flex min-h-48 flex-col items-center justify-center gap-3">
             <LoaderCircle className="size-7 animate-spin text-primary" />
             <p className="text-sm font-medium">{progress ?? '데이터를 불러오는 중입니다.'}</p>
-            {progressCount ? (
+            {progressCount && progressCount.total > 0 ? (
               <p className="text-xs text-muted-foreground">
-                {progressCount.completed}/{progressCount.total} 범위 완료
+                {progressCount.completed}/{progressCount.total} 완료
               </p>
             ) : null}
             <Button onClick={restartWorker} size="sm" variant="ghost">
@@ -700,10 +941,9 @@ export function AnalysisWorkspace({
           </CardContent>
         </Card>
       ) : null}
-
       {error ? (
         <div className="flex items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm">
-          <AlertTriangle className="size-5 text-destructive" />
+          <AlertTriangle className="size-5 shrink-0 text-destructive" />
           <p className="flex-1">{error}</p>
           <Button onClick={restartWorker} size="sm" variant="outline">
             <RefreshCw />
@@ -715,36 +955,56 @@ export function AnalysisWorkspace({
       {profile ? (
         <Tabs
           onValueChange={(value) => {
-            const nextTab = value as AnalysisTab
-            setWorkspaceTab(nextTab)
-            onTabChange?.(nextTab)
+            const next = value as AnalysisTab
+            setWorkspaceTab(next)
+            onTabChange?.(next)
           }}
           value={tab}
         >
           {!settingsContainer ? (
-            <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-5">
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="relationships">Relationships</TabsTrigger>
+            <TabsList className="grid h-auto w-full [grid-template-columns:repeat(auto-fit,minmax(105px,1fr))] gap-1">
+              <TabsTrigger value="explore">Explore</TabsTrigger>
               <TabsTrigger value="mining">Mining</TabsTrigger>
               <TabsTrigger value="prediction">Prediction</TabsTrigger>
               <TabsTrigger value="data">Data</TabsTrigger>
             </TabsList>
           ) : null}
 
-          <TabsContent className="space-y-4" value="overview">
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <MetricCard label="Prepared" value={profile.preparedCount} />
-              <MetricCard label="Recorded" value={profile.recordedMeasurementCount} />
-              <MetricCard label="All Measurements" value={profile.rowCount} />
-              <MetricCard label="Recorded Data rows" value={profile.recordedDataCount} />
+          <TabsContent className="space-y-4" value="explore">
+            <AnalysisSettingsSlot
+              container={settingsContainer}
+              description="input vars 하나와 숫자 Recorded Data 하나를 선택하면 산점도가 즉시 갱신됩니다."
+              id="explore"
+              title="Explore"
+            >
+              <SearchableColumnSelect
+                columns={inputColumns}
+                label="Input variable"
+                onChange={(value) => requestRelationshipPlot(value, exploreTargetKey)}
+                value={exploreInputKey}
+              />
+              <SearchableColumnSelect
+                columns={targetColumns}
+                label="Recorded Data"
+                onChange={(value) => requestRelationshipPlot(exploreInputKey, value)}
+                value={exploreTargetKey}
+              />
+            </AnalysisSettingsSlot>
+
+            <div className="grid [grid-template-columns:repeat(auto-fit,minmax(150px,1fr))] gap-3">
+              <MetricCard label="Recorded Measurements" value={profile.recordedMeasurementCount} />
+              <MetricCard
+                label="Input vars"
+                value={inputColumns.length}
+                detail={`${featureColumns.length}개 전체 feature`}
+              />
+              <MetricCard
+                label="Recorded outputs"
+                value={targetColumns.length}
+                detail={`${profile.recordedDataCount}개 Stored Data`}
+              />
+              <MetricCard label="Calculated pairs" value={relationships?.pairs.length ?? 0} detail="|Pearson r| 순" />
             </div>
-            {profile.rowCount === 0 ? (
-              <Card>
-                <CardContent className="py-12 text-center text-sm text-muted-foreground">
-                  이 Experiment에 Measurement가 없습니다.
-                </CardContent>
-              </Card>
-            ) : null}
             {profile.warnings.map((warning) => (
               <div className="rounded-lg border bg-muted/30 p-3 text-sm" key={warning}>
                 {warning}
@@ -752,323 +1012,278 @@ export function AnalysisWorkspace({
             ))}
             <Card>
               <CardHeader>
-                <CardTitle>분포</CardTitle>
-                <CardDescription>숫자 feature 또는 target의 histogram입니다.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <AnalysisSettingsSlot
-                  container={settingsContainer}
-                  description="Histogram에 표시할 숫자 열을 선택합니다."
-                  id="overview"
-                  title="분포 열"
-                >
-                  <Select onValueChange={setHistogramKey} value={histogramKey || undefined}>
-                    <SelectTrigger className="max-w-xl">
-                      <SelectValue placeholder="Column 선택" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {profile.columns
-                        .filter((column) => column.histogram?.length)
-                        .map((column) => (
-                          <SelectItem key={column.key} value={column.key}>
-                            {column.label}
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
-                </AnalysisSettingsSlot>
-                {histogramColumn ? <Histogram column={histogramColumn} /> : null}
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle>Scalar profile</CardTitle>
-                <CardDescription>누락률이 30%를 넘는 feature와 상수 열은 분석에서 제외됩니다.</CardDescription>
+                <CardTitle>
+                  {columnLabel(exploreInput)} × {columnLabel(exploreTarget)}
+                </CardTitle>
+                <CardDescription>
+                  {columnMeta(exploreInput)} · {columnMeta(exploreTarget)} · 완전한 값 쌍만 표시합니다.
+                </CardDescription>
               </CardHeader>
               <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Column</TableHead>
-                      <TableHead>종류</TableHead>
-                      <TableHead>평균</TableHead>
-                      <TableHead>표준편차</TableHead>
-                      <TableHead>p05</TableHead>
-                      <TableHead>p50</TableHead>
-                      <TableHead>p95</TableHead>
-                      <TableHead>누락</TableHead>
-                      <TableHead>상태</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {profile.columns.map((column) => (
-                      <TableRow key={column.key}>
-                        <TableCell>
-                          <span className="block max-w-72 truncate font-medium" title={column.key}>
-                            {column.label}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            {column.unit ?? column.quantityKind ?? column.source}
-                          </span>
-                        </TableCell>
-                        <TableCell>{column.kind}</TableCell>
-                        <TableCell>{formatNumber(column.mean)}</TableCell>
-                        <TableCell>{formatNumber(column.std)}</TableCell>
-                        <TableCell>{formatNumber(column.p05)}</TableCell>
-                        <TableCell>{formatNumber(column.p50)}</TableCell>
-                        <TableCell>{formatNumber(column.p95)}</TableCell>
-                        <TableCell>{(column.missingRatio * 100).toFixed(1)}%</TableCell>
-                        <TableCell>
-                          {column.eligible ? (
-                            <Badge>사용 가능</Badge>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">{column.exclusionReason}</span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                {plotBusy ? (
+                  <div className="flex min-h-72 items-center justify-center">
+                    <LoaderCircle className="size-6 animate-spin text-primary" />
+                  </div>
+                ) : relationshipPlot ? (
+                  <>
+                    <ScatterPlot
+                      label={`${columnLabel(exploreInput)}와 ${columnLabel(exploreTarget)} 산점도`}
+                      points={relationshipPlot.points}
+                      xLabel={`${columnLabel(exploreInput)}${exploreInput?.unit ? ` (${exploreInput.unit})` : ''}`}
+                      yLabel={`${columnLabel(exploreTarget)}${exploreTarget?.unit ? ` (${exploreTarget.unit})` : ''}`}
+                    />
+                    {relationshipPlot.pearson === null ? (
+                      <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                        {relationshipPlot.count < 3
+                          ? `완전한 값 쌍이 ${relationshipPlot.count}개입니다. 상관계수는 최소 3개가 필요합니다.`
+                          : '한 축의 값이 모두 같아 상관계수를 계산할 수 없습니다.'}
+                      </p>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="py-20 text-center text-sm text-muted-foreground">
+                    선택할 수 있는 input vars와 Recorded Data 조합이 없습니다.
+                  </p>
+                )}
               </CardContent>
             </Card>
-            {profile.categoricalSummaries.length > 0 ? (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Boolean · String 빈도</CardTitle>
-                  <CardDescription>숫자 분석과 Prediction에는 포함하지 않습니다.</CardDescription>
-                </CardHeader>
-                <CardContent className="grid gap-3 md:grid-cols-2">
-                  {profile.categoricalSummaries.map((summary) => (
-                    <div className="rounded-lg border p-3" key={summary.name}>
-                      <p className="font-medium">{summary.name}</p>
+            <div className="grid [grid-template-columns:repeat(auto-fit,minmax(150px,1fr))] gap-3">
+              <MetricCard label="Pearson r" value={formatNumber(relationshipPlot?.pearson)} />
+              <MetricCard label="Spearman ρ" value={formatNumber(relationshipPlot?.spearman)} />
+              <MetricCard label="Valid pairs" value={relationshipPlot?.count ?? 0} detail="완전한 input/target 쌍" />
+            </div>
+            <Card>
+              <CardHeader>
+                <CardTitle>Strongest relationships</CardTitle>
+                <CardDescription>
+                  계산 가능한 모든 input vars × Recorded Data 조합을 |Pearson r| 순으로 표시합니다. 최소 표본 수는
+                  3개입니다.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {relationshipsBusy ? (
+                  <div className="flex min-h-40 flex-col items-center justify-center gap-2">
+                    <LoaderCircle className="size-6 animate-spin text-primary" />
+                    <p className="text-sm text-muted-foreground">{progress ?? '상관관계를 계산하는 중입니다.'}</p>
+                    {progressCount && progressCount.total > 0 ? (
                       <p className="text-xs text-muted-foreground">
-                        {summary.dtype} · {summary.quantityKind}
+                        {progressCount.completed}/{progressCount.total}
                       </p>
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {summary.counts.slice(0, 12).map((count) => (
-                          <Badge className="border bg-transparent text-foreground" key={count.value}>
-                            {count.value}: {count.count}
-                          </Badge>
-                        ))}
-                      </div>
-                      {summary.excludedReason ? (
-                        <p className="mt-2 text-xs text-destructive">{summary.excludedReason}</p>
-                      ) : null}
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-            ) : null}
-          </TabsContent>
-
-          <TabsContent className="space-y-4" value="relationships">
-            <AnalysisSettingsSlot container={settingsContainer} id="relationships">
-              <Card>
-                <CardHeader>
-                  <CardTitle>관계 설정</CardTitle>
-                  <CardDescription>Pearson·Spearman 상관계수와 선택한 두 열의 산점도를 계산합니다.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <FeaturePicker
-                    columns={featureColumns}
-                    disabled={busy !== null}
-                    onChange={setSelectedFeatureKeys}
-                    selected={selectedFeatureKeys}
-                  />
-                  <div className="grid gap-3 md:grid-cols-3">
-                    <Select onValueChange={setXKey} value={xKey || undefined}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="X축" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {featureColumns
-                          .filter((column) => column.eligible)
-                          .map((column) => (
-                            <SelectItem key={column.key} value={column.key}>
-                              {column.label}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
-                    <Select onValueChange={setYKey} value={yKey || undefined}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Y축" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {[...featureColumns, ...targetColumns]
-                          .filter((column) => column.eligible)
-                          .map((column) => (
-                            <SelectItem key={column.key} value={column.key}>
-                              {column.label}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
-                    <Select onValueChange={setSelectedTargetKey} value={selectedTargetKey || undefined}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="상관관계 target" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {targetColumns.map((column) => (
-                          <SelectItem key={column.key} value={column.key}>
-                            {column.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    ) : null}
                   </div>
-                  <Button disabled={busy !== null || selectedFeatureKeys.length < 2} onClick={runMining}>
-                    {busy === 'mine' ? <LoaderCircle className="animate-spin" /> : <ChartNoAxesCombined />}
-                    관계 분석 실행
-                  </Button>
-                  {busy === 'mine' ? <p className="text-sm text-muted-foreground">{progress}</p> : null}
-                </CardContent>
-              </Card>
-            </AnalysisSettingsSlot>
-            {mining ? (
-              <div className="grid gap-4 xl:grid-cols-2">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Pearson heatmap</CardTitle>
-                    <CardDescription>파랑은 음의 상관, 빨강은 양의 상관입니다.</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <CorrelationHeatmap keys={mining.correlationKeys} matrix={mining.correlations} />
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader>
-                    <CardTitle>산점도</CardTitle>
-                    <CardDescription>분석 실행 시 선택한 X·Y 열입니다.</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <ScatterPlot
-                      label="선택 열 산점도"
-                      points={mining.points
-                        .filter((point) => point.x !== undefined && point.y !== undefined)
-                        .map((point) => ({
-                          x: point.x!,
-                          y: point.y!,
-                          cluster: point.cluster,
-                          outlier: point.outlier,
-                        }))}
-                    />
-                  </CardContent>
-                </Card>
-                <Card className="xl:col-span-2">
-                  <CardHeader>
-                    <CardTitle>Spearman matrix</CardTitle>
-                    <CardDescription>순위 기반 단조 관계입니다.</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <CorrelationHeatmap keys={mining.correlationKeys} matrix={mining.spearmanCorrelations} />
-                  </CardContent>
-                </Card>
-              </div>
-            ) : null}
-          </TabsContent>
-
-          <TabsContent className="space-y-4" value="mining">
-            <AnalysisSettingsSlot container={settingsContainer} id="mining">
-              <Card>
-                <CardHeader>
-                  <CardTitle>PCA · 군집 · 이상치</CardTitle>
-                  <CardDescription>중앙값 보정과 표준화 후 seed 42로 계산합니다.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <FeaturePicker
-                    columns={featureColumns}
-                    disabled={busy !== null}
-                    onChange={setSelectedFeatureKeys}
-                    selected={selectedFeatureKeys}
-                  />
-                  <label className="block max-w-md space-y-2 text-sm">
-                    <span className="font-medium">이상치 상위 {outlierPercent}%</span>
-                    <input
-                      className="w-full accent-primary"
-                      disabled={busy !== null}
-                      max="10"
-                      min="1"
-                      onChange={(event) => setOutlierPercent(Number(event.target.value))}
-                      type="range"
-                      value={outlierPercent}
-                    />
-                  </label>
-                  <Button disabled={busy !== null || selectedFeatureKeys.length < 2} onClick={runMining}>
-                    {busy === 'mine' ? <LoaderCircle className="animate-spin" /> : <Sparkles />}
-                    Mining 실행
-                  </Button>
-                  {busy === 'mine' ? <p className="text-sm text-muted-foreground">{progress}</p> : null}
-                </CardContent>
-              </Card>
-            </AnalysisSettingsSlot>
-            {mining ? (
-              <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>PCA projection</CardTitle>
-                    <CardDescription>
-                      K={mining.clusterCount} · silhouette {formatNumber(mining.silhouette)} · PC1{' '}
-                      {(100 * (mining.explainedVariance[0] ?? 0)).toFixed(1)}% · PC2{' '}
-                      {(100 * (mining.explainedVariance[1] ?? 0)).toFixed(1)}%
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <ScatterPlot
-                      label="PCA 2D projection"
-                      points={mining.points.map((point) => ({
-                        x: point.pc1,
-                        y: point.pc2,
-                        cluster: point.cluster,
-                        outlier: point.outlier,
-                      }))}
-                    />
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Loading</CardTitle>
-                    <CardDescription>PC1·PC2 기여 방향입니다.</CardDescription>
-                  </CardHeader>
-                  <CardContent>
+                ) : relationshipPage.length ? (
+                  <>
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Feature</TableHead>
-                          <TableHead>PC1</TableHead>
-                          <TableHead>PC2</TableHead>
+                          <TableHead className="w-14">순위</TableHead>
+                          <TableHead>Input</TableHead>
+                          <TableHead>Recorded Data</TableHead>
+                          <TableHead>Pearson</TableHead>
+                          <TableHead>Spearman</TableHead>
+                          <TableHead>n</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {[...mining.loadings]
-                          .sort((left, right) => Math.abs(right.pc1) - Math.abs(left.pc1))
-                          .slice(0, 15)
-                          .map((loading) => (
-                            <TableRow key={loading.key}>
+                        {relationshipPage.map((pair, index) => {
+                          const input = profile.columns.find((column) => column.key === pair.inputKey)
+                          const target = profile.columns.find((column) => column.key === pair.targetKey)
+                          const selected = pair.inputKey === exploreInputKey && pair.targetKey === exploreTargetKey
+                          return (
+                            <TableRow
+                              aria-label={`${columnLabel(input)}와 ${columnLabel(target)} 관계 보기`}
+                              aria-selected={selected}
+                              className="cursor-pointer focus-visible:bg-muted focus-visible:outline-none"
+                              key={`${pair.inputKey}:${pair.targetKey}`}
+                              onClick={() => requestRelationshipPlot(pair.inputKey, pair.targetKey)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault()
+                                  requestRelationshipPlot(pair.inputKey, pair.targetKey)
+                                }
+                              }}
+                              tabIndex={0}
+                            >
+                              <TableCell className="tabular-nums">{relationshipOffset + index + 1}</TableCell>
                               <TableCell>
-                                <span className="block max-w-44 truncate" title={loading.key}>
-                                  {loading.key}
+                                <span className="flex min-w-0 items-center gap-2">
+                                  <span className="truncate font-medium" title={pair.inputKey}>
+                                    {columnLabel(input)}
+                                  </span>
+                                  {selected ? <Check className="size-4 shrink-0 text-primary" /> : null}
                                 </span>
                               </TableCell>
-                              <TableCell>{formatNumber(loading.pc1)}</TableCell>
-                              <TableCell>{formatNumber(loading.pc2)}</TableCell>
+                              <TableCell>
+                                <span className="block max-w-64 truncate" title={pair.targetKey}>
+                                  {columnLabel(target)}
+                                </span>
+                              </TableCell>
+                              <TableCell
+                                className={cn(
+                                  'font-medium tabular-nums',
+                                  pair.pearson < 0 ? 'text-blue-700' : 'text-red-700',
+                                )}
+                              >
+                                {formatNumber(pair.pearson)}
+                              </TableCell>
+                              <TableCell className="tabular-nums">{formatNumber(pair.spearman)}</TableCell>
+                              <TableCell className="tabular-nums">{pair.count}</TableCell>
                             </TableRow>
-                          ))}
+                          )
+                        })}
                       </TableBody>
                     </Table>
-                  </CardContent>
-                </Card>
-                <Card className="xl:col-span-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-xs text-muted-foreground">
+                        {relationshipOffset + 1}–
+                        {Math.min(relationships?.pairs.length ?? 0, relationshipOffset + relationshipPage.length)} /{' '}
+                        {relationships?.pairs.length ?? 0}
+                      </p>
+                      <div className="flex gap-2">
+                        <Button
+                          disabled={relationshipOffset === 0}
+                          onClick={() =>
+                            setRelationshipOffset((offset) => Math.max(0, offset - RELATIONSHIP_PAGE_SIZE))
+                          }
+                          size="sm"
+                          variant="outline"
+                        >
+                          이전
+                        </Button>
+                        <Button
+                          disabled={relationshipOffset + RELATIONSHIP_PAGE_SIZE >= (relationships?.pairs.length ?? 0)}
+                          onClick={() => setRelationshipOffset((offset) => offset + RELATIONSHIP_PAGE_SIZE)}
+                          size="sm"
+                          variant="outline"
+                        >
+                          다음
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <p className="py-12 text-center text-sm text-muted-foreground">
+                    상관계수를 계산할 수 있는 조합이 없습니다. 각 조합에 서로 다른 값과 완전한 표본이 3개 이상
+                    필요합니다.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent className="space-y-4" value="mining">
+            <AnalysisSettingsSlot
+              container={settingsContainer}
+              description="여러 feature를 표준화해 PCA, 군집과 reconstruction anomaly를 계산합니다."
+              id="mining"
+              title="Mining 설정"
+            >
+              <ColumnPicker
+                columns={featureColumns}
+                disabled={busy !== null}
+                max={50}
+                onChange={setMiningFeatureKeys}
+                selected={miningFeatureKeys}
+              />
+              <label className="block space-y-2 text-sm">
+                <span className="font-medium">이상치 상위 {outlierPercent}%</span>
+                <input
+                  aria-label="이상치 비율"
+                  className="w-full accent-primary"
+                  disabled={busy !== null}
+                  max="10"
+                  min="1"
+                  onChange={(event) => setOutlierPercent(Number(event.target.value))}
+                  type="range"
+                  value={outlierPercent}
+                />
+              </label>
+              <Button className="w-full" disabled={busy !== null || miningFeatureKeys.length < 2} onClick={runMining}>
+                {busy === 'mine' ? <LoaderCircle className="animate-spin" /> : <Sparkles />}Mining 실행
+              </Button>
+              {miningFeatureKeys.length < 2 ? (
+                <p className="text-xs text-amber-700">서로 다른 feature를 2개 이상 선택하세요.</p>
+              ) : null}
+            </AnalysisSettingsSlot>
+            {busy === 'mine' ? (
+              <EmptyResult>
+                <span>
+                  <LoaderCircle className="mx-auto mb-3 size-6 animate-spin text-primary" />
+                  {progress ?? 'Mining을 계산하는 중입니다.'}
+                </span>
+              </EmptyResult>
+            ) : mining ? (
+              <>
+                <div className="grid [grid-template-columns:repeat(auto-fit,minmax(360px,1fr))] gap-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>PCA projection</CardTitle>
+                      <CardDescription>
+                        K={mining.clusterCount} · silhouette {formatNumber(mining.silhouette)} · PC1{' '}
+                        {(100 * (mining.explainedVariance[0] ?? 0)).toFixed(1)}% · PC2{' '}
+                        {(100 * (mining.explainedVariance[1] ?? 0)).toFixed(1)}%
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <ScatterPlot
+                        label="PCA 2D projection"
+                        points={mining.points.map((point) => ({
+                          x: point.pc1,
+                          y: point.pc2,
+                          measurementId: point.measurementId,
+                          cluster: point.cluster,
+                          outlier: point.outlier,
+                        }))}
+                        xLabel="PC1"
+                        yLabel="PC2"
+                      />
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Principal component loadings</CardTitle>
+                      <CardDescription>PC1 절댓값이 큰 feature부터 표시합니다.</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Feature</TableHead>
+                            <TableHead>PC1</TableHead>
+                            <TableHead>PC2</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {[...mining.loadings]
+                            .sort((left, right) => Math.abs(right.pc1) - Math.abs(left.pc1))
+                            .slice(0, 15)
+                            .map((loading) => (
+                              <TableRow key={loading.key}>
+                                <TableCell>
+                                  <span className="block max-w-64 truncate" title={loading.key}>
+                                    {columnLabel(profile.columns.find((column) => column.key === loading.key))}
+                                  </span>
+                                </TableCell>
+                                <TableCell>{formatNumber(loading.pc1)}</TableCell>
+                                <TableCell>{formatNumber(loading.pc2)}</TableCell>
+                              </TableRow>
+                            ))}
+                        </TableBody>
+                      </Table>
+                    </CardContent>
+                  </Card>
+                </div>
+                <Card>
                   <CardHeader>
                     <CardTitle>Reconstruction anomaly</CardTitle>
-                    <CardDescription>PCA 90% 설명 분산 reconstruction error의 순위 점수입니다.</CardDescription>
+                    <CardDescription>PCA 90% 설명 분산 reconstruction error가 큰 Measurement입니다.</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <Table>
                       <TableHeader>
                         <TableRow>
                           <TableHead>Measurement</TableHead>
-                          <TableHead>Input</TableHead>
+                          <TableHead>Input fingerprint</TableHead>
                           <TableHead>Cluster</TableHead>
                           <TableHead>Anomaly score</TableHead>
                           <TableHead>상태</TableHead>
@@ -1081,10 +1296,10 @@ export function AnalysisWorkspace({
                           .map((point) => (
                             <TableRow key={point.measurementId}>
                               <TableCell>#{point.measurementId}</TableCell>
-                              <TableCell className="max-w-44 truncate" title={point.inputFingerprint}>
+                              <TableCell className="max-w-64 truncate" title={point.inputFingerprint}>
                                 {point.inputFingerprint}
                               </TableCell>
-                              <TableCell>{point.cluster}</TableCell>
+                              <TableCell>{point.cluster + 1}</TableCell>
                               <TableCell>{formatNumber(point.anomalyScore)}</TableCell>
                               <TableCell>
                                 {point.outlier ? (
@@ -1099,89 +1314,211 @@ export function AnalysisWorkspace({
                     </Table>
                   </CardContent>
                 </Card>
-              </div>
-            ) : null}
+              </>
+            ) : (
+              <EmptyResult>
+                feature를 2개 이상 선택하고 Mining을 실행하면 PCA, 군집과 이상치 결과가 여기에 표시됩니다.
+              </EmptyResult>
+            )}
           </TabsContent>
 
           <TabsContent className="space-y-4" value="prediction">
-            <AnalysisSettingsSlot container={settingsContainer} id="prediction">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Data-based Prediction</CardTitle>
-                  <CardDescription>
-                    동일 입력 조건을 fold 사이에 분리한 최대 5-fold 검증으로 Ridge와 Random Forest를 비교합니다. 최소
-                    20행·5개 입력·5개 target 값이 필요합니다.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <Select onValueChange={setSelectedTargetKey} value={selectedTargetKey || undefined}>
-                    <SelectTrigger className="max-w-xl">
-                      <SelectValue placeholder="Prediction target" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {targetColumns.map((column) => (
-                        <SelectItem key={column.key} value={column.key}>
-                          {column.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FeaturePicker
-                    columns={featureColumns}
-                    disabled={busy !== null}
-                    onChange={(keys) => {
-                      setSelectedFeatureKeys(keys)
-                      setWhatIf(
-                        Object.fromEntries(
-                          keys.map((key) => [
-                            key,
-                            whatIf[key] ?? featureColumns.find((column) => column.key === key)?.p50 ?? 0,
-                          ]),
-                        ),
+            <AnalysisSettingsSlot
+              container={settingsContainer}
+              description="동일 입력을 fold 사이에 분리해 Ridge와 Random Forest를 비교합니다."
+              id="prediction"
+              title="Prediction 설정"
+            >
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium">Prediction target</span>
+                <Select onValueChange={setPredictionTargetKey} value={predictionTargetKey || undefined}>
+                  <SelectTrigger aria-label="Prediction target">
+                    <SelectValue placeholder="Recorded Data 선택" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {targetColumns.map((column) => (
+                      <SelectItem key={column.key} value={column.key}>
+                        {columnLabel(column)}
+                        {column.unit ? ` · ${column.unit}` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+              <ColumnPicker
+                columns={featureColumns}
+                disabled={busy !== null}
+                max={50}
+                onChange={(keys) => {
+                  setPredictionFeatureKeys(keys)
+                  setWhatIf(
+                    Object.fromEntries(
+                      keys.map((key) => [
+                        key,
+                        whatIf[key] ?? featureColumns.find((column) => column.key === key)?.p50 ?? 0,
+                      ]),
+                    ),
+                  )
+                }}
+                selected={predictionFeatureKeys}
+              />
+              <div className="space-y-1.5 rounded-lg border bg-muted/20 p-3 text-xs">
+                <p className={predictionTarget && predictionTarget.count >= 20 ? 'text-emerald-700' : 'text-amber-700'}>
+                  유효 target 행 {predictionTarget?.count ?? 0} / 20+
+                </p>
+                <p
+                  className={
+                    predictionTarget && predictionTarget.distinctCount >= 5 ? 'text-emerald-700' : 'text-amber-700'
+                  }
+                >
+                  서로 다른 target 값 {predictionTarget?.distinctCount ?? 0} / 5+
+                </p>
+                <p
+                  className={
+                    predictionTarget && (predictionTarget.distinctInputCount ?? 0) >= 5
+                      ? 'text-emerald-700'
+                      : 'text-amber-700'
+                  }
+                >
+                  서로 다른 입력 {predictionTarget?.distinctInputCount ?? 0} / 5+
+                </p>
+                <p className={predictionFeatureKeys.length > 0 ? 'text-emerald-700' : 'text-amber-700'}>
+                  선택 feature {predictionFeatureKeys.length} / 1+
+                </p>
+              </div>
+              <Button className="w-full" disabled={busy !== null || !predictionReady} onClick={runPrediction}>
+                {busy === 'predict' ? <LoaderCircle className="animate-spin" /> : <BrainCircuit />}모델 비교·학습
+              </Button>
+              {prediction ? (
+                <div className="space-y-3 border-t pt-4">
+                  <div>
+                    <p className="text-sm font-medium">What-if 입력</p>
+                    <p className="mt-1 text-xs text-muted-foreground">재학습 없이 현재 최종 모델에 적용합니다.</p>
+                  </div>
+                  <div className="max-h-80 space-y-3 overflow-y-auto pr-1">
+                    {predictionFeatureKeys.map((key) => {
+                      const column = featureColumns.find((item) => item.key === key)
+                      if (!column) return null
+                      const value = whatIf[key] ?? column.p50 ?? 0
+                      const outside =
+                        (column.min !== undefined && value < column.min) ||
+                        (column.max !== undefined && value > column.max)
+                      return (
+                        <label className="block space-y-1 text-sm" key={key}>
+                          <span className="block truncate font-medium" title={key}>
+                            {columnLabel(column)}
+                          </span>
+                          <Input
+                            onChange={(event) =>
+                              setWhatIf((current) => ({ ...current, [key]: Number(event.target.value) }))
+                            }
+                            step="any"
+                            type="number"
+                            value={value}
+                          />
+                          <span className={cn('text-xs text-muted-foreground', outside && 'text-amber-700')}>
+                            관측 {formatNumber(column.min)}–{formatNumber(column.max)}
+                            {outside ? ' · 외삽' : ''}
+                          </span>
+                        </label>
                       )
-                    }}
-                    selected={selectedFeatureKeys}
-                  />
-                  {!predictionReady ? (
-                    <p className="text-sm text-amber-700">현재 데이터는 Prediction 활성화 조건을 충족하지 않습니다.</p>
-                  ) : null}
-                  <Button disabled={busy !== null || !predictionReady} onClick={runPrediction}>
-                    {busy === 'predict' ? <LoaderCircle className="animate-spin" /> : <BrainCircuit />}
-                    모델 비교·학습
+                    })}
+                  </div>
+                  <Button className="w-full" disabled={busy !== null} onClick={runWhatIf}>
+                    {busy === 'what-if' ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}What-if 계산
                   </Button>
-                  {busy === 'predict' ? <p className="text-sm text-muted-foreground">{progress}</p> : null}
-                </CardContent>
-              </Card>
-            </AnalysisSettingsSlot>
-            {prediction ? (
-              <>
-                <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
-                  <MetricCard label="Ridge R²" value={prediction.metrics.ridge.r2} />
-                  <MetricCard label="Ridge MAE" value={prediction.metrics.ridge.mae} />
-                  <MetricCard label="Ridge RMSE" value={prediction.metrics.ridge.rmse} />
-                  <MetricCard label="RF R²" value={prediction.metrics.randomForest.r2} />
-                  <MetricCard label="RF MAE" value={prediction.metrics.randomForest.mae} />
-                  <MetricCard label="RF RMSE" value={prediction.metrics.randomForest.rmse} />
                 </div>
-                <div className="grid gap-4 xl:grid-cols-2">
+              ) : null}
+            </AnalysisSettingsSlot>
+            {busy === 'predict' ? (
+              <EmptyResult>
+                <span>
+                  <LoaderCircle className="mx-auto mb-3 size-6 animate-spin text-primary" />
+                  {progress ?? '교차 검증과 최종 학습을 진행하는 중입니다.'}
+                </span>
+              </EmptyResult>
+            ) : prediction ? (
+              <>
+                <div className="grid [grid-template-columns:repeat(auto-fit,minmax(170px,1fr))] gap-3">
+                  <MetricCard
+                    label="Selected model"
+                    value={prediction.selectedModel === 'ridge' ? 'Ridge' : 'Random Forest'}
+                  />
+                  <MetricCard
+                    label="OOF R²"
+                    value={prediction.metrics[prediction.selectedModel === 'ridge' ? 'ridge' : 'randomForest'].r2}
+                  />
+                  <MetricCard
+                    label="OOF MAE"
+                    value={prediction.metrics[prediction.selectedModel === 'ridge' ? 'ridge' : 'randomForest'].mae}
+                  />
+                  <MetricCard
+                    label="OOF RMSE"
+                    value={prediction.metrics[prediction.selectedModel === 'ridge' ? 'ridge' : 'randomForest'].rmse}
+                  />
+                </div>
+                <div className="grid [grid-template-columns:repeat(auto-fit,minmax(360px,1fr))] gap-4">
                   <Card>
                     <CardHeader>
-                      <CardTitle>관측값 × OOF 예측값</CardTitle>
-                      <CardDescription>
-                        선택 모델: {prediction.selectedModel} · Ridge α {prediction.ridgeAlpha}
-                      </CardDescription>
+                      <CardTitle>Model comparison</CardTitle>
+                      <CardDescription>동일한 grouped folds에서 계산한 OOF 지표입니다.</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Model</TableHead>
+                            <TableHead>R²</TableHead>
+                            <TableHead>MAE</TableHead>
+                            <TableHead>RMSE</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          <TableRow>
+                            <TableCell>
+                              Ridge{prediction.selectedModel === 'ridge' ? <Badge className="ml-2">선택</Badge> : null}
+                            </TableCell>
+                            <TableCell>{formatNumber(prediction.metrics.ridge.r2)}</TableCell>
+                            <TableCell>{formatNumber(prediction.metrics.ridge.mae)}</TableCell>
+                            <TableCell>{formatNumber(prediction.metrics.ridge.rmse)}</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell>
+                              Random Forest
+                              {prediction.selectedModel === 'random-forest' ? (
+                                <Badge className="ml-2">선택</Badge>
+                              ) : null}
+                            </TableCell>
+                            <TableCell>{formatNumber(prediction.metrics.randomForest.r2)}</TableCell>
+                            <TableCell>{formatNumber(prediction.metrics.randomForest.mae)}</TableCell>
+                            <TableCell>{formatNumber(prediction.metrics.randomForest.rmse)}</TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Observed × out-of-fold prediction</CardTitle>
+                      <CardDescription>점선은 관측값과 예측값이 같은 기준선입니다.</CardDescription>
                     </CardHeader>
                     <CardContent>
                       <ScatterPlot
+                        diagonal
                         label="관측값과 out-of-fold 예측값"
                         points={prediction.rows.map((row) => ({
                           x: row.observed,
                           y: row.predicted,
+                          measurementId: row.measurementId,
                           cluster: row.fold,
                         }))}
+                        xLabel="관측값"
+                        yLabel="OOF 예측값"
                       />
                     </CardContent>
                   </Card>
+                </div>
+                <div className="grid [grid-template-columns:repeat(auto-fit,minmax(320px,1fr))] gap-4">
                   <Card>
                     <CardHeader>
                       <CardTitle>Feature importance</CardTitle>
@@ -1190,11 +1527,11 @@ export function AnalysisWorkspace({
                     <CardContent className="space-y-2">
                       {prediction.importances.slice(0, 15).map((importance) => (
                         <div
-                          className="grid grid-cols-[minmax(0,1fr)_120px_48px] items-center gap-2 text-sm"
+                          className="grid grid-cols-[minmax(0,1fr)_minmax(80px,140px)_48px] items-center gap-2 text-sm"
                           key={importance.key}
                         >
                           <span className="truncate" title={importance.key}>
-                            {importance.key}
+                            {columnLabel(featureColumns.find((column) => column.key === importance.key))}
                           </span>
                           <span className="h-2 overflow-hidden rounded-full bg-muted">
                             <span className="block h-full bg-primary" style={{ width: `${importance.value * 100}%` }} />
@@ -1204,135 +1541,149 @@ export function AnalysisWorkspace({
                       ))}
                     </CardContent>
                   </Card>
-                </div>
-                <Card>
-                  <CardHeader>
-                    <CardTitle>What-if</CardTitle>
-                    <CardDescription>
-                      범위는 교차 검증 절대 잔차의 90분위수이며 통계적 신뢰구간이 아닙니다.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <AnalysisSettingsSlot
-                      container={settingsContainer}
-                      description="학습된 모델에 적용할 feature 값을 조정합니다."
-                      id="prediction-what-if"
-                      title="What-if 입력"
-                    >
-                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                        {selectedFeatureKeys.map((key) => {
-                          const column = featureColumns.find((item) => item.key === key)
-                          if (!column) return null
-                          const value = whatIf[key] ?? column.p50 ?? 0
-                          const outside =
-                            (column.min !== undefined && value < column.min) ||
-                            (column.max !== undefined && value > column.max)
-                          return (
-                            <label className="space-y-1 text-sm" key={key}>
-                              <span className="block truncate font-medium" title={key}>
-                                {column.label}
-                              </span>
-                              <Input
-                                onChange={(event) =>
-                                  setWhatIf((current) => ({
-                                    ...current,
-                                    [key]: Number(event.target.value),
-                                  }))
-                                }
-                                step="any"
-                                type="number"
-                                value={value}
-                              />
-                              <span className={cn('text-xs text-muted-foreground', outside && 'text-amber-700')}>
-                                관측 {formatNumber(column.min)}–{formatNumber(column.max)}
-                                {outside ? ' · 외삽' : ''}
-                              </span>
-                            </label>
-                          )
-                        })}
-                      </div>
-                      <Button disabled={busy !== null} onClick={runPrediction}>
-                        What-if 다시 계산
-                      </Button>
-                    </AnalysisSettingsSlot>
-                    <div className="rounded-lg border bg-primary/5 p-4">
-                      <p className="text-sm text-muted-foreground">예측값</p>
-                      <p className="mt-1 text-2xl font-semibold">{formatNumber(prediction.prediction)}</p>
-                      <p className="text-sm text-muted-foreground">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>What-if result</CardTitle>
+                      <CardDescription>
+                        범위는 grouped OOF 절대 잔차의 90분위수이며 통계적 신뢰구간이 아닙니다.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-3xl font-semibold tabular-nums">{formatNumber(prediction.prediction)}</p>
+                      <p className="mt-2 text-sm text-muted-foreground">
                         잔차 기반 범위 {formatNumber(prediction.interval[0])}–{formatNumber(prediction.interval[1])}
                       </p>
                       {prediction.extrapolatedFeatureKeys.length > 0 ? (
-                        <p className="mt-2 text-sm text-amber-700">
-                          관측 범위를 벗어난 feature: {prediction.extrapolatedFeatureKeys.join(', ')}
+                        <p className="mt-3 text-sm text-amber-700">
+                          관측 범위를 벗어난 feature:{' '}
+                          {prediction.extrapolatedFeatureKeys
+                            .map((key) => columnLabel(featureColumns.find((column) => column.key === key)))
+                            .join(', ')}
                         </p>
                       ) : null}
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Out-of-fold 결과</CardTitle>
-                    <CardDescription>
-                      동일 입력 조건이 학습·검증에 섞이지 않은 관측값, 예측값과 잔차입니다.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Measurement</TableHead>
-                          <TableHead>Input</TableHead>
-                          <TableHead>Fold</TableHead>
-                          <TableHead>관측</TableHead>
-                          <TableHead>예측</TableHead>
-                          <TableHead>잔차</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {prediction.rows.slice(0, 100).map((row) => (
-                          <TableRow key={row.measurementId}>
-                            <TableCell>#{row.measurementId}</TableCell>
-                            <TableCell className="max-w-44 truncate" title={row.inputFingerprint}>
-                              {row.inputFingerprint}
-                            </TableCell>
-                            <TableCell>{row.fold + 1}</TableCell>
-                            <TableCell>{formatNumber(row.observed)}</TableCell>
-                            <TableCell>{formatNumber(row.predicted)}</TableCell>
-                            <TableCell>{formatNumber(row.residual)}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                    {prediction.rows.length > 100 ? (
-                      <p className="mt-3 text-xs text-muted-foreground">
-                        화면에는 앞의 100행만 표시합니다. 전체 결과는 Prediction CSV에서 확인할 수 있습니다.
-                      </p>
-                    ) : null}
-                  </CardContent>
-                </Card>
+                    </CardContent>
+                  </Card>
+                </div>
               </>
-            ) : null}
+            ) : (
+              <EmptyResult>
+                조건을 충족하는 target과 feature를 선택한 뒤 모델을 학습하면 OOF 검증, 중요도와 What-if 결과가
+                표시됩니다.
+              </EmptyResult>
+            )}
           </TabsContent>
 
           <TabsContent className="space-y-4" value="data">
+            <AnalysisSettingsSlot
+              container={settingsContainer}
+              description="표와 CSV에 포함할 숫자 열, histogram과 profile 필터를 선택합니다."
+              id="data"
+              title="Data 설정"
+            >
+              <ColumnPicker
+                columns={profile.columns}
+                disabled={busy !== null}
+                max={profile.columns.length}
+                onChange={setDataColumnKeys}
+                selected={dataColumnKeys}
+              />
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium">Histogram</span>
+                <Select onValueChange={setHistogramKey} value={histogramKey || undefined}>
+                  <SelectTrigger aria-label="Histogram 열">
+                    <SelectValue placeholder="열 선택" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {profile.columns
+                      .filter((column) => column.histogram?.length)
+                      .map((column) => (
+                        <SelectItem key={column.key} value={column.key}>
+                          {columnLabel(column)}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </label>
+              <div className="space-y-2 border-t pt-3">
+                <p className="text-sm font-medium">Scalar profile 필터</p>
+                <Input
+                  aria-label="Scalar profile 검색"
+                  onChange={(event) => setProfileSearch(event.target.value)}
+                  placeholder="열 이름 검색"
+                  value={profileSearch}
+                />
+                <Select
+                  onValueChange={(value) => setProfileSource(value as typeof profileSource)}
+                  value={profileSource}
+                >
+                  <SelectTrigger aria-label="Scalar profile source">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">모든 source</SelectItem>
+                    <SelectItem value="measurement-vars">Input vars</SelectItem>
+                    <SelectItem value="measurement-material">Material</SelectItem>
+                    <SelectItem value="recorded-data">Recorded Data</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  onValueChange={(value) => setProfileStatus(value as typeof profileStatus)}
+                  value={profileStatus}
+                >
+                  <SelectTrigger aria-label="Scalar profile status">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">모든 상태</SelectItem>
+                    <SelectItem value="eligible">사용 가능</SelectItem>
+                    <SelectItem value="excluded">제외됨</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </AnalysisSettingsSlot>
             <Card>
               <CardHeader>
-                <CardTitle>Compact analysis data</CardTitle>
+                <CardTitle>Distribution · {columnLabel(histogramColumn)}</CardTitle>
+                <CardDescription>{columnMeta(histogramColumn)}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {histogramColumn ? (
+                  <Histogram column={histogramColumn} />
+                ) : (
+                  <p className="py-10 text-center text-sm text-muted-foreground">Histogram 열을 선택하세요.</p>
+                )}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle>Selected analysis data</CardTitle>
                 <CardDescription>
-                  Worker에서 현재 페이지 100행만 가져옵니다. raw tensor는 포함하지 않습니다.
+                  현재 선택한 열의 100행 페이지입니다. 같은 선택이 Data CSV에 사용됩니다.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {tablePage ? (
+                {dataColumnKeys.length === 0 ? (
+                  <p className="py-12 text-center text-sm text-muted-foreground">좌측에서 표시할 열을 선택하세요.</p>
+                ) : tablePage ? (
                   <>
-                    <Table>
-                      <TableHeader>
+                    <Table containerClassName="max-h-[34rem] overflow-auto">
+                      <TableHeader className="sticky top-0 z-[1] bg-background">
                         <TableRow>
                           <TableHead>Measurement</TableHead>
                           <TableHead>Input</TableHead>
-                          {tablePage.columns.map((column) => (
-                            <TableHead key={column}>{column}</TableHead>
-                          ))}
+                          {tablePage.columns.map((key) => {
+                            const column = profile.columns.find((item) => item.key === key)
+                            return (
+                              <TableHead key={key}>
+                                <span className="block min-w-28" title={key}>
+                                  {columnLabel(column)}
+                                </span>
+                                {column?.unit ? (
+                                  <span className="text-[10px] font-normal text-muted-foreground">{column.unit}</span>
+                                ) : null}
+                              </TableHead>
+                            )
+                          })}
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -1343,7 +1694,9 @@ export function AnalysisWorkspace({
                               {row.inputFingerprint}
                             </TableCell>
                             {row.values.map((value, index) => (
-                              <TableCell key={tablePage.columns[index]}>{formatNumber(value ?? undefined)}</TableCell>
+                              <TableCell className="tabular-nums" key={tablePage.columns[index]}>
+                                {formatNumber(value)}
+                              </TableCell>
                             ))}
                           </TableRow>
                         ))}
@@ -1375,10 +1728,89 @@ export function AnalysisWorkspace({
                     </div>
                   </>
                 ) : (
-                  <p className="py-12 text-center text-sm text-muted-foreground">페이지를 준비하는 중입니다.</p>
+                  <div className="flex min-h-40 items-center justify-center">
+                    <LoaderCircle className="size-6 animate-spin text-primary" />
+                  </div>
                 )}
               </CardContent>
             </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle>Scalar profile</CardTitle>
+                <CardDescription>누락률이 30%를 넘는 feature와 상수 열은 고급 분석에서 제외됩니다.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Column</TableHead>
+                      <TableHead>종류</TableHead>
+                      <TableHead>평균</TableHead>
+                      <TableHead>표준편차</TableHead>
+                      <TableHead>p05</TableHead>
+                      <TableHead>p50</TableHead>
+                      <TableHead>p95</TableHead>
+                      <TableHead>누락</TableHead>
+                      <TableHead>상태</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredProfileColumns.map((column) => (
+                      <TableRow key={column.key}>
+                        <TableCell>
+                          <span className="block max-w-72 truncate font-medium" title={column.key}>
+                            {columnLabel(column)}
+                          </span>
+                          <span className="text-xs text-muted-foreground">{columnMeta(column)}</span>
+                        </TableCell>
+                        <TableCell>{column.kind}</TableCell>
+                        <TableCell>{formatNumber(column.mean)}</TableCell>
+                        <TableCell>{formatNumber(column.std)}</TableCell>
+                        <TableCell>{formatNumber(column.p05)}</TableCell>
+                        <TableCell>{formatNumber(column.p50)}</TableCell>
+                        <TableCell>{formatNumber(column.p95)}</TableCell>
+                        <TableCell>{(column.missingRatio * 100).toFixed(1)}%</TableCell>
+                        <TableCell>
+                          {column.eligible ? (
+                            <Badge>사용 가능</Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">{column.exclusionReason}</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+            {profile.categoricalSummaries.length > 0 ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Boolean · String 빈도</CardTitle>
+                  <CardDescription>숫자 관계 분석과 Prediction에는 포함하지 않습니다.</CardDescription>
+                </CardHeader>
+                <CardContent className="grid [grid-template-columns:repeat(auto-fit,minmax(260px,1fr))] gap-3">
+                  {profile.categoricalSummaries.map((summary) => (
+                    <div className="rounded-lg border p-3" key={summary.name}>
+                      <p className="font-medium">{summary.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {[summary.dtype, summary.quantityKind].filter(Boolean).join(' · ')}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {summary.counts.slice(0, 12).map((count) => (
+                          <Badge className="border bg-transparent text-foreground" key={count.value}>
+                            {count.value}: {count.count}
+                          </Badge>
+                        ))}
+                      </div>
+                      {summary.excludedReason ? (
+                        <p className="mt-2 text-xs text-destructive">{summary.excludedReason}</p>
+                      ) : null}
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            ) : null}
           </TabsContent>
         </Tabs>
       ) : null}

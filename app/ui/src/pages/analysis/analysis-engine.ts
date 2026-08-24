@@ -17,7 +17,10 @@ import type {
   AnalysisMiningResult,
   AnalysisPredictionResult,
   AnalysisProfile,
+  AnalysisRelationshipPlot,
+  AnalysisRelationshipsResult,
   AnalysisTablePage,
+  AnalysisWhatIfResult,
 } from './analysis-types'
 
 export const ANALYSIS_MAX_ROWS = 10_000
@@ -40,6 +43,7 @@ export type AnalysisDataset = {
   columns: ReadonlyMap<string, AnalysisColumn>
   lastMining: AnalysisMiningResult | null
   lastPrediction: AnalysisPredictionResult | null
+  lastPredictionModel: TrainedPredictionModel | null
 }
 
 type ColumnState = {
@@ -77,6 +81,15 @@ type FittedPreprocessor = Readonly<{
 type RidgeModel = Readonly<{
   coefficients: readonly number[]
   intercept: number
+}>
+
+type TrainedPredictionModel = Readonly<{
+  featureKeys: readonly string[]
+  targetKey: string
+  preprocessor: FittedPreprocessor
+  model:
+    Readonly<{ kind: 'ridge'; value: RidgeModel }> | Readonly<{ kind: 'random-forest'; value: RandomForestRegression }>
+  intervalRadius: number
 }>
 
 type RecordedTensorView = Readonly<{
@@ -754,8 +767,17 @@ export function buildAnalysisDataset({
   states.forEach((state) => {
     while (state.values.length < identities.length) state.values.push(Number.NaN)
     const values = Float64Array.from(state.values)
+    const descriptor = describeColumn(state, values, identities.length)
     columns.set(state.key, {
-      descriptor: describeColumn(state, values, identities.length),
+      descriptor:
+        state.kind === 'target'
+          ? {
+              ...descriptor,
+              distinctInputCount: new Set(
+                identities.filter((_, index) => Number.isFinite(values[index])).map((row) => row.inputFingerprint),
+              ).size,
+            }
+          : descriptor,
       values,
     })
   })
@@ -794,6 +816,7 @@ export function buildAnalysisDataset({
     columns,
     lastMining: null,
     lastPrediction: null,
+    lastPredictionModel: null,
   }
 }
 
@@ -936,29 +959,21 @@ function rawFeatureRows(dataset: AnalysisDataset, featureKeys: readonly string[]
   return dataset.rows.map((_, rowIndex) => columns.map((column) => column.values[rowIndex]))
 }
 
-function pairwiseCorrelation(left: Float64Array, right: Float64Array) {
-  const pairs: [number, number][] = []
+function pairedValues(left: Float64Array, right: Float64Array) {
+  const first: number[] = []
+  const second: number[] = []
   for (let index = 0; index < left.length; index += 1) {
-    if (Number.isFinite(left[index]) && Number.isFinite(right[index])) pairs.push([left[index], right[index]])
+    if (!Number.isFinite(left[index]) || !Number.isFinite(right[index])) continue
+    first.push(left[index])
+    second.push(right[index])
   }
-  if (
-    pairs.length < 3 ||
-    new Set(pairs.map((pair) => pair[0])).size <= 1 ||
-    new Set(pairs.map((pair) => pair[1])).size <= 1
-  )
-    return null
-  const first = pairs.map((pair) => pair[0])
-  const second = pairs.map((pair) => pair[1])
-  const value = sampleCorrelation(first, second)
-  return Number.isFinite(value) ? value : null
+  return { first, second }
 }
 
-function rankValues(values: Float64Array) {
-  const ranked = new Float64Array(values.length)
-  ranked.fill(Number.NaN)
-  const ordered = Array.from(values)
+function rankValues(values: readonly number[]) {
+  const ranked = Array(values.length).fill(Number.NaN) as number[]
+  const ordered = values
     .map((value, index) => ({ index, value }))
-    .filter((entry) => Number.isFinite(entry.value))
     .sort((left, right) => left.value - right.value || left.index - right.index)
   let start = 0
   while (start < ordered.length) {
@@ -969,6 +984,85 @@ function rankValues(values: Float64Array) {
     start = end
   }
   return ranked
+}
+
+function relationshipStatistics(left: Float64Array, right: Float64Array) {
+  const { first, second } = pairedValues(left, right)
+  if (first.length < 3 || new Set(first).size <= 1 || new Set(second).size <= 1) {
+    return { count: first.length, pearson: null, spearman: null }
+  }
+  const pearson = sampleCorrelation(first, second)
+  const spearman = sampleCorrelation(rankValues(first), rankValues(second))
+  return {
+    count: first.length,
+    pearson: Number.isFinite(pearson) ? pearson : null,
+    spearman: Number.isFinite(spearman) ? spearman : null,
+  }
+}
+
+export function analyzeRelationships(
+  dataset: AnalysisDataset,
+  onProgress?: (completed: number, total: number) => void,
+): AnalysisRelationshipsResult {
+  const inputs = [...dataset.columns.values()].filter(
+    (column) =>
+      column.descriptor.kind === 'feature' &&
+      column.descriptor.source === 'measurement-vars' &&
+      column.descriptor.eligible,
+  )
+  const targets = [...dataset.columns.values()].filter(
+    (column) =>
+      column.descriptor.kind === 'target' && column.descriptor.source === 'recorded-data' && column.descriptor.eligible,
+  )
+  const pairs: AnalysisRelationshipsResult['pairs'][number][] = []
+  inputs.forEach((input, inputIndex) => {
+    targets.forEach((target) => {
+      const result = relationshipStatistics(input.values, target.values)
+      if (result.pearson === null || result.spearman === null) return
+      pairs.push({
+        inputKey: input.descriptor.key,
+        targetKey: target.descriptor.key,
+        pearson: result.pearson,
+        spearman: result.spearman,
+        count: result.count,
+      })
+    })
+    onProgress?.(inputIndex + 1, inputs.length)
+  })
+  pairs.sort(
+    (left, right) =>
+      Math.abs(right.pearson) - Math.abs(left.pearson) ||
+      Math.abs(right.spearman) - Math.abs(left.spearman) ||
+      left.inputKey.localeCompare(right.inputKey) ||
+      left.targetKey.localeCompare(right.targetKey),
+  )
+  return { fingerprint: dataset.profile.fingerprint, pairs }
+}
+
+export function getRelationshipPlot(
+  dataset: AnalysisDataset,
+  inputKey: string,
+  targetKey: string,
+): AnalysisRelationshipPlot {
+  const input = requireColumns(dataset, [inputKey], 'feature')[0]
+  const target = requireColumns(dataset, [targetKey], 'target')[0]
+  if (input.descriptor.source !== 'measurement-vars' || target.descriptor.source !== 'recorded-data') {
+    throw new Error('관계 그래프는 input vars와 Recorded Data 조합만 지원합니다.')
+  }
+  const result = relationshipStatistics(input.values, target.values)
+  return {
+    fingerprint: dataset.profile.fingerprint,
+    inputKey,
+    targetKey,
+    pearson: result.pearson,
+    spearman: result.spearman,
+    count: result.count,
+    points: dataset.rows.flatMap((row, index) =>
+      Number.isFinite(input.values[index]) && Number.isFinite(target.values[index])
+        ? [{ measurementId: row.measurementId, x: input.values[index], y: target.values[index] }]
+        : [],
+    ),
+  }
 }
 
 function standardizedMatrix(dataset: AnalysisDataset, featureKeys: readonly string[]) {
@@ -995,15 +1089,9 @@ export function mineDataset(
   {
     featureKeys,
     outlierFraction,
-    targetKey,
-    xKey,
-    yKey,
   }: {
     featureKeys: readonly string[]
     outlierFraction: number
-    targetKey: string | null
-    xKey: string | null
-    yKey: string | null
   },
 ): AnalysisMiningResult {
   if (dataset.rows.length < 3) throw new Error('Mining에는 Measurement가 3개 이상 필요합니다.')
@@ -1011,7 +1099,6 @@ export function mineDataset(
     throw new Error(`Mining feature는 2개 이상 ${ANALYSIS_MAX_PREDICTION_FEATURES}개 이하여야 합니다.`)
   }
   requireColumns(dataset, featureKeys, 'feature')
-  if (targetKey) requireColumns(dataset, [targetKey], 'target')
   const boundedOutlierFraction = Math.min(0.1, Math.max(0.01, outlierFraction))
   const matrix = standardizedMatrix(dataset, featureKeys)
   const pca = new PCA(matrix, { center: false, scale: false })
@@ -1059,23 +1146,9 @@ export function mineDataset(
       .map((entry) => entry.index),
   )
 
-  const correlationKeys = [...featureKeys, ...(targetKey ? [targetKey] : [])]
-  const correlationColumns = requireColumns(dataset, correlationKeys)
-  const correlations = correlationColumns.map((left) =>
-    correlationColumns.map((right) => pairwiseCorrelation(left.values, right.values)),
-  )
-  const rankedColumns = correlationColumns.map((column) => rankValues(column.values))
-  const spearmanCorrelations = rankedColumns.map((left) =>
-    rankedColumns.map((right) => pairwiseCorrelation(left, right)),
-  )
-  const xValues = xKey ? requireColumns(dataset, [xKey])[0].values : null
-  const yValues = yKey ? requireColumns(dataset, [yKey])[0].values : null
   const result: AnalysisMiningResult = {
     fingerprint: dataset.profile.fingerprint,
     featureKeys,
-    correlationKeys,
-    correlations,
-    spearmanCorrelations,
     explainedVariance: explainedVariance.slice(0, 2),
     loadings,
     points: dataset.rows.map((row, index) => ({
@@ -1085,8 +1158,6 @@ export function mineDataset(
       cluster: clusters[index],
       anomalyScore: errors[index],
       outlier: outlierIndexes.has(index),
-      ...(xValues && Number.isFinite(xValues[index]) ? { x: xValues[index] } : {}),
-      ...(yValues && Number.isFinite(yValues[index]) ? { y: yValues[index] } : {}),
     })),
     clusterCount: bestK,
     silhouette: bestSilhouette,
@@ -1109,6 +1180,8 @@ export function predictDataset(
   },
   onFinalTraining?: () => void,
 ): AnalysisPredictionResult {
+  dataset.lastPrediction = null
+  dataset.lastPredictionModel = null
   if (featureKeys.length === 0 || featureKeys.length > ANALYSIS_MAX_PREDICTION_FEATURES) {
     throw new Error(`Prediction feature는 1개 이상 ${ANALYSIS_MAX_PREDICTION_FEATURES}개 이하여야 합니다.`)
   }
@@ -1158,19 +1231,17 @@ export function predictDataset(
   onFinalTraining?.()
   const finalPreprocessor = fittedPreprocessor(rawAll, validIndexes, featureKeys)
   const finalMatrix = transformRows(rawAll, validIndexes, finalPreprocessor)
-  const rawWhatIf = [featureKeys.map((key) => whatIf[key])]
-  const whatIfMatrix = transformRows(rawWhatIf, [0], finalPreprocessor)
-  let prediction: number
   let expandedImportance: readonly number[]
   let importanceMethod: string
+  let trainedModel: TrainedPredictionModel['model']
   if (selectedModel === 'ridge') {
     const model = fitRidge(finalMatrix, observed, bestRidge.alpha)
-    prediction = predictRidge(model, whatIfMatrix)[0]
+    trainedModel = { kind: 'ridge', value: model }
     expandedImportance = model.coefficients.map(Math.abs)
     importanceMethod = '표준화 Ridge coefficient 절댓값'
   } else {
     const model = fitForest(finalMatrix, observed, 42)
-    prediction = model.predict(whatIfMatrix)[0]
+    trainedModel = { kind: 'random-forest', value: model }
     expandedImportance = (model as RandomForestRegression & { featureImportance(): number[] })
       .featureImportance()
       .map((value: number) => (Number.isFinite(value) ? value : 0))
@@ -1189,15 +1260,15 @@ export function predictDataset(
   const residuals = observed.map((value, index) => value - selectedOof[index])
   const absoluteResiduals = residuals.map(Math.abs).sort((left, right) => left - right)
   const radius = quantileSorted(absoluteResiduals, 0.9)
-  const extrapolatedFeatureKeys = featureKeys.filter((key) => {
-    const descriptor = dataset.columns.get(key)?.descriptor
-    const value = whatIf[key]
-    return (
-      !Number.isFinite(value) ||
-      (descriptor?.min !== undefined && value < descriptor.min) ||
-      (descriptor?.max !== undefined && value > descriptor.max)
-    )
-  })
+  const trained: TrainedPredictionModel = {
+    featureKeys,
+    targetKey,
+    preprocessor: finalPreprocessor,
+    model: trainedModel,
+    intervalRadius: radius,
+  }
+  dataset.lastPredictionModel = trained
+  const whatIfResult = evaluateWhatIf(dataset, trained, whatIf)
 
   const result: AnalysisPredictionResult = {
     fingerprint: dataset.profile.fingerprint,
@@ -1215,11 +1286,56 @@ export function predictDataset(
       residual: residuals[index],
       fold: foldByRow.get(rowIndex) ?? 0,
     })),
-    prediction,
-    interval: [prediction - radius, prediction + radius],
-    extrapolatedFeatureKeys,
+    prediction: whatIfResult.prediction,
+    interval: whatIfResult.interval,
+    extrapolatedFeatureKeys: whatIfResult.extrapolatedFeatureKeys,
   }
   dataset.lastPrediction = result
+  return result
+}
+
+function evaluateWhatIf(
+  dataset: AnalysisDataset,
+  trained: TrainedPredictionModel,
+  whatIf: Readonly<Record<string, number>>,
+): AnalysisWhatIfResult {
+  const raw = [trained.featureKeys.map((key) => whatIf[key])]
+  const matrix = transformRows(raw, [0], trained.preprocessor)
+  const prediction =
+    trained.model.kind === 'ridge'
+      ? predictRidge(trained.model.value, matrix)[0]
+      : trained.model.value.predict(matrix)[0]
+  const extrapolatedFeatureKeys = trained.featureKeys.filter((key) => {
+    const descriptor = dataset.columns.get(key)?.descriptor
+    const value = whatIf[key]
+    return (
+      !Number.isFinite(value) ||
+      (descriptor?.min !== undefined && value < descriptor.min) ||
+      (descriptor?.max !== undefined && value > descriptor.max)
+    )
+  })
+  return {
+    fingerprint: dataset.profile.fingerprint,
+    prediction,
+    interval: [prediction - trained.intervalRadius, prediction + trained.intervalRadius],
+    extrapolatedFeatureKeys,
+  }
+}
+
+export function predictWhatIf(
+  dataset: AnalysisDataset,
+  whatIf: Readonly<Record<string, number>>,
+): AnalysisWhatIfResult {
+  if (!dataset.lastPredictionModel) throw new Error('먼저 Prediction 모델을 학습하세요.')
+  const result = evaluateWhatIf(dataset, dataset.lastPredictionModel, whatIf)
+  if (dataset.lastPrediction) {
+    dataset.lastPrediction = {
+      ...dataset.lastPrediction,
+      prediction: result.prediction,
+      interval: result.interval,
+      extrapolatedFeatureKeys: result.extrapolatedFeatureKeys,
+    }
+  }
   return result
 }
 

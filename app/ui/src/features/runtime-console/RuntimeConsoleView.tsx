@@ -104,7 +104,7 @@ export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
               const contentId = `runtime-console-event-${index}`
               return (
                 <li
-                  className="grid grid-cols-[1.25rem_6.5rem_8.5rem_minmax(0,1fr)] items-start gap-1 px-3 py-2"
+                  className="grid grid-cols-[1.25rem_5.5rem_minmax(0,1fr)] items-start gap-1 px-3 py-2"
                   key={event.id}
                 >
                   <button
@@ -127,20 +127,7 @@ export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
                       className={`size-3.5 transition-transform ${expanded ? 'rotate-90' : ''}`}
                     />
                   </button>
-                  <time className="whitespace-nowrap text-zinc-500" dateTime={new Date(event.timestamp).toISOString()}>
-                    {new Date(event.timestamp).toISOString().slice(11, 23)}
-                  </time>
-                  <span
-                    className={`whitespace-nowrap ${
-                      event.level === 'error'
-                        ? 'text-red-400'
-                        : event.level === 'warning'
-                          ? 'text-amber-300'
-                          : 'text-sky-300'
-                    }`}
-                  >
-                    {sourceLabels[event.source]} · {event.level}
-                  </span>
+                  <span className="whitespace-nowrap text-zinc-400">{sourceLabels[event.source]}</span>
                   <div className="flex min-w-0 items-start gap-2" id={contentId}>
                     <p
                       className={

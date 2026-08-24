@@ -8,14 +8,23 @@ import type { CaeDataSelection } from './useCaeDataSelection'
 import type { SavedMeasurement } from '../types'
 
 type GenerateAndRunState = Readonly<{
+  attempt: number
   baselineRevision: number
   candidateGeneration: number
   experimentId: number
+  failures: number
   measurementId: number | null
   phase: 'candidate' | 'measurement' | 'running' | 'saving'
+  repeat: boolean
   sequence: number
   sourceHash: string
+  successes: number
+  total: number
 }>
+
+function generateAndRunStage(state: GenerateAndRunState, value: string) {
+  return state.repeat ? `${state.attempt}/${state.total} · ${value}` : value
+}
 
 function recordRequest(
   experimentDocument: CadDocumentController,
@@ -75,14 +84,17 @@ export function useCaeMeasurementActions({
   const [error, setError] = useState<string | null>(null)
   const [pendingRecordMeasurementId, setPendingRecordMeasurementId] = useState<number | null>(null)
   const activeMeasurementId = useRef<number | null>(null)
+  const generateAndRunCancelRequested = useRef(false)
   const generateAndRunSequence = useRef(0)
   const generateAndRunStep = useRef<GenerateAndRunState['phase'] | null>(null)
+  const onGenerateCandidateRef = useRef(onGenerateCandidate)
   const pendingRecordRequest = useRef<MeasurementRecordRequest | null>(null)
   const experimentIdentityRef = useRef({ experimentClean, experimentId, experimentSourceHash })
   const experimentDocumentRef = useRef(experimentDocument)
   const simulationRef = useRef(simulation)
   experimentIdentityRef.current = { experimentClean, experimentId, experimentSourceHash }
   experimentDocumentRef.current = experimentDocument
+  onGenerateCandidateRef.current = onGenerateCandidate
   simulationRef.current = simulation
 
   const fail = useCallback((cause: unknown, fallback: string) => {
@@ -91,16 +103,69 @@ export function useCaeMeasurementActions({
     toast.error(message)
   }, [])
 
-  const finishGenerateAndRun = useCallback((sequence: number) => {
-    if (generateAndRunSequence.current !== sequence) return false
-    generateAndRunSequence.current += 1
-    generateAndRunStep.current = null
-    activeMeasurementId.current = null
-    setGenerateAndRunState(null)
-    setOperation(null)
-    setStage(null)
+  const finishGenerateAndRun = useCallback(
+    (sequence: number, summary?: Pick<GenerateAndRunState, 'failures' | 'repeat' | 'successes' | 'total'>) => {
+      if (generateAndRunSequence.current !== sequence) return false
+      generateAndRunSequence.current += 1
+      generateAndRunStep.current = null
+      generateAndRunCancelRequested.current = false
+      activeMeasurementId.current = null
+      setGenerateAndRunState(null)
+      setOperation(null)
+      setStage(null)
+      if (summary?.repeat) {
+        const message = `Repeat Run ${summary.total.toLocaleString()}회 완료: 성공 ${summary.successes.toLocaleString()}회, 실패 ${summary.failures.toLocaleString()}회`
+        if (summary.failures > 0) toast.warning(message)
+        else toast.success(message)
+      }
+      return true
+    },
+    [],
+  )
+
+  const startGenerateAndRunAttempt = useCallback((state: GenerateAndRunState) => {
+    if (generateAndRunSequence.current !== state.sequence) return false
+    const candidateGeneration = onGenerateCandidateRef.current()
+    if (candidateGeneration === null) return false
+    const nextState: GenerateAndRunState = {
+      ...state,
+      baselineRevision: experimentDocumentRef.current.revision,
+      candidateGeneration,
+      measurementId: null,
+      phase: 'candidate',
+    }
+    generateAndRunStep.current = 'candidate'
+    setGenerateAndRunState(nextState)
+    setStage(generateAndRunStage(nextState, 'Candidate 생성'))
     return true
   }, [])
+
+  const advanceGenerateAndRun = useCallback(
+    (state: GenerateAndRunState, succeeded: boolean) => {
+      if (generateAndRunSequence.current !== state.sequence) return false
+      const completed: GenerateAndRunState = {
+        ...state,
+        failures: state.failures + (succeeded ? 0 : 1),
+        successes: state.successes + (succeeded ? 1 : 0),
+      }
+      if (state.attempt >= state.total) {
+        return finishGenerateAndRun(state.sequence, completed)
+      }
+      const nextState: GenerateAndRunState = {
+        ...completed,
+        attempt: state.attempt + 1,
+      }
+      try {
+        if (startGenerateAndRunAttempt(nextState)) return true
+        throw new Error('다음 Candidate 생성을 시작하지 못해 Repeat Run을 중단했습니다.')
+      } catch (cause) {
+        finishGenerateAndRun(state.sequence)
+        fail(cause, '다음 Candidate 생성을 시작하지 못해 Repeat Run을 중단했습니다.')
+      }
+      return false
+    },
+    [fail, finishGenerateAndRun, startGenerateAndRunAttempt],
+  )
 
   const invalidate = useCallback(
     async (measurementId?: number) => {
@@ -172,57 +237,71 @@ export function useCaeMeasurementActions({
     }
   }, [experimentDocument.runIsBusy, fail, onGenerateCandidate, operation, pendingRecordMeasurementId])
 
-  const generateAndRun = useCallback(() => {
-    if (operation || generateAndRunStep.current || pendingRecordMeasurementId || experimentDocument.runIsBusy) {
-      return false
-    }
-    setError(null)
-    try {
-      if (!authenticated) throw new Error('로그인이 필요합니다.')
-      if (!experimentClean || !experimentId || !experimentSourceHash) {
-        throw new Error('저장되고 편집되지 않은 Experiment가 필요합니다.')
+  const startGenerateAndRun = useCallback(
+    (total: number, repeat: boolean) => {
+      if (operation || generateAndRunStep.current || pendingRecordMeasurementId || experimentDocument.runIsBusy) {
+        return false
       }
-      if (experimentDocument.draftTaskNames.length > 0) {
-        throw new Error('Solver가 선택되지 않은 Draft Task가 있어 Measurement를 저장할 수 없습니다.')
+      setError(null)
+      try {
+        if (!Number.isSafeInteger(total) || total < 1) {
+          throw new Error('반복 횟수는 양의 정수여야 합니다.')
+        }
+        if (!authenticated) throw new Error('로그인이 필요합니다.')
+        if (!experimentClean || !experimentId || !experimentSourceHash) {
+          throw new Error('저장되고 편집되지 않은 Experiment가 필요합니다.')
+        }
+        if (experimentDocument.draftTaskNames.length > 0) {
+          throw new Error('Solver가 선택되지 않은 Draft Task가 있어 Measurement를 저장할 수 없습니다.')
+        }
+        const sequence = generateAndRunSequence.current + 1
+        generateAndRunSequence.current = sequence
+        generateAndRunCancelRequested.current = false
+        generateAndRunStep.current = 'candidate'
+        setOperation('generate-and-run')
+        const initialState: GenerateAndRunState = {
+          attempt: 1,
+          baselineRevision: experimentDocument.revision,
+          candidateGeneration: 0,
+          experimentId,
+          failures: 0,
+          measurementId: null,
+          phase: 'candidate',
+          repeat,
+          sequence,
+          sourceHash: experimentSourceHash,
+          successes: 0,
+          total,
+        }
+        if (!startGenerateAndRunAttempt(initialState)) throw new Error('Candidate 생성을 시작하지 못했습니다.')
+        return true
+      } catch (cause) {
+        generateAndRunSequence.current += 1
+        generateAndRunStep.current = null
+        setGenerateAndRunState(null)
+        setOperation(null)
+        setStage(null)
+        fail(cause, repeat ? 'Repeat Run을 시작하지 못했습니다.' : 'Generate & Run을 시작하지 못했습니다.')
+        return false
       }
-      const sequence = generateAndRunSequence.current + 1
-      generateAndRunSequence.current = sequence
-      generateAndRunStep.current = 'candidate'
-      const candidateGeneration = onGenerateCandidate()
-      if (candidateGeneration === null) throw new Error('Candidate 생성을 시작하지 못했습니다.')
-      setGenerateAndRunState({
-        baselineRevision: experimentDocument.revision,
-        candidateGeneration,
-        experimentId,
-        measurementId: null,
-        phase: 'candidate',
-        sequence,
-        sourceHash: experimentSourceHash,
-      })
-      setOperation('generate-and-run')
-      setStage('Candidate 생성')
-      return true
-    } catch (cause) {
-      generateAndRunStep.current = null
-      setGenerateAndRunState(null)
-      setOperation(null)
-      setStage(null)
-      fail(cause, 'Generate & Run을 시작하지 못했습니다.')
-      return false
-    }
-  }, [
-    authenticated,
-    experimentClean,
-    experimentDocument.draftTaskNames.length,
-    experimentDocument.revision,
-    experimentDocument.runIsBusy,
-    experimentId,
-    experimentSourceHash,
-    fail,
-    onGenerateCandidate,
-    operation,
-    pendingRecordMeasurementId,
-  ])
+    },
+    [
+      authenticated,
+      experimentClean,
+      experimentDocument.draftTaskNames.length,
+      experimentDocument.revision,
+      experimentDocument.runIsBusy,
+      experimentId,
+      experimentSourceHash,
+      fail,
+      operation,
+      pendingRecordMeasurementId,
+      startGenerateAndRunAttempt,
+    ],
+  )
+
+  const generateAndRun = useCallback(() => startGenerateAndRun(1, false), [startGenerateAndRun])
+  const repeatGenerateAndRun = useCallback((count: number) => startGenerateAndRun(count, true), [startGenerateAndRun])
 
   const saveCurrent = useCallback(async () => {
     if (operation || pendingRecordMeasurementId) return null
@@ -314,26 +393,24 @@ export function useCaeMeasurementActions({
       experimentDocument.completedCandidateGeneration !== state.candidateGeneration ||
       experimentDocument.successfulCandidateGeneration !== state.candidateGeneration
     ) {
-      if (finishGenerateAndRun(state.sequence)) {
-        fail(
-          new Error(
-            experimentDocument.error?.message ??
-              (experimentDocument.completedCandidateGeneration > state.candidateGeneration
-                ? '새 Candidate 생성 요청이 다른 요청으로 대체되었습니다.'
-                : '새 Candidate 평가에 실패했습니다.'),
-          ),
-          '새 Candidate 평가에 실패했습니다.',
-        )
-      }
+      fail(
+        new Error(
+          experimentDocument.error?.message ??
+            (experimentDocument.completedCandidateGeneration > state.candidateGeneration
+              ? '새 Candidate 생성 요청이 다른 요청으로 대체되었습니다.'
+              : '새 Candidate 평가에 실패했습니다.'),
+        ),
+        '새 Candidate 평가에 실패했습니다.',
+      )
+      advanceGenerateAndRun(state, false)
       return
     }
     if (experimentDocument.status === 'Error') {
-      if (finishGenerateAndRun(state.sequence)) {
-        fail(
-          new Error(experimentDocument.error?.message ?? '새 Candidate 평가에 실패했습니다.'),
-          '새 Candidate 평가에 실패했습니다.',
-        )
-      }
+      fail(
+        new Error(experimentDocument.error?.message ?? '새 Candidate 평가에 실패했습니다.'),
+        '새 Candidate 평가에 실패했습니다.',
+      )
+      advanceGenerateAndRun(state, false)
       return
     }
     if (
@@ -345,7 +422,7 @@ export function useCaeMeasurementActions({
 
     generateAndRunStep.current = 'saving'
     setGenerateAndRunState({ ...state, phase: 'saving' })
-    setStage('Measurement 저장')
+    setStage(generateAndRunStage(state, 'Measurement 저장'))
     void (async () => {
       try {
         const request = requireSavableCandidate()
@@ -369,18 +446,22 @@ export function useCaeMeasurementActions({
         }
         generateAndRunStep.current = 'measurement'
         setGenerateAndRunState(measurementState)
-        setStage('Measurement 평가')
+        setStage(generateAndRunStage(measurementState, 'Measurement 평가'))
         const row = await refreshPersistedMeasurement(id, state.experimentId)
         if (generateAndRunSequence.current !== state.sequence) return
         if (!row) {
           const message = `Measurement #${id}은 저장되었지만 Generate & Run을 계속할 수 없습니다.`
-          if (finishGenerateAndRun(state.sequence)) setError(message)
+          setError(message)
+          advanceGenerateAndRun(measurementState, false)
         }
       } catch (cause) {
-        if (finishGenerateAndRun(state.sequence)) fail(cause, 'Measurement를 저장하지 못했습니다.')
+        if (generateAndRunSequence.current !== state.sequence) return
+        fail(cause, 'Measurement를 저장하지 못했습니다.')
+        advanceGenerateAndRun(state, false)
       }
     })()
   }, [
+    advanceGenerateAndRun,
     experimentDocument.error?.message,
     experimentDocument.completedCandidateGeneration,
     experimentDocument.revision,
@@ -388,7 +469,6 @@ export function useCaeMeasurementActions({
     experimentDocument.successfulCandidateGeneration,
     experimentDocument.successfulRevision,
     fail,
-    finishGenerateAndRun,
     generateAndRunState,
     operation,
     refreshPersistedMeasurement,
@@ -407,19 +487,17 @@ export function useCaeMeasurementActions({
       return
     }
     if (selection.measurement && selection.measurement.id !== state.measurementId) {
-      if (finishGenerateAndRun(state.sequence)) {
-        fail(new Error('Generate & Run을 위해 저장한 Measurement 선택이 변경되었습니다.'), '')
-      }
+      fail(new Error('Generate & Run을 위해 저장한 Measurement 선택이 변경되었습니다.'), '')
+      advanceGenerateAndRun(state, false)
       return
     }
     if (!selection.measurement || experimentDocument.revision <= state.baselineRevision) return
     if (experimentDocument.status === 'Error') {
-      if (finishGenerateAndRun(state.sequence)) {
-        fail(
-          new Error(experimentDocument.error?.message ?? '저장된 Measurement 평가에 실패했습니다.'),
-          '저장된 Measurement 평가에 실패했습니다.',
-        )
-      }
+      fail(
+        new Error(experimentDocument.error?.message ?? '저장된 Measurement 평가에 실패했습니다.'),
+        '저장된 Measurement 평가에 실패했습니다.',
+      )
+      advanceGenerateAndRun(state, false)
       return
     }
     if (
@@ -429,9 +507,8 @@ export function useCaeMeasurementActions({
       return
     }
     if (!simulation.canRun) {
-      if (finishGenerateAndRun(state.sequence)) {
-        fail(new Error('저장된 Measurement를 실행할 수 없습니다.'), '')
-      }
+      fail(new Error('저장된 Measurement를 실행할 수 없습니다.'), '')
+      advanceGenerateAndRun(state, false)
       return
     }
 
@@ -439,19 +516,20 @@ export function useCaeMeasurementActions({
     setGenerateAndRunState({ ...state, phase: 'running' })
     pendingRecordRequest.current = null
     activeMeasurementId.current = state.measurementId
-    setStage('Simulation 실행')
+    setStage(generateAndRunStage(state, 'Simulation 실행'))
     const runId = simulation.run()
     if (!runId) {
       activeMeasurementId.current = null
-      if (finishGenerateAndRun(state.sequence)) fail(new Error('Simulation을 시작하지 못했습니다.'), '')
+      fail(new Error('Simulation을 시작하지 못했습니다.'), '')
+      advanceGenerateAndRun(state, false)
     }
   }, [
+    advanceGenerateAndRun,
     experimentDocument.error?.message,
     experimentDocument.revision,
     experimentDocument.status,
     experimentDocument.successfulRevision,
     fail,
-    finishGenerateAndRun,
     generateAndRunState,
     operation,
     selection.measurement,
@@ -531,29 +609,34 @@ export function useCaeMeasurementActions({
   }, [fail, operation, pendingRecordMeasurementId, persistRecordedData])
 
   useEffect(() => {
-    const generateAndRunSequenceId =
-      operation === 'generate-and-run' && generateAndRunState?.phase === 'running' ? generateAndRunState.sequence : null
-    if (operation !== 'measurement' && generateAndRunSequenceId === null) return
+    const batchState =
+      operation === 'generate-and-run' && generateAndRunState?.phase === 'running' ? generateAndRunState : null
+    if (operation !== 'measurement' && !batchState) return
     const measurementId = activeMeasurementId.current
     if (!measurementId) return
     if (simulation.process.status === 'preparing' || simulation.process.status === 'running') {
-      setStage(simulation.process.stage ?? 'Simulation 실행')
+      setStage(
+        batchState
+          ? generateAndRunStage(batchState, simulation.process.stage ?? 'Simulation 실행')
+          : (simulation.process.stage ?? 'Simulation 실행'),
+      )
       return
     }
     if (simulation.process.status === 'succeeded') {
       activeMeasurementId.current = null
-      setStage('RecordedData 저장')
+      setStage(batchState ? generateAndRunStage(batchState, 'RecordedData 저장') : 'RecordedData 저장')
       void (async () => {
         try {
           const request = recordRequest(experimentDocumentRef.current, simulationRef.current)
           pendingRecordRequest.current = request
           await persistRecordedData(measurementId, request)
+          if (batchState) advanceGenerateAndRun(batchState, true)
         } catch (cause) {
           if (pendingRecordRequest.current) setPendingRecordMeasurementId(measurementId)
           fail(cause, 'RecordedData를 저장하지 못했습니다.')
+          if (batchState) finishGenerateAndRun(batchState.sequence)
         } finally {
-          if (generateAndRunSequenceId !== null) finishGenerateAndRun(generateAndRunSequenceId)
-          else {
+          if (!batchState) {
             setOperation(null)
             setStage(null)
           }
@@ -564,17 +647,19 @@ export function useCaeMeasurementActions({
     if (simulation.process.status === 'failed' || simulation.process.status === 'cancelled') {
       activeMeasurementId.current = null
       fail(simulation.process.error ?? 'Simulation이 완료되지 않았습니다.', 'Simulation이 완료되지 않았습니다.')
-      if (generateAndRunSequenceId !== null) finishGenerateAndRun(generateAndRunSequenceId)
-      else {
+      if (batchState) {
+        if (generateAndRunCancelRequested.current) finishGenerateAndRun(batchState.sequence)
+        else advanceGenerateAndRun(batchState, false)
+      } else {
         setOperation(null)
         setStage(null)
       }
     }
   }, [
+    advanceGenerateAndRun,
     fail,
     finishGenerateAndRun,
-    generateAndRunState?.phase,
-    generateAndRunState?.sequence,
+    generateAndRunState,
     operation,
     persistRecordedData,
     simulation.process.error,
@@ -589,12 +674,23 @@ export function useCaeMeasurementActions({
     ) {
       return
     }
+    if (operation === 'generate-and-run') generateAndRunCancelRequested.current = true
     simulation.cancel()
   }, [generateAndRunState?.phase, operation, simulation])
 
   const cancelable =
     (operation === 'measurement' || (operation === 'generate-and-run' && generateAndRunState?.phase === 'running')) &&
     ['preparing', 'running'].includes(simulation.process.status)
+
+  const generateAndRunBatch = generateAndRunState
+    ? Object.freeze({
+        attempt: generateAndRunState.attempt,
+        failures: generateAndRunState.failures,
+        repeat: generateAndRunState.repeat,
+        successes: generateAndRunState.successes,
+        total: generateAndRunState.total,
+      })
+    : null
 
   return {
     busy: operation !== null,
@@ -603,10 +699,12 @@ export function useCaeMeasurementActions({
     deleteMeasurements,
     error,
     generateAndRun,
+    generateAndRunBatch,
     generateCandidate,
     operation,
     pendingRecordMeasurementId,
     retryRecord,
+    repeatGenerateAndRun,
     runSelected,
     saveCurrent,
     stage,

@@ -30,7 +30,7 @@ export type ExperimentRightTabId = (typeof experimentRightTabIds)[number]
 export const measurementRightTabIds = ['recorded-data', 'detail'] as const
 export type MeasurementRightTabId = (typeof measurementRightTabIds)[number]
 
-export const analysisTabIds = ['overview', 'relationships', 'mining', 'prediction', 'data'] as const
+export const analysisTabIds = ['explore', 'mining', 'prediction', 'data'] as const
 export type AnalysisTabId = (typeof analysisTabIds)[number]
 
 export const helpKindIds = ['manual', 'geometry', 'materials', 'quantity-kinds', 'solvers'] as const
@@ -77,7 +77,7 @@ export const defaultWorkbenchLayoutState: WorkbenchLayoutState = Object.freeze({
   bottomHeightRatio: 0.5,
   viewerExpanded: false,
   rightTabs: Object.freeze({ experiment: 'source', measurement: 'recorded-data' }),
-  analysisTab: 'overview',
+  analysisTab: 'explore',
   help: Object.freeze({ kind: 'manual', item: 'program-overview' }),
 })
 

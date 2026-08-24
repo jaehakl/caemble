@@ -60,6 +60,31 @@ function measurement(id: number, updatedAt: string) {
   }
 }
 
+function recordedResult(id: number) {
+  return {
+    id: 100 + id,
+    updated_at: 'a',
+    measurement_id: id,
+    name: 'result',
+    quantity_kind: 'Dimensionless',
+    tensor_order: 0,
+    dtype: 'float64',
+    data_schema: { dtype: 'float64', quantityKind: 'Dimensionless', unit: '1' },
+    data: { value: id * 3 },
+  }
+}
+
+async function loadNumericDataset(requestId: string) {
+  const items = Array.from({ length: 20 }, (_, index) => measurement(index + 1, 'a'))
+  apiMocks.measurementList.mockResolvedValue({ total: items.length, items })
+  apiMocks.recordedDataList.mockResolvedValue({
+    total: items.length,
+    items: items.map((item) => recordedResult(item.id)),
+  })
+  dispatch({ type: 'load-context', requestId, experimentId: 2 })
+  await waitForResponse('profile', requestId)
+}
+
 describe('Analysis Worker data loading', () => {
   beforeAll(async () => {
     vi.stubGlobal('self', workerScope)
@@ -223,5 +248,56 @@ describe('Analysis Worker data loading', () => {
 
     expect(apiMocks.recordedDataList).toHaveBeenCalledTimes(5)
     expect(maximumActive).toBe(4)
+  })
+
+  it('최초 관계 순위와 선택 산점도를 데이터 재조회 없이 갱신한다', async () => {
+    await loadNumericDataset('relationship-load')
+    const measurementCalls = apiMocks.measurementList.mock.calls.length
+    const recordedCalls = apiMocks.recordedDataList.mock.calls.length
+
+    dispatch({ type: 'relationships', requestId: 'relationship-rank' })
+    const ranked = await waitForResponse('relationships', 'relationship-rank')
+    expect(ranked.type === 'relationships' && ranked.result.pairs[0]).toMatchObject({
+      inputKey: 'measurement.vars.width',
+      targetKey: 'target:result',
+      pearson: 1,
+      spearman: 1,
+      count: 20,
+    })
+
+    dispatch({
+      type: 'relationship-plot',
+      requestId: 'relationship-plot',
+      inputKey: 'measurement.vars.width',
+      targetKey: 'target:result',
+    })
+    const plot = await waitForResponse('relationship-plot', 'relationship-plot')
+    expect(plot.type === 'relationship-plot' && plot.result.points).toHaveLength(20)
+    expect(apiMocks.measurementList).toHaveBeenCalledTimes(measurementCalls)
+    expect(apiMocks.recordedDataList).toHaveBeenCalledTimes(recordedCalls)
+  })
+
+  it('What-if는 학습 전에는 거절하고 학습 후에는 캐시된 최종 모델만 사용한다', async () => {
+    await loadNumericDataset('prediction-load')
+    dispatch({ type: 'predict-what-if', requestId: 'what-if-too-soon', whatIf: { 'measurement.vars.width': 4 } })
+    const early = await waitForResponse('error', 'what-if-too-soon')
+    expect(early.type === 'error' && early.message).toContain('먼저 Prediction 모델을 학습')
+
+    dispatch({
+      type: 'predict',
+      requestId: 'prediction-train',
+      featureKeys: ['measurement.vars.width'],
+      targetKey: 'target:result',
+      whatIf: { 'measurement.vars.width': 4 },
+    })
+    await waitForResponse('prediction', 'prediction-train')
+    const measurementCalls = apiMocks.measurementList.mock.calls.length
+    const recordedCalls = apiMocks.recordedDataList.mock.calls.length
+
+    dispatch({ type: 'predict-what-if', requestId: 'what-if-cached', whatIf: { 'measurement.vars.width': 8 } })
+    const cached = await waitForResponse('prediction-what-if', 'what-if-cached')
+    expect(cached.type === 'prediction-what-if' && cached.result.prediction).toBeCloseTo(24, 3)
+    expect(apiMocks.measurementList).toHaveBeenCalledTimes(measurementCalls)
+    expect(apiMocks.recordedDataList).toHaveBeenCalledTimes(recordedCalls)
   })
 })

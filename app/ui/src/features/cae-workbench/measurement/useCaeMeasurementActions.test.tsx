@@ -15,12 +15,15 @@ const mocks = vi.hoisted(() => ({
   record: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
+  toastWarning: vi.fn(),
 }))
 
 vi.mock('@/api', () => ({
   dbTables: { Measurement: { create: mocks.create, deleteRows: mocks.deleteRows, record: mocks.record } },
 }))
-vi.mock('sonner', () => ({ toast: { error: mocks.toastError, success: mocks.toastSuccess } }))
+vi.mock('sonner', () => ({
+  toast: { error: mocks.toastError, success: mocks.toastSuccess, warning: mocks.toastWarning },
+}))
 
 const sourceHash = 'a'.repeat(64)
 const prepared: SavedMeasurement = {
@@ -106,6 +109,348 @@ beforeEach(() => {
 })
 
 describe('useCaeMeasurementActions', () => {
+  it('runs every Repeat Run attempt sequentially after the previous RecordedData save completes', async () => {
+    let resolveFirstRecord!: () => void
+    mocks.record
+      .mockImplementationOnce(() => new Promise<void>((resolve) => (resolveFirstRecord = resolve)))
+      .mockResolvedValueOnce(undefined)
+    mocks.create.mockReset().mockResolvedValueOnce({ id: 12 }).mockResolvedValueOnce({ id: 13 })
+    const generate = vi.fn().mockReturnValueOnce(2).mockReturnValueOnce(3)
+    const run = vi.fn().mockReturnValueOnce('run-1').mockReturnValueOnce('run-2')
+    const saved12 = { ...prepared, id: 12, vars: { width: 12 } }
+    const saved13 = { ...prepared, id: 13, vars: { width: 13 } }
+    const loadMeasurement = vi.fn(async (value: number | SavedMeasurement) =>
+      typeof value === 'number' && value === 12 ? saved12 : saved13,
+    )
+    const initialProps = {
+      authenticated: true,
+      experimentClean: true,
+      experimentDocument: documentController(),
+      experimentId: 7,
+      experimentSourceHash: sourceHash,
+      onGenerateCandidate: generate,
+      selection: selection({ loadMeasurement }),
+      simulation: simulationController({ canRun: false, run }),
+    }
+    const { result, rerender } = renderHook((props) => useCaeMeasurementActions(props), {
+      initialProps,
+      wrapper: wrapper(),
+    })
+
+    act(() => expect(result.current.repeatGenerateAndRun(2)).toBe(true))
+    expect(result.current.generateAndRunBatch).toEqual({
+      attempt: 1,
+      failures: 0,
+      repeat: true,
+      successes: 0,
+      total: 2,
+    })
+    expect(result.current.stage).toBe('1/2 · Candidate 생성')
+
+    rerender({
+      ...initialProps,
+      experimentDocument: documentController({
+        candidateGeneration: 2,
+        completedCandidateGeneration: 2,
+        revision: 3,
+        successfulCandidateGeneration: 2,
+        successfulRevision: 3,
+        variables: { width: 12 },
+      }),
+    })
+    await waitFor(() => expect(loadMeasurement).toHaveBeenCalledWith(12, 7))
+    rerender({
+      ...initialProps,
+      experimentDocument: documentController({
+        revision: 4,
+        simulationProgram: { recordedData: {} } as never,
+        successfulRevision: 4,
+      }),
+      selection: selection({ loadMeasurement, measurement: saved12 }),
+      simulation: simulationController({ run }),
+    })
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1))
+    rerender({
+      ...initialProps,
+      experimentDocument: documentController({
+        revision: 4,
+        simulationProgram: { recordedData: {} } as never,
+        successfulRevision: 4,
+      }),
+      selection: selection({ loadMeasurement, measurement: saved12 }),
+      simulation: simulationController({
+        process: {
+          engine: { name: 'caemble-cae', version: '1' },
+          error: null,
+          finishedAt: Date.now(),
+          runId: 'run-1',
+          stage: null,
+          startedAt: Date.now(),
+          status: 'succeeded',
+        },
+        recordedData: {},
+        run,
+      }),
+    })
+    await waitFor(() => expect(mocks.record).toHaveBeenCalledTimes(1))
+    expect(generate).toHaveBeenCalledTimes(1)
+
+    resolveFirstRecord()
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(2))
+    expect(result.current.generateAndRunBatch).toEqual({
+      attempt: 2,
+      failures: 0,
+      repeat: true,
+      successes: 1,
+      total: 2,
+    })
+    expect(result.current.stage).toBe('2/2 · Candidate 생성')
+
+    rerender({
+      ...initialProps,
+      experimentDocument: documentController({
+        candidateGeneration: 3,
+        completedCandidateGeneration: 3,
+        revision: 5,
+        successfulCandidateGeneration: 3,
+        successfulRevision: 5,
+        variables: { width: 13 },
+      }),
+      selection: selection({ loadMeasurement }),
+    })
+    await waitFor(() => expect(loadMeasurement).toHaveBeenCalledWith(13, 7))
+    rerender({
+      ...initialProps,
+      experimentDocument: documentController({
+        revision: 6,
+        simulationProgram: { recordedData: {} } as never,
+        successfulRevision: 6,
+      }),
+      selection: selection({ loadMeasurement, measurement: saved13 }),
+      simulation: simulationController({ run }),
+    })
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(2))
+    rerender({
+      ...initialProps,
+      experimentDocument: documentController({
+        revision: 6,
+        simulationProgram: { recordedData: {} } as never,
+        successfulRevision: 6,
+      }),
+      selection: selection({ loadMeasurement, measurement: saved13 }),
+      simulation: simulationController({
+        process: {
+          engine: { name: 'caemble-cae', version: '1' },
+          error: null,
+          finishedAt: Date.now(),
+          runId: 'run-2',
+          stage: null,
+          startedAt: Date.now(),
+          status: 'succeeded',
+        },
+        recordedData: {},
+        run,
+      }),
+    })
+
+    await waitFor(() => expect(mocks.record).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(result.current.busy).toBe(false))
+    expect(mocks.create).toHaveBeenCalledTimes(2)
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('Repeat Run 2회 완료: 성공 2회, 실패 0회')
+  })
+
+  it('counts a failed Candidate attempt and continues with a new generation', async () => {
+    const generate = vi.fn().mockReturnValueOnce(2).mockReturnValueOnce(3)
+    const initialProps = {
+      authenticated: true,
+      experimentClean: true,
+      experimentDocument: documentController(),
+      experimentId: 7,
+      experimentSourceHash: sourceHash,
+      onGenerateCandidate: generate,
+      selection: selection(),
+      simulation: simulationController({ canRun: false }),
+    }
+    const { result, rerender } = renderHook((props) => useCaeMeasurementActions(props), {
+      initialProps,
+      wrapper: wrapper(),
+    })
+
+    act(() => result.current.repeatGenerateAndRun(2))
+    rerender({
+      ...initialProps,
+      experimentDocument: documentController({
+        candidateGeneration: 2,
+        completedCandidateGeneration: 2,
+        error: { title: 'Candidate Error', message: 'candidate failed' },
+        revision: 3,
+        status: 'Error',
+        successfulCandidateGeneration: 1,
+        successfulRevision: -1,
+      }),
+    })
+
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(2))
+    expect(result.current.generateAndRunBatch).toEqual({
+      attempt: 2,
+      failures: 1,
+      repeat: true,
+      successes: 0,
+      total: 2,
+    })
+    expect(result.current.stage).toBe('2/2 · Candidate 생성')
+
+    rerender({
+      ...initialProps,
+      experimentDocument: documentController({
+        candidateGeneration: 3,
+        completedCandidateGeneration: 3,
+        error: { title: 'Candidate Error', message: 'candidate failed again' },
+        revision: 4,
+        status: 'Error',
+        successfulCandidateGeneration: 1,
+        successfulRevision: -1,
+      }),
+    })
+    await waitFor(() => expect(result.current.busy).toBe(false))
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.toastWarning).toHaveBeenCalledWith('Repeat Run 2회 완료: 성공 0회, 실패 2회')
+  })
+
+  it('stops remaining attempts when the next Candidate generation cannot start', async () => {
+    const generate = vi.fn().mockReturnValueOnce(2).mockReturnValueOnce(null)
+    const initialProps = {
+      authenticated: true,
+      experimentClean: true,
+      experimentDocument: documentController(),
+      experimentId: 7,
+      experimentSourceHash: sourceHash,
+      onGenerateCandidate: generate,
+      selection: selection(),
+      simulation: simulationController({ canRun: false }),
+    }
+    const { result, rerender } = renderHook((props) => useCaeMeasurementActions(props), {
+      initialProps,
+      wrapper: wrapper(),
+    })
+
+    act(() => result.current.repeatGenerateAndRun(2))
+    rerender({
+      ...initialProps,
+      experimentDocument: documentController({
+        candidateGeneration: 2,
+        completedCandidateGeneration: 2,
+        error: { title: 'Candidate Error', message: 'candidate failed' },
+        revision: 3,
+        status: 'Error',
+        successfulCandidateGeneration: 1,
+        successfulRevision: -1,
+      }),
+    })
+
+    await waitFor(() => expect(result.current.busy).toBe(false))
+    expect(generate).toHaveBeenCalledTimes(2)
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.toastError).toHaveBeenCalledWith('다음 Candidate 생성을 시작하지 못해 Repeat Run을 중단했습니다.')
+  })
+
+  it('rejects invalid Repeat Run counts before generating a Candidate', () => {
+    const generate = vi.fn(() => 2)
+    const { result } = renderHook(
+      () =>
+        useCaeMeasurementActions({
+          authenticated: true,
+          experimentClean: true,
+          experimentDocument: documentController(),
+          experimentId: 7,
+          experimentSourceHash: sourceHash,
+          onGenerateCandidate: generate,
+          selection: selection(),
+          simulation: simulationController(),
+        }),
+      { wrapper: wrapper() },
+    )
+
+    act(() => {
+      expect(result.current.repeatGenerateAndRun(0)).toBe(false)
+      expect(result.current.repeatGenerateAndRun(1.5)).toBe(false)
+      expect(result.current.repeatGenerateAndRun(Number.MAX_SAFE_INTEGER + 1)).toBe(false)
+    })
+    expect(generate).not.toHaveBeenCalled()
+  })
+
+  it('stops remaining Repeat Run attempts and preserves Retry Save after a RecordedData save failure', async () => {
+    mocks.record.mockRejectedValueOnce(new Error('record failed'))
+    const generate = vi.fn().mockReturnValueOnce(2).mockReturnValueOnce(3)
+    const run = vi.fn(() => 'run-1')
+    const saved = { ...prepared, id: 12 }
+    const loadMeasurement = vi.fn().mockResolvedValue(saved)
+    const initialProps = {
+      authenticated: true,
+      experimentClean: true,
+      experimentDocument: documentController(),
+      experimentId: 7,
+      experimentSourceHash: sourceHash,
+      onGenerateCandidate: generate,
+      selection: selection({ loadMeasurement }),
+      simulation: simulationController({ canRun: false, run }),
+    }
+    const { result, rerender } = renderHook((props) => useCaeMeasurementActions(props), {
+      initialProps,
+      wrapper: wrapper(),
+    })
+
+    act(() => result.current.repeatGenerateAndRun(2))
+    rerender({
+      ...initialProps,
+      experimentDocument: documentController({
+        candidateGeneration: 2,
+        completedCandidateGeneration: 2,
+        revision: 3,
+        successfulCandidateGeneration: 2,
+        successfulRevision: 3,
+      }),
+    })
+    await waitFor(() => expect(loadMeasurement).toHaveBeenCalledWith(12, 7))
+    const selected = selection({ loadMeasurement, measurement: saved })
+    const recordedDocument = documentController({
+      revision: 4,
+      simulationProgram: { recordedData: {} } as never,
+      successfulRevision: 4,
+    })
+    rerender({
+      ...initialProps,
+      experimentDocument: recordedDocument,
+      selection: selected,
+      simulation: simulationController({ run }),
+    })
+    await waitFor(() => expect(run).toHaveBeenCalledOnce())
+    rerender({
+      ...initialProps,
+      experimentDocument: recordedDocument,
+      selection: selected,
+      simulation: simulationController({
+        process: {
+          engine: { name: 'caemble-cae', version: '1' },
+          error: null,
+          finishedAt: Date.now(),
+          runId: 'run-1',
+          stage: null,
+          startedAt: Date.now(),
+          status: 'succeeded',
+        },
+        recordedData: {},
+        run,
+      }),
+    })
+
+    await waitFor(() => expect(result.current.busy).toBe(false))
+    expect(result.current.pendingRecordMeasurementId).toBe(12)
+    expect(generate).toHaveBeenCalledOnce()
+    expect(mocks.create).toHaveBeenCalledOnce()
+    expect(mocks.toastError).toHaveBeenCalledWith('record failed')
+  })
+
   it('waits for the requested Candidate generation and the saved Measurement revision before running', async () => {
     mocks.record.mockRejectedValueOnce(new Error('response was lost'))
     const generate = vi.fn(() => 4)
@@ -440,9 +785,10 @@ describe('useCaeMeasurementActions', () => {
     expect(mocks.deleteRows).not.toHaveBeenCalled()
   })
 
-  it('retains the generated Prepared Measurement when its Simulation is cancelled', async () => {
+  it('cancels the current Simulation and all remaining Repeat Run attempts', async () => {
     const run = vi.fn(() => 'run-generated')
     const cancel = vi.fn()
+    const generate = vi.fn(() => 1)
     const saved = { ...prepared, id: 12 }
     const loadMeasurement = vi.fn().mockResolvedValue(saved)
     const initialProps = {
@@ -451,7 +797,7 @@ describe('useCaeMeasurementActions', () => {
       experimentDocument: documentController(),
       experimentId: 7,
       experimentSourceHash: sourceHash,
-      onGenerateCandidate: vi.fn(() => 1),
+      onGenerateCandidate: generate,
       selection: selection({ loadMeasurement }),
       simulation: simulationController({ canRun: false, cancel, run }),
     }
@@ -460,7 +806,7 @@ describe('useCaeMeasurementActions', () => {
       wrapper: wrapper(),
     })
 
-    act(() => result.current.generateAndRun())
+    act(() => result.current.repeatGenerateAndRun(2))
     rerender({ ...initialProps, experimentDocument: documentController({ revision: 3, successfulRevision: 3 }) })
     await waitFor(() => expect(loadMeasurement).toHaveBeenCalledWith(12, 7))
     const selectedSaved = selection({ measurement: saved, loadMeasurement })
@@ -512,6 +858,7 @@ describe('useCaeMeasurementActions', () => {
     })
 
     await waitFor(() => expect(result.current.busy).toBe(false))
+    expect(generate).toHaveBeenCalledOnce()
     expect(mocks.deleteRows).not.toHaveBeenCalled()
     expect(mocks.record).not.toHaveBeenCalled()
   })

@@ -33,7 +33,19 @@ describe('documentation knowledge registry', () => {
     ).not.toContain('복제')
     const quickstart = manualDocsKnowledge.find(({ id }) => id === 'workbench-quickstart')?.content
     expect(quickstart).toContain('**Generate & Run**')
+    expect(quickstart).toContain('**Repeat Run**')
+    expect(quickstart).toContain('N은 성공 횟수가 아니라 전체 시도 횟수')
+    expect(quickstart).toContain('결과 저장 실패나 명시적 Cancel은 남은 반복을 중단')
     expect(quickstart).toContain('Prepared 상태로 남습니다')
+  })
+
+  it('documents the Analysis Explore ranking, readiness gates, and CSV scope', () => {
+    const analysis = manualDocsKnowledge.find((chunk) => chunk.id === 'workbench-analysis')?.content ?? ''
+
+    expect(analysis).toContain('|Pearson r|')
+    expect(analysis).toContain('서로 다른 입력 5개 이상')
+    expect(analysis).toContain('Data 설정에서 선택한 열만')
+    expect(analysis).toContain('Worker에 캐시된 최종 모델')
   })
 
   it('links manual examples to canonical catalog detail instead of duplicating full source', () => {

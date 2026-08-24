@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SavedMeasurement } from '../types'
@@ -51,7 +51,10 @@ beforeEach(() => {
   api.listRows.mockResolvedValue({ items: measurements, total: measurements.length })
 })
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
 
 describe('Measurement panes', () => {
   it('renders square points and supports single, additive, range, and additive range selection', async () => {
@@ -145,6 +148,56 @@ describe('Measurement panes', () => {
     await waitFor(() => expect(screen.getByText('0개 선택')).toBeVisible())
   })
 
+  it('fills the measured point viewport and preserves the visible range when its capacity changes', async () => {
+    let resizeCallback: ResizeObserverCallback | null = null
+    vi.stubGlobal(
+      'ResizeObserver',
+      vi.fn().mockImplementation((callback: ResizeObserverCallback) => {
+        resizeCallback = callback
+        return { disconnect: vi.fn(), observe: vi.fn(), unobserve: vi.fn() }
+      }),
+    )
+    const available = Array.from({ length: 30 }, (_, index) => ({
+      ...measurement,
+      id: index + 1,
+      recorded_at: null,
+    }))
+    api.listRows.mockImplementation(async (request: { offset: number; limit: number }) => ({
+      items: available.slice(request.offset, request.offset + request.limit),
+      total: available.length,
+    }))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <MeasurementExplorer experimentId={7} onDelete={vi.fn()} onSelect={vi.fn()} />
+      </QueryClientProvider>,
+    )
+
+    expect(resizeCallback).not.toBeNull()
+    act(() => {
+      resizeCallback!([{ contentRect: { height: 100, width: 200 } } as ResizeObserverEntry], {} as ResizeObserver)
+    })
+    await waitFor(() => expect(api.listRows).toHaveBeenCalledWith(expect.objectContaining({ limit: 8, offset: 0 })))
+    expect(await screen.findByRole('button', { name: 'Measurement #8 Prepared' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Measurement #9 Prepared' })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: '다음' }))
+    const ninth = await screen.findByRole('button', { name: 'Measurement #9 Prepared' })
+    await userEvent.click(ninth)
+    expect(ninth).toHaveAttribute('aria-pressed', 'true')
+
+    act(() => {
+      resizeCallback!([{ contentRect: { height: 144, width: 200 } } as ResizeObserverEntry], {} as ResizeObserver)
+    })
+    await waitFor(() => expect(api.listRows).toHaveBeenCalledWith(expect.objectContaining({ limit: 12, offset: 0 })))
+    const resizedNinth = await screen.findByRole('button', { name: 'Measurement #9 Prepared' })
+    expect(resizedNinth).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Measurement #12 Prepared' }), { shiftKey: true })
+    expect(resizedNinth).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: 'Measurement #12 Prepared' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
   it('retains selections across pages and returns from an emptied last page after deletion', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     let available = Array.from({ length: 13 }, (_, index) => ({ ...measurement, id: index + 1, recorded_at: null }))
@@ -164,6 +217,8 @@ describe('Measurement panes', () => {
         <MeasurementExplorer experimentId={7} onDelete={onDelete} onSelect={vi.fn()} />
       </QueryClientProvider>,
     )
+
+    await waitFor(() => expect(api.listRows).toHaveBeenCalledWith(expect.objectContaining({ limit: 12, offset: 0 })))
 
     await userEvent.click(await screen.findByRole('button', { name: 'Measurement #1 Prepared' }))
     await userEvent.click(screen.getByRole('button', { name: '다음' }))

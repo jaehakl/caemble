@@ -40,6 +40,46 @@ describe('Runtime Console store', () => {
     })
   })
 
+  it('updates a progress event with the same explicit ID without adding another row', () => {
+    const store = createRuntimeConsoleStore()
+    const subscriber = vi.fn()
+    store.subscribe(subscriber)
+
+    store.append({
+      id: 'cae-progress:run-1:electric',
+      timestamp: 1,
+      source: 'cae',
+      level: 'info',
+      phase: 'run.progress',
+      message: 'electric: solve',
+      runId: 'run-1',
+      progress: 0.25,
+      details: { task: 'electric', stage: 'solve', completed: 1, total: 4 },
+    })
+    const updated = store.append({
+      id: 'cae-progress:run-1:electric',
+      timestamp: 2,
+      source: 'cae',
+      level: 'info',
+      phase: 'run.progress',
+      message: 'electric: output',
+      runId: 'run-1',
+      progress: 0.75,
+      details: { task: 'electric', stage: 'output', completed: 3, total: 4 },
+    })
+
+    expect(store.getSnapshot().events).toEqual([updated])
+    expect(updated).toMatchObject({
+      id: 'cae-progress:run-1:electric',
+      timestamp: 2,
+      message: 'electric: output',
+      progress: 0.75,
+      details: { task: 'electric', stage: 'output', completed: 3, total: 4 },
+    })
+    expect(store.getSnapshot().byteLength).toBe(new TextEncoder().encode(JSON.stringify(updated)).byteLength)
+    expect(subscriber).toHaveBeenCalledTimes(2)
+  })
+
   it('evicts the oldest events at both the 500 event and 256 KiB FIFO limits', () => {
     const store = createRuntimeConsoleStore()
     for (let index = 0; index <= RUNTIME_CONSOLE_MAX_EVENTS; index += 1) {

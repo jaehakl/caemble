@@ -179,6 +179,17 @@ describe('Workbench sessionStorage v16', () => {
     })
   })
 
+  it.each(['overview', 'relationships'])('restores the legacy %s Analysis tab as Explore', async (analysisTab) => {
+    sessionStorage.setItem(
+      WORKBENCH_DRAFT_STORAGE_KEY,
+      JSON.stringify({ ...draft(), layout: { ...draft().layout, analysisTab } }),
+    )
+
+    const restored = await loadWorkbenchDraft()
+
+    expect(restored?.layout.analysisTab).toBe('explore')
+  })
+
   it('fully resets unsupported drafts instead of carrying obsolete layout state', async () => {
     sessionStorage.setItem(WORKBENCH_DRAFT_STORAGE_KEY, JSON.stringify({ ...draft(), version: 13 }))
 

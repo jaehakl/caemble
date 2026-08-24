@@ -292,6 +292,26 @@ describe('CAE session client', () => {
           total: 4,
         },
       })
+      options.onEvent({
+        type: 'progress',
+        payload: {
+          task: 'electric',
+          kernel: { name: 'dc-current-density', version: '0.1.0' },
+          stage: 'output',
+          completed: 1,
+          total: 2,
+        },
+      })
+      options.onEvent({
+        type: 'progress',
+        payload: {
+          task: 'thermal',
+          kernel: { name: 'steady-state-heat', version: '0.1.0' },
+          stage: 'solve',
+          completed: 1,
+          total: 4,
+        },
+      })
       return { payload: { kind: 'complete', sequence: 1, recordSequences: [] }, files: [] }
     })
     sdk.runJob.mockResolvedValue({
@@ -302,16 +322,31 @@ describe('CAE session client', () => {
 
     await simulate(fixture.measurement as never, { onActivity, onProgress })
 
+    expect(onProgress).toHaveBeenCalledTimes(3)
     expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({ completed: 3, total: 4, stage: 'solve' }))
     expect(onActivity).toHaveBeenCalledWith(
       expect.objectContaining({
         source: 'cae',
+        id: 'cae-progress:run-progress:electric',
         phase: 'run.progress',
         jobId: 'job-progress',
         runId: 'run-progress',
         progress: 0.75,
       }),
     )
+    expect(
+      onActivity.mock.calls
+        .map(([activity]) => activity)
+        .filter((activity) => activity.phase === 'run.progress')
+        .map((activity) => activity.id),
+    ).toEqual([
+      'cae-progress:run-progress:electric',
+      'cae-progress:run-progress:electric',
+      'cae-progress:run-progress:thermal',
+    ])
+    expect(
+      onActivity.mock.calls.map(([activity]) => activity).find((activity) => activity.phase === 'run.completed'),
+    ).not.toHaveProperty('progress')
     expect(call.mock.calls[0]?.[1]).toEqual({ runId: 'run-progress', ackSequence: null })
   })
 
