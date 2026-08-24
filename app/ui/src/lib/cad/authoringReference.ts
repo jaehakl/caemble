@@ -37,10 +37,7 @@ export function buildCadAuthoringReference({
     '- Bounded deterministic `for`, `map`, and `if` are supported. Use explicit loop IDs; prefer `array` for regular lattices.',
     '',
     '## Element index (canonical syntax)',
-    ...elements.map(
-      ({ authoringName, category, summary, syntax }) =>
-        `- \`${authoringName}\` (${category}): ${summary} Syntax: \`${syntax}\``,
-    ),
+    ...elements.map(({ authoringName, syntax }) => `- \`${authoringName}\`: \`${syntax}\``),
   ].join('\n')
 
   if (new TextEncoder().encode(core).byteLength > CAD_GRAMMAR_CORE_MAX_BYTES) {

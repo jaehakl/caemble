@@ -105,9 +105,9 @@ describe('canonical public Experiment catalog', () => {
   it.each(exampleExperimentKeys)('evaluates %s at min, midpoint, max, and alternating geometry bounds', async (key) => {
     const bundle = exampleExperiment(key).sourceBundle
     const { inspection } = inspectPublicExampleBundle(bundle)
-    expect(Object.values(inspection.varsSchema).some(({ min, max }) => JSON.stringify(min) !== JSON.stringify(max))).toBe(
-      true,
-    )
+    expect(
+      Object.values(inspection.varsSchema).some(({ min, max }) => JSON.stringify(min) !== JSON.stringify(max)),
+    ).toBe(true)
 
     const minimum = Object.fromEntries(
       Object.entries(inspection.varsSchema).map(([name, entry]) => [name, entry.min]),
@@ -138,7 +138,8 @@ describe('canonical public Experiment catalog', () => {
         expectReliablePublicScene(result.scene)
         Object.values(result.taskScenes).forEach((scene) => expectReliablePublicScene(scene))
       } catch (error) {
-        throw new Error(`${key} ${candidate} Candidate is not reliable: ${JSON.stringify(variables)}`, { cause: error })
+        const detail = error instanceof Error ? error.message : String(error)
+        throw new Error(`${key} ${candidate} Candidate is not reliable: ${JSON.stringify(variables)}; cause: ${detail}`)
       }
     }
   })
