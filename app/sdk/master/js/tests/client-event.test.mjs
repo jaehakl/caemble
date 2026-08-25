@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { encodeBinaryFrame } from '../dist/binary.js';
 import { GpStationClient, GpStationJobSession } from '../dist/client.js';
 import { GpStationJobPeer } from '../dist/job-peer.js';
 
@@ -390,6 +391,93 @@ test('job peer call rejects when data channel errors before result', async () =>
   dataChannel.dispatchEvent(new Event('error'));
 
   await assert.rejects(result, /data channel error/);
+});
+
+test('job peer enqueues result ack and resolves without waiting for the ack send buffer to drain', async () => {
+  const { dataChannel, diagnostics, peer } = createJobPeer();
+  const result = peer.call('call-1', 'cae.simulation.next', { runId: 'run-1' }, 100);
+  await waitForSentMessages(dataChannel, 1);
+  dataChannel.bufferedAmount = 4096;
+
+  dataChannel.dispatchMessage(
+    JSON.stringify({
+      kind: 'job.result',
+      id: 'call-1',
+      payload: { kind: 'complete' },
+      attachments: [],
+    }),
+  );
+
+  assert.deepEqual(await result, { payload: { kind: 'complete' }, files: [] });
+  assert.deepEqual(JSON.parse(dataChannel.sent.at(-1)), {
+    kind: 'job.result.ack',
+    id: 'call-1',
+  });
+  assert.deepEqual(
+    diagnostics
+      .filter(({ stage }) => stage === 'job-result' || stage === 'job-result-ack')
+      .map(({ stage, callId, attachmentCount, attachmentBytes, bufferedAmount }) => ({
+        stage,
+        callId,
+        attachmentCount,
+        attachmentBytes,
+        bufferedAmount,
+      })),
+    [
+      {
+        stage: 'job-result',
+        callId: 'call-1',
+        attachmentCount: 0,
+        attachmentBytes: 0,
+        bufferedAmount: 4096,
+      },
+      {
+        stage: 'job-result-ack',
+        callId: 'call-1',
+        attachmentCount: 0,
+        attachmentBytes: 0,
+        bufferedAmount: 4096,
+      },
+    ],
+  );
+});
+
+test('job peer acknowledges an attachment result only after the complete attachment arrives', async () => {
+  const { dataChannel, diagnostics, peer } = createJobPeer();
+  const result = peer.call('call-attachment', 'cae.simulation.next', { runId: 'run-1' }, 1000);
+  await waitForSentMessages(dataChannel, 1);
+
+  dataChannel.dispatchMessage(
+    JSON.stringify({
+      kind: 'job.result',
+      id: 'call-attachment',
+      payload: { kind: 'record' },
+      attachments: [{ id: 'rays', name: 'rays.bin', mimeType: 'application/octet-stream', size: 3 }],
+    }),
+  );
+  assert.equal(dataChannel.sent.length, 1);
+  dataChannel.dispatchMessage(
+    encodeBinaryFrame(
+      {
+        kind: 'attachment.chunk',
+        callId: 'call-attachment',
+        attachmentId: 'rays',
+        index: 0,
+        final: true,
+      },
+      new Uint8Array([1, 2, 3]),
+    ),
+  );
+
+  const response = await result;
+  assert.deepEqual(new Uint8Array(await response.files[0].blob.arrayBuffer()), new Uint8Array([1, 2, 3]));
+  assert.deepEqual(JSON.parse(dataChannel.sent.at(-1)), { kind: 'job.result.ack', id: 'call-attachment' });
+  assert.deepEqual(
+    diagnostics
+      .filter(({ stage }) => stage === 'job-result-ack')
+      .map(({ callId, attachmentCount, attachmentBytes }) => ({ callId, attachmentCount, attachmentBytes })),
+    [{ callId: 'call-attachment', attachmentCount: 1, attachmentBytes: 3 }],
+  );
 });
 
 test('job peer call rejects a control frame above the negotiated DataChannel message size before send', async () => {

@@ -12,7 +12,7 @@ BUFFERED_AMOUNT_LOW_THRESHOLD = 128 * 1024
 BUFFERED_AMOUNT_DRAIN_TIMEOUT_SECONDS = 30
 
 
-async def send_job_result(channel: Any, job_id: str, message: DataChannelMessage) -> None:
+async def send_job_result(channel: Any, job_id: str, message: DataChannelMessage) -> int:
     attachments = [attachment_metadata(attachment) for attachment in message.attachments]
     channel.send(
         json.dumps(
@@ -28,6 +28,9 @@ async def send_job_result(channel: Any, job_id: str, message: DataChannelMessage
     )
     for attachment in message.attachments:
         await send_attachment(channel, job_id, attachment)
+    drain_started_at = asyncio.get_running_loop().time()
+    await wait_for_buffered_amount(channel, 0, "after job result")
+    return round((asyncio.get_running_loop().time() - drain_started_at) * 1000)
 
 
 async def send_attachment(channel: Any, call_id: str, attachment: DataChannelAttachment) -> None:
@@ -64,15 +67,20 @@ async def send_attachment(channel: Any, call_id: str, attachment: DataChannelAtt
             )
         )
         if getattr(channel, "bufferedAmount", 0) > MAX_BUFFERED_AMOUNT:
-            deadline = asyncio.get_running_loop().time() + BUFFERED_AMOUNT_DRAIN_TIMEOUT_SECONDS
-            while getattr(channel, "bufferedAmount", 0) > BUFFERED_AMOUNT_LOW_THRESHOLD:
-                if getattr(channel, "readyState", "open") != "open":
-                    raise RuntimeError("DataChannel closed while sending attachment")
-                remaining = deadline - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    raise TimeoutError("DataChannel buffer did not drain while sending attachment")
-                await asyncio.sleep(min(0.01, remaining))
+            await wait_for_buffered_amount(channel, BUFFERED_AMOUNT_LOW_THRESHOLD, "while sending attachment")
         index += 1
+
+
+async def wait_for_buffered_amount(channel: Any, threshold: int, phase: str) -> None:
+    channel.bufferedAmountLowThreshold = threshold
+    deadline = asyncio.get_running_loop().time() + BUFFERED_AMOUNT_DRAIN_TIMEOUT_SECONDS
+    while getattr(channel, "bufferedAmount", 0) > threshold:
+        if getattr(channel, "readyState", "open") != "open":
+            raise RuntimeError(f"DataChannel closed {phase}")
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            raise TimeoutError(f"DataChannel buffer did not drain {phase}")
+        await asyncio.sleep(min(0.01, remaining))
 
 
 def attachment_metadata(attachment: DataChannelAttachment) -> dict[str, Any]:

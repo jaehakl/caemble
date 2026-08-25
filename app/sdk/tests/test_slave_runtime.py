@@ -38,6 +38,9 @@ class DummyChannel:
 
     def __init__(self) -> None:
         self.sent: list[str | bytes] = []
+        self.bufferedAmount = 0
+        self.bufferedAmountLowThreshold = 0
+        self.readyState = "open"
 
     def send(self, message: str | bytes) -> None:
         self.sent.append(message)
@@ -597,6 +600,20 @@ async def test_wait_for_job_result_ack_succeeds_when_ack_arrives():
 
 
 @pytest.mark.asyncio
+async def test_wait_for_job_result_ack_accepts_delayed_ack():
+    ack_event = asyncio.Event()
+    closed_event = asyncio.Event()
+
+    async def acknowledge_later():
+        await asyncio.sleep(0.02)
+        ack_event.set()
+
+    asyncio.create_task(acknowledge_later())
+
+    await wait_for_job_result_ack("job-1", ack_event, closed_event, timeout_seconds=0.1)
+
+
+@pytest.mark.asyncio
 async def test_wait_for_job_result_ack_times_out():
     with pytest.raises(RuntimeError, match="result delivery ack timeout"):
         await wait_for_job_result_ack("job-1", asyncio.Event(), asyncio.Event(), timeout_seconds=0.01)
@@ -715,8 +732,48 @@ async def test_send_job_result_waits_for_datachannel_backpressure():
     assert not task.done()
     assert channel.bufferedAmountLowThreshold == BUFFERED_AMOUNT_LOW_THRESHOLD
 
-    channel.bufferedAmount = BUFFERED_AMOUNT_LOW_THRESHOLD
+    channel.bufferedAmount = 0
     await task
+
+
+@pytest.mark.asyncio
+async def test_send_job_result_waits_for_final_datachannel_drain():
+    channel = DummyChannel()
+    channel.bufferedAmount = 1
+
+    task = asyncio.create_task(
+        send_job_result(
+            channel,
+            "job-1",
+            DataChannelMessage(id="job-1", type="inline.result", payload={"ok": True}),
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert not task.done()
+    assert channel.bufferedAmountLowThreshold == 0
+
+    channel.bufferedAmount = 0
+    await task
+
+
+@pytest.mark.asyncio
+async def test_send_job_result_fails_when_channel_closes_during_final_drain():
+    channel = DummyChannel()
+    channel.bufferedAmount = 1
+
+    task = asyncio.create_task(
+        send_job_result(
+            channel,
+            "job-1",
+            DataChannelMessage(id="job-1", type="inline.result", payload={"ok": True}),
+        )
+    )
+    await asyncio.sleep(0)
+    channel.readyState = "closed"
+
+    with pytest.raises(RuntimeError, match="closed after job result"):
+        await task
 
 
 @pytest.mark.asyncio

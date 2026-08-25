@@ -371,6 +371,73 @@ describe('CAE session client', () => {
     expect(call.mock.calls[0]?.[1]).toEqual({ runId: 'run-progress', ackSequence: null })
   })
 
+  it('reports scalar transport diagnostics without exposing SDP and retains the last failure state', async () => {
+    const fixture = measurementFixture()
+    const activities: RuntimeActivityDraft[] = []
+    sdk.runJob.mockImplementation(async (_type, _payload, options) => {
+      options.onJobCreated({ id: 'job-transport' })
+      options.onDiagnostic({
+        stage: 'job-result',
+        message: 'received job result',
+        callId: 'call-2',
+        attachmentCount: 2,
+        attachmentBytes: 4096,
+        bufferedAmount: 0,
+        connectionState: 'connected',
+        dataChannelState: 'open',
+        localCandidateSummary: { total: 2, host: 1, srflx: 1, relay: 0, prflx: 0, unknown: 0 },
+        localSdp: 'secret-local-sdp',
+        remoteSdp: 'secret-remote-sdp',
+      })
+      options.onDiagnostic({
+        stage: 'data-channel-state',
+        message: 'data channel state: error',
+        bufferedAmount: 17,
+        connectionState: 'failed',
+        iceConnectionState: 'disconnected',
+        dataChannelState: 'open',
+      })
+      throw new Error('data channel error')
+    })
+
+    await expect(
+      simulate(fixture.measurement as never, { onActivity: (activity) => activities.push(activity) }),
+    ).rejects.toThrow('data channel error')
+
+    const received = activities.find(({ phase }) => phase === 'transport.job-result')
+    expect(received).toMatchObject({
+      source: 'gpstation',
+      level: 'info',
+      jobId: 'job-transport',
+      details: {
+        callId: 'call-2',
+        attachmentCount: 2,
+        attachmentBytes: 4096,
+        bufferedAmount: 0,
+        localCandidateTotal: 2,
+        localCandidateHost: 1,
+        localCandidateSrflx: 1,
+      },
+    })
+    expect(received?.details).not.toHaveProperty('localSdp')
+    expect(received?.details).not.toHaveProperty('remoteSdp')
+    expect(activities.find(({ phase }) => phase === 'transport.data-channel-state')).toMatchObject({
+      source: 'gpstation',
+      level: 'error',
+      details: { bufferedAmount: 17, connectionState: 'failed', dataChannelState: 'open' },
+    })
+    expect(activities.find(({ phase }) => phase === 'client.failed')).toMatchObject({
+      details: {
+        errorName: 'Error',
+        lastTransportStage: 'data-channel-state',
+        lastConnectionState: 'failed',
+        lastIceConnectionState: 'disconnected',
+        lastDataChannelState: 'open',
+        lastBufferedAmount: 17,
+      },
+    })
+  })
+
   it('rejects a taskless local manifest before opening a remote CAE session', async () => {
     const fixture = measurementFixture()
     const measurement = {

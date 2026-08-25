@@ -113,6 +113,10 @@ export type CandidateSummary = {
 export type ConnectDiagnosticEvent = {
   stage: string;
   message: string;
+  callId?: string;
+  attachmentCount?: number;
+  attachmentBytes?: number;
+  bufferedAmount?: number;
   elapsedMs?: number;
   stageStartedAt?: number;
   prewarmHit?: boolean;

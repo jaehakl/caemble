@@ -164,6 +164,10 @@ export class GpStationJobPeer {
     emitDiagnostic(this.peerConnection, this.dataChannel, this.diagnostic, {
       stage: 'job-call',
       message: `sent job call: ${handlerType}`,
+      callId,
+      attachmentCount: attachments.length,
+      attachmentBytes: attachments.reduce((total, attachment) => total + attachment.blob.size, 0),
+      bufferedAmount: this.dataChannel.bufferedAmount,
     });
   }
 
@@ -345,6 +349,10 @@ export class GpStationJobPeer {
     emitDiagnostic(this.peerConnection, this.dataChannel, this.diagnostic, {
       stage: 'job-result',
       message: 'received job result',
+      callId: message.id,
+      attachmentCount: message.attachments?.length ?? 0,
+      attachmentBytes: (message.attachments ?? []).reduce((total, attachment) => total + attachment.size, 0),
+      bufferedAmount: this.dataChannel.bufferedAmount,
     });
     const files = new Map<string, IncomingFile>();
     for (const attachment of message.attachments ?? []) {
@@ -363,7 +371,7 @@ export class GpStationJobPeer {
       files,
     };
     if (files.size === 0) {
-      await this.resolvePendingCall();
+      this.resolvePendingCall();
     }
   }
 
@@ -390,16 +398,20 @@ export class GpStationJobPeer {
       throw new Error(`attachment size mismatch: ${header.attachmentId}`);
     }
     if ([...this.response.files.values()].every((item) => item.complete)) {
-      await this.resolvePendingCall();
+      this.resolvePendingCall();
     }
   }
 
-  private async resolvePendingCall(): Promise<void> {
+  private resolvePendingCall(): void {
     if (!this.response || !this.pendingCall) {
       return;
     }
     try {
-      await this.acknowledgeResult(this.pendingCall.id);
+      this.acknowledgeResult(
+        this.pendingCall.id,
+        this.response.attachments.length,
+        this.response.attachments.reduce((total, attachment) => total + attachment.size, 0),
+      );
     } catch (error) {
       this.rejectPendingCall(asError(error));
       return;
@@ -476,51 +488,16 @@ export class GpStationJobPeer {
     resolve();
   }
 
-  private async acknowledgeResult(callId: string): Promise<void> {
+  private acknowledgeResult(callId: string, attachmentCount: number, attachmentBytes: number): void {
     this.ensureOpen('acknowledge job result');
     this.dataChannel.send(JSON.stringify({ kind: 'job.result.ack', id: callId }));
-    await this.waitForAckBufferedAmountLow();
     emitDiagnostic(this.peerConnection, this.dataChannel, this.diagnostic, {
       stage: 'job-result-ack',
       message: 'sent job result ack',
-    });
-  }
-
-  private waitForAckBufferedAmountLow(): Promise<void> {
-    if (this.dataChannel.readyState !== 'open') {
-      return Promise.reject(new Error('data channel closed before job result ack'));
-    }
-    if (this.dataChannel.bufferedAmount === 0) {
-      return Promise.resolve();
-    }
-    this.dataChannel.bufferedAmountLowThreshold = 0;
-    return new Promise((resolve, reject) => {
-      let timer: ReturnType<typeof setTimeout>;
-      const cleanup = () => {
-        clearTimeout(timer);
-        this.dataChannel.removeEventListener('bufferedamountlow', onLow);
-        this.dataChannel.removeEventListener('close', onClose);
-        this.dataChannel.removeEventListener('error', onError);
-      };
-      const onLow = () => {
-        cleanup();
-        resolve();
-      };
-      const onClose = () => {
-        cleanup();
-        reject(new Error('data channel closed before job result ack'));
-      };
-      const onError = () => {
-        cleanup();
-        reject(new Error('data channel error before job result ack'));
-      };
-      this.dataChannel.addEventListener('bufferedamountlow', onLow);
-      this.dataChannel.addEventListener('close', onClose);
-      this.dataChannel.addEventListener('error', onError);
-      timer = setTimeout(() => {
-        cleanup();
-        reject(new Error('job result ack buffered amount timeout'));
-      }, 1000);
+      callId,
+      attachmentCount,
+      attachmentBytes,
+      bufferedAmount: this.dataChannel.bufferedAmount,
     });
   }
 

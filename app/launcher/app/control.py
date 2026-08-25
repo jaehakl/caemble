@@ -126,7 +126,7 @@ async def handle_server_message(manager: WorkerManager, value: Any) -> None:
         await manager.cancel_job(message.job_id, message.reason)
         return
     if isinstance(message, WorkerReset):
-        await manager.reset_worker(message.reason)
+        await manager.reset_worker(message.reason, notify_reset=True)
         return
     if isinstance(message, ControlError):
         print(f"Server control error: {message.detail}", flush=True)

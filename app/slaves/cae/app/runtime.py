@@ -210,6 +210,7 @@ class CaeRun:
         self.completed_sequences.append(packet.sequence)
 
     async def progress(self, progress: Any) -> None:
+        await asyncio.sleep(0)
         self.latest_progress = progress
         now = time.monotonic()
         if now - self.last_progress_at < 0.1:

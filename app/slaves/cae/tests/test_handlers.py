@@ -12,6 +12,7 @@ from sdk.slave import SlaveContext
 from app.errors import CaeError, ProtocolError
 from app.handlers import cae_simulation_next, cae_simulation_start, cae_solver_manifests
 from app.runtime import (
+    CaeRun,
     SimulationApi,
     _validate_built_measurement,
     _validate_material_snapshot,
@@ -19,6 +20,46 @@ from app.runtime import (
 )
 from app.solver_framework.geometry import canonical_geometry_hash
 from app.solver_framework.registry import registry
+
+
+@pytest.mark.asyncio
+async def test_progress_yields_to_other_asyncio_tasks_and_heartbeat(monkeypatch) -> None:
+    run = CaeRun(
+        measurement=payload()["measurement"],
+        max_run_seconds=60,
+        job_id="job-progress-yield",
+        on_cleanup=lambda _run_id: None,
+    )
+    task_ran = False
+    events = []
+
+    async def mark_scheduled_task() -> None:
+        nonlocal task_ran
+        task_ran = True
+
+    async def send_event(event_type, event_payload) -> None:
+        events.append((event_type, event_payload))
+
+    monkeypatch.setattr("app.runtime.HEARTBEAT_SECONDS", 0)
+    context = SlaveContext(
+        session_id="session-progress-yield",
+        ttl_seconds=60,
+        call_id="call-progress-yield",
+        _event_sender=send_event,
+    )
+    run.active_context = context
+    heartbeat_task = asyncio.create_task(run._emit_heartbeats(context))
+    run.heartbeat_task = heartbeat_task
+    scheduled = asyncio.create_task(mark_scheduled_task())
+    try:
+        await run.progress({"stage": "trace", "completed": 128})
+        await run.progress({"stage": "trace", "completed": 256})
+        assert task_ran
+        assert any(event_type == "heartbeat" for event_type, _payload in events)
+    finally:
+        await scheduled
+        run.abort()
+        await asyncio.gather(heartbeat_task, return_exceptions=True)
 
 
 @pytest.mark.asyncio

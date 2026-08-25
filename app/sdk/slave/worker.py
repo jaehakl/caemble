@@ -30,7 +30,7 @@ from sdk.slave.rtc import (
     summarize_sdp_candidates,
 )
 
-JOB_RESULT_ACK_TIMEOUT_SECONDS = 5.0
+JOB_RESULT_ACK_TIMEOUT_SECONDS = 30.0
 JOB_DATA_CHANNEL_MESSAGE_MAX_BYTES = 1024 * 1024
 JOB_DATA_CHANNEL_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024
 
@@ -658,11 +658,52 @@ async def run_worker_job_call(
         ack_event = asyncio.Event()
         state.result_ack_events[call_id] = ack_event
         try:
-            await send_job_result(channel, call_id, response)
-            log(f"job call result sent: id={call_id} type={call_type}")
-            log(f"job result ack wait: id={call_id} timeout_s={JOB_RESULT_ACK_TIMEOUT_SECONDS:g}")
-            await wait_for_job_result_ack(call_id, ack_event, state.closed_event)
-            log(f"job result ack received: id={call_id}")
+            attachment_count = len(response.attachments)
+            attachment_bytes = sum(
+                attachment.size if attachment.size is not None else len(attachment.data)
+                for attachment in response.attachments
+            )
+            send_started_at = time.perf_counter()
+            try:
+                drain_duration_ms = await send_job_result(channel, call_id, response)
+            except Exception as exc:
+                log(
+                    f"job call result send failed: id={call_id} type={call_type} "
+                    f"attachments={attachment_count} attachment_bytes={attachment_bytes} "
+                    f"send_duration_ms={elapsed_ms(send_started_at)} "
+                    f"buffered_amount={getattr(channel, 'bufferedAmount', 0)} "
+                    f"channel_state={getattr(channel, 'readyState', 'unknown')} "
+                    f"error_type={type(exc).__name__}"
+                )
+                raise
+            log(
+                f"job call result sent: id={call_id} type={call_type} "
+                f"attachments={attachment_count} attachment_bytes={attachment_bytes} "
+                f"send_duration_ms={elapsed_ms(send_started_at)} drain_duration_ms={drain_duration_ms} "
+                f"buffered_amount={getattr(channel, 'bufferedAmount', 0)} "
+                f"channel_state={getattr(channel, 'readyState', 'unknown')}"
+            )
+            ack_started_at = time.perf_counter()
+            log(
+                f"job result ack wait: id={call_id} timeout_s={JOB_RESULT_ACK_TIMEOUT_SECONDS:g} "
+                f"buffered_amount={getattr(channel, 'bufferedAmount', 0)} "
+                f"channel_state={getattr(channel, 'readyState', 'unknown')}"
+            )
+            try:
+                await wait_for_job_result_ack(call_id, ack_event, state.closed_event)
+            except Exception as exc:
+                log(
+                    f"job result ack failed: id={call_id} duration_ms={elapsed_ms(ack_started_at)} "
+                    f"buffered_amount={getattr(channel, 'bufferedAmount', 0)} "
+                    f"channel_state={getattr(channel, 'readyState', 'unknown')} "
+                    f"error_type={type(exc).__name__}"
+                )
+                raise
+            log(
+                f"job result ack received: id={call_id} duration_ms={elapsed_ms(ack_started_at)} "
+                f"buffered_amount={getattr(channel, 'bufferedAmount', 0)} "
+                f"channel_state={getattr(channel, 'readyState', 'unknown')}"
+            )
         finally:
             state.result_ack_events.pop(call_id, None)
     finally:

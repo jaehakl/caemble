@@ -1,4 +1,10 @@
-import { GpStationClient, type CallResult, type JobEvent, type JobSession } from '@gpstation/v1-master-js-sdk'
+import {
+  GpStationClient,
+  type CallResult,
+  type ConnectDiagnosticEvent,
+  type JobEvent,
+  type JobSession,
+} from '@gpstation/v1-master-js-sdk'
 import type {
   CaeCompletePayload,
   CaeFailedPayload,
@@ -12,7 +18,11 @@ import { CaeSimulationError } from './errors'
 import { serializeCaeRequest } from './request'
 import { API_URL } from '@/api'
 import { request as apiRequest } from '@/api/http'
-import { emitRuntimeActivity, type RuntimeActivityCallback } from '@/features/runtime-console/types'
+import {
+  emitRuntimeActivity,
+  type RuntimeActivityCallback,
+  type RuntimeActivityDetails,
+} from '@/features/runtime-console/types'
 import type { BuiltMeasurement, DataTensor, RecordedData } from '../../lib/cad'
 import { createDataTensorAccessor, registerDataTensorAttachment, releaseDataTensorAttachments } from '../../lib/cad'
 import { sourceCatalogSolverContracts } from '@/lib/catalog/runtime'
@@ -41,6 +51,7 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
   let runId: string | null = null
   let session: JobSession | null = null
   let failureReported = false
+  const transportState: { lastDiagnostic?: ConnectDiagnosticEvent } = {}
   const attachmentIds: string[] = []
   const report = (activity: Parameters<RuntimeActivityCallback>[0]) => emitRuntimeActivity(options.onActivity, activity)
 
@@ -106,6 +117,27 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
         autoFinish: false,
         timeoutMs: CONNECT_TIMEOUT_MS,
         attachments: requestAttachments,
+        onDiagnostic(event) {
+          transportState.lastDiagnostic = event
+          const failed =
+            event.message.endsWith(': error') ||
+            event.connectionState === 'failed' ||
+            event.iceConnectionState === 'failed'
+          const interrupted =
+            event.dataChannelState === 'closing' ||
+            event.dataChannelState === 'closed' ||
+            event.connectionState === 'disconnected' ||
+            event.connectionState === 'closed'
+          report({
+            source: 'gpstation',
+            level: failed ? 'error' : interrupted ? 'warning' : 'info',
+            phase: `transport.${event.stage}`,
+            message: event.message,
+            ...(jobId ? { jobId } : {}),
+            ...(runId ? { runId } : {}),
+            details: transportDiagnosticDetails(event),
+          })
+        },
         onJobCreated(job) {
           jobId = job.id
           report({
@@ -268,6 +300,7 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
       if (!transportSucceeded) await kill()
       session?.close()
       if (!failureReported) {
+        const lastTransportDiagnostic = transportState.lastDiagnostic
         report({
           source: cancelled || (error instanceof Error && error.name === 'AbortError') ? 'gpstation' : 'cae',
           level: cancelled || (error instanceof Error && error.name === 'AbortError') ? 'warning' : 'error',
@@ -281,7 +314,26 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
                 : 'CAE client 실행에 실패했습니다.',
           ...(jobId ? { jobId } : {}),
           ...(runId ? { runId } : {}),
-          details: { errorName: error instanceof Error ? error.name : 'UnknownError' },
+          details: {
+            errorName: error instanceof Error ? error.name : 'UnknownError',
+            ...(lastTransportDiagnostic
+              ? {
+                  lastTransportStage: lastTransportDiagnostic.stage,
+                  ...(lastTransportDiagnostic.connectionState
+                    ? { lastConnectionState: lastTransportDiagnostic.connectionState }
+                    : {}),
+                  ...(lastTransportDiagnostic.iceConnectionState
+                    ? { lastIceConnectionState: lastTransportDiagnostic.iceConnectionState }
+                    : {}),
+                  ...(lastTransportDiagnostic.dataChannelState
+                    ? { lastDataChannelState: lastTransportDiagnostic.dataChannelState }
+                    : {}),
+                  ...(lastTransportDiagnostic.bufferedAmount !== undefined
+                    ? { lastBufferedAmount: lastTransportDiagnostic.bufferedAmount }
+                    : {}),
+                }
+              : {}),
+          },
         })
       }
       throw error
@@ -291,6 +343,44 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
   return promise.finally(() => {
     options.signal?.removeEventListener('abort', cancel)
   })
+}
+
+function transportDiagnosticDetails(event: ConnectDiagnosticEvent): RuntimeActivityDetails {
+  const details: Record<string, string | number | boolean | null> = {}
+  const scalarFields = [
+    'callId',
+    'attachmentCount',
+    'attachmentBytes',
+    'bufferedAmount',
+    'elapsedMs',
+    'stageStartedAt',
+    'prewarmHit',
+    'offerGatheringMs',
+    'answerWaitMs',
+    'dataChannelOpenMs',
+    'signalingState',
+    'iceGatheringState',
+    'iceConnectionState',
+    'connectionState',
+    'dataChannelState',
+  ] as const
+  for (const field of scalarFields) {
+    const value = event[field]
+    if (value !== undefined) details[field] = value
+  }
+  for (const [prefix, summary] of [
+    ['localCandidate', event.localCandidateSummary],
+    ['remoteCandidate', event.remoteCandidateSummary],
+  ] as const) {
+    if (!summary) continue
+    details[`${prefix}Total`] = summary.total
+    details[`${prefix}Host`] = summary.host
+    details[`${prefix}Srflx`] = summary.srflx
+    details[`${prefix}Relay`] = summary.relay
+    details[`${prefix}Prflx`] = summary.prflx
+    details[`${prefix}Unknown`] = summary.unknown
+  }
+  return details
 }
 
 export function releaseRecordedDataAttachments(recordedData: RecordedData | null): void {

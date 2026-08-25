@@ -199,7 +199,7 @@ class WorkerManager:
         except (BrokenPipeError, ConnectionResetError):
             await self.reset_worker(reason)
 
-    async def reset_worker(self, reason: str, *, cancel_current_job: bool = True, notify_reset: bool = True) -> None:
+    async def reset_worker(self, reason: str, *, cancel_current_job: bool = True, notify_reset: bool = False) -> None:
         self.cancel_cancel_escalation()
         self.cancel_cleanup_confirmed_job_id = None
         self.cancel_terminal_forwarded_job_id = None
@@ -359,6 +359,7 @@ class WorkerManager:
                 await self.reset_worker(
                     f"job {job_id} did not stop within {CANCEL_RESET_GRACE_SECONDS}s: {reason}",
                     cancel_current_job=not terminal_was_forwarded,
+                    notify_reset=False,
                 )
                 if terminal_was_forwarded:
                     self.current_job_id = None

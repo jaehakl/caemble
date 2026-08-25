@@ -552,7 +552,7 @@ async def test_cae_cancel_without_cleanup_resets_worker_without_duplicate_termin
     assert resets == [
         (
             "job job-1 did not stop within 0s: user cancel",
-            {"cancel_current_job": False},
+            {"cancel_current_job": False, "notify_reset": False},
         )
     ]
     assert messages == []
@@ -561,7 +561,7 @@ async def test_cae_cancel_without_cleanup_resets_worker_without_duplicate_termin
 
 
 @pytest.mark.asyncio
-async def test_reset_without_loaded_worker_still_acknowledges_completion():
+async def test_internal_reset_without_loaded_worker_does_not_report_server_completion():
     messages = []
 
     async def send_control(message):
@@ -570,6 +570,20 @@ async def test_reset_without_loaded_worker_still_acknowledges_completion():
     manager = WorkerManager(launcher_settings(), send_control, SlaveAppRegistry([]))
 
     await manager.reset_worker("user reset")
+
+    assert messages == []
+
+
+@pytest.mark.asyncio
+async def test_explicit_reset_without_loaded_worker_acknowledges_completion_once():
+    messages = []
+
+    async def send_control(message):
+        messages.append(message)
+
+    manager = WorkerManager(launcher_settings(), send_control, SlaveAppRegistry([]))
+
+    await manager.reset_worker("server reset", notify_reset=True)
 
     assert messages == [{"type": "worker.reset.done"}]
 
@@ -602,7 +616,7 @@ async def test_handle_server_message_dispatches_job_controls():
             },
         ),
         ("cancel_job", "job-1", "user"),
-        ("reset_worker", "reset"),
+        ("reset_worker", "reset", {"notify_reset": True}),
     ]
 
 
@@ -666,8 +680,8 @@ class FakeManager:
     async def cancel_job(self, job_id, reason):
         self.calls.append(("cancel_job", job_id, reason))
 
-    async def reset_worker(self, reason):
-        self.calls.append(("reset_worker", reason))
+    async def reset_worker(self, reason, **kwargs):
+        self.calls.append(("reset_worker", reason, kwargs))
 
 
 class FakeWorkerStdin:
