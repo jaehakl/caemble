@@ -144,6 +144,44 @@ describe('Analysis engine', () => {
     ])
   })
 
+  it('예약된 시스템 RecordedData를 QuantityKind, profile, column에서 제외한다', () => {
+    const measurements = [
+      {
+        id: 1,
+        experiment_id: 22,
+        vars: { width: 2 },
+        material_parameters: {
+          schemaVersion: 2,
+          experiment: { schemaVersion: 1, materials: {} },
+          tasks: {},
+        },
+        recorded_at: '2026-08-12T00:00:00Z',
+      },
+    ] satisfies MeasurementRecord[]
+    const recordedData = [
+      {
+        id: 2,
+        measurement_id: 1,
+        name: '@caemble/ray-paths@1/primary/path-offsets',
+        dtype: 'uint32',
+        quantity_kind: null,
+        tensor_order: 0,
+        data_schema: { dtype: 'uint32', axes: [{ name: 'path' }] },
+        data: { value: [0] },
+      },
+    ] satisfies RecordedDataRecord[]
+
+    expect(collectAnalysisQuantityKindNames(measurements, recordedData)).toEqual([])
+    const dataset = buildAnalysisDataset({
+      experimentId: 22,
+      fingerprint: 'system-only',
+      measurements,
+      recordedData,
+    })
+    expect(dataset.profile.recordedDataCount).toBe(0)
+    expect(dataset.profile.columns.some((column) => column.source === 'recorded-data')).toBe(false)
+  })
+
   it('scalar profile과 categorical 빈도, 100행 이하 table page를 만든다', () => {
     const dataset = createDataset()
     const response = dataset.profile.columns.find((column) => column.key === 'target:response')

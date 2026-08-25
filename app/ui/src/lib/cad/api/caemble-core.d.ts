@@ -132,6 +132,7 @@ export type RecordedDataResultAxis = DataSchemaAxis
 export type RecordedDataResult = DataSchema
 export type RecordedDataAxis = Readonly<{
   ticks?: readonly (number | string)[]
+  implicitOrdinal?: true
 }>
 export type DataTensor = Readonly<{
   shape: readonly number[]

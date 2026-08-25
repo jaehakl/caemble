@@ -19,6 +19,7 @@ export function createDocumentMaterialResolver(storedSnapshot: unknown | null, s
   const materialNameQueries = new Map<string, ReturnType<typeof dbTables.MaterialName.listRows>>()
   const materialQueries = new Map<string, ReturnType<typeof dbTables.Material.listRows>>()
   const parameterQueries = new Map<string, ReturnType<typeof dbTables.MaterialParameter.listRows>>()
+  const qualifierQueries = new Map<string, ReturnType<typeof dbTables.MaterialParameterQualifier.listRows>>()
 
   const resolveOne = async (
     materials: Parameters<typeof resolveMaterialParameters>[0],
@@ -72,7 +73,30 @@ export function createDocumentMaterialResolver(storedSnapshot: unknown | null, s
       })
     }
     const [databaseMaterials, parameters] = await Promise.all([materialQuery, parameterQuery])
-    return resolveMaterialParameters(materials, names, parameters.items, { materials: databaseMaterials.items })
+    const parameterIds = parameters.items
+      .flatMap((parameter) => (parameter.id === undefined ? [] : [parameter.id]))
+      .sort((left, right) => left - right)
+    const qualifierKey = JSON.stringify(parameterIds)
+    let qualifierQuery = qualifierQueries.get(qualifierKey)
+    if (!qualifierQuery) {
+      qualifierQuery =
+        parameterIds.length === 0
+          ? Promise.resolve({ items: [], total: 0 })
+          : dbTables.MaterialParameterQualifier.listRows({
+              ...getListRequest('visible'),
+              limit: null,
+              filter: { material_parameter_id: parameterIds },
+            })
+      qualifierQueries.set(qualifierKey, qualifierQuery)
+      void qualifierQuery.catch(() => {
+        if (qualifierQueries.get(qualifierKey) === qualifierQuery) qualifierQueries.delete(qualifierKey)
+      })
+    }
+    const qualifiers = await qualifierQuery
+    return resolveMaterialParameters(materials, names, parameters.items, {
+      materials: databaseMaterials.items,
+      qualifiers: qualifiers.items,
+    })
   }
 
   return async (snapshot: EvaluatedExperimentSnapshot): Promise<MeasurementMaterialResolution> => {

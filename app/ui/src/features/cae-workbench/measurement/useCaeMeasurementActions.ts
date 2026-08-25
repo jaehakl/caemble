@@ -3,7 +3,14 @@ import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { dbTables, type MeasurementRecordRequest } from '@/api'
 import type { CadDocumentController, SimulationController } from '@/features/viewer/workspace/useCadWorkspace'
-import { createDataTensorAccessor, MAX_RECORDED_DATA_BYTES, persistDataSchema, persistDataTensor } from '@/lib/cad'
+import {
+  createDataTensorAccessor,
+  MAX_RECORDED_DATA_BYTES,
+  parseRayPathBundles,
+  persistDataSchema,
+  persistDataTensor,
+  type RecordedDataRule,
+} from '@/lib/cad'
 import type { CaeDataSelection } from './useCaeDataSelection'
 import type { SavedMeasurement } from '../types'
 
@@ -33,6 +40,20 @@ function recordRequest(
   const result = simulation.recordedData
   const schemas = experimentDocument.simulationProgram?.recordedData
   if (!result || !schemas || simulation.stale) throw new Error('저장 가능한 최신 RecordedData가 없습니다.')
+
+  parseRayPathBundles(
+    Object.entries(schemas).map(
+      ([label, schema]) =>
+        ({
+          target: Object.freeze([]),
+          label,
+          methodId: 'measurement.recorded-data-validation',
+          parameters: Object.freeze({}),
+          result: schema,
+        }) satisfies RecordedDataRule,
+    ),
+    result,
+  )
 
   let recordedByteLength = 0
   const recordedData = Object.entries(result).map(([name, data]) => {

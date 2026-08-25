@@ -4,7 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { SavedMeasurement } from '../types'
+import type { RayPathBundle } from '@/lib/cad'
+import type { SavedMeasurement, SavedRecordedData } from '../types'
 import { MeasurementDetail } from './MeasurementDetail'
 import { MeasurementExplorer } from './MeasurementExplorer'
 
@@ -259,5 +260,53 @@ describe('Measurement panes', () => {
     expect(screen.getByText('displacement', { selector: 'p' })).toBeVisible()
     expect(screen.getByText('2,048 B')).toBeVisible()
     expect(screen.queryByText(/raw-payload/)).not.toBeInTheDocument()
+  })
+
+  it('counts the five reserved ray-path rows as one system result', () => {
+    const members = ['vertices', 'path-offsets', 'segment-power', 'path-wavelength', 'segment-event']
+    const rayRows = members.map(
+      (member, index) =>
+        ({
+          id: 40 + index,
+          measurement_id: measurement.id,
+          name: `@caemble/ray-paths@1/primary/${member}`,
+          quantity_kind: null,
+          tensor_order: 0,
+          dtype: 'uint8',
+        }) satisfies SavedRecordedData,
+    )
+    const rayPathBundle: RayPathBundle = {
+      id: 'primary',
+      pathCount: 1,
+      segmentCount: 2,
+      vertices: new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]),
+      pathOffsets: new Uint32Array([0, 3]),
+      segmentPower: new Float32Array([1, 0.5]),
+      pathWavelength: new Float32Array([532e-9]),
+      segmentEvent: new Uint8Array([2, 5]),
+    }
+
+    const { rerender } = render(
+      <MeasurementDetail measurement={measurement} rayPathBundles={[rayPathBundle]} recordedRows={rayRows} />,
+    )
+
+    const recordedSection = screen.getByRole('heading', { name: 'Recorded Data' }).closest('section')
+    expect(recordedSection).toHaveTextContent('Ray paths · 1 paths · 2 segments')
+    expect(recordedSection).not.toHaveTextContent('@caemble/ray-paths@1/primary/vertices')
+    expect(recordedSection?.querySelector('[data-system-result="ray-paths"]')).not.toBeNull()
+    expect(recordedSection?.querySelector('.bg-transparent')).toHaveTextContent('1')
+
+    rerender(
+      <MeasurementDetail
+        measurement={measurement}
+        pendingSave
+        rayPathBundles={[rayPathBundle]}
+        rayPathsDeclared
+        recordedRows={[]}
+      />,
+    )
+    expect(screen.getByRole('heading', { name: 'Recorded Data' }).closest('section')).toHaveTextContent(
+      'Ray paths · 1 paths · 2 segments',
+    )
   })
 })

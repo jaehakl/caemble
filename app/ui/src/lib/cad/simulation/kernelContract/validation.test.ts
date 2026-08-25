@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { installSyntheticCatalog } from '@/test/syntheticCatalog'
+import type { CadScene } from '../../evaluation/types'
 import {
   normalizeKernelTaskConfig,
   resolveKernelInputPort,
@@ -14,6 +15,8 @@ installSyntheticCatalog({
   quantityKinds: [
     { name: 'DimensionlessRatio', applicableUnits: ['{fraction}', '%'] },
     { name: 'electromagnetism.Voltage', applicableUnits: ['V', 'mV'] },
+    { name: 'Frequency', applicableUnits: ['Hz'] },
+    { name: 'optics.RefractiveIndex', applicableUnits: ['{fraction}', '%'] },
   ],
 })
 
@@ -191,6 +194,96 @@ describe('kernel contract validation', () => {
         },
       },
     })
+  })
+
+  it('accepts only the canonical Frequency axis for scalar Material properties', () => {
+    const spectralDescriptor = {
+      ...descriptor,
+      materials: [
+        {
+          role: 'optical',
+          description: 'Optical medium.',
+          target: { category: 'initializations', methodId: 'test.initialize' },
+          properties: {
+            'optical.refractive_index': {
+              description: 'Spectral refractive index.',
+              data: {
+                dtype: 'float64',
+                unit: '{fraction}',
+                quantityKind: 'optics.RefractiveIndex',
+              },
+            },
+          },
+        },
+      ],
+    } as const satisfies KernelDescriptor
+    const spectral = {
+      dtype: 'float64',
+      value: [1.5, 1.6],
+      unit: '{fraction}',
+      quantityKind: 'optics.RefractiveIndex',
+      axes: [
+        {
+          length: 2,
+          name: 'frequency',
+          ticks: [4e14, 6e14],
+          unit: 'Hz',
+          quantityKind: 'Frequency',
+        },
+      ],
+    }
+    const scene: CadScene = {
+      lengthUnit: 'm',
+      parts: [
+        {
+          id: 'part',
+          geometry: {},
+          materialRole: 'body',
+          material: { name: 'Glass', variables: { 'optical.refractive_index': spectral } },
+          surfaces: [],
+        },
+      ],
+      tree: { key: 'root', label: 'Root', children: [] },
+      geometryGroups: [
+        {
+          id: 'group',
+          name: 'conductor',
+          kind: 'geometry',
+          memberIds: ['part'],
+          geometryIds: ['part'],
+          surfaceIds: [],
+          missingMemberIds: [],
+        },
+      ],
+      surfaceGroups: [],
+    }
+    const world = { scenes: { experiment: scene, task: scene } }
+    expect(validateKernelTaskConfig(spectralDescriptor, config, world)).toEqual([])
+
+    const descending: CadScene = {
+      ...scene,
+      parts: [
+        {
+          ...scene.parts[0],
+          material: {
+            name: 'Glass',
+            variables: {
+              'optical.refractive_index': {
+                ...spectral,
+                axes: [{ ...spectral.axes[0], ticks: [6e14, 4e14] }],
+              },
+            },
+          },
+        },
+      ],
+    }
+    expect(validateKernelTaskConfig(spectralDescriptor, config, { scenes: { experiment: descending, task: scene } })).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: 'material role optical on experiment.geometry.conductor.variables.optical.refractive_index.axes',
+        }),
+      ]),
+    )
   })
 
   it('enforces globally unique method IDs and versioned artifact types', () => {

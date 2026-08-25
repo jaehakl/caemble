@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { resolveCadViewerContent, type CadViewerDocument } from './cadViewerContent'
 import JscadViewer from './JscadViewer'
 import type { CadViewerSource } from './sourceLayers'
+import type { RayPathBundle } from '@/lib/cad'
 
 export type { CadViewerDocument } from './cadViewerContent'
 
@@ -13,6 +14,7 @@ export type CadViewerProps = {
   onRenderStart: (sources: readonly CadViewerSource[]) => void
   onToggleViewerExpanded?: () => void
   viewerExpanded?: boolean
+  rayPaths?: readonly RayPathBundle[]
 }
 
 export function CadViewer({
@@ -22,6 +24,7 @@ export function CadViewer({
   onRenderError,
   onRenderStart,
   onToggleViewerExpanded,
+  rayPaths,
   viewerExpanded,
 }: CadViewerProps) {
   const [experimentVisible, setExperimentVisible] = useState(true)
@@ -47,6 +50,7 @@ export function CadViewer({
         emptyMessage={content.emptyMessage}
         layers={content.layers}
         lengthUnit={content.lengthUnit}
+        rayPaths={rayPaths}
         visibleSources={content.visibleSources}
         onRenderEnd={handleRenderEnd}
         onRenderError={handleRenderError}

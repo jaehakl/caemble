@@ -204,6 +204,58 @@ async def test_record_is_atomic_and_only_allowed_once(client, db_session, monkey
 
 
 @pytest.mark.asyncio
+async def test_recorded_data_list_can_exclude_system_records(client, db_session, monkeypatch):
+    monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
+    owner = await create_user(db_session)
+    experiment = await create_experiment(db_session, owner)
+    headers = auth_headers(owner)
+    created = await client.post("/measurement/create", headers=headers, json=create_payload(experiment))
+    measurement_id = created.json()["id"]
+    assert (
+        await client.post(
+            f"/measurement/{measurement_id}/record",
+            headers=headers,
+            json=recorded_payload(),
+        )
+    ).status_code == 200
+    db_session.add(
+        RecordedData(
+            user_id=owner.id,
+            measurement_id=measurement_id,
+            name="@caemble/test-system",
+            quantity_kind=None,
+            tensor_order=0,
+            dtype="uint8",
+            data_schema={"dtype": "uint8", "tensorOrder": 0},
+            data={"tensorEncodingVersion": 1, "shape": [], "storage": {"kind": "inline", "value": 1}},
+        )
+    )
+    await db_session.commit()
+    request = {
+        "scope": "mine",
+        "offset": 0,
+        "limit": None,
+        "selected_ids": [],
+        "search_text": None,
+        "text_filter": {},
+        "filter": {"measurement_id": [measurement_id, measurement_id]},
+        "sort": ["updated_at", "desc"],
+    }
+
+    default_response = await client.post("/recorded_data/list", headers=headers, json=request)
+    filtered_response = await client.post(
+        "/recorded_data/list",
+        headers=headers,
+        json={**request, "include_system": False},
+    )
+
+    assert default_response.status_code == filtered_response.status_code == 200
+    assert default_response.json()["total"] == 2
+    assert filtered_response.json()["total"] == 1
+    assert [row["name"] for row in filtered_response.json()["items"]] == ["Current"]
+
+
+@pytest.mark.asyncio
 async def test_empty_recording_marks_measurement_complete(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
     owner = await create_user(db_session)

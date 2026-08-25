@@ -154,6 +154,7 @@ describe('Analysis Worker data loading', () => {
     expect(apiMocks.recordedDataList).toHaveBeenCalledWith(
       expect.objectContaining({
         filter: { measurement_id: [1, 3] },
+        include_system: false,
         limit: null,
       }),
     )
@@ -188,6 +189,38 @@ describe('Analysis Worker data loading', () => {
 
     expect(response.type === 'error' && response.message).toContain('Catalog API를 사용할 수 없습니다.')
     expect(responses.some((item) => item.type === 'profile' && item.requestId === 'catalog-error')).toBe(false)
+  })
+
+  it('구버전 API가 반환한 시스템 row를 profile과 fingerprint에서 방어적으로 제외한다', async () => {
+    apiMocks.measurementList.mockResolvedValue({ total: 1, items: [measurement(1, 'a')] })
+    let systemValue = 1
+    apiMocks.recordedDataList.mockImplementation(async () => ({
+      total: 2,
+      items: [
+        recordedResult(1),
+        {
+          id: 999,
+          updated_at: 'a',
+          measurement_id: 1,
+          name: '@caemble/ray-paths@1/primary/segment-event',
+          quantity_kind: null,
+          tensor_order: 0,
+          dtype: 'uint8',
+          data: { value: [systemValue] },
+        },
+      ],
+    }))
+
+    dispatch({ type: 'load-context', requestId: 'system-first', experimentId: 2 })
+    const first = await waitForResponse('profile', 'system-first')
+    systemValue = 2
+    dispatch({ type: 'load-context', requestId: 'system-second', experimentId: 2 })
+    const second = await waitForResponse('profile', 'system-second')
+
+    if (first.type !== 'profile' || second.type !== 'profile') throw new Error('Expected profile responses.')
+    expect(first.profile.recordedDataCount).toBe(1)
+    expect(second.profile.recordedDataCount).toBe(1)
+    expect(second.profile.fingerprint).toBe(first.profile.fingerprint)
   })
 
   it('전후 signature가 바뀌면 한 번 다시 읽고 안정된 snapshot만 반환한다', async () => {

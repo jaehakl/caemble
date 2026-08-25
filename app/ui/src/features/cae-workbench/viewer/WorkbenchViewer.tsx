@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import CadViewer from '@/features/viewer/viewer/CadViewer'
-import type { ExperimentSourceDocument } from '@/lib/cad'
+import type { ExperimentSourceDocument, RayPathBundle } from '@/lib/cad'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
 
 export function WorkbenchViewer({
@@ -8,12 +8,14 @@ export function WorkbenchViewer({
   experiment,
   experimentDocument,
   onToggleViewerExpanded,
+  rayPaths,
   viewerExpanded,
 }: {
   activeExperimentTaskName?: string | null
   experiment: ExperimentSourceDocument | null
   experimentDocument: CadDocumentController
   onToggleViewerExpanded: () => void
+  rayPaths?: readonly RayPathBundle[]
   viewerExpanded: boolean
 }) {
   const viewerDocument = useMemo(
@@ -43,6 +45,7 @@ export function WorkbenchViewer({
         onRenderEnd={experimentDocument.handleRenderEnd}
         onRenderError={experimentDocument.handleRenderError}
         onRenderStart={experimentDocument.handleRenderStart}
+        rayPaths={rayPaths}
         onToggleViewerExpanded={onToggleViewerExpanded}
         viewerExpanded={viewerExpanded}
       />

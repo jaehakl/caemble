@@ -568,7 +568,7 @@ export function MaterialDetail({
                         <Badge>pressure · {parameter.pressure}</Badge>
                       ) : null}
                       {parameter.frequency !== null && parameter.frequency !== undefined ? (
-                        <Badge>frequency · {parameter.frequency}</Badge>
+                        <Badge>frequency · {parameter.frequency} Hz</Badge>
                       ) : null}
                     </div>
                     <div className="rounded-lg border">

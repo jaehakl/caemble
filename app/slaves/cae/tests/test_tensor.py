@@ -10,6 +10,8 @@ from app.tensor import (
     MAX_RECORDED_BYTES,
     decode_attachment_tensors,
     encode_tensor,
+    validate_ray_path_recorded_data_schemas,
+    validate_recorded_ray_path_bundles,
 )
 
 
@@ -34,6 +36,97 @@ def test_encodes_little_endian_float_tensor_and_dynamic_ticks():
     assert tensor["storage"]["kind"] == "inline"
     assert attachments == []
     assert byte_length == 12 * 8
+
+
+def test_accepts_implicit_ordinal_for_dynamic_axes_without_materializing_ticks():
+    tensor, attachments, byte_length = encode_tensor(
+        "@caemble/ray-paths@1/primary/path-offsets",
+        {"dtype": "uint32", "tensorOrder": 0, "axes": [{"name": "path boundary"}]},
+        {
+            "value": np.asarray([0, 2, 5], dtype=np.uint32),
+            "axes": [{"implicitOrdinal": True}],
+        },
+        1,
+    )
+
+    assert tensor["shape"] == [3]
+    assert tensor["axes"] == [{"implicitOrdinal": True}]
+    assert tensor["storage"]["kind"] == "attachments"
+    assert len(attachments) == 1
+    assert byte_length == 12
+
+
+def test_rejects_invalid_implicit_ordinal_axes():
+    schema = {"dtype": "uint32", "tensorOrder": 0, "axes": [{"name": "path"}]}
+
+    with pytest.raises(CaeError, match="cannot contain both"):
+        encode_tensor(
+            "offsets",
+            schema,
+            {"value": [0, 2], "axes": [{"ticks": [0, 1], "implicitOrdinal": True}]},
+            1,
+        )
+    with pytest.raises(CaeError, match="must be true"):
+        encode_tensor(
+            "offsets",
+            schema,
+            {"value": [0, 2], "axes": [{"implicitOrdinal": False}]},
+            1,
+        )
+    with pytest.raises(CaeError, match="only for a dynamic"):
+        encode_tensor(
+            "offsets",
+            {"dtype": "uint32", "tensorOrder": 0, "axes": [{"length": 2}]},
+            {"value": [0, 2], "axes": [{"implicitOrdinal": True}]},
+            1,
+        )
+
+
+def test_validates_ray_path_bundle_declarations_and_recorded_all_or_none():
+    prefix = "@caemble/ray-paths@1/primary/"
+    schemas = {
+        f"{prefix}vertices": {
+            "dtype": "float32",
+            "unit": "m",
+            "quantityKind": "Length",
+            "tensorOrder": 0,
+            "axes": [
+                {"name": "vertex"},
+                {"name": "coordinate", "length": 3, "ticks": ["x", "y", "z"]},
+            ],
+        },
+        f"{prefix}path-offsets": {
+            "dtype": "uint32",
+            "tensorOrder": 0,
+            "axes": [{"name": "path boundary"}],
+        },
+        f"{prefix}segment-power": {
+            "dtype": "float32",
+            "unit": "W",
+            "quantityKind": "optics.RadiantFlux",
+            "tensorOrder": 0,
+            "axes": [{"name": "segment"}],
+        },
+        f"{prefix}path-wavelength": {
+            "dtype": "float32",
+            "unit": "m",
+            "quantityKind": "Wavelength",
+            "tensorOrder": 0,
+            "axes": [{"name": "path"}],
+        },
+        f"{prefix}segment-event": {
+            "dtype": "uint8",
+            "tensorOrder": 0,
+            "axes": [{"name": "segment"}],
+        },
+    }
+
+    validate_ray_path_recorded_data_schemas(schemas)
+    validate_recorded_ray_path_bundles(set(schemas))
+    with pytest.raises(CaeError, match="all five members"):
+        validate_ray_path_recorded_data_schemas(dict(list(schemas.items())[:-1]))
+    with pytest.raises(CaeError, match="all five members or none"):
+        validate_recorded_ray_path_bundles(set(list(schemas)[:-1]))
 
 
 def test_shards_large_tensor_at_16_mib():

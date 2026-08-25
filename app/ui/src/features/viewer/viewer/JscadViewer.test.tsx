@@ -1,6 +1,7 @@
 import { measurements, primitives } from '@jscad/modeling'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
+import type { RayPathBundle } from '@/lib/cad'
 import JscadViewer, { ViewerToolbar } from './JscadViewer'
 import { createLayerRenderParts, scaleViewerLayers } from './sourceLayers'
 
@@ -89,6 +90,32 @@ describe('JscadViewer source layers', () => {
     )
     expect(scaled[0].parts[0].geometry).toBe(structureGeometry)
     expect(scaled[1].parts[0].geometry).not.toBe(experimentGeometry)
+  })
+
+  it('shows every stored ray path by default even without Geometry', () => {
+    const bundle: RayPathBundle = {
+      id: 'primary',
+      pathCount: 1,
+      segmentCount: 2,
+      vertices: new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]),
+      pathOffsets: new Uint32Array([0, 3]),
+      segmentPower: new Float32Array([1, 0.5]),
+      pathWavelength: new Float32Array([532e-9]),
+      segmentEvent: new Uint8Array([2, 5]),
+    }
+    const markup = renderToStaticMarkup(
+      <JscadViewer
+        lengthUnit="m"
+        layers={[]}
+        rayPaths={[bundle]}
+        onRenderEnd={() => undefined}
+        onRenderError={() => undefined}
+        onRenderStart={() => undefined}
+      />,
+    )
+
+    expect(markup).toContain('Ray paths · 1 paths · 2 segments')
+    expect(markup).not.toContain('Waiting for model...')
   })
 })
 

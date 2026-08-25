@@ -1,0 +1,1233 @@
+{
+  "formatVersion": 1,
+  "payload": {
+    "formatVersion": 2,
+    "measurement": {
+      "kind": "measurement",
+      "experiment": {
+        "kind": "experiment",
+        "sourceHash": "5d7783f4fb46850794ebb60d7bba575bc03f8bd7bb45231c2c3882ad7fb57511",
+        "variables": {},
+        "varsSchema": {},
+        "scene": {
+          "geometryFormatVersion": 1,
+          "lengthUnit": "mm",
+          "roots": [
+            {
+              "id": "source.body",
+              "materialRole": "body",
+              "material": {
+                "name": "Optical Air",
+                "source": "reference"
+              },
+              "node": {
+                "kind": "transform",
+                "nodeId": "source/$component-transform/$transform-1",
+                "matrix": [
+                  1,
+                  0,
+                  0,
+                  -55,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "child": {
+                  "kind": "primitive",
+                  "nodeId": "source.body",
+                  "primitive": "box",
+                  "parameters": {
+                    "size": [
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "id": "lens.body",
+              "materialRole": "body",
+              "material": {
+                "name": "Lens Glass",
+                "source": "reference"
+              },
+              "node": {
+                "kind": "transform",
+                "nodeId": "lens/$component-transform/$transform-1",
+                "matrix": [
+                  1,
+                  0,
+                  0,
+                  -30,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "child": {
+                  "kind": "primitive",
+                  "nodeId": "lens.body",
+                  "primitive": "sphere",
+                  "parameters": {
+                    "radius": 10,
+                    "segments": 32
+                  }
+                }
+              }
+            },
+            {
+              "id": "folding-mirror.$part-1",
+              "materialRole": "substrate",
+              "material": {
+                "name": "Mirror Substrate",
+                "source": "reference"
+              },
+              "node": {
+                "kind": "transform",
+                "nodeId": "folding-mirror/$component-transform/$transform-1",
+                "matrix": [
+                  0.7071067811865476,
+                  0.7071067811865475,
+                  0,
+                  0,
+                  -0.7071067811865475,
+                  0.7071067811865476,
+                  0,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "child": {
+                  "kind": "shell",
+                  "nodeId": "experiment/root/fragment-2/result/$layer-1",
+                  "innerOffset": 0,
+                  "outerOffset": 2,
+                  "child": {
+                    "kind": "primitive",
+                    "nodeId": "folding-mirror.body",
+                    "primitive": "box",
+                    "parameters": {
+                      "size": [
+                        2,
+                        30,
+                        30
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "folding-mirror.$part-2",
+              "materialRole": "film",
+              "material": {
+                "name": "Five Micrometer Film",
+                "source": "reference"
+              },
+              "node": {
+                "kind": "transform",
+                "nodeId": "folding-mirror/$component-transform/$transform-2",
+                "matrix": [
+                  0.7071067811865476,
+                  0.7071067811865475,
+                  0,
+                  0,
+                  -0.7071067811865475,
+                  0.7071067811865476,
+                  0,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "child": {
+                  "kind": "shell",
+                  "nodeId": "experiment/root/fragment-2/result/$layer-2",
+                  "innerOffset": 2,
+                  "outerOffset": 2.005,
+                  "child": {
+                    "kind": "primitive",
+                    "nodeId": "folding-mirror.body",
+                    "primitive": "box",
+                    "parameters": {
+                      "size": [
+                        2,
+                        30,
+                        30
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "baffle-left.body",
+              "materialRole": "body",
+              "material": {
+                "name": "Black Baffle",
+                "source": "reference"
+              },
+              "node": {
+                "kind": "transform",
+                "nodeId": "baffle-left/$component-transform/$transform-1",
+                "matrix": [
+                  1,
+                  0,
+                  0,
+                  -9,
+                  0,
+                  1,
+                  0,
+                  20,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "child": {
+                  "kind": "primitive",
+                  "nodeId": "baffle-left.body",
+                  "primitive": "box",
+                  "parameters": {
+                    "size": [
+                      3,
+                      3,
+                      28
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "id": "baffle-right.body",
+              "materialRole": "body",
+              "material": {
+                "name": "Black Baffle",
+                "source": "reference"
+              },
+              "node": {
+                "kind": "transform",
+                "nodeId": "baffle-right/$component-transform/$transform-1",
+                "matrix": [
+                  1,
+                  0,
+                  0,
+                  9,
+                  0,
+                  1,
+                  0,
+                  20,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "child": {
+                  "kind": "primitive",
+                  "nodeId": "baffle-right.body",
+                  "primitive": "box",
+                  "parameters": {
+                    "size": [
+                      3,
+                      3,
+                      28
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "id": "haze.body",
+              "materialRole": "body",
+              "material": {
+                "name": "Scattering Haze",
+                "source": "reference"
+              },
+              "node": {
+                "kind": "transform",
+                "nodeId": "haze/$component-transform/$transform-1",
+                "matrix": [
+                  1,
+                  0,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  27,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "child": {
+                  "kind": "primitive",
+                  "nodeId": "haze.body",
+                  "primitive": "box",
+                  "parameters": {
+                    "size": [
+                      24,
+                      10,
+                      24
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "id": "detector.body",
+              "materialRole": "body",
+              "material": {
+                "name": "Optical Air",
+                "source": "reference"
+              },
+              "node": {
+                "kind": "transform",
+                "nodeId": "detector/$component-transform/$transform-1",
+                "matrix": [
+                  1,
+                  0,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                  44,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "child": {
+                  "kind": "primitive",
+                  "nodeId": "detector.body",
+                  "primitive": "box",
+                  "parameters": {
+                    "size": [
+                      30,
+                      2,
+                      30
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          "geometryGroups": [
+            {
+              "id": "@geometry-group/rayDomain",
+              "name": "rayDomain",
+              "kind": "geometry",
+              "memberIds": [
+                "lens",
+                "folding-mirror",
+                "baffle-left",
+                "baffle-right",
+                "haze",
+                "detector"
+              ],
+              "rootIds": [
+                "lens.body",
+                "folding-mirror.$part-1",
+                "folding-mirror.$part-2",
+                "baffle-left.body",
+                "baffle-right.body",
+                "haze.body",
+                "detector.body"
+              ],
+              "missingMemberIds": []
+            },
+            {
+              "id": "@geometry-group/lightSource",
+              "name": "lightSource",
+              "kind": "geometry",
+              "memberIds": [
+                "source"
+              ],
+              "rootIds": [
+                "source.body"
+              ],
+              "missingMemberIds": []
+            },
+            {
+              "id": "@geometry-group/haze",
+              "name": "haze",
+              "kind": "geometry",
+              "memberIds": [
+                "haze"
+              ],
+              "rootIds": [
+                "haze.body"
+              ],
+              "missingMemberIds": []
+            }
+          ],
+          "surfaceGroups": [
+            {
+              "id": "@surface-group/abgBaffle",
+              "name": "abgBaffle",
+              "kind": "surface",
+              "memberIds": [
+                "baffle-left.body/surface/%2BX"
+              ],
+              "selectors": [
+                {
+                  "rootId": "baffle-left.body",
+                  "sourceNodeId": "baffle-left.body",
+                  "faceKey": "+X"
+                }
+              ],
+              "missingMemberIds": []
+            },
+            {
+              "id": "@surface-group/lambertianBaffle",
+              "name": "lambertianBaffle",
+              "kind": "surface",
+              "memberIds": [
+                "baffle-right.body/surface/-X"
+              ],
+              "selectors": [
+                {
+                  "rootId": "baffle-right.body",
+                  "sourceNodeId": "baffle-right.body",
+                  "faceKey": "-X"
+                }
+              ],
+              "missingMemberIds": []
+            },
+            {
+              "id": "@surface-group/detector",
+              "name": "detector",
+              "kind": "surface",
+              "memberIds": [
+                "detector.body/surface/-Y"
+              ],
+              "selectors": [
+                {
+                  "rootId": "detector.body",
+                  "sourceNodeId": "detector.body",
+                  "faceKey": "-Y"
+                }
+              ],
+              "missingMemberIds": []
+            }
+          ],
+          "geometryHash": "7f27ef82f9bf5206f2c7bc4e16d813d33641d3971bc25c3d60eb1c0d52b21ad8"
+        },
+        "taskScenes": {
+          "trace": {
+            "geometryFormatVersion": 1,
+            "lengthUnit": "mm",
+            "roots": [
+              {
+                "id": "task-marker.body",
+                "materialRole": "body",
+                "material": {
+                  "name": "Optical Air",
+                  "source": "reference"
+                },
+                "node": {
+                  "kind": "transform",
+                  "nodeId": "task-marker/$component-transform/$transform-1",
+                  "matrix": [
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    -80,
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "child": {
+                    "kind": "primitive",
+                    "nodeId": "task-marker.body",
+                    "primitive": "box",
+                    "parameters": {
+                      "size": [
+                        1,
+                        1,
+                        1
+                      ]
+                    }
+                  }
+                }
+              }
+            ],
+            "geometryGroups": [],
+            "surfaceGroups": [],
+            "geometryHash": "0bd9880d2856910451263fc205d6730a7c208bfa086d0ac6ac65bdee06ab7f62"
+          }
+        },
+        "simulationProgram": {
+          "formatVersion": 5,
+          "simulationApiVersion": 3,
+          "pythonSource": "async def simulate(*, sim, tasks, vars):\n    result = await sim.run(tasks[\"trace\"])\n    await sim.record(\"detectorIrradiance\", result[\"artifacts\"][\"detectorIrradiance\"])\n    await sim.record(\"detectorPower\", result[\"artifacts\"][\"detectorPower\"])\n    await sim.record(\"detectorEfficiency\", result[\"artifacts\"][\"detectorEfficiency\"])\n    paths = result[\"state\"][\"rayPaths\"]\n    await sim.record(\"@caemble/ray-paths@1/primary/vertices\", paths[\"vertices\"])\n    await sim.record(\"@caemble/ray-paths@1/primary/path-offsets\", paths[\"pathOffsets\"])\n    await sim.record(\"@caemble/ray-paths@1/primary/segment-power\", paths[\"segmentPower\"])\n    await sim.record(\"@caemble/ray-paths@1/primary/path-wavelength\", paths[\"pathWavelength\"])\n    await sim.record(\"@caemble/ray-paths@1/primary/segment-event\", paths[\"segmentEvent\"])\n    return result[\"state\"]\n",
+          "tasks": {
+            "trace": {
+              "kernel": {
+                "name": "ray-tracing",
+                "version": "0.1.0"
+              },
+              "config": {
+                "boundaryConditions": [
+                  {
+                    "methodId": "ray.abg-scatter",
+                    "parameters": {
+                      "b": {
+                        "dtype": "float64",
+                        "quantityKind": "Dimensionless",
+                        "unit": "1",
+                        "value": 0.02
+                      },
+                      "g": {
+                        "dtype": "float64",
+                        "quantityKind": "Dimensionless",
+                        "unit": "1",
+                        "value": 1.8
+                      },
+                      "scatterFraction": {
+                        "dtype": "float64",
+                        "quantityKind": "DimensionlessRatio",
+                        "unit": "{fraction}",
+                        "value": 0.8
+                      }
+                    },
+                    "target": [
+                      "experiment.surface.abgBaffle"
+                    ]
+                  },
+                  {
+                    "methodId": "ray.lambertian-scatter",
+                    "parameters": {
+                      "scatterFraction": {
+                        "dtype": "float64",
+                        "quantityKind": "DimensionlessRatio",
+                        "unit": "{fraction}",
+                        "value": 1
+                      }
+                    },
+                    "target": [
+                      "experiment.surface.lambertianBaffle"
+                    ]
+                  },
+                  {
+                    "methodId": "ray.hg-medium",
+                    "parameters": {
+                      "anisotropy": {
+                        "dtype": "float64",
+                        "quantityKind": "Dimensionless",
+                        "unit": "1",
+                        "value": 0.65
+                      }
+                    },
+                    "target": [
+                      "experiment.geometry.haze"
+                    ]
+                  }
+                ],
+                "initializations": [
+                  {
+                    "methodId": "ray.domain",
+                    "parameters": {},
+                    "target": [
+                      "experiment.geometry.rayDomain"
+                    ]
+                  },
+                  {
+                    "methodId": "ray.point-source",
+                    "parameters": {
+                      "coneHalfAngle": {
+                        "dtype": "float64",
+                        "quantityKind": "PlaneAngle",
+                        "unit": "deg",
+                        "value": 2.5
+                      },
+                      "direction": {
+                        "axes": [
+                          {
+                            "length": 3
+                          }
+                        ],
+                        "dtype": "float64",
+                        "quantityKind": "Dimensionless",
+                        "unit": "1",
+                        "value": [
+                          1,
+                          0,
+                          0
+                        ]
+                      },
+                      "radiantFlux": {
+                        "dtype": "float64",
+                        "quantityKind": "optics.RadiantFlux",
+                        "unit": "W",
+                        "value": 0.7
+                      },
+                      "rayCount": 256,
+                      "stokes": {
+                        "axes": [
+                          {
+                            "length": 4
+                          }
+                        ],
+                        "dtype": "float64",
+                        "quantityKind": "Dimensionless",
+                        "unit": "1",
+                        "value": [
+                          1,
+                          1,
+                          0,
+                          0
+                        ]
+                      },
+                      "wavelength": {
+                        "dtype": "float64",
+                        "quantityKind": "Wavelength",
+                        "unit": "nm",
+                        "value": 532
+                      }
+                    },
+                    "target": [
+                      "experiment.geometry.lightSource"
+                    ]
+                  },
+                  {
+                    "methodId": "ray.point-source",
+                    "parameters": {
+                      "coneHalfAngle": {
+                        "dtype": "float64",
+                        "quantityKind": "PlaneAngle",
+                        "unit": "deg",
+                        "value": 2.5
+                      },
+                      "direction": {
+                        "axes": [
+                          {
+                            "length": 3
+                          }
+                        ],
+                        "dtype": "float64",
+                        "quantityKind": "Dimensionless",
+                        "unit": "1",
+                        "value": [
+                          1,
+                          0,
+                          0
+                        ]
+                      },
+                      "radiantFlux": {
+                        "dtype": "float64",
+                        "quantityKind": "optics.RadiantFlux",
+                        "unit": "W",
+                        "value": 0.3
+                      },
+                      "rayCount": 128,
+                      "stokes": {
+                        "axes": [
+                          {
+                            "length": 4
+                          }
+                        ],
+                        "dtype": "float64",
+                        "quantityKind": "Dimensionless",
+                        "unit": "1",
+                        "value": [
+                          1,
+                          0,
+                          0,
+                          0
+                        ]
+                      },
+                      "wavelength": {
+                        "dtype": "float64",
+                        "quantityKind": "Wavelength",
+                        "unit": "nm",
+                        "value": 650
+                      }
+                    },
+                    "target": [
+                      "experiment.geometry.lightSource"
+                    ]
+                  }
+                ],
+                "outputs": [
+                  {
+                    "key": "detectorIrradiance",
+                    "methodId": "ray.detector-irradiance",
+                    "parameters": {
+                      "pixelShape": {
+                        "axes": [
+                          {
+                            "length": 2
+                          }
+                        ],
+                        "dtype": "int32",
+                        "value": [
+                          16,
+                          16
+                        ]
+                      }
+                    },
+                    "target": [
+                      "experiment.surface.detector"
+                    ]
+                  },
+                  {
+                    "key": "detectorPower",
+                    "methodId": "ray.detector-power",
+                    "parameters": {},
+                    "target": [
+                      "experiment.surface.detector"
+                    ]
+                  },
+                  {
+                    "key": "detectorEfficiency",
+                    "methodId": "ray.detector-efficiency",
+                    "parameters": {},
+                    "target": [
+                      "experiment.surface.detector"
+                    ]
+                  }
+                ],
+                "parameters": {
+                  "maxInteractions": 16,
+                  "maxPaths": 1024,
+                  "minPowerFraction": {
+                    "dtype": "float64",
+                    "quantityKind": "DimensionlessRatio",
+                    "unit": "{fraction}",
+                    "value": 1e-7
+                  },
+                  "seed": 20260825
+                }
+              }
+            }
+          },
+          "recordedData": {
+            "detectorIrradiance": {
+              "dtype": "float64",
+              "unit": "W.m-2",
+              "quantityKind": "PowerPerArea",
+              "axes": [
+                {
+                  "name": "detector-v",
+                  "unit": "m",
+                  "quantityKind": "Length"
+                },
+                {
+                  "name": "detector-u",
+                  "unit": "m",
+                  "quantityKind": "Length"
+                }
+              ],
+              "tensorOrder": 0
+            },
+            "detectorPower": {
+              "dtype": "float64",
+              "unit": "W",
+              "quantityKind": "optics.RadiantFlux",
+              "tensorOrder": 0
+            },
+            "detectorEfficiency": {
+              "dtype": "float64",
+              "unit": "{fraction}",
+              "quantityKind": "DimensionlessRatio",
+              "tensorOrder": 0
+            },
+            "@caemble/ray-paths@1/primary/vertices": {
+              "dtype": "float32",
+              "unit": "m",
+              "quantityKind": "Length",
+              "axes": [
+                {},
+                {
+                  "length": 3,
+                  "ticks": [
+                    "x",
+                    "y",
+                    "z"
+                  ]
+                }
+              ],
+              "tensorOrder": 0
+            },
+            "@caemble/ray-paths@1/primary/path-offsets": {
+              "dtype": "uint32",
+              "axes": [
+                {}
+              ],
+              "tensorOrder": 0
+            },
+            "@caemble/ray-paths@1/primary/segment-power": {
+              "dtype": "float32",
+              "unit": "W",
+              "quantityKind": "optics.RadiantFlux",
+              "axes": [
+                {}
+              ],
+              "tensorOrder": 0
+            },
+            "@caemble/ray-paths@1/primary/path-wavelength": {
+              "dtype": "float32",
+              "unit": "m",
+              "quantityKind": "Wavelength",
+              "axes": [
+                {}
+              ],
+              "tensorOrder": 0
+            },
+            "@caemble/ray-paths@1/primary/segment-event": {
+              "dtype": "uint8",
+              "axes": [
+                {}
+              ],
+              "tensorOrder": 0
+            }
+          }
+        }
+      },
+      "materialParameters": {
+        "schemaVersion": 1,
+        "materials": {
+          "Optical Air": {
+            "optical.refractive_index": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 1,
+                "unit": "{fraction}"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            },
+            "optical.extinction_coefficient": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 0,
+                "unit": "1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            },
+            "optical.absorption_coefficient": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 0,
+                "unit": "m-1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            },
+            "optical.scattering_coefficient": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 0,
+                "unit": "m-1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            }
+          },
+          "Lens Glass": {
+            "optical.refractive_index": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 1.52,
+                "unit": "{fraction}"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            },
+            "optical.extinction_coefficient": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 0,
+                "unit": "1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            },
+            "optical.absorption_coefficient": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 0.02,
+                "unit": "m-1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            },
+            "optical.scattering_coefficient": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 0,
+                "unit": "m-1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            }
+          },
+          "Mirror Substrate": {
+            "optical.refractive_index": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 0.2,
+                "unit": "{fraction}"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            },
+            "optical.extinction_coefficient": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 3.2,
+                "unit": "1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            },
+            "optical.absorption_coefficient": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 73000000,
+                "unit": "m-1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            },
+            "optical.scattering_coefficient": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 0,
+                "unit": "m-1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            }
+          },
+          "Five Micrometer Film": {
+            "optical.refractive_index": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 1.38,
+                "unit": "{fraction}"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            },
+            "optical.extinction_coefficient": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 0,
+                "unit": "1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            },
+            "optical.absorption_coefficient": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 0,
+                "unit": "m-1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            },
+            "optical.scattering_coefficient": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 0,
+                "unit": "m-1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            }
+          },
+          "Black Baffle": {
+            "optical.refractive_index": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 1.6,
+                "unit": "{fraction}"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            },
+            "optical.extinction_coefficient": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 0.7,
+                "unit": "1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            },
+            "optical.absorption_coefficient": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 2000,
+                "unit": "m-1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            },
+            "optical.scattering_coefficient": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 0,
+                "unit": "m-1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            }
+          },
+          "Scattering Haze": {
+            "optical.refractive_index": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 1.0003,
+                "unit": "{fraction}"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            },
+            "optical.extinction_coefficient": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 0,
+                "unit": "1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            },
+            "optical.absorption_coefficient": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 0.1,
+                "unit": "m-1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            },
+            "optical.scattering_coefficient": {
+              "origin": "source",
+              "value": {
+                "dtype": "float64",
+                "value": 25,
+                "unit": "m-1"
+              },
+              "source": null,
+              "version": null,
+              "materialId": null,
+              "materialParameterId": null
+            }
+          }
+        },
+        "materialColors": {}
+      },
+      "materialWarnings": [
+        "Legacy Material snapshot: database parameters were not automatically re-resolved.",
+        "Material Optical Air: database catalog values are unavailable in source-only mode; only explicit source parameters are used.",
+        "Material Lens Glass: database catalog values are unavailable in source-only mode; only explicit source parameters are used.",
+        "Material Mirror Substrate: database catalog values are unavailable in source-only mode; only explicit source parameters are used.",
+        "Material Five Micrometer Film: database catalog values are unavailable in source-only mode; only explicit source parameters are used.",
+        "Material Black Baffle: database catalog values are unavailable in source-only mode; only explicit source parameters are used.",
+        "Material Scattering Haze: database catalog values are unavailable in source-only mode; only explicit source parameters are used."
+      ],
+      "taskMaterialParameters": {
+        "trace": {
+          "schemaVersion": 1,
+          "materials": {
+            "Optical Air": {
+              "optical.refractive_index": {
+                "origin": "source",
+                "value": {
+                  "dtype": "float64",
+                  "value": 1,
+                  "unit": "{fraction}"
+                },
+                "source": null,
+                "version": null,
+                "materialId": null,
+                "materialParameterId": null
+              },
+              "optical.extinction_coefficient": {
+                "origin": "source",
+                "value": {
+                  "dtype": "float64",
+                  "value": 0,
+                  "unit": "1"
+                },
+                "source": null,
+                "version": null,
+                "materialId": null,
+                "materialParameterId": null
+              },
+              "optical.absorption_coefficient": {
+                "origin": "source",
+                "value": {
+                  "dtype": "float64",
+                  "value": 0,
+                  "unit": "m-1"
+                },
+                "source": null,
+                "version": null,
+                "materialId": null,
+                "materialParameterId": null
+              },
+              "optical.scattering_coefficient": {
+                "origin": "source",
+                "value": {
+                  "dtype": "float64",
+                  "value": 0,
+                  "unit": "m-1"
+                },
+                "source": null,
+                "version": null,
+                "materialId": null,
+                "materialParameterId": null
+              }
+            }
+          },
+          "materialColors": {}
+        }
+      },
+      "taskMaterialWarnings": {
+        "trace": [
+          "Legacy Material snapshot: database parameters were not automatically re-resolved.",
+          "Material Optical Air: database catalog values are unavailable in source-only mode; only explicit source parameters are used."
+        ]
+      }
+    },
+    "solverContracts": [
+      {
+        "name": "ray-tracing",
+        "version": "0.1.0",
+        "contractDigest": "2e444bd72b1dbebe6a16875d26869006278bf5f4ca495c89cbe2595d8c549fe6"
+      }
+    ]
+  },
+  "attachments": []
+}

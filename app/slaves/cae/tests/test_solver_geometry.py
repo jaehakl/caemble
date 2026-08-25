@@ -374,6 +374,62 @@ async def test_shell_rejects_thickness_below_portable_float32_precision():
 
 
 @pytest.mark.asyncio
+async def test_shell_layer_boundaries_bypass_closed_solid_precision_and_apply_outer_scale():
+    shell = {
+        "kind": "transform",
+        "nodeId": "scaled-layer",
+        "matrix": [
+            2, 0, 0, 0,
+            0, 3, 0, 0,
+            0, 0, 4, 0,
+            0, 0, 0, 1,
+        ],
+        "child": {
+            "kind": "shell",
+            "nodeId": "coating/$layer-1",
+            "innerOffset": 0,
+            "outerOffset": 5e-8,
+            "child": box_node(),
+        },
+    }
+    layer = await GeometryService().shell_layer(canonical_scene(shell), "body", "m")
+
+    assert layer is not None
+    assert layer.family_id == "coating"
+    assert layer.inner.triangles.shape == layer.outer.triangles.shape == (12, 3)
+    assert layer.minimum_thickness == pytest.approx(1e-7)
+    assert layer.maximum_thickness == pytest.approx(2e-7)
+    assert {(item.source_node_id, item.face_key) for item in layer.inner.triangle_provenance} == {
+        ("coating/$layer-1", "inner")
+    }
+
+
+@pytest.mark.asyncio
+async def test_shell_layer_returns_none_for_non_direct_boolean_shell():
+    node = {
+        "kind": "boolean",
+        "nodeId": "merged",
+        "operation": "union",
+        "children": [
+            {
+                "kind": "shell",
+                "nodeId": "coating/$layer-1",
+                "innerOffset": 0,
+                "outerOffset": 1e-6,
+                "child": box_node("coated"),
+            },
+            {
+                "kind": "transform",
+                "nodeId": "other-transform",
+                "matrix": [1, 0, 0, 4, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+                "child": box_node("other"),
+            },
+        ],
+    }
+    assert await GeometryService().shell_layer(canonical_scene(node), "body", "m") is None
+
+
+@pytest.mark.asyncio
 async def test_shell_rejects_thickness_lost_at_translated_float64_mesh_coordinates():
     translated_box = {
         "kind": "transform",

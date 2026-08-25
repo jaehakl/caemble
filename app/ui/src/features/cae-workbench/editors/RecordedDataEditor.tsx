@@ -1,11 +1,15 @@
-import type { RecordedData, RecordedDataRule } from '@/lib/cad'
+import { isRayPathRecordedDataName, type RayPathBundle, type RecordedData, type RecordedDataRule } from '@/lib/cad'
 import RecordedDataResults from '@/features/viewer/viewer/RecordedDataResults'
+import { RayPathSystemCard } from '../measurement/RayPathSystemCard'
 
 export type RecordedDataEditorProps = {
   measurementId: number | null
   pendingSave?: boolean
   recordedAt?: string | null
   recordedData?: RecordedData | null
+  rayPathBundles?: readonly RayPathBundle[]
+  rayPathError?: string | null
+  rayPathsDeclared?: boolean
   rules: readonly RecordedDataRule[]
 }
 
@@ -14,8 +18,28 @@ export function RecordedDataEditor({
   pendingSave = false,
   recordedAt = null,
   recordedData,
+  rayPathBundles = [],
+  rayPathError = null,
+  rayPathsDeclared = false,
   rules,
 }: RecordedDataEditorProps) {
+  const regularRules = rules.filter((rule) => !isRayPathRecordedDataName(rule.label))
+  const regularRecordedData = recordedData
+    ? (Object.freeze(
+        Object.fromEntries(Object.entries(recordedData).filter(([name]) => !isRayPathRecordedDataName(name))),
+      ) as RecordedData)
+    : recordedData
+  const regularResults =
+    regularRules.length > 0 ? <RecordedDataResults recordedData={regularRecordedData} rules={regularRules} /> : null
+  const results =
+    rayPathsDeclared || rayPathBundles.length > 0 || rayPathError ? (
+      <div className="h-full min-h-0 space-y-3 overflow-y-auto p-3">
+        <RayPathSystemCard bundles={rayPathBundles} declared={rayPathsDeclared} error={rayPathError} />
+        {regularResults}
+      </div>
+    ) : (
+      regularResults
+    )
   if (measurementId === null) {
     return (
       <section
@@ -42,7 +66,7 @@ export function RecordedDataEditor({
     )
   }
 
-  if (rules.length === 0) {
+  if (regularRules.length === 0 && !rayPathsDeclared && rayPathBundles.length === 0 && !rayPathError) {
     return (
       <section
         aria-label="Recorded Data editor"
@@ -63,11 +87,9 @@ export function RecordedDataEditor({
         실행 결과는 이 세션에 남아 있습니다. 재실행하지 말고 <strong>Retry Saving Results</strong>로 저장만 다시
         시도하세요.
       </div>
-      <div className="min-h-0 flex-1">
-        <RecordedDataResults recordedData={recordedData} rules={rules} />
-      </div>
+      <div className="min-h-0 flex-1">{results}</div>
     </section>
   ) : (
-    <RecordedDataResults recordedData={recordedData} rules={rules} />
+    results
   )
 }

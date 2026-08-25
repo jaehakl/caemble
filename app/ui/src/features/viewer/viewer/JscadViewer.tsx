@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import * as reglRenderer from '@jscad/regl-renderer'
 import { Maximize2, Minimize2 } from 'lucide-react'
-import type { CadScenePart, UcumUnit } from '@/lib/cad'
+import type { CadScenePart, RayPathBundle, UcumUnit } from '@/lib/cad'
 import { scenePartColor, unassignedGeometryColor } from './materialColor'
 import { createWireframeGeometries } from './renderParts'
+import { createRayPathRenderGeometries } from './rayPathRendering'
 import { createLayerRenderParts, scaleViewerLayers, type CadViewerSource, type JscadViewerLayer } from './sourceLayers'
 
 type RendererEntity = Record<string, unknown>
@@ -55,6 +56,10 @@ type ReglRendererApi = {
   entitiesFromSolids: (options: Record<string, unknown>, ...solids: unknown[]) => RendererEntity[]
   prepareRender: (options: RendererOptions) => (options: RendererOptions) => void
 }
+type ReglCommandBuilder = {
+  (options: Record<string, unknown>): (props: Record<string, unknown>) => void
+  prop: (name: string) => unknown
+}
 
 type CameraView = 'default' | 'x' | 'y' | 'z'
 
@@ -68,11 +73,45 @@ type JscadViewerProps = {
   onRenderStart: () => void
   onToggleSource?: (source: CadViewerSource) => void
   onToggleViewerExpanded?: () => void
+  rayPaths?: readonly RayPathBundle[]
   viewerExpanded?: boolean
   visibleSources?: readonly CadViewerSource[]
 }
 
 const renderer = reglRenderer as unknown as ReglRendererApi
+const rayPathVertexShader = `
+precision mediump float;
+uniform mat4 view, projection;
+attribute vec3 position;
+attribute vec4 color;
+varying vec4 vertexColor;
+void main() {
+  vertexColor = color;
+  gl_Position = projection * view * vec4(position, 1.0);
+}
+`
+const rayPathFragmentShader = `
+precision mediump float;
+varying vec4 vertexColor;
+void main() { gl_FragColor = vertexColor; }
+`
+function drawRayPaths(regl: ReglCommandBuilder) {
+  return regl({
+    primitive: 'lines',
+    vert: rayPathVertexShader,
+    frag: rayPathFragmentShader,
+    attributes: {
+      position: regl.prop('positions'),
+      color: regl.prop('colors'),
+    },
+    elements: regl.prop('indices'),
+    depth: { enable: false },
+    blend: {
+      enable: true,
+      func: { src: 'src alpha', dst: 'one minus src alpha' },
+    },
+  })
+}
 const cameraViewDirections = {
   default: [1, 1, 1],
   x: [1, 0, 0],
@@ -163,11 +202,30 @@ function JscadViewer({
   onRenderStart,
   onToggleSource,
   onToggleViewerExpanded,
+  rayPaths = [],
   viewerExpanded,
   visibleSources,
 }: JscadViewerProps) {
   const displayLayers = useMemo(() => scaleViewerLayers(layers, lengthUnit), [layers, lengthUnit])
   const parts = useMemo(() => displayLayers.flatMap((layer) => layer.parts), [displayLayers])
+  const rayPathGeometries = useMemo(() => createRayPathRenderGeometries(rayPaths, lengthUnit), [lengthUnit, rayPaths])
+  const rayPathVisualsRef = useRef<Record<string, unknown>>({
+    drawCmd: 'drawRayPaths',
+    show: true,
+    transparent: true,
+  })
+  const rayPathEntities = useMemo(
+    () =>
+      rayPathGeometries.map((geometry) => ({
+        colors: geometry.colors,
+        indices: geometry.indices,
+        positions: geometry.positions,
+        visuals: rayPathVisualsRef.current,
+      })),
+    [rayPathGeometries],
+  )
+  const rayPathCount = rayPaths.reduce((sum, bundle) => sum + bundle.pathCount, 0)
+  const raySegmentCount = rayPaths.reduce((sum, bundle) => sum + bundle.segmentCount, 0)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const cameraRef = useRef<RendererState | null>(null)
   const controlsRef = useRef<RendererState | null>(null)
@@ -200,6 +258,7 @@ function JscadViewer({
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
+    delete rayPathVisualsRef.current.cacheId
 
     const perspectiveCamera = renderer.cameras.perspective
     const orbit = renderer.controls.orbit
@@ -252,6 +311,7 @@ function JscadViewer({
         drawGrid: renderer.drawCommands.drawGrid,
         drawLines: renderer.drawCommands.drawLines,
         drawMesh: renderer.drawCommands.drawMesh,
+        drawRayPaths,
       },
       entities: [],
       glOptions: { canvas },
@@ -313,7 +373,7 @@ function JscadViewer({
     if (!optionsRef.current || !renderRef.current || !cameraRef.current || !controlsRef.current) return
 
     if (parts.length === 0) {
-      optionsRef.current.entities = referenceEntitiesRef.current
+      optionsRef.current.entities = [...referenceEntitiesRef.current, ...rayPathEntities]
       renderScene()
       lastFittedPartsRef.current = null
       return
@@ -362,7 +422,7 @@ function JscadViewer({
         }
       }
 
-      optionsRef.current.entities = [...referenceEntitiesRef.current, ...geometryEntities]
+      optionsRef.current.entities = [...referenceEntitiesRef.current, ...geometryEntities, ...rayPathEntities]
       if (shouldFit) {
         const zoomed = renderer.controls.orbit.zoomToFit({
           camera: cameraRef.current,
@@ -389,7 +449,7 @@ function JscadViewer({
       const typedError = error as { message?: string }
       onRenderError(typedError.message ?? String(error))
     }
-  }, [displayLayers, lengthUnit, onRenderEnd, onRenderError, onRenderStart, parts, renderScene])
+  }, [displayLayers, lengthUnit, onRenderEnd, onRenderError, onRenderStart, parts, rayPathEntities, renderScene])
 
   const renderWithControls = () => {
     if (!cameraRef.current || !controlsRef.current || !optionsRef.current || !renderRef.current) return
@@ -506,9 +566,15 @@ function JscadViewer({
           }}
         />
 
-        {parts.length === 0 ? (
+        {parts.length === 0 && rayPathCount === 0 ? (
           <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-slate-500">
             {emptyMessage}
+          </div>
+        ) : null}
+
+        {rayPathCount > 0 ? (
+          <div className="pointer-events-none absolute bottom-3 left-3 rounded border border-slate-200 bg-white/90 px-3 py-2 text-xs text-slate-700 shadow-sm backdrop-blur-sm">
+            Ray paths · {rayPathCount.toLocaleString()} paths · {raySegmentCount.toLocaleString()} segments
           </div>
         ) : null}
 

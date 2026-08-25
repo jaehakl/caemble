@@ -1,0 +1,87 @@
+{
+  "formatVersion": 1,
+  "records": [
+    {
+      "dtype": "float64",
+      "finite": true,
+      "name": "detectorIrradiance",
+      "nonzero": true,
+      "shape": [
+        16,
+        16
+      ]
+    },
+    {
+      "absoluteTolerance": 1e-12,
+      "dtype": "float64",
+      "name": "detectorPower",
+      "shape": [],
+      "value": 0.7495528611599909
+    },
+    {
+      "absoluteTolerance": 1e-12,
+      "dtype": "float64",
+      "name": "detectorEfficiency",
+      "shape": [],
+      "value": 0.7495528611599909
+    },
+    {
+      "dtype": "float32",
+      "finite": true,
+      "name": "@caemble/ray-paths@1/primary/vertices",
+      "nonzero": true,
+      "shape": [
+        3917,
+        3
+      ]
+    },
+    {
+      "dtype": "uint32",
+      "name": "@caemble/ray-paths@1/primary/path-offsets",
+      "nonzero": true,
+      "shape": [
+        769
+      ]
+    },
+    {
+      "dtype": "float32",
+      "finite": true,
+      "minimumExclusive": 0,
+      "name": "@caemble/ray-paths@1/primary/segment-power",
+      "shape": [
+        3149
+      ]
+    },
+    {
+      "dtype": "float32",
+      "finite": true,
+      "minimumExclusive": 0,
+      "name": "@caemble/ray-paths@1/primary/path-wavelength",
+      "shape": [
+        768
+      ]
+    },
+    {
+      "dtype": "uint8",
+      "name": "@caemble/ray-paths@1/primary/segment-event",
+      "nonzero": true,
+      "shape": [
+        3149
+      ]
+    }
+  ],
+  "terminal": {
+    "kind": "complete",
+    "recordSequences": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "sequence": 9
+  }
+}

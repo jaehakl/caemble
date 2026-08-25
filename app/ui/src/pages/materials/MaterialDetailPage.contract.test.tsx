@@ -480,4 +480,30 @@ describe('MaterialDetailPage permissions and solver guidance', () => {
       ]),
     )
   })
+
+  it('stores a positive frequency in Hz only for a frequency-qualified property', async () => {
+    renderPage()
+    expect(await screen.findByRole('heading', { name: 'Copper' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Parameter 추가' }))
+    await chooseMaterialCatalogEntry('test.scalar_property')
+
+    const dialog = screen.getByRole('dialog')
+    const frequency = within(dialog).getByLabelText('Frequency (Hz)')
+    expect(frequency).toBeEnabled()
+    await userEvent.type(frequency, '5e14')
+    await userEvent.click(within(dialog).getByRole('button', { name: '저장' }))
+
+    await waitFor(() =>
+      expect(api.upsertParameter).toHaveBeenCalledWith([
+        expect.objectContaining({ name: 'test.scalar_property', frequency: 5e14 }),
+      ]),
+    )
+
+    cleanup()
+    renderPage()
+    expect(await screen.findByRole('heading', { name: 'Copper' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Parameter 추가' }))
+    await chooseMaterialCatalogEntry('test.matrix_property')
+    expect(within(screen.getByRole('dialog')).getByLabelText('Frequency (Hz)')).toBeDisabled()
+  })
 })

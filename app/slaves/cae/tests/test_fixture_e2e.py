@@ -13,6 +13,7 @@ from app.tensor import decode_attachment_tensors
 FIXTURE_DIRECTORIES = [
     Path(__file__).parent / "fixtures" / "dc-uniform-bar",
     Path(__file__).parent / "fixtures" / "fiber-bundle",
+    Path(__file__).parent / "fixtures" / "ray-tracing",
 ]
 
 

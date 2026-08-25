@@ -440,7 +440,13 @@ function resolvedTargetCount(scene: CadScene, kind: 'geometry' | 'surface', grou
   )
 }
 
-function validateValueShape(value: unknown, spec: KernelValueSpec, path: string, issues: KernelContractIssue[]) {
+function validateValueShape(
+  value: unknown,
+  spec: KernelValueSpec,
+  path: string,
+  issues: KernelContractIssue[],
+  allowMaterialFrequencySeries = false,
+) {
   const descriptor = isRecord(value) ? value : undefined
   if (spec.axes !== undefined && !descriptor) {
     addIssue(issues, path, 'must be a dtype descriptor with axes.')
@@ -477,8 +483,45 @@ function validateValueShape(value: unknown, spec: KernelValueSpec, path: string,
   }
 
   const descriptorAxes = descriptor?.axes
+  const frequencyAxis =
+    allowMaterialFrequencySeries &&
+    spec.axes === undefined &&
+    descriptor?.dtype === 'float64' &&
+    spec.dtype === 'float64' &&
+    spec.quantityKind !== undefined &&
+    getQuantityKindTensorOrder(spec.quantityKind) === 0 &&
+    Array.isArray(descriptorAxes) &&
+    descriptorAxes.length === 1 &&
+    isRecord(descriptorAxes[0]) &&
+    Reflect.ownKeys(descriptorAxes[0]).every((key) =>
+      ['length', 'name', 'ticks', 'unit', 'quantityKind'].includes(String(key)),
+    ) &&
+    Number.isSafeInteger(descriptorAxes[0].length) &&
+    (descriptorAxes[0].length as number) >= 2 &&
+    descriptorAxes[0].name === 'frequency' &&
+    descriptorAxes[0].unit === 'Hz' &&
+    descriptorAxes[0].quantityKind === 'Frequency' &&
+    Array.isArray(descriptorAxes[0].ticks) &&
+    descriptorAxes[0].ticks.length === descriptorAxes[0].length &&
+    descriptorAxes[0].ticks.every(
+      (tick, index, ticks) =>
+        typeof tick === 'number' &&
+        Number.isFinite(tick) &&
+        tick > 0 &&
+        (index === 0 || tick > (ticks[index - 1] as number)),
+    )
+      ? descriptorAxes[0]
+      : undefined
   if (spec.axes === undefined) {
-    if (descriptor?.axes !== undefined) addIssue(issues, `${path}.axes`, 'must be omitted.')
+    if (descriptor?.axes !== undefined && frequencyAxis === undefined) {
+      addIssue(
+        issues,
+        `${path}.axes`,
+        allowMaterialFrequencySeries
+          ? 'must be omitted or contain one canonical ascending Frequency axis in Hz.'
+          : 'must be omitted.',
+      )
+    }
   } else if (!Array.isArray(descriptorAxes) || descriptorAxes.length !== spec.axes.length) {
     addIssue(issues, `${path}.axes`, `must contain ${spec.axes.length} axes.`)
   } else {
@@ -510,7 +553,7 @@ function validateValueShape(value: unknown, spec: KernelValueSpec, path: string,
   }
 
   const raw = descriptor ? descriptor.value : value
-  const expectedOuter = spec.axes?.map((axis) => axis.length!) ?? []
+  const expectedOuter = frequencyAxis ? [frequencyAxis.length as number] : (spec.axes?.map((axis) => axis.length!) ?? [])
   const expectedComponents = spec.quantityKind ? getQuantityKindComponentShape(spec.quantityKind) : []
   const expectedShape = [...expectedOuter, ...expectedComponents]
   const leaves: unknown[] = []
@@ -575,6 +618,7 @@ function validateParameterValues(
   path: string,
   issues: KernelContractIssue[],
   allowUnknown = false,
+  allowMaterialFrequencySeries = false,
 ) {
   if (!isRecord(values)) {
     addIssue(issues, path, 'must be an object.')
@@ -592,7 +636,13 @@ function validateParameterValues(
       if (spec.required !== false) addIssue(issues, `${path}.${name}`, 'is required.')
       return
     }
-    validateValueShape(values[name], spec.data, `${path}.${name}`, issues)
+    validateValueShape(
+      values[name],
+      spec.data,
+      `${path}.${name}`,
+      issues,
+      allowMaterialFrequencySeries,
+    )
   })
 }
 
@@ -704,7 +754,7 @@ function validateMaterials(
             addIssue(issues, path, `requires Material properties ${Object.keys(material.properties).join(', ')}.`)
             return
           }
-          validateParameterValues(part.material.variables, material.properties, `${path}.variables`, issues, true)
+          validateParameterValues(part.material.variables, material.properties, `${path}.variables`, issues, true, true)
         })
       })
     })

@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ExperimentSourceDocument } from '@/lib/cad'
+import type { ExperimentSourceDocument, RayPathBundle, RecordedDataRule } from '@/lib/cad'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
 import { DocumentFeedback } from './DocumentFeedback'
 import { ExperimentEditor } from './ExperimentEditor'
@@ -368,5 +368,43 @@ describe('RecordedDataEditor', () => {
 
     rerender(<RecordedDataEditor measurementId={7} pendingSave recordedAt={null} rules={[]} />)
     expect(screen.getByText('세션 결과 저장을 다시 시도하세요')).toBeInTheDocument()
+  })
+
+  it('groups reserved ray-path tensors into one system result card', () => {
+    const rayPathBundle: RayPathBundle = {
+      id: 'primary',
+      pathCount: 1,
+      segmentCount: 2,
+      vertices: new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]),
+      pathOffsets: new Uint32Array([0, 3]),
+      segmentPower: new Float32Array([1, 0.5]),
+      pathWavelength: new Float32Array([532e-9]),
+      segmentEvent: new Uint8Array([2, 5]),
+    }
+    const rules = ['vertices', 'path-offsets', 'segment-power', 'path-wavelength', 'segment-event'].map(
+      (member) =>
+        ({
+          target: [],
+          label: `@caemble/ray-paths@1/primary/${member}`,
+          methodId: 'test',
+          parameters: {},
+          result: { dtype: 'uint8', axes: [{ name: 'dynamic' }] },
+        }) satisfies RecordedDataRule,
+    )
+
+    render(
+      <RecordedDataEditor
+        measurementId={7}
+        rayPathBundles={[rayPathBundle]}
+        rayPathsDeclared
+        recordedAt="2026-08-12T00:00:00Z"
+        rules={rules}
+      />,
+    )
+
+    const card = screen.getByText(/Ray paths · 1 paths · 2 segments/).closest('[data-system-result="ray-paths"]')
+    expect(card).toHaveTextContent('Ray paths · 1 paths · 2 segments')
+    expect(card).toHaveTextContent('scattering · 1')
+    expect(screen.queryByText('@caemble/ray-paths@1/primary/vertices')).not.toBeInTheDocument()
   })
 })

@@ -20,6 +20,7 @@ const getListRequestSchema = z.object({
     ])
     .nullable(),
   random: z.boolean().optional(),
+  include_system: z.boolean().optional(),
 })
 
 const upsertResponseSchema = z.object({
@@ -457,7 +458,7 @@ export const dbTables = {
       description: z.string().nullable().optional(),
       temperature: z.number().nullable().optional(),
       pressure: z.number().nullable().optional(),
-      frequency: z.number().nullable().optional(),
+      frequency: z.number().finite().positive().nullable().optional(),
     }),
     async listRows(listRequest: GetListRequest = getListRequest()) {
       const payload = getListRequestSchema.parse(listRequest)

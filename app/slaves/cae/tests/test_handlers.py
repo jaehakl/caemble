@@ -11,7 +11,12 @@ from sdk.slave import SlaveContext
 
 from app.errors import CaeError, ProtocolError
 from app.handlers import cae_simulation_next, cae_simulation_start, cae_solver_manifests
-from app.runtime import SimulationApi, _validate_built_measurement, _validate_variables
+from app.runtime import (
+    SimulationApi,
+    _validate_built_measurement,
+    _validate_material_snapshot,
+    _validate_variables,
+)
 from app.solver_framework.geometry import canonical_geometry_hash
 from app.solver_framework.registry import registry
 
@@ -28,7 +33,7 @@ async def test_solver_manifests_returns_sorted_full_manifests_as_json_attachment
     assert response.type == "cae.solvers.manifests.result"
     assert response.payload == {
         "formatVersion": 1,
-        "count": 2,
+        "count": 3,
         "attachmentId": "solver-manifests",
     }
     assert len(response.attachments) == 1
@@ -40,9 +45,10 @@ async def test_solver_manifests_returns_sorted_full_manifests_as_json_attachment
     assert [
         manifest["descriptor"]["name"]
         for manifest in json.loads(attachment.data)
-    ] == ["dc-current-density", "steady-state-heat"]
+    ] == ["dc-current-density", "ray-tracing", "steady-state-heat"]
     assert "implementation" in json.loads(attachment.data)[0]
     assert "app.solvers.dc_current_density.solver" not in set(sys.modules) - modules_before
+    assert "app.solvers.ray_tracing.solver" not in set(sys.modules) - modules_before
     assert "app.solvers.steady_state_heat.solver" not in set(sys.modules) - modules_before
 
 
@@ -1422,6 +1428,89 @@ async def test_start_maps_invalid_material_snapshot_to_invalid_input():
 
     assert response.payload["kind"] == "failed"
     assert response.payload["error"]["code"] == "invalid_input"
+
+
+def test_runtime_accepts_schema_v1_frequency_axis_material_property():
+    snapshot = {
+        "schemaVersion": 1,
+        "materials": {
+            "Glass": {
+                "optical.refractive_index": {
+                    "origin": "database",
+                    "value": {
+                        "dtype": "float64",
+                        "value": [1.5, 1.6],
+                        "unit": "{fraction}",
+                        "axes": [
+                            {
+                                "length": 2,
+                                "name": "frequency",
+                                "ticks": [5e14, 6e14],
+                                "unit": "Hz",
+                                "quantityKind": "Frequency",
+                            }
+                        ],
+                    },
+                    "source": "handbook",
+                    "version": "2",
+                    "materialId": 8,
+                    "materialParameterId": None,
+                }
+            }
+        },
+    }
+
+    _validate_material_snapshot(snapshot, "snapshot")
+
+
+def test_runtime_rejects_noncanonical_frequency_axis_material_properties():
+    entry = {
+        "origin": "database",
+        "value": {
+            "dtype": "float64",
+            "value": [1.5, 1.6],
+            "unit": "{fraction}",
+            "axes": [
+                {
+                    "length": 2,
+                    "name": "frequency",
+                    "ticks": [5e14, 6e14],
+                    "unit": "Hz",
+                    "quantityKind": "Frequency",
+                }
+            ],
+        },
+        "source": "handbook",
+        "version": "2",
+        "materialId": 8,
+        "materialParameterId": None,
+    }
+    invalid = []
+    descending = copy.deepcopy(entry)
+    descending["value"]["axes"][0]["ticks"] = [6e14, 5e14]
+    invalid.append(descending)
+    wrong_dtype = copy.deepcopy(entry)
+    wrong_dtype["value"]["dtype"] = "float32"
+    invalid.append(wrong_dtype)
+    retained_row_id = copy.deepcopy(entry)
+    retained_row_id["materialParameterId"] = 10
+    invalid.append(retained_row_id)
+    source_series = copy.deepcopy(entry)
+    source_series["origin"] = "source"
+    source_series["materialId"] = None
+    invalid.append(source_series)
+
+    for candidate in invalid:
+        with pytest.raises(CaeError, match="frequency"):
+            _validate_material_snapshot(
+                {
+                    "schemaVersion": 1,
+                    "materials": {
+                        "Glass": {"optical.refractive_index": candidate}
+                    },
+                },
+                "snapshot",
+            )
 
 
 @pytest.mark.asyncio

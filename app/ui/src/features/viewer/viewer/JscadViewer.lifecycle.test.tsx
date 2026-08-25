@@ -3,6 +3,7 @@
 import { StrictMode } from 'react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { RayPathBundle } from '@/lib/cad'
 import JscadViewer from './JscadViewer'
 
 const rendererMocks = vi.hoisted(() => {
@@ -55,6 +56,17 @@ const coloredLayer = {
     },
   ],
   sceneHash: 'same-scene',
+}
+
+const rayPathBundle: RayPathBundle = {
+  id: 'primary',
+  pathCount: 1,
+  segmentCount: 1,
+  vertices: new Float32Array([0, 0, 0, 1, 0, 0]),
+  pathOffsets: new Uint32Array([0, 2]),
+  segmentPower: new Float32Array([1]),
+  pathWavelength: new Float32Array([532e-9]),
+  segmentEvent: new Uint8Array([5]),
 }
 
 describe('JscadViewer geometry lifecycle', () => {
@@ -122,6 +134,25 @@ describe('JscadViewer geometry lifecycle', () => {
     expect(callbacks.onRenderError).not.toHaveBeenCalled()
     expect(screen.getByLabelText('Geometry Viewer')).toBeInTheDocument()
     expect(screen.getByText('Waiting for model...')).toBeInTheDocument()
+  })
+
+  it('rebuilds ray-path commands for a second StrictMode renderer session', async () => {
+    mockRendererEntityMutation()
+    const callbacks = {
+      onRenderEnd: vi.fn(),
+      onRenderError: vi.fn(),
+      onRenderStart: vi.fn(),
+    }
+
+    render(
+      <StrictMode>
+        <JscadViewer layers={[]} lengthUnit="m" rayPaths={[rayPathBundle]} {...callbacks} />
+      </StrictMode>,
+    )
+
+    await waitFor(() => expect(rendererMocks.prepareRender).toHaveBeenCalledTimes(2))
+    expect(callbacks.onRenderError).not.toHaveBeenCalled()
+    expect(screen.getByText('Ray paths · 1 paths · 1 segments')).toBeInTheDocument()
   })
 
   it('rebuilds Geometry entities for a second StrictMode renderer session', async () => {

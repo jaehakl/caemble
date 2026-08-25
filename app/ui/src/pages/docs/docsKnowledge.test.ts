@@ -65,6 +65,24 @@ describe('documentation knowledge registry', () => {
     expect(catalogDocsKnowledge.some(({ section }) => section === 'materials')).toBe(false)
   })
 
+  it('documents the non-sequential ray-tracing solver and its adaptive thin-film boundary', () => {
+    const rayTracing = manualDocsKnowledge.find(({ id }) => id === 'program-ray-tracing')?.content ?? ''
+
+    expect(rayTracing).toContain('`ray-tracing@0.1.0`')
+    expect(rayTracing).toContain('emitter locator geometry 또는 surface는 `ray.domain` group에서 제외')
+    expect(rayTracing).toContain('실제 방출 위치도 모든 collision solid 바깥')
+    expect(rayTracing).toContain('서로 부분적으로 겹치면 안 됩니다')
+    expect(rayTracing).toContain('엄격히 `50 µm` 미만')
+    expect(rayTracing).toContain('정확히 `50 µm`인 layer')
+    expect(rayTracing).toContain('`MaterialParameter.frequency`')
+    expect(rayTracing).toContain('`frequency = c / wavelength`')
+    expect(rayTracing).toContain('`_by_wavelength`')
+    expect(rayTracing).toContain('reserved system result')
+    expect(rayTracing).toContain('`@caemble/ray-paths@1/primary/`')
+    expect(rayTracing).toContain('최대 32개 segment')
+    expect(rayTracing).toContain('folded-ray-tracing@1.0.0')
+  })
+
   it('documents CAD API 10 semantic surfaces and the legacy ordinal hard cut', () => {
     const identity = manualDocsKnowledge.find(({ id }) => id === 'reference-geometry-identity')?.content ?? ''
 

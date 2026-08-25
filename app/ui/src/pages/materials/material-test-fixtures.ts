@@ -34,7 +34,7 @@ const materialParameters = [
     domain: 'test',
     labelKo: '테스트 스칼라',
     quantityKind: 'test.Scalar',
-    specialQualifiers: [],
+    specialQualifiers: ['wavelength_or_frequency'],
   },
   {
     key: 'test.matrix_property',

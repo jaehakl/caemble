@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Any
 
 import numpy as np
@@ -14,6 +15,14 @@ ATTACHMENT_SHARD_BYTES = 16 * 1024 * 1024
 MAX_INPUT_BYTES = 256 * 1024 * 1024
 MAX_RECORDED_BYTES = 64 * 1024 * 1024
 MAX_SAFE_INTEGER = (1 << 53) - 1
+
+RAY_PATH_MEMBERS = frozenset(
+    {"vertices", "path-offsets", "segment-power", "path-wavelength", "segment-event"}
+)
+RAY_PATH_RECORDED_DATA_PATTERN = re.compile(
+    r"^@caemble/ray-paths@1/(?P<bundle>[a-z][a-z0-9-]{0,31})/"
+    r"(?P<member>vertices|path-offsets|segment-power|path-wavelength|segment-event)$"
+)
 
 _DTYPES: dict[str, np.dtype[Any]] = {
     "float16": np.dtype("<f2"),
@@ -29,6 +38,8 @@ _DTYPES: dict[str, np.dtype[Any]] = {
     "uint64": np.dtype("<u8"),
     "bool": np.dtype("u1"),
 }
+
+
 def _is_finite_number(value: Any) -> bool:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return False
@@ -282,7 +293,7 @@ def encode_tensor(
         _validate_shape(schema, shape, axes)
         if max_byte_length is not None and len(raw) > max_byte_length:
             raise CaeError("resource_limit", "RecordedData raw bytes exceed 64 MiB")
-        if len(raw) <= INLINE_LIMIT_BYTES:
+        if len(raw) <= INLINE_LIMIT_BYTES and not is_ray_path_recorded_data_name(name):
             return _inline_tensor(shape, axes, normalized), [], len(raw)
         attachments = _shard(name, sequence, raw, "application/json; charset=utf-8")
         return _attachment_tensor(shape, axes, attachments, len(raw)), attachments, len(raw)
@@ -308,7 +319,9 @@ def encode_tensor(
     if len(raw) != byte_length:
         raise CaeError("invalid_tensor", f"RecordedData {name} byteLength is inconsistent")
 
-    if encoded.ndim == 0 or len(raw) <= INLINE_LIMIT_BYTES:
+    if encoded.ndim == 0 or (
+        len(raw) <= INLINE_LIMIT_BYTES and not is_ray_path_recorded_data_name(name)
+    ):
         if dtype_name == "bool":
             boolean = encoded.astype(np.bool_)
             inline_value = boolean.item() if boolean.ndim == 0 else boolean.tolist()
@@ -365,6 +378,76 @@ def _validate_numeric_range(name: str, array: np.ndarray[Any, Any], dtype: np.dt
             raise CaeError("invalid_tensor", f"RecordedData {name} exceeds {dtype.name} range")
 
 
+def is_ray_path_recorded_data_name(name: str) -> bool:
+    return bool(RAY_PATH_RECORDED_DATA_PATTERN.fullmatch(name))
+
+
+def validate_ray_path_recorded_data_schemas(schemas: dict[str, Any]) -> None:
+    bundles: dict[str, set[str]] = {}
+    expected = {
+        "vertices": ("float32", "Length", "m", 2),
+        "path-offsets": ("uint32", None, None, 1),
+        "segment-power": ("float32", "optics.RadiantFlux", "W", 1),
+        "path-wavelength": ("float32", "Wavelength", "m", 1),
+        "segment-event": ("uint8", None, None, 1),
+    }
+    for name, schema in schemas.items():
+        if not name.startswith("@caemble/ray-paths@"):
+            continue
+        match = RAY_PATH_RECORDED_DATA_PATTERN.fullmatch(name)
+        if match is None:
+            raise CaeError("invalid_schema", f"unsupported ray-path RecordedData name: {name}")
+        bundle = match.group("bundle")
+        member = match.group("member")
+        bundles.setdefault(bundle, set()).add(member)
+        dtype, quantity_kind, unit, axis_count = expected[member]
+        axes = schema.get("axes") if isinstance(schema, dict) else None
+        if (
+            not isinstance(schema, dict)
+            or schema.get("dtype") != dtype
+            or schema.get("tensorOrder") != 0
+            or schema.get("quantityKind") != quantity_kind
+            or schema.get("unit") != unit
+            or not isinstance(axes, list)
+            or len(axes) != axis_count
+            or any(not isinstance(axis, dict) for axis in axes)
+            or axes[0].get("length") is not None
+            or axes[0].get("ticks") is not None
+        ):
+            raise CaeError(
+                "invalid_schema",
+                f"ray-path {member} DataSchema does not match @caemble/ray-paths@1",
+            )
+        if member == "vertices" and (
+            axes[1].get("length") != 3
+            or axes[1].get("ticks") not in (None, ["x", "y", "z"])
+        ):
+            raise CaeError(
+                "invalid_schema",
+                "ray-path vertices coordinate axis must have length 3 and x/y/z ticks when specified",
+            )
+    for bundle, members in bundles.items():
+        if members != RAY_PATH_MEMBERS:
+            raise CaeError(
+                "invalid_schema",
+                f"ray-path bundle {bundle} must declare all five members",
+            )
+
+
+def validate_recorded_ray_path_bundles(names: set[str]) -> None:
+    bundles: dict[str, set[str]] = {}
+    for name in names:
+        match = RAY_PATH_RECORDED_DATA_PATTERN.fullmatch(name)
+        if match is not None:
+            bundles.setdefault(match.group("bundle"), set()).add(match.group("member"))
+    for bundle, members in bundles.items():
+        if members != RAY_PATH_MEMBERS:
+            raise CaeError(
+                "invalid_record",
+                f"ray-path bundle {bundle} must record all five members or none",
+            )
+
+
 def _validate_shape(schema: dict[str, Any], shape: list[int], axes: Any) -> None:
     schema_axes = schema.get("axes") or []
     if not isinstance(schema_axes, list):
@@ -396,13 +479,39 @@ def _validate_shape(schema: dict[str, Any], shape: list[int], axes: Any) -> None
     if not isinstance(axes, list) or len(axes) != len(schema_axes):
         raise CaeError("invalid_tensor", "tensor axes do not match DataSchema rank")
     for index, axis in enumerate(axes):
-        if not isinstance(axis, dict) or any(key != "ticks" for key in axis):
-            raise CaeError("invalid_tensor", f"tensor axis {index} may contain only ticks")
+        if not isinstance(axis, dict) or any(
+            key not in {"ticks", "implicitOrdinal"} for key in axis
+        ):
+            raise CaeError(
+                "invalid_tensor",
+                f"tensor axis {index} may contain only ticks or implicitOrdinal",
+            )
         ticks = axis.get("ticks")
+        implicit_ordinal = axis.get("implicitOrdinal")
         schema_ticks = schema_axes[index].get("ticks")
+        if implicit_ordinal is not None:
+            if implicit_ordinal is not True:
+                raise CaeError(
+                    "invalid_tensor",
+                    f"tensor axis {index} implicitOrdinal must be true when present",
+                )
+            if ticks is not None:
+                raise CaeError(
+                    "invalid_tensor",
+                    f"tensor axis {index} cannot contain both ticks and implicitOrdinal",
+                )
+            if schema_axes[index].get("length") is not None or schema_ticks is not None:
+                raise CaeError(
+                    "invalid_tensor",
+                    f"tensor axis {index} implicitOrdinal is allowed only for a dynamic axis",
+                )
+            continue
         if ticks is None:
             if schema_axes[index].get("length") is None:
-                raise CaeError("invalid_tensor", f"tensor axis {index} ticks are required for a dynamic axis")
+                raise CaeError(
+                    "invalid_tensor",
+                    f"tensor axis {index} ticks or implicitOrdinal are required for a dynamic axis",
+                )
             continue
         if not isinstance(ticks, list) or len(ticks) != shape[index]:
             raise CaeError("invalid_tensor", f"tensor axis {index} ticks do not match shape")

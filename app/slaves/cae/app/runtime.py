@@ -33,6 +33,8 @@ from app.tensor import (
     MAX_SAFE_INTEGER,
     encode_tensor,
     validate_data_schema,
+    validate_ray_path_recorded_data_schemas,
+    validate_recorded_ray_path_bundles,
     validate_tensor_value,
 )
 
@@ -111,6 +113,7 @@ class CaeRun:
             if not isinstance(name, str) or not name:
                 raise CaeError("invalid_schema", "RecordedData names must be non-empty strings")
             validate_data_schema(schema, f"RecordedData {name}")
+        validate_ray_path_recorded_data_schemas(self.schemas)
         self.run_id = str(uuid.uuid4())
         self.max_run_seconds = max_run_seconds
         self.job_id = job_id
@@ -294,6 +297,7 @@ class CaeRun:
             )
             final_state_revision = sim.state_revision(final_state)
             await self._status("finalizing")
+            validate_recorded_ray_path_bundles(self.recorded_names)
             duration_ms = int((time.perf_counter() - started) * 1000)
             logger.info(
                 "CAE run completed run_id=%s tasks=%s records=%s bytes=%s final_state_revision=%s duration_ms=%s",
@@ -1079,13 +1083,28 @@ def _validate_material_snapshot(value: Any, path: str) -> None:
                 )
             ):
                 raise CaeError("invalid_input", f"{path}.{material}.{name} is invalid")
-            _validate_material_value(entry["value"], f"{path}.{material}.{name}.value")
+            frequency_series = _validate_material_value(
+                entry["value"], f"{path}.{material}.{name}.value"
+            )
+            if frequency_series and (
+                entry["origin"] != "database"
+                or entry["materialId"] is None
+                or entry["materialParameterId"] is not None
+            ):
+                raise CaeError(
+                    "invalid_input",
+                    f"{path}.{material}.{name} frequency series metadata is invalid",
+                )
 
 
-def _validate_material_value(value: Any, path: str) -> None:
+def _validate_material_value(value: Any, path: str) -> bool:
     if not isinstance(value, dict):
         raise CaeError("invalid_input", f"{path} is invalid")
-    if set(value) == {"dtype", "value", "unit"}:
+    property_fields = set(value)
+    if property_fields in (
+        {"dtype", "value", "unit"},
+        {"dtype", "value", "unit", "axes"},
+    ):
         dtype = value.get("dtype")
         if (
             dtype not in {"float16", "float32", "float64"}
@@ -1094,7 +1113,38 @@ def _validate_material_value(value: Any, path: str) -> None:
         ):
             raise CaeError("invalid_input", f"{path} property descriptor is invalid")
         _validate_float_tensor(value["value"], dtype, f"{path}.value")
-        return
+        if "axes" not in value:
+            return False
+        axes = value["axes"]
+        axis = axes[0] if isinstance(axes, list) and len(axes) == 1 else None
+        if (
+            dtype != "float64"
+            or not isinstance(axis, dict)
+            or set(axis) != {"length", "name", "ticks", "unit", "quantityKind"}
+            or not _is_safe_integer(axis.get("length"))
+            or axis["length"] < 2
+            or axis.get("name") != "frequency"
+            or axis.get("unit") != "Hz"
+            or axis.get("quantityKind") != "Frequency"
+            or not isinstance(axis.get("ticks"), list)
+            or len(axis["ticks"]) != axis["length"]
+            or not isinstance(value["value"], list)
+            or len(value["value"]) != axis["length"]
+        ):
+            raise CaeError("invalid_input", f"{path} frequency axis is invalid")
+        previous = None
+        for index, tick in enumerate(axis["ticks"]):
+            if (
+                not _is_finite_number(tick)
+                or tick <= 0
+                or (previous is not None and tick <= previous)
+            ):
+                raise CaeError(
+                    "invalid_input",
+                    f"{path}.axes[0].ticks[{index}] frequency must be positive and strictly ascending",
+                )
+            previous = tick
+        return True
     if (
         set(value) != {"kind", "input", "output"}
         or value.get("kind") != "sampled_relation"
@@ -1122,6 +1172,7 @@ def _validate_material_value(value: Any, path: str) -> None:
         series.append(item["values"])
     if len(series[0]) != len(series[1]):
         raise CaeError("invalid_input", f"{path} sampled relation lengths differ")
+    return False
 
 
 def _validate_float_tensor(value: Any, dtype: str, path: str) -> None:

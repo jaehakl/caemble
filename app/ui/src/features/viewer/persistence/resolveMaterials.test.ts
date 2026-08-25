@@ -6,8 +6,19 @@ import { installSyntheticCatalog } from '@/test/syntheticCatalog'
 import { createDocumentMaterialResolver } from './resolveMaterials'
 
 installSyntheticCatalog({
-  quantityKinds: [{ name: 'MassDensity', applicableUnits: ['kg.m-3'] }],
-  materialParameters: [{ key: 'general.mass_density', quantityKind: 'MassDensity' }],
+  quantityKinds: [
+    { name: 'MassDensity', applicableUnits: ['kg.m-3'] },
+    { name: 'DimensionlessRatio', applicableUnits: ['{fraction}'] },
+    { name: 'Frequency', applicableUnits: ['Hz'] },
+  ],
+  materialParameters: [
+    { key: 'general.mass_density', quantityKind: 'MassDensity' },
+    {
+      key: 'optical.refractive_index',
+      quantityKind: 'DimensionlessRatio',
+      specialQualifiers: ['wavelength_or_frequency'],
+    },
+  ],
 })
 
 function scene(materialName: string) {
@@ -165,6 +176,7 @@ describe('createDocumentMaterialResolver', () => {
       ],
       total: 1,
     } as never)
+    vi.spyOn(dbTables.MaterialParameterQualifier, 'listRows').mockResolvedValue({ items: [], total: 0 })
     const random = vi.spyOn(Math, 'random').mockReturnValue(0.75)
 
     const result = await createDocumentMaterialResolver(null)(snapshot)
@@ -172,6 +184,64 @@ describe('createDocumentMaterialResolver', () => {
     expect(random).toHaveBeenCalledTimes(1)
     expect(result.materialParameters.materials.Shared).toEqual(result.taskMaterialParameters.Heat.materials.Shared)
     expect(result.materialParameters.materials.Shared['general.mass_density'].value).toMatchObject({ value: 11 })
+  })
+
+  it('loads qualifier relations and assembles a frequency curve from one exact qualifier set', async () => {
+    vi.spyOn(dbTables.MaterialName, 'listRows').mockResolvedValue({
+      items: [
+        { id: 1, material_id: 7, name: 'Common', user_id: null },
+        { id: 2, material_id: 8, name: 'Task', user_id: null },
+      ],
+      total: 2,
+    } as never)
+    vi.spyOn(dbTables.Material, 'listRows').mockResolvedValue({
+      items: [
+        { id: 7, color: null },
+        { id: 8, color: null },
+      ],
+      total: 2,
+    } as never)
+    const rows = [
+      ...[5e14, 6e14].map((frequency, index) => ({
+        id: 20 + index,
+        material_id: 7,
+        name: 'optical.refractive_index',
+        value: { dtype: 'float64' as const, value: 2.5 + index * 0.1, unit: '{fraction}' },
+        source: 'handbook',
+        version: '1',
+        frequency,
+        user_id: null,
+      })),
+      ...[5e14, 6e14].map((frequency, index) => ({
+        id: 22 + index,
+        material_id: 7,
+        name: 'optical.refractive_index',
+        value: { dtype: 'float64' as const, value: 1.5 + index * 0.1, unit: '{fraction}' },
+        source: 'handbook',
+        version: '1',
+        frequency,
+        user_id: null,
+      })),
+    ]
+    vi.spyOn(dbTables.MaterialParameter, 'listRows').mockResolvedValue({ items: rows, total: rows.length } as never)
+    const listQualifiers = vi.spyOn(dbTables.MaterialParameterQualifier, 'listRows').mockResolvedValue({
+      items: rows.map((row) => ({
+        material_parameter_id: row.id,
+        name: 'polarization',
+        value: row.id < 22 ? 0 : 1,
+      })),
+      total: rows.length,
+    } as never)
+
+    const result = await createDocumentMaterialResolver(null)(materialSnapshot())
+
+    expect(listQualifiers).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: null, filter: { material_parameter_id: [20, 21, 22, 23] } }),
+    )
+    expect(result.materialParameters.materials.Common['optical.refractive_index'].value).toMatchObject({
+      value: [1.5, 1.6],
+      axes: [{ ticks: [5e14, 6e14] }],
+    })
   })
 
   it('replays an exact frozen schema-v2 snapshot without catalog queries', async () => {

@@ -39,6 +39,10 @@ class GetListRequestBase(BaseModel):
     random: Optional[bool] = False
 
 
+class RecordedDataListRequest(GetListRequestBase):
+    include_system: bool = True
+
+
 class GetListResponseBase(BaseModel):
     total: int
     items: List[Any]
@@ -79,7 +83,12 @@ class MaterialParameterBase(OwnedTimestampFields):
     description: Optional[str] = None
     temperature: Optional[float] = None
     pressure: Optional[float] = None
-    frequency: Optional[float] = None
+    frequency: Optional[float] = Field(
+        default=None,
+        gt=0,
+        allow_inf_nan=False,
+        description="Frequency in Hz.",
+    )
 
 
 class MaterialParameterQualifierBase(TimestampFields):

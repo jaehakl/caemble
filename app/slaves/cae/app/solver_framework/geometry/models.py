@@ -33,3 +33,15 @@ class TriangularMesh:
             ],
             dtype=np.int64,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ShellLayerGeometry:
+    root_id: str
+    family_id: str
+    inner_offset: float
+    outer_offset: float
+    inner: TriangularMesh
+    outer: TriangularMesh
+    minimum_thickness: float
+    maximum_thickness: float

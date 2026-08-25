@@ -1,4 +1,9 @@
-import type { MaterialNameRecord, MaterialParameterRecord, MaterialRecord } from '@/api'
+import type {
+  MaterialNameRecord,
+  MaterialParameterQualifierRecord,
+  MaterialParameterRecord,
+  MaterialRecord,
+} from '@/api'
 import type { CadSceneMaterial } from '../cad/evaluation/types'
 import { applyMaterialErrorMultiplier, normalizeDataValueDescriptor } from '../cad/model/core'
 import { QuantityKind } from '../quantitykind'
@@ -8,6 +13,15 @@ export type MaterialPropertyValue = Readonly<{
   dtype: 'float16' | 'float32' | 'float64'
   value: number | readonly unknown[]
   unit: string
+  axes?: readonly [
+    Readonly<{
+      length: number
+      name: 'frequency'
+      ticks: readonly number[]
+      unit: 'Hz'
+      quantityKind: 'Frequency'
+    }>,
+  ]
 }>
 
 export type MaterialRelationValue = Readonly<{
@@ -70,6 +84,59 @@ function propertyValue(name: string, value: unknown): MaterialPropertyValue | nu
   }
 }
 
+function frequencyPropertyValue(name: string, value: unknown): MaterialPropertyValue | null {
+  const definition = getRuntimeMaterialParameter(name)
+  if (
+    !definition ||
+    !definition.specialQualifiers.some(
+      (qualifier) => qualifier === 'frequency' || qualifier === 'wavelength_or_frequency',
+    ) ||
+    !isRecord(value) ||
+    !exactKeys(value, ['dtype', 'value', 'unit', 'axes']) ||
+    value.dtype !== 'float64' ||
+    typeof value.unit !== 'string' ||
+    !Array.isArray(value.value) ||
+    !Array.isArray(value.axes) ||
+    value.axes.length !== 1
+  )
+    return null
+
+  const axis = value.axes[0]
+  if (
+    !isRecord(axis) ||
+    !exactKeys(axis, ['length', 'name', 'ticks', 'unit', 'quantityKind']) ||
+    !Number.isSafeInteger(axis.length) ||
+    (axis.length as number) < 2 ||
+    axis.name !== 'frequency' ||
+    axis.unit !== 'Hz' ||
+    axis.quantityKind !== 'Frequency' ||
+    !Array.isArray(axis.ticks) ||
+    axis.ticks.length !== axis.length ||
+    value.value.length !== axis.length ||
+    axis.ticks.some((tick) => typeof tick !== 'number' || !Number.isFinite(tick) || tick <= 0) ||
+    axis.ticks.some((tick, index) => index > 0 && tick <= (axis.ticks as number[])[index - 1])
+  )
+    return null
+
+  const samples = value.value.map(
+    (sample) => propertyValue(name, { dtype: 'float64', value: sample, unit: value.unit })?.value,
+  )
+  if (samples.some((sample) => sample === undefined)) return null
+  const normalizedAxis = Object.freeze({
+    length: axis.length as number,
+    name: 'frequency' as const,
+    ticks: Object.freeze([...(axis.ticks as number[])]),
+    unit: 'Hz' as const,
+    quantityKind: 'Frequency' as const,
+  })
+  return Object.freeze({
+    dtype: 'float64',
+    value: Object.freeze(samples) as readonly unknown[],
+    unit: value.unit,
+    axes: Object.freeze([normalizedAxis] as const),
+  })
+}
+
 function relationValue(name: string, value: unknown): MaterialRelationValue | null {
   const definition = getRuntimeMaterialModel(name)
   if (
@@ -128,20 +195,15 @@ function relationValue(name: string, value: unknown): MaterialRelationValue | nu
   }
 }
 
-function catalogValue(name: string, value: unknown) {
-  return propertyValue(name, value) ?? relationValue(name, value)
+function frozenCatalogValue(name: string, value: unknown) {
+  return propertyValue(name, value) ?? frequencyPropertyValue(name, value) ?? relationValue(name, value)
 }
 
 function sourceCatalogValue(name: string, value: unknown) {
   if (getRuntimeMaterialParameter(name) && isRecord(value)) {
     return propertyValue(name, { dtype: value.dtype, value: value.value, unit: value.unit })
   }
-  if (
-    getRuntimeMaterialModel(name) &&
-    isRecord(value) &&
-    isRecord(value.input) &&
-    isRecord(value.output)
-  ) {
+  if (getRuntimeMaterialModel(name) && isRecord(value) && isRecord(value.input) && isRecord(value.output)) {
     return relationValue(name, {
       kind: value.kind,
       input: { unit: value.input.unit, values: value.input.values },
@@ -219,6 +281,7 @@ export function resolveMaterialParameters(
   parameters: readonly MaterialParameterRecord[],
   options: Readonly<{
     materials?: readonly MaterialRecord[]
+    qualifiers?: readonly MaterialParameterQualifierRecord[]
     sourceOnly?: boolean
     warnings?: string[]
   }> = {},
@@ -295,10 +358,9 @@ export function resolveMaterialParameters(
         })
       grouped.forEach((candidates, name) => {
         if (explicit.has(name)) return
-        if (
-          !getRuntimeMaterialParameter(name) &&
-          !getRuntimeMaterialModel(name)
-        ) {
+        const propertyDefinition = getRuntimeMaterialParameter(name)
+        const modelDefinition = getRuntimeMaterialModel(name)
+        if (!propertyDefinition && !modelDefinition) {
           warnings.push(`Material ${material.name} parameter ${name} is outside the catalog and was skipped.`)
           return
         }
@@ -311,12 +373,109 @@ export function resolveMaterialParameters(
           if (material.source) return candidate.source === material.source ? 0 : 1
           return 0
         }
-        const selected = [...candidates].sort(
+        const ordered = [...candidates].sort(
           (left, right) => tier(left) - tier(right) || newestPrivateFirst(left, right),
-        )[0]
-        const normalized = catalogValue(name, selected.value)
+        )
+        let selected = ordered[0]
+        let materialParameterId = selected.id ?? null
+        let normalized: MaterialPropertyValue | MaterialRelationValue | null
+
+        if (propertyDefinition) {
+          const qualifierKey = (candidate: MaterialParameterRecord) =>
+            JSON.stringify(
+              (options.qualifiers ?? [])
+                .filter((qualifier) => qualifier.material_parameter_id === candidate.id)
+                .map((qualifier) => [qualifier.name, qualifier.value] as const)
+                .sort(
+                  ([leftName, leftValue], [rightName, rightValue]) =>
+                    leftName.localeCompare(rightName) || leftValue - rightValue,
+                ),
+            )
+          const selectedQualifierKey = qualifierKey(selected)
+          const cohort = ordered.filter(
+            (candidate) =>
+              (candidate.user_id != null) === (selected.user_id != null) &&
+              (candidate.source ?? null) === (selected.source ?? null) &&
+              (candidate.version ?? null) === (selected.version ?? null) &&
+              (candidate.temperature ?? null) === (selected.temperature ?? null) &&
+              (candidate.pressure ?? null) === (selected.pressure ?? null) &&
+              qualifierKey(candidate) === selectedQualifierKey,
+          )
+          const scalarRows = cohort.filter((candidate) => candidate.frequency == null)
+          const frequencyRows = cohort.filter((candidate) => candidate.frequency != null)
+          if (scalarRows.length > 0 && frequencyRows.length > 0) {
+            throw new Error(
+              `Material ${material.name} database parameter ${name} cannot mix scalar and frequency rows in one source/version/privacy/condition cohort.`,
+            )
+          }
+
+          if (frequencyRows.length > 0) {
+            if (
+              !propertyDefinition.specialQualifiers.some(
+                (qualifier) => qualifier === 'frequency' || qualifier === 'wavelength_or_frequency',
+              )
+            ) {
+              throw new Error(`Material ${material.name} database parameter ${name} does not support frequency rows.`)
+            }
+            frequencyRows.forEach((candidate) => {
+              if (
+                typeof candidate.frequency !== 'number' ||
+                !Number.isFinite(candidate.frequency) ||
+                candidate.frequency <= 0
+              ) {
+                throw new Error(
+                  `Material ${material.name} database parameter ${name} frequency must be a positive finite Hz value.`,
+                )
+              }
+            })
+            frequencyRows.sort((left, right) => left.frequency! - right.frequency!)
+            if (frequencyRows.length < 2) {
+              throw new Error(
+                `Material ${material.name} database parameter ${name} frequency series requires at least two rows.`,
+              )
+            }
+            if (
+              frequencyRows.some(
+                (candidate, index) => index > 0 && candidate.frequency === frequencyRows[index - 1].frequency,
+              )
+            ) {
+              throw new Error(`Material ${material.name} database parameter ${name} has duplicate frequency rows.`)
+            }
+            const samples = frequencyRows.map((candidate) => propertyValue(name, candidate.value))
+            if (samples.some((sample) => sample === null)) {
+              throw new Error(`Material ${material.name} database parameter ${name} has an invalid frequency sample.`)
+            }
+            const typedSamples = samples as MaterialPropertyValue[]
+            const unit = typedSamples[0].unit
+            const quantityKind = QuantityKind[propertyDefinition.quantityKind]
+            normalized = frequencyPropertyValue(name, {
+              dtype: 'float64',
+              value: typedSamples.map((sample) => quantityKind.transform(sample.value, sample.unit, unit)),
+              unit,
+              axes: [
+                {
+                  length: frequencyRows.length,
+                  name: 'frequency',
+                  ticks: frequencyRows.map((candidate) => candidate.frequency),
+                  unit: 'Hz',
+                  quantityKind: 'Frequency',
+                },
+              ],
+            })
+            materialParameterId = null
+          } else {
+            selected = [...scalarRows].sort(newestPrivateFirst)[0]
+            normalized = propertyValue(name, selected.value)
+          }
+        } else {
+          if (selected.frequency != null) {
+            throw new Error(`Material ${material.name} database model ${name} cannot use frequency rows.`)
+          }
+          normalized = relationValue(name, selected.value)
+        }
+
         const value =
-          normalized && getRuntimeMaterialParameter(name)
+          normalized && propertyDefinition
             ? sampleProperty(
                 normalized as MaterialPropertyValue,
                 material.errorRate ?? 0,
@@ -330,7 +489,7 @@ export function resolveMaterialParameters(
           source: selected.source ?? null,
           version: selected.version ?? null,
           materialId: selected.material_id,
-          materialParameterId: selected.id ?? null,
+          materialParameterId,
         })
       })
     }
@@ -389,7 +548,9 @@ export function readFrozenMaterialParameters(value: unknown): FrozenMaterialPara
         (entry.version !== null && typeof entry.version !== 'string') ||
         (entry.materialId !== null && !Number.isSafeInteger(entry.materialId)) ||
         (entry.materialParameterId !== null && !Number.isSafeInteger(entry.materialParameterId)) ||
-        !catalogValue(name, entry.value)
+        !frozenCatalogValue(name, entry.value) ||
+        (frequencyPropertyValue(name, entry.value) !== null &&
+          (entry.origin !== 'database' || entry.materialId === null || entry.materialParameterId !== null))
       )
         return null
     }

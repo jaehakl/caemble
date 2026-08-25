@@ -197,6 +197,13 @@ export type { BuiltMeasurement, MeasurementMaterialResolution, TaskMaterialResol
 export { assertSerializableCadScene, deserializeCadScene, serializeCadScene } from './execution/mesh'
 export type { SerializableCadMesh, SerializableCadScene, SerializableCadScenePart } from './execution/mesh'
 export { normalizeRecordedData, normalizeRecordedDataTensor } from './model/recordedData'
+export {
+  isRayPathRecordedDataName,
+  parseRayPathBundles,
+  RAY_PATH_EVENT_NAMES,
+  type RayPathBundle,
+  type RayPathEventName,
+} from './model/rayPaths'
 export type { ResolvedRecordedTensor } from './model/recordedData'
 export {
   DATA_TENSOR_ATTACHMENT_SHARD_BYTES,

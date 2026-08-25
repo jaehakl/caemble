@@ -40,8 +40,8 @@ def test_canonical_catalog_is_normalized_and_complete():
             "quantityKindCount": 1_216,
             "materialParameterCount": 258,
             "materialModelCount": 2,
-            "solverCount": 2,
-            "experimentCount": 15,
+            "solverCount": 3,
+            "experimentCount": 16,
             "materialGlobalQualifiers": [
                 "temperature",
                 "pressure",
@@ -83,6 +83,7 @@ def test_solver_manifests_reconstruct_the_legacy_contract():
         manifests = catalog.solver_manifests()
         assert [item["descriptor"]["name"] for item in manifests] == [
             "dc-current-density",
+            "ray-tracing",
             "steady-state-heat",
         ]
         heat = catalog.get_solver_manifest("steady-state-heat", "0.1.0")
@@ -100,7 +101,7 @@ def test_solver_manifests_reconstruct_the_legacy_contract():
 def test_example_experiment_catalog_contracts():
     with Catalog.open_readonly() as catalog:
         experiments, experiment_total = catalog.list_experiments(limit=100)
-        assert experiment_total == 15
+        assert experiment_total == 16
         assert {
             "basketball-goal",
             "fiber-bundle",
@@ -108,6 +109,7 @@ def test_example_experiment_catalog_contracts():
             "random-curved-edge-cylinder-array",
             "random-curved-surface-sphere-hcp-array",
             "geometry-authoring-skeleton",
+            "folded-ray-tracing",
             "two-material-wheel-assembly",
         } < {item["key"] for item in experiments}
         assert catalog._all("SELECT name FROM sqlite_schema WHERE name LIKE '%geometr%'") == []

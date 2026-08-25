@@ -133,6 +133,43 @@ describe('DataTensor codec', () => {
     expect(tensor.axes).toEqual([{ ticks: ['앞', '뒤'] }])
   })
 
+  it('preserves implicit ordinal dynamic axes without allocating ticks', () => {
+    const dataSchema = {
+      dtype: 'uint32' as const,
+      axes: [{ name: 'path boundary' }],
+    }
+    const tensor: DataTensor = {
+      shape: [3],
+      axes: [{ implicitOrdinal: true }],
+      storage: { kind: 'inline', value: [0, 2, 5] },
+    }
+
+    const accessor = createDataTensorAccessor(dataSchema, tensor)
+    expect(accessor.tensor.axes).toEqual([{ implicitOrdinal: true }])
+    expect(persistDataTensor(dataSchema, tensor).axes).toEqual([{ implicitOrdinal: true }])
+  })
+
+  it('rejects malformed implicit ordinal axes', () => {
+    const dynamicSchema = { dtype: 'uint32' as const, axes: [{ name: 'path' }] }
+    expect(() =>
+      createDataTensorAccessor(dynamicSchema, {
+        shape: [2],
+        axes: [{ ticks: [0, 1], implicitOrdinal: true }],
+        storage: { kind: 'inline', value: [0, 2] },
+      }),
+    ).toThrow(/both ticks and implicitOrdinal/)
+    expect(() =>
+      createDataTensorAccessor(
+        { dtype: 'uint32' as const, axes: [{ length: 2 }] },
+        {
+          shape: [2],
+          axes: [{ implicitOrdinal: true }],
+          storage: { kind: 'inline', value: [0, 2] },
+        },
+      ),
+    ).toThrow(/only for a dynamic/)
+  })
+
   it.each([
     ['float16', [1.5, -2.25]],
     ['float32', [1.25, -3.5]],

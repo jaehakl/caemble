@@ -13,7 +13,7 @@ export const AI_AGENT_PROVIDER_QUERY_KEY = ['ai-agent', 'providers'] as const
 export const AI_AGENT_PROVIDER = 'openai' as const
 export const AI_AGENT_MODEL = 'gpt-5.6-luna' as const
 // <generated:ai-agent-prompt-tool-version>
-export const AI_AGENT_PROMPT_TOOL_VERSION = 'caemble-ai-agent-v4-d593ea2ee940' as const
+export const AI_AGENT_PROMPT_TOOL_VERSION = 'caemble-ai-agent-v4-ae29c406759f' as const
 // </generated:ai-agent-prompt-tool-version>
 export const AI_AGENT_REASONING_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 

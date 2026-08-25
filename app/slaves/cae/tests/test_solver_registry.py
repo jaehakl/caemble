@@ -40,12 +40,14 @@ def test_production_catalog_contracts_are_valid_and_implementations_stay_lazy():
 
     assert [manifest["descriptor"]["name"] for manifest in discovered.manifests()] == [
         "dc-current-density",
+        "ray-tracing",
         "steady-state-heat",
     ]
     for manifest in discovered.manifests():
         descriptor = manifest["descriptor"]
         assert len(discovered.contract_digest(descriptor["name"], descriptor["version"])) == 64
     assert "app.solvers.dc_current_density.solver" not in set(sys.modules) - modules_before
+    assert "app.solvers.ray_tracing.solver" not in set(sys.modules) - modules_before
     assert "app.solvers.steady_state_heat.solver" not in set(sys.modules) - modules_before
 
 

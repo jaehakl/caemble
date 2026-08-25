@@ -16,7 +16,7 @@ import type { AnalysisTabId, HelpKindId, WorkbenchSectionId } from '@/features/c
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
 import { createRuntimeConsoleStore, RuntimeConsoleView } from '@/features/runtime-console'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
-import type { RecordedDataRule } from '@/lib/cad'
+import { parseRayPathBundles, type RecordedDataRule } from '@/lib/cad'
 import type { AiChatCommand } from '@/pages/ai/AiChatPage'
 import type { AnalysisCommand } from '@/pages/analysis/AnalysisPage'
 import { JobsWorkspace } from '@/pages/jobs/JobsPage'
@@ -163,6 +163,16 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     [workbench.experimentDocument.simulationProgram],
   )
   const pendingResult = workbench.measurementActions.pendingRecordMeasurementId !== null
+  const activeRecordedData = pendingResult ? workbench.simulation.recordedData : workbench.selection.recordedData
+  const activeRecordedRules = pendingResult ? sessionRecordedRules : workbench.selection.recordedRules
+  const rayPathsDeclared = activeRecordedRules.some((rule) => rule.label.startsWith('@caemble/ray-paths@'))
+  const rayPathState = useMemo(() => {
+    try {
+      return { bundles: parseRayPathBundles(activeRecordedRules, activeRecordedData), error: null }
+    } catch (error) {
+      return { bundles: [], error: error instanceof Error ? error.message : String(error) }
+    }
+  }, [activeRecordedData, activeRecordedRules])
 
   const applyAgentBundle = async (request: AiAgentApplyRequest) => {
     const result = await workbench.applyAgentBundle(request)
@@ -290,14 +300,20 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               measurementId={workbench.selection.measurement?.id ?? null}
               pendingSave={pendingResult}
               recordedAt={workbench.selection.measurement?.recorded_at ?? null}
-              recordedData={pendingResult ? workbench.simulation.recordedData : workbench.selection.recordedData}
-              rules={pendingResult ? sessionRecordedRules : workbench.selection.recordedRules}
+              recordedData={activeRecordedData}
+              rayPathBundles={rayPathState.bundles}
+              rayPathError={rayPathState.error}
+              rayPathsDeclared={rayPathsDeclared}
+              rules={activeRecordedRules}
             />
           ),
           detail: (
             <MeasurementDetail
               measurement={workbench.selection.measurement}
               pendingSave={pendingResult}
+              rayPathBundles={rayPathState.bundles}
+              rayPathError={rayPathState.error}
+              rayPathsDeclared={rayPathsDeclared}
               recordedRows={workbench.selection.recordedRows}
             />
           ),
@@ -407,6 +423,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               onToggleViewerExpanded={() =>
                 page.setLayout((current) => ({ ...current, viewerExpanded: !current.viewerExpanded }))
               }
+              rayPaths={rayPathState.bundles}
               viewerExpanded={page.viewerExpanded}
             />
           }

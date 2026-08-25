@@ -460,7 +460,13 @@ export function MaterialParameterDialog({
     setDescription(record?.description ?? '')
     setTemperature(record?.temperature === null || record?.temperature === undefined ? '' : String(record.temperature))
     setPressure(record?.pressure === null || record?.pressure === undefined ? '' : String(record.pressure))
-    setFrequency(record?.frequency === null || record?.frequency === undefined ? '' : String(record.frequency))
+    setFrequency(
+      property?.special_qualifiers?.some(
+        (qualifier) => qualifier === 'frequency' || qualifier === 'wavelength_or_frequency',
+      ) && record?.frequency !== null && record?.frequency !== undefined
+        ? String(record.frequency)
+        : '',
+    )
     setVisibility(defaultVisibility(material, user, record?.user_id))
     setFormError('')
   }, [catalog, initialName, material, open, record, user])
@@ -496,6 +502,7 @@ export function MaterialParameterDialog({
     setName(nextName)
     setDtype('float32')
     setIncompatibleValue(false)
+    setFrequency('')
     if (property) {
       const config = getQuantityValueConfig(property.quantity_kind, mergedCatalog)
       setUnit(config.units[0] ?? '')
@@ -519,9 +526,20 @@ export function MaterialParameterDialog({
   const propertyConfig = property ? getQuantityValueConfig(property.quantity_kind, activeCatalog) : null
   const relationInputConfig = model ? getQuantityValueConfig(model.input.quantity_kind, activeCatalog) : null
   const relationOutputConfig = model ? getQuantityValueConfig(model.output.quantity_kind, activeCatalog) : null
+  const frequencySupported = Boolean(
+    property?.special_qualifiers?.some(
+      (qualifier) => qualifier === 'frequency' || qualifier === 'wavelength_or_frequency',
+    ),
+  )
+  const frequencyValid =
+    !frequency.trim() || (Number.isFinite(Number(frequency)) && Number(frequency) > 0 && frequencySupported)
   const mutation = useMutation({
     mutationFn: async () => {
       if (!isMaterialCatalogKey(name, activeCatalog)) throw new Error('카탈로그에서 Material parameter를 선택하세요.')
+      const normalizedFrequency = optionalNumber(frequency)
+      if (normalizedFrequency !== null && (!frequencySupported || normalizedFrequency <= 0)) {
+        throw new Error('Frequency는 지원되는 Material parameter에 양의 유한 Hz 값으로 입력해야 합니다.')
+      }
       let value: unknown
       if (property && propertyConfig) {
         value = createMaterialPropertyValue(
@@ -561,7 +579,7 @@ export function MaterialParameterDialog({
           description: description.trim() || null,
           temperature: optionalNumber(temperature),
           pressure: optionalNumber(pressure),
-          frequency: optionalNumber(frequency),
+          frequency: normalizedFrequency,
           user_id: childOwnerId(material, user, visibility, record?.user_id),
         },
       ])
@@ -856,8 +874,20 @@ export function MaterialParameterDialog({
                 <Input inputMode="decimal" onChange={(event) => setPressure(event.target.value)} value={pressure} />
               </label>
               <label className="grid gap-1.5">
-                <FieldLabel>Frequency</FieldLabel>
-                <Input inputMode="decimal" onChange={(event) => setFrequency(event.target.value)} value={frequency} />
+                <FieldLabel>Frequency (Hz)</FieldLabel>
+                <Input
+                  aria-label="Frequency (Hz)"
+                  disabled={!frequencySupported}
+                  inputMode="decimal"
+                  min="0"
+                  onChange={(event) => setFrequency(event.target.value)}
+                  value={frequency}
+                />
+                {!frequencySupported ? (
+                  <span className="text-xs text-muted-foreground">
+                    frequency qualifier를 지원하는 Material property에서만 사용할 수 있습니다.
+                  </span>
+                ) : null}
               </label>
             </div>
             {formError ? (
@@ -869,7 +899,7 @@ export function MaterialParameterDialog({
               <Button onClick={() => onOpenChange(false)} type="button" variant="outline">
                 취소
               </Button>
-              <Button disabled={!validName || !valueComplete || mutation.isPending} type="submit">
+              <Button disabled={!validName || !valueComplete || !frequencyValid || mutation.isPending} type="submit">
                 {mutation.isPending ? <LoaderCircle className="animate-spin" /> : null}저장
               </Button>
             </DialogFooter>

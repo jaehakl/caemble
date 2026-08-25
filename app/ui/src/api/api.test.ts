@@ -144,6 +144,35 @@ describe('integrated Experiment API facade', () => {
     expect(dbTables.Measurement.rowSchema.parse(prepared).recorded_at).toBeNull()
     expect(dbTables.Measurement.rowSchema.parse(recorded).recorded_at).toBeTruthy()
   })
+
+  it('passes the RecordedData system-row filter through the list contract', async () => {
+    mocks.request.mockResolvedValueOnce({ total: 0, items: [] })
+
+    await dbTables.RecordedData.listRows({ ...getListRequest('mine'), include_system: false })
+
+    expect(mocks.request).toHaveBeenCalledWith(
+      'post',
+      '/recorded_data/list',
+      expect.objectContaining({ include_system: false }),
+    )
+  })
+})
+
+describe('MaterialParameter API contract', () => {
+  const row = {
+    material_id: 7,
+    name: 'optical.refractive_index',
+    value: { dtype: 'float64', value: 1.5, unit: '{fraction}' },
+  }
+
+  it('accepts only null or positive finite frequency values in Hz', () => {
+    expect(dbTables.MaterialParameter.rowSchema.safeParse({ ...row, frequency: null }).success).toBe(true)
+    expect(dbTables.MaterialParameter.rowSchema.safeParse({ ...row, frequency: 5e14 }).success).toBe(true)
+    expect(dbTables.MaterialParameter.rowSchema.safeParse({ ...row, frequency: 0 }).success).toBe(false)
+    expect(
+      dbTables.MaterialParameter.rowSchema.safeParse({ ...row, frequency: Number.POSITIVE_INFINITY }).success,
+    ).toBe(false)
+  })
 })
 
 describe('Example Experiment catalog identity', () => {

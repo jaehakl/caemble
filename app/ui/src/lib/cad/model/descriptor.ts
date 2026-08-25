@@ -127,7 +127,10 @@ export type ExperimentRule<TParameters extends ExperimentParameters = Experiment
 export type RecordedDataRule<TParameters extends ExperimentParameters = ExperimentParameters> = Readonly<
   ExperimentRule<TParameters> & { result: RecordedDataResult }
 >
-export type RecordedDataAxis = Readonly<{ ticks?: readonly (number | string)[] }>
+export type RecordedDataAxis = Readonly<{
+  ticks?: readonly (number | string)[]
+  implicitOrdinal?: true
+}>
 export type DataTensor = Readonly<{
   shape: readonly number[]
   axes?: readonly RecordedDataAxis[]

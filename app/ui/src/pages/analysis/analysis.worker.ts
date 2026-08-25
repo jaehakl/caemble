@@ -89,11 +89,15 @@ async function loadRecordedData(
       const exactIds = new Set(range.ids)
       const response = await dbTables.RecordedData.listRows({
         ...getListRequest('mine'),
+        include_system: false,
         limit: null,
         filter: { measurement_id: [range.min, range.max] },
       })
       responses[index] = response.items.filter(
-        (row) => exactIds.has(row.measurement_id) && allowedMeasurementIds.has(row.measurement_id),
+        (row) =>
+          exactIds.has(row.measurement_id) &&
+          allowedMeasurementIds.has(row.measurement_id) &&
+          !row.name.startsWith('@caemble/'),
       )
       completed += 1
       postProgress(requestId, 'Recorded Data 조회', completed, ranges.length)

@@ -10,12 +10,19 @@ installSyntheticCatalog({
     { name: 'synthetic.ThermalConductivity', tensorOrder: 2, applicableUnits: ['W.m-1.K-1'] },
     { name: 'electromagnetism.ElectricConductivity', tensorOrder: 2, applicableUnits: ['S.m-1'] },
     { name: 'thermodynamics.RelativeHumidity', applicableUnits: ['%'] },
-    { name: 'DimensionlessRatio', applicableUnits: ['{fraction}'] },
+    { name: 'DimensionlessRatio', applicableUnits: ['{fraction}', '%'] },
+    { name: 'Frequency', applicableUnits: ['Hz'] },
   ],
   materialParameters: [
     { key: 'general.mass_density', quantityKind: 'MassDensity' },
     { key: 'thermal.conductivity', quantityKind: 'synthetic.ThermalConductivity' },
     { key: 'electrical.conductivity', quantityKind: 'electromagnetism.ElectricConductivity' },
+    {
+      key: 'optical.refractive_index',
+      quantityKind: 'DimensionlessRatio',
+      specialQualifiers: ['wavelength_or_frequency'],
+    },
+    { key: 'test.unsampled_ratio', quantityKind: 'DimensionlessRatio' },
   ],
   materialModels: [
     {
@@ -148,6 +155,307 @@ describe('Material resolution', () => {
       value: 9000,
       unit: 'kg.m-3',
     })
+  })
+
+  it('freezes a coherent frequency cohort as one ascending float64 Frequency-axis property', () => {
+    const result = resolveMaterialParameters(
+      [{ name: 'Glass', source: 'handbook', version: '2', errorRate: 0, variables: {} }],
+      [{ id: 1, material_id: 8, name: 'Glass', user_id: null }],
+      [
+        {
+          id: 30,
+          material_id: 8,
+          name: 'optical.refractive_index',
+          value: { dtype: 'float32', value: 160, unit: '%' },
+          source: 'handbook',
+          version: '2',
+          frequency: 6e14,
+          user_id: 'mine',
+        },
+        {
+          id: 31,
+          material_id: 8,
+          name: 'optical.refractive_index',
+          value: { dtype: 'float64', value: 1.5, unit: '{fraction}' },
+          source: 'handbook',
+          version: '2',
+          frequency: 5e14,
+          user_id: 'mine',
+        },
+        {
+          id: 32,
+          material_id: 8,
+          name: 'optical.refractive_index',
+          value: { dtype: 'float64', value: 9, unit: '{fraction}' },
+          source: 'other',
+          version: '9',
+          frequency: 5e14,
+          user_id: 'mine',
+        },
+        ...[5e14, 6e14].map((frequency, index) => ({
+          id: 33 + index,
+          material_id: 8,
+          name: 'optical.refractive_index',
+          value: { dtype: 'float64', value: 8 + index, unit: '{fraction}' },
+          source: 'handbook',
+          version: '2',
+          frequency,
+          user_id: null,
+          updated_at: '2026-12-31T00:00:00Z',
+        })),
+      ],
+    )
+
+    expect(result.materialParameters.materials.Glass['optical.refractive_index']).toEqual({
+      origin: 'database',
+      value: {
+        dtype: 'float64',
+        value: [1.5, 1.6],
+        unit: '{fraction}',
+        axes: [
+          {
+            length: 2,
+            name: 'frequency',
+            ticks: [5e14, 6e14],
+            unit: 'Hz',
+            quantityKind: 'Frequency',
+          },
+        ],
+      },
+      source: 'handbook',
+      version: '2',
+      materialId: 8,
+      materialParameterId: null,
+    })
+    expect(readFrozenMaterialParameters(result.materialParameters)).toEqual(result.materialParameters)
+  })
+
+  it('applies one database error multiplier to the complete frequency curve', () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0)
+    const result = resolveMaterialParameters(
+      [{ name: 'Glass', errorRate: 0.1, variables: {} }],
+      [{ id: 1, material_id: 8, name: 'Glass', user_id: null }],
+      [5e14, 6e14].map((frequency, index) => ({
+        id: 40 + index,
+        material_id: 8,
+        name: 'optical.refractive_index',
+        value: { dtype: 'float64', value: 1.5 + index * 0.1, unit: '{fraction}' },
+        source: 'handbook',
+        version: '1',
+        frequency,
+        user_id: null,
+      })),
+    )
+    random.mockRestore()
+
+    const value = result.materialParameters.materials.Glass['optical.refractive_index'].value as {
+      value: readonly number[]
+    }
+    expect(value.value[0]).toBeCloseTo(1.35)
+    expect(value.value[1]).toBeCloseTo(1.44)
+    expect(value.value[0] / 1.5).toBeCloseTo(value.value[1] / 1.6)
+  })
+
+  it('keeps temperature and pressure conditions separate when assembling a frequency curve', () => {
+    const rows = [
+      ...[5e14, 6e14].map((frequency, index) => ({
+        id: 70 + index,
+        material_id: 8,
+        name: 'optical.refractive_index',
+        value: { dtype: 'float64' as const, value: 2.5 + index * 0.1, unit: '{fraction}' },
+        source: 'handbook',
+        version: '1',
+        temperature: 400,
+        pressure: 101325,
+        frequency,
+        user_id: null,
+      })),
+      ...[5e14, 6e14].map((frequency, index) => ({
+        id: 72 + index,
+        material_id: 8,
+        name: 'optical.refractive_index',
+        value: { dtype: 'float64' as const, value: 1.5 + index * 0.1, unit: '{fraction}' },
+        source: 'handbook',
+        version: '1',
+        temperature: 300,
+        pressure: 101325,
+        frequency,
+        user_id: null,
+      })),
+    ]
+    const result = resolveMaterialParameters(
+      [{ name: 'Glass', variables: {} }],
+      [{ id: 1, material_id: 8, name: 'Glass', user_id: null }],
+      rows,
+    )
+
+    expect(result.materialParameters.materials.Glass['optical.refractive_index'].value).toMatchObject({
+      value: [1.5, 1.6],
+      axes: [{ ticks: [5e14, 6e14] }],
+    })
+  })
+
+  it('keeps generic qualifier sets separate when assembling a frequency curve', () => {
+    const rows = [
+      ...[5e14, 6e14].map((frequency, index) => ({
+        id: 80 + index,
+        material_id: 8,
+        name: 'optical.refractive_index',
+        value: { dtype: 'float64' as const, value: 2.5 + index * 0.1, unit: '{fraction}' },
+        source: 'handbook',
+        version: '1',
+        temperature: 300,
+        pressure: 101325,
+        frequency,
+        user_id: null,
+      })),
+      ...[5e14, 6e14].map((frequency, index) => ({
+        id: 82 + index,
+        material_id: 8,
+        name: 'optical.refractive_index',
+        value: { dtype: 'float64' as const, value: 1.5 + index * 0.1, unit: '{fraction}' },
+        source: 'handbook',
+        version: '1',
+        temperature: 300,
+        pressure: 101325,
+        frequency,
+        user_id: null,
+      })),
+    ]
+    const result = resolveMaterialParameters(
+      [{ name: 'Glass', variables: {} }],
+      [{ id: 1, material_id: 8, name: 'Glass', user_id: null }],
+      rows,
+      {
+        qualifiers: rows.map((row) => ({
+          material_parameter_id: row.id,
+          name: 'polarization',
+          value: row.id < 82 ? 0 : 1,
+        })),
+      },
+    )
+
+    expect(result.materialParameters.materials.Glass['optical.refractive_index'].value).toMatchObject({
+      value: [1.5, 1.6],
+      axes: [{ ticks: [5e14, 6e14] }],
+    })
+  })
+
+  it.each([
+    {
+      label: 'mixed scalar and frequency rows',
+      rows: [
+        { id: 50, frequency: null },
+        { id: 51, frequency: 5e14 },
+      ],
+      message: 'cannot mix scalar and frequency rows',
+    },
+    {
+      label: 'a one-point frequency series',
+      rows: [{ id: 50, frequency: 5e14 }],
+      message: 'requires at least two rows',
+    },
+    {
+      label: 'duplicate frequencies',
+      rows: [
+        { id: 50, frequency: 5e14 },
+        { id: 51, frequency: 5e14 },
+      ],
+      message: 'duplicate frequency rows',
+    },
+    {
+      label: 'a non-positive frequency',
+      rows: [
+        { id: 50, frequency: 0 },
+        { id: 51, frequency: 5e14 },
+      ],
+      message: 'positive finite Hz value',
+    },
+  ])('rejects $label within the selected cohort', ({ rows, message }) => {
+    expect(() =>
+      resolveMaterialParameters(
+        [{ name: 'Glass', variables: {} }],
+        [{ id: 1, material_id: 8, name: 'Glass', user_id: null }],
+        rows.map(({ id, frequency }) => ({
+          id,
+          material_id: 8,
+          name: 'optical.refractive_index',
+          value: { dtype: 'float64', value: 1.5, unit: '{fraction}' },
+          source: 'handbook',
+          version: '1',
+          frequency,
+          user_id: null,
+        })),
+      ),
+    ).toThrow(message)
+  })
+
+  it('rejects frequency rows for a property without a frequency qualifier', () => {
+    expect(() =>
+      resolveMaterialParameters(
+        [{ name: 'Glass', variables: {} }],
+        [{ id: 1, material_id: 8, name: 'Glass', user_id: null }],
+        [5e14, 6e14].map((frequency, index) => ({
+          id: 60 + index,
+          material_id: 8,
+          name: 'test.unsampled_ratio',
+          value: { dtype: 'float64', value: 1.5, unit: '{fraction}' },
+          source: 'handbook',
+          version: '1',
+          frequency,
+          user_id: null,
+        })),
+      ),
+    ).toThrow('does not support frequency rows')
+  })
+
+  it('rejects a frozen frequency series with non-ascending ticks or a retained row id', () => {
+    const entry = {
+      origin: 'database',
+      value: {
+        dtype: 'float64',
+        value: [1.5, 1.6],
+        unit: '{fraction}',
+        axes: [
+          {
+            length: 2,
+            name: 'frequency',
+            ticks: [5e14, 6e14],
+            unit: 'Hz',
+            quantityKind: 'Frequency',
+          },
+        ],
+      },
+      source: 'handbook',
+      version: '1',
+      materialId: 8,
+      materialParameterId: null,
+    }
+    expect(
+      readFrozenMaterialParameters({
+        schemaVersion: 1,
+        materials: { Glass: { 'optical.refractive_index': entry } },
+      }),
+    ).not.toBeNull()
+    expect(
+      readFrozenMaterialParameters({
+        schemaVersion: 1,
+        materials: {
+          Glass: {
+            'optical.refractive_index': {
+              ...entry,
+              value: { ...entry.value, axes: [{ ...entry.value.axes[0], ticks: [6e14, 5e14] }] },
+            },
+          },
+        },
+      }),
+    ).toBeNull()
+    expect(
+      readFrozenMaterialParameters({
+        schemaVersion: 1,
+        materials: { Glass: { 'optical.refractive_index': { ...entry, materialParameterId: 50 } } },
+      }),
+    ).toBeNull()
   })
 
   it('rejects duplicate names that resolve to different final values', () => {

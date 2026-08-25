@@ -127,10 +127,12 @@ export function collectAnalysisQuantityKindNames(
 ) {
   const names = new Set<string>()
   measurements.forEach((measurement) => collectQuantityKindFields(measurement.material_parameters, names))
-  recordedData.forEach((row) => {
-    if (row.quantity_kind) names.add(row.quantity_kind)
-    collectQuantityKindFields(row.data_schema, names)
-  })
+  recordedData
+    .filter((row) => !row.name.startsWith('@caemble/'))
+    .forEach((row) => {
+      if (row.quantity_kind) names.add(row.quantity_kind)
+      collectQuantityKindFields(row.data_schema, names)
+    })
   return Object.freeze([...names].sort())
 }
 
@@ -619,11 +621,13 @@ export function buildAnalysisDataset({
     (row): row is MeasurementRecord & { id: number } => Number.isSafeInteger(row.id) && (row.id ?? 0) > 0,
   )
   const recordedByMeasurement = new Map<number, RecordedDataRecord[]>()
-  recordedData.forEach((row) => {
-    const rows = recordedByMeasurement.get(row.measurement_id) ?? []
-    rows.push(row)
-    recordedByMeasurement.set(row.measurement_id, rows)
-  })
+  recordedData
+    .filter((row) => !row.name.startsWith('@caemble/'))
+    .forEach((row) => {
+      const rows = recordedByMeasurement.get(row.measurement_id) ?? []
+      rows.push(row)
+      recordedByMeasurement.set(row.measurement_id, rows)
+    })
 
   const states = new Map<string, ColumnState>()
   const materialSignatures = new Map<string, Set<string>>()

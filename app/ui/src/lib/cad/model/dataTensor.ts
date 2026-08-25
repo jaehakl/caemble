@@ -138,11 +138,26 @@ function normalizeAxes(
   return Object.freeze(
     axes.map((rawAxis, axisIndex) => {
       const axisPath = `${path}.axes[${axisIndex}]`
-      if (!isPlainObject(rawAxis) || Reflect.ownKeys(rawAxis).some((key) => key !== 'ticks')) {
-        throw new CadModelError(`${axisPath} must contain optional ticks only.`)
+      if (
+        !isPlainObject(rawAxis) ||
+        Reflect.ownKeys(rawAxis).some((key) => key !== 'ticks' && key !== 'implicitOrdinal')
+      ) {
+        throw new CadModelError(`${axisPath} must contain optional ticks or implicitOrdinal only.`)
       }
       const schemaAxis = schemaAxes[axisIndex]
       const actualLength = shape[axisIndex]
+      if (rawAxis.implicitOrdinal !== undefined) {
+        if (rawAxis.implicitOrdinal !== true) {
+          throw new CadModelError(`${axisPath}.implicitOrdinal must be true when present.`)
+        }
+        if (rawAxis.ticks !== undefined) {
+          throw new CadModelError(`${axisPath} cannot contain both ticks and implicitOrdinal.`)
+        }
+        if (schemaAxis.length !== undefined || schemaAxis.ticks !== undefined) {
+          throw new CadModelError(`${axisPath}.implicitOrdinal is allowed only for a dynamic DataSchema axis.`)
+        }
+        return Object.freeze({ implicitOrdinal: true as const })
+      }
       const ticks = rawAxis.ticks ?? schemaAxis.ticks
       if (ticks === undefined) {
         if (requireDynamicTicks && schemaAxis.length === undefined) {

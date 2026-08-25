@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import math
 from dataclasses import dataclass
+from decimal import Decimal
 from types import MappingProxyType
 from typing import Any, Awaitable, Callable
 
@@ -16,7 +17,7 @@ from app.solver_framework.geometry.complexity import (
     enforce_boolean_work_limit,
     enforce_triangle_limit,
 )
-from app.solver_framework.geometry.models import TriangleProvenance, TriangularMesh
+from app.solver_framework.geometry.models import ShellLayerGeometry, TriangleProvenance, TriangularMesh
 from app.solver_framework.units import convert_ucum_value
 
 _BACKEND_VERSION = "manifold3d-3.5.1"
@@ -29,11 +30,20 @@ class _CompiledGeometry:
     provenance: dict[tuple[int, int], tuple[str, str]]
 
 
+@dataclass(frozen=True, slots=True)
+class _ShellBoundaryData:
+    world_center: np.ndarray[Any, Any]
+    triangles: np.ndarray[Any, Any]
+    displacements: np.ndarray[Any, Any]
+    boundaries: dict[float, np.ndarray[Any, Any]]
+
+
 class GeometryService:
     """Run-scoped access to canonical geometry and shared triangulation."""
 
     def __init__(self) -> None:
         self._meshes: dict[tuple[str, str, str, str, str], TriangularMesh] = {}
+        self._shell_layers: dict[tuple[str, str, str, str], ShellLayerGeometry] = {}
         self._cached_triangles = 0
 
     @property
@@ -136,6 +146,123 @@ class GeometryService:
             return existing
         self._meshes[key] = result
         self._cached_triangles += triangles.shape[0]
+        if progress is not None:
+            await progress({"stage": "geometry", "completed": 1, "total": 1})
+        return result
+
+    async def shell_layer(
+        self,
+        scene: dict[str, Any],
+        root_id: str,
+        reference_length_unit: str,
+        progress: Callable[[Any], Awaitable[None]] | None = None,
+    ) -> ShellLayerGeometry | None:
+        key = (scene["geometryHash"], root_id, reference_length_unit, _MESHING_PROFILE)
+        cached = self._shell_layers.get(key)
+        if cached is not None:
+            return cached
+        roots = [root for root in scene["roots"] if root["id"] == root_id]
+        if len(roots) != 1:
+            raise CaeError("invalid_geometry", f"Canonical Geometry root {root_id!r} is missing")
+        direct = _direct_shell(roots[0]["node"])
+        if direct is None:
+            return None
+        shell, outer_matrix = direct
+        enforce_triangle_limit(roots[0]["node"], f"geometry root {root_id!r}")
+        if progress is not None:
+            await progress({"stage": "geometry", "completed": 0, "total": 1})
+        await asyncio.sleep(0)
+        context = manifold.ExecutionContext()
+        try:
+            child = _compile_node(shell["child"], context)
+            data = _shell_boundary_data(
+                child,
+                (float(shell["innerOffset"]), float(shell["outerOffset"])),
+                context,
+            )
+        except CaeError:
+            raise
+        except Exception as exc:
+            raise CaeError("invalid_geometry", f"Manifold could not evaluate shell root {root_id!r}") from exc
+        scale = _length_scale(scene["lengthUnit"], reference_length_unit, root_id)
+        linear = outer_matrix[:3, :3] * scale
+        reverses_orientation = float(np.linalg.det(linear)) < 0
+
+        def boundary(offset: float, face_key: str) -> TriangularMesh:
+            points = data.boundaries[offset] + data.world_center
+            homogeneous = np.concatenate((points, np.ones((len(points), 1))), axis=1)
+            vertices = (homogeneous @ outer_matrix.T)[:, :3] * scale
+            if np.any(~np.isfinite(vertices)):
+                raise CaeError("invalid_geometry", f"shell root {root_id!r} produced non-finite vertices")
+            vertices = np.ascontiguousarray(vertices, dtype=np.float64)
+            triangle_indices = data.triangles[:, [0, 2, 1]] if reverses_orientation else data.triangles
+            triangles = np.ascontiguousarray(triangle_indices, dtype=np.int64)
+            vertices.setflags(write=False)
+            triangles.setflags(write=False)
+            provenance = tuple(
+                TriangleProvenance(root_id, shell["nodeId"], face_key)
+                for _ in range(len(triangles))
+            )
+            return TriangularMesh(vertices, triangles, provenance)
+
+        inner_offset = float(shell["innerOffset"])
+        outer_offset = float(shell["outerOffset"])
+        inner = boundary(inner_offset, "inner")
+        outer = boundary(outer_offset, "outer")
+        inner_triangles = inner.vertices[inner.triangles]
+        outer_triangles = outer.vertices[outer.triangles]
+        inner_normals = np.cross(
+            inner_triangles[:, 1] - inner_triangles[:, 0],
+            inner_triangles[:, 2] - inner_triangles[:, 0],
+        )
+        outer_normals = np.cross(
+            outer_triangles[:, 1] - outer_triangles[:, 0],
+            outer_triangles[:, 2] - outer_triangles[:, 0],
+        )
+        inner_normal_lengths = np.linalg.norm(inner_normals, axis=1)
+        outer_normal_lengths = np.linalg.norm(outer_normals, axis=1)
+        if (
+            np.any(~np.isfinite(inner_normal_lengths))
+            or np.any(inner_normal_lengths <= 0)
+            or np.any(~np.isfinite(outer_normal_lengths))
+            or np.any(outer_normal_lengths <= 0)
+        ):
+            raise CaeError("invalid_geometry", f"shell root {root_id!r} has degenerate boundary triangles")
+        inner_normals /= inner_normal_lengths[:, None]
+        outer_normals /= outer_normal_lengths[:, None]
+        offset_span = float(abs(Decimal(str(outer_offset)) - Decimal(str(inner_offset))))
+        transformed_displacements = data.displacements @ linear.T * offset_span
+        triangle_displacements = transformed_displacements[data.triangles]
+        separations = np.concatenate(
+            (
+                np.abs(np.einsum("ijk,ik->ij", triangle_displacements, inner_normals)).reshape(-1),
+                np.abs(np.einsum("ijk,ik->ij", triangle_displacements, outer_normals)).reshape(-1),
+            )
+        )
+        if len(separations) == 0 or np.any(~np.isfinite(separations)) or np.any(separations <= 0):
+            raise CaeError("invalid_geometry", f"shell root {root_id!r} has invalid physical thickness")
+        family_id = shell["nodeId"].rsplit("/$layer-", 1)[0]
+        result = ShellLayerGeometry(
+            root_id=root_id,
+            family_id=family_id,
+            inner_offset=inner_offset,
+            outer_offset=outer_offset,
+            inner=inner,
+            outer=outer,
+            minimum_thickness=float(np.min(separations)),
+            maximum_thickness=float(np.max(separations)),
+        )
+        required = len(inner.triangles) + len(outer.triangles)
+        if self._cached_triangles + required > MAX_TRIANGLES:
+            raise CaeError(
+                "resource_limit",
+                f"Geometry mesh cache may contain at most {MAX_TRIANGLES} triangles",
+            )
+        existing = self._shell_layers.get(key)
+        if existing is not None:
+            return existing
+        self._shell_layers[key] = result
+        self._cached_triangles += required
         if progress is not None:
             await progress({"stage": "geometry", "completed": 1, "total": 1})
         return result
@@ -472,13 +599,26 @@ def _fiber(node: dict[str, Any]) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, 
     return np.asarray(vertices), np.asarray(triangles, dtype=np.uint64), face_keys
 
 
-def _shell(
+def _direct_shell(node: dict[str, Any]) -> tuple[dict[str, Any], np.ndarray[Any, Any]] | None:
+    matrix = np.eye(4, dtype=np.float64)
+    current = node
+    while current.get("kind") in {"transform", "instance"}:
+        transform = np.asarray(current.get("matrix"), dtype=np.float64)
+        if transform.shape != (16,):
+            return None
+        matrix = matrix @ transform.reshape(4, 4)
+        child = current.get("child")
+        if not isinstance(child, dict):
+            return None
+        current = child
+    return (current, matrix) if current.get("kind") == "shell" else None
+
+
+def _shell_boundary_data(
     child: _CompiledGeometry,
-    shell_node_id: str,
-    inner_offset: float,
-    outer_offset: float,
+    offsets: tuple[float, ...],
     context: manifold.ExecutionContext,
-) -> _CompiledGeometry:
+) -> _ShellBoundaryData:
     _check_solid(child.solid, context, "shell child")
     output = child.solid.to_mesh64()
     vertices = np.asarray(output.vert_properties, dtype=np.float64)[:, :3]
@@ -505,22 +645,47 @@ def _shell(
             adjacent[int(vertex_index)].append((normal, weight))
     displacements = np.empty_like(vertices)
     for vertex_index, faces in enumerate(adjacent):
-        matrix = sum((weight * np.outer(normal, normal) for normal, weight in faces), np.zeros((3, 3)))
-        target = sum((weight * normal for normal, weight in faces), np.zeros(3))
-        total_weight = sum(weight for _normal, weight in faces)
-        average_length = float(np.linalg.norm(target))
-        if average_length <= 0 or total_weight <= 0:
+        coefficients = np.asarray([math.sqrt(weight) * normal for normal, weight in faces])
+        target = np.asarray([math.sqrt(weight) for _normal, weight in faces])
+        if len(coefficients) == 0 or np.any(~np.isfinite(coefficients)) or np.any(~np.isfinite(target)):
             raise CaeError("invalid_geometry", f"shell has no stable offset at vertex {vertex_index}")
-        average = target / average_length
-        regularization = total_weight * 1e-8
-        matrix += np.eye(3) * regularization
-        target += average * regularization
         try:
-            displacements[vertex_index] = np.linalg.solve(matrix, target)
+            displacement, _residuals, rank, _singular_values = np.linalg.lstsq(
+                coefficients,
+                target,
+                rcond=1e-12,
+            )
         except np.linalg.LinAlgError as exc:
             raise CaeError("invalid_geometry", f"shell has no stable offset at vertex {vertex_index}") from exc
-    inner = vertices + inner_offset * displacements
-    outer = vertices + outer_offset * displacements
+        if rank <= 0 or np.any(~np.isfinite(displacement)):
+            raise CaeError("invalid_geometry", f"shell has no stable offset at vertex {vertex_index}")
+        displacements[vertex_index] = displacement
+    boundaries = {offset: vertices + offset * displacements for offset in offsets}
+    epsilon = max(float(np.max(np.ptp(vertices, axis=0))) * 1e-12, 1e-12) ** 2
+    for offset, boundary in boundaries.items():
+        signed = np.einsum(
+            "ij,ij->i",
+            np.cross(
+                boundary[triangles[:, 1]] - boundary[triangles[:, 0]],
+                boundary[triangles[:, 2]] - boundary[triangles[:, 0]],
+            ),
+            normals,
+        )
+        if np.any(~np.isfinite(signed)) or np.any(signed <= epsilon):
+            raise CaeError("invalid_geometry", f"shell offset {offset} creates an inverted surface")
+    return _ShellBoundaryData(world_center, triangles, displacements, boundaries)
+
+
+def _shell(
+    child: _CompiledGeometry,
+    shell_node_id: str,
+    inner_offset: float,
+    outer_offset: float,
+    context: manifold.ExecutionContext,
+) -> _CompiledGeometry:
+    data = _shell_boundary_data(child, (inner_offset, outer_offset), context)
+    inner = data.boundaries[inner_offset]
+    outer = data.boundaries[outer_offset]
     minimum = np.minimum(np.min(inner, axis=0), np.min(outer, axis=0))
     maximum = np.maximum(np.max(inner, axis=0), np.max(outer, axis=0))
     span = float(np.max(maximum - minimum))
@@ -535,8 +700,8 @@ def _shell(
             np.abs(
                 np.concatenate(
                     (
-                        world_center + minimum,
-                        world_center + maximum,
+                        data.world_center + minimum,
+                        data.world_center + maximum,
                     )
                 )
             )
@@ -547,21 +712,15 @@ def _shell(
             "invalid_geometry",
             f"shell {shell_node_id!r} exceeds the portable Float64 mesh precision envelope",
         )
-    epsilon = max(float(np.max(np.ptp(vertices, axis=0))) * 1e-12, 1e-12) ** 2
-    for offset, boundary in ((inner_offset, inner), (outer_offset, outer)):
-        signed = np.einsum(
-            "ij,ij->i",
-            np.cross(boundary[triangles[:, 1]] - boundary[triangles[:, 0]], boundary[triangles[:, 2]] - boundary[triangles[:, 0]]),
-            normals,
-        )
-        if np.any(~np.isfinite(signed)) or np.any(signed <= epsilon):
-            raise CaeError("invalid_geometry", f"shell offset {offset} creates an inverted surface")
     shell_vertices = np.concatenate((inner, outer), axis=0)
-    shell_triangles = np.concatenate((triangles[:, ::-1], triangles + len(vertices)), axis=0)
+    shell_triangles = np.concatenate(
+        (data.triangles[:, ::-1], data.triangles + len(inner)),
+        axis=0,
+    )
     face_ids = np.concatenate(
         (
-            np.zeros(len(triangles), dtype=np.uint64),
-            np.ones(len(triangles), dtype=np.uint64),
+            np.zeros(len(data.triangles), dtype=np.uint64),
+            np.ones(len(data.triangles), dtype=np.uint64),
         )
     )
     mesh = manifold.Mesh64(
@@ -569,7 +728,7 @@ def _shell(
         np.ascontiguousarray(shell_triangles, dtype=np.uint64),
         face_id=face_ids,
     )
-    solid = context.from_mesh(mesh).translate(tuple(float(item) for item in world_center))
+    solid = context.from_mesh(mesh).translate(tuple(float(item) for item in data.world_center))
     _check_solid(solid, context, "shell")
     shell_output = solid.to_mesh64()
     original_id = int(shell_output.run_original_id[0])

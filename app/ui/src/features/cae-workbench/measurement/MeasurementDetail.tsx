@@ -2,7 +2,9 @@ import { Database, FlaskConical } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
+import { isRayPathRecordedDataName, type RayPathBundle } from '@/lib/cad'
 import type { SavedMeasurement, SavedRecordedData } from '../types'
+import { RayPathSystemCard } from './RayPathSystemCard'
 
 function formatDate(value: string | null | undefined) {
   return value ? new Date(value).toLocaleString('ko-KR') : '—'
@@ -48,11 +50,17 @@ export function MeasurementDetail({
   className,
   measurement,
   pendingSave = false,
+  rayPathBundles = [],
+  rayPathsDeclared: rayPathsDeclaredProp = false,
+  rayPathError = null,
   recordedRows = [],
 }: {
   className?: string
   measurement: SavedMeasurement | null
   pendingSave?: boolean
+  rayPathBundles?: readonly RayPathBundle[]
+  rayPathsDeclared?: boolean
+  rayPathError?: string | null
   recordedRows?: readonly SavedRecordedData[]
 }) {
   if (!measurement)
@@ -66,6 +74,12 @@ export function MeasurementDetail({
         왼쪽 목록에서 Measurement를 선택하세요.
       </div>
     )
+
+  const regularRows = recordedRows.filter((row) => !isRayPathRecordedDataName(row.name))
+  const rayPathsDeclared =
+    rayPathsDeclaredProp || recordedRows.some((row) => row.name.startsWith('@caemble/ray-paths@'))
+  const hasRayPathSystemResult = rayPathsDeclared || rayPathBundles.length > 0 || Boolean(rayPathError)
+  const displayedResultCount = regularRows.length + (hasRayPathSystemResult ? 1 : 0)
 
   return (
     <div className={cn('h-full space-y-4 overflow-y-auto p-3', className)}>
@@ -125,34 +139,37 @@ export function MeasurementDetail({
             <Database className="size-4 text-primary" />
             Recorded Data
           </h3>
-          <Badge className="border bg-transparent">{recordedRows.length}</Badge>
+          <Badge className="border bg-transparent">{displayedResultCount}</Badge>
         </div>
-        {recordedRows.length ? (
-          <ul className="space-y-2">
-            {recordedRows.map((row, index) => (
-              <li className="rounded-md border p-3" key={row.id ?? `${row.name}-${index}`}>
-                <p className="truncate text-sm font-medium">{row.name}</p>
-                <dl className="mt-2 grid grid-cols-2 gap-2">
-                  <DetailField label="Quantity Kind" value={row.quantity_kind ?? '—'} />
-                  <DetailField label="Dtype" value={row.dtype} />
-                  <DetailField label="Tensor order" value={row.tensor_order} />
-                  <DetailField
-                    label="File size"
-                    value={
-                      row.file_size === null || row.file_size === undefined
-                        ? '—'
-                        : `${row.file_size.toLocaleString()} B`
-                    }
-                  />
-                </dl>
-                {row.data_schema ? (
-                  <pre className="mt-2 max-h-24 overflow-auto rounded bg-muted p-2 text-[10px] break-all whitespace-pre-wrap">
-                    {JSON.stringify(row.data_schema, null, 2)}
-                  </pre>
-                ) : null}
-              </li>
-            ))}
-          </ul>
+        {displayedResultCount ? (
+          <div className="space-y-2">
+            <RayPathSystemCard bundles={rayPathBundles} declared={rayPathsDeclared} error={rayPathError} />
+            <ul className="space-y-2">
+              {regularRows.map((row, index) => (
+                <li className="rounded-md border p-3" key={row.id ?? `${row.name}-${index}`}>
+                  <p className="truncate text-sm font-medium">{row.name}</p>
+                  <dl className="mt-2 grid grid-cols-2 gap-2">
+                    <DetailField label="Quantity Kind" value={row.quantity_kind ?? '—'} />
+                    <DetailField label="Dtype" value={row.dtype} />
+                    <DetailField label="Tensor order" value={row.tensor_order} />
+                    <DetailField
+                      label="File size"
+                      value={
+                        row.file_size === null || row.file_size === undefined
+                          ? '—'
+                          : `${row.file_size.toLocaleString()} B`
+                      }
+                    />
+                  </dl>
+                  {row.data_schema ? (
+                    <pre className="mt-2 max-h-24 overflow-auto rounded bg-muted p-2 text-[10px] break-all whitespace-pre-wrap">
+                      {JSON.stringify(row.data_schema, null, 2)}
+                    </pre>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
         ) : (
           <div className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
             기록된 데이터가 없습니다.
