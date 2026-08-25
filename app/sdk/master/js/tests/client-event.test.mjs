@@ -24,6 +24,7 @@ class FakePeerConnection {
   iceGatheringState = 'complete';
   iceConnectionState = 'connected';
   connectionState = 'connected';
+  sctp = { maxMessageSize: 65_536 };
   closed = false;
 
   close() {
@@ -389,6 +390,16 @@ test('job peer call rejects when data channel errors before result', async () =>
   dataChannel.dispatchEvent(new Event('error'));
 
   await assert.rejects(result, /data channel error/);
+});
+
+test('job peer call rejects a control frame above the negotiated DataChannel message size before send', async () => {
+  const { dataChannel, peer } = createJobPeer();
+
+  await assert.rejects(
+    peer.call('job-1', 'cae.simulation.start', { source: 'x'.repeat(65_536) }, 1000),
+    /job call frame is \d+ bytes; negotiated RTCDataChannel max-message-size is 65536 bytes/,
+  );
+  assert.equal(dataChannel.sent.length, 0);
 });
 
 test('job peer call sends request attachment metadata and ordered binary chunks', async () => {

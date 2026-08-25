@@ -36,6 +36,7 @@ function runnerLocation() {
     const url = new URL('/runner.html', window.location.origin)
     url.hostname = 'localhost'
     url.port = String(hostPort + 1)
+    url.searchParams.set('hostOrigin', window.location.origin)
     return url
   }
   const url = new URL('/runner.html', configuredOrigin)

@@ -7,6 +7,7 @@ from sdk.protocol.messages import DataChannelAttachment, DataChannelMessage
 from sdk.slave import SlaveContext
 
 from app.handlers import cae_simulation_next, cae_simulation_start
+from app.tensor import decode_attachment_tensors
 
 
 FIXTURE_DIRECTORIES = [
@@ -61,10 +62,21 @@ def materialize_record(response: DataChannelMessage, expected: dict):
 @pytest.mark.parametrize("fixture_directory", FIXTURE_DIRECTORIES, ids=lambda path: path.name)
 async def test_ui_fixture_runs_through_cae_handlers(fixture_directory):
     payload, attachments = load_request(fixture_directory)
+    decoded_payload = decode_attachment_tensors(payload, attachments)
+    encoded_payload = json.dumps(decoded_payload, ensure_ascii=False, separators=(",", ":"))
+    assert '"kind":"mesh"' not in encoded_payload
+    assert '"positions":' not in encoded_payload
+    assert '"polygonOffsets":' not in encoded_payload
+    if fixture_directory.name == "fiber-bundle":
+        assert payload["kind"] == "cae.start.payload-attachments"
+        assert len(attachments) == 1
+        assert attachments[0].mimeType == "application/json; charset=utf-8"
+    else:
+        assert attachments == []
     expected = load_json(fixture_directory, "expected.json")
     assert expected["formatVersion"] == 1
     expected_records = expected["records"]
-    recorded_schemas = payload["measurement"]["experiment"]["simulationProgram"]["recordedData"]
+    recorded_schemas = decoded_payload["measurement"]["experiment"]["simulationProgram"]["recordedData"]
     events = []
 
     async def send_event(event_type, event_payload):

@@ -6,6 +6,7 @@ import { installCatalogRuntimeSlice, registerSourceCatalogRuntimeSlice } from '@
 import type { CatalogRuntimeSlice } from '@/contracts/catalog'
 import type { RuntimeActivityDraft } from '@/features/runtime-console'
 import { releaseRecordedDataAttachments, simulate } from './client'
+import { serializeCaeRequest } from './request'
 
 const sdk = vi.hoisted(() => ({ clientOptions: vi.fn(), runJob: vi.fn() }))
 const api = vi.hoisted(() => ({ request: vi.fn() }))
@@ -221,6 +222,7 @@ describe('CAE session client', () => {
       jobApiPrefix: '/web/jobs',
     })
     expect(Object.keys(sdk.runJob.mock.calls[0][1])).toEqual(['formatVersion', 'measurement', 'solverContracts'])
+    expect(sdk.runJob.mock.calls[0][2].attachments).toEqual([])
     const startPayload = sdk.runJob.mock.calls[0][1]
     expect(startPayload.formatVersion).toBe(2)
     expect(startPayload.solverContracts).toEqual([
@@ -432,6 +434,33 @@ describe('CAE session client', () => {
       ),
     )
     expect(Object.keys(payload)).toEqual(['formatVersion', 'measurement', 'solverContracts'])
+  })
+
+  it('keeps exactly 32 KiB inline and moves the next byte into request attachments', () => {
+    const fixture = measurementFixture()
+    const solverContracts = [
+      {
+        name: 'dc-current-density',
+        version: '0.1.0',
+        contractDigest: 'd'.repeat(64),
+      },
+    ]
+    const payload = () => ({ formatVersion: 2, measurement: fixture.measurement, solverContracts })
+    const encoder = new TextEncoder()
+    const baseBytes = encoder.encode(JSON.stringify(payload())).byteLength
+    fixture.measurement.experiment.simulationProgram.pythonSource += 'x'.repeat(32 * 1024 - baseBytes)
+
+    expect(encoder.encode(JSON.stringify(payload()))).toHaveLength(32 * 1024)
+    expect(serializeCaeRequest(fixture.measurement as never, solverContracts).attachments).toEqual([])
+
+    fixture.measurement.experiment.simulationProgram.pythonSource += 'x'
+    const sharded = serializeCaeRequest(fixture.measurement as never, solverContracts)
+    expect(sharded.payload).toMatchObject({
+      kind: 'cae.start.payload-attachments',
+      storage: { kind: 'attachments', byteLength: 32 * 1024 + 1 },
+    })
+    expect(sharded.attachments).toHaveLength(1)
+    expect(sharded.attachments[0]).toMatchObject({ mimeType: 'application/json; charset=utf-8' })
   })
 
   it('rejects malformed or obsolete terminal payload fields', async () => {

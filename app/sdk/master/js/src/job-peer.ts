@@ -15,6 +15,7 @@ const REQUEST_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
 const MAX_BUFFERED_AMOUNT = 512 * 1024;
 const BUFFERED_AMOUNT_LOW_THRESHOLD = 128 * 1024;
 const BUFFERED_AMOUNT_DRAIN_TIMEOUT_MS = 30_000;
+const textEncoder = new TextEncoder();
 
 type JobControlFrame = {
   kind: string;
@@ -143,7 +144,20 @@ export class GpStationJobPeer {
         size: attachment.blob.size,
       }));
     }
-    this.dataChannel.send(JSON.stringify(frame));
+    const encodedFrame = JSON.stringify(frame);
+    const frameBytes = textEncoder.encode(encodedFrame).byteLength;
+    const maxMessageSize = this.peerConnection.sctp?.maxMessageSize;
+    if (
+      typeof maxMessageSize === 'number' &&
+      Number.isFinite(maxMessageSize) &&
+      maxMessageSize > 0 &&
+      frameBytes > maxMessageSize
+    ) {
+      throw new Error(
+        `job call frame is ${frameBytes} bytes; negotiated RTCDataChannel max-message-size is ${maxMessageSize} bytes. Move large payload data to request attachments.`,
+      );
+    }
+    this.dataChannel.send(encodedFrame);
     for (const attachment of attachments) {
       await this.sendRequestAttachment(callId, attachment);
     }

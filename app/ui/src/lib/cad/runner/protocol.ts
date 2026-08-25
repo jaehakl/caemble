@@ -34,6 +34,17 @@ export type RunnerCancelOperationEnvelope = Readonly<{
   requestId: string
 }>
 
+export function resolveRunnerReadyHostOrigin(search: string, allowedHostOrigins: ReadonlySet<string>) {
+  const candidate = new URLSearchParams(search).get('hostOrigin')
+  if (!candidate) return undefined
+  try {
+    const origin = new URL(candidate).origin
+    return candidate === origin && allowedHostOrigins.has(origin) ? origin : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function assertPlainObject(value: unknown, path: string): asserts value is Record<string, unknown> {
   if (
     typeof value !== 'object' ||

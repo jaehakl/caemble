@@ -118,7 +118,12 @@ describe('isolated runner frame', () => {
   beforeAll(async () => {
     vi.stubGlobal('Worker', FakeWorker)
     vi.stubGlobal('window', {
-      location: { origin: 'http://127.0.0.1:5174', protocol: 'http:', port: '5174' },
+      location: {
+        origin: 'http://127.0.0.1:5174',
+        protocol: 'http:',
+        port: '5174',
+        search: '?hostOrigin=http%3A%2F%2Flocalhost%3A5173',
+      },
       parent: {
         postMessage(message: unknown, origin: string) {
           readyMessages.push({ message, origin })
@@ -136,7 +141,9 @@ describe('isolated runner frame', () => {
   afterAll(() => vi.unstubAllGlobals())
 
   it('starts an inspection in a disposable Worker', () => {
-    expect(readyMessages).toHaveLength(3)
+    expect(readyMessages).toEqual([
+      { message: { type: 'caemble-runner-frame-ready' }, origin: 'http://localhost:5173' },
+    ])
     const { messages, port } = createPort()
     handlers[0]({
       data: inspection,

@@ -1,10 +1,10 @@
-import { assertBuiltMeasurement, type BuiltMeasurement } from '../../lib/cad'
+import { assertBuiltMeasurement, type BuiltMeasurement } from '../../lib/cad/execution/measurement'
 import type { CaeStartRequest } from './protocol'
 import { CaeSimulationError } from './errors'
 
 const INPUT_LIMIT_BYTES = 256 * 1024 * 1024
 const SHARD_BYTES = 16 * 1024 * 1024
-const INLINE_CALL_PAYLOAD_BYTES = 512 * 1024
+const INLINE_CALL_PAYLOAD_BYTES = 32 * 1024
 const LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1
 
 export type SerializedCaeAttachment = Readonly<{

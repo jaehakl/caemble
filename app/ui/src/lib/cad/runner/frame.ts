@@ -5,6 +5,7 @@ import {
   assertRunnerOperationEnvelope,
   assertRunnerOperationResultEnvelope,
   runnerOperationRejectionEnvelope,
+  resolveRunnerReadyHostOrigin,
   type RunnerOperationEnvelope,
 } from './protocol'
 
@@ -21,6 +22,9 @@ const allowedHostOrigins = configuredHostOrigin
       ])
     : new Set<string>()
 const activeWorkers = new Map<string, Worker>()
+const readyHostOrigin = configuredHostOrigin
+  ? new URL(configuredHostOrigin).origin
+  : resolveRunnerReadyHostOrigin(window.location.search, allowedHostOrigins)
 
 function handleOperation(event: MessageEvent<unknown>, envelope: RunnerOperationEnvelope) {
   const { nonce, request, type: operation } = envelope
@@ -148,6 +152,4 @@ window.addEventListener('message', (event: MessageEvent<unknown>) => {
   }
 })
 
-allowedHostOrigins.forEach((origin) => {
-  window.parent.postMessage({ type: 'caemble-runner-frame-ready' }, origin)
-})
+if (readyHostOrigin) window.parent.postMessage({ type: 'caemble-runner-frame-ready' }, readyHostOrigin)

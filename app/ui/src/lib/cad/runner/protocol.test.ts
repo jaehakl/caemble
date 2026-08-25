@@ -9,6 +9,7 @@ import {
   assertRunnerOperationEnvelope,
   assertRunnerOperationResultEnvelope,
   assertRunnerOperationStartedEnvelope,
+  resolveRunnerReadyHostOrigin,
   runnerOperationRejectionEnvelope,
 } from './protocol'
 import { canonicalShapedCatalog } from './catalogProtocol.testFixture'
@@ -47,6 +48,16 @@ const compiledExperiment: CompiledCadDocument = {
 }
 
 describe('isolated runner protocol for Experiment bundles', () => {
+  it('selects one exact development host origin from localhost, IPv4, or IPv6', () => {
+    const allowed = new Set(['http://localhost:5173', 'http://127.0.0.1:5173', 'http://[::1]:5173'])
+    for (const origin of allowed) {
+      expect(resolveRunnerReadyHostOrigin(`?hostOrigin=${encodeURIComponent(origin)}`, allowed)).toBe(origin)
+    }
+    expect(resolveRunnerReadyHostOrigin('?hostOrigin=http%3A%2F%2Fevil.example', allowed)).toBeUndefined()
+    expect(resolveRunnerReadyHostOrigin('?hostOrigin=http%3A%2F%2Flocalhost%3A5173%2Fpath', allowed)).toBeUndefined()
+    expect(resolveRunnerReadyHostOrigin('?hostOrigin=%', allowed)).toBeUndefined()
+  })
+
   it('accepts a Taskless Experiment evaluation result', () => {
     const sceneContent = {
       lengthUnit: 'mm' as const,
