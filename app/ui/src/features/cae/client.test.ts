@@ -42,20 +42,22 @@ function measurementFixture() {
     },
   }
   const scene = {
-    sceneHash: 'c'.repeat(64),
+    geometryFormatVersion: 1,
+    geometryHash: 'c'.repeat(64),
     lengthUnit: 'mm',
-    parts: [
+    roots: [
       {
         id: 'part',
-        geometry: {
-          kind: 'mesh',
-          positions: new Float64Array([1000, 0, 0]),
-          polygonOffsets: new Uint32Array([0, 3]),
+        materialRole: 'body',
+        material: { name: 'Copper', source: 'test', version: '1' },
+        node: {
+          kind: 'primitive',
+          nodeId: 'part',
+          primitive: 'box',
+          parameters: { size: [1, 1, 1] },
         },
-        surfaces: [],
       },
     ],
-    tree: { key: 'root', label: 'root', children: [] },
     geometryGroups: [],
     surfaceGroups: [],
   }
@@ -139,8 +141,24 @@ describe('CAE session client', () => {
           opaque: false,
           applicableUnits: ['{fraction}'],
         },
+        {
+          name: 'electromagnetism.ElectricConductivity',
+          domain: 'electromagnetism',
+          tensorOrder: 2,
+          description: null,
+          opaque: false,
+          applicableUnits: ['S.m-1', 'S.cm-1'],
+        },
       ],
-      materialParameters: [],
+      materialParameters: [
+        {
+          key: 'electrical.conductivity',
+          domain: 'electrical',
+          labelKo: '전기 전도도',
+          quantityKind: 'electromagnetism.ElectricConductivity',
+          specialQualifiers: [],
+        },
+      ],
       materialModels: [],
       materialGlobalQualifiers: [],
       warnings: [],
@@ -202,8 +220,9 @@ describe('CAE session client', () => {
       authMode: 'cookie',
       jobApiPrefix: '/web/jobs',
     })
-    expect(Object.keys(sdk.runJob.mock.calls[0][1])).toEqual(['measurement', 'solverContracts'])
+    expect(Object.keys(sdk.runJob.mock.calls[0][1])).toEqual(['formatVersion', 'measurement', 'solverContracts'])
     const startPayload = sdk.runJob.mock.calls[0][1]
+    expect(startPayload.formatVersion).toBe(2)
     expect(startPayload.solverContracts).toEqual([
       {
         name: 'dc-current-density',
@@ -367,6 +386,20 @@ describe('CAE session client', () => {
     expect(sdk.runJob).not.toHaveBeenCalled()
   })
 
+  it('rejects preview-only render geometry at the CAE request boundary', async () => {
+    const fixture = measurementFixture()
+    const measurement = {
+      ...fixture.measurement,
+      experiment: {
+        ...fixture.measurement.experiment,
+        renderScene: { parts: [] },
+      },
+    }
+
+    await expect(simulate(measurement as never)).rejects.toThrow('renderScene is not allowed')
+    expect(sdk.runJob).not.toHaveBeenCalled()
+  })
+
   it('moves a large UTF-8 start payload into request attachments', async () => {
     const fixture = measurementFixture()
     fixture.measurement.experiment.simulationProgram.pythonSource = `# ${'한'.repeat(300_000)}`
@@ -398,7 +431,7 @@ describe('CAE session client', () => {
         attachments.find((item: { mimeType: string }) => item.mimeType.startsWith('application/json')).blob,
       ),
     )
-    expect(Object.keys(payload)).toEqual(['measurement', 'solverContracts'])
+    expect(Object.keys(payload)).toEqual(['formatVersion', 'measurement', 'solverContracts'])
   })
 
   it('rejects malformed or obsolete terminal payload fields', async () => {

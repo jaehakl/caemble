@@ -1,7 +1,8 @@
 import pytest
 
 from app.errors import CaeError
-from app.runtime import _validate_material_snapshot, _validate_scene_part, _validate_variables
+from app.runtime import _validate_material_snapshot, _validate_scene, _validate_variables
+from app.solver_framework.geometry import canonical_geometry_hash
 from app.solver_framework.validation import normalize_parameter_value
 
 
@@ -237,23 +238,44 @@ def test_material_snapshot_validation_rejects_provenance_and_tensor_errors():
         assert error.value.code == "invalid_input"
 
 
-def test_scene_part_accepts_a_named_material_role_and_rejects_invalid_roles():
-    part = {
+def test_canonical_scene_accepts_a_named_material_role_and_rejects_legacy_meshes():
+    root = {
         "id": "wheel.tire",
         "materialRole": "tire",
-        "geometry": {
-            "kind": "mesh",
-            "positions": [0, 0, 0, 1, 0, 0, 0, 1, 0],
-            "polygonOffsets": [0, 3],
+        "node": {
+            "kind": "primitive",
+            "nodeId": "wheel.tire",
+            "primitive": "box",
+            "parameters": {"size": [1, 1, 1]},
         },
-        "surfaces": [],
     }
-    _validate_scene_part(part, "Built Experiment.scene.parts[0]")
+    draft = {
+        "geometryFormatVersion": 1,
+        "lengthUnit": "m",
+        "roots": [root],
+        "geometryGroups": [],
+        "surfaceGroups": [],
+    }
+    scene = {**draft, "geometryHash": canonical_geometry_hash(draft)}
+    _validate_scene(scene, "Built Experiment.scene")
 
     for invalid in ("", 7):
         with pytest.raises(CaeError) as error:
-            _validate_scene_part(
-                {**part, "materialRole": invalid},
-                "Built Experiment.scene.parts[0]",
+            _validate_scene(
+                {**scene, "roots": [{**root, "materialRole": invalid}]},
+                "Built Experiment.scene",
             )
         assert error.value.code == "invalid_input"
+
+    with pytest.raises(CaeError, match="CanonicalGeometrySceneV1"):
+        _validate_scene(
+            {
+                "sceneHash": "c" * 64,
+                "lengthUnit": "m",
+                "parts": [],
+                "tree": {},
+                "geometryGroups": [],
+                "surfaceGroups": [],
+            },
+            "Built Experiment.scene",
+        )

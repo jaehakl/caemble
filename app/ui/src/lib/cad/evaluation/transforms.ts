@@ -2,6 +2,7 @@ import { maths, transforms } from '@jscad/modeling'
 import { CadModelError } from '../model/core'
 import type { Rotation, Vec3 } from '../model/types'
 import type { EvaluatedPart, NormalizedTransforms } from './types'
+import type { CanonicalAffineMatrixV1 } from './canonicalTypes'
 
 const { scale, transform, translate } = transforms
 const cadCreateMatrix = maths.mat4.create as () => unknown
@@ -105,7 +106,71 @@ function xyzEulerMatrix([x, y, z]: Vec3) {
   )
 }
 
-export function applyTransforms(parts: EvaluatedPart[], values: NormalizedTransforms) {
+export function normalizedTransformMatrix(values: NormalizedTransforms): CanonicalAffineMatrixV1 {
+  let rotation = [1, 0, 0, 0, 1, 0, 0, 0, 1]
+  if (values.rotation) {
+    const [x, y, z] = values.rotation
+    const a = Math.cos(x)
+    const b = Math.sin(x)
+    const c = Math.cos(y)
+    const d = Math.sin(y)
+    const e = Math.cos(z)
+    const f = Math.sin(z)
+    rotation = [
+      c * e,
+      -c * f,
+      d,
+      a * f + b * e * d,
+      a * e - b * f * d,
+      -b * c,
+      b * f - a * e * d,
+      b * e + a * f * d,
+      a * c,
+    ]
+  } else if (values.rotate) {
+    const [x, y, z] = values.rotate.axis
+    const cosine = Math.cos(values.rotate.angle)
+    const sine = Math.sin(values.rotate.angle)
+    const inverse = 1 - cosine
+    rotation = [
+      cosine + x * x * inverse,
+      x * y * inverse - z * sine,
+      x * z * inverse + y * sine,
+      y * x * inverse + z * sine,
+      cosine + y * y * inverse,
+      y * z * inverse - x * sine,
+      z * x * inverse - y * sine,
+      z * y * inverse + x * sine,
+      cosine + z * z * inverse,
+    ]
+  }
+  const [scaleX, scaleY, scaleZ] = values.scale
+  return Object.freeze([
+    rotation[0] * scaleX,
+    rotation[1] * scaleY,
+    rotation[2] * scaleZ,
+    values.position[0],
+    rotation[3] * scaleX,
+    rotation[4] * scaleY,
+    rotation[5] * scaleZ,
+    values.position[1],
+    rotation[6] * scaleX,
+    rotation[7] * scaleY,
+    rotation[8] * scaleZ,
+    values.position[2],
+    0,
+    0,
+    0,
+    1,
+  ]) as CanonicalAffineMatrixV1
+}
+
+export function applyTransforms(
+  parts: EvaluatedPart[],
+  values: NormalizedTransforms,
+  nodeId?: string,
+  instanceId?: string,
+) {
   const shouldScale = values.scale.some((factor) => factor !== 1)
   const legacyRotationMatrix =
     values.rotate && values.rotate.angle !== 0
@@ -114,14 +179,30 @@ export function applyTransforms(parts: EvaluatedPart[], values: NormalizedTransf
   const shouldRotate = values.rotation?.some((angle) => angle !== 0) ?? false
   const shouldTranslate = values.position.some((coordinate) => coordinate !== 0)
 
-  if (!shouldScale && legacyRotationMatrix === undefined && !shouldRotate && !shouldTranslate) return parts
+  if (!shouldScale && legacyRotationMatrix === undefined && !shouldRotate && !shouldTranslate && !instanceId)
+    return parts
 
-  return parts.map((part) => {
+  const matrix = normalizedTransformMatrix(values)
+
+  return parts.map((part, index) => {
     let geometry = part.geometry
     if (shouldScale) geometry = cadScale([...values.scale], geometry)
     if (shouldRotate) geometry = cadTransform(xyzEulerMatrix(values.rotation!), geometry)
     if (legacyRotationMatrix !== undefined) geometry = cadTransform(legacyRotationMatrix, geometry)
     if (shouldTranslate) geometry = cadTranslate([...values.position], geometry)
-    return { ...part, geometry }
+    const transformNodeId = `${nodeId ?? part.canonicalNode.nodeId}/${instanceId ? '$instance' : '$transform'}-${index + 1}`
+    return {
+      ...part,
+      geometry,
+      canonicalNode: instanceId
+        ? {
+            kind: 'instance' as const,
+            nodeId: transformNodeId,
+            instanceId,
+            matrix,
+            child: part.canonicalNode,
+          }
+        : { kind: 'transform' as const, nodeId: transformNodeId, matrix, child: part.canonicalNode },
+    }
   })
 }

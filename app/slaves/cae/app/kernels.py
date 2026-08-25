@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Awaitable, Callable
 
 from app.errors import CaeError
+from app.solver_framework.geometry import GeometryService
 from app.solver_framework.registry import registry
 from app.solver_framework.validation import normalize_task_config
 
@@ -59,5 +60,6 @@ async def run_kernel(
     inputs: dict[str, Any],
     world: dict[str, Any],
     progress: Callable[[Any], Awaitable[None]],
+    geometry: GeometryService | None = None,
 ) -> dict[str, Any]:
-    return await registry.run(task, state, inputs, world, progress)
+    return await registry.run(task, state, inputs, world, progress, geometry or GeometryService())

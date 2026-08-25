@@ -101,7 +101,7 @@ describe('unversioned CAD authoring declarations', () => {
     expect(jsxTypes).not.toContain('const Fragment: unknown')
   })
 
-  it('type-checks the v9 Experiment and Task defaults', () => {
+  it('type-checks the v10 Experiment and Task defaults', () => {
     expect(diagnosticsFor(catalogExperimentProgramCode)).toEqual([])
     expect(
       diagnosticsFor(catalogExperimentTaskCode, catalogGeometryFiles, 'C:/caemble-source/hash/tasks/electric.tsx'),

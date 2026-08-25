@@ -5,6 +5,7 @@ import { installSyntheticCatalog } from '@/test/syntheticCatalog'
 import { starterExperimentSourceBundle } from '../../localExperimentCode'
 import { CAD_COMPILER_VERSION, type CompiledCadDocument, type CompiledCadSource } from '../compiler/types'
 import { generateRandomVars } from '../model/vars'
+import { assertCadSourceDocument, createExperimentSourceBundle } from '../source/document'
 import {
   evaluateCompiledGeometryModule,
   executeCompiledDocument,
@@ -47,7 +48,7 @@ async function compiledDocument(
       .filter(([path]) => path.endsWith('.ts') || path.endsWith('.tsx'))
       .map(async ([entryFile, source]) => {
         const compiled: CompiledCadSource = {
-          apiVersion: 9,
+          apiVersion: 10,
           compilerVersion: CAD_COMPILER_VERSION,
           entryFile,
           code: await compile(source, entryFile),
@@ -56,7 +57,7 @@ async function compiledDocument(
         return [entryFile, compiled] as const
       }),
   )
-  return { apiVersion: 9, compilerVersion: CAD_COMPILER_VERSION, sourceHash, sources: Object.fromEntries(entries) }
+  return { apiVersion: 10, compilerVersion: CAD_COMPILER_VERSION, sourceHash, sources: Object.fromEntries(entries) }
 }
 
 describe('compiled Experiment bundle execution', () => {
@@ -207,5 +208,33 @@ export default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => <b
     expect(geometries.geom3.isA(result.scene.parts[0].geometry)).toBe(true)
     expect(result.taskScenes).toEqual({})
     expect(result.simulationProgram.tasks).toEqual({})
+  })
+
+  it('reads API 7-9 bundles but rejects ordinal surface ids when they are executed', async () => {
+    const bundle = createExperimentSourceBundle({
+      'experiment.tsx': `import { experiment } from '@caemble/core'
+export default experiment({
+  lengthUnit: 'mm', varsSchema: {}, geometry: () => <box id="body" size={[1, 1, 1]} />,
+  surfaceGroup: { terminal: ['body/surface-1'] }, recordedData: {},
+})`,
+      'simulate.py': 'async def simulate(*, sim, tasks, vars):\n    return None\n',
+    })
+    for (const apiVersion of [7, 8, 9] as const) {
+      expect(() =>
+        assertCadSourceDocument({ kind: 'experiment', formatVersion: 2, apiVersion, sourceBundle: bundle }),
+      ).not.toThrow()
+    }
+
+    const compiled = await compiledDocument(bundle.files, '7'.repeat(64))
+    expect(() => executeCompiledDocument(compiled, {}, bundle.files['simulate.py'])).toThrow(
+      'uses removed ordinal surface syntax. CAD API 10 requires <geometry-id>/surface/<face-key>',
+    )
+
+    const semanticBundle = createExperimentSourceBundle({
+      ...bundle.files,
+      'experiment.tsx': bundle.files['experiment.tsx'].replace('body/surface-1', 'body/surface/-X'),
+    })
+    const semantic = await compiledDocument(semanticBundle.files, '6'.repeat(64))
+    expect(() => executeCompiledDocument(semantic, {}, semanticBundle.files['simulate.py'])).not.toThrow()
   })
 })

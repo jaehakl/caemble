@@ -37,6 +37,8 @@ export function buildCadAuthoringReference({
     `- Never generate \`translation\`. ${authoringContract.transforms.legacyProperties.map(({ name }) => `\`${name}\``).join(' and ')} and lowercase primitive JSX are deprecated compatibility syntax; do not emit them. ${authoringContract.transforms.mixing}`,
     '- Omitted component/primitive IDs use lower-kebab names plus `-2`, `-3`; use explicit stable IDs for durable targets. Fragment has no `id`.',
     '- A topology-changing operation owns its result `id`; consumed operand IDs are not final solver targets. `array` keeps `$cell-x-y-z` instance identity.',
+    '- `surfaceGroup` members use `<geometry-id>/surface/<URL-encoded-face-key>`. Give referenced primitive/Fiber leaves explicit stable IDs and use only face keys from the Element reference; Boolean results retain leaf provenance and a shell root exposes `inner`/`outer`. Never emit ordinal `/surface-N` members or aliases.',
+    '- One Boolean node accepts at most 128 operands. Avoid expanding large lattices into nested Booleans because the deterministic triangle and triangle-pair work budgets reject unsafe scenes before Manifold evaluation.',
     '- Components inherit the parent Material role map when `materials` is omitted; an explicit map replaces it and `{}` clears it. Primitives consume the `body` role.',
     "- Boolean child order matters: `subtract` uses the first child as base and the rest as cutters. Follow each operation's child contract exactly.",
     '- Import PascalCase primitives and public APIs from `@caemble/core`; keep operation tags lowercase. Export PascalCase named `Geometry<Props>` components, never a default Geometry export.',

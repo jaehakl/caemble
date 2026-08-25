@@ -32,9 +32,23 @@ const exampleExperimentRepositories: Record<(typeof exampleExperimentKeys)[numbe
   'electro-thermal-uniform-bar': 'verified',
 }
 
-function catalogQuery(key: (typeof exampleExperimentKeys)[number]) {
+export const exampleExperimentVersions: Record<(typeof exampleExperimentKeys)[number], '1.0.0' | '2.0.0'> = {
+  'basketball-goal': '1.0.0',
+  'fiber-bundle': '1.0.0',
+  'shell-cutaways': '1.0.0',
+  'random-curved-edge-cylinder-array': '1.0.0',
+  'random-curved-surface-sphere-hcp-array': '1.0.0',
+  'geometry-authoring-skeleton': '1.0.0',
+  'two-material-wheel-assembly': '1.0.0',
+  'dc-uniform-bar': '2.0.0',
+  'dc-notched-current-density': '2.0.0',
+  'dc-resolution-study': '2.0.0',
+  'electro-thermal-uniform-bar': '2.0.0',
+}
+
+function catalogQuery(key: (typeof exampleExperimentKeys)[number], version: '1.0.0' | '2.0.0') {
   const repository = exampleExperimentRepositories[key]
-  const cacheKey = `caemble:experiment/caemble/${repository}/${key}@1.0.0`
+  const cacheKey = `caemble:experiment/caemble/${repository}/${key}@${version}`
   if (cached.has(cacheKey)) return cached.get(cacheKey)
   const catalogRoot = path.resolve(process.cwd(), '../catalog')
   const executable = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3')
@@ -48,7 +62,7 @@ function catalogQuery(key: (typeof exampleExperimentKeys)[number]) {
       'query',
       'experiment',
       key,
-      '1.0.0',
+      version,
       '--namespace',
       'caemble',
       '--repository',
@@ -65,8 +79,11 @@ function catalogQuery(key: (typeof exampleExperimentKeys)[number]) {
   return value
 }
 
-export function exampleExperiment(key: (typeof exampleExperimentKeys)[number]) {
-  const value = catalogQuery(key) as CatalogExperimentDetail
+export function exampleExperiment(
+  key: (typeof exampleExperimentKeys)[number],
+  version: '1.0.0' | '2.0.0' = exampleExperimentVersions[key],
+) {
+  const value = catalogQuery(key, version) as CatalogExperimentDetail
   assertExperimentSourceBundle(value.sourceBundle)
   return value as CatalogExperimentDetail & { sourceBundle: ExperimentSourceBundle }
 }

@@ -1,13 +1,14 @@
 import { extrusions, geometries } from '@jscad/modeling'
 import type { MutableVec3 } from '../../../geometry/vec3'
 import type { PrimitiveElementDefinition } from '../../../evaluation/types'
+import type { CanonicalFiberNodeV1 } from '../../../evaluation/canonicalTypes'
 import { fiberManifest, type FiberAttributes } from './definition'
-import { sampleFiber } from './sampling'
+import { sampleFiber, type SampledFiber } from './sampling'
 
 const tau = Math.PI * 2
+const sampledFiberByGeometry = new WeakMap<object, SampledFiber>()
 
-export function createFiberGeometry(attributes: FiberAttributes) {
-  const sampled = sampleFiber(attributes)
+function createFiberGeometryFromSampled(sampled: SampledFiber) {
   const slices = sampled.points.map((point, pathIndex) => {
     const frame = sampled.frames[pathIndex]
     const radius = sampled.radii[pathIndex]
@@ -24,7 +25,7 @@ export function createFiberGeometry(attributes: FiberAttributes) {
     return extrusions.slice.fromPoints(ring)
   })
 
-  return extrusions.extrudeFromSlices(
+  const geometry = extrusions.extrudeFromSlices(
     {
       numberOfSlices: slices.length,
       capStart: true,
@@ -34,6 +35,29 @@ export function createFiberGeometry(attributes: FiberAttributes) {
     },
     slices[0],
   )
+  sampledFiberByGeometry.set(geometry, sampled)
+  return geometry
+}
+
+export function createFiberGeometry(attributes: FiberAttributes) {
+  return createFiberGeometryFromSampled(sampleFiber(attributes))
+}
+
+export function canonicalFiberNode(geometry: unknown, nodeId: string): CanonicalFiberNodeV1 {
+  const sampled = typeof geometry === 'object' && geometry !== null ? sampledFiberByGeometry.get(geometry) : undefined
+  if (!sampled) throw new Error('Fiber evaluation lost its sampled numeric representation.')
+  return {
+    kind: 'fiber',
+    nodeId,
+    points: sampled.points.map((point) => [point[0], point[1], point[2]]),
+    radii: [...sampled.radii],
+    frames: sampled.frames.map((frame) => ({
+      tangent: [frame.tangent[0], frame.tangent[1], frame.tangent[2]],
+      normal: [frame.normal[0], frame.normal[1], frame.normal[2]],
+      binormal: [frame.binormal[0], frame.binormal[1], frame.binormal[2]],
+    })),
+    radialSegments: sampled.radialSegments,
+  }
 }
 
 export const fiberDefinition = {

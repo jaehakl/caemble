@@ -4,35 +4,49 @@ import type { RunnerOperationEnvelope } from './protocol'
 import { canonicalShapedCatalog } from './catalogProtocol.testFixture'
 
 const responses: unknown[] = []
+const reportedErrors: unknown[] = []
+let rejectOperationResult = false
 const workerScope = {
   onmessage: null as ((event: MessageEvent<unknown>) => void) | null,
   postMessage(message: unknown) {
+    if (
+      rejectOperationResult &&
+      typeof message === 'object' &&
+      message !== null &&
+      'type' in message &&
+      message.type === 'operation-result'
+    ) {
+      throw new Error('postMessage failed')
+    }
     responses.push(message)
+  },
+  reportError(error: unknown) {
+    reportedErrors.push(error)
   },
 }
 const nonce = '12345678-90ab-cdef-1234-567890abcdef'
 const sourceHash = 'c'.repeat(64)
 const compiledExperiment: CompiledCadDocument = {
-  apiVersion: 9,
+  apiVersion: 10,
   compilerVersion: CAD_COMPILER_VERSION,
   sourceHash,
   sources: {
     'geometry.tsx': {
-      apiVersion: 9,
+      apiVersion: 10,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'geometry.tsx',
       sourceHash,
       code: 'module.exports = {}',
     },
     'material.tsx': {
-      apiVersion: 9,
+      apiVersion: 10,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'material.tsx',
       sourceHash,
       code: 'module.exports = {}',
     },
     'experiment.tsx': {
-      apiVersion: 9,
+      apiVersion: 10,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'experiment.tsx',
       sourceHash,
@@ -44,7 +58,7 @@ module.exports.default = experiment({
 })`,
     },
     'tasks/electric.tsx': {
-      apiVersion: 9,
+      apiVersion: 10,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'tasks/electric.tsx',
       sourceHash,
@@ -70,6 +84,8 @@ describe('CAD runner Worker', () => {
   })
   beforeEach(() => {
     responses.length = 0
+    reportedErrors.length = 0
+    rejectOperationResult = false
   })
   afterAll(() => vi.unstubAllGlobals())
 
@@ -94,7 +110,7 @@ describe('CAD runner Worker', () => {
     })
   })
 
-  it('evaluates against the exact synthetic catalog slice', () => {
+  it('evaluates against the exact synthetic catalog slice', async () => {
     dispatch({
       type: 'evaluate',
       nonce,
@@ -108,6 +124,7 @@ describe('CAD runner Worker', () => {
         vars: { width: 2 },
       },
     })
+    await vi.waitFor(() => expect(responses).toHaveLength(1))
     expect(responses[0]).toMatchObject({
       type: 'operation-result',
       operation: 'evaluate',
@@ -116,7 +133,7 @@ describe('CAD runner Worker', () => {
     })
   })
 
-  it('evaluates the reserved Draft Task for preview without a fake Solver descriptor', () => {
+  it('evaluates the reserved Draft Task for preview without a fake Solver descriptor', async () => {
     const draftDocument: CompiledCadDocument = {
       ...compiledExperiment,
       sources: {
@@ -144,6 +161,7 @@ module.exports.default = defineTask({
         vars: { width: 2 },
       },
     })
+    await vi.waitFor(() => expect(responses).toHaveLength(1))
     expect(responses[0]).toMatchObject({
       type: 'operation-result',
       operation: 'evaluate',
@@ -220,5 +238,23 @@ module.exports.default = defineTask({
         message: expect.stringContaining('is not applicable to DimensionlessRatio'),
       },
     })
+  })
+
+  it('reports asynchronous operation-result delivery failures to the Worker error boundary', async () => {
+    rejectOperationResult = true
+    dispatch({
+      type: 'inspect',
+      nonce,
+      request: {
+        type: 'inspect',
+        requestId: 'delivery-failed',
+        revision: 8,
+        compiledDocument: compiledExperiment,
+        catalog: canonicalShapedCatalog,
+      },
+    })
+
+    await vi.waitFor(() => expect(reportedErrors).toHaveLength(1))
+    expect(reportedErrors[0]).toEqual(expect.objectContaining({ message: 'postMessage failed' }))
   })
 })

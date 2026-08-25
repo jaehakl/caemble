@@ -11,10 +11,12 @@ those details in Markdown.
 | --- | ---: | --- |
 | Experiment source bundle | 6 | UI/API source document model |
 | CAD document | 2 | UI Code-to-CAD runner |
-| CAD authoring API | 9 | generated UI declaration and element registry |
+| CAD authoring API | 10 | generated UI declaration and element registry |
+| Canonical Geometry scene | 1 | UI evaluator and CAE geometry runtime |
 | Simulation manifest | 5 | UI evaluation and CAE runtime |
 | Python simulation API | 3 | CAE program runtime |
 | Material snapshot | 2 | UI Measurement builder |
+| Catalog schema | 6 | shared SQLite catalog |
 
 An Experiment version atomically owns this source bundle:
 
@@ -40,11 +42,19 @@ Persisted versions use
 repository, key, and SemVer are stored on the Experiment row; repository lists
 are derived from those rows rather than maintained as separate entities.
 
-CAD API v9 uses `position`, `rotation`, and `scale` as canonical transforms.
+CAD API v10 uses `position`, `rotation`, and `scale` as canonical transforms.
 Material assignment uses named roles such as `body`, `tire`, or `shell`, not
 positional arrays. TypeScript sources may statically import `@caemble/core` and
 relative `.ts`/`.tsx` modules stored in the same bundle; there is no external
 Geometry source graph.
+
+Surface group members use semantic primitive provenance in the form
+`<geometry-id>/surface/<URL-encoded-face-key>`. For example, the positive X face
+of a leaf with identity `conductor.body` is
+`conductor.body/surface/%2BX`. CAD API v7-v9 source remains readable, but an
+ordinal `/surface-N` member cannot be prepared or executed under API v10. It is
+never mapped to a semantic face automatically; publish a new immutable
+Experiment version with explicit leaf identities and semantic members.
 
 Authoring examples and element-specific props belong in generated executable
 examples and the live Experiment Catalog exposed by `/docs`. When syntax changes,
@@ -56,11 +66,13 @@ copying a new prose example here.
 ```text
 Experiment version + complete vars
   -> isolated UI compile/evaluate
-  -> deterministic common and Task-local scenes
+  -> deterministic common and Task-local Canonical Geometry scenes
+  -> local preview mesh (Viewer only)
   -> frozen Material snapshot
   -> prepared Measurement
-  -> { measurement: BuiltMeasurement, solverContracts }
-  -> CAE worker contract validation and execution
+  -> { formatVersion: 2, measurement: BuiltMeasurement, solverContracts }
+  -> CAE worker contract and Canonical Geometry validation
+  -> Solver-specific interpretation or shared triangulation
   -> sim.record() DataTensor values
   -> atomic RecordedData attachment
   -> Viewer and Analysis
@@ -78,17 +90,20 @@ Measurement conditions, RecordedData, and orchestration state. Source can
 overwrite an unlocked version; any derived Measurement or model locks that
 version's source and requires an explicit new SemVer for code changes. Name and
 description metadata remain editable. The API does not execute CAD or physics.
-Payloads and attachments travel over WebRTC between the client and worker.
+Payloads and attachments travel over WebRTC between the client and worker. The
+Viewer's rendered mesh stays in the UI; the CAE request carries Canonical
+Geometry scene v1 with `geometryFormatVersion`, `geometryHash`, units, roots,
+geometry groups, and semantic surface selectors.
 
 ## Ownership boundaries
 
 | Area | Responsibility |
 | --- | --- |
-| UI | authoring, isolated evaluation, preview, candidate generation, Material freezing, BuiltMeasurement serialization |
+| UI | authoring, isolated evaluation, local preview, canonical CSG normalization, candidate generation, Material freezing, BuiltMeasurement serialization |
 | API | OAuth/tokens, Experiment version ownership, prepared Measurements, one-time RecordedData transaction, job orchestration |
 | Catalog | the sole QuantityKind, Material, Solver, and Example Experiment data source in `catalog.sqlite3` |
 | Launcher | discovers executable manifests, owns one active worker/job, and bridges the control WebSocket |
-| CAE worker | verifies catalog digests, converts units, validates target/method contracts, runs `simulate.py` and Solvers |
+| CAE worker | verifies catalog and geometry digests, validates canonical CSG and targets, converts units, interprets or triangulates Geometry, runs `simulate.py` and Solvers |
 | AI worker | executes the public v1 AI handlers using machine-local model/provider configuration |
 | SDKs | preserve the public v1 REST, WebSocket, WebRTC, frame, and attachment contracts |
 

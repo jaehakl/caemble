@@ -3,6 +3,7 @@ import pytest
 
 from app.errors import CaeError
 from app.kernels import run_kernel
+from app.solver_framework.geometry import GeometryService
 from app.solver_framework.numerics.voxel import build_voxel_domain
 from app.solver_framework.world import surface
 
@@ -10,50 +11,61 @@ pytestmark = pytest.mark.slow
 
 
 def box_world():
-    x0, x1 = -0.05, 0.05
-    y0, y1 = -0.0025, 0.0025
-    z0, z1 = -0.0025, 0.0025
-    polygons = [
-        [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]],
-        [[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]],
-        [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]],
-        [[x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]],
-        [[x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]],
-        [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]],
-    ]
-    positions = np.asarray([point for polygon in polygons for point in polygon], dtype=np.float64)
-    offsets = np.arange(0, positions.shape[0] + 1, 4, dtype=np.uint32)
     part = {
         "id": "conductor",
-        "geometry": {
-            "kind": "mesh",
-            "positions": positions,
-            "polygonOffsets": offsets,
+        "materialRole": "conductor",
+        "material": {"name": "Copper"},
+        "node": {
+            "kind": "primitive",
+            "nodeId": "conductor",
+            "primitive": "box",
+            "parameters": {"size": [0.1, 0.005, 0.005]},
         },
-        "material": {"name": "Copper", "variables": {}},
-        "surfaces": [
-            {"id": "source", "name": "source", "polygonIndices": [0]},
-            {"id": "reference", "name": "reference", "polygonIndices": [1]},
-        ],
     }
     scene = {
+        "geometryFormatVersion": 1,
+        "geometryHash": "a" * 64,
         "lengthUnit": "m",
-        "parts": [part],
+        "roots": [part],
         "geometryGroups": [
             {
+                "id": "@geometry-group/conductor",
                 "name": "conductor",
-                "geometryIds": ["conductor"],
-                "surfaceIds": [],
+                "kind": "geometry",
+                "memberIds": ["conductor"],
+                "rootIds": ["conductor"],
+                "missingMemberIds": [],
             }
         ],
         "surfaceGroups": [
-            {"name": "sourceTerminal", "geometryIds": [], "surfaceIds": ["source"]},
-            {"name": "referenceTerminal", "geometryIds": [], "surfaceIds": ["reference"]},
+            {
+                "id": "@surface-group/sourceTerminal",
+                "name": "sourceTerminal",
+                "kind": "surface",
+                "memberIds": ["conductor/surface/-X"],
+                "selectors": [{"rootId": "conductor", "sourceNodeId": "conductor", "faceKey": "-X"}],
+                "missingMemberIds": [],
+            },
+            {
+                "id": "@surface-group/referenceTerminal",
+                "name": "referenceTerminal",
+                "kind": "surface",
+                "memberIds": ["conductor/surface/%2BX"],
+                "selectors": [{"rootId": "conductor", "sourceNodeId": "conductor", "faceKey": "+X"}],
+                "missingMemberIds": [],
+            },
         ],
     }
     return {
         "experiment": scene,
-        "task": {},
+        "task": {
+            "geometryFormatVersion": 1,
+            "geometryHash": "b" * 64,
+            "lengthUnit": "m",
+            "roots": [],
+            "geometryGroups": [],
+            "surfaceGroups": [],
+        },
         "materials": {
             "experiment": {
                 "parameters": {
@@ -225,7 +237,8 @@ async def test_solver_converts_geometry_from_declared_ucum_length_unit():
         return None
 
     world = box_world()
-    world["experiment"]["parts"][0]["geometry"]["positions"] /= 0.3048006096012192
+    parameters = world["experiment"]["roots"][0]["node"]["parameters"]
+    parameters["size"] = [value / 0.3048006096012192 for value in parameters["size"]]
     world["experiment"]["lengthUnit"] = "[ft_us]"
 
     result = await run_kernel(dc_task(), None, {}, world, report)
@@ -239,35 +252,34 @@ async def test_geometry_views_can_use_different_solver_reference_units():
         return None
 
     scene = box_world()["experiment"]
-    part = scene["parts"][0]
+    part = scene["roots"][0]
     source = surface(scene, "sourceTerminal", "conductor")
     reference = surface(scene, "referenceTerminal", "conductor")
-    original_positions = part["geometry"]["positions"].copy()
+    original_size = list(part["node"]["parameters"]["size"])
+    geometry = GeometryService()
+    meter_mesh = await geometry.triangular_mesh(scene, part["id"], "m")
+    millimeter_mesh = await geometry.triangular_mesh(scene, part["id"], "mm")
 
     meter_domain = await build_voxel_domain(
-        scene,
-        part,
+        meter_mesh,
         source,
         reference,
         (3, 3, 3),
-        "m",
         report,
         "meter solver",
     )
     millimeter_domain = await build_voxel_domain(
-        scene,
-        part,
+        millimeter_mesh,
         source,
         reference,
         (3, 3, 3),
-        "mm",
         report,
         "millimeter solver",
     )
 
     assert meter_domain.length == pytest.approx(0.1)
     assert millimeter_domain.length == pytest.approx(100)
-    np.testing.assert_array_equal(part["geometry"]["positions"], original_positions)
+    assert part["node"]["parameters"]["size"] == original_size
 
 
 @pytest.mark.asyncio

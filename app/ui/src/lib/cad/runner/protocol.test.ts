@@ -26,14 +26,14 @@ const syntheticCatalog = {
   warnings: [],
 } as const
 const compiledSource = (entryFile: string, code = 'module.exports = {}') => ({
-  apiVersion: 9 as const,
+  apiVersion: 10 as const,
   compilerVersion: CAD_COMPILER_VERSION,
   entryFile,
   code,
   sourceHash,
 })
 const compiledExperiment: CompiledCadDocument = {
-  apiVersion: 9,
+  apiVersion: 10,
   compilerVersion: CAD_COMPILER_VERSION,
   sourceHash,
   sources: {
@@ -55,7 +55,15 @@ describe('isolated runner protocol for Experiment bundles', () => {
       geometryGroups: [],
       surfaceGroups: [],
     }
-    const scene = { sceneHash: cadSceneHash(sceneContent), ...sceneContent }
+    const renderScene = { sceneHash: cadSceneHash(sceneContent), ...sceneContent }
+    const scene = {
+      geometryFormatVersion: 1,
+      geometryHash: '925303f4dbe17be213b13881dbe3c16d804347ad95db75560fcab454731f3a76',
+      lengthUnit: 'mm' as const,
+      roots: [],
+      geometryGroups: [],
+      surfaceGroups: [],
+    }
 
     expect(() =>
       assertRunnerOperationResultEnvelope({
@@ -74,6 +82,8 @@ describe('isolated runner protocol for Experiment bundles', () => {
             varsSchema: {},
             scene,
             taskScenes: {},
+            renderScene,
+            taskRenderScenes: {},
             simulationProgram: {
               formatVersion: 5,
               simulationApiVersion: 3,
@@ -146,7 +156,7 @@ describe('isolated runner protocol for Experiment bundles', () => {
           varsSchema: { width: { min: 1, max: 3 } },
         },
       }),
-    ).toThrow('shape is required by CAD API v9')
+    ).toThrow('shape is required by CAD API v10')
     expect(() =>
       assertRunnerCancelOperationEnvelope({ type: 'cancel-operation', nonce, requestId: inspect.requestId }),
     ).not.toThrow()

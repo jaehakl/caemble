@@ -5,10 +5,11 @@ import json
 import sqlite3
 
 APPLICATION_ID = 0x4341454D  # "CAEM"
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 RUNTIME_SLICE_SCHEMA_VERSION = 1
 SEMVER_COMPONENT_MAX = 2_147_483_647
 EXPERIMENT_COORDINATE_PREFIX = "caemble:experiment/"
+SUPPORTED_CAD_API_VERSIONS = (7, 8, 9, 10)
 
 
 def parse_experiment_version(value: str) -> tuple[int, int, int]:
@@ -45,7 +46,7 @@ CREATE TABLE experiments (
     version_patch INTEGER NOT NULL CHECK (version_patch BETWEEN 0 AND 2147483647),
     title TEXT NOT NULL,
     description TEXT NOT NULL,
-    cad_api_version INTEGER NOT NULL CHECK (cad_api_version = 9),
+    cad_api_version INTEGER NOT NULL CHECK (cad_api_version IN (7, 8, 9, 10)),
     source_format_version INTEGER NOT NULL CHECK (source_format_version = 2),
     bundle_format_version INTEGER NOT NULL CHECK (bundle_format_version = 6),
     verification_json TEXT NOT NULL CHECK (json_valid(verification_json)),
@@ -330,54 +331,56 @@ def upgrade_schema(connection: sqlite3.Connection) -> None:
         )
     if user_version == SCHEMA_VERSION:
         return
-    if user_version == 4:
+    if user_version in (4, 5):
+        previous_version = user_version
         connection.executescript(
             """
-            ALTER TABLE experiment_solvers RENAME TO experiment_solvers_v4;
-            ALTER TABLE experiment_concepts RENAME TO experiment_concepts_v4;
-            ALTER TABLE experiment_files RENAME TO experiment_files_v4;
-            ALTER TABLE experiments RENAME TO experiments_v4;
+            ALTER TABLE experiment_solvers RENAME TO experiment_solvers_previous;
+            ALTER TABLE experiment_concepts RENAME TO experiment_concepts_previous;
+            ALTER TABLE experiment_files RENAME TO experiment_files_previous;
+            ALTER TABLE experiments RENAME TO experiments_previous;
             DROP INDEX experiment_solvers_solver_idx;
             DROP INDEX experiments_key_idx;
             """
         )
         connection.executescript(CATALOG_ENTITY_SCHEMA_SQL)
+        cad_api_version = "cad_api_version" if previous_version == 5 else "9"
         connection.execute(
-            """INSERT INTO experiments(
+            f"""INSERT INTO experiments(
                    id, key, namespace, repository_slug, version_major, version_minor, version_patch,
                    title, description, cad_api_version, source_format_version, bundle_format_version,
                    verification_json, bundle_hash
                )
                SELECT id, key, namespace, repository_slug, version_major, version_minor, version_patch,
-                      title, description, 9, source_format_version, bundle_format_version,
+                      title, description, {cad_api_version}, source_format_version, bundle_format_version,
                       verification_json, bundle_hash
-               FROM experiments_v4"""
+               FROM experiments_previous"""
         )
         connection.execute(
             """INSERT INTO experiment_files(experiment_id, ordinal, path, source)
-               SELECT experiment_id, ordinal, path, source FROM experiment_files_v4"""
+               SELECT experiment_id, ordinal, path, source FROM experiment_files_previous"""
         )
         connection.execute(
             """INSERT INTO experiment_concepts(experiment_id, ordinal, concept)
-               SELECT experiment_id, ordinal, concept FROM experiment_concepts_v4"""
+               SELECT experiment_id, ordinal, concept FROM experiment_concepts_previous"""
         )
         connection.execute(
             """INSERT INTO experiment_solvers(experiment_id, ordinal, solver_name, solver_version)
-               SELECT experiment_id, ordinal, solver_name, solver_version FROM experiment_solvers_v4"""
+               SELECT experiment_id, ordinal, solver_name, solver_version FROM experiment_solvers_previous"""
         )
         connection.executescript(
             """
-            DROP TABLE experiment_solvers_v4;
-            DROP TABLE experiment_concepts_v4;
-            DROP TABLE experiment_files_v4;
-            DROP TABLE experiments_v4;
+            DROP TABLE experiment_solvers_previous;
+            DROP TABLE experiment_concepts_previous;
+            DROP TABLE experiment_files_previous;
+            DROP TABLE experiments_previous;
             """
         )
         connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         return
     if user_version != 3:
         raise ValueError(
-            f"Only a CAEM catalog schema v3 or v4 database can be upgraded: "
+            f"Only a CAEM catalog schema v3, v4, or v5 database can be upgraded: "
             f"application_id={application_id}, user_version={user_version}"
         )
     connection.row_factory = sqlite3.Row

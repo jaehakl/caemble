@@ -7,27 +7,23 @@ from typing import Any, Awaitable, Callable
 import numpy as np
 
 from app.errors import CaeError
+from app.solver_framework.geometry import TriangularMesh
 from app.solver_framework.models import ElectrodeVoxelDomain, FiniteVolumeSystem, VoxelDomain
-from app.solver_framework.units import convert_ucum_value
 
 _NEIGHBOR_OFFSETS = ((-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1))
 
 async def build_voxel_domain(
-    scene: dict[str, Any],
-    part: dict[str, Any],
+    mesh: TriangularMesh,
     source_surface: dict[str, Any],
     reference_surface: dict[str, Any],
     shape: tuple[int, int, int],
-    reference_length_unit: str,
     progress: Callable[[Any], Awaitable[None]],
     label: str,
 ) -> VoxelDomain:
-    positions, polygons = _mesh(
-        part,
-        _length_scale(scene.get("lengthUnit"), reference_length_unit, label),
-    )
-    source = _surface_plane(source_surface, polygons, label)
-    reference = _surface_plane(reference_surface, polygons, label)
+    positions = mesh.vertices
+    triangles = positions[mesh.triangles]
+    source = _surface_plane(source_surface, mesh, label)
+    reference = _surface_plane(reference_surface, mesh, label)
     displacement = reference["center"] - source["center"]
     length = float(np.linalg.norm(displacement))
     if not math.isfinite(length) or length <= 0:
@@ -60,7 +56,6 @@ async def build_voxel_domain(
     axial_spacing = length / shape[0]
     u_spacing = (maximum_u - minimum_u) / shape[1]
     v_spacing = (maximum_v - minimum_v) / shape[2]
-    triangles = _triangles(polygons)
     occupancy = np.zeros(math.prod(shape), dtype=np.uint8)
     occupied = 0
     for i in range(shape[0]):
@@ -96,19 +91,13 @@ async def build_voxel_domain(
 
 
 async def build_electrode_voxel_domain(
-    experiment_scene: dict[str, Any],
-    conductor_parts: list[dict[str, Any]],
-    task_scene: dict[str, Any],
-    source_parts: list[dict[str, Any]],
-    reference_parts: list[dict[str, Any]],
+    conductor_meshes: list[TriangularMesh],
+    source_meshes: list[TriangularMesh],
+    reference_meshes: list[TriangularMesh],
     shape: tuple[int, int, int],
-    reference_length_unit: str,
     progress: Callable[[Any], Awaitable[None]],
     label: str,
 ) -> ElectrodeVoxelDomain:
-    conductor_meshes = _meshes(experiment_scene, conductor_parts, reference_length_unit, label)
-    source_meshes = _meshes(task_scene, source_parts, reference_length_unit, label)
-    reference_meshes = _meshes(task_scene, reference_parts, reference_length_unit, label)
     source_center = _mesh_bounds_center(source_meshes)
     reference_center = _mesh_bounds_center(reference_meshes)
     displacement = reference_center - source_center
@@ -124,7 +113,7 @@ async def build_electrode_voxel_domain(
     v_axis = v_axis / np.linalg.norm(v_axis)
     provisional_origin = (source_center + reference_center) / 2
     positions = np.concatenate(
-        [mesh[0] for mesh in conductor_meshes + source_meshes + reference_meshes],
+        [mesh.vertices for mesh in conductor_meshes + source_meshes + reference_meshes],
         axis=0,
     )
     provisional_offsets = positions - provisional_origin
@@ -189,25 +178,15 @@ async def build_electrode_voxel_domain(
     return ElectrodeVoxelDomain(combined, conductor, source, reference)
 
 
-def _meshes(
-    scene: dict[str, Any],
-    parts: list[dict[str, Any]],
-    reference_length_unit: str,
-    label: str,
-) -> list[tuple[np.ndarray[Any, Any], list[np.ndarray[Any, Any]]]]:
-    scale = _length_scale(scene.get("lengthUnit"), reference_length_unit, label)
-    return [_mesh(part, scale) for part in parts]
-
-
 def _mesh_bounds_center(
-    meshes: list[tuple[np.ndarray[Any, Any], list[np.ndarray[Any, Any]]]],
+    meshes: list[TriangularMesh],
 ) -> np.ndarray[Any, Any]:
-    positions = np.concatenate([mesh[0] for mesh in meshes], axis=0)
+    positions = np.concatenate([mesh.vertices for mesh in meshes], axis=0)
     return (np.min(positions, axis=0) + np.max(positions, axis=0)) / 2
 
 
 async def _voxelize_meshes(
-    meshes: list[tuple[np.ndarray[Any, Any], list[np.ndarray[Any, Any]]]],
+    meshes: list[TriangularMesh],
     domain: VoxelDomain,
     frame: tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any]],
     progress: Callable[[Any], Awaitable[None]],
@@ -218,8 +197,8 @@ async def _voxelize_meshes(
     s_ticks = np.asarray(axis_ticks(domain)[0])
     total = len(meshes) * domain.shape[1] * domain.shape[2]
     completed = 0
-    for positions, polygons in meshes:
-        triangles = _triangles(polygons)
+    for mesh in meshes:
+        triangles = mesh.vertices[mesh.triangles]
         offsets = triangles - origin
         local = np.stack((offsets @ axis, offsets @ u_axis, offsets @ v_axis), axis=-1)
         for j in range(domain.shape[1]):
@@ -286,25 +265,12 @@ def _axial_range(mask: np.ndarray[Any, Any], shape: tuple[int, int, int]) -> str
     return f"{int(indices[0])}..{int(indices[-1])}"
 
 
-def _mesh(part: dict[str, Any], scale: float) -> tuple[np.ndarray[Any, Any], list[np.ndarray[Any, Any]]]:
-    geometry = part.get("geometry")
-    if not isinstance(geometry, dict) or geometry.get("kind") != "mesh":
-        raise CaeError("invalid_geometry", "CAE kernels require a serialized mesh")
-    positions = np.asarray(geometry.get("positions"), dtype=np.float64).reshape(-1, 3) * scale
-    offsets = np.asarray(geometry.get("polygonOffsets"), dtype=np.int64).reshape(-1)
-    if positions.size == 0 or offsets.size < 2 or offsets[0] != 0 or offsets[-1] != positions.shape[0]:
-        raise CaeError("invalid_geometry", "serialized mesh offsets are invalid")
-    polygons = [positions[offsets[index] : offsets[index + 1]] for index in range(offsets.size - 1)]
-    if any(polygon.shape[0] < 3 for polygon in polygons):
-        raise CaeError("invalid_geometry", "mesh polygons require at least three vertices")
-    return positions, polygons
-
-
-def _surface_plane(surface: dict[str, Any], polygons: list[np.ndarray[Any, Any]], label: str) -> dict[str, Any]:
-    indices = surface.get("polygonIndices")
-    if not isinstance(indices, list) or not indices:
-        raise CaeError("invalid_geometry", f"{label} terminal has no polygons")
-    first = polygons[indices[0]]
+def _surface_plane(surface: dict[str, Any], mesh: TriangularMesh, label: str) -> dict[str, Any]:
+    indices = mesh.triangle_indices(surface)
+    if indices.size == 0:
+        raise CaeError("invalid_geometry", f"{label} terminal has no semantic triangles")
+    triangles = mesh.vertices[mesh.triangles[indices]]
+    first = triangles[0]
     normal = np.cross(first[1] - first[0], first[2] - first[0])
     normal_length = float(np.linalg.norm(normal))
     if normal_length <= 0:
@@ -312,34 +278,18 @@ def _surface_plane(surface: dict[str, Any], polygons: list[np.ndarray[Any, Any]]
     normal /= normal_length
     weighted = np.zeros(3)
     total_area = 0.0
-    points: list[np.ndarray[Any, Any]] = []
-    for index in indices:
-        try:
-            polygon = polygons[index]
-        except IndexError as exc:
-            raise CaeError("invalid_geometry", f"{label} terminal references a missing polygon") from exc
-        points.append(polygon)
-        anchor = polygon[0]
-        for triangle_index in range(1, polygon.shape[0] - 1):
-            second, third = polygon[triangle_index], polygon[triangle_index + 1]
-            area = float(np.linalg.norm(np.cross(second - anchor, third - anchor)) / 2)
-            weighted += ((anchor + second + third) / 3) * area
-            total_area += area
+    for triangle in triangles:
+        anchor, second, third = triangle
+        area = float(np.linalg.norm(np.cross(second - anchor, third - anchor)) / 2)
+        weighted += ((anchor + second + third) / 3) * area
+        total_area += area
     if total_area <= 0:
         raise CaeError("invalid_geometry", f"{label} terminal has no positive area")
     center = weighted / total_area
     tolerance = 1e-8
-    if any(np.any(np.abs((polygon - first[0]) @ normal) > tolerance) for polygon in points):
+    if np.any(np.abs((triangles.reshape(-1, 3) - first[0]) @ normal) > tolerance):
         raise CaeError("invalid_geometry", f"{label} terminal must be planar")
     return {"center": center, "normal": normal}
-
-
-def _triangles(polygons: list[np.ndarray[Any, Any]]) -> np.ndarray[Any, Any]:
-    result = []
-    for polygon in polygons:
-        for index in range(1, polygon.shape[0] - 1):
-            result.append([polygon[0], polygon[index], polygon[index + 1]])
-    return np.asarray(result, dtype=np.float64)
 
 
 def _contains(point: np.ndarray[Any, Any], triangles: np.ndarray[Any, Any]) -> bool:
@@ -469,19 +419,3 @@ def voxel_index(i: int, j: int, k: int, shape: tuple[int, int, int]) -> int:
 
 def round_like_javascript(value: float) -> int:
     return math.floor(value + 0.5)
-
-
-def _length_scale(unit: Any, reference_unit: str, path: str) -> float:
-    if not isinstance(unit, str) or not unit:
-        raise CaeError("invalid_unit", f"{path} scene.lengthUnit must be a non-empty UCUM unit")
-    return convert_ucum_value(
-        1,
-        unit,
-        reference_unit,
-        f"{path} scene.lengthUnit",
-    ) - convert_ucum_value(
-        0,
-        unit,
-        reference_unit,
-        f"{path} scene.lengthUnit",
-    )

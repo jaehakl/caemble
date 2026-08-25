@@ -38,13 +38,17 @@ export const translateDefinition = {
   evaluate(node, context) {
     const parts = evaluateChildren(node, context)
     const position = normalizeVec3(node.props.offset, '<translate> offset')
-    return applyTransforms(parts, {
-      family: 'canonical',
-      position,
-      rotation: undefined,
-      rotate: undefined,
-      scale: unitScale,
-    })
+    return applyTransforms(
+      parts,
+      {
+        family: 'canonical',
+        position,
+        rotation: undefined,
+        rotate: undefined,
+        scale: unitScale,
+      },
+      context.nodeId,
+    )
   },
 } satisfies GeometryOperationDefinition<'translate'>
 
@@ -59,13 +63,17 @@ export const rotateDefinition = {
       axis: normalizeDirection(node.props.axis, '<rotate> axis'),
       angle: finiteNumber(node.props.angle, '<rotate> angle'),
     })
-    return applyTransforms(parts, {
-      family: 'legacy',
-      position: origin,
-      rotation: undefined,
-      rotate,
-      scale: unitScale,
-    })
+    return applyTransforms(
+      parts,
+      {
+        family: 'legacy',
+        position: origin,
+        rotation: undefined,
+        rotate,
+        scale: unitScale,
+      },
+      context.nodeId,
+    )
   },
 } satisfies GeometryOperationDefinition<'rotate'>
 
@@ -81,12 +89,16 @@ export const scaleDefinition = {
       finiteNumber(node.props.y, '<scale> y'),
       finiteNumber(node.props.z, '<scale> z'),
     ]) as Vec3
-    return applyTransforms(parts, {
-      family: 'canonical',
-      position: origin,
-      rotation: undefined,
-      rotate: undefined,
-      scale,
-    })
+    return applyTransforms(
+      parts,
+      {
+        family: 'canonical',
+        position: origin,
+        rotation: undefined,
+        rotate: undefined,
+        scale,
+      },
+      context.nodeId,
+    )
   },
 } satisfies GeometryOperationDefinition<'scale'>

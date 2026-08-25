@@ -302,6 +302,26 @@ def test_decodes_sharded_start_json_before_tensor_attachments():
     assert decoded["parameter"]["value"].tolist() == [1.25, 2.5]
 
 
+def test_rejects_legacy_mesh_attachment_dtype_hints():
+    raw = np.asarray([1.25], dtype="<f8").tobytes()
+
+    with pytest.raises(CaeError, match="requires a surrounding dtype") as error:
+        decode_attachment_tensors(
+            {
+                "positions": {
+                    "shape": [1],
+                    "storage": {
+                        "kind": "attachments",
+                        "ids": ["mesh-0"],
+                        "byteLength": len(raw),
+                    },
+                },
+            },
+            [DataChannelAttachment(id="mesh-0", data=raw)],
+        )
+    assert error.value.code == "invalid_schema"
+
+
 def test_rejects_malformed_or_oversized_request_attachments():
     with pytest.raises(CaeError, match="unused request attachment"):
         decode_attachment_tensors(

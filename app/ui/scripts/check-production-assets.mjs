@@ -30,6 +30,9 @@ const [indexHtml, packageJson, authoringManifest, runnerHeaders, deploymentConfi
 if (!/^\d+\.\d+\.\d+$/.test(packageJson.dependencies['monaco-editor'])) {
   throw new Error('monaco-editor must be pinned to an exact version.')
 }
+if (!/^\d+\.\d+\.\d+$/.test(packageJson.dependencies['manifold-3d'])) {
+  throw new Error('manifold-3d must be pinned to an exact version.')
+}
 if (!/^\d+\.\d+\.\d+$/.test(authoringManifest.coreDeclarationVersion)) {
   throw new Error('@caemble/core declaration version must be pinned.')
 }
@@ -81,8 +84,22 @@ if (!deploymentConfig.includes(`add_header Content-Security-Policy "${hostCsp}" 
 if (!runnerHtml?.includes(runnerCsp) || !runnerHeaders.includes(runnerCsp)) {
   throw new Error('Runner HTML and deployment headers must preserve the isolated runner CSP.')
 }
-if (!runnerHeaders.includes(hostAssetCsp) || !deploymentConfig.includes(hostAssetCsp)) {
+const hostServerStart = deploymentConfig.lastIndexOf('server_name www.caemble.com;')
+const evaluatorServerStart = deploymentConfig.lastIndexOf('server_name code-to-cad.caemble.com;')
+if (hostServerStart < 0 || evaluatorServerStart <= hostServerStart) {
+  throw new Error('The deployment config must contain separate HTTPS host and evaluator servers.')
+}
+const assetLocationPattern = /location \^~ \/assets\/ \{[\s\S]*?\n    \}/u
+const hostAssetLocation = deploymentConfig.slice(hostServerStart, evaluatorServerStart).match(assetLocationPattern)?.[0]
+const evaluatorAssetLocation = deploymentConfig.slice(evaluatorServerStart).match(assetLocationPattern)?.[0]
+if (
+  !runnerHeaders.includes(hostAssetCsp) ||
+  !hostAssetLocation?.includes(`add_header Content-Security-Policy "${hostAssetCsp}" always;`)
+) {
   throw new Error('Main-origin Worker responses must allow only same-origin API connections.')
+}
+if (!evaluatorAssetLocation?.includes(`add_header Content-Security-Policy "${hostAssetCsp}" always;`)) {
+  throw new Error('Evaluator Worker responses must allow only same-origin revisioned asset connections.')
 }
 const revisionedAnalysisHostAsset = [...contents.entries()].find(
   ([name, source]) =>
@@ -115,8 +132,18 @@ for (const [name, source] of contents) {
   const marker = localSimulationMarkers.find((candidate) => source.includes(candidate))
   if (marker) throw new Error(`${name} contains browser-local simulation runtime code: ${marker}`)
 }
-if (assetNames.some((name) => name.endsWith('.wasm'))) {
-  throw new Error('The production build contains a WASM asset.')
+const wasmAssetNames = assetNames.filter((name) => name.endsWith('.wasm'))
+if (wasmAssetNames.length !== 1 || !/^manifold-[A-Za-z0-9_-]{8,}\.wasm$/u.test(wasmAssetNames[0])) {
+  throw new Error('The production build must contain exactly one revisioned Manifold WASM asset.')
+}
+const manifoldWasmReferences = [...contents.entries()]
+  .filter(([, source]) => source.includes(wasmAssetNames[0]))
+  .map(([name]) => name)
+if (
+  manifoldWasmReferences.length !== 1 ||
+  !/^evaluation\.worker-[A-Za-z0-9_-]+\.js$/u.test(manifoldWasmReferences[0])
+) {
+  throw new Error('The revisioned Manifold WASM must be referenced only by the evaluation Worker.')
 }
 
 const initialAssetNames = new Set([...indexHtml.matchAll(/(?:src|href)="\/assets\/([^"]+)"/g)].map((match) => match[1]))

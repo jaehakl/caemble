@@ -150,7 +150,7 @@ async function buildMeasurement(example: CatalogExperiment) {
   } finally {
     Math.random = originalRandom
   }
-  const experiment = serializeEvaluatedDocumentSnapshot(
+  const experiment = await serializeEvaluatedDocumentSnapshot(
     executeCompiledDocument(compiled, variables, simulationSource),
   )
   return buildSourceOnlyMeasurement(experiment)

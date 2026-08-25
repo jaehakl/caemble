@@ -202,7 +202,7 @@ def decode_attachment_tensors(value: Any, attachments: list[DataChannelAttachmen
             raise CaeError("invalid_attachment", "start payload attachment must contain UTF-8 JSON") from exc
         used.update(ids)
 
-    def decode(node: Any, key: str | None = None, dtype_hint: str | None = None) -> Any:
+    def decode(node: Any, dtype_hint: str | None = None) -> Any:
         if isinstance(node, list):
             return [decode(item, dtype_hint=dtype_hint) for item in node]
         if not isinstance(node, dict):
@@ -225,10 +225,7 @@ def decode_attachment_tensors(value: Any, attachments: list[DataChannelAttachmen
                 raise CaeError("invalid_attachment", "attachment tensor byteLength does not match received bytes")
             dtype_name = node.get("dtype")
             if not isinstance(dtype_name, str):
-                dtype_name = (
-                    dtype_hint
-                    or ("float64" if key == "positions" else "uint32" if key == "polygonOffsets" else None)
-                )
+                dtype_name = dtype_hint
             if dtype_name is None:
                 raise CaeError("invalid_schema", "attachment tensor requires a surrounding dtype")
             if dtype_name == "string":
@@ -250,7 +247,7 @@ def decode_attachment_tensors(value: Any, attachments: list[DataChannelAttachmen
             return array
         descriptor_dtype = node.get("dtype") if isinstance(node.get("dtype"), str) else None
         return {
-            name: decode(item, name, descriptor_dtype if name == "value" else None)
+            name: decode(item, descriptor_dtype if name == "value" else None)
             for name, item in node.items()
         }
 

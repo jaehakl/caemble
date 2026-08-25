@@ -5,6 +5,7 @@ from typing import Any, Awaitable, Callable
 import numpy as np
 
 from app.errors import CaeError
+from app.solver_framework.geometry import GeometryService
 from app.solver_framework.models import SolverContext, VoxelDomain
 from app.solver_framework.numerics.finite_volume import create_scalar_finite_volume_system, solve_pcg
 from app.solver_framework.numerics.voxel import (
@@ -32,6 +33,7 @@ async def _run_dc(
     state: Any,
     inputs: dict[str, Any],
     world: dict[str, Any],
+    geometry: GeometryService,
     progress: Callable[[Any], Awaitable[None]],
     descriptor: dict[str, Any],
 ) -> dict[str, Any]:
@@ -73,13 +75,17 @@ async def _run_dc(
         source_rule, reference_rule = legacy_source[0], legacy_reference[0]
         source = surface(scene, target_group(source_rule, "surface"), part["id"])
         reference = surface(scene, target_group(reference_rule, "surface"), part["id"])
-        domain = await build_voxel_domain(
+        mesh = await geometry.triangular_mesh(
             scene,
-            part,
+            part["id"],
+            descriptor["referenceLengthUnit"],
+            progress,
+        )
+        domain = await build_voxel_domain(
+            mesh,
             source,
             reference,
             shape,
-            descriptor["referenceLengthUnit"],
             progress,
             "DC conductor",
         )
@@ -93,13 +99,34 @@ async def _run_dc(
             for part in source_parts + reference_parts
         )
         electrode_domain = await build_electrode_voxel_domain(
-            scene,
-            parts,
-            task,
-            source_parts,
-            reference_parts,
+            [
+                await geometry.triangular_mesh(
+                    scene,
+                    part["id"],
+                    descriptor["referenceLengthUnit"],
+                    progress,
+                )
+                for part in parts
+            ],
+            [
+                await geometry.triangular_mesh(
+                    task,
+                    part["id"],
+                    descriptor["referenceLengthUnit"],
+                    progress,
+                )
+                for part in source_parts
+            ],
+            [
+                await geometry.triangular_mesh(
+                    task,
+                    part["id"],
+                    descriptor["referenceLengthUnit"],
+                    progress,
+                )
+                for part in reference_parts
+            ],
             shape,
-            descriptor["referenceLengthUnit"],
             progress,
             "DC conductor",
         )
@@ -196,6 +223,7 @@ async def run(context: SolverContext) -> dict[str, Any]:
         context.state,
         context.inputs,
         context.world,
+        context.geometry,
         context.progress,
         context.descriptor,
     )

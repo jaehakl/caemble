@@ -3,7 +3,11 @@ import { evaluateCadScene } from '../evaluation/evaluator'
 import { Fragment, h } from '../evaluation/jsx'
 import { Material } from '../model/core'
 import { serializeEvaluatedDocumentSnapshot } from './snapshot'
-import { assertEvaluatedDocumentSnapshot, assertPlainSnapshotValue } from './snapshotValidation'
+import {
+  assertEvaluatedDocumentSnapshot,
+  assertMeasurementExperimentSnapshot,
+  assertPlainSnapshotValue,
+} from './snapshotValidation'
 
 function Box() {
   return h('box', { size: [1, 1, 1] })
@@ -26,7 +30,7 @@ describe('Experiment snapshot validation', () => {
     expect(() => assertPlainSnapshotValue(direct)).toThrow('cyclic value')
   })
 
-  it('serializes common and Task scenes without seed', () => {
+  it('serializes Canonical Geometry separately from Manifold render scenes without seed', async () => {
     const material = new Material('Shared', { color: '#2563eb' })
     const scene = evaluateCadScene(
       h(
@@ -38,7 +42,7 @@ describe('Experiment snapshot validation', () => {
       {},
       'Experiment',
     )
-    const snapshot = serializeEvaluatedDocumentSnapshot({
+    const snapshot = await serializeEvaluatedDocumentSnapshot({
       kind: 'experiment',
       scene,
       taskScenes: { main: scene },
@@ -47,7 +51,11 @@ describe('Experiment snapshot validation', () => {
       variables: { width: 4 },
       varsSchema: { width: { shape: [], min: 1, max: 10 } },
     })
-    expect(snapshot.scene.parts[0].material).toBe(snapshot.scene.parts[1].material)
+    expect(snapshot.scene.geometryFormatVersion).toBe(1)
+    expect(snapshot.scene.roots.map((root) => root.node.kind)).toEqual(['primitive', 'transform'])
+    expect(snapshot.scene.roots[0].material).toEqual(snapshot.scene.roots[1].material)
+    expect(snapshot.renderScene.parts[0].geometry.kind).toBe('mesh')
+    expect(JSON.stringify(snapshot.scene)).not.toMatch(/"kind":"mesh"|positions|polygonOffsets/u)
     expect(snapshot).not.toHaveProperty('seed')
     expect(() => assertEvaluatedDocumentSnapshot(snapshot)).not.toThrow()
     expect(() => assertEvaluatedDocumentSnapshot({ ...snapshot, variables: { width: 20 } })).toThrow(
@@ -58,7 +66,7 @@ describe('Experiment snapshot validation', () => {
         ...snapshot,
         varsSchema: { width: { min: 1, max: 10 } },
       }),
-    ).toThrow('shape is required by CAD API v9')
+    ).toThrow('shape is required by CAD API v10')
     expect(() =>
       assertEvaluatedDocumentSnapshot({
         ...snapshot,
@@ -66,12 +74,65 @@ describe('Experiment snapshot validation', () => {
         variables: { width: [4] },
       }),
     ).toThrow('must have shape [2]')
+
+    const tooManyTasks = Object.fromEntries(
+      Array.from({ length: 129 }, (_, index) => [`task-${index}`, snapshot.scene]),
+    )
+    expect(() =>
+      assertEvaluatedDocumentSnapshot({
+        ...snapshot,
+        taskScenes: tooManyTasks,
+        taskRenderScenes: Object.fromEntries(Object.keys(tooManyTasks).map((name) => [name, snapshot.renderScene])),
+      }),
+    ).toThrow('at most 128 Task Geometry scenes')
+
+    const largeScene = {
+      ...snapshot.scene,
+      geometryHash: 'c'.repeat(64),
+      roots: [
+        {
+          id: 'large',
+          materialRole: 'body',
+          node: { kind: 'primitive', nodeId: 'large', primitive: 'sphere', parameters: { radius: 1, segments: 800 } },
+        },
+      ],
+    }
+    expect(() =>
+      assertEvaluatedDocumentSnapshot({
+        ...snapshot,
+        scene: largeScene,
+        taskScenes: { main: { ...largeScene, geometryHash: 'd'.repeat(64) } },
+      }),
+    ).toThrow('aggregate derived-triangle limit')
+
+    const measurementSnapshot = {
+      kind: snapshot.kind,
+      sourceHash: snapshot.sourceHash,
+      variables: snapshot.variables,
+      varsSchema: snapshot.varsSchema,
+      scene: snapshot.scene,
+      taskScenes: snapshot.taskScenes,
+      simulationProgram: snapshot.simulationProgram,
+    }
+    expect(() =>
+      assertMeasurementExperimentSnapshot({
+        ...measurementSnapshot,
+        taskScenes: tooManyTasks,
+      }),
+    ).toThrow('at most 128 Task Geometry scenes')
+    expect(() =>
+      assertMeasurementExperimentSnapshot({
+        ...measurementSnapshot,
+        scene: largeScene,
+        taskScenes: { main: { ...largeScene, geometryHash: 'd'.repeat(64) } },
+      }),
+    ).toThrow('aggregate derived-triangle limit')
   })
 
-  it('accepts a common scene when the Experiment has no Tasks', () => {
+  it('accepts a common scene when the Experiment has no Tasks', async () => {
     const scene = evaluateCadScene(h(Box, { id: 'preview' }), {}, 'Experiment')
     const tasklessProgram = { ...program, tasks: {} }
-    const snapshot = serializeEvaluatedDocumentSnapshot({
+    const snapshot = await serializeEvaluatedDocumentSnapshot({
       kind: 'experiment',
       scene,
       taskScenes: {},
@@ -81,7 +142,7 @@ describe('Experiment snapshot validation', () => {
       varsSchema: {},
     })
 
-    expect(snapshot.scene.parts).toHaveLength(1)
+    expect(snapshot.scene.roots).toHaveLength(1)
     expect(snapshot.taskScenes).toEqual({})
     expect(snapshot.simulationProgram.tasks).toEqual({})
     expect(() => assertEvaluatedDocumentSnapshot(snapshot)).not.toThrow()

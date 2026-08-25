@@ -82,11 +82,11 @@ export function createDocumentMaterialResolver(storedSnapshot: unknown | null, s
       throw new Error('저장된 Measurement Material snapshot이 올바르지 않습니다.')
     }
 
-    const commonScene = deserializeCadScene(snapshot.scene)
+    const commonScene = deserializeCadScene(snapshot.renderScene)
     const commonMaterials = commonScene.parts.flatMap((part) => (part.material ? [part.material] : []))
     const taskMaterials = Object.fromEntries(
       taskNames.map((name) => {
-        const scene = deserializeCadScene(snapshot.taskScenes[name])
+        const scene = deserializeCadScene(snapshot.taskRenderScenes[name])
         return [name, scene.parts.flatMap((part) => (part.material ? [part.material] : []))]
       }),
     )

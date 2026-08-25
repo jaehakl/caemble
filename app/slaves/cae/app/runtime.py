@@ -20,6 +20,13 @@ from sdk.slave.runtime import emit
 from app.errors import CaeError, ProtocolError
 from app.kernels import resolve_output_specs, run_kernel, solver_spec, validate_kernel_tasks
 from app.program import SIMULATION_API_VERSION, validate_and_load_simulate
+from app.solver_framework.geometry import GeometryService, validate_canonical_geometry_scene
+from app.solver_framework.geometry.complexity import (
+    MAX_BOOLEAN_WORK,
+    MAX_TRIANGLES,
+    estimated_boolean_work,
+    estimated_triangle_count,
+)
 from app.solver_framework.registry import registry
 from app.tensor import (
     MAX_RECORDED_BYTES,
@@ -35,6 +42,7 @@ DEFAULT_MAX_RUN_SECONDS = 2 * 60 * 60
 HEARTBEAT_SECONDS = 5
 LIVENESS_SECONDS = 5 * 60
 MAX_VARS_TENSOR_ELEMENTS = 65_536
+MAX_TASK_SCENES = 128
 logger = logging.getLogger(__name__)
 
 
@@ -437,6 +445,7 @@ class SimulationApi:
         self._artifact_sequence = 0
         self._state_revisions: dict[int, tuple[Any, int]] = {}
         self._state_sequence = 0
+        self._geometry = GeometryService()
 
     async def run(
         self,
@@ -518,6 +527,7 @@ class SimulationApi:
             kernel_inputs,
             kernel_world,
             report,
+            self._geometry,
         )
         finished_at = int(time.time() * 1000)
         artifacts = result.get("artifacts")
@@ -794,10 +804,15 @@ def create_run(
     job_id: str,
     on_cleanup: Callable[[str], None],
 ) -> CaeRun:
-    if not isinstance(payload, dict) or set(payload) != {"measurement", "solverContracts"}:
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"formatVersion", "measurement", "solverContracts"}
+        or payload.get("formatVersion") != 2
+        or isinstance(payload.get("formatVersion"), bool)
+    ):
         raise CaeError(
             "invalid_input",
-            "start payload must contain exactly measurement and solverContracts",
+            "start payload must contain exactly formatVersion 2, measurement, and solverContracts",
         )
     measurement = payload.get("measurement")
     _validate_built_measurement(measurement)
@@ -870,6 +885,11 @@ def _validate_snapshot(value: Any) -> None:
     task_scenes = value.get("taskScenes")
     if not isinstance(task_scenes, dict) or not task_scenes:
         raise CaeError("invalid_input", "Built experiment.taskScenes must be a non-empty object")
+    if len(task_scenes) > MAX_TASK_SCENES:
+        raise CaeError(
+            "resource_limit",
+            f"Built experiment.taskScenes may contain at most {MAX_TASK_SCENES} Task scenes",
+        )
     for task_name, scene in task_scenes.items():
         if not isinstance(task_name, str) or not task_name.strip():
             raise CaeError("invalid_input", "Built experiment Task names must be non-empty strings")
@@ -878,6 +898,32 @@ def _validate_snapshot(value: Any) -> None:
     tasks = manifest.get("tasks") if isinstance(manifest, dict) else None
     if not isinstance(tasks, dict) or set(tasks) != set(task_scenes):
         raise CaeError("invalid_input", "Built experiment Task scenes must exactly match simulationProgram tasks")
+    geometry_roots: set[tuple[str, str]] = set()
+    aggregate_triangles = 0
+    aggregate_boolean_work = 0
+    for scene in [value["scene"], *task_scenes.values()]:
+        for root in scene["roots"]:
+            identity = (scene["geometryHash"], root["id"])
+            if identity in geometry_roots:
+                continue
+            geometry_roots.add(identity)
+            aggregate_triangles += estimated_triangle_count(root["node"])
+            aggregate_boolean_work = min(
+                MAX_BOOLEAN_WORK + 1,
+                aggregate_boolean_work + estimated_boolean_work(root["node"]),
+            )
+            if aggregate_triangles > MAX_TRIANGLES:
+                raise CaeError(
+                    "resource_limit",
+                    "Built Experiment geometry roots exceed the aggregate "
+                    f"limit of {MAX_TRIANGLES} estimated triangles",
+                )
+            if aggregate_boolean_work > MAX_BOOLEAN_WORK:
+                raise CaeError(
+                    "resource_limit",
+                    "Built Experiment geometry roots exceed the aggregate "
+                    f"Boolean work limit of {MAX_BOOLEAN_WORK}",
+                )
 
 
 def _validate_variables(variables: dict[str, Any], schema: dict[str, Any], path: str) -> None:
@@ -982,86 +1028,7 @@ def _validate_numeric_range(
 
 
 def _validate_scene(value: Any, path: str) -> None:
-    expected = {"sceneHash", "lengthUnit", "parts", "tree", "geometryGroups", "surfaceGroups"}
-    if not isinstance(value, dict) or set(value) != expected:
-        raise CaeError("invalid_input", f"{path} fields are invalid")
-    scene_hash = value.get("sceneHash")
-    if (
-        not isinstance(scene_hash, str)
-        or len(scene_hash) != 64
-        or any(character not in "0123456789abcdef" for character in scene_hash)
-        or not isinstance(value.get("lengthUnit"), str)
-        or not value["lengthUnit"]
-        or not isinstance(value.get("parts"), list)
-        or not isinstance(value.get("tree"), dict)
-        or not isinstance(value.get("geometryGroups"), list)
-        or not isinstance(value.get("surfaceGroups"), list)
-    ):
-        raise CaeError("invalid_input", f"{path} metadata is invalid")
-    for index, part in enumerate(value["parts"]):
-        _validate_scene_part(part, f"{path}.parts[{index}]")
-
-
-def _validate_scene_part(value: Any, path: str) -> None:
-    if (
-        not isinstance(value, dict)
-        or any(key not in {"id", "geometry", "material", "materialRole", "surfaces"} for key in value)
-        or not isinstance(value.get("id"), str)
-        or not value["id"]
-        or (
-            "materialRole" in value
-            and (
-                not isinstance(value["materialRole"], str)
-                or not value["materialRole"]
-            )
-        )
-        or not isinstance(value.get("surfaces"), list)
-    ):
-        raise CaeError("invalid_input", f"{path} metadata is invalid")
-    geometry = value.get("geometry")
-    if not isinstance(geometry, dict) or set(geometry) != {"kind", "positions", "polygonOffsets"}:
-        raise CaeError("invalid_input", f"{path}.geometry fields are invalid")
-    if geometry.get("kind") != "mesh":
-        raise CaeError("invalid_input", f"{path}.geometry must be a serialized mesh")
-    try:
-        positions = np.asarray(geometry.get("positions"))
-        offsets = np.asarray(geometry.get("polygonOffsets"))
-    except Exception as exc:
-        raise CaeError("invalid_input", f"{path}.geometry arrays are invalid") from exc
-    if (
-        positions.ndim != 1
-        or positions.dtype.kind not in "fiu"
-        or positions.size % 3 != 0
-        or not np.all(np.isfinite(positions))
-        or offsets.ndim != 1
-        or offsets.dtype.kind not in "iu"
-        or offsets.size < 2
-    ):
-        raise CaeError("invalid_input", f"{path}.geometry shape is invalid")
-    vertex_count = positions.size // 3
-    if (
-        int(offsets[0]) != 0
-        or int(offsets[-1]) != vertex_count
-        or np.any(np.diff(offsets.astype(np.int64)) < 3)
-    ):
-        raise CaeError("invalid_input", f"{path}.geometry polygon offsets are invalid")
-    polygon_count = offsets.size - 1
-    for surface in value["surfaces"]:
-        if (
-            not isinstance(surface, dict)
-            or set(surface) != {"id", "name", "polygonIndices"}
-            or not isinstance(surface.get("id"), str)
-            or not isinstance(surface.get("name"), str)
-            or not isinstance(surface.get("polygonIndices"), list)
-            or any(
-                not isinstance(item, int)
-                or isinstance(item, bool)
-                or item < 0
-                or item >= polygon_count
-                for item in surface["polygonIndices"]
-            )
-        ):
-            raise CaeError("invalid_input", f"{path} contains an invalid surface")
+    validate_canonical_geometry_scene(value, path)
 
 
 def _validate_material_snapshot(value: Any, path: str) -> None:

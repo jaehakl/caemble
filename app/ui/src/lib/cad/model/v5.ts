@@ -1,7 +1,7 @@
 import type { DefinedKernelTask, KernelIdentity, RecordedDataSpec } from '../simulation/types'
 import { canonicalRecordedDataSpec, simulationProgramManifest } from '../simulation/authoring'
 import { CadModelError } from './errors'
-import { normalizeGeometryGroup, type GeometryGroupMap } from './structure'
+import { normalizeGeometryGroup, type GeometryGroupMap, type SurfaceGroupMap } from './structure'
 import type { Tensor, Vars } from './types'
 import { assertUcumUnitComparable, normalizeUcumUnit, type UcumUnit } from './units'
 import { normalizeVars, normalizeVarsSchema, type VarsSchema, type VarsSchemaEntry } from './vars'
@@ -43,7 +43,7 @@ export type ExperimentDefinitionOptions<
   lengthUnit: UcumUnit
   varsSchema: Schema
   geometryGroup?: GeometryGroupMap
-  surfaceGroup?: GeometryGroupMap
+  surfaceGroup?: SurfaceGroupMap
   recordedData: Recorded
 }>
 
@@ -52,7 +52,7 @@ export type TaskDefinitionOptions<Config> = Readonly<{
   lengthUnit?: UcumUnit
   geometry?: (context: TaskModelContext) => unknown
   geometryGroup?: GeometryGroupMap
-  surfaceGroup?: GeometryGroupMap
+  surfaceGroup?: SurfaceGroupMap
   config: (context: TaskModelContext) => Config
 }>
 
@@ -74,12 +74,12 @@ function normalizeLengthUnit(value: unknown, objectName: string) {
 }
 
 export class TaskDefinition<Config = unknown> {
-  readonly apiVersion = 9 as const
+  readonly apiVersion = 10 as const
   readonly documentType = 'task' as const
   readonly kernel: KernelIdentity
   readonly lengthUnit?: UcumUnit
   readonly geometryGroup: GeometryGroupMap
-  readonly surfaceGroup: GeometryGroupMap
+  readonly surfaceGroup: SurfaceGroupMap
   readonly geometryFactory?: TaskDefinitionOptions<Config>['geometry']
   readonly configFactory: TaskDefinitionOptions<Config>['config']
 
@@ -130,12 +130,12 @@ export class ExperimentDefinition<
   Schema extends VarsSchemaDefinition = VarsSchemaDefinition,
   Recorded extends Readonly<Record<string, RecordedDataSpec>> = Readonly<Record<string, RecordedDataSpec>>,
 > {
-  readonly apiVersion = 9 as const
+  readonly apiVersion = 10 as const
   readonly documentType = 'experiment' as const
   readonly lengthUnit: UcumUnit
   readonly varsSchema: Readonly<Record<string, VarsSchemaEntry>>
   readonly geometryGroup: GeometryGroupMap
-  readonly surfaceGroup: GeometryGroupMap
+  readonly surfaceGroup: SurfaceGroupMap
   readonly recordedData: Recorded
   readonly geometryFactory: (context: ModelContext<Schema>) => unknown
   private readonly normalizedVarsSchema: VarsSchema

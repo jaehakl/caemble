@@ -20,7 +20,12 @@ from .admin import (
 )
 from .database import Catalog, catalog_path
 from .errors import CatalogError, CatalogNotFoundError
-from .schema import EXPERIMENT_COORDINATE_PREFIX, parse_experiment_coordinate, parse_experiment_version
+from .schema import (
+    EXPERIMENT_COORDINATE_PREFIX,
+    SUPPORTED_CAD_API_VERSIONS,
+    parse_experiment_coordinate,
+    parse_experiment_version,
+)
 
 
 def _data(value: str) -> dict[str, Any]:
@@ -231,6 +236,7 @@ def _edit_experiment(args: argparse.Namespace) -> None:
                     "version": args.version,
                     "title": args.title,
                     "description": args.description,
+                    "cadApiVersion": args.cad_api_version,
                     "concepts": args.concept,
                     "relatedSolvers": related_solvers,
                     "sourceBundle": _load_json_file(args.bundle_file, "Experiment source bundle"),
@@ -644,6 +650,7 @@ def build_parser() -> argparse.ArgumentParser:
     upsert.add_argument("--namespace", default="caemble")
     upsert.add_argument("--repository", default="verified")
     upsert.add_argument("--version", default="1.0.0")
+    upsert.add_argument("--cad-api-version", type=int, choices=SUPPORTED_CAD_API_VERSIONS, required=True)
     upsert.add_argument("--title", required=True)
     upsert.add_argument("--description", required=True)
     upsert.add_argument("--bundle-file", type=Path, required=True)

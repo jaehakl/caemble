@@ -1,8 +1,9 @@
 /// <reference lib="webworker" />
 
 import { cadSnapshotTransferables } from '../execution/meshValidation'
-import { serializeCadScene } from '../execution/mesh'
 import { assertEvaluatedDocumentSnapshot, serializeEvaluatedDocumentSnapshot } from '../execution/snapshot'
+import { canonicalGeometryScene } from '../evaluation/canonical'
+import { renderCanonicalGeometryScene } from '../execution/manifoldRender'
 import { runtimeDiagnostic } from '../execution/runtimeDiagnostics'
 import {
   evaluateCompiledGeometryModule,
@@ -10,13 +11,21 @@ import {
   inspectCompiledDocument,
 } from '../execution/userModule'
 import { CadModelError } from '../model/core'
-import { assertRunnerOperationEnvelope, type RunnerOperationResultEnvelope } from './protocol'
+import {
+  assertRunnerOperationEnvelope,
+  type RunnerOperationEnvelope,
+  type RunnerOperationResultEnvelope,
+} from './protocol'
 import { installCatalogRuntimeSlice } from '@/lib/catalog/runtime'
 import { assertCatalogKernelTasks } from '@/lib/catalog/solverValidation'
 import { assertValidKernelDescriptor } from '../simulation'
 
 function handleOperation(value: unknown) {
   assertRunnerOperationEnvelope(value)
+  return handleValidatedOperation(value)
+}
+
+async function handleValidatedOperation(value: RunnerOperationEnvelope) {
   const { nonce, request, type: operation } = value
   let response: RunnerOperationResultEnvelope['response']
   try {
@@ -35,7 +44,7 @@ function handleOperation(value: unknown) {
     } else if (request.type === 'evaluate') {
       const evaluated = executeCompiledDocument(request.compiledDocument, request.vars, request.pythonSource)
       assertCatalogKernelTasks(request.catalog, evaluated.simulationProgram)
-      const snapshot = serializeEvaluatedDocumentSnapshot(evaluated)
+      const snapshot = await serializeEvaluatedDocumentSnapshot(evaluated)
       assertEvaluatedDocumentSnapshot(snapshot)
       response = {
         type: 'evaluation-success',
@@ -45,20 +54,19 @@ function handleOperation(value: unknown) {
         snapshot,
       }
     } else {
+      const runtimeScene = evaluateCompiledGeometryModule(
+        request.compiledDocument,
+        request.path,
+        request.exportName,
+        request.lengthUnit,
+      )
       response = {
         type: 'geometry-preview-success',
         requestId: request.requestId,
         revision: request.revision,
         documentType: 'geometry',
         sourceHash: request.compiledDocument.sourceHash,
-        scene: serializeCadScene(
-          evaluateCompiledGeometryModule(
-            request.compiledDocument,
-            request.path,
-            request.exportName,
-            request.lengthUnit,
-          ),
-        ),
+        scene: await renderCanonicalGeometryScene(await canonicalGeometryScene(runtimeScene), runtimeScene),
       }
     }
   } catch (error) {
@@ -88,8 +96,8 @@ function handleOperation(value: unknown) {
     envelope,
     response.type === 'evaluation-success'
       ? [
-          ...cadSnapshotTransferables(response.snapshot.scene),
-          ...Object.values(response.snapshot.taskScenes).flatMap(cadSnapshotTransferables),
+          ...cadSnapshotTransferables(response.snapshot.renderScene),
+          ...Object.values(response.snapshot.taskRenderScenes).flatMap(cadSnapshotTransferables),
         ]
       : response.type === 'geometry-preview-success'
         ? cadSnapshotTransferables(response.scene)
@@ -97,7 +105,10 @@ function handleOperation(value: unknown) {
   )
 }
 
-self.onmessage = (event: MessageEvent<unknown>) => handleOperation(event.data)
+self.onmessage = (event: MessageEvent<unknown>) => {
+  const operation = handleOperation(event.data)
+  void operation.catch((error) => self.reportError(error))
+}
 self.postMessage({ type: 'runner-worker-ready' })
 
 export {}

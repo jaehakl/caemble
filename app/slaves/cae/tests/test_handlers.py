@@ -11,7 +11,8 @@ from sdk.slave import SlaveContext
 
 from app.errors import CaeError, ProtocolError
 from app.handlers import cae_simulation_next, cae_simulation_start, cae_solver_manifests
-from app.runtime import SimulationApi, _validate_variables
+from app.runtime import SimulationApi, _validate_built_measurement, _validate_variables
+from app.solver_framework.geometry import canonical_geometry_hash
 from app.solver_framework.registry import registry
 
 
@@ -208,15 +209,16 @@ def payload():
         "    await sim.record(\"totalCurrent\", result[\"artifacts\"][\"totalCurrent\"])\n"
         "    return result[\"state\"]\n"
     )
-    scene = {
-        "sceneHash": "c" * 64,
+    scene_draft = {
+        "geometryFormatVersion": 1,
         "lengthUnit": "m",
-        "parts": [],
-        "tree": {"key": "root", "label": "root", "children": []},
+        "roots": [],
         "geometryGroups": [],
         "surfaceGroups": [],
     }
+    scene = {**scene_draft, "geometryHash": canonical_geometry_hash(scene_draft)}
     return {
+        "formatVersion": 2,
         "solverContracts": [solver_contract("dc-current-density")],
         "measurement": {
             "kind": "measurement",
@@ -338,6 +340,145 @@ async def test_start_rejects_obsolete_contract_metadata_before_run_creation():
 
 
 @pytest.mark.asyncio
+async def test_start_caps_task_scenes_before_run_creation(monkeypatch):
+    request = payload()
+    experiment = request["measurement"]["experiment"]
+    program = experiment["simulationProgram"]
+    task = program["tasks"]["electric"]
+    scene = experiment["taskScenes"]["electric"]
+    names = [f"task-{index}" for index in range(129)]
+    program["tasks"] = {name: copy.deepcopy(task) for name in names}
+    experiment["taskScenes"] = {name: scene for name in names}
+    request["measurement"]["taskMaterialParameters"] = {
+        name: {"schemaVersion": 1, "materials": {}} for name in names
+    }
+    request["measurement"]["taskMaterialWarnings"] = {name: [] for name in names}
+    monkeypatch.setattr("app.runtime.CaeRun", lambda **_kwargs: pytest.fail("run was created"))
+
+    response = await cae_simulation_start(
+        DataChannelMessage(id="start", type="cae.simulation.start", payload=request),
+        {"runs": {}},
+        SlaveContext(session_id="session", ttl_seconds=10, call_id="start"),
+    )
+
+    assert response.payload["kind"] == "failed"
+    assert response.payload["error"]["code"] == "resource_limit"
+    assert "at most 128 Task scenes" in response.payload["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_start_caps_unique_geometry_roots_across_all_scenes_before_run_creation(monkeypatch):
+    request = payload()
+    experiment = request["measurement"]["experiment"]
+
+    def large_scene(node_id):
+        draft = {
+            "geometryFormatVersion": 1,
+            "lengthUnit": "m",
+            "roots": [
+                {
+                    "id": "body",
+                    "materialRole": "body",
+                    "node": {
+                        "kind": "primitive",
+                        "nodeId": node_id,
+                        "primitive": "sphere",
+                        "parameters": {"radius": 1, "segments": 800},
+                    },
+                }
+            ],
+            "geometryGroups": [],
+            "surfaceGroups": [],
+        }
+        return {**draft, "geometryHash": canonical_geometry_hash(draft)}
+
+    common_scene = large_scene("common-sphere")
+    experiment["scene"] = common_scene
+    experiment["taskScenes"]["electric"] = common_scene
+    _validate_built_measurement(request["measurement"])
+
+    experiment["taskScenes"]["electric"] = large_scene("task-sphere")
+    monkeypatch.setattr("app.runtime.CaeRun", lambda **_kwargs: pytest.fail("run was created"))
+    response = await cae_simulation_start(
+        DataChannelMessage(id="start", type="cae.simulation.start", payload=request),
+        {"runs": {}},
+        SlaveContext(session_id="session", ttl_seconds=10, call_id="start"),
+    )
+
+    assert response.payload["kind"] == "failed"
+    assert response.payload["error"]["code"] == "resource_limit"
+    assert "aggregate limit" in response.payload["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_start_caps_unique_boolean_work_across_all_scenes_before_run_creation(monkeypatch):
+    request = payload()
+    experiment = request["measurement"]["experiment"]
+
+    def boolean_scene(prefix):
+        draft = {
+            "geometryFormatVersion": 1,
+            "lengthUnit": "m",
+            "roots": [
+                {
+                    "id": "body",
+                    "materialRole": "body",
+                    "node": {
+                        "kind": "boolean",
+                        "nodeId": f"{prefix}-union",
+                        "operation": "union",
+                        "children": [
+                            {
+                                "kind": "primitive",
+                                "nodeId": f"{prefix}-sphere-{index}",
+                                "primitive": "sphere",
+                                "parameters": {"radius": 1, "segments": 70},
+                            }
+                            for index in range(2)
+                        ],
+                    },
+                }
+            ],
+            "geometryGroups": [],
+            "surfaceGroups": [],
+        }
+        return {**draft, "geometryHash": canonical_geometry_hash(draft)}
+
+    common_scene = boolean_scene("common")
+    experiment["scene"] = common_scene
+    experiment["taskScenes"]["electric"] = common_scene
+    _validate_built_measurement(request["measurement"])
+
+    experiment["taskScenes"]["electric"] = boolean_scene("task")
+    monkeypatch.setattr("app.runtime.CaeRun", lambda **_kwargs: pytest.fail("run was created"))
+    response = await cae_simulation_start(
+        DataChannelMessage(id="start", type="cae.simulation.start", payload=request),
+        {"runs": {}},
+        SlaveContext(session_id="session", ttl_seconds=10, call_id="start"),
+    )
+
+    assert response.payload["kind"] == "failed"
+    assert response.payload["error"]["code"] == "resource_limit"
+    assert "aggregate Boolean work limit" in response.payload["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_start_rejects_legacy_envelope_without_format_version_2():
+    request = payload()
+    request.pop("formatVersion")
+
+    response = await cae_simulation_start(
+        DataChannelMessage(id="start", type="cae.simulation.start", payload=request),
+        {"runs": {}},
+        SlaveContext(session_id="session", ttl_seconds=10, call_id="start"),
+    )
+
+    assert response.payload["kind"] == "failed"
+    assert response.payload["error"]["code"] == "invalid_input"
+    assert "formatVersion 2" in response.payload["error"]["message"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("contracts", [[], None])
 async def test_start_rejects_missing_solver_contract_before_run_creation(contracts, monkeypatch):
     request = payload()
@@ -420,10 +561,11 @@ async def test_sim_run_selects_only_the_current_task_scene_and_material_snapshot
     program = experiment["simulationProgram"]
     program["tasks"]["thermal"] = copy.deepcopy(program["tasks"]["electric"])
     electric_scene = experiment["taskScenes"]["electric"]
-    electric_scene["tree"]["label"] = "electric-scene"
     thermal_scene = copy.deepcopy(electric_scene)
-    thermal_scene["sceneHash"] = "e" * 64
-    thermal_scene["tree"]["label"] = "thermal-scene"
+    thermal_scene["lengthUnit"] = "mm"
+    thermal_scene["geometryHash"] = canonical_geometry_hash(
+        {key: value for key, value in thermal_scene.items() if key != "geometryHash"}
+    )
     experiment["taskScenes"] = {
         "electric": electric_scene,
         "thermal": thermal_scene,
@@ -453,13 +595,13 @@ async def test_sim_run_selects_only_the_current_task_scene_and_material_snapshot
     )
     selected = []
 
-    async def fake_kernel(task, state, inputs, world, progress):
+    async def fake_kernel(task, state, inputs, world, progress, geometry):
         assert set(world) == {"experiment", "task", "materials"}
         assert set(world["materials"]) == {"experiment", "task"}
         assert set(world["materials"]["task"]) == {"parameters", "warnings"}
         selected.append(
             (
-                world["task"]["tree"]["label"],
+                world["task"]["lengthUnit"],
                 tuple(world["materials"]["task"]["parameters"].get("materialColors", {})),
                 tuple(world["materials"]["task"]["warnings"]),
             )
@@ -496,8 +638,8 @@ async def test_sim_run_selects_only_the_current_task_scene_and_material_snapshot
 
     assert response.payload["kind"] == "complete"
     assert selected == [
-        ("electric-scene", ("Electric",), ("electric-warning",)),
-        ("thermal-scene", ("Thermal",), ("thermal-warning",)),
+        ("m", ("Electric",), ("electric-warning",)),
+        ("mm", ("Thermal",), ("thermal-warning",)),
     ]
 
 
@@ -538,7 +680,7 @@ async def test_start_rejects_manifest_tasks_that_do_not_match_task_scenes():
 async def test_start_does_not_compute_and_next_applies_record_ack_backpressure(monkeypatch):
     calls = 0
 
-    async def fake_kernel(task, state, inputs, world, progress):
+    async def fake_kernel(task, state, inputs, world, progress, geometry):
         nonlocal calls
         calls += 1
         return {
@@ -608,7 +750,7 @@ async def test_start_does_not_compute_and_next_applies_record_ack_backpressure(m
 
 @pytest.mark.asyncio
 async def test_run_timeout_while_record_is_pending_remains_reachable_after_ack(monkeypatch):
-    async def fake_kernel(task, state, inputs, world, progress):
+    async def fake_kernel(task, state, inputs, world, progress, geometry):
         return {
             "state": {"done": True},
             "artifacts": {"totalCurrent": {"value": 14.9}},
@@ -655,7 +797,7 @@ async def test_run_timeout_while_record_is_pending_remains_reachable_after_ack(m
 
 @pytest.mark.asyncio
 async def test_record_ack_watchdog_cleans_up_after_outer_run_timeout(monkeypatch):
-    async def fake_kernel(task, state, inputs, world, progress):
+    async def fake_kernel(task, state, inputs, world, progress, geometry):
         return {
             "state": None,
             "artifacts": {"totalCurrent": {"value": 14.9}},
@@ -706,7 +848,7 @@ async def test_sim_run_rejects_equal_but_unregistered_task(monkeypatch):
     program["pythonSource"] = source
     calls = 0
 
-    async def fake_kernel(task, state, inputs, world, progress):
+    async def fake_kernel(task, state, inputs, world, progress, geometry):
         nonlocal calls
         calls += 1
         return {"state": None, "artifacts": {}, "observations": {}}
@@ -740,7 +882,7 @@ async def test_sim_run_rejects_equal_but_unregistered_task(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_sim_run_validates_actual_kernel_output_against_resolved_data_schema(monkeypatch):
-    async def fake_kernel(task, state, inputs, world, progress):
+    async def fake_kernel(task, state, inputs, world, progress, geometry):
         return {
             "state": None,
             "artifacts": {"totalCurrent": {"value": np.asarray([1.0, 2.0])}},
@@ -791,7 +933,7 @@ async def test_simulation_rejects_mutation_assignment_targets(mutation, monkeypa
     program["pythonSource"] = source
     calls = 0
 
-    async def fake_kernel(task, state, inputs, world, progress):
+    async def fake_kernel(task, state, inputs, world, progress, geometry):
         nonlocal calls
         calls += 1
         return {"state": None, "artifacts": {}, "observations": {}}
@@ -868,7 +1010,7 @@ async def test_sim_run_forwards_state_and_owned_artifact_to_registered_kernel(
     calls = []
     produced = []
 
-    async def fake_kernel(task, state, inputs, world, progress):
+    async def fake_kernel(task, state, inputs, world, progress, geometry):
         calls.append({"task": task, "state": state, "inputs": inputs})
         artifacts = fake_artifacts(task)
         produced.extend(artifacts.values())
@@ -941,7 +1083,7 @@ async def test_sim_run_rejects_fabricated_state_before_kernel_execution(monkeypa
     program["pythonSource"] = source
     calls = 0
 
-    async def fake_kernel(task, state, inputs, world, progress):
+    async def fake_kernel(task, state, inputs, world, progress, geometry):
         nonlocal calls
         calls += 1
         return {"state": None, "artifacts": {}, "observations": {}}
@@ -1003,7 +1145,7 @@ async def test_sim_run_rejects_unowned_or_incompatible_artifacts_before_consumer
 ):
     calls = 0
 
-    async def fake_kernel(task, state, inputs, world, progress):
+    async def fake_kernel(task, state, inputs, world, progress, geometry):
         nonlocal calls
         calls += 1
         return {
@@ -1051,7 +1193,7 @@ async def test_sim_run_rejects_an_artifact_after_release(monkeypatch):
     program["pythonSource"] = source
     calls = 0
 
-    async def fake_kernel(task, state, inputs, world, progress):
+    async def fake_kernel(task, state, inputs, world, progress, geometry):
         nonlocal calls
         calls += 1
         return {
@@ -1096,7 +1238,7 @@ async def test_duplicate_record_name_returns_terminal_domain_failure(monkeypatch
     )
     request["measurement"]["experiment"]["simulationProgram"]["pythonSource"] = source
 
-    async def fake_kernel(task, state, inputs, world, progress):
+    async def fake_kernel(task, state, inputs, world, progress, geometry):
         return {
             "state": {"done": True},
             "artifacts": {"totalCurrent": {"value": 1.0}},
@@ -1434,7 +1576,7 @@ async def test_sim_release_keeps_owned_graphs_alive_and_rejects_injected_descend
 async def test_rejects_duplicate_or_stale_ack(monkeypatch):
     gate = asyncio.Event()
 
-    async def fake_kernel(task, state, inputs, world, progress):
+    async def fake_kernel(task, state, inputs, world, progress, geometry):
         await gate.wait()
         return {"state": None, "artifacts": {}, "observations": {}}
 

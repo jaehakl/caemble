@@ -1,6 +1,7 @@
 import { booleans, geometries, measurements, modifiers, transforms } from '@jscad/modeling'
 import { CadModelError } from '../../../model/core'
 import type { CadElementManifest, EvaluatedPart, GeometryOperationDefinition } from '../../../evaluation/types'
+import type { CanonicalGeometryNodeV1 } from '../../../evaluation/canonicalTypes'
 import { intersectManifest, subtractManifest, unionManifest } from './definition'
 
 type CadGeom3 = ReturnType<typeof geometries.geom3.create>
@@ -103,8 +104,15 @@ function createBooleanDefinition<Tag extends 'union' | 'subtract' | 'intersect'>
           }),
         )
         const cutterSurfaces = decomposedParts.slice(1).flat()
+        const cutterNodes = childParts.slice(1).flatMap((parts) => parts.map((part) => part.canonicalNode))
 
         return childParts[0].map((part, partIndex) => {
+          const canonicalNode: CanonicalGeometryNodeV1 = {
+            kind: 'boolean',
+            nodeId: `${context.nodeId}/$result-${partIndex + 1}`,
+            operation: 'subtract',
+            children: [part.canonicalNode, ...cutterNodes],
+          }
           const { solidSurfaces, voidSurfaces } = decomposedParts[0][partIndex]
           const solid = solidSurfaces.length === 1 ? solidSurfaces[0] : cadUnion(...solidSurfaces)
           let subtracted: CadGeom3
@@ -155,6 +163,7 @@ function createBooleanDefinition<Tag extends 'union' | 'subtract' | 'intersect'>
             if (!booleanApplied) {
               return {
                 geometry: subtracted,
+                canonicalNode,
                 materialRole: part.materialRole,
                 ...(part.material === undefined ? {} : { material: part.material }),
               }
@@ -211,6 +220,7 @@ function createBooleanDefinition<Tag extends 'union' | 'subtract' | 'intersect'>
             .filter((polygon) => geometries.poly3.measureArea(polygon) > 0)
           return {
             geometry: geometries.geom3.create(finalPolygons),
+            canonicalNode,
             materialRole: part.materialRole,
             ...(part.material === undefined ? {} : { material: part.material }),
           }
@@ -223,6 +233,12 @@ function createBooleanDefinition<Tag extends 'union' | 'subtract' | 'intersect'>
         return [
           {
             geometry: cadUnion(...allParts.map((part) => part.geometry)),
+            canonicalNode: {
+              kind: 'boolean',
+              nodeId: context.nodeId,
+              operation: 'union',
+              children: allParts.map((part) => part.canonicalNode),
+            },
             materialRole,
             ...(material === undefined ? {} : { material }),
           },
@@ -233,9 +249,25 @@ function createBooleanDefinition<Tag extends 'union' | 'subtract' | 'intersect'>
         matchingMaterial(parts, manifest.tag)
         return parts.length === 1 ? parts[0].geometry : cadUnion(...parts.map((part) => part.geometry))
       })
+      const canonicalChildren: CanonicalGeometryNodeV1[] = childParts.map((parts, index) =>
+        parts.length === 1
+          ? parts[0].canonicalNode
+          : {
+              kind: 'boolean',
+              nodeId: `${context.nodeId}/$operand-${index + 1}`,
+              operation: 'union',
+              children: parts.map((part) => part.canonicalNode),
+            },
+      )
       return [
         {
           geometry: cadIntersect(...childGeometries),
+          canonicalNode: {
+            kind: 'boolean',
+            nodeId: context.nodeId,
+            operation: 'intersect',
+            children: canonicalChildren,
+          },
           materialRole,
           ...(material === undefined ? {} : { material }),
         },

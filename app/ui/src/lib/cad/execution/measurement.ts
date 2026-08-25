@@ -7,9 +7,10 @@ import type { CadScene } from '../evaluation/types'
 import { CadModelError } from '../model/errors'
 import { deserializeCadScene } from './mesh'
 import {
-  assertEvaluatedDocumentSnapshot,
+  assertMeasurementExperimentSnapshot,
   assertPlainSnapshotValue,
   type EvaluatedExperimentSnapshot,
+  type MeasurementExperimentSnapshot,
 } from './snapshotValidation'
 
 export type TaskMaterialResolution = Readonly<{
@@ -21,7 +22,7 @@ export type MeasurementMaterialResolution = MaterialResolution & TaskMaterialRes
 
 export type BuiltMeasurement = Readonly<{
   kind: 'measurement'
-  experiment: EvaluatedExperimentSnapshot
+  experiment: MeasurementExperimentSnapshot
   materialParameters: FrozenMaterialParameters
   materialWarnings: readonly string[]
   taskMaterialParameters: Readonly<Record<string, FrozenMaterialParameters>>
@@ -30,12 +31,12 @@ export type BuiltMeasurement = Readonly<{
 
 export function unresolvedMeasurementMaterialRoles(snapshot: EvaluatedExperimentSnapshot) {
   const unresolved = new Set<string>()
-  snapshot.scene.parts.forEach((part) => {
-    if (!part.material) unresolved.add(`Experiment: ${part.materialRole}`)
+  snapshot.scene.roots.forEach((root) => {
+    if (!root.material) unresolved.add(`Experiment: ${root.materialRole}`)
   })
   Object.entries(snapshot.taskScenes).forEach(([taskName, scene]) => {
-    scene.parts.forEach((part) => {
-      if (!part.material) unresolved.add(`Task ${taskName}: ${part.materialRole}`)
+    scene.roots.forEach((root) => {
+      if (!root.material) unresolved.add(`Task ${taskName}: ${root.materialRole}`)
     })
   })
   return Object.freeze([...unresolved])
@@ -49,9 +50,18 @@ export function buildMeasurement(
   if (unresolved.length > 0) {
     throw new CadModelError(`Measurement requires resolved Material roles: ${unresolved.join(', ')}.`)
   }
+  const experiment: MeasurementExperimentSnapshot = {
+    kind: snapshot.kind,
+    sourceHash: snapshot.sourceHash,
+    variables: snapshot.variables,
+    varsSchema: snapshot.varsSchema,
+    scene: snapshot.scene,
+    taskScenes: snapshot.taskScenes,
+    simulationProgram: snapshot.simulationProgram,
+  }
   const measurement = Object.freeze({
     kind: 'measurement' as const,
-    experiment: snapshot,
+    experiment: Object.freeze(experiment),
     materialParameters: resolution.materialParameters,
     materialWarnings: Object.freeze([...resolution.warnings]),
     taskMaterialParameters: resolution.taskMaterialParameters,
@@ -62,11 +72,11 @@ export function buildMeasurement(
 }
 
 export function buildSourceOnlyMeasurement(snapshot: EvaluatedExperimentSnapshot) {
-  const experimentMaterials = deserializeCadScene(snapshot.scene).parts.flatMap((part) =>
+  const experimentMaterials = deserializeCadScene(snapshot.renderScene).parts.flatMap((part) =>
     part.material ? [part.material] : [],
   )
   const taskMaterials = Object.fromEntries(
-    Object.entries(snapshot.taskScenes).map(([name, scene]) => [
+    Object.entries(snapshot.taskRenderScenes).map(([name, scene]) => [
       name,
       deserializeCadScene(scene).parts.flatMap((part) => (part.material ? [part.material] : [])),
     ]),
@@ -117,10 +127,18 @@ export function assertBuiltMeasurement(value: unknown): asserts value is BuiltMe
   if (measurement.kind !== 'measurement' || measurement.experiment?.kind !== 'experiment') {
     throw new CadModelError('Built Measurement kind does not match its Experiment.')
   }
-  assertEvaluatedDocumentSnapshot(measurement.experiment)
-  const unresolved = unresolvedMeasurementMaterialRoles(measurement.experiment)
-  if (unresolved.length > 0) {
-    throw new CadModelError(`Built Measurement contains unresolved Material roles: ${unresolved.join(', ')}.`)
+  assertMeasurementExperimentSnapshot(measurement.experiment)
+  const unresolved = new Set<string>()
+  measurement.experiment.scene.roots.forEach((root) => {
+    if (!root.material) unresolved.add(`Experiment: ${root.materialRole}`)
+  })
+  Object.entries(measurement.experiment.taskScenes).forEach(([taskName, scene]) => {
+    scene.roots.forEach((root) => {
+      if (!root.material) unresolved.add(`Task ${taskName}: ${root.materialRole}`)
+    })
+  })
+  if (unresolved.size > 0) {
+    throw new CadModelError(`Built Measurement contains unresolved Material roles: ${[...unresolved].join(', ')}.`)
   }
   if (!readFrozenMaterialParameters(measurement.materialParameters)) {
     throw new CadModelError('Built Measurement Experiment Material snapshot is invalid.')
@@ -165,9 +183,7 @@ export function applyFrozenMaterialParameters(scene: CadScene, frozen: FrozenMat
             ? Object.freeze({
                 ...entry.value,
                 quantityKind: definition.quantityKind,
-                ...(QuantityKind[definition.quantityKind].tensorOrder() === 0
-                  ? {}
-                  : { basis: identityCartesianBasis }),
+                ...(QuantityKind[definition.quantityKind].tensorOrder() === 0 ? {} : { basis: identityCartesianBasis }),
               })
             : entry.value
       })

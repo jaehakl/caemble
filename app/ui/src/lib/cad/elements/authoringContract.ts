@@ -1,7 +1,7 @@
 import type { CadAuthoringContract } from '../evaluation/types'
 
 export const cadAuthoringContract = {
-  apiVersion: 9,
+  apiVersion: 10,
   identity: {
     name: 'id',
     type: 'string',

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from app.solver_framework.geometry import GeometryService
 
 
 @dataclass(frozen=True, slots=True)
@@ -12,6 +15,7 @@ class SolverContext:
     state: Any
     inputs: dict[str, Any]
     world: dict[str, Any]
+    geometry: GeometryService
     progress: Callable[[Any], Awaitable[None]]
     descriptor: dict[str, Any]
 

@@ -311,7 +311,7 @@ describe('CAD scene identity and evaluated tree', () => {
         overlap: ['assembly.left'],
       },
       surfaceGroup: {
-        contacts: ['assembly.left.box/surface-1', 'assembly.right.box/surface-2', 'missing/surface-1'],
+        contacts: ['assembly.left.box/surface/-X', 'assembly.right.box/surface/%2BX', 'missing/surface/-X'],
       },
     })
 
@@ -329,8 +329,8 @@ describe('CAD scene identity and evaluated tree', () => {
     expect(scene.surfaceGroups[0]).toMatchObject({
       id: '@surface-group/contacts',
       geometryIds: ['assembly.left.box', 'assembly.right.box'],
-      surfaceIds: ['assembly.left.box/surface-1', 'assembly.right.box/surface-2'],
-      missingMemberIds: ['missing/surface-1'],
+      surfaceIds: ['assembly.left.box/surface/-X', 'assembly.right.box/surface/%2BX'],
+      missingMemberIds: ['missing/surface/-X'],
     })
   })
 })

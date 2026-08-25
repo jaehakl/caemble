@@ -1,4 +1,4 @@
-import type { BuiltMeasurement } from '../../lib/cad'
+import { assertBuiltMeasurement, type BuiltMeasurement } from '../../lib/cad'
 import type { CaeStartRequest } from './protocol'
 import { CaeSimulationError } from './errors'
 
@@ -18,6 +18,30 @@ export function serializeCaeRequest(
   measurement: BuiltMeasurement,
   solverContracts: CaeStartRequest['solverContracts'],
 ) {
+  assertBuiltMeasurement(measurement)
+  const forbiddenGeometryField = (value: unknown): string | undefined => {
+    if (Array.isArray(value)) {
+      return value.map(forbiddenGeometryField).find((field) => field !== undefined)
+    }
+    if (!value || typeof value !== 'object' || ArrayBuffer.isView(value)) return undefined
+    const record = value as Record<string, unknown>
+    if (record.kind === 'mesh') return 'kind:mesh'
+    return Object.entries(record)
+      .flatMap(([key, item]) =>
+        key === 'positions' || key === 'polygonOffsets' ? [key] : [forbiddenGeometryField(item)],
+      )
+      .find((field) => field !== undefined)
+  }
+  const forbidden = [
+    forbiddenGeometryField(measurement.experiment.scene),
+    ...Object.values(measurement.experiment.taskScenes).map(forbiddenGeometryField),
+  ].find((field) => field !== undefined)
+  if (forbidden) {
+    throw new CaeSimulationError(
+      'invalid_request',
+      `Canonical Geometry 전송에 금지된 Mesh 필드가 있습니다: ${forbidden}`,
+    )
+  }
   const attachments: SerializedCaeAttachment[] = []
   let totalBytes = 0
   const visit = (value: unknown, path: string): unknown => {
@@ -54,7 +78,7 @@ export function serializeCaeRequest(
     }
     return value
   }
-  const payload = visit({ measurement, solverContracts }, 'cae') as CaeStartRequest
+  const payload = visit({ formatVersion: 2, measurement, solverContracts }, 'cae') as CaeStartRequest
   const payloadBytes = new TextEncoder().encode(JSON.stringify(payload))
   totalBytes += payloadBytes.byteLength
   if (totalBytes > INPUT_LIMIT_BYTES) {

@@ -25,11 +25,13 @@ export type {
   Geometry,
   GeometryAttributes,
   GeometryGroupMap,
+  GeometrySurfaceRef,
   GeometryIdentityAttributes,
   GeometryInvocationAttributes,
   GeometryTransformAttributes,
   IntrinsicGeometryAttributes,
   LegacyGeometryTransformAttributes,
+  SurfaceGroupMap,
 } from './structure'
 export { Material } from './material'
 export { CadModelError } from './errors'

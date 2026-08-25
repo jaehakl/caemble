@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from app.errors import CaeError
+from app.solver_framework.geometry import TriangleProvenance, TriangularMesh
 from app.solver_framework.models import VoxelDomain
 from app.solver_framework.numerics.finite_volume import create_scalar_finite_volume_system, solve_pcg
 from app.solver_framework.numerics.voxel import build_electrode_voxel_domain
@@ -11,23 +12,23 @@ from app.solvers.dc_current_density.solver import _cross_section, _gradient
 def box_part(part_id, minimum, maximum):
     x0, y0, z0 = minimum
     x1, y1, z1 = maximum
-    polygons = [
-        [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]],
-        [[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]],
-        [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]],
-        [[x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]],
-        [[x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]],
-        [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]],
-    ]
-    positions = np.asarray([point for polygon in polygons for point in polygon], dtype=np.float64)
-    return {
-        "id": part_id,
-        "geometry": {
-            "kind": "mesh",
-            "positions": positions,
-            "polygonOffsets": np.arange(0, positions.shape[0] + 1, 4, dtype=np.uint32),
-        },
-    }
+    vertices = np.asarray(
+        [
+            [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
+            [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1],
+        ],
+        dtype=np.float64,
+    )
+    triangles = np.asarray(
+        [
+            [0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7],
+            [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5],
+            [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7],
+        ],
+        dtype=np.int64,
+    )
+    provenance = (TriangleProvenance(part_id, part_id, "Outer"),) * len(triangles)
+    return TriangularMesh(vertices, triangles, provenance)
 
 
 def test_dc_cross_section_and_gradient_are_solver_owned():
@@ -94,13 +95,10 @@ async def test_dc_voxelizes_touching_experiment_and_task_geometry_as_one_domain(
         return None
 
     result = await build_electrode_voxel_domain(
-        {"lengthUnit": "m"},
         [conductor],
-        {"lengthUnit": "m"},
         [source],
         [reference],
         (12, 5, 5),
-        "m",
         progress,
         "DC test",
     )
@@ -137,13 +135,10 @@ async def test_dc_rejects_disconnected_or_overlapping_electrodes(source_bounds, 
 
     with pytest.raises(CaeError, match=message):
         await build_electrode_voxel_domain(
-            {"lengthUnit": "m"},
             [conductor],
-            {"lengthUnit": "m"},
             [source],
             [reference],
             (20, 5, 5),
-            "m",
             progress,
             "DC test",
         )

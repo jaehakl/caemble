@@ -500,12 +500,12 @@ export function useCadWorkspace(
         )
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
         const commonScene = applyFrozenMaterialParameters(
-          deserializeCadScene(snapshot.scene),
+          deserializeCadScene(snapshot.renderScene),
           resolution.materialParameters,
         )
         const nextTaskScenes = Object.freeze(
           Object.fromEntries(
-            Object.entries(snapshot.taskScenes).map(([name, serialized]) => [
+            Object.entries(snapshot.taskRenderScenes).map(([name, serialized]) => [
               name,
               applyFrozenMaterialParameters(deserializeCadScene(serialized), resolution.taskMaterialParameters[name]),
             ]),
@@ -914,7 +914,7 @@ export function useCadWorkspace(
     () =>
       Object.freeze(
         Object.fromEntries(
-          Object.entries(evaluatedSnapshot?.taskScenes ?? {}).map(([name, value]) => [name, value.sceneHash]),
+          Object.entries(evaluatedSnapshot?.taskRenderScenes ?? {}).map(([name, value]) => [name, value.sceneHash]),
         ),
       ),
     [evaluatedSnapshot],
@@ -948,7 +948,7 @@ export function useCadWorkspace(
     revision,
     runIsBusy,
     scene,
-    sceneHash: evaluatedSnapshot?.scene.sceneHash ?? null,
+    sceneHash: evaluatedSnapshot?.renderScene.sceneHash ?? null,
     setEvaluationTimeoutMs,
     simulationProgram,
     sourceReadOnly,

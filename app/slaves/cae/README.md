@@ -24,7 +24,7 @@ measurement, catalog, or wire boundary changes:
 
 ```powershell
 Push-Location ../../ui
-npm run export:cae-fixture -- --example caemble:experiment/caemble/verified/dc-uniform-bar@1.0.0 --out ../slaves/cae/tests/fixtures/dc-uniform-bar
+npm run export:cae-fixture -- --example caemble:experiment/caemble/verified/dc-uniform-bar@2.0.0 --out ../slaves/cae/tests/fixtures/dc-uniform-bar
 Pop-Location
 
 poetry run pytest -q tests/test_fixture_e2e.py -k dc_uniform_bar
@@ -58,9 +58,11 @@ descriptors and digests at startup, then closes the database. Solver modules are
 imported only on first use.
 
 The start payload is exactly
-`{ measurement: BuiltMeasurement, solverContracts }`. The contract list must
-match the unique name/version/digest set referenced by Simulation manifest v5.
-A mismatch is rejected before run creation.
+`{ formatVersion: 2, measurement: BuiltMeasurement, solverContracts }`.
+`formatVersion: 2` carries Canonical Geometry scene v1; unversioned legacy mesh
+requests are rejected. The contract list must match the unique
+name/version/digest set referenced by Simulation manifest v5. A mismatch is
+rejected before run creation.
 
 Each kernel sees two local scopes: `experiment` for the common scene and `task`
 for its task-local scene. Unit conversion modifies only that Solver view, never

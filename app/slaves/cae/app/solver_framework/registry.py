@@ -9,6 +9,7 @@ from typing import Any, Awaitable, Callable
 from caemble_catalog import open_catalog
 
 from app.errors import CaeError
+from app.solver_framework.geometry import GeometryService
 from app.solver_framework.models import SolverContext
 
 Runner = Callable[[SolverContext], Awaitable[dict[str, Any]]]
@@ -175,6 +176,7 @@ class SolverRegistry:
         inputs: dict[str, Any],
         world: dict[str, Any],
         progress: Callable[[Any], Awaitable[None]],
+        geometry: GeometryService | None = None,
     ) -> dict[str, Any]:
         kernel = task.get("kernel") or {}
         config = task.get("config")
@@ -183,7 +185,7 @@ class SolverRegistry:
         name, version = kernel.get("name"), kernel.get("version")
         descriptor = self.descriptor(name, version)
         result = await self.runner(name, version)(
-            SolverContext(config, state, inputs, world, progress, descriptor)
+            SolverContext(config, state, inputs, world, geometry or GeometryService(), progress, descriptor)
         )
         return result if "state" in result else {"state": state, **result}
 

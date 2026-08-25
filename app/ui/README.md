@@ -54,7 +54,7 @@ an error.
 - `src/features`: authentication, Viewer/editor persistence, AI, and the thin
   CAE client.
 - `src/api`: fetch clients and Zod response validation.
-- `src/lib/cad`: source model, generated CAD API v7, compiler, isolated runner,
+- `src/lib/cad`: source model, generated CAD API declarations, compiler, isolated runner,
   evaluation, and serialization.
 - `src/lib/material`, `src/lib/quantitykind`, `src/lib/solver`: domain models
   that consume API/catalog contracts.
@@ -95,7 +95,7 @@ an Access Token; Account-created `client` and `launcher` tokens are for external
 SDKs and launchers only.
 
 Simulation callers go through `src/features/cae/client.ts`, which sends
-`{ measurement, solverContracts }` and owns attachments, progress, record ACK,
+`{ formatVersion: 2, measurement, solverContracts }` and owns attachments, progress, record ACK,
 cancellation, and cleanup. There is no browser-local Solver fallback.
 
 ## Production runner

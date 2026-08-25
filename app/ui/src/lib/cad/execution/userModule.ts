@@ -264,13 +264,7 @@ export function inspectCompiledDocument(compiled: CompiledCadDocument): CadInspe
 }
 
 function emptyTaskScene(label: string, lengthUnit: UcumUnit): CadScene {
-  return {
-    lengthUnit,
-    parts: [],
-    tree: { key: label.toLowerCase().replace(/[^a-z0-9]+/gu, '-'), label, children: [] },
-    geometryGroups: [],
-    surfaceGroups: [],
-  }
+  return evaluateCadScene([], {}, label, lengthUnit)
 }
 
 export function evaluateDocumentEntry(

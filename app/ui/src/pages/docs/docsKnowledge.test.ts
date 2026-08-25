@@ -50,7 +50,7 @@ describe('documentation knowledge registry', () => {
 
   it('links manual examples to canonical catalog detail instead of duplicating full source', () => {
     expect(manualDocsKnowledge.find(({ id }) => id === 'program-definition')?.content).toContain(
-      'item=experiment:caemble:experiment/caemble/verified/dc-uniform-bar@1.0.0',
+      'item=experiment:caemble:experiment/caemble/verified/dc-uniform-bar@2.0.0',
     )
     expect(manualDocsKnowledge.find(({ id }) => id === 'reference-geometry-skeleton')?.content).toContain(
       'item=experiment:caemble:experiment/caemble/getting-started/geometry-authoring-skeleton@1.0.0',
@@ -63,6 +63,16 @@ describe('documentation knowledge registry', () => {
       '<rotate axis=',
     )
     expect(catalogDocsKnowledge.some(({ section }) => section === 'materials')).toBe(false)
+  })
+
+  it('documents CAD API 10 semantic surfaces and the legacy ordinal hard cut', () => {
+    const identity = manualDocsKnowledge.find(({ id }) => id === 'reference-geometry-identity')?.content ?? ''
+
+    expect(identity).toContain('<geometry-id>/surface/<URL-encoded-face-key>')
+    expect(identity).toContain('conductor.body/surface/%2BX')
+    expect(identity).toContain('CAD API v7-v9 bundle은 계속 열어 읽을 수 있지만')
+    expect(identity).toContain('자동 alias하지 않으므로')
+    expect(identity).toContain('Boolean operation은 최대 128개 operand')
   })
 
   it('ranks Manual and live catalog matches and produces stable catalog links', () => {

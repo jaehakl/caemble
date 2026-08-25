@@ -9,7 +9,7 @@ from typing import Any
 
 from .database import Catalog
 from .errors import CatalogIntegrityError
-from .schema import SEMVER_COMPONENT_MAX
+from .schema import SEMVER_COMPONENT_MAX, SUPPORTED_CAD_API_VERSIONS
 
 QUANTITY_KIND_DOMAINS = (
     "general",
@@ -354,6 +354,10 @@ def _validate_experiments(catalog: Catalog) -> None:
         ):
             raise CatalogIntegrityError(
                 f"Experiment {key} SemVer components must be between 0 and {SEMVER_COMPONENT_MAX}"
+            )
+        if row["cad_api_version"] not in SUPPORTED_CAD_API_VERSIONS:
+            raise CatalogIntegrityError(
+                f"Experiment {key} CAD API version must be one of {SUPPORTED_CAD_API_VERSIONS}"
             )
         try:
             verification = json.loads(row["verification_json"])

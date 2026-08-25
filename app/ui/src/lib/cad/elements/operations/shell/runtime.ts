@@ -262,6 +262,7 @@ export const shellDefinition = {
       throw new CadModelError('<shell> child Geometry must evaluate to exactly one solid.')
     }
 
+    const boundaries = [...offsets.map(({ offset }) => offset), 0].sort((first, second) => first - second)
     return createShellGeometries(
       parts[0].geometry,
       offsets.map(({ offset }) => offset),
@@ -270,6 +271,13 @@ export const shellDefinition = {
       const binding = context.inheritedMaterials.get(role)
       return {
         geometry,
+        canonicalNode: {
+          kind: 'shell' as const,
+          nodeId: `${context.nodeId}/$layer-${index + 1}`,
+          innerOffset: boundaries[index],
+          outerOffset: boundaries[index + 1],
+          child: parts[0].canonicalNode,
+        },
         materialRole: binding?.role ?? role,
         ...(binding?.material === undefined ? {} : { material: binding.material }),
       }

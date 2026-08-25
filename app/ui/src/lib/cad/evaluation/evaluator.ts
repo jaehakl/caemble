@@ -4,6 +4,9 @@ import { getCadElementDefinition } from './registry'
 import { flattenValues, Fragment, isCadNode } from './jsx'
 import { applyTransforms, normalizeTransforms } from './transforms'
 import { applyCadSceneGroups, type CadSceneGroupOptions } from './groups'
+import { canonicalPrimitiveNode } from './canonicalPrimitive'
+import { canonicalSurfaceMemberEntries, registerCanonicalGeometryScene } from './canonical'
+import type { CanonicalGeometryRootV1 } from './canonicalTypes'
 import type {
   CadScene,
   CadSceneMaterial,
@@ -137,11 +140,12 @@ function resolveGeometryId(value: unknown, label: string, parentId: string, stat
 }
 
 function automaticGeometryId(authoringName: string, parentId: string, state: EvaluationState) {
-  const base = authoringName
-    .replace(/([a-z0-9])([A-Z])/gu, '$1-$2')
-    .replace(/[^A-Za-z0-9_-]+/gu, '-')
-    .replace(/^-+|-+$/gu, '')
-    .toLowerCase() || 'geometry'
+  const base =
+    authoringName
+      .replace(/([a-z0-9])([A-Z])/gu, '$1-$2')
+      .replace(/[^A-Za-z0-9_-]+/gu, '-')
+      .replace(/^-+|-+$/gu, '')
+      .toLowerCase() || 'geometry'
   const siblingIds = state.localIdsByParent.get(parentId) ?? new Set<string>()
   const explicitIds = state.explicitIdsByParent.get(parentId)
   let localId = base
@@ -249,6 +253,7 @@ function evaluateNode(
     return applyTransforms(
       evaluateNode(result, materials, state, traceNode, `${nodeKey}/result`, globalId, traceNode.key),
       transformValues,
+      `${globalId}/$component-transform`,
     )
   }
 
@@ -259,7 +264,8 @@ function evaluateNode(
     definition.kind === 'primitive' && props.id === undefined
       ? automaticGeometryId(definition.manifest.authoringName, identityParent, state)
       : null
-  const globalId = primitiveIdentity?.globalId ??
+  const globalId =
+    primitiveIdentity?.globalId ??
     (props.id === undefined ? undefined : resolveGeometryId(props.id, `<${type}>`, identityParent, state))
   const traceNode = addTreeNode(state, traceParent, nodeKey, `<${type}>`, globalId)
   const elementIdentityParent = globalId ?? identityParent
@@ -280,6 +286,7 @@ function evaluateNode(
     parts = [
       {
         geometry,
+        canonicalNode: canonicalPrimitiveNode(definition.tag, globalId!, resolvedProps, geometry),
         materialRole: binding.role,
         ...(binding.material === undefined ? {} : { material: binding.material }),
         surfaces: definition.createSurfaces(geometry, resolvedProps),
@@ -291,6 +298,7 @@ function evaluateNode(
     reserveExplicitSiblingIds(children, elementIdentityParent, state)
     let childIndex = 0
     parts = definition.evaluate(value, {
+      nodeId: globalId ?? nodeKey,
       inheritedMaterials,
       evaluate: (child, materials = inheritedMaterials, trace) => {
         if (trace) {
@@ -330,7 +338,7 @@ function evaluateNode(
     }
   }
 
-  return applyTransforms(parts, transformValues)
+  return applyTransforms(parts, transformValues, `${globalId ?? nodeKey}/$element-transform`)
 }
 
 export function evaluateCadScene(
@@ -375,6 +383,7 @@ export function evaluateCadScene(
   })
 
   const sceneMaterials = new Map<Material, CadSceneMaterial>()
+  const canonicalRoots: CanonicalGeometryRootV1[] = []
   const parts: CadScenePart[] = evaluatedParts.map((part, partIndex) => {
     if (!part.surfaces || !part.ownerNodeKey || !part.resultNodeKey) {
       throw new CadModelError('CAD evaluation produced geometry without surface metadata.')
@@ -391,8 +400,8 @@ export function evaluateCadScene(
     const subtreePartCount = subtreePartCounts.get(owner.globalId) ?? 0
     const usesExactGeometryId = directPartCount === 1 && subtreePartCount === 1
     const id = usesExactGeometryId ? owner.globalId : `${owner.globalId}.$part-${directPartOrdinal}`
-    const surfaces = part.surfaces.map((surface, surfaceIndex) => ({
-      id: `${id}/surface-${surfaceIndex + 1}`,
+    const surfaces = part.surfaces.map((surface) => ({
+      id: `${id}/surface/${encodeURIComponent(surface.name)}`,
       name: surface.name,
       polygonIndices: [...surface.polygonIndices],
     }))
@@ -429,6 +438,21 @@ export function evaluateCadScene(
       }
     }
 
+    canonicalRoots.push({
+      id,
+      materialRole: part.materialRole,
+      ...(part.material === undefined
+        ? {}
+        : {
+            material: {
+              name: part.material.name,
+              ...(part.material.source === undefined ? {} : { source: part.material.source }),
+              ...(part.material.version === undefined ? {} : { version: part.material.version }),
+            },
+          }),
+      node: part.canonicalNode,
+    })
+
     return {
       id,
       geometry: part.geometry,
@@ -440,7 +464,27 @@ export function evaluateCadScene(
 
   annotateGeometryNodes(tree)
 
-  return applyCadSceneGroups({ lengthUnit, parts, tree, geometryGroups: [], surfaceGroups: [] }, groupOptions)
+  const scene = applyCadSceneGroups({ lengthUnit, parts, tree, geometryGroups: [], surfaceGroups: [] }, groupOptions)
+  const canonical = registerCanonicalGeometryScene(scene, canonicalRoots, groupOptions)
+  scene.surfaceGroups = canonical.surfaceGroups.map((group) => {
+    const entries = canonicalSurfaceMemberEntries(group)
+    entries.forEach(({ memberId, selector }) => {
+      const part = scene.parts.find((candidate) => candidate.id === selector.rootId)
+      if (part && !part.surfaces.some((surface) => surface.id === memberId)) {
+        part.surfaces.push({ id: memberId, name: selector.faceKey, polygonIndices: [] })
+      }
+    })
+    return {
+      id: group.id,
+      name: group.name,
+      kind: 'surface',
+      memberIds: [...group.memberIds],
+      geometryIds: [...new Set(group.selectors.map((selector) => selector.rootId))],
+      surfaceIds: entries.map((entry) => entry.memberId),
+      missingMemberIds: [...group.missingMemberIds],
+    }
+  })
+  return scene
 }
 
 export function evaluateCad(root: unknown): CadScenePart[] {

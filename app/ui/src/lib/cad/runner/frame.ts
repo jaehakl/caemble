@@ -104,8 +104,8 @@ function handleOperation(event: MessageEvent<unknown>, envelope: RunnerOperation
         workerEvent.data,
         response.type === 'evaluation-success'
           ? [
-              ...cadSnapshotTransferables(response.snapshot.scene),
-              ...Object.values(response.snapshot.taskScenes).flatMap(cadSnapshotTransferables),
+              ...cadSnapshotTransferables(response.snapshot.renderScene),
+              ...Object.values(response.snapshot.taskRenderScenes).flatMap(cadSnapshotTransferables),
             ]
           : response.type === 'geometry-preview-success'
             ? cadSnapshotTransferables(response.scene)

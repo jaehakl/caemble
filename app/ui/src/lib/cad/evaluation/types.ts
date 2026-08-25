@@ -1,6 +1,7 @@
 import type { Material, ResolvedMaterialVariables } from '../model/core'
 import type { Rotation, Vec3 } from '../model/types'
 import type { UcumUnit } from '../model/units'
+import type { CanonicalGeometryNodeV1 } from './canonicalTypes'
 
 export type GeometryComponent = (props: Record<string, unknown>) => unknown
 export type CadElementType = string | GeometryComponent
@@ -13,6 +14,7 @@ export type CadNode = {
 
 export type EvaluatedPart = {
   geometry: unknown
+  canonicalNode: CanonicalGeometryNodeV1
   materialRole: string
   material?: Material
   surfaces?: EvaluatedSurface[]
@@ -28,7 +30,7 @@ export type EvaluatedSurface = {
 export type CadSceneSurface = {
   id: string
   name: string
-  polygonIndices: number[]
+  polygonIndices: number[] | Uint32Array
 }
 
 export type CadScenePart = {
@@ -99,7 +101,7 @@ export type CadElementChildrenManifest = Readonly<{
 }>
 
 export type CadAuthoringContract = Readonly<{
-  apiVersion: 9
+  apiVersion: 10
   identity: CadElementPropertyManifest & Readonly<{ pathExample: string }>
   transforms: Readonly<{
     applicationOrder: readonly ['scale', 'rotation', 'position']
@@ -126,6 +128,7 @@ export type CadElementManifest<Tag extends string = string> = Readonly<{
 }>
 
 export type CadElementEvaluationContext = Readonly<{
+  nodeId: string
   inheritedMaterials: Map<string, MaterialBinding>
   evaluate: (
     value: unknown,

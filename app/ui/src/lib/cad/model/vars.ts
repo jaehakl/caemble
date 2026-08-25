@@ -79,7 +79,7 @@ export function normalizeVarsSchema(rawSchema: unknown, objectName: string): Var
     }
     if (entry.shape === undefined) {
       throw new CadModelError(
-        `varsSchema.${key}.shape is required by CAD API v9; update the Experiment source to define shape, min, and max.`,
+        `varsSchema.${key}.shape is required by CAD API v10; update the Experiment source to define shape, min, and max.`,
       )
     }
     if (entry.min === undefined || entry.max === undefined) {

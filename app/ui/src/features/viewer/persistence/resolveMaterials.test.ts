@@ -28,11 +28,36 @@ function scene(materialName: string) {
   })
 }
 
+function canonicalScene(materialName: string) {
+  return {
+    geometryFormatVersion: 1 as const,
+    geometryHash: materialName === 'Common' ? 'a'.repeat(64) : 'b'.repeat(64),
+    lengthUnit: 'mm',
+    roots: [
+      {
+        id: materialName,
+        materialRole: materialName.toLowerCase(),
+        material: { name: materialName },
+        node: {
+          kind: 'primitive' as const,
+          nodeId: materialName,
+          primitive: 'box' as const,
+          parameters: { size: [1, 1, 1] },
+        },
+      },
+    ],
+    geometryGroups: [],
+    surfaceGroups: [],
+  }
+}
+
 function materialSnapshot(): EvaluatedExperimentSnapshot {
   return {
     kind: 'experiment',
-    scene: scene('Common'),
-    taskScenes: { Heat: scene('Task') },
+    scene: canonicalScene('Common'),
+    taskScenes: { Heat: canonicalScene('Task') },
+    renderScene: scene('Common'),
+    taskRenderScenes: { Heat: scene('Task') },
     simulationProgram: {
       formatVersion: 5,
       simulationApiVersion: 3,
@@ -80,7 +105,14 @@ describe('createDocumentMaterialResolver', () => {
       surfaceGroups: [],
       tree: { children: [], key: 'shared', label: 'Shared' },
     })
-    const snapshot = { ...materialSnapshot(), scene: sharedScene, taskScenes: { Heat: sharedScene } }
+    const sharedCanonicalScene = canonicalScene('Shared')
+    const snapshot = {
+      ...materialSnapshot(),
+      scene: sharedCanonicalScene,
+      taskScenes: { Heat: sharedCanonicalScene },
+      renderScene: sharedScene,
+      taskRenderScenes: { Heat: sharedScene },
+    }
     const random = vi.spyOn(Math, 'random').mockReturnValue(0.75)
 
     const result = await createDocumentMaterialResolver(null, true)(snapshot)
@@ -105,7 +137,14 @@ describe('createDocumentMaterialResolver', () => {
       surfaceGroups: [],
       tree: { children: [], key: 'shared', label: 'Shared' },
     })
-    const snapshot = { ...materialSnapshot(), scene: sharedScene, taskScenes: { Heat: sharedScene } }
+    const sharedCanonicalScene = canonicalScene('Shared')
+    const snapshot = {
+      ...materialSnapshot(),
+      scene: sharedCanonicalScene,
+      taskScenes: { Heat: sharedCanonicalScene },
+      renderScene: sharedScene,
+      taskRenderScenes: { Heat: sharedScene },
+    }
     vi.spyOn(dbTables.MaterialName, 'listRows').mockResolvedValue({
       items: [{ id: 1, material_id: 7, name: 'Shared', user_id: null }],
       total: 1,

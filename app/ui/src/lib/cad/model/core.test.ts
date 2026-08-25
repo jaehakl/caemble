@@ -213,7 +213,7 @@ describe('Experiment vars and groups', () => {
             legacy: { min: 0, max: 2 } as never,
           },
         }),
-    ).toThrow('shape is required by CAD API v9')
+    ).toThrow('shape is required by CAD API v10')
     expect(
       () =>
         new ExperimentDefinition({
@@ -382,7 +382,7 @@ describe('Experiment vars and groups', () => {
     expect(
       () => new ExperimentDefinition({ lengthUnit: 'mm', ...options, geometryGroup: { invalid: 'assembly' as never } }),
     ).toThrow('must be an array')
-    expect(() => new ExperimentDefinition({ lengthUnit: 'mm', ...options, surfaceGroup: { invalid: [''] } })).toThrow(
+    expect(() => new ExperimentDefinition({ lengthUnit: 'mm', ...options, surfaceGroup: { invalid: ['' as never] } })).toThrow(
       'must be a non-empty string',
     )
     expect(

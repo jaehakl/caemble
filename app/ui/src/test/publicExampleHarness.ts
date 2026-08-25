@@ -15,6 +15,7 @@ import {
 } from '@/lib/cad/source/sourceAnalysis'
 import {
   assertExperimentSourceBundle,
+  CAD_SOURCE_API_VERSION,
   createExperimentSourceBundle,
   experimentTaskName,
   type ExperimentSourceBundle,
@@ -80,7 +81,7 @@ export function inspectPublicExampleBundle(bundle: ExperimentSourceBundle) {
       else if (experimentTaskName(entryFile) !== null) analyzeTaskSource(source)
       else analyzeBundleModuleSource(source, entryFile)
       const compiled: CompiledCadSource = {
-        apiVersion: 9,
+        apiVersion: CAD_SOURCE_API_VERSION,
         compilerVersion: CAD_COMPILER_VERSION,
         entryFile,
         code: compileSource(source, entryFile),
@@ -90,7 +91,7 @@ export function inspectPublicExampleBundle(bundle: ExperimentSourceBundle) {
     }),
   )
   const document: CompiledCadDocument = {
-    apiVersion: 9,
+    apiVersion: CAD_SOURCE_API_VERSION,
     compilerVersion: CAD_COMPILER_VERSION,
     sourceHash,
     sources,

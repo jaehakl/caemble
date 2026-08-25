@@ -7,6 +7,7 @@ const cacheDirectory = path.resolve('node_modules/.cache')
 await mkdir(cacheDirectory, { recursive: true })
 const temporaryDirectory = await mkdtemp(path.join(cacheDirectory, 'caemble-cae-fixture-'))
 const bundledEntry = path.join(temporaryDirectory, 'export-cae-fixture.mjs')
+const manifoldWasmPath = path.resolve('node_modules/manifold-3d/manifold.wasm')
 
 try {
   await build({
@@ -16,8 +17,23 @@ try {
     platform: 'node',
     target: 'node20',
     external: ['esbuild'],
+    plugins: [
+      {
+        name: 'manifold-wasm-path',
+        setup(buildContext) {
+          buildContext.onResolve({ filter: /^manifold-3d\/manifold\.wasm\?url$/u }, () => ({
+            path: 'manifold-wasm-path',
+            namespace: 'caemble',
+          }))
+          buildContext.onLoad({ filter: /.*/u, namespace: 'caemble' }, () => ({
+            contents: `export default ${JSON.stringify(manifoldWasmPath)}`,
+            loader: 'js',
+          }))
+        },
+      },
+    ],
     define: {
-      'import.meta.env.MODE': '"test"',
+      'import.meta.env.MODE': '"export"',
     },
     banner: {
       js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",

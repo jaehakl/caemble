@@ -1,4 +1,4 @@
-// @caemble/core declaration version: 0.6.0
+// @caemble/core declaration version: 0.7.0
 export type Tensor = number | readonly Tensor[]
 export type Vars = Readonly<Record<string, Tensor>>
 export type Vec3 = readonly [number, number, number]
@@ -34,6 +34,8 @@ export type GeometryTransformAttributes = CanonicalGeometryTransformAttributes |
 export type GeometryIdentityAttributes = Readonly<{ id?: string }>
 export type IntrinsicGeometryAttributes = GeometryIdentityAttributes & GeometryTransformAttributes
 export type GeometryGroupMap = Readonly<Record<string, readonly string[]>>
+export type GeometrySurfaceRef = `${string}/surface/${string}`
+export type SurfaceGroupMap = Readonly<Record<string, readonly GeometrySurfaceRef[]>>
 export type VarsSchemaEntry = Readonly<{
   shape: readonly number[]
   min: number
@@ -452,7 +454,7 @@ export type ExperimentDefinitionOptions<
   lengthUnit: UcumUnit
   varsSchema: Schema
   geometryGroup?: GeometryGroupMap
-  surfaceGroup?: GeometryGroupMap
+  surfaceGroup?: SurfaceGroupMap
   recordedData: Recorded
 }>
 
@@ -461,7 +463,7 @@ export type TaskDefinitionOptions<Config> = Readonly<{
   lengthUnit?: UcumUnit
   geometry?: (context: TaskModelContext) => unknown
   geometryGroup?: GeometryGroupMap
-  surfaceGroup?: GeometryGroupMap
+  surfaceGroup?: SurfaceGroupMap
   config: (context: TaskModelContext) => Config
 }>
 
@@ -470,23 +472,23 @@ export class ExperimentDefinition<
   Recorded extends Readonly<Record<string, RecordedDataSpec>> = Readonly<Record<string, RecordedDataSpec>>,
 > {
   constructor(options: ExperimentDefinitionOptions<Schema, Recorded>)
-  readonly apiVersion: 9
+  readonly apiVersion: 10
   readonly documentType: 'experiment'
   readonly varsSchema: Schema
   readonly lengthUnit: UcumUnit
   readonly geometryGroup: GeometryGroupMap
-  readonly surfaceGroup: GeometryGroupMap
+  readonly surfaceGroup: SurfaceGroupMap
   readonly recordedData: Recorded
 }
 
 export class TaskDefinition<Config = unknown> {
   constructor(options: TaskDefinitionOptions<Config>)
-  readonly apiVersion: 9
+  readonly apiVersion: 10
   readonly documentType: 'task'
   readonly kernel: KernelIdentity
   readonly lengthUnit?: UcumUnit
   readonly geometryGroup: GeometryGroupMap
-  readonly surfaceGroup: GeometryGroupMap
+  readonly surfaceGroup: SurfaceGroupMap
 }
 
 export declare function experiment<

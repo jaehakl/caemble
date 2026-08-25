@@ -37,7 +37,15 @@ export function cadSceneHash(scene: Omit<SerializableCadScene, 'sceneHash'>) {
         id: part.id,
         materialRole: part.materialRole,
         material: part.material,
-        surfaces: part.surfaces,
+        surfaces: part.surfaces.map((surface) =>
+          surface.polygonIndices instanceof Uint32Array
+            ? {
+                id: surface.id,
+                name: surface.name,
+                polygonIndices: { kind: 'uint32', length: surface.polygonIndices.length },
+              }
+            : surface,
+        ),
         positionLength: part.geometry.positions.length,
         polygonOffsetLength: part.geometry.polygonOffsets.length,
       })),
@@ -55,6 +63,17 @@ export function cadSceneHash(scene: Omit<SerializableCadScene, 'sceneHash'>) {
         part.geometry.polygonOffsets.buffer,
         part.geometry.polygonOffsets.byteOffset,
         part.geometry.polygonOffsets.byteLength,
+      ),
+      ...part.surfaces.flatMap((surface) =>
+        surface.polygonIndices instanceof Uint32Array
+          ? [
+              new Uint8Array(
+                surface.polygonIndices.buffer,
+                surface.polygonIndices.byteOffset,
+                surface.polygonIndices.byteLength,
+              ),
+            ]
+          : [],
       ),
     ]),
   ]
@@ -144,7 +163,7 @@ export function assertSerializableCadScene(value: unknown): asserts value is Ser
         Array.isArray(surface) ||
         typeof surface.id !== 'string' ||
         typeof surface.name !== 'string' ||
-        !Array.isArray(surface.polygonIndices) ||
+        (!Array.isArray(surface.polygonIndices) && !(surface.polygonIndices instanceof Uint32Array)) ||
         Object.keys(surface).some((key) => !['id', 'name', 'polygonIndices'].includes(key)) ||
         surface.polygonIndices.some(
           (index) => !Number.isSafeInteger(index) || index < 0 || index >= mesh.polygonOffsets.length - 1,
@@ -160,5 +179,15 @@ export function assertSerializableCadScene(value: unknown): asserts value is Ser
 }
 
 export function cadSnapshotTransferables(scene: SerializableCadScene) {
-  return scene.parts.flatMap((part) => [part.geometry.positions.buffer, part.geometry.polygonOffsets.buffer])
+  return [
+    ...new Set(
+      scene.parts.flatMap((part) => [
+        part.geometry.positions.buffer,
+        part.geometry.polygonOffsets.buffer,
+        ...part.surfaces.flatMap((surface) =>
+          surface.polygonIndices instanceof Uint32Array ? [surface.polygonIndices.buffer] : [],
+        ),
+      ]),
+    ),
+  ]
 }

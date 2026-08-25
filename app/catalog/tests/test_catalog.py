@@ -25,7 +25,7 @@ from caemble_catalog.admin import (
     validate_database,
     writable_connection,
 )
-from caemble_catalog.cli import main
+from caemble_catalog.cli import build_parser, main
 from caemble_catalog.experiment_bundle import ExperimentBundleError, validate_experiment_module_graph
 from caemble_catalog.schema import parse_experiment_version
 
@@ -33,7 +33,7 @@ from caemble_catalog.schema import parse_experiment_version
 def test_canonical_catalog_is_normalized_and_complete():
     with Catalog.open_readonly() as catalog:
         assert catalog.meta() == {
-            "schemaVersion": 5,
+            "schemaVersion": 6,
             "catalogRevision": catalog.meta()["catalogRevision"],
             "quantityKindDataVersion": "0.0.1",
             "materialCatalogVersion": "0.0.0",
@@ -41,7 +41,7 @@ def test_canonical_catalog_is_normalized_and_complete():
             "materialParameterCount": 258,
             "materialModelCount": 2,
             "solverCount": 2,
-            "experimentCount": 11,
+            "experimentCount": 15,
             "materialGlobalQualifiers": [
                 "temperature",
                 "pressure",
@@ -100,7 +100,7 @@ def test_solver_manifests_reconstruct_the_legacy_contract():
 def test_example_experiment_catalog_contracts():
     with Catalog.open_readonly() as catalog:
         experiments, experiment_total = catalog.list_experiments(limit=100)
-        assert experiment_total == 11
+        assert experiment_total == 15
         assert {
             "basketball-goal",
             "fiber-bundle",
@@ -123,10 +123,25 @@ def test_example_experiment_catalog_contracts():
         assert wheel["relatedSolvers"] == []
         assert catalog.list_experiments(namespace="caemble", repository="arrays", limit=100)[1] == 2
 
-        coupled = catalog.experiment("electro-thermal-uniform-bar")
+        legacy_coupled = catalog.experiment(
+            "electro-thermal-uniform-bar",
+            namespace="caemble",
+            repository="verified",
+            version="1.0.0",
+        )
+        coupled = catalog.experiment(
+            "electro-thermal-uniform-bar",
+            namespace="caemble",
+            repository="verified",
+            version="2.0.0",
+        )
         assert coupled["sourceBundle"]["formatVersion"] == 6
         assert "geometrySnapshot" not in coupled["sourceBundle"]
-        assert coupled["cadApiVersion"] == 9
+        assert legacy_coupled["cadApiVersion"] == 9
+        assert coupled["cadApiVersion"] == 10
+        assert "/surface-" in legacy_coupled["sourceBundle"]["files"]["experiment.tsx"]
+        assert "/surface-" not in coupled["sourceBundle"]["files"]["experiment.tsx"]
+        assert "conductor.body/surface/%2BX" in coupled["sourceBundle"]["files"]["experiment.tsx"]
         assert coupled["sourceFormatVersion"] == 2
         assert [(item["name"], item["version"]) for item in coupled["relatedSolvers"]] == [
             ("dc-current-density", "0.2.0"),
@@ -138,8 +153,38 @@ def test_example_experiment_catalog_contracts():
             "material.tsx",
             "simulate.py",
         }
-        assert catalog.list_experiments(solver_name="steady-state-heat", solver_version="0.1.0")[1] == 1
+        assert catalog.list_experiments(solver_name="steady-state-heat", solver_version="0.1.0")[1] == 2
         assert {item["kind"] for item in catalog.search("wheel")} == {"experiment"}
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "dc-notched-current-density",
+        "dc-resolution-study",
+        "dc-uniform-bar",
+        "electro-thermal-uniform-bar",
+    ],
+)
+def test_surface_target_experiment_versions_preserve_legacy_and_add_api10_semantics(key: str):
+    with Catalog.open_readonly() as catalog:
+        legacy = catalog.experiment(key, namespace="caemble", repository="verified", version="1.0.0")
+        current = catalog.experiment(key, namespace="caemble", repository="verified", version="2.0.0")
+
+    assert legacy["cadApiVersion"] == 9
+    assert current["cadApiVersion"] == 10
+    assert "/surface-" in legacy["sourceBundle"]["files"]["experiment.tsx"]
+    assert "/surface-" not in current["sourceBundle"]["files"]["experiment.tsx"]
+    assert "conductor.body/surface/-X" in current["sourceBundle"]["files"]["experiment.tsx"]
+    assert "conductor.body/surface/%2BX" in current["sourceBundle"]["files"]["experiment.tsx"]
+    assert 'id="body"' in current["sourceBundle"]["files"]["geometry.tsx"]
+    if key == "dc-notched-current-density":
+        assert 'id="notch"' in current["sourceBundle"]["files"]["geometry.tsx"]
+    assert current["verification"] == legacy["verification"]
+    assert current["concepts"] == legacy["concepts"]
+    assert current["relatedSolvers"] == legacy["relatedSolvers"]
+    for path in current["sourceBundle"]["files"].keys() - {"experiment.tsx", "geometry.tsx"}:
+        assert current["sourceBundle"]["files"][path] == legacy["sourceBundle"]["files"][path]
 
 
 @pytest.mark.parametrize("value", ["01.0.0", "1.00.0", "1.0.0-alpha", "2147483648.0.0"])
@@ -170,6 +215,7 @@ def test_experiment_cli_crud_and_semantic_diff(tmp_path: Path, capsys):
             "--database", str(draft), "experiment", "upsert", experiment["key"],
             "--namespace", experiment["namespace"], "--repository", experiment["repository"],
             "--version", experiment["version"],
+            "--cad-api-version", str(experiment["cadApiVersion"]),
             "--title", "Updated Basketball Goal", "--description", experiment["description"],
             "--bundle-file", str(bundle), "--verification-file", str(verification),
         ]
@@ -180,7 +226,8 @@ def test_experiment_cli_crud_and_semantic_diff(tmp_path: Path, capsys):
     second_version_args = [
         "--database", str(draft), "experiment", "upsert", experiment["key"],
         "--namespace", experiment["namespace"], "--repository", experiment["repository"],
-        "--version", "2.0.0", "--title", experiment["title"], "--description", experiment["description"],
+        "--version", "2.0.0", "--cad-api-version", "10",
+        "--title", experiment["title"], "--description", experiment["description"],
         "--bundle-file", str(bundle), "--verification-file", str(verification),
     ]
     assert main(second_version_args) == 0
@@ -198,6 +245,7 @@ def test_experiment_cli_crud_and_semantic_diff(tmp_path: Path, capsys):
             repository=experiment["repository"],
             version="2.0.0",
         )
+        assert selected["cadApiVersion"] == 10
         assert catalog.experiment(selected["coordinate"])["version"] == "2.0.0"
         matches = catalog.list_experiments(query=experiment["key"], limit=100)[0]
         assert {item["coordinate"] for item in matches} == {
@@ -224,6 +272,29 @@ def test_experiment_cli_crud_and_semantic_diff(tmp_path: Path, capsys):
         ]
     ) == 0
     assert main(["--database", str(draft), "experiment", "remove", experiment["key"]]) == 0
+
+
+def test_experiment_upsert_requires_an_explicit_supported_cad_api_version():
+    parser = build_parser()
+    arguments = [
+        "experiment",
+        "upsert",
+        "example-experiment",
+        "--title",
+        "Example Experiment",
+        "--description",
+        "Example description",
+        "--bundle-file",
+        "bundle.json",
+        "--verification-file",
+        "verification.json",
+    ]
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(arguments)
+    with pytest.raises(SystemExit):
+        parser.parse_args([*arguments, "--cad-api-version", "11"])
+    assert parser.parse_args([*arguments, "--cad-api-version", "10"]).cad_api_version == 10
 
 
 def test_runtime_slice_is_solver_scoped_and_resolves_explicit_references():
@@ -309,7 +380,13 @@ def test_draft_diff_publish_and_released_solver_identity_policy(tmp_path: Path):
     ) == 0
     with Catalog.open_readonly(draft, immutable=False) as catalog:
         assert [
-            item["name"] for item in catalog.experiment("electro-thermal-uniform-bar")["relatedSolvers"]
+            item["name"]
+            for item in catalog.experiment(
+                "electro-thermal-uniform-bar",
+                namespace="caemble",
+                repository="verified",
+                version="2.0.0",
+            )["relatedSolvers"]
         ] == ["dc-current-density", "steady-state-heat"]
     before = baseline.read_bytes()
     with pytest.raises(CatalogIntegrityError, match="immutable"):
@@ -317,9 +394,22 @@ def test_draft_diff_publish_and_released_solver_identity_policy(tmp_path: Path):
     assert baseline.read_bytes() == before
 
     create_draft(draft, baseline)
-    assert main(
-        ["--database", str(draft), "experiment", "remove", "electro-thermal-uniform-bar"]
-    ) == 0
+    for version in ("1.0.0", "2.0.0"):
+        assert main(
+            [
+                "--database",
+                str(draft),
+                "experiment",
+                "remove",
+                "electro-thermal-uniform-bar",
+                "--namespace",
+                "caemble",
+                "--repository",
+                "verified",
+                "--version",
+                version,
+            ]
+        ) == 0
     assert main(
         [
             "--database",
@@ -337,19 +427,13 @@ def test_draft_diff_publish_and_released_solver_identity_policy(tmp_path: Path):
         assert ("steady-state-heat", "0.1.0") not in catalog.solver_contracts()
 
 
-def test_create_draft_upgrades_schema_v4_to_v5(tmp_path: Path):
+def test_create_draft_upgrades_schema_v4_to_v6(tmp_path: Path):
     baseline = tmp_path / "catalog-v4.sqlite3"
     draft = tmp_path / "draft.sqlite3"
     shutil.copy2(catalog_path(), baseline)
     connection = sqlite3.connect(baseline)
     connection.execute("PRAGMA ignore_check_constraints = ON")
     connection.execute("UPDATE experiments SET cad_api_version = 8")
-    connection.execute("PRAGMA writable_schema = ON")
-    connection.execute(
-        "UPDATE sqlite_schema SET sql = replace(sql, 'cad_api_version = 9', 'cad_api_version = 8') "
-        "WHERE type = 'table' AND name = 'experiments'"
-    )
-    connection.execute("PRAGMA writable_schema = OFF")
     connection.execute("PRAGMA user_version = 4")
     connection.commit()
     connection.close()
@@ -357,8 +441,32 @@ def test_create_draft_upgrades_schema_v4_to_v5(tmp_path: Path):
     create_draft(draft, baseline)
 
     with Catalog.open_readonly(draft, immutable=False) as catalog:
-        assert catalog.meta()["schemaVersion"] == 5
+        assert catalog.meta()["schemaVersion"] == 6
         assert {row["cad_api_version"] for row in catalog._all("SELECT cad_api_version FROM experiments")} == {9}
+
+
+def test_create_draft_upgrades_schema_v5_to_v6_without_changing_cad_api_versions(tmp_path: Path):
+    baseline = tmp_path / "catalog-v5.sqlite3"
+    draft = tmp_path / "draft.sqlite3"
+    shutil.copy2(catalog_path(), baseline)
+    connection = sqlite3.connect(baseline)
+    connection.execute("PRAGMA ignore_check_constraints = ON")
+    connection.execute("UPDATE experiments SET cad_api_version = 8 WHERE key = 'basketball-goal'")
+    connection.execute("PRAGMA user_version = 5")
+    connection.commit()
+    connection.close()
+
+    create_draft(draft, baseline)
+
+    with Catalog.open_readonly(draft, immutable=False) as catalog:
+        assert catalog.meta()["schemaVersion"] == 6
+        assert catalog.experiment("basketball-goal")["cadApiVersion"] == 8
+        assert (
+            catalog.experiment(
+                "dc-uniform-bar", namespace="caemble", repository="verified", version="1.0.0"
+            )["cadApiVersion"]
+            == 9
+        )
 
 
 def test_publish_uses_sqlite_backup_when_windows_blocks_atomic_replace(tmp_path: Path, monkeypatch):
@@ -411,17 +519,20 @@ def test_validate_detects_stale_contract_digest(tmp_path: Path):
         ),
         (
             "UPDATE experiment_files SET path = 'missing.py' "
-            "WHERE experiment_id = (SELECT id FROM experiments WHERE key = 'dc-uniform-bar') "
+            "WHERE experiment_id = (SELECT id FROM experiments WHERE key = 'dc-uniform-bar' "
+            "AND version_major = 2 AND version_minor = 0 AND version_patch = 0) "
             "AND path = 'simulate.py'",
             "Experiment dc-uniform-bar source bundle is missing required files",
         ),
         (
-            "UPDATE experiments SET verification_json = '{}' WHERE key = 'dc-uniform-bar'",
+            "UPDATE experiments SET verification_json = '{}' WHERE key = 'dc-uniform-bar' "
+            "AND version_major = 2 AND version_minor = 0 AND version_patch = 0",
             "Experiment dc-uniform-bar verification.kernelTasks must be a string array",
         ),
         (
             "UPDATE experiment_solvers SET solver_version = '9.9.9' "
-            "WHERE experiment_id = (SELECT id FROM experiments WHERE key = 'dc-uniform-bar')",
+            "WHERE experiment_id = (SELECT id FROM experiments WHERE key = 'dc-uniform-bar' "
+            "AND version_major = 2 AND version_minor = 0 AND version_patch = 0)",
             "foreign-key violation",
         ),
     ],

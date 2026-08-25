@@ -5,6 +5,7 @@ from typing import Any, Awaitable, Callable
 import numpy as np
 
 from app.errors import CaeError
+from app.solver_framework.geometry import GeometryService
 from app.solver_framework.models import SolverContext, VoxelDomain
 from app.solver_framework.numerics.finite_volume import create_scalar_finite_volume_system, solve_pcg
 from app.solver_framework.numerics.voxel import axis_ticks, build_voxel_domain, dense_field, voxel_index
@@ -24,6 +25,7 @@ async def _run_heat(
     state: Any,
     inputs: dict[str, Any],
     world: dict[str, Any],
+    geometry: GeometryService,
     progress: Callable[[Any], Awaitable[None]],
     descriptor: dict[str, Any],
 ) -> dict[str, Any]:
@@ -44,13 +46,17 @@ async def _run_heat(
     source = surface(scene, target_group(boundaries[0], "surface"), part["id"])
     reference = surface(scene, target_group(boundaries[1], "surface"), part["id"])
     shape = grid_shape(grid_rule)
-    domain = await build_voxel_domain(
+    mesh = await geometry.triangular_mesh(
         scene,
-        part,
+        part["id"],
+        descriptor["referenceLengthUnit"],
+        progress,
+    )
+    domain = await build_voxel_domain(
+        mesh,
         source,
         reference,
         shape,
-        descriptor["referenceLengthUnit"],
         progress,
         "Heat domain",
     )
@@ -99,6 +105,7 @@ async def run(context: SolverContext) -> dict[str, Any]:
         context.state,
         context.inputs,
         context.world,
+        context.geometry,
         context.progress,
         context.descriptor,
     )

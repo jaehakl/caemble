@@ -4,19 +4,30 @@ import { normalizeVars, normalizeVarsSchema, type VarsSchemaEntry } from '../mod
 import type { SimulationProgramManifest } from '../simulation/types'
 import { assertSimulationProgramManifest } from '../simulation/validation'
 import { assertSerializableCadScene, type SerializableCadScene } from './meshValidation'
+import {
+  assertCanonicalGeometryRunBudget,
+  assertCanonicalGeometryScene,
+  assertCanonicalTaskSceneCount,
+} from '../evaluation/canonical'
+import { MAX_CANONICAL_RENDER_TYPED_ARRAY_BYTES, type CanonicalGeometrySceneV1 } from '../evaluation/canonicalTypes'
 
 export type EvaluatedExperimentSnapshot = Readonly<{
   kind: 'experiment'
   sourceHash: string
   variables: Readonly<Vars>
   varsSchema: Readonly<Record<string, VarsSchemaEntry>>
-  scene: SerializableCadScene
-  taskScenes: Readonly<Record<string, SerializableCadScene>>
+  scene: CanonicalGeometrySceneV1
+  taskScenes: Readonly<Record<string, CanonicalGeometrySceneV1>>
+  renderScene: SerializableCadScene
+  taskRenderScenes: Readonly<Record<string, SerializableCadScene>>
   simulationProgram: SimulationProgramManifest
 }>
 
 export type EvaluatedDocumentSnapshot = EvaluatedExperimentSnapshot
-export const MAX_CAD_SNAPSHOT_TYPED_ARRAY_BYTES = 128 * 1024 * 1024
+export type MeasurementExperimentSnapshot = Readonly<
+  Omit<EvaluatedExperimentSnapshot, 'renderScene' | 'taskRenderScenes'>
+>
+export const MAX_CAD_SNAPSHOT_TYPED_ARRAY_BYTES = MAX_CANONICAL_RENDER_TYPED_ARRAY_BYTES
 
 export function assertPlainSnapshotValue(value: unknown, path = 'snapshot') {
   const activePath = new WeakSet<object>()
@@ -81,7 +92,17 @@ export function assertEvaluatedDocumentSnapshot(value: unknown): asserts value i
     throw new CadModelError('Evaluated Experiment snapshot must be an object.')
   }
   const snapshot = value as Partial<EvaluatedExperimentSnapshot>
-  const allowedKeys = ['kind', 'sourceHash', 'variables', 'varsSchema', 'scene', 'taskScenes', 'simulationProgram']
+  const allowedKeys = [
+    'kind',
+    'sourceHash',
+    'variables',
+    'varsSchema',
+    'scene',
+    'taskScenes',
+    'renderScene',
+    'taskRenderScenes',
+    'simulationProgram',
+  ]
   const unknownKey = Object.keys(value).find((key) => !allowedKeys.includes(key))
   if (unknownKey) throw new CadModelError(`Evaluated Experiment snapshot.${unknownKey} is not allowed.`)
   if (snapshot.kind !== 'experiment') throw new CadModelError('Evaluated snapshot kind must be experiment.')
@@ -90,12 +111,27 @@ export function assertEvaluatedDocumentSnapshot(value: unknown): asserts value i
   }
   const schema = normalizeVarsSchema(snapshot.varsSchema, 'Evaluated Experiment snapshot')
   normalizeVars(schema, snapshot.variables, 'Evaluated Experiment snapshot')
-  assertSerializableCadScene(snapshot.scene)
+  assertCanonicalGeometryScene(snapshot.scene)
   if (typeof snapshot.taskScenes !== 'object' || snapshot.taskScenes === null || Array.isArray(snapshot.taskScenes)) {
     throw new CadModelError('Evaluated Experiment snapshot Task scenes are invalid.')
   }
+  assertCanonicalTaskSceneCount(snapshot.taskScenes)
   Object.entries(snapshot.taskScenes).forEach(([name, scene]) => {
     if (!name.trim()) throw new CadModelError('Evaluated Experiment snapshot Task name is invalid.')
+    assertCanonicalGeometryScene(scene)
+  })
+  assertCanonicalGeometryRunBudget(snapshot.scene, snapshot.taskScenes)
+  assertSerializableCadScene(snapshot.renderScene)
+  if (
+    typeof snapshot.taskRenderScenes !== 'object' ||
+    snapshot.taskRenderScenes === null ||
+    Array.isArray(snapshot.taskRenderScenes)
+  ) {
+    throw new CadModelError('Evaluated Experiment snapshot Task render scenes are invalid.')
+  }
+  const taskRenderScenes = snapshot.taskRenderScenes
+  Object.entries(taskRenderScenes).forEach(([name, scene]) => {
+    if (!name.trim()) throw new CadModelError('Evaluated Experiment snapshot Task render scene name is invalid.')
     assertSerializableCadScene(scene)
   })
   const simulationProgram = snapshot.simulationProgram
@@ -103,8 +139,49 @@ export function assertEvaluatedDocumentSnapshot(value: unknown): asserts value i
   const taskNames = Object.keys(snapshot.taskScenes)
   if (
     taskNames.length !== Object.keys(simulationProgram.tasks).length ||
-    taskNames.some((name) => !(name in simulationProgram.tasks))
+    taskNames.some((name) => !(name in simulationProgram.tasks)) ||
+    taskNames.length !== Object.keys(taskRenderScenes).length ||
+    taskNames.some((name) => !(name in taskRenderScenes))
   ) {
     throw new CadModelError('Evaluated Experiment snapshot Task scenes do not match its Simulation Program.')
+  }
+}
+
+export function assertMeasurementExperimentSnapshot(value: unknown): asserts value is MeasurementExperimentSnapshot {
+  assertPlainSnapshotValue(value, 'Measurement Experiment')
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new CadModelError('Measurement Experiment must be an object.')
+  }
+  const snapshot = value as Partial<MeasurementExperimentSnapshot>
+  const allowedKeys = ['kind', 'sourceHash', 'variables', 'varsSchema', 'scene', 'taskScenes', 'simulationProgram']
+  const unknownKey = Object.keys(value).find((key) => !allowedKeys.includes(key))
+  if (unknownKey) throw new CadModelError(`Measurement Experiment.${unknownKey} is not allowed.`)
+  if (
+    snapshot.kind !== 'experiment' ||
+    typeof snapshot.sourceHash !== 'string' ||
+    !/^[0-9a-f]{64}$/u.test(snapshot.sourceHash)
+  ) {
+    throw new CadModelError('Measurement Experiment provenance is invalid.')
+  }
+  const schema = normalizeVarsSchema(snapshot.varsSchema, 'Measurement Experiment')
+  normalizeVars(schema, snapshot.variables, 'Measurement Experiment')
+  assertCanonicalGeometryScene(snapshot.scene)
+  if (typeof snapshot.taskScenes !== 'object' || snapshot.taskScenes === null || Array.isArray(snapshot.taskScenes)) {
+    throw new CadModelError('Measurement Experiment Task scenes are invalid.')
+  }
+  assertCanonicalTaskSceneCount(snapshot.taskScenes)
+  Object.entries(snapshot.taskScenes).forEach(([name, scene]) => {
+    if (!name.trim()) throw new CadModelError('Measurement Experiment Task name is invalid.')
+    assertCanonicalGeometryScene(scene)
+  })
+  assertCanonicalGeometryRunBudget(snapshot.scene, snapshot.taskScenes)
+  const simulationProgram = snapshot.simulationProgram
+  assertSimulationProgramManifest(simulationProgram, { allowTaskless: true })
+  const taskNames = Object.keys(snapshot.taskScenes)
+  if (
+    taskNames.length !== Object.keys(simulationProgram.tasks).length ||
+    taskNames.some((name) => !(name in simulationProgram.tasks))
+  ) {
+    throw new CadModelError('Measurement Experiment Task scenes do not match its Simulation Program.')
   }
 }

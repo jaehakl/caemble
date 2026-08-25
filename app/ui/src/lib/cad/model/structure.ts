@@ -43,11 +43,23 @@ export type GeometryInvocationAttributes<P extends object = object> = Readonly<
 > &
   GeometryTransformAttributes
 export type GeometryGroupMap = Readonly<Record<string, readonly string[]>>
+export type GeometrySurfaceRef = `${string}/surface/${string}`
+export type SurfaceGroupMap = Readonly<Record<string, readonly GeometrySurfaceRef[]>>
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+export function normalizeGeometryGroup(
+  rawGroup: unknown,
+  propertyName: 'geometryGroup',
+  objectName: string,
+): GeometryGroupMap
+export function normalizeGeometryGroup(
+  rawGroup: unknown,
+  propertyName: 'surfaceGroup',
+  objectName: string,
+): SurfaceGroupMap
 export function normalizeGeometryGroup(
   rawGroup: unknown,
   propertyName: 'geometryGroup' | 'surfaceGroup',
@@ -73,11 +85,17 @@ export function normalizeGeometryGroup(
         throw new CadModelError(`${objectName} ${propertyName}.${name}[${index}] must be a non-empty string global ID.`)
       }
       const memberId = rawMember.trim()
+      if (propertyName === 'surfaceGroup' && /\/surface-\d+$/u.test(memberId)) {
+        throw new CadModelError(
+          `${objectName} ${propertyName}.${name}[${index}] uses removed ordinal surface syntax. ` +
+            'CAD API 10 requires <geometry-id>/surface/<face-key>.',
+        )
+      }
       if (seenMemberIds.has(memberId)) return
       seenMemberIds.add(memberId)
       memberIds.push(memberId)
     })
     return [name, Object.freeze(memberIds)] as const
   })
-  return Object.freeze(Object.fromEntries(entries)) as GeometryGroupMap
+  return Object.freeze(Object.fromEntries(entries)) as GeometryGroupMap | SurfaceGroupMap
 }

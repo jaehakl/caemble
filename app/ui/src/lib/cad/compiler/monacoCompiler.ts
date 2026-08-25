@@ -1,6 +1,7 @@
 import type * as Monaco from 'monaco-editor'
 import type { CatalogRuntimeSlice } from '@/contracts/catalog'
 import {
+  CAD_SOURCE_API_VERSION,
   EXPERIMENT_ENTRY_PATH,
   EXPERIMENT_GEOMETRY_PATH,
   EXPERIMENT_MATERIAL_PATH,
@@ -188,7 +189,7 @@ async function compile(
             throw new CadCompilationError('compile', `TypeScript did not emit JavaScript for ${path}.`, diagnostics)
           }
           const compiledSource: CompiledCadSource = Object.freeze({
-            apiVersion: 9,
+            apiVersion: CAD_SOURCE_API_VERSION,
             compilerVersion: CAD_COMPILER_VERSION,
             entryFile: path,
             code: `${code.replace(/\r?\n\/\/# sourceMappingURL=.*?(?:\r?\n)?$/u, '')}\n//# sourceURL=caemble://${sourceHash}/${path}`,
@@ -199,7 +200,7 @@ async function compile(
         }),
       )
       return Object.freeze({
-        apiVersion: 9 as const,
+        apiVersion: CAD_SOURCE_API_VERSION,
         compilerVersion: CAD_COMPILER_VERSION,
         sourceHash,
         sources: Object.freeze(Object.fromEntries(entries)),

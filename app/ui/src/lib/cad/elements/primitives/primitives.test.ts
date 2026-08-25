@@ -69,12 +69,12 @@ describe('CAD primitives', () => {
     expect(box.id).toBe('primitive.box')
     expect(box.surfaces.map((surface) => surface.name)).toEqual(['-X', '+X', '-Y', '+Y', 'Bottom', 'Top'])
     expect(box.surfaces.map((surface) => surface.id)).toEqual([
-      'primitive.box/surface-1',
-      'primitive.box/surface-2',
-      'primitive.box/surface-3',
-      'primitive.box/surface-4',
-      'primitive.box/surface-5',
-      'primitive.box/surface-6',
+      'primitive.box/surface/-X',
+      'primitive.box/surface/%2BX',
+      'primitive.box/surface/-Y',
+      'primitive.box/surface/%2BY',
+      'primitive.box/surface/Bottom',
+      'primitive.box/surface/Top',
     ])
     expect(cylinder.surfaces.map((surface) => surface.name)).toEqual(['Bottom', 'Side', 'Top'])
     expect(startTip.surfaces.map((surface) => surface.name)).toEqual(['Side', 'Top'])
@@ -84,7 +84,7 @@ describe('CAD primitives', () => {
     const boxPolygonCount = geometries.geom3.toPolygons(
       box.geometry as Parameters<typeof geometries.geom3.toPolygons>[0],
     ).length
-    expect(box.surfaces.flatMap((surface) => surface.polygonIndices).sort((a, b) => a - b)).toEqual(
+    expect(box.surfaces.flatMap((surface) => [...surface.polygonIndices]).sort((a, b) => a - b)).toEqual(
       Array.from({ length: boxPolygonCount }, (_value, index) => index),
     )
   })

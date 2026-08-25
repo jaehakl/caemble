@@ -94,11 +94,7 @@ export const arrayDefinition = {
   manifest: arrayManifest,
   surfacePolicy: 'preserve',
   evaluate(node, context) {
-    if (
-      node.children.length !== 1 ||
-      !isCadNode(node.children[0]) ||
-      node.children[0].type === Fragment
-    ) {
+    if (node.children.length !== 1 || !isCadNode(node.children[0]) || node.children[0].type === Fragment) {
       throw new CadModelError('<array> requires exactly one direct Geometry or intrinsic CAD element.')
     }
 
@@ -171,6 +167,8 @@ export const arrayDefinition = {
                 rotate: undefined,
                 position: offset,
               },
+              `${context.nodeId}/cell-${x}-${y}-${z}`,
+              `$cell-${x}-${y}-${z}`,
             ),
           )
         }

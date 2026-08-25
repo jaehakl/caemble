@@ -58,6 +58,30 @@ const unresolvedScene = serializeCadScene({
   surfaceGroups: [],
   tree: { children: [], key: 'root', label: 'Root' },
 })
+const canonicalScene = {
+  geometryFormatVersion: 1 as const,
+  geometryHash: 'c'.repeat(64),
+  lengthUnit: 'mm',
+  roots: [],
+  geometryGroups: [],
+  surfaceGroups: [],
+}
+const unresolvedCanonicalScene = {
+  ...canonicalScene,
+  geometryHash: 'd'.repeat(64),
+  roots: [
+    {
+      id: 'wheel',
+      materialRole: 'wheel',
+      node: {
+        kind: 'primitive' as const,
+        nodeId: 'wheel',
+        primitive: 'box' as const,
+        parameters: { size: [1, 1, 1] },
+      },
+    },
+  ],
+}
 const document = createCadSourceDocument(
   'experiment',
   createExperimentSourceBundle({
@@ -75,8 +99,10 @@ describe('useCadWorkspace unified Experiment', () => {
     vi.mocked(inspectDocument).mockImplementation(async () => ({ sourceHash, varsSchema: currentVarsSchema }))
     vi.mocked(evaluateDocument).mockImplementation(async ({ vars }) => ({
       kind: 'experiment',
-      scene: serializedScene,
-      taskScenes: { electric: serializedScene },
+      scene: canonicalScene,
+      taskScenes: { electric: canonicalScene },
+      renderScene: serializedScene,
+      taskRenderScenes: { electric: serializedScene },
       simulationProgram: {
         formatVersion: 5,
         simulationApiVersion: 3,
@@ -594,8 +620,10 @@ describe('useCadWorkspace unified Experiment', () => {
   it('keeps unresolved Geometry viewable while blocking Measurement and simulation readiness', async () => {
     vi.mocked(evaluateDocument).mockImplementationOnce(async ({ vars }) => ({
       kind: 'experiment',
-      scene: unresolvedScene,
-      taskScenes: { electric: serializedScene },
+      scene: unresolvedCanonicalScene,
+      taskScenes: { electric: canonicalScene },
+      renderScene: unresolvedScene,
+      taskRenderScenes: { electric: serializedScene },
       simulationProgram: {
         formatVersion: 5,
         simulationApiVersion: 3,
@@ -626,8 +654,10 @@ describe('useCadWorkspace unified Experiment', () => {
     registerSourceCatalogRuntimeSlice(sourceHash, draftCatalog)
     vi.mocked(evaluateDocument).mockImplementationOnce(async ({ vars }) => ({
       kind: 'experiment',
-      scene: serializedScene,
-      taskScenes: { electric: serializedScene },
+      scene: canonicalScene,
+      taskScenes: { electric: canonicalScene },
+      renderScene: serializedScene,
+      taskRenderScenes: { electric: serializedScene },
       simulationProgram: {
         formatVersion: 5,
         simulationApiVersion: 3,
@@ -663,8 +693,10 @@ describe('useCadWorkspace unified Experiment', () => {
   it('blocks the whole Experiment when real and Draft Tasks are mixed', async () => {
     vi.mocked(evaluateDocument).mockImplementationOnce(async ({ vars }) => ({
       kind: 'experiment',
-      scene: serializedScene,
-      taskScenes: { electric: serializedScene, draft: serializedScene },
+      scene: canonicalScene,
+      taskScenes: { electric: canonicalScene, draft: canonicalScene },
+      renderScene: serializedScene,
+      taskRenderScenes: { electric: serializedScene, draft: serializedScene },
       simulationProgram: {
         formatVersion: 5,
         simulationApiVersion: 3,

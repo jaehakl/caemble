@@ -56,12 +56,16 @@ def geometry_parts(scene: dict[str, Any], group_name: str) -> list[dict[str, Any
         for group in scene.get("geometryGroups", [])
         if isinstance(group, dict) and group.get("name") == group_name
     ]
-    ids = groups[0].get("geometryIds") if len(groups) == 1 else None
+    group = groups[0] if len(groups) == 1 else None
+    ids = group.get("rootIds") if isinstance(group, dict) else None
+    missing_ids = group.get("missingMemberIds") if isinstance(group, dict) else None
+    if missing_ids:
+        raise CaeError("invalid_input", f"geometry group {group_name!r} has missing authored members")
     if not isinstance(ids, list) or not ids:
         raise CaeError("invalid_task", f"geometry group {group_name!r} must resolve to at least one part")
     parts_by_id = {
         part.get("id"): part
-        for part in scene.get("parts", [])
+        for part in scene.get("roots", [])
         if isinstance(part, dict) and isinstance(part.get("id"), str)
     }
     missing = next((part_id for part_id in ids if part_id not in parts_by_id), None)
@@ -80,16 +84,17 @@ def surface(
         for group in scene.get("surfaceGroups", [])
         if isinstance(group, dict) and group.get("name") == group_name
     ]
-    ids = groups[0].get("surfaceIds") if len(groups) == 1 else None
-    if not isinstance(ids, list) or len(ids) != 1:
+    group = groups[0] if len(groups) == 1 else None
+    selectors = group.get("selectors") if isinstance(group, dict) else None
+    missing_ids = group.get("missingMemberIds") if isinstance(group, dict) else None
+    if missing_ids:
+        raise CaeError("invalid_input", f"surface group {group_name!r} has missing authored members")
+    if not isinstance(selectors, list) or len(selectors) != 1:
         raise CaeError("invalid_task", f"surface group {group_name!r} must resolve to one surface")
-    for part in scene.get("parts", []):
-        for surface in part.get("surfaces", []) if isinstance(part, dict) else []:
-            if isinstance(surface, dict) and surface.get("id") == ids[0]:
-                if part.get("id") != expected_part_id:
-                    raise CaeError("invalid_task", "terminal surface must belong to the kernel geometry")
-                return surface
-    raise CaeError("invalid_input", f"surface {ids[0]!r} is missing")
+    selector = selectors[0]
+    if not isinstance(selector, dict) or selector.get("rootId") != expected_part_id:
+        raise CaeError("invalid_task", "terminal surface must belong to the kernel geometry")
+    return selector
 
 
 def grid_shape(rule: dict[str, Any]) -> tuple[int, int, int]:
