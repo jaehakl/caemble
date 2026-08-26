@@ -31,23 +31,13 @@ def load_rtc_ice_servers() -> list[dict[str, Any]]:
     raw_value = os.environ.get(RTC_ICE_SERVERS_ENV, "").strip()
     if not raw_value:
         return [dict(item) for item in DEFAULT_RTC_ICE_SERVERS]
-    try:
-        parsed = json.loads(raw_value)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"{RTC_ICE_SERVERS_ENV} must be valid JSON: {exc.msg}") from exc
-    return validate_rtc_ice_servers(parsed)
+    return json.loads(raw_value)
 
 
 def load_rtc_ice_gather_timeout_seconds(ice_servers: list[dict[str, Any]]) -> float:
     raw_value = os.environ.get(RTC_ICE_GATHER_TIMEOUT_ENV, "").strip()
     if raw_value:
-        try:
-            timeout_seconds = float(raw_value)
-        except ValueError as exc:
-            raise ValueError(f"{RTC_ICE_GATHER_TIMEOUT_ENV} must be a positive number") from exc
-        if timeout_seconds <= 0:
-            raise ValueError(f"{RTC_ICE_GATHER_TIMEOUT_ENV} must be a positive number")
-        return timeout_seconds
+        return float(raw_value)
     if any(url.startswith(("turn:", "turns:")) for url in iter_rtc_ice_server_urls(ice_servers)):
         return DEFAULT_TURN_ICE_GATHER_TIMEOUT_SECONDS
     return DEFAULT_STUN_ICE_GATHER_TIMEOUT_SECONDS
@@ -57,11 +47,7 @@ def load_rtc_memory_cache_enabled() -> bool:
     raw_value = os.environ.get(RTC_MEMORY_CACHE_ENABLED_ENV, "").strip().lower()
     if not raw_value:
         return True
-    if raw_value in {"1", "true", "yes", "on"}:
-        return True
-    if raw_value in {"0", "false", "no", "off"}:
-        return False
-    raise ValueError(f"{RTC_MEMORY_CACHE_ENABLED_ENV} must be true or false")
+    return raw_value in {"1", "true", "yes", "on"}
 
 
 def configure_aioice_gather_timeout(aioice_connection_cls: Any, timeout_seconds: float) -> None:
@@ -78,34 +64,8 @@ def configure_aioice_gather_timeout(aioice_connection_cls: Any, timeout_seconds:
     setattr(aioice_connection_cls, "_caemble_ice_gather_timeout_seconds", timeout_seconds)
 
 
-def validate_rtc_ice_servers(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        raise ValueError(f"{RTC_ICE_SERVERS_ENV} must be a JSON array")
-    servers: list[dict[str, Any]] = []
-    for index, item in enumerate(value):
-        if not isinstance(item, dict):
-            raise ValueError(f"{RTC_ICE_SERVERS_ENV}[{index}] must be an object")
-        urls = item.get("urls")
-        if not (isinstance(urls, str) or is_string_list(urls)):
-            raise ValueError(f"{RTC_ICE_SERVERS_ENV}[{index}].urls must be a string or string array")
-        server = {"urls": urls}
-        for key in ("username", "credential", "credentialType"):
-            optional_value = item.get(key)
-            if optional_value is None:
-                continue
-            if not isinstance(optional_value, str):
-                raise ValueError(f"{RTC_ICE_SERVERS_ENV}[{index}].{key} must be a string")
-            server[key] = optional_value
-        servers.append(server)
-    return servers
-
-
 def ice_server_kwargs(server: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in server.items() if key in {"urls", "username", "credential", "credentialType"}}
-
-
-def is_string_list(value: Any) -> bool:
-    return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
 
 def iter_rtc_ice_server_urls(ice_servers: list[dict[str, Any]]) -> Iterator[str]:
@@ -113,5 +73,4 @@ def iter_rtc_ice_server_urls(ice_servers: list[dict[str, Any]]) -> Iterator[str]
         urls = server.get("urls")
         items = urls if isinstance(urls, list) else [urls]
         for item in items:
-            if isinstance(item, str):
-                yield item.lower()
+            yield item.lower()

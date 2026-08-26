@@ -32,7 +32,6 @@ class CrudSpec(Generic[ModelT, SchemaT]):
     count_sort_fields: Mapping[str, str] = field(default_factory=dict)
     read_only_fields: tuple[str, ...] = ("created_at", "updated_at")
     preserve_unset_fields: tuple[str, ...] = field(default_factory=tuple)
-    immutable_update_fields: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)

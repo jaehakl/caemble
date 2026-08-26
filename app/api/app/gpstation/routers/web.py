@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gpstation.models import (
@@ -62,7 +61,7 @@ async def csrf_token(
 @router.get("/jobs", response_model=list[JobSummary], tags=["web-jobs"])
 async def list_jobs(
     active_only: bool = Query(default=False),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100),
     db: AsyncSession = Depends(get_db),
     current_user: UserData = Depends(require_roles(["admin", "user"])),
 ) -> list[JobSummary]:
@@ -80,19 +79,13 @@ async def create_job(
     db: AsyncSession = Depends(get_db),
     current_user: UserData = Depends(require_roles(["admin", "user"])),
 ) -> JobCreateResult:
-    try:
-        job = await job_orchestrator.create_job(
-            db,
-            user_id=current_user.id,
-            handler_type=body.handler_type,
-            slave_app_id=body.slave_app_id,
-            offer=body.offer,
-        )
-    except (ValueError, ValidationError) as error:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(error),
-        ) from error
+    job = await job_orchestrator.create_job(
+        db,
+        user_id=current_user.id,
+        handler_type=body.handler_type,
+        slave_app_id=body.slave_app_id,
+        offer=body.offer,
+    )
     return JobCreateResult(
         job=job_to_data(job),
         answer_wait_url=build_job_wait_url(str(job.id), "/web/jobs"),
@@ -125,7 +118,7 @@ async def get_job(
 )
 async def wait_job_answer(
     job_id: str,
-    wait_seconds: float = Query(default=30.0, ge=0, le=60),
+    wait_seconds: float = Query(default=30.0),
     db: AsyncSession = Depends(get_db),
     current_user: UserData = Depends(require_roles(["admin", "user"])),
 ) -> JobAnswerWaitResult:

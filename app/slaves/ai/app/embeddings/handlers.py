@@ -8,7 +8,6 @@ from sdk.slave import DataChannelMessage, SlaveApp, SlaveContext
 from app.embeddings.models import EmbeddingBatchRequest, EmbeddingRequest
 from app.embeddings.service import generate_embedding, generate_embeddings
 from app.logging import log, log_exception
-from app.message import reject_request_attachments
 from app.model_catalog import get_model_list_payload
 
 
@@ -23,7 +22,6 @@ async def ai_embedding_models(
     memory: dict[str, Any] | None,
     context: SlaveContext,
 ) -> DataChannelMessage:
-    reject_request_attachments(message)
     return DataChannelMessage(
         id=message.id,
         type="ai.embeddings.models.result",
@@ -38,7 +36,6 @@ async def ai_embeddings(
 ) -> DataChannelMessage:
     started_at = time.perf_counter()
     try:
-        reject_request_attachments(message)
         request = EmbeddingRequest.model_validate(message.payload)
         log(f"ai.embeddings start session={context.session_id} text_chars={len(request.text)}")
         response = await generate_embedding(request)
@@ -67,7 +64,6 @@ async def ai_embeddings_batch(
 ) -> DataChannelMessage:
     started_at = time.perf_counter()
     try:
-        reject_request_attachments(message)
         request = EmbeddingBatchRequest.model_validate(message.payload)
         log(f"ai.embeddings.batch start session={context.session_id} count={len(request.texts)}")
         response = await generate_embeddings(request)

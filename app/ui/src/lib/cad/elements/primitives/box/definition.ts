@@ -22,7 +22,7 @@ export const boxManifest = {
       required: false,
       default: '[1, 1, 1]',
       authoringValue: '[1, 1, 1]',
-      description: '각각 X, Y, Z 방향의 전체 길이인 정확히 세 개의 유한한 양수입니다.',
+      description: '각각 X, Y, Z 방향의 전체 길이입니다.',
     },
   ],
   children: { count: 'none', description: '자식을 받지 않는 primitive입니다.' },

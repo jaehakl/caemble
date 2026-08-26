@@ -26,7 +26,6 @@ async function measurementExperimentId(measurementId: number) {
 
 function starterDraft(): WorkbenchDraft {
   return {
-    version: 16,
     savedAt: Date.now(),
     experiment: {
       record: null,

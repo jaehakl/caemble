@@ -2,6 +2,11 @@ import type { DataTensor as CadDataTensor, RecordedDataResult } from '../model/d
 
 export type RecordedDataSpec = RecordedDataResult
 export type ResolvedDataSchema = RecordedDataSpec & Readonly<{ tensorOrder: number }>
+export type RecordedDataSpecNode = RecordedDataSpec | RecordedDataSpecGroup
+export interface RecordedDataSpecGroup extends Readonly<Record<string, RecordedDataSpecNode>> {}
+export type ResolvedDataSchemaNode = ResolvedDataSchema | ResolvedDataSchemaGroup
+export interface ResolvedDataSchemaGroup extends Readonly<Record<string, ResolvedDataSchemaNode>> {}
+export interface RecordedDataSchemaTree extends Readonly<Record<string, ResolvedDataSchemaNode>> {}
 export type DataTensor = CadDataTensor
 
 export type KernelIdentity = Readonly<{
@@ -21,9 +26,7 @@ export type SimulationProgramTaskManifest = Readonly<{
 }>
 
 export type SimulationProgramManifest = Readonly<{
-  formatVersion: 5
-  simulationApiVersion: 3
   pythonSource: string
   tasks: Readonly<Record<string, SimulationProgramTaskManifest>>
-  recordedData: Readonly<Record<string, ResolvedDataSchema>>
+  recordedData: RecordedDataSchemaTree
 }>

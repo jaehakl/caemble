@@ -84,8 +84,6 @@ class GpStationJobSession:
         effective_timeout = (
             self._default_timeout_seconds if timeout_seconds is None else timeout_seconds
         )
-        if effective_timeout <= 0:
-            raise ValueError("timeout_seconds must be greater than zero")
         self._call_index += 1
         call_id = self.job_id if self._call_index == 1 else f"{self.job_id}:{self._call_index}"
 
@@ -112,8 +110,6 @@ class GpStationJobSession:
         effective_timeout = (
             self._default_timeout_seconds if timeout_seconds is None else timeout_seconds
         )
-        if effective_timeout <= 0:
-            raise ValueError("timeout_seconds must be greater than zero")
         await self._peer.finish(self.job_id, effective_timeout)
         self._notify_closed()
 
@@ -207,8 +203,6 @@ class GpStationClient:
     async def list_launchers(self) -> list[LauncherView]:
         self._ensure_open()
         payload = await self._request("/v1/launchers")
-        if not isinstance(payload, list):
-            raise GpStationProtocolError("launcher list response must be an array")
         return [_parse_launcher(item) for item in payload]
 
     async def prewarm_job_connection(
@@ -220,7 +214,6 @@ class GpStationClient:
         on_diagnostic: DiagnosticCallback | None = None,
     ) -> None:
         self._ensure_open()
-        _validate_run_parameters("prewarm", slave_app_id, timeout_seconds)
         configuration = rtc_configuration_with_defaults(rtc_configuration or self._rtc_configuration)
         key = job_connection_key(slave_app_id, configuration)
         stale: PreparedJobConnection | None = None
@@ -333,7 +326,6 @@ class GpStationClient:
         attachments: Sequence[RequestAttachment] = (),
     ) -> CallResult[Any] | RunJobSessionResult[Any]:
         self._ensure_open()
-        _validate_run_parameters(handler_type, slave_app_id, timeout_seconds)
         configuration = rtc_configuration_with_defaults(rtc_configuration or self._rtc_configuration)
         try:
             try:
@@ -745,10 +737,7 @@ class GpStationClient:
             )
         if not response.is_success:
             raise GpStationHttpError(response.status_code, response.text)
-        try:
-            return response.json()
-        except ValueError as exc:
-            raise GpStationProtocolError("API response is not valid JSON") from exc
+        return response.json()
 
     def _uses_csrf(self, path: str, method: str) -> bool:
         return (
@@ -785,107 +774,68 @@ class GpStationClient:
 
 
 def _parse_launcher(value: Any) -> LauncherView:
-    payload = _require_mapping(value, "launcher")
-    slave_app_ids = payload.get("slave_app_ids")
-    if not isinstance(slave_app_ids, list) or not all(isinstance(item, str) for item in slave_app_ids):
-        raise GpStationProtocolError("launcher slave_app_ids must be an array of strings")
     return LauncherView(
-        id=_require_string(payload, "id"),
-        user_id=_require_string(payload, "user_id"),
-        launcher_name=_require_string(payload, "launcher_name"),
-        status=_require_string(payload, "status"),
-        slave_app_ids=list(slave_app_ids),
-        connected_at=_require_string(payload, "connected_at"),
-        last_heartbeat_at=_require_string(payload, "last_heartbeat_at"),
-        ip_address=_optional_string(payload, "ip_address"),
-        disconnected_at=_optional_string(payload, "disconnected_at"),
+        id=value["id"],
+        user_id=value["user_id"],
+        launcher_name=value["launcher_name"],
+        status=value["status"],
+        slave_app_ids=list(value.get("slave_app_ids") or []),
+        connected_at=value["connected_at"],
+        last_heartbeat_at=value["last_heartbeat_at"],
+        ip_address=value.get("ip_address"),
+        disconnected_at=value.get("disconnected_at"),
     )
 
 
 def _parse_job_create_result(value: Any) -> JobCreateResult:
-    payload = _require_mapping(value, "job create response")
     return JobCreateResult(
-        job=_parse_job_descriptor(payload.get("job")),
-        answer_wait_url=_require_string(payload, "answer_wait_url"),
+        job=_parse_job_descriptor(value["job"]),
+        answer_wait_url=value["answer_wait_url"],
     )
 
 
 def _parse_job_descriptor(value: Any) -> JobDescriptor:
-    payload = _require_mapping(value, "job")
-    progress = payload.get("progress")
-    if not isinstance(progress, list):
-        raise GpStationProtocolError("job progress must be an array")
-    attempt_count = payload.get("attempt_count", 0)
-    if isinstance(attempt_count, bool) or not isinstance(attempt_count, int):
-        raise GpStationProtocolError("job attempt_count must be an integer")
-    answer = payload.get("answer")
+    answer = value.get("answer")
     return JobDescriptor(
-        id=_require_string(payload, "id"),
-        user_id=_require_string(payload, "user_id"),
-        handler_type=_require_string(payload, "handler_type"),
-        slave_app_id=_require_string(payload, "slave_app_id"),
-        offer=_parse_signal_payload(payload.get("offer")),
-        progress=list(progress),
-        state=_require_string(payload, "state"),
+        id=value["id"],
+        user_id=value["user_id"],
+        handler_type=value["handler_type"],
+        slave_app_id=value["slave_app_id"],
+        offer=_parse_signal_payload(value["offer"]),
+        progress=list(value.get("progress") or []),
+        state=value["state"],
         answer=_parse_signal_payload(answer) if answer is not None else None,
-        launcher_id=_optional_string(payload, "launcher_id"),
-        assigned_at=_optional_string(payload, "assigned_at"),
-        answer_ready_at=_optional_string(payload, "answer_ready_at"),
-        started_at=_optional_string(payload, "started_at"),
-        finished_at=_optional_string(payload, "finished_at"),
-        cancel_requested_at=_optional_string(payload, "cancel_requested_at"),
-        last_error=_optional_string(payload, "last_error"),
-        attempt_count=attempt_count,
-        created_at=_optional_string(payload, "created_at"),
-        updated_at=_optional_string(payload, "updated_at"),
+        launcher_id=value.get("launcher_id"),
+        assigned_at=value.get("assigned_at"),
+        answer_ready_at=value.get("answer_ready_at"),
+        started_at=value.get("started_at"),
+        finished_at=value.get("finished_at"),
+        cancel_requested_at=value.get("cancel_requested_at"),
+        last_error=value.get("last_error"),
+        attempt_count=value.get("attempt_count", 0),
+        created_at=value.get("created_at"),
+        updated_at=value.get("updated_at"),
     )
 
 
 def _parse_job_answer_wait_result(value: Any) -> JobAnswerWaitResult:
-    payload = _require_mapping(value, "job answer response")
-    answer = payload.get("answer")
+    answer = value.get("answer")
     return JobAnswerWaitResult(
-        job_id=_require_string(payload, "job_id"),
-        state=_require_string(payload, "state"),
+        job_id=value["job_id"],
+        state=value["state"],
         answer=_parse_signal_payload(answer) if answer is not None else None,
-        last_error=_optional_string(payload, "last_error"),
+        last_error=value.get("last_error"),
     )
 
 
 def _parse_signal_payload(value: Any) -> SignalPayload:
-    payload = _require_mapping(value, "signal payload")
-    sdp_mline_index = payload.get("sdpMLineIndex")
-    if sdp_mline_index is not None and (
-        isinstance(sdp_mline_index, bool) or not isinstance(sdp_mline_index, int)
-    ):
-        raise GpStationProtocolError("signal payload sdpMLineIndex must be an integer")
     return SignalPayload(
-        type=_require_string(payload, "type"),
-        sdp=_optional_string(payload, "sdp"),
-        candidate=_optional_string(payload, "candidate"),
-        sdp_mid=_optional_string(payload, "sdpMid"),
-        sdp_mline_index=sdp_mline_index,
+        type=value["type"],
+        sdp=value.get("sdp"),
+        candidate=value.get("candidate"),
+        sdp_mid=value.get("sdpMid"),
+        sdp_mline_index=value.get("sdpMLineIndex"),
     )
-
-
-def _require_mapping(value: Any, name: str) -> Mapping[str, Any]:
-    if not isinstance(value, dict):
-        raise GpStationProtocolError(f"{name} must be an object")
-    return value
-
-
-def _require_string(value: Mapping[str, Any], key: str) -> str:
-    item = value.get(key)
-    if not isinstance(item, str):
-        raise GpStationProtocolError(f"{key} must be a string")
-    return item
-
-
-def _optional_string(value: Mapping[str, Any], key: str) -> str | None:
-    item = value.get(key)
-    if item is not None and not isinstance(item, str):
-        raise GpStationProtocolError(f"{key} must be a string")
-    return item
 
 
 def _normalize_api_prefix(prefix: str) -> str:
@@ -898,15 +848,6 @@ def _prepared_is_usable(prepared: PreparedJobConnection) -> bool:
         prepared.peer_connection.signalingState != "closed"
         and prepared.data_channel.readyState != "closed"
     )
-
-
-def _validate_run_parameters(handler_type: str, slave_app_id: str, timeout_seconds: float) -> None:
-    if not handler_type:
-        raise ValueError("handler_type is required")
-    if not slave_app_id:
-        raise ValueError("slave_app_id is required")
-    if timeout_seconds <= 0:
-        raise ValueError("timeout_seconds must be greater than zero")
 
 
 def _elapsed_ms(started_at: float) -> int:

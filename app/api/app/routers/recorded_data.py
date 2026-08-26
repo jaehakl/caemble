@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends
+from sqlalchemy import and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import RecordedData
@@ -18,5 +19,12 @@ async def list_recorded_data(
     db: AsyncSession = Depends(get_db),
     user: UserData | None = Depends(require_roles(["*"])),
 ):
-    base_clause = None if request.include_system else ~RecordedData.name.like("@caemble/%")
+    base_clause = (
+        None
+        if request.include_system
+        else and_(
+            ~RecordedData.name.like("@caemble/%"),
+            ~RecordedData.name.like("rayPaths.%"),
+        )
+    )
     return await get_list_response(db, request, CRUD_SPEC, base_clause, user=user)

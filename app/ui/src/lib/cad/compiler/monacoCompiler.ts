@@ -1,11 +1,9 @@
 import type * as Monaco from 'monaco-editor'
 import type { CatalogRuntimeSlice } from '@/contracts/catalog'
 import {
-  CAD_SOURCE_API_VERSION,
   EXPERIMENT_ENTRY_PATH,
   EXPERIMENT_GEOMETRY_PATH,
   EXPERIMENT_MATERIAL_PATH,
-  assertCadSourceDocument,
   cadSourceHash,
   experimentTaskName,
   type CadSourceDocument,
@@ -20,11 +18,9 @@ import {
   assertExperimentModuleGraph,
 } from '../source/sourceAnalysis'
 import { withCatalogTypeEnvironment } from './catalogTypeEnvironment'
-import { CAD_COMPILER_VERSION, type CadDiagnostic, type CompiledCadDocument, type CompiledCadSource } from './types'
+import type { CadDiagnostic, CompiledCadDocument, CompiledCadSource } from './types'
 
 const compilationCache = new Map<string, Promise<CompiledCadDocument>>()
-const maximumCompilationCacheEntries = 32
-const compilationTimeoutMs = 15_000
 
 export class CadCompilationError extends Error {
   readonly diagnostics: readonly CadDiagnostic[]
@@ -154,7 +150,6 @@ async function compile(
       return [path, monaco.editor.createModel(source, 'typescript', uri)]
     }),
   )
-  let timeout = 0
   try {
     const compilation = withCatalogTypeEnvironment(monaco, catalog, async () => {
       const workerFactory = await getTypeScriptWorker(monaco)
@@ -189,8 +184,6 @@ async function compile(
             throw new CadCompilationError('compile', `TypeScript did not emit JavaScript for ${path}.`, diagnostics)
           }
           const compiledSource: CompiledCadSource = Object.freeze({
-            apiVersion: CAD_SOURCE_API_VERSION,
-            compilerVersion: CAD_COMPILER_VERSION,
             entryFile: path,
             code: `${code.replace(/\r?\n\/\/# sourceMappingURL=.*?(?:\r?\n)?$/u, '')}\n//# sourceURL=caemble://${sourceHash}/${path}`,
             ...(sourceMap === undefined ? {} : { sourceMap }),
@@ -200,20 +193,12 @@ async function compile(
         }),
       )
       return Object.freeze({
-        apiVersion: CAD_SOURCE_API_VERSION,
-        compilerVersion: CAD_COMPILER_VERSION,
         sourceHash,
         sources: Object.freeze(Object.fromEntries(entries)),
       })
     })
-    const timedOut = new Promise<never>((_resolve, reject) => {
-      timeout = window.setTimeout(() => {
-        reject(new CadCompilationError('compile', 'TypeScript compilation timed out after 15 seconds.'))
-      }, compilationTimeoutMs)
-    })
-    return await Promise.race([compilation, timedOut])
+    return await compilation
   } finally {
-    window.clearTimeout(timeout)
     Object.values(sourceModels).forEach((model) => model.dispose())
   }
 }
@@ -224,9 +209,8 @@ export type CompileCadDocumentOptions = Readonly<{
 }>
 
 export async function compileCadDocument(document: CadSourceDocument, options: CompileCadDocumentOptions = {}) {
-  assertCadSourceDocument(document)
   const sourceHash = await cadSourceHash(document)
-  const cacheKey = `${CAD_COMPILER_VERSION}:${options.catalogRevision ?? 'catalog-independent'}:${sourceHash}`
+  const cacheKey = `${options.catalogRevision ?? 'catalog-independent'}:${sourceHash}`
   let cached = compilationCache.get(cacheKey)
   if (!cached) {
     cached = compile(document, sourceHash, options.catalog).catch((error) => {
@@ -234,9 +218,6 @@ export async function compileCadDocument(document: CadSourceDocument, options: C
       throw error
     })
     compilationCache.set(cacheKey, cached)
-    if (compilationCache.size > maximumCompilationCacheEntries) {
-      compilationCache.delete(compilationCache.keys().next().value!)
-    }
   }
   return cached
 }

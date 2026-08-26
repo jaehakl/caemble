@@ -13,7 +13,6 @@ router = APIRouter(prefix="/predictor_model", tags=["predictor_model"])
 CRUD_SPEC = CrudSpec(
     model=PredictorModel,
     schema=PredictorModelBase,
-    immutable_update_fields=("experiment_id",),
 )
 
 

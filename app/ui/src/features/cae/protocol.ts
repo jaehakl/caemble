@@ -1,5 +1,9 @@
 import type { BuiltMeasurement, DataTensor } from '../../lib/cad'
 
+export type CaeRecordedDataValue = DataTensor | CaeRecordedDataGroup
+// Recursive group nodes require an interface; a direct type alias is rejected as circular by TypeScript.
+export interface CaeRecordedDataGroup extends Readonly<Record<string, CaeRecordedDataValue>> {}
+
 export type CaeSimulationStatus = 'validating' | 'running' | 'finalizing'
 
 export type CaeSimulationProgress = Readonly<{
@@ -13,9 +17,7 @@ export type CaeSimulationProgress = Readonly<{
 }>
 
 export type CaeStartRequest = Readonly<{
-  formatVersion: 2
   measurement: BuiltMeasurement
-  solverContracts: readonly Readonly<{ name: string; version: string; contractDigest: string }>[]
 }>
 
 export type CaeNextRequest = Readonly<{
@@ -33,7 +35,7 @@ export type CaeRecordPayload = Readonly<{
   kind: 'record'
   sequence: number
   name: string
-  tensor: DataTensor
+  value: CaeRecordedDataValue
 }>
 
 export type CaeCompletePayload = Readonly<{

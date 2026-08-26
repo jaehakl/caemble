@@ -1,17 +1,11 @@
-import { CadModelError } from '../model/core'
 import type { Vec3 } from '../model/types'
 import { interpolate, subtract, vectorLength, type MutableVec3 } from './vec3'
 
-export function cumulativeLengths(points: readonly Vec3[], path: string) {
-  const coordinateScale = Math.max(1, ...points.flatMap((point) => point.map(Math.abs)))
-  const minimumLength = coordinateScale * 1e-10
+export function cumulativeLengths(points: readonly Vec3[], _path: string) {
   const cumulative = [0]
 
   for (let index = 1; index < points.length; index += 1) {
     const segmentLength = vectorLength(subtract(points[index], points[index - 1]))
-    if (!Number.isFinite(segmentLength) || segmentLength <= minimumLength) {
-      throw new CadModelError(`${path} contains a duplicate or zero-length segment near sample ${index}.`)
-    }
     cumulative.push(cumulative[index - 1] + segmentLength)
   }
 

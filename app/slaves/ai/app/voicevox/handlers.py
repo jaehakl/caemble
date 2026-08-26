@@ -7,7 +7,6 @@ from typing import Any
 from sdk.slave import DataChannelAttachment, DataChannelMessage, SlaveApp, SlaveContext
 
 from app.logging import log, log_exception
-from app.message import reject_request_attachments
 from app.voicevox.models import VoicevoxAudioQueryRequest, VoicevoxSynthesisRequest
 from app.voicevox.runtime import get_voicevox_runtime
 
@@ -25,7 +24,6 @@ async def ai_voicevox_speakers(
 ) -> DataChannelMessage:
     started_at = time.perf_counter()
     try:
-        reject_request_attachments(message)
         speakers = await asyncio.to_thread(get_voicevox_runtime().speakers)
         duration_ms = int((time.perf_counter() - started_at) * 1000)
         log(
@@ -50,7 +48,6 @@ async def ai_voicevox_audio_query(
 ) -> DataChannelMessage:
     started_at = time.perf_counter()
     try:
-        reject_request_attachments(message)
         request = VoicevoxAudioQueryRequest.model_validate(message.payload)
         log(
             "ai.voicevox.audio_query start "
@@ -81,7 +78,6 @@ async def ai_voicevox_synthesis(
 ) -> DataChannelMessage:
     started_at = time.perf_counter()
     try:
-        reject_request_attachments(message)
         request = VoicevoxSynthesisRequest.model_validate(message.payload)
         log(f"ai.voicevox.synthesis start session={context.session_id} speaker={request.speaker}")
         wav = await asyncio.to_thread(

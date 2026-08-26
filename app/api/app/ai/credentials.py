@@ -4,8 +4,6 @@ import asyncio
 import hashlib
 import logging
 from datetime import datetime
-from typing import Literal
-
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
@@ -32,8 +30,6 @@ logger = logging.getLogger(__name__)
 
 
 class ProviderCredentialRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
     apiKey: SecretStr
 
 
@@ -42,9 +38,7 @@ class ProviderModelData(BaseModel):
 
     id: str
     display_name: str = Field(alias="displayName")
-    reasoning_efforts: list[
-        Literal["none", "low", "medium", "high", "xhigh", "max"]
-    ] = Field(alias="reasoningEfforts")
+    reasoning_efforts: list[str] = Field(alias="reasoningEfforts")
 
 
 class ProviderData(BaseModel):
@@ -65,7 +59,7 @@ class ProvidersResponse(BaseModel):
 class ProviderConnectionTestData(BaseModel):
     provider: str
     model: str
-    ok: Literal[True]
+    ok: bool
 
 
 def _fernet() -> MultiFernet:
@@ -103,24 +97,11 @@ def _provider_data(
     )
 
 
-def _require_provider(provider: str) -> None:
-    if provider not in SUPPORTED_PROVIDERS:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "code": "provider_not_supported",
-                "message": "Provider is not supported.",
-            },
-        )
-
-
 async def get_provider_credential(
     db: AsyncSession,
     user_id: str,
     provider: str,
 ) -> tuple[str, int]:
-    if provider not in SUPPORTED_PROVIDERS:
-        raise LookupError("Provider is not supported")
     credential = (
         await db.execute(
             select(
@@ -189,7 +170,6 @@ async def put_provider_credential(
     db: AsyncSession = Depends(get_db),
     user: UserData = Depends(require_roles(["admin", "user"])),
 ) -> ProviderData:
-    _require_provider(provider)
     api_key = payload.apiKey.get_secret_value().strip()
     if not api_key or len(api_key) > 4096:
         raise HTTPException(
@@ -239,7 +219,6 @@ async def delete_provider_credential(
     db: AsyncSession = Depends(get_db),
     user: UserData = Depends(require_roles(["admin", "user"])),
 ) -> Response:
-    _require_provider(provider)
     await db.execute(
         delete(AIProviderCredential).where(
             AIProviderCredential.user_id == user.id,
@@ -260,7 +239,6 @@ async def test_provider_credential(
     db: AsyncSession = Depends(get_db),
     user: UserData = Depends(require_roles(["admin", "user"])),
 ) -> ProviderConnectionTestData:
-    _require_provider(provider)
     model = PROVIDER_MODELS[provider][0]
     try:
         api_key, _ = await get_provider_credential(db, user.id, provider)

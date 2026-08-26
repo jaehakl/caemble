@@ -1,5 +1,4 @@
 import { booleans, geometries, measurements, modifiers, transforms } from '@jscad/modeling'
-import { CadModelError } from '../../../model/core'
 import type { CadElementManifest, EvaluatedPart, GeometryOperationDefinition } from '../../../evaluation/types'
 import type { CanonicalGeometryNodeV1 } from '../../../evaluation/canonicalTypes'
 import { intersectManifest, subtractManifest, unionManifest } from './definition'
@@ -15,13 +14,9 @@ const cadRetessellate = modifiers.retessellate as unknown as (geometry: CadGeom3
 const cadSubtract = booleans.subtract as (...geometries: unknown[]) => CadGeom3
 const cadUnion = booleans.union as (...geometries: unknown[]) => CadGeom3
 
-function matchingMaterial(parts: EvaluatedPart[], operation: string) {
-  if (parts.length === 0) throw new CadModelError(`<${operation}> did not receive any geometry.`)
-  const material = parts[0].material
-  const materialRole = parts[0].materialRole
-  if (parts.some((part) => part.material !== material || part.materialRole !== materialRole)) {
-    throw new CadModelError(`<${operation}> cannot combine Geometry with different Materials.`)
-  }
+function matchingMaterial(parts: EvaluatedPart[]) {
+  const material = parts[0]!.material
+  const materialRole = parts[0]!.materialRole
   return { material, materialRole }
 }
 
@@ -32,19 +27,8 @@ function createBooleanDefinition<Tag extends 'union' | 'subtract' | 'intersect'>
     manifest,
     surfacePolicy: 'derive',
     evaluate(node, context) {
-      const minimum = manifest.tag === 'union' ? 1 : 2
-      if (node.children.length < minimum) {
-        throw new CadModelError(
-          `<${manifest.tag}> requires at least ${minimum} child geometr${minimum === 1 ? 'y' : 'ies'}.`,
-        )
-      }
-
       const childParts = node.children.map((child) => context.evaluate(child, context.inheritedMaterials))
       if (manifest.tag === 'subtract') {
-        if (childParts.some((parts) => parts.length === 0)) {
-          throw new CadModelError('<subtract> did not receive any geometry.')
-        }
-
         const snapEpsilon = Math.max(...childParts[0].map((part) => measurements.measureEpsilon(part.geometry))) * 2
         const decomposedParts = childParts.map((parts) =>
           parts.map((part) => {
@@ -228,7 +212,7 @@ function createBooleanDefinition<Tag extends 'union' | 'subtract' | 'intersect'>
       }
 
       const allParts = childParts.flat()
-      const { material, materialRole } = matchingMaterial(allParts, manifest.tag)
+      const { material, materialRole } = matchingMaterial(allParts)
       if (manifest.tag === 'union') {
         return [
           {
@@ -246,7 +230,6 @@ function createBooleanDefinition<Tag extends 'union' | 'subtract' | 'intersect'>
       }
 
       const childGeometries = childParts.map((parts) => {
-        matchingMaterial(parts, manifest.tag)
         return parts.length === 1 ? parts[0].geometry : cadUnion(...parts.map((part) => part.geometry))
       })
       const canonicalChildren: CanonicalGeometryNodeV1[] = childParts.map((parts, index) =>

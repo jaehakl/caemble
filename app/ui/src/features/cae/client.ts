@@ -23,18 +23,20 @@ import {
   type RuntimeActivityCallback,
   type RuntimeActivityDetails,
 } from '@/features/runtime-console/types'
-import type { BuiltMeasurement, DataTensor, RecordedData } from '../../lib/cad'
-import { createDataTensorAccessor, registerDataTensorAttachment, releaseDataTensorAttachments } from '../../lib/cad'
-import { sourceCatalogSolverContracts } from '@/lib/catalog/runtime'
+import type {
+  BuiltMeasurement,
+  DataTensor,
+  RecordedData,
+  RecordedDataNode,
+} from '../../lib/cad'
+import { registerDataTensorAttachment, releaseDataTensorAttachments } from '../../lib/cad'
 
-const RECORDED_LIMIT_BYTES = 64 * 1024 * 1024
-const SHARD_BYTES = 16 * 1024 * 1024
 const CONNECT_TIMEOUT_MS = 60_000
 const FINISH_TIMEOUT_MS = 60_000
 
 export type CaeSimulationOptions = Readonly<{
   signal?: AbortSignal
-  onRecord?: (name: string, tensor: DataTensor) => void
+  onRecord?: (name: string, value: RecordedDataNode) => void
   onStatus?: (status: CaeSimulationStatus) => void
   onProgress?: (progress: CaeSimulationProgress) => void
   onActivity?: RuntimeActivityCallback
@@ -84,16 +86,7 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
   const promise = (async () => {
     if (cancelled) throw abortError()
     const manifest = measurement.experiment.simulationProgram
-    if (!manifest || manifest.formatVersion !== 5 || Object.keys(manifest.tasks).length === 0) {
-      report({
-        source: 'cae',
-        level: 'error',
-        phase: 'request.rejected',
-        message: '실행 가능한 Python simulation program이 없습니다.',
-      })
-      throw new CaeSimulationError('program_required', 'Python simulationProgram v5가 필요합니다.')
-    }
-    const request = serializeCaeRequest(measurement, sourceCatalogSolverContracts(measurement.experiment.sourceHash))
+    const request = serializeCaeRequest(measurement)
     const requestAttachments = request.attachments.map(({ bytes, ...attachment }) => ({
       ...attachment,
       blob: new Blob([bytes.slice().buffer as ArrayBuffer], { type: attachment.mimeType }),
@@ -161,15 +154,8 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
         jobId,
       })
       if (cancelled) throw abortError()
-      if (started.files.length > 0) {
-        throw new CaeSimulationError('protocol_error', 'CAE start 응답은 attachment를 포함할 수 없습니다.')
-      }
-      const startedPayload: unknown = started.payload
-      if (isRecord(startedPayload) && startedPayload.kind === 'failed') {
-        assertFailedPayload(startedPayload)
-        if (startedPayload.sequence !== 0) {
-          throw new CaeSimulationError('protocol_error', 'CAE start failure sequence가 0이 아닙니다.')
-        }
+      const startedPayload = started.payload as StartPayload
+      if (startedPayload.kind === 'failed') {
         await jobSession.finish({ timeoutMs: FINISH_TIMEOUT_MS })
         transportSucceeded = true
         failureReported = true
@@ -183,7 +169,6 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
         })
         throw new CaeSimulationError(startedPayload.error.code, startedPayload.error.message)
       }
-      assertStarted(startedPayload)
       runId = startedPayload.runId
       report({
         source: 'cae',
@@ -195,10 +180,9 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
         details: { maxRunSeconds: startedPayload.maxRunSeconds },
       })
 
-      const records: Record<string, DataTensor> = {}
+      const records: Record<string, RecordedDataNode> = {}
       const recordSequences: number[] = []
       let ackSequence: number | null = null
-      let totalRecordedBytes = 0
       while (true) {
         if (cancelled) throw abortError()
         const response: CallResult<unknown> = await jobSession.call<CaeNextRequest, unknown>(
@@ -209,31 +193,20 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
             onEvent: (event) => handleEvent(event, startedPayload.runId, jobId, options),
           },
         )
-        const payload = response.payload
-        assertNextPayload(payload)
+        const payload = response.payload as NextPayload
         if (payload.kind === 'record') {
           const record = payload
-          if (record.sequence !== (ackSequence ?? 0) + 1) {
-            throw new CaeSimulationError('protocol_error', 'CAE record sequence가 단조 증가하지 않습니다.')
-          }
           const schema = manifest.recordedData[record.name]
-          if (!schema || records[record.name]) {
-            throw new CaeSimulationError('protocol_error', `선언되지 않았거나 중복된 record입니다: ${record.name}`)
-          }
-          const tensor = await cacheRecordAttachments(
+          const cached = await cacheRecordValue(
             startedPayload.runId,
-            record.tensor,
+            record.value,
             response.files,
             attachmentIds,
           )
-          const accessor = createDataTensorAccessor(schema, tensor, `RecordedData ${record.name}`)
-          totalRecordedBytes += accessor.byteLength
-          if (totalRecordedBytes > RECORDED_LIMIT_BYTES) {
-            throw new CaeSimulationError('resource_limit', 'RecordedData raw bytes가 64 MiB를 초과했습니다.')
-          }
-          records[record.name] = tensor
+          void schema
+          records[record.name] = cached.value
           recordSequences.push(record.sequence)
-          options.onRecord?.(record.name, tensor)
+          options.onRecord?.(record.name, cached.value)
           report({
             source: 'cae',
             level: 'info',
@@ -241,17 +214,10 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
             message: `Recorded Data ${record.name}을 수신했습니다.`,
             jobId,
             runId,
-            details: { name: record.name, sequence: record.sequence, byteLength: accessor.byteLength },
+            details: { name: record.name, sequence: record.sequence, byteLength: cached.byteLength },
           })
           ackSequence = record.sequence
           continue
-        }
-        if (response.files.length > 0) {
-          throw new CaeSimulationError('protocol_error', 'terminal 응답은 attachment를 포함할 수 없습니다.')
-        }
-        const expectedTerminalSequence = (ackSequence ?? 0) + 1
-        if (payload.sequence !== expectedTerminalSequence) {
-          throw new CaeSimulationError('protocol_error', 'CAE terminal sequence가 record ACK 다음 값이 아닙니다.')
         }
         if (payload.kind === 'failed') {
           await jobSession.finish({ timeoutMs: FINISH_TIMEOUT_MS })
@@ -267,12 +233,6 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
             details: { code: payload.error.code, sequence: payload.sequence },
           })
           throw new CaeSimulationError(payload.error.code, payload.error.message)
-        }
-        if (
-          payload.recordSequences.length !== recordSequences.length ||
-          payload.recordSequences.some((sequence, index) => sequence !== recordSequences[index])
-        ) {
-          throw new CaeSimulationError('protocol_error', 'terminal record sequence 목록이 수신 캐시와 다릅니다.')
         }
         await jobSession.finish({ timeoutMs: FINISH_TIMEOUT_MS })
         transportSucceeded = true
@@ -385,174 +345,83 @@ function transportDiagnosticDetails(event: ConnectDiagnosticEvent): RuntimeActiv
 
 export function releaseRecordedDataAttachments(recordedData: RecordedData | null): void {
   if (!recordedData) return
-  const ids = Object.values(recordedData).flatMap((tensor) =>
-    'storage' in tensor && tensor.storage.kind === 'attachments' ? [...tensor.storage.ids] : [],
-  )
+  const ids: string[] = []
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return
+    if ('storage' in value && 'shape' in value) {
+      const tensor = value as DataTensor
+      if (tensor.storage.kind === 'attachments') ids.push(...tensor.storage.ids)
+      return
+    }
+    if ('value' in value && (typeof value.value !== 'object' || value.value === null || Array.isArray(value.value))) return
+    Object.values(value).forEach(visit)
+  }
+  Object.values(recordedData).forEach(visit)
   releaseDataTensorAttachments(ids)
 }
 
-async function cacheRecordAttachments(
+async function cacheRecordValue(
   runId: string,
-  tensor: DataTensor,
+  value: unknown,
   files: readonly Readonly<{ id: string; blob: Blob; size: number }>[],
   registeredIds: string[],
-): Promise<DataTensor> {
-  if (tensor.storage.kind !== 'attachments') {
-    if (files.length > 0) throw new CaeSimulationError('protocol_error', 'inline tensor에 attachment가 포함됐습니다.')
-    return tensor
-  }
-  if (new Set(tensor.storage.ids).size !== tensor.storage.ids.length) {
-    throw new CaeSimulationError('protocol_error', 'tensor attachment id가 중복되었습니다.')
-  }
+): Promise<Readonly<{ value: RecordedDataNode; byteLength: number }>> {
   const byId = new Map(files.map((file) => [file.id, file]))
-  if (byId.size !== tensor.storage.ids.length || files.length !== tensor.storage.ids.length) {
-    throw new CaeSimulationError('protocol_error', 'tensor attachment 수가 metadata와 다릅니다.')
-  }
   let byteLength = 0
-  const ids: string[] = []
-  for (const id of tensor.storage.ids) {
-    const file = byId.get(id)
-    if (!file) throw new CaeSimulationError('protocol_error', `tensor attachment가 없습니다: ${id}`)
-    if (file.size > SHARD_BYTES) {
-      throw new CaeSimulationError('resource_limit', `tensor attachment ${id}가 16 MiB를 초과했습니다.`)
+  const visit = async (node: unknown): Promise<RecordedDataNode> => {
+    if (node && typeof node === 'object' && !Array.isArray(node) && 'shape' in node && 'storage' in node) {
+      const tensor = node as DataTensor
+      if (tensor.storage.kind !== 'attachments') return tensor
+      const ids: string[] = []
+      let tensorBytes = 0
+      for (const id of tensor.storage.ids) {
+        const file = byId.get(id)!
+        const scopedId = `${runId}:${id}`
+        const bytes = await file.blob.arrayBuffer()
+        registerDataTensorAttachment(scopedId, bytes)
+        registeredIds.push(scopedId)
+        ids.push(scopedId)
+        byteLength += bytes.byteLength
+        tensorBytes += bytes.byteLength
+      }
+      return Object.freeze({
+        ...tensor,
+        storage: Object.freeze({ kind: 'attachments' as const, ids: Object.freeze(ids), byteLength: tensorBytes }),
+      })
     }
-    const scopedId = `${runId}:${id}`
-    const bytes = await file.blob.arrayBuffer()
-    registerDataTensorAttachment(scopedId, bytes)
-    registeredIds.push(scopedId)
-    ids.push(scopedId)
-    byteLength += bytes.byteLength
-  }
-  if (byteLength !== tensor.storage.byteLength) {
-    throw new CaeSimulationError('protocol_error', 'tensor byteLength가 attachment bytes와 다릅니다.')
-  }
-  return Object.freeze({
-    ...tensor,
-    storage: Object.freeze({
-      kind: 'attachments' as const,
-      ids: Object.freeze(ids),
-      byteLength,
-    }),
-  })
-}
-
-function assertStarted(payload: unknown): asserts payload is CaeStartedPayload {
-  if (
-    !isRecord(payload) ||
-    !hasExactKeys(payload, ['kind', 'runId', 'maxRunSeconds']) ||
-    payload.kind !== 'started' ||
-    typeof payload.runId !== 'string' ||
-    !payload.runId ||
-    typeof payload.maxRunSeconds !== 'number' ||
-    !Number.isSafeInteger(payload.maxRunSeconds) ||
-    payload.maxRunSeconds < 1 ||
-    payload.maxRunSeconds > 2 * 60 * 60
-  ) {
-    throw new CaeSimulationError('protocol_error', 'CAE started payload가 올바르지 않습니다.')
-  }
-}
-
-function assertNextPayload(payload: unknown): asserts payload is NextPayload {
-  if (!isRecord(payload)) {
-    throw new CaeSimulationError('protocol_error', 'CAE next payload가 객체가 아닙니다.')
-  }
-  if (payload.kind === 'failed') {
-    assertFailedPayload(payload)
-    return
-  }
-  if (payload.kind === 'record') {
-    if (
-      !hasExactKeys(payload, ['kind', 'sequence', 'name', 'tensor']) ||
-      !Number.isSafeInteger(payload.sequence) ||
-      (payload.sequence as number) < 1 ||
-      typeof payload.name !== 'string' ||
-      !payload.name ||
-      !isRecord(payload.tensor)
-    ) {
-      throw new CaeSimulationError('protocol_error', 'CAE record payload가 올바르지 않습니다.')
+    const entries: [string, RecordedDataNode][] = []
+    for (const [name, member] of Object.entries(node as Record<string, unknown>)) {
+      entries.push([name, await visit(member)])
     }
-    return
+    return Object.freeze(Object.fromEntries(entries))
   }
-  if (payload.kind !== 'complete') {
-    throw new CaeSimulationError('protocol_error', '알 수 없는 CAE next payload입니다.')
-  }
-  if (
-    !hasExactKeys(payload, ['kind', 'sequence', 'recordSequences']) ||
-    !Number.isSafeInteger(payload.sequence) ||
-    (payload.sequence as number) < 1 ||
-    !Array.isArray(payload.recordSequences) ||
-    payload.recordSequences.some((sequence) => !Number.isSafeInteger(sequence) || (sequence as number) < 1)
-  ) {
-    throw new CaeSimulationError('protocol_error', 'CAE complete payload가 올바르지 않습니다.')
-  }
-}
-
-function assertFailedPayload(payload: unknown): asserts payload is CaeFailedPayload {
-  if (
-    !isRecord(payload) ||
-    !hasExactKeys(payload, ['kind', 'sequence', 'error']) ||
-    payload.kind !== 'failed' ||
-    !Number.isSafeInteger(payload.sequence) ||
-    (payload.sequence as number) < 0 ||
-    !isRecord(payload.error) ||
-    !hasExactKeys(payload.error, ['code', 'message']) ||
-    typeof payload.error.code !== 'string' ||
-    !payload.error.code ||
-    typeof payload.error.message !== 'string' ||
-    !payload.error.message
-  ) {
-    throw new CaeSimulationError('protocol_error', 'CAE failed payload가 올바르지 않습니다.')
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  const actual = Object.keys(value)
-  return actual.length === keys.length && actual.every((key) => keys.includes(key))
+  return Object.freeze({ value: await visit(value), byteLength })
 }
 
 function handleEvent(event: JobEvent, runId: string, jobId: string | null, callbacks: CaeSimulationOptions): void {
   if (event.type === 'status') {
-    const status =
-      event.payload && typeof event.payload === 'object' && 'status' in event.payload
-        ? String(event.payload.status)
-        : ''
-    if (status === 'validating' || status === 'running' || status === 'finalizing') {
-      callbacks.onStatus?.(status)
-      emitRuntimeActivity(callbacks.onActivity, {
-        source: 'cae',
-        level: 'info',
-        phase: `status.${status}`,
-        message: `CAE 실행 상태: ${status}`,
-        ...(jobId ? { jobId } : {}),
-        runId,
-      })
-    }
+    const status = (event.payload as { status: CaeSimulationStatus }).status
+    callbacks.onStatus?.(status)
+    emitRuntimeActivity(callbacks.onActivity, {
+      source: 'cae',
+      level: 'info',
+      phase: `status.${status}`,
+      message: `CAE 실행 상태: ${status}`,
+      ...(jobId ? { jobId } : {}),
+      runId,
+    })
     return
   }
-  if (event.type !== 'progress' || !event.payload || typeof event.payload !== 'object') return
-  const progress = event.payload as Partial<CaeSimulationProgress>
-  if (
-    typeof progress.stage !== 'string' ||
-    typeof progress.completed !== 'number' ||
-    !Number.isFinite(progress.completed)
-  ) {
-    return
-  }
+  if (event.type !== 'progress') return
+  const progress = event.payload as CaeSimulationProgress
   const normalized = Object.freeze({
     runId,
-    task: typeof progress.task === 'string' ? progress.task : 'simulation',
-    kernel:
-      progress.kernel && typeof progress.kernel.name === 'string' && typeof progress.kernel.version === 'string'
-        ? progress.kernel
-        : Object.freeze({ name: 'cae', version: '1' }),
+    task: progress.task,
+    kernel: progress.kernel,
     stage: progress.stage,
     completed: progress.completed,
-    ...(typeof progress.total === 'number' ? { total: progress.total } : {}),
-    ...(typeof progress.message === 'string' ? { message: progress.message } : {}),
+    ...(progress.total === undefined ? {} : { total: progress.total }),
+    ...(progress.message === undefined ? {} : { message: progress.message }),
   })
   callbacks.onProgress?.(normalized)
   emitRuntimeActivity(callbacks.onActivity, {

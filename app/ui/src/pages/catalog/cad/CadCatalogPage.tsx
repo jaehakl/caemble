@@ -59,7 +59,7 @@ export function GeometryCatalog({
   return (
     <CatalogPageLayout
       count={cadElementCatalog.length}
-      description={`CAD API v${cadAuthoringContract.apiVersion} primitive와 operation의 공식 문법·제약·예제`}
+      description="CAD primitive와 operation의 공식 문법·예제"
       embedded={embedded}
       title="Primitives & Operations"
       filters={
@@ -235,22 +235,6 @@ export function GeometryCatalog({
                 </pre>
               </div>
 
-              {selected.standardTransforms ? (
-                <details className="mt-6 rounded-lg border px-4 py-3 text-sm">
-                  <summary className="cursor-pointer font-medium">Deprecated v7 호환 props</summary>
-                  <p className="mt-2 leading-6 text-muted-foreground">{cadAuthoringContract.transforms.mixing}</p>
-                  <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
-                    {cadAuthoringContract.transforms.legacyProperties.map((property) => (
-                      <li key={property.name}>
-                        <code>
-                          {property.name}: {property.type}
-                        </code>{' '}
-                        — {property.description}
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              ) : null}
             </CardContent>
           </>
         ) : (

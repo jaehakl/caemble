@@ -14,14 +14,6 @@ dependencies = [
 packages = [{ include = "gpstation_master" }]
 include = [{ path = "gpstation_master/py.typed", format = ["sdist", "wheel"] }]
 
-[tool.poetry.group.dev.dependencies]
-pytest = ">=8.0,<10.0"
-pytest-asyncio = ">=1.0,<2.0"
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["tests"]
-
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

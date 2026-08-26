@@ -4,7 +4,6 @@ from typing import Any, Awaitable, Callable
 
 import numpy as np
 
-from app.errors import CaeError
 from app.solver_framework.geometry import GeometryService
 from app.solver_framework.models import SolverContext, VoxelDomain
 from app.solver_framework.numerics.finite_volume import create_scalar_finite_volume_system, solve_pcg
@@ -28,6 +27,7 @@ from app.solver_framework.world import (
     target_group,
 )
 
+
 async def _run_dc(
     config: dict[str, Any],
     state: Any,
@@ -38,39 +38,25 @@ async def _run_dc(
     descriptor: dict[str, Any],
 ) -> dict[str, Any]:
     del state
-    if inputs:
-        raise CaeError("invalid_input", "dc-current-density does not accept artifact inputs")
+    del inputs
     scene = experiment_scene(world)
-    grid_rules = [item for item in config.get("initializations", []) if item.get("methodId") == "dc.voxel-grid"]
-    if len(grid_rules) != 1:
-        raise CaeError("invalid_task", "dc.voxel-grid must occur exactly once")
-    grid_rule = grid_rules[0]
+    grid_rule = next(item for item in config["initializations"] if item["methodId"] == "dc.voxel-grid")
     group_name = target_group(grid_rule, "geometry")
     parts = geometry_parts(scene, group_name)
-    boundary_conditions = config.get("boundaryConditions", [])
-    legacy_source = [item for item in boundary_conditions if item.get("methodId") == "dc.source-potential"]
-    legacy_reference = [item for item in boundary_conditions if item.get("methodId") == "dc.reference-potential"]
+    boundary_conditions = config["boundaryConditions"]
+    legacy_source = [item for item in boundary_conditions if item["methodId"] == "dc.source-potential"]
+    legacy_reference = [item for item in boundary_conditions if item["methodId"] == "dc.reference-potential"]
     electrode_source = [
-        item for item in boundary_conditions if item.get("methodId") == "dc.source-electrode-potential"
+        item for item in boundary_conditions if item["methodId"] == "dc.source-electrode-potential"
     ]
     electrode_reference = [
-        item for item in boundary_conditions if item.get("methodId") == "dc.reference-electrode-potential"
+        item for item in boundary_conditions if item["methodId"] == "dc.reference-electrode-potential"
     ]
     legacy_mode = len(legacy_source) == len(legacy_reference) == 1 and not electrode_source and not electrode_reference
-    electrode_mode = (
-        len(electrode_source) == len(electrode_reference) == 1 and not legacy_source and not legacy_reference
-    )
-    if not legacy_mode and not electrode_mode:
-        raise CaeError(
-            "invalid_task",
-            "DC boundary conditions require exactly one legacy surface pair or one task electrode geometry pair",
-        )
     shape = grid_shape(grid_rule)
     conductivities = [material_scalar(world, part, descriptor, "electrical.conductivity") for part in parts]
     fixed_values: np.ndarray[Any, Any] | None = None
     if legacy_mode:
-        if len(parts) != 1:
-            raise CaeError("invalid_task", "legacy DC surface boundaries require one conductor part")
         part = geometry_part(scene, group_name)
         source_rule, reference_rule = legacy_source[0], legacy_reference[0]
         source = surface(scene, target_group(source_rule, "surface"), part["id"])
@@ -137,8 +123,6 @@ async def _run_dc(
             reference_rule["parameters"]["voltage"]
         )
     conductivity = conductivities[0]
-    if any(not np.isclose(value, conductivity, rtol=1e-12, atol=0) for value in conductivities[1:]):
-        raise CaeError("invalid_material", "DC conductor and electrode conductivity values must match")
     source_voltage = scalar_parameter(source_rule["parameters"]["voltage"])
     reference_voltage = scalar_parameter(reference_rule["parameters"]["voltage"])
     tolerance = scalar_parameter(config["parameters"]["relativeTolerance"])
@@ -153,22 +137,18 @@ async def _run_dc(
     potential = np.full(domain.occupancy.size, np.nan) if fixed_values is None else fixed_values.copy()
     potential[system.active_cells] = solution
     ticks = axis_ticks(domain)
-    outputs = config.get("outputs")
-    if not isinstance(outputs, list) or not outputs:
-        raise CaeError("invalid_task", "dc-current-density requires outputs")
+    outputs = config["outputs"]
     artifacts: dict[str, Any] = {}
     cross_sections: dict[float, tuple[np.ndarray[Any, Any], float]] = {}
     density_positions = {
         scalar_parameter(output["parameters"]["crossSectionPosition"])
         for output in outputs
-        if output.get("methodId") == "dc.current-density"
+        if output["methodId"] == "dc.current-density"
     }
     joule: dict[str, Any] | None = None
     for index, output in enumerate(outputs):
-        method = output.get("methodId")
-        key = output.get("key")
-        if not isinstance(key, str):
-            raise CaeError("invalid_task", "DC output key must be a string")
+        method = output["methodId"]
+        key = output["key"]
         if method == "dc.joule-heating":
             if joule is None:
                 voxel_values = np.zeros(domain.occupancy.size, dtype=np.float64)
@@ -208,8 +188,6 @@ async def _run_dc(
                     "value": values[..., None] * domain.axis,
                     "axes": [{"ticks": ticks[1]}, {"ticks": ticks[2]}],
                 }
-        else:
-            raise CaeError("invalid_task", f"unsupported DC output method: {method}")
         await progress({"stage": "output", "completed": index + 1, "total": len(outputs)})
     return {
         "artifacts": artifacts,

@@ -1,5 +1,4 @@
 import { geometries, measurements, modifiers } from '@jscad/modeling'
-import { CadModelError } from '../model/core'
 import type { EvaluatedSurface } from '../evaluation/types'
 
 type CadGeom3 = ReturnType<typeof geometries.geom3.create>
@@ -10,12 +9,9 @@ const cadGeneralize = modifiers.generalize as unknown as (
 ) => CadGeom3
 
 export function deriveGeometrySurfaces(geometry: unknown) {
-  if (!geometries.geom3.isA(geometry)) {
-    throw new CadModelError('CAD scene parts must be valid geom3 solids.')
-  }
-
-  const snapEpsilon = Math.max(measurements.measureEpsilon(geometry) * 1e-6, Number.EPSILON)
-  const snappedPolygons = geometries.geom3.toPolygons(geometry as CadGeom3).map((polygon) => {
+  const solid = geometry as CadGeom3
+  const snapEpsilon = Math.max(measurements.measureEpsilon(solid) * 1e-6, Number.EPSILON)
+  const snappedPolygons = geometries.geom3.toPolygons(solid).map((polygon) => {
     const snapped = geometries.poly3.create(
       polygon.vertices.map((vertex) => [
         Math.round(vertex[0] / snapEpsilon) * snapEpsilon,
@@ -79,29 +75,4 @@ export function deriveGeometrySurfaces(geometry: unknown) {
   })
 
   return { geometry: normalizedGeometry, surfaces }
-}
-
-export function validateSurfacePartition(geometry: unknown, surfaces: readonly EvaluatedSurface[]) {
-  if (!geometries.geom3.isA(geometry)) {
-    throw new CadModelError('CAD scene parts must be valid geom3 solids.')
-  }
-
-  const polygonCount = geometries.geom3.toPolygons(geometry as CadGeom3).length
-  const owners = Array.from({ length: polygonCount }, () => 0)
-  surfaces.forEach((surface) => {
-    if (!Number.isSafeInteger(surface.surfaceIndex) || surface.surfaceIndex < 0) {
-      throw new CadModelError('CAD surface indices must be non-negative safe integers.')
-    }
-    if (!surface.label.trim()) throw new CadModelError('CAD surface labels must not be empty.')
-    surface.polygonIndices.forEach((polygonIndex) => {
-      if (!Number.isSafeInteger(polygonIndex) || polygonIndex < 0 || polygonIndex >= polygonCount) {
-        throw new CadModelError(`CAD surface ${surface.surfaceIndex} contains an invalid polygon index.`)
-      }
-      owners[polygonIndex] += 1
-    })
-  })
-
-  if (owners.some((ownerCount) => ownerCount !== 1)) {
-    throw new CadModelError('CAD surfaces must partition every geometry polygon exactly once.')
-  }
 }

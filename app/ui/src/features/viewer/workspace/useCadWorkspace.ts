@@ -36,7 +36,7 @@ import {
 import type { SimulationProgramManifest } from '@/lib/cad/simulation'
 import { fetchCatalogRuntimeSlice } from '@/lib/catalog/references'
 import { sourceCatalogRuntimeSlice } from '@/lib/catalog/runtime'
-import { assertCatalogKernelTasks } from '@/lib/catalog/solverValidation'
+import { catalogDraftTaskNames } from '@/lib/catalog/solverTasks'
 import type { MeasurementMaterialParameters } from '../persistence/contracts'
 import { resolveDocumentMaterials } from '../persistence/resolveMaterials'
 import type { SimulationProcess } from './simulationUiTypes'
@@ -95,6 +95,7 @@ export type CadDocumentController = Readonly<{
   materialWarnings: readonly string[]
   readOnly: boolean
   measurement: BuiltMeasurement | null
+  resultSessionKey: string | number | null
   revision: number
   runIsBusy: boolean
   scene: CadScene | null
@@ -107,6 +108,7 @@ export type CadDocumentController = Readonly<{
   successfulRevision: number
   taskSceneHashes: Readonly<Record<string, string>>
   taskScenes: Readonly<Record<string, CadScene>>
+  validatedRevision: number
   variables: Readonly<Vars> | null
   varsSchema: EvaluatedExperimentSnapshot['varsSchema'] | null
 }>
@@ -177,11 +179,13 @@ export function useCadWorkspace(
   const [status, setStatus] = useState<AppStatus>('Ready')
   const [successfulCandidateGeneration, setSuccessfulCandidateGeneration] = useState(0)
   const [successfulRevision, setSuccessfulRevision] = useState(-1)
+  const [validatedRevision, setValidatedRevision] = useState(-1)
   const [taskScenes, setTaskScenes] = useState<Readonly<Record<string, CadScene>>>(Object.freeze({}))
   const [variables, setVariables] = useState<Readonly<Vars> | null>(null)
   const [varsSchema, setVarsSchema] = useState<EvaluatedExperimentSnapshot['varsSchema'] | null>(null)
   const [process, setProcess] = useState<SimulationProcess>(idleSimulationProcess)
   const [recordedData, setRecordedData] = useState<RecordedData | null>(null)
+  const [resultSessionKey, setResultSessionKey] = useState<string | number | null>(null)
   const [stale, setStale] = useState(false)
 
   const activeEvaluationRef = useRef<AbortController | null>(null)
@@ -219,6 +223,10 @@ export function useCadWorkspace(
   const revisionRef = useRef(0)
   const statusRef = useRef<AppStatus>('Ready')
   const successfulRevisionRef = useRef(-1)
+  const validatedCandidateDependencyKeyRef = useRef<string | null>(null)
+  const validatedDocumentRef = useRef<ExperimentSourceDocument | null>(null)
+  const validatedGenerationRef = useRef(-1)
+  const validatedResetKeyRef = useRef<string | number | null>(null)
   const resetKeyRef = useRef<string | number>(resetKey)
   const preparedDocumentRef = useRef<Readonly<{
     catalog: Awaited<ReturnType<typeof fetchCatalogRuntimeSlice>>
@@ -300,12 +308,15 @@ export function useCadWorkspace(
     setError(null)
     const resetPreview = resetKeyRef.current !== resetKey
     resetKeyRef.current = resetKey
+    const sessionCandidateVars = resetPreview ? undefined : candidateVars
+    const sessionMaterialSnapshot = resetPreview ? null : frozenMaterialSnapshot
     if (resetPreview) {
       candidateCacheRef.current = null
       editableMaterialEchoRef.current = null
       lastSchemaFingerprintRef.current = null
       preparedDocumentRef.current = null
       setEvaluatedSnapshot(null)
+      setResultSessionKey(null)
     }
     setBuiltMeasurement(null)
     builtMeasurementRef.current = null
@@ -324,6 +335,7 @@ export function useCadWorkspace(
       lastSchemaFingerprintRef.current = null
       preparedDocumentRef.current = null
       setEvaluatedSnapshot(null)
+      setResultSessionKey(null)
       setScene(null)
       setTaskScenes(Object.freeze({}))
       setVarsSchema(null)
@@ -429,7 +441,7 @@ export function useCadWorkspace(
           return generated
         }
         let nextVars: Readonly<Vars>
-        if (candidateProvenance === 'persisted-measurement' && candidateVarsPending && candidateVars === undefined) {
+        if (candidateProvenance === 'persisted-measurement' && candidateVarsPending && sessionCandidateVars === undefined) {
           updateStatus('Checking')
           return
         } else if (explicitGeneration) {
@@ -437,9 +449,9 @@ export function useCadWorkspace(
         } else if (candidateProvenance === 'persisted-measurement') {
           candidateCacheRef.current = null
           try {
-            if (candidateVars === undefined) throw new Error('The saved Measurement does not contain Candidate vars.')
+            if (sessionCandidateVars === undefined) throw new Error('The saved Measurement does not contain Candidate vars.')
             const normalizedSchema = normalizeVarsSchema(inspection.varsSchema, 'Experiment')
-            nextVars = normalizeVars(normalizedSchema, candidateVars, 'Measurement')
+            nextVars = normalizeVars(normalizedSchema, sessionCandidateVars, 'Measurement')
           } catch (cause: unknown) {
             const detail = cause instanceof Error ? cause.message : String(cause)
             throw new MeasurementVarsError(
@@ -450,12 +462,12 @@ export function useCadWorkspace(
           nextVars = generateCandidateVars('schema-changed')
         } else if (reusableCachedCandidate) {
           nextVars = reusableCachedCandidate
-        } else if (candidateVars === undefined) {
+        } else if (sessionCandidateVars === undefined) {
           nextVars = generateCandidateVars()
         } else {
           try {
             const normalizedSchema = normalizeVarsSchema(inspection.varsSchema, 'Experiment')
-            nextVars = normalizeVars(normalizedSchema, candidateVars, 'Candidate')
+            nextVars = normalizeVars(normalizedSchema, sessionCandidateVars, 'Candidate')
             candidateCacheRef.current = null
           } catch {
             nextVars = generateCandidateVars('invalid-candidate')
@@ -474,6 +486,11 @@ export function useCadWorkspace(
           { catalog, signal: abort.signal, timeoutMs: evaluationTimeoutRef.current },
         )
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
+        validatedCandidateDependencyKeyRef.current = candidateDependencyKey
+        validatedDocumentRef.current = evaluationDocument
+        validatedGenerationRef.current = generation
+        validatedResetKeyRef.current = resetKey
+        setValidatedRevision(requestRevision)
         emitRuntimeActivity(onActivityRef.current, {
           source: 'cad',
           level: 'info',
@@ -495,7 +512,7 @@ export function useCadWorkspace(
         })
         const resolution = await resolveDocumentMaterials(
           snapshot,
-          explicitGeneration ? null : frozenMaterialSnapshot,
+          explicitGeneration ? null : sessionMaterialSnapshot,
           sourceOnlyMaterials,
         )
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
@@ -544,8 +561,9 @@ export function useCadWorkspace(
           })
         }
         if (unresolved.length > 0) {
-          const nextDraftTaskNames = assertCatalogKernelTasks(registeredCatalog, snapshot.simulationProgram)
+          const nextDraftTaskNames = catalogDraftTaskNames(registeredCatalog, snapshot.simulationProgram)
           setEvaluatedSnapshot(snapshot)
+          setResultSessionKey(resetKey)
           setDraftTaskNames(nextDraftTaskNames)
           setVariables(snapshot.variables)
           setVarsSchema(snapshot.varsSchema)
@@ -566,12 +584,10 @@ export function useCadWorkspace(
           reportReady({ revision: requestRevision, unresolvedMaterialRoles: unresolved.length })
           return
         }
-        const nextDraftTaskNames = assertCatalogKernelTasks(registeredCatalog, snapshot.simulationProgram, {
-          experiment: commonScene,
-          tasks: nextTaskScenes,
-        })
+        const nextDraftTaskNames = catalogDraftTaskNames(registeredCatalog, snapshot.simulationProgram)
         if (nextDraftTaskNames.length > 0) {
           setEvaluatedSnapshot(snapshot)
+          setResultSessionKey(resetKey)
           setDraftTaskNames(nextDraftTaskNames)
           setVariables(snapshot.variables)
           setVarsSchema(snapshot.varsSchema)
@@ -590,13 +606,13 @@ export function useCadWorkspace(
         }
         const built = buildMeasurement(snapshot, resolution)
         const persistedMaterials: MeasurementMaterialParameters = Object.freeze({
-          schemaVersion: 2,
           experiment: built.materialParameters,
           tasks: built.taskMaterialParameters,
         })
         builtMeasurementRef.current = built
         setBuiltMeasurement(built)
         setEvaluatedSnapshot(snapshot)
+        setResultSessionKey(resetKey)
         setVariables(snapshot.variables)
         setVarsSchema(snapshot.varsSchema)
         setScene(commonScene)
@@ -653,7 +669,6 @@ export function useCadWorkspace(
       if (activeEvaluationRef.current === abort) activeEvaluationRef.current = null
     }
     // Canonical dependency keys keep generated Candidate/material echoes from restarting the same evaluation.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     experiment,
     candidateProvenance,
@@ -763,9 +778,18 @@ export function useCadWorkspace(
     [updateStatus],
   )
 
+  const ownsCurrentSession = resultSessionKey === resetKey
+  const currentValidatedRevision =
+    validatedDocumentRef.current === experiment &&
+    validatedCandidateDependencyKeyRef.current === candidateDependencyKey &&
+    validatedGenerationRef.current === generation &&
+    validatedResetKeyRef.current === resetKey
+      ? validatedRevision
+      : -1
   const processActive = process.status === 'preparing' || process.status === 'running'
   const canRun = Boolean(
     runtimeEnabled &&
+    ownsCurrentSession &&
     !processActive &&
     status === 'Ready' &&
     successfulRevision === revision &&
@@ -914,10 +938,13 @@ export function useCadWorkspace(
     () =>
       Object.freeze(
         Object.fromEntries(
-          Object.entries(evaluatedSnapshot?.taskRenderScenes ?? {}).map(([name, value]) => [name, value.sceneHash]),
+          Object.entries(ownsCurrentSession ? (evaluatedSnapshot?.taskRenderScenes ?? {}) : {}).map(([name, value]) => [
+            name,
+            value.sceneHash,
+          ]),
         ),
       ),
-    [evaluatedSnapshot],
+    [evaluatedSnapshot, ownsCurrentSession],
   )
   const runIsBusy = ['Checking', 'Compiling', 'Evaluating', 'Resolving Materials', 'Rendering'].includes(status)
   const experimentDocument: CadDocumentController = {
@@ -928,7 +955,7 @@ export function useCadWorkspace(
     documentType: 'experiment',
     draftTaskNames,
     error,
-    evaluatedSnapshot,
+    evaluatedSnapshot: ownsCurrentSession ? evaluatedSnapshot : null,
     evaluationTimeoutMs,
     generateCandidate,
     handleAddExperimentFile,
@@ -941,25 +968,34 @@ export function useCadWorkspace(
     handleRenderStart,
     handleSimulationCodeChange,
     handleSourceChange,
-    materialParameters,
+    materialParameters: ownsCurrentSession ? materialParameters : null,
     materialWarnings,
     readOnly: sourceReadOnly,
-    measurement: builtMeasurement,
+    measurement: ownsCurrentSession ? builtMeasurement : null,
+    resultSessionKey: ownsCurrentSession ? resultSessionKey : null,
     revision,
     runIsBusy,
-    scene,
-    sceneHash: evaluatedSnapshot?.renderScene.sceneHash ?? null,
+    scene: ownsCurrentSession ? scene : null,
+    sceneHash: ownsCurrentSession ? (evaluatedSnapshot?.renderScene.sceneHash ?? null) : null,
     setEvaluationTimeoutMs,
-    simulationProgram,
+    simulationProgram: ownsCurrentSession ? simulationProgram : null,
     sourceReadOnly,
     status,
     successfulCandidateGeneration,
     successfulRevision,
     taskSceneHashes,
-    taskScenes,
-    variables,
+    taskScenes: ownsCurrentSession ? taskScenes : Object.freeze({}),
+    validatedRevision: currentValidatedRevision,
+    variables: ownsCurrentSession ? variables : null,
     varsSchema,
   }
-  const simulation: SimulationController = { canRun, cancel, process, recordedData, run, stale }
+  const simulation: SimulationController = {
+    canRun,
+    cancel,
+    process,
+    recordedData: ownsCurrentSession ? recordedData : null,
+    run,
+    stale,
+  }
   return { experimentDocument, simulation }
 }

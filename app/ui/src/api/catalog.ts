@@ -1,20 +1,19 @@
-import { z } from 'zod'
-import {
-  catalogMetaSchema,
-  experimentDetailSchema,
-  experimentListItemSchema,
-  listSchema,
-  materialModelSchema,
-  materialParameterDetailSchema,
-  materialParameterSchema,
-  quantityKindDetailSchema,
-  quantityKindSchema,
-  runtimeSliceSchema,
-  searchItemSchema,
-  solverDetailSchema,
-  solverListItemSchema,
-  type CatalogRuntimeSliceRequest,
-  type ListQuery,
+import type {
+  CatalogExperimentDetail,
+  CatalogExperimentListItem,
+  CatalogList,
+  CatalogMaterialModel,
+  CatalogMaterialParameter,
+  CatalogMaterialParameterDetail,
+  CatalogMeta,
+  CatalogQuantityKind,
+  CatalogQuantityKindDetail,
+  CatalogRuntimeSlice,
+  CatalogRuntimeSliceRequest,
+  CatalogSearchItem,
+  CatalogSolverDetail,
+  CatalogSolverListItem,
+  ListQuery,
 } from '@/contracts/catalog'
 import { request } from './http'
 
@@ -68,81 +67,43 @@ export const catalogQueryKeys = {
 } as const
 
 export const catalogApi = {
-  async meta() {
-    return catalogMetaSchema.parse(await request<unknown>('get', catalogUrl('/meta')))
-  },
-  async listQuantityKinds(query: ListQuery = {}) {
-    return listSchema(quantityKindSchema).parse(await request<unknown>('get', catalogUrl('/quantity-kinds', query)))
-  },
-  async getQuantityKind(name: string) {
-    return quantityKindDetailSchema.parse(
-      await request<unknown>('get', catalogUrl(`/quantity-kinds/${encodeURIComponent(name)}`)),
-    )
-  },
-  async listMaterialParameters(query: ListQuery = {}) {
-    return listSchema(materialParameterSchema).parse(
-      await request<unknown>('get', catalogUrl('/material-parameters', query)),
-    )
-  },
-  async getMaterialParameter(key: string) {
-    return materialParameterDetailSchema.parse(
-      await request<unknown>('get', catalogUrl(`/material-parameters/${encodeURIComponent(key)}`)),
-    )
-  },
-  async listMaterialModels(query: ListQuery = {}) {
-    return listSchema(materialModelSchema).parse(await request<unknown>('get', catalogUrl('/material-models', query)))
-  },
-  async getMaterialModel(key: string) {
-    return materialModelSchema.parse(
-      await request<unknown>('get', catalogUrl(`/material-models/${encodeURIComponent(key)}`)),
-    )
-  },
-  async listSolvers(query: ListQuery = {}) {
-    return listSchema(solverListItemSchema).parse(await request<unknown>('get', catalogUrl('/solvers', query)))
-  },
-  async getSolver(name: string, version: string) {
-    return solverDetailSchema.parse(
-      await request<unknown>('get', catalogUrl(`/solvers/${encodeURIComponent(name)}/${encodeURIComponent(version)}`)),
-    )
-  },
-  async listExperiments(query: ListQuery = {}) {
-    return listSchema(experimentListItemSchema).parse(await request<unknown>('get', catalogUrl('/experiments', query)))
-  },
+  meta: () => request<CatalogMeta>('get', catalogUrl('/meta')),
+  listQuantityKinds: (query: ListQuery = {}) =>
+    request<CatalogList<CatalogQuantityKind>>('get', catalogUrl('/quantity-kinds', query)),
+  getQuantityKind: (name: string) =>
+    request<CatalogQuantityKindDetail>('get', catalogUrl(`/quantity-kinds/${encodeURIComponent(name)}`)),
+  listMaterialParameters: (query: ListQuery = {}) =>
+    request<CatalogList<CatalogMaterialParameter>>('get', catalogUrl('/material-parameters', query)),
+  getMaterialParameter: (key: string) =>
+    request<CatalogMaterialParameterDetail>('get', catalogUrl(`/material-parameters/${encodeURIComponent(key)}`)),
+  listMaterialModels: (query: ListQuery = {}) =>
+    request<CatalogList<CatalogMaterialModel>>('get', catalogUrl('/material-models', query)),
+  getMaterialModel: (key: string) =>
+    request<CatalogMaterialModel>('get', catalogUrl(`/material-models/${encodeURIComponent(key)}`)),
+  listSolvers: (query: ListQuery = {}) =>
+    request<CatalogList<CatalogSolverListItem>>('get', catalogUrl('/solvers', query)),
+  getSolver: (name: string, version: string) =>
+    request<CatalogSolverDetail>(
+      'get',
+      catalogUrl(`/solvers/${encodeURIComponent(name)}/${encodeURIComponent(version)}`),
+    ),
+  listExperiments: (query: ListQuery = {}) =>
+    request<CatalogList<CatalogExperimentListItem>>('get', catalogUrl('/experiments', query)),
   async getExperiment(identity: string | CatalogExperimentIdentity) {
-    let key: string
-    let query: ListQuery = {}
-    if (typeof identity === 'string') {
-      const coordinate = identity.match(
-        /^caemble:experiment\/([^/]+)\/([^/]+)\/([^/@]+)@((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))$/u,
-      )
-      if (coordinate) {
-        key = coordinate[3]
-        query = { namespace: coordinate[1], repository: coordinate[2], version: coordinate[4] }
-      } else {
-        key = identity
-      }
-    } else {
-      key = identity.key
-      query = { namespace: identity.namespace, repository: identity.repository, version: identity.version }
-    }
-    return experimentDetailSchema.parse(
-      await request<unknown>('get', catalogUrl(`/experiments/${encodeURIComponent(key)}`, query)),
-    )
+    const parsed = typeof identity === 'string' && identity.startsWith('caemble:experiment/')
+      ? identity.slice('caemble:experiment/'.length).split('/')
+      : null
+    const coordinateTail = parsed?.[parsed.length - 1]?.split('@')
+    const key = typeof identity === 'string' ? (coordinateTail?.[0] ?? identity) : identity.key
+    const query = typeof identity === 'string'
+      ? parsed && coordinateTail
+        ? { namespace: parsed[0], repository: parsed[1], version: coordinateTail[1] }
+        : {}
+      : { namespace: identity.namespace, repository: identity.repository, version: identity.version }
+    return request<CatalogExperimentDetail>('get', catalogUrl(`/experiments/${encodeURIComponent(key)}`, query))
   },
-  async search(q: string, limit = 50) {
-    return z
-      .object({ items: z.array(searchItemSchema) })
-      .parse(await request<unknown>('get', catalogUrl('/search', { q, limit })))
-  },
-  async runtimeSlice(value: CatalogRuntimeSliceRequest) {
-    const payload = z
-      .object({
-        solvers: z.array(z.object({ name: z.string().min(1), version: z.string().min(1) })).max(32),
-        quantityKinds: z.array(z.string().min(1)).max(256),
-        materialParameters: z.array(z.string().min(1)).max(256),
-        materialModels: z.array(z.string().min(1)).max(64),
-      })
-      .parse(value)
-    return runtimeSliceSchema.parse(await request<unknown>('post', catalogUrl('/runtime-slice'), payload))
-  },
+  search: async (q: string, limit = 50) =>
+    (await request<Readonly<{ items: readonly CatalogSearchItem[] }>>('get', catalogUrl('/search', { q, limit }))).items,
+  runtimeSlice: (payload: CatalogRuntimeSliceRequest) =>
+    request<CatalogRuntimeSlice>('post', catalogUrl('/runtime-slice'), payload),
 } as const

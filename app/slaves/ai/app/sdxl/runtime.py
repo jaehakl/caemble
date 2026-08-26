@@ -94,14 +94,6 @@ async def generate_images_batch(
                 return await asyncio.to_thread(_generate_images_batch_locked, *generation_args)
 
 
-def _reset_image_runtime_for_tests() -> None:
-    _image_locks.clear()
-    _image_ckpt_paths.clear()
-    _image_pipe_modes.clear()
-    _image_controlnet_model_ids_by_device.clear()
-    _image_pipes.clear()
-
-
 def warmup_sdxl_imports() -> None:
     log("importing torch for SDXL")
     _load_image_torch()
@@ -178,7 +170,6 @@ def _generate_images_batch_locked(
 ) -> tuple[list[Any], list[int]]:
     normalized_image_mode = image_mode.strip().lower()
     torch = _load_image_torch()
-    _validate_cuda_device_id(torch, device_id)
     device = _cuda_device_name(device_id)
     pipe = _get_image_pipe_locked(ckpt_path, normalized_image_mode, controlnet_model_ids, torch, device_id)
     sampler_key = sampler.strip().lower()
@@ -208,8 +199,6 @@ def _generate_images_batch_locked(
             UniPCMultistepScheduler = _load_diffusers_attr("UniPCMultistepScheduler")
 
             pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)
-        else:
-            raise ValueError(f"unsupported image sampler: {sampler}")
 
     images: list[Any] = []
     seeds: list[int] = []
@@ -252,14 +241,6 @@ def _generate_images_batch_locked(
             call_kwargs["width"] = width
             call_kwargs["strength"] = strength
         elif normalized_image_mode in {"controlnet_t2i", "controlnet_i2i", "controlnet_inpaint"}:
-            if not controlnet_model_ids:
-                raise ValueError(f"{normalized_image_mode} requires at least one ControlNet model")
-            if len(controlnet_model_ids) > 1 and chunk_size > 1:
-                raise ValueError("multiple ControlNets support only a single image per generation chunk")
-            if len(controlnet_image_chunk) != chunk_size:
-                raise ValueError("control image batch size must match prompt batch size")
-            if any(len(controlnet_images) != len(controlnet_model_ids) for controlnet_images in controlnet_image_chunk):
-                raise ValueError("control image count must match ControlNet model count")
             if normalized_image_mode in {"controlnet_i2i", "controlnet_inpaint"}:
                 call_kwargs["image"] = init_image_chunk
                 call_kwargs["strength"] = strength
@@ -291,8 +272,6 @@ def _generate_images_batch_locked(
                 if len(controlnet_model_ids) == 1
                 else control_guidance_ends
             )
-        else:
-            raise ValueError(f"unsupported image generation mode: {image_mode}")
         if clip_skip is not None:
             call_kwargs["clip_skip"] = clip_skip
         images.extend(pipe(**call_kwargs).images)
@@ -343,8 +322,6 @@ def _get_image_pipe_locked(
                 "StableDiffusionXLControlNetPipeline",
             )
 
-            if not controlnet_model_ids:
-                raise ValueError(f"{image_mode} requires at least one ControlNet model")
             controlnets = [
                 ControlNetModel.from_pretrained(
                     model_id,
@@ -359,10 +336,6 @@ def _get_image_pipe_locked(
                 pipeline_cls = StableDiffusionXLControlNetImg2ImgPipeline
             elif image_mode == "controlnet_inpaint":
                 pipeline_cls = StableDiffusionXLControlNetInpaintPipeline
-            else:
-                raise ValueError(f"unsupported image generation mode: {image_mode}")
-        else:
-            raise ValueError(f"unsupported image generation mode: {image_mode}")
 
         device = _cuda_device_name(device_id)
         log(f"loading Stable Diffusion {image_mode} checkpoint on {device}: {ckpt_path}")
@@ -421,16 +394,6 @@ def _get_image_lock(device_id: int) -> asyncio.Lock:
 
 def _cuda_device_name(device_id: int) -> str:
     return f"cuda:{device_id}"
-
-
-def _validate_cuda_device_id(torch: Any, device_id: int) -> None:
-    if device_id < 0:
-        raise ValueError("cuda device id must be 0 or greater")
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA GPU is not available")
-    device_count = torch.cuda.device_count()
-    if device_id >= device_count:
-        raise ValueError(f"cuda device id {device_id} is not available")
 
 
 def _clear_cuda_cache(torch: Any, device_id: int) -> None:

@@ -44,11 +44,6 @@ def get_image_cuda_device_id() -> int:
     return 1 if get_cuda_device_count() >= 2 else 0
 
 
-def reset_gpu_residency_for_tests() -> None:
-    _gpu_locks.clear()
-    _loaded_models_by_device.clear()
-
-
 class GpuModelLease:
     def __init__(
         self,

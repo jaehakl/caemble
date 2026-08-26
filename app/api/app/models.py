@@ -1,8 +1,8 @@
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, RootModel
 
 
 class RoleEnum(str, Enum):
@@ -27,14 +27,14 @@ class AuthenticatedUserData(UserData):
 
 
 class GetListRequestBase(BaseModel):
-    scope: Literal["visible", "mine", "public"] = "visible"
+    scope: str = "visible"
     offset: Optional[int] = 0
     limit: Optional[int] = None
     selected_ids: Optional[List[int]] = None
     search_text: Optional[str] = None
     text_filter: Optional[Dict[str, List[str]]] = None
     filter: Optional[Dict[str, List[Any]]] = None
-    null_filter: Optional[Dict[str, Literal["is_null", "is_not_null"]]] = None
+    null_filter: Optional[Dict[str, str]] = None
     sort: Optional[Union[List[str], List[List[str]]]] = None
     random: Optional[bool] = False
 
@@ -66,41 +66,33 @@ class OwnedTimestampFields(TimestampFields):
 class MaterialBase(OwnedTimestampFields):
     inchi: Optional[str] = None
     description: Optional[str] = None
-    color: Optional[str] = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+    color: Optional[str] = None
 
 
 class MaterialNameBase(OwnedTimestampFields):
     material_id: int
-    name: str = Field(..., min_length=1)
+    name: str
 
 
 class MaterialParameterBase(OwnedTimestampFields):
     material_id: int
-    name: str = Field(..., min_length=1)
+    name: str
     value: Any
     source: Optional[str] = None
     version: Optional[str] = None
     description: Optional[str] = None
     temperature: Optional[float] = None
     pressure: Optional[float] = None
-    frequency: Optional[float] = Field(
-        default=None,
-        gt=0,
-        allow_inf_nan=False,
-        description="Frequency in Hz.",
-    )
+    frequency: Optional[float] = None
 
 
 class MaterialParameterQualifierBase(TimestampFields):
     material_parameter_id: int
-    name: str = Field(..., min_length=1)
+    name: str
     value: float
 
 
 class ExperimentSourceBundle(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    formatVersion: Literal[6]
     files: Dict[str, str]
 
 
@@ -112,47 +104,25 @@ class ExperimentBase(OwnedTimestampFields):
     version_major: int
     version_minor: int
     version_patch: int
-    name: str = Field(..., min_length=1)
+    name: str
     description: Optional[str] = None
     source_bundle: ExperimentSourceBundle
-    source_hash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    source_hash: str
 
 
 class SaveExperimentRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    mode: Literal["create", "overwrite", "new_version"]
+    mode: str
     namespace: str
     repository: str
     key: str
     initialVersion: Optional[str] = "0.1.0"
-    experimentId: Optional[int] = Field(default=None, gt=0)
-    baseBundleHash: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    bump: Optional[Literal["patch", "minor", "major"]] = None
-    name: str = Field(..., min_length=1)
+    experimentId: Optional[int] = None
+    baseBundleHash: Optional[str] = None
+    bump: Optional[str] = None
+    name: str
     description: Optional[str] = None
     sourceBundle: ExperimentSourceBundle
-    bundleHash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
-
-    @model_validator(mode="after")
-    def validate_mode_fields(self) -> "SaveExperimentRequest":
-        if self.mode == "create":
-            if self.experimentId is not None or self.baseBundleHash is not None or self.bump is not None:
-                raise ValueError("create does not accept experimentId, baseBundleHash, or bump")
-        elif self.mode == "overwrite":
-            if self.experimentId is None or self.baseBundleHash is None:
-                raise ValueError("overwrite requires experimentId and baseBundleHash")
-            if (
-                self.bump is not None
-                or "initialVersion" in self.model_fields_set
-            ):
-                raise ValueError("overwrite does not accept initialVersion or bump")
-        else:
-            if self.experimentId is None or self.baseBundleHash is None or self.bump is None:
-                raise ValueError("new_version requires experimentId, baseBundleHash, and bump")
-            if "initialVersion" in self.model_fields_set:
-                raise ValueError("new_version does not accept initialVersion")
-        return self
+    bundleHash: str
 
 
 class ExperimentDerivedCounts(BaseModel):
@@ -164,21 +134,19 @@ class ExperimentDerivedCounts(BaseModel):
 
 class SaveExperimentResponse(BaseModel):
     id: int
-    action: Literal["create", "overwrite", "new_version"]
+    action: str
     namespace: str
     repository: str
     key: str
     version: str
     coordinate: str
-    bundleHash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    bundleHash: str
     sourceLocked: bool
     derivedCounts: ExperimentDerivedCounts
 
 
 class ExperimentUsageRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    experimentIds: List[int] = Field(default_factory=list, max_length=256)
+    experimentIds: List[int] = Field(default_factory=list)
 
 
 class MeasurementBase(OwnedTimestampFields):
@@ -190,29 +158,34 @@ class MeasurementBase(OwnedTimestampFields):
 
 
 class MeasurementSaveRecordedData(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(..., min_length=1)
-    quantity_kind: Optional[str] = Field(default=None, min_length=1)
-    tensor_order: int = Field(..., ge=0)
-    dtype: str = Field(..., min_length=1)
+    quantity_kind: Optional[str] = None
+    tensor_order: int
+    dtype: str
     data_schema: Dict[str, Any]
     data: Any
 
 
-class MeasurementCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class MeasurementSaveRecordedDataGroup(
+    RootModel[Dict[str, Union[MeasurementSaveRecordedData, "MeasurementSaveRecordedDataGroup"]]]
+):
+    pass
 
-    experiment_id: int = Field(..., gt=0)
-    experiment_source_hash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+
+MeasurementSaveRecordedDataNode = Union[
+    MeasurementSaveRecordedData,
+    MeasurementSaveRecordedDataGroup,
+]
+
+
+class MeasurementCreateRequest(BaseModel):
+    experiment_id: int
+    experiment_source_hash: str
     vars: Dict[str, Any]
     material_parameters: Dict[str, Any]
 
 
 class MeasurementRecordRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    recorded_data: List[MeasurementSaveRecordedData] = Field(default_factory=list)
+    recorded_data: Dict[str, MeasurementSaveRecordedDataNode] = Field(default_factory=dict)
 
 
 class MeasurementSaveResponse(BaseModel):
@@ -222,20 +195,20 @@ class MeasurementSaveResponse(BaseModel):
 class RecordedDataBase(OwnedTimestampFields):
     user_id: str
     measurement_id: int
-    name: str = Field(..., min_length=1)
-    quantity_kind: Optional[str] = Field(default=None, min_length=1)
-    tensor_order: int = Field(..., ge=0)
-    dtype: str = Field(..., min_length=1)
+    name: str
+    quantity_kind: Optional[str] = None
+    tensor_order: int
+    dtype: str
     data_schema: Optional[Dict[str, Any]] = None
     data: Any = None
     data_url: Optional[str] = None
-    file_size: Optional[int] = Field(default=None, ge=0)
+    file_size: Optional[int] = None
 
 
 class ModelArtifactBase(OwnedTimestampFields):
     experiment_id: int
     model_url: Optional[str] = None
-    file_size: Optional[int] = Field(default=None, ge=0)
+    file_size: Optional[int] = None
 
 
 class DesignerModelBase(ModelArtifactBase):

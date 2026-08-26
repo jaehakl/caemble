@@ -13,13 +13,7 @@ export function encodeBinaryFrame(header: AttachmentChunkHeader, body: Uint8Arra
 }
 
 export function decodeBinaryFrame(frame: Uint8Array): { header: AttachmentChunkHeader; body: Uint8Array } {
-  if (frame.byteLength < 4) {
-    throw new Error('binary frame is too short');
-  }
   const headerLength = new DataView(frame.buffer, frame.byteOffset, frame.byteLength).getUint32(0, false);
-  if (headerLength <= 0 || frame.byteLength < 4 + headerLength) {
-    throw new Error('invalid binary frame header length');
-  }
   const header = JSON.parse(textDecoder.decode(frame.slice(4, 4 + headerLength))) as AttachmentChunkHeader;
   return { header, body: frame.slice(4 + headerLength) };
 }

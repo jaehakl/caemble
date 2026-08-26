@@ -21,18 +21,6 @@ packages = [
 caemble-catalog = { path = "../../catalog", develop = true }
 caemble-runtime-sdk = { path = "../../sdk", develop = true, extras = ["slave"] }
 
-[tool.poetry.group.dev.dependencies]
-pytest = ">=8.0,<10.0"
-pytest-asyncio = ">=1.0,<2.0"
-
-[tool.pytest.ini_options]
-pythonpath = ["."]
-testpaths = ["tests"]
-markers = [
-    "slow: numerical golden or end-to-end integration coverage",
-    "live: opt-in test that calls an external service",
-]
-
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

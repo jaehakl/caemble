@@ -9,20 +9,17 @@ from typing import Any, Callable
 
 from .admin import (
     create_draft,
-    draft_path,
     insert_experiment,
     insert_solver_manifest,
     publish_draft,
-    semantic_diff,
+    rebase_database,
     refresh_derived_data,
-    validate_database,
     writable_connection,
 )
-from .database import Catalog, catalog_path
+from .database import Catalog
 from .errors import CatalogError, CatalogNotFoundError
 from .schema import (
     EXPERIMENT_COORDINATE_PREFIX,
-    WRITABLE_CAD_API_VERSIONS,
     parse_experiment_coordinate,
     parse_experiment_version,
 )
@@ -236,11 +233,9 @@ def _edit_experiment(args: argparse.Namespace) -> None:
                     "version": args.version,
                     "title": args.title,
                     "description": args.description,
-                    "cadApiVersion": args.cad_api_version,
                     "concepts": args.concept,
                     "relatedSolvers": related_solvers,
                     "sourceBundle": _load_json_file(args.bundle_file, "Experiment source bundle"),
-                    "verification": _load_json_file(args.verification_file, "Experiment verification"),
                 },
             )
     refresh_derived_data(args.database)
@@ -251,7 +246,6 @@ def _run_solver(args: argparse.Namespace) -> None:
     database = args.database
     if action == "create":
         manifest = {
-            "schemaVersion": 1,
             "implementation": args.implementation,
             "descriptor": {
                 "name": args.name,
@@ -620,20 +614,18 @@ def _descriptor(upsert: argparse.ArgumentParser, *, optional: bool = False) -> N
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="catalogctl", description="Manage a validated draft CAE catalog SQLite file.")
-    parser.add_argument("--database", type=Path, default=draft_path(), help="draft SQLite path")
+    parser = argparse.ArgumentParser(prog="catalogctl", description="Manage a CAE catalog SQLite file.")
+    parser.add_argument("--database", type=Path, required=True, help="explicit SQLite path")
     commands = parser.add_subparsers(dest="command", required=True)
 
     draft = commands.add_parser("draft")
     draft_actions = draft.add_subparsers(dest="draft_action", required=True)
     create = draft_actions.add_parser("create")
-    create.add_argument("--source", type=Path, default=catalog_path())
+    create.add_argument("--source", type=Path, required=True)
 
-    commands.add_parser("validate")
-    diff = commands.add_parser("diff")
-    diff.add_argument("--against", type=Path, default=catalog_path())
+    commands.add_parser("rebase")
     publish = commands.add_parser("publish")
-    publish.add_argument("--destination", type=Path, default=catalog_path())
+    publish.add_argument("--destination", type=Path, required=True)
     query = commands.add_parser("query")
     query.add_argument(
         "resource", choices=("meta", "quantity-kind", "material-parameter", "solver", "experiment")
@@ -650,11 +642,9 @@ def build_parser() -> argparse.ArgumentParser:
     upsert.add_argument("--namespace", default="caemble")
     upsert.add_argument("--repository", default="verified")
     upsert.add_argument("--version", default="1.0.0")
-    upsert.add_argument("--cad-api-version", type=int, choices=WRITABLE_CAD_API_VERSIONS, required=True)
     upsert.add_argument("--title", required=True)
     upsert.add_argument("--description", required=True)
     upsert.add_argument("--bundle-file", type=Path, required=True)
-    upsert.add_argument("--verification-file", type=Path, required=True)
     upsert.add_argument("--concept", action="append", default=[])
     upsert.add_argument("--solver", action="append", default=[])
     remove = experiment_actions.add_parser("remove")
@@ -835,11 +825,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "draft":
             create_draft(args.database, args.source)
             result: Any = {"draft": str(args.database.resolve())}
-        elif args.command == "validate":
-            result = validate_database(args.database)
-        elif args.command == "diff":
-            changes = semantic_diff(args.database, args.against)
-            result = {"changes": changes, "changeCount": len(changes)}
+        elif args.command == "rebase":
+            rebase_database(args.database)
+            result = {"rebased": str(args.database.resolve())}
         elif args.command == "publish":
             result = publish_draft(args.database, args.destination)
         elif args.command == "query":

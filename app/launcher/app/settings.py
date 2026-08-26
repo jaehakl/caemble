@@ -4,7 +4,7 @@ from pathlib import Path
 from socket import gethostname
 from urllib.parse import urlparse, urlunparse
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,7 +33,6 @@ class LauncherSettings(BaseSettings):
     )
     heartbeat_interval_seconds: float = Field(
         default=5.0,
-        gt=0,
         validation_alias=AliasChoices(
             "CAEMBLE_HEARTBEAT_INTERVAL_SECONDS",
             "GPSTATION_V1_HEARTBEAT_INTERVAL_SECONDS",
@@ -41,7 +40,6 @@ class LauncherSettings(BaseSettings):
     )
     worker_ready_timeout_seconds: float = Field(
         default=10.0,
-        gt=0,
         validation_alias=AliasChoices(
             "CAEMBLE_WORKER_READY_TIMEOUT_SECONDS",
             "GPSTATION_V1_WORKER_READY_TIMEOUT_SECONDS",
@@ -69,35 +67,13 @@ class LauncherSettings(BaseSettings):
         ),
     )
 
-    @field_validator("api_url")
-    @classmethod
-    def strip_api_url(cls, value: str) -> str:
-        normalized = value.rstrip("/")
-        parsed = urlparse(normalized)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            raise ValueError("API URL must be an absolute http(s) URL")
-        if parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
-            raise ValueError("Remote API URL must use https")
-        return normalized
-
-    @field_validator("rtc_ice_servers_json")
-    @classmethod
-    def strip_rtc_ice_servers_json(cls, value: str) -> str:
-        return value.strip() or DEFAULT_RTC_ICE_SERVERS_JSON
-
-    @field_validator("rtc_ice_gather_timeout_seconds")
-    @classmethod
-    def strip_rtc_ice_gather_timeout_seconds(cls, value: str) -> str:
-        return value.strip()
-
-    @field_validator("rtc_memory_cache_enabled")
-    @classmethod
-    def strip_rtc_memory_cache_enabled(cls, value: str) -> str:
-        return value.strip()
-
     @property
     def control_websocket_url(self) -> str:
-        parsed = urlparse(self.api_url)
+        parsed = urlparse(self.api_url.rstrip("/"))
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("API URL must be an absolute http(s) URL")
+        if parsed.scheme != "https" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+            raise ValueError("Remote API URL must use https")
         scheme = "wss" if parsed.scheme == "https" else "ws"
         base_path = parsed.path.rstrip("/")
         path = f"{base_path}/v1/launchers/control" if base_path else "/v1/launchers/control"

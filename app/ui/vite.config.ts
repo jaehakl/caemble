@@ -1,4 +1,4 @@
-import { configDefaults, defineConfig } from 'vitest/config'
+import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath, URL } from 'node:url'
@@ -47,10 +47,5 @@ export default defineConfig(({ mode }) => ({
   plugins: [react(), tailwindcss()],
   worker: {
     format: 'es',
-  },
-  test: {
-    environment: 'node',
-    exclude: [...configDefaults.exclude, 'e2e/**'],
-    setupFiles: ['./src/test/setup.ts'],
   },
 }))

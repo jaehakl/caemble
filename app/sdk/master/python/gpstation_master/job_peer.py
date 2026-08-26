@@ -11,9 +11,7 @@ from .constants import (
     ATTACHMENT_CHUNK_SIZE,
     BUFFERED_AMOUNT_DRAIN_TIMEOUT_SECONDS,
     BUFFERED_AMOUNT_LOW_THRESHOLD,
-    MAX_BUFFERED_AMOUNT,
-    REQUEST_ATTACHMENT_MAX_BYTES,
-    RESULT_ACK_BUFFER_TIMEOUT_SECONDS,
+    BUFFERED_AMOUNT_HIGH_WATER_MARK,
 )
 from .diagnostics import DiagnosticCallback, emit_diagnostic
 from .errors import GpStationError, GpStationProtocolError
@@ -138,7 +136,6 @@ class GpStationJobPeer:
         self._ensure_open("send job call")
         if self._pending_call is not None:
             raise GpStationError(f"job call already in progress: {self._pending_call.id}")
-        self._validate_request_attachments(attachments)
         future: asyncio.Future[CallResult[Any]] = asyncio.get_running_loop().create_future()
         self._pending_call = _PendingCall(id=call_id, future=future, on_event=on_event)
         self._response = None
@@ -280,7 +277,7 @@ class GpStationJobPeer:
                     data[offset:end],
                 )
             )
-            if self._data_channel.bufferedAmount > MAX_BUFFERED_AMOUNT:
+            if self._data_channel.bufferedAmount > BUFFERED_AMOUNT_HIGH_WATER_MARK:
                 await self._wait_for_send_buffer()
 
     async def _wait_for_send_buffer(self) -> None:
@@ -300,8 +297,6 @@ class GpStationJobPeer:
                 try:
                     if isinstance(raw_message, str):
                         message = json.loads(raw_message)
-                        if not isinstance(message, dict):
-                            raise GpStationProtocolError("job control frame must be an object")
                         await self._handle_control_message(message)
                     else:
                         await self._handle_binary_message(raw_message)
@@ -337,17 +332,13 @@ class GpStationJobPeer:
         if kind != "job.result":
             return
         call_id = message.get("id")
-        if not isinstance(call_id, str) or self._pending_call is None or self._pending_call.id != call_id:
+        if self._pending_call is None or self._pending_call.id != call_id:
             raise GpStationProtocolError(f"unexpected job result: {call_id or 'missing id'}")
         raw_attachments = message.get("attachments") or []
-        if not isinstance(raw_attachments, list):
-            raise GpStationProtocolError("job result attachments must be a list")
         attachments: list[AttachmentMetadata] = []
         files: dict[str, _IncomingFile] = {}
         for raw_attachment in raw_attachments:
             metadata = self._parse_attachment_metadata(raw_attachment)
-            if metadata.id in files:
-                raise GpStationProtocolError(f"duplicate result attachment id: {metadata.id}")
             attachments.append(metadata)
             files[metadata.id] = _IncomingFile(metadata=metadata)
         emit_diagnostic(
@@ -370,29 +361,14 @@ class GpStationJobPeer:
         if header.get("kind") != "attachment.chunk" or self._response is None:
             return
         call_id = header.get("callId")
-        if not isinstance(call_id, str) or self._pending_call is None or self._pending_call.id != call_id:
+        if self._pending_call is None or self._pending_call.id != call_id:
             raise GpStationProtocolError(f"unexpected attachment chunk call id: {call_id}")
-        attachment_id = header.get("attachmentId")
-        if not isinstance(attachment_id, str) or attachment_id not in self._response.files:
-            raise GpStationProtocolError(f"unknown attachment chunk: {attachment_id}")
+        attachment_id = header["attachmentId"]
         incoming_file = self._response.files[attachment_id]
-        index = header.get("index")
-        if isinstance(index, bool) or not isinstance(index, int) or index != incoming_file.next_index:
-            raise GpStationProtocolError(f"out-of-order attachment chunk: {attachment_id}")
-        final = header.get("final")
-        if not isinstance(final, bool):
-            raise GpStationProtocolError(f"attachment final flag is invalid: {attachment_id}")
-        if incoming_file.complete:
-            raise GpStationProtocolError(f"attachment already complete: {attachment_id}")
-        next_size = incoming_file.received_size + len(body)
-        if next_size > incoming_file.metadata.size:
-            raise GpStationProtocolError(f"attachment exceeds declared size: {attachment_id}")
         incoming_file.chunks.append(body)
-        incoming_file.received_size = next_size
+        incoming_file.received_size += len(body)
         incoming_file.next_index += 1
-        incoming_file.complete = final
-        if final and next_size != incoming_file.metadata.size:
-            raise GpStationProtocolError(f"attachment size mismatch: {attachment_id}")
+        incoming_file.complete = bool(header.get("final"))
         if all(item.complete for item in self._response.files.values()):
             await self._resolve_pending_call()
 
@@ -419,14 +395,6 @@ class GpStationJobPeer:
     async def _acknowledge_result(self, call_id: str) -> None:
         self._ensure_open("acknowledge job result")
         self._data_channel.send(self._encode_control({"kind": "job.result.ack", "id": call_id}))
-        self._data_channel.bufferedAmountLowThreshold = 0
-        try:
-            async with asyncio.timeout(RESULT_ACK_BUFFER_TIMEOUT_SECONDS):
-                while self._data_channel.bufferedAmount > 0:
-                    self._ensure_open("acknowledge job result")
-                    await asyncio.sleep(0.01)
-        except TimeoutError as exc:
-            raise TimeoutError("job result ack buffered amount timeout") from exc
         emit_diagnostic(
             self._peer_connection,
             self._data_channel,
@@ -495,38 +463,13 @@ class GpStationJobPeer:
         )
 
     @staticmethod
-    def _validate_request_attachments(attachments: Sequence[RequestAttachment]) -> None:
-        ids: set[str] = set()
-        for attachment in attachments:
-            if not attachment.id:
-                raise ValueError("request attachment id is required")
-            if attachment.id in ids:
-                raise ValueError(f"duplicate request attachment id: {attachment.id}")
-            if not isinstance(attachment.data, (bytes, bytearray, memoryview)):
-                raise TypeError(f"request attachment data must be bytes: {attachment.id}")
-            if len(attachment.data) > REQUEST_ATTACHMENT_MAX_BYTES:
-                raise ValueError(
-                    f"request attachment exceeds {REQUEST_ATTACHMENT_MAX_BYTES} bytes: {attachment.id}"
-                )
-            ids.add(attachment.id)
-
-    @staticmethod
     def _parse_attachment_metadata(value: Any) -> AttachmentMetadata:
-        if not isinstance(value, dict):
-            raise GpStationProtocolError("result attachment metadata must be an object")
-        attachment_id = value.get("id")
-        size = value.get("size")
-        name = value.get("name")
-        mime_type = value.get("mimeType")
-        if not isinstance(attachment_id, str) or not attachment_id:
-            raise GpStationProtocolError("result attachment id is required")
-        if isinstance(size, bool) or not isinstance(size, int) or size < 0:
-            raise GpStationProtocolError(f"result attachment size is invalid: {attachment_id}")
-        if name is not None and not isinstance(name, str):
-            raise GpStationProtocolError(f"result attachment name is invalid: {attachment_id}")
-        if mime_type is not None and not isinstance(mime_type, str):
-            raise GpStationProtocolError(f"result attachment mimeType is invalid: {attachment_id}")
-        return AttachmentMetadata(id=attachment_id, name=name, mime_type=mime_type, size=size)
+        return AttachmentMetadata(
+            id=value["id"],
+            name=value.get("name"),
+            mime_type=value.get("mimeType"),
+            size=value.get("size", 0),
+        )
 
     @staticmethod
     def _encode_control(value: dict[str, Any]) -> str:

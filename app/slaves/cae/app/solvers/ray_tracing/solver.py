@@ -35,7 +35,6 @@ from .physics import (
 from .tracing import SurfaceSampler, TriangleMetadata, TriangleScene, counter_random, vector_parameter
 
 THIN_LAYER_LIMIT = 50e-6
-MAX_RAY_COUNT = 1_000_000
 EVENT_REFLECTION = 0
 EVENT_REFRACTION = 1
 EVENT_SCATTERING = 2
@@ -160,20 +159,16 @@ class PathCollector:
 
 
 async def run(context: SolverContext) -> dict[str, Any]:
-    if context.inputs:
-        raise CaeError("invalid_input", "ray-tracing does not accept artifact inputs")
     scene = experiment_scene(context.world)
     config = context.config
-    seed = _integer(config["parameters"]["seed"], "seed", 0, 2**31 - 1)
-    maximum_interactions = _integer(config["parameters"]["maxInteractions"], "maxInteractions", 1, 32)
-    maximum_paths = _integer(config["parameters"]["maxPaths"], "maxPaths", 0, 65_536)
+    seed = _integer(config["parameters"]["seed"])
+    maximum_interactions = _integer(config["parameters"]["maxInteractions"])
+    maximum_paths = _integer(config["parameters"]["maxPaths"])
     minimum_power_fraction = scalar_parameter(config["parameters"]["minPowerFraction"])
-    if not 0 <= minimum_power_fraction < 1:
-        raise CaeError("invalid_task", "minPowerFraction must be in [0, 1)")
 
     domain_rule = single_method(config, "initializations", "ray.domain")
     parts = geometry_parts(scene, target_group(domain_rule, "geometry"))
-    collision_scene, meshes, thin_roots = await _collision_scene(context, scene, parts)
+    collision_scene, meshes = await _collision_scene(context, scene, parts)
     epsilon = max(1e-12, collision_scene.diagonal * 1e-10)
     surface_scatter = _surface_scatter(config, scene, meshes)
     bulk_scatter = _bulk_scatter(config, scene)
@@ -188,12 +183,9 @@ async def run(context: SolverContext) -> dict[str, Any]:
         config,
         scene,
         meshes,
-        thin_roots,
         seed,
         epsilon,
     )
-    if len(launched) > MAX_RAY_COUNT:
-        raise CaeError("resource_limit", f"ray-tracing may launch at most {MAX_RAY_COUNT} rays")
     await context.progress({"stage": "trace", "completed": 0, "total": len(launched)})
     collector = PathCollector(maximum_paths)
     queue = deque(launched)
@@ -225,10 +217,8 @@ async def run(context: SolverContext) -> dict[str, Any]:
     artifacts: dict[str, Any] = {}
     for index, detector in enumerate(detectors):
         output = detector.output
-        method = output.get("methodId")
-        key = output.get("key")
-        if not isinstance(key, str) or not key:
-            raise CaeError("invalid_task", "ray detector output key must be a non-empty string")
+        method = output["methodId"]
+        key = output["key"]
         detected_power = float(np.sum(detector.power))
         if method == "ray.detector-power":
             artifacts[key] = {"value": detected_power}
@@ -242,8 +232,6 @@ async def run(context: SolverContext) -> dict[str, Any]:
                 "value": detector.power / pixel_area,
                 "axes": [{"ticks": v_ticks.tolist()}, {"ticks": u_ticks.tolist()}],
             }
-        else:
-            raise CaeError("invalid_task", f"unsupported ray detector output method: {method}")
         await context.progress({"stage": "output", "completed": index + 1, "total": len(detectors)})
     return {
         "state": {"rayPaths": collector.bundle()},
@@ -261,7 +249,7 @@ async def _collision_scene(
     context: SolverContext,
     scene: dict[str, Any],
     parts: list[dict[str, Any]],
-) -> tuple[TriangleScene, dict[str, TriangularMesh], dict[str, ShellLayerGeometry]]:
+) -> tuple[TriangleScene, dict[str, TriangularMesh]]:
     collision = TriangleScene()
     meshes: dict[str, TriangularMesh] = {}
     thin_roots: dict[str, ShellLayerGeometry] = {}
@@ -282,11 +270,6 @@ async def _collision_scene(
         if layer is not None and _is_thin(layer.maximum_thickness):
             thin_roots[root_id] = layer
         else:
-            if layer is None and _contains_shell(part["node"]):
-                raise CaeError(
-                    "invalid_geometry",
-                    f"ray-tracing requires shell root {root_id!r} to remain a direct shell or transformed shell",
-                )
             mesh = await context.geometry.triangular_mesh(
                 scene,
                 root_id,
@@ -352,7 +335,7 @@ async def _collision_scene(
             TriangleMetadata("solid", root_id, materials_by_root[root_id]),
         )
     collision.build()
-    return collision, meshes, thin_roots
+    return collision, meshes
 
 
 def _trace_one(
@@ -426,8 +409,6 @@ def _trace_one(
 
     if hit.metadata.kind.startswith("thin-stack"):
         stack = hit.metadata.payload
-        if not isinstance(stack, ThinStack):
-            raise CaeError("invalid_geometry", "thin shell collision metadata is invalid")
         (
             reflected,
             transmitted,
@@ -708,14 +689,13 @@ async def _sources(
     config: dict[str, Any],
     scene: dict[str, Any],
     meshes: dict[str, TriangularMesh],
-    thin_roots: dict[str, ShellLayerGeometry],
     seed: int,
     epsilon: float,
 ) -> tuple[list[Ray], float]:
     rules = [
         rule
-        for rule in config.get("initializations", [])
-        if isinstance(rule, dict) and rule.get("methodId") in {
+        for rule in config["initializations"]
+        if rule["methodId"] in {
             "ray.point-source",
             "ray.area-source",
             "ray.directional-source",
@@ -730,22 +710,13 @@ async def _sources(
         parameters = rule["parameters"]
         wavelength = scalar_parameter(parameters["wavelength"])
         flux = scalar_parameter(parameters["radiantFlux"])
-        count = _integer(parameters["rayCount"], "rayCount", 1, MAX_RAY_COUNT)
-        if len(rays) + count > MAX_RAY_COUNT:
-            raise CaeError("resource_limit", f"ray-tracing may launch at most {MAX_RAY_COUNT} rays")
-        if wavelength <= 0 or flux <= 0:
-            raise CaeError("invalid_task", "source wavelength and radiantFlux must be positive")
+        count = _integer(parameters["rayCount"])
         stokes = _stokes(parameters["stokes"], flux / count)
         method = rule["methodId"]
         sampler = None
         center = None
         if method == "ray.point-source":
             part = geometry_part(scene, target_group(rule, "geometry"))
-            if part["id"] in meshes or part["id"] in thin_roots:
-                raise CaeError(
-                    "invalid_task",
-                    "point source geometry must be an emitter locator outside ray.domain",
-                )
             mesh = await context.geometry.triangular_mesh(
                 scene,
                 part["id"],
@@ -757,14 +728,7 @@ async def _sources(
         else:
             group_name = target_group(rule, "surface")
             selectors = _selectors(scene, group_name)
-            if len(selectors) != 1:
-                raise CaeError("invalid_task", f"source surface group {group_name!r} must resolve to one surface")
             root_id = selectors[0]["rootId"]
-            if root_id in meshes or root_id in thin_roots:
-                raise CaeError(
-                    "invalid_task",
-                    "source surface geometry must be an emitter locator outside ray.domain",
-                )
             source_meshes[root_id] = await context.geometry.triangular_mesh(
                 scene,
                 root_id,
@@ -792,8 +756,6 @@ async def _sources(
                 direction = vector_parameter(parameters["direction"], "source direction")
             else:
                 outward = parameters["outward"]
-                if not isinstance(outward, bool):
-                    raise CaeError("invalid_task", "outward must be boolean")
                 direction = cosine_hemisphere(
                     sampled_normal * (1 if outward else -1),
                     counter_random(seed, rule_index, local_index, 3),
@@ -815,8 +777,6 @@ async def _sources(
             )
             source_index += 1
         total_power += flux
-    if not rays:
-        raise CaeError("invalid_task", "ray-tracing requires at least one light source")
     return rays, total_power
 
 
@@ -826,36 +786,23 @@ def _surface_scatter(
     meshes: dict[str, TriangularMesh],
 ) -> dict[tuple[str, int], tuple[str, dict[str, Any]]]:
     result: dict[tuple[str, int], tuple[str, dict[str, Any]]] = {}
-    for rule in config.get("boundaryConditions", []):
-        method = rule.get("methodId") if isinstance(rule, dict) else None
+    for rule in config["boundaryConditions"]:
+        method = rule["methodId"]
         if method not in {"ray.abg-scatter", "ray.lambertian-scatter"}:
             continue
         parameters = rule["parameters"]
-        fraction = scalar_parameter(parameters["scatterFraction"])
-        if not 0 <= fraction <= 1:
-            raise CaeError("invalid_task", "surface scatterFraction must be in [0, 1]")
-        if method == "ray.abg-scatter" and (
-            scalar_parameter(parameters["b"]) <= 0 or scalar_parameter(parameters["g"]) <= 0
-        ):
-            raise CaeError("invalid_task", "ABg b and g must be positive")
         for key in _surface_triangle_keys(scene, target_group(rule, "surface"), meshes):
-            if key in result:
-                raise CaeError("invalid_task", "ray surface scatter groups must not overlap")
             result[key] = ("abg" if method == "ray.abg-scatter" else "lambertian", parameters)
     return result
 
 
 def _bulk_scatter(config: dict[str, Any], scene: dict[str, Any]) -> dict[str, float]:
     result: dict[str, float] = {}
-    for rule in config.get("boundaryConditions", []):
-        if not isinstance(rule, dict) or rule.get("methodId") != "ray.hg-medium":
+    for rule in config["boundaryConditions"]:
+        if rule["methodId"] != "ray.hg-medium":
             continue
         anisotropy = scalar_parameter(rule["parameters"]["anisotropy"])
-        if not -1 < anisotropy < 1:
-            raise CaeError("invalid_task", "HG anisotropy must be strictly between -1 and 1")
         for part in geometry_parts(scene, target_group(rule, "geometry")):
-            if part["id"] in result:
-                raise CaeError("invalid_task", "ray HG geometry groups must not overlap")
             result[part["id"]] = anisotropy
     return result
 
@@ -866,13 +813,9 @@ def _detectors(
     meshes: dict[str, TriangularMesh],
 ) -> list[Detector]:
     result: list[Detector] = []
-    outputs = config.get("outputs")
-    if not isinstance(outputs, list) or not outputs:
-        raise CaeError("invalid_task", "ray-tracing requires detector outputs")
+    outputs = config["outputs"]
     for output in outputs:
-        method = output.get("methodId") if isinstance(output, dict) else None
-        if method not in {"ray.detector-irradiance", "ray.detector-power", "ray.detector-efficiency"}:
-            raise CaeError("invalid_task", f"unsupported ray output method: {method}")
+        method = output["methodId"]
         group_name = target_group(output, "surface")
         keys = _surface_triangle_keys(scene, group_name, meshes)
         triangles = []
@@ -887,29 +830,20 @@ def _detectors(
         lengths = np.linalg.norm(crosses, axis=1)
         normals = crosses / lengths[:, None]
         normal = normals[0]
-        if np.any(np.abs(normals @ normal) < 1 - 1e-8):
-            raise CaeError("invalid_geometry", f"detector surface group {group_name!r} must be planar")
         points = triangle_values.reshape((-1, 3))
-        tolerance = max(1e-12, np.ptp(points, axis=0).max() * 1e-8)
-        if np.ptp(points @ normal) > tolerance:
-            raise CaeError("invalid_geometry", f"detector surface group {group_name!r} must be coplanar")
         u_axis = perpendicular(normal)
         v_axis = np.cross(normal, u_axis)
         u_values = points @ u_axis
         v_values = points @ v_axis
         extent_u = float(np.ptp(u_values))
         extent_v = float(np.ptp(v_values))
-        if extent_u <= 0 or extent_v <= 0:
-            raise CaeError("invalid_geometry", f"detector surface group {group_name!r} has zero area")
         shape = (1, 1)
         if method == "ray.detector-irradiance":
-            shape_values = _array(output["parameters"]["pixelShape"], "pixelShape", 2)
+            shape_values = _array(output["parameters"]["pixelShape"])
             shape = (
-                _integer(shape_values[0], "pixelShape[0]", 1, 2048),
-                _integer(shape_values[1], "pixelShape[1]", 1, 2048),
+                _integer(shape_values[0]),
+                _integer(shape_values[1]),
             )
-            if math.prod(shape) > 1_048_576:
-                raise CaeError("resource_limit", "detector pixelShape may contain at most 1048576 pixels")
         result.append(
             Detector(
                 output,
@@ -929,19 +863,9 @@ def _detectors(
 
 
 def _surface_sampler(scene: dict[str, Any], group_name: str, meshes: dict[str, TriangularMesh]) -> SurfaceSampler:
-    selectors = list(_selectors(scene, group_name))
-    if len(selectors) != 1:
-        raise CaeError("invalid_task", f"source surface group {group_name!r} must resolve to one surface")
-    selector = selectors[0]
-    mesh = meshes.get(selector["rootId"])
-    if mesh is None:
-        raise CaeError(
-            "invalid_task",
-            f"source surface group {group_name!r} must belong to an emitter locator outside ray.domain",
-        )
+    selector = _selectors(scene, group_name)[0]
+    mesh = meshes[selector["rootId"]]
     indices = mesh.triangle_indices(selector)
-    if len(indices) == 0:
-        raise CaeError("invalid_geometry", f"source surface group {group_name!r} resolved to no triangles")
     return SurfaceSampler(mesh, indices)
 
 
@@ -951,77 +875,42 @@ def _surface_triangle_keys(
     result: set[tuple[str, int]] = set()
     for selector in _selectors(scene, group_name):
         root_id = selector["rootId"]
-        mesh = meshes.get(root_id)
-        if mesh is None:
-            raise CaeError("invalid_task", f"surface group {group_name!r} targets an adaptive thin shell")
+        mesh = meshes[root_id]
         indices = mesh.triangle_indices(selector)
-        if len(indices) == 0:
-            raise CaeError("invalid_geometry", f"surface group {group_name!r} resolved to no collision triangles")
         result.update((root_id, int(index)) for index in indices)
-    if not result:
-        raise CaeError("invalid_task", f"surface group {group_name!r} is empty")
     return result
 
 
 def _selectors(scene: dict[str, Any], group_name: str) -> tuple[dict[str, Any], ...]:
-    matches = [group for group in scene.get("surfaceGroups", []) if group.get("name") == group_name]
-    if len(matches) != 1 or matches[0].get("missingMemberIds"):
-        raise CaeError("invalid_task", f"surface group {group_name!r} is invalid")
-    selectors = matches[0].get("selectors")
-    if not isinstance(selectors, list) or not selectors:
-        raise CaeError("invalid_task", f"surface group {group_name!r} must resolve to at least one surface")
-    return tuple(selectors)
+    group = next(group for group in scene["surfaceGroups"] if group["name"] == group_name)
+    return tuple(group["selectors"])
 
 
 def _segment(ray: Ray, endpoint: np.ndarray[Any, Any], event: int) -> None:
-    if len(ray.powers) >= 32:
-        return
     ray.powers.append(max(0.0, float(ray.stokes[0])))
     ray.events.append(event)
     ray.vertices.append(np.asarray(endpoint, dtype=np.float64).copy())
 
 
 def _stokes(value: Any, power: float) -> np.ndarray[Any, Any]:
-    array = _array(value, "stokes", 4)
-    result = np.asarray(array, dtype=np.float64)
-    if np.any(~np.isfinite(result)) or result[0] <= 0 or np.linalg.norm(result[1:]) > result[0] * (1 + 1e-12):
-        raise CaeError("invalid_task", "source Stokes vector must be finite and physically realizable")
+    result = np.asarray(_array(value), dtype=np.float64)
     return result * (power / result[0])
 
 
-def _array(value: Any, path: str, length: int) -> list[Any]:
+def _array(value: Any) -> list[Any]:
     raw = value.get("value") if isinstance(value, dict) else value
     if isinstance(raw, np.ndarray):
         raw = raw.tolist()
-    if not isinstance(raw, list) or len(raw) != length:
-        raise CaeError("invalid_task", f"{path} must contain {length} values")
-    return raw
+    return list(raw)
 
 
-def _integer(value: Any, path: str, minimum: int, maximum: int) -> int:
+def _integer(value: Any) -> int:
     raw = value.get("value") if isinstance(value, dict) else value
-    if not isinstance(raw, int) or isinstance(raw, bool) or raw < minimum or raw > maximum:
-        raise CaeError("invalid_task", f"{path} must be an integer in [{minimum}, {maximum}]")
-    return raw
+    return int(raw)
 
 
 def _material_name(part: dict[str, Any]) -> str:
-    material = part.get("material")
-    name = material.get("name") if isinstance(material, dict) else None
-    if not isinstance(name, str) or not name:
-        raise CaeError("invalid_material", f"ray domain part {part.get('id')!r} requires a Material")
-    return name
-
-
-def _contains_shell(node: Any) -> bool:
-    if not isinstance(node, dict):
-        return False
-    if node.get("kind") == "shell":
-        return True
-    child = node.get("child")
-    if _contains_shell(child):
-        return True
-    return any(_contains_shell(item) for item in node.get("children", []) if isinstance(node.get("children"), list))
+    return part["material"]["name"]
 
 
 def _is_thin(thickness: float) -> bool:

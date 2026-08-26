@@ -1,9 +1,5 @@
 import type { UcumUnit } from '../model/units'
 
-export const MAX_CANONICAL_GEOMETRY_TRIANGLES = 2_000_000
-export const MAX_CANONICAL_TASK_SCENES = 128
-export const MAX_CANONICAL_RENDER_TYPED_ARRAY_BYTES = 128 * 1024 * 1024
-
 export type CanonicalVec3V1 = readonly [number, number, number]
 export type CanonicalAffineMatrixV1 = readonly [
   number,
@@ -106,28 +102,27 @@ export type CanonicalGeometryGroupV1 = Readonly<{
   missingMemberIds: readonly string[]
 }>
 
-export type CanonicalSurfaceSelectorV2 = Readonly<{
+export type CanonicalSurfaceSelectorV1 = Readonly<{
   rootId: string
   sourceNodeId: string
   surfaceIndex: number
 }>
 
-export type CanonicalSurfaceGroupV2 = Readonly<{
+export type CanonicalSurfaceGroupV1 = Readonly<{
   id: string
   name: string
   kind: 'surface'
   memberIds: readonly string[]
-  selectors: readonly CanonicalSurfaceSelectorV2[]
+  selectors: readonly CanonicalSurfaceSelectorV1[]
   missingMemberIds: readonly string[]
 }>
 
-export type CanonicalGeometrySceneV2 = Readonly<{
-  geometryFormatVersion: 2
+export type CanonicalGeometrySceneV1 = Readonly<{
   geometryHash: string
   lengthUnit: UcumUnit
   roots: readonly CanonicalGeometryRootV1[]
   geometryGroups: readonly CanonicalGeometryGroupV1[]
-  surfaceGroups: readonly CanonicalSurfaceGroupV2[]
+  surfaceGroups: readonly CanonicalSurfaceGroupV1[]
 }>
 
-export type CanonicalGeometrySceneDraftV2 = Omit<CanonicalGeometrySceneV2, 'geometryHash'>
+export type CanonicalGeometrySceneDraftV1 = Omit<CanonicalGeometrySceneV1, 'geometryHash'>

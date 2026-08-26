@@ -22,8 +22,6 @@ from app.llm import runtime as llm_runtime
 from app.model_catalog import get_selected_model_name
 
 CHAT_MEMORY_KEY = "ai_chat"
-CHAT_MAX_HISTORY_MESSAGES = 41
-CHAT_CACHE_CAPACITY_BYTES = 512 * 1024 * 1024
 CHAT_DELTA_BATCH_SECONDS = 0.033
 
 
@@ -42,18 +40,10 @@ def prepare_chat_messages(
     session_id: str,
     request: ChatRequest,
 ) -> tuple[dict[str, Any], list[dict[str, str]]]:
-    if memory is None:
-        raise ValueError("ai.chat requires slave memory")
-
     prompt = request.prompt.strip()
-    if not prompt:
-        raise ValueError("prompt is required")
-
     requested_system_prompt = request.system_prompt.strip() if request.system_prompt is not None else ""
     state = memory.get(CHAT_MEMORY_KEY)
     if not isinstance(state, dict) or state.get("session_id") != session_id:
-        if not requested_system_prompt:
-            raise ValueError("system_prompt is required for the first ai.chat call")
         state = {
             "session_id": session_id,
             "system_prompt": requested_system_prompt,
@@ -61,8 +51,9 @@ def prepare_chat_messages(
             "messages": [{"role": "system", "content": requested_system_prompt}],
         }
         memory[CHAT_MEMORY_KEY] = state
-    elif requested_system_prompt and requested_system_prompt != state.get("system_prompt"):
-        raise ValueError("system_prompt cannot change within an active ai.chat session")
+    elif requested_system_prompt:
+        state["system_prompt"] = requested_system_prompt
+        state["messages"] = [{"role": "system", "content": requested_system_prompt}]
 
     if request.model is not None:
         state["model"] = get_selected_model_name("llm", request.model)
@@ -76,24 +67,12 @@ def prepare_chat_messages(
     return state, [*messages, {"role": "user", "content": prompt}]
 
 
-def prune_chat_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
-    if len(messages) <= CHAT_MAX_HISTORY_MESSAGES:
-        return messages
-    system_messages = messages[:1] if messages and messages[0].get("role") == "system" else []
-    tail = messages[len(system_messages):][-(CHAT_MAX_HISTORY_MESSAGES - len(system_messages)):]
-    if tail and tail[0].get("role") == "assistant":
-        tail = tail[1:]
-    return [*system_messages, *tail]
-
-
 def build_reference_generation_messages(
     messages: list[dict[str, str]],
     reference_context: str | None,
 ) -> list[dict[str, str]]:
     if not reference_context:
         return messages
-    if not messages or messages[-1].get("role") != "user":
-        raise ValueError("reference_context requires a current user question")
     question = messages[-1].get("content", "")
     generation_question = f"{reference_context.rstrip()}\n\n{question}"
     return [*messages[:-1], {"role": "user", "content": generation_question}]
@@ -135,8 +114,6 @@ async def generate_chat_with_llm(
                 on_delta,
                 reference_context is not None and bool(reference_context),
             )
-    if not result.answer.strip():
-        raise RuntimeError("LLM returned empty answer")
     return result
 
 
@@ -150,7 +127,7 @@ def _generate_chat_with_llm_locked(
     has_reference_context: bool = False,
 ) -> ChatGenerationResult:
     llm = llm_runtime._get_prompt_llm_locked(config)
-    cache_enabled = _ensure_chat_cache(llm)
+    cache_enabled = False
     if has_reference_context:
         messages = _select_reference_generation_messages(
             llm,
@@ -232,11 +209,6 @@ def _select_reference_generation_messages(
     system_messages = messages[:1] if messages[0].get("role") == "system" else []
     current_question = messages[-1:]
     history = messages[len(system_messages):-1]
-    minimum_messages = [*system_messages, *current_question]
-    minimum_tokens = _estimate_prompt_tokens(llm, minimum_messages)
-    if minimum_tokens >= context_size:
-        raise ValueError("reference_context and current question exceed the LLM context window")
-
     target_prompt_tokens = max(1, context_size - max_response_tokens)
     selected = [*system_messages, *history, *current_question]
     while history and _estimate_prompt_tokens(llm, selected) > target_prompt_tokens:
@@ -250,28 +222,6 @@ def _drop_oldest_history_turn(messages: list[dict[str, str]]) -> list[dict[str, 
     while remaining and remaining[0].get("role") == "assistant":
         remaining = remaining[1:]
     return remaining
-
-
-def _ensure_chat_cache(llm: Any) -> bool:
-    if getattr(llm, "_ai_slave_chat_cache_enabled", False):
-        return True
-    set_cache = getattr(llm, "set_cache", None)
-    if not callable(set_cache):
-        return False
-    try:
-        cache = _create_chat_ram_cache()
-    except Exception as exc:
-        log(f"LLM chat RAM cache unavailable: {exc}")
-        return False
-    set_cache(cache)
-    setattr(llm, "_ai_slave_chat_cache_enabled", True)
-    return True
-
-
-def _create_chat_ram_cache() -> Any:
-    from llama_cpp.llama_cache import LlamaRAMCache
-
-    return LlamaRAMCache(capacity_bytes=CHAT_CACHE_CAPACITY_BYTES)
 
 
 def _estimate_prompt_tokens(llm: Any, messages: list[dict[str, str]]) -> int:

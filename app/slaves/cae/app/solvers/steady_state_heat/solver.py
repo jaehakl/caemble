@@ -4,7 +4,6 @@ from typing import Any, Awaitable, Callable
 
 import numpy as np
 
-from app.errors import CaeError
 from app.solver_framework.geometry import GeometryService
 from app.solver_framework.models import SolverContext, VoxelDomain
 from app.solver_framework.numerics.finite_volume import create_scalar_finite_volume_system, solve_pcg
@@ -20,6 +19,7 @@ from app.solver_framework.world import (
     target_group,
 )
 
+
 async def _run_heat(
     config: dict[str, Any],
     state: Any,
@@ -30,19 +30,13 @@ async def _run_heat(
     descriptor: dict[str, Any],
 ) -> dict[str, Any]:
     del state
-    if any(name != "heatSource" for name in inputs):
-        raise CaeError("invalid_input", "steady-state-heat received an undeclared artifact input")
     scene = experiment_scene(world)
     grid_rule = single_method(config, "initializations", "heat.voxel-grid")
     group_name = target_group(grid_rule, "geometry")
     part = geometry_part(scene, group_name)
     boundaries = [
-        rule
-        for rule in config.get("boundaryConditions", [])
-        if isinstance(rule, dict) and rule.get("methodId") == "heat.fixed-temperature"
+        rule for rule in config["boundaryConditions"] if rule["methodId"] == "heat.fixed-temperature"
     ]
-    if len(boundaries) != 2:
-        raise CaeError("invalid_task", "steady-state-heat requires two fixed-temperature boundaries")
     source = surface(scene, target_group(boundaries[0], "surface"), part["id"])
     reference = surface(scene, target_group(boundaries[1], "surface"), part["id"])
     shape = grid_shape(grid_rule)
@@ -69,17 +63,13 @@ async def _run_heat(
     system = create_scalar_finite_volume_system(domain, source_temperature, reference_temperature, volume_source)
     solution, iterations, residual = await solve_pcg(system, tolerance, max_iterations, progress, "Heat")
     ticks = axis_ticks(domain)
-    outputs = config.get("outputs")
-    if not isinstance(outputs, list) or not outputs:
-        raise CaeError("invalid_task", "steady-state-heat requires outputs")
+    outputs = config["outputs"]
     artifacts: dict[str, Any] = {}
     temperature: dict[str, Any] | None = None
     maximum: float | None = None
     for index, output in enumerate(outputs):
-        method = output.get("methodId")
-        key = output.get("key")
-        if not isinstance(key, str):
-            raise CaeError("invalid_task", "Heat output key must be a string")
+        method = output["methodId"]
+        key = output["key"]
         if method == "heat.temperature":
             if temperature is None:
                 temperature = {
@@ -90,8 +80,6 @@ async def _run_heat(
         elif method == "heat.maximum-temperature":
             maximum = float(np.max(solution)) if maximum is None else maximum
             artifacts[key] = {"value": maximum}
-        else:
-            raise CaeError("invalid_task", f"unsupported Heat output method: {method}")
         await progress({"stage": "output", "completed": index + 1, "total": len(outputs)})
     return {
         "artifacts": artifacts,
@@ -119,20 +107,8 @@ def _volume_source(
     source = np.zeros(domain.occupancy.size)
     if artifact is None:
         return source
-    if not isinstance(artifact, dict) or "value" not in artifact:
-        raise CaeError("invalid_input", "heatSource must be a three-dimensional tensor artifact")
-    values = np.asarray(artifact["value"], dtype=np.float64)
     expected_shape = (domain.shape[0], domain.shape[2], domain.shape[1])
-    if values.shape != expected_shape or np.any(~np.isfinite(values)) or np.any(values < 0):
-        raise CaeError("invalid_input", "heatSource shape/value does not match heat.voxel-grid")
-    expected_ticks = axis_ticks(domain)
-    axes = artifact.get("axes")
-    if not isinstance(axes, list) or len(axes) != 3:
-        raise CaeError("invalid_input", "heatSource must include three voxel axes")
-    for axis_index, expected in enumerate(expected_ticks):
-        actual = axes[axis_index].get("ticks") if isinstance(axes[axis_index], dict) else None
-        if actual is None or not np.allclose(np.asarray(actual, dtype=np.float64), expected, rtol=1e-10, atol=1e-12):
-            raise CaeError("invalid_input", f"heatSource axis {axis_index} does not match heat.voxel-grid")
+    values = np.asarray(artifact["value"], dtype=np.float64).reshape(expected_shape)
     for i in range(domain.shape[0]):
         for row in range(domain.shape[2]):
             k = domain.shape[2] - row - 1

@@ -11,12 +11,9 @@ VACUUM_LIGHT_SPEED = 299_792_458.0
 
 
 def unit_vector(value: Any, path: str = "vector") -> np.ndarray[Any, Any]:
-    vector = np.asarray(value, dtype=np.float64)
-    if vector.shape != (3,) or np.any(~np.isfinite(vector)):
-        raise ValueError(f"{path} must contain three finite values")
+    del path
+    vector = np.asarray(value, dtype=np.float64).reshape(3)
     length = float(np.linalg.norm(vector))
-    if length <= 0:
-        raise ValueError(f"{path} must be non-zero")
     return vector / length
 
 
@@ -56,8 +53,6 @@ def _complex_cosine(n_incident: complex, n_transmitted: complex, cosine_incident
 
 def _passive_pair(reflection: complex, transmission: complex) -> tuple[complex, complex]:
     total = abs(reflection) ** 2 + abs(transmission) ** 2
-    if not math.isfinite(total):
-        raise ValueError("optical amplitudes must be finite")
     if total > 1:
         scale = 1 / math.sqrt(total)
         return reflection * scale, transmission * scale

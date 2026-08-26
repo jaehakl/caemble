@@ -12,9 +12,6 @@ from app.model_catalog import resolve_embedding_model
 
 async def generate_embedding(request: EmbeddingRequest) -> EmbeddingResponse:
     text = request.text.strip()
-    if not text:
-        raise ValueError("text is required")
-
     model, model_source, revision = resolve_embedding_model(request.model)
 
     try:
@@ -44,12 +41,7 @@ async def generate_embeddings(request: EmbeddingBatchRequest) -> EmbeddingBatchR
     except Exception as exc:
         raise RuntimeError(f"Embedding batch generation failed: {exc}") from exc
 
-    if len(embeddings) != len(texts):
-        raise RuntimeError("Embedding batch result count does not match the request")
     dimensions = len(embeddings[0]) if embeddings else 0
-    if any(len(embedding) != dimensions for embedding in embeddings):
-        raise RuntimeError("Embedding batch result dimensions are inconsistent")
-
     return EmbeddingBatchResponse(
         model=model.name,
         embeddings=embeddings,

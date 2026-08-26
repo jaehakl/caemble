@@ -42,14 +42,6 @@ export function getRuntimeMaterialModel(key: string): CatalogMaterialModel | und
   return activeCatalogRuntimeSlice().materialModels.find((entry) => entry.key === key)
 }
 
-export function runtimeSolverContracts() {
-  return Object.freeze(
-    activeCatalogRuntimeSlice().solvers.map(({ name, version, contractDigest }) =>
-      Object.freeze({ name, version, contractDigest }),
-    ),
-  )
-}
-
 export function registerSourceCatalogRuntimeSlice(sourceHash: string, slice: CatalogRuntimeSlice) {
   sourceSlices.set(sourceHash, deepFreeze(slice))
   if (sourceSlices.size > 32) sourceSlices.delete(sourceSlices.keys().next().value!)
@@ -63,9 +55,3 @@ export function sourceCatalogRuntimeSlice(sourceHash: string) {
   return slice
 }
 
-export function sourceCatalogSolverContracts(sourceHash: string) {
-  const slice = sourceCatalogRuntimeSlice(sourceHash)
-  return Object.freeze(
-    slice.solvers.map(({ name, version, contractDigest }) => Object.freeze({ name, version, contractDigest })),
-  )
-}

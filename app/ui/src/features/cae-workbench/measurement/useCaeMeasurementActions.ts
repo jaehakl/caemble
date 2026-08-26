@@ -4,12 +4,13 @@ import { toast } from 'sonner'
 import { dbTables, type MeasurementRecordRequest } from '@/api'
 import type { CadDocumentController, SimulationController } from '@/features/viewer/workspace/useCadWorkspace'
 import {
-  createDataTensorAccessor,
-  MAX_RECORDED_DATA_BYTES,
-  parseRayPathBundles,
   persistDataSchema,
   persistDataTensor,
-  type RecordedDataRule,
+  type RecordedDataNode,
+  type RecordedDataGroup,
+  type RecordedDataTensor,
+  type ResolvedDataSchema,
+  type ResolvedDataSchemaNode,
 } from '@/lib/cad'
 import type { CaeDataSelection } from './useCaeDataSelection'
 import type { SavedMeasurement } from '../types'
@@ -29,6 +30,10 @@ type GenerateAndRunState = Readonly<{
   total: number
 }>
 
+function isSchemaLeaf(value: ResolvedDataSchemaNode): value is ResolvedDataSchema {
+  return 'dtype' in value && typeof value.dtype === 'string'
+}
+
 function generateAndRunStage(state: GenerateAndRunState, value: string) {
   return state.repeat ? `${state.attempt}/${state.total} · ${value}` : value
 }
@@ -41,39 +46,29 @@ function recordRequest(
   const schemas = experimentDocument.simulationProgram?.recordedData
   if (!result || !schemas || simulation.stale) throw new Error('저장 가능한 최신 RecordedData가 없습니다.')
 
-  parseRayPathBundles(
-    Object.entries(schemas).map(
-      ([label, schema]) =>
-        ({
-          target: Object.freeze([]),
-          label,
-          methodId: 'measurement.recorded-data-validation',
-          parameters: Object.freeze({}),
-          result: schema,
-        }) satisfies RecordedDataRule,
-    ),
-    result,
+  type SavedNode = MeasurementRecordRequest['recorded_data'][string]
+  const persistNode = (spec: ResolvedDataSchemaNode, data: RecordedDataNode, path: string): SavedNode => {
+    if (isSchemaLeaf(spec)) {
+      const tensor = data as RecordedDataTensor
+      const { tensorOrder, ...dataSchema } = spec
+      return {
+        quantity_kind: spec.quantityKind ?? null,
+        tensor_order: tensorOrder,
+        dtype: spec.dtype,
+        data_schema: persistDataSchema(dataSchema),
+        data: persistDataTensor(spec, tensor, path),
+      }
+    }
+    const names = Object.keys(spec)
+    const group = data as RecordedDataGroup
+    return Object.freeze(
+      Object.fromEntries(names.map((name) => [name, persistNode(spec[name], group[name], `${path}.${name}`)])),
+    )
+  }
+  const names = Object.keys(result)
+  const recordedData = Object.freeze(
+    Object.fromEntries(names.map((name) => [name, persistNode(schemas[name], result[name], `RecordedData ${name}`)])),
   )
-
-  let recordedByteLength = 0
-  const recordedData = Object.entries(result).map(([name, data]) => {
-    const spec = schemas[name]
-    if (!spec) throw new Error(`RecordedData ${JSON.stringify(name)} schema가 없습니다.`)
-    const { tensorOrder, ...dataSchema } = spec
-    const accessor = createDataTensorAccessor(spec, data, `RecordedData ${JSON.stringify(name)}`)
-    recordedByteLength += accessor.byteLength
-    if (recordedByteLength > MAX_RECORDED_DATA_BYTES) {
-      throw new Error(`RecordedData raw bytes exceed the ${MAX_RECORDED_DATA_BYTES / 1024 / 1024} MiB Run limit.`)
-    }
-    return {
-      name,
-      quantity_kind: spec.quantityKind ?? null,
-      tensor_order: tensorOrder,
-      dtype: spec.dtype,
-      data_schema: persistDataSchema(dataSchema),
-      data: persistDataTensor(spec, data, `RecordedData ${JSON.stringify(name)}`),
-    }
-  })
   return { recorded_data: recordedData }
 }
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import math
 from typing import Any, Awaitable, Callable
 
 import numpy as np
@@ -11,6 +10,7 @@ from app.solver_framework.models import FiniteVolumeSystem, VoxelDomain
 from app.solver_framework.numerics.voxel import voxel_index
 
 _NEIGHBOR_OFFSETS = ((-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1))
+
 
 def create_scalar_finite_volume_system(
     domain: VoxelDomain,
@@ -23,19 +23,8 @@ def create_scalar_finite_volume_system(
     shape = domain.shape
     if fixed_values is not None:
         fixed_values = np.asarray(fixed_values, dtype=np.float64).reshape(-1)
-        invalid = ~np.isnan(fixed_values) & ~np.isfinite(fixed_values)
-        if (
-            fixed_values.size != occupancy.size
-            or np.any(invalid)
-            or np.any(np.isfinite(fixed_values) & ~occupancy.astype(bool))
-        ):
-            raise CaeError("invalid_geometry", "fixed-potential mask must match occupied conductor cells")
-        if not np.any(np.isfinite(fixed_values)):
-            raise CaeError("invalid_geometry", "fixed-potential domain requires at least one fixed cell")
     free = occupancy.astype(bool) if fixed_values is None else occupancy.astype(bool) & ~np.isfinite(fixed_values)
     active_cells = np.flatnonzero(free).astype(np.int64)
-    if active_cells.size == 0:
-        raise CaeError("invalid_geometry", "finite-volume domain requires at least one free conductor cell")
     active_index = np.full(occupancy.size, -1, dtype=np.int64)
     active_index[active_cells] = np.arange(active_cells.size)
     spacings = (domain.axial_spacing, domain.u_spacing, domain.v_spacing)
@@ -72,8 +61,6 @@ def create_scalar_finite_volume_system(
         if fixed_values is None and i == shape[0] - 1:
             diagonal[active] += 2 * weights[0]
             right_hand_side[active] += 2 * weights[0] * reference_value
-        if not math.isfinite(diagonal[active]) or diagonal[active] <= 0:
-            raise CaeError("invalid_geometry", "finite-volume matrix contains an isolated cell")
     return FiniteVolumeSystem(
         active_cells,
         active_index,
@@ -114,8 +101,6 @@ async def solve_pcg(
     for iteration in range(1, max_iterations + 1):
         product = _apply_matrix(system, direction)
         denominator = float(np.dot(direction, product))
-        if not math.isfinite(denominator) or denominator <= 0:
-            raise CaeError("solver_error", f"{label} finite-volume matrix is not positive definite")
         alpha = residual_preconditioned / denominator
         solution += alpha * direction
         residual -= alpha * product

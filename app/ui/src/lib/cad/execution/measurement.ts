@@ -1,17 +1,11 @@
 import type { FrozenMaterialParameters, MaterialResolution } from '../../material'
-import { projectMaterialResolution, readFrozenMaterialParameters, sourceOnlyMaterialParameters } from '../../material'
+import { projectMaterialResolution, sourceOnlyMaterialParameters } from '../../material'
 import { getRuntimeMaterialParameter } from '../../catalog/runtime'
 import { QuantityKind } from '../../quantitykind'
 import { identityCartesianBasis } from '../../quantitykind/identityBasis'
 import type { CadScene } from '../evaluation/types'
-import { CadModelError } from '../model/errors'
 import { deserializeCadScene } from './mesh'
-import {
-  assertMeasurementExperimentSnapshot,
-  assertPlainSnapshotValue,
-  type EvaluatedExperimentSnapshot,
-  type MeasurementExperimentSnapshot,
-} from './snapshotValidation'
+import type { EvaluatedExperimentSnapshot, MeasurementExperimentSnapshot } from './snapshotTypes'
 
 export type TaskMaterialResolution = Readonly<{
   taskMaterialParameters: Readonly<Record<string, FrozenMaterialParameters>>
@@ -46,10 +40,6 @@ export function buildMeasurement(
   snapshot: EvaluatedExperimentSnapshot,
   resolution: MeasurementMaterialResolution,
 ): BuiltMeasurement {
-  const unresolved = unresolvedMeasurementMaterialRoles(snapshot)
-  if (unresolved.length > 0) {
-    throw new CadModelError(`Measurement requires resolved Material roles: ${unresolved.join(', ')}.`)
-  }
   const experiment: MeasurementExperimentSnapshot = {
     kind: snapshot.kind,
     sourceHash: snapshot.sourceHash,
@@ -67,7 +57,6 @@ export function buildMeasurement(
     taskMaterialParameters: resolution.taskMaterialParameters,
     taskMaterialWarnings: resolution.taskMaterialWarnings,
   })
-  assertBuiltMeasurement(measurement)
   return measurement
 }
 
@@ -104,67 +93,6 @@ export function buildSourceOnlyMeasurement(snapshot: EvaluatedExperimentSnapshot
       ),
     ),
   })
-}
-
-export function assertBuiltMeasurement(value: unknown): asserts value is BuiltMeasurement {
-  assertPlainSnapshotValue(value, 'built Measurement')
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new CadModelError('Built Measurement must be an object.')
-  }
-  const measurement = value as Partial<BuiltMeasurement>
-  const unknownKey = Object.keys(value).find(
-    (key) =>
-      ![
-        'kind',
-        'experiment',
-        'materialParameters',
-        'materialWarnings',
-        'taskMaterialParameters',
-        'taskMaterialWarnings',
-      ].includes(key),
-  )
-  if (unknownKey) throw new CadModelError(`Built Measurement.${unknownKey} is not allowed.`)
-  if (measurement.kind !== 'measurement' || measurement.experiment?.kind !== 'experiment') {
-    throw new CadModelError('Built Measurement kind does not match its Experiment.')
-  }
-  assertMeasurementExperimentSnapshot(measurement.experiment)
-  const unresolved = new Set<string>()
-  measurement.experiment.scene.roots.forEach((root) => {
-    if (!root.material) unresolved.add(`Experiment: ${root.materialRole}`)
-  })
-  Object.entries(measurement.experiment.taskScenes).forEach(([taskName, scene]) => {
-    scene.roots.forEach((root) => {
-      if (!root.material) unresolved.add(`Task ${taskName}: ${root.materialRole}`)
-    })
-  })
-  if (unresolved.size > 0) {
-    throw new CadModelError(`Built Measurement contains unresolved Material roles: ${[...unresolved].join(', ')}.`)
-  }
-  if (!readFrozenMaterialParameters(measurement.materialParameters)) {
-    throw new CadModelError('Built Measurement Experiment Material snapshot is invalid.')
-  }
-  if (
-    !Array.isArray(measurement.materialWarnings) ||
-    measurement.materialWarnings.some((item) => typeof item !== 'string')
-  ) {
-    throw new CadModelError('Built Measurement Experiment Material warnings are invalid.')
-  }
-  if (!measurement.taskMaterialParameters || !measurement.taskMaterialWarnings) {
-    throw new CadModelError('Built Measurement Task Material snapshots are invalid.')
-  }
-  const taskNames = Object.keys(measurement.experiment.taskScenes)
-  if (
-    taskNames.some((name) => !readFrozenMaterialParameters(measurement.taskMaterialParameters![name])) ||
-    taskNames.some(
-      (name) =>
-        !Array.isArray(measurement.taskMaterialWarnings![name]) ||
-        measurement.taskMaterialWarnings![name].some((item: unknown) => typeof item !== 'string'),
-    ) ||
-    Object.keys(measurement.taskMaterialParameters).length !== taskNames.length ||
-    Object.keys(measurement.taskMaterialWarnings).length !== taskNames.length
-  ) {
-    throw new CadModelError('Built Measurement Task Material snapshots are invalid.')
-  }
 }
 
 export function applyFrozenMaterialParameters(scene: CadScene, frozen: FrozenMaterialParameters): CadScene {

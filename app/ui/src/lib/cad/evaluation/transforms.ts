@@ -1,6 +1,5 @@
 import { maths, transforms } from '@jscad/modeling'
-import { CadModelError } from '../model/core'
-import type { Rotation, Vec3 } from '../model/types'
+import type { Vec3 } from '../model/types'
 import type { EvaluatedPart, NormalizedTransforms } from './types'
 import type { CanonicalAffineMatrixV1 } from './canonicalTypes'
 
@@ -19,60 +18,24 @@ const cadTranslate = translate as (offset: [number, number, number], geometry: u
 export const origin = Object.freeze([0, 0, 0] as [number, number, number])
 export const unitScale = Object.freeze([1, 1, 1] as [number, number, number])
 
-export function normalizeVec3(value: unknown, path: string): Vec3 {
-  if (
-    !Array.isArray(value) ||
-    value.length !== 3 ||
-    value.some((coordinate) => typeof coordinate !== 'number' || !Number.isFinite(coordinate))
-  ) {
-    throw new CadModelError(`${path} must be an array of exactly three finite numbers.`)
-  }
-
-  return Object.freeze([value[0], value[1], value[2]] as [number, number, number])
+export function normalizeVec3(value: unknown, _path: string): Vec3 {
+  const vector = value as Vec3
+  return Object.freeze([vector[0], vector[1], vector[2]])
 }
 
 export function normalizeDirection(value: unknown, path: string) {
   const direction = normalizeVec3(value, path)
   const length = Math.hypot(...direction)
 
-  if (length === 0) throw new CadModelError(`${path} must not be the zero vector.`)
   return Object.freeze(direction.map((coordinate) => coordinate / length) as [number, number, number])
 }
 
-export function normalizeRotation(value: unknown, owner: string): Rotation | undefined {
-  if (value === undefined) return undefined
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new CadModelError(`${owner} rotate must be an object with axis and angle.`)
-  }
-
-  const input = value as Record<string, unknown>
-  const axis = normalizeDirection(input.axis, `${owner} rotate.axis`)
-  if (typeof input.angle !== 'number' || !Number.isFinite(input.angle)) {
-    throw new CadModelError(`${owner} rotate.angle must be a finite number in radians.`)
-  }
-
-  return Object.freeze({ axis, angle: input.angle })
-}
-
 export function normalizeTransforms(props: Record<string, unknown>, owner: string): NormalizedTransforms {
-  if (props.translation !== undefined) {
-    throw new CadModelError(`${owner} does not support translation. Use position.`)
-  }
-  const usesCanonical = props.position !== undefined || props.rotation !== undefined
-  const usesLegacy = props.pos !== undefined || props.rotate !== undefined
-  if (usesCanonical && usesLegacy) {
-    throw new CadModelError(`${owner} cannot mix position/rotation with deprecated pos/rotate.`)
-  }
-
   return {
-    family: usesLegacy ? 'legacy' : 'canonical',
-    position:
-      (usesLegacy ? props.pos : props.position) === undefined
-        ? origin
-        : normalizeVec3(usesLegacy ? props.pos : props.position, `${owner} ${usesLegacy ? 'pos' : 'position'}`),
-    rotation:
-      usesLegacy || props.rotation === undefined ? undefined : normalizeVec3(props.rotation, `${owner} rotation`),
-    rotate: usesLegacy ? normalizeRotation(props.rotate, owner) : undefined,
+    family: 'canonical',
+    position: props.position === undefined ? origin : normalizeVec3(props.position, `${owner} position`),
+    rotation: props.rotation === undefined ? undefined : normalizeVec3(props.rotation, `${owner} rotation`),
+    rotate: undefined,
     scale: props.scale === undefined ? unitScale : normalizeVec3(props.scale, `${owner} scale`),
   }
 }

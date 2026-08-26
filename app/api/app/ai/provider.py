@@ -5,7 +5,7 @@ import hashlib
 import inspect
 import json
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Literal, Protocol
+from typing import Any, Awaitable, Callable, Protocol
 
 from ai.models import ReasoningEffort
 
@@ -97,7 +97,7 @@ class ProviderAdapter(Protocol):
         input_items: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         reasoning_effort: ReasoningEffort,
-        reasoning_context: Literal["current_turn", "all_turns"],
+        reasoning_context: str,
         prompt_cache_key: str,
         on_delta: DeltaCallback,
         cancel_event: asyncio.Event,
@@ -147,24 +147,19 @@ class OpenAIResponsesAdapter:
         input_items: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         reasoning_effort: ReasoningEffort,
-        reasoning_context: Literal["current_turn", "all_turns"],
+        reasoning_context: str,
         prompt_cache_key: str,
         on_delta: DeltaCallback,
         cancel_event: asyncio.Event,
     ) -> ProviderStep:
-        _validate_strict_tools(tools)
         request: dict[str, Any] = {
             "model": self.capabilities.model,
             "instructions": instructions,
             "input": input_items,
             "store": False,
             "stream": True,
-            "max_output_tokens": 16_000,
             "reasoning": {"effort": reasoning_effort, "context": reasoning_context},
             "include": ["reasoning.encrypted_content"],
-            "context_management": [
-                {"type": "compaction", "compact_threshold": 160_000}
-            ],
             "prompt_cache_key": prompt_cache_key,
             "prompt_cache_options": {"mode": "implicit", "ttl": "30m"},
             "safety_identifier": hashlib.sha256(prompt_cache_key.encode("utf-8")).hexdigest(),
@@ -174,7 +169,6 @@ class OpenAIResponsesAdapter:
                 tools=tools,
                 tool_choice="auto",
                 parallel_tool_calls=False,
-                max_tool_calls=64,
             )
         stream: Any = None
         completed_response: Any = None
@@ -358,18 +352,6 @@ def _safe_field(value: Any) -> str | None:
     if not all(character.isalnum() or character in "._-[]" for character in value):
         return None
     return value
-
-
-def _validate_strict_tools(tools: list[dict[str, Any]]) -> None:
-    for tool in tools:
-        parameters = tool.get("parameters")
-        if (
-            tool.get("type") != "function"
-            or tool.get("strict") is not True
-            or not isinstance(parameters, dict)
-            or parameters.get("additionalProperties") is not False
-        ):
-            raise ProviderError("Agent tool definitions must use strict schemas")
 
 
 def _tool_call(item: dict[str, Any]) -> ProviderToolCall:

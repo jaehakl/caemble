@@ -7,14 +7,7 @@ from pathlib import Path
 from typing import Any, Iterator, Sequence
 
 from .errors import CatalogAmbiguousError, CatalogIntegrityError, CatalogNotFoundError
-from .schema import (
-    APPLICATION_ID,
-    EXPERIMENT_COORDINATE_PREFIX,
-    RUNTIME_SLICE_SCHEMA_VERSION,
-    SCHEMA_VERSION,
-    parse_experiment_coordinate,
-    parse_experiment_version,
-)
+from .schema import APPLICATION_ID, EXPERIMENT_COORDINATE_PREFIX, parse_experiment_coordinate, parse_experiment_version
 
 
 def catalog_path() -> Path:
@@ -26,7 +19,7 @@ def _json(value: str | None) -> Any:
 
 
 class Catalog:
-    """Read-only access to the versioned CAE catalog snapshot."""
+    """Read-only access to the canonical CAE catalog snapshot."""
 
     def __init__(self, connection: sqlite3.Connection, path: Path):
         self._connection = connection
@@ -51,7 +44,7 @@ class Catalog:
         connection.execute("PRAGMA query_only = ON")
         instance = cls(connection, resolved)
         try:
-            instance.validate()
+            instance._require_identity()
         except BaseException:
             connection.close()
             raise
@@ -75,23 +68,10 @@ class Catalog:
         with self._lock:
             return self._connection.execute(sql, parameters).fetchone()
 
-    def validate(self) -> None:
+    def _require_identity(self) -> None:
         application_id = self._one("PRAGMA application_id")[0]
-        user_version = self._one("PRAGMA user_version")[0]
-        if application_id != APPLICATION_ID or user_version != SCHEMA_VERSION:
-            raise CatalogIntegrityError(
-                f"Unsupported catalog identity/schema: application_id={application_id}, user_version={user_version}"
-            )
-        quick_check = self._one("PRAGMA quick_check")[0]
-        if quick_check != "ok":
-            raise CatalogIntegrityError(f"Catalog quick_check failed: {quick_check}")
-        foreign_keys = self._all("PRAGMA foreign_key_check")
-        if foreign_keys:
-            raise CatalogIntegrityError(f"Catalog contains {len(foreign_keys)} foreign-key violation(s)")
-        required = {"catalogRevision", "quantityKindDataVersion", "materialCatalogVersion"}
-        present = {row["key"] for row in self._all("SELECT key FROM catalog_metadata")}
-        if missing := required - present:
-            raise CatalogIntegrityError(f"Catalog metadata is missing: {', '.join(sorted(missing))}")
+        if application_id != APPLICATION_ID:
+            raise CatalogIntegrityError(f"Unsupported catalog application_id: {application_id}")
 
     def meta(self) -> dict[str, Any]:
         metadata = {row["key"]: row["value"] for row in self._all("SELECT key, value FROM catalog_metadata")}
@@ -113,7 +93,6 @@ class Catalog:
             for row in self._all("SELECT key, description FROM material_design_rules ORDER BY key")
         }
         return {
-            "schemaVersion": SCHEMA_VERSION,
             "catalogRevision": metadata["catalogRevision"],
             "quantityKindDataVersion": metadata["quantityKindDataVersion"],
             "materialCatalogVersion": metadata["materialCatalogVersion"],
@@ -351,20 +330,6 @@ class Catalog:
             rows = self._all("SELECT key FROM material_models ORDER BY key LIMIT ? OFFSET ?", (limit, offset))
         return [self.material_model(row["key"]) for row in rows], total
 
-    def solver_contracts(self) -> dict[tuple[str, str], str]:
-        return {
-            (row["name"], row["version"]): row["contract_digest"]
-            for row in self._all("SELECT name, version, contract_digest FROM solvers ORDER BY name, version")
-        }
-
-    def solver_contract_digest(self, name: str, version: str) -> str:
-        row = self._one("SELECT contract_digest FROM solvers WHERE name = ? AND version = ?", (name, version))
-        if row is None:
-            raise CatalogNotFoundError(f"Unknown Solver: {name}@{version}")
-        return row["contract_digest"]
-
-    get_solver_contract_digest = solver_contract_digest
-
     def _named_data(self, table: str, name: str, version: str) -> dict[str, Any]:
         rows = self._all(
             f"SELECT name, description, data_json FROM {table} WHERE solver_name = ? AND solver_version = ? ORDER BY ordinal",
@@ -479,7 +444,6 @@ class Catalog:
                 item["data"] = _json(method["data_json"])
             descriptor["methods"][method["category"]].append(item)
         return {
-            "schemaVersion": solver["schema_version"],
             "implementation": solver["implementation"],
             "descriptor": descriptor,
         }
@@ -497,7 +461,6 @@ class Catalog:
             "name": name,
             "version": version,
             "description": descriptor["description"],
-            "contractDigest": self.solver_contract_digest(name, version),
         }
 
     def list_solvers(self, *, query: str | None = None) -> list[dict[str, Any]]:
@@ -693,9 +656,6 @@ class Catalog:
             ),
             "title": row["title"],
             "description": row["description"],
-            "cadApiVersion": row["cad_api_version"],
-            "sourceFormatVersion": row["source_format_version"],
-            "bundleFormatVersion": row["bundle_format_version"],
             "bundleHash": row["bundle_hash"],
             "concepts": [
                 item["concept"]
@@ -722,9 +682,7 @@ class Catalog:
             ],
         }
         if include_bundle:
-            result["verification"] = _json(row["verification_json"])
             result["sourceBundle"] = {
-                "formatVersion": row["bundle_format_version"],
                 "files": {
                     item["path"]: item["source"]
                     for item in self._all(
@@ -899,15 +857,11 @@ class Catalog:
             )
         meta = self.meta()
         return {
-            "schemaVersion": RUNTIME_SLICE_SCHEMA_VERSION,
             "catalogRevision": meta["catalogRevision"],
             "solvers": [
                 {
                     "name": manifest["descriptor"]["name"],
                     "version": manifest["descriptor"]["version"],
-                    "contractDigest": self.solver_contract_digest(
-                        manifest["descriptor"]["name"], manifest["descriptor"]["version"]
-                    ),
                     "descriptor": manifest["descriptor"],
                 }
                 for manifest in manifests

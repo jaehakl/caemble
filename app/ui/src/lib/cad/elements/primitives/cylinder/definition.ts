@@ -24,7 +24,7 @@ export const cylinderManifest = {
       required: false,
       default: '0.5',
       authoringValue: '0.5',
-      description: '아래쪽 끝의 유한한 0 이상 반지름입니다. radius_2와 동시에 0일 수 없습니다.',
+      description: '아래쪽 끝의 반지름입니다.',
     },
     {
       name: 'radius_2',
@@ -32,7 +32,7 @@ export const cylinderManifest = {
       required: false,
       default: 'radius',
       authoringValue: '0.5',
-      description: '위쪽 끝의 유한한 0 이상 반지름입니다. 생략하면 radius와 같고 두 반지름이 동시에 0일 수 없습니다.',
+      description: '위쪽 끝의 반지름입니다. 생략하면 radius와 같습니다.',
     },
     {
       name: 'height',
@@ -40,7 +40,7 @@ export const cylinderManifest = {
       required: false,
       default: '1',
       authoringValue: '1',
-      description: 'Z축 방향의 유한한 양수 전체 높이입니다.',
+      description: 'Z축 방향의 전체 높이입니다.',
     },
     {
       name: 'segments',
@@ -48,7 +48,7 @@ export const cylinderManifest = {
       required: false,
       default: '32',
       authoringValue: '32',
-      description: '둘레 분할 수이며 4 이상의 안전한 정수입니다.',
+      description: '둘레 분할 수입니다.',
     },
   ],
   children: { count: 'none', description: '자식을 받지 않는 primitive입니다.' },

@@ -4,17 +4,12 @@ import type { ExperimentRecord } from './types'
 export type AiAgentSourceBundle = ExperimentRecord['source_bundle']
 export type AiAgentSourceDocument = Readonly<{
   kind: 'experiment'
-  formatVersion: 2
-  apiVersion: 11
   sourceBundle: AiAgentSourceBundle
 }>
 
 export const AI_AGENT_PROVIDER_QUERY_KEY = ['ai-agent', 'providers'] as const
 export const AI_AGENT_PROVIDER = 'openai' as const
 export const AI_AGENT_MODEL = 'gpt-5.6-luna' as const
-// <generated:ai-agent-prompt-tool-version>
-export const AI_AGENT_PROMPT_TOOL_VERSION = 'caemble-ai-agent-v4-cd1e8ab51821' as const
-// </generated:ai-agent-prompt-tool-version>
 export const AI_AGENT_REASONING_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 
 export type AiAgentReasoningEffort = (typeof AI_AGENT_REASONING_EFFORTS)[number]
@@ -76,7 +71,7 @@ export type AiAgentApplyRequest = Readonly<{
   baseHash: string
   sourceHash: string
   stagedRevision: number
-  experimentContextVersion: string
+  workspaceSession: number
   provenance: readonly AiAgentProvenance[]
 }>
 
@@ -100,7 +95,6 @@ export type AiAgentRunStart = Readonly<{
     experimentId: number | null
     document: AiAgentSourceDocument
     baseHash: string
-    experimentContextVersion: string
     activeFile: string | null
     workspaceSession: number
   }>
@@ -152,7 +146,6 @@ export type AiAgentServerEvent =
         baseHash: string
         sourceHash: string | null
         stagedRevision: number
-        experimentContextVersion: string
         sessionContextEnvelope: string | null
         contextUsage: AiAgentContextUsage | null
         provenance: readonly AiAgentProvenance[]
@@ -162,7 +155,32 @@ export type AiAgentServerEvent =
 
 export const aiAgentApi = Object.freeze({
   async listProviders() {
-    return normalizeProviders(await request<unknown>('get', '/ai/providers'))
+    const response = await request<{
+      providers: readonly Readonly<{
+        provider: string
+        displayName: string
+        configured: boolean
+        credentialVersion: number | null
+        updatedAt: string | null
+        models: readonly Readonly<{
+          id: string
+          displayName: string
+          reasoningEfforts: readonly AiAgentReasoningEffort[]
+        }>[]
+      }>[]
+    }>('get', '/ai/providers')
+    return response.providers.map((provider) => Object.freeze({
+      id: provider.provider,
+      label: provider.displayName,
+      configured: provider.configured,
+      credentialVersion: provider.credentialVersion,
+      updatedAt: provider.updatedAt,
+      models: provider.models.map((model) => Object.freeze({
+        id: model.id,
+        label: model.displayName,
+        reasoningEfforts: model.reasoningEfforts,
+      })),
+    }))
   },
   async saveCredential(provider: string, apiKey: string) {
     await request<unknown>('put', `/ai/providers/${encodeURIComponent(provider)}/credential`, { apiKey })
@@ -243,10 +261,10 @@ export function connectAiAgent({
   socket.onmessage = ({ data }) => {
     eventQueue = eventQueue
       .then(async () => {
-        const event = parseAiAgentServerEvent(typeof data === 'string' ? JSON.parse(data) : data)
-        if (event) await onEvent(event)
+        const event = (typeof data === 'string' ? JSON.parse(data) : data) as AiAgentServerEvent
+        await onEvent(event)
       })
-      .catch(() => onClose('AI Agent 응답 형식이 올바르지 않습니다.'))
+      .catch(() => onClose('AI Agent 응답을 처리하지 못했습니다.'))
   }
   socket.onclose = ({ code, reason }) => {
     if (!settled) {
@@ -267,9 +285,7 @@ export function connectAiAgent({
   })
 }
 
-const SESSION_STORAGE_KEY = 'caemble.ai-helper.agent-session.v1'
-const SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000
-const SESSION_MAX_BYTES = 2 * 1024 * 1024
+const SESSION_STORAGE_KEY = 'caemble.ai-helper.agent-session'
 
 export type AiAgentSessionBinding = Readonly<{
   userId: string
@@ -279,230 +295,33 @@ export type AiAgentSessionBinding = Readonly<{
   experimentId: number | null
   workspaceSession: number
   permissionFingerprint: string
-  promptToolVersion: string
 }>
 
 export function loadAiAgentSession(binding: AiAgentSessionBinding) {
   const serialized = sessionStorage.getItem(SESSION_STORAGE_KEY)
   if (!serialized) return null
-  try {
-    const value = JSON.parse(serialized) as Record<string, unknown>
-    if (
-      value.version !== 1 ||
+  const value = JSON.parse(serialized) as Record<string, unknown>
+  if (
       value.userId !== binding.userId ||
       value.provider !== binding.provider ||
       value.model !== binding.model ||
       value.credentialVersion !== binding.credentialVersion ||
       value.experimentId !== binding.experimentId ||
       value.workspaceSession !== binding.workspaceSession ||
-      value.permissionFingerprint !== binding.permissionFingerprint ||
-      value.promptToolVersion !== binding.promptToolVersion ||
-      typeof value.savedAt !== 'number' ||
-      Date.now() - value.savedAt > SESSION_MAX_AGE_MS ||
-      typeof value.envelope !== 'string' ||
-      new TextEncoder().encode(value.envelope).byteLength > SESSION_MAX_BYTES
+      value.permissionFingerprint !== binding.permissionFingerprint
     ) {
-      sessionStorage.removeItem(SESSION_STORAGE_KEY)
-      return null
-    }
-    return value.envelope
-  } catch {
     sessionStorage.removeItem(SESSION_STORAGE_KEY)
     return null
   }
+  return value.envelope as string
 }
 
 export function saveAiAgentSession(binding: AiAgentSessionBinding, envelope: string) {
-  if (new TextEncoder().encode(envelope).byteLength > SESSION_MAX_BYTES) {
-    throw new Error('AI Agent 세션 문맥이 브라우저 저장 한도를 초과했습니다.')
-  }
-  sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ version: 1, ...binding, savedAt: Date.now(), envelope }))
+  sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ ...binding, envelope }))
 }
 
 export function clearAiAgentSession() {
   sessionStorage.removeItem(SESSION_STORAGE_KEY)
-}
-
-function normalizeProviders(value: unknown): readonly AiAgentProvider[] {
-  const record = asRecord(value)
-  const items = Array.isArray(value)
-    ? value
-    : Array.isArray(record?.providers)
-      ? record.providers
-      : Array.isArray(record?.items)
-        ? record.items
-        : record
-          ? [record]
-          : []
-  return Object.freeze(items.flatMap((item) => (normalizeProvider(item) ? [normalizeProvider(item)!] : [])))
-}
-
-function normalizeProvider(value: unknown): AiAgentProvider | null {
-  const record = asRecord(value)
-  if (!record) return null
-  const id = stringValue(record.id, record.provider, record.name)
-  if (!id) return null
-  const rawModels = Array.isArray(record.models)
-    ? record.models
-    : stringValue(record.model)
-      ? [stringValue(record.model)]
-      : id === AI_AGENT_PROVIDER
-        ? [AI_AGENT_MODEL]
-        : []
-  const models = rawModels.flatMap((model) => {
-    if (typeof model === 'string') {
-      return [
-        Object.freeze({ id: model, label: model, reasoningEfforts: Object.freeze([...AI_AGENT_REASONING_EFFORTS]) }),
-      ]
-    }
-    const modelRecord = asRecord(model)
-    const modelId = modelRecord && stringValue(modelRecord.id, modelRecord.model, modelRecord.name)
-    if (!modelRecord || !modelId) return []
-    const efforts = arrayValue(modelRecord.reasoningEfforts, modelRecord.reasoning_efforts).filter(
-      (effort): effort is AiAgentReasoningEffort =>
-        typeof effort === 'string' && AI_AGENT_REASONING_EFFORTS.includes(effort as AiAgentReasoningEffort),
-    )
-    return [
-      Object.freeze({
-        id: modelId,
-        label: stringValue(modelRecord.label, modelRecord.displayName, modelRecord.display_name) || modelId,
-        reasoningEfforts: Object.freeze(efforts.length ? efforts : [...AI_AGENT_REASONING_EFFORTS]),
-      }),
-    ]
-  })
-  return Object.freeze({
-    id,
-    label: stringValue(record.label, record.displayName, record.display_name) || (id === 'openai' ? 'OpenAI' : id),
-    configured: record.configured === true,
-    credentialVersion:
-      typeof (record.credentialVersion ?? record.credential_version) === 'string' ||
-      typeof (record.credentialVersion ?? record.credential_version) === 'number'
-        ? ((record.credentialVersion ?? record.credential_version) as string | number)
-        : null,
-    updatedAt: stringValue(record.updatedAt, record.updated_at) || null,
-    models: Object.freeze(models),
-  })
-}
-
-function parseAiAgentServerEvent(value: unknown): AiAgentServerEvent | null {
-  const record = asRecord(value)
-  const type = record && stringValue(record.type)
-  const runId = record && stringValue(record.runId, record.run_id)
-  const sequence = record && numberValue(record.sequence)
-  if (!record || !type || !runId || sequence === null) return null
-  const base = { runId, sequence }
-  if (type === 'run.started') return { ...base, type, status: stringValue(record.status) || undefined }
-  if (type === 'run.status') return { ...base, type, status: stringValue(record.status, record.message) || '작업 중' }
-  if (type === 'message.delta' || type === 'assistant.delta') {
-    return { ...base, type: 'message.delta', delta: stringValue(record.delta) || '' }
-  }
-  if (type === 'workspace.changed') {
-    const stagedRevision = numberValue(record.stagedRevision, record.staged_revision)
-    const sourceHash = stringValue(record.sourceHash, record.source_hash)
-    if (stagedRevision === null || !sourceHash) return null
-    return {
-      ...base,
-      type,
-      stagedRevision,
-      sourceHash,
-      changedFiles: Object.freeze(
-        arrayValue(record.changedFiles, record.changed_files).filter(
-          (path): path is string => typeof path === 'string' && path.length > 0,
-        ),
-      ),
-    }
-  }
-  if (type === 'context.updated') {
-    const estimatedTokens = numberValue(record.estimatedTokens, record.estimated_tokens)
-    if (estimatedTokens === null) return null
-    return {
-      ...base,
-      type,
-      estimatedTokens,
-      includedKeys: Object.freeze(
-        arrayValue(record.includedKeys, record.included_keys).filter(
-          (key): key is string => typeof key === 'string' && key.length > 0,
-        ),
-      ),
-      omittedKeys: Object.freeze(
-        arrayValue(record.omittedKeys, record.omitted_keys).filter(
-          (key): key is string => typeof key === 'string' && key.length > 0,
-        ),
-      ),
-      compacted: record.compacted === true,
-    }
-  }
-  if (type === 'tool.started' || type === 'tool.completed') {
-    const callId = stringValue(record.callId, record.call_id)
-    const name = stringValue(record.name, record.toolName, record.tool_name)
-    if (!callId || !name) return null
-    return { ...base, type, callId, name, summary: stringValue(record.summary) || undefined }
-  }
-  if (type === 'run.completed') {
-    const stagedRevision = numberValue(record.stagedRevision, record.staged_revision)
-    if (stagedRevision === null) return null
-    return {
-      ...base,
-      type,
-      message: stringValue(record.message, record.answer) || '',
-      finalBundle: ((record.finalBundle ?? record.final_bundle) as AiAgentSourceBundle | null | undefined) ?? null,
-      baseHash: stringValue(record.baseHash, record.base_hash) || '',
-      sourceHash: stringValue(record.sourceHash, record.source_hash) || null,
-      stagedRevision,
-      experimentContextVersion: stringValue(record.experimentContextVersion, record.experiment_context_version) || '',
-      sessionContextEnvelope: stringValue(record.sessionContextEnvelope, record.session_context_envelope) || null,
-      contextUsage: normalizeContextUsage(record.contextUsage ?? record.context_usage),
-      provenance: normalizeProvenance(record.provenance),
-    }
-  }
-  if (type === 'run.failed') {
-    return {
-      ...base,
-      type,
-      code: stringValue(record.code) || undefined,
-      message: stringValue(record.message, record.error) || '실패',
-      retryable: typeof record.retryable === 'boolean' ? record.retryable : undefined,
-      providerRequestId: stringValue(record.providerRequestId, record.provider_request_id) || undefined,
-    }
-  }
-  if (type === 'run.cancelled') return { ...base, type, message: stringValue(record.message) || undefined }
-  return null
-}
-
-function normalizeContextUsage(value: unknown): AiAgentContextUsage | null {
-  const record = asRecord(value)
-  if (!record) return null
-  return Object.freeze({
-    inputTokens: numberValue(record.inputTokens, record.input_tokens) ?? undefined,
-    outputTokens: numberValue(record.outputTokens, record.output_tokens) ?? undefined,
-    contextTokens: numberValue(record.contextTokens, record.context_tokens) ?? undefined,
-    cachedTokens: numberValue(record.cachedTokens, record.cached_tokens) ?? undefined,
-    cacheWriteTokens: numberValue(record.cacheWriteTokens, record.cache_write_tokens) ?? undefined,
-    compacted: typeof record.compacted === 'boolean' ? record.compacted : undefined,
-  })
-}
-
-function normalizeProvenance(value: unknown): readonly AiAgentProvenance[] {
-  if (!Array.isArray(value)) return Object.freeze([])
-  return Object.freeze(
-    value.flatMap((item) => {
-      const record = asRecord(item)
-      const kind = record && stringValue(record.kind, record.type)
-      const label = record && stringValue(record.label, record.title, record.name)
-      if (!record || !kind || !label) return []
-      const resourceId = record.resourceId ?? record.resource_id ?? record.id
-      return [
-        Object.freeze({
-          kind,
-          label,
-          resourceType: stringValue(record.resourceType, record.resource_type) || undefined,
-          resourceId: typeof resourceId === 'string' || typeof resourceId === 'number' ? resourceId : undefined,
-          revision: stringValue(record.revision, record.hash) || undefined,
-          href: stringValue(record.href) || undefined,
-        }),
-      ]
-    }),
-  )
 }
 
 function asRecord(value: unknown) {
@@ -513,12 +332,4 @@ function asRecord(value: unknown) {
 
 function stringValue(...values: unknown[]) {
   return values.find((value): value is string => typeof value === 'string' && value.length > 0) ?? ''
-}
-
-function numberValue(...values: unknown[]) {
-  return values.find((value): value is number => typeof value === 'number' && Number.isFinite(value)) ?? null
-}
-
-function arrayValue(...values: unknown[]) {
-  return values.find(Array.isArray) ?? []
 }

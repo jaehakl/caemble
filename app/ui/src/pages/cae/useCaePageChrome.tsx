@@ -85,6 +85,7 @@ export function useCaePageChrome({
   const actions = useMemo<Record<string, WorkbenchAction>>(() => {
     const loginReason = '로그인 후 사용할 수 있습니다.'
     const savedReason = '저장되고 편집되지 않은 Experiment가 필요합니다.'
+    const sourceValidationReason = 'Experiment source 오류를 수정하고 의미 검사를 완료한 뒤 저장하세요.'
     const tasklessReason = !workbench.hasTasks
       ? 'Task가 없는 Experiment는 미리보기와 source 저장만 사용할 수 있습니다.'
       : undefined
@@ -141,6 +142,7 @@ export function useCaePageChrome({
         disabled:
           !authenticated ||
           !workbench.experiment ||
+          !workbench.experimentSourceValidated ||
           Boolean(workbench.experimentRecord && !workbench.experimentManageable) ||
           (workbench.sourceLocked && workbench.experimentDirty) ||
           workbench.saving !== null,
@@ -148,11 +150,13 @@ export function useCaePageChrome({
           ? loginReason
           : !workbench.experiment
             ? 'Experiment source가 없습니다.'
-            : workbench.experimentRecord && !workbench.experimentManageable
-              ? '다른 사용자의 Experiment는 Save As로 저장하세요.'
-              : workbench.sourceLocked && workbench.experimentDirty
-                ? '연결 데이터가 있는 Version은 잠겨 있습니다. Save New Version을 사용하세요.'
-                : sourceLockReason,
+            : !workbench.experimentSourceValidated
+              ? sourceValidationReason
+              : workbench.experimentRecord && !workbench.experimentManageable
+                ? '다른 사용자의 Experiment는 Save As로 저장하세요.'
+                : workbench.sourceLocked && workbench.experimentDirty
+                  ? '연결 데이터가 있는 Version은 잠겨 있습니다. Save New Version을 사용하세요.'
+                  : sourceLockReason,
         onSelect: () => setDialog('save-experiment'),
       },
       saveExperimentVersion: {
@@ -160,26 +164,35 @@ export function useCaePageChrome({
         label: 'New Version',
         icon: <GitBranch />,
         disabled:
-          !authenticated || !workbench.experimentRecord || !workbench.experimentManageable || workbench.saving !== null,
+          !authenticated ||
+          !workbench.experimentRecord ||
+          !workbench.experimentSourceValidated ||
+          !workbench.experimentManageable ||
+          workbench.saving !== null,
         disabledReason: !authenticated
           ? loginReason
           : !workbench.experimentRecord
             ? '먼저 Experiment를 저장하세요.'
-            : !workbench.experimentManageable
-              ? '다른 사용자의 Experiment는 Save As로 저장하세요.'
-              : sourceLockReason,
+            : !workbench.experimentSourceValidated
+              ? sourceValidationReason
+              : !workbench.experimentManageable
+                ? '다른 사용자의 Experiment는 Save As로 저장하세요.'
+                : sourceLockReason,
         onSelect: () => setDialog('save-experiment-version'),
       },
       saveExperimentAs: {
         id: 'save-experiment-as',
         label: 'Save As',
         icon: <SaveAll />,
-        disabled: !authenticated || !workbench.experiment || workbench.saving !== null,
+        disabled:
+          !authenticated || !workbench.experiment || !workbench.experimentSourceValidated || workbench.saving !== null,
         disabledReason: !authenticated
           ? loginReason
           : !workbench.experiment
             ? 'Experiment source가 없습니다.'
-            : sourceLockReason,
+            : !workbench.experimentSourceValidated
+              ? sourceValidationReason
+              : sourceLockReason,
         onSelect: () => setDialog('save-experiment-as'),
       },
       generateCandidate: {

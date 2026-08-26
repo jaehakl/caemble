@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,7 +16,7 @@ class Settings(BaseSettings):
     )
 
     voicevox_runtime_dir: str = "voicevox_runtime"
-    voicevox_cpu_num_threads: int = Field(default=0, ge=0, le=65_535)
+    voicevox_cpu_num_threads: int = 0
 
     def resolve_ai_path(self, value: str) -> Path:
         path = Path(value).expanduser()

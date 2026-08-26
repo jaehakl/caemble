@@ -8,14 +8,12 @@ import manifoldWasmUrl from 'manifold-3d/manifold.wasm?url'
 import type {
   CanonicalAffineMatrixV1,
   CanonicalGeometryNodeV1,
-  CanonicalGeometrySceneV2,
+  CanonicalGeometrySceneV1,
   CanonicalPrimitiveNodeV1,
 } from '../evaluation/canonicalTypes'
-import { MAX_CANONICAL_GEOMETRY_TRIANGLES, MAX_CANONICAL_RENDER_TYPED_ARRAY_BYTES } from '../evaluation/canonicalTypes'
 import type { CadScene, CadSceneSurface, CadSceneTreeNode } from '../evaluation/types'
-import { assertCanonicalGeometryScene, canonicalSurfaceMemberEntries } from '../evaluation/canonical'
-import { CadModelError } from '../model/errors'
-import { cadSceneHash, type SerializableCadScene, type SerializableCadScenePart } from './meshValidation'
+import { canonicalSurfaceMemberEntries } from '../evaluation/canonical'
+import { cadSceneHash, type SerializableCadScene, type SerializableCadScenePart } from './meshSerialization'
 
 type Triangle = readonly [number, number, number]
 type SourceSurfaces = Readonly<{ nodeId: string; surfaceIndices: ReadonlyMap<number, number> }>
@@ -29,15 +27,11 @@ function meshPointKey(point: ArrayLike<number>) {
 
 function solidBoundsCenter(solid: ManifoldSolid): Vec3 {
   const bounds = solid.boundingBox()
-  const center: Vec3 = [
+  return [
     (bounds.min[0] + bounds.max[0]) / 2,
     (bounds.min[1] + bounds.max[1]) / 2,
     (bounds.min[2] + bounds.max[2]) / 2,
   ]
-  if (!center.every(Number.isFinite)) {
-    throw new CadModelError('Canonical Geometry has non-finite Manifold bounds.')
-  }
-  return center
 }
 
 async function manifoldModule() {
@@ -82,10 +76,6 @@ function registerPrimitiveSource(
     for (let triangle = 0; triangle < mesh.numTri; triangle += 1) {
       const faceId = mesh.faceID[triangle]
       const index = surfaceIndex(mesh, triangle, triangleNormal(mesh, triangle))
-      const previous = surfaceIndices.get(faceId)
-      if (previous !== undefined && previous !== index) {
-        throw new CadModelError(`Canonical Geometry source ${nodeId} has ambiguous Manifold face provenance.`)
-      }
       surfaceIndices.set(faceId, index)
     }
     sources.set(original.originalID(), { nodeId, surfaceIndices })
@@ -107,29 +97,6 @@ function manifoldFromTriangles(
   origin: Vec3 = [0, 0, 0],
 ) {
   const localPoints = points.map((point): Vec3 => [point[0] - origin[0], point[1] - origin[1], point[2] - origin[2]])
-  const minimum = [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY]
-  const maximum = [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY]
-  localPoints.forEach((point) =>
-    point.forEach((value, axis) => {
-      minimum[axis] = Math.min(minimum[axis], value)
-      maximum[axis] = Math.max(maximum[axis], value)
-    }),
-  )
-  let minimumEdge = Number.POSITIVE_INFINITY
-  triangles.forEach((triangle) => {
-    for (let corner = 0; corner < 3; corner += 1) {
-      const first = localPoints[triangle[corner]]
-      const second = localPoints[triangle[(corner + 1) % 3]]
-      const edge = Math.hypot(first[0] - second[0], first[1] - second[1], first[2] - second[2])
-      if (edge > 0) minimumEdge = Math.min(minimumEdge, edge)
-    }
-  })
-  const span = Math.max(...maximum.map((value, axis) => value - minimum[axis]))
-  if (!Number.isFinite(minimumEdge) || span * 2 ** -23 >= minimumEdge) {
-    throw new CadModelError(
-      `Canonical Geometry source ${nodeId} exceeds the Float32 indexed-mesh precision envelope and is invalid.`,
-    )
-  }
   const keyIds = new Map<number, number>()
   const faceID = Uint32Array.from(
     surfaceIndices.map((key) => {
@@ -155,19 +122,10 @@ function manifoldFromTriangles(
   }
   try {
     const originalMesh = solid.getMesh()
-    if (originalMesh.numTri < triangles.length) {
-      throw new CadModelError(
-        `Canonical Geometry source ${nodeId} lost indexed-mesh triangles in Manifold preview and is invalid.`,
-      )
-    }
     const classifiedSurfaceIndices = new Map<number, number>()
     for (let triangle = 0; triangle < originalMesh.numTri; triangle += 1) {
       const faceId = originalMesh.faceID[triangle]
       const surfaceIndex = classifySurface(originalMesh, triangle)
-      const previous = classifiedSurfaceIndices.get(faceId)
-      if (previous !== undefined && previous !== surfaceIndex) {
-        throw new CadModelError(`Canonical Geometry source ${nodeId} has ambiguous Manifold face provenance.`)
-      }
       classifiedSurfaceIndices.set(faceId, surfaceIndex)
     }
     sources.set(solid.originalID(), {
@@ -264,9 +222,6 @@ function curvedEdgeCylinder(
         0,
       )
       const radius = azimuthalRadius * verticalRadius
-      if (!Number.isFinite(radius) || radius <= 0) {
-        throw new CadModelError('curvedEdgeCylinder sampled a non-positive radius in Manifold preview.')
-      }
       return [radius * Math.cos(theta), radius * Math.sin(theta), z]
     })
   })
@@ -304,9 +259,6 @@ function curvedSurfaceSphere(
       0,
     )
     const radius = azimuthalRadius * polarRadius
-    if (!Number.isFinite(radius) || radius <= 0) {
-      throw new CadModelError('curvedSurfaceSphere sampled a non-positive radius in Manifold preview.')
-    }
     return [radius * Math.sin(phi) * Math.cos(theta), radius * Math.sin(phi) * Math.sin(theta), radius * Math.cos(phi)]
   }
   const points: Vec3[] = [point(0, 0)]
@@ -462,11 +414,6 @@ function shellSolid(
 ) {
   let centered: ManifoldSolid | undefined
   try {
-    const status = child.status()
-    if (status !== 'NoError') {
-      throw new CadModelError(`Canonical Geometry shell ${node.nodeId} failed Manifold preview with status ${status}.`)
-    }
-    if (child.isEmpty()) throw new CadModelError(`Canonical Geometry shell ${node.nodeId} has an empty child.`)
     const center = solidBoundsCenter(child)
     centered = child.translate([-center[0], -center[1], -center[2]])
     const mesh = centered.getMesh()
@@ -487,7 +434,7 @@ function shellSolid(
         adjacent[pointIndex].push({ normal, weight: Math.acos(Math.max(-1, Math.min(1, cosine))) })
       })
     })
-    const displacement = adjacent.map((faces, pointIndex): Vec3 => {
+    const displacement = adjacent.map((faces): Vec3 => {
       let a00 = 0,
         a01 = 0,
         a02 = 0,
@@ -519,14 +466,11 @@ function shellSolid(
       b1 += (regularization * b1) / length
       b2 += (regularization * b2) / length
       const determinant = a00 * (a11 * a22 - a12 * a12) - a01 * (a01 * a22 - a12 * a02) + a02 * (a01 * a12 - a11 * a02)
-      const result: Vec3 = [
+      return [
         (b0 * (a11 * a22 - a12 * a12) - a01 * (b1 * a22 - a12 * b2) + a02 * (b1 * a12 - a11 * b2)) / determinant,
         (a00 * (b1 * a22 - a12 * b2) - b0 * (a01 * a22 - a12 * a02) + a02 * (a01 * b2 - b1 * a02)) / determinant,
         (a00 * (a11 * b2 - b1 * a12) - a01 * (a01 * b2 - b1 * a02) + b0 * (a01 * a12 - a11 * a02)) / determinant,
-      ]
-      if (!result.every(Number.isFinite))
-        throw new CadModelError(`<shell> could not offset vertex ${pointIndex} in Manifold preview.`)
-      return result
+      ] as Vec3
     })
     const boundary = (offset: number) =>
       points.map((point, index): Vec3 => [
@@ -536,39 +480,6 @@ function shellSolid(
       ])
     const inner = boundary(node.innerOffset)
     const outer = boundary(node.outerOffset)
-    const minimum = [Infinity, Infinity, Infinity]
-    const maximum = [-Infinity, -Infinity, -Infinity]
-    let minimumGap = Infinity
-    inner.forEach((point, index) => {
-      const other = outer[index]
-      minimumGap = Math.min(
-        minimumGap,
-        Math.max(Math.abs(other[0] - point[0]), Math.abs(other[1] - point[1]), Math.abs(other[2] - point[2])),
-      )
-      for (let axis = 0; axis < 3; axis += 1) {
-        minimum[axis] = Math.min(minimum[axis], point[axis], other[axis])
-        maximum[axis] = Math.max(maximum[axis], point[axis], other[axis])
-      }
-    })
-    const span = Math.max(maximum[0] - minimum[0], maximum[1] - minimum[1], maximum[2] - minimum[2])
-    if (!Number.isFinite(minimumGap) || minimumGap <= span * 2 ** -23) {
-      throw new CadModelError(
-        `Canonical Geometry shell ${node.nodeId} exceeds the portable Float32 shell precision envelope.`,
-      )
-    }
-    const worldMagnitude = Math.max(
-      Math.abs(center[0] + minimum[0]),
-      Math.abs(center[0] + maximum[0]),
-      Math.abs(center[1] + minimum[1]),
-      Math.abs(center[1] + maximum[1]),
-      Math.abs(center[2] + minimum[2]),
-      Math.abs(center[2] + maximum[2]),
-    )
-    if (minimumGap <= Math.max(span, worldMagnitude) * 2 ** -52) {
-      throw new CadModelError(
-        `Canonical Geometry shell ${node.nodeId} exceeds the portable Float64 mesh precision envelope.`,
-      )
-    }
     const outerStart = inner.length
     const shellTriangles = [
       ...triangles.map((triangle) => triangle.map((index) => index + outerStart) as unknown as Triangle),
@@ -629,49 +540,16 @@ function evaluateNode(
 
 function meshPart(
   module: ManifoldToplevel,
-  root: CanonicalGeometrySceneV2['roots'][number],
+  root: CanonicalGeometrySceneV1['roots'][number],
   runtimeScene: CadScene,
   sources: Map<number, SourceSurfaces>,
-  usage: { triangles: number; typedArrayBytes: number },
 ): SerializableCadScenePart {
   const solid = evaluateNode(module, root.node, sources)
   try {
-    const status = solid.status()
-    if (status !== 'NoError') {
-      throw new CadModelError(`Canonical Geometry root ${root.id} failed Manifold preview with status ${status}.`)
-    }
-    if (solid.isEmpty()) throw new CadModelError(`Canonical Geometry root ${root.id} is empty in Manifold preview.`)
     const center = solidBoundsCenter(solid)
     const centered = solid.translate([-center[0], -center[1], -center[2]])
     try {
-      const volume = centered.volume()
-      if (!Number.isFinite(volume) || volume <= 0) {
-        throw new CadModelError(`Canonical Geometry root ${root.id} has non-positive Manifold volume.`)
-      }
-      const triangleCount = centered.numTri()
-      if (triangleCount > MAX_CANONICAL_GEOMETRY_TRIANGLES) {
-        throw new CadModelError(
-          `Canonical Geometry root ${root.id} exceeds the ${MAX_CANONICAL_GEOMETRY_TRIANGLES.toLocaleString('en-US')} triangle preview limit.`,
-        )
-      }
-      const typedArrayBytes =
-        triangleCount * 9 * Float64Array.BYTES_PER_ELEMENT +
-        (triangleCount + 1) * Uint32Array.BYTES_PER_ELEMENT +
-        triangleCount * Uint32Array.BYTES_PER_ELEMENT
-      if (
-        usage.triangles + triangleCount > MAX_CANONICAL_GEOMETRY_TRIANGLES ||
-        usage.typedArrayBytes + typedArrayBytes > MAX_CANONICAL_RENDER_TYPED_ARRAY_BYTES
-      ) {
-        throw new CadModelError(
-          `Canonical Geometry render output exceeds the shared ${MAX_CANONICAL_GEOMETRY_TRIANGLES.toLocaleString('en-US')} triangle or ${MAX_CANONICAL_RENDER_TYPED_ARRAY_BYTES / 1024 / 1024} MiB typed-array limit.`,
-        )
-      }
-      usage.triangles += triangleCount
-      usage.typedArrayBytes += typedArrayBytes
       const mesh = centered.getMesh()
-      if (mesh.numTri !== triangleCount) {
-        throw new CadModelError(`Canonical Geometry root ${root.id} changed triangle count during mesh extraction.`)
-      }
       const positions = new Float64Array(mesh.numTri * 9)
       const polygonOffsets = Uint32Array.from({ length: mesh.numTri + 1 }, (_, index) => index * 3)
       const surfacePolygons = new Map<string, { sourceNodeId: string; surfaceIndex: number; polygonIndices: number[] }>()
@@ -700,9 +578,6 @@ function meshPart(
         label: `Surface ${surface.surfaceIndex}`,
         polygonIndices: Uint32Array.from(surface.polygonIndices),
       }))
-      if (surfaces.reduce((count, surface) => count + surface.polygonIndices.length, 0) !== mesh.numTri) {
-        throw new CadModelError(`Canonical Geometry root ${root.id} lost semantic face provenance in Manifold preview.`)
-      }
       const runtimePart = runtimeScene.parts.find((part) => part.id === root.id)
       return {
         id: root.id,
@@ -746,11 +621,9 @@ function semanticTree(tree: CadSceneTreeNode, parts: readonly SerializableCadSce
 }
 
 export async function renderCanonicalGeometryScene(
-  scene: CanonicalGeometrySceneV2,
+  scene: CanonicalGeometrySceneV1,
   runtimeScene: CadScene,
-  usage: { triangles: number; typedArrayBytes: number } = { triangles: 0, typedArrayBytes: 0 },
 ): Promise<SerializableCadScene> {
-  assertCanonicalGeometryScene(scene)
   const module = await manifoldModule()
   const sources = new Map<number, SourceSurfaces>()
   const surfaceAliases = new Map<string, Map<string, Set<string>>>()
@@ -764,7 +637,7 @@ export async function renderCanonicalGeometryScene(
   })
   const parts: SerializableCadScenePart[] = []
   for (const root of scene.roots) {
-    const part = meshPart(module, root, runtimeScene, sources, usage)
+    const part = meshPart(module, root, runtimeScene, sources)
     parts.push({
       ...part,
       surfaces: part.surfaces.flatMap((surface) => {

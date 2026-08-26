@@ -10,48 +10,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable
 
-from .database import Catalog, catalog_path
-from .errors import CatalogError, CatalogIntegrityError, CatalogNotFoundError
-from .schema import create_schema, parse_experiment_version, upgrade_schema
-from .validation import validate_catalog_content
+from .database import Catalog
+from .errors import CatalogError, CatalogNotFoundError
+from .schema import APPLICATION_ID, TABLE_ORDER, create_schema, parse_experiment_version
 
 
 def canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def contract_digest(catalog: Catalog, manifest: dict[str, Any]) -> str:
-    descriptor = manifest["descriptor"]
-    solver = (descriptor["name"], descriptor["version"])
-    material_keys = [
-        row["material_parameter"]
-        for row in catalog._all(
-            """
-            SELECT DISTINCT material_parameter FROM solver_material_properties
-            WHERE solver_name = ? AND solver_version = ? ORDER BY material_parameter
-            """,
-            solver,
-        )
-    ]
-    materials = [catalog.material_parameter(key) for key in material_keys]
-    quantity_names = {
-        row["quantity_kind"]
-        for row in catalog._all(
-            """
-            SELECT DISTINCT quantity_kind FROM solver_quantity_kind_usages
-            WHERE solver_name = ? AND solver_version = ?
-            """,
-            solver,
-        )
-    }
-    quantity_names.update(item["quantityKind"] for item in materials)
-    payload = {
-        "manifest": manifest,
-        "quantityKinds": [catalog.quantity_kind(name) for name in sorted(quantity_names)],
-        "materialParameters": materials,
-        "materialModels": [],
-    }
-    return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
 
 
 def _insert_data_usages(
@@ -81,17 +46,14 @@ def _insert_data_usages(
 def insert_solver_manifest(connection: sqlite3.Connection, manifest: dict[str, Any]) -> None:
     descriptor = manifest["descriptor"]
     solver = (descriptor["name"], descriptor["version"])
-    digest = "0" * 64
     connection.execute(
-        "INSERT INTO solvers VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO solvers VALUES (?, ?, ?, ?, ?, ?)",
         (
             *solver,
-            manifest["schemaVersion"],
             manifest["implementation"],
             descriptor["description"],
             descriptor["referenceLengthUnit"],
             descriptor["minimumOutputs"],
-            digest,
         ),
     )
     usage_ordinal = 0
@@ -214,9 +176,8 @@ def insert_experiment(connection: sqlite3.Connection, experiment: dict[str, Any]
     cursor = connection.execute(
         """INSERT INTO experiments(
                key, namespace, repository_slug, version_major, version_minor, version_patch,
-               title, description, cad_api_version, source_format_version, bundle_format_version,
-               verification_json, bundle_hash
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               title, description, bundle_hash
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             experiment["key"],
             experiment.get("namespace", "caemble"),
@@ -224,10 +185,6 @@ def insert_experiment(connection: sqlite3.Connection, experiment: dict[str, Any]
             *version,
             experiment["title"],
             experiment["description"],
-            experiment.get("cadApiVersion", 9),
-            experiment.get("sourceFormatVersion", 2),
-            bundle["formatVersion"],
-            canonical_json(experiment["verification"]),
             bundle_hash,
         ),
     )
@@ -255,8 +212,6 @@ def insert_experiment(connection: sqlite3.Connection, experiment: dict[str, Any]
 
 
 def create_database(path: Path, dataset: dict[str, Any]) -> None:
-    if dataset.get("geometryRepositories") or dataset.get("geometries"):
-        raise CatalogError("Geometry catalog rows are no longer supported; convert them to Experiment bundles")
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         path.unlink()
@@ -318,18 +273,8 @@ def create_database(path: Path, dataset: dict[str, Any]) -> None:
                 insert_solver_manifest(connection, manifest)
             for experiment in dataset.get("experiments", []):
                 insert_experiment(connection, experiment)
-            revision_source = {
-                "quantityKinds": quantity_kinds,
-                "opaqueQuantityKindNames": sorted(opaque_names),
-                "materialParameters": dataset["materialParameters"],
-                "materialModels": dataset["materialModels"],
-                "materialGlobalQualifiers": dataset["materialGlobalQualifiers"],
-                "materialDesignRules": dataset["materialDesignRules"],
-                "solverManifests": dataset["solverManifests"],
-            }
-            revision = hashlib.sha256(canonical_json(revision_source).encode("utf-8")).hexdigest()
             metadata = {
-                "catalogRevision": revision,
+                "catalogRevision": "",
                 "quantityKindDataVersion": dataset["quantityKindDataVersion"],
                 "materialCatalogVersion": dataset["materialCatalogVersion"],
             }
@@ -339,92 +284,15 @@ def create_database(path: Path, dataset: dict[str, Any]) -> None:
     finally:
         connection.close()
     refresh_derived_data(path)
-    validate_database(path)
 
 
-def validate_database(path: Path) -> dict[str, Any]:
-    with Catalog.open_readonly(path, immutable=False) as catalog:
-        validate_catalog_content(catalog)
-        manifests = catalog.solver_manifests()
-        for manifest in manifests:
-            descriptor = manifest["descriptor"]
-            stored = catalog.solver_contract_digest(descriptor["name"], descriptor["version"])
-            if stored != contract_digest(catalog, manifest):
-                raise CatalogIntegrityError(f"Contract digest mismatch: {descriptor['name']}@{descriptor['version']}")
-        for usage in catalog._all(
-            """
-            SELECT u.solver_name, u.solver_version, u.path, u.quantity_kind, u.unit, q.opaque
-            FROM solver_quantity_kind_usages u JOIN quantity_kinds q ON q.name = u.quantity_kind
-            """
-        ):
-            if usage["opaque"]:
-                raise CatalogIntegrityError(
-                    f"{usage['solver_name']}@{usage['solver_version']} {usage['path']} uses opaque "
-                    f"QuantityKind {usage['quantity_kind']}"
-                )
-            if usage["unit"] is None:
-                raise CatalogIntegrityError(
-                    f"{usage['solver_name']}@{usage['solver_version']} {usage['path']} has no unit"
-                )
-            known = catalog._one(
-                "SELECT 1 FROM quantity_kind_units WHERE quantity_kind = ? AND unit = ?",
-                (usage["quantity_kind"], usage["unit"]),
-            )
-            if known is None:
-                raise CatalogIntegrityError(
-                    f"{usage['solver_name']}@{usage['solver_version']} {usage['path']} uses unit "
-                    f"{usage['unit']} outside QuantityKind {usage['quantity_kind']}"
-                )
-        for solver in catalog._all("SELECT name, version, reference_length_unit FROM solvers"):
-            known = catalog._one(
-                "SELECT 1 FROM quantity_kind_units WHERE quantity_kind = 'Length' AND unit = ?",
-                (solver["reference_length_unit"],),
-            )
-            if known is None:
-                raise CatalogIntegrityError(
-                    f"{solver['name']}@{solver['version']} referenceLengthUnit "
-                    f"{solver['reference_length_unit']!r} is not applicable to Length"
-                )
-        mismatches = catalog._all(
-            """
-            SELECT p.solver_name, p.solver_version, p.role, p.material_parameter,
-                   m.quantity_kind AS expected, json_extract(p.data_json, '$.quantityKind') AS actual
-            FROM solver_material_properties p
-            JOIN material_parameters m ON m.key = p.material_parameter
-            WHERE json_extract(p.data_json, '$.quantityKind') IS NOT m.quantity_kind
-            """
-        )
-        if mismatches:
-            mismatch = mismatches[0]
-            raise CatalogIntegrityError(
-                f"{mismatch['solver_name']}@{mismatch['solver_version']} material role {mismatch['role']} "
-                f"uses {mismatch['material_parameter']} as {mismatch['actual']!r}; expected {mismatch['expected']!r}"
-            )
-        return catalog.meta()
-
-
-def draft_path(root: Path | None = None) -> Path:
-    workspace = root or Path.cwd()
-    return workspace / ".catalog-work" / "draft.sqlite3"
-
-
-def upgrade_database(path: Path) -> None:
-    with writable_connection(path) as connection:
-        upgrade_schema(connection)
-    refresh_derived_data(path)
-    validate_database(path)
-    connection = sqlite3.connect(path)
-    try:
-        connection.execute("PRAGMA journal_mode = DELETE")
-        connection.execute("VACUUM")
-    finally:
-        connection.close()
-
-
-def create_draft(destination: Path, source: Path | None = None) -> None:
-    source_path = (source or catalog_path()).resolve()
+def create_draft(destination: Path, source: Path) -> None:
+    source_path = source.resolve()
+    destination = destination.resolve()
     if not source_path.is_file():
         raise CatalogNotFoundError(f"Catalog SQLite file does not exist: {source_path}")
+    if source_path == destination:
+        raise CatalogError("Draft destination must differ from its source")
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(".tmp.sqlite3")
     if temporary.exists():
@@ -437,39 +305,72 @@ def create_draft(destination: Path, source: Path | None = None) -> None:
         target_connection.close()
         source_connection.close()
     os.replace(temporary, destination)
-    upgrade_database(destination)
 
 
-def publish_draft(source: Path, destination: Path | None = None) -> dict[str, Any]:
-    destination_path = (destination or catalog_path()).resolve()
+def rebase_database(path: Path) -> None:
+    source_path = path.resolve()
+    if not source_path.is_file():
+        raise CatalogNotFoundError(f"Catalog SQLite file does not exist: {source_path}")
+    fd, temporary_name = tempfile.mkstemp(prefix="catalog-rebase-", suffix=".sqlite3", dir=source_path.parent)
+    os.close(fd)
+    temporary = Path(temporary_name)
+    temporary.unlink()
+    source = sqlite3.connect(source_path)
+    source.row_factory = sqlite3.Row
+    target = sqlite3.connect(temporary)
+    try:
+        try:
+            application_id = source.execute("PRAGMA application_id").fetchone()[0]
+            if application_id != APPLICATION_ID:
+                raise CatalogError(f"Unsupported catalog application_id: {application_id}")
+            create_schema(target)
+            source_tables = {
+                row[0] for row in source.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            }
+            with target:
+                for table in TABLE_ORDER:
+                    if table not in source_tables:
+                        continue
+                    source_columns = {row[1] for row in source.execute(f'PRAGMA table_info("{table}")')}
+                    columns = [
+                        row[1]
+                        for row in target.execute(f'PRAGMA table_info("{table}")')
+                        if row[1] in source_columns
+                    ]
+                    if not columns:
+                        continue
+                    names = ", ".join(f'"{column}"' for column in columns)
+                    rows = source.execute(f'SELECT {names} FROM "{table}"').fetchall()
+                    if rows:
+                        placeholders = ", ".join("?" for _ in columns)
+                        target.executemany(
+                            f'INSERT INTO "{table}" ({names}) VALUES ({placeholders})',
+                            rows,
+                        )
+            target.execute("PRAGMA journal_mode = DELETE")
+            target.execute("VACUUM")
+        finally:
+            target.close()
+            source.close()
+        os.replace(temporary, source_path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    refresh_derived_data(source_path)
+
+
+def publish_draft(source: Path, destination: Path) -> dict[str, Any]:
+    source = source.resolve()
+    destination_path = destination.resolve()
     refresh_derived_data(source)
-    meta = validate_database(source)
-    if destination_path.is_file():
-        with tempfile.TemporaryDirectory(prefix="catalog-baseline-") as baseline_directory:
-            baseline_path = Path(baseline_directory) / "catalog.sqlite3"
-            shutil.copy2(destination_path, baseline_path)
-            upgrade_database(baseline_path)
-            baseline = semantic_snapshot(baseline_path)["solvers"]
-            candidate = semantic_snapshot(source)["solvers"]
-            with Catalog.open_readonly(baseline_path, immutable=False) as catalog:
-                baseline_contracts = catalog.solver_contracts()
-            with Catalog.open_readonly(source, immutable=False) as catalog:
-                candidate_contracts = catalog.solver_contracts()
-            for identity in baseline.keys() & candidate.keys():
-                name, version = identity.rsplit("@", 1)
-                if baseline[identity] != candidate[identity] or baseline_contracts[(name, version)] != candidate_contracts[
-                    (name, version)
-                ]:
-                    raise CatalogIntegrityError(
-                        f"Released Solver contract {identity} is immutable; replace it with a new version"
-                    )
+    with Catalog.open_readonly(source, immutable=False) as catalog:
+        meta = catalog.meta()
     destination_path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary_name = tempfile.mkstemp(prefix="catalog-", suffix=".sqlite3", dir=destination_path.parent)
     os.close(fd)
     temporary = Path(temporary_name)
     try:
         shutil.copy2(source, temporary)
-        validate_database(temporary)
         try:
             os.replace(temporary, destination_path)
         except PermissionError:
@@ -480,68 +381,10 @@ def publish_draft(source: Path, destination: Path | None = None) -> dict[str, An
             finally:
                 destination_connection.close()
                 source_connection.close()
-            validate_database(destination_path)
     finally:
         if temporary.exists():
             temporary.unlink()
     return meta
-
-
-def semantic_snapshot(path: Path) -> dict[str, Any]:
-    with Catalog.open_readonly(path, immutable=False) as catalog:
-        return {
-            "meta": catalog.meta(),
-            "quantityKinds": {
-                row["name"]: catalog.quantity_kind(row["name"])
-                for row in catalog._all("SELECT name FROM quantity_kinds ORDER BY name")
-            },
-            "materialParameters": {
-                row["key"]: catalog.material_parameter(row["key"])
-                for row in catalog._all("SELECT key FROM material_parameters ORDER BY key")
-            },
-            "materialModels": {item["key"]: item for item in catalog.material_models()},
-            "solvers": {
-                f"{item['descriptor']['name']}@{item['descriptor']['version']}": item
-                for item in catalog.solver_manifests()
-            },
-            "experiments": {
-                item["coordinate"]: catalog.experiment(
-                    item["key"],
-                    namespace=item["namespace"],
-                    repository=item["repository"],
-                    version=item["version"],
-                )
-                for item in catalog.list_experiments(limit=10_000)[0]
-            },
-        }
-
-
-def semantic_diff(candidate: Path, baseline: Path | None = None) -> list[str]:
-    baseline_path = (baseline or catalog_path()).resolve()
-    with tempfile.TemporaryDirectory(prefix="catalog-diff-") as baseline_directory:
-        compatible_baseline = Path(baseline_directory) / "catalog.sqlite3"
-        shutil.copy2(baseline_path, compatible_baseline)
-        upgrade_database(compatible_baseline)
-        before = semantic_snapshot(compatible_baseline)
-    after = semantic_snapshot(candidate.resolve())
-    changes: list[str] = []
-    for section in (
-        "quantityKinds",
-        "materialParameters",
-        "materialModels",
-        "solvers",
-        "experiments",
-    ):
-        before_items = before[section]
-        after_items = after[section]
-        for key in sorted(before_items.keys() - after_items.keys()):
-            changes.append(f"- {section}/{key}")
-        for key in sorted(after_items.keys() - before_items.keys()):
-            changes.append(f"+ {section}/{key}")
-        for key in sorted(before_items.keys() & after_items.keys()):
-            if before_items[key] != after_items[key]:
-                changes.append(f"~ {section}/{key}")
-    return changes
 
 
 def _rebuild_solver_usages(connection: sqlite3.Connection) -> None:
@@ -612,62 +455,51 @@ def _rebuild_solver_usages(connection: sqlite3.Connection) -> None:
 
 
 def _revision_payload(path: Path) -> dict[str, Any]:
-    with Catalog.open_readonly(path, immutable=False) as catalog:
-        meta = catalog.meta()
-        return {
-            "catalogVersions": {
-                "quantityKindDataVersion": meta["quantityKindDataVersion"],
-                "materialCatalogVersion": meta["materialCatalogVersion"],
-            },
-            "quantityKinds": {
-                row["name"]: catalog.quantity_kind(row["name"])
-                for row in catalog._all("SELECT name FROM quantity_kinds ORDER BY name")
-            },
-            "materialParameters": {
-                row["key"]: catalog.material_parameter(row["key"])
-                for row in catalog._all("SELECT key FROM material_parameters ORDER BY key")
-            },
-            "materialModels": catalog.material_models(),
-            "materialGlobalQualifiers": [
-                row["qualifier"] for row in catalog._all("SELECT qualifier FROM material_global_qualifiers ORDER BY ordinal")
-            ],
-            "materialDesignRules": {
-                row["key"]: row["description"]
-                for row in catalog._all("SELECT key, description FROM material_design_rules ORDER BY key")
-            },
-            "solverManifests": catalog.solver_manifests(),
-            "experiments": [
-                catalog.experiment(
-                    item["key"],
-                    namespace=item["namespace"],
-                    repository=item["repository"],
-                    version=item["version"],
-                )
-                for item in catalog.list_experiments(limit=10_000)[0]
-            ],
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    try:
+        tables: dict[str, list[dict[str, Any]]] = {}
+        for table in TABLE_ORDER:
+            info = connection.execute(f'PRAGMA table_info("{table}")').fetchall()
+            columns = [row["name"] for row in info]
+            primary_key = [
+                row["name"] for row in sorted((row for row in info if row["pk"]), key=lambda row: row["pk"])
+            ]
+            names = ", ".join(f'"{column}"' for column in columns)
+            where = " WHERE key != 'catalogRevision'" if table == "catalog_metadata" else ""
+            order = f" ORDER BY {', '.join(primary_key)}" if primary_key else ""
+            tables[table] = [
+                dict(row)
+                for row in connection.execute(f'SELECT {names} FROM "{table}"{where}{order}')
+            ]
+        return {"tables": tables}
+    finally:
+        connection.close()
+
+
+def _refresh_experiment_hashes(connection: sqlite3.Connection) -> None:
+    for experiment in connection.execute("SELECT id FROM experiments ORDER BY id"):
+        files = {
+            row["path"]: row["source"]
+            for row in connection.execute(
+                "SELECT path, source FROM experiment_files WHERE experiment_id = ? ORDER BY ordinal",
+                (experiment["id"],),
+            )
         }
+        bundle_hash = hashlib.sha256(canonical_json({"files": files}).encode("utf-8")).hexdigest()
+        connection.execute(
+            "UPDATE experiments SET bundle_hash = ? WHERE id = ?",
+            (bundle_hash, experiment["id"]),
+        )
 
 
 def refresh_derived_data(path: Path) -> None:
     with writable_connection(path) as connection:
         _rebuild_solver_usages(connection)
+        _refresh_experiment_hashes(connection)
     payload = _revision_payload(path)
-    manifests = payload["solverManifests"]
     revision = hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
-    with Catalog.open_readonly(path, immutable=False) as catalog:
-        digests = [
-            (
-                contract_digest(catalog, manifest),
-                manifest["descriptor"]["name"],
-                manifest["descriptor"]["version"],
-            )
-            for manifest in manifests
-        ]
     with writable_connection(path) as connection:
-        connection.executemany(
-            "UPDATE solvers SET contract_digest = ? WHERE name = ? AND version = ?",
-            digests,
-        )
         connection.execute(
             "INSERT INTO catalog_metadata(key, value) VALUES ('catalogRevision', ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",

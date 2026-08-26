@@ -1,81 +1,51 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, Field
 
 from models import ExperimentSourceBundle
 
 
-ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
+ReasoningEffort = str
 
 
 class AgentMessage(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    role: Literal["user", "assistant"]
-    content: str = Field(min_length=1, max_length=32_000)
+    role: str
+    content: str
 
 
 class AgentRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    prompt: str = Field(min_length=1, max_length=32_000)
-    messages: list[AgentMessage] = Field(default_factory=list, max_length=6)
-
-    @model_validator(mode="after")
-    def validate_total_size(self) -> "AgentRequest":
-        total = len(self.prompt.encode("utf-8")) + sum(
-            len(message.content.encode("utf-8")) for message in self.messages
-        )
-        if total > 64 * 1024:
-            raise ValueError("Agent conversation exceeds 64 KiB")
-        return self
+    prompt: str
+    messages: list[AgentMessage] = Field(default_factory=list)
 
 
 class ExperimentSourceDocument(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    kind: Literal["experiment"]
-    formatVersion: Literal[2]
-    apiVersion: Literal[11]
+    kind: str
     sourceBundle: ExperimentSourceBundle
 
 
 class AgentWorkspace(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    experimentId: int | None = Field(default=None, gt=0)
+    experimentId: int | None = None
     document: ExperimentSourceDocument
-    baseHash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    experimentContextVersion: str = Field(min_length=1, max_length=256)
-    workspaceSession: int = Field(ge=0)
-    activeFile: str | None = Field(default=None, max_length=256)
-
-    @model_validator(mode="after")
-    def validate_active_file(self) -> "AgentWorkspace":
-        if self.activeFile is not None and self.activeFile not in self.document.sourceBundle.files:
-            raise ValueError("activeFile must name a sourceBundle file")
-        return self
+    baseHash: str
+    workspaceSession: int
+    activeFile: str | None = None
 
 
 class RunStart(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["run.start"]
+    type: str
     request: AgentRequest
-    provider: Literal["openai"]
-    model: Literal["gpt-5.6-luna"]
+    provider: str
+    model: str
     reasoningEffort: ReasoningEffort = "medium"
     workspace: AgentWorkspace
-    sessionContextEnvelope: str | None = Field(default=None, max_length=2 * 1024 * 1024)
+    sessionContextEnvelope: str | None = None
 
 
 class RunCancel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["run.cancel"]
-    runId: str = Field(min_length=1, max_length=128)
+    type: str
+    runId: str
 
 
 ClientMessage = RunStart | RunCancel

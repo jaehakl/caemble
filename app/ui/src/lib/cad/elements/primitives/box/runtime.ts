@@ -1,5 +1,5 @@
 import { geometries, primitives } from '@jscad/modeling'
-import { CadModelError } from '../../../model/core'
+import type { Vec3 } from '../../../model/types'
 import type { PrimitiveElementDefinition } from '../../../evaluation/types'
 import { boxManifest } from './definition'
 
@@ -9,14 +9,8 @@ export const boxDefinition = {
   manifest: boxManifest,
   defaultProps: Object.freeze({ size: Object.freeze([1, 1, 1]) }),
   createGeometry(props) {
-    if (
-      !Array.isArray(props.size) ||
-      props.size.length !== 3 ||
-      props.size.some((value) => typeof value !== 'number' || !Number.isFinite(value) || value <= 0)
-    ) {
-      throw new CadModelError('<box> size must be an array of exactly three finite positive numbers.')
-    }
-    return primitives.cuboid({ size: [props.size[0], props.size[1], props.size[2]] })
+    const size = props.size as Vec3
+    return primitives.cuboid({ size: [size[0], size[1], size[2]] })
   },
   createSurfaces(geometry) {
     const polygons = geometries.geom3.toPolygons(geometry as ReturnType<typeof geometries.geom3.create>)

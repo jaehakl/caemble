@@ -11,11 +11,9 @@ import type {
 } from './types.js';
 
 const REQUEST_ATTACHMENT_CHUNK_SIZE = 16 * 1024;
-const REQUEST_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
-const MAX_BUFFERED_AMOUNT = 512 * 1024;
+const BUFFERED_AMOUNT_HIGH_WATER_MARK = 512 * 1024;
 const BUFFERED_AMOUNT_LOW_THRESHOLD = 128 * 1024;
 const BUFFERED_AMOUNT_DRAIN_TIMEOUT_MS = 30_000;
-const textEncoder = new TextEncoder();
 
 type JobControlFrame = {
   kind: string;
@@ -101,11 +99,6 @@ export class GpStationJobPeer {
     if (this.pendingCall) {
       return Promise.reject(new Error(`job call already in progress: ${this.pendingCall.id}`));
     }
-    try {
-      this.validateRequestAttachments(attachments);
-    } catch (error) {
-      return Promise.reject(asError(error));
-    }
     return new Promise<CallResult<unknown>>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.rejectPendingCall(new Error(`job result timeout: ${callId}`));
@@ -144,20 +137,7 @@ export class GpStationJobPeer {
         size: attachment.blob.size,
       }));
     }
-    const encodedFrame = JSON.stringify(frame);
-    const frameBytes = textEncoder.encode(encodedFrame).byteLength;
-    const maxMessageSize = this.peerConnection.sctp?.maxMessageSize;
-    if (
-      typeof maxMessageSize === 'number' &&
-      Number.isFinite(maxMessageSize) &&
-      maxMessageSize > 0 &&
-      frameBytes > maxMessageSize
-    ) {
-      throw new Error(
-        `job call frame is ${frameBytes} bytes; negotiated RTCDataChannel max-message-size is ${maxMessageSize} bytes. Move large payload data to request attachments.`,
-      );
-    }
-    this.dataChannel.send(encodedFrame);
+    this.dataChannel.send(JSON.stringify(frame));
     for (const attachment of attachments) {
       await this.sendRequestAttachment(callId, attachment);
     }
@@ -209,26 +189,10 @@ export class GpStationJobPeer {
           ),
         ),
       );
-      if (this.dataChannel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+      if (this.dataChannel.bufferedAmount > BUFFERED_AMOUNT_HIGH_WATER_MARK) {
         await this.waitForSendBuffer();
       }
       index += 1;
-    }
-  }
-
-  private validateRequestAttachments(attachments: RequestAttachment[]): void {
-    const ids = new Set<string>();
-    for (const attachment of attachments) {
-      if (!attachment.id) {
-        throw new Error('request attachment id is required');
-      }
-      if (ids.has(attachment.id)) {
-        throw new Error(`duplicate request attachment id: ${attachment.id}`);
-      }
-      if (attachment.blob.size > REQUEST_ATTACHMENT_MAX_BYTES) {
-        throw new Error(`request attachment exceeds ${REQUEST_ATTACHMENT_MAX_BYTES} bytes: ${attachment.id}`);
-      }
-      ids.add(attachment.id);
     }
   }
 
@@ -383,20 +347,11 @@ export class GpStationJobPeer {
     if (this.pendingCall?.id !== header.callId) {
       throw new Error(`unexpected attachment chunk call id: ${header.callId}`);
     }
-    const file = this.response.files.get(header.attachmentId);
-    if (!file) {
-      throw new Error(`unknown attachment chunk: ${header.attachmentId}`);
-    }
-    if (header.index !== file.nextIndex) {
-      throw new Error(`out-of-order attachment chunk: ${header.attachmentId}`);
-    }
+    const file = this.response.files.get(header.attachmentId)!;
     file.chunks.push(body);
     file.receivedSize += body.byteLength;
     file.nextIndex += 1;
     file.complete = header.final;
-    if (file.complete && file.receivedSize !== file.size) {
-      throw new Error(`attachment size mismatch: ${header.attachmentId}`);
-    }
     if ([...this.response.files.values()].every((item) => item.complete)) {
       this.resolvePendingCall();
     }

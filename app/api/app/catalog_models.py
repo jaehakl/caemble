@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Annotated, Any, Generic, Literal, TypeVar
+from typing import Any, Generic, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 from models import ExperimentSourceBundle
@@ -13,7 +13,6 @@ class CatalogModel(BaseModel):
 
 
 class CatalogMeta(CatalogModel):
-    schema_version: Literal[7]
     catalog_revision: str
     quantity_kind_data_version: str
     material_catalog_version: str
@@ -44,7 +43,7 @@ class SolverQuantityKindUsage(CatalogModel):
     solver_name: str
     solver_version: str
     quantity_kind: str | None = None
-    context: Literal["parameter", "material", "input", "output", "axis"]
+    context: str
     path: str
     unit: str | None
 
@@ -88,7 +87,7 @@ class MaterialModelEndpoint(CatalogModel):
 class MaterialModel(CatalogModel):
     key: str
     label_ko: str
-    kind: Literal["sampled_relation"]
+    kind: str
     input: MaterialModelEndpoint
     output: MaterialModelEndpoint
     minimum_samples: int
@@ -99,7 +98,6 @@ class SolverSummary(CatalogModel):
     name: str
     version: str
     description: str
-    contract_digest: str
 
 
 class ArtifactConsumer(CatalogModel):
@@ -148,69 +146,17 @@ class ExperimentSummary(CatalogModel):
     coordinate: str
     title: str
     description: str
-    cad_api_version: Literal[7, 8, 9, 10, 11]
-    source_format_version: Literal[2]
-    bundle_format_version: Literal[6]
     bundle_hash: str
     concepts: list[str]
     related_solvers: list[ExperimentSolver]
 
 
-class VerificationRecord(CatalogModel):
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
-
-    name: str
-    dtype: str
-    shape: list[Annotated[int, Field(strict=True, ge=0)]]
-
-
-class ExactVerificationRecord(VerificationRecord):
-    value: Any
-    absolute_tolerance: Annotated[float, Field(ge=0, allow_inf_nan=False)]
-
-
-class AssertionVerificationRecord(VerificationRecord):
-    finite: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
-    nonzero: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
-    minimum_exclusive: Annotated[float, Field(allow_inf_nan=False)] | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
-
-    @model_validator(mode="after")
-    def require_assertion(self) -> AssertionVerificationRecord:
-        if self.finite is None and self.nonzero is None and self.minimum_exclusive is None:
-            raise ValueError("Assertion verification records require at least one assertion")
-        return self
-
-
-class VerificationTerminal(CatalogModel):
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
-
-    kind: Literal["complete"]
-    sequence: Annotated[int, Field(strict=True, ge=0)]
-    record_sequences: list[Annotated[int, Field(strict=True, ge=0)]]
-
-
-class ExperimentFixture(CatalogModel):
-    records: list[ExactVerificationRecord | AssertionVerificationRecord]
-    terminal: VerificationTerminal
-
-
-class ExperimentVerification(CatalogModel):
-    kernel_tasks: list[str]
-    recorded_data: list[str]
-    expectations: list[str]
-    fixture: ExperimentFixture | None = None
-
-
 class ExperimentDetail(ExperimentSummary):
-    verification: ExperimentVerification
     source_bundle: ExperimentSourceBundle
 
 
 class CatalogSearchItem(CatalogModel):
-    kind: Literal["quantityKind", "materialParameter", "materialModel", "solver", "experiment"]
+    kind: str
     key: str
     title: str
     subtitle: str
@@ -229,7 +175,7 @@ class CatalogPage(CatalogModel, Generic[T]):
     total: int
 
 
-CatalogIdentifier = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+CatalogIdentifier = str
 
 
 class SolverIdentity(CatalogModel):
@@ -238,21 +184,19 @@ class SolverIdentity(CatalogModel):
 
 
 class CatalogRuntimeSliceRequest(BaseModel):
-    solvers: list[SolverIdentity] = Field(default_factory=list, max_length=32)
-    quantityKinds: list[CatalogIdentifier] = Field(default_factory=list, max_length=256)
-    materialParameters: list[CatalogIdentifier] = Field(default_factory=list, max_length=256)
-    materialModels: list[CatalogIdentifier] = Field(default_factory=list, max_length=64)
+    solvers: list[SolverIdentity] = Field(default_factory=list)
+    quantityKinds: list[CatalogIdentifier] = Field(default_factory=list)
+    materialParameters: list[CatalogIdentifier] = Field(default_factory=list)
+    materialModels: list[CatalogIdentifier] = Field(default_factory=list)
 
 
 class RuntimeSolver(CatalogModel):
     name: str
     version: str
-    contract_digest: str
     descriptor: dict[str, Any]
 
 
 class CatalogRuntimeSlice(CatalogModel):
-    schema_version: Literal[1]
     catalog_revision: str
     solvers: list[RuntimeSolver]
     quantity_kinds: list[QuantityKind]

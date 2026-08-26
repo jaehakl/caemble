@@ -81,7 +81,7 @@ export type CadScene = {
 }
 
 export type NormalizedTransforms = {
-  family: 'canonical' | 'legacy'
+  family: 'canonical' | 'axis-angle'
   position: Vec3
   rotation: Vec3 | undefined
   rotate: Rotation | undefined
@@ -103,14 +103,11 @@ export type CadElementChildrenManifest = Readonly<{
 }>
 
 export type CadAuthoringContract = Readonly<{
-  apiVersion: 11
   identity: CadElementPropertyManifest & Readonly<{ pathExample: string }>
   transforms: Readonly<{
     applicationOrder: readonly ['scale', 'rotation', 'position']
     rotationConvention: string
     canonicalProperties: readonly CadElementPropertyManifest[]
-    legacyProperties: readonly CadElementPropertyManifest[]
-    mixing: string
   }>
 }>
 

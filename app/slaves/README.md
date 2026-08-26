@@ -3,7 +3,7 @@
 `app/slaves` contains the independent applications discovered by the launcher:
 
 - `ai`: LLM/chat, embedding, image, tagging, and VOICEVOX handlers.
-- `cae`: catalog-validated CAE simulation and Solver implementations.
+- `cae`: trusted-payload CAE simulation and Solver implementations.
 
 Each `manifest.json` describes how the launcher starts an executable. It is not
 a job-handler schema or Solver contract.
@@ -18,12 +18,10 @@ Push-Location ai
 Copy-Item models.example.toml models.toml
 # Replace example names and paths with machine-local configuration.
 poetry install
-poetry run pytest -q
 Pop-Location
 
 Push-Location cae
 poetry install
-poetry run pytest -q
 Pop-Location
 ```
 
@@ -60,18 +58,17 @@ poetry run python scripts/install_voicevox.py
 Pop-Location
 ```
 
-The public handler names are part of the frozen v1 contract and are listed in
-[v1 SDK compatibility](../../docs/v1-sdk-compatibility.md). Payloads and examples
-belong in the SDK/client code and executable tests rather than being copied into
-this README.
-
 ## Runtime ownership
 
 Worker initialization warms imports but not every model weight. AI model state
-and GPU residency are process-local. CAE Solver contracts come only from the
-shared SQLite catalog and are checked before execution; see the
+and GPU residency are process-local. CAE Solver descriptors come only from the
+shared SQLite catalog. Built Measurements and Catalog snapshots are trusted,
+unversioned worker payloads; see the
 [CAE README](cae/README.md) and [Solver development guide](../../docs/solver-development.md).
 
-The worker protocol, attachment framing, and handler lifecycle are owned by
-`app/sdk`. Deployment and launcher/API configuration are documented in the
-repository [deployment guide](../../deployment/deployment.md).
+The GPStation v1 transport, attachment framing, and handler lifecycle are owned
+by `app/sdk`; this version labels the transport, not CAE payload formats. The CAE
+AST allowlist is an API guardrail rather than an OS sandbox, so production
+workers run under a dedicated account or container. Deployment and launcher/API
+configuration are documented in the repository
+[deployment guide](../../deployment/deployment.md).

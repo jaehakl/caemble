@@ -19,7 +19,6 @@ import {
   AI_AGENT_MODEL,
   AI_AGENT_PROVIDER,
   AI_AGENT_PROVIDER_QUERY_KEY,
-  AI_AGENT_PROMPT_TOOL_VERSION,
   AI_AGENT_REASONING_EFFORTS,
   aiAgentApi,
   aiAgentProviderFailureMessage,
@@ -43,7 +42,6 @@ import { useAuth } from '@/features/auth/use-auth'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { WorkbenchTabId } from '@/features/cae-workbench/types'
 import { runtimeErrorMessage } from '@/features/runtime/format'
-import { assertExperimentSourceBundle } from '@/lib/cad'
 
 type AiHelperMessage = AiAgentMessage & Readonly<{ id: number; streaming: boolean }>
 type AiHelperActivity = Readonly<{
@@ -57,7 +55,6 @@ export type AiHelperWorkspaceProps = Readonly<{
   activeExperimentFile: string | null
   activeTab: WorkbenchTabId
   baseHash?: string | null
-  experimentContextVersion?: string | null
   onApplyStagedBundle?: (request: AiAgentApplyRequest) => Promise<AiAgentApplyResult>
   onRequestLogin?: () => void
   workbench: CaeWorkbenchState
@@ -66,7 +63,6 @@ export type AiHelperWorkspaceProps = Readonly<{
 export function AiHelperWorkspace({
   activeExperimentFile,
   baseHash,
-  experimentContextVersion,
   onApplyStagedBundle,
   onRequestLogin,
   workbench,
@@ -99,7 +95,7 @@ export function AiHelperWorkspace({
   const runFinishedRef = useRef(true)
   const runWorkspaceIdentityRef = useRef<Readonly<{
     baseHash: string
-    experimentContextVersion: string
+    workspaceSession: number
   }> | null>(null)
   const selectedProvider = providers.data?.find(({ id }) => id === providerId) ?? null
   const selectedModel = selectedProvider?.models.find(({ id }) => id === modelId) ?? null
@@ -115,7 +111,6 @@ export function AiHelperWorkspace({
             experimentId: workbench.experimentId,
             workspaceSession: workbench.agentWorkspaceSession,
             permissionFingerprint: [...auth.user.roles].sort().join(','),
-            promptToolVersion: AI_AGENT_PROMPT_TOOL_VERSION,
           }
         : null,
     [auth.user, modelId, providerId, selectedProvider, workbench.agentWorkspaceSession, workbench.experimentId],
@@ -237,8 +232,7 @@ export function AiHelperWorkspace({
     const runWorkspaceIdentity = runWorkspaceIdentityRef.current
     if (
       !runWorkspaceIdentity ||
-      event.baseHash !== runWorkspaceIdentity.baseHash ||
-      event.experimentContextVersion !== runWorkspaceIdentity.experimentContextVersion
+      event.baseHash !== runWorkspaceIdentity.baseHash
     ) {
       const message = 'Agent 완료 결과의 Workspace identity가 실행 시작 시점과 일치하지 않습니다.'
       setError(message)
@@ -270,7 +264,6 @@ export function AiHelperWorkspace({
       return
     }
     try {
-      assertExperimentSourceBundle(event.finalBundle)
       if (!applyHandlerRef.current) throw new Error('Agent 변경을 적용할 Workbench handler가 연결되지 않았습니다.')
       setStatus('코드 편집기에 반영 중')
       const result = await applyHandlerRef.current({
@@ -279,7 +272,7 @@ export function AiHelperWorkspace({
         baseHash: runWorkspaceIdentity.baseHash,
         sourceHash: event.sourceHash,
         stagedRevision: event.stagedRevision,
-        experimentContextVersion: runWorkspaceIdentity.experimentContextVersion,
+        workspaceSession: runWorkspaceIdentity.workspaceSession,
         provenance: event.provenance,
       })
       if (result.status === 'conflicted') {
@@ -383,7 +376,7 @@ export function AiHelperWorkspace({
   async function sendPrompt() {
     const value = prompt.trim()
     const document = workbench.experiment
-    if (!baseHash || !experimentContextVersion || !sessionBinding) {
+    if (!baseHash || !sessionBinding) {
       setError('Workspace context 준비 중입니다. 잠시 후 다시 시도하세요.')
       return
     }
@@ -413,7 +406,7 @@ export function AiHelperWorkspace({
     runFinishedRef.current = false
     activeRunIdRef.current = null
     lastSequenceRef.current = -1
-    runWorkspaceIdentityRef.current = { baseHash, experimentContextVersion }
+    runWorkspaceIdentityRef.current = { baseHash, workspaceSession: workbench.agentWorkspaceSession }
     runSessionBindingRef.current = sessionBinding
 
     const connection = connectAiAgent({
@@ -438,7 +431,6 @@ export function AiHelperWorkspace({
           experimentId: workbench.experimentId,
           document,
           baseHash,
-          experimentContextVersion,
           activeFile:
             activeExperimentFile && activeExperimentFile in document.sourceBundle.files ? activeExperimentFile : null,
           workspaceSession: workbench.agentWorkspaceSession,
@@ -658,8 +650,7 @@ export function AiHelperWorkspace({
                 !selectedModel ||
                 !prompt.trim() ||
                 !workbench.experiment ||
-                !baseHash ||
-                !experimentContextVersion
+                !baseHash
               }
               type="submit"
             >

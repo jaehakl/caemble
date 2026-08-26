@@ -13,7 +13,6 @@ from app.settings import settings
 
 VOICEVOX_RESULT_OK = 0
 VOICEVOX_ACCELERATION_MODE_CPU = 1
-VOICEVOX_CORE_VERSION = "0.16.4"
 
 
 class VoicevoxLoadOnnxruntimeOptions(ctypes.Structure):
@@ -77,15 +76,10 @@ class VoicevoxRuntime:
         query_json = json.dumps(
             audio_query,
             ensure_ascii=False,
-            allow_nan=False,
             separators=(",", ":"),
         ).encode("utf-8")
         with self._lock:
             self._ensure_initialized_locked()
-            self._raise_for_result(
-                self._lib.voicevox_audio_query_validate(query_json),
-                "validate audio query",
-            )
             options = self._lib.voicevox_make_default_synthesis_options()
             if enable_interrogative_upspeak is not None:
                 options.enable_interrogative_upspeak = enable_interrogative_upspeak
@@ -131,7 +125,6 @@ class VoicevoxRuntime:
                 self._dll_directory_handles.append(os.add_dll_directory(str(directory)))
 
         library = ctypes.CDLL(str(core_library))
-        self._validate_library_version(library)
         self._configure_library(library)
 
         onnx_filename = library.voicevox_get_onnxruntime_lib_versioned_filename().decode("utf-8")
@@ -170,8 +163,6 @@ class VoicevoxRuntime:
             )
 
             model_files = sorted(self.runtime_dir.rglob("*.vvm"))
-            if not model_files:
-                raise RuntimeError(f"VOICEVOX voice models were not found under {self.runtime_dir}")
             for model_path in model_files:
                 model = ctypes.c_void_p()
                 self._raise_for_result_with_library(
@@ -198,12 +189,7 @@ class VoicevoxRuntime:
         self._synthesizer = synthesizer
 
     def _find_one(self, filename: str) -> Path:
-        matches = [path for path in self.runtime_dir.rglob(filename) if path.is_file()]
-        if len(matches) != 1:
-            raise RuntimeError(
-                f"Expected exactly one {filename} under {self.runtime_dir}, found {len(matches)}"
-            )
-        return matches[0]
+        return next(path for path in self.runtime_dir.rglob(filename) if path.is_file())
 
     def _read_json_pointer(self, pointer: int | None) -> Any:
         if not pointer:
@@ -223,18 +209,6 @@ class VoicevoxRuntime:
         message = library.voicevox_error_result_to_message(result)
         detail = message.decode("utf-8") if message else f"result code {result}"
         raise RuntimeError(f"VOICEVOX failed to {operation}: {detail}")
-
-    @staticmethod
-    def _validate_library_version(library: Any) -> None:
-        library.voicevox_get_version.argtypes = []
-        library.voicevox_get_version.restype = ctypes.c_char_p
-        raw_version = library.voicevox_get_version()
-        actual_version = raw_version.decode("utf-8", errors="replace") if raw_version else "unknown"
-        if actual_version != VOICEVOX_CORE_VERSION:
-            raise RuntimeError(
-                "Unsupported VOICEVOX Core version: "
-                f"expected {VOICEVOX_CORE_VERSION}, got {actual_version}"
-            )
 
     @staticmethod
     def _configure_library(library: Any) -> None:
@@ -280,8 +254,6 @@ class VoicevoxRuntime:
             ctypes.POINTER(ctypes.c_void_p),
         ]
         library.voicevox_synthesizer_create_audio_query.restype = ctypes.c_int32
-        library.voicevox_audio_query_validate.argtypes = [ctypes.c_char_p]
-        library.voicevox_audio_query_validate.restype = ctypes.c_int32
         library.voicevox_make_default_synthesis_options.argtypes = []
         library.voicevox_make_default_synthesis_options.restype = VoicevoxSynthesisOptions
         library.voicevox_synthesizer_synthesis.argtypes = [

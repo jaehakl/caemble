@@ -7,7 +7,6 @@ export const exampleDefinition = {
   tag: exampleManifest.tag,
   manifest: exampleManifest,
   createGeometry(props) {
-    // Validate props, then return one JSCAD geom3.
     return props
   },
   createSurfaces(geometry) {

@@ -19,7 +19,6 @@ export function CurrentCadSelectionProvider({ children }: { children: ReactNode 
 }
 
 // This hook intentionally shares the component provider module.
-// eslint-disable-next-line react-refresh/only-export-components
 export function useCurrentCadSelection() {
   const value = useContext(CurrentCadSelectionContext)
   if (!value) throw new Error('CurrentCadSelectionProvider가 필요합니다.')

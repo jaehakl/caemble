@@ -1,16 +1,11 @@
-import {
-  assertCompiledCadDocument,
-  assertCompiledCadSource,
-  type CompiledCadDocument,
-  type CompiledCadSource,
-} from '../compiler/types'
+import type { CompiledCadDocument, CompiledCadSource } from '../compiler/types'
 import { evaluateCadScene } from '../evaluation/evaluator'
 import { Fragment, h } from '../evaluation/jsx'
 import type { CadScene } from '../evaluation/types'
 import { cadPrimitiveAuthoringBindings } from '../elements/generated'
 import { CadModelError, evaluateWithVars, isFloatDType, Mat, Material, radians } from '../model/core'
-import { defineTask, experiment, ExperimentDefinition, TaskDefinition, type ExternalVars } from '../model/v5'
-import { assertUcumUnitComparable, convertUcumValue, normalizeUcumUnit, type UcumUnit } from '../model/units'
+import { defineTask, experiment, ExperimentDefinition, TaskDefinition, type ExternalVars } from '../model/definition'
+import { convertUcumValue, normalizeUcumUnit, type UcumUnit } from '../model/units'
 import type { VarsSchemaEntry } from '../model/vars'
 import {
   EXPERIMENT_ENTRY_PATH,
@@ -23,7 +18,6 @@ import type { EvaluatedRuntimeDocumentSnapshot } from './snapshot'
 
 const coreModule = Object.freeze({
   ...cadPrimitiveAuthoringBindings,
-  assertUcumUnitComparable,
   CadModelError,
   convertUcumValue,
   defineTask,
@@ -151,7 +145,6 @@ export function loadCompiledTaskCode(jsCode: string) {
 }
 
 export function loadCompiledSource(compiledSource: CompiledCadSource) {
-  assertCompiledCadSource(compiledSource)
   if (compiledSource.entryFile !== EXPERIMENT_ENTRY_PATH) {
     throw new CadModelError(`Compiled Experiment source entry must be ${EXPERIMENT_ENTRY_PATH}.`)
   }
@@ -166,7 +159,6 @@ type CompiledModuleLoader = Readonly<{
 }>
 
 function compiledModuleLoader(compiled: CompiledCadDocument): CompiledModuleLoader {
-  assertCompiledCadDocument(compiled)
   const cache = new Map<string, { state: 'loading' | 'loaded'; value?: Readonly<Record<string, unknown>> }>()
   const load = (path: string): Readonly<Record<string, unknown>> => {
     const cached = cache.get(path)
@@ -255,7 +247,6 @@ function compiledExperimentEntry(loader: CompiledModuleLoader) {
 }
 
 export function inspectCompiledDocument(compiled: CompiledCadDocument): CadInspectionResult {
-  assertCompiledCadDocument(compiled)
   const loader = compiledModuleLoader(compiled)
   compiledMaterialRuntime(loader)
   const entry = compiledExperimentEntry(loader)
@@ -329,7 +320,6 @@ export function executeCompiledCode(
 }
 
 export function executeCompiledDocument(compiled: CompiledCadDocument, vars: ExternalVars, pythonSource?: string) {
-  assertCompiledCadDocument(compiled)
   const loader = compiledModuleLoader(compiled)
   compiledMaterialRuntime(loader)
   const entry = compiledExperimentEntry(loader)
@@ -351,7 +341,6 @@ export function evaluateCompiledGeometryModule(
   exportName: string,
   lengthUnit: UcumUnit = 'mm',
 ) {
-  assertCompiledCadDocument(compiled)
   const loader = compiledModuleLoader(compiled)
   compiledMaterialRuntime(loader)
   const exports = loader.load(path)

@@ -2,16 +2,7 @@ import { DEFAULT_RTC_ICE_CANDIDATE_POOL_SIZE, DEFAULT_RTC_ICE_SERVERS } from './
 import type { CandidateSummary, PreparedJobConnection } from './types.js';
 
 export function parseRtcIceServersJson(value: string): RTCIceServer[] {
-  const parsed = JSON.parse(value) as unknown;
-  if (!Array.isArray(parsed)) {
-    throw new Error('RTC ICE servers JSON must be an array');
-  }
-  for (const item of parsed) {
-    if (!isRtcIceServer(item)) {
-      throw new Error('RTC ICE servers JSON must contain objects with urls');
-    }
-  }
-  return parsed;
+  return JSON.parse(value) as RTCIceServer[];
 }
 
 export function summarizeSdpCandidates(sdp: string): CandidateSummary {
@@ -73,12 +64,4 @@ export function waitForIceGatheringComplete(
       }
     });
   });
-}
-
-function isRtcIceServer(value: unknown): value is RTCIceServer {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-  const urls = (value as { urls?: unknown }).urls;
-  return typeof urls === 'string' || (Array.isArray(urls) && urls.every((item) => typeof item === 'string'));
 }

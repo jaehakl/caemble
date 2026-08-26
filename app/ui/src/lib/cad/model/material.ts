@@ -3,7 +3,6 @@ import { getRuntimeMaterialModel, getRuntimeMaterialParameter } from '../../cata
 import type { MaterialVariables, NormalizedMaterialVariables } from './descriptor'
 import { CadModelError } from './errors'
 import {
-  isPlainObject,
   normalizeMaterialDataValueDescriptor,
   normalizeMaterialErrorRate,
   normalizeMaterialSampledRelation,
@@ -50,39 +49,30 @@ export class Material {
         : sourceVersionOrVariables === undefined
           ? {}
           : sourceVersionOrVariables
-    if (!isPlainObject(rawVariables)) {
-      throw new CadModelError(`Material ${name} variables must be a plain object.`)
+    if (typeof rawVariables !== 'object' || rawVariables === null || Array.isArray(rawVariables)) {
+      throw new CadModelError(`Material ${name} variables must be an object.`)
     }
     const errorRate = normalizeMaterialErrorRate(rawVariables.errorRate, `Material ${name} variables.errorRate`)
     const normalizedVariables: Record<string, unknown> = {}
     Object.entries(rawVariables).forEach(([key, value]) => {
-      if (!key.trim()) throw new CadModelError(`Material ${name} variable names must not be empty.`)
       const path = `Material ${name} variables.${key}`
       if (key === 'color') {
         normalizedVariables.color = value
       } else if (key === 'errorRate') {
         return
       } else if (getRuntimeMaterialParameter(key)) {
-        if (!isPlainObject(value)) throw new CadModelError(`${path} must be a Material property descriptor.`)
         normalizedVariables[key] = normalizeMaterialDataValueDescriptor(
           key as MaterialPropertyKey,
-          value,
+          value as Record<string, unknown>,
           path,
           errorRate,
         )
       } else if (getRuntimeMaterialModel(key)) {
-        if (!isPlainObject(value)) throw new CadModelError(`${path} must be a sampled relation.`)
-        normalizedVariables[key] = normalizeMaterialSampledRelation(key as MaterialModelKey, value, path)
+        normalizedVariables[key] = normalizeMaterialSampledRelation(key as MaterialModelKey, value as Record<string, unknown>, path)
       } else {
-        throw new CadModelError(`${path} is not a registered Material catalog key.`)
+        normalizedVariables[key] = value
       }
     })
-    if (normalizedVariables.color !== undefined) {
-      if (typeof normalizedVariables.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(normalizedVariables.color)) {
-        throw new CadModelError(`Material ${name} variables.color must use #RRGGBB format.`)
-      }
-      normalizedVariables.color = normalizedVariables.color.toLowerCase()
-    }
     this.name = name.trim()
     if (source !== undefined) this.source = source
     if (version !== undefined) this.version = version

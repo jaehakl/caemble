@@ -5,11 +5,10 @@ from typing import Any
 
 from sdk.slave import DataChannelMessage, SlaveApp, SlaveContext
 
-from app.llm.chat import prepare_chat_messages, prune_chat_messages
+from app.llm.chat import prepare_chat_messages
 from app.llm.models import ChatRequest, LlmRequest
 from app.llm.service import generate_chat_answer, generate_llm_answer
 from app.logging import log, log_exception
-from app.message import reject_request_attachments
 from app.model_catalog import get_model_list_payload
 
 
@@ -24,7 +23,6 @@ async def ai_llm_models(
     memory: dict[str, Any] | None,
     context: SlaveContext,
 ) -> DataChannelMessage:
-    reject_request_attachments(message)
     return DataChannelMessage(
         id=message.id,
         type="ai.llm.models.result",
@@ -39,7 +37,6 @@ async def ai_llm(
 ) -> DataChannelMessage:
     started_at = time.perf_counter()
     try:
-        reject_request_attachments(message)
         request = LlmRequest.model_validate(message.payload)
         log(
             "ai.llm start "
@@ -73,7 +70,6 @@ async def ai_chat(
 ) -> DataChannelMessage:
     started_at = time.perf_counter()
     try:
-        reject_request_attachments(message)
         request = ChatRequest.model_validate(message.payload)
         state, messages = prepare_chat_messages(memory, context.session_id, request)
         model_name = str(state["model"])
@@ -95,7 +91,7 @@ async def ai_chat(
             await context.emit_event("ai.chat.delta", {"delta": delta})
 
         response = await generate_chat_answer(request, messages, emit_delta)
-        state["messages"] = prune_chat_messages(messages + [{"role": "assistant", "content": response.answer}])
+        state["messages"] = messages + [{"role": "assistant", "content": response.answer}]
         duration_ms = int((time.perf_counter() - started_at) * 1000)
         log(f"ai.chat complete session={context.session_id} duration_ms={duration_ms} answer_chars={len(response.answer)}")
         return DataChannelMessage(

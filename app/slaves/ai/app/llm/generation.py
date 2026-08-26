@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Iterator, Literal
@@ -125,11 +124,7 @@ class GenerationOutputParser:
 
     def finish(self, model_name: str) -> GenerationOutput:
         finish_emitted = ""
-        if self._state == "gemma":
-            raise RuntimeError("LLM returned an unterminated Gemma thought channel")
-        if self._state == "qwen":
-            raise RuntimeError("LLM returned an unterminated Qwen think block")
-        if self._state == "detecting":
+        if self._state != "final":
             self._state = "final"
             finish_emitted = self._accept_final(self._reasoning_buffer)
             self._reasoning_buffer = ""
@@ -137,43 +132,7 @@ class GenerationOutputParser:
         answer = self._final_text.strip()
         if answer.endswith(TURN_END):
             answer = answer[:-len(TURN_END)].rstrip()
-        if not answer:
-            raise RuntimeError("LLM returned no final answer after reasoning")
-
         json_recovered = False
-        if self.response_format == "json":
-            try:
-                json_payload = json.loads(answer)
-            except json.JSONDecodeError:
-                decoder = json.JSONDecoder()
-                candidates: list[tuple[int, int, dict[str, Any]]] = []
-                for start_index, character in enumerate(answer):
-                    if character != "{":
-                        continue
-                    try:
-                        candidate, relative_end = decoder.raw_decode(answer[start_index:])
-                    except json.JSONDecodeError:
-                        continue
-                    if isinstance(candidate, dict):
-                        candidates.append((start_index, start_index + relative_end, candidate))
-                maximal_candidates = [
-                    candidate
-                    for candidate in candidates
-                    if not any(
-                        other_start <= candidate[0]
-                        and candidate[1] <= other_end
-                        and (other_start, other_end) != (candidate[0], candidate[1])
-                        for other_start, other_end, _ in candidates
-                    )
-                ]
-                if len(maximal_candidates) != 1:
-                    raise RuntimeError("LLM final answer does not contain exactly one JSON object")
-                json_payload = maximal_candidates[0][2]
-                json_recovered = True
-            if not isinstance(json_payload, dict):
-                raise RuntimeError("LLM final answer must be a JSON object")
-            answer = json.dumps(json_payload, ensure_ascii=False, separators=(",", ":"))
-
         pending_delta = (
             answer
             if self.response_format == "json"

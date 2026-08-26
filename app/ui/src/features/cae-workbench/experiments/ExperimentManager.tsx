@@ -8,7 +8,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { assertExperimentSourceBundle } from '@/lib/cad'
 import { authQueryKey } from '@/features/auth/use-auth'
 import type { SavedExperiment } from '../types'
 
@@ -215,7 +214,6 @@ export function ExperimentManager({
     setLoadingExample(experiment.coordinate)
     try {
       const item = await catalogApi.getExperiment(experiment)
-      assertExperimentSourceBundle(item.sourceBundle)
       onOpenExample(item.sourceBundle, item.title, item.description)
     } catch (cause: unknown) {
       toast.error(cause instanceof Error ? cause.message : 'Example을 불러오지 못했습니다.')

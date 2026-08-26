@@ -4,7 +4,7 @@ import enum, uuid
 from typing import Optional, List
 from sqlalchemy import (func,
     text,Text,Boolean,DateTime,LargeBinary,Integer,
-    UniqueConstraint,CheckConstraint,ForeignKey,Index,)
+    UniqueConstraint,ForeignKey,Index,)
 from sqlalchemy.orm import (mapped_column,Mapped,relationship,)
 from sqlalchemy.dialects.postgresql import (UUID,JSONB,INET)
 from sqlalchemy import Enum as SAEnum
@@ -87,7 +87,6 @@ class AIProviderCredential(TimestampMixin, Base):
             "provider",
             name="uq_ai_provider_credentials_user_id_provider",
         ),
-        CheckConstraint("version >= 1", name="version_positive"),
     )
 
     id: Mapped[str] = mapped_column(
@@ -164,14 +163,6 @@ class AuthAudit(Base):
     __tablename__ = "auth_audit"
     __table_args__ = (
         Index("idx_auth_audit_user_id", "user_id"),
-        CheckConstraint(
-            "event IN ("
-            "'login_success','login_failure','logout','link_success','unlink',"
-            "'token_created','token_revoked',"
-            "'launcher_connected','launcher_rejected','launcher_disconnected'"
-            ")",
-            name="ck_auth_audit_event",
-        ),
     )
     id: Mapped[str] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[Optional[str]] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

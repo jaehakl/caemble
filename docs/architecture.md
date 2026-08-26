@@ -1,174 +1,136 @@
 # Caemble architecture
 
-This document is for contributors who need the current source and runtime
-boundaries. The in-app `/docs` route is the canonical user manual for authoring
-syntax, examples, troubleshooting, and live catalog reference; do not duplicate
-those details in Markdown.
+Caemble is a local-first CAE Workbench. The browser authors and previews an
+Experiment, the API owns persistence and orchestration, and a per-user launcher
+runs isolated worker applications. The in-app `/docs` route is the user manual;
+this document describes the implementation boundaries.
 
-## Current formats
+## Identities and payloads
 
-| Contract | Version | Owner |
-| --- | ---: | --- |
-| Experiment source bundle | 6 | UI/API source document model |
-| CAD document | 2 | UI Code-to-CAD runner |
-| CAD authoring API | 10 | generated UI declaration and element registry |
-| Canonical Geometry scene | 1 | UI evaluator and CAE geometry runtime |
-| Simulation manifest | 5 | UI evaluation and CAE runtime |
-| Python simulation API | 3 | CAE program runtime |
-| Material snapshot | 2 | UI Measurement builder |
-| Catalog schema | 6 | shared SQLite catalog |
+Experiment and Solver SemVer are durable identities. An Experiment is addressed
+by namespace, repository, tag, and SemVer; a Solver is addressed by name and
+SemVer. Published identities are immutable, so a behavior or descriptor change
+gets a new SemVer.
 
-An Experiment version atomically owns this source bundle:
+CAD source, Geometry scenes, Simulation programs, Material snapshots, Catalog
+slices, and built Measurements are trusted, unversioned application payloads.
+They move between repository-owned producers and consumers without a wrapper
+format negotiation layer. The CAE worker applies unit and geometry
+transformations needed by a Solver, while malformed values fail at their natural
+runtime operation.
 
-```text
-experiment.tsx
-geometry.tsx
-material.tsx
-simulate.py
-tasks/<taskName>.tsx   (zero or more)
-<relative-path>.ts(x)  (optional bundle-local modules)
+QuantityKind, Material, Solver, and Experiment catalog records live only in
+`app/catalog/caemble_catalog/catalog.sqlite3`. Launcher `manifest.json` files
+describe executables and are not Solver descriptors.
+
+## Experiment data flow
+
+1. The Workbench loads an immutable Experiment identity and evaluates its CAD
+   source in the isolated browser runner.
+2. Evaluation produces the common Geometry scene and any task-local Geometry.
+   Preview meshes are render products, not solver input.
+3. Material assignments are resolved into a frozen Material snapshot.
+4. The UI builds a Measurement containing the trusted Geometry, Simulation,
+   Material, and Catalog payloads for that run.
+5. Job control and attachments travel directly between browser and worker over
+   WebRTC; the API retains orchestration state rather than solver payloads.
+6. `simulate.py` calls a catalog-selected Solver and records its tensors. A
+   record is retained until its acknowledgement, and `sim.release()` ends the
+   run-side ownership of the artifact.
+7. The API persists RecordedData for the owning user and Measurement. Analysis
+   and the 3D Viewer read the persisted tensors through their respective
+   projections.
+
+The browser may keep local draft source independently of an Experiment. Draft
+Geometry becomes Experiment input only through an explicit handoff.
+
+## Geometry and surface identity
+
+The canonical Geometry scene preserves CSG roots, nodes, transforms, groups,
+and source-surface provenance. Surface members authored as
+`<geometry-id>/surface/<index>` become numeric selectors:
+
+```json
+{ "rootId": "optic", "sourceNodeId": "lens", "surfaceIndex": 1 }
 ```
 
-`experiment.tsx` owns common units, variables, physical geometry, groups, and
-RecordedData declarations. `geometry.tsx` exports shared Geometry components;
-`material.tsx` exports Material values or factories. Each Task selects a pinned
-Solver name/version and owns its config plus optional task-local geometry.
-`simulate.py` orchestrates Tasks through `sim.run`, `sim.record`, and
-`sim.release`. Task entries are optional while authoring and previewing, but a
-Measurement requires at least one valid Task.
+`surfaceIndex` is the primitive's stable numeric slot; it is not derived from
+triangle order. Transforms and Boolean evaluation carry the source node and slot
+into the canonical scene. For example, a box uses local slots `0..5` for
+`-X`, `+X`, `-Y`, `+Y`, `-Z`, and `+Z`. Solvers request a triangular mesh from
+the shared Geometry service and map detector, emitter, boundary, and material
+groups through these selectors.
 
-Persisted versions use
-`caemble:experiment/<namespace>/<repository>/<key>@X.Y.Z`. Namespace,
-repository, key, and SemVer are stored on the Experiment row; repository lists
-are derived from those rows rather than maintained as separate entities.
+Each Solver receives two local views: `experiment` for common Geometry and
+`task` for task-local Geometry. Reference-length conversion changes only the
+Solver view, never the stored Geometry or frozen Material snapshot.
 
-CAD API v11 uses `position`, `rotation`, and `scale` as canonical transforms.
-Material assignment uses named roles such as `body`, `tire`, or `shell`, not
-positional arrays. TypeScript sources may statically import `@caemble/core` and
-relative `.ts`/`.tsx` modules stored in the same bundle; there is no external
-Geometry source graph.
+## Solver and Catalog boundary
 
-Surface group members use `<geometry-id>/surface/<non-negative-index>`. Each
-primitive defines fixed local surface slots; transforms and Boolean operations
-preserve the source slot. For example, local +X on a Box leaf with identity
-`conductor.body` is `conductor.body/surface/1`. CAD API v7-v10 source remains
-readable from Catalog history but cannot be compiled or executed. It is not
-converted automatically; publish a new immutable CAD API v11 Experiment version.
+A task pins a Solver name and SemVer. The active Catalog descriptor supplies
+its implementation locator, parameters, methods, material roles and properties,
+input ports, observations, and reference length unit. The CAE registry imports
+the implementation lazily; there is no central per-Solver dispatch branch.
 
-Authoring examples and element-specific props belong in generated executable
-examples and the live Experiment Catalog exposed by `/docs`. When syntax changes,
-update the registry/authoring manifest and regenerate declarations instead of
-copying a new prose example here.
+Solver-specific physics belongs under
+`app/slaves/cae/app/solvers/<solver_package>/`. Shared geometry, units, tensor,
+and numerical services remain in the solver framework. Catalog editing uses an
+explicit Draft SQLite file and publishes that file to the canonical Catalog.
 
-## Data flow
+## Non-sequential ray tracing
 
-```text
-Experiment version + complete vars
-  -> isolated UI compile/evaluate
-  -> deterministic common and Task-local Canonical Geometry scenes
-  -> local preview mesh (Viewer only)
-  -> frozen Material snapshot
-  -> prepared Measurement
-  -> { formatVersion: 2, measurement: BuiltMeasurement, solverContracts }
-  -> CAE worker contract and Canonical Geometry validation
-  -> Solver-specific interpretation or shared triangulation
-  -> sim.record() DataTensor values
-  -> atomic RecordedData attachment
-  -> Viewer and Analysis
-```
+The ray-tracing Solver launches point, area, directional, or Lambertian sources
+and follows the next physical collision rather than a prescribed surface
+sequence. Detector surfaces produce ordinary outputs such as irradiance,
+detected radiant flux, and source efficiency.
 
-Source and candidate values are separate. Creating a candidate samples values
-inside `varsSchema` and freezes its Materials; it does not rewrite source,
-persist a Measurement, or run a Solver. Persisted Measurement vars are complete
-and strict. A failed or cancelled run leaves the prepared Measurement unchanged.
-A successful run attaches all declared RecordedData once; repeating the same
-conditions requires a new Measurement.
+Physical shell thickness controls multilayer treatment. Adjacent shell layers
+whose thickness is strictly less than `50 µm` form one coherent transfer-matrix
+stack. A shell at exactly `50 µm` or thicker participates in ordinary geometric
+collisions. This adaptive choice remains part of the physical tracing state,
+including reflection, transmission, scattering, absorption, detector hits, and
+ray branching.
 
-The API stores namespace/repository/SemVer Experiment identities, source bundles,
-Measurement conditions, RecordedData, and orchestration state. Source can
-overwrite an unlocked version; any derived Measurement or model locks that
-version's source and requires an explicit new SemVer for code changes. Name and
-description metadata remain editable. The API does not execute CAD or physics.
-Payloads and attachments travel over WebRTC between the client and worker. The
-Viewer's rendered mesh stays in the UI; the CAE request carries Canonical
-Geometry scene v2 with `geometryFormatVersion`, `geometryHash`, units, roots,
-geometry groups, and numeric surface selectors.
+Visual paths use the semantic RecordedData group `rayPaths`, recorded in one
+call as five aligned tensors:
 
-## Ownership boundaries
-
-| Area | Responsibility |
+| Member | Type and meaning |
 | --- | --- |
-| UI | authoring, isolated evaluation, local preview, canonical CSG normalization, candidate generation, Material freezing, BuiltMeasurement serialization |
-| API | OAuth/tokens, Experiment version ownership, prepared Measurements, one-time RecordedData transaction, job orchestration |
-| Catalog | the sole QuantityKind, Material, Solver, and Example Experiment data source in `catalog.sqlite3` |
-| Launcher | discovers executable manifests, owns one active worker/job, and bridges the control WebSocket |
-| CAE worker | verifies catalog and geometry digests, validates canonical CSG and targets, converts units, interprets or triangulates Geometry, runs `simulate.py` and Solvers |
-| AI worker | executes the public v1 AI handlers using machine-local model/provider configuration |
-| SDKs | preserve the public v1 REST, WebSocket, WebRTC, frame, and attachment contracts |
+| `vertices` | `float32[V, 3]` flattened vertex positions |
+| `pathOffsets` | `uint32[P + 1]` vertex offsets, ending at `V` |
+| `segmentPower` | `float32[S]` radiant flux aligned to segments |
+| `pathWavelength` | `float32[P]` one wavelength per path |
+| `segmentEvent` | `uint8[S]` event code aligned to segments |
 
-`app/slaves/ai/manifest.json` and `app/slaves/cae/manifest.json` are executable
-launcher manifests. Solver contracts are relations in
-`app/catalog/caemble_catalog/catalog.sqlite3`; there is no parallel JSON or
-TypeScript Solver catalog.
+The persisted names are `rayPaths.<member>`. The Viewer reconstructs paths from
+the offsets; generic Analysis excludes these system tensors by requesting
+RecordedData with `include_system: false`.
 
-## Catalog and Solver boundary
+## Execution, authentication, and ownership
 
-The UI reads searchable catalog data from the API and requests only the runtime
-slice referenced by the current Experiment. A CAE request contains the unique
-Solver identities and `contractDigest` values used by its Tasks. The CAE worker
-compares these against its local SQLite snapshot before it creates a run.
+`simulate.py` runs under the CAE AST allowlist and may call only `sim.run`,
+`sim.record`, and `sim.release`. The allowlist protects the worker API boundary;
+it is not an operating-system sandbox. Production workers therefore run under a
+dedicated account or container.
 
-Every Solver target has the form `<scope>.<kind>.<group>`:
+- Browser sessions use cookies and CSRF protection; external clients use bearer
+  tokens.
+- The API enforces user ownership for Experiments, Measurements, jobs, and
+  RecordedData.
+- Launcher tokens authorize worker control, and one launcher owns one active job
+  at a time.
+- The CAE worker preserves run and job identity, record acknowledgement,
+  cancellation, and release lifecycle across its streamed messages.
+- API launcher sockets and resident-agent state are process-local, so a
+  deployment keeps the API at one worker/replica unless that state is moved to a
+  shared service.
 
-- `experiment.geometry.*` and `experiment.surface.*` address the common scene.
-- `task.geometry.*` and `task.surface.*` address the current Task-local scene.
+## Implementation map
 
-The selected method's catalog relation determines which source/kind is valid.
-Units are converted only in the Solver's local view; the stored Geometry and
-Material snapshot remain unchanged. See [Solver development](solver-development.md)
-before modifying this boundary.
-
-## Code-reading path
-
-For Experiment authoring and evaluation, read in this order:
-
-1. [`document.ts`](../app/ui/src/lib/cad/source/document.ts) — accepted files and
-   pinned format/API versions.
-2. [`sourceAnalysis.ts`](../app/ui/src/lib/cad/source/sourceAnalysis.ts) — import
-   and determinism policy.
-3. [`evaluateDocument.ts`](../app/ui/src/lib/cad/execution/evaluateDocument.ts) —
-   isolated runner boundary.
-4. [`userModule.ts`](../app/ui/src/lib/cad/execution/userModule.ts) — common and
-   Task-local scene evaluation and Simulation manifest creation.
-5. [`measurement.ts`](../app/ui/src/lib/cad/execution/measurement.ts) — frozen
-   Material snapshot and BuiltMeasurement construction.
-6. [`request.ts`](../app/ui/src/features/cae/request.ts) — wire payload and tensor
-   attachment sharding.
-
-For remote execution and persistence, continue with:
-
-1. [`client.ts`](../app/ui/src/features/cae/client.ts) — simulation lifecycle,
-   progress, record acknowledgements, and cancellation.
-2. [`handlers.py`](../app/slaves/cae/app/handlers.py) — CAE wire handlers.
-3. [`runtime.py`](../app/slaves/cae/app/runtime.py) — run and artifact ownership.
-4. [`program.py`](../app/slaves/cae/app/program.py) — Python API v3 and AST policy.
-5. [`registry.py`](../app/slaves/cae/app/solver_framework/registry.py) — SQLite
-   contract snapshot, digest verification, and lazy Solver import.
-6. [`measurement_service.py`](../app/api/app/service/measurement_service.py) —
-   ownership, source-hash check, and atomic RecordedData persistence.
-
-The `simulate.py` AST allowlist is a guardrail for trusted Experiment source,
-not an operating-system sandbox. Production workers still require an OS account
-or container boundary.
-
-## Validation boundary
-
-Local unit and contract suites prove serialization, validation, and lifecycle
-behavior in their test environments. They do not prove browser layout, live
-provider credentials, network traversal, a deployed database migration, or a
-real launcher-to-worker connection. Report those checks separately.
-
-Use the root [validation commands](../README.md#validation), then add the
-component-specific checks for every boundary changed. Cross-component catalog
-changes require the same catalog release in the API/UI deployment and a restart
-of resident CAE workers.
+- `app/ui/src/lib/cad`: CAD execution, canonical Geometry, and render products.
+- `app/ui/src/features/cae-workbench`: Measurement building and run UI.
+- `app/api/app`: authentication, persistence, catalog routes, and orchestration.
+- `app/catalog`: canonical Catalog and `catalogctl` Draft workflow.
+- `app/launcher`: per-user executable lifecycle and WebRTC signaling.
+- `app/slaves/cae/app`: AST program runtime, Solver framework, and physics.
+- `app/sdk`: client and worker transport libraries.

@@ -197,7 +197,7 @@ function ExampleExperimentCatalog({
   return (
     <CatalogPageLayout
       count={listQuery.data?.total ?? 0}
-      description="SQLite 카탈로그에서 제공하는 읽기 전용 Experiment bundle v6 예제"
+      description="SQLite 카탈로그에서 제공하는 읽기 전용 Experiment 예제"
       embedded={embedded}
       title="Examples"
       filters={
@@ -239,11 +239,6 @@ function ExampleExperimentCatalog({
         ) : detailQuery.data ? (
           <>
             <CardHeader>
-              <div className="mb-2 flex flex-wrap gap-1">
-                <Badge>CAD API v{detailQuery.data.cadApiVersion}</Badge>
-                <Badge>bundle v{detailQuery.data.bundleFormatVersion}</Badge>
-                <Badge>source v{detailQuery.data.sourceFormatVersion}</Badge>
-              </div>
               <CardTitle>{detailQuery.data.title}</CardTitle>
               <CardDescription>{detailQuery.data.description}</CardDescription>
               <p className="font-mono text-xs text-muted-foreground">{detailQuery.data.coordinate}</p>
@@ -264,18 +259,6 @@ function ExampleExperimentCatalog({
                     </Button>
                   ))}
                 </div>
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold">Verification</h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Tasks: {detailQuery.data.verification.kernelTasks.join(', ')} · RecordedData:{' '}
-                  {detailQuery.data.verification.recordedData.join(', ')}
-                </p>
-                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-                  {detailQuery.data.verification.expectations.map((expectation) => (
-                    <li key={expectation}>{expectation}</li>
-                  ))}
-                </ul>
               </div>
               <div>
                 <h3 className="mb-2 text-sm font-semibold">Source bundle</h3>
@@ -349,7 +332,6 @@ function SolverDetail({
         </div>
         <CardTitle className="font-mono text-lg">{detail.name}</CardTitle>
         <CardDescription>{detail.description}</CardDescription>
-        <p className="font-mono text-[10px] break-all text-muted-foreground">Contract {detail.contractDigest}</p>
       </CardHeader>
       <CardContent>
         <div className="mb-5">

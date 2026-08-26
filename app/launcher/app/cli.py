@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 
 import typer
 
@@ -24,26 +23,6 @@ def run() -> None:
         asyncio.run(run_slave_launcher(load_settings()))
     except KeyboardInterrupt:
         typer.echo("Stopped.")
-
-
-@app.command("config-check")
-def config_check() -> None:
-    settings = load_settings()
-    typer.echo(
-        json.dumps(
-            {
-                "api_url": settings.api_url,
-                "control_websocket_url": settings.control_websocket_url,
-                "launcher_name": settings.launcher_name,
-                "heartbeat_interval_seconds": settings.heartbeat_interval_seconds,
-                "worker_ready_timeout_seconds": settings.worker_ready_timeout_seconds,
-                "rtc_ice_servers_json": settings.rtc_ice_servers_json,
-                "access_token": "set" if settings.access_token else "missing",
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
 
 
 @app.command()

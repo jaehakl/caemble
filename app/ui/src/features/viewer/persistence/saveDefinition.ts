@@ -6,7 +6,6 @@ function canonicalBundle(bundle: ExperimentSourceBundle) {
   const compareText = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0)
   const value = {
     files: Object.fromEntries(Object.entries(bundle.files).sort(([left], [right]) => compareText(left, right))),
-    formatVersion: bundle.formatVersion,
   }
   const stable = (item: unknown): unknown =>
     Array.isArray(item)

@@ -23,10 +23,6 @@ import type {
   AnalysisWhatIfResult,
 } from './analysis-types'
 
-export const ANALYSIS_MAX_ROWS = 10_000
-export const ANALYSIS_MAX_COLUMNS = 500
-export const ANALYSIS_MAX_PREDICTION_FEATURES = 50
-
 type RowIdentity = Readonly<{
   measurementId: number
   inputFingerprint: string
@@ -128,7 +124,7 @@ export function collectAnalysisQuantityKindNames(
   const names = new Set<string>()
   measurements.forEach((measurement) => collectQuantityKindFields(measurement.material_parameters, names))
   recordedData
-    .filter((row) => !row.name.startsWith('@caemble/'))
+    .filter((row) => !row.name.startsWith('rayPaths.'))
     .forEach((row) => {
       if (row.quantity_kind) names.add(row.quantity_kind)
       collectQuantityKindFields(row.data_schema, names)
@@ -236,7 +232,7 @@ function extractMaterials(
   source: 'measurement-material',
   observations: NumericObservation[],
 ) {
-  if (!isRecord(value) || value.schemaVersion !== 1 || !isRecord(value.materials)) return
+  if (!isRecord(value) || !isRecord(value.materials)) return
   Object.entries(value.materials).forEach(([materialName, rawParameters]) => {
     if (!isRecord(rawParameters)) return
     Object.entries(rawParameters).forEach(([parameterName, rawParameter]) => {
@@ -613,16 +609,12 @@ export function buildAnalysisDataset({
   quantityKindTensorOrders?: AnalysisQuantityKindTensorOrders
   recordedData: readonly RecordedDataRecord[]
 }): AnalysisDataset {
-  if (measurements.length > ANALYSIS_MAX_ROWS) {
-    throw new Error(`Analysis는 최대 ${ANALYSIS_MAX_ROWS.toLocaleString()}개 Measurement까지 지원합니다.`)
-  }
-
   const usableMeasurements = measurements.filter(
     (row): row is MeasurementRecord & { id: number } => Number.isSafeInteger(row.id) && (row.id ?? 0) > 0,
   )
   const recordedByMeasurement = new Map<number, RecordedDataRecord[]>()
   recordedData
-    .filter((row) => !row.name.startsWith('@caemble/'))
+    .filter((row) => !row.name.startsWith('rayPaths.'))
     .forEach((row) => {
       const rows = recordedByMeasurement.get(row.measurement_id) ?? []
       rows.push(row)
@@ -649,9 +641,6 @@ export function buildAnalysisDataset({
   const observe = (observation: NumericObservation, rowIndex: number) => {
     let state = states.get(observation.key)
     if (!state) {
-      if (states.size >= ANALYSIS_MAX_COLUMNS) {
-        throw new Error(`Analysis는 최대 ${ANALYSIS_MAX_COLUMNS}개 scalar column까지 지원합니다.`)
-      }
       state = {
         key: observation.key,
         label: observation.label,
@@ -685,7 +674,7 @@ export function buildAnalysisDataset({
     const observations: NumericObservation[] = []
     extractVars(measurement.vars, 'measurement.vars', 'measurement-vars', observations)
     const materials = measurement.material_parameters
-    if (isRecord(materials) && materials.schemaVersion === 2) {
+    if (isRecord(materials)) {
       extractMaterials(materials.experiment, 'measurement.material.experiment', 'measurement-material', observations)
       if (isRecord(materials.tasks)) {
         Object.entries(materials.tasks).forEach(([taskName, value]) => {
@@ -699,7 +688,10 @@ export function buildAnalysisDataset({
     recordedDataCount += resultRows.length
     resultRows.forEach((resultRow) => {
       const storedSchema = resultRow.data_schema
-      const quantityKind = storedSchema?.quantityKind ?? resultRow.quantity_kind ?? undefined
+      const storedQuantityKind = storedSchema?.quantityKind
+      const quantityKind = typeof storedQuantityKind === 'string'
+        ? storedQuantityKind
+        : resultRow.quantity_kind ?? undefined
       const schemaSignature = storedSchema
         ? `schema:${JSON.stringify(storedSchema)}`
         : `legacy:${resultRow.dtype}:${resultRow.quantity_kind ?? ''}:${resultRow.tensor_order}`
@@ -727,9 +719,6 @@ export function buildAnalysisDataset({
         keys.add(target.key)
         let state = states.get(target.key)
         if (!state) {
-          if (states.size >= ANALYSIS_MAX_COLUMNS) {
-            throw new Error(`Analysis는 최대 ${ANALYSIS_MAX_COLUMNS}개 scalar column까지 지원합니다.`)
-          }
           state = {
             key: target.key,
             label: target.label,
@@ -1099,9 +1088,7 @@ export function mineDataset(
   },
 ): AnalysisMiningResult {
   if (dataset.rows.length < 3) throw new Error('Mining에는 Measurement가 3개 이상 필요합니다.')
-  if (featureKeys.length < 2 || featureKeys.length > ANALYSIS_MAX_PREDICTION_FEATURES) {
-    throw new Error(`Mining feature는 2개 이상 ${ANALYSIS_MAX_PREDICTION_FEATURES}개 이하여야 합니다.`)
-  }
+  if (featureKeys.length < 2) throw new Error('Mining에는 feature가 2개 이상 필요합니다.')
   requireColumns(dataset, featureKeys, 'feature')
   const boundedOutlierFraction = Math.min(0.1, Math.max(0.01, outlierFraction))
   const matrix = standardizedMatrix(dataset, featureKeys)
@@ -1186,9 +1173,7 @@ export function predictDataset(
 ): AnalysisPredictionResult {
   dataset.lastPrediction = null
   dataset.lastPredictionModel = null
-  if (featureKeys.length === 0 || featureKeys.length > ANALYSIS_MAX_PREDICTION_FEATURES) {
-    throw new Error(`Prediction feature는 1개 이상 ${ANALYSIS_MAX_PREDICTION_FEATURES}개 이하여야 합니다.`)
-  }
+  if (featureKeys.length === 0) throw new Error('Prediction에는 feature가 필요합니다.')
   const target = requireColumns(dataset, [targetKey], 'target')[0]
   requireColumns(dataset, featureKeys, 'feature')
   const validIndexes = dataset.rows.map((_, index) => index).filter((index) => Number.isFinite(target.values[index]))

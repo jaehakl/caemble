@@ -1,25 +1,20 @@
 import { geometries } from '@jscad/modeling'
 import type { CadScene } from '../evaluation/types'
-import { CadModelError } from '../model/errors'
 import {
-  assertSerializableCadScene,
   cadSceneHash,
   type SerializableCadMesh,
   type SerializableCadScene,
-} from './meshValidation'
+} from './meshSerialization'
 
-export { assertSerializableCadScene, cadSceneHash, cadSnapshotTransferables } from './meshValidation'
-export type { SerializableCadMesh, SerializableCadScene, SerializableCadScenePart } from './meshValidation'
+export { cadSceneHash, cadSnapshotTransferables } from './meshSerialization'
+export type { SerializableCadMesh, SerializableCadScene, SerializableCadScenePart } from './meshSerialization'
 
 const runtimeMeshCache = new WeakMap<SerializableCadMesh, unknown>()
 const runtimeSceneCache = new Map<string, CadScene>()
 
 export function serializeCadScene(scene: CadScene): SerializableCadScene {
   const parts = scene.parts.map((part) => {
-    if (!geometries.geom3.isA(part.geometry)) {
-      throw new CadModelError(`CAD scene part ${part.id} must contain a valid geom3 solid.`)
-    }
-    const polygons = geometries.geom3.toPolygons(part.geometry)
+    const polygons = geometries.geom3.toPolygons(part.geometry as Parameters<typeof geometries.geom3.toPolygons>[0])
     const vertexCount = polygons.reduce((count, polygon) => count + polygon.vertices.length, 0)
     const positions = new Float64Array(vertexCount * 3)
     const polygonOffsets = new Uint32Array(polygons.length + 1)
@@ -53,7 +48,6 @@ export function serializeCadScene(scene: CadScene): SerializableCadScene {
 }
 
 export function deserializeCadScene(scene: SerializableCadScene): CadScene {
-  assertSerializableCadScene(scene)
   const cached = runtimeSceneCache.get(scene.sceneHash)
   if (cached) return cached
   const parts = scene.parts.map((part) => {

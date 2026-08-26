@@ -110,7 +110,7 @@ for received_file in result.files:
     Path(received_file.name or received_file.id).write_bytes(received_file.data)
 ```
 
-Each request attachment is limited to 20 MiB. Files are transferred directly over the job DataChannel and are not uploaded through the REST API.
+Files are transferred directly over the job DataChannel and are not uploaded through the REST API.
 
 ## Prewarm and cookie authentication
 
@@ -130,32 +130,3 @@ async with GpStationClient(
         {"system_prompt": "Answer concisely.", "prompt": "hello"},
     )
 ```
-
-## Verify
-
-```powershell
-poetry run pytest
-poetry build
-```
-
-## Opt-in live contract smoke
-
-`tests/test_live_e2e.py` exercises the published 0.1.0 bearer API without a
-GPStation checkout or private client hooks. It constructs `GpStationClient`
-with only the Caemble API base URL and a client-scoped token, verifies that one
-connected launcher advertises both `ai` and `cae`, then runs
-`cae.solvers.manifests`, `ai.llm.models`, and a streaming `ai.chat` session
-that is explicitly finished.
-
-The normal test suite reports this test as skipped when either required
-credential is absent. To run it against a live Caemble deployment:
-
-```powershell
-$env:CAEMBLE_V1_E2E_API_BASE_URL = "https://www.caemble.com/api"
-$env:CAEMBLE_V1_E2E_CLIENT_TOKEN = "<client-scoped-token>"
-$env:CAEMBLE_V1_E2E_TIMEOUT_SECONDS = "300" # optional
-poetry run pytest -rs tests/test_live_e2e.py
-```
-
-The timeout must be a positive number and applies to each WebRTC job call and
-explicit session finish.

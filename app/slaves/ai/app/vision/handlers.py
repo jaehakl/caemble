@@ -6,7 +6,6 @@ from typing import Any
 from sdk.slave import DataChannelMessage, SlaveApp, SlaveContext
 
 from app.logging import log, log_exception
-from app.message import reject_request_attachments
 from app.vision.models import ClipTextRequest, VisionImageRequest
 from app.vision.service import analyze_clip_text, analyze_image
 
@@ -50,7 +49,6 @@ async def ai_clip_text(
 ) -> DataChannelMessage:
     started_at = time.perf_counter()
     try:
-        reject_request_attachments(message)
         request = ClipTextRequest.model_validate(message.payload)
         log(f"ai.clip.text start session={context.session_id} text_chars={len(request.text)}")
         response = await analyze_clip_text(request)

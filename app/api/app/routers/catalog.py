@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import base64
-import binascii
-from typing import Annotated, Any
+from typing import Any
 
 from caemble_catalog import Catalog, CatalogAmbiguousError, CatalogNotFoundError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -37,14 +36,8 @@ def get_catalog(request: Request) -> Catalog:
 def _offset(cursor: str | None) -> int:
     if cursor is None:
         return 0
-    try:
-        value = base64.urlsafe_b64decode(cursor.encode("ascii") + b"===").decode("ascii")
-        offset = int(value)
-    except (UnicodeError, ValueError, binascii.Error) as error:
-        raise HTTPException(status_code=422, detail={"code": "invalid_cursor", "message": "Invalid cursor."}) from error
-    if offset < 0:
-        raise HTTPException(status_code=422, detail={"code": "invalid_cursor", "message": "Invalid cursor."})
-    return offset
+    value = base64.urlsafe_b64decode(cursor.encode("ascii") + b"===").decode("ascii")
+    return int(value)
 
 
 def _cursor(offset: int, count: int, total: int) -> str | None:
@@ -77,15 +70,15 @@ def meta(response: Response, catalog: Catalog = Depends(get_catalog)):
 @router.get("/quantity-kinds", response_model=CatalogPage[QuantityKind])
 def quantity_kinds(
     response: Response,
-    q: str | None = Query(default=None, max_length=200),
-    domain: str | None = Query(default=None, max_length=100),
-    solver_name: str | None = Query(default=None, alias="solverName", max_length=200),
-    solver_version: str | None = Query(default=None, alias="solverVersion", max_length=100),
-    usage: str | None = Query(default=None, pattern="^(parameter|material|input|output|axis)$"),
-    unit: str | None = Query(default=None, max_length=200),
-    tensor_order: int | None = Query(default=None, alias="tensorOrder", ge=0, le=16),
-    limit: int = Query(default=50, ge=1, le=200),
-    cursor: str | None = Query(default=None, max_length=100),
+    q: str | None = Query(default=None),
+    domain: str | None = Query(default=None),
+    solver_name: str | None = Query(default=None, alias="solverName"),
+    solver_version: str | None = Query(default=None, alias="solverVersion"),
+    usage: str | None = Query(default=None),
+    unit: str | None = Query(default=None),
+    tensor_order: int | None = Query(default=None, alias="tensorOrder"),
+    limit: int = Query(default=50),
+    cursor: str | None = Query(default=None),
     catalog: Catalog = Depends(get_catalog),
 ):
     offset = _offset(cursor)
@@ -117,13 +110,13 @@ def quantity_kind(name: str, response: Response, catalog: Catalog = Depends(get_
 @router.get("/material-parameters", response_model=CatalogPage[MaterialParameter])
 def material_parameters(
     response: Response,
-    q: str | None = Query(default=None, max_length=200),
-    domain: str | None = Query(default=None, max_length=100),
-    quantity_kind: str | None = Query(default=None, alias="quantityKind", max_length=200),
-    solver_name: str | None = Query(default=None, alias="solverName", max_length=200),
-    solver_version: str | None = Query(default=None, alias="solverVersion", max_length=100),
-    limit: int = Query(default=50, ge=1, le=200),
-    cursor: str | None = Query(default=None, max_length=100),
+    q: str | None = Query(default=None),
+    domain: str | None = Query(default=None),
+    quantity_kind: str | None = Query(default=None, alias="quantityKind"),
+    solver_name: str | None = Query(default=None, alias="solverName"),
+    solver_version: str | None = Query(default=None, alias="solverVersion"),
+    limit: int = Query(default=50),
+    cursor: str | None = Query(default=None),
     catalog: Catalog = Depends(get_catalog),
 ):
     offset = _offset(cursor)
@@ -153,9 +146,9 @@ def material_parameter(key: str, response: Response, catalog: Catalog = Depends(
 @router.get("/material-models", response_model=CatalogPage[MaterialModel])
 def material_models(
     response: Response,
-    q: str | None = Query(default=None, max_length=200),
-    limit: int = Query(default=50, ge=1, le=200),
-    cursor: str | None = Query(default=None, max_length=100),
+    q: str | None = Query(default=None),
+    limit: int = Query(default=50),
+    cursor: str | None = Query(default=None),
     catalog: Catalog = Depends(get_catalog),
 ):
     offset = _offset(cursor)
@@ -177,9 +170,9 @@ def material_model(key: str, response: Response, catalog: Catalog = Depends(get_
 @router.get("/solvers", response_model=CatalogPage[SolverSummary])
 def solvers(
     response: Response,
-    q: str | None = Query(default=None, max_length=200),
-    limit: int = Query(default=50, ge=1, le=200),
-    cursor: str | None = Query(default=None, max_length=100),
+    q: str | None = Query(default=None),
+    limit: int = Query(default=50),
+    cursor: str | None = Query(default=None),
     catalog: Catalog = Depends(get_catalog),
 ):
     offset = _offset(cursor)
@@ -201,13 +194,13 @@ def solver(name: str, version: str, response: Response, catalog: Catalog = Depen
 @router.get("/experiments", response_model=CatalogPage[ExperimentSummary])
 def experiments(
     response: Response,
-    q: str | None = Query(default=None, max_length=200),
-    solver_name: str | None = Query(default=None, alias="solverName", max_length=200),
-    solver_version: str | None = Query(default=None, alias="solverVersion", max_length=100),
-    namespace: str | None = Query(default=None, max_length=32),
-    repository: str | None = Query(default=None, max_length=64),
-    limit: int = Query(default=50, ge=1, le=200),
-    cursor: str | None = Query(default=None, max_length=100),
+    q: str | None = Query(default=None),
+    solver_name: str | None = Query(default=None, alias="solverName"),
+    solver_version: str | None = Query(default=None, alias="solverVersion"),
+    namespace: str | None = Query(default=None),
+    repository: str | None = Query(default=None),
+    limit: int = Query(default=50),
+    cursor: str | None = Query(default=None),
     catalog: Catalog = Depends(get_catalog),
 ):
     offset = _offset(cursor)
@@ -228,13 +221,9 @@ def experiments(
 def experiment(
     key: str,
     response: Response,
-    namespace: str | None = Query(default=None, max_length=32),
-    repository: str | None = Query(default=None, max_length=64),
-    version: str | None = Query(
-        default=None,
-        pattern=r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$",
-        max_length=32,
-    ),
+    namespace: str | None = Query(default=None),
+    repository: str | None = Query(default=None),
+    version: str | None = Query(default=None),
     catalog: Catalog = Depends(get_catalog),
 ):
     try:
@@ -250,8 +239,8 @@ def experiment(
 @router.get("/search", response_model=CatalogSearchResponse)
 def search(
     response: Response,
-    q: Annotated[str, Query(min_length=1, max_length=200)],
-    limit: int = Query(default=30, ge=1, le=100),
+    q: str = Query(),
+    limit: int = Query(default=30),
     catalog: Catalog = Depends(get_catalog),
 ):
     _cache(response, catalog)

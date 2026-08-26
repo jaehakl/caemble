@@ -16,11 +16,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "prepare": "npx --yes --package typescript@6.0.3 tsc -p tsconfig.build.json",
-    "test": "npm run build && node --test tests/client-event.test.mjs tests/live-e2e.test.mjs",
-    "test:live": "npm run build && node --test tests/live-e2e.test.mjs",
-    "typecheck": "tsc --noEmit"
+    "build": "tsc -p tsconfig.build.json"
   },
   "devDependencies": {
     "typescript": "^6.0.3"

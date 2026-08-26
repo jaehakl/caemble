@@ -1,15 +1,5 @@
-export {
-  assertValidKernelDescriptor,
-  assertValidKernelTaskConfig,
-  normalizeKernelTaskConfig,
-  resolveKernelInputPort,
-  resolveKernelOutputSpecs,
-  validateKernelDescriptor,
-  validateKernelTaskConfig,
-} from './validation'
 export type {
   KernelArtifactType,
-  KernelContractIssue,
   KernelDataAxis,
   KernelDataSpec,
   KernelDescriptor,

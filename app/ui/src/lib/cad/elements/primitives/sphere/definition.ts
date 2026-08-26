@@ -22,7 +22,7 @@ export const sphereManifest = {
       required: false,
       default: '0.5',
       authoringValue: '0.5',
-      description: '유한한 양수 구 반지름입니다.',
+      description: '구 반지름입니다.',
     },
     {
       name: 'segments',
@@ -30,7 +30,7 @@ export const sphereManifest = {
       required: false,
       default: '32',
       authoringValue: '32',
-      description: '표면 분할 해상도이며 4 이상의 안전한 정수여야 합니다.',
+      description: '표면 분할 해상도입니다.',
     },
   ],
   children: { count: 'none', description: '자식을 받지 않는 primitive입니다.' },

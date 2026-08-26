@@ -19,13 +19,9 @@ packages = [
 ]
 exclude = [
     ".cache/**",
-    ".mypy_cache/**",
-    ".pytest_cache/**",
-    ".ruff_cache/**",
     ".venv/**",
     "dist/**",
     "master/**",
-    "tests/**",
     "README.md",
     "poetry.lock",
     "pyproject.toml",
@@ -33,14 +29,6 @@ exclude = [
     "**/node_modules/**",
     "**/.next/**",
 ]
-
-[tool.poetry.group.dev.dependencies]
-pytest = ">=8.0,<10.0"
-pytest-asyncio = ">=1.0,<2.0"
-
-[tool.pytest.ini_options]
-pythonpath = [".."]
-testpaths = ["tests"]
 
 [build-system]
 requires = ["poetry-core"]

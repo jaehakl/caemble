@@ -6,7 +6,6 @@ from typing import Any, List, Optional
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
-    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -56,7 +55,6 @@ SessionLocal = async_sessionmaker(
 naming_convention = {
     "ix": "ix_%(column_0_label)s",
     "uq": "uq_%(table_name)s_%(column_0_name)s",
-    "ck": "ck_%(table_name)s_%(constraint_name)s",
     "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
     "pk": "pk_%(table_name)s",
 }
@@ -231,26 +229,6 @@ class Experiment(TimestampMixin, Base):
             "version_minor",
             "version_patch",
         ),
-        CheckConstraint(
-            "namespace <> 'caemble' AND "
-            "namespace ~ '^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$'",
-            name="namespace_format",
-        ),
-        CheckConstraint(
-            "repository_slug ~ '^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$'",
-            name="repository_slug_format",
-        ),
-        CheckConstraint(
-            "experiment_key ~ '^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$'",
-            name="experiment_key_format",
-        ),
-        CheckConstraint("version_major >= 0", name="version_major_nonnegative"),
-        CheckConstraint("version_minor >= 0", name="version_minor_nonnegative"),
-        CheckConstraint("version_patch >= 0", name="version_patch_nonnegative"),
-        CheckConstraint(
-            "source_hash ~ '^[0-9a-f]{64}$'",
-            name="source_hash_sha256",
-        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -295,21 +273,6 @@ class Experiment(TimestampMixin, Base):
 class Measurement(TimestampMixin, Base):
     __tablename__ = "measurements"
     __table_args__ = (
-        CheckConstraint("jsonb_typeof(vars) = 'object'", name="vars_object"),
-        CheckConstraint(
-            "jsonb_typeof(material_parameters) = 'object'",
-            name="material_parameters_object",
-        ),
-        CheckConstraint(
-            "material_parameters ?& ARRAY['schemaVersion', 'experiment', 'tasks'] "
-            "AND material_parameters - 'schemaVersion' - 'experiment' - 'tasks' = '{}'::jsonb "
-            "AND material_parameters->>'schemaVersion' = '2' "
-            "AND jsonb_typeof(material_parameters->'experiment') = 'object' "
-            "AND material_parameters->'experiment'->>'schemaVersion' = '1' "
-            "AND jsonb_typeof(material_parameters->'experiment'->'materials') = 'object' "
-            "AND jsonb_typeof(material_parameters->'tasks') = 'object'",
-            name="material_parameters_v2",
-        ),
         Index(
             "ix_measurements_user_id_updated_at",
             "user_id",
@@ -351,8 +314,6 @@ class Measurement(TimestampMixin, Base):
 class RecordedData(TimestampMixin, Base):
     __tablename__ = "recorded_data"
     __table_args__ = (
-        CheckConstraint("tensor_order >= 0", name="tensor_order_nonnegative"),
-        CheckConstraint("file_size IS NULL OR file_size >= 0", name="file_size_nonnegative"),
         UniqueConstraint("measurement_id", "name", name="uq_recorded_data_measurement_id_name"),
     )
 
@@ -383,9 +344,6 @@ class RecordedData(TimestampMixin, Base):
 
 class DesignerModel(TimestampMixin, Base):
     __tablename__ = "designer_models"
-    __table_args__ = (
-        CheckConstraint("file_size IS NULL OR file_size >= 0", name="file_size_nonnegative"),
-    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[Optional[str]] = mapped_column(
@@ -408,9 +366,6 @@ class DesignerModel(TimestampMixin, Base):
 
 class PredictorModel(TimestampMixin, Base):
     __tablename__ = "predictor_models"
-    __table_args__ = (
-        CheckConstraint("file_size IS NULL OR file_size >= 0", name="file_size_nonnegative"),
-    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[Optional[str]] = mapped_column(

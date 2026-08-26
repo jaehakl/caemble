@@ -31,8 +31,6 @@ from sdk.slave.rtc import (
 )
 
 JOB_RESULT_ACK_TIMEOUT_SECONDS = 30.0
-JOB_DATA_CHANNEL_MESSAGE_MAX_BYTES = 1024 * 1024
-JOB_DATA_CHANNEL_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024
 
 
 @dataclass
@@ -225,23 +223,12 @@ def attach_worker_job_peer_handlers(pc: Any, job_id: str, handler_type: str, job
         def on_message(raw_message: Any) -> None:
             try:
                 if isinstance(raw_message, (bytes, bytearray, memoryview)):
-                    size = len(raw_message)
                     if not state.ready_event.is_set():
-                        detail = (
-                            f"binary job DataChannel message exceeds {JOB_DATA_CHANNEL_MESSAGE_MAX_BYTES} bytes"
-                            if size > JOB_DATA_CHANNEL_MESSAGE_MAX_BYTES
-                            else "expected job.ready before binary attachment data"
-                        )
-                        state.ready_error["detail"] = detail
+                        state.ready_error["detail"] = "expected job.ready before binary attachment data"
                         state.ready_event.set()
-                        log(f"job datachannel message rejected: {detail}; size={size}")
                         return
                     call_id = str((state.incoming_call or {}).get("id") or job_id)
                     try:
-                        if size > JOB_DATA_CHANNEL_MESSAGE_MAX_BYTES:
-                            raise ValueError(
-                                f"binary job DataChannel message exceeds {JOB_DATA_CHANNEL_MESSAGE_MAX_BYTES} bytes"
-                            )
                         receive_request_attachment_chunk(state, bytes(raw_message))
                     except Exception as exc:
                         state.incoming_call = None
@@ -249,8 +236,6 @@ def attach_worker_job_peer_handlers(pc: Any, job_id: str, handler_type: str, job
                         log(f"job request attachment rejected: id={call_id} error={exc}")
                     return
                 if isinstance(raw_message, str):
-                    if len(raw_message.encode("utf-8")) > JOB_DATA_CHANNEL_MESSAGE_MAX_BYTES:
-                        raise ValueError(f"job DataChannel message exceeds {JOB_DATA_CHANNEL_MESSAGE_MAX_BYTES} bytes")
                     payload = json.loads(raw_message)
                     kind = payload.get("kind")
                     if kind == "job.ready":
@@ -269,14 +254,10 @@ def attach_worker_job_peer_handlers(pc: Any, job_id: str, handler_type: str, job
                         state.ready_event.set()
                         return
                     if kind == "job.call":
-                        call_id = str(payload.get("id") or "")
-                        call_type = payload.get("type")
+                        call_id = str(payload["id"])
                         if not state.ready_event.is_set():
                             state.ready_error["detail"] = f"expected job.ready before {kind}"
                             state.ready_event.set()
-                            return
-                        if not call_id or not isinstance(call_type, str) or not call_type:
-                            send_job_error(channel, call_id or job_id, "invalid_call", "job.call requires id and type")
                             return
                         if state.call_in_progress or state.incoming_call is not None or not state.call_queue.empty():
                             send_job_error(channel, call_id, "worker_busy", "worker is already processing a job call")
@@ -340,34 +321,16 @@ def receive_job_call(state: WorkerJobPeerState, payload: dict[str, Any]) -> None
         "payload": payload.get("payload"),
     }
     raw_attachments = payload.get("attachments") or []
-    if not isinstance(raw_attachments, list):
-        raise ValueError("job.call attachments must be a list")
     if not raw_attachments:
         state.call_queue.put_nowait(call)
         return
 
     files: dict[str, dict[str, Any]] = {}
     for raw_attachment in raw_attachments:
-        if not isinstance(raw_attachment, dict):
-            raise ValueError("request attachment metadata must be an object")
-        attachment_id = raw_attachment.get("id")
-        if not isinstance(attachment_id, str) or not attachment_id:
-            raise ValueError("request attachment id is required")
-        if attachment_id in files:
-            raise ValueError(f"duplicate request attachment id: {attachment_id}")
-        size = raw_attachment.get("size")
-        if isinstance(size, bool) or not isinstance(size, int) or size < 0:
-            raise ValueError(f"request attachment size is invalid: {attachment_id}")
-        if size > JOB_DATA_CHANNEL_ATTACHMENT_MAX_BYTES:
-            raise ValueError(
-                f"request attachment exceeds {JOB_DATA_CHANNEL_ATTACHMENT_MAX_BYTES} bytes: {attachment_id}"
-            )
+        attachment_id = str(raw_attachment["id"])
+        size = int(raw_attachment.get("size") or 0)
         name = raw_attachment.get("name")
         mime_type = raw_attachment.get("mimeType")
-        if name is not None and not isinstance(name, str):
-            raise ValueError(f"request attachment name is invalid: {attachment_id}")
-        if mime_type is not None and not isinstance(mime_type, str):
-            raise ValueError(f"request attachment mimeType is invalid: {attachment_id}")
         files[attachment_id] = {
             "metadata": {
                 "id": attachment_id,
@@ -390,32 +353,14 @@ def receive_request_attachment_chunk(state: WorkerJobPeerState, frame: bytes) ->
     if call is None:
         raise ValueError("no request attachments are pending")
     header, body = decode_binary_frame(frame)
-    if header.get("kind") != "attachment.chunk":
-        raise ValueError("unsupported binary message type")
     if str(header.get("callId") or "") != call["id"]:
         raise ValueError(f"unexpected attachment chunk call id: {header.get('callId')}")
-    attachment_id = str(header.get("attachmentId") or "")
-    file = call["files"].get(attachment_id)
-    if file is None:
-        raise ValueError(f"unknown request attachment chunk: {attachment_id}")
-    if file["complete"]:
-        raise ValueError(f"request attachment already complete: {attachment_id}")
-    index = header.get("index")
-    if isinstance(index, bool) or not isinstance(index, int) or index != file["next_index"]:
-        raise ValueError(f"out-of-order request attachment chunk: {attachment_id}")
-    if not isinstance(header.get("final"), bool):
-        raise ValueError(f"request attachment final flag is invalid: {attachment_id}")
-
-    next_size = file["received_size"] + len(body)
-    declared_size = file["metadata"]["size"]
-    if next_size > declared_size or next_size > JOB_DATA_CHANNEL_ATTACHMENT_MAX_BYTES:
-        raise ValueError(f"request attachment exceeds declared size: {attachment_id}")
+    attachment_id = str(header["attachmentId"])
+    file = call["files"][attachment_id]
     file["chunks"].append(body)
-    file["received_size"] = next_size
+    file["received_size"] += len(body)
     file["next_index"] += 1
-    file["complete"] = header["final"]
-    if file["complete"] and next_size != declared_size:
-        raise ValueError(f"request attachment size mismatch: {attachment_id}")
+    file["complete"] = bool(header.get("final"))
     if not all(item["complete"] for item in call["files"].values()):
         return
 
@@ -725,8 +670,6 @@ def send_job_error(channel: Any, call_id: str, code: str, detail: str) -> None:
 
 
 def parse_job_ready_message(raw_message: str, job_id: str) -> tuple[bool, Any, str | None]:
-    if len(raw_message.encode("utf-8")) > JOB_DATA_CHANNEL_MESSAGE_MAX_BYTES:
-        return True, None, f"job.ready frame exceeds {JOB_DATA_CHANNEL_MESSAGE_MAX_BYTES} bytes"
     try:
         payload = json.loads(raw_message)
     except Exception as exc:

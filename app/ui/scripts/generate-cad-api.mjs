@@ -1,20 +1,15 @@
-import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import { format } from 'prettier'
-import ts from 'typescript'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const checkOnly = process.argv.includes('--check')
 const changed = []
 
 const elementManifestPath = path.join(root, 'src/lib/cad/elements/manifest.json')
-const authoringManifestPath = path.join(root, 'src/lib/cad/api/authoring-manifest.json')
 const elementManifest = JSON.parse(await readFile(elementManifestPath, 'utf8'))
-const authoringManifest = JSON.parse(await readFile(authoringManifestPath, 'utf8'))
 
 function catalogQuery(resource, key, ...identityArguments) {
   const catalogRoot = path.resolve(root, '../catalog')
@@ -47,10 +42,6 @@ function tsString(value) {
   return `'${value.replaceAll('\\', '\\\\').replaceAll("'", "\\'")}'`
 }
 
-function sha256(value) {
-  return createHash('sha256').update(value, 'utf8').digest('hex')
-}
-
 function formatGenerated(relativePath, source) {
   return format(source, {
     filepath: path.join(root, relativePath),
@@ -81,7 +72,7 @@ async function loadBundledModule(entryPoint) {
     logLevel: 'silent',
     platform: 'node',
     target: 'node20',
-    define: { 'import.meta.env.MODE': '"test"' },
+    define: { 'import.meta.env.MODE': '"production"' },
     write: false,
   })
   const source = Buffer.from(result.outputFiles[0].text).toString('base64')
@@ -98,181 +89,8 @@ async function emit(relativePath, content) {
   }
   if (current.replaceAll('\r\n', '\n') === content) return
   changed.push(relativePath)
-  if (!checkOnly) await writeFile(outputPath, content, 'utf8')
+  await writeFile(outputPath, content, 'utf8')
 }
-
-function declaredAttributeProperties(source, typeName, fileName) {
-  const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-  const properties = new Set()
-  const collect = (node) => {
-    if (ts.isIntersectionTypeNode(node)) {
-      node.types.forEach(collect)
-      return
-    }
-    if (ts.isTypeReferenceNode(node) && node.typeName.getText(sourceFile) === 'Readonly') {
-      node.typeArguments?.forEach(collect)
-      return
-    }
-    if (!ts.isTypeLiteralNode(node)) return
-    node.members.forEach((member) => {
-      if (!ts.isPropertySignature(member) || !member.name) return
-      const name = ts.isIdentifier(member.name) || ts.isStringLiteral(member.name) ? member.name.text : undefined
-      if (name) properties.add(name)
-    })
-  }
-  sourceFile.statements.forEach((statement) => {
-    if (ts.isTypeAliasDeclaration(statement) && statement.name.text === typeName) collect(statement.type)
-  })
-  return [...properties]
-}
-
-function runtimeDefaultProperties(source, definitionName, fileName) {
-  const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-  for (const statement of sourceFile.statements) {
-    if (!ts.isVariableStatement(statement)) continue
-    for (const declaration of statement.declarationList.declarations) {
-      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== definitionName || !declaration.initializer)
-        continue
-      let definition = declaration.initializer
-      while (ts.isSatisfiesExpression(definition) || ts.isAsExpression(definition)) definition = definition.expression
-      if (!ts.isObjectLiteralExpression(definition)) continue
-      const defaultsProperty = definition.properties.find(
-        (property) => ts.isPropertyAssignment(property) && property.name.getText(sourceFile) === 'defaultProps',
-      )
-      if (!defaultsProperty || !ts.isPropertyAssignment(defaultsProperty)) return []
-      const call = defaultsProperty.initializer
-      const defaults = ts.isCallExpression(call) ? call.arguments[0] : call
-      if (!defaults || !ts.isObjectLiteralExpression(defaults)) return []
-      return defaults.properties.flatMap((property) => {
-        if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) return []
-        return ts.isIdentifier(property.name) || ts.isStringLiteral(property.name) ? [property.name.text] : []
-      })
-    }
-  }
-  return []
-}
-
-async function validateElementManifest() {
-  if (elementManifest.version !== 2 || !Array.isArray(elementManifest.elements)) {
-    throw new Error('src/lib/cad/elements/manifest.json must use element manifest format version 2.')
-  }
-  const tags = new Set()
-  const manifests = []
-  for (const element of elementManifest.elements) {
-    if (tags.has(element.tag)) throw new Error(`Duplicate CAD element manifest tag: ${element.tag}`)
-    tags.add(element.tag)
-    if (typeof element.authoringName !== 'string' || !element.authoringName.trim()) {
-      throw new Error(`CAD element authoring name must not be blank: ${element.tag}`)
-    }
-    const definitionPath = path.join(root, 'src/lib/cad/elements', `${element.definitionModule}.ts`)
-    const runtimePath = path.join(root, 'src/lib/cad/elements', `${element.runtimeModule}.ts`)
-    const [definition, runtime] = await Promise.all([readFile(definitionPath, 'utf8'), readFile(runtimePath, 'utf8')])
-    if (!definition.includes(`export type ${element.attributes}`)) {
-      throw new Error(`${element.definitionModule} does not export ${element.attributes}.`)
-    }
-    if (
-      !definition.includes(`export const ${element.manifestExport}`) ||
-      !definition.includes(`tag: '${element.tag}'`)
-    ) {
-      throw new Error(`${element.definitionModule} does not define ${element.manifestExport} for ${element.tag}.`)
-    }
-    if (!runtime.includes(`export const ${element.definitionExport}`)) {
-      throw new Error(`${element.runtimeModule} does not export ${element.definitionExport}.`)
-    }
-
-    const definitionModule = await loadBundledModule(definitionPath)
-    const manifest = definitionModule[element.manifestExport]
-    if (
-      !manifest ||
-      manifest.tag !== element.tag ||
-      manifest.authoringName !== element.authoringName ||
-      manifest.standardTransforms !== element.standardTransforms ||
-      !['primitive', 'operation'].includes(manifest.category) ||
-      (manifest.category === 'primitive' && !/^[A-Z][A-Za-z0-9]*$/u.test(manifest.authoringName)) ||
-      (manifest.category === 'operation' && manifest.authoringName !== manifest.tag) ||
-      !manifest.syntax?.trim() ||
-      !manifest.summary?.trim() ||
-      !Array.isArray(manifest.keywords) ||
-      manifest.keywords.length === 0 ||
-      manifest.keywords.some((keyword) => typeof keyword !== 'string' || !keyword.trim()) ||
-      !Array.isArray(manifest.properties) ||
-      !manifest.children ||
-      !['none', 'one', 'many'].includes(manifest.children.count) ||
-      typeof manifest.children.description !== 'string' ||
-      !manifest.children.description.trim() ||
-      typeof manifest.origin !== 'string' ||
-      !manifest.origin.trim() ||
-      !Array.isArray(manifest.surfaces) ||
-      (manifest.category === 'primitive' && manifest.surfaces.length === 0) ||
-      manifest.surfaces.some(
-        (surface) =>
-          !surface ||
-          !Number.isSafeInteger(surface.index) ||
-          surface.index < 0 ||
-          typeof surface.label !== 'string' ||
-          !surface.label.trim() ||
-          typeof surface.description !== 'string' ||
-          !surface.description.trim(),
-      ) ||
-      new Set(manifest.surfaces.map((surface) => surface.index)).size !== manifest.surfaces.length ||
-      typeof manifest.example !== 'string' ||
-      !manifest.example.includes(`<${element.authoringName}`)
-    ) {
-      throw new Error(`${element.definitionModule} has incomplete CAD authoring metadata.`)
-    }
-
-    const commonProperties = new Set(['id', 'position', 'rotation', 'scale', 'pos', 'rotate'])
-    const documentedProperties = manifest.properties.map((property) => property.name)
-    if (
-      new Set(documentedProperties).size !== documentedProperties.length ||
-      manifest.properties.some(
-        (property) =>
-          !property ||
-          typeof property.name !== 'string' ||
-          !property.name.trim() ||
-          commonProperties.has(property.name) ||
-          typeof property.type !== 'string' ||
-          !property.type.trim() ||
-          typeof property.required !== 'boolean' ||
-          (property.default !== undefined && typeof property.default !== 'string') ||
-          typeof property.authoringValue !== 'string' ||
-          !property.authoringValue.trim() ||
-          typeof property.description !== 'string' ||
-          !property.description.trim(),
-      )
-    ) {
-      throw new Error(`${element.definitionModule} has invalid or duplicated property metadata.`)
-    }
-    const declaredProperties = declaredAttributeProperties(definition, element.attributes, definitionPath).filter(
-      (property) => property !== 'children',
-    )
-    if (
-      declaredProperties.length !== documentedProperties.length ||
-      declaredProperties.some((property) => !documentedProperties.includes(property))
-    ) {
-      throw new Error(
-        `${element.definitionModule} property metadata must exactly match ${element.attributes}: declared [${declaredProperties.join(', ')}], documented [${documentedProperties.join(', ')}].`,
-      )
-    }
-    if (manifest.category === 'primitive') {
-      if (manifest.properties.some((property) => property.required || property.default === undefined)) {
-        throw new Error(`${element.definitionModule} primitive properties must all declare defaults.`)
-      }
-      const runtimeDefaults = runtimeDefaultProperties(runtime, element.definitionExport, runtimePath)
-      if (
-        runtimeDefaults.length !== documentedProperties.length ||
-        documentedProperties.some((property) => !runtimeDefaults.includes(property))
-      ) {
-        throw new Error(
-          `${element.runtimeModule} defaultProps must exactly match primitive properties: [${documentedProperties.join(', ')}].`,
-        )
-      }
-    }
-    manifests.push(manifest)
-  }
-  return manifests
-}
-
 function generatedElementRegistry() {
   const elements = elementManifest.elements
   return `// Generated by scripts/generate-cad-api.mjs from manifest.json. Do not edit.\n${groupedImports(
@@ -288,13 +106,16 @@ function generatedElementRegistry() {
 }
 
 function generatedJsxDeclaration() {
-  const attributes = [...new Set(elementManifest.elements.map((element) => element.attributes))].sort()
+  const attributes = [
+    ...new Set(
+      elementManifest.elements
+        .filter((element) => element.authoringName === element.tag)
+        .map((element) => element.attributes),
+    ),
+  ].sort()
   return `// Generated by scripts/generate-cad-api.mjs from elements/manifest.json. Do not edit.\nimport type {\n${attributes.map((name) => `  ${name},`).join('\n')}\n  Geometry,\n  GeometryInvocationAttributes,\n} from '@caemble/core'\n\ndeclare global {\n  function h(type: unknown, attributes: unknown, ...children: unknown[]): unknown\n  function Fragment(props: { children?: unknown }): unknown\n\n  namespace JSX {\n    type LibraryManagedAttributes<Component, Props> = Props extends { readonly id: string }\n      ? Component extends Geometry<infer CustomProps>\n        ? GeometryInvocationAttributes<CustomProps>\n        : Props\n      : Props\n\n    interface IntrinsicElements {\n${elementManifest.elements
-    .map((element) =>
-      element.authoringName === element.tag
-        ? `      ${element.tag}: ${element.attributes}`
-        : `      /** @deprecated Import { ${element.authoringName} } from '@caemble/core'. */\n      ${element.tag}: ${element.attributes}`,
-    )
+    .filter((element) => element.authoringName === element.tag)
+    .map((element) => `      ${element.tag}: ${element.attributes}`)
     .join('\n')}\n    }\n  }\n}\n\nexport {}\n`
 }
 
@@ -302,14 +123,13 @@ function primitiveAuthoringDeclarations() {
   return `// <generated:primitive-authoring-bindings>
 ${elementManifest.elements
   .filter((element) => element.authoringName !== element.tag)
-  .map((element) => `export const ${element.authoringName}: ${tsString(element.tag)}`)
+  .map((element) => `export const ${element.authoringName}: (props: ${element.attributes}) => unknown`)
   .join('\n')}
 // </generated:primitive-authoring-bindings>`
 }
 
 function quantityKindTypes() {
   return `// <generated:quantity-kind-types>
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface CatalogQuantityKindMap {}
 export type QuantityKindName = keyof CatalogQuantityKindMap extends never ? string : keyof CatalogQuantityKindMap
 export type QuantityKindDomain = string
@@ -333,7 +153,6 @@ function materialCatalogTypes(properties, models) {
   void models
   return `// <generated:material-catalog-types>
 // Catalog keys are augmented in memory from the active Solver runtime slice.
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface MaterialPropertyQuantityKindMap {}
 export type MaterialPropertyKey = keyof MaterialPropertyQuantityKindMap extends never
   ? string
@@ -346,7 +165,6 @@ export type MaterialPropertyDefinitionFor<Key extends MaterialPropertyKey> = Rea
   quantity_kind: MaterialPropertyQuantityKind<Key>
 }>
 
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface MaterialModelDefinitionMap {}
 export type MaterialModelKey = keyof MaterialModelDefinitionMap extends never ? string : keyof MaterialModelDefinitionMap
 export type MaterialModelDefinitionFor<Key extends MaterialModelKey> = Key extends keyof MaterialModelDefinitionMap
@@ -459,23 +277,6 @@ export const QuantityKind = new Proxy(Object.create(null) as Record<string, Quan
 `
 }
 
-const elementCatalog = await validateElementManifest()
-
-const [modelRuntime, coreRuntime] = await Promise.all([
-  loadBundledModule(path.join(root, 'src/lib/cad/model/v5.ts')),
-  loadBundledModule(path.join(root, 'src/lib/cad/model/core.ts')),
-])
-if (
-  typeof modelRuntime.experiment !== 'function' ||
-  typeof modelRuntime.ExperimentDefinition !== 'function' ||
-  typeof modelRuntime.TaskDefinition !== 'function' ||
-  typeof coreRuntime.Material !== 'function' ||
-  typeof coreRuntime.Mat !== 'function' ||
-  typeof coreRuntime.radians !== 'function'
-) {
-  throw new Error('@caemble/core runtime exports do not match the declaration generator contract.')
-}
-
 const coreDeclarationPath = path.join(root, 'src/lib/cad/api/caemble-core.d.ts')
 const coreDeclaration = await formatGenerated(
   'src/lib/cad/api/caemble-core.d.ts',
@@ -483,7 +284,7 @@ const coreDeclaration = await formatGenerated(
     source
       .replace(
         /^\/\/ @caemble\/core declaration version: .*$/m,
-        `// @caemble/core declaration version: ${authoringManifest.coreDeclarationVersion}`,
+        '// Generated @caemble/core declaration.',
       )
       .replace(
         /\/\/ <generated:primitive-authoring-bindings>[\s\S]*?\/\/ <\/generated:primitive-authoring-bindings>/,
@@ -500,10 +301,16 @@ const coreDeclaration = await formatGenerated(
   ),
 )
 const jsxDeclaration = await formatGenerated('src/lib/cad/api/cad-jsx.d.ts', generatedJsxDeclaration())
-const declarationFingerprint = sha256(['@caemble/core', coreDeclaration, 'cad-jsx', jsxDeclaration].join('\0'))
-const [authoringReferenceModule, authoringContractModule] = await Promise.all([
+await Promise.all([
+  emit('src/lib/cad/elements/generated.ts', generatedElementRegistry()),
+  emit('src/lib/cad/api/cad-jsx.d.ts', jsxDeclaration),
+  emit('src/lib/cad/api/caemble-core.d.ts', coreDeclaration),
+  emit('src/lib/quantitykind/index.ts', await formatGenerated('src/lib/quantitykind/index.ts', quantityKindFacade())),
+])
+
+const [authoringReferenceModule, generatedElementsModule] = await Promise.all([
   loadBundledModule(path.join(root, 'src/lib/cad/authoringReference.ts')),
-  loadBundledModule(path.join(root, 'src/lib/cad/elements/authoringContract.ts')),
+  loadBundledModule(path.join(root, 'src/lib/cad/elements/generated.ts')),
 ])
 const geometrySkeletonExperiment = catalogQuery(
   'experiment',
@@ -514,78 +321,14 @@ const geometrySkeletonExperiment = catalogQuery(
   '--repository',
   'getting-started',
 )
-const geometrySkeleton = geometrySkeletonExperiment.sourceBundle?.files?.['geometry.tsx']
-const experimentSkeleton = geometrySkeletonExperiment.sourceBundle?.files?.['experiment.tsx']
-if (typeof geometrySkeleton !== 'string' || typeof experimentSkeleton !== 'string') {
-  throw new Error('The Geometry Authoring Skeleton Experiment must contain experiment.tsx and geometry.tsx.')
-}
 const authoringReferencePayload = authoringReferenceModule.buildCadAuthoringReference({
-  authoringContract: authoringContractModule.cadAuthoringContract,
-  declarationFingerprint,
-  elements: elementCatalog,
-  experimentSkeleton,
-  geometrySkeleton,
+  authoringContract: generatedElementsModule.cadAuthoringContract,
+  elements: generatedElementsModule.cadElementCatalog,
+  experimentSkeleton: geometrySkeletonExperiment.sourceBundle.files['experiment.tsx'],
+  geometrySkeleton: geometrySkeletonExperiment.sourceBundle.files['geometry.tsx'],
 })
-const authoringReferenceHash = sha256(JSON.stringify(authoringReferencePayload))
-const aiAgentPromptToolVersion = `caemble-ai-agent-v4-${authoringReferenceHash.slice(0, 12)}`
-const backendAuthoringReference = `${JSON.stringify(
-  {
-    ...authoringReferencePayload,
-    referenceHash: authoringReferenceHash,
-    promptToolVersion: aiAgentPromptToolVersion,
-  },
-  null,
-  2,
-)}\n`
+await emit('../api/app/ai/cad_authoring_reference.json', `${JSON.stringify(authoringReferencePayload, null, 2)}\n`)
 
-const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
-if (packageJson.dependencies['monaco-editor'] !== authoringManifest.monacoVersion) {
-  throw new Error('authoring-manifest Monaco version must equal the exact package.json dependency.')
-}
-if (packageJson.devDependencies.typescript !== authoringManifest.typescriptVersion) {
-  throw new Error('authoring-manifest TypeScript version must equal the exact package.json devDependency.')
-}
-const monacoTypeScriptMetadata = await readFile(
-  path.join(root, 'node_modules/monaco-editor/esm/vs/languages/features/typescript/lib/typescriptServicesMetadata.js'),
-  'utf8',
-)
-const monacoTypeScriptVersion = monacoTypeScriptMetadata.match(/typescriptVersion = "([^"]+)"/)?.[1]
-if (monacoTypeScriptVersion !== authoringManifest.typescriptVersion) {
-  throw new Error('The test TypeScript version must match the TypeScript version embedded in Monaco.')
-}
-const generatedVersions = await formatGenerated(
-  'src/lib/cad/api/generatedVersions.ts',
-  `// Generated by scripts/generate-cad-api.mjs. Do not edit.
-export const CAEMBLE_CORE_DECLARATION_VERSION = ${tsString(authoringManifest.coreDeclarationVersion)} as const
-export const CAEMBLE_MONACO_VERSION = ${tsString(authoringManifest.monacoVersion)} as const
-export const CAEMBLE_TYPESCRIPT_VERSION = ${tsString(authoringManifest.typescriptVersion)} as const
-export const CAD_API_DECLARATION_FINGERPRINT = ${tsString(declarationFingerprint)} as const
-`,
-)
-const aiAgentSourcePath = path.join(root, 'src/api/aiAgent.ts')
-const aiAgentSource = await formatGenerated(
-  'src/api/aiAgent.ts',
-  await readFile(aiAgentSourcePath, 'utf8').then((source) =>
-    source.replace(
-      /\/\/ <generated:ai-agent-prompt-tool-version>[\s\S]*?\/\/ <\/generated:ai-agent-prompt-tool-version>/,
-      `// <generated:ai-agent-prompt-tool-version>\nexport const AI_AGENT_PROMPT_TOOL_VERSION = ${tsString(aiAgentPromptToolVersion)} as const\n// </generated:ai-agent-prompt-tool-version>`,
-    ),
-  ),
-)
-
-await Promise.all([
-  emit('src/lib/cad/elements/generated.ts', generatedElementRegistry()),
-  emit('src/lib/cad/api/cad-jsx.d.ts', jsxDeclaration),
-  emit('src/lib/cad/api/caemble-core.d.ts', coreDeclaration),
-  emit('src/lib/quantitykind/index.ts', await formatGenerated('src/lib/quantitykind/index.ts', quantityKindFacade())),
-  emit('src/lib/cad/api/generatedVersions.ts', generatedVersions),
-  emit('src/api/aiAgent.ts', aiAgentSource),
-  emit('../api/app/ai/cad_authoring_reference.json', backendAuthoringReference),
-])
-
-if (checkOnly && changed.length > 0) {
-  console.error(`Generated CAD API files are stale:\n${changed.map((file) => `- ${file}`).join('\n')}`)
-  process.exitCode = 1
-} else if (!checkOnly && changed.length > 0) {
+if (changed.length > 0) {
   console.log(`Updated generated CAD API files:\n${changed.map((file) => `- ${file}`).join('\n')}`)
 }

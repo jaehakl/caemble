@@ -7,7 +7,6 @@ from db import SessionLocal, engine
 from gpstation.service.job_orchestrator import job_orchestrator
 from gpstation.service.job_service import JobService
 from gpstation.service.state import runtime
-from gpstation.utils.slave_registry import initialize_slave_registry
 
 
 @asynccontextmanager
@@ -16,7 +15,6 @@ async def gpstation_lifespan(app: FastAPI):
     catalog = Catalog.open_readonly()
     app.state.catalog = catalog
     try:
-        initialize_slave_registry()
         async with SessionLocal() as db:
             await JobService.recover_after_server_restart(db)
         await job_orchestrator.start_dispatcher()

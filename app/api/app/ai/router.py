@@ -14,7 +14,6 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai.agent import AgentRunner, permission_fingerprint
-from ai.context import ContextBudgetExceeded
 from ai.credentials import get_provider_credential, router as credential_router
 from ai.data_tools import VisibleDataReader
 from ai.models import RunCancel, RunStart, parse_client_message
@@ -25,10 +24,6 @@ from ai.workspace import StagedExperiment, WorkspaceEditError
 from settings import settings
 from user_auth.routes import check_user, get_db
 
-
-MAX_WS_MESSAGE_BYTES = 16 * 1024 * 1024
-MAX_RUN_SECONDS = 600
-FIRST_MESSAGE_SECONDS = 30
 
 logger = logging.getLogger(__name__)
 
@@ -112,10 +107,7 @@ async def run_agent(
     started_at: float | None = None
     start_message: RunStart | None = None
     try:
-        first = await asyncio.wait_for(
-            _receive_message(websocket),
-            timeout=FIRST_MESSAGE_SECONDS,
-        )
+        first = await _receive_message(websocket)
         if not isinstance(first, RunStart):
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
@@ -170,9 +162,7 @@ async def run_agent(
             emitter=emitter,
             cancel_event=cancel_event,
         )
-        run_task = asyncio.create_task(
-            asyncio.wait_for(runner.run(api_key), timeout=MAX_RUN_SECONDS)
-        )
+        run_task = asyncio.create_task(runner.run(api_key))
         result = await _drive_run(websocket, run_task, cancel_event, run_id)
         await emitter.emit("run.completed", **result)
         context_usage = result["contextUsage"]
@@ -224,9 +214,7 @@ async def run_agent(
         if emitter is not None:
             try:
                 failure = {"message": _safe_error_message(error)}
-                if isinstance(error, ContextBudgetExceeded):
-                    failure["code"] = "context_too_large"
-                elif isinstance(error, ProviderError) and error.code is not None:
+                if isinstance(error, ProviderError) and error.code is not None:
                     failure.update(error.public_data())
                 await emitter.emit("run.failed", **failure)
                 await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
@@ -286,7 +274,6 @@ async def _drive_run(
     cancel_event: asyncio.Event,
     run_id: str,
 ) -> dict[str, Any]:
-    inbound_messages = 0
     while True:
         receive_task = asyncio.create_task(_receive_message(websocket))
         done, _ = await asyncio.wait(
@@ -298,14 +285,10 @@ async def _drive_run(
             await asyncio.gather(receive_task, return_exceptions=True)
             return await run_task
         message = await receive_task
-        inbound_messages += 1
-        if inbound_messages > 64:
-            raise ValueError("Agent run received too many control messages")
         if isinstance(message, RunCancel) and message.runId == run_id:
             cancel_event.set()
             run_task.cancel()
             raise asyncio.CancelledError
-        raise ValueError("Only cancellation is accepted during a run")
 
 
 async def _receive_message(websocket: WebSocket) -> Any:
@@ -315,8 +298,6 @@ async def _receive_message(websocket: WebSocket) -> Any:
     text = envelope.get("text")
     if not isinstance(text, str):
         raise ValueError("Binary WebSocket messages are not supported")
-    if len(text.encode("utf-8")) > MAX_WS_MESSAGE_BYTES:
-        raise ValueError("WebSocket message exceeds 16 MiB")
     try:
         value = json.loads(text)
     except json.JSONDecodeError as error:
@@ -350,7 +331,6 @@ def _safe_error_message(error: Exception) -> str:
     if isinstance(
         error,
         (
-            ContextBudgetExceeded,
             ProviderError,
             SessionEnvelopeError,
             WorkspaceEditError,

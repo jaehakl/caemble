@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import ast
 import inspect
+from collections.abc import Collection
 from typing import Any
 
 from app.errors import CaeError
-
-SIMULATION_API_VERSION = "3"
-MAX_SIMULATION_SOURCE_BYTES = 1024 * 1024
 
 _ALLOWED_NODES = {
     ast.Module,
@@ -82,15 +80,14 @@ _SIM_METHODS = {"run", "record", "release"}
 _RESERVED_NAMES = {*_ALLOWED_BUILTINS, "sim", "tasks", "vars"}
 
 
-def validate_and_load_simulate(source: str) -> Any:
+def validate_and_load_simulate(
+    source: str,
+    *,
+    task_names: Collection[str],
+    recorded_names: Collection[str],
+) -> Any:
     if not isinstance(source, str) or not source.strip():
         raise CaeError("invalid_program", "Python simulation source is required")
-    try:
-        source_bytes = len(source.encode("utf-8", errors="strict"))
-    except UnicodeEncodeError as exc:
-        raise CaeError("invalid_program", "Python simulation source must be valid UTF-8") from exc
-    if source_bytes > MAX_SIMULATION_SOURCE_BYTES:
-        raise CaeError("resource_limit", "Python simulation source exceeds 1 MiB")
     try:
         tree = ast.parse(source, filename="simulate.py", mode="exec")
     except SyntaxError as exc:
@@ -139,6 +136,36 @@ def validate_and_load_simulate(source: str) -> Any:
                 )
         if isinstance(node, ast.Call):
             _validate_call(node)
+            if (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "sim"
+                and node.func.attr == "record"
+            ):
+                name_node = node.args[0] if node.args else next(
+                    (keyword.value for keyword in node.keywords if keyword.arg == "name"),
+                    None,
+                )
+                if (
+                    isinstance(name_node, ast.Constant)
+                    and name_node.value not in recorded_names
+                ):
+                    raise CaeError(
+                        "invalid_program",
+                        f"simulate.py line {node.lineno}: RecordedData "
+                        f"{name_node.value!r} is not declared",
+                    )
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "tasks"
+            and isinstance(node.slice, ast.Constant)
+            and node.slice.value not in task_names
+        ):
+            raise CaeError(
+                "invalid_program",
+                f"simulate.py line {node.lineno}: task {node.slice.value!r} is not declared",
+            )
     globals_dict = {"__builtins__": _ALLOWED_BUILTINS}
     locals_dict: dict[str, Any] = {}
     try:

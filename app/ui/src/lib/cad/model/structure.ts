@@ -1,25 +1,12 @@
 import { CadModelError } from './errors'
-import type { Rotation, Vec3 } from './types'
+import type { Vec3 } from './types'
 
 export type CanonicalGeometryTransformAttributes = Readonly<{
   position?: Vec3
   rotation?: Vec3
-  pos?: never
-  rotate?: never
   scale?: Vec3
 }>
-
-export type LegacyGeometryTransformAttributes = Readonly<{
-  position?: never
-  rotation?: never
-  /** @deprecated Use position. */
-  pos?: Vec3
-  /** @deprecated Use rotation with XYZ Euler angles in radians. */
-  rotate?: Rotation
-  scale?: Vec3
-}>
-
-export type GeometryTransformAttributes = CanonicalGeometryTransformAttributes | LegacyGeometryTransformAttributes
+export type GeometryTransformAttributes = CanonicalGeometryTransformAttributes
 
 export type GeometryIdentityAttributes = Readonly<{ id?: string }>
 export type IntrinsicGeometryAttributes = GeometryIdentityAttributes & GeometryTransformAttributes
@@ -46,10 +33,6 @@ export type GeometryGroupMap = Readonly<Record<string, readonly string[]>>
 export type GeometrySurfaceRef = `${string}/surface/${number}`
 export type SurfaceGroupMap = Readonly<Record<string, readonly GeometrySurfaceRef[]>>
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 export function normalizeGeometryGroup(
   rawGroup: unknown,
   propertyName: 'geometryGroup',
@@ -66,39 +49,41 @@ export function normalizeGeometryGroup(
   objectName: string,
 ) {
   if (rawGroup === undefined) return Object.freeze({}) as GeometryGroupMap
-  if (!isRecord(rawGroup)) throw new CadModelError(`${objectName} ${propertyName} must be an object.`)
+  if (typeof rawGroup !== 'object' || rawGroup === null || Array.isArray(rawGroup)) {
+    throw new CadModelError(`${objectName} ${propertyName} must be an object.`)
+  }
   const names = new Set<string>()
   const entries = Object.entries(rawGroup).map(([rawName, rawMembers]) => {
     const name = rawName.trim()
     if (!name) throw new CadModelError(`${objectName} ${propertyName} group names must not be empty.`)
     if (names.has(name)) {
-      throw new CadModelError(`${objectName} ${propertyName} group name "${name}" is duplicated after trimming.`)
+      throw new CadModelError(`${objectName} ${propertyName} group name ${JSON.stringify(name)} is duplicated after trimming.`)
     }
     names.add(name)
     if (!Array.isArray(rawMembers)) {
       throw new CadModelError(`${objectName} ${propertyName}.${name} must be an array of global IDs.`)
     }
-    const memberIds: string[] = []
-    const seenMemberIds = new Set<string>()
+    const members: string[] = []
+    const seen = new Set<string>()
     rawMembers.forEach((rawMember, index) => {
       if (typeof rawMember !== 'string' || !rawMember.trim()) {
         throw new CadModelError(`${objectName} ${propertyName}.${name}[${index}] must be a non-empty string global ID.`)
       }
-      const memberId = rawMember.trim()
+      const member = rawMember.trim()
       if (propertyName === 'surfaceGroup') {
-        const match = /^.+\/surface\/(0|[1-9]\d*)$/u.exec(memberId)
+        const match = /^.+\/surface\/(0|[1-9]\d*)$/u.exec(member)
         if (!match || !Number.isSafeInteger(Number(match[1]))) {
           throw new CadModelError(
-            `${objectName} ${propertyName}.${name}[${index}] must use ` +
-              '<source-node-id>/surface/<non-negative-index> with canonical safe-integer decimal notation.',
+            `${objectName} ${propertyName}.${name}[${index}] must use <source-node-id>/surface/<non-negative-index>.`,
           )
         }
       }
-      if (seenMemberIds.has(memberId)) return
-      seenMemberIds.add(memberId)
-      memberIds.push(memberId)
+      if (!seen.has(member)) {
+        seen.add(member)
+        members.push(member)
+      }
     })
-    return [name, Object.freeze(memberIds)] as const
+    return [name, Object.freeze(members)] as const
   })
   return Object.freeze(Object.fromEntries(entries)) as GeometryGroupMap | SurfaceGroupMap
 }

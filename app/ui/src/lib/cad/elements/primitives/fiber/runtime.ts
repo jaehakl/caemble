@@ -44,8 +44,7 @@ export function createFiberGeometry(attributes: FiberAttributes) {
 }
 
 export function canonicalFiberNode(geometry: unknown, nodeId: string): CanonicalFiberNodeV1 {
-  const sampled = typeof geometry === 'object' && geometry !== null ? sampledFiberByGeometry.get(geometry) : undefined
-  if (!sampled) throw new Error('Fiber evaluation lost its sampled numeric representation.')
+  const sampled = sampledFiberByGeometry.get(geometry as object)!
   return {
     kind: 'fiber',
     nodeId,

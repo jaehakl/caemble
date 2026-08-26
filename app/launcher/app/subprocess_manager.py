@@ -239,7 +239,6 @@ class WorkerManager:
         process: asyncio.subprocess.Process,
         ready_event: asyncio.Event,
     ) -> None:
-        assert process.stdout is not None
         try:
             while True:
                 line = await process.stdout.readline()
@@ -270,7 +269,6 @@ class WorkerManager:
                     )
 
     async def read_worker_stderr(self, process: asyncio.subprocess.Process) -> None:
-        assert process.stderr is not None
         while True:
             line = await process.stderr.readline()
             if not line:

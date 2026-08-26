@@ -11,12 +11,16 @@ import { ConfirmWorkbenchDialog } from '@/features/cae-workbench/dialogs'
 import { ExperimentEditor, RecordedDataEditor } from '@/features/cae-workbench/editors'
 import { ExperimentManager } from '@/features/cae-workbench/experiments'
 import { MeasurementDetail, MeasurementExplorer } from '@/features/cae-workbench/measurement'
+import {
+  flattenRecordedData,
+  recordedDataRules,
+} from '@/features/cae-workbench/measurement/recordedData'
 import { useCaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { AnalysisTabId, HelpKindId, WorkbenchSectionId } from '@/features/cae-workbench/types'
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
 import { createRuntimeConsoleStore, RuntimeConsoleView } from '@/features/runtime-console'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
-import { parseRayPathBundles, type RecordedDataRule } from '@/lib/cad'
+import { parseRayPathBundles } from '@/lib/cad'
 import type { AiChatCommand } from '@/pages/ai/AiChatPage'
 import type { AnalysisCommand } from '@/pages/analysis/AnalysisPage'
 import { JobsWorkspace } from '@/pages/jobs/JobsPage'
@@ -148,31 +152,28 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     workbench,
   })
 
+  const sessionRecordedSchemas = workbench.experimentDocument.simulationProgram?.recordedData ?? Object.freeze({})
   const sessionRecordedRules = useMemo(
-    () =>
-      Object.entries(workbench.experimentDocument.simulationProgram?.recordedData ?? {}).map(
-        ([label, result]) =>
-          ({
-            target: Object.freeze([]),
-            label,
-            methodId: 'measurement.session-recorded-data',
-            parameters: Object.freeze({}),
-            result,
-          }) satisfies RecordedDataRule,
-      ),
-    [workbench.experimentDocument.simulationProgram],
+    () => recordedDataRules(sessionRecordedSchemas, 'measurement.session-recorded-data'),
+    [sessionRecordedSchemas],
+  )
+  const sessionFlatRecordedData = useMemo(
+    () => flattenRecordedData(sessionRecordedSchemas, workbench.simulation.recordedData),
+    [sessionRecordedSchemas, workbench.simulation.recordedData],
   )
   const pendingResult = workbench.measurementActions.pendingRecordMeasurementId !== null
   const activeRecordedData = pendingResult ? workbench.simulation.recordedData : workbench.selection.recordedData
+  const activeFlatRecordedData = pendingResult ? sessionFlatRecordedData : workbench.selection.flatRecordedData
+  const activeRecordedSchemas = pendingResult ? sessionRecordedSchemas : workbench.selection.recordedSchemas
   const activeRecordedRules = pendingResult ? sessionRecordedRules : workbench.selection.recordedRules
-  const rayPathsDeclared = activeRecordedRules.some((rule) => rule.label.startsWith('@caemble/ray-paths@'))
+  const rayPathsDeclared = 'rayPaths' in activeRecordedSchemas
   const rayPathState = useMemo(() => {
     try {
-      return { bundles: parseRayPathBundles(activeRecordedRules, activeRecordedData), error: null }
+      return { bundles: parseRayPathBundles(activeRecordedSchemas, activeRecordedData), error: null }
     } catch (error) {
       return { bundles: [], error: error instanceof Error ? error.message : String(error) }
     }
-  }, [activeRecordedData, activeRecordedRules])
+  }, [activeRecordedData, activeRecordedSchemas])
 
   const applyAgentBundle = async (request: AiAgentApplyRequest) => {
     const result = await workbench.applyAgentBundle(request)
@@ -300,7 +301,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               measurementId={workbench.selection.measurement?.id ?? null}
               pendingSave={pendingResult}
               recordedAt={workbench.selection.measurement?.recorded_at ?? null}
-              recordedData={activeRecordedData}
+              recordedData={activeFlatRecordedData}
               rayPathBundles={rayPathState.bundles}
               rayPathError={rayPathState.error}
               rayPathsDeclared={rayPathsDeclared}
@@ -390,7 +391,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                       activeExperimentFile={page.activeExperimentFile}
                       activeTab="ai-helper"
                       baseHash={workbench.agentWorkspaceIdentity?.baseHash}
-                      experimentContextVersion={workbench.agentWorkspaceIdentity?.experimentContextVersion}
                       workbench={workbench}
                       onApplyStagedBundle={applyAgentBundle}
                       onRequestLogin={() => page.setDialog('account')}

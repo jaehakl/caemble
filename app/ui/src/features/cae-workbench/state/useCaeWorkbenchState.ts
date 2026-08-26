@@ -18,7 +18,6 @@ import {
   type Vars,
 } from '@/lib/cad'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
-import { agentExperimentContextVersion } from '../agent/agentWorkspace'
 import { useCaeDataSelection } from '../measurement/useCaeDataSelection'
 import { useCaeMeasurementActions } from '../measurement/useCaeMeasurementActions'
 import type {
@@ -40,15 +39,13 @@ function definitionStatus(
 }
 
 function sourceBundlesEqual(left: ExperimentSourceBundle, right: ExperimentSourceBundle | null) {
-  if (!right || left.formatVersion !== right.formatVersion) return false
+  if (!right) return false
   const paths = [...new Set([...Object.keys(left.files), ...Object.keys(right.files)])]
   return paths.every((path) => left.files[path] === right.files[path])
 }
 
 function createExperimentDocument(sourceBundle: ExperimentSourceBundle) {
-  const document = createCadSourceDocument('experiment', sourceBundle)
-  if (document.kind !== 'experiment') throw new Error('Experiment source를 만들지 못했습니다.')
-  return document
+  return createCadSourceDocument('experiment', sourceBundle)
 }
 
 export type AgentExperimentChange = Readonly<{
@@ -70,7 +67,7 @@ type AgentApplyRequest = Readonly<{
   baseHash: string
   sourceHash: string
   stagedRevision: number
-  experimentContextVersion: string
+  workspaceSession: number
 }>
 
 function changedLineCounts(before: string | null, after: string | null) {
@@ -122,7 +119,6 @@ export function useCaeWorkbenchState(
   const [agentChange, setAgentChange] = useState<AgentExperimentChange | null>(null)
   const [agentWorkspaceIdentity, setAgentWorkspaceIdentity] = useState<Readonly<{
     baseHash: string
-    experimentContextVersion: string
     document: ExperimentSourceDocument
   }> | null>(null)
   const requestSequence = useRef(0)
@@ -199,6 +195,7 @@ export function useCaeWorkbenchState(
     onActivity,
     onCandidateVarsRegenerated: handleCandidateVarsRegenerated,
   })
+  const experimentSourceValidated = experimentDocument.validatedRevision === experimentDocument.revision
 
   useEffect(() => {
     if (!experiment) {
@@ -206,10 +203,10 @@ export function useCaeWorkbenchState(
       return
     }
     let active = true
-    void Promise.all([cadSourceHash(experiment), agentExperimentContextVersion(experiment)]).then(
-      ([baseHash, experimentContextVersion]) => {
+    void cadSourceHash(experiment).then(
+      (baseHash) => {
         if (active) {
-          setAgentWorkspaceIdentity(Object.freeze({ baseHash, experimentContextVersion, document: experiment }))
+          setAgentWorkspaceIdentity(Object.freeze({ baseHash, document: experiment }))
         }
       },
       () => {
@@ -224,7 +221,6 @@ export function useCaeWorkbenchState(
     agentWorkspaceIdentity?.document === experiment
       ? Object.freeze({
           baseHash: agentWorkspaceIdentity.baseHash,
-          experimentContextVersion: agentWorkspaceIdentity.experimentContextVersion,
         })
       : null
 
@@ -246,14 +242,11 @@ export function useCaeWorkbenchState(
           message: 'Agent 완료 bundle의 source hash가 일치하지 않아 자동 반영하지 않았습니다.',
         }
       }
-      const [currentHash, contextVersion] = await Promise.all([
-        cadSourceHash(current),
-        agentExperimentContextVersion(current),
-      ])
+      const currentHash = await cadSourceHash(current)
       const conflicted =
         experimentRef.current !== current ||
         currentHash !== request.baseHash ||
-        contextVersion !== request.experimentContextVersion
+        workspaceSession !== request.workspaceSession
       const comparison = conflicted ? (experimentRef.current ?? current) : current
       const paths = [
         ...new Set([...Object.keys(comparison.sourceBundle.files), ...Object.keys(next.sourceBundle.files)]),
@@ -286,7 +279,7 @@ export function useCaeWorkbenchState(
       setAgentChange(Object.freeze({ runId: request.runId, appliedAt: Date.now(), status: 'applied' as const, files }))
       return { status: 'applied' as const, firstChangedFile, changedFiles: files.length }
     },
-    [clearMeasurement],
+    [clearMeasurement, workspaceSession],
   )
 
   const undoAgentChange = useCallback(async () => {
@@ -340,6 +333,7 @@ export function useCaeWorkbenchState(
   useEffect(() => {
     if (
       selection.measurement ||
+      experimentDocument.resultSessionKey !== workspaceSession ||
       experimentDocument.status !== 'Ready' ||
       experimentDocument.successfulRevision !== experimentDocument.revision ||
       !experimentDocument.variables
@@ -350,11 +344,13 @@ export function useCaeWorkbenchState(
     if (experimentDocument.materialParameters) setCandidateMaterialParameters(experimentDocument.materialParameters)
   }, [
     experimentDocument.materialParameters,
+    experimentDocument.resultSessionKey,
     experimentDocument.revision,
     experimentDocument.status,
     experimentDocument.successfulRevision,
     experimentDocument.variables,
     selection.measurement,
+    workspaceSession,
   ])
 
   useEffect(() => {
@@ -472,6 +468,9 @@ export function useCaeWorkbenchState(
     async (values: DefinitionFormValues, mode: ExperimentSaveMode) => {
       if (!authenticated || !user) throw new Error('로그인이 필요합니다.')
       if (!experiment) throw new Error('저장할 Experiment source가 없습니다.')
+      if (!experimentSourceValidated) {
+        throw new Error('현재 Experiment source 의미 검사가 완료되지 않아 저장할 수 없습니다.')
+      }
       if (mode !== 'create' && !experimentRecord) throw new Error('먼저 Save As로 Experiment를 저장하세요.')
       const manageable = experimentRecord && (experimentRecord.user_id === user.id || user.roles.includes('admin'))
       if (mode !== 'create' && !manageable) throw new Error('이 Experiment는 Save As로 저장하세요.')
@@ -530,6 +529,7 @@ export function useCaeWorkbenchState(
       experimentDirty,
       experimentId,
       experimentRecord,
+      experimentSourceValidated,
       invalidate,
       user,
     ],
@@ -565,7 +565,6 @@ export function useCaeWorkbenchState(
 
   const draft = useCallback(
     (layout: WorkbenchLayoutState): WorkbenchDraft => ({
-      version: 16,
       savedAt: Date.now(),
       experiment: {
         record: experimentRecord,
@@ -610,6 +609,7 @@ export function useCaeWorkbenchState(
     experimentName,
     experimentDescription,
     experimentDirty,
+    experimentSourceValidated,
     hasUnsavedExperimentWork,
     hasUnsavedWork: experimentDirty,
     experimentClean,

@@ -7,7 +7,7 @@ from typing import Any
 from sdk.protocol.messages import DataChannelAttachment, DataChannelMessage
 
 CHUNK_SIZE = 16 * 1024
-MAX_BUFFERED_AMOUNT = 512 * 1024
+BUFFERED_AMOUNT_HIGH_WATER_MARK = 512 * 1024
 BUFFERED_AMOUNT_LOW_THRESHOLD = 128 * 1024
 BUFFERED_AMOUNT_DRAIN_TIMEOUT_SECONDS = 30
 
@@ -66,7 +66,7 @@ async def send_attachment(channel: Any, call_id: str, attachment: DataChannelAtt
                 chunk,
             )
         )
-        if getattr(channel, "bufferedAmount", 0) > MAX_BUFFERED_AMOUNT:
+        if getattr(channel, "bufferedAmount", 0) > BUFFERED_AMOUNT_HIGH_WATER_MARK:
             await wait_for_buffered_amount(channel, BUFFERED_AMOUNT_LOW_THRESHOLD, "while sending attachment")
         index += 1
 
@@ -98,12 +98,6 @@ def encode_binary_frame(header: dict[str, Any], body: bytes) -> bytes:
 
 
 def decode_binary_frame(frame: bytes) -> tuple[dict[str, Any], bytes]:
-    if len(frame) < 4:
-        raise ValueError("binary frame is too short")
     header_length = int.from_bytes(frame[:4], "big")
-    if header_length <= 0 or len(frame) < 4 + header_length:
-        raise ValueError("invalid binary frame header length")
     header = json.loads(frame[4 : 4 + header_length].decode("utf-8"))
-    if not isinstance(header, dict):
-        raise ValueError("binary frame header must be an object")
     return header, frame[4 + header_length :]

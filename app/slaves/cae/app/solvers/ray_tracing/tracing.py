@@ -57,23 +57,17 @@ class TriangleScene:
         triangle_indices: np.ndarray[Any, Any] | None = None,
     ) -> None:
         indices = np.arange(len(mesh.triangles), dtype=np.int64) if triangle_indices is None else triangle_indices
-        if isinstance(metadata, list) and len(metadata) != len(indices):
-            raise ValueError("triangle metadata count must match selected triangles")
         for ordinal, local_index in enumerate(indices):
             self._triangles.append(mesh.vertices[mesh.triangles[int(local_index)]])
             self._metadata.append(metadata[ordinal] if isinstance(metadata, list) else metadata)
             self._local_indices.append(int(local_index))
 
     def build(self) -> None:
-        if not self._triangles:
-            raise ValueError("ray-tracing scene must contain collision triangles")
         self.triangles = np.ascontiguousarray(self._triangles, dtype=np.float64)
         first = self.triangles[:, 1] - self.triangles[:, 0]
         second = self.triangles[:, 2] - self.triangles[:, 0]
         normals = np.cross(first, second)
         lengths = np.linalg.norm(normals, axis=1)
-        if np.any(~np.isfinite(lengths)) or np.any(lengths <= 0):
-            raise ValueError("ray-tracing scene contains degenerate triangles")
         self.normals = normals / lengths[:, None]
         self.minimum = np.min(self.triangles, axis=(0, 1))
         self.maximum = np.max(self.triangles, axis=(0, 1))
@@ -185,13 +179,9 @@ class TriangleScene:
 
 class SurfaceSampler:
     def __init__(self, mesh: TriangularMesh, triangle_indices: np.ndarray[Any, Any]) -> None:
-        if len(triangle_indices) == 0:
-            raise ValueError("surface sampler requires at least one triangle")
         self.triangles = mesh.vertices[mesh.triangles[triangle_indices]]
         cross = np.cross(self.triangles[:, 1] - self.triangles[:, 0], self.triangles[:, 2] - self.triangles[:, 0])
         lengths = np.linalg.norm(cross, axis=1)
-        if np.any(~np.isfinite(lengths)) or np.any(lengths <= 0):
-            raise ValueError("surface sampler contains degenerate triangles")
         self.normals = cross / lengths[:, None]
         self.cumulative_area = np.cumsum(lengths / 2)
         self.area = float(self.cumulative_area[-1])

@@ -7,7 +7,6 @@ import {
 } from '../runner/protocol'
 import {
   EXPERIMENT_SIMULATION_PATH,
-  assertCadSourceDocument,
   type CadEvaluationInput,
   type ExperimentSourceDocument,
 } from '../source/document'
@@ -117,7 +116,6 @@ export async function inspectDocument(
   document: ExperimentSourceDocument,
   options: EvaluateDocumentOptions = {},
 ): Promise<CadDocumentInspection> {
-  assertCadSourceDocument(document)
   const catalog = options.catalog ?? (await fetchCatalogRuntimeSlice(document.sourceBundle))
   installCatalogRuntimeSlice(catalog)
   const compiledDocument = await compileCadDocument(document, {
@@ -149,7 +147,6 @@ export async function evaluateDocument(
   input: CadEvaluationInput,
   options: EvaluateDocumentOptions = {},
 ): Promise<EvaluatedExperimentSnapshot> {
-  assertCadSourceDocument(input.document)
   const catalog = options.catalog ?? (await fetchCatalogRuntimeSlice(input.document.sourceBundle))
   installCatalogRuntimeSlice(catalog)
   const compiledDocument = await compileCadDocument(input.document, {
@@ -184,7 +181,6 @@ export async function evaluateGeometryModule(
   exportName: string,
   options: GeometryModuleEvaluationOptions = {},
 ): Promise<GeometryModulePreview> {
-  assertCadSourceDocument(document)
   const catalog = options.catalog ?? (await fetchCatalogRuntimeSlice(document.sourceBundle))
   const compiledDocument = await compileCadDocument(document, {
     catalogRevision: catalog.catalogRevision,

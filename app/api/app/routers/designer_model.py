@@ -13,7 +13,6 @@ router = APIRouter(prefix="/designer_model", tags=["designer_model"])
 CRUD_SPEC = CrudSpec(
     model=DesignerModel,
     schema=DesignerModelBase,
-    immutable_update_fields=("experiment_id",),
 )
 
 

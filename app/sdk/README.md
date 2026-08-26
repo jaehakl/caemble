@@ -1,42 +1,15 @@
-# Caemble GPStation v1 compatibility SDK
+# Caemble GPStation v1 SDK
 
-The bundled Python package contains the public GPStation v1 protocol messages and slave executable runtime used by Caemble.
+이 package는 Caemble launcher와 slave가 공유하는 GPStation v1 message/runtime을 제공한다.
+GPStation의 외부 protocol version은 유지하며 CAE domain payload는 별도 version wrapper 없이
+전달한다.
 
 ```powershell
 cd app/sdk
 python -m pip install -e ".[slave]"
-python -m pytest
 ```
 
-The async Python master SDK is an independent package alongside the browser TypeScript SDK:
-
-```powershell
-cd app/sdk/master/python
-poetry install
-poetry run pytest
-poetry build
-```
-
-```python
-import asyncio
-import os
-
-from gpstation_master import GpStationClient
-
-
-async def main() -> None:
-    async with GpStationClient(
-        api_base_url="http://127.0.0.1:8000",
-        token=os.environ["CAEMBLE_CLIENT_TOKEN"],
-    ) as client:
-        result = await client.run_job(
-            "ai.llm",
-            {"system_prompt": "Answer concisely.", "prompt": "hello"},
-        )
-        print(result.payload)
-
-
-asyncio.run(main())
-```
-
-See `master/python/README.md` for sessions, events, attachments, prewarm, and cookie authentication.
+브라우저용 master SDK는 `master/js`, Python master SDK는 `master/python`에 있다. 두 SDK는
+ordered RTCDataChannel을 열고 control frame과 attachment chunk를 전달하며 결과를 모두 받은
+즉시 ACK를 보낸다. Attachment chunking과 buffered-amount backpressure는 전송 메커니즘이고,
+domain schema나 크기 정책을 판정하지 않는다.

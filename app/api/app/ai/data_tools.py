@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import base64
-import binascii
-import hashlib
-import json
 import math
 import struct
 from datetime import date, datetime
 from itertools import islice
-from typing import Any, Iterable, Literal
+from typing import Any, Iterable
 
 from sqlalchemy import Text, and_, cast, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,18 +22,7 @@ from db import (
 )
 
 
-VisibleResource = Literal[
-    "material",
-    "experiment",
-    "measurement",
-    "recorded_data",
-    "designer_model",
-    "predictor_model",
-]
-
-MAX_SEARCH_RESULTS = 10
-MAX_SOURCE_CHUNK = 24_000
-MAX_RECORDED_VALUES = 256
+VisibleResource = str
 
 
 class VisibleDataError(ValueError):
@@ -54,7 +40,6 @@ class VisibleDataReader:
         query: str,
         limit: int,
     ) -> list[dict[str, Any]]:
-        limit = min(max(limit, 1), MAX_SEARCH_RESULTS)
         pattern = _search_pattern(query)
         if resource == "material":
             statement = (
@@ -144,7 +129,6 @@ class VisibleDataReader:
                     f"{row['repository_slug']}/{row['experiment_key']}@{version}"
                 ),
                 "sourceHash": row["source_hash"],
-                "formatVersion": bundle.get("formatVersion"),
                 "files": [
                     {"path": path, "characters": len(source)}
                     for path, source in sorted(files.items())
@@ -191,13 +175,12 @@ class VisibleDataReader:
 
     async def read_source(
         self,
-        resource: Literal["experiment"],
+        resource: str,
         resource_id: int,
         path: str | None,
         offset: int,
         length: int,
     ) -> dict[str, Any]:
-        length = min(max(length, 1), MAX_SOURCE_CHUNK)
         row = await self._one_visible(
             select(Experiment.id, Experiment.name, Experiment.source_hash, Experiment.source_bundle),
             Experiment,
@@ -211,7 +194,6 @@ class VisibleDataReader:
         if not isinstance(source, str):
             raise VisibleDataError("Visible Experiment source file was not found")
         label = f"{row['name']} / {path}"
-        revision = row["source_hash"]
         if offset > len(source):
             raise VisibleDataError("Source offset is outside the file")
         content = source[offset : offset + length]
@@ -224,8 +206,7 @@ class VisibleDataReader:
             "totalCharacters": len(source),
             "content": content,
             "nextOffset": next_offset if next_offset < len(source) else None,
-            "revision": revision,
-            "provenance": _provenance(resource, resource_id, label, revision),
+            "provenance": _provenance(resource, resource_id, label),
         }
 
     async def read_recorded_slice(self, resource_id: int, offset: int, count: int) -> dict[str, Any]:
@@ -244,7 +225,6 @@ class VisibleDataReader:
                 "recorded_data",
                 row["id"],
                 row["name"],
-                _json_value(row["updated_at"]),
             ),
         }
 
@@ -318,7 +298,6 @@ class VisibleDataReader:
                     _visible(MaterialName.user_id, self.user_id),
                 )
                 .order_by(MaterialName.name)
-                .limit(50)
             )
         ).all()
         parameters = (
@@ -338,7 +317,6 @@ class VisibleDataReader:
                     _visible(MaterialParameter.user_id, self.user_id),
                 )
                 .order_by(MaterialParameter.name, MaterialParameter.id)
-                .limit(100)
             )
         ).mappings().all()
         value = {
@@ -349,15 +327,6 @@ class VisibleDataReader:
                 for parameter in parameters
             ],
         }
-        value["evidenceRevision"] = hashlib.sha256(
-            json.dumps(
-                value,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-                default=str,
-            ).encode("utf-8")
-        ).hexdigest()
         return value
 
     async def _recorded_row(self, resource_id: int, *, include_data: bool) -> Any:
@@ -404,35 +373,13 @@ class VisibleDataReader:
 
 
 def slice_recorded_tensor(data: Any, dtype: str, offset: int, count: int) -> dict[str, Any]:
-    if offset < 0:
-        raise VisibleDataError("RecordedData offset must be non-negative")
-    count = min(max(count, 1), MAX_RECORDED_VALUES)
-    if not isinstance(data, dict):
-        raise VisibleDataError("RecordedData payload is invalid")
-    shape = data.get("shape")
-    storage = data.get("storage")
-    if not isinstance(shape, list) or not all(isinstance(value, int) and value >= 0 for value in shape):
-        legacy = data.get("value")
-        shape = _infer_shape(legacy)
-        total = sum(1 for _ in _flatten_inline(legacy))
-        return _slice_inline(legacy, shape, total, offset, count)
+    shape = data["shape"]
+    storage = data["storage"]
     total = math.prod(shape) if shape else 1
-    if offset > total:
-        raise VisibleDataError("RecordedData offset is outside the tensor")
     selected_count = min(count, total - offset)
-    if not isinstance(storage, dict):
-        raise VisibleDataError("RecordedData storage is invalid")
     if storage.get("kind") == "inline":
         return _slice_inline(storage.get("value"), shape, total, offset, count)
-    if storage.get("kind") != "base64" or not isinstance(storage.get("data"), str):
-        raise VisibleDataError("RecordedData storage cannot be read from the database")
-    format_code = _DTYPE_FORMATS.get(dtype)
-    if format_code is None:
-        raise VisibleDataError("RecordedData dtype is not sliceable")
-    item_size = struct.calcsize(f"<{format_code}")
-    byte_length = storage.get("byteLength")
-    if not isinstance(byte_length, int) or byte_length != total * item_size:
-        raise VisibleDataError("RecordedData byte length is inconsistent")
+    format_code = _DTYPE_FORMATS[dtype]
     values = _decode_base64_slice(storage["data"], format_code, offset, selected_count)
     next_offset = offset + len(values)
     return {
@@ -468,14 +415,9 @@ def _decode_base64_slice(encoded: str, format_code: str, offset: int, count: int
     byte_end = byte_start + count * item_size
     character_start = (byte_start // 3) * 4
     character_end = ((byte_end + 2) // 3) * 4
-    try:
-        decoded = base64.b64decode(encoded[character_start:character_end], validate=True)
-    except (ValueError, binascii.Error) as error:
-        raise VisibleDataError("RecordedData base64 storage is invalid") from error
+    decoded = base64.b64decode(encoded[character_start:character_end])
     local_start = byte_start - (character_start // 4) * 3
     selected = decoded[local_start : local_start + count * item_size]
-    if len(selected) != count * item_size:
-        raise VisibleDataError("RecordedData base64 storage is truncated")
     return list(struct.unpack(f"<{count}{format_code}", selected))
 
 
@@ -486,12 +428,8 @@ def _slice_inline(
     offset: int,
     count: int,
 ) -> dict[str, Any]:
-    if offset > total:
-        raise VisibleDataError("RecordedData offset is outside the tensor")
     selected_count = min(count, total - offset)
     selected = list(islice(_flatten_inline(value), offset, offset + selected_count))
-    if len(selected) != selected_count:
-        raise VisibleDataError("RecordedData inline shape is inconsistent")
     next_offset = offset + len(selected)
     return {
         "shape": shape,
@@ -502,23 +440,12 @@ def _slice_inline(
     }
 
 
-def _flatten_inline(value: Any, depth: int = 0) -> Iterable[Any]:
-    if depth > 16:
-        raise VisibleDataError("RecordedData inline nesting is too deep")
+def _flatten_inline(value: Any) -> Iterable[Any]:
     if isinstance(value, list):
         for item in value:
-            yield from _flatten_inline(item, depth + 1)
+            yield from _flatten_inline(item)
     else:
         yield value
-
-
-def _infer_shape(value: Any) -> list[int]:
-    shape: list[int] = []
-    current = value
-    while isinstance(current, list):
-        shape.append(len(current))
-        current = current[0] if current else None
-    return shape
 
 
 def _visible(column: Any, user_id: str) -> Any:
@@ -541,22 +468,17 @@ def _json_value(value: Any) -> Any:
 
 
 def _bounded_value(value: Any) -> Any:
-    encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
-    if len(encoded.encode("utf-8")) <= 16 * 1024:
-        return value
-    return {"truncated": True, "preview": encoded[:8_000]}
+    return value
 
 
 def _provenance(
     resource: str,
     resource_id: int,
     label: str,
-    revision: str | None,
 ) -> dict[str, Any]:
     return {
         "kind": "database",
         "label": label,
         "resourceType": resource,
         "resourceId": resource_id,
-        "revision": revision,
     }

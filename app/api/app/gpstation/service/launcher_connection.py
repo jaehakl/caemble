@@ -14,7 +14,6 @@ from gpstation.service.auth_service import Principal, authenticate_db_authorizat
 from gpstation.service.job_orchestrator import LauncherPolicyViolation, job_orchestrator
 from gpstation.service.launcher_service import LauncherService
 from gpstation.service.state import runtime, utcnow
-from gpstation.utils.slave_registry import registered_slave_app_ids
 from sdk.protocol.messages import LauncherHello, parse_launcher_message
 
 
@@ -79,35 +78,6 @@ async def run_launcher_control(websocket: WebSocket) -> None:
                 )
                 await db.commit()
                 await websocket.close(code=status.WS_1003_UNSUPPORTED_DATA)
-                return
-
-            unknown_apps = sorted(
-                set(hello.slave_app_ids) - set(registered_slave_app_ids())
-            )
-            if unknown_apps:
-                add_auth_audit(
-                    db,
-                    "launcher_rejected",
-                    user_id=principal.user_id,
-                    details={
-                        "reason": "unknown_slave_app_ids",
-                        "slave_app_ids": unknown_apps,
-                        "access_key_id": principal.access_key_id,
-                    },
-                    client_ip=websocket.client.host if websocket.client else None,
-                    user_agent=websocket.headers.get("user-agent"),
-                )
-                await db.commit()
-                await safe_send_json(
-                    websocket,
-                    {
-                        "type": "error",
-                        "detail": (
-                            f"unknown slave_app_ids: {', '.join(unknown_apps)}"
-                        ),
-                    },
-                )
-                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
                 return
 
             launcher = await LauncherService.create_connected_launcher(

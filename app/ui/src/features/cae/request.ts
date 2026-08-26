@@ -1,11 +1,8 @@
-import { assertBuiltMeasurement, type BuiltMeasurement } from '../../lib/cad/execution/measurement'
+import type { BuiltMeasurement } from '../../lib/cad/execution/measurement'
 import type { CaeStartRequest } from './protocol'
-import { CaeSimulationError } from './errors'
 
-const INPUT_LIMIT_BYTES = 256 * 1024 * 1024
 const SHARD_BYTES = 16 * 1024 * 1024
 const INLINE_CALL_PAYLOAD_BYTES = 32 * 1024
-const LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1
 
 export type SerializedCaeAttachment = Readonly<{
   id: string
@@ -14,59 +11,19 @@ export type SerializedCaeAttachment = Readonly<{
   bytes: Uint8Array
 }>
 
-export function serializeCaeRequest(
-  measurement: BuiltMeasurement,
-  solverContracts: CaeStartRequest['solverContracts'],
-) {
-  assertBuiltMeasurement(measurement)
-  const forbiddenGeometryField = (value: unknown): string | undefined => {
-    if (Array.isArray(value)) {
-      return value.map(forbiddenGeometryField).find((field) => field !== undefined)
-    }
-    if (!value || typeof value !== 'object' || ArrayBuffer.isView(value)) return undefined
-    const record = value as Record<string, unknown>
-    if (record.kind === 'mesh') return 'kind:mesh'
-    return Object.entries(record)
-      .flatMap(([key, item]) =>
-        key === 'positions' || key === 'polygonOffsets' ? [key] : [forbiddenGeometryField(item)],
-      )
-      .find((field) => field !== undefined)
-  }
-  const forbidden = [
-    forbiddenGeometryField(measurement.experiment.scene),
-    ...Object.values(measurement.experiment.taskScenes).map(forbiddenGeometryField),
-  ].find((field) => field !== undefined)
-  if (forbidden) {
-    throw new CaeSimulationError(
-      'invalid_request',
-      `Canonical Geometry 전송에 금지된 Mesh 필드가 있습니다: ${forbidden}`,
-    )
-  }
+export function serializeCaeRequest(measurement: BuiltMeasurement) {
   const attachments: SerializedCaeAttachment[] = []
-  let totalBytes = 0
   const visit = (value: unknown, path: string): unknown => {
     if (ArrayBuffer.isView(value) && !(value instanceof DataView)) {
-      if (!LITTLE_ENDIAN) {
-        throw new CaeSimulationError(
-          'unsupported_platform',
-          'CAE raw tensor 전송은 little-endian browser가 필요합니다.',
-        )
-      }
       const typedArray = value as ArrayBufferView & Readonly<{ BYTES_PER_ELEMENT: number }>
       const source = new Uint8Array(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength)
       const ids: string[] = []
       for (let offset = 0; offset < source.byteLength; offset += SHARD_BYTES) {
         const id = `input-${attachments.length}`
-        const bytes = source.slice(offset, Math.min(offset + SHARD_BYTES, source.byteLength))
+        const bytes = source.slice(offset, offset + SHARD_BYTES)
         ids.push(id)
-        attachments.push({
-          id,
-          name: `${path}.${ids.length - 1}.bin`,
-          mimeType: 'application/octet-stream',
-          bytes,
-        })
+        attachments.push({ id, name: `${path}.${ids.length - 1}.bin`, mimeType: 'application/octet-stream', bytes })
       }
-      totalBytes += source.byteLength
       return {
         shape: [typedArray.byteLength / typedArray.BYTES_PER_ELEMENT],
         storage: { kind: 'attachments', ids, byteLength: source.byteLength },
@@ -78,36 +35,28 @@ export function serializeCaeRequest(
     }
     return value
   }
-  const payload = visit({ formatVersion: 2, measurement, solverContracts }, 'cae') as CaeStartRequest
+  const payload = visit({ measurement }, 'cae') as CaeStartRequest
   const payloadBytes = new TextEncoder().encode(JSON.stringify(payload))
-  totalBytes += payloadBytes.byteLength
-  if (totalBytes > INPUT_LIMIT_BYTES) {
-    throw new CaeSimulationError('resource_limit', 'BuiltMeasurement가 256 MiB를 초과했습니다.')
+  if (payloadBytes.byteLength <= INLINE_CALL_PAYLOAD_BYTES) {
+    return Object.freeze({ payload, attachments: Object.freeze(attachments) })
   }
-  if (payloadBytes.byteLength > INLINE_CALL_PAYLOAD_BYTES) {
-    const ids: string[] = []
-    for (let offset = 0; offset < payloadBytes.byteLength; offset += SHARD_BYTES) {
-      const id = `input-${attachments.length}`
-      const bytes = payloadBytes.slice(offset, Math.min(offset + SHARD_BYTES, payloadBytes.byteLength))
-      ids.push(id)
-      attachments.push({
-        id,
-        name: `cae-start.${ids.length - 1}.json`,
-        mimeType: 'application/json; charset=utf-8',
-        bytes,
-      })
-    }
-    return Object.freeze({
-      payload: Object.freeze({
-        kind: 'cae.start.payload-attachments',
-        storage: Object.freeze({
-          kind: 'attachments',
-          ids: Object.freeze(ids),
-          byteLength: payloadBytes.byteLength,
-        }),
-      }),
-      attachments: Object.freeze(attachments),
+  const ids: string[] = []
+  for (let offset = 0; offset < payloadBytes.byteLength; offset += SHARD_BYTES) {
+    const id = `input-${attachments.length}`
+    const bytes = payloadBytes.slice(offset, offset + SHARD_BYTES)
+    ids.push(id)
+    attachments.push({
+      id,
+      name: `cae-start.${ids.length - 1}.json`,
+      mimeType: 'application/json; charset=utf-8',
+      bytes,
     })
   }
-  return Object.freeze({ payload, attachments: Object.freeze(attachments) })
+  return Object.freeze({
+    payload: Object.freeze({
+      kind: 'cae.start.payload-attachments',
+      storage: Object.freeze({ kind: 'attachments', ids: Object.freeze(ids), byteLength: payloadBytes.byteLength }),
+    }),
+    attachments: Object.freeze(attachments),
+  })
 }

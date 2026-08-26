@@ -1,18 +1,10 @@
-import { CadModelError } from '../model/core'
 import type { Vec3 } from '../model/types'
 
 export type MutableVec3 = [number, number, number]
 
-export function parseVec3(value: unknown, path: string): MutableVec3 {
-  if (
-    !Array.isArray(value) ||
-    value.length !== 3 ||
-    value.some((coordinate) => typeof coordinate !== 'number' || !Number.isFinite(coordinate))
-  ) {
-    throw new CadModelError(`${path} must be an array of exactly three finite numbers.`)
-  }
-
-  return [value[0], value[1], value[2]]
+export function parseVec3(value: unknown, _path: string): MutableVec3 {
+  const vector = value as Vec3
+  return [vector[0], vector[1], vector[2]]
 }
 
 export function subtract(left: Vec3, right: Vec3): MutableVec3 {
@@ -35,12 +27,8 @@ export function vectorLength(value: Vec3) {
   return Math.hypot(...value)
 }
 
-export function normalizeVector(value: Vec3, path: string): MutableVec3 {
+export function normalizeVector(value: Vec3, _path: string): MutableVec3 {
   const length = vectorLength(value)
-  if (!Number.isFinite(length) || length <= Number.EPSILON) {
-    throw new CadModelError(`${path} must not be a zero-length vector.`)
-  }
-
   return [value[0] / length, value[1] / length, value[2] / length]
 }
 

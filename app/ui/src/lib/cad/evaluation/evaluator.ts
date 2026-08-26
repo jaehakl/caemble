@@ -1,5 +1,5 @@
 import { CadModelError, Material, resolveMaterialVariables } from '../model/core'
-import { deriveGeometrySurfaces, validateSurfacePartition } from '../geometry/surfaces'
+import { deriveGeometrySurfaces } from '../geometry/surfaces'
 import { getCadElementDefinition } from './registry'
 import { flattenValues, Fragment, isCadNode } from './jsx'
 import { applyTransforms, normalizeTransforms } from './transforms'
@@ -12,10 +12,11 @@ import type {
   CadSceneMaterial,
   CadScenePart,
   CadSceneTreeNode,
+  CadNode,
   EvaluatedPart,
   MaterialBinding,
 } from './types'
-import { assertUcumUnitComparable, normalizeUcumUnit, type UcumUnit } from '../model/units'
+import { normalizeUcumUnit, type UcumUnit } from '../model/units'
 
 type EvaluationState = {
   nodes: Map<string, CadSceneTreeNode>
@@ -39,7 +40,7 @@ function createMaterialBinding(role: string, material?: Material): MaterialBindi
 function assertMaterialRole(role: string) {
   if (!role.trim()) throw new CadModelError('Geometry material roles must not be blank.')
   if (role !== role.trim()) {
-    throw new CadModelError(`Geometry material role "${role}" must not have leading or trailing whitespace.`)
+    throw new CadModelError(`Geometry material role ${JSON.stringify(role)} must not have surrounding whitespace.`)
   }
 }
 
@@ -83,7 +84,7 @@ function resolveMaterials(value: unknown, inherited: Map<string, MaterialBinding
       return
     }
     if (!(material instanceof Material)) {
-      throw new CadModelError(`Geometry material role "${role}" must contain a Material instance or undefined.`)
+      throw new CadModelError(`Geometry material role ${JSON.stringify(role)} must contain a Material instance or undefined.`)
     }
     bindings.set(role, bindingByExposedMaterial.get(material) ?? createMaterialBinding(role, material))
   })
@@ -129,10 +130,9 @@ function resolveGeometryId(value: unknown, label: string, parentId: string, stat
       `Geometry ${label} id must be a non-empty string containing only Unicode letters, numbers, "_", or "-".`,
     )
   }
-
   const siblingIds = state.localIdsByParent.get(parentId) ?? new Set<string>()
   if (siblingIds.has(value)) {
-    throw new CadModelError(`Geometry id "${value}" must be unique within parent "${parentId || state.rootLabel}".`)
+    throw new CadModelError(`Geometry id ${JSON.stringify(value)} must be unique within parent ${JSON.stringify(parentId || state.rootLabel)}.`)
   }
   siblingIds.add(value)
   state.localIdsByParent.set(parentId, siblingIds)
@@ -198,23 +198,9 @@ function evaluateNode(
       ),
     )
   }
-  if (!isCadNode(value)) throw new CadModelError('Geometry functions must return CAD JSX.')
-
-  const { children, props, type } = value
+  const node = value as CadNode
+  const { children, props, type } = node
   if (type === Fragment) {
-    if (
-      props.id !== undefined ||
-      props.translation !== undefined ||
-      props.position !== undefined ||
-      props.rotation !== undefined ||
-      props.pos !== undefined ||
-      props.rotate !== undefined ||
-      props.scale !== undefined
-    ) {
-      throw new CadModelError(
-        'Fragment only accepts children. Use a Geometry or CAD element for identity or transforms.',
-      )
-    }
     reserveExplicitSiblingIds(children, identityParent, state)
     return children.flatMap((child, index) =>
       evaluateNode(
@@ -243,9 +229,8 @@ function evaluateNode(
     const result = type({
       ...props,
       id: identity.localId,
-      ...(transformValues.family === 'legacy'
-        ? { pos: transformValues.position, rotate: transformValues.rotate }
-        : { position: transformValues.position, rotation: transformValues.rotation }),
+      position: transformValues.position,
+      rotation: transformValues.rotation,
       scale: transformValues.scale,
       materials: exposeMaterials(materials),
       children,
@@ -257,8 +242,7 @@ function evaluateNode(
     )
   }
 
-  const definition = getCadElementDefinition(type)
-  if (!definition) throw new CadModelError(`Unknown CAD element: ${type}`)
+  const definition = getCadElementDefinition(type)!
   const resolvedProps = definition.kind === 'primitive' ? primitiveProps(definition.defaultProps, props) : props
   const primitiveIdentity =
     definition.kind === 'primitive' && props.id === undefined
@@ -271,15 +255,9 @@ function evaluateNode(
   const elementIdentityParent = globalId ?? identityParent
   const elementOwnerNodeKey = globalId === undefined ? ownerNodeKey : traceNode.key
   const transformValues = normalizeTransforms(resolvedProps, `<${type}>`)
-  if (definition.kind === 'operation' && definition.surfacePolicy === 'derive' && !elementOwnerNodeKey) {
-    throw new CadModelError(`<${type}> requires an explicit id on itself or an enclosing Geometry.`)
-  }
   let parts: EvaluatedPart[]
 
   if (definition.kind === 'primitive') {
-    if (!elementOwnerNodeKey) {
-      throw new CadModelError('CAD geometry requires an explicit id on an intrinsic element or enclosing Geometry.')
-    }
     const binding = materialBinding(inheritedMaterials, 'body')
 
     const geometry = definition.createGeometry(resolvedProps)
@@ -290,14 +268,14 @@ function evaluateNode(
         materialRole: binding.role,
         ...(binding.material === undefined ? {} : { material: binding.material }),
         surfaces: definition.createSurfaces(geometry, resolvedProps),
-        ownerNodeKey: elementOwnerNodeKey,
+        ownerNodeKey: elementOwnerNodeKey!,
         resultNodeKey: nodeKey,
       },
     ]
   } else {
     reserveExplicitSiblingIds(children, elementIdentityParent, state)
     let childIndex = 0
-    parts = definition.evaluate(value, {
+    parts = definition.evaluate(node, {
       nodeId: globalId ?? nodeKey,
       inheritedMaterials,
       evaluate: (child, materials = inheritedMaterials, trace) => {
@@ -348,7 +326,6 @@ export function evaluateCadScene(
   rawLengthUnit: UcumUnit = 'm',
 ): CadScene {
   const lengthUnit = normalizeUcumUnit(rawLengthUnit, `${rootLabel} scene lengthUnit`)
-  assertUcumUnitComparable(lengthUnit, 'm', `${rootLabel} scene lengthUnit`)
   const rootKey = rootLabel.toLowerCase()
   const tree: CadSceneTreeNode = { key: rootKey, label: rootLabel, children: [] }
   const state: EvaluationState = {
@@ -360,12 +337,8 @@ export function evaluateCadScene(
   const evaluatedParts = evaluateNode(root, new Map(), state, tree, `${rootKey}/root`, '', undefined)
 
   const ownerIds = evaluatedParts.map((part) => {
-    if (!part.ownerNodeKey) {
-      throw new CadModelError('CAD geometry requires an explicit id on an intrinsic element or enclosing Geometry.')
-    }
-    const owner = state.nodes.get(part.ownerNodeKey)
-    if (!owner?.globalId) throw new CadModelError('CAD evaluation lost a Geometry identity owner.')
-    return owner.globalId
+    const owner = state.nodes.get(part.ownerNodeKey!)!
+    return owner.globalId!
   })
   const subtreePartCounts = new Map<string, number>()
   ownerIds.forEach((ownerId) => {
@@ -391,22 +364,15 @@ export function evaluateCadScene(
     return node.kind === 'shell' ? { ...node, nodeId: rootId } : node
   }
   const parts: CadScenePart[] = evaluatedParts.map((part, partIndex) => {
-    if (!part.surfaces || !part.ownerNodeKey || !part.resultNodeKey) {
-      throw new CadModelError('CAD evaluation produced geometry without surface metadata.')
-    }
-    validateSurfacePartition(part.geometry, part.surfaces)
-
-    const owner = state.nodes.get(part.ownerNodeKey)
-    const resultNode = state.nodes.get(part.resultNodeKey)
-    if (!owner?.globalId || !resultNode) {
-      throw new CadModelError('CAD evaluation lost the Geometry Tree owner for a scene part.')
-    }
-    const directPartCount = directPartCounts.get(part.ownerNodeKey) ?? 0
+    const owner = state.nodes.get(part.ownerNodeKey!)!
+    const resultNode = state.nodes.get(part.resultNodeKey!)!
+    const ownerId = owner.globalId!
+    const directPartCount = directPartCounts.get(part.ownerNodeKey!) ?? 0
     const directPartOrdinal = directPartOrdinals[partIndex]
-    const subtreePartCount = subtreePartCounts.get(owner.globalId) ?? 0
+    const subtreePartCount = subtreePartCounts.get(ownerId) ?? 0
     const usesExactGeometryId = directPartCount === 1 && subtreePartCount === 1
-    const id = usesExactGeometryId ? owner.globalId : `${owner.globalId}.$part-${directPartOrdinal}`
-    const surfaces = part.surfaces.map((surface) => ({
+    const id = usesExactGeometryId ? ownerId : `${ownerId}.$part-${directPartOrdinal}`
+    const surfaces = part.surfaces!.map((surface) => ({
       id: `${id}/surface/${surface.surfaceIndex}`,
       surfaceIndex: surface.surfaceIndex,
       label: surface.label,

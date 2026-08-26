@@ -6,11 +6,9 @@ from typing import Any, Awaitable, Callable
 
 import numpy as np
 
-from app.errors import CaeError
 from app.solver_framework.geometry import TriangularMesh
 from app.solver_framework.models import ElectrodeVoxelDomain, FiniteVolumeSystem, VoxelDomain
 
-_NEIGHBOR_OFFSETS = ((-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1))
 
 async def build_voxel_domain(
     mesh: TriangularMesh,
@@ -26,15 +24,7 @@ async def build_voxel_domain(
     reference = _surface_plane(reference_surface, mesh, label)
     displacement = reference["center"] - source["center"]
     length = float(np.linalg.norm(displacement))
-    if not math.isfinite(length) or length <= 0:
-        raise CaeError("invalid_geometry", f"{label} terminal centers must be separated")
     axis = displacement / length
-    if (
-        float(np.dot(source["normal"], reference["normal"])) > -1 + 1e-7
-        or float(np.dot(source["normal"], axis)) > -1 + 1e-7
-        or float(np.dot(reference["normal"], axis)) < 1 - 1e-7
-    ):
-        raise CaeError("invalid_geometry", f"{label} terminals must be parallel, opposite, and normal to their axis")
     projected_y = np.array([0.0, 1.0, 0.0]) - axis * float(np.dot([0.0, 1.0, 0.0], axis))
     projected_z = np.array([0.0, 0.0, 1.0]) - axis * float(np.dot([0.0, 0.0, 1.0], axis))
     u_axis = projected_y if np.linalg.norm(projected_y) > 1e-8 else projected_z
@@ -43,16 +33,10 @@ async def build_voxel_domain(
     v_axis = v_axis / np.linalg.norm(v_axis)
     origin = (source["center"] + reference["center"]) / 2
     offsets = positions - origin
-    axial = offsets @ axis
-    tolerance = max(length * 1e-8, np.max(np.ptp(positions, axis=0)) * 2e-12, 1e-9)
-    if np.any(axial < -length / 2 - tolerance) or np.any(axial > length / 2 + tolerance):
-        raise CaeError("invalid_geometry", f"{label} must remain between its terminal planes")
     u_values = offsets @ u_axis
     v_values = offsets @ v_axis
     minimum_u, maximum_u = float(np.min(u_values)), float(np.max(u_values))
     minimum_v, maximum_v = float(np.min(v_values)), float(np.max(v_values))
-    if maximum_u <= minimum_u or maximum_v <= minimum_v:
-        raise CaeError("invalid_geometry", f"{label} cross-section bounds must be positive")
     axial_spacing = length / shape[0]
     u_spacing = (maximum_u - minimum_u) / shape[1]
     v_spacing = (maximum_v - minimum_v) / shape[2]
@@ -72,10 +56,7 @@ async def build_voxel_domain(
                 if (index + 1) % 4096 == 0:
                     await progress({"stage": "occupancy", "completed": index + 1, "total": occupancy.size})
                     await asyncio.sleep(0)
-    if occupied == 0:
-        raise CaeError("invalid_geometry", f"{label} did not occupy any cells")
     await progress({"stage": "occupancy", "completed": occupancy.size, "total": occupancy.size})
-    await _validate_connectivity(occupancy, occupied, shape, progress, label)
     return VoxelDomain(
         shape,
         axis,
@@ -102,8 +83,6 @@ async def build_electrode_voxel_domain(
     reference_center = _mesh_bounds_center(reference_meshes)
     displacement = reference_center - source_center
     center_distance = float(np.linalg.norm(displacement))
-    if not math.isfinite(center_distance) or center_distance <= 0:
-        raise CaeError("invalid_geometry", f"{label} electrode centers must be separated")
     axis = displacement / center_distance
     projected_y = np.array([0.0, 1.0, 0.0]) - axis * float(np.dot([0.0, 1.0, 0.0], axis))
     projected_z = np.array([0.0, 0.0, 1.0]) - axis * float(np.dot([0.0, 0.0, 1.0], axis))
@@ -120,16 +99,12 @@ async def build_electrode_voxel_domain(
     axial = provisional_offsets @ axis
     minimum_axial, maximum_axial = float(np.min(axial)), float(np.max(axial))
     length = maximum_axial - minimum_axial
-    if not math.isfinite(length) or length <= 0:
-        raise CaeError("invalid_geometry", f"{label} axial bounds must be positive")
     origin = provisional_origin + axis * ((minimum_axial + maximum_axial) / 2)
     offsets = positions - origin
     u_values = offsets @ u_axis
     v_values = offsets @ v_axis
     minimum_u, maximum_u = float(np.min(u_values)), float(np.max(u_values))
     minimum_v, maximum_v = float(np.min(v_values)), float(np.max(v_values))
-    if maximum_u <= minimum_u or maximum_v <= minimum_v:
-        raise CaeError("invalid_geometry", f"{label} cross-section bounds must be positive")
     domain = VoxelDomain(
         shape,
         axis,
@@ -146,23 +121,8 @@ async def build_electrode_voxel_domain(
     conductor = await _voxelize_meshes(conductor_meshes, domain, frame, progress, "conductor")
     source = await _voxelize_meshes(source_meshes, domain, frame, progress, "source electrode")
     reference = await _voxelize_meshes(reference_meshes, domain, frame, progress, "reference electrode")
-    if np.any(source & reference):
-        raise CaeError("invalid_geometry", f"{label} source and reference electrodes must not overlap")
-    if not _masks_touch(conductor, source, shape):
-        raise CaeError(
-            "invalid_geometry",
-            f"{label} source electrode must contact the conductor "
-            f"(conductor axial cells {_axial_range(conductor, shape)}, electrode axial cells {_axial_range(source, shape)})",
-        )
-    if not _masks_touch(conductor, reference, shape):
-        raise CaeError(
-            "invalid_geometry",
-            f"{label} reference electrode must contact the conductor "
-            f"(conductor axial cells {_axial_range(conductor, shape)}, electrode axial cells {_axial_range(reference, shape)})",
-        )
     occupancy = (conductor | source | reference).astype(np.uint8)
     occupied = int(np.count_nonzero(occupancy))
-    await _validate_connectivity(occupancy, occupied, shape, progress, label)
     combined = VoxelDomain(
         shape,
         axis,
@@ -215,8 +175,6 @@ async def _voxelize_meshes(
             if completed % 64 == 0:
                 await progress({"stage": f"occupancy:{stage}", "completed": completed, "total": total})
                 await asyncio.sleep(0)
-    if not np.any(result):
-        raise CaeError("invalid_geometry", f"DC {stage} did not occupy any cells")
     await progress({"stage": f"occupancy:{stage}", "completed": total, "total": total})
     return result
 
@@ -242,39 +200,13 @@ def _column_intersections(triangles: np.ndarray[Any, Any], u: float, v: float) -
     return hits[keep]
 
 
-def _masks_touch(first: np.ndarray[Any, Any], second: np.ndarray[Any, Any], shape: tuple[int, int, int]) -> bool:
-    first_grid = first.reshape(shape)
-    second_grid = second.reshape(shape)
-    if np.any(first_grid & second_grid):
-        return True
-    return any(
-        np.any(first_grid[first_slice] & second_grid[second_slice])
-        for first_slice, second_slice in (
-            ((slice(1, None), slice(None), slice(None)), (slice(None, -1), slice(None), slice(None))),
-            ((slice(None, -1), slice(None), slice(None)), (slice(1, None), slice(None), slice(None))),
-            ((slice(None), slice(1, None), slice(None)), (slice(None), slice(None, -1), slice(None))),
-            ((slice(None), slice(None, -1), slice(None)), (slice(None), slice(1, None), slice(None))),
-            ((slice(None), slice(None), slice(1, None)), (slice(None), slice(None), slice(None, -1))),
-            ((slice(None), slice(None), slice(None, -1)), (slice(None), slice(None), slice(1, None))),
-        )
-    )
-
-
-def _axial_range(mask: np.ndarray[Any, Any], shape: tuple[int, int, int]) -> str:
-    indices = np.flatnonzero(np.any(mask.reshape(shape), axis=(1, 2)))
-    return f"{int(indices[0])}..{int(indices[-1])}"
-
-
 def _surface_plane(surface: dict[str, Any], mesh: TriangularMesh, label: str) -> dict[str, Any]:
+    del label
     indices = mesh.triangle_indices(surface)
-    if indices.size == 0:
-        raise CaeError("invalid_geometry", f"{label} terminal has no semantic triangles")
     triangles = mesh.vertices[mesh.triangles[indices]]
     first = triangles[0]
     normal = np.cross(first[1] - first[0], first[2] - first[0])
     normal_length = float(np.linalg.norm(normal))
-    if normal_length <= 0:
-        raise CaeError("invalid_geometry", f"{label} terminal has an invalid normal")
     normal /= normal_length
     weighted = np.zeros(3)
     total_area = 0.0
@@ -283,12 +215,7 @@ def _surface_plane(surface: dict[str, Any], mesh: TriangularMesh, label: str) ->
         area = float(np.linalg.norm(np.cross(second - anchor, third - anchor)) / 2)
         weighted += ((anchor + second + third) / 3) * area
         total_area += area
-    if total_area <= 0:
-        raise CaeError("invalid_geometry", f"{label} terminal has no positive area")
     center = weighted / total_area
-    tolerance = 1e-8
-    if np.any(np.abs((triangles.reshape(-1, 3) - first[0]) @ normal) > tolerance):
-        raise CaeError("invalid_geometry", f"{label} terminal must be planar")
     return {"center": center, "normal": normal}
 
 
@@ -316,54 +243,6 @@ def _contains(point: np.ndarray[Any, Any], triangles: np.ndarray[Any, Any]) -> b
         if distance > 1e-10 and all(abs(distance - previous) > 1e-8 for previous in hits):
             hits.append(distance)
     return len(hits) % 2 == 1
-
-
-async def _validate_connectivity(
-    occupancy: np.ndarray[Any, Any],
-    occupied_count: int,
-    shape: tuple[int, int, int],
-    progress: Callable[[Any], Awaitable[None]],
-    label: str,
-) -> None:
-    source_cells = []
-    reference_cells = []
-    for j in range(shape[1]):
-        for k in range(shape[2]):
-            source = voxel_index(0, j, k, shape)
-            reference = voxel_index(shape[0] - 1, j, k, shape)
-            if occupancy[source]:
-                source_cells.append(source)
-            if occupancy[reference]:
-                reference_cells.append(reference)
-    if not source_cells or not reference_cells:
-        raise CaeError("invalid_geometry", f"{label} must occupy both terminal planes")
-    visited = np.zeros(occupancy.size, dtype=np.uint8)
-    queue = np.empty(occupied_count, dtype=np.int64)
-    queue[0] = source_cells[0]
-    visited[source_cells[0]] = 1
-    head, tail = 0, 1
-    while head < tail:
-        index = int(queue[head])
-        head += 1
-        k = index % shape[2]
-        j = (index // shape[2]) % shape[1]
-        i = index // (shape[1] * shape[2])
-        for di, dj, dk in _NEIGHBOR_OFFSETS:
-            ni, nj, nk = i + di, j + dj, k + dk
-            if ni < 0 or ni >= shape[0] or nj < 0 or nj >= shape[1] or nk < 0 or nk >= shape[2]:
-                continue
-            neighbor = voxel_index(ni, nj, nk, shape)
-            if not occupancy[neighbor] or visited[neighbor]:
-                continue
-            visited[neighbor] = 1
-            queue[tail] = neighbor
-            tail += 1
-        if head % 8192 == 0:
-            await progress({"stage": "connectivity", "completed": head, "total": occupied_count})
-            await asyncio.sleep(0)
-    if tail != occupied_count or not any(visited[index] for index in reference_cells):
-        raise CaeError("invalid_geometry", f"{label} cells must form one connected domain")
-    await progress({"stage": "connectivity", "completed": occupied_count, "total": occupied_count})
 
 
 def axis_ticks(domain: VoxelDomain) -> tuple[list[float], list[float], list[float]]:

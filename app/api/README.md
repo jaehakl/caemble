@@ -13,7 +13,6 @@ allowed origins, and credential-encryption keys. Then install, migrate, and run:
 ```powershell
 poetry install
 poetry run alembic upgrade head
-poetry run alembic current
 poetry run uvicorn main:app --app-dir app --reload --host 127.0.0.1 --port 8000
 ```
 
@@ -21,21 +20,19 @@ The initial migration creates the required `vector` extension. If the
 application database user cannot create extensions, a DBA must create `vector`
 before running Alembic.
 
-Routine tests omit explicitly slow database/WebSocket contracts and opt-in live
-provider checks:
+A normal install uses the current single baseline against an empty schema.
+
+To erase every application row and recreate PostgreSQL from that baseline, run
+the explicit reset entrypoint. It refuses to run unless the destructive flag is
+set:
 
 ```powershell
-poetry run pytest -q -m "not slow and not live"
+$env:RESET_API_SCHEMA = "1"
+poetry run python reset_schema.py
 ```
 
-Run the complete local suite before a cross-boundary change is merged:
-
-```powershell
-poetry run pytest -q
-```
-
-The live OpenAI smoke test is separate, uses the environment variables named in
-the test module, sends a paid request, and must never run in routine CI.
+The reset drops the complete `public` schema with `CASCADE`; it does not create a
+backup and the baseline does not provide downgrade recovery.
 
 ## Ownership
 
@@ -48,10 +45,10 @@ the test module, sends a paid request, and must never run in routine CI.
 - `app/ai`: external provider credentials, Agent tools, staged source changes,
   and streaming run state.
 - `app/utils/crud`: shared owned/public CRUD mechanics.
-- `alembic`: append-only schema migrations.
+- `alembic`: the current destructive baseline and subsequent migrations.
 
 The [architecture guide](../../docs/architecture.md) is the concise source for
-current bundle versions and UI/API/worker responsibility. Endpoint request and
+UI/API/worker responsibility. Endpoint request and
 response detail belongs in Pydantic/OpenAPI definitions, not a duplicated list
 in this README.
 
@@ -81,9 +78,10 @@ failed and does not resume an Agent run.
 
 ## Persistence boundaries
 
-The API validates source hashes, ownership, immutable Geometry imports, and
-one-time RecordedData attachment. CAD evaluation, tensor interpretation, unit
-conversion, and physics execution remain in the UI/CAE worker boundary.
+The API trusts domain payloads after basic Pydantic deserialization. Ownership,
+authentication, CSRF, encrypted session binding, and source-path containment
+remain enforced. CAD evaluation, tensor interpretation, unit conversion, and
+physics execution remain in the UI/CAE worker boundary.
 
 QuantityKind, Material, and Solver catalog data is read from
 `app/catalog/caemble_catalog/catalog.sqlite3`. Never introduce parallel catalog

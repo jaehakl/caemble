@@ -10,7 +10,6 @@ from typing import Any, Hashable
 from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection
 
 from .constants import DATA_CHANNEL_LABEL, DEFAULT_RTC_ICE_SERVERS, PEER_CLOSE_TIMEOUT_SECONDS
-from .errors import GpStationProtocolError
 from .types import CandidateSummary
 
 
@@ -27,39 +26,15 @@ class PreparedJobConnection:
 
 
 def parse_rtc_ice_servers_json(value: str) -> list[RTCIceServer]:
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"RTC ICE servers JSON is invalid: {exc}") from exc
-    if not isinstance(parsed, list):
-        raise ValueError("RTC ICE servers JSON must be an array")
-    servers: list[RTCIceServer] = []
-    for item in parsed:
-        if not isinstance(item, dict):
-            raise ValueError("RTC ICE servers JSON must contain objects with urls")
-        urls = item.get("urls")
-        if not isinstance(urls, str) and not (
-            isinstance(urls, list) and all(isinstance(url, str) for url in urls)
-        ):
-            raise ValueError("RTC ICE servers JSON must contain objects with urls")
-        username = item.get("username")
-        credential = item.get("credential")
-        credential_type = item.get("credentialType", "password")
-        if username is not None and not isinstance(username, str):
-            raise ValueError("RTC ICE server username must be a string")
-        if credential is not None and not isinstance(credential, str):
-            raise ValueError("RTC ICE server credential must be a string")
-        if not isinstance(credential_type, str):
-            raise ValueError("RTC ICE server credentialType must be a string")
-        servers.append(
-            RTCIceServer(
-                urls=urls,
-                username=username,
-                credential=credential,
-                credentialType=credential_type,
-            )
+    return [
+        RTCIceServer(
+            urls=item["urls"],
+            username=item.get("username"),
+            credential=item.get("credential"),
+            credentialType=item.get("credentialType", "password"),
         )
-    return servers
+        for item in json.loads(value)
+    ]
 
 
 def summarize_sdp_candidates(sdp: str) -> CandidateSummary:
@@ -117,8 +92,6 @@ async def create_prepared_job_connection(
         async with asyncio.timeout(timeout_seconds):
             offer = await peer_connection.createOffer()
             await peer_connection.setLocalDescription(offer)
-        if peer_connection.localDescription is None:
-            raise GpStationProtocolError("localDescription was not created")
         return PreparedJobConnection(
             peer_connection=peer_connection,
             data_channel=data_channel,

@@ -13,6 +13,8 @@ export type {
   LauncherRuntime,
   MeasurementCreateRequest,
   MeasurementRecordRequest,
+  MeasurementRecordedData,
+  RecordedDataSaveLeaf,
   SaveExperimentResponse,
   SaveExperimentRequest,
   UpsertResponse,

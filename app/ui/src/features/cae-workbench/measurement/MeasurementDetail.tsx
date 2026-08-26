@@ -46,6 +46,58 @@ function MaterialSnapshot({
   )
 }
 
+function RecordedLeaf({ row }: { row: SavedRecordedData }) {
+  return (
+    <div className="rounded-md border p-3">
+      <p className="truncate text-sm font-medium">{row.name.slice(row.name.lastIndexOf('.') + 1)}</p>
+      <dl className="mt-2 grid grid-cols-2 gap-2">
+        <DetailField label="Quantity Kind" value={row.quantity_kind ?? '—'} />
+        <DetailField label="Dtype" value={row.dtype} />
+        <DetailField label="Tensor order" value={row.tensor_order} />
+        <DetailField
+          label="File size"
+          value={row.file_size === null || row.file_size === undefined ? '—' : `${row.file_size.toLocaleString()} B`}
+        />
+      </dl>
+      {row.data_schema ? (
+        <pre className="mt-2 max-h-24 overflow-auto rounded bg-muted p-2 text-[10px] break-all whitespace-pre-wrap">
+          {JSON.stringify(row.data_schema, null, 2)}
+        </pre>
+      ) : null}
+    </div>
+  )
+}
+
+function RecordedRows({ rows, depth = 0 }: { rows: readonly SavedRecordedData[]; depth?: number }) {
+  const grouped = new Map<string, SavedRecordedData[]>()
+  rows.forEach((row) => {
+    const name = row.name.split('.')[depth]
+    if (name) grouped.set(name, [...(grouped.get(name) ?? []), row])
+  })
+  return (
+    <ul className="space-y-2">
+      {[...grouped].map(([name, members]) => {
+        const leaf = members.length === 1 && members[0].name.split('.').length === depth + 1
+        return (
+          <li key={`${depth}-${name}`}>
+            {leaf ? (
+              <RecordedLeaf row={members[0]} />
+            ) : (
+              <section className="rounded-md border p-3" aria-label={`RecordedData group ${name}`}>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="truncate text-sm font-semibold">{name}</p>
+                  <Badge className="border bg-transparent">group</Badge>
+                </div>
+                <RecordedRows rows={members} depth={depth + 1} />
+              </section>
+            )}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
 export function MeasurementDetail({
   className,
   measurement,
@@ -77,9 +129,10 @@ export function MeasurementDetail({
 
   const regularRows = recordedRows.filter((row) => !isRayPathRecordedDataName(row.name))
   const rayPathsDeclared =
-    rayPathsDeclaredProp || recordedRows.some((row) => row.name.startsWith('@caemble/ray-paths@'))
+    rayPathsDeclaredProp || recordedRows.some((row) => isRayPathRecordedDataName(row.name))
   const hasRayPathSystemResult = rayPathsDeclared || rayPathBundles.length > 0 || Boolean(rayPathError)
-  const displayedResultCount = regularRows.length + (hasRayPathSystemResult ? 1 : 0)
+  const displayedResultCount =
+    new Set(regularRows.map((row) => row.name.split('.')[0])).size + (hasRayPathSystemResult ? 1 : 0)
 
   return (
     <div className={cn('h-full space-y-4 overflow-y-auto p-3', className)}>
@@ -144,31 +197,7 @@ export function MeasurementDetail({
         {displayedResultCount ? (
           <div className="space-y-2">
             <RayPathSystemCard bundles={rayPathBundles} declared={rayPathsDeclared} error={rayPathError} />
-            <ul className="space-y-2">
-              {regularRows.map((row, index) => (
-                <li className="rounded-md border p-3" key={row.id ?? `${row.name}-${index}`}>
-                  <p className="truncate text-sm font-medium">{row.name}</p>
-                  <dl className="mt-2 grid grid-cols-2 gap-2">
-                    <DetailField label="Quantity Kind" value={row.quantity_kind ?? '—'} />
-                    <DetailField label="Dtype" value={row.dtype} />
-                    <DetailField label="Tensor order" value={row.tensor_order} />
-                    <DetailField
-                      label="File size"
-                      value={
-                        row.file_size === null || row.file_size === undefined
-                          ? '—'
-                          : `${row.file_size.toLocaleString()} B`
-                      }
-                    />
-                  </dl>
-                  {row.data_schema ? (
-                    <pre className="mt-2 max-h-24 overflow-auto rounded bg-muted p-2 text-[10px] break-all whitespace-pre-wrap">
-                      {JSON.stringify(row.data_schema, null, 2)}
-                    </pre>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
+            <RecordedRows rows={regularRows} />
           </div>
         ) : (
           <div className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">

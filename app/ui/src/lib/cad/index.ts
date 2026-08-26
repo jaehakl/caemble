@@ -1,6 +1,5 @@
 export { evaluateCad, evaluateCadScene } from './evaluation/evaluator'
 export { cadAuthoringContract, cadElementCatalog } from './catalog'
-export { CAD_API_DECLARATION_FINGERPRINT } from './api/generatedVersions'
 export {
   insertPrimitiveAfterCursorLine,
   operationAuthoringElements,
@@ -23,7 +22,6 @@ export type {
   CadElementPropertyManifest,
   CadElementSurfaceManifest,
 } from './evaluation/types'
-export { MAX_CANONICAL_GEOMETRY_TRIANGLES } from './evaluation/canonicalTypes'
 export type {
   CanonicalAffineMatrixV1,
   CanonicalBooleanNodeV1,
@@ -32,18 +30,18 @@ export type {
   CanonicalGeometryMaterialV1,
   CanonicalGeometryNodeV1,
   CanonicalGeometryRootV1,
-  CanonicalGeometrySceneV2,
+  CanonicalGeometrySceneV1,
   CanonicalInstanceNodeV1,
   CanonicalPrimitiveNameV1,
   CanonicalPrimitiveNodeV1,
   CanonicalShellNodeV1,
-  CanonicalSurfaceGroupV2,
-  CanonicalSurfaceSelectorV2,
+  CanonicalSurfaceGroupV1,
+  CanonicalSurfaceSelectorV1,
   CanonicalTransformNodeV1,
   CanonicalVec3V1,
 } from './evaluation/canonicalTypes'
 export { CadModelError, isFloatDType, Mat, Material, radians } from './model/core'
-export { defineTask, experiment, ExperimentDefinition, TaskDefinition } from './model/v5'
+export { defineTask, experiment, ExperimentDefinition, TaskDefinition } from './model/definition'
 export type {
   CadDefinition,
   ExperimentDefinitionOptions,
@@ -53,9 +51,9 @@ export type {
   TaskDefinitionOptions,
   TaskModelContext,
   VarsSchemaDefinition,
-} from './model/v5'
+} from './model/definition'
 export { generateRandomVars, normalizeVars, normalizeVarsSchema, varsSchemaFingerprint } from './model/vars'
-export { assertUcumUnitComparable, convertUcumValue, normalizeUcumUnit } from './model/units'
+export { convertUcumValue, normalizeUcumUnit } from './model/units'
 export { normalizeDataValueDescriptor } from './model/core'
 export type {
   CartesianBasis,
@@ -77,8 +75,7 @@ export type {
   GeometryTransformAttributes,
   IntegerDataDType,
   IntrinsicGeometryAttributes,
-  LegacyRecordedDataTensor,
-  LegacyGeometryTransformAttributes,
+  DataTensorInput,
   MaterialDataValueDescriptor,
   MaterialQuantitySeries,
   MaterialSampledRelation,
@@ -94,6 +91,8 @@ export type {
   QuantityMetadata,
   RecordedData,
   RecordedDataAxis,
+  RecordedDataGroup,
+  RecordedDataNode,
   RecordedDataResult,
   RecordedDataResultAxis,
   RecordedDataRule,
@@ -122,18 +121,12 @@ export type {
   MaterialPropertyQuantityKind,
 } from '../material/data'
 export {
-  CAD_SOURCE_API_VERSION,
-  CAD_SOURCE_FORMAT_VERSION,
-  MAX_CAD_SOURCE_BYTES,
   EXPERIMENT_ENTRY_PATH,
   EXPERIMENT_GEOMETRY_PATH,
   EXPERIMENT_MATERIAL_PATH,
   EXPERIMENT_SIMULATION_PATH,
-  EXPERIMENT_SOURCE_BUNDLE_FORMAT_VERSION,
   addExperimentSourceFile,
   addExperimentTask,
-  assertCadSourceDocument,
-  assertExperimentSourceBundle,
   cadSource,
   cadSourceHash,
   createCadSourceDocument,
@@ -180,7 +173,7 @@ export type {
   GeometryModuleEvaluationOptions,
   GeometryModulePreview,
 } from './execution/evaluateDocument'
-export { assertEvaluatedDocumentSnapshot, serializeEvaluatedDocumentSnapshot } from './execution/snapshot'
+export { serializeEvaluatedDocumentSnapshot } from './execution/snapshot'
 export type {
   EvaluatedDocumentSnapshot,
   EvaluatedExperimentSnapshot,
@@ -189,13 +182,12 @@ export type {
 } from './execution/snapshot'
 export {
   applyFrozenMaterialParameters,
-  assertBuiltMeasurement,
   buildMeasurement,
   buildSourceOnlyMeasurement,
   unresolvedMeasurementMaterialRoles,
 } from './execution/measurement'
 export type { BuiltMeasurement, MeasurementMaterialResolution, TaskMaterialResolution } from './execution/measurement'
-export { assertSerializableCadScene, deserializeCadScene, serializeCadScene } from './execution/mesh'
+export { deserializeCadScene, serializeCadScene } from './execution/mesh'
 export type { SerializableCadMesh, SerializableCadScene, SerializableCadScenePart } from './execution/mesh'
 export { normalizeRecordedData, normalizeRecordedDataTensor } from './model/recordedData'
 export {
@@ -205,11 +197,19 @@ export {
   type RayPathBundle,
   type RayPathEventName,
 } from './model/rayPaths'
+export type {
+  RecordedDataSchemaTree,
+  RecordedDataSpecGroup,
+  RecordedDataSpecNode,
+  ResolvedDataSchema,
+  ResolvedDataSchemaGroup,
+  ResolvedDataSchemaNode,
+  SimulationProgramManifest,
+} from './simulation/types'
 export type { ResolvedRecordedTensor } from './model/recordedData'
 export {
   DATA_TENSOR_ATTACHMENT_SHARD_BYTES,
   DATA_TENSOR_INLINE_BYTES,
-  MAX_RECORDED_DATA_BYTES,
   createAttachmentDataTensor,
   createDataTensor,
   createDataTensorAccessor,

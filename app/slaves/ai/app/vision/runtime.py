@@ -115,13 +115,6 @@ def release_wd14_runtime(device_id: int) -> None:
     _clear_cuda_cache(_load_torch(), device_id)
 
 
-def reset_vision_runtime_for_tests() -> None:
-    global _clip_bundle, _wd14_bundle
-
-    _clip_bundle = None
-    _wd14_bundle = None
-
-
 def _encode_clip_image_locked(image: Image.Image, device: str) -> list[float]:
     model, preprocess, _clip, torch, _device = _get_clip_bundle_locked(device)
     image_tensor = preprocess(image).unsqueeze(0).to(device)

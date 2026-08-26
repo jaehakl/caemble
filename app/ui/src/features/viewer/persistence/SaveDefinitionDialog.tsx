@@ -1,7 +1,5 @@
-import { zodResolver } from '@hookform/resolvers/zod'
 import { useEffect, useId, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
-import { z } from 'zod'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -13,26 +11,14 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 
-const definitionFormSchema = z.object({
-  namespace: z
-    .string()
-    .trim()
-    .regex(/^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$/, '3~32자의 소문자, 숫자, -로 Namespace를 입력하세요.')
-    .refine((value) => value !== 'caemble', 'caemble Namespace는 Example 전용입니다.'),
-  name: z.string().trim().min(1, '이름을 입력하세요.').max(200, '이름은 200자 이하여야 합니다.'),
-  description: z.string().trim().max(2_000, '설명은 2,000자 이하여야 합니다.'),
-  repository: z
-    .string()
-    .trim()
-    .regex(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/, '소문자, 숫자, -로 Repository를 입력하세요.'),
-  key: z
-    .string()
-    .trim()
-    .regex(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/, '소문자, 숫자, -로 Experiment key를 입력하세요.'),
-  bump: z.enum(['patch', 'minor', 'major']),
-})
-
-export type DefinitionFormValues = z.infer<typeof definitionFormSchema>
+export type DefinitionFormValues = Readonly<{
+  namespace: string
+  name: string
+  description: string
+  repository: string
+  key: string
+  bump: 'patch' | 'minor' | 'major'
+}>
 export type ExperimentSaveMode = 'create' | 'overwrite' | 'new_version'
 
 export function SaveDefinitionDialog({
@@ -61,7 +47,7 @@ export function SaveDefinitionDialog({
   title?: string
 }) {
   const namespaceListId = useId()
-  const form = useForm<DefinitionFormValues>({ resolver: zodResolver(definitionFormSchema), defaultValues: defaults })
+  const form = useForm<DefinitionFormValues>({ defaultValues: defaults })
   const defaultBump = defaults.bump
   const defaultDescription = defaults.description
   const defaultKey = defaults.key
@@ -106,23 +92,14 @@ export function SaveDefinitionDialog({
                   <option key={namespace} value={namespace} />
                 ))}
               </datalist>
-              {form.formState.errors.namespace ? (
-                <span className="text-xs text-destructive">{form.formState.errors.namespace.message}</span>
-              ) : null}
             </label>
             <label className="grid gap-1.5 text-sm font-medium">
               Repository
               <Input disabled={pending} {...form.register('repository')} />
-              {form.formState.errors.repository ? (
-                <span className="text-xs text-destructive">{form.formState.errors.repository.message}</span>
-              ) : null}
             </label>
             <label className="grid gap-1.5 text-sm font-medium">
               Experiment key
               <Input disabled={pending} {...form.register('key')} />
-              {form.formState.errors.key ? (
-                <span className="text-xs text-destructive">{form.formState.errors.key.message}</span>
-              ) : null}
             </label>
           </div>
           {mode === 'create' ? null : (
@@ -147,9 +124,6 @@ export function SaveDefinitionDialog({
           <label className="grid gap-1.5 text-sm font-medium">
             이름
             <Input disabled={pending} {...form.register('name')} />
-            {form.formState.errors.name ? (
-              <span className="text-xs text-destructive">{form.formState.errors.name.message}</span>
-            ) : null}
           </label>
           <label className="grid gap-1.5 text-sm font-medium">
             설명
@@ -158,9 +132,6 @@ export function SaveDefinitionDialog({
               disabled={pending}
               {...form.register('description')}
             />
-            {form.formState.errors.description ? (
-              <span className="text-xs text-destructive">{form.formState.errors.description.message}</span>
-            ) : null}
           </label>
           <DialogFooter>
             <Button disabled={pending} type="button" variant="outline" onClick={() => onOpenChange(false)}>

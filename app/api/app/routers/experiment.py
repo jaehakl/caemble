@@ -28,17 +28,6 @@ router = APIRouter(prefix="/experiment", tags=["experiment"])
 CRUD_SPEC = CrudSpec(
     model=Experiment,
     schema=ExperimentBase,
-    immutable_update_fields=(
-        "user_id",
-        "namespace",
-        "repository_slug",
-        "experiment_key",
-        "version_major",
-        "version_minor",
-        "version_patch",
-        "source_bundle",
-        "source_hash",
-    ),
     search_aliases={
         "workbench": (
             "name",

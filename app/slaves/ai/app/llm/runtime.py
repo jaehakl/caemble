@@ -122,10 +122,6 @@ async def ask_llm(
 ) -> str:
     trimmed_system_message = system_message.strip()
     trimmed_question = question.strip()
-    if not trimmed_system_message:
-        raise ValueError("system_message is required")
-    if not trimmed_question:
-        raise ValueError("question is required")
     answer = await generate_prompt_with_llm(
         [
             {"role": "system", "content": trimmed_system_message},
@@ -140,8 +136,6 @@ async def ask_llm(
         thinking_effort=thinking_effort,
         response_format_json=response_format_json,
     )
-    if not answer.strip():
-        raise RuntimeError("LLM returned empty answer")
     return answer
 
 
@@ -224,11 +218,7 @@ def _resolve_llm_main_gpu(use_gpu: bool, cuda_device_count: int, main_gpu: int) 
 
 
 def _parse_llm_split_mode(value: str) -> int:
-    normalized = value.strip().lower()
-    split_mode = LLM_SPLIT_MODE_NAMES.get(normalized)
-    if split_mode is None:
-        raise ValueError("split_mode must be one of: none, layer, row, tensor")
-    return split_mode
+    return LLM_SPLIT_MODE_NAMES[value.strip().lower()]
 
 
 def _resolve_llm_lease_device_ids(
@@ -244,10 +234,6 @@ def _resolve_llm_lease_device_ids(
     if tensor_split is not None:
         return tuple(range(len(tensor_split)))
     return tuple(range(cuda_device_count))
-
-
-def reset_llm_runtime_for_tests() -> None:
-    release_llm_runtime()
 
 
 def warmup_llm_import() -> None:

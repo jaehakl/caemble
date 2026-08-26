@@ -11,7 +11,6 @@ import type {
   MaterialPropertyKey,
   MaterialPropertyQuantityKind,
 } from '../../material/data'
-import { CadModelError } from './errors'
 import type { UcumUnit } from './units'
 
 export type ExperimentTarget = `${'experiment' | 'task'}.${'geometry' | 'surface'}.${string}`
@@ -108,11 +107,8 @@ export type MaterialSampledRelation<Key extends MaterialModelKey = MaterialModel
 export type ScalarValue = boolean | string | number
 export type MaterialVariable = string | MaterialDataValueDescriptor | MaterialSampledRelation
 // The selected runtime slice supplies exact authoring keys to Monaco; application runtime values are validated.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type MaterialVariables = Readonly<Record<string, any> & { color?: string; errorRate?: number }>
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type NormalizedMaterialVariables = Readonly<Record<string, any> & { color?: string }>
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ResolvedMaterialVariables = Readonly<Record<string, any> & { color?: string }>
 export type ExperimentParameter = ScalarValue | DataValueDescriptor
 export type ExperimentParameters = Readonly<Record<string, ExperimentParameter>>
@@ -139,23 +135,22 @@ export type DataTensor = Readonly<{
     | Readonly<{ kind: 'attachments'; ids: readonly string[]; byteLength: number }>
     | Readonly<{ kind: 'base64'; data: string; byteLength: number }>
 }>
-export type PersistedDataTensor = DataTensor & Readonly<{ tensorEncodingVersion: 1 }>
-export type LegacyRecordedDataTensor = Readonly<{
+export type PersistedDataTensor = Readonly<{
+  shape: readonly number[]
+  axes?: readonly RecordedDataAxis[]
+  storage:
+    | Readonly<{ kind: 'inline'; value: unknown }>
+    | Readonly<{ kind: 'base64'; data: string; byteLength: number }>
+}>
+export type DataTensorInput = Readonly<{
   value: boolean | string | number | readonly unknown[]
   axes?: readonly RecordedDataAxis[]
 }>
-export type RecordedDataTensor = DataTensor | PersistedDataTensor | LegacyRecordedDataTensor
-export type RecordedData = Readonly<Record<string, RecordedDataTensor>>
+export type RecordedDataTensor = DataTensor | PersistedDataTensor
+export type RecordedDataNode = RecordedDataTensor | RecordedDataGroup
+export interface RecordedDataGroup extends Readonly<Record<string, RecordedDataNode>> {}
+export interface RecordedData extends Readonly<Record<string, RecordedDataNode>> {}
 export function Mat(diagonal: number, offDiagonal = 0, size = 3): MatrixValue {
-  if (typeof diagonal !== 'number' || !Number.isFinite(diagonal)) {
-    throw new CadModelError('Mat diagonal must be a finite number.')
-  }
-  if (typeof offDiagonal !== 'number' || !Number.isFinite(offDiagonal)) {
-    throw new CadModelError('Mat offDiagonal must be a finite number.')
-  }
-  if (!Number.isSafeInteger(size) || size <= 0) {
-    throw new CadModelError('Mat size must be a positive safe integer.')
-  }
   return Object.freeze(
     Array.from({ length: size }, (_, row) =>
       Object.freeze(Array.from({ length: size }, (_item, column) => (row === column ? diagonal : offDiagonal))),

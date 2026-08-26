@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
-import { cadSnapshotTransferables } from '../execution/meshValidation'
-import { assertEvaluatedDocumentSnapshot, serializeEvaluatedDocumentSnapshot } from '../execution/snapshot'
+import { cadSnapshotTransferables } from '../execution/meshSerialization'
+import { serializeEvaluatedDocumentSnapshot } from '../execution/snapshot'
 import { canonicalGeometryScene } from '../evaluation/canonical'
 import { renderCanonicalGeometryScene } from '../execution/manifoldRender'
 import { runtimeDiagnostic } from '../execution/runtimeDiagnostics'
@@ -11,14 +11,13 @@ import {
   inspectCompiledDocument,
 } from '../execution/userModule'
 import { CadModelError } from '../model/core'
+import { assertExperimentAuthoringSemantics } from '../simulation/authoringSemantics'
 import {
   assertRunnerOperationEnvelope,
   type RunnerOperationEnvelope,
   type RunnerOperationResultEnvelope,
 } from './protocol'
 import { installCatalogRuntimeSlice } from '@/lib/catalog/runtime'
-import { assertCatalogKernelTasks } from '@/lib/catalog/solverValidation'
-import { assertValidKernelDescriptor } from '../simulation'
 
 function handleOperation(value: unknown) {
   assertRunnerOperationEnvelope(value)
@@ -30,7 +29,6 @@ async function handleValidatedOperation(value: RunnerOperationEnvelope) {
   let response: RunnerOperationResultEnvelope['response']
   try {
     installCatalogRuntimeSlice(request.catalog)
-    request.catalog.solvers.forEach(({ descriptor }) => assertValidKernelDescriptor(descriptor))
     if (request.type === 'inspect') {
       const inspection = inspectCompiledDocument(request.compiledDocument)
       response = {
@@ -43,9 +41,8 @@ async function handleValidatedOperation(value: RunnerOperationEnvelope) {
       }
     } else if (request.type === 'evaluate') {
       const evaluated = executeCompiledDocument(request.compiledDocument, request.vars, request.pythonSource)
-      assertCatalogKernelTasks(request.catalog, evaluated.simulationProgram)
+      assertExperimentAuthoringSemantics(request.catalog, evaluated)
       const snapshot = await serializeEvaluatedDocumentSnapshot(evaluated)
-      assertEvaluatedDocumentSnapshot(snapshot)
       response = {
         type: 'evaluation-success',
         requestId: request.requestId,

@@ -14,14 +14,9 @@ dist/
 **/dist/
 *.egg-info/
 **/*.egg-info/
-**/.pytest_cache/
-**/.ruff_cache/
-**/.mypy_cache/
 **/.cache/
 .catalog-work/
 **/.catalog-work/
-.coverage
-**/coverage
 
 ### Node / Next.js ###
 node_modules/

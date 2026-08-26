@@ -57,7 +57,7 @@ export type MaterialSourceAnalysis = Readonly<{
 
 type CadSourcePolicy = 'experiment' | 'task' | 'geometry' | 'material' | 'module'
 
-const geometrySharedProps = new Set(['children', 'id', 'materials', 'pos', 'position', 'rotate', 'rotation', 'scale'])
+const geometrySharedProps = new Set(['children', 'id', 'materials', 'position', 'rotation', 'scale'])
 
 function propertyName(node: t.Expression | t.PrivateName): string | null {
   if (node.type === 'Identifier') return node.name

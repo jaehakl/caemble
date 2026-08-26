@@ -53,7 +53,7 @@ export function ExperimentDetail({ workbench }: { workbench: CaeWorkbenchState }
         <DetailItem label="Source hash" value={record?.source_hash ?? '저장 후 생성됨'} mono />
         <DetailItem
           label="Bundle format"
-          value={workbench.experiment ? `v${workbench.experiment.sourceBundle.formatVersion}` : '—'}
+          value={workbench.experiment ? `${Object.keys(workbench.experiment.sourceBundle.files).length} files` : '—'}
         />
       </dl>
 

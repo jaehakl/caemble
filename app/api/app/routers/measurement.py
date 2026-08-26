@@ -12,10 +12,7 @@ from models import (
     MeasurementSaveResponse,
     UserData,
 )
-from service.measurement_service import (
-    MeasurementAlreadyRecordedError,
-    MeasurementService,
-)
+from service.measurement_service import MeasurementService
 from user_auth.routes import get_db
 from user_auth.utils.auth_wrapper import require_roles
 from utils.crud import CrudSpec, delete_items, get_list_response
@@ -73,16 +70,23 @@ async def record_measurement(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(error),
         ) from error
-    except MeasurementAlreadyRecordedError as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(error),
-        ) from error
     except IntegrityError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="RecordedData conflicts with the current database state.",
         ) from error
+
+
+@router.get("/{measurement_id}/recorded-data", response_model=MeasurementRecordRequest)
+async def get_measurement_recorded_data(
+    measurement_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: UserData = Depends(require_roles(["admin", "user"])),
+):
+    try:
+        return await MeasurementService.get_recorded_data(measurement_id, db, user)
+    except LookupError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
 
 
 @router.delete("/", status_code=200)

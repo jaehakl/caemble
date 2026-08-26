@@ -3,7 +3,7 @@ import type { EvaluatedExperimentSnapshot } from '../execution/snapshot'
 import type { Tensor } from '../model/types'
 import type { UcumUnit } from '../model/units'
 import type { VarsSchemaEntry } from '../model/vars'
-import type { SerializableCadScene } from '../execution/meshValidation'
+import type { SerializableCadScene } from '../execution/meshSerialization'
 import type { CatalogRuntimeSlice } from '@/contracts/catalog'
 
 export type CadDocumentType = 'experiment'

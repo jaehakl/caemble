@@ -102,9 +102,6 @@ export function createDocumentMaterialResolver(storedSnapshot: unknown | null, s
   return async (snapshot: EvaluatedExperimentSnapshot): Promise<MeasurementMaterialResolution> => {
     const taskNames = Object.keys(snapshot.taskScenes).sort()
     const stored = storedSnapshot === null ? null : readMeasurementMaterialParameters(storedSnapshot, taskNames)
-    if (storedSnapshot !== null && !stored) {
-      throw new Error('저장된 Measurement Material snapshot이 올바르지 않습니다.')
-    }
 
     const commonScene = deserializeCadScene(snapshot.renderScene)
     const commonMaterials = commonScene.parts.flatMap((part) => (part.material ? [part.material] : []))

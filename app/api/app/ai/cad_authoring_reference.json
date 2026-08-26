@@ -1,8 +1,5 @@
 {
-  "schemaVersion": 1,
-  "apiVersion": 11,
-  "declarationFingerprint": "e65ee4c238c8d8b40aa673635b758bd067a86370e0c4f9d59901d58a612bd971",
-  "core": "# Official CAD authoring grammar — API v11\nAuthority: Caemble app contract. Manuals: /docs?section=reference and /docs?section=geometry.\n\n## Complete experiment.tsx skeleton\n```tsx\nimport { experiment } from '@caemble/core'\nimport { Assembly } from './geometry'\n\nexport default experiment({\n  lengthUnit: 'mm',\n  varsSchema: {\n    baseWidth: { shape: [], min: 80, max: 120 },\n    baseDepth: { shape: [], min: 45, max: 75 },\n    baseHeight: { shape: [], min: 8, max: 12 },\n    postRadius: { shape: [], min: 3, max: 7 },\n    postHeight: { shape: [], min: 60, max: 100 },\n    braceWidth: { shape: [], min: 2, max: 6 },\n    braceLength: { shape: [], min: 30, max: 50 },\n    braceDepth: { shape: [], min: 2, max: 6 },\n    brace1PositionX: { shape: [], min: -25, max: -15 },\n    brace1PositionY: { shape: [], min: -10, max: 10 },\n    brace1PositionZ: { shape: [], min: 20, max: 40 },\n    brace2PositionX: { shape: [], min: 15, max: 25 },\n    brace2PositionY: { shape: [], min: -10, max: 10 },\n    brace2PositionZ: { shape: [], min: 20, max: 40 },\n  },\n  geometry: ({ vars }) => (\n    <Assembly\n      id=\"catalog-preview\"\n      baseSize={[vars.baseWidth, vars.baseDepth, vars.baseHeight]}\n      postRadius={vars.postRadius}\n      postHeight={vars.postHeight}\n      braceSize={[vars.braceWidth, vars.braceLength, vars.braceDepth]}\n      bracePositions={[\n        [vars.brace1PositionX, vars.brace1PositionY, vars.brace1PositionZ],\n        [vars.brace2PositionX, vars.brace2PositionY, vars.brace2PositionZ],\n      ]}\n    />\n  ),\n  recordedData: {},\n})\n```\n\n## Complete geometry.tsx skeleton\n```tsx\nimport { Box, Cylinder, type Geometry, type Vec3 } from '@caemble/core'\n\nexport const Assembly: Geometry<{\n  baseSize: Vec3\n  postRadius: number\n  postHeight: number\n  braceSize: Vec3\n  bracePositions: readonly [Vec3, Vec3]\n  includeBraces?: boolean\n}> = ({\n  baseSize = [100, 60, 10],\n  postRadius = 5,\n  postHeight = 80,\n  braceSize = [4, 40, 4],\n  bracePositions = [[-20, 0, 30], [20, 0, 30]],\n  includeBraces = true,\n}) => {\n  const braces: unknown[] = []\n  if (includeBraces) {\n    for (let index = 0; index < 2; index += 1) {\n      braces.push(<Box id={`brace-${index}`} size={braceSize} position={bracePositions[index]} />)\n    }\n  }\n\n  return (\n    <>\n      <Box id=\"base\" size={baseSize} position={[0, 0, baseSize[2] / 2]} />\n      <Cylinder\n        id=\"post\"\n        radius={postRadius}\n        height={postHeight}\n        position={[0, 0, baseSize[2] + postHeight / 2]}\n      />\n      {braces}\n    </>\n  )\n}\n```\n\n## Required rules\n- Every `varsSchema` entry is exactly `{ shape, min, max }`. Use `shape: []` for a scalar and a literal positive-safe-integer shape such as `[3]` or `[4, 4, 1]` for a tensor. `min` and `max` are finite scalar numbers applied uniformly to all elements; tensor bounds, inferred shapes, and broadcasting are invalid. A tensor shape may contain at most 65,536 elements.\n- New code uses only canonical v11 transforms: `position?: Vec3`, `rotation?: Vec3`, `scale?: Vec3`. Right-handed intrinsic XYZ Euler angles in radians, matching the Three/R3F default XYZ order. Effective order: scale, rotation, position.\n- Group transforms with lowercase `<translate offset={Vec3}>`, `<rotate axis={Vec3} angle={radians(degrees)}>`, and `<scale x={sx} y={sy} z={sz}>`; wrappers reject direct transform props.\n- Never generate `translation`. `pos` and `rotate` and lowercase primitive JSX are deprecated compatibility syntax; do not emit them. A node cannot mix canonical position/rotation with deprecated pos/rotate.\n- Omitted component/primitive IDs use lower-kebab names plus `-2`, `-3`; use explicit stable IDs for durable targets. Fragment has no `id`.\n- A topology-changing operation owns its result `id`; consumed operand IDs are not final solver targets. `array` keeps `$cell-x-y-z` instance identity.\n- `surfaceGroup` members use `<geometry-id>/surface/<non-negative-index>`. Give referenced primitive/Fiber leaves explicit stable IDs and use the fixed numeric slots from the Element reference. Transforms and Boolean results retain source slots; a shell root exposes slot 0 for inner and slot 1 for outer. Never emit `/surface-N`, names, URL encoding, or aliases.\n- One Boolean node accepts at most 128 operands. Avoid expanding large lattices into nested Booleans because the deterministic triangle and triangle-pair work budgets reject unsafe scenes before Manifold evaluation.\n- Components inherit the parent Material role map when `materials` is omitted; an explicit map replaces it and `{}` clears it. Primitives consume the `body` role.\n- Boolean child order matters: `subtract` uses the first child as base and the rest as cutters. Follow each operation's child contract exactly.\n- Import PascalCase primitives and public APIs from `@caemble/core`; keep operation tags lowercase. Export PascalCase named `Geometry<Props>` components, never a default Geometry export.\n- Local `Geometry<Props>` functions use direct destructuring with an initializer for every custom prop; no `props.foo`, rest, computed, or nested patterns.\n- Primitive props are optional; omitted/`undefined` uses Catalog defaults. Operation props and child contracts stay required.\n- Bounded deterministic `for`, `map`, and `if` are supported. Use explicit loop IDs; prefer `array` for regular lattices.\n\n## Element index (canonical syntax)\n- `Box`: `<Box size={[x,y,z]} />`\n- `Cylinder`: `<Cylinder radius={r1} radius_2={r2} height={h} segments={32} />`\n- `CurvedEdgeCylinder`: `<CurvedEdgeCylinder height={h} azimuthalCurve={modes} verticalCurve={{origin,coefficients}} />`\n- `Sphere`: `<Sphere radius={r} segments={32} />`\n- `CurvedSurfaceSphere`: `<CurvedSurfaceSphere azimuthalCurve={modes} polarCurve={modes} />`\n- `Fiber`: `<Fiber from={p0} to={p1} radius={(s) => r} helix={{turns,phase,radius}} fourier={modes} />`\n- `translate`: `<translate offset={[x,y,z]}>Geometry...</translate>`\n- `rotate`: `<rotate axis={[x,y,z]} angle={radians(degrees)}>Geometry...</rotate>`\n- `scale`: `<scale x={sx} y={sy} z={sz}>Geometry...</scale>`\n- `shell`: `<shell offsets={{ inner: -1, outer: 1 }}>Geometry</shell>`\n- `array`: `<array shape={[nx,ny,nz]} period={[px,py,pz]} axes={{x,y,z}} inject={tensors}>Geometry</array>`\n- `union`: `<union>...</union>`\n- `subtract`: `<subtract>base cutter...</subtract>`\n- `intersect`: `<intersect>shapeA shapeB...</intersect>`",
+  "core": "# Official CAD authoring grammar\nAuthority: Caemble app contract. Manuals: /docs?section=reference and /docs?section=geometry.\n\n## Complete experiment.tsx skeleton\n```tsx\nimport { experiment } from '@caemble/core'\nimport { Assembly } from './geometry'\n\nexport default experiment({\n  lengthUnit: 'mm',\n  varsSchema: {\n    baseWidth: { shape: [], min: 80, max: 120 },\n    baseDepth: { shape: [], min: 45, max: 75 },\n    baseHeight: { shape: [], min: 8, max: 12 },\n    postRadius: { shape: [], min: 3, max: 7 },\n    postHeight: { shape: [], min: 60, max: 100 },\n    braceWidth: { shape: [], min: 2, max: 6 },\n    braceLength: { shape: [], min: 30, max: 50 },\n    braceDepth: { shape: [], min: 2, max: 6 },\n    brace1PositionX: { shape: [], min: -25, max: -15 },\n    brace1PositionY: { shape: [], min: -10, max: 10 },\n    brace1PositionZ: { shape: [], min: 20, max: 40 },\n    brace2PositionX: { shape: [], min: 15, max: 25 },\n    brace2PositionY: { shape: [], min: -10, max: 10 },\n    brace2PositionZ: { shape: [], min: 20, max: 40 },\n  },\n  geometry: ({ vars }) => (\n    <Assembly\n      id=\"catalog-preview\"\n      baseSize={[vars.baseWidth, vars.baseDepth, vars.baseHeight]}\n      postRadius={vars.postRadius}\n      postHeight={vars.postHeight}\n      braceSize={[vars.braceWidth, vars.braceLength, vars.braceDepth]}\n      bracePositions={[\n        [vars.brace1PositionX, vars.brace1PositionY, vars.brace1PositionZ],\n        [vars.brace2PositionX, vars.brace2PositionY, vars.brace2PositionZ],\n      ]}\n    />\n  ),\n  recordedData: {},\n})\n```\n\n## Complete geometry.tsx skeleton\n```tsx\nimport { Box, Cylinder, type Geometry, type Vec3 } from '@caemble/core'\n\nexport const Assembly: Geometry<{\n  baseSize: Vec3\n  postRadius: number\n  postHeight: number\n  braceSize: Vec3\n  bracePositions: readonly [Vec3, Vec3]\n  includeBraces?: boolean\n}> = ({\n  baseSize = [100, 60, 10],\n  postRadius = 5,\n  postHeight = 80,\n  braceSize = [4, 40, 4],\n  bracePositions = [[-20, 0, 30], [20, 0, 30]],\n  includeBraces = true,\n}) => {\n  const braces: unknown[] = []\n  if (includeBraces) {\n    for (let index = 0; index < 2; index += 1) {\n      braces.push(<Box id={`brace-${index}`} size={braceSize} position={bracePositions[index]} />)\n    }\n  }\n\n  return (\n    <>\n      <Box id=\"base\" size={baseSize} position={[0, 0, baseSize[2] / 2]} />\n      <Cylinder\n        id=\"post\"\n        radius={postRadius}\n        height={postHeight}\n        position={[0, 0, baseSize[2] + postHeight / 2]}\n      />\n      {braces}\n    </>\n  )\n}\n```\n\n## Authoring conventions\n- A `varsSchema` entry uses `{ shape, min, max }`. Use `shape: []` for a scalar and an explicit shape such as `[3]` or `[4, 4, 1]` for a tensor.\n- New code uses canonical transforms: `position?: Vec3`, `rotation?: Vec3`, `scale?: Vec3`. Right-handed intrinsic XYZ Euler angles in radians, matching the Three/R3F default XYZ order. Effective order: scale, rotation, position.\n- Group transforms use lowercase `<translate offset={Vec3}>`, `<rotate axis={Vec3} angle={radians(degrees)}>`, and `<scale x={sx} y={sy} z={sz}>`.\n- Omitted component/primitive IDs use lower-kebab names plus `-2`, `-3`; use explicit stable IDs for durable targets. Fragment has no `id`.\n- A topology-changing operation owns its result `id`; consumed operand IDs are not final solver targets. `array` keeps `$cell-x-y-z` instance identity.\n- `surfaceGroup` members use `<geometry-id>/surface/<index>`. Give referenced primitive/Fiber leaves stable IDs and use the numeric slots from the Element reference. Transforms and Boolean results retain source slots; a shell root exposes slot 0 for inner and slot 1 for outer.\n- Components inherit the parent Material role map when `materials` is omitted; an explicit map replaces it and `{}` clears it. Primitives consume the `body` role.\n- Boolean child order defines the operation: `subtract` uses the first child as base and the rest as cutters.\n- Import PascalCase primitives and public APIs from `@caemble/core`; keep operation tags lowercase. Export PascalCase named `Geometry<Props>` components, never a default Geometry export.\n- Local `Geometry<Props>` functions use direct destructuring with an initializer for every custom prop; no `props.foo`, rest, computed, or nested patterns.\n- Primitive props are optional; omitted/`undefined` uses Catalog defaults. Operation props and child contracts stay required.\n- `for`, `map`, and `if` are supported. Use explicit loop IDs; prefer `array` for regular lattices.\n\n## Element index (canonical syntax)\n- `Box`: `<Box size={[x,y,z]} />`\n- `Cylinder`: `<Cylinder radius={r1} radius_2={r2} height={h} segments={32} />`\n- `CurvedEdgeCylinder`: `<CurvedEdgeCylinder height={h} azimuthalCurve={modes} verticalCurve={{origin,coefficients}} />`\n- `Sphere`: `<Sphere radius={r} segments={32} />`\n- `CurvedSurfaceSphere`: `<CurvedSurfaceSphere azimuthalCurve={modes} polarCurve={modes} />`\n- `Fiber`: `<Fiber from={p0} to={p1} radius={(s) => r} helix={{turns,phase,radius}} fourier={modes} />`\n- `translate`: `<translate offset={[x,y,z]}>Geometry...</translate>`\n- `rotate`: `<rotate axis={[x,y,z]} angle={radians(degrees)}>Geometry...</rotate>`\n- `scale`: `<scale x={sx} y={sy} z={sz}>Geometry...</scale>`\n- `shell`: `<shell offsets={{ inner: -1, outer: 1 }}>Geometry</shell>`\n- `array`: `<array shape={[nx,ny,nz]} period={[px,py,pz]} axes={{x,y,z}} inject={tensors}>Geometry</array>`\n- `union`: `<union>...</union>`\n- `subtract`: `<subtract>base cutter...</subtract>`\n- `intersect`: `<intersect>shapeA shapeB...</intersect>`",
   "elements": [
     {
       "tag": "box",
@@ -25,7 +22,7 @@
           "required": false,
           "default": "[1, 1, 1]",
           "authoringValue": "[1, 1, 1]",
-          "description": "각각 X, Y, Z 방향의 전체 길이인 정확히 세 개의 유한한 양수입니다."
+          "description": "각각 X, Y, Z 방향의 전체 길이입니다."
         }
       ],
       "children": {
@@ -88,7 +85,7 @@
           "required": false,
           "default": "0.5",
           "authoringValue": "0.5",
-          "description": "아래쪽 끝의 유한한 0 이상 반지름입니다. radius_2와 동시에 0일 수 없습니다."
+          "description": "아래쪽 끝의 반지름입니다."
         },
         {
           "name": "radius_2",
@@ -96,7 +93,7 @@
           "required": false,
           "default": "radius",
           "authoringValue": "0.5",
-          "description": "위쪽 끝의 유한한 0 이상 반지름입니다. 생략하면 radius와 같고 두 반지름이 동시에 0일 수 없습니다."
+          "description": "위쪽 끝의 반지름입니다. 생략하면 radius와 같습니다."
         },
         {
           "name": "height",
@@ -104,7 +101,7 @@
           "required": false,
           "default": "1",
           "authoringValue": "1",
-          "description": "Z축 방향의 유한한 양수 전체 높이입니다."
+          "description": "Z축 방향의 전체 높이입니다."
         },
         {
           "name": "segments",
@@ -112,7 +109,7 @@
           "required": false,
           "default": "32",
           "authoringValue": "32",
-          "description": "둘레 분할 수이며 4 이상의 안전한 정수입니다."
+          "description": "둘레 분할 수입니다."
         }
       ],
       "children": {
@@ -159,7 +156,7 @@
           "required": false,
           "default": "1",
           "authoringValue": "1",
-          "description": "Z축 방향의 유한한 양수 전체 높이입니다."
+          "description": "Z축 방향의 전체 높이입니다."
         },
         {
           "name": "azimuthalCurve",
@@ -167,7 +164,7 @@
           "required": false,
           "default": "[{ amplitude: 0.5, phase: 0 }]",
           "authoringValue": "[{ amplitude: 0.5, phase: 0 }]",
-          "description": "비어 있지 않은 Fourier mode 배열입니다. amplitude는 유한한 0 이상, phase는 유한해야 하며 모든 표본 반지름은 양수여야 합니다."
+          "description": "방위각 방향 Fourier mode 배열입니다."
         },
         {
           "name": "verticalCurve",
@@ -175,7 +172,7 @@
           "required": false,
           "default": "{ origin: 0, coefficients: [1] }",
           "authoringValue": "{ origin: 0, coefficients: [1] }",
-          "description": "유한한 origin과 비어 있지 않은 유한 coefficients로 높이별 Taylor 반지름 배율을 정의하며 모든 표본 반지름은 양수여야 합니다."
+          "description": "origin과 coefficients로 높이별 Taylor 반지름 배율을 정의합니다."
         },
         {
           "name": "azimuthalSegments",
@@ -183,7 +180,7 @@
           "required": false,
           "default": "64",
           "authoringValue": "64",
-          "description": "방위각 방향 분할 수이며 4 이상의 안전한 정수입니다."
+          "description": "방위각 방향 분할 수입니다."
         },
         {
           "name": "verticalSegments",
@@ -191,7 +188,7 @@
           "required": false,
           "default": "32",
           "authoringValue": "32",
-          "description": "높이 방향 분할 수이며 1 이상의 안전한 정수입니다."
+          "description": "높이 방향 분할 수입니다."
         }
       ],
       "children": {
@@ -238,7 +235,7 @@
           "required": false,
           "default": "0.5",
           "authoringValue": "0.5",
-          "description": "유한한 양수 구 반지름입니다."
+          "description": "구 반지름입니다."
         },
         {
           "name": "segments",
@@ -246,7 +243,7 @@
           "required": false,
           "default": "32",
           "authoringValue": "32",
-          "description": "표면 분할 해상도이며 4 이상의 안전한 정수여야 합니다."
+          "description": "표면 분할 해상도입니다."
         }
       ],
       "children": {
@@ -283,7 +280,7 @@
           "required": false,
           "default": "[{ amplitude: 0.5, phase: 0 }]",
           "authoringValue": "[{ amplitude: 0.5, phase: 0 }]",
-          "description": "비어 있지 않은 Fourier mode 배열입니다. amplitude는 유한한 0 이상이고 phase는 유한해야 합니다."
+          "description": "방위각 방향 Fourier mode 배열입니다."
         },
         {
           "name": "polarCurve",
@@ -291,7 +288,7 @@
           "required": false,
           "default": "[{ amplitude: 1, phase: 0 }]",
           "authoringValue": "[{ amplitude: 1, phase: 0 }]",
-          "description": "비어 있지 않은 Fourier mode 배열입니다. amplitude는 유한한 0 이상이고 phase는 유한하며 모든 결합 표본 반지름은 양수여야 합니다."
+          "description": "polar angle 방향 Fourier mode 배열입니다."
         },
         {
           "name": "azimuthalSegments",
@@ -299,7 +296,7 @@
           "required": false,
           "default": "64",
           "authoringValue": "64",
-          "description": "방위각 방향 분할 수이며 4 이상의 안전한 정수입니다."
+          "description": "방위각 방향 분할 수입니다."
         },
         {
           "name": "polarSegments",
@@ -307,7 +304,7 @@
           "required": false,
           "default": "32",
           "authoringValue": "32",
-          "description": "극각 방향 분할 수이며 2 이상의 안전한 정수입니다."
+          "description": "극각 방향 분할 수입니다."
         }
       ],
       "children": {
@@ -347,7 +344,7 @@
           "required": false,
           "default": "[0, 0, -0.5]",
           "authoringValue": "[0, 0, -0.5]",
-          "description": "정확히 세 유한 좌표인 중심선 시작점이며 to와 달라야 합니다."
+          "description": "중심선 시작점입니다."
         },
         {
           "name": "to",
@@ -355,7 +352,7 @@
           "required": false,
           "default": "[0, 0, 0.5]",
           "authoringValue": "[0, 0, 0.5]",
-          "description": "정확히 세 유한 좌표인 중심선 끝점이며 from과 달라야 합니다."
+          "description": "중심선 끝점입니다."
         },
         {
           "name": "basePath",
@@ -363,7 +360,7 @@
           "required": false,
           "default": "straight line from from to to",
           "authoringValue": "undefined",
-          "description": "0≤t≤1에서 유한 Vec3 중심선을 정의하며 양 끝은 from과 to에 일치하고 연속 표본이 중복되어 길이 0인 구간을 만들면 안 됩니다."
+          "description": "0≤t≤1에서 Vec3 중심선을 정의합니다."
         },
         {
           "name": "radius",
@@ -371,7 +368,7 @@
           "required": false,
           "default": "0.05",
           "authoringValue": "0.05",
-          "description": "정규화된 호 길이의 모든 표본에서 유한한 양수를 반환하는 단면 반지름입니다."
+          "description": "정규화된 호 길이에 따른 단면 반지름입니다."
         },
         {
           "name": "helix",
@@ -379,7 +376,7 @@
           "required": false,
           "default": "none",
           "authoringValue": "undefined",
-          "description": "유한 turns/phase와 모든 표본에서 유한한 0 이상 radius를 갖는 나선 변위입니다."
+          "description": "turns, phase와 radius로 정의하는 나선 변위입니다."
         },
         {
           "name": "fourier",
@@ -387,7 +384,7 @@
           "required": false,
           "default": "none",
           "authoringValue": "undefined",
-          "description": "지정 시 비어 있지 않아야 하며 각 mode는 유한한 0 이상 amplitude와 유한 phase를 가집니다."
+          "description": "중심선에 적용할 Fourier mode 배열입니다."
         },
         {
           "name": "envelopePower",
@@ -395,7 +392,7 @@
           "required": false,
           "default": "2",
           "authoringValue": "2",
-          "description": "끝점에서 변위를 감쇠하는 유한한 1 이상 envelope 지수입니다."
+          "description": "끝점에서 변위를 감쇠하는 envelope 지수입니다."
         },
         {
           "name": "up",
@@ -403,7 +400,7 @@
           "required": false,
           "default": "automatic Bishop frame",
           "authoringValue": "undefined",
-          "description": "초기 path tangent와 평행하지 않은 유한한 기준 방향입니다."
+          "description": "초기 path frame의 기준 방향입니다."
         },
         {
           "name": "pathSegments",
@@ -411,7 +408,7 @@
           "required": false,
           "default": "128",
           "authoringValue": "128",
-          "description": "중심선 방향 분할 수이며 8~2048 범위의 정수입니다."
+          "description": "중심선 방향 분할 수입니다."
         },
         {
           "name": "radialSegments",
@@ -419,7 +416,7 @@
           "required": false,
           "default": "12",
           "authoringValue": "12",
-          "description": "원형 단면 분할 수이며 3~64 범위의 정수입니다."
+          "description": "원형 단면 분할 수입니다."
         }
       ],
       "children": {
@@ -466,7 +463,7 @@
           "type": "Vec3",
           "required": true,
           "authoringValue": "[0, 0, 0]",
-          "description": "parent 좌표계에서 적용할 정확히 세 개의 유한한 상대 이동 값입니다."
+          "description": "parent 좌표계에서 적용할 XYZ 상대 이동입니다."
         }
       ],
       "children": {
@@ -498,14 +495,14 @@
           "type": "Vec3",
           "required": true,
           "authoringValue": "[0, 0, 1]",
-          "description": "오른손 법칙을 적용할 정확히 세 개의 유한한 값인 0이 아닌 회전축입니다."
+          "description": "오른손 법칙을 적용할 회전축입니다."
         },
         {
           "name": "angle",
           "type": "number",
           "required": true,
           "authoringValue": "0",
-          "description": "radian 단위의 유한한 회전각입니다. degree 입력은 radians()로 변환합니다."
+          "description": "radian 단위의 회전각입니다. degree 입력은 radians()로 변환합니다."
         }
       ],
       "children": {
@@ -537,21 +534,21 @@
           "type": "number",
           "required": true,
           "authoringValue": "1",
-          "description": "X축에 적용할 유한한 배율입니다."
+          "description": "X축에 적용할 배율입니다."
         },
         {
           "name": "y",
           "type": "number",
           "required": true,
           "authoringValue": "1",
-          "description": "Y축에 적용할 유한한 배율입니다."
+          "description": "Y축에 적용할 배율입니다."
         },
         {
           "name": "z",
           "type": "number",
           "required": true,
           "authoringValue": "1",
-          "description": "Z축에 적용할 유한한 배율입니다."
+          "description": "Z축에 적용할 배율입니다."
         }
       ],
       "children": {
@@ -584,12 +581,12 @@
           "type": "Readonly<Record<string, number>>",
           "required": true,
           "authoringValue": "{ inner: -1, outer: 1 }",
-          "description": "비어 있지 않은 Material role별 signed offset입니다. role은 비어 있지 않고 앞뒤 공백이 없어야 하며 값은 서로 다른 유한한 0 아닌 수여야 합니다."
+          "description": "Material role별 signed offset입니다."
         }
       ],
       "children": {
         "count": "one",
-        "description": "정확히 하나의 유효한 닫힌 양의 부피 solid를 받으며 각 offset에서도 퇴화·반전되지 않아야 합니다."
+        "description": "shell 경계를 생성할 닫힌 solid를 받습니다."
       },
       "origin": "자식 좌표를 유지한 채 생성된 shell 결과에 이 element의 transform을 적용합니다.",
       "surfaces": [
@@ -628,14 +625,14 @@
           "type": "readonly [number, number, number]",
           "required": true,
           "authoringValue": "[1, 1, 1]",
-          "description": "X, Y, Z축 cell 개수인 정확히 세 개의 양의 안전한 정수입니다."
+          "description": "X, Y, Z축 cell 개수입니다."
         },
         {
           "name": "period",
           "type": "Vec3",
           "required": true,
           "authoringValue": "[0, 0, 0]",
-          "description": "각 lattice 축의 유한한 cell 중심 간격입니다. cell이 둘 이상이면 양수, 아니면 0 이상이어야 합니다."
+          "description": "각 lattice 축의 cell 중심 간격입니다."
         },
         {
           "name": "axes",
@@ -643,19 +640,19 @@
           "required": false,
           "default": "world XYZ axes",
           "authoringValue": "{ x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }",
-          "description": "각각 정확히 세 유한 좌표인 0이 아닌 x/y/z lattice 방향이며 런타임에서 정규화됩니다."
+          "description": "x/y/z lattice 방향이며 런타임에서 정규화됩니다."
         },
         {
           "name": "inject",
           "type": "Readonly<Record<string, Tensor | { axis: Tensor; angle: Tensor }>>",
           "required": false,
           "authoringValue": "undefined",
-          "description": "비어 있지 않은 dense finite tensor로 cell props를 주입합니다. 선두 shape가 일치해야 하며 position/rotation/scale은 뒤에 길이 3 축이 필요합니다. axis/angle 객체는 deprecated rotate 호환 전용입니다. id/materials/children 및 canonical/legacy transform 혼용은 금지됩니다."
+          "description": "dense tensor로 cell props를 주입합니다. position/rotation/scale은 XYZ 축 값을 사용합니다."
         }
       ],
       "children": {
         "count": "one",
-        "description": "id가 있는 Geometry component 또는 intrinsic CAD element를 정확히 하나 받습니다."
+        "description": "격자에 배치할 Geometry component 또는 intrinsic CAD element를 받습니다."
       },
       "origin": "전체 array가 원점 주위에 중심 정렬되며 cell identity에는 $cell-x-y-z가 붙습니다.",
       "surfaces": [],
@@ -677,7 +674,7 @@
       "properties": [],
       "children": {
         "count": "many",
-        "description": "같은 Material instance와 role을 가진 하나 이상의 solid를 받습니다."
+        "description": "합칠 solid를 받습니다."
       },
       "origin": "자식 좌표를 유지한 채 결과에 이 element의 transform을 적용합니다.",
       "surfaces": [],
@@ -701,7 +698,7 @@
       "properties": [],
       "children": {
         "count": "many",
-        "description": "첫 Geometry의 각 solid가 base이고 이후 하나 이상의 유효한 solid가 cutter입니다."
+        "description": "첫 Geometry가 base이고 이후 Geometry가 cutter입니다."
       },
       "origin": "자식 좌표를 유지한 채 결과에 이 element의 transform을 적용합니다.",
       "surfaces": [],
@@ -723,13 +720,11 @@
       "properties": [],
       "children": {
         "count": "many",
-        "description": "같은 Material instance와 role을 가지며 교차시킬 두 개 이상의 solid를 받습니다."
+        "description": "교차시킬 solid를 받습니다."
       },
       "origin": "자식 좌표를 유지한 채 결과에 이 element의 transform을 적용합니다.",
       "surfaces": [],
       "example": "<intersect id=\"overlap\"><Box size={[10, 10, 10]} /><Sphere radius={7} /></intersect>"
     }
-  ],
-  "referenceHash": "cd1e8ab5182196065a3a1e55409937385c405f980eb2298aca56bd5462abd221",
-  "promptToolVersion": "caemble-ai-agent-v4-cd1e8ab51821"
+  ]
 }

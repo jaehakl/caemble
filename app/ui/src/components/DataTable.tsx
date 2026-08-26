@@ -13,7 +13,7 @@ export function DataTable<T>({
   selectedKey,
 }: {
   columns: ColumnDef<T, unknown>[]
-  data: T[]
+  data: readonly T[]
   emptyLabel?: string
   getRowKey: (row: T) => string
   onRowClick?: (row: T) => void
@@ -21,7 +21,7 @@ export function DataTable<T>({
   selectedKey?: string
 }) {
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const table = useReactTable({ data, columns, getCoreRowModel: getCoreRowModel() })
+  const table = useReactTable({ data: [...data], columns, getCoreRowModel: getCoreRowModel() })
 
   useEffect(
     () => () => {

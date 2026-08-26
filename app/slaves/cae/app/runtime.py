@@ -3,11 +3,10 @@ from __future__ import annotations
 import asyncio
 import copy
 import contextlib
-import json
 import logging
-import math
 import time
 import uuid
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Awaitable, Callable
@@ -18,33 +17,17 @@ from sdk.slave import SlaveContext
 from sdk.slave.runtime import emit
 
 from app.errors import CaeError, ProtocolError
-from app.kernels import resolve_output_specs, run_kernel, solver_spec, validate_kernel_tasks
-from app.program import SIMULATION_API_VERSION, validate_and_load_simulate
-from app.solver_framework.geometry import GeometryService, validate_canonical_geometry_scene
-from app.solver_framework.geometry.complexity import (
-    MAX_BOOLEAN_WORK,
-    MAX_TRIANGLES,
-    estimated_boolean_work,
-    estimated_triangle_count,
-)
+from app.kernels import normalize_kernel_tasks, resolve_output_specs, run_kernel, solver_spec
+from app.program import validate_and_load_simulate
+from app.solver_framework.geometry import GeometryService
 from app.solver_framework.registry import registry
-from app.tensor import (
-    MAX_RECORDED_BYTES,
-    MAX_SAFE_INTEGER,
-    encode_tensor,
-    validate_data_schema,
-    validate_ray_path_recorded_data_schemas,
-    validate_recorded_ray_path_bundles,
-    validate_tensor_value,
-)
+from app.tensor import encode_recorded_data
 
 FIRST_NEXT_TIMEOUT_SECONDS = 30
 RECORD_ACK_TIMEOUT_SECONDS = 120
 DEFAULT_MAX_RUN_SECONDS = 2 * 60 * 60
 HEARTBEAT_SECONDS = 5
 LIVENESS_SECONDS = 5 * 60
-MAX_VARS_TENSOR_ELEMENTS = 65_536
-MAX_TASK_SCENES = 128
 logger = logging.getLogger(__name__)
 
 
@@ -52,11 +35,39 @@ logger = logging.getLogger(__name__)
 class RecordPacket:
     sequence: int
     name: str
-    tensor: dict[str, Any]
+    value: dict[str, Any]
     attachments: list[DataChannelAttachment]
     byte_length: int
     ack: asyncio.Future[None]
     ack_watchdog: asyncio.Task[None] | None = None
+
+
+class _TaskHandles(Mapping[str, Any]):
+    def __init__(self, tasks: dict[str, Any]) -> None:
+        self._tasks = MappingProxyType(tasks)
+
+    def __getitem__(self, name: str) -> Any:
+        if not isinstance(name, str):
+            raise CaeError(
+                "invalid_input",
+                f"simulate.py tasks[{name!r}] requires a declared Task name string",
+            )
+        try:
+            return self._tasks[name]
+        except KeyError:
+            raise CaeError(
+                "invalid_input",
+                f"simulate.py tasks[{name!r}] is not declared",
+            ) from None
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._tasks)
+
+    def __len__(self) -> int:
+        return len(self._tasks)
+
+    def __contains__(self, name: object) -> bool:
+        return isinstance(name, str) and name in self._tasks
 
 
 class CaeRun:
@@ -71,15 +82,14 @@ class CaeRun:
         self.measurement = copy.deepcopy(measurement)
         manifest = _manifest(self.measurement)
         source = _simulation_source(self.measurement, manifest)
-        api_version = manifest.get("simulationApiVersion", manifest.get("simulation_api_version", SIMULATION_API_VERSION))
-        if str(api_version) != SIMULATION_API_VERSION:
-            raise CaeError("unsupported_program", f"simulation API version {api_version!r} is not supported")
-        self.simulate = validate_and_load_simulate(source)
-        tasks = manifest.get("tasks")
-        self.schemas = manifest.get("recordedData")
-        if not isinstance(tasks, dict) or not tasks or not isinstance(self.schemas, dict):
-            raise CaeError("invalid_program", "simulation manifest tasks and recordedData are required")
-        normalized_tasks = validate_kernel_tasks(tasks)
+        tasks = manifest["tasks"]
+        self.schemas = manifest["recordedData"]
+        self.simulate = validate_and_load_simulate(
+            source,
+            task_names=tasks,
+            recorded_names=self.schemas,
+        )
+        normalized_tasks = normalize_kernel_tasks(tasks)
         canonical_tasks = copy.deepcopy(
             tasks if normalized_tasks is None else normalized_tasks
         )
@@ -94,26 +104,15 @@ class CaeRun:
         self._task_scenes = self.measurement["experiment"]["taskScenes"]
         self._task_material_parameters = self.measurement["taskMaterialParameters"]
         self._task_material_warnings = self.measurement["taskMaterialWarnings"]
-        for name, task in canonical_tasks.items():
-            _validate_task_artifact_contract(
-                name,
-                self._task_descriptors[name],
-                self._output_specs[name],
-            )
         task_handles = {
             name: _read_only(task)
             for name, task in canonical_tasks.items()
         }
-        self.tasks = MappingProxyType(task_handles)
+        self.tasks = _TaskHandles(task_handles)
         self._registered_tasks = tuple(
             (name, task_handles[name], canonical_tasks[name])
             for name in canonical_tasks
         )
-        for name, schema in self.schemas.items():
-            if not isinstance(name, str) or not name:
-                raise CaeError("invalid_schema", "RecordedData names must be non-empty strings")
-            validate_data_schema(schema, f"RecordedData {name}")
-        validate_ray_path_recorded_data_schemas(self.schemas)
         self.run_id = str(uuid.uuid4())
         self.max_run_seconds = max_run_seconds
         self.job_id = job_id
@@ -123,7 +122,8 @@ class CaeRun:
         self.first_next = False
         self.sequence = 0
         self.completed_sequences: list[int] = []
-        self.recorded_names: set[str] = set()
+        self.recorded_names: list[str] = []
+        self._recorded_name_set: set[str] = set()
         self.recorded_bytes = 0
         self.active_context: SlaveContext | None = None
         self.heartbeat_task: asyncio.Task[None] | None = None
@@ -172,7 +172,7 @@ class CaeRun:
                     "kind": "record",
                     "sequence": item.sequence,
                     "name": item.name,
-                    "tensor": item.tensor,
+                    "value": item.value,
                 },
                 attachments=item.attachments,
             )
@@ -186,24 +186,25 @@ class CaeRun:
         )
 
     async def record(self, name: str, value: Any) -> None:
-        if name not in self.schemas:
+        if not isinstance(name, str) or name not in self.schemas:
             raise CaeError("invalid_record", f"RecordedData {name!r} is not declared")
-        if name in self.recorded_names:
+        if name in self._recorded_name_set:
             raise CaeError("invalid_record", f"RecordedData {name!r} was already recorded")
-        self.recorded_names.add(name)
+        _validate_record_group_members(name, self.schemas[name], value)
         await self._flush_progress()
         next_sequence = self.sequence + 1
-        tensor, attachments, byte_length = encode_tensor(
+        encoded, attachments, byte_length = encode_recorded_data(
             name,
             self.schemas[name],
             value,
             next_sequence,
-            max_byte_length=MAX_RECORDED_BYTES - self.recorded_bytes,
         )
         self.sequence = next_sequence
+        self.recorded_names.append(name)
+        self._recorded_name_set.add(name)
         self.recorded_bytes += byte_length
         ack = asyncio.get_running_loop().create_future()
-        packet = RecordPacket(self.sequence, name, tensor, attachments, byte_length, ack)
+        packet = RecordPacket(self.sequence, name, encoded, attachments, byte_length, ack)
         packet.ack_watchdog = asyncio.create_task(self._watch_record_ack(packet))
         await self.queue.put(packet)
         await asyncio.shield(ack)
@@ -284,7 +285,6 @@ class CaeRun:
     async def _execute(self) -> None:
         started = time.perf_counter()
         try:
-            await self._status("validating")
             sim = SimulationApi(self)
             simulation_vars = _read_only(_variables(self.measurement))
             await self._status("running")
@@ -298,7 +298,6 @@ class CaeRun:
             )
             final_state_revision = sim.state_revision(final_state)
             await self._status("finalizing")
-            validate_recorded_ray_path_bundles(self.recorded_names)
             duration_ms = int((time.perf_counter() - started) * 1000)
             logger.info(
                 "CAE run completed run_id=%s tasks=%s records=%s bytes=%s final_state_revision=%s duration_ms=%s",
@@ -535,38 +534,11 @@ class SimulationApi:
             self._geometry,
         )
         finished_at = int(time.time() * 1000)
-        artifacts = result.get("artifacts")
-        if not isinstance(artifacts, dict):
-            raise CaeError("invalid_output", f"task {task_name} kernel artifacts must be an object")
+        artifacts = result.get("artifacts", {})
         output_specs = self._run._output_specs[task_name]
-        if set(artifacts) != set(output_specs):
-            raise CaeError(
-                "invalid_output",
-                f"task {task_name} kernel artifacts do not match its resolved output specs",
-            )
         pending_provenance: list[tuple[Any, dict[str, Any]]] = []
-        seen_artifacts: set[int] = set()
         for output_name, artifact in artifacts.items():
-            if not isinstance(artifact, dict) or "value" not in artifact:
-                raise CaeError(
-                    "invalid_output",
-                    f"task {task_name} artifact {output_name!r} must contain a value",
-                )
-            validate_tensor_value(
-                f"task {task_name} artifact {output_name!r}",
-                output_specs[output_name]["data"],
-                artifact,
-            )
-            artifact_id = id(artifact)
-            if artifact_id in seen_artifacts or (
-                artifact_id in self._artifact_provenance
-                and self._artifact_provenance[artifact_id]["artifact"] is artifact
-            ):
-                raise CaeError(
-                    "invalid_output",
-                    f"task {task_name} returned a reused artifact object",
-                )
-            seen_artifacts.add(artifact_id)
+            spec = output_specs.get(output_name, {})
             self._artifact_sequence += 1
             pending_provenance.append(
                 (
@@ -576,8 +548,8 @@ class SimulationApi:
                         "id": f"artifact-{self._artifact_sequence}",
                         "producerTask": task_name,
                         "output": output_name,
-                        "artifactType": output_specs[output_name]["artifactType"],
-                        "data": copy.deepcopy(output_specs[output_name]["data"]),
+                        "artifactType": spec.get("artifactType"),
+                        "data": copy.deepcopy(spec.get("data")),
                     },
                 )
             )
@@ -613,7 +585,7 @@ class SimulationApi:
 
     def release(self, value: Any) -> None:
         if self._releasable.get(id(value)) is not value:
-            raise CaeError("invalid_release", "sim.release accepts only state or artifacts returned by sim.run")
+            raise CaeError("invalid_release", "sim.release accepts only live values returned by sim.run")
         released: dict[int, Any] = {}
 
         def collect(item: Any) -> None:
@@ -624,7 +596,7 @@ class SimulationApi:
                 if self._releasable.get(item_id) is not item:
                     raise CaeError(
                         "invalid_release",
-                        "sim.release found a value that was not returned by sim.run",
+                        "sim.release found a value that is not live or was not returned by sim.run",
                     )
                 released[item_id] = item
             if isinstance(item, dict):
@@ -722,7 +694,8 @@ class SimulationApi:
                 ):
                     raise CaeError(
                         "invalid_input",
-                        f"task {task_name} input port {port_name!r} accepts only a live artifact returned by sim.run",
+                        f"task {task_name} input port {port_name!r} accepts only a live "
+                        "artifact returned by sim.run",
                     )
                 if provenance["artifactType"] not in port["artifactTypes"]:
                     raise CaeError(
@@ -730,69 +703,11 @@ class SimulationApi:
                         f"task {task_name} input port {port_name!r} rejects artifact type "
                         f"{provenance['artifactType']!r}",
                     )
-                expected_schema = port.get("data")
-                if expected_schema is not None and provenance["data"] != expected_schema:
-                    raise CaeError(
-                        "invalid_input",
-                        f"task {task_name} input port {port_name!r} DataSchema is incompatible with "
-                        f"{provenance['producerTask']}.{provenance['output']}",
-                    )
                 trace_artifacts.append(
-                    {
-                        "id": provenance["id"],
-                        "artifactType": provenance["artifactType"],
-                    }
+                    {"id": provenance["id"], "artifactType": provenance["artifactType"]}
                 )
             trace_inputs[port_name] = trace_artifacts if isinstance(raw, list) else trace_artifacts[0]
         return trace_inputs
-
-
-def _validate_task_artifact_contract(
-    task_name: str,
-    descriptor: dict[str, Any],
-    output_specs: dict[str, Any],
-) -> None:
-    ports = descriptor.get("inputPorts")
-    if not isinstance(ports, dict):
-        raise CaeError("descriptor_mismatch", f"task {task_name} descriptor inputPorts are invalid")
-    for port_name, port in ports.items():
-        if not isinstance(port_name, str) or not port_name or not isinstance(port, dict):
-            raise CaeError("descriptor_mismatch", f"task {task_name} descriptor input port is invalid")
-        artifact_types = port.get("artifactTypes")
-        minimum = port.get("minimumOccurrences")
-        maximum = port.get("maximumOccurrences")
-        if (
-            not isinstance(artifact_types, list)
-            or not artifact_types
-            or any(not isinstance(item, str) or not item for item in artifact_types)
-            or not isinstance(minimum, int)
-            or isinstance(minimum, bool)
-            or not isinstance(maximum, int)
-            or isinstance(maximum, bool)
-            or minimum < 0
-            or maximum < minimum
-        ):
-            raise CaeError(
-                "descriptor_mismatch",
-                f"task {task_name} descriptor input port {port_name!r} is invalid",
-            )
-        if port.get("data") is not None:
-            validate_data_schema(port["data"], f"task {task_name}.inputPorts.{port_name}.data")
-
-    for output_name, spec in output_specs.items():
-        if (
-            not isinstance(output_name, str)
-            or not output_name
-            or not isinstance(spec, dict)
-            or set(spec) != {"artifactType", "data"}
-            or not isinstance(spec.get("artifactType"), str)
-            or not spec["artifactType"]
-        ):
-            raise CaeError(
-                "invalid_program",
-                f"task {task_name} resolved output artifact {output_name!r} is invalid",
-            )
-        validate_data_schema(spec.get("data"), f"task {task_name}.outputs.{output_name}.data")
 
 
 def _read_only(value: Any) -> Any:
@@ -803,413 +718,39 @@ def _read_only(value: Any) -> Any:
     return value
 
 
+def _validate_record_group_members(path: str, schema: dict[str, Any], value: Any) -> None:
+    if "dtype" in schema:
+        return
+    if not isinstance(value, Mapping):
+        raise CaeError("invalid_record", f"RecordedData group {path!r} must be an object")
+    missing = [name for name in schema if name not in value]
+    unknown = [name for name in value if name not in schema]
+    if missing or unknown:
+        details = []
+        if missing:
+            details.append(f"missing {missing!r}")
+        if unknown:
+            details.append(f"unknown {unknown!r}")
+        raise CaeError(
+            "invalid_record",
+            f"RecordedData group {path!r} has incorrect members: {', '.join(details)}",
+        )
+    for name, member_schema in schema.items():
+        _validate_record_group_members(f"{path}.{name}", member_schema, value[name])
+
+
 def create_run(
     payload: dict[str, Any],
     *,
     job_id: str,
     on_cleanup: Callable[[str], None],
 ) -> CaeRun:
-    if (
-        not isinstance(payload, dict)
-        or set(payload) != {"formatVersion", "measurement", "solverContracts"}
-        or payload.get("formatVersion") != 2
-        or isinstance(payload.get("formatVersion"), bool)
-    ):
-        raise CaeError(
-            "invalid_input",
-            "start payload must contain exactly formatVersion 2, measurement, and solverContracts",
-        )
-    measurement = payload.get("measurement")
-    _validate_built_measurement(measurement)
-    simulation_program = measurement["experiment"]["simulationProgram"]
-    registry.validate_contracts(payload.get("solverContracts"), simulation_program.get("tasks"))
     return CaeRun(
-        measurement=measurement,
+        measurement=payload["measurement"],
         max_run_seconds=DEFAULT_MAX_RUN_SECONDS,
         job_id=job_id,
         on_cleanup=on_cleanup,
     )
-
-
-def _validate_built_measurement(value: Any) -> None:
-    if not isinstance(value, dict) or value.get("kind") != "measurement":
-        raise CaeError("invalid_input", "start.measurement must be a BuiltMeasurement")
-    if set(value) != {
-        "kind", "experiment", "materialParameters", "materialWarnings",
-        "taskMaterialParameters", "taskMaterialWarnings",
-    }:
-        raise CaeError("invalid_input", "start.measurement fields are invalid")
-    snapshot = value.get("experiment")
-    _validate_snapshot(snapshot)
-    _validate_material_snapshot(value.get("materialParameters"), "start.measurement.materialParameters")
-    warnings = value.get("materialWarnings")
-    if not isinstance(warnings, list) or any(not isinstance(item, str) for item in warnings):
-        raise CaeError("invalid_input", "start.measurement.materialWarnings must be an array of strings")
-    task_names = set(snapshot["taskScenes"])
-    material_parameters = value.get("taskMaterialParameters")
-    material_warnings = value.get("taskMaterialWarnings")
-    if not isinstance(material_parameters, dict) or set(material_parameters) != task_names:
-        raise CaeError("invalid_input", "start.measurement.taskMaterialParameters must exactly match Task scenes")
-    if not isinstance(material_warnings, dict) or set(material_warnings) != task_names:
-        raise CaeError("invalid_input", "start.measurement.taskMaterialWarnings must exactly match Task scenes")
-    for task_name in task_names:
-        _validate_material_snapshot(
-            material_parameters[task_name],
-            f"start.measurement.taskMaterialParameters.{task_name}",
-        )
-        warnings = material_warnings[task_name]
-        if not isinstance(warnings, list) or any(not isinstance(item, str) for item in warnings):
-            raise CaeError(
-                "invalid_input",
-                f"start.measurement.taskMaterialWarnings.{task_name} must be an array of strings",
-            )
-
-
-def _validate_snapshot(value: Any) -> None:
-    expected = {"kind", "sourceHash", "variables", "varsSchema", "scene", "taskScenes", "simulationProgram"}
-    if not isinstance(value, dict) or value.get("kind") != "experiment" or set(value) != expected:
-        raise CaeError("invalid_input", "Built Experiment snapshot fields are invalid")
-    source_hash = value.get("sourceHash")
-    if (
-        not isinstance(source_hash, str)
-        or len(source_hash) != 64
-        or any(character not in "0123456789abcdef" for character in source_hash)
-    ):
-        raise CaeError("invalid_input", "Built Experiment sourceHash is invalid")
-    if (
-        not isinstance(value.get("variables"), dict)
-        or not isinstance(value.get("varsSchema"), dict)
-    ):
-        raise CaeError("invalid_input", "Built Experiment variables are invalid")
-    _validate_variables(
-        value["variables"],
-        value["varsSchema"],
-        "Built Experiment",
-    )
-    _validate_scene(value.get("scene"), "Built Experiment.scene")
-    task_scenes = value.get("taskScenes")
-    if not isinstance(task_scenes, dict) or not task_scenes:
-        raise CaeError("invalid_input", "Built experiment.taskScenes must be a non-empty object")
-    if len(task_scenes) > MAX_TASK_SCENES:
-        raise CaeError(
-            "resource_limit",
-            f"Built experiment.taskScenes may contain at most {MAX_TASK_SCENES} Task scenes",
-        )
-    for task_name, scene in task_scenes.items():
-        if not isinstance(task_name, str) or not task_name.strip():
-            raise CaeError("invalid_input", "Built experiment Task names must be non-empty strings")
-        _validate_scene(scene, f"Built experiment.taskScenes.{task_name}")
-    manifest = value.get("simulationProgram")
-    tasks = manifest.get("tasks") if isinstance(manifest, dict) else None
-    if not isinstance(tasks, dict) or set(tasks) != set(task_scenes):
-        raise CaeError("invalid_input", "Built experiment Task scenes must exactly match simulationProgram tasks")
-    geometry_roots: set[tuple[str, str]] = set()
-    aggregate_triangles = 0
-    aggregate_boolean_work = 0
-    for scene in [value["scene"], *task_scenes.values()]:
-        for root in scene["roots"]:
-            identity = (scene["geometryHash"], root["id"])
-            if identity in geometry_roots:
-                continue
-            geometry_roots.add(identity)
-            aggregate_triangles += estimated_triangle_count(root["node"])
-            aggregate_boolean_work = min(
-                MAX_BOOLEAN_WORK + 1,
-                aggregate_boolean_work + estimated_boolean_work(root["node"]),
-            )
-            if aggregate_triangles > MAX_TRIANGLES:
-                raise CaeError(
-                    "resource_limit",
-                    "Built Experiment geometry roots exceed the aggregate "
-                    f"limit of {MAX_TRIANGLES} estimated triangles",
-                )
-            if aggregate_boolean_work > MAX_BOOLEAN_WORK:
-                raise CaeError(
-                    "resource_limit",
-                    "Built Experiment geometry roots exceed the aggregate "
-                    f"Boolean work limit of {MAX_BOOLEAN_WORK}",
-                )
-
-
-def _validate_variables(variables: dict[str, Any], schema: dict[str, Any], path: str) -> None:
-    if set(variables) != set(schema):
-        raise CaeError("invalid_input", f"{path} variables must exactly match varsSchema")
-    for name, entry in schema.items():
-        if not isinstance(name, str) or not name.strip() or not isinstance(entry, dict):
-            raise CaeError("invalid_input", f"{path}.varsSchema.{name} is invalid")
-        if "shape" not in entry:
-            raise CaeError(
-                "invalid_input",
-                f"{path}.varsSchema.{name}.shape is required by CAD API v9; update the Experiment source",
-            )
-        if set(entry) != {"shape", "min", "max"}:
-            raise CaeError("invalid_input", f"{path}.varsSchema.{name} must define only shape, min, and max")
-        shape = _validate_vars_shape(entry["shape"], f"{path}.varsSchema.{name}.shape")
-        minimum = entry["min"]
-        maximum = entry["max"]
-        if not _is_finite_number(minimum):
-            raise CaeError("invalid_input", f"{path}.varsSchema.{name}.min must be a finite number")
-        if not _is_finite_number(maximum):
-            raise CaeError("invalid_input", f"{path}.varsSchema.{name}.max must be a finite number")
-        if minimum > maximum:
-            raise CaeError("invalid_input", f"{path}.varsSchema.{name} min exceeds max")
-        _validate_numeric_shape(variables[name], shape, f"{path}.variables.{name}")
-        _validate_numeric_range(
-            variables[name],
-            minimum,
-            maximum,
-            shape,
-            f"{path}.variables.{name}",
-        )
-
-
-def _validate_vars_shape(value: Any, path: str) -> tuple[int, ...]:
-    if not isinstance(value, list):
-        raise CaeError("invalid_input", f"{path} must be an array of positive safe integers")
-    elements = 1
-    shape = []
-    for index, size in enumerate(value):
-        if not isinstance(size, int) or isinstance(size, bool) or size <= 0 or size > MAX_SAFE_INTEGER:
-            raise CaeError("invalid_input", f"{path}[{index}] must be a positive safe integer")
-        elements *= size
-        if elements > MAX_VARS_TENSOR_ELEMENTS:
-            raise CaeError(
-                "invalid_input",
-                f"{path} must contain at most {MAX_VARS_TENSOR_ELEMENTS} elements",
-            )
-        shape.append(size)
-    return tuple(shape)
-
-
-def _numeric_tensor_shape(value: Any, path: str) -> tuple[int, ...]:
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        if not _is_finite_number(value):
-            raise CaeError("invalid_input", f"{path} must contain only finite numbers")
-        return ()
-    if not isinstance(value, list) or not value:
-        raise CaeError("invalid_input", f"{path} must be a non-empty rectangular numeric tensor")
-    child_shape = _numeric_tensor_shape(value[0], f"{path}[0]")
-    for index, item in enumerate(value[1:], 1):
-        if _numeric_tensor_shape(item, f"{path}[{index}]") != child_shape:
-            raise CaeError("invalid_input", f"{path} must be rectangular")
-    return (len(value), *child_shape)
-
-
-def _validate_numeric_shape(
-    value: Any,
-    shape: tuple[int, ...],
-    path: str,
-    *,
-    allow_scalar: bool = False,
-) -> None:
-    if allow_scalar and isinstance(value, (int, float)) and not isinstance(value, bool):
-        if not _is_finite_number(value):
-            raise CaeError("invalid_input", f"{path} must be finite")
-        return
-    actual = _numeric_tensor_shape(value, path)
-    if actual != shape:
-        raise CaeError("invalid_input", f"{path} must have shape {list(shape)}")
-
-
-def _validate_numeric_range(
-    value: Any,
-    minimum: float,
-    maximum: float,
-    shape: tuple[int, ...],
-    path: str,
-) -> None:
-    if not shape:
-        if value < minimum or value > maximum:
-            raise CaeError("invalid_input", f"{path} is outside varsSchema range")
-        return
-    for index, item in enumerate(value):
-        _validate_numeric_range(
-            item,
-            minimum,
-            maximum,
-            shape[1:],
-            f"{path}[{index}]",
-        )
-
-
-def _validate_scene(value: Any, path: str) -> None:
-    validate_canonical_geometry_scene(value, path)
-
-
-def _validate_material_snapshot(value: Any, path: str) -> None:
-    if (
-        not isinstance(value, dict)
-        or value.get("schemaVersion") != 1
-        or any(key not in {"schemaVersion", "materials", "materialColors"} for key in value)
-        or not isinstance(value.get("materials"), dict)
-    ):
-        raise CaeError("invalid_input", f"{path} is invalid")
-    colors = value.get("materialColors")
-    if colors is not None and not isinstance(colors, dict):
-        raise CaeError("invalid_input", f"{path}.materialColors is invalid")
-    if isinstance(colors, dict):
-        for material, entry in colors.items():
-            if (
-                not isinstance(material, str)
-                or not material
-                or not isinstance(entry, dict)
-                or set(entry) != {"color", "materialId"}
-                or not isinstance(entry.get("color"), str)
-                or len(entry["color"]) != 7
-                or entry["color"][0] != "#"
-                or any(character not in "0123456789abcdef" for character in entry["color"][1:])
-                or not _is_safe_integer(entry.get("materialId"))
-            ):
-                raise CaeError("invalid_input", f"{path}.materialColors is invalid")
-    for material, parameters in value["materials"].items():
-        if not isinstance(material, str) or not material or not isinstance(parameters, dict):
-            raise CaeError("invalid_input", f"{path}.materials is invalid")
-        for name, entry in parameters.items():
-            if (
-                not isinstance(name, str)
-                or not name
-                or not isinstance(entry, dict)
-                or set(entry)
-                != {"origin", "value", "source", "version", "materialId", "materialParameterId"}
-                or entry.get("origin") not in {"database", "source"}
-                or (entry.get("source") is not None and not isinstance(entry["source"], str))
-                or (entry.get("version") is not None and not isinstance(entry["version"], str))
-                or (
-                    entry.get("materialId") is not None
-                    and not _is_safe_integer(entry["materialId"])
-                )
-                or (
-                    entry.get("materialParameterId") is not None
-                    and not _is_safe_integer(entry["materialParameterId"])
-                )
-            ):
-                raise CaeError("invalid_input", f"{path}.{material}.{name} is invalid")
-            frequency_series = _validate_material_value(
-                entry["value"], f"{path}.{material}.{name}.value"
-            )
-            if frequency_series and (
-                entry["origin"] != "database"
-                or entry["materialId"] is None
-                or entry["materialParameterId"] is not None
-            ):
-                raise CaeError(
-                    "invalid_input",
-                    f"{path}.{material}.{name} frequency series metadata is invalid",
-                )
-
-
-def _validate_material_value(value: Any, path: str) -> bool:
-    if not isinstance(value, dict):
-        raise CaeError("invalid_input", f"{path} is invalid")
-    property_fields = set(value)
-    if property_fields in (
-        {"dtype", "value", "unit"},
-        {"dtype", "value", "unit", "axes"},
-    ):
-        dtype = value.get("dtype")
-        if (
-            dtype not in {"float16", "float32", "float64"}
-            or not isinstance(value.get("unit"), str)
-            or not value["unit"]
-        ):
-            raise CaeError("invalid_input", f"{path} property descriptor is invalid")
-        _validate_float_tensor(value["value"], dtype, f"{path}.value")
-        if "axes" not in value:
-            return False
-        axes = value["axes"]
-        axis = axes[0] if isinstance(axes, list) and len(axes) == 1 else None
-        if (
-            dtype != "float64"
-            or not isinstance(axis, dict)
-            or set(axis) != {"length", "name", "ticks", "unit", "quantityKind"}
-            or not _is_safe_integer(axis.get("length"))
-            or axis["length"] < 2
-            or axis.get("name") != "frequency"
-            or axis.get("unit") != "Hz"
-            or axis.get("quantityKind") != "Frequency"
-            or not isinstance(axis.get("ticks"), list)
-            or len(axis["ticks"]) != axis["length"]
-            or not isinstance(value["value"], list)
-            or len(value["value"]) != axis["length"]
-        ):
-            raise CaeError("invalid_input", f"{path} frequency axis is invalid")
-        previous = None
-        for index, tick in enumerate(axis["ticks"]):
-            if (
-                not _is_finite_number(tick)
-                or tick <= 0
-                or (previous is not None and tick <= previous)
-            ):
-                raise CaeError(
-                    "invalid_input",
-                    f"{path}.axes[0].ticks[{index}] frequency must be positive and strictly ascending",
-                )
-            previous = tick
-        return True
-    if (
-        set(value) != {"kind", "input", "output"}
-        or value.get("kind") != "sampled_relation"
-    ):
-        raise CaeError("invalid_input", f"{path} is invalid")
-    series = []
-    for side in ("input", "output"):
-        item = value.get(side)
-        if (
-            not isinstance(item, dict)
-            or set(item) != {"unit", "values"}
-            or not isinstance(item.get("unit"), str)
-            or not item["unit"]
-            or not isinstance(item.get("values"), list)
-            or not item["values"]
-        ):
-            raise CaeError("invalid_input", f"{path}.{side} is invalid")
-        sample_shape = _numeric_tensor_shape(item["values"][0], f"{path}.{side}.values[0]")
-        for index, sample in enumerate(item["values"]):
-            _validate_numeric_shape(
-                sample,
-                sample_shape,
-                f"{path}.{side}.values[{index}]",
-            )
-        series.append(item["values"])
-    if len(series[0]) != len(series[1]):
-        raise CaeError("invalid_input", f"{path} sampled relation lengths differ")
-    return False
-
-
-def _validate_float_tensor(value: Any, dtype: str, path: str) -> None:
-    _numeric_tensor_shape(value, path)
-    stack = [value]
-    while stack:
-        item = stack.pop()
-        if isinstance(item, list):
-            stack.extend(item)
-            continue
-        if dtype == "float16" and abs(item) > 65504:
-            raise CaeError("invalid_input", f"{path} exceeds float16 range")
-        if dtype == "float32":
-            try:
-                finite = math.isfinite(float(np.float32(item)))
-            except (OverflowError, ValueError):
-                finite = False
-            if not finite:
-                raise CaeError("invalid_input", f"{path} exceeds float32 range")
-
-
-def _is_safe_integer(value: Any) -> bool:
-    return (
-        isinstance(value, int)
-        and not isinstance(value, bool)
-        and -MAX_SAFE_INTEGER <= value <= MAX_SAFE_INTEGER
-    )
-
-
-def _is_finite_number(value: Any) -> bool:
-    if not isinstance(value, (int, float)) or isinstance(value, bool):
-        return False
-    try:
-        return math.isfinite(value)
-    except OverflowError:
-        return False
 
 
 def started_payload(run: CaeRun) -> dict[str, Any]:
@@ -1221,43 +762,13 @@ def started_payload(run: CaeRun) -> dict[str, Any]:
 
 
 def _manifest(measurement: dict[str, Any]) -> dict[str, Any]:
-    experiment = measurement.get("experiment")
-    manifest = experiment.get("simulationProgram") if isinstance(experiment, dict) else None
-    if (
-        not isinstance(manifest, dict)
-        or manifest.get("formatVersion") != 5
-        or set(manifest) != {
-            "formatVersion",
-            "simulationApiVersion",
-            "pythonSource",
-            "tasks",
-            "recordedData",
-        }
-    ):
-        raise CaeError("invalid_program", "BuiltMeasurement simulationProgram formatVersion 5 is required")
-    return manifest
+    return measurement["experiment"]["simulationProgram"]
 
 
 def _simulation_source(measurement: dict[str, Any], manifest: dict[str, Any]) -> str:
     del measurement
-    if isinstance(manifest.get("pythonSource"), str) and manifest["pythonSource"].strip():
-        return manifest["pythonSource"]
-    raise CaeError("invalid_program", "BuiltMeasurement has no Python simulation source")
+    return manifest["pythonSource"]
 
 
 def _variables(measurement: dict[str, Any]) -> dict[str, Any]:
-    experiment = measurement.get("experiment")
-    variables = experiment.get("variables") if isinstance(experiment, dict) else None
-    return variables if isinstance(variables, dict) else {}
-
-
-def _json_state(value: Any) -> Any:
-    if isinstance(value, np.ndarray):
-        return None
-    try:
-        encoded = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
-    except (TypeError, ValueError):
-        return None
-    if len(encoded) > 64 * 1024:
-        return None
-    return value
+    return measurement["experiment"].get("variables", {})

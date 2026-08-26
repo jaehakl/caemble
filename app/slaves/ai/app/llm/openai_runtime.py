@@ -27,11 +27,6 @@ async def ask_openai(
 ) -> str:
     trimmed_system_message = system_message.strip()
     trimmed_question = question.strip()
-    if not trimmed_system_message:
-        raise ValueError("system_message is required")
-    if not trimmed_question:
-        raise ValueError("question is required")
-
     effective_thinking = resolve_thinking(model.enable_thinking, enable_thinking)
     request_kwargs: dict[str, Any] = {
         "model": model.model_id,

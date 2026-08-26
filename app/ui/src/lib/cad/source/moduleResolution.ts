@@ -1,8 +1,5 @@
 import { CadModelError } from '../model/errors'
 
-export const MAX_EXPERIMENT_SOURCE_FILES = 256
-export const MAX_EXPERIMENT_SOURCE_PATH_LENGTH = 256
-
 const sourceSegmentPattern = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$/u
 
 export function isExperimentTypeScriptPath(path: string) {
@@ -13,7 +10,6 @@ export function assertExperimentSourcePath(path: unknown): asserts path is strin
   if (
     typeof path !== 'string' ||
     path.length === 0 ||
-    path.length > MAX_EXPERIMENT_SOURCE_PATH_LENGTH ||
     path.startsWith('/') ||
     path.includes('\\')
   ) {
@@ -33,9 +29,6 @@ export function assertExperimentSourcePath(path: unknown): asserts path is strin
 }
 
 export function assertExperimentSourcePaths(paths: readonly string[]) {
-  if (paths.length > MAX_EXPERIMENT_SOURCE_FILES) {
-    throw new CadModelError(`Experiment source bundle exceeds ${MAX_EXPERIMENT_SOURCE_FILES} files.`)
-  }
   const folded = new Map<string, string>()
   paths.forEach((path) => {
     assertExperimentSourcePath(path)

@@ -34,8 +34,6 @@ class SlaveApp:
 class SlaveAppRegistry:
     def __init__(self, apps: list[SlaveApp]) -> None:
         self.apps = {app.id: app for app in apps}
-        if len(self.apps) != len(apps):
-            raise ValueError("duplicate slave app id")
 
     def ids(self) -> list[str]:
         return sorted(self.apps)
@@ -85,22 +83,12 @@ def load_manifest(manifest_path: Path) -> SlaveApp:
         name=str(payload.get("name") or payload["id"]),
         module=str(payload["module"]),
         project_dir=manifest_path.parent,
-        startup_timeout_seconds=parse_startup_timeout_seconds(payload.get("startup_timeout_seconds"), manifest_path),
+        startup_timeout_seconds=(
+            float(payload["startup_timeout_seconds"])
+            if payload.get("startup_timeout_seconds") is not None
+            else None
+        ),
     )
-
-
-def parse_startup_timeout_seconds(value: Any, manifest_path: Path) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        raise ValueError(f"{manifest_path}: startup_timeout_seconds must be a positive number")
-    try:
-        timeout = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{manifest_path}: startup_timeout_seconds must be a positive number") from exc
-    if timeout <= 0:
-        raise ValueError(f"{manifest_path}: startup_timeout_seconds must be positive")
-    return timeout
 
 
 def default_plugins_dir() -> Path:

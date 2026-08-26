@@ -1,22 +1,13 @@
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import Field
 
 from models import BaseModel
 
 
 AccessKeyScope = Literal["client", "launcher"]
-JobState = Literal[
-    "queued",
-    "assigned",
-    "answer_ready",
-    "running",
-    "succeeded",
-    "failed",
-    "cancelled",
-    "killed",
-]
+JobState = str
 
 
 class OkResponse(BaseModel):
@@ -36,10 +27,8 @@ class LauncherView(BaseModel):
 
 
 class JobCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    handler_type: str = Field(min_length=1, max_length=128)
-    slave_app_id: str = Field(default="ai", min_length=1, max_length=128)
+    handler_type: str
+    slave_app_id: str = "ai"
     offer: Dict[str, Any]
 
 
@@ -113,16 +102,9 @@ class AccessKeyData(BaseModel):
 
 
 class AccessKeyCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(min_length=1, max_length=128)
-    scopes: List[AccessKeyScope] = Field(min_length=1, max_length=2)
+    name: str
+    scopes: List[AccessKeyScope]
     expires_at: Optional[datetime] = None
-
-    @field_validator("scopes", mode="before")
-    @classmethod
-    def deduplicate_scopes(cls, value: Any) -> Any:
-        return list(dict.fromkeys(value)) if isinstance(value, list) else value
 
 
 class AccessKeyCreateResult(BaseModel):
@@ -131,11 +113,9 @@ class AccessKeyCreateResult(BaseModel):
 
 
 class CrudListRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    offset: int = Field(default=0, ge=0)
-    limit: Optional[int] = Field(default=100, ge=1, le=1000)
-    selected_ids: List[str] = Field(default_factory=list, max_length=1000)
+    offset: int = 0
+    limit: Optional[int] = 100
+    selected_ids: List[str] = Field(default_factory=list)
     search_text: Optional[str] = None
     text_filter: Dict[str, List[str]] = Field(default_factory=dict)
     filter: Dict[str, List[Any]] = Field(default_factory=dict)
@@ -148,9 +128,7 @@ class CrudListResponse(BaseModel):
 
 
 class CrudDeleteRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    ids: List[str] = Field(max_length=1000)
+    ids: List[str]
 
 
 class CrudDeleteResponse(BaseModel):

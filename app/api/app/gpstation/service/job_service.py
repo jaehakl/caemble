@@ -1,47 +1,27 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
-from sqlalchemy import and_, cast, func, or_, select, update
+from sqlalchemy import and_, cast, or_, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from gpstation.db import Job, Launcher
 from gpstation.models import JobData, JobSummary
-from gpstation.utils.slave_registry import require_slave_app_id
-from sdk.protocol.messages import SignalPayload
 from settings import settings
 
 
 JOB_TERMINAL_STATES = {"succeeded", "failed", "cancelled", "killed"}
 JOB_ACTIVE_STATES = {"assigned", "answer_ready", "running"}
-JOB_OFFER_MAX_BYTES = 512 * 1024
-JOB_PROGRESS_MAX_BYTES = 64 * 1024
-JOB_PROGRESS_MAX_ITEMS = 1000
 JOB_IDLE_TIMEOUT = timedelta(hours=2)
 JOB_MAX_LIFETIME = timedelta(hours=24)
 
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def json_size(value: Any) -> int:
-    try:
-        return len(
-            json.dumps(
-                value,
-                ensure_ascii=False,
-                allow_nan=False,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        )
-    except (TypeError, ValueError) as error:
-        raise ValueError("Job payload must be JSON serializable") from error
 
 
 def job_to_data(job: Job) -> JobData:
@@ -84,26 +64,11 @@ class JobService:
         slave_app_id: str,
         offer: dict[str, Any],
     ) -> Job:
-        require_slave_app_id(slave_app_id)
-        if json_size(
-            {
-                "handler_type": handler_type,
-                "slave_app_id": slave_app_id,
-                "offer": offer,
-            }
-        ) > JOB_OFFER_MAX_BYTES:
-            raise ValueError(f"Job request exceeds {JOB_OFFER_MAX_BYTES} bytes")
-        signal = SignalPayload.model_validate(offer)
-        if signal.type != "offer" or not signal.sdp:
-            raise ValueError("Job offer must be an SDP offer")
-        normalized_offer = signal.model_dump(exclude_none=True)
-        if json_size(normalized_offer) > JOB_OFFER_MAX_BYTES:
-            raise ValueError(f"Job request exceeds {JOB_OFFER_MAX_BYTES} bytes")
         job = Job(
             user_id=user_id,
             handler_type=handler_type,
             slave_app_id=slave_app_id,
-            offer=normalized_offer,
+            offer=offer,
             state="queued",
             progress=[],
         )
@@ -258,9 +223,6 @@ class JobService:
         user_id: str,
         answer: dict[str, Any],
     ) -> Job | None:
-        signal = SignalPayload.model_validate(answer)
-        if signal.type != "answer" or not signal.sdp:
-            raise ValueError("Job answer must be an SDP answer")
         now = utcnow()
         return await JobService._update_launcher_job(
             db,
@@ -269,7 +231,7 @@ class JobService:
             user_id=user_id,
             expected_states={"assigned"},
             values={
-                "answer": signal.model_dump(exclude_none=True),
+                "answer": answer,
                 "answer_ready_at": now,
                 "state": "answer_ready",
                 "updated_at": now,
@@ -303,8 +265,6 @@ class JobService:
         user_id: str,
         progress: Any,
     ) -> Job | None:
-        if json_size(progress) > JOB_PROGRESS_MAX_BYTES:
-            raise ValueError(f"Job progress exceeds {JOB_PROGRESS_MAX_BYTES} bytes")
         now = utcnow()
         item = {"time": now.isoformat(), "progress": progress}
         return await JobService._update_launcher_job(
@@ -313,7 +273,6 @@ class JobService:
             launcher_id=launcher_id,
             user_id=user_id,
             expected_states={"running"},
-            extra_conditions=(func.jsonb_array_length(Job.progress) < JOB_PROGRESS_MAX_ITEMS,),
             values={
                 "progress": Job.progress.op("||")(cast([item], JSONB)),
                 "updated_at": now,
@@ -349,8 +308,6 @@ class JobService:
         detail: str,
         state: str = "failed",
     ) -> Job | None:
-        if state not in {"failed", "cancelled"}:
-            raise ValueError("Invalid terminal job state")
         now = utcnow()
         return await JobService._update_launcher_job(
             db,

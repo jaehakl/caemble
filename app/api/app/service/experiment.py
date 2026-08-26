@@ -2,15 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from collections.abc import Iterable
 from typing import Any
 
-from caemble_catalog.experiment_bundle import (
-    ExperimentBundleError,
-    is_experiment_source_path,
-    validate_experiment_module_graph,
-)
 from fastapi import HTTPException, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -26,18 +20,6 @@ from models import (
 )
 from user_auth.db import User
 from utils.crud.common import is_admin_user, normalize_int_ids
-
-
-MAX_BUNDLE_FILES = 256
-MAX_SOURCE_BYTES = 1024 * 1024
-MAX_BUNDLE_BYTES = 1024 * 1024
-SEMVER_COMPONENT_MAX = 2_147_483_647
-NAMESPACE_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$")
-SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
-SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
-REQUIRED_SOURCE_PATHS = frozenset(
-    {"experiment.tsx", "geometry.tsx", "material.tsx", "simulate.py"}
-)
 
 
 def _bad(message: Any, *, code: int = status.HTTP_422_UNPROCESSABLE_ENTITY) -> HTTPException:
@@ -61,12 +43,9 @@ def _coordinate(experiment: Experiment) -> str:
 
 
 def _parse_version(value: str | None) -> tuple[int, int, int]:
-    match = SEMVER_RE.fullmatch(value or "")
-    if match is None:
-        raise _bad("initialVersion must be a release-only SemVer value.")
-    parts = tuple(int(item) for item in match.groups())
-    if any(item > SEMVER_COMPONENT_MAX for item in parts):
-        raise _bad(f"SemVer components must not exceed {SEMVER_COMPONENT_MAX}.")
+    parts = tuple(int(item) for item in (value or "").split("."))
+    if len(parts) != 3:
+        raise ValueError("initialVersion must contain three numeric components")
     return parts  # type: ignore[return-value]
 
 
@@ -82,42 +61,10 @@ def _bump_version(experiment: Experiment, bump: str) -> tuple[int, int, int]:
         minor, patch = minor + 1, 0
     else:
         patch += 1
-    if max(major, minor, patch) > SEMVER_COMPONENT_MAX:
-        raise _bad(f"SemVer components must not exceed {SEMVER_COMPONENT_MAX}.")
     return major, minor, patch
 
 
-def validate_source_bundle(bundle: ExperimentSourceBundle) -> dict[str, Any]:
-    files = bundle.files
-    if len(files) > MAX_BUNDLE_FILES:
-        raise _bad(f"Experiment source bundle may contain at most {MAX_BUNDLE_FILES} files.")
-    missing = REQUIRED_SOURCE_PATHS - files.keys()
-    if missing:
-        raise _bad(f"Experiment source bundle is missing required file: {sorted(missing)[0]}")
-    casefold_paths: set[str] = set()
-    total_bytes = 0
-    for path, source in files.items():
-        if not is_experiment_source_path(path):
-            raise _bad(f"Experiment source file path is not allowed: {path}")
-        folded_path = path.casefold()
-        if folded_path in casefold_paths:
-            raise _bad(f"Experiment source paths must be case-insensitively unique: {path}")
-        casefold_paths.add(folded_path)
-        try:
-            source_bytes = len(source.encode("utf-8"))
-        except UnicodeEncodeError as error:
-            raise _bad(f"Experiment source {path} must contain valid UTF-8 text.") from error
-        if source_bytes > MAX_SOURCE_BYTES:
-            raise _bad(f"Experiment source {path} exceeds 1 MiB.")
-        total_bytes += source_bytes
-    if total_bytes > MAX_BUNDLE_BYTES:
-        raise _bad("Experiment source bundle exceeds 1 MiB.")
-    if not files["experiment.tsx"].strip() or not files["simulate.py"].strip():
-        raise _bad("Experiment program sources must not be empty.")
-    try:
-        validate_experiment_module_graph(files)
-    except ExperimentBundleError as error:
-        raise _bad(str(error)) from error
+def _source_bundle_payload(bundle: ExperimentSourceBundle) -> dict[str, Any]:
     return bundle.model_dump(mode="json")
 
 
@@ -228,24 +175,14 @@ async def save_experiment(
     *,
     user: Any,
 ) -> SaveExperimentResponse:
-    source_bundle = validate_source_bundle(request.sourceBundle)
+    source_bundle = _source_bundle_payload(request.sourceBundle)
     source_hash = _bundle_hash(source_bundle)
-    if source_hash != request.bundleHash:
-        raise _bad("bundleHash does not match sourceBundle.", code=status.HTTP_400_BAD_REQUEST)
     name = request.name.strip()
-    if not name:
-        raise _bad("Experiment name must not be blank.")
     namespace = request.namespace.strip()
     repository = request.repository.strip()
     key = request.key.strip()
-    if NAMESPACE_RE.fullmatch(namespace) is None:
-        raise _bad("Experiment namespace format is invalid.")
     if namespace == "caemble":
         raise _bad("The caemble namespace is reserved for Examples.", code=status.HTTP_409_CONFLICT)
-    if SLUG_RE.fullmatch(repository) is None:
-        raise _bad("Experiment repository format is invalid.")
-    if SLUG_RE.fullmatch(key) is None:
-        raise _bad("Experiment key format is invalid.")
 
     counts = ExperimentDerivedCounts()
     if request.mode == "create":

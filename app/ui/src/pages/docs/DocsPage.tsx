@@ -57,7 +57,7 @@ export function DocsPage() {
   })
 
   const searchEntries = useMemo<readonly DocsKnowledgeChunk[]>(
-    () => [...getDocsKnowledge(), ...catalogSearchKnowledge(catalogSearch.data?.items ?? [])],
+    () => [...getDocsKnowledge(), ...catalogSearchKnowledge(catalogSearch.data ?? [])],
     [catalogSearch.data],
   )
 

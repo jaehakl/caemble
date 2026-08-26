@@ -7,7 +7,7 @@ from sdk.slave.channel import (
     BUFFERED_AMOUNT_DRAIN_TIMEOUT_SECONDS,
     BUFFERED_AMOUNT_LOW_THRESHOLD,
     CHUNK_SIZE,
-    MAX_BUFFERED_AMOUNT,
+    BUFFERED_AMOUNT_HIGH_WATER_MARK,
     attachment_metadata,
     decode_binary_frame,
     encode_binary_frame,
@@ -24,12 +24,10 @@ from sdk.slave.config import (
     build_rtc_configuration,
     configure_aioice_gather_timeout,
     ice_server_kwargs,
-    is_string_list,
     iter_rtc_ice_server_urls,
     load_rtc_ice_gather_timeout_seconds,
     load_rtc_ice_servers,
     load_rtc_memory_cache_enabled,
-    validate_rtc_ice_servers,
 )
 from sdk.slave.io import emit, log, parse_args, read_stdin_line
 from sdk.slave.rtc import (
@@ -42,8 +40,6 @@ from sdk.slave.rtc import (
     summarize_sdp_candidates,
 )
 from sdk.slave.worker import (
-    JOB_DATA_CHANNEL_ATTACHMENT_MAX_BYTES,
-    JOB_DATA_CHANNEL_MESSAGE_MAX_BYTES,
     JOB_RESULT_ACK_TIMEOUT_SECONDS,
     WorkerJobPeerState,
     _run_worker_stdio,
@@ -74,10 +70,8 @@ __all__ = [
     "DEFAULT_STUN_ICE_GATHER_TIMEOUT_SECONDS",
     "DEFAULT_TURN_ICE_GATHER_TIMEOUT_SECONDS",
     "JOB_RESULT_ACK_TIMEOUT_SECONDS",
-    "JOB_DATA_CHANNEL_ATTACHMENT_MAX_BYTES",
-    "JOB_DATA_CHANNEL_MESSAGE_MAX_BYTES",
     "MessageHandler",
-    "MAX_BUFFERED_AMOUNT",
+    "BUFFERED_AMOUNT_HIGH_WATER_MARK",
     "PreparedWorkerPeer",
     "RTC_ICE_GATHER_TIMEOUT_ENV",
     "RTC_ICE_SERVERS_ENV",
@@ -99,7 +93,6 @@ __all__ = [
     "encode_binary_frame",
     "format_candidate_summary",
     "ice_server_kwargs",
-    "is_string_list",
     "iter_rtc_ice_server_urls",
     "load_rtc_ice_gather_timeout_seconds",
     "load_rtc_ice_servers",
@@ -118,6 +111,5 @@ __all__ = [
     "send_job_result",
     "summarize_pc_local_candidates",
     "summarize_sdp_candidates",
-    "validate_rtc_ice_servers",
     "wait_for_job_result_ack",
 ]

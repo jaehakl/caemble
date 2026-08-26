@@ -1,36 +1,25 @@
-// @caemble/core declaration version: 0.7.0
+// Generated @caemble/core declaration.
 export type Tensor = number | readonly Tensor[]
 export type Vars = Readonly<Record<string, Tensor>>
 export type Vec3 = readonly [number, number, number]
 export type CartesianBasis = readonly [Vec3, Vec3, Vec3]
 export type Rotation = Readonly<{ axis: Vec3; angle: number }>
 // <generated:primitive-authoring-bindings>
-export const Box: 'box'
-export const Cylinder: 'cylinder'
-export const CurvedEdgeCylinder: 'curvedEdgeCylinder'
-export const Sphere: 'sphere'
-export const CurvedSurfaceSphere: 'curvedSurfaceSphere'
-export const Fiber: 'fiber'
+export const Box: (props: BoxAttributes) => unknown
+export const Cylinder: (props: CylinderAttributes) => unknown
+export const CurvedEdgeCylinder: (props: CurvedEdgeCylinderAttributes) => unknown
+export const Sphere: (props: SphereAttributes) => unknown
+export const CurvedSurfaceSphere: (props: CurvedSurfaceSphereAttributes) => unknown
+export const Fiber: (props: FiberAttributes) => unknown
 // </generated:primitive-authoring-bindings>
 export function radians(degrees: number): number
 export function radians(degrees: Vec3): Vec3
 export type CanonicalGeometryTransformAttributes = Readonly<{
   position?: Vec3
   rotation?: Vec3
-  pos?: never
-  rotate?: never
   scale?: Vec3
 }>
-export type LegacyGeometryTransformAttributes = Readonly<{
-  position?: never
-  rotation?: never
-  /** @deprecated Use position. */
-  pos?: Vec3
-  /** @deprecated Use rotation with XYZ Euler angles in radians. */
-  rotate?: Rotation
-  scale?: Vec3
-}>
-export type GeometryTransformAttributes = CanonicalGeometryTransformAttributes | LegacyGeometryTransformAttributes
+export type GeometryTransformAttributes = CanonicalGeometryTransformAttributes
 export type GeometryIdentityAttributes = Readonly<{ id?: string }>
 export type IntrinsicGeometryAttributes = GeometryIdentityAttributes & GeometryTransformAttributes
 export type GeometryGroupMap = Readonly<Record<string, readonly string[]>>
@@ -61,7 +50,6 @@ export type NonFloatDataDType = Exclude<DataDType, FloatDataDType>
 export type IntegerDataDType = Exclude<NonFloatDataDType, 'bool' | 'string'>
 export type UcumUnit = string
 // <generated:quantity-kind-types>
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface CatalogQuantityKindMap {}
 export type QuantityKindName = keyof CatalogQuantityKindMap extends never ? string : keyof CatalogQuantityKindMap
 export type QuantityKindDomain = string
@@ -143,14 +131,20 @@ export type DataTensor = Readonly<{
     | Readonly<{ kind: 'base64'; data: string; byteLength: number }>
 }>
 export type PersistedDataTensor = DataTensor & Readonly<{ tensorEncodingVersion: 1 }>
-export type LegacyRecordedDataTensor = Readonly<{
+export type DataTensorInput = Readonly<{
   value: boolean | string | number | readonly unknown[]
   axes?: readonly RecordedDataAxis[]
 }>
-export type RecordedDataTensor = DataTensor | PersistedDataTensor | LegacyRecordedDataTensor
-export type RecordedData = Readonly<Record<string, RecordedDataTensor>>
+export type RecordedDataTensor = DataTensor | PersistedDataTensor
+export type RecordedDataNode = RecordedDataTensor | RecordedDataGroup
+export interface RecordedDataGroup extends Readonly<Record<string, RecordedDataNode>> {}
+export interface RecordedData extends Readonly<Record<string, RecordedDataNode>> {}
 export type RecordedDataSpec = RecordedDataResult
 export type ResolvedDataSchema = RecordedDataSpec & Readonly<{ tensorOrder: number }>
+export type RecordedDataSpecNode = RecordedDataSpec | RecordedDataSpecGroup
+export interface RecordedDataSpecGroup extends Readonly<Record<string, RecordedDataSpecNode>> {}
+export type ResolvedDataSchemaNode = ResolvedDataSchema | ResolvedDataSchemaGroup
+export interface ResolvedDataSchemaGroup extends Readonly<Record<string, ResolvedDataSchemaNode>> {}
 
 export type BoxAttributes = Readonly<{
   size?: Vec3
@@ -280,7 +274,6 @@ export type GeometryInvocationAttributes<P extends object = object> = Readonly<
 
 // <generated:material-catalog-types>
 // Catalog keys are augmented in memory from the active Solver runtime slice.
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface MaterialPropertyQuantityKindMap {}
 export type MaterialPropertyKey = keyof MaterialPropertyQuantityKindMap extends never
   ? string
@@ -292,7 +285,6 @@ export type MaterialPropertyDefinitionFor<Key extends MaterialPropertyKey> = Rea
   quantity_kind: MaterialPropertyQuantityKind<Key>
 }>
 
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface MaterialModelDefinitionMap {}
 export type MaterialModelKey = keyof MaterialModelDefinitionMap extends never
   ? string
@@ -388,11 +380,6 @@ export function convertUcumValue(
   toUnit: UcumUnit | undefined,
   path?: string,
 ): number
-export function assertUcumUnitComparable(
-  unit: UcumUnit | undefined,
-  expectedUnit: UcumUnit | undefined,
-  path: string,
-): void
 export function isFloatDType(dtype: DataDType): boolean
 export function Mat(diagonal: number, offDiagonal?: number, size?: number): MatrixValue
 
@@ -449,7 +436,7 @@ export type KernelIdentity = Readonly<{
 
 export type ExperimentDefinitionOptions<
   Schema extends VarsSchemaDefinition,
-  Recorded extends Readonly<Record<string, RecordedDataSpec>>,
+  Recorded extends Readonly<Record<string, RecordedDataSpecNode>>,
 > = Readonly<{
   geometry: (context: ModelContext<Schema>) => unknown
   lengthUnit: UcumUnit
@@ -470,10 +457,9 @@ export type TaskDefinitionOptions<Config> = Readonly<{
 
 export class ExperimentDefinition<
   Schema extends VarsSchemaDefinition = VarsSchemaDefinition,
-  Recorded extends Readonly<Record<string, RecordedDataSpec>> = Readonly<Record<string, RecordedDataSpec>>,
+  Recorded extends Readonly<Record<string, RecordedDataSpecNode>> = Readonly<Record<string, RecordedDataSpecNode>>,
 > {
   constructor(options: ExperimentDefinitionOptions<Schema, Recorded>)
-  readonly apiVersion: 11
   readonly documentType: 'experiment'
   readonly varsSchema: Schema
   readonly lengthUnit: UcumUnit
@@ -484,7 +470,6 @@ export class ExperimentDefinition<
 
 export class TaskDefinition<Config = unknown> {
   constructor(options: TaskDefinitionOptions<Config>)
-  readonly apiVersion: 11
   readonly documentType: 'task'
   readonly kernel: KernelIdentity
   readonly lengthUnit?: UcumUnit
@@ -494,14 +479,12 @@ export class TaskDefinition<Config = unknown> {
 
 export declare function experiment<
   const Schema extends VarsSchemaDefinition,
-  const Recorded extends Readonly<Record<string, RecordedDataSpec>>,
+  const Recorded extends Readonly<Record<string, RecordedDataSpecNode>>,
 >(options: ExperimentDefinitionOptions<Schema, Recorded>): ExperimentDefinition<Schema, Recorded>
 
 export declare function defineTask<const Config>(options: TaskDefinitionOptions<Config>): TaskDefinition<Config>
 
 export type SimulationProgramManifest = Readonly<{
-  formatVersion: 5
-  simulationApiVersion: 3
   pythonSource: string
   tasks: Readonly<
     Record<
@@ -512,7 +495,7 @@ export type SimulationProgramManifest = Readonly<{
       }>
     >
   >
-  recordedData: Readonly<Record<string, ResolvedDataSchema>>
+  recordedData: Readonly<Record<string, ResolvedDataSchemaNode>>
 }>
 
 export type ExternalVars = Readonly<Record<string, Tensor>>

@@ -1,4 +1,3 @@
-import { CadModelError } from '../model/core'
 import type { Vec3 } from '../model/types'
 import { cumulativeLengths } from './polyline'
 import {
@@ -37,9 +36,6 @@ function initialNormal(tangent: Vec3, up: unknown): MutableVec3 {
     candidate[1] - tangent[1] * projection,
     candidate[2] - tangent[2] * projection,
   ]
-  if (vectorLength(normal) <= 1e-8) {
-    throw new CadModelError('<fiber> up must not be parallel to the initial path tangent.')
-  }
   return normalizeVector(normal, '<fiber> initial frame normal')
 }
 
@@ -68,9 +64,7 @@ export function createBishopFrames(points: readonly Vec3[], up: unknown, path: s
     const cosine = Math.max(-1, Math.min(1, dot(previous.tangent, tangent)))
     let transportedNormal = previous.normal
 
-    if (sine <= 1e-10) {
-      if (cosine < 0) throw new CadModelError(`${path} contains a 180-degree tangent reversal near sample ${index}.`)
-    } else {
+    if (sine > 1e-10) {
       const axis: MutableVec3 = [rotationAxis[0] / sine, rotationAxis[1] / sine, rotationAxis[2] / sine]
       transportedNormal = rotateAroundAxis(previous.normal, axis, Math.atan2(sine, cosine))
     }

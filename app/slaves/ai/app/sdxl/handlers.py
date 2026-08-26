@@ -6,7 +6,6 @@ from typing import Any
 from sdk.slave import DataChannelAttachment, DataChannelMessage, SlaveApp, SlaveContext
 
 from app.logging import log, log_exception
-from app.message import reject_request_attachments
 from app.model_catalog import get_model_list_payload
 from app.sdxl.models import SdxlControlNetRequest, SdxlGenerationRequest, SdxlT2IRequest, SdxlT2IResponse
 from app.sdxl.service import generate_sdxl_images, generate_sdxl_t2i_images
@@ -27,7 +26,6 @@ async def ai_sdxl_models(
     memory: dict[str, Any] | None,
     context: SlaveContext,
 ) -> DataChannelMessage:
-    reject_request_attachments(message)
     return DataChannelMessage(
         id=message.id,
         type="ai.sdxl.models.result",
@@ -40,7 +38,6 @@ async def ai_sdxl_t2i(
     memory: dict[str, Any] | None,
     context: SlaveContext,
 ) -> DataChannelMessage:
-    reject_request_attachments(message)
     request = SdxlT2IRequest.model_validate(message.payload)
     return await _run_sdxl_handler(message, context, request, "t2i")
 

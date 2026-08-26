@@ -53,46 +53,6 @@ def _constraint_detail(error: IntegrityError) -> str:
     return "Database constraint violation."
 
 
-async def _validate_tree_cycles(
-    db: AsyncSession,
-    spec: CrudSpec[Any, Any],
-    items: list[Any],
-) -> None:
-    parent_field = spec.tree_parent_field
-    if parent_field is None:
-        return
-
-    proposed_parents = {
-        item.id: getattr(item, parent_field)
-        for item in items
-        if item.id is not None
-    }
-    stored_parents: dict[int, int | None] = {}
-
-    async def get_parent(entity_id: int) -> int | None:
-        if entity_id in proposed_parents:
-            return proposed_parents[entity_id]
-        if entity_id not in stored_parents:
-            stored_parents[entity_id] = await db.scalar(
-                select(getattr(spec.model, parent_field)).where(spec.model.id == entity_id)
-            )
-        return stored_parents[entity_id]
-
-    for item in items:
-        if item.id is None:
-            continue
-        seen = {item.id}
-        parent_id = getattr(item, parent_field)
-        while parent_id is not None:
-            if parent_id in seen:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"{spec.model.__name__} parent relationship cannot contain a cycle.",
-                )
-            seen.add(parent_id)
-            parent_id = await get_parent(parent_id)
-
-
 async def upsert_items(
     db: AsyncSession,
     items: list[Any],
@@ -106,9 +66,6 @@ async def upsert_items(
         return []
 
     supplied_ids = [item.id for item in items if item.id is not None]
-    if len(supplied_ids) != len(set(supplied_ids)):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Duplicate upsert ids.")
-
     existing_entities = await _fetch_entities_by_ids(db, spec.model, supplied_ids)
     missing_ids = sorted(set(supplied_ids) - set(existing_entities))
     if missing_ids:
@@ -124,29 +81,6 @@ async def upsert_items(
         )
         if inaccessible_ids:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Items not found: {inaccessible_ids}.")
-
-    for item in items:
-        existing = existing_entities.get(item.id)
-        if existing is None:
-            continue
-        immutable_payload = item.model_dump(include=set(spec.immutable_update_fields))
-        changed_field = next(
-            (
-                field_name
-                for field_name in spec.immutable_update_fields
-                if field_name in item.model_fields_set
-                and getattr(existing, field_name) != immutable_payload[field_name]
-            ),
-            None,
-        )
-        if changed_field is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    f"{spec.model.__name__}.{changed_field} cannot be changed through generic upsert; "
-                    "use the dedicated save endpoint."
-                ),
-            )
 
     direct_owner = spec.model.__table__.columns.get("user_id") is not None
     effective_owners: list[str | None] = []
@@ -222,8 +156,6 @@ async def upsert_items(
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"{field_name} not found.")
             if owner_id is not None and target_owner_id not in {None, owner_id}:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"{field_name} not found.")
-
-    await _validate_tree_cycles(db, spec, items)
 
     writable_columns = {
         column.name

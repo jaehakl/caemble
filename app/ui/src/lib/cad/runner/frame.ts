@@ -1,4 +1,4 @@
-import { cadSnapshotTransferables } from '../execution/meshValidation'
+import { cadSnapshotTransferables } from '../execution/meshSerialization'
 import { installCatalogRuntimeSlice } from '@/lib/catalog/runtime'
 import {
   assertRunnerCancelOperationEnvelope,

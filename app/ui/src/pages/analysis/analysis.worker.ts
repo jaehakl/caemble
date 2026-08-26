@@ -4,7 +4,6 @@ import { dbTables, getListRequest } from '@/api'
 import { catalogApi } from '@/api/catalog'
 import type { MeasurementRecord, RecordedDataRecord } from '@/api'
 import {
-  ANALYSIS_MAX_ROWS,
   analyzeRelationships,
   buildAnalysisDataset,
   collectAnalysisQuantityKindNames,
@@ -58,10 +57,6 @@ async function loadContextRows(selectedExperimentId: number): Promise<ContextRow
   return { measurements: response.items.filter((row) => row.experiment_id === selectedExperimentId) }
 }
 
-function rowsSignature(rows: ContextRows) {
-  return stableSignature(rows.measurements)
-}
-
 async function loadRecordedData(
   requestId: string,
   measurements: readonly MeasurementRecord[],
@@ -97,7 +92,7 @@ async function loadRecordedData(
         (row) =>
           exactIds.has(row.measurement_id) &&
           allowedMeasurementIds.has(row.measurement_id) &&
-          !row.name.startsWith('@caemble/'),
+          !row.name.startsWith('rayPaths.'),
       )
       completed += 1
       postProgress(requestId, 'Recorded Data 조회', completed, ranges.length)
@@ -108,27 +103,17 @@ async function loadRecordedData(
   return responses.flat()
 }
 
-async function loadStableContext(requestId: string, selectedExperimentId: number): Promise<LoadedContext> {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    postProgress(requestId, 'Measurement 조회')
-    const before = await loadContextRows(selectedExperimentId)
-    if (before.measurements.length > ANALYSIS_MAX_ROWS) {
-      throw new Error(`Analysis는 최대 ${ANALYSIS_MAX_ROWS.toLocaleString()}개 Measurement까지 지원합니다.`)
-    }
-    const recordedData = await loadRecordedData(requestId, before.measurements)
-    const after = await loadContextRows(selectedExperimentId)
-    if (rowsSignature(before) === rowsSignature(after)) {
-      const currentMeasurementSignature = stableSignature(after.measurements)
-      const fingerprint = [currentMeasurementSignature, stableSignature(recordedData)].join(':')
-      return {
-        rows: after,
-        recordedData,
-        fingerprint,
-        measurementSignature: currentMeasurementSignature,
-      }
-    }
+async function loadContext(requestId: string, selectedExperimentId: number): Promise<LoadedContext> {
+  postProgress(requestId, 'Measurement 조회')
+  const rows = await loadContextRows(selectedExperimentId)
+  const recordedData = await loadRecordedData(requestId, rows.measurements)
+  const currentMeasurementSignature = stableSignature(rows.measurements)
+  return {
+    rows,
+    recordedData,
+    fingerprint: [currentMeasurementSignature, stableSignature(recordedData)].join(':'),
+    measurementSignature: currentMeasurementSignature,
   }
-  throw new Error('분석 데이터를 읽는 동안 Measurement가 계속 변경되었습니다. 잠시 후 새로고침해 주세요.')
 }
 
 function requireDataset() {
@@ -139,7 +124,7 @@ function requireDataset() {
 async function handleRequest(request: AnalysisWorkerRequest) {
   if (request.type === 'load-context') {
     experimentId = request.experimentId
-    const loaded = await loadStableContext(request.requestId, request.experimentId)
+    const loaded = await loadContext(request.requestId, request.experimentId)
     postProgress(request.requestId, 'Catalog 조회')
     const quantityKindNames = collectAnalysisQuantityKindNames(loaded.rows.measurements, loaded.recordedData)
     const quantityKindTensorOrders = new Map<string, number>()

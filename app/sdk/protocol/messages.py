@@ -1,39 +1,26 @@
 from __future__ import annotations
 
-import json
-from typing import Any, Annotated, Literal, Union
+from typing import Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
-
-
-class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+from pydantic import BaseModel, Field
 
 
-class SignalPayload(StrictModel):
+class SignalPayload(BaseModel):
     type: Literal["offer", "answer", "ice", "end-of-candidates"]
-    sdp: str | None = Field(default=None, max_length=256 * 1024)
-    candidate: str | None = Field(default=None, max_length=16 * 1024)
-    sdpMid: str | None = Field(default=None, max_length=256)
+    sdp: str | None = None
+    candidate: str | None = None
+    sdpMid: str | None = None
     sdpMLineIndex: int | None = None
 
 
-class LauncherHello(StrictModel):
+class LauncherHello(BaseModel):
     type: Literal["launcher.hello"]
-    launcher_name: str = Field(min_length=1, max_length=128)
-    slave_app_ids: list[str] = Field(default_factory=list, max_length=64)
+    launcher_name: str
+    slave_app_ids: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    @model_validator(mode="after")
-    def validate_hello_size(self) -> "LauncherHello":
-        if any(len(item) > 128 for item in self.slave_app_ids):
-            raise ValueError("slave_app_id exceeds 128 characters")
-        if len(json.dumps(self.metadata, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > 64 * 1024:
-            raise ValueError("launcher metadata exceeds 65536 bytes")
-        return self
 
-
-class LauncherHeartbeat(StrictModel):
+class LauncherHeartbeat(BaseModel):
     type: Literal["launcher.heartbeat"]
     status: Literal["ready", "busy"] = "ready"
     current_job_id: str | None = None
@@ -41,21 +28,16 @@ class LauncherHeartbeat(StrictModel):
     worker_status: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    @model_validator(mode="after")
-    def validate_metadata_size(self) -> "LauncherHeartbeat":
-        if len(json.dumps(self.metadata, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > 64 * 1024:
-            raise ValueError("launcher metadata exceeds 65536 bytes")
-        return self
 
 
-class LauncherAccepted(StrictModel):
+class LauncherAccepted(BaseModel):
     type: Literal["launcher.accepted"]
     launcher_id: str
     server_time: str
     capabilities: dict[str, Any] = Field(default_factory=dict)
 
 
-class JobStart(StrictModel):
+class JobStart(BaseModel):
     type: Literal["job.start"]
     job_id: str
     handler_type: str
@@ -63,63 +45,62 @@ class JobStart(StrictModel):
     offer: SignalPayload
 
 
-class JobCancel(StrictModel):
+class JobCancel(BaseModel):
     type: Literal["job.cancel"]
     job_id: str
-    reason: str = Field(default="cancelled", max_length=4096)
+    reason: str = "cancelled"
 
 
-class WorkerReset(StrictModel):
+class WorkerReset(BaseModel):
     type: Literal["worker.reset"]
-    reason: str = Field(default="reset requested", max_length=4096)
+    reason: str = "reset requested"
 
 
-class ControlError(StrictModel):
+class ControlError(BaseModel):
     type: Literal["error"]
-    detail: str = Field(max_length=16 * 1024)
+    detail: str
 
 
-class JobAnswer(StrictModel):
+class JobAnswer(BaseModel):
     type: Literal["job.answer"]
     job_id: str
     answer: SignalPayload
 
 
-class JobRunning(StrictModel):
+class JobRunning(BaseModel):
     type: Literal["job.running"]
     job_id: str
 
 
-class JobProgress(StrictModel):
+class JobProgress(BaseModel):
     type: Literal["job.progress"]
     job_id: str
     progress: Any = None
 
 
-class JobResult(StrictModel):
+class JobResult(BaseModel):
     type: Literal["job.result"]
     job_id: str
 
 
-class JobError(StrictModel):
+class JobError(BaseModel):
     type: Literal["job.error"]
     job_id: str
-    code: str = Field(default="job_error", max_length=128)
-    detail: str = Field(max_length=16 * 1024)
+    code: str = "job_error"
+    detail: str
 
 
-class JobCancelled(StrictModel):
+class JobCancelled(BaseModel):
     type: Literal["job.cancelled"]
     job_id: str
-    reason: str = Field(default="cancelled", max_length=4096)
+    reason: str = "cancelled"
 
 
-class WorkerResetDone(StrictModel):
+class WorkerResetDone(BaseModel):
     type: Literal["worker.reset.done"]
 
 
-LauncherToServerMessage = Annotated[
-    Union[
+LauncherToServerMessage = Union[
         LauncherHello,
         LauncherHeartbeat,
         JobAnswer,
@@ -129,48 +110,53 @@ LauncherToServerMessage = Annotated[
         JobError,
         JobCancelled,
         WorkerResetDone,
-    ],
-    Field(discriminator="type"),
-]
+    ]
 
-ServerToLauncherMessage = Annotated[
-    Union[
+ServerToLauncherMessage = Union[
         LauncherAccepted,
         JobStart,
         JobCancel,
         WorkerReset,
         ControlError,
-    ],
-    Field(discriminator="type"),
-]
+    ]
 
-_launcher_to_server_adapter = TypeAdapter(LauncherToServerMessage)
-_server_to_launcher_adapter = TypeAdapter(ServerToLauncherMessage)
+_LAUNCHER_TO_SERVER = {
+    "launcher.hello": LauncherHello,
+    "launcher.heartbeat": LauncherHeartbeat,
+    "job.answer": JobAnswer,
+    "job.running": JobRunning,
+    "job.progress": JobProgress,
+    "job.result": JobResult,
+    "job.error": JobError,
+    "job.cancelled": JobCancelled,
+    "worker.reset.done": WorkerResetDone,
+}
+_SERVER_TO_LAUNCHER = {
+    "launcher.accepted": LauncherAccepted,
+    "job.start": JobStart,
+    "job.cancel": JobCancel,
+    "worker.reset": WorkerReset,
+    "error": ControlError,
+}
 
 
 def parse_launcher_message(value: Any) -> LauncherToServerMessage:
-    return _launcher_to_server_adapter.validate_python(value)
+    return _LAUNCHER_TO_SERVER[value["type"]].model_validate(value)
 
 
 def parse_server_message(value: Any) -> ServerToLauncherMessage:
-    return _server_to_launcher_adapter.validate_python(value)
+    return _SERVER_TO_LAUNCHER[value["type"]].model_validate(value)
 
 
-class DataChannelAttachment(StrictModel):
+class DataChannelAttachment(BaseModel):
     id: str
     name: str | None = None
     mimeType: str | None = None
-    size: int | None = Field(default=None, ge=0)
+    size: int | None = None
     data: bytes = b""
 
-    @model_validator(mode="after")
-    def fill_size(self) -> "DataChannelAttachment":
-        if self.size is None:
-            self.size = len(self.data)
-        return self
 
-
-class DataChannelMessage(StrictModel):
+class DataChannelMessage(BaseModel):
     id: str
     type: str
     payload: Any = None

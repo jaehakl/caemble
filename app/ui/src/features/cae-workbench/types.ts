@@ -99,30 +99,7 @@ export type WorkbenchDraftDomain = Readonly<{
   }>
 }>
 
-export type WorkbenchDraftV14 = WorkbenchDraftDomain &
-  Readonly<{
-    version: 14
-    layout: Readonly<{
-      openTabs: readonly WorkbenchTabId[]
-      activeTab: WorkbenchTabId | null
-      experimentFile: string | null
-      splitPercent: number
-    }>
-  }>
-
-export type WorkbenchDraftV15 = WorkbenchDraftDomain &
-  Readonly<{
-    version: 15
-    layout: Omit<WorkbenchLayoutState, 'leftWidthRatio' | 'rightWidthRatio' | 'bottomHeightRatio'> &
-      Readonly<{
-        leftWidthPx: number
-        rightWidthPx: number
-        bottomHeightPx: number
-      }>
-  }>
-
 export type WorkbenchDraft = WorkbenchDraftDomain &
   Readonly<{
-    version: 16
     layout: WorkbenchLayoutState
   }>

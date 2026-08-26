@@ -33,8 +33,7 @@ function deepFreeze<T>(value: T): T {
 }
 
 const EMPTY_DRAFT_CATALOG_RUNTIME_SLICE: CatalogRuntimeSlice = deepFreeze({
-  schemaVersion: 1,
-  catalogRevision: 'draft-only-empty-v1',
+  catalogRevision: 'draft-only-empty',
   solvers: [],
   quantityKinds: [],
   materialParameters: [],

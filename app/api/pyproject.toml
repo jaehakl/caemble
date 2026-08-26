@@ -35,16 +35,3 @@ caemble-catalog = { path = "../catalog", develop = true }
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-
-[dependency-groups]
-dev = [
-    "pytest (>=8,<9)",
-    "pytest-asyncio (>=1,<2)",
-    "httpx (>=0.28,<0.29)"
-]
-
-[tool.pytest.ini_options]
-markers = [
-    "slow: database, websocket, or end-to-end integration coverage",
-    "live: opt-in test that calls a paid external service",
-]

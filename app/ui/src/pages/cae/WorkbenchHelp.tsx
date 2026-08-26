@@ -294,7 +294,6 @@ export function WorkbenchHelpDetail({ kind, selectedItem }: { kind: HelpKindId; 
           label="Artifact ports"
           value={`${detail.producesArtifacts.length} outputs · ${detail.consumesArtifacts.length} inputs`}
         />
-        <DetailRow label="Contract digest" value={detail.contractDigest} mono />
       </article>
     )
   }
