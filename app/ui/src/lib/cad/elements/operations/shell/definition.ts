@@ -30,6 +30,9 @@ export const shellManifest = {
     description: '정확히 하나의 유효한 닫힌 양의 부피 solid를 받으며 각 offset에서도 퇴화·반전되지 않아야 합니다.',
   },
   origin: '자식 좌표를 유지한 채 생성된 shell 결과에 이 element의 transform을 적용합니다.',
-  surfaces: ['Surface 1', 'Surface 2', '…'],
+  surfaces: [
+    { index: 0, label: 'Inner', description: '각 shell layer의 안쪽 경계입니다.' },
+    { index: 1, label: 'Outer', description: '각 shell layer의 바깥쪽 경계입니다.' },
+  ],
   example: '<shell id="coating" offsets={{ inner: -1, outer: 1 }}><Sphere radius={10} /></shell>',
 } as const satisfies CadElementManifest<'shell'>

@@ -162,14 +162,6 @@ describe('CAD booleans', () => {
     const [part] = evaluateCad(h(Result, { id: 'result', materials: { body: material } }))
 
     expect(part.surfaces).toHaveLength(7)
-    expect(part.surfaces.map((surface) => surface.name)).toEqual([
-      'Surface 1',
-      'Surface 2',
-      'Surface 3',
-      'Surface 4',
-      'Surface 5',
-      'Surface 6',
-      'Surface 7',
-    ])
+    expect(part.surfaces.map((surface) => surface.surfaceIndex)).toEqual([0, 1, 2, 3, 4, 5, 6])
   })
 })

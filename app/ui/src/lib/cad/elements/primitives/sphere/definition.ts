@@ -35,6 +35,6 @@ export const sphereManifest = {
   ],
   children: { count: 'none', description: '자식을 받지 않는 primitive입니다.' },
   origin: '구의 중심이 원점에 있습니다.',
-  surfaces: ['Outer'],
+  surfaces: [{ index: 0, label: 'Outer', description: '구의 바깥쪽 표면입니다.' }],
   example: '<Sphere id="ball" radius={12} position={[0, 0, 12]} />',
 } as const satisfies CadElementManifest<'sphere'>

@@ -53,6 +53,10 @@ export const cylinderManifest = {
   ],
   children: { count: 'none', description: '자식을 받지 않는 primitive입니다.' },
   origin: '중심이 원점에 있고 기본 축은 +Z이며 양 끝은 z = ±height/2에 있습니다.',
-  surfaces: ['Bottom', 'Side', 'Top'],
+  surfaces: [
+    { index: 0, label: 'Bottom', description: '로컬 -Z 끝 cap입니다. 반지름이 0이면 존재하지 않습니다.' },
+    { index: 1, label: 'Side', description: '축을 둘러싼 옆면입니다.' },
+    { index: 2, label: 'Top', description: '로컬 +Z 끝 cap입니다. 반지름이 0이면 존재하지 않습니다.' },
+  ],
   example: '<Cylinder id="pole" radius={3} height={300} position={[0, 0, 150]} />',
 } as const satisfies CadElementManifest<'cylinder'>

@@ -59,7 +59,7 @@ describe('CAD primitives', () => {
     expect(measurements.measureVolume(cone)).toBeGreaterThan(0)
   })
 
-  it('assigns deterministic semantic surfaces to basic primitives', () => {
+  it('assigns deterministic numeric surface slots to basic primitives', () => {
     const box = evaluate('box', { size: [1, 2, 3], rotation: [0, 0.4, 0] })
     const cylinder = evaluate('cylinder', { radius: 2, radius_2: 1, height: 4, segments: 8 })
     const startTip = evaluate('cylinder', { radius: 0, radius_2: 2, height: 4, segments: 8 })
@@ -67,19 +67,19 @@ describe('CAD primitives', () => {
     const sphere = evaluate('sphere', { radius: 1, segments: 8 })
 
     expect(box.id).toBe('primitive.box')
-    expect(box.surfaces.map((surface) => surface.name)).toEqual(['-X', '+X', '-Y', '+Y', 'Bottom', 'Top'])
+    expect(box.surfaces.map((surface) => surface.surfaceIndex)).toEqual([0, 1, 2, 3, 4, 5])
     expect(box.surfaces.map((surface) => surface.id)).toEqual([
-      'primitive.box/surface/-X',
-      'primitive.box/surface/%2BX',
-      'primitive.box/surface/-Y',
-      'primitive.box/surface/%2BY',
-      'primitive.box/surface/Bottom',
-      'primitive.box/surface/Top',
+      'primitive.box/surface/0',
+      'primitive.box/surface/1',
+      'primitive.box/surface/2',
+      'primitive.box/surface/3',
+      'primitive.box/surface/4',
+      'primitive.box/surface/5',
     ])
-    expect(cylinder.surfaces.map((surface) => surface.name)).toEqual(['Bottom', 'Side', 'Top'])
-    expect(startTip.surfaces.map((surface) => surface.name)).toEqual(['Side', 'Top'])
-    expect(endTip.surfaces.map((surface) => surface.name)).toEqual(['Bottom', 'Side'])
-    expect(sphere.surfaces.map((surface) => surface.name)).toEqual(['Outer'])
+    expect(cylinder.surfaces.map((surface) => surface.surfaceIndex)).toEqual([0, 1, 2])
+    expect(startTip.surfaces.map((surface) => surface.surfaceIndex)).toEqual([1, 2])
+    expect(endTip.surfaces.map((surface) => surface.surfaceIndex)).toEqual([0, 1])
+    expect(sphere.surfaces.map((surface) => surface.surfaceIndex)).toEqual([0])
 
     const boxPolygonCount = geometries.geom3.toPolygons(
       box.geometry as Parameters<typeof geometries.geom3.toPolygons>[0],

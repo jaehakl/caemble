@@ -3,17 +3,16 @@ import type { CadSceneGroupOptions } from './groups'
 import type {
   CanonicalGeometryNodeV1,
   CanonicalGeometryRootV1,
-  CanonicalGeometrySceneDraftV1,
-  CanonicalGeometrySceneV1,
-  CanonicalSurfaceGroupV1,
-  CanonicalSurfaceSelectorV1,
+  CanonicalGeometrySceneDraftV2,
+  CanonicalGeometrySceneV2,
+  CanonicalSurfaceGroupV2,
+  CanonicalSurfaceSelectorV2,
 } from './canonicalTypes'
 import { MAX_CANONICAL_GEOMETRY_TRIANGLES, MAX_CANONICAL_TASK_SCENES } from './canonicalTypes'
 import { CadModelError } from '../model/errors'
 import { assertUcumUnitComparable, normalizeUcumUnit } from '../model/units'
 
-const drafts = new WeakMap<CadScene, CanonicalGeometrySceneDraftV1>()
-const ordinalSurfacePattern = /(?:^|\/)surface-\d+$/u
+const drafts = new WeakMap<CadScene, CanonicalGeometrySceneDraftV2>()
 const maxRoots = 10_000
 const maxNodes = 100_000
 const maxNodeDepth = 128
@@ -21,41 +20,41 @@ const maxArrayItems = 1_000_000
 const maxSegments = 65_536
 const maxBooleanOperands = 128
 const maxBooleanWork = 100_000_000
-const primitiveFaceKeys = Object.freeze({
-  box: Object.freeze(['-X', '+X', '-Y', '+Y', 'Bottom', 'Top']),
-  cylinder: Object.freeze(['Bottom', 'Side', 'Top']),
-  sphere: Object.freeze(['Outer']),
-  curvedEdgeCylinder: Object.freeze(['Bottom', 'Side', 'Top']),
-  curvedSurfaceSphere: Object.freeze(['Outer']),
+const primitiveSurfaceIndices = Object.freeze({
+  box: Object.freeze([0, 1, 2, 3, 4, 5]),
+  cylinder: Object.freeze([0, 1, 2]),
+  sphere: Object.freeze([0]),
+  curvedEdgeCylinder: Object.freeze([0, 1, 2]),
+  curvedSurfaceSphere: Object.freeze([0]),
 })
 
-function sourceFaceIndex(
+function sourceSurfaceIndex(
   node: CanonicalGeometryNodeV1,
-  index = new Map<string, Set<string>>(),
-): Map<string, Set<string>> {
-  let faceKeys: readonly string[] | undefined
+  index = new Map<string, Set<number>>(),
+): Map<string, Set<number>> {
+  let surfaceIndices: readonly number[] | undefined
   if (node.kind === 'primitive') {
-    faceKeys = primitiveFaceKeys[node.primitive]
+    surfaceIndices = primitiveSurfaceIndices[node.primitive]
     if (node.primitive === 'cylinder') {
-      faceKeys = faceKeys.filter(
-        (faceKey) =>
-          (faceKey !== 'Bottom' || (node.parameters.radius as number) > 0) &&
-          (faceKey !== 'Top' || (node.parameters.radius_2 as number) > 0),
+      surfaceIndices = surfaceIndices.filter(
+        (surfaceIndex) =>
+          (surfaceIndex !== 0 || (node.parameters.radius as number) > 0) &&
+          (surfaceIndex !== 2 || (node.parameters.radius_2 as number) > 0),
       )
     }
   } else if (node.kind === 'fiber') {
-    faceKeys = ['Start cap', 'Side', 'End cap']
+    surfaceIndices = [0, 1, 2]
   } else if (node.kind === 'boolean') {
-    node.children.forEach((child) => sourceFaceIndex(child, index))
+    node.children.forEach((child) => sourceSurfaceIndex(child, index))
   } else if (node.kind === 'shell') {
-    faceKeys = ['inner', 'outer']
+    surfaceIndices = [0, 1]
   } else {
-    sourceFaceIndex(node.child, index)
+    sourceSurfaceIndex(node.child, index)
   }
-  if (faceKeys) {
+  if (surfaceIndices) {
     const existing = index.get(node.nodeId)
-    if (existing) faceKeys.forEach((faceKey) => existing.add(faceKey))
-    else index.set(node.nodeId, new Set(faceKeys))
+    if (existing) surfaceIndices.forEach((surfaceIndex) => existing.add(surfaceIndex))
+    else index.set(node.nodeId, new Set(surfaceIndices))
   }
   return index
 }
@@ -64,44 +63,23 @@ function surfaceMember(memberId: string) {
   const marker = '/surface/'
   const markerIndex = memberId.lastIndexOf(marker)
   if (markerIndex <= 0 || markerIndex + marker.length === memberId.length) return undefined
-  try {
-    const sourceNodeId = memberId.slice(0, markerIndex)
-    const faceKey = decodeURIComponent(memberId.slice(markerIndex + marker.length))
-    if (!faceKey || `${sourceNodeId}${marker}${encodeURIComponent(faceKey)}` !== memberId) return undefined
-    return { sourceNodeId, faceKey }
-  } catch {
-    return undefined
-  }
-}
-
-function rootShellBoundary(
-  node: CanonicalGeometryNodeV1,
-): Extract<CanonicalGeometryNodeV1, { kind: 'shell' }> | undefined {
-  let candidate = node
-  while (candidate.kind === 'transform' || candidate.kind === 'instance') candidate = candidate.child
-  return candidate.kind === 'shell' ? candidate : undefined
+  const sourceNodeId = memberId.slice(0, markerIndex)
+  const rawSurfaceIndex = memberId.slice(markerIndex + marker.length)
+  if (!/^(?:0|[1-9]\d*)$/u.test(rawSurfaceIndex)) return undefined
+  const surfaceIndex = Number(rawSurfaceIndex)
+  if (!Number.isSafeInteger(surfaceIndex)) return undefined
+  return { sourceNodeId, surfaceIndex }
 }
 
 function canonicalSurfaceGroups(roots: readonly CanonicalGeometryRootV1[], options: CadSceneGroupOptions) {
-  const matchesByMember = new Map<string, CanonicalSurfaceSelectorV1[]>()
+  const matchesByMember = new Map<string, CanonicalSurfaceSelectorV2[]>()
   roots.forEach((root) => {
-    const rootMatches = new Map<string, CanonicalSurfaceSelectorV1>()
-    sourceFaceIndex(root.node).forEach((faceKeys, sourceNodeId) => {
-      faceKeys.forEach((faceKey) => {
-        rootMatches.set(JSON.stringify([sourceNodeId, faceKey]), { rootId: root.id, sourceNodeId, faceKey })
+    const rootMatches = new Map<string, CanonicalSurfaceSelectorV2>()
+    sourceSurfaceIndex(root.node).forEach((surfaceIndices, sourceNodeId) => {
+      surfaceIndices.forEach((surfaceIndex) => {
+        rootMatches.set(JSON.stringify([sourceNodeId, surfaceIndex]), { rootId: root.id, sourceNodeId, surfaceIndex })
       })
     })
-    const boundary = rootShellBoundary(root.node)
-    if (boundary) {
-      const shellFaceKeys = ['inner', 'outer'] as const
-      shellFaceKeys.forEach((faceKey) => {
-        rootMatches.set(JSON.stringify([root.id, faceKey]), {
-          rootId: root.id,
-          sourceNodeId: boundary.nodeId,
-          faceKey,
-        })
-      })
-    }
     rootMatches.forEach((selector, key) => {
       const matches = matchesByMember.get(key)
       if (matches) matches.push(selector)
@@ -109,7 +87,7 @@ function canonicalSurfaceGroups(roots: readonly CanonicalGeometryRootV1[], optio
     })
   })
   return Object.entries(options.surfaceGroup ?? {}).map(([name, memberIds]) => {
-    const selectors: CanonicalSurfaceSelectorV1[] = []
+    const selectors: CanonicalSurfaceSelectorV2[] = []
     const missingMemberIds: string[] = []
     memberIds.forEach((memberId) => {
       const member = surfaceMember(memberId)
@@ -117,7 +95,7 @@ function canonicalSurfaceGroups(roots: readonly CanonicalGeometryRootV1[], optio
         missingMemberIds.push(memberId)
         return
       }
-      const matches = matchesByMember.get(JSON.stringify([member.sourceNodeId, member.faceKey])) ?? []
+      const matches = matchesByMember.get(JSON.stringify([member.sourceNodeId, member.surfaceIndex])) ?? []
       if (matches.length !== 1) {
         missingMemberIds.push(memberId)
         return
@@ -135,7 +113,7 @@ function canonicalSurfaceGroups(roots: readonly CanonicalGeometryRootV1[], optio
   })
 }
 
-export function canonicalSurfaceMemberEntries(group: CanonicalSurfaceGroupV1) {
+export function canonicalSurfaceMemberEntries(group: CanonicalSurfaceGroupV2) {
   const missing = new Set(group.missingMemberIds)
   let selectorIndex = 0
   return group.memberIds.flatMap((memberId) => {
@@ -151,8 +129,8 @@ export function registerCanonicalGeometryScene(
   roots: readonly CanonicalGeometryRootV1[],
   options: CadSceneGroupOptions,
 ) {
-  const draft: CanonicalGeometrySceneDraftV1 = {
-    geometryFormatVersion: 1,
+  const draft: CanonicalGeometrySceneDraftV2 = {
+    geometryFormatVersion: 2,
     lengthUnit: scene.lengthUnit,
     roots,
     geometryGroups: scene.geometryGroups.map((group) => ({
@@ -182,7 +160,7 @@ function canonicalJson(value: unknown): string {
   return encoded
 }
 
-export async function canonicalGeometryScene(scene: CadScene): Promise<CanonicalGeometrySceneV1> {
+export async function canonicalGeometryScene(scene: CadScene): Promise<CanonicalGeometrySceneV2> {
   const draft = drafts.get(scene)
   if (!draft) throw new CadModelError('CAD evaluation lost its Canonical Geometry scene.')
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonicalJson(draft)))
@@ -261,7 +239,7 @@ function assertNode(
   if (nodeIds.has(value.nodeId)) throw new CadModelError(`${path}.nodeId is duplicated within its root.`)
   nodeIds.add(value.nodeId)
   if (value.kind === 'primitive') {
-    if (!Object.prototype.hasOwnProperty.call(primitiveFaceKeys, String(value.primitive))) {
+    if (!Object.prototype.hasOwnProperty.call(primitiveSurfaceIndices, String(value.primitive))) {
       throw new CadModelError(`${path}.primitive is invalid.`)
     }
     assertKeys(value, ['kind', 'nodeId', 'primitive', 'parameters'], path)
@@ -479,8 +457,8 @@ export function assertCanonicalTaskSceneCount(taskScenes: Readonly<Record<string
 }
 
 export function assertCanonicalGeometryRunBudget(
-  scene: CanonicalGeometrySceneV1,
-  taskScenes: Readonly<Record<string, CanonicalGeometrySceneV1>>,
+  scene: CanonicalGeometrySceneV2,
+  taskScenes: Readonly<Record<string, CanonicalGeometrySceneV2>>,
 ) {
   assertCanonicalTaskSceneCount(taskScenes)
   const tasks = Object.values(taskScenes)
@@ -523,7 +501,7 @@ function assertStringArray(value: unknown, path: string): asserts value is strin
   })
 }
 
-export function assertCanonicalGeometryScene(value: unknown): asserts value is CanonicalGeometrySceneV1 {
+export function assertCanonicalGeometryScene(value: unknown): asserts value is CanonicalGeometrySceneV2 {
   assertRecord(value, 'Canonical Geometry scene')
   assertKeys(
     value,
@@ -531,7 +509,7 @@ export function assertCanonicalGeometryScene(value: unknown): asserts value is C
     'Canonical Geometry scene',
   )
   if (
-    value.geometryFormatVersion !== 1 ||
+    value.geometryFormatVersion !== 2 ||
     typeof value.geometryHash !== 'string' ||
     !/^[0-9a-f]{64}$/u.test(value.geometryHash)
   ) {
@@ -552,8 +530,7 @@ export function assertCanonicalGeometryScene(value: unknown): asserts value is C
   }
   const rootIds = new Set<string>()
   const roots = new Map<string, CanonicalGeometryRootV1>()
-  const rootSourceFaces = new Map<string, Map<string, Set<string>>>()
-  const rootShellBoundaries = new Map<string, Extract<CanonicalGeometryNodeV1, { kind: 'shell' }>>()
+  const rootSourceSurfaces = new Map<string, Map<string, Set<number>>>()
   const nodeCount = { value: 0 }
   let estimatedTriangles = 0
   let booleanWork = 0
@@ -600,9 +577,7 @@ export function assertCanonicalGeometryScene(value: unknown): asserts value is C
       )
     }
     roots.set(root.id, root as CanonicalGeometryRootV1)
-    rootSourceFaces.set(root.id, sourceFaceIndex(root.node))
-    const boundary = rootShellBoundary(root.node)
-    if (boundary) rootShellBoundaries.set(root.id, boundary)
+    rootSourceSurfaces.set(root.id, sourceSurfaceIndex(root.node))
   })
   const geometryGroupIds = new Set<string>()
   const geometryGroupNames = new Set<string>()
@@ -657,11 +632,8 @@ export function assertCanonicalGeometryScene(value: unknown): asserts value is C
     const missingMemberIds = group.missingMemberIds
     assertStringArray(memberIds, `${path}.memberIds`)
     assertStringArray(missingMemberIds, `${path}.missingMemberIds`)
-    if (
-      memberIds.some((memberId) => ordinalSurfacePattern.test(memberId)) ||
-      missingMemberIds.some((memberId) => ordinalSurfacePattern.test(memberId))
-    ) {
-      throw new CadModelError(`${path} uses an ordinal /surface-N id; migrate the Geometry to semantic surfaces.`)
+    if (memberIds.some((memberId) => surfaceMember(memberId) === undefined)) {
+      throw new CadModelError(`${path}.memberIds must use canonical /surface/<non-negative-index> references.`)
     }
     const memberIdSet = new Set(memberIds)
     const missingMemberIdSet = new Set(missingMemberIds)
@@ -676,34 +648,31 @@ export function assertCanonicalGeometryScene(value: unknown): asserts value is C
     group.selectors.forEach((selector, selectorIndex) => {
       const selectorPath = `${path}.selectors[${selectorIndex}]`
       assertRecord(selector, selectorPath)
-      assertKeys(selector, ['rootId', 'sourceNodeId', 'faceKey'], selectorPath)
+      assertKeys(selector, ['rootId', 'sourceNodeId', 'surfaceIndex'], selectorPath)
+      const surfaceIndex = selector.surfaceIndex
       if (
         !isWellFormedNonEmptyString(selector.rootId) ||
         !isWellFormedNonEmptyString(selector.sourceNodeId) ||
-        !isWellFormedNonEmptyString(selector.faceKey) ||
-        ordinalSurfacePattern.test(selector.faceKey)
+        typeof surfaceIndex !== 'number' ||
+        !Number.isSafeInteger(surfaceIndex) ||
+        surfaceIndex < 0
       ) {
-        throw new CadModelError(`${selectorPath} must use non-empty semantic references.`)
+        throw new CadModelError(`${selectorPath} must use a non-negative surfaceIndex.`)
       }
       const root = roots.get(selector.rootId)
       if (!root) throw new CadModelError(`${selectorPath}.rootId references a missing root.`)
-      if (!rootSourceFaces.get(selector.rootId)?.get(selector.sourceNodeId)?.has(selector.faceKey)) {
-        throw new CadModelError(`${selectorPath} does not identify a semantic source face.`)
+      if (!rootSourceSurfaces.get(selector.rootId)?.get(selector.sourceNodeId)?.has(surfaceIndex)) {
+        throw new CadModelError(`${selectorPath} does not identify a source surface slot.`)
       }
       const member = surfaceMember(resolvedMemberIds[selectorIndex])
-      const boundary = rootShellBoundaries.get(selector.rootId)
-      const usesRootShellAlias =
-        member?.sourceNodeId === selector.rootId &&
-        boundary?.nodeId === selector.sourceNodeId &&
-        (selector.faceKey === 'inner' || selector.faceKey === 'outer')
       if (
         !member ||
-        member.faceKey !== selector.faceKey ||
-        (member.sourceNodeId !== selector.sourceNodeId && !usesRootShellAlias)
+        member.surfaceIndex !== surfaceIndex ||
+        member.sourceNodeId !== selector.sourceNodeId
       ) {
-        throw new CadModelError(`${selectorPath} does not match its positional semantic memberId.`)
+        throw new CadModelError(`${selectorPath} does not match its positional surface memberId.`)
       }
-      const selectorKey = JSON.stringify([selector.rootId, selector.sourceNodeId, selector.faceKey])
+      const selectorKey = JSON.stringify([selector.rootId, selector.sourceNodeId, surfaceIndex])
       if (selectorKeys.has(selectorKey)) throw new CadModelError(`${path}.selectors must be unique.`)
       selectorKeys.add(selectorKey)
     })

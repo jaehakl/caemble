@@ -56,7 +56,7 @@ export const arrayManifest = {
     description: 'id가 있는 Geometry component 또는 intrinsic CAD element를 정확히 하나 받습니다.',
   },
   origin: '전체 array가 원점 주위에 중심 정렬되며 cell identity에는 $cell-x-y-z가 붙습니다.',
-  surfaces: ['child-defined'],
+  surfaces: [],
   example:
     '<array id="posts" shape={[3, 1, 1]} period={[20, 0, 0]}><Cylinder id="post" radius={2} height={30} /></array>',
 } as const satisfies CadElementManifest<'array'>

@@ -10,7 +10,7 @@ import numpy as np
 class TriangleProvenance:
     root_id: str
     source_node_id: str
-    face_key: str
+    surface_index: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,14 +22,14 @@ class TriangularMesh:
     def triangle_indices(self, selector: dict[str, Any]) -> np.ndarray[Any, Any]:
         root_id = selector.get("rootId")
         source_node_id = selector.get("sourceNodeId")
-        face_key = selector.get("faceKey")
+        surface_index = selector.get("surfaceIndex")
         return np.asarray(
             [
                 index
                 for index, provenance in enumerate(self.triangle_provenance)
                 if provenance.root_id == root_id
                 and provenance.source_node_id == source_node_id
-                and provenance.face_key == face_key
+                and provenance.surface_index == surface_index
             ],
             dtype=np.int64,
         )

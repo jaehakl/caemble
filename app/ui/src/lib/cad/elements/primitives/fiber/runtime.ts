@@ -87,15 +87,18 @@ export const fiberDefinition = {
     const startCapStart = polygons.length - capPolygonCount
     return [
       {
-        name: 'Start cap',
+        surfaceIndex: 0,
+        label: 'Start cap',
         polygonIndices: Array.from({ length: capPolygonCount }, (_value, index) => startCapStart + index),
       },
       {
-        name: 'Side',
+        surfaceIndex: 1,
+        label: 'Side',
         polygonIndices: Array.from({ length: endCapStart }, (_value, index) => index),
       },
       {
-        name: 'End cap',
+        surfaceIndex: 2,
+        label: 'End cap',
         polygonIndices: Array.from({ length: capPolygonCount }, (_value, index) => endCapStart + index),
       },
     ]

@@ -7,7 +7,7 @@ import type { CanonicalGeometryNodeV1 } from './canonicalTypes'
 import { MAX_CANONICAL_RENDER_TYPED_ARRAY_BYTES } from './canonicalTypes'
 
 describe('Canonical Geometry evaluation and local rendering', () => {
-  it('preserves explicit Boolean leaf provenance for semantic surface selection', async () => {
+  it('preserves explicit Boolean leaf provenance for numeric surface selection', async () => {
     function NotchedConductor() {
       return h(
         'subtract',
@@ -19,25 +19,25 @@ describe('Canonical Geometry evaluation and local rendering', () => {
 
     const runtimeScene = evaluateCadScene(h(NotchedConductor, { id: 'conductor' }), {
       surfaceGroup: {
-        terminals: ['conductor.body/surface/-X', 'conductor.body/surface/%2BX'],
+        terminals: ['conductor.body/surface/0', 'conductor.body/surface/1'],
       },
     })
     const scene = await canonicalGeometryScene(runtimeScene)
 
     expect(scene.surfaceGroups[0]).toMatchObject({
       selectors: [
-        { rootId: 'conductor', sourceNodeId: 'conductor.body', faceKey: '-X' },
-        { rootId: 'conductor', sourceNodeId: 'conductor.body', faceKey: '+X' },
+        { rootId: 'conductor', sourceNodeId: 'conductor.body', surfaceIndex: 0 },
+        { rootId: 'conductor', sourceNodeId: 'conductor.body', surfaceIndex: 1 },
       ],
       missingMemberIds: [],
     })
     const renderScene = await renderCanonicalGeometryScene(scene, runtimeScene)
     expect(renderScene.surfaceGroups[0].surfaceIds).toEqual([
-      'conductor.body/surface/-X',
-      'conductor.body/surface/%2BX',
+      'conductor.body/surface/0',
+      'conductor.body/surface/1',
     ])
     expect(renderScene.parts[0].surfaces.map((surface) => surface.id)).toEqual(
-      expect.arrayContaining(['conductor.body/surface/-X', 'conductor.body/surface/%2BX']),
+      expect.arrayContaining(['conductor.body/surface/0', 'conductor.body/surface/1']),
     )
   })
 
@@ -69,7 +69,7 @@ describe('Canonical Geometry evaluation and local rendering', () => {
     expect(renderScene.parts.every((part) => part.geometry.kind === 'mesh')).toBe(true)
   })
 
-  it('lets authors select each generated shell root boundary without internal layer ids', async () => {
+  it('selects generated shell boundaries by their direct root source ids', async () => {
     function Coating() {
       return h('shell', { offsets: { inner: -0.5, outer: 0.5 } }, h('box', { id: 'body', size: [4, 4, 4] }))
     }
@@ -77,10 +77,10 @@ describe('Canonical Geometry evaluation and local rendering', () => {
     const runtimeScene = evaluateCadScene(h(Coating, { id: 'coat' }), {
       surfaceGroup: {
         boundaries: [
-          'coat.$part-1/surface/inner',
-          'coat.$part-1/surface/outer',
-          'coat.$part-2/surface/inner',
-          'coat.$part-2/surface/outer',
+          'coat.$part-1/surface/0',
+          'coat.$part-1/surface/1',
+          'coat.$part-2/surface/0',
+          'coat.$part-2/surface/1',
         ],
       },
     })
@@ -93,7 +93,12 @@ describe('Canonical Geometry evaluation and local rendering', () => {
       'coat.$part-2',
       'coat.$part-2',
     ])
-    expect(scene.surfaceGroups[0].selectors.every((selector) => selector.sourceNodeId.includes('$layer-'))).toBe(true)
+    expect(scene.surfaceGroups[0].selectors.map((selector) => selector.sourceNodeId)).toEqual([
+      'coat.$part-1',
+      'coat.$part-1',
+      'coat.$part-2',
+      'coat.$part-2',
+    ])
     const renderScene = await renderCanonicalGeometryScene(scene, runtimeScene)
     expect(renderScene.surfaceGroups[0].surfaceIds).toEqual(scene.surfaceGroups[0].memberIds)
     expect(renderScene.parts.flatMap((part) => part.surfaces.map((surface) => surface.id))).toEqual(
@@ -109,7 +114,7 @@ describe('Canonical Geometry evaluation and local rendering', () => {
       parameters: { size: [1, 1, 1] },
     })
     const scene = () => ({
-      geometryFormatVersion: 1,
+      geometryFormatVersion: 2,
       geometryHash: 'a'.repeat(64),
       lengthUnit: 'm',
       roots: [{ id: 'body', materialRole: 'body', node: box('body') }],
@@ -197,7 +202,7 @@ describe('Canonical Geometry evaluation and local rendering', () => {
 
   it('rejects invalid group strings, missing references, and ordinal surface migration ids', () => {
     const base = {
-      geometryFormatVersion: 1,
+      geometryFormatVersion: 2,
       geometryHash: 'a'.repeat(64),
       lengthUnit: 'm',
       roots: [
@@ -239,7 +244,7 @@ describe('Canonical Geometry evaluation and local rendering', () => {
           },
         ],
       }),
-    ).toThrow('migrate the Geometry to semantic surfaces')
+    ).toThrow('must use canonical /surface/<non-negative-index> references')
     expect(() =>
       assertCanonicalGeometryScene({
         ...base,
@@ -248,19 +253,19 @@ describe('Canonical Geometry evaluation and local rendering', () => {
             id: 'surface',
             name: 'Surface',
             kind: 'surface',
-            memberIds: ['body/surface/Outer'],
-            selectors: [{ rootId: 'body', sourceNodeId: 'body', faceKey: 'Outer' }],
+            memberIds: ['body/surface/6'],
+            selectors: [{ rootId: 'body', sourceNodeId: 'body', surfaceIndex: 6 }],
             missingMemberIds: [],
           },
         ],
       }),
-    ).toThrow('does not identify a semantic source face')
+    ).toThrow('does not identify a source surface slot')
   })
 
   it('rejects forged group accounting, ordering, names, and duplicate selector triples', () => {
     const primitive = { kind: 'primitive', nodeId: 'body', primitive: 'box', parameters: { size: [1, 1, 1] } }
     const base = {
-      geometryFormatVersion: 1,
+      geometryFormatVersion: 2,
       geometryHash: 'a'.repeat(64),
       lengthUnit: 'm',
       roots: [{ id: 'body', materialRole: 'body', node: primitive }],
@@ -292,8 +297,8 @@ describe('Canonical Geometry evaluation and local rendering', () => {
       id: 'surface',
       name: 'surface',
       kind: 'surface',
-      memberIds: ['body/surface/-X'],
-      selectors: [{ rootId: 'body', sourceNodeId: 'body', faceKey: '-X' }],
+      memberIds: ['body/surface/0'],
+      selectors: [{ rootId: 'body', sourceNodeId: 'body', surfaceIndex: 0 }],
       missingMemberIds: [],
     }
     expect(() =>
@@ -305,12 +310,12 @@ describe('Canonical Geometry evaluation and local rendering', () => {
         surfaceGroups: [
           {
             ...surfaceGroup,
-            memberIds: ['body/surface/%2BX'],
-            selectors: [{ rootId: 'body', sourceNodeId: 'body', faceKey: '-X' }],
+            memberIds: ['body/surface/1'],
+            selectors: [{ rootId: 'body', sourceNodeId: 'body', surfaceIndex: 0 }],
           },
         ],
       }),
-    ).toThrow('does not match its positional semantic memberId')
+    ).toThrow('does not match its positional surface memberId')
 
     expect(() =>
       assertCanonicalGeometryScene({
@@ -329,22 +334,22 @@ describe('Canonical Geometry evaluation and local rendering', () => {
         },
       ],
     }
-    const repeated = { rootId: 'shell', sourceNodeId: 'layer', faceKey: 'inner' }
+    const repeated = { rootId: 'shell', sourceNodeId: 'layer', surfaceIndex: 0 }
     expect(() =>
       assertCanonicalGeometryScene({
         ...shellBase,
         surfaceGroups: [
           {
             ...surfaceGroup,
-            memberIds: ['shell/surface/inner', 'layer/surface/inner'],
+            memberIds: ['layer/surface/0', 'layer/surface/0'],
             selectors: [repeated, repeated],
           },
         ],
       }),
-    ).toThrow('selectors must be unique')
+    ).toThrow('values must be unique')
   })
 
-  it('indexes semantic surfaces and group membership without repeated linear scans', () => {
+  it('indexes numeric surfaces and group membership without repeated linear scans', () => {
     let generationKindReads = 0
     const instrumentedNode = {
       get kind() {
@@ -356,7 +361,7 @@ describe('Canonical Geometry evaluation and local rendering', () => {
       parameters: { size: [1, 1, 1] as const },
     }
     const runtimeScene = evaluateCadScene(h('box', { id: 'runtime-body', size: [1, 1, 1] }))
-    const missingSurfaces = Array.from({ length: 500 }, (_, index) => `missing-${index}/surface/Outer`)
+    const missingSurfaces = Array.from({ length: 500 }, (_, index) => `missing-${index}/surface/0`)
     const draft = registerCanonicalGeometryScene(
       runtimeScene,
       [{ id: 'body', materialRole: 'body', node: instrumentedNode }],
@@ -372,11 +377,11 @@ describe('Canonical Geometry evaluation and local rendering', () => {
           return Reflect.get(target, property, receiver)
         },
       })
-    const memberIds = rejectIncludes(['missing'])
-    const absentIds = rejectIncludes(['missing'])
+    const memberIds = rejectIncludes(['missing/surface/0'])
+    const absentIds = rejectIncludes(['missing/surface/0'])
     expect(() =>
       assertCanonicalGeometryScene({
-        geometryFormatVersion: 1,
+        geometryFormatVersion: 2,
         geometryHash: 'a'.repeat(64),
         lengthUnit: 'm',
         roots: [{ id: 'body', materialRole: 'body', node: instrumentedNode }],
@@ -409,7 +414,7 @@ describe('Canonical Geometry evaluation and local rendering', () => {
         ),
     )
     assertCanonicalGeometryScene({
-      geometryFormatVersion: 1,
+      geometryFormatVersion: 2,
       geometryHash: 'a'.repeat(64),
       lengthUnit: 'm',
       roots: [
@@ -425,8 +430,8 @@ describe('Canonical Geometry evaluation and local rendering', () => {
           id: 'surfaces',
           name: 'surfaces',
           kind: 'surface',
-          memberIds: leaves.map((leaf) => `${leaf.nodeId}/surface/-X`),
-          selectors: leaves.map((leaf) => ({ rootId: 'body', sourceNodeId: leaf.nodeId, faceKey: '-X' })),
+          memberIds: leaves.map((leaf) => `${leaf.nodeId}/surface/0`),
+          selectors: leaves.map((leaf) => ({ rootId: 'body', sourceNodeId: leaf.nodeId, surfaceIndex: 0 })),
           missingMemberIds: [],
         },
       ],
@@ -436,7 +441,7 @@ describe('Canonical Geometry evaluation and local rendering', () => {
 
   it('allows ordinary sphere Booleans while bounding operand count and aggregate Boolean work', () => {
     const scene = (node: CanonicalGeometryNodeV1) => ({
-      geometryFormatVersion: 1,
+      geometryFormatVersion: 2,
       geometryHash: 'a'.repeat(64),
       lengthUnit: 'm',
       roots: [{ id: 'body', materialRole: 'body', node }],
@@ -490,7 +495,7 @@ describe('Canonical Geometry evaluation and local rendering', () => {
     ).toThrow('Boolean triangle-pair work limit')
   })
 
-  it('scopes Viewer surface aliases by root when distinct roots reuse a source node id', async () => {
+  it('rejects root aliases when a shell surface member does not name its direct source node', async () => {
     const runtimeScene = evaluateCadScene(
       h(Fragment, null, h('box', { id: 'left', size: [1, 1, 1] }), h('box', { id: 'right', size: [1, 1, 1] })),
     )
@@ -507,40 +512,19 @@ describe('Canonical Geometry evaluation and local rendering', () => {
           child: { ...root.node, nodeId: 'shared-leaf' },
         },
       })),
-      surfaceGroups: [
-        {
-          id: '@surface-group/left-faces',
-          name: 'left-faces',
-          kind: 'surface' as const,
-          memberIds: ['left/surface/inner', 'right/surface/inner'],
-          selectors: [
-            { rootId: 'left', sourceNodeId: 'shared-layer', faceKey: 'inner' },
-            { rootId: 'right', sourceNodeId: 'shared-layer', faceKey: 'inner' },
-          ],
-          missingMemberIds: [],
-        },
-        {
-          id: '@surface-group/direct-left-face',
-          name: 'direct-left-face',
-          kind: 'surface' as const,
-          memberIds: ['shared-layer/surface/inner'],
-          selectors: [{ rootId: 'left', sourceNodeId: 'shared-layer', faceKey: 'inner' }],
-          missingMemberIds: [],
-        },
-      ],
+      surfaceGroups: [{
+        id: '@surface-group/left-face',
+        name: 'left-face',
+        kind: 'surface' as const,
+        memberIds: ['left/surface/0'],
+        selectors: [{ rootId: 'left', sourceNodeId: 'shared-layer', surfaceIndex: 0 }],
+        missingMemberIds: [],
+      }],
     }
 
-    const renderScene = await renderCanonicalGeometryScene(scene, runtimeScene)
-    const leftAliases = renderScene.parts[0].surfaces.filter((surface) =>
-      ['left/surface/inner', 'shared-layer/surface/inner'].includes(surface.id),
+    await expect(renderCanonicalGeometryScene(scene, runtimeScene)).rejects.toThrow(
+      'does not match its positional surface memberId',
     )
-    expect(leftAliases).toHaveLength(2)
-    expect(leftAliases[0].polygonIndices).toEqual(leftAliases[1].polygonIndices)
-    expect(renderScene.parts[1].surfaces.some((surface) => surface.id === 'right/surface/inner')).toBe(true)
-    expect(renderScene.surfaceGroups.map((group) => group.surfaceIds)).toEqual([
-      ['left/surface/inner', 'right/surface/inner'],
-      ['shared-layer/surface/inner'],
-    ])
   })
 
   it('rejects shell thickness below the portable Float32 precision envelope', async () => {
@@ -600,18 +584,18 @@ describe('Canonical Geometry evaluation and local rendering', () => {
     const runtimeScene = evaluateCadScene(
       h('cylinder', { id: 'cone', radius: 2, radius_2: 0, height: 1, segments: 16 }),
       {
-        surfaceGroup: { valid: ['cone/surface/Bottom', 'cone/surface/Side'], missing: ['cone/surface/Top'] },
+        surfaceGroup: { valid: ['cone/surface/0', 'cone/surface/1'], missing: ['cone/surface/2'] },
       },
     )
     const scene = await canonicalGeometryScene(runtimeScene)
     expect(scene.surfaceGroups[0].missingMemberIds).toEqual([])
-    expect(scene.surfaceGroups[1].missingMemberIds).toEqual(['cone/surface/Top'])
+    expect(scene.surfaceGroups[1].missingMemberIds).toEqual(['cone/surface/2'])
     const renderScene = await renderCanonicalGeometryScene(scene, runtimeScene)
     const surfaces = Object.fromEntries(
-      renderScene.parts[0].surfaces.map((surface) => [surface.name, surface.polygonIndices.length]),
+      renderScene.parts[0].surfaces.map((surface) => [surface.surfaceIndex, surface.polygonIndices.length]),
     )
 
-    expect(surfaces).toEqual({ Bottom: 14, Side: 16 })
+    expect(surfaces).toEqual({ 0: 14, 1: 16 })
   })
 
   it('rejects a numerically collapsed tiny frustum instead of labeling every face as a cap', async () => {
@@ -637,10 +621,10 @@ describe('Canonical Geometry evaluation and local rendering', () => {
     )
     const renderScene = await renderCanonicalGeometryScene(await canonicalGeometryScene(runtimeScene), runtimeScene)
     const surfaces = Object.fromEntries(
-      renderScene.parts[0].surfaces.map((surface) => [surface.name, surface.polygonIndices.length]),
+      renderScene.parts[0].surfaces.map((surface) => [surface.surfaceIndex, surface.polygonIndices.length]),
     )
 
-    expect(surfaces).toEqual({ Bottom: 8, Side: 16, Top: 8 })
+    expect(surfaces).toEqual({ 0: 8, 1: 16, 2: 8 })
   })
 
   it('preserves small Fiber cross-sections at large scene coordinates', async () => {
@@ -702,9 +686,9 @@ describe('Canonical Geometry evaluation and local rendering', () => {
     )
     const renderScene = await renderCanonicalGeometryScene(await canonicalGeometryScene(runtimeScene), runtimeScene)
 
-    expect(renderScene.parts[0].surfaces.find((surface) => surface.name === 'Bottom')?.polygonIndices).toHaveLength(32)
-    expect(renderScene.parts[0].surfaces.find((surface) => surface.name === 'Top')?.polygonIndices).toHaveLength(32)
-    expect(renderScene.parts[0].surfaces.find((surface) => surface.name === 'Side')?.polygonIndices).toHaveLength(64)
+    expect(renderScene.parts[0].surfaces.find((surface) => surface.surfaceIndex === 0)?.polygonIndices).toHaveLength(32)
+    expect(renderScene.parts[0].surfaces.find((surface) => surface.surfaceIndex === 2)?.polygonIndices).toHaveLength(32)
+    expect(renderScene.parts[0].surfaces.find((surface) => surface.surfaceIndex === 1)?.polygonIndices).toHaveLength(64)
   })
 
   it('rejects conservatively oversized derived meshes before Manifold allocation', async () => {

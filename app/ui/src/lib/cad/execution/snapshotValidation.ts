@@ -9,15 +9,15 @@ import {
   assertCanonicalGeometryScene,
   assertCanonicalTaskSceneCount,
 } from '../evaluation/canonical'
-import { MAX_CANONICAL_RENDER_TYPED_ARRAY_BYTES, type CanonicalGeometrySceneV1 } from '../evaluation/canonicalTypes'
+import { MAX_CANONICAL_RENDER_TYPED_ARRAY_BYTES, type CanonicalGeometrySceneV2 } from '../evaluation/canonicalTypes'
 
 export type EvaluatedExperimentSnapshot = Readonly<{
   kind: 'experiment'
   sourceHash: string
   variables: Readonly<Vars>
   varsSchema: Readonly<Record<string, VarsSchemaEntry>>
-  scene: CanonicalGeometrySceneV1
-  taskScenes: Readonly<Record<string, CanonicalGeometrySceneV1>>
+  scene: CanonicalGeometrySceneV2
+  taskScenes: Readonly<Record<string, CanonicalGeometrySceneV2>>
   renderScene: SerializableCadScene
   taskRenderScenes: Readonly<Record<string, SerializableCadScene>>
   simulationProgram: SimulationProgramManifest

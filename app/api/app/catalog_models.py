@@ -13,7 +13,7 @@ class CatalogModel(BaseModel):
 
 
 class CatalogMeta(CatalogModel):
-    schema_version: Literal[6]
+    schema_version: Literal[7]
     catalog_revision: str
     quantity_kind_data_version: str
     material_catalog_version: str
@@ -148,7 +148,7 @@ class ExperimentSummary(CatalogModel):
     coordinate: str
     title: str
     description: str
-    cad_api_version: Literal[7, 8, 9, 10]
+    cad_api_version: Literal[7, 8, 9, 10, 11]
     source_format_version: Literal[2]
     bundle_format_version: Literal[6]
     bundle_hash: str

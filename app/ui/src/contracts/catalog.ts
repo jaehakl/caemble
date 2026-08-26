@@ -166,7 +166,7 @@ const materialRequirementSchema = z.object({
 })
 
 export const catalogMetaSchema = z.object({
-  schemaVersion: z.literal(6),
+  schemaVersion: z.literal(7),
   catalogRevision: z.string().min(1),
   quantityKindCount: z.number().int().nonnegative(),
   materialParameterCount: z.number().int().nonnegative(),
@@ -243,7 +243,7 @@ export const experimentListItemSchema = z.object({
   coordinate: z.string().min(1),
   title: z.string().min(1),
   description: z.string().min(1),
-  cadApiVersion: z.union([z.literal(7), z.literal(8), z.literal(9), z.literal(10)]),
+  cadApiVersion: z.union([z.literal(7), z.literal(8), z.literal(9), z.literal(10), z.literal(11)]),
   sourceFormatVersion: z.literal(2),
   bundleFormatVersion: z.literal(6),
   bundleHash: z.string().regex(/^[0-9a-f]{64}$/),

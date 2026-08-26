@@ -74,7 +74,8 @@ export function deriveGeometrySurfaces(geometry: unknown) {
     }
 
     polygonIndices.sort((first, second) => first - second)
-    surfaces.push({ name: `Surface ${surfaces.length + 1}`, polygonIndices })
+    const surfaceIndex = surfaces.length
+    surfaces.push({ surfaceIndex, label: `Derived surface ${surfaceIndex}`, polygonIndices })
   })
 
   return { geometry: normalizedGeometry, surfaces }
@@ -88,10 +89,13 @@ export function validateSurfacePartition(geometry: unknown, surfaces: readonly E
   const polygonCount = geometries.geom3.toPolygons(geometry as CadGeom3).length
   const owners = Array.from({ length: polygonCount }, () => 0)
   surfaces.forEach((surface) => {
-    if (!surface.name.trim()) throw new CadModelError('CAD surface names must not be empty.')
+    if (!Number.isSafeInteger(surface.surfaceIndex) || surface.surfaceIndex < 0) {
+      throw new CadModelError('CAD surface indices must be non-negative safe integers.')
+    }
+    if (!surface.label.trim()) throw new CadModelError('CAD surface labels must not be empty.')
     surface.polygonIndices.forEach((polygonIndex) => {
       if (!Number.isSafeInteger(polygonIndex) || polygonIndex < 0 || polygonIndex >= polygonCount) {
-        throw new CadModelError(`CAD surface ${surface.name} contains an invalid polygon index.`)
+        throw new CadModelError(`CAD surface ${surface.surfaceIndex} contains an invalid polygon index.`)
       }
       owners[polygonIndex] += 1
     })

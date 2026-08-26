@@ -112,8 +112,8 @@ tensor order가 호환되어야 한다.
 ## Canonical Geometry 입력
 
 UI Viewer가 렌더링한 mesh는 CAE worker로 보내지 않는다. 각 Experiment 공통 scene과 Task-local
-scene은 Canonical Geometry scene v1으로 전달된다. 이 계약에는 `geometryFormatVersion: 1`,
-canonical SHA-256 `geometryHash`, `lengthUnit`, CSG root, geometry group, semantic surface group이
+scene은 Canonical Geometry scene v2으로 전달된다. 이 계약에는 `geometryFormatVersion: 2`,
+canonical SHA-256 `geometryHash`, `lengthUnit`, CSG root, geometry group, numeric surface group이
 포함된다. primitive, transform, Boolean, shell, instance/fiber node를 exact-key와 resource limit로
 검증한 뒤에만 Solver를 만든다.
 
@@ -127,22 +127,22 @@ Solver는 해석 도메인에 적합하면 canonical CSG를 직접 해석할 수
 복제하지 않는다. 단위 변환은 Solver-local view에서만 수행하고 원본 canonical scene과 hash는
 변경하지 않는다.
 
-`surfaceGroup`의 source member는
-`<geometry-id>/surface/<URL-encoded-face-key>` 형식이다. 예를 들어 명시적 leaf
-`conductor.body`의 `+X` face는 `conductor.body/surface/%2BX`다. CAE에는
-`{ rootId, sourceNodeId, faceKey }` selector로 전달되며 polygon ordinal을 다시 만들지 않는다.
-CAD API v7-v9의 `/surface-N` source는 읽을 수 있지만 실행할 수 없고 semantic face로 자동
-alias하지 않는다. 해당 Example은 원본 version을 유지하고 CAD API 10의 새 immutable
-Experiment version으로 이행한다.
+`surfaceGroup`의 source member는 `<geometry-id>/surface/<non-negative-index>` 형식이다.
+예를 들어 명시적 leaf `conductor.body`의 surface 1은 `conductor.body/surface/1`이다.
+CAE에는 `{ rootId, sourceNodeId, surfaceIndex }` selector로 그대로 전달한다. 숫자는 각 primitive의
+고정된 local surface slot이며 transform과 Boolean을 통과해도 source slot을 유지한다. Box는
+0=-local X, 1=+local X, 2=-local Y, 3=+local Y, 4=-local Z, 5=+local Z 순서다.
+CAD API v7-v10의 기존 source는 Catalog에서 읽을 수 있지만 compile/run할 수 없고 자동 변환하지
+않는다. 원본 version은 보존하고 CAD API 11의 새 immutable Experiment version으로 이행한다.
 
 Experiment version을 추가할 때도 raw SQL을 사용하지 않는다. `experiment upsert --help`에서
-지원 범위를 확인하고 `--cad-api-version 10`을 명시한 뒤 Draft의 validate와 semantic diff에서
+지원 범위를 확인하고 `--cad-api-version 11`을 명시한 뒤 Draft의 validate와 semantic diff에서
 기존 version 변경 없이 새 coordinate만 추가됐는지 확인한다.
 
 ```powershell
 poetry run catalogctl experiment upsert example-experiment `
   --namespace caemble --repository verified --version 2.0.0 `
-  --cad-api-version 10 --title "Example Experiment" --description "What this example verifies." `
+  --cad-api-version 11 --title "Example Experiment" --description "What this example verifies." `
   --bundle-file .catalog-work/example-bundle.json `
   --verification-file .catalog-work/example-verification.json
 ```
@@ -169,7 +169,7 @@ import되어야 한다. Solver를 등록하기 위한 registry 조건문이나 �
 
 ```powershell
 Push-Location app/ui
-npm run export:cae-fixture -- --example <cad-api-10-experiment-coordinate> --out ../slaves/cae/tests/fixtures/<fixture-id>
+npm run export:cae-fixture -- --example <cad-api-11-experiment-coordinate> --out ../slaves/cae/tests/fixtures/<fixture-id>
 Pop-Location
 
 Push-Location app/slaves/cae

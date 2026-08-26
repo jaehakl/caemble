@@ -37,7 +37,7 @@ def source_bundle() -> ExperimentSourceBundle:
     )
 
 
-def run_start(bundle: ExperimentSourceBundle | None = None, api_version: int = 10) -> RunStart:
+def run_start(bundle: ExperimentSourceBundle | None = None, api_version: int = 11) -> RunStart:
     bundle = bundle or source_bundle()
     return RunStart.model_validate(
         {
@@ -207,19 +207,18 @@ def test_agent_generation_policy_and_execution_limits():
     assert MAX_AGENT_STEPS == 12
     assert MAX_TOOL_CALLS == 24
     assert CAD_AUTHORING_CORE in SYSTEM_PROMPT
-    assert "CAD API v10" in SYSTEM_PROMPT
-    assert "<geometry-id>/surface/<URL-encoded-face-key>" in SYSTEM_PROMPT
-    assert "Never emit ordinal `/surface-N`" in SYSTEM_PROMPT
+    assert "CAD API v11" in SYSTEM_PROMPT
+    assert "<geometry-id>/surface/<non-negative-index>" in SYSTEM_PROMPT
+    assert "Never emit `/surface-N`" in SYSTEM_PROMPT
     assert "get_cad_authoring_reference" in SYSTEM_PROMPT
     assert "Never compile, evaluate, test, or validate" in SYSTEM_PROMPT
     assert "finish immediately" in SYSTEM_PROMPT
     assert run_start().reasoningEffort == "medium"
 
 
-def test_agent_workspace_reads_historical_and_current_cad_api_versions():
-    for api_version in (7, 8, 9, 10):
-        assert run_start(api_version=api_version).workspace.document.apiVersion == api_version
-    for api_version in (6, 11):
+def test_agent_workspace_only_accepts_current_cad_api_version():
+    assert run_start(api_version=11).workspace.document.apiVersion == 11
+    for api_version in (6, 7, 8, 9, 10, 12):
         with pytest.raises(ValueError):
             run_start(api_version=api_version)
 

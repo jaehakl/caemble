@@ -43,7 +43,7 @@ export type GeometryInvocationAttributes<P extends object = object> = Readonly<
 > &
   GeometryTransformAttributes
 export type GeometryGroupMap = Readonly<Record<string, readonly string[]>>
-export type GeometrySurfaceRef = `${string}/surface/${string}`
+export type GeometrySurfaceRef = `${string}/surface/${number}`
 export type SurfaceGroupMap = Readonly<Record<string, readonly GeometrySurfaceRef[]>>
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -85,11 +85,14 @@ export function normalizeGeometryGroup(
         throw new CadModelError(`${objectName} ${propertyName}.${name}[${index}] must be a non-empty string global ID.`)
       }
       const memberId = rawMember.trim()
-      if (propertyName === 'surfaceGroup' && /\/surface-\d+$/u.test(memberId)) {
-        throw new CadModelError(
-          `${objectName} ${propertyName}.${name}[${index}] uses removed ordinal surface syntax. ` +
-            'CAD API 10 requires <geometry-id>/surface/<face-key>.',
-        )
+      if (propertyName === 'surfaceGroup') {
+        const match = /^.+\/surface\/(0|[1-9]\d*)$/u.exec(memberId)
+        if (!match || !Number.isSafeInteger(Number(match[1]))) {
+          throw new CadModelError(
+            `${objectName} ${propertyName}.${name}[${index}] must use ` +
+              '<source-node-id>/surface/<non-negative-index> with canonical safe-integer decimal notation.',
+          )
+        }
       }
       if (seenMemberIds.has(memberId)) return
       seenMemberIds.add(memberId)

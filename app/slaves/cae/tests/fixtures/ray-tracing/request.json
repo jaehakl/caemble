@@ -6,11 +6,11 @@
       "kind": "measurement",
       "experiment": {
         "kind": "experiment",
-        "sourceHash": "5d7783f4fb46850794ebb60d7bba575bc03f8bd7bb45231c2c3882ad7fb57511",
+        "sourceHash": "1563598c7ba131106fb27b8466a262f187ed10a0e1e48e3224b030f94dfda9fe",
         "variables": {},
         "varsSchema": {},
         "scene": {
-          "geometryFormatVersion": 1,
+          "geometryFormatVersion": 2,
           "lengthUnit": "mm",
           "roots": [
             {
@@ -124,7 +124,7 @@
                 ],
                 "child": {
                   "kind": "shell",
-                  "nodeId": "experiment/root/fragment-2/result/$layer-1",
+                  "nodeId": "folding-mirror.$part-1",
                   "innerOffset": 0,
                   "outerOffset": 2,
                   "child": {
@@ -172,7 +172,7 @@
                 ],
                 "child": {
                   "kind": "shell",
-                  "nodeId": "experiment/root/fragment-2/result/$layer-2",
+                  "nodeId": "folding-mirror.$part-2",
                   "innerOffset": 2,
                   "outerOffset": 2.005,
                   "child": {
@@ -414,13 +414,13 @@
               "name": "abgBaffle",
               "kind": "surface",
               "memberIds": [
-                "baffle-left.body/surface/%2BX"
+                "baffle-left.body/surface/1"
               ],
               "selectors": [
                 {
                   "rootId": "baffle-left.body",
                   "sourceNodeId": "baffle-left.body",
-                  "faceKey": "+X"
+                  "surfaceIndex": 1
                 }
               ],
               "missingMemberIds": []
@@ -430,13 +430,13 @@
               "name": "lambertianBaffle",
               "kind": "surface",
               "memberIds": [
-                "baffle-right.body/surface/-X"
+                "baffle-right.body/surface/0"
               ],
               "selectors": [
                 {
                   "rootId": "baffle-right.body",
                   "sourceNodeId": "baffle-right.body",
-                  "faceKey": "-X"
+                  "surfaceIndex": 0
                 }
               ],
               "missingMemberIds": []
@@ -446,23 +446,23 @@
               "name": "detector",
               "kind": "surface",
               "memberIds": [
-                "detector.body/surface/-Y"
+                "detector.body/surface/2"
               ],
               "selectors": [
                 {
                   "rootId": "detector.body",
                   "sourceNodeId": "detector.body",
-                  "faceKey": "-Y"
+                  "surfaceIndex": 2
                 }
               ],
               "missingMemberIds": []
             }
           ],
-          "geometryHash": "7f27ef82f9bf5206f2c7bc4e16d813d33641d3971bc25c3d60eb1c0d52b21ad8"
+          "geometryHash": "cf11d6a91da364509ff5bcd0e084fac20069ee278a929f55982b46867c229fc4"
         },
         "taskScenes": {
           "trace": {
-            "geometryFormatVersion": 1,
+            "geometryFormatVersion": 2,
             "lengthUnit": "mm",
             "roots": [
               {
@@ -510,7 +510,7 @@
             ],
             "geometryGroups": [],
             "surfaceGroups": [],
-            "geometryHash": "0bd9880d2856910451263fc205d6730a7c208bfa086d0ac6ac65bdee06ab7f62"
+            "geometryHash": "ff8a4b6f19c36b0a8fe6f4167e830dc499f19ad7fe477946ee5cbc26d9a265b3"
           }
         },
         "simulationProgram": {

@@ -44,7 +44,7 @@ export const translateManifest = {
   ],
   children: { count: 'many', description: '동일한 상대 이동을 적용할 Geometry를 한 개 이상 받습니다.' },
   origin: 'child의 local 좌표계를 유지한 채 offset만큼 이동합니다.',
-  surfaces: ['child-defined'],
+  surfaces: [],
   example: '<translate id="moved" offset={[20, 0, 0]}><Box id="body" size={[10, 10, 10]} /></translate>',
 } as const satisfies CadElementManifest<'translate'>
 
@@ -74,7 +74,7 @@ export const rotateManifest = {
   ],
   children: { count: 'many', description: '동일한 axis-angle 회전을 적용할 Geometry를 한 개 이상 받습니다.' },
   origin: 'wrapper local 원점을 중심으로 오른손 axis-angle 회전을 적용합니다.',
-  surfaces: ['child-defined'],
+  surfaces: [],
   example: '<rotate id="turned" axis={[0, 0, 1]} angle={radians(90)}><Box id="body" size={[10, 20, 5]} /></rotate>',
 } as const satisfies CadElementManifest<'rotate'>
 
@@ -93,6 +93,6 @@ export const scaleManifest = {
   ],
   children: { count: 'many', description: '동일한 축별 배율을 적용할 Geometry를 한 개 이상 받습니다.' },
   origin: 'wrapper local 원점을 중심으로 X, Y, Z축 배율을 적용합니다.',
-  surfaces: ['child-defined'],
+  surfaces: [],
   example: '<scale id="stretched" x={2} y={1} z={1}><Box id="body" size={[10, 10, 10]} /></scale>',
 } as const satisfies CadElementManifest<'scale'>

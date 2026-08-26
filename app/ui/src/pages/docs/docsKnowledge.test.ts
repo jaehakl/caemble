@@ -50,10 +50,10 @@ describe('documentation knowledge registry', () => {
 
   it('links manual examples to canonical catalog detail instead of duplicating full source', () => {
     expect(manualDocsKnowledge.find(({ id }) => id === 'program-definition')?.content).toContain(
-      'item=experiment:caemble:experiment/caemble/verified/dc-uniform-bar@2.0.0',
+      'item=experiment:caemble:experiment/caemble/verified/dc-uniform-bar@3.0.0',
     )
     expect(manualDocsKnowledge.find(({ id }) => id === 'reference-geometry-skeleton')?.content).toContain(
-      'item=experiment:caemble:experiment/caemble/getting-started/geometry-authoring-skeleton@1.0.0',
+      'item=experiment:caemble:experiment/caemble/getting-started/geometry-authoring-skeleton@2.0.0',
     )
     expect(manualDocsKnowledge.find(({ id }) => id === 'reference-geometry-skeleton')?.content).not.toContain(
       'export const Assembly',
@@ -80,16 +80,16 @@ describe('documentation knowledge registry', () => {
     expect(rayTracing).toContain('reserved system result')
     expect(rayTracing).toContain('`@caemble/ray-paths@1/primary/`')
     expect(rayTracing).toContain('최대 32개 segment')
-    expect(rayTracing).toContain('folded-ray-tracing@1.0.0')
+    expect(rayTracing).toContain('folded-ray-tracing@2.0.0')
   })
 
-  it('documents CAD API 10 semantic surfaces and the legacy ordinal hard cut', () => {
+  it('documents CAD API 11 numeric surfaces and the historical execution hard cut', () => {
     const identity = manualDocsKnowledge.find(({ id }) => id === 'reference-geometry-identity')?.content ?? ''
 
-    expect(identity).toContain('<geometry-id>/surface/<URL-encoded-face-key>')
-    expect(identity).toContain('conductor.body/surface/%2BX')
-    expect(identity).toContain('CAD API v7-v9 bundle은 계속 열어 읽을 수 있지만')
-    expect(identity).toContain('자동 alias하지 않으므로')
+    expect(identity).toContain('<geometry-id>/surface/<non-negative-index>')
+    expect(identity).toContain('conductor.body/surface/1')
+    expect(identity).toContain('CAD API v7-v10 bundle은 Catalog 이력으로 계속 열어 읽을 수 있지만')
+    expect(identity).toContain('자동 변환이나 alias를 두지 않으므로')
     expect(identity).toContain('Boolean operation은 최대 128개 operand')
   })
 

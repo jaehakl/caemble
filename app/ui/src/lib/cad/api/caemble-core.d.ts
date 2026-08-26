@@ -34,7 +34,7 @@ export type GeometryTransformAttributes = CanonicalGeometryTransformAttributes |
 export type GeometryIdentityAttributes = Readonly<{ id?: string }>
 export type IntrinsicGeometryAttributes = GeometryIdentityAttributes & GeometryTransformAttributes
 export type GeometryGroupMap = Readonly<Record<string, readonly string[]>>
-export type GeometrySurfaceRef = `${string}/surface/${string}`
+export type GeometrySurfaceRef = `${string}/surface/${number}`
 export type SurfaceGroupMap = Readonly<Record<string, readonly GeometrySurfaceRef[]>>
 export type VarsSchemaEntry = Readonly<{
   shape: readonly number[]
@@ -473,7 +473,7 @@ export class ExperimentDefinition<
   Recorded extends Readonly<Record<string, RecordedDataSpec>> = Readonly<Record<string, RecordedDataSpec>>,
 > {
   constructor(options: ExperimentDefinitionOptions<Schema, Recorded>)
-  readonly apiVersion: 10
+  readonly apiVersion: 11
   readonly documentType: 'experiment'
   readonly varsSchema: Schema
   readonly lengthUnit: UcumUnit
@@ -484,7 +484,7 @@ export class ExperimentDefinition<
 
 export class TaskDefinition<Config = unknown> {
   constructor(options: TaskDefinitionOptions<Config>)
-  readonly apiVersion: 10
+  readonly apiVersion: 11
   readonly documentType: 'task'
   readonly kernel: KernelIdentity
   readonly lengthUnit?: UcumUnit

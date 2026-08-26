@@ -27,14 +27,14 @@ const syntheticCatalog = {
   warnings: [],
 } as const
 const compiledSource = (entryFile: string, code = 'module.exports = {}') => ({
-  apiVersion: 10 as const,
+  apiVersion: 11 as const,
   compilerVersion: CAD_COMPILER_VERSION,
   entryFile,
   code,
   sourceHash,
 })
 const compiledExperiment: CompiledCadDocument = {
-  apiVersion: 10,
+  apiVersion: 11,
   compilerVersion: CAD_COMPILER_VERSION,
   sourceHash,
   sources: {
@@ -68,7 +68,7 @@ describe('isolated runner protocol for Experiment bundles', () => {
     }
     const renderScene = { sceneHash: cadSceneHash(sceneContent), ...sceneContent }
     const scene = {
-      geometryFormatVersion: 1,
+      geometryFormatVersion: 2,
       geometryHash: '925303f4dbe17be213b13881dbe3c16d804347ad95db75560fcab454731f3a76',
       lengthUnit: 'mm' as const,
       roots: [],
@@ -167,7 +167,7 @@ describe('isolated runner protocol for Experiment bundles', () => {
           varsSchema: { width: { min: 1, max: 3 } },
         },
       }),
-    ).toThrow('shape is required by CAD API v10')
+    ).toThrow('shape is required by CAD API v11')
     expect(() =>
       assertRunnerCancelOperationEnvelope({ type: 'cancel-operation', nonce, requestId: inspect.requestId }),
     ).not.toThrow()

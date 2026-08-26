@@ -42,19 +42,18 @@ Persisted versions use
 repository, key, and SemVer are stored on the Experiment row; repository lists
 are derived from those rows rather than maintained as separate entities.
 
-CAD API v10 uses `position`, `rotation`, and `scale` as canonical transforms.
+CAD API v11 uses `position`, `rotation`, and `scale` as canonical transforms.
 Material assignment uses named roles such as `body`, `tire`, or `shell`, not
 positional arrays. TypeScript sources may statically import `@caemble/core` and
 relative `.ts`/`.tsx` modules stored in the same bundle; there is no external
 Geometry source graph.
 
-Surface group members use semantic primitive provenance in the form
-`<geometry-id>/surface/<URL-encoded-face-key>`. For example, the positive X face
-of a leaf with identity `conductor.body` is
-`conductor.body/surface/%2BX`. CAD API v7-v9 source remains readable, but an
-ordinal `/surface-N` member cannot be prepared or executed under API v10. It is
-never mapped to a semantic face automatically; publish a new immutable
-Experiment version with explicit leaf identities and semantic members.
+Surface group members use `<geometry-id>/surface/<non-negative-index>`. Each
+primitive defines fixed local surface slots; transforms and Boolean operations
+preserve the source slot. For example, local +X on a Box leaf with identity
+`conductor.body` is `conductor.body/surface/1`. CAD API v7-v10 source remains
+readable from Catalog history but cannot be compiled or executed. It is not
+converted automatically; publish a new immutable CAD API v11 Experiment version.
 
 Authoring examples and element-specific props belong in generated executable
 examples and the live Experiment Catalog exposed by `/docs`. When syntax changes,
@@ -92,8 +91,8 @@ version's source and requires an explicit new SemVer for code changes. Name and
 description metadata remain editable. The API does not execute CAD or physics.
 Payloads and attachments travel over WebRTC between the client and worker. The
 Viewer's rendered mesh stays in the UI; the CAE request carries Canonical
-Geometry scene v1 with `geometryFormatVersion`, `geometryHash`, units, roots,
-geometry groups, and semantic surface selectors.
+Geometry scene v2 with `geometryFormatVersion`, `geometryHash`, units, roots,
+geometry groups, and numeric surface selectors.
 
 ## Ownership boundaries
 

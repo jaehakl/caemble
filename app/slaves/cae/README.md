@@ -59,7 +59,7 @@ imported only on first use.
 
 The start payload is exactly
 `{ formatVersion: 2, measurement: BuiltMeasurement, solverContracts }`.
-`formatVersion: 2` carries Canonical Geometry scene v1; unversioned legacy mesh
+`formatVersion: 2` carries Canonical Geometry scene v2; unversioned legacy mesh
 requests are rejected. The contract list must match the unique
 name/version/digest set referenced by Simulation manifest v5. A mismatch is
 rejected before run creation.

@@ -59,7 +59,7 @@ export const curvedSurfaceSphereManifest = {
   ],
   children: { count: 'none', description: '자식을 받지 않는 primitive입니다.' },
   origin: '변형된 구면의 중심이 원점에 있고 극축은 +Z입니다.',
-  surfaces: ['Outer'],
+  surfaces: [{ index: 0, label: 'Outer', description: '곡률이 적용된 구의 바깥쪽 표면입니다.' }],
   example:
     '<CurvedSurfaceSphere id="particle" azimuthalCurve={[{ amplitude: 5, phase: 0 }]} polarCurve={[{ amplitude: 1, phase: 0 }]} />',
 } as const satisfies CadElementManifest<'curvedSurfaceSphere'>

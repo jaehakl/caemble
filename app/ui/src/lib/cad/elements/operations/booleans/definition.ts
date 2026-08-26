@@ -17,7 +17,7 @@ export const unionManifest = {
   properties: [],
   children: { count: 'many', description: '같은 Material instance와 role을 가진 하나 이상의 solid를 받습니다.' },
   origin: '자식 좌표를 유지한 채 결과에 이 element의 transform을 적용합니다.',
-  surfaces: ['Surface 1', 'Surface 2', '…'],
+  surfaces: [],
   example: '<union id="body"><Box size={[10, 10, 10]} /><Cylinder radius={3} height={14} /></union>',
 } as const satisfies CadElementManifest<'union'>
 export const subtractManifest = {
@@ -34,7 +34,7 @@ export const subtractManifest = {
     description: '첫 Geometry의 각 solid가 base이고 이후 하나 이상의 유효한 solid가 cutter입니다.',
   },
   origin: '자식 좌표를 유지한 채 결과에 이 element의 transform을 적용합니다.',
-  surfaces: ['Surface 1', 'Surface 2', '…'],
+  surfaces: [],
   example: '<subtract id="notched"><Box size={[20, 10, 6]} /><Box size={[4, 10, 3]} /></subtract>',
 } as const satisfies CadElementManifest<'subtract'>
 export const intersectManifest = {
@@ -51,6 +51,6 @@ export const intersectManifest = {
     description: '같은 Material instance와 role을 가지며 교차시킬 두 개 이상의 solid를 받습니다.',
   },
   origin: '자식 좌표를 유지한 채 결과에 이 element의 transform을 적용합니다.',
-  surfaces: ['Surface 1', 'Surface 2', '…'],
+  surfaces: [],
   example: '<intersect id="overlap"><Box size={[10, 10, 10]} /><Sphere radius={7} /></intersect>',
 } as const satisfies CadElementManifest<'intersect'>

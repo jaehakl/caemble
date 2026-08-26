@@ -27,6 +27,13 @@ export const boxManifest = {
   ],
   children: { count: 'none', description: '자식을 받지 않는 primitive입니다.' },
   origin: '기하 중심이 원점에 있고 모서리는 좌표축과 평행합니다.',
-  surfaces: ['-X', '+X', '-Y', '+Y', 'Bottom', 'Top'],
+  surfaces: [
+    { index: 0, label: 'Local -X', description: '회전 전 Box 로컬 좌표계의 -X 면입니다.' },
+    { index: 1, label: 'Local +X', description: '회전 전 Box 로컬 좌표계의 +X 면입니다.' },
+    { index: 2, label: 'Local -Y', description: '회전 전 Box 로컬 좌표계의 -Y 면입니다.' },
+    { index: 3, label: 'Local +Y', description: '회전 전 Box 로컬 좌표계의 +Y 면입니다.' },
+    { index: 4, label: 'Local -Z', description: '회전 전 Box 로컬 좌표계의 -Z 면입니다.' },
+    { index: 5, label: 'Local +Z', description: '회전 전 Box 로컬 좌표계의 +Z 면입니다.' },
+  ],
   example: '<Box id="backboard" size={[180, 5, 100]} position={[0, 200, 280]} />',
 } as const satisfies CadElementManifest<'box'>

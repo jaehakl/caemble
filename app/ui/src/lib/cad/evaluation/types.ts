@@ -23,13 +23,15 @@ export type EvaluatedPart = {
 }
 
 export type EvaluatedSurface = {
-  name: string
+  surfaceIndex: number
+  label: string
   polygonIndices: number[]
 }
 
 export type CadSceneSurface = {
   id: string
-  name: string
+  surfaceIndex: number
+  label: string
   polygonIndices: number[] | Uint32Array
 }
 
@@ -101,7 +103,7 @@ export type CadElementChildrenManifest = Readonly<{
 }>
 
 export type CadAuthoringContract = Readonly<{
-  apiVersion: 10
+  apiVersion: 11
   identity: CadElementPropertyManifest & Readonly<{ pathExample: string }>
   transforms: Readonly<{
     applicationOrder: readonly ['scale', 'rotation', 'position']
@@ -110,6 +112,12 @@ export type CadAuthoringContract = Readonly<{
     legacyProperties: readonly CadElementPropertyManifest[]
     mixing: string
   }>
+}>
+
+export type CadElementSurfaceManifest = Readonly<{
+  index: number
+  label: string
+  description: string
 }>
 
 export type CadElementManifest<Tag extends string = string> = Readonly<{
@@ -123,7 +131,7 @@ export type CadElementManifest<Tag extends string = string> = Readonly<{
   properties: readonly CadElementPropertyManifest[]
   children: CadElementChildrenManifest
   origin: string
-  surfaces: readonly string[]
+  surfaces: readonly CadElementSurfaceManifest[]
   example: string
 }>
 

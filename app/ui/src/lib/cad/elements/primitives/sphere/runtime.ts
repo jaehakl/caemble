@@ -20,6 +20,6 @@ export const sphereDefinition = {
   },
   createSurfaces(geometry) {
     const polygons = geometries.geom3.toPolygons(geometry as ReturnType<typeof geometries.geom3.create>)
-    return [{ name: 'Outer', polygonIndices: polygons.map((_polygon, index) => index) }]
+    return [{ surfaceIndex: 0, label: 'Outer', polygonIndices: polygons.map((_polygon, index) => index) }]
   },
 } satisfies PrimitiveElementDefinition<'sphere'>

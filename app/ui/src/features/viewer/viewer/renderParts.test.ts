@@ -11,8 +11,8 @@ function createPart(id = 'assembly.core', color: string | null = '#2563eb', with
     materialRole: id,
     ...(withMaterial ? { material: { name: 'Core', variables: color === null ? {} : { color } } } : {}),
     surfaces: [
-      { id: `${id}/surface-1`, name: '-X', polygonIndices: [0] },
-      { id: `${id}/surface-2`, name: 'Other', polygonIndices: [1, 2, 3, 4, 5] },
+      { id: `${id}/surface/0`, surfaceIndex: 0, label: 'Local -X', polygonIndices: [0] },
+      { id: `${id}/surface/1`, surfaceIndex: 1, label: 'Other', polygonIndices: [1, 2, 3, 4, 5] },
     ],
   }
 }

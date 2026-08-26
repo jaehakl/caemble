@@ -5,11 +5,12 @@ import json
 import sqlite3
 
 APPLICATION_ID = 0x4341454D  # "CAEM"
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 RUNTIME_SLICE_SCHEMA_VERSION = 1
 SEMVER_COMPONENT_MAX = 2_147_483_647
 EXPERIMENT_COORDINATE_PREFIX = "caemble:experiment/"
-SUPPORTED_CAD_API_VERSIONS = (7, 8, 9, 10)
+SUPPORTED_CAD_API_VERSIONS = (7, 8, 9, 10, 11)
+WRITABLE_CAD_API_VERSIONS = (11,)
 
 
 def parse_experiment_version(value: str) -> tuple[int, int, int]:
@@ -46,7 +47,7 @@ CREATE TABLE experiments (
     version_patch INTEGER NOT NULL CHECK (version_patch BETWEEN 0 AND 2147483647),
     title TEXT NOT NULL,
     description TEXT NOT NULL,
-    cad_api_version INTEGER NOT NULL CHECK (cad_api_version IN (7, 8, 9, 10)),
+    cad_api_version INTEGER NOT NULL CHECK (cad_api_version IN (7, 8, 9, 10, 11)),
     source_format_version INTEGER NOT NULL CHECK (source_format_version = 2),
     bundle_format_version INTEGER NOT NULL CHECK (bundle_format_version = 6),
     verification_json TEXT NOT NULL CHECK (json_valid(verification_json)),
@@ -331,7 +332,7 @@ def upgrade_schema(connection: sqlite3.Connection) -> None:
         )
     if user_version == SCHEMA_VERSION:
         return
-    if user_version in (4, 5):
+    if user_version in (4, 5, 6):
         previous_version = user_version
         connection.executescript(
             """
@@ -344,7 +345,7 @@ def upgrade_schema(connection: sqlite3.Connection) -> None:
             """
         )
         connection.executescript(CATALOG_ENTITY_SCHEMA_SQL)
-        cad_api_version = "cad_api_version" if previous_version == 5 else "9"
+        cad_api_version = "cad_api_version" if previous_version >= 5 else "9"
         connection.execute(
             f"""INSERT INTO experiments(
                    id, key, namespace, repository_slug, version_major, version_minor, version_patch,
@@ -380,7 +381,7 @@ def upgrade_schema(connection: sqlite3.Connection) -> None:
         return
     if user_version != 3:
         raise ValueError(
-            f"Only a CAEM catalog schema v3, v4, or v5 database can be upgraded: "
+            f"Only a CAEM catalog schema v3, v4, v5, or v6 database can be upgraded: "
             f"application_id={application_id}, user_version={user_version}"
         )
     connection.row_factory = sqlite3.Row

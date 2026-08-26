@@ -8,7 +8,7 @@ import manifoldWasmUrl from 'manifold-3d/manifold.wasm?url'
 import type {
   CanonicalAffineMatrixV1,
   CanonicalGeometryNodeV1,
-  CanonicalGeometrySceneV1,
+  CanonicalGeometrySceneV2,
   CanonicalPrimitiveNodeV1,
 } from '../evaluation/canonicalTypes'
 import { MAX_CANONICAL_GEOMETRY_TRIANGLES, MAX_CANONICAL_RENDER_TYPED_ARRAY_BYTES } from '../evaluation/canonicalTypes'
@@ -18,8 +18,8 @@ import { CadModelError } from '../model/errors'
 import { cadSceneHash, type SerializableCadScene, type SerializableCadScenePart } from './meshValidation'
 
 type Triangle = readonly [number, number, number]
-type SourceFaces = Readonly<{ nodeId: string; faceKeys: ReadonlyMap<number, string> }>
-type FaceClassifier = (mesh: ManifoldMesh, triangle: number) => string
+type SourceSurfaces = Readonly<{ nodeId: string; surfaceIndices: ReadonlyMap<number, number> }>
+type SurfaceClassifier = (mesh: ManifoldMesh, triangle: number) => number
 
 let manifoldModulePromise: Promise<ManifoldToplevel> | undefined
 
@@ -67,8 +67,8 @@ function triangleNormal(mesh: ManifoldMesh, triangle: number): Vec3 {
 function registerPrimitiveSource(
   solid: ManifoldSolid,
   nodeId: string,
-  sources: Map<number, SourceFaces>,
-  faceKey: (mesh: ManifoldMesh, triangle: number, normal: Vec3) => string,
+  sources: Map<number, SourceSurfaces>,
+  surfaceIndex: (mesh: ManifoldMesh, triangle: number, normal: Vec3) => number,
 ) {
   let original: ManifoldSolid
   try {
@@ -78,17 +78,17 @@ function registerPrimitiveSource(
   }
   try {
     const mesh = original.getMesh()
-    const faceKeys = new Map<number, string>()
+    const surfaceIndices = new Map<number, number>()
     for (let triangle = 0; triangle < mesh.numTri; triangle += 1) {
       const faceId = mesh.faceID[triangle]
-      const key = faceKey(mesh, triangle, triangleNormal(mesh, triangle))
-      const previous = faceKeys.get(faceId)
-      if (previous !== undefined && previous !== key) {
+      const index = surfaceIndex(mesh, triangle, triangleNormal(mesh, triangle))
+      const previous = surfaceIndices.get(faceId)
+      if (previous !== undefined && previous !== index) {
         throw new CadModelError(`Canonical Geometry source ${nodeId} has ambiguous Manifold face provenance.`)
       }
-      faceKeys.set(faceId, key)
+      surfaceIndices.set(faceId, index)
     }
-    sources.set(original.originalID(), { nodeId, faceKeys })
+    sources.set(original.originalID(), { nodeId, surfaceIndices })
     return original
   } catch (error) {
     original.delete()
@@ -100,10 +100,10 @@ function manifoldFromTriangles(
   module: ManifoldToplevel,
   points: readonly Vec3[],
   triangles: readonly Triangle[],
-  faceKeys: readonly string[],
+  surfaceIndices: readonly number[],
   nodeId: string,
-  sources: Map<number, SourceFaces>,
-  classifyFace: FaceClassifier,
+  sources: Map<number, SourceSurfaces>,
+  classifySurface: SurfaceClassifier,
   origin: Vec3 = [0, 0, 0],
 ) {
   const localPoints = points.map((point): Vec3 => [point[0] - origin[0], point[1] - origin[1], point[2] - origin[2]])
@@ -130,9 +130,9 @@ function manifoldFromTriangles(
       `Canonical Geometry source ${nodeId} exceeds the Float32 indexed-mesh precision envelope and is invalid.`,
     )
   }
-  const keyIds = new Map<string, number>()
+  const keyIds = new Map<number, number>()
   const faceID = Uint32Array.from(
-    faceKeys.map((key) => {
+    surfaceIndices.map((key) => {
       const existing = keyIds.get(key)
       if (existing !== undefined) return existing
       const id = keyIds.size + 1
@@ -160,19 +160,19 @@ function manifoldFromTriangles(
         `Canonical Geometry source ${nodeId} lost indexed-mesh triangles in Manifold preview and is invalid.`,
       )
     }
-    const classifiedFaceKeys = new Map<number, string>()
+    const classifiedSurfaceIndices = new Map<number, number>()
     for (let triangle = 0; triangle < originalMesh.numTri; triangle += 1) {
       const faceId = originalMesh.faceID[triangle]
-      const faceKey = classifyFace(originalMesh, triangle)
-      const previous = classifiedFaceKeys.get(faceId)
-      if (previous !== undefined && previous !== faceKey) {
+      const surfaceIndex = classifySurface(originalMesh, triangle)
+      const previous = classifiedSurfaceIndices.get(faceId)
+      if (previous !== undefined && previous !== surfaceIndex) {
         throw new CadModelError(`Canonical Geometry source ${nodeId} has ambiguous Manifold face provenance.`)
       }
-      classifiedFaceKeys.set(faceId, faceKey)
+      classifiedSurfaceIndices.set(faceId, surfaceIndex)
     }
     sources.set(solid.originalID(), {
       nodeId,
-      faceKeys: classifiedFaceKeys,
+      surfaceIndices: classifiedSurfaceIndices,
     })
     if (origin.every((value) => value === 0)) return solid
     const translated = solid.translate(origin)
@@ -188,8 +188,8 @@ function ringSolid(
   module: ManifoldToplevel,
   rings: readonly (readonly Vec3[])[],
   nodeId: string,
-  sources: Map<number, SourceFaces>,
-  capKeys: readonly [string, string],
+  sources: Map<number, SourceSurfaces>,
+  capIndices: readonly [number, number],
   capCenters: readonly [Vec3, Vec3],
 ) {
   const radialSegments = rings[0].length
@@ -197,14 +197,14 @@ function ringSolid(
   const firstCenter = points.push(capCenters[0]) - 1
   const lastCenter = points.push(capCenters[1]) - 1
   const triangles: Triangle[] = []
-  const faceKeys: string[] = []
+  const surfaceIndices: number[] = []
   for (let radial = 0; radial < radialSegments; radial += 1) {
     const next = (radial + 1) % radialSegments
     triangles.push([firstCenter, next, radial])
-    faceKeys.push(capKeys[0])
+    surfaceIndices.push(capIndices[0])
     const endStart = (rings.length - 1) * radialSegments
     triangles.push([lastCenter, endStart + radial, endStart + next])
-    faceKeys.push(capKeys[1])
+    surfaceIndices.push(capIndices[1])
   }
   for (let ring = 0; ring < rings.length - 1; ring += 1) {
     const start = ring * radialSegments
@@ -213,7 +213,7 @@ function ringSolid(
       const next = (radial + 1) % radialSegments
       triangles.push([start + radial, start + next, nextStart + next])
       triangles.push([start + radial, nextStart + next, nextStart + radial])
-      faceKeys.push('Side', 'Side')
+      surfaceIndices.push(1, 1)
     }
   }
   const origin = capCenters[0]
@@ -229,11 +229,11 @@ function ringSolid(
     module,
     points,
     triangles,
-    faceKeys,
+    surfaceIndices,
     nodeId,
     sources,
     (mesh, triangle) =>
-      onRing(mesh, triangle, firstRing) ? capKeys[0] : onRing(mesh, triangle, lastRing) ? capKeys[1] : 'Side',
+      onRing(mesh, triangle, firstRing) ? capIndices[0] : onRing(mesh, triangle, lastRing) ? capIndices[1] : 1,
     origin,
   )
 }
@@ -241,7 +241,7 @@ function ringSolid(
 function curvedEdgeCylinder(
   module: ManifoldToplevel,
   node: CanonicalPrimitiveNodeV1,
-  sources: Map<number, SourceFaces>,
+  sources: Map<number, SourceSurfaces>,
 ) {
   const parameters = node.parameters as Readonly<{
     height: number
@@ -275,7 +275,7 @@ function curvedEdgeCylinder(
     rings,
     node.nodeId,
     sources,
-    ['Bottom', 'Top'],
+    [0, 2],
     [
       [0, 0, -parameters.height / 2],
       [0, 0, parameters.height / 2],
@@ -286,7 +286,7 @@ function curvedEdgeCylinder(
 function curvedSurfaceSphere(
   module: ManifoldToplevel,
   node: CanonicalPrimitiveNodeV1,
-  sources: Map<number, SourceFaces>,
+  sources: Map<number, SourceSurfaces>,
 ) {
   const parameters = node.parameters as Readonly<{
     azimuthalCurve: readonly Readonly<{ amplitude: number; phase: number }>[]
@@ -341,23 +341,19 @@ function curvedSurfaceSphere(
     module,
     points,
     triangles,
-    triangles.map(() => 'Outer'),
+    triangles.map(() => 0),
     node.nodeId,
     sources,
-    () => 'Outer',
+    () => 0,
   )
 }
 
-function primitiveSolid(module: ManifoldToplevel, node: CanonicalPrimitiveNodeV1, sources: Map<number, SourceFaces>) {
+function primitiveSolid(module: ManifoldToplevel, node: CanonicalPrimitiveNodeV1, sources: Map<number, SourceSurfaces>) {
   if (node.primitive === 'box') {
     const solid = module.Manifold.cube(node.parameters.size as Vec3, true)
     return registerPrimitiveSource(solid, node.nodeId, sources, (_mesh, _triangle, normal) => {
       const axis = Math.abs(normal[0]) > 0.5 ? 0 : Math.abs(normal[1]) > 0.5 ? 1 : 2
-      return axis === 2
-        ? normal[2] < 0
-          ? 'Bottom'
-          : 'Top'
-        : `${normal[axis] < 0 ? '-' : '+'}${axis === 0 ? 'X' : 'Y'}`
+      return axis * 2 + (normal[axis] < 0 ? 0 : 1)
     })
   }
   if (node.primitive === 'cylinder') {
@@ -377,15 +373,15 @@ function primitiveSolid(module: ManifoldToplevel, node: CanonicalPrimitiveNodeV1
     return registerPrimitiveSource(solid, node.nodeId, sources, (mesh, triangle) => {
       const z = [...mesh.verts(triangle)].map((vertex) => mesh.position(vertex)[2])
       return z.every((value) => Math.abs(value + height / 2) <= tolerance)
-        ? 'Bottom'
+        ? 0
         : z.every((value) => Math.abs(value - height / 2) <= tolerance)
-          ? 'Top'
-          : 'Side'
+          ? 2
+          : 1
     })
   }
   if (node.primitive === 'sphere') {
     const { radius, segments } = node.parameters as Readonly<Record<string, number>>
-    return registerPrimitiveSource(module.Manifold.sphere(radius, segments), node.nodeId, sources, () => 'Outer')
+    return registerPrimitiveSource(module.Manifold.sphere(radius, segments), node.nodeId, sources, () => 0)
   }
   if (node.primitive === 'curvedEdgeCylinder') return curvedEdgeCylinder(module, node, sources)
   return curvedSurfaceSphere(module, node, sources)
@@ -394,7 +390,7 @@ function primitiveSolid(module: ManifoldToplevel, node: CanonicalPrimitiveNodeV1
 function fiberSolid(
   module: ManifoldToplevel,
   node: Extract<CanonicalGeometryNodeV1, { kind: 'fiber' }>,
-  sources: Map<number, SourceFaces>,
+  sources: Map<number, SourceSurfaces>,
 ) {
   const rings = node.points.map((point, index) => {
     const frame = node.frames[index]
@@ -415,7 +411,7 @@ function fiberSolid(
     rings,
     node.nodeId,
     sources,
-    ['Start cap', 'End cap'],
+    [0, 2],
     [[...node.points[0]], [...node.points[node.points.length - 1]]],
   )
 }
@@ -462,7 +458,7 @@ function shellSolid(
   module: ManifoldToplevel,
   child: ManifoldSolid,
   node: Extract<CanonicalGeometryNodeV1, { kind: 'shell' }>,
-  sources: Map<number, SourceFaces>,
+  sources: Map<number, SourceSurfaces>,
 ) {
   let centered: ManifoldSolid | undefined
   try {
@@ -583,13 +579,13 @@ function shellSolid(
       module,
       [...inner, ...outer],
       shellTriangles,
-      [...triangles.map(() => 'outer'), ...triangles.map(() => 'inner')],
+      [...triangles.map(() => 1), ...triangles.map(() => 0)],
       node.nodeId,
       sources,
       (mesh, triangle) =>
         [...mesh.verts(triangle)].every((vertex) => innerPoints.has(meshPointKey(mesh.position(vertex))))
-          ? 'inner'
-          : 'outer',
+          ? 0
+          : 1,
     )
     try {
       return localShell.translate(center)
@@ -605,7 +601,7 @@ function shellSolid(
 function evaluateNode(
   module: ManifoldToplevel,
   node: CanonicalGeometryNodeV1,
-  sources: Map<number, SourceFaces>,
+  sources: Map<number, SourceSurfaces>,
 ): ManifoldSolid {
   if (node.kind === 'primitive') return primitiveSolid(module, node, sources)
   if (node.kind === 'fiber') return fiberSolid(module, node, sources)
@@ -633,9 +629,9 @@ function evaluateNode(
 
 function meshPart(
   module: ManifoldToplevel,
-  root: CanonicalGeometrySceneV1['roots'][number],
+  root: CanonicalGeometrySceneV2['roots'][number],
   runtimeScene: CadScene,
-  sources: Map<number, SourceFaces>,
+  sources: Map<number, SourceSurfaces>,
   usage: { triangles: number; typedArrayBytes: number },
 ): SerializableCadScenePart {
   const solid = evaluateNode(module, root.node, sources)
@@ -678,15 +674,15 @@ function meshPart(
       }
       const positions = new Float64Array(mesh.numTri * 9)
       const polygonOffsets = Uint32Array.from({ length: mesh.numTri + 1 }, (_, index) => index * 3)
-      const surfacePolygons = new Map<string, { sourceNodeId: string; faceKey: string; polygonIndices: number[] }>()
+      const surfacePolygons = new Map<string, { sourceNodeId: string; surfaceIndex: number; polygonIndices: number[] }>()
       let run = 0
       for (let triangle = 0; triangle < mesh.numTri; triangle += 1) {
         while (run + 1 < mesh.runIndex.length && triangle * 3 >= mesh.runIndex[run + 1]) run += 1
         const source = sources.get(mesh.runOriginalID[run])
-        const faceKey = source?.faceKeys.get(mesh.faceID[triangle])
-        if (source && faceKey) {
-          const id = `${source.nodeId}/surface/${encodeURIComponent(faceKey)}`
-          const surface = surfacePolygons.get(id) ?? { sourceNodeId: source.nodeId, faceKey, polygonIndices: [] }
+        const surfaceIndex = source?.surfaceIndices.get(mesh.faceID[triangle])
+        if (source && surfaceIndex !== undefined) {
+          const id = `${source.nodeId}/surface/${surfaceIndex}`
+          const surface = surfacePolygons.get(id) ?? { sourceNodeId: source.nodeId, surfaceIndex, polygonIndices: [] }
           surface.polygonIndices.push(triangle)
           surfacePolygons.set(id, surface)
         }
@@ -700,7 +696,8 @@ function meshPart(
       }
       const surfaces: CadSceneSurface[] = [...surfacePolygons].map(([id, surface]) => ({
         id,
-        name: surface.faceKey,
+        surfaceIndex: surface.surfaceIndex,
+        label: `Surface ${surface.surfaceIndex}`,
         polygonIndices: Uint32Array.from(surface.polygonIndices),
       }))
       if (surfaces.reduce((count, surface) => count + surface.polygonIndices.length, 0) !== mesh.numTri) {
@@ -739,7 +736,7 @@ function semanticTree(tree: CadSceneTreeNode, parts: readonly SerializableCadSce
       if (!owner || owner.children.some((child) => child.surfaceId === surface.id)) return
       owner.children.push({
         key: `${owner.key}/${surface.id}`,
-        label: surface.name,
+        label: `${surface.surfaceIndex} · ${surface.label}`,
         surfaceId: surface.id,
         children: [],
       })
@@ -749,16 +746,16 @@ function semanticTree(tree: CadSceneTreeNode, parts: readonly SerializableCadSce
 }
 
 export async function renderCanonicalGeometryScene(
-  scene: CanonicalGeometrySceneV1,
+  scene: CanonicalGeometrySceneV2,
   runtimeScene: CadScene,
   usage: { triangles: number; typedArrayBytes: number } = { triangles: 0, typedArrayBytes: 0 },
 ): Promise<SerializableCadScene> {
   assertCanonicalGeometryScene(scene)
   const module = await manifoldModule()
-  const sources = new Map<number, SourceFaces>()
+  const sources = new Map<number, SourceSurfaces>()
   const surfaceAliases = new Map<string, Map<string, Set<string>>>()
   scene.surfaceGroups.flatMap(canonicalSurfaceMemberEntries).forEach(({ memberId, selector }) => {
-    const sourceId = `${selector.sourceNodeId}/surface/${encodeURIComponent(selector.faceKey)}`
+    const sourceId = `${selector.sourceNodeId}/surface/${selector.surfaceIndex}`
     const rootAliases = surfaceAliases.get(selector.rootId) ?? new Map<string, Set<string>>()
     const aliases = rootAliases.get(sourceId) ?? new Set<string>()
     aliases.add(memberId)

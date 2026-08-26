@@ -213,7 +213,7 @@ describe('Experiment vars and groups', () => {
             legacy: { min: 0, max: 2 } as never,
           },
         }),
-    ).toThrow('shape is required by CAD API v10')
+    ).toThrow('shape is required by CAD API v11')
     expect(
       () =>
         new ExperimentDefinition({
@@ -388,6 +388,14 @@ describe('Experiment vars and groups', () => {
     expect(
       () => new ExperimentDefinition({ lengthUnit: 'mm', ...options, surfaceGroup: { invalid: [1 as never] } }),
     ).toThrow('must be a non-empty string')
+    expect(
+      () =>
+        new ExperimentDefinition({
+          lengthUnit: 'mm',
+          ...options,
+          surfaceGroup: { invalid: ['body/surface/9007199254740992'] },
+        }),
+    ).toThrow('canonical safe-integer decimal notation')
   })
 })
 

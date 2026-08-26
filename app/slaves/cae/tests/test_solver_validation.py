@@ -250,7 +250,7 @@ def test_canonical_scene_accepts_a_named_material_role_and_rejects_legacy_meshes
         },
     }
     draft = {
-        "geometryFormatVersion": 1,
+        "geometryFormatVersion": 2,
         "lengthUnit": "m",
         "roots": [root],
         "geometryGroups": [],
@@ -267,7 +267,7 @@ def test_canonical_scene_accepts_a_named_material_role_and_rejects_legacy_meshes
             )
         assert error.value.code == "invalid_input"
 
-    with pytest.raises(CaeError, match="CanonicalGeometrySceneV1"):
+    with pytest.raises(CaeError, match="CanonicalGeometrySceneV2"):
         _validate_scene(
             {
                 "sceneHash": "c" * 64,

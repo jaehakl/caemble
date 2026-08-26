@@ -120,6 +120,10 @@ export const fiberManifest = {
   ],
   children: { count: 'none', description: '자식을 받지 않는 primitive입니다.' },
   origin: 'from/to 또는 basePath가 정의한 좌표를 그대로 사용하며 별도의 중심 보정은 하지 않습니다.',
-  surfaces: ['Start cap', 'Side', 'End cap'],
+  surfaces: [
+    { index: 0, label: 'Start cap', description: 'Fiber path의 시작 단면입니다.' },
+    { index: 1, label: 'Side', description: 'Fiber path를 따라 생성된 옆면입니다.' },
+    { index: 2, label: 'End cap', description: 'Fiber path의 끝 단면입니다.' },
+  ],
   example: '<Fiber id="strand" from={[0, 0, 0]} to={[0, 0, 20]} radius={1} />',
 } as const satisfies CadElementManifest<'fiber'>

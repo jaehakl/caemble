@@ -127,7 +127,7 @@ describe('procedural fiber geometry', () => {
     const bounds = measurements.measureBoundingBox(translated.geometry)
     expect(bounds[0][0]).toBeCloseTo(2.5)
     expect(bounds[1][0]).toBeCloseTo(3.5)
-    expect(translated.surfaces.map((surface) => surface.name)).toEqual(['Start cap', 'Side', 'End cap'])
+    expect(translated.surfaces.map((surface) => surface.surfaceIndex)).toEqual([0, 1, 2])
     expect(combined.material?.name).toBe('Fiber')
     expect(measurements.measureVolume(combined.geometry)).toBeGreaterThan(0)
   })

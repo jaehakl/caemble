@@ -204,7 +204,10 @@ export function GeometryCatalog({
                 {selected.surfaces.length ? (
                   <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-6 text-muted-foreground">
                     {selected.surfaces.map((surface) => (
-                      <li key={surface}>{surface}</li>
+                      <li key={surface.index}>
+                        <span className="font-mono text-foreground">surface/{surface.index}</span> — {surface.label}.{' '}
+                        {surface.description}
+                      </li>
                     ))}
                   </ul>
                 ) : (

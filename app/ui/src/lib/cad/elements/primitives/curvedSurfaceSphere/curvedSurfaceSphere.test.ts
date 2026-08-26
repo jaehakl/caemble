@@ -78,7 +78,7 @@ describe('curved surface sphere geometry', () => {
     expect(bounds[0][0]).toBeCloseTo(2)
     expect(bounds[1][0]).toBeCloseTo(4)
     expect(translated.material?.name).toBe('Curved Sphere')
-    expect(translated.surfaces.map((surface) => surface.name)).toEqual(['Outer'])
+    expect(translated.surfaces.map((surface) => surface.surfaceIndex)).toEqual([0])
     expect(combined.material?.name).toBe('Curved Sphere')
     expect(measurements.measureVolume(combined.geometry)).toBeGreaterThan(0)
   })

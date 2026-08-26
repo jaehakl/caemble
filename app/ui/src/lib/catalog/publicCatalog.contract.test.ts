@@ -9,7 +9,7 @@ import {
   expectReliablePublicScene,
   inspectPublicExampleBundle,
 } from '@/test/publicExampleHarness'
-import { exampleExperiment, exampleExperimentKeys, exampleExperimentVersions } from './catalogTestData'
+import { exampleExperiment, exampleExperimentKeys } from './catalogTestData'
 
 installSyntheticCatalog({
   quantityKinds: [
@@ -79,20 +79,23 @@ describe('canonical public Experiment catalog', () => {
     )
   })
 
-  it('keeps ordinal-surface CAD API 9 versions readable while API 10 versions use semantic surfaces', () => {
+  it('keeps historical catalog versions readable while API 11 versions use numeric surfaces', () => {
     const legacy = exampleExperiment('dc-uniform-bar', '1.0.0')
-    const current = exampleExperiment('dc-uniform-bar', '2.0.0')
+    const semantic = exampleExperiment('dc-uniform-bar', '2.0.0')
+    const current = exampleExperiment('dc-uniform-bar', '3.0.0')
 
-    for (const cadApiVersion of [7, 8, 9, 10] as const) {
+    for (const cadApiVersion of [7, 8, 9, 10, 11] as const) {
       expect(experimentDetailSchema.parse({ ...legacy, cadApiVersion }).cadApiVersion).toBe(cadApiVersion)
     }
-    for (const cadApiVersion of [6, 11]) {
+    for (const cadApiVersion of [6, 12]) {
       expect(() => experimentDetailSchema.parse({ ...legacy, cadApiVersion })).toThrow()
     }
     expect(experimentDetailSchema.parse(legacy).cadApiVersion).toBe(9)
     expect(legacy.sourceBundle.files['experiment.tsx']).toContain('conductor.box/surface-1')
-    expect(experimentDetailSchema.parse(current).cadApiVersion).toBe(10)
-    expect(current.sourceBundle.files['experiment.tsx']).toContain('conductor.body/surface/%2BX')
+    expect(experimentDetailSchema.parse(semantic).cadApiVersion).toBe(10)
+    expect(semantic.sourceBundle.files['experiment.tsx']).toContain('conductor.body/surface/%2BX')
+    expect(experimentDetailSchema.parse(current).cadApiVersion).toBe(11)
+    expect(current.sourceBundle.files['experiment.tsx']).toContain('conductor.body/surface/1')
     expect(current.sourceBundle.files['experiment.tsx']).not.toMatch(/\/surface-[0-9]/u)
   })
 
@@ -101,7 +104,7 @@ describe('canonical public Experiment catalog', () => {
     const result = await evaluatePublicExampleBundle(item.sourceBundle)
     const manifest = result.simulationProgram
 
-    expect(item.cadApiVersion).toBe(exampleExperimentVersions[key] === '2.0.0' ? 10 : 9)
+    expect(item.cadApiVersion).toBe(11)
     expect(item.sourceFormatVersion).toBe(2)
     expect(item.bundleFormatVersion).toBe(6)
     expect(manifest).toMatchObject({

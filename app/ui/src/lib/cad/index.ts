@@ -21,6 +21,7 @@ export type {
   CadElementChildrenManifest,
   CadElementManifest,
   CadElementPropertyManifest,
+  CadElementSurfaceManifest,
 } from './evaluation/types'
 export { MAX_CANONICAL_GEOMETRY_TRIANGLES } from './evaluation/canonicalTypes'
 export type {
@@ -31,13 +32,13 @@ export type {
   CanonicalGeometryMaterialV1,
   CanonicalGeometryNodeV1,
   CanonicalGeometryRootV1,
-  CanonicalGeometrySceneV1,
+  CanonicalGeometrySceneV2,
   CanonicalInstanceNodeV1,
   CanonicalPrimitiveNameV1,
   CanonicalPrimitiveNodeV1,
   CanonicalShellNodeV1,
-  CanonicalSurfaceGroupV1,
-  CanonicalSurfaceSelectorV1,
+  CanonicalSurfaceGroupV2,
+  CanonicalSurfaceSelectorV2,
   CanonicalTransformNodeV1,
   CanonicalVec3V1,
 } from './evaluation/canonicalTypes'

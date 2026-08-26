@@ -51,7 +51,7 @@ describe('Experiment snapshot validation', () => {
       variables: { width: 4 },
       varsSchema: { width: { shape: [], min: 1, max: 10 } },
     })
-    expect(snapshot.scene.geometryFormatVersion).toBe(1)
+    expect(snapshot.scene.geometryFormatVersion).toBe(2)
     expect(snapshot.scene.roots.map((root) => root.node.kind)).toEqual(['primitive', 'transform'])
     expect(snapshot.scene.roots[0].material).toEqual(snapshot.scene.roots[1].material)
     expect(snapshot.renderScene.parts[0].geometry.kind).toBe('mesh')
@@ -66,7 +66,7 @@ describe('Experiment snapshot validation', () => {
         ...snapshot,
         varsSchema: { width: { min: 1, max: 10 } },
       }),
-    ).toThrow('shape is required by CAD API v10')
+    ).toThrow('shape is required by CAD API v11')
     expect(() =>
       assertEvaluatedDocumentSnapshot({
         ...snapshot,

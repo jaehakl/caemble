@@ -6,7 +6,7 @@ import { applyTransforms, normalizeTransforms } from './transforms'
 import { applyCadSceneGroups, type CadSceneGroupOptions } from './groups'
 import { canonicalPrimitiveNode } from './canonicalPrimitive'
 import { canonicalSurfaceMemberEntries, registerCanonicalGeometryScene } from './canonical'
-import type { CanonicalGeometryRootV1 } from './canonicalTypes'
+import type { CanonicalGeometryNodeV1, CanonicalGeometryRootV1 } from './canonicalTypes'
 import type {
   CadScene,
   CadSceneMaterial,
@@ -384,6 +384,12 @@ export function evaluateCadScene(
 
   const sceneMaterials = new Map<Material, CadSceneMaterial>()
   const canonicalRoots: CanonicalGeometryRootV1[] = []
+  const identifyRootShell = (node: CanonicalGeometryNodeV1, rootId: string): CanonicalGeometryNodeV1 => {
+    if (node.kind === 'transform' || node.kind === 'instance') {
+      return { ...node, child: identifyRootShell(node.child, rootId) }
+    }
+    return node.kind === 'shell' ? { ...node, nodeId: rootId } : node
+  }
   const parts: CadScenePart[] = evaluatedParts.map((part, partIndex) => {
     if (!part.surfaces || !part.ownerNodeKey || !part.resultNodeKey) {
       throw new CadModelError('CAD evaluation produced geometry without surface metadata.')
@@ -401,13 +407,14 @@ export function evaluateCadScene(
     const usesExactGeometryId = directPartCount === 1 && subtreePartCount === 1
     const id = usesExactGeometryId ? owner.globalId : `${owner.globalId}.$part-${directPartOrdinal}`
     const surfaces = part.surfaces.map((surface) => ({
-      id: `${id}/surface/${encodeURIComponent(surface.name)}`,
-      name: surface.name,
+      id: `${id}/surface/${surface.surfaceIndex}`,
+      surfaceIndex: surface.surfaceIndex,
+      label: surface.label,
       polygonIndices: [...surface.polygonIndices],
     }))
     const surfaceNodes = surfaces.map((surface) => ({
       key: `${part.resultNodeKey}/${surface.id}`,
-      label: surface.name,
+      label: `${surface.surfaceIndex} · ${surface.label}`,
       surfaceId: surface.id,
       children: [],
     }))
@@ -450,7 +457,7 @@ export function evaluateCadScene(
               ...(part.material.version === undefined ? {} : { version: part.material.version }),
             },
           }),
-      node: part.canonicalNode,
+      node: identifyRootShell(part.canonicalNode, id),
     })
 
     return {
@@ -471,7 +478,12 @@ export function evaluateCadScene(
     entries.forEach(({ memberId, selector }) => {
       const part = scene.parts.find((candidate) => candidate.id === selector.rootId)
       if (part && !part.surfaces.some((surface) => surface.id === memberId)) {
-        part.surfaces.push({ id: memberId, name: selector.faceKey, polygonIndices: [] })
+        part.surfaces.push({
+          id: memberId,
+          surfaceIndex: selector.surfaceIndex,
+          label: `Surface ${selector.surfaceIndex}`,
+          polygonIndices: [],
+        })
       }
     })
     return {

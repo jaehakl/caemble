@@ -5,7 +5,7 @@ import pytest
 import pytest_asyncio
 import warnings
 from caemble_catalog import Catalog
-from caemble_catalog.admin import create_draft, insert_experiment, refresh_derived_data, writable_connection
+from caemble_catalog.admin import create_draft
 from fastapi import FastAPI
 from pydantic import ValidationError
 
@@ -30,11 +30,11 @@ def test_experiment_catalog_contract_accepts_historical_and_current_cad_api_vers
             "dc-uniform-bar", namespace="caemble", repository="verified", version="1.0.0"
         )
 
-    for cad_api_version in (7, 8, 9, 10):
+    for cad_api_version in (7, 8, 9, 10, 11):
         assert ExperimentSummary.model_validate(
             {**experiment, "cadApiVersion": cad_api_version}
         ).cad_api_version == cad_api_version
-    for cad_api_version in (6, 11):
+    for cad_api_version in (6, 12):
         with pytest.raises(ValidationError):
             ExperimentSummary.model_validate({**experiment, "cadApiVersion": cad_api_version})
 
@@ -55,9 +55,9 @@ async def test_catalog_is_anonymous_cacheable_and_paginated(catalog_client: http
     meta = await catalog_client.get("/catalog/meta")
     assert meta.status_code == 200
     assert meta.json()["quantityKindCount"] == 1_216
-    assert meta.json()["schemaVersion"] == 6
+    assert meta.json()["schemaVersion"] == 7
     assert "geometryCount" not in meta.json()
-    assert meta.json()["experimentCount"] == 16
+    assert meta.json()["experimentCount"] == 28
     assert meta.json()["materialGlobalQualifiers"][0] == "temperature"
     assert "canonical_key" in meta.json()["materialDesignRules"]
     assert meta.headers["etag"].startswith('"')
@@ -125,13 +125,14 @@ async def test_example_experiments_are_public_filterable_and_cacheable(
     )
     assert experiments.status_code == 200
     assert [(item["key"], item["version"]) for item in experiments.json()["items"]] == [
+        ("electro-thermal-uniform-bar", "3.0.0"),
         ("electro-thermal-uniform-bar", "2.0.0"),
         ("electro-thermal-uniform-bar", "1.0.0"),
     ]
 
     detail = await catalog_client.get(
         "/catalog/experiments/dc-uniform-bar",
-        params={"namespace": "caemble", "repository": "verified", "version": "2.0.0"},
+        params={"namespace": "caemble", "repository": "verified", "version": "3.0.0"},
     )
     assert detail.status_code == 200, detail.text
     assert detail.json()["sourceBundle"]["formatVersion"] == 6
@@ -139,8 +140,8 @@ async def test_example_experiments_are_public_filterable_and_cacheable(
     assert detail.json()["coordinate"].startswith("caemble:experiment/caemble/")
     assert detail.json()["verification"]["kernelTasks"] == ["solveCurrent"]
     assert detail.json()["verification"]["fixture"]["records"][0]["name"] == "totalCurrent"
-    assert detail.json()["cadApiVersion"] == 10
-    assert "conductor.body/surface/%2BX" in detail.json()["sourceBundle"]["files"]["experiment.tsx"]
+    assert detail.json()["cadApiVersion"] == 11
+    assert "conductor.body/surface/1" in detail.json()["sourceBundle"]["files"]["experiment.tsx"]
 
     legacy = await catalog_client.get(
         "/catalog/experiments/dc-uniform-bar",
@@ -190,11 +191,6 @@ async def test_example_experiments_are_public_filterable_and_cacheable(
 async def test_experiment_detail_requires_full_identity_when_key_is_ambiguous(tmp_path):
     draft = tmp_path / "catalog.sqlite3"
     create_draft(draft)
-    with Catalog.open_readonly(draft, immutable=False) as catalog:
-        duplicate = {**catalog.experiment("basketball-goal"), "version": "2.0.0"}
-    with writable_connection(draft) as connection:
-        insert_experiment(connection, duplicate)
-    refresh_derived_data(draft)
 
     app = FastAPI()
     catalog = Catalog.open_readonly(draft, immutable=False)

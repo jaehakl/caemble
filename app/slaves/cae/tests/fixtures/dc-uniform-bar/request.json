@@ -6,7 +6,7 @@
       "kind": "measurement",
       "experiment": {
         "kind": "experiment",
-        "sourceHash": "a6bd8142afd214ae17e6c55286456a8e1678740f095cdb068e93f2ff2c4de698",
+        "sourceHash": "6c936ac2fe2c499e5ad4f5987c8926e7507eee5523d43bd82e934375f5956f48",
         "variables": {
           "conductorLength": 100,
           "conductorWidth": 5,
@@ -48,7 +48,7 @@
           }
         },
         "scene": {
-          "geometryFormatVersion": 1,
+          "geometryFormatVersion": 2,
           "lengthUnit": "mm",
           "roots": [
             {
@@ -92,13 +92,13 @@
               "name": "sourceTerminal",
               "kind": "surface",
               "memberIds": [
-                "conductor.body/surface/-X"
+                "conductor.body/surface/0"
               ],
               "selectors": [
                 {
                   "rootId": "conductor.body",
                   "sourceNodeId": "conductor.body",
-                  "faceKey": "-X"
+                  "surfaceIndex": 0
                 }
               ],
               "missingMemberIds": []
@@ -108,23 +108,23 @@
               "name": "referenceTerminal",
               "kind": "surface",
               "memberIds": [
-                "conductor.body/surface/%2BX"
+                "conductor.body/surface/1"
               ],
               "selectors": [
                 {
                   "rootId": "conductor.body",
                   "sourceNodeId": "conductor.body",
-                  "faceKey": "+X"
+                  "surfaceIndex": 1
                 }
               ],
               "missingMemberIds": []
             }
           ],
-          "geometryHash": "66f59045805a1dace9af72aa0aaac3977ab68f6cb0b6cef4622eeeaea67f5096"
+          "geometryHash": "2cb3033ce1aeb856f788f9fffb3f8226163ad518c929bc58bd76fae6d452eaa9"
         },
         "taskScenes": {
           "solveCurrent": {
-            "geometryFormatVersion": 1,
+            "geometryFormatVersion": 2,
             "lengthUnit": "mm",
             "roots": [
               {
@@ -172,7 +172,7 @@
             ],
             "geometryGroups": [],
             "surfaceGroups": [],
-            "geometryHash": "15b861e9ed9eb7a7d564c9081c9ce6d3d89e4974edfe729570b260a75c818aca"
+            "geometryHash": "9df6cbdb01a088d079caa9c2cd48ef61f9bb49b855656622c00020d440458605"
           }
         },
         "simulationProgram": {

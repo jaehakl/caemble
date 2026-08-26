@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "apiVersion": 10,
-  "declarationFingerprint": "268c9f497a91ab3eb6015108c1594201228d109efc1bf79cafc1e2cf5dbc90e4",
-  "core": "# Official CAD authoring grammar — API v10\nAuthority: Caemble app contract. Manuals: /docs?section=reference and /docs?section=geometry.\n\n## Complete experiment.tsx skeleton\n```tsx\nimport { experiment } from '@caemble/core'\nimport { Assembly } from './geometry'\n\nexport default experiment({\n  lengthUnit: 'mm',\n  varsSchema: {\n    baseWidth: { shape: [], min: 80, max: 120 },\n    baseDepth: { shape: [], min: 45, max: 75 },\n    baseHeight: { shape: [], min: 8, max: 12 },\n    postRadius: { shape: [], min: 3, max: 7 },\n    postHeight: { shape: [], min: 60, max: 100 },\n    braceWidth: { shape: [], min: 2, max: 6 },\n    braceLength: { shape: [], min: 30, max: 50 },\n    braceDepth: { shape: [], min: 2, max: 6 },\n    brace1PositionX: { shape: [], min: -25, max: -15 },\n    brace1PositionY: { shape: [], min: -10, max: 10 },\n    brace1PositionZ: { shape: [], min: 20, max: 40 },\n    brace2PositionX: { shape: [], min: 15, max: 25 },\n    brace2PositionY: { shape: [], min: -10, max: 10 },\n    brace2PositionZ: { shape: [], min: 20, max: 40 },\n  },\n  geometry: ({ vars }) => (\n    <Assembly\n      id=\"catalog-preview\"\n      baseSize={[vars.baseWidth, vars.baseDepth, vars.baseHeight]}\n      postRadius={vars.postRadius}\n      postHeight={vars.postHeight}\n      braceSize={[vars.braceWidth, vars.braceLength, vars.braceDepth]}\n      bracePositions={[\n        [vars.brace1PositionX, vars.brace1PositionY, vars.brace1PositionZ],\n        [vars.brace2PositionX, vars.brace2PositionY, vars.brace2PositionZ],\n      ]}\n    />\n  ),\n  recordedData: {},\n})\n```\n\n## Complete geometry.tsx skeleton\n```tsx\nimport { Box, Cylinder, type Geometry, type Vec3 } from '@caemble/core'\n\nexport const Assembly: Geometry<{\n  baseSize: Vec3\n  postRadius: number\n  postHeight: number\n  braceSize: Vec3\n  bracePositions: readonly [Vec3, Vec3]\n  includeBraces?: boolean\n}> = ({\n  baseSize = [100, 60, 10],\n  postRadius = 5,\n  postHeight = 80,\n  braceSize = [4, 40, 4],\n  bracePositions = [[-20, 0, 30], [20, 0, 30]],\n  includeBraces = true,\n}) => {\n  const braces: unknown[] = []\n  if (includeBraces) {\n    for (let index = 0; index < 2; index += 1) {\n      braces.push(<Box id={`brace-${index}`} size={braceSize} position={bracePositions[index]} />)\n    }\n  }\n\n  return (\n    <>\n      <Box id=\"base\" size={baseSize} position={[0, 0, baseSize[2] / 2]} />\n      <Cylinder\n        id=\"post\"\n        radius={postRadius}\n        height={postHeight}\n        position={[0, 0, baseSize[2] + postHeight / 2]}\n      />\n      {braces}\n    </>\n  )\n}\n```\n\n## Required rules\n- Every `varsSchema` entry is exactly `{ shape, min, max }`. Use `shape: []` for a scalar and a literal positive-safe-integer shape such as `[3]` or `[4, 4, 1]` for a tensor. `min` and `max` are finite scalar numbers applied uniformly to all elements; tensor bounds, inferred shapes, and broadcasting are invalid. A tensor shape may contain at most 65,536 elements.\n- New code uses only canonical v10 transforms: `position?: Vec3`, `rotation?: Vec3`, `scale?: Vec3`. Right-handed intrinsic XYZ Euler angles in radians, matching the Three/R3F default XYZ order. Effective order: scale, rotation, position.\n- Group transforms with lowercase `<translate offset={Vec3}>`, `<rotate axis={Vec3} angle={radians(degrees)}>`, and `<scale x={sx} y={sy} z={sz}>`; wrappers reject direct transform props.\n- Never generate `translation`. `pos` and `rotate` and lowercase primitive JSX are deprecated compatibility syntax; do not emit them. A node cannot mix canonical position/rotation with deprecated pos/rotate.\n- Omitted component/primitive IDs use lower-kebab names plus `-2`, `-3`; use explicit stable IDs for durable targets. Fragment has no `id`.\n- A topology-changing operation owns its result `id`; consumed operand IDs are not final solver targets. `array` keeps `$cell-x-y-z` instance identity.\n- `surfaceGroup` members use `<geometry-id>/surface/<URL-encoded-face-key>`. Give referenced primitive/Fiber leaves explicit stable IDs and use only face keys from the Element reference; Boolean results retain leaf provenance and a shell root exposes `inner`/`outer`. Never emit ordinal `/surface-N` members or aliases.\n- One Boolean node accepts at most 128 operands. Avoid expanding large lattices into nested Booleans because the deterministic triangle and triangle-pair work budgets reject unsafe scenes before Manifold evaluation.\n- Components inherit the parent Material role map when `materials` is omitted; an explicit map replaces it and `{}` clears it. Primitives consume the `body` role.\n- Boolean child order matters: `subtract` uses the first child as base and the rest as cutters. Follow each operation's child contract exactly.\n- Import PascalCase primitives and public APIs from `@caemble/core`; keep operation tags lowercase. Export PascalCase named `Geometry<Props>` components, never a default Geometry export.\n- Local `Geometry<Props>` functions use direct destructuring with an initializer for every custom prop; no `props.foo`, rest, computed, or nested patterns.\n- Primitive props are optional; omitted/`undefined` uses Catalog defaults. Operation props and child contracts stay required.\n- Bounded deterministic `for`, `map`, and `if` are supported. Use explicit loop IDs; prefer `array` for regular lattices.\n\n## Element index (canonical syntax)\n- `Box`: `<Box size={[x,y,z]} />`\n- `Cylinder`: `<Cylinder radius={r1} radius_2={r2} height={h} segments={32} />`\n- `CurvedEdgeCylinder`: `<CurvedEdgeCylinder height={h} azimuthalCurve={modes} verticalCurve={{origin,coefficients}} />`\n- `Sphere`: `<Sphere radius={r} segments={32} />`\n- `CurvedSurfaceSphere`: `<CurvedSurfaceSphere azimuthalCurve={modes} polarCurve={modes} />`\n- `Fiber`: `<Fiber from={p0} to={p1} radius={(s) => r} helix={{turns,phase,radius}} fourier={modes} />`\n- `translate`: `<translate offset={[x,y,z]}>Geometry...</translate>`\n- `rotate`: `<rotate axis={[x,y,z]} angle={radians(degrees)}>Geometry...</rotate>`\n- `scale`: `<scale x={sx} y={sy} z={sz}>Geometry...</scale>`\n- `shell`: `<shell offsets={{ inner: -1, outer: 1 }}>Geometry</shell>`\n- `array`: `<array shape={[nx,ny,nz]} period={[px,py,pz]} axes={{x,y,z}} inject={tensors}>Geometry</array>`\n- `union`: `<union>...</union>`\n- `subtract`: `<subtract>base cutter...</subtract>`\n- `intersect`: `<intersect>shapeA shapeB...</intersect>`",
+  "apiVersion": 11,
+  "declarationFingerprint": "e65ee4c238c8d8b40aa673635b758bd067a86370e0c4f9d59901d58a612bd971",
+  "core": "# Official CAD authoring grammar — API v11\nAuthority: Caemble app contract. Manuals: /docs?section=reference and /docs?section=geometry.\n\n## Complete experiment.tsx skeleton\n```tsx\nimport { experiment } from '@caemble/core'\nimport { Assembly } from './geometry'\n\nexport default experiment({\n  lengthUnit: 'mm',\n  varsSchema: {\n    baseWidth: { shape: [], min: 80, max: 120 },\n    baseDepth: { shape: [], min: 45, max: 75 },\n    baseHeight: { shape: [], min: 8, max: 12 },\n    postRadius: { shape: [], min: 3, max: 7 },\n    postHeight: { shape: [], min: 60, max: 100 },\n    braceWidth: { shape: [], min: 2, max: 6 },\n    braceLength: { shape: [], min: 30, max: 50 },\n    braceDepth: { shape: [], min: 2, max: 6 },\n    brace1PositionX: { shape: [], min: -25, max: -15 },\n    brace1PositionY: { shape: [], min: -10, max: 10 },\n    brace1PositionZ: { shape: [], min: 20, max: 40 },\n    brace2PositionX: { shape: [], min: 15, max: 25 },\n    brace2PositionY: { shape: [], min: -10, max: 10 },\n    brace2PositionZ: { shape: [], min: 20, max: 40 },\n  },\n  geometry: ({ vars }) => (\n    <Assembly\n      id=\"catalog-preview\"\n      baseSize={[vars.baseWidth, vars.baseDepth, vars.baseHeight]}\n      postRadius={vars.postRadius}\n      postHeight={vars.postHeight}\n      braceSize={[vars.braceWidth, vars.braceLength, vars.braceDepth]}\n      bracePositions={[\n        [vars.brace1PositionX, vars.brace1PositionY, vars.brace1PositionZ],\n        [vars.brace2PositionX, vars.brace2PositionY, vars.brace2PositionZ],\n      ]}\n    />\n  ),\n  recordedData: {},\n})\n```\n\n## Complete geometry.tsx skeleton\n```tsx\nimport { Box, Cylinder, type Geometry, type Vec3 } from '@caemble/core'\n\nexport const Assembly: Geometry<{\n  baseSize: Vec3\n  postRadius: number\n  postHeight: number\n  braceSize: Vec3\n  bracePositions: readonly [Vec3, Vec3]\n  includeBraces?: boolean\n}> = ({\n  baseSize = [100, 60, 10],\n  postRadius = 5,\n  postHeight = 80,\n  braceSize = [4, 40, 4],\n  bracePositions = [[-20, 0, 30], [20, 0, 30]],\n  includeBraces = true,\n}) => {\n  const braces: unknown[] = []\n  if (includeBraces) {\n    for (let index = 0; index < 2; index += 1) {\n      braces.push(<Box id={`brace-${index}`} size={braceSize} position={bracePositions[index]} />)\n    }\n  }\n\n  return (\n    <>\n      <Box id=\"base\" size={baseSize} position={[0, 0, baseSize[2] / 2]} />\n      <Cylinder\n        id=\"post\"\n        radius={postRadius}\n        height={postHeight}\n        position={[0, 0, baseSize[2] + postHeight / 2]}\n      />\n      {braces}\n    </>\n  )\n}\n```\n\n## Required rules\n- Every `varsSchema` entry is exactly `{ shape, min, max }`. Use `shape: []` for a scalar and a literal positive-safe-integer shape such as `[3]` or `[4, 4, 1]` for a tensor. `min` and `max` are finite scalar numbers applied uniformly to all elements; tensor bounds, inferred shapes, and broadcasting are invalid. A tensor shape may contain at most 65,536 elements.\n- New code uses only canonical v11 transforms: `position?: Vec3`, `rotation?: Vec3`, `scale?: Vec3`. Right-handed intrinsic XYZ Euler angles in radians, matching the Three/R3F default XYZ order. Effective order: scale, rotation, position.\n- Group transforms with lowercase `<translate offset={Vec3}>`, `<rotate axis={Vec3} angle={radians(degrees)}>`, and `<scale x={sx} y={sy} z={sz}>`; wrappers reject direct transform props.\n- Never generate `translation`. `pos` and `rotate` and lowercase primitive JSX are deprecated compatibility syntax; do not emit them. A node cannot mix canonical position/rotation with deprecated pos/rotate.\n- Omitted component/primitive IDs use lower-kebab names plus `-2`, `-3`; use explicit stable IDs for durable targets. Fragment has no `id`.\n- A topology-changing operation owns its result `id`; consumed operand IDs are not final solver targets. `array` keeps `$cell-x-y-z` instance identity.\n- `surfaceGroup` members use `<geometry-id>/surface/<non-negative-index>`. Give referenced primitive/Fiber leaves explicit stable IDs and use the fixed numeric slots from the Element reference. Transforms and Boolean results retain source slots; a shell root exposes slot 0 for inner and slot 1 for outer. Never emit `/surface-N`, names, URL encoding, or aliases.\n- One Boolean node accepts at most 128 operands. Avoid expanding large lattices into nested Booleans because the deterministic triangle and triangle-pair work budgets reject unsafe scenes before Manifold evaluation.\n- Components inherit the parent Material role map when `materials` is omitted; an explicit map replaces it and `{}` clears it. Primitives consume the `body` role.\n- Boolean child order matters: `subtract` uses the first child as base and the rest as cutters. Follow each operation's child contract exactly.\n- Import PascalCase primitives and public APIs from `@caemble/core`; keep operation tags lowercase. Export PascalCase named `Geometry<Props>` components, never a default Geometry export.\n- Local `Geometry<Props>` functions use direct destructuring with an initializer for every custom prop; no `props.foo`, rest, computed, or nested patterns.\n- Primitive props are optional; omitted/`undefined` uses Catalog defaults. Operation props and child contracts stay required.\n- Bounded deterministic `for`, `map`, and `if` are supported. Use explicit loop IDs; prefer `array` for regular lattices.\n\n## Element index (canonical syntax)\n- `Box`: `<Box size={[x,y,z]} />`\n- `Cylinder`: `<Cylinder radius={r1} radius_2={r2} height={h} segments={32} />`\n- `CurvedEdgeCylinder`: `<CurvedEdgeCylinder height={h} azimuthalCurve={modes} verticalCurve={{origin,coefficients}} />`\n- `Sphere`: `<Sphere radius={r} segments={32} />`\n- `CurvedSurfaceSphere`: `<CurvedSurfaceSphere azimuthalCurve={modes} polarCurve={modes} />`\n- `Fiber`: `<Fiber from={p0} to={p1} radius={(s) => r} helix={{turns,phase,radius}} fourier={modes} />`\n- `translate`: `<translate offset={[x,y,z]}>Geometry...</translate>`\n- `rotate`: `<rotate axis={[x,y,z]} angle={radians(degrees)}>Geometry...</rotate>`\n- `scale`: `<scale x={sx} y={sy} z={sz}>Geometry...</scale>`\n- `shell`: `<shell offsets={{ inner: -1, outer: 1 }}>Geometry</shell>`\n- `array`: `<array shape={[nx,ny,nz]} period={[px,py,pz]} axes={{x,y,z}} inject={tensors}>Geometry</array>`\n- `union`: `<union>...</union>`\n- `subtract`: `<subtract>base cutter...</subtract>`\n- `intersect`: `<intersect>shapeA shapeB...</intersect>`",
   "elements": [
     {
       "tag": "box",
@@ -34,12 +34,36 @@
       },
       "origin": "기하 중심이 원점에 있고 모서리는 좌표축과 평행합니다.",
       "surfaces": [
-        "-X",
-        "+X",
-        "-Y",
-        "+Y",
-        "Bottom",
-        "Top"
+        {
+          "index": 0,
+          "label": "Local -X",
+          "description": "회전 전 Box 로컬 좌표계의 -X 면입니다."
+        },
+        {
+          "index": 1,
+          "label": "Local +X",
+          "description": "회전 전 Box 로컬 좌표계의 +X 면입니다."
+        },
+        {
+          "index": 2,
+          "label": "Local -Y",
+          "description": "회전 전 Box 로컬 좌표계의 -Y 면입니다."
+        },
+        {
+          "index": 3,
+          "label": "Local +Y",
+          "description": "회전 전 Box 로컬 좌표계의 +Y 면입니다."
+        },
+        {
+          "index": 4,
+          "label": "Local -Z",
+          "description": "회전 전 Box 로컬 좌표계의 -Z 면입니다."
+        },
+        {
+          "index": 5,
+          "label": "Local +Z",
+          "description": "회전 전 Box 로컬 좌표계의 +Z 면입니다."
+        }
       ],
       "example": "<Box id=\"backboard\" size={[180, 5, 100]} position={[0, 200, 280]} />"
     },
@@ -97,9 +121,21 @@
       },
       "origin": "중심이 원점에 있고 기본 축은 +Z이며 양 끝은 z = ±height/2에 있습니다.",
       "surfaces": [
-        "Bottom",
-        "Side",
-        "Top"
+        {
+          "index": 0,
+          "label": "Bottom",
+          "description": "로컬 -Z 끝 cap입니다. 반지름이 0이면 존재하지 않습니다."
+        },
+        {
+          "index": 1,
+          "label": "Side",
+          "description": "축을 둘러싼 옆면입니다."
+        },
+        {
+          "index": 2,
+          "label": "Top",
+          "description": "로컬 +Z 끝 cap입니다. 반지름이 0이면 존재하지 않습니다."
+        }
       ],
       "example": "<Cylinder id=\"pole\" radius={3} height={300} position={[0, 0, 150]} />"
     },
@@ -164,9 +200,21 @@
       },
       "origin": "중심이 원점에 있고 기본 축은 +Z이며 양 끝은 z = ±height/2에 있습니다.",
       "surfaces": [
-        "Bottom",
-        "Side",
-        "Top"
+        {
+          "index": 0,
+          "label": "Bottom",
+          "description": "로컬 -Z 끝 cap입니다."
+        },
+        {
+          "index": 1,
+          "label": "Side",
+          "description": "곡률이 적용된 옆면입니다."
+        },
+        {
+          "index": 2,
+          "label": "Top",
+          "description": "로컬 +Z 끝 cap입니다."
+        }
       ],
       "example": "<CurvedEdgeCylinder id=\"body\" height={20} azimuthalCurve={[{ amplitude: 5, phase: 0 }]} verticalCurve={{ origin: 0, coefficients: [1] }} />"
     },
@@ -207,7 +255,11 @@
       },
       "origin": "구의 중심이 원점에 있습니다.",
       "surfaces": [
-        "Outer"
+        {
+          "index": 0,
+          "label": "Outer",
+          "description": "구의 바깥쪽 표면입니다."
+        }
       ],
       "example": "<Sphere id=\"ball\" radius={12} position={[0, 0, 12]} />"
     },
@@ -264,7 +316,11 @@
       },
       "origin": "변형된 구면의 중심이 원점에 있고 극축은 +Z입니다.",
       "surfaces": [
-        "Outer"
+        {
+          "index": 0,
+          "label": "Outer",
+          "description": "곡률이 적용된 구의 바깥쪽 표면입니다."
+        }
       ],
       "example": "<CurvedSurfaceSphere id=\"particle\" azimuthalCurve={[{ amplitude: 5, phase: 0 }]} polarCurve={[{ amplitude: 1, phase: 0 }]} />"
     },
@@ -372,9 +428,21 @@
       },
       "origin": "from/to 또는 basePath가 정의한 좌표를 그대로 사용하며 별도의 중심 보정은 하지 않습니다.",
       "surfaces": [
-        "Start cap",
-        "Side",
-        "End cap"
+        {
+          "index": 0,
+          "label": "Start cap",
+          "description": "Fiber path의 시작 단면입니다."
+        },
+        {
+          "index": 1,
+          "label": "Side",
+          "description": "Fiber path를 따라 생성된 옆면입니다."
+        },
+        {
+          "index": 2,
+          "label": "End cap",
+          "description": "Fiber path의 끝 단면입니다."
+        }
       ],
       "example": "<Fiber id=\"strand\" from={[0, 0, 0]} to={[0, 0, 20]} radius={1} />"
     },
@@ -406,9 +474,7 @@
         "description": "동일한 상대 이동을 적용할 Geometry를 한 개 이상 받습니다."
       },
       "origin": "child의 local 좌표계를 유지한 채 offset만큼 이동합니다.",
-      "surfaces": [
-        "child-defined"
-      ],
+      "surfaces": [],
       "example": "<translate id=\"moved\" offset={[20, 0, 0]}><Box id=\"body\" size={[10, 10, 10]} /></translate>"
     },
     {
@@ -447,9 +513,7 @@
         "description": "동일한 axis-angle 회전을 적용할 Geometry를 한 개 이상 받습니다."
       },
       "origin": "wrapper local 원점을 중심으로 오른손 axis-angle 회전을 적용합니다.",
-      "surfaces": [
-        "child-defined"
-      ],
+      "surfaces": [],
       "example": "<rotate id=\"turned\" axis={[0, 0, 1]} angle={radians(90)}><Box id=\"body\" size={[10, 20, 5]} /></rotate>"
     },
     {
@@ -495,9 +559,7 @@
         "description": "동일한 축별 배율을 적용할 Geometry를 한 개 이상 받습니다."
       },
       "origin": "wrapper local 원점을 중심으로 X, Y, Z축 배율을 적용합니다.",
-      "surfaces": [
-        "child-defined"
-      ],
+      "surfaces": [],
       "example": "<scale id=\"stretched\" x={2} y={1} z={1}><Box id=\"body\" size={[10, 10, 10]} /></scale>"
     },
     {
@@ -531,9 +593,16 @@
       },
       "origin": "자식 좌표를 유지한 채 생성된 shell 결과에 이 element의 transform을 적용합니다.",
       "surfaces": [
-        "Surface 1",
-        "Surface 2",
-        "…"
+        {
+          "index": 0,
+          "label": "Inner",
+          "description": "각 shell layer의 안쪽 경계입니다."
+        },
+        {
+          "index": 1,
+          "label": "Outer",
+          "description": "각 shell layer의 바깥쪽 경계입니다."
+        }
       ],
       "example": "<shell id=\"coating\" offsets={{ inner: -1, outer: 1 }}><Sphere radius={10} /></shell>"
     },
@@ -589,9 +658,7 @@
         "description": "id가 있는 Geometry component 또는 intrinsic CAD element를 정확히 하나 받습니다."
       },
       "origin": "전체 array가 원점 주위에 중심 정렬되며 cell identity에는 $cell-x-y-z가 붙습니다.",
-      "surfaces": [
-        "child-defined"
-      ],
+      "surfaces": [],
       "example": "<array id=\"posts\" shape={[3, 1, 1]} period={[20, 0, 0]}><Cylinder id=\"post\" radius={2} height={30} /></array>"
     },
     {
@@ -613,11 +680,7 @@
         "description": "같은 Material instance와 role을 가진 하나 이상의 solid를 받습니다."
       },
       "origin": "자식 좌표를 유지한 채 결과에 이 element의 transform을 적용합니다.",
-      "surfaces": [
-        "Surface 1",
-        "Surface 2",
-        "…"
-      ],
+      "surfaces": [],
       "example": "<union id=\"body\"><Box size={[10, 10, 10]} /><Cylinder radius={3} height={14} /></union>"
     },
     {
@@ -641,11 +704,7 @@
         "description": "첫 Geometry의 각 solid가 base이고 이후 하나 이상의 유효한 solid가 cutter입니다."
       },
       "origin": "자식 좌표를 유지한 채 결과에 이 element의 transform을 적용합니다.",
-      "surfaces": [
-        "Surface 1",
-        "Surface 2",
-        "…"
-      ],
+      "surfaces": [],
       "example": "<subtract id=\"notched\"><Box size={[20, 10, 6]} /><Box size={[4, 10, 3]} /></subtract>"
     },
     {
@@ -667,14 +726,10 @@
         "description": "같은 Material instance와 role을 가지며 교차시킬 두 개 이상의 solid를 받습니다."
       },
       "origin": "자식 좌표를 유지한 채 결과에 이 element의 transform을 적용합니다.",
-      "surfaces": [
-        "Surface 1",
-        "Surface 2",
-        "…"
-      ],
+      "surfaces": [],
       "example": "<intersect id=\"overlap\"><Box size={[10, 10, 10]} /><Sphere radius={7} /></intersect>"
     }
   ],
-  "referenceHash": "ae29c406759f3a105d7fdae68f5d450bac4695192ec4781a1ad0b8483d8ffe5c",
-  "promptToolVersion": "caemble-ai-agent-v4-ae29c406759f"
+  "referenceHash": "cd1e8ab5182196065a3a1e55409937385c405f980eb2298aca56bd5462abd221",
+  "promptToolVersion": "caemble-ai-agent-v4-cd1e8ab51821"
 }

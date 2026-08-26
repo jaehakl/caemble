@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 from dataclasses import dataclass
 from decimal import Decimal
@@ -21,13 +22,13 @@ from app.solver_framework.geometry.models import ShellLayerGeometry, TrianglePro
 from app.solver_framework.units import convert_ucum_value
 
 _BACKEND_VERSION = "manifold3d-3.5.1"
-_MESHING_PROFILE = "canonical-v1"
+_MESHING_PROFILE = "canonical-v2"
 
 
 @dataclass(frozen=True, slots=True)
 class _CompiledGeometry:
     solid: manifold.Manifold
-    provenance: dict[tuple[int, int], tuple[str, str]]
+    provenance: dict[tuple[int, int], tuple[str, int]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,7 +189,7 @@ class GeometryService:
         linear = outer_matrix[:3, :3] * scale
         reverses_orientation = float(np.linalg.det(linear)) < 0
 
-        def boundary(offset: float, face_key: str) -> TriangularMesh:
+        def boundary(offset: float, surface_index: int) -> TriangularMesh:
             points = data.boundaries[offset] + data.world_center
             homogeneous = np.concatenate((points, np.ones((len(points), 1))), axis=1)
             vertices = (homogeneous @ outer_matrix.T)[:, :3] * scale
@@ -200,15 +201,15 @@ class GeometryService:
             vertices.setflags(write=False)
             triangles.setflags(write=False)
             provenance = tuple(
-                TriangleProvenance(root_id, shell["nodeId"], face_key)
+                TriangleProvenance(root_id, shell["nodeId"], surface_index)
                 for _ in range(len(triangles))
             )
             return TriangularMesh(vertices, triangles, provenance)
 
         inner_offset = float(shell["innerOffset"])
         outer_offset = float(shell["outerOffset"])
-        inner = boundary(inner_offset, "inner")
-        outer = boundary(outer_offset, "outer")
+        inner = boundary(inner_offset, 0)
+        outer = boundary(outer_offset, 1)
         inner_triangles = inner.vertices[inner.triangles]
         outer_triangles = outer.vertices[outer.triangles]
         inner_normals = np.cross(
@@ -241,7 +242,10 @@ class GeometryService:
         )
         if len(separations) == 0 or np.any(~np.isfinite(separations)) or np.any(separations <= 0):
             raise CaeError("invalid_geometry", f"shell root {root_id!r} has invalid physical thickness")
-        family_id = shell["nodeId"].rsplit("/$layer-", 1)[0]
+        family_id = json.dumps(
+            [shell["child"]["nodeId"], outer_matrix.tolist()],
+            separators=(",", ":"),
+        )
         result = ShellLayerGeometry(
             root_id=root_id,
             family_id=family_id,
@@ -286,21 +290,21 @@ def _compile_node(node: dict[str, Any], context: manifold.ExecutionContext) -> _
         elif primitive == "sphere":
             solid = manifold.Manifold.sphere(parameters["radius"], parameters["segments"])
         elif primitive == "curvedEdgeCylinder":
-            vertices, triangles, face_keys = _curved_edge_cylinder(parameters)
-            return _from_indexed(vertices, triangles, face_keys, node["nodeId"], context)
+            vertices, triangles, surface_indices = _curved_edge_cylinder(parameters)
+            return _from_indexed(vertices, triangles, surface_indices, node["nodeId"], context)
         else:
             vertices, triangles = _curved_surface_sphere(parameters)
             return _from_indexed(
                 vertices,
                 triangles,
-                ["Outer"] * triangles.shape[0],
+                [0] * triangles.shape[0],
                 node["nodeId"],
                 context,
             )
         return _primitive(solid, node["nodeId"], primitive, parameters, context)
     if kind == "fiber":
-        vertices, triangles, face_keys = _fiber(node)
-        return _from_indexed(vertices, triangles, face_keys, node["nodeId"], context)
+        vertices, triangles, surface_indices = _fiber(node)
+        return _from_indexed(vertices, triangles, surface_indices, node["nodeId"], context)
     if kind in {"transform", "instance"}:
         child = _compile_node(node["child"], context)
         matrix = node["matrix"]
@@ -321,9 +325,9 @@ def _compile_node(node: dict[str, Any], context: manifold.ExecutionContext) -> _
         }[node["operation"]]
         solid = manifold.Manifold.batch_boolean([child.solid for child in children], operation)
         provenance = {
-            item: semantic
+            item: provenance
             for child in children
-            for item, semantic in child.provenance.items()
+            for item, provenance in child.provenance.items()
         }
         return _CompiledGeometry(solid, provenance)
     child = _compile_node(node["child"], context)
@@ -344,31 +348,29 @@ def _primitive(
     triangles = np.asarray(output.tri_verts, dtype=np.int64)
     face_ids = np.asarray(output.face_id, dtype=np.uint64)
     original_id = int(output.run_original_id[0])
-    result: dict[tuple[int, int], tuple[str, str]] = {}
+    result: dict[tuple[int, int], tuple[str, int]] = {}
     for index, triangle in enumerate(triangles):
         if primitive in {"sphere", "curvedSurfaceSphere"}:
-            face_key = "Outer"
+            surface_index = 0
         else:
             points = vertices[triangle]
             normal = np.cross(points[1] - points[0], points[2] - points[0])
             normal /= np.linalg.norm(normal)
             if primitive == "box":
                 axis = int(np.argmax(np.abs(normal)))
-                face_key = (
-                    ("-X", "+X") if axis == 0 else ("-Y", "+Y") if axis == 1 else ("Bottom", "Top")
-                )[int(normal[axis] > 0)]
+                surface_index = axis * 2 + int(normal[axis] > 0)
             else:
                 height = abs(parameters["height"])
                 tolerance = min(max(height * 1e-10, 1e-12), height / 4)
                 if np.all(np.abs(points[:, 2] + height / 2) <= tolerance):
-                    face_key = "Bottom"
+                    surface_index = 0
                 elif np.all(np.abs(points[:, 2] - height / 2) <= tolerance):
-                    face_key = "Top"
+                    surface_index = 2
                 else:
-                    face_key = "Side"
+                    surface_index = 1
         key = (original_id, int(face_ids[index]))
-        previous = result.setdefault(key, (node_id, face_key))
-        if previous != (node_id, face_key):
+        previous = result.setdefault(key, (node_id, surface_index))
+        if previous != (node_id, surface_index):
             raise CaeError("invalid_geometry", f"{primitive} {node_id!r} has ambiguous surface provenance")
     return _CompiledGeometry(solid, result)
 
@@ -376,7 +378,7 @@ def _primitive(
 def _from_indexed(
     vertices: np.ndarray[Any, Any],
     triangles: np.ndarray[Any, Any],
-    face_keys: list[str],
+    surface_indices: list[int],
     node_id: str,
     context: manifold.ExecutionContext,
 ) -> _CompiledGeometry:
@@ -396,10 +398,10 @@ def _from_indexed(
             f"geometry node {node_id!r} exceeds the Float32 indexed-mesh precision envelope",
         )
 
-    semantics: dict[str, int] = {}
-    face_ids = np.empty(len(face_keys), dtype=np.uint64)
-    for index, face_key in enumerate(face_keys):
-        face_ids[index] = semantics.setdefault(face_key, len(semantics))
+    face_ids_by_surface: dict[int, int] = {}
+    face_ids = np.empty(len(surface_indices), dtype=np.uint64)
+    for index, surface_index in enumerate(surface_indices):
+        face_ids[index] = face_ids_by_surface.setdefault(surface_index, len(face_ids_by_surface))
     mesh = manifold.Mesh64(
         np.ascontiguousarray(vertices, dtype=np.float64),
         np.ascontiguousarray(triangles, dtype=np.uint64),
@@ -416,7 +418,10 @@ def _from_indexed(
     original_id = int(output.run_original_id[0])
     return _CompiledGeometry(
         solid,
-        {(original_id, face_id): (node_id, face_key) for face_key, face_id in semantics.items()},
+        {
+            (original_id, face_id): (node_id, surface_index)
+            for surface_index, face_id in face_ids_by_surface.items()
+        },
     )
 
 
@@ -443,7 +448,7 @@ def _check_solid(solid: manifold.Manifold, context: manifold.ExecutionContext, l
 
 def _output_provenance(
     output: manifold.Mesh64,
-    semantic_by_face: dict[tuple[int, int], tuple[str, str]],
+    provenance_by_face: dict[tuple[int, int], tuple[str, int]],
     root_id: str,
 ) -> tuple[TriangleProvenance, ...]:
     triangle_count = len(output.face_id)
@@ -451,10 +456,10 @@ def _output_provenance(
     run_index = np.asarray(output.run_index, dtype=np.int64) // 3
     for run, original_id in enumerate(output.run_original_id):
         for triangle_index in range(int(run_index[run]), int(run_index[run + 1])):
-            semantic = semantic_by_face.get((int(original_id), int(output.face_id[triangle_index])))
-            if semantic is None:
-                raise CaeError("invalid_geometry", "Manifold output lost semantic surface provenance")
-            result[triangle_index] = TriangleProvenance(root_id, semantic[0], semantic[1])
+            provenance = provenance_by_face.get((int(original_id), int(output.face_id[triangle_index])))
+            if provenance is None:
+                raise CaeError("invalid_geometry", "Manifold output lost surface provenance")
+            result[triangle_index] = TriangleProvenance(root_id, provenance[0], provenance[1])
     if any(item is None for item in result):
         raise CaeError("invalid_geometry", "Manifold output has an incomplete provenance run")
     return tuple(item for item in result if item is not None)
@@ -462,7 +467,7 @@ def _output_provenance(
 
 def _curved_edge_cylinder(
     parameters: dict[str, Any],
-) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], list[str]]:
+) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], list[int]]:
     azimuthal_segments = parameters["azimuthalSegments"]
     vertical_segments = parameters["verticalSegments"]
     height = parameters["height"]
@@ -488,14 +493,14 @@ def _curved_edge_cylinder(
     top_center = len(vertices)
     vertices.append([0.0, 0.0, height / 2])
     triangles: list[list[int]] = []
-    face_keys: list[str] = []
+    surface_indices: list[int] = []
     for azimuthal_index in range(azimuthal_segments):
         following = (azimuthal_index + 1) % azimuthal_segments
         triangles.append([bottom_center, following, azimuthal_index])
-        face_keys.append("Bottom")
+        surface_indices.append(0)
         top_start = vertical_segments * azimuthal_segments
         triangles.append([top_center, top_start + azimuthal_index, top_start + following])
-        face_keys.append("Top")
+        surface_indices.append(2)
     for vertical_index in range(vertical_segments):
         lower = vertical_index * azimuthal_segments
         upper = lower + azimuthal_segments
@@ -505,8 +510,8 @@ def _curved_edge_cylinder(
                 ([lower + azimuthal_index, lower + following, upper + following],
                  [lower + azimuthal_index, upper + following, upper + azimuthal_index])
             )
-            face_keys.extend(("Side", "Side"))
-    return np.asarray(vertices), np.asarray(triangles, dtype=np.uint64), face_keys
+            surface_indices.extend((1, 1))
+    return np.asarray(vertices), np.asarray(triangles, dtype=np.uint64), surface_indices
 
 
 def _curved_surface_sphere(
@@ -557,7 +562,7 @@ def _curved_surface_sphere(
     return np.asarray(vertices), np.asarray(triangles, dtype=np.uint64)
 
 
-def _fiber(node: dict[str, Any]) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], list[str]]:
+def _fiber(node: dict[str, Any]) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], list[int]]:
     segments = node["radialSegments"]
     vertices: list[list[float]] = []
     for path_index, point in enumerate(node["points"]):
@@ -578,14 +583,14 @@ def _fiber(node: dict[str, Any]) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, 
     end_center = len(vertices)
     vertices.append(list(node["points"][-1]))
     triangles: list[list[int]] = []
-    face_keys: list[str] = []
+    surface_indices: list[int] = []
     for radial_index in range(segments):
         following = (radial_index + 1) % segments
         triangles.append([start_center, following, radial_index])
-        face_keys.append("Start cap")
+        surface_indices.append(0)
         end_start = (len(node["points"]) - 1) * segments
         triangles.append([end_center, end_start + radial_index, end_start + following])
-        face_keys.append("End cap")
+        surface_indices.append(2)
     for path_index in range(len(node["points"]) - 1):
         lower = path_index * segments
         upper = lower + segments
@@ -595,8 +600,8 @@ def _fiber(node: dict[str, Any]) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, 
                 ([lower + radial_index, lower + following, upper + following],
                  [lower + radial_index, upper + following, upper + radial_index])
             )
-            face_keys.extend(("Side", "Side"))
-    return np.asarray(vertices), np.asarray(triangles, dtype=np.uint64), face_keys
+            surface_indices.extend((1, 1))
+    return np.asarray(vertices), np.asarray(triangles, dtype=np.uint64), surface_indices
 
 
 def _direct_shell(node: dict[str, Any]) -> tuple[dict[str, Any], np.ndarray[Any, Any]] | None:
@@ -733,8 +738,8 @@ def _shell(
     shell_output = solid.to_mesh64()
     original_id = int(shell_output.run_original_id[0])
     provenance = {
-        (original_id, 0): (shell_node_id, "inner"),
-        (original_id, 1): (shell_node_id, "outer"),
+        (original_id, 0): (shell_node_id, 0),
+        (original_id, 1): (shell_node_id, 1),
     }
     return _CompiledGeometry(solid, provenance)
 

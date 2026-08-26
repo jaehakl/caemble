@@ -106,28 +106,28 @@ export type CanonicalGeometryGroupV1 = Readonly<{
   missingMemberIds: readonly string[]
 }>
 
-export type CanonicalSurfaceSelectorV1 = Readonly<{
+export type CanonicalSurfaceSelectorV2 = Readonly<{
   rootId: string
   sourceNodeId: string
-  faceKey: string
+  surfaceIndex: number
 }>
 
-export type CanonicalSurfaceGroupV1 = Readonly<{
+export type CanonicalSurfaceGroupV2 = Readonly<{
   id: string
   name: string
   kind: 'surface'
   memberIds: readonly string[]
-  selectors: readonly CanonicalSurfaceSelectorV1[]
+  selectors: readonly CanonicalSurfaceSelectorV2[]
   missingMemberIds: readonly string[]
 }>
 
-export type CanonicalGeometrySceneV1 = Readonly<{
-  geometryFormatVersion: 1
+export type CanonicalGeometrySceneV2 = Readonly<{
+  geometryFormatVersion: 2
   geometryHash: string
   lengthUnit: UcumUnit
   roots: readonly CanonicalGeometryRootV1[]
   geometryGroups: readonly CanonicalGeometryGroupV1[]
-  surfaceGroups: readonly CanonicalSurfaceGroupV1[]
+  surfaceGroups: readonly CanonicalSurfaceGroupV2[]
 }>
 
-export type CanonicalGeometrySceneDraftV1 = Omit<CanonicalGeometrySceneV1, 'geometryHash'>
+export type CanonicalGeometrySceneDraftV2 = Omit<CanonicalGeometrySceneV2, 'geometryHash'>

@@ -43,7 +43,7 @@ function measurementFixture() {
     },
   }
   const scene = {
-    geometryFormatVersion: 1,
+    geometryFormatVersion: 2,
     geometryHash: 'c'.repeat(64),
     lengthUnit: 'mm',
     roots: [

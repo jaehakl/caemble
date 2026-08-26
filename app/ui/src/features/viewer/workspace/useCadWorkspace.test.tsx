@@ -59,7 +59,7 @@ const unresolvedScene = serializeCadScene({
   tree: { children: [], key: 'root', label: 'Root' },
 })
 const canonicalScene = {
-  geometryFormatVersion: 1 as const,
+  geometryFormatVersion: 2 as const,
   geometryHash: 'c'.repeat(64),
   lengthUnit: 'mm',
   roots: [],

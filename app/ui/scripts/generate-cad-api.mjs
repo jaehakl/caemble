@@ -203,8 +203,18 @@ async function validateElementManifest() {
       typeof manifest.origin !== 'string' ||
       !manifest.origin.trim() ||
       !Array.isArray(manifest.surfaces) ||
-      manifest.surfaces.length === 0 ||
-      manifest.surfaces.some((surface) => typeof surface !== 'string' || !surface.trim()) ||
+      (manifest.category === 'primitive' && manifest.surfaces.length === 0) ||
+      manifest.surfaces.some(
+        (surface) =>
+          !surface ||
+          !Number.isSafeInteger(surface.index) ||
+          surface.index < 0 ||
+          typeof surface.label !== 'string' ||
+          !surface.label.trim() ||
+          typeof surface.description !== 'string' ||
+          !surface.description.trim(),
+      ) ||
+      new Set(manifest.surfaces.map((surface) => surface.index)).size !== manifest.surfaces.length ||
       typeof manifest.example !== 'string' ||
       !manifest.example.includes(`<${element.authoringName}`)
     ) {

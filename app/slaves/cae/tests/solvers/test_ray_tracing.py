@@ -458,7 +458,7 @@ async def test_shell_threshold_is_strict_and_applied_per_canonical_layer():
         },
     ]
     scene = {
-        "geometryFormatVersion": 1,
+        "geometryFormatVersion": 2,
         "geometryHash": "b" * 64,
         "lengthUnit": "m",
         "roots": roots,
@@ -590,7 +590,7 @@ async def test_reverse_incidence_prefers_coincident_thin_stack_over_substrate_su
         },
     ]
     scene = {
-        "geometryFormatVersion": 1,
+        "geometryFormatVersion": 2,
         "geometryHash": "e" * 64,
         "lengthUnit": "m",
         "roots": roots,
@@ -628,7 +628,7 @@ async def test_surface_source_modes_launch_from_an_outside_domain_locator(method
         },
     }
     scene = {
-        "geometryFormatVersion": 1,
+        "geometryFormatVersion": 2,
         "geometryHash": method.encode().hex().ljust(64, "0")[:64],
         "lengthUnit": "m",
         "roots": [source],
@@ -638,8 +638,8 @@ async def test_surface_source_modes_launch_from_an_outside_domain_locator(method
                 "id": "@surface-group/emitter",
                 "name": "emitter",
                 "kind": "surface",
-                "memberIds": ["emitter/surface/+X"],
-                "selectors": [{"rootId": "emitter", "sourceNodeId": "emitter-box", "faceKey": "+X"}],
+                "memberIds": ["emitter/surface/1"],
+                "selectors": [{"rootId": "emitter", "sourceNodeId": "emitter-box", "surfaceIndex": 1}],
                 "missingMemberIds": [],
             }
         ],
@@ -746,7 +746,7 @@ async def test_point_source_reaches_detector_and_returns_path_bundle():
         },
     ]
     scene = {
-        "geometryFormatVersion": 1,
+        "geometryFormatVersion": 2,
         "geometryHash": "a" * 64,
         "lengthUnit": "m",
         "roots": roots,
@@ -773,8 +773,8 @@ async def test_point_source_reaches_detector_and_returns_path_bundle():
                 "id": "@surface-group/detector",
                 "name": "detector",
                 "kind": "surface",
-                "memberIds": ["detector/surface/-X"],
-                "selectors": [{"rootId": "detector", "sourceNodeId": "detector-box", "faceKey": "-X"}],
+                "memberIds": ["detector/surface/0"],
+                "selectors": [{"rootId": "detector", "sourceNodeId": "detector-box", "surfaceIndex": 0}],
                 "missingMemberIds": [],
             }
         ],

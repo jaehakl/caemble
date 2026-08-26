@@ -48,10 +48,10 @@ The orchestration routes, WebRTC framing, handler names, record acknowledgements
 and terminal responses remain v1. The application payload of
 `cae.simulation.start` has an intentional geometry hard cut: a BuiltMeasurement
 must use the exact `{ formatVersion: 2, measurement, solverContracts }` envelope
-and contain Canonical Geometry scene v1, not UI-rendered mesh arrays. Legacy
+and contain Canonical Geometry scene v2, not UI-rendered mesh arrays. Legacy
 unversioned mesh payloads are rejected and there is no format negotiation or
 automatic surface alias. Third-party CAE clients must migrate their request
-serializer and use semantic surface members before sending a new job.
+serializer and use CAD API v11 numeric surface members before sending a new job.
 
 ## Authentication and ownership
 

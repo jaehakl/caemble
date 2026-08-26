@@ -27,26 +27,26 @@ class FakeWorker {
 
 const sourceHash = 'a'.repeat(64)
 const compiled: CompiledCadDocument = {
-  apiVersion: 10,
+  apiVersion: 11,
   compilerVersion: CAD_COMPILER_VERSION,
   sourceHash,
   sources: {
     'experiment.tsx': {
-      apiVersion: 10,
+      apiVersion: 11,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'experiment.tsx',
       code: '',
       sourceHash,
     },
     'geometry.tsx': {
-      apiVersion: 10,
+      apiVersion: 11,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'geometry.tsx',
       code: '',
       sourceHash,
     },
     'material.tsx': {
-      apiVersion: 10,
+      apiVersion: 11,
       compilerVersion: CAD_COMPILER_VERSION,
       entryFile: 'material.tsx',
       code: '',
@@ -74,7 +74,7 @@ const emptySceneContent = {
 }
 const emptyRenderScene = { sceneHash: cadSceneHash(emptySceneContent), ...emptySceneContent }
 const emptyScene = {
-  geometryFormatVersion: 1 as const,
+  geometryFormatVersion: 2 as const,
   geometryHash: '925303f4dbe17be213b13881dbe3c16d804347ad95db75560fcab454731f3a76',
   lengthUnit: 'mm' as const,
   roots: [],

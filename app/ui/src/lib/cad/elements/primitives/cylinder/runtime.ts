@@ -35,20 +35,18 @@ export const cylinderDefinition = {
     })
   },
   createSurfaces(geometry) {
-    const groups = {
-      Bottom: [] as number[],
-      Side: [] as number[],
-      Top: [] as number[],
-    }
+    const groups = [
+      { surfaceIndex: 0, label: 'Bottom', polygonIndices: [] as number[] },
+      { surfaceIndex: 1, label: 'Side', polygonIndices: [] as number[] },
+      { surfaceIndex: 2, label: 'Top', polygonIndices: [] as number[] },
+    ]
     geometries.geom3.toPolygons(geometry as ReturnType<typeof geometries.geom3.create>).forEach((polygon, index) => {
       const normalZ = geometries.poly3.plane(polygon)[2]
-      if (Math.abs(normalZ + 1) < 1e-10) groups.Bottom.push(index)
-      else if (Math.abs(normalZ - 1) < 1e-10) groups.Top.push(index)
-      else groups.Side.push(index)
+      if (Math.abs(normalZ + 1) < 1e-10) groups[0].polygonIndices.push(index)
+      else if (Math.abs(normalZ - 1) < 1e-10) groups[2].polygonIndices.push(index)
+      else groups[1].polygonIndices.push(index)
     })
 
-    return Object.entries(groups)
-      .filter(([, polygonIndices]) => polygonIndices.length > 0)
-      .map(([name, polygonIndices]) => ({ name, polygonIndices }))
+    return groups.filter(({ polygonIndices }) => polygonIndices.length > 0)
   },
 } satisfies PrimitiveElementDefinition<'cylinder'>

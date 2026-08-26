@@ -23,7 +23,7 @@ def box_world():
         },
     }
     scene = {
-        "geometryFormatVersion": 1,
+        "geometryFormatVersion": 2,
         "geometryHash": "a" * 64,
         "lengthUnit": "m",
         "roots": [part],
@@ -42,16 +42,16 @@ def box_world():
                 "id": "@surface-group/sourceTerminal",
                 "name": "sourceTerminal",
                 "kind": "surface",
-                "memberIds": ["conductor/surface/-X"],
-                "selectors": [{"rootId": "conductor", "sourceNodeId": "conductor", "faceKey": "-X"}],
+                "memberIds": ["conductor/surface/0"],
+                "selectors": [{"rootId": "conductor", "sourceNodeId": "conductor", "surfaceIndex": 0}],
                 "missingMemberIds": [],
             },
             {
                 "id": "@surface-group/referenceTerminal",
                 "name": "referenceTerminal",
                 "kind": "surface",
-                "memberIds": ["conductor/surface/%2BX"],
-                "selectors": [{"rootId": "conductor", "sourceNodeId": "conductor", "faceKey": "+X"}],
+                "memberIds": ["conductor/surface/1"],
+                "selectors": [{"rootId": "conductor", "sourceNodeId": "conductor", "surfaceIndex": 1}],
                 "missingMemberIds": [],
             },
         ],
@@ -59,7 +59,7 @@ def box_world():
     return {
         "experiment": scene,
         "task": {
-            "geometryFormatVersion": 1,
+            "geometryFormatVersion": 2,
             "geometryHash": "b" * 64,
             "lengthUnit": "m",
             "roots": [],

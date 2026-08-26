@@ -35,7 +35,7 @@ describe('CAD registry contracts', () => {
 
   it('keeps complete element metadata separate from the shared identity and transform contract', () => {
     expect(cadAuthoringContract).toMatchObject({
-      apiVersion: 10,
+      apiVersion: 11,
       identity: { name: 'id', pathExample: 'goal.pole' },
       transforms: { applicationOrder: ['scale', 'rotation', 'position'] },
     })
@@ -44,7 +44,12 @@ describe('CAD registry contracts', () => {
       expect(manifest.keywords.length).toBeGreaterThan(0)
       expect(manifest.children.description).not.toBe('')
       expect(manifest.origin).not.toBe('')
-      expect(manifest.surfaces.length).toBeGreaterThan(0)
+      if (manifest.surfaces.length > 0) {
+        expect(manifest.surfaces.length).toBeGreaterThan(0)
+        expect(manifest.surfaces.map(({ index }) => index)).toEqual(
+          [...manifest.surfaces.map(({ index }) => index)].sort((left, right) => left - right),
+        )
+      }
       expect(manifest.example).toContain(`<${manifest.authoringName}`)
       expect(manifest.properties.every((property) => !commonProperties.has(property.name))).toBe(true)
       if (manifest.category === 'primitive') {

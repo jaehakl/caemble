@@ -257,7 +257,7 @@ def payload():
         "    return result[\"state\"]\n"
     )
     scene_draft = {
-        "geometryFormatVersion": 1,
+        "geometryFormatVersion": 2,
         "lengthUnit": "m",
         "roots": [],
         "geometryGroups": [],
@@ -420,7 +420,7 @@ async def test_start_caps_unique_geometry_roots_across_all_scenes_before_run_cre
 
     def large_scene(node_id):
         draft = {
-            "geometryFormatVersion": 1,
+            "geometryFormatVersion": 2,
             "lengthUnit": "m",
             "roots": [
                 {
@@ -464,7 +464,7 @@ async def test_start_caps_unique_boolean_work_across_all_scenes_before_run_creat
 
     def boolean_scene(prefix):
         draft = {
-            "geometryFormatVersion": 1,
+            "geometryFormatVersion": 2,
             "lengthUnit": "m",
             "roots": [
                 {

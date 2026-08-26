@@ -80,7 +80,7 @@ describe('curved edge cylinder geometry', () => {
     expect(bounds[0][0]).toBeCloseTo(2)
     expect(bounds[1][0]).toBeCloseTo(4)
     expect(translated.material?.name).toBe('Curved Cylinder')
-    expect(translated.surfaces.map((surface) => surface.name)).toEqual(['Bottom', 'Side', 'Top'])
+    expect(translated.surfaces.map((surface) => surface.surfaceIndex)).toEqual([0, 1, 2])
     expect(combined.material?.name).toBe('Curved Cylinder')
     expect(measurements.measureVolume(combined.geometry)).toBeGreaterThan(0)
   })

@@ -32,21 +32,23 @@ const exampleExperimentRepositories: Record<(typeof exampleExperimentKeys)[numbe
   'electro-thermal-uniform-bar': 'verified',
 }
 
-export const exampleExperimentVersions: Record<(typeof exampleExperimentKeys)[number], '1.0.0' | '2.0.0'> = {
-  'basketball-goal': '1.0.0',
-  'fiber-bundle': '1.0.0',
-  'shell-cutaways': '1.0.0',
-  'random-curved-edge-cylinder-array': '1.0.0',
-  'random-curved-surface-sphere-hcp-array': '1.0.0',
-  'geometry-authoring-skeleton': '1.0.0',
-  'two-material-wheel-assembly': '1.0.0',
-  'dc-uniform-bar': '2.0.0',
-  'dc-notched-current-density': '2.0.0',
-  'dc-resolution-study': '2.0.0',
-  'electro-thermal-uniform-bar': '2.0.0',
+export const exampleExperimentVersions: Record<(typeof exampleExperimentKeys)[number], '2.0.0' | '3.0.0'> = {
+  'basketball-goal': '2.0.0',
+  'fiber-bundle': '2.0.0',
+  'shell-cutaways': '2.0.0',
+  'random-curved-edge-cylinder-array': '2.0.0',
+  'random-curved-surface-sphere-hcp-array': '2.0.0',
+  'geometry-authoring-skeleton': '2.0.0',
+  'two-material-wheel-assembly': '2.0.0',
+  'dc-uniform-bar': '3.0.0',
+  'dc-notched-current-density': '3.0.0',
+  'dc-resolution-study': '3.0.0',
+  'electro-thermal-uniform-bar': '3.0.0',
 }
 
-function catalogQuery(key: (typeof exampleExperimentKeys)[number], version: '1.0.0' | '2.0.0') {
+type ExampleVersion = '1.0.0' | '2.0.0' | '3.0.0'
+
+function catalogQuery(key: (typeof exampleExperimentKeys)[number], version: ExampleVersion) {
   const repository = exampleExperimentRepositories[key]
   const cacheKey = `caemble:experiment/caemble/${repository}/${key}@${version}`
   if (cached.has(cacheKey)) return cached.get(cacheKey)
@@ -81,7 +83,7 @@ function catalogQuery(key: (typeof exampleExperimentKeys)[number], version: '1.0
 
 export function exampleExperiment(
   key: (typeof exampleExperimentKeys)[number],
-  version: '1.0.0' | '2.0.0' = exampleExperimentVersions[key],
+  version: ExampleVersion = exampleExperimentVersions[key],
 ) {
   const value = catalogQuery(key, version) as CatalogExperimentDetail
   assertExperimentSourceBundle(value.sourceBundle)

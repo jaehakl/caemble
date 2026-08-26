@@ -13,7 +13,7 @@ import {
 } from '../source/moduleResolution'
 
 export const CAD_COMPILER_VERSION =
-  `monaco-${CAEMBLE_MONACO_VERSION}-api-10-${CAD_API_DECLARATION_FINGERPRINT}-experiment-bundle-v1` as const
+  `monaco-${CAEMBLE_MONACO_VERSION}-api-11-${CAD_API_DECLARATION_FINGERPRINT}-experiment-bundle-v1` as const
 
 export type CadDiagnostic = Readonly<{
   code: number | string

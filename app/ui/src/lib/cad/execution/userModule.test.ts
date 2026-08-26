@@ -48,7 +48,7 @@ async function compiledDocument(
       .filter(([path]) => path.endsWith('.ts') || path.endsWith('.tsx'))
       .map(async ([entryFile, source]) => {
         const compiled: CompiledCadSource = {
-          apiVersion: 10,
+          apiVersion: 11,
           compilerVersion: CAD_COMPILER_VERSION,
           entryFile,
           code: await compile(source, entryFile),
@@ -57,7 +57,7 @@ async function compiledDocument(
         return [entryFile, compiled] as const
       }),
   )
-  return { apiVersion: 10, compilerVersion: CAD_COMPILER_VERSION, sourceHash, sources: Object.fromEntries(entries) }
+  return { apiVersion: 11, compilerVersion: CAD_COMPILER_VERSION, sourceHash, sources: Object.fromEntries(entries) }
 }
 
 describe('compiled Experiment bundle execution', () => {
@@ -210,7 +210,7 @@ export default experiment({ lengthUnit: 'mm', varsSchema: {}, geometry: () => <b
     expect(result.simulationProgram.tasks).toEqual({})
   })
 
-  it('reads API 7-9 bundles but rejects ordinal surface ids when they are executed', async () => {
+  it('keeps API 7-10 catalog history out of the CAD API 11 compiler', async () => {
     const bundle = createExperimentSourceBundle({
       'experiment.tsx': `import { experiment } from '@caemble/core'
 export default experiment({
@@ -219,22 +219,17 @@ export default experiment({
 })`,
       'simulate.py': 'async def simulate(*, sim, tasks, vars):\n    return None\n',
     })
-    for (const apiVersion of [7, 8, 9] as const) {
+    for (const apiVersion of [7, 8, 9, 10] as const) {
       expect(() =>
         assertCadSourceDocument({ kind: 'experiment', formatVersion: 2, apiVersion, sourceBundle: bundle }),
-      ).not.toThrow()
+      ).toThrow('Only Experiment source format version 2 and API version 11 are supported.')
     }
 
-    const compiled = await compiledDocument(bundle.files, '7'.repeat(64))
-    expect(() => executeCompiledDocument(compiled, {}, bundle.files['simulate.py'])).toThrow(
-      'uses removed ordinal surface syntax. CAD API 10 requires <geometry-id>/surface/<face-key>',
-    )
-
-    const semanticBundle = createExperimentSourceBundle({
+    const numericBundle = createExperimentSourceBundle({
       ...bundle.files,
-      'experiment.tsx': bundle.files['experiment.tsx'].replace('body/surface-1', 'body/surface/-X'),
+      'experiment.tsx': bundle.files['experiment.tsx'].replace('body/surface-1', 'body/surface/0'),
     })
-    const semantic = await compiledDocument(semanticBundle.files, '6'.repeat(64))
-    expect(() => executeCompiledDocument(semantic, {}, semanticBundle.files['simulate.py'])).not.toThrow()
+    const numeric = await compiledDocument(numericBundle.files, '6'.repeat(64))
+    expect(() => executeCompiledDocument(numeric, {}, numericBundle.files['simulate.py'])).not.toThrow()
   })
 })

@@ -6,7 +6,6 @@ import math
 import re
 from decimal import Decimal
 from typing import Any
-from urllib.parse import quote, unquote
 
 from app.errors import CaeError
 from app.solver_framework.geometry.complexity import (
@@ -20,19 +19,19 @@ from app.solver_framework.geometry.complexity import (
 from app.solver_framework.units import convert_ucum_value
 
 _HASH = re.compile(r"^[0-9a-f]{64}$")
-_ORDINAL_SURFACE = re.compile(r"(?:^|/)surface-\d+$")
-_PRIMITIVE_FACES = {
-    "box": {"-X", "+X", "-Y", "+Y", "Bottom", "Top"},
-    "cylinder": {"Bottom", "Side", "Top"},
-    "sphere": {"Outer"},
-    "curvedEdgeCylinder": {"Bottom", "Side", "Top"},
-    "curvedSurfaceSphere": {"Outer"},
+_PRIMITIVE_SURFACES = {
+    "box": {0, 1, 2, 3, 4, 5},
+    "cylinder": {0, 1, 2},
+    "sphere": {0},
+    "curvedEdgeCylinder": {0, 1, 2},
+    "curvedSurfaceSphere": {0},
 }
 _MAX_ROOTS = 10_000
 _MAX_NODES = 100_000
 _MAX_NODE_DEPTH = 128
 _MAX_ARRAY_ITEMS = 1_000_000
 _MAX_SEGMENTS = 65_536
+_MAX_SAFE_INTEGER = 9_007_199_254_740_991
 
 
 def validate_canonical_geometry_scene(value: Any, path: str) -> None:
@@ -45,9 +44,9 @@ def validate_canonical_geometry_scene(value: Any, path: str) -> None:
         "surfaceGroups",
     }
     if not isinstance(value, dict) or set(value) != expected:
-        raise CaeError("invalid_input", f"{path} must be an exact CanonicalGeometrySceneV1")
-    if value.get("geometryFormatVersion") != 1 or isinstance(value["geometryFormatVersion"], bool):
-        raise CaeError("invalid_input", f"{path}.geometryFormatVersion must be 1")
+        raise CaeError("invalid_input", f"{path} must be an exact CanonicalGeometrySceneV2")
+    if value.get("geometryFormatVersion") != 2 or isinstance(value["geometryFormatVersion"], bool):
+        raise CaeError("invalid_input", f"{path}.geometryFormatVersion must be 2")
     if not isinstance(value.get("geometryHash"), str) or _HASH.fullmatch(value["geometryHash"]) is None:
         raise CaeError("invalid_input", f"{path}.geometryHash is invalid")
     if not isinstance(value.get("lengthUnit"), str) or not value["lengthUnit"]:
@@ -69,7 +68,7 @@ def validate_canonical_geometry_scene(value: Any, path: str) -> None:
         raise CaeError("invalid_input", f"{path} groups must be arrays")
 
     roots: dict[str, dict[str, Any]] = {}
-    root_nodes: dict[str, dict[str, set[str]]] = {}
+    root_nodes: dict[str, dict[str, set[int]]] = {}
     node_count = [0]
     scene_triangle_count = 0
     scene_boolean_work = 0
@@ -87,14 +86,14 @@ def validate_canonical_geometry_scene(value: Any, path: str) -> None:
         if "material" in root:
             _validate_material(root["material"], f"{root_path}.material")
         node_ids: set[str] = set()
-        faces: dict[str, set[str]] = {}
-        _validate_node(root.get("node"), f"{root_path}.node", node_ids, faces, node_count, 1)
+        surfaces: dict[str, set[int]] = {}
+        _validate_node(root.get("node"), f"{root_path}.node", node_ids, surfaces, node_count, 1)
         enforce_triangle_limit(root["node"], f"{root_path}.node")
         root_boolean_work = enforce_boolean_work_limit(root["node"], f"{root_path}.node")
         scene_triangle_count += estimated_triangle_count(root["node"])
         scene_boolean_work = min(MAX_BOOLEAN_WORK + 1, scene_boolean_work + root_boolean_work)
         roots[root_id] = root
-        root_nodes[root_id] = faces
+        root_nodes[root_id] = surfaces
     if scene_triangle_count > MAX_TRIANGLES:
         raise CaeError(
             "resource_limit",
@@ -148,11 +147,8 @@ def validate_canonical_geometry_scene(value: Any, path: str) -> None:
         missing_ids = _string_array(group.get("missingMemberIds"), f"{group_path}.missingMemberIds")
         if not set(missing_ids).issubset(member_ids):
             raise CaeError("invalid_input", f"{group_path}.missingMemberIds must be a subset of memberIds")
-        if any(_ORDINAL_SURFACE.search(member_id) for member_id in member_ids + missing_ids):
-            raise CaeError(
-                "invalid_input",
-                f"{group_path} uses an ordinal /surface-N id; migrate the Geometry to semantic surfaces",
-            )
+        if any(_surface_member(member_id) is None for member_id in member_ids):
+            raise CaeError("invalid_input", f"{group_path}.memberIds must use canonical /surface/<index> references")
         selectors = group.get("selectors")
         if not isinstance(selectors, list) or len(selectors) > _MAX_ARRAY_ITEMS:
             raise CaeError("invalid_input", f"{group_path}.selectors is invalid")
@@ -163,21 +159,26 @@ def validate_canonical_geometry_scene(value: Any, path: str) -> None:
                 "invalid_input",
                 f"{group_path}.selectors must positionally match non-missing memberIds",
             )
-        selector_triples: set[tuple[str, str, str]] = set()
+        selector_triples: set[tuple[str, str, int]] = set()
         for selector_index, selector in enumerate(selectors):
             selector_path = f"{group_path}.selectors[{selector_index}]"
-            if not isinstance(selector, dict) or set(selector) != {"rootId", "sourceNodeId", "faceKey"}:
+            if not isinstance(selector, dict) or set(selector) != {"rootId", "sourceNodeId", "surfaceIndex"}:
                 raise CaeError("invalid_input", f"{selector_path} fields are invalid")
             root_id = _non_empty_string(selector.get("rootId"), f"{selector_path}.rootId")
             source_node_id = _non_empty_string(selector.get("sourceNodeId"), f"{selector_path}.sourceNodeId")
-            face_key = _non_empty_string(selector.get("faceKey"), f"{selector_path}.faceKey")
-            if _ORDINAL_SURFACE.search(face_key):
-                raise CaeError("invalid_input", f"{selector_path}.faceKey must be semantic")
+            surface_index = selector.get("surfaceIndex")
+            if (
+                not isinstance(surface_index, int)
+                or isinstance(surface_index, bool)
+                or surface_index < 0
+                or surface_index > _MAX_SAFE_INTEGER
+            ):
+                raise CaeError("invalid_input", f"{selector_path}.surfaceIndex must be a non-negative safe integer")
             if root_id not in roots:
                 raise CaeError("invalid_input", f"{selector_path}.rootId references a missing root")
-            if face_key not in root_nodes[root_id].get(source_node_id, set()):
-                raise CaeError("invalid_input", f"{selector_path} does not identify a semantic leaf face")
-            triple = (root_id, source_node_id, face_key)
+            if surface_index not in root_nodes[root_id].get(source_node_id, set()):
+                raise CaeError("invalid_input", f"{selector_path} does not identify a source surface slot")
+            triple = (root_id, source_node_id, surface_index)
             if triple in selector_triples:
                 raise CaeError("invalid_input", f"{group_path}.selectors must not contain duplicates")
             selector_triples.add(triple)
@@ -185,17 +186,10 @@ def validate_canonical_geometry_scene(value: Any, path: str) -> None:
             if member is None:
                 raise CaeError(
                     "invalid_input",
-                    f"{group_path}.memberIds must use <sourceNodeId>/surface/<encoded-faceKey>",
+                    f"{group_path}.memberIds must use <sourceNodeId>/surface/<surfaceIndex>",
                 )
-            member_source_node_id, member_face_key = member
-            shell_boundary = _root_shell_boundary(roots[root_id]["node"])
-            shell_alias = (
-                member_source_node_id == root_id
-                and member_face_key in {"inner", "outer"}
-                and shell_boundary is not None
-                and shell_boundary["nodeId"] == source_node_id
-            )
-            if member_face_key != face_key or (member_source_node_id != source_node_id and not shell_alias):
+            member_source_node_id, member_surface_index = member
+            if member_surface_index != surface_index or member_source_node_id != source_node_id:
                 raise CaeError(
                     "invalid_input",
                     f"{selector_path} must positionally match its authored surface member",
@@ -211,24 +205,17 @@ def canonical_geometry_hash(scene_without_hash: dict[str, Any]) -> str:
     return hashlib.sha256(_canonical_json(scene_without_hash).encode("utf-8")).hexdigest()
 
 
-def _surface_member(member_id: str) -> tuple[str, str] | None:
+def _surface_member(member_id: str) -> tuple[str, int] | None:
     marker = "/surface/"
     marker_index = member_id.rfind(marker)
     if marker_index <= 0 or marker_index + len(marker) == len(member_id):
         return None
     source_node_id = member_id[:marker_index]
-    face_key = unquote(member_id[marker_index + len(marker) :])
-    encoded_face_key = quote(face_key, safe="-_.!~*'()")
-    if not face_key or f"{source_node_id}{marker}{encoded_face_key}" != member_id:
+    raw_surface_index = member_id[marker_index + len(marker) :]
+    if re.fullmatch(r"(?:0|[1-9]\d*)", raw_surface_index) is None:
         return None
-    return source_node_id, face_key
-
-
-def _root_shell_boundary(node: dict[str, Any]) -> dict[str, Any] | None:
-    candidate = node
-    while candidate["kind"] in {"transform", "instance"}:
-        candidate = candidate["child"]
-    return candidate if candidate["kind"] == "shell" else None
+    surface_index = int(raw_surface_index)
+    return (source_node_id, surface_index) if surface_index <= _MAX_SAFE_INTEGER else None
 
 
 def _validate_material(value: Any, path: str) -> None:
@@ -249,7 +236,7 @@ def _validate_node(
     value: Any,
     path: str,
     node_ids: set[str],
-    faces: dict[str, set[str]],
+    surfaces: dict[str, set[int]],
     node_count: list[int],
     depth: int,
 ) -> None:
@@ -267,18 +254,18 @@ def _validate_node(
         if set(value) != {"kind", "nodeId", "primitive", "parameters"}:
             raise CaeError("invalid_input", f"{path} primitive fields are invalid")
         primitive = value.get("primitive")
-        if primitive not in _PRIMITIVE_FACES:
+        if primitive not in _PRIMITIVE_SURFACES:
             raise CaeError("invalid_input", f"{path}.primitive is unsupported")
         _validate_primitive_parameters(primitive, value.get("parameters"), f"{path}.parameters")
         if primitive == "cylinder":
             parameters = value["parameters"]
-            faces[node_id] = {
-                "Side",
-                *(["Bottom"] if parameters["radius"] > 0 else []),
-                *(["Top"] if parameters["radius_2"] > 0 else []),
+            surfaces[node_id] = {
+                1,
+                *([0] if parameters["radius"] > 0 else []),
+                *([2] if parameters["radius_2"] > 0 else []),
             }
         else:
-            faces[node_id] = _PRIMITIVE_FACES[primitive]
+            surfaces[node_id] = _PRIMITIVE_SURFACES[primitive]
         return
     if kind == "fiber":
         if set(value) != {"kind", "nodeId", "points", "radii", "frames", "radialSegments"}:
@@ -306,7 +293,7 @@ def _validate_node(
             for key in ("tangent", "normal", "binormal"):
                 _vector(frame[key], f"{path}.frames[{index}].{key}")
         _segment_count(value.get("radialSegments"), 3, f"{path}.radialSegments")
-        faces[node_id] = {"Start cap", "Side", "End cap"}
+        surfaces[node_id] = {0, 1, 2}
         return
     if kind in {"transform", "instance"}:
         expected = {"kind", "nodeId", "matrix", "child"}
@@ -317,7 +304,7 @@ def _validate_node(
         if kind == "instance":
             _non_empty_string(value.get("instanceId"), f"{path}.instanceId")
         _matrix(value.get("matrix"), f"{path}.matrix")
-        _validate_node(value.get("child"), f"{path}.child", node_ids, faces, node_count, depth + 1)
+        _validate_node(value.get("child"), f"{path}.child", node_ids, surfaces, node_count, depth + 1)
         return
     if kind == "boolean":
         if set(value) != {"kind", "nodeId", "operation", "children"}:
@@ -333,7 +320,7 @@ def _validate_node(
                 f"{path}.children may contain at most {MAX_BOOLEAN_OPERANDS} Boolean operands",
             )
         for index, child in enumerate(children):
-            _validate_node(child, f"{path}.children[{index}]", node_ids, faces, node_count, depth + 1)
+            _validate_node(child, f"{path}.children[{index}]", node_ids, surfaces, node_count, depth + 1)
         return
     if kind == "shell":
         if set(value) != {"kind", "nodeId", "innerOffset", "outerOffset", "child"}:
@@ -342,11 +329,11 @@ def _validate_node(
         outer = _finite_number(value.get("outerOffset"), f"{path}.outerOffset")
         if inner >= outer:
             raise CaeError("invalid_input", f"{path} shell innerOffset must be less than outerOffset")
-        faces_before_child = set(faces)
-        _validate_node(value.get("child"), f"{path}.child", node_ids, faces, node_count, depth + 1)
-        for descendant_node_id in set(faces) - faces_before_child:
-            del faces[descendant_node_id]
-        faces[node_id] = {"inner", "outer"}
+        surfaces_before_child = set(surfaces)
+        _validate_node(value.get("child"), f"{path}.child", node_ids, surfaces, node_count, depth + 1)
+        for descendant_node_id in set(surfaces) - surfaces_before_child:
+            del surfaces[descendant_node_id]
+        surfaces[node_id] = {0, 1}
         return
     raise CaeError("invalid_input", f"{path}.kind is unsupported")
 

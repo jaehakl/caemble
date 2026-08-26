@@ -41,7 +41,8 @@ export function cadSceneHash(scene: Omit<SerializableCadScene, 'sceneHash'>) {
           surface.polygonIndices instanceof Uint32Array
             ? {
                 id: surface.id,
-                name: surface.name,
+                surfaceIndex: surface.surfaceIndex,
+                label: surface.label,
                 polygonIndices: { kind: 'uint32', length: surface.polygonIndices.length },
               }
             : surface,
@@ -162,9 +163,12 @@ export function assertSerializableCadScene(value: unknown): asserts value is Ser
         surface === null ||
         Array.isArray(surface) ||
         typeof surface.id !== 'string' ||
-        typeof surface.name !== 'string' ||
+        !Number.isSafeInteger(surface.surfaceIndex) ||
+        surface.surfaceIndex < 0 ||
+        typeof surface.label !== 'string' ||
+        !surface.label.trim() ||
         (!Array.isArray(surface.polygonIndices) && !(surface.polygonIndices instanceof Uint32Array)) ||
-        Object.keys(surface).some((key) => !['id', 'name', 'polygonIndices'].includes(key)) ||
+        Object.keys(surface).some((key) => !['id', 'surfaceIndex', 'label', 'polygonIndices'].includes(key)) ||
         surface.polygonIndices.some(
           (index) => !Number.isSafeInteger(index) || index < 0 || index >= mesh.polygonOffsets.length - 1,
         )

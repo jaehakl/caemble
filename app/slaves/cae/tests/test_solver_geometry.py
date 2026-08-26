@@ -1,4 +1,3 @@
-import copy
 from collections import Counter
 
 import pytest
@@ -14,7 +13,7 @@ from app.solver_framework.geometry import (
 
 def canonical_scene(node, *, selectors=()):
     draft = {
-        "geometryFormatVersion": 1,
+        "geometryFormatVersion": 2,
         "lengthUnit": "m",
         "roots": [{"id": "body", "materialRole": "body", "node": node}],
         "geometryGroups": [
@@ -33,7 +32,7 @@ def canonical_scene(node, *, selectors=()):
                 "name": "terminals",
                 "kind": "surface",
                 "memberIds": [
-                    f"{selector['sourceNodeId']}/surface/{selector['faceKey']}"
+                    f"{selector['sourceNodeId']}/surface/{selector['surfaceIndex']}"
                     for selector in selectors
                 ],
                 "selectors": list(selectors),
@@ -53,17 +52,22 @@ def box_node(node_id="box"):
     }
 
 
-def test_canonical_geometry_scene_v1_validates_exact_schema_and_semantic_selectors():
-    selector = {"rootId": "body", "sourceNodeId": "box", "faceKey": "-X"}
+def test_canonical_geometry_scene_v2_validates_exact_schema_and_numeric_selectors():
+    selector = {"rootId": "body", "sourceNodeId": "box", "surfaceIndex": 0}
     scene = canonical_scene(box_node(), selectors=(selector,))
 
     validate_canonical_geometry_scene(scene, "scene")
 
-    with pytest.raises(CaeError, match="ordinal /surface-N"):
+    with pytest.raises(CaeError, match="canonical /surface/<index>"):
         invalid = canonical_scene(box_node())
         invalid["surfaceGroups"][0]["memberIds"] = ["box/surface-0"]
         validate_canonical_geometry_scene(invalid, "scene")
-    with pytest.raises(CaeError, match="CanonicalGeometrySceneV1"):
+    with pytest.raises(CaeError, match="canonical /surface/<index>"):
+        invalid = canonical_scene(box_node())
+        invalid["surfaceGroups"][0]["memberIds"] = ["box/surface/9007199254740992"]
+        invalid["surfaceGroups"][0]["missingMemberIds"] = ["box/surface/9007199254740992"]
+        validate_canonical_geometry_scene(invalid, "scene")
+    with pytest.raises(CaeError, match="CanonicalGeometrySceneV2"):
         validate_canonical_geometry_scene({"parts": [], "sceneHash": "0" * 64}, "scene")
 
 
@@ -100,22 +104,22 @@ def test_cylinder_cap_faces_follow_nonzero_endpoint_radii():
     validate_canonical_geometry_scene(
         canonical_scene(
             cone,
-            selectors=({"rootId": "body", "sourceNodeId": "cone", "faceKey": "Bottom"},),
+            selectors=({"rootId": "body", "sourceNodeId": "cone", "surfaceIndex": 0},),
         ),
         "scene",
     )
-    with pytest.raises(CaeError, match="does not identify a semantic leaf face"):
+    with pytest.raises(CaeError, match="does not identify a source surface slot"):
         validate_canonical_geometry_scene(
             canonical_scene(
                 cone,
-                selectors=({"rootId": "body", "sourceNodeId": "cone", "faceKey": "Top"},),
+                selectors=({"rootId": "body", "sourceNodeId": "cone", "surfaceIndex": 2},),
             ),
             "scene",
         )
 
 
 def test_geometry_service_exposes_tree_queries_without_meshing():
-    selector = {"rootId": "body", "sourceNodeId": "box", "faceKey": "+X"}
+    selector = {"rootId": "body", "sourceNodeId": "box", "surfaceIndex": 1}
     scene = canonical_scene(box_node(), selectors=(selector,))
     geometry = GeometryService()
 
@@ -123,14 +127,14 @@ def test_geometry_service_exposes_tree_queries_without_meshing():
     assert geometry.root(scene, "body")["node"]["primitive"] == "box"
     assert geometry.geometry_group(scene, "body")["rootIds"] == ("body",)
     assert geometry.surface_group(scene, "terminals")["kind"] == "surface"
-    assert geometry.selectors(scene, "terminals")[0]["faceKey"] == "+X"
+    assert geometry.selectors(scene, "terminals")[0]["surfaceIndex"] == 1
     assert geometry.cached_mesh_count == 0
     with pytest.raises(TypeError):
         immutable_scene["lengthUnit"] = "mm"
 
 
 def test_canonical_groups_reject_forged_resolution_divergence():
-    selector = {"rootId": "body", "sourceNodeId": "box", "faceKey": "-X"}
+    selector = {"rootId": "body", "sourceNodeId": "box", "surfaceIndex": 0}
     cases = []
 
     scene = canonical_scene(box_node(), selectors=(selector,))
@@ -157,7 +161,7 @@ def test_canonical_groups_reject_forged_resolution_divergence():
     scene["surfaceGroups"][0]["selectors"][0] = {
         "rootId": "body",
         "sourceNodeId": "box",
-        "faceKey": "+X",
+        "surfaceIndex": 1,
     }
     cases.append(scene)
 
@@ -167,7 +171,7 @@ def test_canonical_groups_reject_forged_resolution_divergence():
         assert error.value.code == "invalid_input"
 
 
-def test_shell_root_member_alias_is_exact_and_duplicate_selectors_are_rejected():
+def test_shell_surface_members_must_name_the_direct_source_node():
     shell = {
         "kind": "shell",
         "nodeId": "coating",
@@ -175,22 +179,23 @@ def test_shell_root_member_alias_is_exact_and_duplicate_selectors_are_rejected()
         "outerOffset": 0.25,
         "child": box_node(),
     }
-    selector = {"rootId": "body", "sourceNodeId": "coating", "faceKey": "inner"}
+    selector = {"rootId": "body", "sourceNodeId": "coating", "surfaceIndex": 0}
     scene = canonical_scene(shell, selectors=(selector,))
-    scene["surfaceGroups"][0]["memberIds"] = ["body/surface/inner"]
+    scene["surfaceGroups"][0]["memberIds"] = ["body/surface/0"]
     draft = {key: value for key, value in scene.items() if key != "geometryHash"}
     scene["geometryHash"] = canonical_geometry_hash(draft)
-    validate_canonical_geometry_scene(scene, "scene")
+    with pytest.raises(CaeError, match="positionally match"):
+        validate_canonical_geometry_scene(scene, "scene")
 
-    duplicate = copy.deepcopy(scene)
-    duplicate["surfaceGroups"][0]["memberIds"] = ["body/surface/inner", "coating/surface/inner"]
+    duplicate = canonical_scene(shell, selectors=(selector,))
+    duplicate["surfaceGroups"][0]["memberIds"] = ["coating/surface/0", "coating/surface/0"]
     duplicate["surfaceGroups"][0]["selectors"] = [selector, selector]
-    with pytest.raises(CaeError, match="must not contain duplicates"):
+    with pytest.raises(CaeError, match="values must be unique"):
         validate_canonical_geometry_scene(duplicate, "scene")
 
 
 @pytest.mark.asyncio
-async def test_triangular_mesh_is_indexed_unit_scaled_and_semantically_provenanced():
+async def test_triangular_mesh_is_indexed_unit_scaled_and_numerically_provenanced():
     scene = canonical_scene(box_node())
     geometry = GeometryService()
 
@@ -199,13 +204,13 @@ async def test_triangular_mesh_is_indexed_unit_scaled_and_semantically_provenanc
     assert mesh.vertices.shape == (8, 3)
     assert mesh.triangles.shape == (12, 3)
     assert max(abs(mesh.vertices[:, 0])) == pytest.approx(1000)
-    assert Counter(item.face_key for item in mesh.triangle_provenance) == {
-        "-X": 2,
-        "+X": 2,
-        "-Y": 2,
-        "+Y": 2,
-        "Bottom": 2,
-        "Top": 2,
+    assert Counter(item.surface_index for item in mesh.triangle_provenance) == {
+        0: 2,
+        1: 2,
+        2: 2,
+        3: 2,
+        4: 2,
+        5: 2,
     }
     assert await geometry.triangular_mesh(scene, "body", "mm") is mesh
     assert geometry.cached_mesh_count == 1
@@ -236,10 +241,10 @@ async def test_squat_frustum_side_faces_are_not_misclassified_as_caps():
     }
     mesh = await GeometryService().triangular_mesh(canonical_scene(frustum), "body", "m")
 
-    assert Counter(item.face_key for item in mesh.triangle_provenance) == {
-        "Side": 32,
-        "Bottom": 14,
-        "Top": 14,
+    assert Counter(item.surface_index for item in mesh.triangle_provenance) == {
+        1: 32,
+        0: 14,
+        2: 14,
     }
 
 
@@ -273,7 +278,7 @@ async def test_boolean_subtract_and_fiber_preserve_leaf_surface_provenance():
     }
     subtracted = await GeometryService().triangular_mesh(canonical_scene(subtract), "body", "m")
     assert any(
-        item.source_node_id == "bore" and item.face_key == "Side"
+        item.source_node_id == "bore" and item.surface_index == 1
         for item in subtracted.triangle_provenance
     )
 
@@ -287,11 +292,7 @@ async def test_boolean_subtract_and_fiber_preserve_leaf_surface_provenance():
         "radialSegments": 8,
     }
     fiber_mesh = await GeometryService().triangular_mesh(canonical_scene(fiber), "body", "m")
-    assert {item.face_key for item in fiber_mesh.triangle_provenance} == {
-        "Start cap",
-        "Side",
-        "End cap",
-    }
+    assert {item.surface_index for item in fiber_mesh.triangle_provenance} == {0, 1, 2}
 
 
 @pytest.mark.asyncio
@@ -338,16 +339,16 @@ async def test_shell_uses_distinct_shell_boundary_provenance():
         "child": box_node(),
     }
     mesh = await GeometryService().triangular_mesh(canonical_scene(shell), "body", "m")
-    assert {(item.source_node_id, item.face_key) for item in mesh.triangle_provenance} == {
-        ("coating", "inner"),
-        ("coating", "outer"),
+    assert {(item.source_node_id, item.surface_index) for item in mesh.triangle_provenance} == {
+        ("coating", 0),
+        ("coating", 1),
     }
 
-    with pytest.raises(CaeError, match="does not identify a semantic leaf face"):
+    with pytest.raises(CaeError, match="does not identify a source surface slot"):
         validate_canonical_geometry_scene(
             canonical_scene(
                 shell,
-                selectors=({"rootId": "body", "sourceNodeId": "box", "faceKey": "-X"},),
+                selectors=({"rootId": "body", "sourceNodeId": "box", "surfaceIndex": 0},),
             ),
             "scene",
         )
@@ -395,12 +396,15 @@ async def test_shell_layer_boundaries_bypass_closed_solid_precision_and_apply_ou
     layer = await GeometryService().shell_layer(canonical_scene(shell), "body", "m")
 
     assert layer is not None
-    assert layer.family_id == "coating"
+    assert layer.family_id == (
+        '["box",[[2.0,0.0,0.0,0.0],[0.0,3.0,0.0,0.0],'
+        '[0.0,0.0,4.0,0.0],[0.0,0.0,0.0,1.0]]]'
+    )
     assert layer.inner.triangles.shape == layer.outer.triangles.shape == (12, 3)
     assert layer.minimum_thickness == pytest.approx(1e-7)
     assert layer.maximum_thickness == pytest.approx(2e-7)
-    assert {(item.source_node_id, item.face_key) for item in layer.inner.triangle_provenance} == {
-        ("coating/$layer-1", "inner")
+    assert {(item.source_node_id, item.surface_index) for item in layer.inner.triangle_provenance} == {
+        ("coating/$layer-1", 0)
     }
 
 
@@ -542,7 +546,7 @@ def test_geometry_complexity_limit_applies_to_the_scene_aggregate():
         "parameters": {"radius": 1, "segments": 800},
     }
     draft = {
-        "geometryFormatVersion": 1,
+        "geometryFormatVersion": 2,
         "lengthUnit": "m",
         "roots": [
             {"id": "first", "materialRole": "body", "node": {**sphere, "nodeId": "first"}},
@@ -576,7 +580,7 @@ async def test_boolean_preflight_limits_operands_and_pairwise_work_before_manifo
     validate_canonical_geometry_scene(canonical_scene(two_spheres), "scene")
 
     aggregate_draft = {
-        "geometryFormatVersion": 1,
+        "geometryFormatVersion": 2,
         "lengthUnit": "m",
         "roots": [
             {

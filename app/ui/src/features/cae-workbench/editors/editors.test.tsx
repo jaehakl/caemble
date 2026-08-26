@@ -72,7 +72,7 @@ vi.mock('@/features/viewer/editor/CadDiffEditor', () => ({
 }))
 
 const document: ExperimentSourceDocument = {
-  apiVersion: 7,
+  apiVersion: 11,
   formatVersion: 2,
   kind: 'experiment',
   sourceBundle: {

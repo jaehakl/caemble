@@ -22,7 +22,7 @@ from .database import Catalog, catalog_path
 from .errors import CatalogError, CatalogNotFoundError
 from .schema import (
     EXPERIMENT_COORDINATE_PREFIX,
-    SUPPORTED_CAD_API_VERSIONS,
+    WRITABLE_CAD_API_VERSIONS,
     parse_experiment_coordinate,
     parse_experiment_version,
 )
@@ -650,7 +650,7 @@ def build_parser() -> argparse.ArgumentParser:
     upsert.add_argument("--namespace", default="caemble")
     upsert.add_argument("--repository", default="verified")
     upsert.add_argument("--version", default="1.0.0")
-    upsert.add_argument("--cad-api-version", type=int, choices=SUPPORTED_CAD_API_VERSIONS, required=True)
+    upsert.add_argument("--cad-api-version", type=int, choices=WRITABLE_CAD_API_VERSIONS, required=True)
     upsert.add_argument("--title", required=True)
     upsert.add_argument("--description", required=True)
     upsert.add_argument("--bundle-file", type=Path, required=True)

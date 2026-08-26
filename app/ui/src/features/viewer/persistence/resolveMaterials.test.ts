@@ -41,7 +41,7 @@ function scene(materialName: string) {
 
 function canonicalScene(materialName: string) {
   return {
-    geometryFormatVersion: 1 as const,
+    geometryFormatVersion: 2 as const,
     geometryHash: materialName === 'Common' ? 'a'.repeat(64) : 'b'.repeat(64),
     lengthUnit: 'mm',
     roots: [

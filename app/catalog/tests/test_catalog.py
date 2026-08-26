@@ -33,7 +33,7 @@ from caemble_catalog.schema import parse_experiment_version
 def test_canonical_catalog_is_normalized_and_complete():
     with Catalog.open_readonly() as catalog:
         assert catalog.meta() == {
-            "schemaVersion": 6,
+            "schemaVersion": 7,
             "catalogRevision": catalog.meta()["catalogRevision"],
             "quantityKindDataVersion": "0.0.1",
             "materialCatalogVersion": "0.0.0",
@@ -41,7 +41,7 @@ def test_canonical_catalog_is_normalized_and_complete():
             "materialParameterCount": 258,
             "materialModelCount": 2,
             "solverCount": 3,
-            "experimentCount": 16,
+            "experimentCount": 28,
             "materialGlobalQualifiers": [
                 "temperature",
                 "pressure",
@@ -101,7 +101,16 @@ def test_solver_manifests_reconstruct_the_legacy_contract():
 def test_example_experiment_catalog_contracts():
     with Catalog.open_readonly() as catalog:
         experiments, experiment_total = catalog.list_experiments(limit=100)
-        assert experiment_total == 16
+        assert experiment_total == 28
+        latest = {
+            key: max(
+                (item for item in experiments if item["key"] == key),
+                key=lambda item: parse_experiment_version(item["version"]),
+            )
+            for key in {item["key"] for item in experiments}
+        }
+        assert len(latest) == 12
+        assert {item["cadApiVersion"] for item in latest.values()} == {11}
         assert {
             "basketball-goal",
             "fiber-bundle",
@@ -114,16 +123,21 @@ def test_example_experiment_catalog_contracts():
         } < {item["key"] for item in experiments}
         assert catalog._all("SELECT name FROM sqlite_schema WHERE name LIKE '%geometr%'") == []
 
-        wheel = catalog.experiment("two-material-wheel-assembly")
+        wheel = catalog.experiment(
+            "two-material-wheel-assembly",
+            namespace="caemble",
+            repository="assemblies",
+            version="2.0.0",
+        )
         assert wheel["namespace"] == "caemble"
         assert wheel["repository"] == "assemblies"
-        assert wheel["version"] == "1.0.0"
-        assert wheel["coordinate"] == "caemble:experiment/caemble/assemblies/two-material-wheel-assembly@1.0.0"
-        assert wheel["cadApiVersion"] == 9
+        assert wheel["version"] == "2.0.0"
+        assert wheel["coordinate"] == "caemble:experiment/caemble/assemblies/two-material-wheel-assembly@2.0.0"
+        assert wheel["cadApiVersion"] == 11
         assert wheel["sourceBundle"]["formatVersion"] == 6
         assert not any(path.startswith("tasks/") for path in wheel["sourceBundle"]["files"])
         assert wheel["relatedSolvers"] == []
-        assert catalog.list_experiments(namespace="caemble", repository="arrays", limit=100)[1] == 2
+        assert catalog.list_experiments(namespace="caemble", repository="arrays", limit=100)[1] == 4
 
         legacy_coupled = catalog.experiment(
             "electro-thermal-uniform-bar",
@@ -131,19 +145,26 @@ def test_example_experiment_catalog_contracts():
             repository="verified",
             version="1.0.0",
         )
-        coupled = catalog.experiment(
+        semantic = catalog.experiment(
             "electro-thermal-uniform-bar",
             namespace="caemble",
             repository="verified",
             version="2.0.0",
         )
+        coupled = catalog.experiment(
+            "electro-thermal-uniform-bar",
+            namespace="caemble",
+            repository="verified",
+            version="3.0.0",
+        )
         assert coupled["sourceBundle"]["formatVersion"] == 6
         assert "geometrySnapshot" not in coupled["sourceBundle"]
         assert legacy_coupled["cadApiVersion"] == 9
-        assert coupled["cadApiVersion"] == 10
+        assert semantic["cadApiVersion"] == 10
+        assert coupled["cadApiVersion"] == 11
         assert "/surface-" in legacy_coupled["sourceBundle"]["files"]["experiment.tsx"]
         assert "/surface-" not in coupled["sourceBundle"]["files"]["experiment.tsx"]
-        assert "conductor.body/surface/%2BX" in coupled["sourceBundle"]["files"]["experiment.tsx"]
+        assert "conductor.body/surface/1" in coupled["sourceBundle"]["files"]["experiment.tsx"]
         assert coupled["sourceFormatVersion"] == 2
         assert [(item["name"], item["version"]) for item in coupled["relatedSolvers"]] == [
             ("dc-current-density", "0.2.0"),
@@ -155,7 +176,7 @@ def test_example_experiment_catalog_contracts():
             "material.tsx",
             "simulate.py",
         }
-        assert catalog.list_experiments(solver_name="steady-state-heat", solver_version="0.1.0")[1] == 2
+        assert catalog.list_experiments(solver_name="steady-state-heat", solver_version="0.1.0")[1] == 3
         assert {item["kind"] for item in catalog.search("wheel")} == {"experiment"}
 
 
@@ -168,17 +189,19 @@ def test_example_experiment_catalog_contracts():
         "electro-thermal-uniform-bar",
     ],
 )
-def test_surface_target_experiment_versions_preserve_legacy_and_add_api10_semantics(key: str):
+def test_surface_target_experiment_versions_preserve_history_and_add_api11_numeric_surfaces(key: str):
     with Catalog.open_readonly() as catalog:
         legacy = catalog.experiment(key, namespace="caemble", repository="verified", version="1.0.0")
-        current = catalog.experiment(key, namespace="caemble", repository="verified", version="2.0.0")
+        semantic = catalog.experiment(key, namespace="caemble", repository="verified", version="2.0.0")
+        current = catalog.experiment(key, namespace="caemble", repository="verified", version="3.0.0")
 
     assert legacy["cadApiVersion"] == 9
-    assert current["cadApiVersion"] == 10
+    assert semantic["cadApiVersion"] == 10
+    assert current["cadApiVersion"] == 11
     assert "/surface-" in legacy["sourceBundle"]["files"]["experiment.tsx"]
     assert "/surface-" not in current["sourceBundle"]["files"]["experiment.tsx"]
-    assert "conductor.body/surface/-X" in current["sourceBundle"]["files"]["experiment.tsx"]
-    assert "conductor.body/surface/%2BX" in current["sourceBundle"]["files"]["experiment.tsx"]
+    assert "conductor.body/surface/0" in current["sourceBundle"]["files"]["experiment.tsx"]
+    assert "conductor.body/surface/1" in current["sourceBundle"]["files"]["experiment.tsx"]
     assert 'id="body"' in current["sourceBundle"]["files"]["geometry.tsx"]
     if key == "dc-notched-current-density":
         assert 'id="notch"' in current["sourceBundle"]["files"]["geometry.tsx"]
@@ -206,7 +229,12 @@ def test_experiment_cli_crud_and_semantic_diff(tmp_path: Path, capsys):
     shutil.copy2(catalog_path(), baseline)
     create_draft(draft, baseline)
     with Catalog.open_readonly(baseline, immutable=False) as catalog:
-        experiment = catalog.experiment("basketball-goal")
+        experiment = catalog.experiment(
+            "basketball-goal",
+            namespace="caemble",
+            repository="getting-started",
+            version="2.0.0",
+        )
 
     bundle = tmp_path / "bundle.json"
     verification = tmp_path / "verification.json"
@@ -228,7 +256,7 @@ def test_experiment_cli_crud_and_semantic_diff(tmp_path: Path, capsys):
     second_version_args = [
         "--database", str(draft), "experiment", "upsert", experiment["key"],
         "--namespace", experiment["namespace"], "--repository", experiment["repository"],
-        "--version", "2.0.0", "--cad-api-version", "10",
+        "--version", "3.0.0", "--cad-api-version", "11",
         "--title", experiment["title"], "--description", experiment["description"],
         "--bundle-file", str(bundle), "--verification-file", str(verification),
     ]
@@ -245,24 +273,25 @@ def test_experiment_cli_crud_and_semantic_diff(tmp_path: Path, capsys):
             experiment["key"],
             namespace=experiment["namespace"],
             repository=experiment["repository"],
-            version="2.0.0",
+            version="3.0.0",
         )
-        assert selected["cadApiVersion"] == 10
-        assert catalog.experiment(selected["coordinate"])["version"] == "2.0.0"
+        assert selected["cadApiVersion"] == 11
+        assert catalog.experiment(selected["coordinate"])["version"] == "3.0.0"
         matches = catalog.list_experiments(query=experiment["key"], limit=100)[0]
         assert {item["coordinate"] for item in matches} == {
             experiment["coordinate"],
-            "caemble:experiment/caemble/getting-started/basketball-goal@2.0.0",
+            "caemble:experiment/caemble/getting-started/basketball-goal@1.0.0",
+            "caemble:experiment/caemble/getting-started/basketball-goal@3.0.0",
             "caemble:experiment/forked/examples/basketball-goal@1.0.0",
         }
     capsys.readouterr()
     assert main(
         [
-            "--database", str(draft), "query", "experiment", experiment["key"], "2.0.0",
+            "--database", str(draft), "query", "experiment", experiment["key"], "3.0.0",
             "--namespace", experiment["namespace"], "--repository", experiment["repository"],
         ]
     ) == 0
-    assert json.loads(capsys.readouterr().out)["coordinate"].endswith("@2.0.0")
+    assert json.loads(capsys.readouterr().out)["coordinate"].endswith("@3.0.0")
     assert main(["--database", str(draft), "query", "experiment", selected["coordinate"]]) == 0
     assert json.loads(capsys.readouterr().out)["coordinate"] == selected["coordinate"]
     assert main(["--database", str(draft), "experiment", "remove", experiment["key"]]) == 1
@@ -271,6 +300,13 @@ def test_experiment_cli_crud_and_semantic_diff(tmp_path: Path, capsys):
         [
             "--database", str(draft), "experiment", "remove", experiment["key"],
             "--namespace", "forked", "--repository", "examples", "--version", "1.0.0",
+        ]
+    ) == 0
+    assert main(
+        [
+            "--database", str(draft), "experiment", "remove", experiment["key"],
+            "--namespace", experiment["namespace"], "--repository", experiment["repository"],
+            "--version", "1.0.0",
         ]
     ) == 0
     assert main(["--database", str(draft), "experiment", "remove", experiment["key"]]) == 0
@@ -295,8 +331,8 @@ def test_experiment_upsert_requires_an_explicit_supported_cad_api_version():
     with pytest.raises(SystemExit):
         parser.parse_args(arguments)
     with pytest.raises(SystemExit):
-        parser.parse_args([*arguments, "--cad-api-version", "11"])
-    assert parser.parse_args([*arguments, "--cad-api-version", "10"]).cad_api_version == 10
+        parser.parse_args([*arguments, "--cad-api-version", "10"])
+    assert parser.parse_args([*arguments, "--cad-api-version", "11"]).cad_api_version == 11
 
 
 def test_runtime_slice_is_solver_scoped_and_resolves_explicit_references():
@@ -396,7 +432,7 @@ def test_draft_diff_publish_and_released_solver_identity_policy(tmp_path: Path):
     assert baseline.read_bytes() == before
 
     create_draft(draft, baseline)
-    for version in ("1.0.0", "2.0.0"):
+    for version in ("1.0.0", "2.0.0", "3.0.0"):
         assert main(
             [
                 "--database",
@@ -429,7 +465,7 @@ def test_draft_diff_publish_and_released_solver_identity_policy(tmp_path: Path):
         assert ("steady-state-heat", "0.1.0") not in catalog.solver_contracts()
 
 
-def test_create_draft_upgrades_schema_v4_to_v6(tmp_path: Path):
+def test_create_draft_upgrades_schema_v4_to_v7(tmp_path: Path):
     baseline = tmp_path / "catalog-v4.sqlite3"
     draft = tmp_path / "draft.sqlite3"
     shutil.copy2(catalog_path(), baseline)
@@ -443,11 +479,11 @@ def test_create_draft_upgrades_schema_v4_to_v6(tmp_path: Path):
     create_draft(draft, baseline)
 
     with Catalog.open_readonly(draft, immutable=False) as catalog:
-        assert catalog.meta()["schemaVersion"] == 6
+        assert catalog.meta()["schemaVersion"] == 7
         assert {row["cad_api_version"] for row in catalog._all("SELECT cad_api_version FROM experiments")} == {9}
 
 
-def test_create_draft_upgrades_schema_v5_to_v6_without_changing_cad_api_versions(tmp_path: Path):
+def test_create_draft_upgrades_schema_v5_to_v7_without_changing_cad_api_versions(tmp_path: Path):
     baseline = tmp_path / "catalog-v5.sqlite3"
     draft = tmp_path / "draft.sqlite3"
     shutil.copy2(catalog_path(), baseline)
@@ -461,14 +497,40 @@ def test_create_draft_upgrades_schema_v5_to_v6_without_changing_cad_api_versions
     create_draft(draft, baseline)
 
     with Catalog.open_readonly(draft, immutable=False) as catalog:
-        assert catalog.meta()["schemaVersion"] == 6
-        assert catalog.experiment("basketball-goal")["cadApiVersion"] == 8
+        assert catalog.meta()["schemaVersion"] == 7
+        assert catalog.experiment(
+            "basketball-goal",
+            namespace="caemble",
+            repository="getting-started",
+            version="2.0.0",
+        )["cadApiVersion"] == 8
         assert (
             catalog.experiment(
                 "dc-uniform-bar", namespace="caemble", repository="verified", version="1.0.0"
             )["cadApiVersion"]
             == 9
         )
+
+
+def test_create_draft_upgrades_schema_v6_to_v7_and_preserves_api11(tmp_path: Path):
+    baseline = tmp_path / "catalog-v6.sqlite3"
+    draft = tmp_path / "draft.sqlite3"
+    shutil.copy2(catalog_path(), baseline)
+    connection = sqlite3.connect(baseline)
+    connection.execute("PRAGMA user_version = 6")
+    connection.commit()
+    connection.close()
+
+    create_draft(draft, baseline)
+
+    with Catalog.open_readonly(draft, immutable=False) as catalog:
+        assert catalog.meta()["schemaVersion"] == 7
+        assert catalog.experiment(
+            "basketball-goal",
+            namespace="caemble",
+            repository="getting-started",
+            version="2.0.0",
+        )["cadApiVersion"] == 11
 
 
 def test_publish_uses_sqlite_backup_when_windows_blocks_atomic_replace(tmp_path: Path, monkeypatch):
@@ -483,7 +545,12 @@ def test_publish_uses_sqlite_backup_when_windows_blocks_atomic_replace(tmp_path:
     publish_draft(draft, destination)
 
     with Catalog.open_readonly(destination, immutable=False) as catalog:
-        assert catalog.experiment("basketball-goal")["title"] == "Published title"
+        assert catalog.experiment(
+            "basketball-goal",
+            namespace="caemble",
+            repository="getting-started",
+            version="2.0.0",
+        )["title"] == "Published title"
 
 
 def test_publish_does_not_replace_destination_with_invalid_database(tmp_path: Path):
@@ -571,7 +638,12 @@ def test_validate_rejects_invalid_experiment_fixture_records_and_terminal(
     draft = tmp_path / f"invalid-{mutation}.sqlite3"
     create_draft(draft)
     with Catalog.open_readonly(draft, immutable=False) as catalog:
-        verification = catalog.experiment("fiber-bundle")["verification"]
+        verification = catalog.experiment(
+            "fiber-bundle",
+            namespace="caemble",
+            repository="advanced-shapes",
+            version="2.0.0",
+        )["verification"]
 
     if mutation == "hybrid":
         verification["fixture"]["records"][0].update({"value": [], "absoluteTolerance": 0})
