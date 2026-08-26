@@ -47,10 +47,14 @@ def insert_solver_manifest(connection: sqlite3.Connection, manifest: dict[str, A
     descriptor = manifest["descriptor"]
     solver = (descriptor["name"], descriptor["version"])
     connection.execute(
-        "INSERT INTO solvers VALUES (?, ?, ?, ?, ?, ?)",
+        """INSERT INTO solvers(
+               name, version, implementation, implementation_abi, description,
+               reference_length_unit, minimum_outputs
+           ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
         (
             *solver,
             manifest["implementation"],
+            manifest.get("abiVersion", 1),
             descriptor["description"],
             descriptor["referenceLengthUnit"],
             descriptor["minimumOutputs"],
@@ -454,6 +458,43 @@ def _rebuild_solver_usages(connection: sqlite3.Connection) -> None:
             )
 
 
+def _rebuild_artifact_types(connection: sqlite3.Connection) -> None:
+    contracts: dict[str, str] = {}
+    rows = connection.execute(
+        """SELECT artifact_type, data_json FROM solver_methods
+           WHERE category = 'outputs' AND artifact_type IS NOT NULL AND data_json IS NOT NULL
+           UNION ALL
+           SELECT a.artifact_type, p.data_json
+           FROM solver_input_artifact_types AS a
+           JOIN solver_input_ports AS p
+             ON p.solver_name = a.solver_name
+            AND p.solver_version = a.solver_version
+            AND p.name = a.input_port
+           ORDER BY artifact_type"""
+    ).fetchall()
+    for row in rows:
+        data_json = canonical_json(json.loads(row["data_json"]))
+        previous = contracts.setdefault(row["artifact_type"], data_json)
+        if previous != data_json:
+            raise CatalogError(f"Artifact type {row['artifact_type']} has conflicting data contracts")
+    connection.execute("DELETE FROM artifact_types")
+    connection.executemany(
+        "INSERT INTO artifact_types(name, payload_kind, data_json) VALUES (?, ?, ?)",
+        [
+            (
+                name,
+                "structured-bundle"
+                if json.loads(data_json).get("resourceKind") == "structuredBundle"
+                else "field"
+                if json.loads(data_json).get("axes")
+                else "scalar",
+                data_json,
+            )
+            for name, data_json in sorted(contracts.items())
+        ],
+    )
+
+
 def _revision_payload(path: Path) -> dict[str, Any]:
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
@@ -496,6 +537,7 @@ def _refresh_experiment_hashes(connection: sqlite3.Connection) -> None:
 def refresh_derived_data(path: Path) -> None:
     with writable_connection(path) as connection:
         _rebuild_solver_usages(connection)
+        _rebuild_artifact_types(connection)
         _refresh_experiment_hashes(connection)
     payload = _revision_payload(path)
     revision = hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()

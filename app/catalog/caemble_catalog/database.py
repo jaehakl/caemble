@@ -337,6 +337,25 @@ class Catalog:
         )
         return {row["name"]: {"description": row["description"], "data": _json(row["data_json"])} for row in rows}
 
+    def artifact_type(self, name: str) -> dict[str, Any]:
+        row = self._one(
+            "SELECT name, payload_kind, data_json FROM artifact_types WHERE name = ?",
+            (name,),
+        )
+        if row is None:
+            raise CatalogNotFoundError(f"Unknown ArtifactType: {name}")
+        return {
+            "name": row["name"],
+            "payloadKind": row["payload_kind"],
+            "data": _json(row["data_json"]),
+        }
+
+    def artifact_types(self) -> list[dict[str, Any]]:
+        return [
+            self.artifact_type(row["name"])
+            for row in self._all("SELECT name FROM artifact_types ORDER BY name")
+        ]
+
     def get_solver_manifest(self, name: str, version: str) -> dict[str, Any]:
         solver = self._one("SELECT * FROM solvers WHERE name = ? AND version = ?", (name, version))
         if solver is None:
@@ -445,6 +464,7 @@ class Catalog:
             descriptor["methods"][method["category"]].append(item)
         return {
             "implementation": solver["implementation"],
+            "abiVersion": solver["implementation_abi"],
             "descriptor": descriptor,
         }
 

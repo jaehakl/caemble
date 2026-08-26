@@ -127,11 +127,15 @@ def _run_query(args: argparse.Namespace) -> Any:
                 return catalog.list_solvers()
             if args.resource == "experiment":
                 return catalog.list_experiments(limit=10_000)[0]
+            if args.resource == "artifact-type":
+                return catalog.artifact_types()
             raise CatalogError(f"{args.resource} query requires KEY")
         if args.resource == "quantity-kind":
             return {**catalog.quantity_kind(args.key), **catalog.quantity_kind_relations(args.key)}
         if args.resource == "material-parameter":
             return {**catalog.material_parameter(args.key), **catalog.material_parameter_relations(args.key)}
+        if args.resource == "artifact-type":
+            return catalog.artifact_type(args.key)
         if args.resource == "experiment":
             return catalog.experiment(
                 args.key,
@@ -141,9 +145,11 @@ def _run_query(args: argparse.Namespace) -> Any:
             )
         if not args.version:
             raise CatalogError("solver query requires VERSION")
+        manifest = catalog.get_solver_manifest(args.key, args.version)
         return {
             **catalog.solver_detail(args.key, args.version),
-            "implementation": catalog.get_solver_manifest(args.key, args.version)["implementation"],
+            "implementation": manifest["implementation"],
+            "abiVersion": manifest["abiVersion"],
         }
 
 
@@ -247,6 +253,7 @@ def _run_solver(args: argparse.Namespace) -> None:
     if action == "create":
         manifest = {
             "implementation": args.implementation,
+            "abiVersion": args.implementation_abi,
             "descriptor": {
                 "name": args.name,
                 "version": args.version,
@@ -265,7 +272,7 @@ def _run_solver(args: argparse.Namespace) -> None:
     if action == "clone":
         manifest = _load_manifest(database, args.name, args.version)
         manifest["descriptor"]["version"] = args.new_version
-        _replace_manifest(database, (args.name, args.version), manifest)
+        _replace_manifest(database, None, manifest)
         return
     if action == "remove":
         _replace_manifest(database, (args.name, args.version), None)
@@ -275,6 +282,7 @@ def _run_solver(args: argparse.Namespace) -> None:
             descriptor = manifest["descriptor"]
             for attribute, field in (
                 ("implementation", None),
+                ("implementation_abi", None),
                 ("description", "description"),
                 ("reference_length_unit", "referenceLengthUnit"),
                 ("minimum_outputs", "minimumOutputs"),
@@ -282,7 +290,7 @@ def _run_solver(args: argparse.Namespace) -> None:
                 value = getattr(args, attribute)
                 if value is not None:
                     if field is None:
-                        manifest["implementation"] = value
+                        manifest["abiVersion" if attribute == "implementation_abi" else "implementation"] = value
                     else:
                         descriptor[field] = value
 
@@ -628,7 +636,8 @@ def build_parser() -> argparse.ArgumentParser:
     publish.add_argument("--destination", type=Path, required=True)
     query = commands.add_parser("query")
     query.add_argument(
-        "resource", choices=("meta", "quantity-kind", "material-parameter", "solver", "experiment")
+        "resource",
+        choices=("meta", "quantity-kind", "material-parameter", "artifact-type", "solver", "experiment"),
     )
     query.add_argument("key", nargs="?")
     query.add_argument("version", nargs="?")
@@ -658,6 +667,7 @@ def build_parser() -> argparse.ArgumentParser:
     create_solver = solver_actions.add_parser("create")
     _identity(create_solver)
     create_solver.add_argument("--implementation", required=True)
+    create_solver.add_argument("--implementation-abi", type=int, default=2)
     create_solver.add_argument("--description", required=True)
     create_solver.add_argument("--reference-length-unit", default="m")
     create_solver.add_argument("--minimum-outputs", type=int, default=1)
@@ -669,6 +679,7 @@ def build_parser() -> argparse.ArgumentParser:
     metadata = solver_actions.add_parser("set-metadata")
     _identity(metadata)
     metadata.add_argument("--implementation")
+    metadata.add_argument("--implementation-abi", type=int)
     metadata.add_argument("--description")
     metadata.add_argument("--reference-length-unit")
     metadata.add_argument("--minimum-outputs", type=int)

@@ -1,5 +1,6 @@
 export type {
   KernelArtifactType,
+  KernelArtifactDataSpec,
   KernelDataAxis,
   KernelDataSpec,
   KernelDescriptor,
@@ -15,5 +16,6 @@ export type {
   KernelTaskConfig,
   KernelValueSpec,
   KernelWorld,
+  KernelStructuredBundleSpec,
   ResolvedKernelOutputSpec,
 } from './types'

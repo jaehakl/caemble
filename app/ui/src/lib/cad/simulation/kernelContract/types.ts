@@ -6,6 +6,11 @@ export type KernelArtifactType = `${string}@${number}`
 
 export type KernelDataAxis = DataSchemaAxis
 export type KernelDataSpec = DataSchema
+export type KernelStructuredBundleSpec = Readonly<{
+  resourceKind: 'structuredBundle'
+  members: Readonly<Record<string, KernelDataSpec>>
+}>
+export type KernelArtifactDataSpec = KernelDataSpec | KernelStructuredBundleSpec
 
 export type KernelValueSpec = KernelDataSpec &
   Readonly<{
@@ -44,7 +49,7 @@ export type KernelMethodDescriptor = Readonly<{
 export type KernelOutputMethodDescriptor = KernelMethodDescriptor &
   Readonly<{
     artifactType: KernelArtifactType
-    data: KernelDataSpec
+    data: KernelArtifactDataSpec
   }>
 
 export type KernelMaterialDescriptor = Readonly<{
@@ -62,7 +67,7 @@ export type KernelInputPortDescriptor = Readonly<{
   artifactTypes: readonly KernelArtifactType[]
   minimumOccurrences: number
   maximumOccurrences: number
-  data?: KernelDataSpec
+  data?: KernelArtifactDataSpec
 }>
 
 export type KernelObservationDescriptor = Readonly<{
@@ -115,7 +120,7 @@ export type KernelWorld = Readonly<{
 
 export type ResolvedKernelOutputSpec = Readonly<{
   artifactType: KernelArtifactType
-  data: KernelDataSpec
+  data: KernelArtifactDataSpec
 }>
 
 export type KernelContractIssue = Readonly<{

@@ -1,23 +1,56 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Awaitable, Callable
 
 import numpy as np
 
-from app.solver_framework.geometry import GeometryService
-from app.solver_framework.models import SolverContext, VoxelDomain
-from app.solver_framework.numerics.finite_volume import create_scalar_finite_volume_system, solve_pcg
-from app.solver_framework.numerics.voxel import axis_ticks, build_voxel_domain, dense_field, voxel_index
-from app.solver_framework.world import (
-    geometry_part,
-    grid_shape,
-    material_scalar,
-    scalar_parameter,
-    single_method,
-    experiment_scene,
-    surface,
-    target_group,
-)
+from app.methods.geometry import GeometryService
+from app.methods.structured import is_structured_cell_field, structured_cell_field
+from app.runtime_kernel.api.world import scalar_parameter
+from app.solver_framework.models import SolverContext
+
+from .domain import build_heat_domain
+from .formulation import _volume_source, solve_heat
+from .outputs import build_heat_outputs
+
+
+async def run(context: SolverContext) -> dict[str, Any]:
+    setup = await build_heat_domain(context)
+    heat_source = _legacy_heat_source(context.inputs.get("heatSource"), setup.domain_ref)
+    result = await solve_heat(
+        setup,
+        heat_source,
+        scalar_parameter(context.config["parameters"]["relativeTolerance"]),
+        int(scalar_parameter(context.config["parameters"]["maxIterations"])),
+        context.progress,
+    )
+    return {
+        "artifacts": await build_heat_outputs(context.config, result, context.progress),
+        "observations": {
+            "iterations": result.iterations,
+            "relativeResidual": result.relative_residual,
+        },
+    }
+
+
+def _legacy_heat_source(value: Any, domain_ref: Mapping[str, Any]) -> Any:
+    """Confine ABI-v1's historical same-grid tensor assumption to its adapter."""
+    if value is None or is_structured_cell_field(value):
+        return value
+    if not isinstance(value, Mapping) or "value" not in value:
+        raise ValueError("legacy heatSource must contain a value")
+    shape = tuple(int(size) for size in domain_ref["shape"])
+    array = np.asarray(value["value"], dtype=np.float64)
+    if array.size != int(np.prod(shape)):
+        raise ValueError(f"legacy heatSource has {array.size} values; expected {int(np.prod(shape))}")
+    return structured_cell_field(
+        domain_ref,
+        array.reshape(shape),
+        domain_ref["axes"],
+        quantity_kind="PowerDensity",
+        unit="W.m-3",
+    )
 
 
 async def _run_heat(
@@ -29,91 +62,7 @@ async def _run_heat(
     progress: Callable[[Any], Awaitable[None]],
     descriptor: dict[str, Any],
 ) -> dict[str, Any]:
-    del state
-    scene = experiment_scene(world)
-    grid_rule = single_method(config, "initializations", "heat.voxel-grid")
-    group_name = target_group(grid_rule, "geometry")
-    part = geometry_part(scene, group_name)
-    boundaries = [
-        rule for rule in config["boundaryConditions"] if rule["methodId"] == "heat.fixed-temperature"
-    ]
-    source = surface(scene, target_group(boundaries[0], "surface"), part["id"])
-    reference = surface(scene, target_group(boundaries[1], "surface"), part["id"])
-    shape = grid_shape(grid_rule)
-    mesh = await geometry.triangular_mesh(
-        scene,
-        part["id"],
-        descriptor["referenceLengthUnit"],
-        progress,
-    )
-    domain = await build_voxel_domain(
-        mesh,
-        source,
-        reference,
-        shape,
-        progress,
-        "Heat domain",
-    )
-    conductivity = material_scalar(world, part, descriptor, "thermal.conductivity")
-    source_temperature = scalar_parameter(boundaries[0]["parameters"]["temperature"])
-    reference_temperature = scalar_parameter(boundaries[1]["parameters"]["temperature"])
-    tolerance = scalar_parameter(config["parameters"]["relativeTolerance"])
-    max_iterations = int(scalar_parameter(config["parameters"]["maxIterations"]))
-    volume_source = _volume_source(inputs.get("heatSource"), domain, conductivity)
-    system = create_scalar_finite_volume_system(domain, source_temperature, reference_temperature, volume_source)
-    solution, iterations, residual = await solve_pcg(system, tolerance, max_iterations, progress, "Heat")
-    ticks = axis_ticks(domain)
-    outputs = config["outputs"]
-    artifacts: dict[str, Any] = {}
-    temperature: dict[str, Any] | None = None
-    maximum: float | None = None
-    for index, output in enumerate(outputs):
-        method = output["methodId"]
-        key = output["key"]
-        if method == "heat.temperature":
-            if temperature is None:
-                temperature = {
-                    "value": dense_field(domain, system, solution),
-                    "axes": [{"ticks": ticks[0]}, {"ticks": ticks[1]}, {"ticks": ticks[2]}],
-                }
-            artifacts[key] = temperature
-        elif method == "heat.maximum-temperature":
-            maximum = float(np.max(solution)) if maximum is None else maximum
-            artifacts[key] = {"value": maximum}
-        await progress({"stage": "output", "completed": index + 1, "total": len(outputs)})
-    return {
-        "artifacts": artifacts,
-        "observations": {"iterations": iterations, "relativeResidual": residual},
-    }
+    return await run(SolverContext(config, state, inputs, world, geometry, progress, descriptor))
 
 
-async def run(context: SolverContext) -> dict[str, Any]:
-    return await _run_heat(
-        context.config,
-        context.state,
-        context.inputs,
-        context.world,
-        context.geometry,
-        context.progress,
-        context.descriptor,
-    )
-
-
-def _volume_source(
-    artifact: Any,
-    domain: VoxelDomain,
-    conductivity: float,
-) -> np.ndarray[Any, Any]:
-    source = np.zeros(domain.occupancy.size)
-    if artifact is None:
-        return source
-    expected_shape = (domain.shape[0], domain.shape[2], domain.shape[1])
-    values = np.asarray(artifact["value"], dtype=np.float64).reshape(expected_shape)
-    for i in range(domain.shape[0]):
-        for row in range(domain.shape[2]):
-            k = domain.shape[2] - row - 1
-            for j in range(domain.shape[1]):
-                global_index = voxel_index(i, j, k, domain.shape)
-                if domain.occupancy[global_index]:
-                    source[global_index] = values[i, row, j] / conductivity
-    return source
+__all__ = ["run"]

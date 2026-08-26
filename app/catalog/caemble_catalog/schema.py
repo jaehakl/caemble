@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 APPLICATION_ID = 0x43414531  # "CAE1"
+SCHEMA_VERSION = 2
 SEMVER_COMPONENT_MAX = 2_147_483_647
 EXPERIMENT_COORDINATE_PREFIX = "caemble:experiment/"
 
@@ -40,6 +41,7 @@ TABLE_ORDER = (
     "material_global_qualifiers",
     "material_design_rules",
     "material_models",
+    "artifact_types",
     "solvers",
     "solver_parameters",
     "solver_material_roles",
@@ -122,11 +124,17 @@ CREATE TABLE solvers (
     name TEXT NOT NULL,
     version TEXT NOT NULL,
     implementation TEXT NOT NULL,
+    implementation_abi INTEGER NOT NULL DEFAULT 1 CHECK (implementation_abi >= 1),
     description TEXT NOT NULL,
     reference_length_unit TEXT NOT NULL,
     minimum_outputs INTEGER NOT NULL,
-    PRIMARY KEY (name, version),
-    UNIQUE (name)
+    PRIMARY KEY (name, version)
+) STRICT;
+
+CREATE TABLE artifact_types (
+    name TEXT PRIMARY KEY,
+    payload_kind TEXT NOT NULL,
+    data_json TEXT NOT NULL
 ) STRICT;
 
 CREATE TABLE solver_parameters (
@@ -332,3 +340,4 @@ WHERE producer.category = 'outputs' AND producer.artifact_type IS NOT NULL;
 def create_schema(connection: sqlite3.Connection) -> None:
     connection.executescript(SCHEMA_SQL)
     connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
+    connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

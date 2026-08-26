@@ -1,5 +1,6 @@
-from app.solver_framework.geometry.models import ShellLayerGeometry, TriangleProvenance, TriangularMesh
-from app.solver_framework.geometry.service import GeometryService
+"""Compatibility exports for :mod:`app.methods.geometry`."""
+
+from app.methods.geometry import GeometryService, ShellLayerGeometry, TriangleProvenance, TriangularMesh
 
 __all__ = [
     "GeometryService",
