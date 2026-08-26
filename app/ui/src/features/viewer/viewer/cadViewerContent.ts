@@ -33,6 +33,7 @@ export function resolveCadViewerContent(
             source: 'experiment' as const,
             lengthUnit: experiment.scene.lengthUnit,
             parts: experiment.scene.parts,
+            tree: experiment.scene.tree,
             sceneHash: experiment.sceneHash ?? null,
           },
         ]
@@ -43,6 +44,7 @@ export function resolveCadViewerContent(
           taskName,
           lengthUnit: scene.lengthUnit,
           parts: scene.parts,
+          tree: scene.tree,
           sceneHash: experiment.taskSceneHashes?.[taskName] ?? null,
         }))
       : []),

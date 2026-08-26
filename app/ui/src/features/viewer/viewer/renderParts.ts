@@ -1,3 +1,4 @@
+import { geometries } from '@jscad/modeling'
 import type { CadScenePart } from '@/lib/cad'
 import { scenePartColor, unassignedGeometryColor } from './materialColor'
 
@@ -8,7 +9,13 @@ type RenderSolid = Record<string, unknown> & { polygons: RenderPolygon[]; transf
 export type RenderPart = Readonly<{
   color: RenderColor
   geometry: unknown
+  selectionGeometry?: unknown
   wireframe: boolean
+}>
+
+export type RenderPartSelection = Readonly<{
+  geometry: boolean
+  polygonIndices: ReadonlySet<number>
 }>
 
 export type WireframeGeometry = Readonly<{
@@ -32,14 +39,45 @@ export function colorFromHex(hex: string): RenderColor {
 }
 
 const wireframeColor = colorFromHex(unassignedGeometryColor)
+export const viewerSelectionColor: RenderColor = [0.96, 0.47, 0.08, 1]
 
-export function createRenderParts(parts: CadScenePart[]): RenderPart[] {
+export function geometryWithSelectedPolygons(
+  value: unknown,
+  selectedPolygonIndices: ReadonlySet<number> | null,
+  selectedOnly = false,
+) {
+  if (typeof value !== 'object' || value === null || !('polygons' in value)) return value
+  const geometry = value as RenderSolid
+  if (!Array.isArray(geometry.polygons)) return value
+  const clone = geometries.geom3.clone(value as Parameters<typeof geometries.geom3.clone>[0]) as unknown as RenderSolid
+  clone.polygons = geometry.polygons.flatMap((polygon, polygonIndex) => {
+    const selected = selectedPolygonIndices === null || selectedPolygonIndices.has(polygonIndex)
+    if (selectedOnly && !selected) return []
+    return [selected ? { ...polygon, color: [...viewerSelectionColor] } : polygon]
+  })
+  return clone
+}
+
+export function createRenderParts(
+  parts: CadScenePart[],
+  selections: ReadonlyMap<string, RenderPartSelection> = new Map(),
+): RenderPart[] {
   return parts.map((part) => {
     const color = scenePartColor(part)
+    const selection = selections.get(part.id)
+    const wireframe = color === undefined
+    const geometry = selection?.geometry
+      ? geometryWithSelectedPolygons(part.geometry, null)
+      : selection && selection.polygonIndices.size > 0 && !wireframe
+        ? geometryWithSelectedPolygons(part.geometry, selection.polygonIndices)
+        : part.geometry
     return {
-      geometry: part.geometry,
-      color: color === undefined ? wireframeColor : colorFromHex(color),
-      wireframe: color === undefined,
+      geometry,
+      color: selection?.geometry ? viewerSelectionColor : color === undefined ? wireframeColor : colorFromHex(color),
+      ...(selection && !selection.geometry && selection.polygonIndices.size > 0 && wireframe
+        ? { selectionGeometry: geometryWithSelectedPolygons(part.geometry, selection.polygonIndices, true) }
+        : {}),
+      wireframe,
     }
   })
 }

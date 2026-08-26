@@ -8,18 +8,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuth } from '@/features/auth/use-auth'
 import { WorkbenchBottomDock, WorkbenchMenubar, WorkbenchRibbon, WorkbenchShell } from '@/features/cae-workbench/chrome'
 import { ConfirmWorkbenchDialog } from '@/features/cae-workbench/dialogs'
-import { ExperimentEditor, RecordedDataEditor } from '@/features/cae-workbench/editors'
+import { ExperimentEditor, RecordedDataEditor, SourcePathPickerDialog } from '@/features/cae-workbench/editors'
 import { ExperimentManager } from '@/features/cae-workbench/experiments'
 import { MeasurementDetail, MeasurementExplorer } from '@/features/cae-workbench/measurement'
-import {
-  flattenRecordedData,
-  recordedDataRules,
-} from '@/features/cae-workbench/measurement/recordedData'
+import { flattenRecordedData, recordedDataRules } from '@/features/cae-workbench/measurement/recordedData'
 import { useCaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { AnalysisTabId, HelpKindId, WorkbenchSectionId } from '@/features/cae-workbench/types'
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
 import { createRuntimeConsoleStore, RuntimeConsoleView } from '@/features/runtime-console'
-import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
+import type { CadEditorAuthoringState, CadEditorRevealRequest } from '@/features/viewer/editor/CadEditor'
+import {
+  findCadSourcePathLocationsByValue,
+  type CadSourcePathLocation,
+} from '@/features/viewer/editor/cadSelectionSource'
+import type { CadViewerSelectionQuery, CadViewerSourceLookupStatus } from '@/features/viewer/viewer/selection'
 import { parseRayPathBundles } from '@/lib/cad'
 import type { AiChatCommand } from '@/pages/ai/AiChatPage'
 import type { AnalysisCommand } from '@/pages/analysis/AnalysisPage'
@@ -66,6 +68,22 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const workbench = useCaeWorkbenchState(auth.user, auth.isAuthenticated, { onActivity: runtimeConsole.append })
   const page = useCaePageSession(workbench)
   const [experimentAuthoringState, setExperimentAuthoringState] = useState<CadEditorAuthoringState | null>(null)
+  const [viewerSelectionQuery, setViewerSelectionQuery] = useState<CadViewerSelectionQuery | null>(null)
+  const [sourceRevealRequest, setSourceRevealRequest] = useState<
+    (CadEditorRevealRequest & Readonly<{ path: string }>) | null
+  >(null)
+  const [sourcePathPicker, setSourcePathPicker] = useState<Readonly<{
+    locations: readonly CadSourcePathLocation[]
+    value: string
+  }> | null>(null)
+  const [selectionSourcePaths, setSelectionSourcePaths] = useState<readonly string[]>([])
+  const [selectionSourceLookup, setSelectionSourceLookup] = useState<
+    Readonly<{
+      files: Readonly<Record<string, string>> | null
+      locations: ReadonlyMap<string, readonly CadSourcePathLocation[]>
+      pathKey: string
+    }>
+  >({ files: null, locations: new Map(), pathKey: '' })
   const [analysisSettingsContainer, setAnalysisSettingsContainer] = useState<HTMLDivElement | null>(null)
   const [chatSettingsContainer, setChatSettingsContainer] = useState<HTMLDivElement | null>(null)
   const [analysisCommand, setAnalysisCommand] = useState<AnalysisCommand | null>(null)
@@ -77,6 +95,103 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const [labActivated, setLabActivated] = useState(false)
   const commandSequence = useRef(0)
   const selectedMaterialId = page.materialId
+  const selectionSourceFiles =
+    workbench.experiment?.kind === 'experiment' ? workbench.experiment.sourceBundle.files : null
+  const selectionSourcePathKey = selectionSourcePaths.join('\u0000')
+
+  const selectionSourceStatus = useMemo(() => {
+    const ready =
+      selectionSourceLookup.files === selectionSourceFiles && selectionSourceLookup.pathKey === selectionSourcePathKey
+    const status: Record<string, CadViewerSourceLookupStatus> = {}
+    selectionSourcePaths.forEach((value) => {
+      status[value] = ready
+        ? selectionSourceLookup.locations.get(value)?.length
+          ? 'available'
+          : 'missing'
+        : 'checking'
+    })
+    return status
+  }, [selectionSourceFiles, selectionSourceLookup, selectionSourcePathKey, selectionSourcePaths])
+
+  const revealSourceLocation = useCallback(
+    (location: CadSourcePathLocation) => {
+      setSourcePathPicker(null)
+      setSourceRevealRequest({
+        end: location.end,
+        id: ++commandSequence.current,
+        path: location.path,
+        start: location.start,
+      })
+      page.setLayout((current) => ({
+        ...current,
+        activeExperimentFile: location.path,
+        activeSection: 'experiment',
+        rightTabs: { ...current.rightTabs, experiment: 'source' },
+        viewerExpanded: false,
+      }))
+    },
+    [page],
+  )
+
+  const findSelectionSource = useCallback(
+    (value: string) => {
+      if (
+        selectionSourceLookup.files !== selectionSourceFiles ||
+        selectionSourceLookup.pathKey !== selectionSourcePathKey
+      )
+        return
+      const locations = selectionSourceLookup.locations.get(value) ?? []
+      if (locations.length === 1) {
+        revealSourceLocation(locations[0])
+      } else if (locations.length > 1) {
+        setSourcePathPicker({ locations, value })
+      }
+    },
+    [revealSourceLocation, selectionSourceFiles, selectionSourceLookup, selectionSourcePathKey],
+  )
+
+  const handleSelectionSourcePathsChange = useCallback((values: readonly string[]) => {
+    setSelectionSourcePaths((current) =>
+      current.length === values.length && current.every((value, index) => value === values[index])
+        ? current
+        : [...values],
+    )
+  }, [])
+
+  const handleCodeSelectionQueryChange = useCallback((query: CadViewerSelectionQuery | null) => {
+    setViewerSelectionQuery((current) => {
+      if (query) return query
+      return current?.origin === 'code' ? null : current
+    })
+  }, [])
+
+  useEffect(() => {
+    setViewerSelectionQuery(null)
+    setSourcePathPicker(null)
+    setSourceRevealRequest(null)
+    setSelectionSourcePaths([])
+    setSelectionSourceLookup({ files: null, locations: new Map(), pathKey: '' })
+  }, [workbench.agentWorkspaceSession])
+
+  useEffect(() => {
+    let cancelled = false
+    const timeout = window.setTimeout(() => {
+      const locations = selectionSourceFiles
+        ? findCadSourcePathLocationsByValue(selectionSourceFiles, selectionSourcePaths)
+        : new Map(selectionSourcePaths.map((value) => [value, []] as const))
+      if (!cancelled) {
+        setSelectionSourceLookup({
+          files: selectionSourceFiles,
+          locations,
+          pathKey: selectionSourcePathKey,
+        })
+      }
+    }, 0)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timeout)
+    }
+  }, [selectionSourceFiles, selectionSourcePathKey, selectionSourcePaths])
 
   useEffect(() => {
     if (page.bottomMode === 'agent') setAgentActivated(true)
@@ -275,7 +390,12 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               initialActiveFile={page.activeExperimentFile}
               onActiveFileChange={page.setActiveExperimentFile}
               onAuthoringStateChange={setExperimentAuthoringState}
+              onSourceRevealRequestHandled={(id) =>
+                setSourceRevealRequest((current) => (current?.id === id ? null : current))
+              }
               onUndoAgentChange={workbench.undoAgentChange}
+              onViewerSelectionQueryChange={handleCodeSelectionQueryChange}
+              sourceRevealRequest={sourceRevealRequest}
             />
           ),
           detail: <ExperimentDetail workbench={workbench} />,
@@ -420,10 +540,15 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               activeExperimentTaskName={page.activeExperimentFile}
               experiment={workbench.experiment}
               experimentDocument={workbench.experimentDocument}
+              onFindSelectionSource={findSelectionSource}
+              onSelectionQueryChange={setViewerSelectionQuery}
+              onSelectionSourcePathsChange={handleSelectionSourcePathsChange}
               onToggleViewerExpanded={() =>
                 page.setLayout((current) => ({ ...current, viewerExpanded: !current.viewerExpanded }))
               }
               rayPaths={rayPathState.bundles}
+              selectionQuery={viewerSelectionQuery}
+              selectionSourceStatus={selectionSourceStatus}
               viewerExpanded={page.viewerExpanded}
             />
           }
@@ -491,6 +616,13 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       </footer>
 
       <CaeWorkbenchDialogs dialog={page.dialog} setDialog={page.setDialog} workbench={workbench} />
+      <SourcePathPickerDialog
+        locations={sourcePathPicker?.locations ?? []}
+        open={sourcePathPicker !== null}
+        value={sourcePathPicker?.value ?? ''}
+        onOpenChange={(open) => !open && setSourcePathPicker(null)}
+        onSelect={revealSourceLocation}
+      />
       <ConfirmWorkbenchDialog
         confirmLabel={page.confirmation?.confirmLabel}
         description={page.confirmation?.description ?? ''}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type * as Monaco from 'monaco-editor'
 import {
   insertPrimitiveAfterCursorLine,
@@ -17,6 +17,9 @@ export type CadEditorAuthoringState = Readonly<{
   hasSelection: boolean
 }>
 
+export type CadEditorSelectionRange = Readonly<{ end: number; start: number }>
+export type CadEditorRevealRequest = Readonly<{ end: number; id: number; start: number }>
+
 type CadEditorProps = {
   diagnostics?: readonly CadDiagnostic[]
   disposeModelOnUnmount?: boolean
@@ -25,8 +28,29 @@ type CadEditorProps = {
   onAuthoringStateChange?: (state: CadEditorAuthoringState | null) => void
   onChange: (value: string) => void
   onCursorOffsetChange?: (offset: number) => void
+  onRevealRequestHandled?: (id: number) => void
+  onSelectionOffsetChange?: (range: CadEditorSelectionRange | null) => void
   readOnly?: boolean
+  revealRequest?: CadEditorRevealRequest | null
   value: string
+}
+
+function revealEditorRange(
+  editor: Monaco.editor.IStandaloneCodeEditor,
+  model: Monaco.editor.ITextModel,
+  request: CadEditorRevealRequest,
+) {
+  const start = model.getPositionAt(Math.max(0, Math.min(request.start, model.getValueLength())))
+  const end = model.getPositionAt(Math.max(request.start, Math.min(request.end, model.getValueLength())))
+  const range = {
+    startLineNumber: start.lineNumber,
+    startColumn: start.column,
+    endLineNumber: end.lineNumber,
+    endColumn: end.column,
+  }
+  editor.setSelection(range)
+  editor.revealRangeInCenter(range)
+  editor.focus()
 }
 
 function markerData(monaco: typeof Monaco, diagnostics: readonly CadDiagnostic[]) {
@@ -52,7 +76,10 @@ function CadEditor({
   onAuthoringStateChange,
   onChange,
   onCursorOffsetChange,
+  onRevealRequestHandled,
+  onSelectionOffsetChange,
   readOnly = false,
+  revealRequest = null,
   value,
 }: CadEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -60,9 +87,13 @@ function CadEditor({
   const onChangeRef = useRef(onChange)
   const onAuthoringStateChangeRef = useRef(onAuthoringStateChange)
   const onCursorOffsetChangeRef = useRef(onCursorOffsetChange)
+  const onRevealRequestHandledRef = useRef(onRevealRequestHandled)
+  const onSelectionOffsetChangeRef = useRef(onSelectionOffsetChange)
   const diagnosticsRef = useRef(diagnostics)
   const monacoRef = useRef<typeof Monaco | null>(null)
   const readOnlyRef = useRef(readOnly)
+  const revealRequestRef = useRef(revealRequest)
+  const revealedRequestIdRef = useRef<number | null>(null)
   const hasSelectionRef = useRef(false)
   const publishAuthoringStateRef = useRef<(() => void) | null>(null)
   const valueRef = useRef(value)
@@ -71,8 +102,22 @@ function CadEditor({
   onChangeRef.current = onChange
   onAuthoringStateChangeRef.current = onAuthoringStateChange
   onCursorOffsetChangeRef.current = onCursorOffsetChange
+  onRevealRequestHandledRef.current = onRevealRequestHandled
+  onSelectionOffsetChangeRef.current = onSelectionOffsetChange
   diagnosticsRef.current = diagnostics
   readOnlyRef.current = readOnly
+  revealRequestRef.current = revealRequest
+
+  const applyRevealRequest = useCallback(
+    (editor: Monaco.editor.IStandaloneCodeEditor, model: Monaco.editor.ITextModel) => {
+      const request = revealRequestRef.current
+      if (!request || revealedRequestIdRef.current === request.id) return
+      revealEditorRange(editor, model, request)
+      revealedRequestIdRef.current = request.id
+      onRevealRequestHandledRef.current?.(request.id)
+    },
+    [],
+  )
 
   useEffect(() => {
     let disposed = false
@@ -145,6 +190,17 @@ function CadEditor({
             readOnlyRef.current ? null : { handle: authoringHandle, hasSelection: hasSelectionRef.current },
           )
         }
+        const publishSelectionOffset = () => {
+          const selection = editor.getSelection()
+          onSelectionOffsetChangeRef.current?.(
+            selection
+              ? {
+                  start: model.getOffsetAt(selection.getStartPosition()),
+                  end: model.getOffsetAt(selection.getEndPosition()),
+                }
+              : null,
+          )
+        }
         publishAuthoringStateRef.current = publishAuthoringState
         monaco.editor.setModelMarkers(model, 'caemble-cad', markerData(monaco, diagnosticsRef.current))
         contentSubscription = model.onDidChangeContent(() => {
@@ -152,6 +208,7 @@ function CadEditor({
           if (nextValue === valueRef.current) return
           valueRef.current = nextValue
           onChangeRef.current(nextValue)
+          publishSelectionOffset()
         })
         cursorSubscription = editor.onDidChangeCursorPosition(({ position }) => {
           onCursorOffsetChangeRef.current?.(model.getOffsetAt(position))
@@ -159,6 +216,7 @@ function CadEditor({
         selectionSubscription = editor.onDidChangeCursorSelection(({ selection }) => {
           hasSelectionRef.current = !selection.isEmpty() && model.getValueInRange(selection).trim().length > 0
           publishAuthoringState()
+          publishSelectionOffset()
         })
         const initialPosition = editor.getPosition()
         if (initialPosition) onCursorOffsetChangeRef.current?.(model.getOffsetAt(initialPosition))
@@ -167,6 +225,8 @@ function CadEditor({
           initialSelection && !initialSelection.isEmpty() && model.getValueInRange(initialSelection).trim().length > 0,
         )
         publishAuthoringState()
+        publishSelectionOffset()
+        applyRevealRequest(editor, model)
       })
       .catch((error: unknown) => {
         if (!disposed) setLoadError(error instanceof Error ? error.message : String(error))
@@ -178,13 +238,14 @@ function CadEditor({
       cursorSubscription?.dispose()
       selectionSubscription?.dispose()
       onAuthoringStateChangeRef.current?.(null)
+      onSelectionOffsetChangeRef.current?.(null)
       editorRef.current?.dispose()
       if (disposeModelOnUnmount) editorModel?.dispose()
       editorRef.current = null
       publishAuthoringStateRef.current = null
       monacoRef.current = null
     }
-  }, [disposeModelOnUnmount, language, modelPath])
+  }, [applyRevealRequest, disposeModelOnUnmount, language, modelPath])
 
   useEffect(() => {
     valueRef.current = value
@@ -196,6 +257,12 @@ function CadEditor({
     editorRef.current?.updateOptions({ readOnly })
     publishAuthoringStateRef.current?.()
   }, [readOnly])
+
+  useEffect(() => {
+    const editor = editorRef.current
+    const model = editor?.getModel()
+    if (editor && model && revealRequest) applyRevealRequest(editor, model)
+  }, [applyRevealRequest, revealRequest])
 
   useEffect(() => {
     const monaco = monacoRef.current

@@ -1,6 +1,7 @@
 import { transforms } from '@jscad/modeling'
-import { convertUcumValue, type CadScenePart, type UcumUnit } from '@/lib/cad'
-import { createRenderParts } from './renderParts'
+import { convertUcumValue, type CadScenePart, type CadSceneTreeNode, type UcumUnit } from '@/lib/cad'
+import { createRenderParts, type RenderPartSelection } from './renderParts'
+import type { CadViewerSelectionMatch } from './selection'
 
 export type CadViewerSource = 'experiment' | 'task'
 
@@ -9,6 +10,7 @@ export type JscadViewerLayer = Readonly<{
   taskName?: string
   lengthUnit: UcumUnit
   parts: CadScenePart[]
+  tree: CadSceneTreeNode
   sceneHash?: string | null
 }>
 
@@ -34,6 +36,28 @@ export function scaleViewerLayers(
   })
 }
 
-export function createLayerRenderParts(layers: readonly JscadViewerLayer[]) {
-  return layers.flatMap((layer) => createRenderParts(layer.parts))
+export function createLayerRenderParts(
+  layers: readonly JscadViewerLayer[],
+  selectionMatches: readonly CadViewerSelectionMatch[] = [],
+) {
+  return layers.flatMap((layer) => {
+    const selections = new Map<string, { geometry: boolean; polygonIndices: Set<number> }>()
+    selectionMatches
+      .filter(
+        (match) =>
+          match.source === layer.source && (match.source === 'experiment' || match.taskName === layer.taskName),
+      )
+      .forEach((match) => {
+        const current = selections.get(match.geometryId) ?? { geometry: false, polygonIndices: new Set<number>() }
+        if (!match.surfaceId) current.geometry = true
+        else {
+          layer.parts
+            .find((part) => part.id === match.geometryId)
+            ?.surfaces.find((surface) => surface.id === match.surfaceId)
+            ?.polygonIndices.forEach((polygonIndex) => current.polygonIndices.add(polygonIndex))
+        }
+        selections.set(match.geometryId, current)
+      })
+    return createRenderParts(layer.parts, selections as ReadonlyMap<string, RenderPartSelection>)
+  })
 }

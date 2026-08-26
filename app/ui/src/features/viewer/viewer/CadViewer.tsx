@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { resolveCadViewerContent, type CadViewerDocument } from './cadViewerContent'
 import JscadViewer from './JscadViewer'
 import type { CadViewerSource } from './sourceLayers'
+import type { CadViewerSelectionQuery, CadViewerSourceLookupStatus } from './selection'
 import type { RayPathBundle } from '@/lib/cad'
 
 export type { CadViewerDocument } from './cadViewerContent'
@@ -12,9 +13,14 @@ export type CadViewerProps = {
   onRenderEnd: (sources: readonly CadViewerSource[]) => void
   onRenderError: (message: string, sources: readonly CadViewerSource[]) => void
   onRenderStart: (sources: readonly CadViewerSource[]) => void
+  onFindSelectionSource?: (value: string) => void
+  onSelectionQueryChange?: (query: CadViewerSelectionQuery | null) => void
+  onSelectionSourcePathsChange?: (values: readonly string[]) => void
   onToggleViewerExpanded?: () => void
-  viewerExpanded?: boolean
   rayPaths?: readonly RayPathBundle[]
+  selectionQuery?: CadViewerSelectionQuery | null
+  selectionSourceStatus?: Readonly<Record<string, CadViewerSourceLookupStatus>>
+  viewerExpanded?: boolean
 }
 
 export function CadViewer({
@@ -23,8 +29,13 @@ export function CadViewer({
   onRenderEnd,
   onRenderError,
   onRenderStart,
+  onFindSelectionSource,
+  onSelectionQueryChange,
+  onSelectionSourcePathsChange,
   onToggleViewerExpanded,
   rayPaths,
+  selectionQuery,
+  selectionSourceStatus,
   viewerExpanded,
 }: CadViewerProps) {
   const [experimentVisible, setExperimentVisible] = useState(true)
@@ -50,7 +61,12 @@ export function CadViewer({
         emptyMessage={content.emptyMessage}
         layers={content.layers}
         lengthUnit={content.lengthUnit}
+        onFindSelectionSource={onFindSelectionSource}
+        onSelectionQueryChange={onSelectionQueryChange}
+        onSelectionSourcePathsChange={onSelectionSourcePathsChange}
         rayPaths={rayPaths}
+        selectionQuery={selectionQuery}
+        selectionSourceStatus={selectionSourceStatus}
         visibleSources={content.visibleSources}
         onRenderEnd={handleRenderEnd}
         onRenderError={handleRenderError}

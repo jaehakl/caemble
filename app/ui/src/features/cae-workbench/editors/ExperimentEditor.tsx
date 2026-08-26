@@ -11,10 +11,12 @@ import {
 } from '@/lib/cad'
 import { draftTaskCode } from '@/lib/localExperimentCode'
 import CadEditor from '@/features/viewer/editor/CadEditor'
-import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
+import type { CadEditorAuthoringState, CadEditorRevealRequest } from '@/features/viewer/editor/CadEditor'
 import { CadDiffEditor } from '@/features/viewer/editor/CadDiffEditor'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
 import type { AgentExperimentChange } from '../state/useCaeWorkbenchState'
+import type { CadViewerSelectionQuery } from '@/features/viewer/viewer/selection'
+import { cadSourceIdSelectionAtRange } from '@/features/viewer/editor/cadSelectionSource'
 import { DocumentFeedback } from './DocumentFeedback'
 
 const protectedCorePaths: readonly string[] = [
@@ -33,6 +35,9 @@ export type ExperimentEditorProps = {
   onUndoAgentChange?: () => Promise<boolean>
   onActiveFileChange?: (path: string) => void
   onAuthoringStateChange?: (state: CadEditorAuthoringState | null) => void
+  onSourceRevealRequestHandled?: (id: number) => void
+  onViewerSelectionQueryChange?: (query: CadViewerSelectionQuery | null) => void
+  sourceRevealRequest?: (CadEditorRevealRequest & Readonly<{ path: string }>) | null
 }
 
 function synchronizeExperimentModels(
@@ -121,6 +126,9 @@ export function ExperimentEditor({
   onUndoAgentChange,
   onActiveFileChange,
   onAuthoringStateChange,
+  onSourceRevealRequestHandled,
+  onViewerSelectionQueryChange,
+  sourceRevealRequest = null,
 }: ExperimentEditorProps) {
   const filePaths = useMemo(
     () =>
@@ -154,9 +162,13 @@ export function ExperimentEditor({
   const editorModels = useExperimentMonacoModels(document?.sourceBundle.files ?? null, activeFile)
   const agentFileChange = agentChange?.files.find((file) => file.path === activeFile) ?? null
   const conflictReview = agentChange?.status === 'conflicted'
-  const isTask = activeFile ? experimentTaskName(activeFile) !== null : false
+  const activeTaskName = activeFile ? experimentTaskName(activeFile) : null
+  const isTask = activeTaskName !== null
   const supportsGeometryAuthoring =
     activeFile === EXPERIMENT_ENTRY_PATH || activeFile === EXPERIMENT_GEOMETRY_PATH || isTask
+  const supportsViewerSelection = Boolean(
+    activeFile && activeFile.endsWith('.tsx') && activeFile !== EXPERIMENT_MATERIAL_PATH,
+  )
 
   useEffect(() => {
     if (agentChange) setShowAgentDiff(true)
@@ -175,6 +187,18 @@ export function ExperimentEditor({
   useEffect(() => {
     if (!supportsGeometryAuthoring) onAuthoringStateChange?.(null)
   }, [onAuthoringStateChange, supportsGeometryAuthoring])
+
+  useEffect(() => {
+    if (!supportsViewerSelection || (agentChange && agentFileChange && showAgentDiff)) {
+      onViewerSelectionQueryChange?.(null)
+    }
+  }, [agentChange, agentFileChange, onViewerSelectionQueryChange, showAgentDiff, supportsViewerSelection])
+
+  useEffect(() => {
+    if (!sourceRevealRequest || !filePaths.includes(sourceRevealRequest.path)) return
+    setSelectedFile(sourceRevealRequest.path)
+    setShowAgentDiff(false)
+  }, [filePaths, sourceRevealRequest])
 
   if (!document || !activeFile) {
     return (
@@ -372,7 +396,32 @@ export function ExperimentEditor({
             language={activeFile === EXPERIMENT_SIMULATION_PATH ? 'python' : 'typescript'}
             modelPath={`file:///${activeFile}`}
             onAuthoringStateChange={supportsGeometryAuthoring ? onAuthoringStateChange : undefined}
+            onRevealRequestHandled={onSourceRevealRequestHandled}
+            onSelectionOffsetChange={
+              supportsViewerSelection
+                ? (range) => {
+                    const selected = range
+                      ? cadSourceIdSelectionAtRange(document.sourceBundle.files[activeFile] ?? '', activeFile, range)
+                      : null
+                    onViewerSelectionQueryChange?.(
+                      selected
+                        ? {
+                            ...selected,
+                            origin: 'code',
+                            scope:
+                              activeFile === EXPERIMENT_ENTRY_PATH
+                                ? { source: 'experiment' }
+                                : activeTaskName
+                                  ? { source: 'task', taskName: activeTaskName }
+                                  : { source: 'visible' },
+                          }
+                        : null,
+                    )
+                  }
+                : undefined
+            }
             readOnly={controller.sourceReadOnly || disabled}
+            revealRequest={sourceRevealRequest?.path === activeFile ? sourceRevealRequest : null}
             value={document.sourceBundle.files[activeFile] ?? ''}
             onChange={(source) => controller.handleExperimentFileChange(activeFile, source)}
           />

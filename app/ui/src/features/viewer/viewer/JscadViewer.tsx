@@ -1,11 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as reglRenderer from '@jscad/regl-renderer'
-import { Maximize2, Minimize2 } from 'lucide-react'
+import { Copy, Focus, Maximize2, Minimize2, SearchCode, X } from 'lucide-react'
+import { toast } from 'sonner'
 import type { CadScenePart, RayPathBundle, UcumUnit } from '@/lib/cad'
 import { scenePartColor, unassignedGeometryColor } from './materialColor'
-import { createWireframeGeometries } from './renderParts'
+import { createWireframeGeometries, geometryWithSelectedPolygons, viewerSelectionColor } from './renderParts'
 import { createRayPathRenderGeometries } from './rayPathRendering'
 import { createLayerRenderParts, scaleViewerLayers, type CadViewerSource, type JscadViewerLayer } from './sourceLayers'
+import {
+  createCadViewerPickParts,
+  pickCadViewerTarget,
+  resolveCadViewerSelection,
+  type CadViewerPickMode,
+  type CadViewerPickingCamera,
+  type CadViewerSelectionQuery,
+  type CadViewerSourceLookupStatus,
+} from './selection'
 
 type RendererEntity = Record<string, unknown>
 type RendererOptions = Record<string, unknown> & {
@@ -71,10 +81,15 @@ type JscadViewerProps = {
   onRenderEnd: () => void
   onRenderError: (message: string) => void
   onRenderStart: () => void
+  onFindSelectionSource?: (value: string) => void
+  onSelectionQueryChange?: (query: CadViewerSelectionQuery | null) => void
+  onSelectionSourcePathsChange?: (values: readonly string[]) => void
   onToggleSource?: (source: CadViewerSource) => void
   onToggleViewerExpanded?: () => void
+  selectionQuery?: CadViewerSelectionQuery | null
   rayPaths?: readonly RayPathBundle[]
   viewerExpanded?: boolean
+  selectionSourceStatus?: Readonly<Record<string, CadViewerSourceLookupStatus>>
   visibleSources?: readonly CadViewerSource[]
 }
 
@@ -121,16 +136,20 @@ const cameraViewDirections = {
 
 export function ViewerToolbar({
   availableSources = [],
+  onPickModeChange,
   onSetCameraView,
   onToggleSource,
   onToggleViewerExpanded,
+  pickMode,
   viewerExpanded = false,
   visibleSources = [],
 }: {
   availableSources?: readonly CadViewerSource[]
+  onPickModeChange: (mode: CadViewerPickMode) => void
   onSetCameraView: (view: CameraView) => void
   onToggleSource?: (source: CadViewerSource) => void
   onToggleViewerExpanded?: () => void
+  pickMode: CadViewerPickMode
   viewerExpanded?: boolean
   visibleSources?: readonly CadViewerSource[]
 }) {
@@ -146,6 +165,25 @@ export function ViewerToolbar({
             onClick={() => onSetCameraView(view)}
           >
             {view === 'default' ? 'Default' : view.toUpperCase()}
+          </button>
+        ))}
+      </div>
+
+      <div aria-label="Viewer selection mode" className="flex items-center gap-1 border-l border-slate-200 pl-3">
+        {(['off', 'geometry', 'surface'] as const).map((mode) => (
+          <button
+            aria-label={`Selection mode ${mode}`}
+            aria-pressed={pickMode === mode}
+            className={`rounded border px-2 py-1 text-[11px] font-medium transition-colors ${
+              pickMode === mode
+                ? 'border-orange-400 bg-orange-50 text-orange-900'
+                : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-800'
+            }`}
+            key={mode}
+            type="button"
+            onClick={() => onPickModeChange(mode)}
+          >
+            {mode === 'off' ? 'Off' : mode === 'geometry' ? 'Geometry' : 'Surface'}
           </button>
         ))}
       </div>
@@ -200,14 +238,41 @@ function JscadViewer({
   onRenderEnd,
   onRenderError,
   onRenderStart,
+  onFindSelectionSource,
+  onSelectionQueryChange,
+  onSelectionSourcePathsChange,
   onToggleSource,
   onToggleViewerExpanded,
   rayPaths = [],
+  selectionQuery = null,
+  selectionSourceStatus = {},
   viewerExpanded,
   visibleSources,
 }: JscadViewerProps) {
+  const [pickMode, setPickMode] = useState<CadViewerPickMode>('off')
   const displayLayers = useMemo(() => scaleViewerLayers(layers, lengthUnit), [layers, lengthUnit])
   const parts = useMemo(() => displayLayers.flatMap((layer) => layer.parts), [displayLayers])
+  const selectionMatches = useMemo(
+    () => resolveCadViewerSelection(displayLayers, selectionQuery),
+    [displayLayers, selectionQuery],
+  )
+  const selectionSourcePaths = useMemo(
+    () =>
+      selectionQuery
+        ? [
+            ...new Set(
+              selectionMatches.length > 0
+                ? selectionMatches.map((match) => match.surfaceId ?? match.geometryId)
+                : [selectionQuery.value],
+            ),
+          ]
+        : [],
+    [selectionMatches, selectionQuery],
+  )
+  const pickParts = useMemo(
+    () => (pickMode === 'off' ? [] : createCadViewerPickParts(displayLayers)),
+    [displayLayers, pickMode],
+  )
   const rayPathGeometries = useMemo(() => createRayPathRenderGeometries(rayPaths, lengthUnit), [lengthUnit, rayPaths])
   const rayPathVisualsRef = useRef<Record<string, unknown>>({
     drawCmd: 'drawRayPaths',
@@ -232,7 +297,10 @@ function JscadViewer({
   const lastFittedPartsRef = useRef<readonly CadScenePart[] | null>(null)
   const lastPointRef = useRef<{
     button: 0 | 2
+    moved: boolean
     pointerId: number
+    startX: number
+    startY: number
     x: number
     y: number
   } | null>(null)
@@ -242,6 +310,14 @@ function JscadViewer({
   const renderRef = useRef<((options: RendererOptions) => void) | null>(null)
   const renderErrorRef = useRef(onRenderError)
   renderErrorRef.current = onRenderError
+
+  useEffect(() => {
+    if (selectionQuery?.origin === 'viewer' && selectionMatches.length === 0) onSelectionQueryChange?.(null)
+  }, [onSelectionQueryChange, selectionMatches.length, selectionQuery])
+
+  useEffect(() => {
+    onSelectionSourcePathsChange?.(selectionSourcePaths)
+  }, [onSelectionSourcePathsChange, selectionSourcePaths])
 
   const renderScene = useCallback(() => {
     if (!renderRef.current || !optionsRef.current) return false
@@ -392,11 +468,17 @@ function JscadViewer({
               layer.sceneHash,
               layer.parts.map((part) => [part.id, part.materialRole, scenePartColor(part)]),
             ]),
+            selection: selectionMatches.map((match) => [
+              match.source,
+              match.taskName ?? null,
+              match.geometryId,
+              match.surfaceId ?? null,
+            ]),
           })
         : null
       let geometryEntities = cacheKey ? rendererEntityCacheRef.current.get(cacheKey) : undefined
       if (!geometryEntities) {
-        const renderParts = createLayerRenderParts(displayLayers)
+        const renderParts = createLayerRenderParts(displayLayers, selectionMatches)
         const wireframeEntities = renderParts
           .filter((part) => part.wireframe)
           .flatMap((part) =>
@@ -413,7 +495,12 @@ function JscadViewer({
         const meshEntities = renderParts
           .filter((part) => !part.wireframe)
           .flatMap((part) => renderer.entitiesFromSolids({ color: part.color, smoothNormals: true }, part.geometry))
-        geometryEntities = [...meshEntities, ...wireframeEntities]
+        const wireframeSelectionEntities = renderParts.flatMap((part) =>
+          part.selectionGeometry
+            ? renderer.entitiesFromSolids({ color: viewerSelectionColor, smoothNormals: false }, part.selectionGeometry)
+            : [],
+        )
+        geometryEntities = [...meshEntities, ...wireframeEntities, ...wireframeSelectionEntities]
         if (cacheKey) {
           rendererEntityCacheRef.current.set(cacheKey, geometryEntities)
           if (rendererEntityCacheRef.current.size > 16) {
@@ -449,7 +536,17 @@ function JscadViewer({
       const typedError = error as { message?: string }
       onRenderError(typedError.message ?? String(error))
     }
-  }, [displayLayers, lengthUnit, onRenderEnd, onRenderError, onRenderStart, parts, rayPathEntities, renderScene])
+  }, [
+    displayLayers,
+    lengthUnit,
+    onRenderEnd,
+    onRenderError,
+    onRenderStart,
+    parts,
+    rayPathEntities,
+    renderScene,
+    selectionMatches,
+  ])
 
   const renderWithControls = () => {
     if (!cameraRef.current || !controlsRef.current || !optionsRef.current || !renderRef.current) return
@@ -488,11 +585,40 @@ function JscadViewer({
     renderWithControls()
   }
 
+  const focusSelectionMatch = (match: (typeof selectionMatches)[number]) => {
+    if (!cameraRef.current || !controlsRef.current) return
+    const layer = displayLayers.find(
+      (candidate) =>
+        candidate.source === match.source &&
+        (candidate.source === 'experiment' || candidate.taskName === match.taskName),
+    )
+    const part = layer?.parts.find((candidate) => candidate.id === match.geometryId)
+    if (!part) return
+    let geometry = part.geometry
+    if (match.surfaceId) {
+      const surface = part.surfaces.find((candidate) => candidate.id === match.surfaceId)
+      if (!surface || surface.polygonIndices.length === 0) return
+      geometry = geometryWithSelectedPolygons(part.geometry, new Set(surface.polygonIndices), true)
+    }
+    const entities = renderer.entitiesFromSolids({ color: viewerSelectionColor, smoothNormals: false }, geometry)
+    if (entities.length === 0) return
+    const zoomed = renderer.controls.orbit.zoomToFit({
+      camera: cameraRef.current,
+      controls: controlsRef.current,
+      entities,
+    })
+    Object.assign(cameraRef.current, zoomed.camera)
+    Object.assign(controlsRef.current, zoomed.controls)
+    renderWithControls()
+  }
+
   return (
     <div className="flex h-full min-h-[320px] w-full flex-col overflow-hidden bg-slate-50 lg:min-h-0">
       <ViewerToolbar
         availableSources={availableSources}
+        pickMode={pickMode}
         visibleSources={visibleSources}
+        onPickModeChange={setPickMode}
         onSetCameraView={setCameraView}
         onToggleSource={onToggleSource}
         onToggleViewerExpanded={onToggleViewerExpanded}
@@ -502,7 +628,9 @@ function JscadViewer({
       <div aria-label="Geometry Viewer" className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         <canvas
           ref={canvasRef}
-          className="block h-full w-full cursor-grab touch-none active:cursor-grabbing"
+          className={`block h-full w-full touch-none ${
+            pickMode === 'off' ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'
+          }`}
           data-viewer-canvas="true"
           onContextMenu={(event) => event.preventDefault()}
           onPointerDown={(event) => {
@@ -511,7 +639,10 @@ function JscadViewer({
             event.currentTarget.setPointerCapture(event.pointerId)
             lastPointRef.current = {
               button: event.button,
+              moved: false,
               pointerId: event.pointerId,
+              startX: event.clientX,
+              startY: event.clientY,
               x: event.clientX,
               y: event.clientY,
             }
@@ -543,16 +674,43 @@ function JscadViewer({
                   )
             Object.assign(cameraRef.current, controlChange.camera)
             Object.assign(controlsRef.current, controlChange.controls)
-            lastPointRef.current = { ...lastPoint, x: event.clientX, y: event.clientY }
+            lastPointRef.current = {
+              ...lastPoint,
+              moved:
+                lastPoint.moved || Math.hypot(event.clientX - lastPoint.startX, event.clientY - lastPoint.startY) > 4,
+              x: event.clientX,
+              y: event.clientY,
+            }
             renderWithControls()
           }}
           onPointerUp={(event) => {
-            if (lastPointRef.current?.pointerId !== event.pointerId) return
+            const lastPoint = lastPointRef.current
+            if (lastPoint?.pointerId !== event.pointerId) return
             event.preventDefault()
             if (event.currentTarget.hasPointerCapture(event.pointerId)) {
               event.currentTarget.releasePointerCapture(event.pointerId)
             }
             lastPointRef.current = null
+            if (lastPoint.button !== 0 || lastPoint.moved || pickMode === 'off' || !cameraRef.current) return
+            const rect = event.currentTarget.getBoundingClientRect()
+            const hit = pickCadViewerTarget(pickParts, cameraRef.current as CadViewerPickingCamera, {
+              height: rect.height,
+              width: rect.width,
+              x: event.clientX - rect.left,
+              y: event.clientY - rect.top,
+            })
+            if (!hit || (pickMode === 'surface' && !hit.surfaceId)) {
+              onSelectionQueryChange?.(null)
+              return
+            }
+            onSelectionQueryChange?.({
+              kind: pickMode,
+              match: 'exact',
+              origin: 'viewer',
+              scope:
+                hit.source === 'experiment' ? { source: 'experiment' } : { source: 'task', taskName: hit.taskName! },
+              value: pickMode === 'surface' ? hit.surfaceId! : hit.geometryId,
+            })
           }}
           onPointerCancel={(event) => {
             if (lastPointRef.current?.pointerId !== event.pointerId) return
@@ -565,6 +723,114 @@ function JscadViewer({
             if (lastPointRef.current?.pointerId === event.pointerId) lastPointRef.current = null
           }}
         />
+
+        {selectionQuery ? (
+          <div className="absolute top-2 left-2 z-10 max-h-[33%] w-fit max-w-[min(20rem,calc(100%-1rem))] overflow-auto rounded border border-white/60 bg-white/65 p-1 text-[9px] text-slate-800 shadow-sm backdrop-blur-sm">
+            <div className="flex min-w-0 items-start gap-0.5">
+              <div className="min-w-0 flex-1 space-y-0.5">
+                {selectionMatches.length === 0 ? (
+                  <div className="flex min-w-0 items-center gap-1 px-0.5 py-0.5">
+                    <span className="max-w-56 min-w-0 truncate font-mono" title={selectionQuery.value}>
+                      {selectionQuery.value}
+                    </span>
+                    <span className="shrink-0 text-amber-700">찾지 못함</span>
+                    {onFindSelectionSource ? (
+                      <button
+                        aria-label={`Find ${selectionQuery.value} in Source`}
+                        className="grid size-5 shrink-0 place-items-center rounded text-slate-500 hover:bg-white/70 hover:text-slate-900 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-slate-500"
+                        disabled={selectionSourceStatus[selectionQuery.value] !== 'available'}
+                        title={
+                          selectionSourceStatus[selectionQuery.value] === 'available'
+                            ? 'Source에서 전역 경로 찾기'
+                            : selectionSourceStatus[selectionQuery.value] === 'missing'
+                              ? 'Source에서 일치하는 경로 없음'
+                              : 'Source 위치 확인 중'
+                        }
+                        type="button"
+                        onClick={() => onFindSelectionSource(selectionQuery.value)}
+                      >
+                        <SearchCode className="size-3" />
+                      </button>
+                    ) : null}
+                  </div>
+                ) : (
+                  selectionMatches.map((match) => {
+                    const path = match.surfaceId ?? match.geometryId
+                    const layerLabel = match.source === 'experiment' ? 'Exp' : `T·${match.taskName}`
+                    return (
+                      <div
+                        className="flex min-w-0 items-center gap-0.5"
+                        key={`${match.source}:${match.taskName ?? ''}:${match.geometryId}:${match.surfaceId ?? ''}`}
+                      >
+                        {selectionMatches.length > 1 ? (
+                          <span
+                            className="max-w-16 shrink-0 truncate rounded bg-slate-900/5 px-1 py-0.5 text-[8px] text-slate-500"
+                            title={match.source === 'experiment' ? 'Experiment' : `Task · ${match.taskName}`}
+                          >
+                            {layerLabel}
+                          </span>
+                        ) : null}
+                        <span className="max-w-56 min-w-0 flex-1 truncate font-mono" title={path}>
+                          {path}
+                        </span>
+                        {onFindSelectionSource ? (
+                          <button
+                            aria-label={`Find ${path} in Source`}
+                            className="grid size-5 shrink-0 place-items-center rounded text-slate-500 hover:bg-white/70 hover:text-slate-900 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-slate-500"
+                            disabled={selectionSourceStatus[path] !== 'available'}
+                            title={
+                              selectionSourceStatus[path] === 'available'
+                                ? 'Source에서 전역 경로 찾기'
+                                : selectionSourceStatus[path] === 'missing'
+                                  ? 'Source에서 일치하는 경로 없음'
+                                  : 'Source 위치 확인 중'
+                            }
+                            type="button"
+                            onClick={() => onFindSelectionSource(path)}
+                          >
+                            <SearchCode className="size-3" />
+                          </button>
+                        ) : null}
+                        <button
+                          aria-label={`Focus Viewer on ${path}`}
+                          className="grid size-5 shrink-0 place-items-center rounded text-slate-500 hover:bg-white/70 hover:text-slate-900"
+                          title="선택 요소에 카메라 맞추기"
+                          type="button"
+                          onClick={() => focusSelectionMatch(match)}
+                        >
+                          <Focus className="size-3" />
+                        </button>
+                        <button
+                          aria-label={`Copy selected ID ${path}`}
+                          className="grid size-5 shrink-0 place-items-center rounded text-slate-500 hover:bg-white/70 hover:text-slate-900"
+                          title="전역 경로 복사"
+                          type="button"
+                          onClick={() => {
+                            void navigator.clipboard
+                              .writeText(path)
+                              .then(() => toast.success('전역 경로를 복사했습니다.'))
+                              .catch(() => toast.error('전역 경로를 복사하지 못했습니다.'))
+                          }}
+                        >
+                          <Copy className="size-3" />
+                        </button>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+              <button
+                aria-label="Clear Viewer selection"
+                className="grid size-5 shrink-0 place-items-center rounded text-slate-500 hover:bg-white/70 hover:text-slate-900"
+                title="선택 해제"
+                type="button"
+                onClick={() => onSelectionQueryChange?.(null)}
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         {parts.length === 0 && rayPathCount === 0 ? (
           <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-slate-500">
