@@ -38,6 +38,7 @@ export class GpStationJobPeer {
   private finishResolve?: () => void;
   private finishReject?: (reason: Error) => void;
   private finishTimer?: ReturnType<typeof setTimeout>;
+  private finishJobId?: string;
   private finishSent = false;
   private isClosed = false;
 
@@ -196,12 +197,15 @@ export class GpStationJobPeer {
     }
   }
 
-  private waitForSendBuffer(): Promise<void> {
+  private waitForSendBuffer(
+    threshold = BUFFERED_AMOUNT_LOW_THRESHOLD,
+    phase = 'while sending attachment',
+  ): Promise<void> {
     if (this.closed || this.dataChannel.readyState !== 'open') {
-      return Promise.reject(new Error('data channel closed while sending attachment'));
+      return Promise.reject(new Error(`data channel closed ${phase}`));
     }
-    this.dataChannel.bufferedAmountLowThreshold = BUFFERED_AMOUNT_LOW_THRESHOLD;
-    if (this.dataChannel.bufferedAmount <= BUFFERED_AMOUNT_LOW_THRESHOLD) {
+    this.dataChannel.bufferedAmountLowThreshold = threshold;
+    if (this.dataChannel.bufferedAmount <= threshold) {
       return Promise.resolve();
     }
     return new Promise((resolve, reject) => {
@@ -218,18 +222,18 @@ export class GpStationJobPeer {
       };
       const onClose = () => {
         cleanup();
-        reject(new Error('data channel closed while sending attachment'));
+        reject(new Error(`data channel closed ${phase}`));
       };
       const onError = () => {
         cleanup();
-        reject(new Error('data channel error while sending attachment'));
+        reject(new Error(`data channel error ${phase}`));
       };
       this.dataChannel.addEventListener('bufferedamountlow', onLow);
       this.dataChannel.addEventListener('close', onClose);
       this.dataChannel.addEventListener('error', onError);
       timer = setTimeout(() => {
         cleanup();
-        reject(new Error('data channel buffer did not drain while sending attachment'));
+        reject(new Error(`data channel buffer did not drain ${phase}`));
       }, BUFFERED_AMOUNT_DRAIN_TIMEOUT_MS);
     });
   }
@@ -248,6 +252,7 @@ export class GpStationJobPeer {
       }, timeoutMs);
       this.finishResolve = resolve;
       this.finishReject = reject;
+      this.finishJobId = jobId;
       try {
         this.dataChannel.send(JSON.stringify({ kind: 'job.finish', id: jobId }));
         this.finishSent = true;
@@ -301,7 +306,24 @@ export class GpStationJobPeer {
       return;
     }
     if (message.kind === 'job.finished') {
-      this.resolveFinish();
+      const jobId = message.id ?? this.finishJobId;
+      if (!jobId) {
+        this.resolveFinish();
+        return;
+      }
+      try {
+        this.ensureOpen('acknowledge job finish');
+        this.dataChannel.send(JSON.stringify({ kind: 'job.finished.ack', id: jobId }));
+        await this.waitForSendBuffer(0, 'after job finished ack');
+        emitDiagnostic(this.peerConnection, this.dataChannel, this.diagnostic, {
+          stage: 'job-finished-ack',
+          message: 'sent job finished ack',
+          bufferedAmount: this.dataChannel.bufferedAmount,
+        });
+        this.resolveFinish('received and acknowledged job finished');
+      } catch {
+        this.resolveFinish('received job finished before acknowledgement completed');
+      }
       return;
     }
     if (message.kind !== 'job.result') {
@@ -427,6 +449,7 @@ export class GpStationJobPeer {
     this.finishResolve = undefined;
     this.finishReject = undefined;
     this.finishTimer = undefined;
+    this.finishJobId = undefined;
     this.finishSent = false;
   }
 

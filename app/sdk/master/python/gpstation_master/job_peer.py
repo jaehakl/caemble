@@ -67,6 +67,7 @@ class GpStationJobPeer:
         self._pending_call: _PendingCall[Any] | None = None
         self._response: _PendingResponse | None = None
         self._finish_future: asyncio.Future[None] | None = None
+        self._finish_job_id: str | None = None
         self._finish_sent = False
         self._is_closed = False
         self._close_lock = asyncio.Lock()
@@ -173,6 +174,7 @@ class GpStationJobPeer:
             raise GpStationError("job finish already in progress")
         future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self._finish_future = future
+        self._finish_job_id = job_id
         try:
             self._data_channel.send(self._encode_control({"kind": "job.finish", "id": job_id}))
             self._finish_sent = True
@@ -280,15 +282,19 @@ class GpStationJobPeer:
             if self._data_channel.bufferedAmount > BUFFERED_AMOUNT_HIGH_WATER_MARK:
                 await self._wait_for_send_buffer()
 
-    async def _wait_for_send_buffer(self) -> None:
-        self._data_channel.bufferedAmountLowThreshold = BUFFERED_AMOUNT_LOW_THRESHOLD
+    async def _wait_for_send_buffer(
+        self,
+        threshold: int = BUFFERED_AMOUNT_LOW_THRESHOLD,
+        phase: str = "while sending attachment",
+    ) -> None:
+        self._data_channel.bufferedAmountLowThreshold = threshold
         try:
             async with asyncio.timeout(BUFFERED_AMOUNT_DRAIN_TIMEOUT_SECONDS):
-                while self._data_channel.bufferedAmount > BUFFERED_AMOUNT_LOW_THRESHOLD:
-                    self._ensure_open("send job attachment")
+                while self._data_channel.bufferedAmount > threshold:
+                    self._ensure_open(phase)
                     await asyncio.sleep(0.01)
         except TimeoutError as exc:
-            raise TimeoutError("data channel buffer did not drain while sending attachment") from exc
+            raise TimeoutError(f"data channel buffer did not drain {phase}") from exc
 
     async def _consume_messages(self) -> None:
         try:
@@ -327,7 +333,23 @@ class GpStationJobPeer:
                 )
             return
         if kind == "job.finished":
-            self._resolve_finish()
+            job_id = message.get("id") if isinstance(message.get("id"), str) else self._finish_job_id
+            if job_id is None:
+                self._resolve_finish()
+                return
+            try:
+                self._ensure_open("acknowledge job finish")
+                self._data_channel.send(self._encode_control({"kind": "job.finished.ack", "id": job_id}))
+                await self._wait_for_send_buffer(0, "after job finished ack")
+                emit_diagnostic(
+                    self._peer_connection,
+                    self._data_channel,
+                    self._diagnostic,
+                    ConnectDiagnosticEvent(stage="job-finished-ack", message="sent job finished ack"),
+                )
+                self._resolve_finish("received and acknowledged job finished")
+            except Exception:
+                self._resolve_finish("received job finished before acknowledgement completed")
             return
         if kind != "job.result":
             return
@@ -445,6 +467,7 @@ class GpStationJobPeer:
 
     def _clear_finish(self) -> None:
         self._finish_future = None
+        self._finish_job_id = None
         self._finish_sent = False
 
     def _ensure_open(self, action: str) -> None:

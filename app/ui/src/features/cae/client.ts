@@ -33,6 +33,7 @@ import { registerDataTensorAttachment, releaseDataTensorAttachments } from '../.
 
 const CONNECT_TIMEOUT_MS = 60_000
 const FINISH_TIMEOUT_MS = 60_000
+const TRANSPORT_DISCONNECT_GRACE_MS = 5_000
 
 export type CaeSimulationOptions = Readonly<{
   signal?: AbortSignal
@@ -53,9 +54,140 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
   let runId: string | null = null
   let session: JobSession | null = null
   let failureReported = false
-  const transportState: { lastDiagnostic?: ConnectDiagnosticEvent } = {}
+  let transportSucceeded = false
+  const transportState: {
+    lastProblemDiagnostic?: ConnectDiagnosticEvent
+    disconnectDiagnostic?: ConnectDiagnosticEvent
+    disconnectedAt?: number
+    disconnectTimer?: ReturnType<typeof setTimeout>
+    iceDisconnected: boolean
+    connectionDisconnected: boolean
+    finishStarted: boolean
+    finishAccepted: boolean
+  } = {
+    iceDisconnected: false,
+    connectionDisconnected: false,
+    finishStarted: false,
+    finishAccepted: false,
+  }
   const attachmentIds: string[] = []
   const report = (activity: Parameters<RuntimeActivityCallback>[0]) => emitRuntimeActivity(options.onActivity, activity)
+
+  const clearTransportInterruption = () => {
+    if (transportState.disconnectTimer) clearTimeout(transportState.disconnectTimer)
+    transportState.disconnectTimer = undefined
+    transportState.disconnectDiagnostic = undefined
+    transportState.disconnectedAt = undefined
+    transportState.iceDisconnected = false
+    transportState.connectionDisconnected = false
+  }
+
+  const reportTransportDiagnostic = (event: ConnectDiagnosticEvent) => {
+    if (event.stage === 'job-finish') transportState.finishStarted = true
+    if (event.stage === 'job-finished') transportState.finishAccepted = true
+
+    const terminalFailure = event.connectionState === 'failed' || event.iceConnectionState === 'failed'
+    const connectionClosed =
+      (event.stage === 'connection-state' && event.connectionState === 'closed') ||
+      (event.stage === 'ice-connection-state' && event.iceConnectionState === 'closed')
+    const dataChannelTerminated =
+      event.stage === 'data-channel-state' &&
+      (event.message === 'data channel state: error' ||
+        event.dataChannelState === 'closing' ||
+        event.dataChannelState === 'closed')
+
+    if (terminalFailure) {
+      clearTransportInterruption()
+      transportState.lastProblemDiagnostic = event
+      report({
+        source: 'gpstation',
+        level: 'error',
+        phase: `transport.${event.stage}`,
+        message: event.message,
+        ...(jobId ? { jobId } : {}),
+        ...(runId ? { runId } : {}),
+        details: transportDiagnosticDetails(event),
+      })
+      return
+    }
+
+    if (connectionClosed || dataChannelTerminated) {
+      clearTransportInterruption()
+      const expected = transportState.finishStarted || transportState.finishAccepted || transportSucceeded || cancelled
+      if (!expected) transportState.lastProblemDiagnostic = event
+      report({
+        source: 'gpstation',
+        level: expected ? 'info' : 'error',
+        phase: `transport.${event.stage}`,
+        message: expected
+          ? cancelled
+            ? `${connectionClosed ? 'WebRTC connection' : 'data channel'} closed after job cancellation`
+            : `${connectionClosed ? 'WebRTC connection' : 'data channel'} closed after job finish`
+          : event.message,
+        ...(jobId ? { jobId } : {}),
+        ...(runId ? { runId } : {}),
+        details: { ...transportDiagnosticDetails(event), expectedClose: expected },
+      })
+      return
+    }
+
+    if (event.stage === 'ice-connection-state' || event.stage === 'connection-state') {
+      transportState.iceDisconnected = event.iceConnectionState === 'disconnected'
+      transportState.connectionDisconnected = event.connectionState === 'disconnected'
+      if (transportState.iceDisconnected || transportState.connectionDisconnected) {
+        transportState.disconnectDiagnostic = event
+        if (transportState.disconnectedAt === undefined) {
+          transportState.disconnectedAt = Date.now()
+          transportState.disconnectTimer = setTimeout(() => {
+            if (
+              transportState.disconnectedAt === undefined ||
+              (!transportState.iceDisconnected && !transportState.connectionDisconnected)
+            ) {
+              return
+            }
+            const diagnostic = transportState.disconnectDiagnostic ?? event
+            const durationMs = Date.now() - transportState.disconnectedAt
+            transportState.lastProblemDiagnostic = diagnostic
+            report({
+              source: 'gpstation',
+              level: 'warning',
+              phase: 'transport.connection-interrupted',
+              message: 'WebRTC connection remains disconnected',
+              ...(jobId ? { jobId } : {}),
+              ...(runId ? { runId } : {}),
+              details: { ...transportDiagnosticDetails(diagnostic), interruptionDurationMs: durationMs },
+            })
+          }, TRANSPORT_DISCONNECT_GRACE_MS)
+        }
+        return
+      }
+      if (transportState.disconnectedAt !== undefined) {
+        const durationMs = Date.now() - transportState.disconnectedAt
+        clearTransportInterruption()
+        transportState.lastProblemDiagnostic = undefined
+        report({
+          source: 'gpstation',
+          level: 'info',
+          phase: 'transport.connection-recovered',
+          message: 'WebRTC connection recovered',
+          ...(jobId ? { jobId } : {}),
+          ...(runId ? { runId } : {}),
+          details: { ...transportDiagnosticDetails(event), interruptionDurationMs: durationMs },
+        })
+        return
+      }
+    }
+
+    report({
+      source: 'gpstation',
+      level: 'info',
+      phase: `transport.${event.stage}`,
+      message: event.message,
+      ...(jobId ? { jobId } : {}),
+      ...(runId ? { runId } : {}),
+      details: transportDiagnosticDetails(event),
+    })
+  }
 
   const kill = async () => {
     if (!jobId) return
@@ -69,6 +201,7 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
   const cancel = () => {
     if (cancelled) return
     cancelled = true
+    clearTransportInterruption()
     report({
       source: 'gpstation',
       level: 'warning',
@@ -96,7 +229,6 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
       authMode: 'cookie',
       jobApiPrefix: '/web/jobs',
     })
-    let transportSucceeded = false
     try {
       report({
         source: 'gpstation',
@@ -111,25 +243,7 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
         timeoutMs: CONNECT_TIMEOUT_MS,
         attachments: requestAttachments,
         onDiagnostic(event) {
-          transportState.lastDiagnostic = event
-          const failed =
-            event.message.endsWith(': error') ||
-            event.connectionState === 'failed' ||
-            event.iceConnectionState === 'failed'
-          const interrupted =
-            event.dataChannelState === 'closing' ||
-            event.dataChannelState === 'closed' ||
-            event.connectionState === 'disconnected' ||
-            event.connectionState === 'closed'
-          report({
-            source: 'gpstation',
-            level: failed ? 'error' : interrupted ? 'warning' : 'info',
-            phase: `transport.${event.stage}`,
-            message: event.message,
-            ...(jobId ? { jobId } : {}),
-            ...(runId ? { runId } : {}),
-            details: transportDiagnosticDetails(event),
-          })
+          reportTransportDiagnostic(event)
         },
         onJobCreated(job) {
           jobId = job.id
@@ -158,6 +272,7 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
       if (startedPayload.kind === 'failed') {
         await jobSession.finish({ timeoutMs: FINISH_TIMEOUT_MS })
         transportSucceeded = true
+        clearTransportInterruption()
         failureReported = true
         report({
           source: 'cae',
@@ -236,6 +351,7 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
         }
         await jobSession.finish({ timeoutMs: FINISH_TIMEOUT_MS })
         transportSucceeded = true
+        clearTransportInterruption()
         report({
           source: 'cae',
           level: 'info',
@@ -257,10 +373,11 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
       }
     } catch (error) {
       releaseDataTensorAttachments(attachmentIds)
+      clearTransportInterruption()
       if (!transportSucceeded) await kill()
       session?.close()
       if (!failureReported) {
-        const lastTransportDiagnostic = transportState.lastDiagnostic
+        const lastTransportDiagnostic = transportState.lastProblemDiagnostic
         report({
           source: cancelled || (error instanceof Error && error.name === 'AbortError') ? 'gpstation' : 'cae',
           level: cancelled || (error instanceof Error && error.name === 'AbortError') ? 'warning' : 'error',
@@ -301,6 +418,7 @@ export function simulate(measurement: BuiltMeasurement, options: CaeSimulationOp
   })()
 
   return promise.finally(() => {
+    clearTransportInterruption()
     options.signal?.removeEventListener('abort', cancel)
   })
 }

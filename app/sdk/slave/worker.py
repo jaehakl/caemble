@@ -10,7 +10,7 @@ from typing import Any
 from sdk.protocol.messages import DataChannelAttachment, DataChannelMessage
 
 from sdk.slave.app import SlaveApp, SlaveContext
-from sdk.slave.channel import decode_binary_frame, send_job_result
+from sdk.slave.channel import decode_binary_frame, send_job_result, wait_for_buffered_amount
 from sdk.slave.config import (
     RTC_ICE_GATHER_TIMEOUT_ENV,
     build_rtc_configuration,
@@ -31,6 +31,7 @@ from sdk.slave.rtc import (
 )
 
 JOB_RESULT_ACK_TIMEOUT_SECONDS = 30.0
+JOB_FINISH_ACK_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass
@@ -38,6 +39,7 @@ class WorkerJobPeerState:
     ready_event: asyncio.Event = field(default_factory=asyncio.Event)
     closed_event: asyncio.Event = field(default_factory=asyncio.Event)
     finish_event: asyncio.Event = field(default_factory=asyncio.Event)
+    finish_ack_event: asyncio.Event = field(default_factory=asyncio.Event)
     call_queue: asyncio.Queue[dict[str, Any]] = field(default_factory=asyncio.Queue)
     result_ack_events: dict[str, asyncio.Event] = field(default_factory=dict)
     channel_holder: dict[str, Any] = field(default_factory=dict)
@@ -283,6 +285,12 @@ def attach_worker_job_peer_handlers(pc: Any, job_id: str, handler_type: str, job
                             return
                         state.finish_event.set()
                         return
+                    if kind == "job.finished.ack":
+                        if str(payload.get("id")) != job_id:
+                            log(f"job finished ack id mismatch: expected {job_id}, got {payload.get('id')}")
+                            return
+                        state.finish_ack_event.set()
+                        return
                     if not state.ready_event.is_set():
                         state.ready_error["detail"] = f"expected job.ready before {kind or 'unknown message'}"
                         state.ready_event.set()
@@ -487,7 +495,26 @@ async def run_worker_job(
             raise RuntimeError("datachannel was not opened")
         emit({"type": "job.running", "job_id": job_id})
         await run_worker_job_session(app, context, channel, state, job_id)
-        channel.send(json.dumps({"kind": "job.finished", "id": job_id}, ensure_ascii=False))
+        finish_sent_at = time.perf_counter()
+        drain_started_at = time.perf_counter()
+        try:
+            channel.send(json.dumps({"kind": "job.finished", "id": job_id}, ensure_ascii=False))
+            await wait_for_buffered_amount(channel, 0, "after job finished")
+            log(
+                f"job finished sent: id={job_id} drain_duration_ms={elapsed_ms(drain_started_at)} "
+                f"buffered_amount={getattr(channel, 'bufferedAmount', 0)} "
+                f"channel_state={getattr(channel, 'readyState', 'unknown')}"
+            )
+            finish_outcome = await wait_for_job_finish_ack(state.finish_ack_event, state.closed_event)
+        except Exception:
+            if not state.closed_event.is_set() and getattr(channel, "readyState", "open") == "open":
+                raise
+            finish_outcome = "skipped_channel_closed"
+        log(
+            f"job finished ack {finish_outcome}: id={job_id} duration_ms={elapsed_ms(finish_sent_at)} "
+            f"buffered_amount={getattr(channel, 'bufferedAmount', 0)} "
+            f"channel_state={getattr(channel, 'readyState', 'unknown')}"
+        )
         emit(
             {
                 "type": "job.result",
@@ -698,6 +725,32 @@ async def wait_for_job_result_ack(
         if ack_task in done and ack_event.is_set():
             return
         raise RuntimeError(f"data channel closed before result delivery ack: {job_id}")
+    finally:
+        for task in (ack_task, closed_task):
+            if not task.done():
+                task.cancel()
+
+
+async def wait_for_job_finish_ack(
+    ack_event: asyncio.Event,
+    closed_event: asyncio.Event,
+    timeout_seconds: float = JOB_FINISH_ACK_TIMEOUT_SECONDS,
+) -> str:
+    ack_task = asyncio.create_task(ack_event.wait())
+    closed_task = asyncio.create_task(closed_event.wait())
+    try:
+        done, pending = await asyncio.wait(
+            {ack_task, closed_task},
+            timeout=timeout_seconds,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        if ack_task in done and ack_event.is_set():
+            return "received"
+        if closed_task in done and closed_event.is_set():
+            return "skipped_channel_closed"
+        return "timeout"
     finally:
         for task in (ack_task, closed_task):
             if not task.done():
