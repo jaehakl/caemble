@@ -8,9 +8,9 @@ import { StarterMaterial } from './material'
 export default experiment({
   lengthUnit: 'mm',
   varsSchema: {
-    sizeX: { shape: [], min: 36, max: 36 },
-    sizeY: { shape: [], min: 24, max: 24 },
-    sizeZ: { shape: [], min: 12, max: 12 },
+    sizeX: { min: 36, max: 36 },
+    sizeY: { min: 24, max: 24 },
+    sizeZ: { min: 12, max: 12 },
     position: { shape: [3], min: -5, max: 5 },
   },
   geometry: ({ vars }) => (

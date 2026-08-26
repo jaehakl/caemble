@@ -26,7 +26,7 @@ export function buildCadAuthoringReference({
     '```',
     '',
     '## Authoring conventions',
-    '- A `varsSchema` entry uses `{ shape, min, max }`. Use `shape: []` for a scalar and an explicit shape such as `[3]` or `[4, 4, 1]` for a tensor.',
+    '- A scalar `varsSchema` entry uses `{ min, max }`; omitted `shape` defaults to `[]`, and explicit `shape: []` remains valid. Tensors require an explicit shape such as `[3]` or `[4, 4, 1]`.',
     `- New code uses canonical transforms: ${authoringContract.transforms.canonicalProperties.map(({ name, type }) => `\`${name}?: ${type}\``).join(', ')}. ${authoringContract.transforms.rotationConvention} Effective order: ${authoringContract.transforms.applicationOrder.join(', ')}.`,
     '- Group transforms use lowercase `<translate offset={Vec3}>`, `<rotate axis={Vec3} angle={radians(degrees)}>`, and `<scale x={sx} y={sy} z={sz}>`.',
     '- Omitted component/primitive IDs use lower-kebab names plus `-2`, `-3`; use explicit stable IDs for durable targets. Fragment has no `id`.',

@@ -5,7 +5,9 @@ import type { Tensor, Vars } from './types'
 import type { UcumUnit } from './units'
 import type { VarsSchemaEntry } from './vars'
 
-export type VarsSchemaDefinition = Readonly<Record<string, Readonly<VarsSchemaEntry>>>
+export type VarsSchemaDefinition = Readonly<
+  Record<string, Readonly<{ shape?: readonly number[]; min: number; max: number }>>
+>
 type FixedLengthTensor<Length extends number, Value, Result extends readonly Value[] = readonly []> = number extends Length
   ? readonly Value[]
   : Result['length'] extends Length
@@ -20,8 +22,14 @@ type TensorForShape<Shape extends readonly number[]> = number extends Shape['len
     : Shape extends readonly [infer Length extends number, ...infer Rest extends readonly number[]]
       ? FixedLengthTensor<Length, TensorForShape<Rest>>
       : never
+type TensorForSchemaEntry<Entry extends VarsSchemaDefinition[string]> =
+  Entry extends Readonly<{
+    shape: infer Shape extends readonly number[]
+  }>
+    ? TensorForShape<Shape>
+    : number
 export type InferVars<Schema extends VarsSchemaDefinition> = Readonly<{
-  [Key in keyof Schema]: TensorForShape<Schema[Key]['shape']>
+  [Key in keyof Schema]: TensorForSchemaEntry<Schema[Key]>
 }>
 export type ModelContext<Schema extends VarsSchemaDefinition> = Readonly<{ vars: InferVars<Schema> }>
 export type TaskModelContext = Readonly<{ vars: Readonly<Vars> }>
@@ -88,7 +96,14 @@ export class ExperimentDefinition<
 
   constructor(options: ExperimentDefinitionOptions<Schema, Recorded>) {
     this.lengthUnit = options.lengthUnit
-    this.varsSchema = Object.freeze({ ...options.varsSchema })
+    this.varsSchema = Object.freeze(
+      Object.fromEntries(
+        Object.entries(options.varsSchema).map(([key, entry]) => [
+          key,
+          Object.freeze({ shape: Object.freeze([...(entry.shape ?? [])]), min: entry.min, max: entry.max }),
+        ]),
+      ),
+    )
     this.geometryGroup = normalizeGeometryGroup(options.geometryGroup, 'geometryGroup', 'Experiment')
     this.surfaceGroup = normalizeGeometryGroup(options.surfaceGroup, 'surfaceGroup', 'Experiment')
     this.recordedData = canonicalRecordedDataTree(options.recordedData) as unknown as Recorded

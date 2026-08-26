@@ -395,7 +395,9 @@ export class Material {
   readonly variables: NormalizedMaterialVariables
 }
 
-export type VarsSchemaDefinition = Readonly<Record<string, Readonly<VarsSchemaEntry>>>
+export type VarsSchemaDefinition = Readonly<
+  Record<string, Readonly<{ shape?: readonly number[]; min: number; max: number }>>
+>
 
 type FixedLengthTensor<
   Length extends number,
@@ -417,8 +419,15 @@ type TensorForShape<Shape extends readonly number[]> = number extends Shape['len
       ? FixedLengthTensor<Length, TensorForShape<Rest>>
       : never
 
+type TensorForSchemaEntry<Entry extends VarsSchemaDefinition[string]> =
+  Entry extends Readonly<{
+    shape: infer Shape extends readonly number[]
+  }>
+    ? TensorForShape<Shape>
+    : number
+
 export type InferVars<Schema extends VarsSchemaDefinition> = Readonly<{
-  [Key in keyof Schema]: TensorForShape<Schema[Key]['shape']>
+  [Key in keyof Schema]: TensorForSchemaEntry<Schema[Key]>
 }>
 
 export type ModelContext<Schema extends VarsSchemaDefinition> = Readonly<{
@@ -461,7 +470,7 @@ export class ExperimentDefinition<
 > {
   constructor(options: ExperimentDefinitionOptions<Schema, Recorded>)
   readonly documentType: 'experiment'
-  readonly varsSchema: Schema
+  readonly varsSchema: Readonly<Record<string, VarsSchemaEntry>>
   readonly lengthUnit: UcumUnit
   readonly geometryGroup: GeometryGroupMap
   readonly surfaceGroup: SurfaceGroupMap
