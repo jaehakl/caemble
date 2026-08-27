@@ -234,17 +234,19 @@ function rayTriangleDistance(
   return distance > 1e-8 ? distance : null
 }
 
-export function pickCadViewerTarget(
+export function pickCadViewerTargets(
   parts: readonly CadViewerPickPart[],
   camera: CadViewerPickingCamera,
   point: Readonly<{ height: number; width: number; x: number; y: number }>,
-): CadViewerSelectionMatch | null {
+  mode: Exclude<CadViewerPickMode, 'off'>,
+): CadViewerSelectionMatch[] {
   const ray = pointerRay(camera, point)
-  if (!ray) return null
-  let nearest: Readonly<{ distance: number; part: CadViewerPickPart; polygonIndex: number }> | null = null
+  if (!ray) return []
+  const hits: Array<Readonly<{ distance: number; part: CadViewerPickPart; polygonIndex: number }>> = []
   parts.forEach((part) => {
     if (!rayIntersectsBounds(ray.origin, ray.direction, part.bounds)) return
     part.polygons.forEach((polygon, polygonIndex) => {
+      let polygonDistance: number | null = null
       for (let vertexIndex = 2; vertexIndex < polygon.vertices.length; vertexIndex += 1) {
         const distance = rayTriangleDistance(
           ray.origin,
@@ -253,17 +255,34 @@ export function pickCadViewerTarget(
           polygon.vertices[vertexIndex - 1],
           polygon.vertices[vertexIndex],
         )
-        if (distance !== null && (!nearest || distance < nearest.distance)) nearest = { distance, part, polygonIndex }
+        if (distance !== null && (polygonDistance === null || distance < polygonDistance)) polygonDistance = distance
       }
+      if (polygonDistance !== null) hits.push({ distance: polygonDistance, part, polygonIndex })
     })
   })
-  if (!nearest) return null
-  const hit = nearest as Readonly<{ distance: number; part: CadViewerPickPart; polygonIndex: number }>
-  const surfaceId = hit.part.surfaceByPolygon.get(hit.polygonIndex)
-  return {
-    geometryId: hit.part.part.id,
-    source: hit.part.source,
-    ...(surfaceId ? { surfaceId } : {}),
-    ...(hit.part.taskName ? { taskName: hit.part.taskName } : {}),
-  }
+  hits.sort((left, right) => left.distance - right.distance)
+
+  const geometryOrder: string[] = []
+  const matches = new Map<string, CadViewerSelectionMatch | null>()
+  hits.forEach((hit) => {
+    const key = `${hit.part.source}:${hit.part.taskName ?? ''}:${hit.part.part.id}`
+    if (!matches.has(key)) {
+      geometryOrder.push(key)
+      matches.set(key, null)
+    }
+    if (matches.get(key)) return
+
+    const surfaceId = hit.part.surfaceByPolygon.get(hit.polygonIndex)
+    if (mode === 'surface' && !surfaceId) return
+    matches.set(key, {
+      geometryId: hit.part.part.id,
+      source: hit.part.source,
+      ...(mode === 'surface' ? { surfaceId } : {}),
+      ...(hit.part.taskName ? { taskName: hit.part.taskName } : {}),
+    })
+  })
+  return geometryOrder.flatMap((key) => {
+    const match = matches.get(key)
+    return match ? [match] : []
+  })
 }

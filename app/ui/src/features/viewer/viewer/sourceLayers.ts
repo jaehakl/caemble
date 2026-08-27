@@ -39,6 +39,7 @@ export function scaleViewerLayers(
 export function createLayerRenderParts(
   layers: readonly JscadViewerLayer[],
   selectionMatches: readonly CadViewerSelectionMatch[] = [],
+  xrayEnabled = false,
 ) {
   return layers.flatMap((layer) => {
     const selections = new Map<string, { geometry: boolean; polygonIndices: Set<number> }>()
@@ -58,6 +59,6 @@ export function createLayerRenderParts(
         }
         selections.set(match.geometryId, current)
       })
-    return createRenderParts(layer.parts, selections as ReadonlyMap<string, RenderPartSelection>)
+    return createRenderParts(layer.parts, selections as ReadonlyMap<string, RenderPartSelection>, xrayEnabled)
   })
 }

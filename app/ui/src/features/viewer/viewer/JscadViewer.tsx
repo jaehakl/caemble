@@ -9,7 +9,7 @@ import { createRayPathRenderGeometries } from './rayPathRendering'
 import { createLayerRenderParts, scaleViewerLayers, type CadViewerSource, type JscadViewerLayer } from './sourceLayers'
 import {
   createCadViewerPickParts,
-  pickCadViewerTarget,
+  pickCadViewerTargets,
   resolveCadViewerSelection,
   type CadViewerPickMode,
   type CadViewerPickingCamera,
@@ -140,18 +140,22 @@ export function ViewerToolbar({
   onSetCameraView,
   onToggleSource,
   onToggleViewerExpanded,
+  onToggleXray,
   pickMode,
   viewerExpanded = false,
   visibleSources = [],
+  xrayEnabled,
 }: {
   availableSources?: readonly CadViewerSource[]
   onPickModeChange: (mode: CadViewerPickMode) => void
   onSetCameraView: (view: CameraView) => void
   onToggleSource?: (source: CadViewerSource) => void
   onToggleViewerExpanded?: () => void
+  onToggleXray: () => void
   pickMode: CadViewerPickMode
   viewerExpanded?: boolean
   visibleSources?: readonly CadViewerSource[]
+  xrayEnabled: boolean
 }) {
   return (
     <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-200 bg-white px-2 py-1">
@@ -168,6 +172,21 @@ export function ViewerToolbar({
           </button>
         ))}
       </div>
+
+      <button
+        aria-label="Toggle X-ray"
+        aria-pressed={xrayEnabled}
+        className={`rounded border px-2 py-1 text-[11px] font-medium transition-colors ${
+          xrayEnabled
+            ? 'border-sky-400 bg-sky-50 text-sky-900'
+            : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-800'
+        }`}
+        title="내부 Geometry를 보기 위한 반투명 표시"
+        type="button"
+        onClick={onToggleXray}
+      >
+        X-ray
+      </button>
 
       <div aria-label="Viewer selection mode" className="flex items-center gap-1 border-l border-slate-200 pl-3">
         {(['off', 'geometry', 'surface'] as const).map((mode) => (
@@ -250,6 +269,7 @@ function JscadViewer({
   visibleSources,
 }: JscadViewerProps) {
   const [pickMode, setPickMode] = useState<CadViewerPickMode>('off')
+  const [xrayEnabled, setXrayEnabled] = useState(false)
   const displayLayers = useMemo(() => scaleViewerLayers(layers, lengthUnit), [layers, lengthUnit])
   const parts = useMemo(() => displayLayers.flatMap((layer) => layer.parts), [displayLayers])
   const selectionMatches = useMemo(
@@ -474,33 +494,51 @@ function JscadViewer({
               match.geometryId,
               match.surfaceId ?? null,
             ]),
+            xray: xrayEnabled,
           })
         : null
       let geometryEntities = cacheKey ? rendererEntityCacheRef.current.get(cacheKey) : undefined
       if (!geometryEntities) {
-        const renderParts = createLayerRenderParts(displayLayers, selectionMatches)
-        const wireframeEntities = renderParts
-          .filter((part) => part.wireframe)
-          .flatMap((part) =>
-            createWireframeGeometries(part).map((geometry) => ({
-              geometry,
-              visuals: {
-                drawCmd: 'drawLines',
-                show: true,
-                transparent: false,
-                useVertexColors: true,
-              },
-            })),
-          )
+        const renderParts = createLayerRenderParts(displayLayers, selectionMatches, xrayEnabled)
+        const wireframeEntities = renderParts.flatMap((part) =>
+          createWireframeGeometries(part, xrayEnabled).map((geometry) => ({
+            geometry,
+            visuals: {
+              drawCmd: 'drawLines',
+              show: true,
+              transparent: false,
+              useVertexColors: true,
+            },
+          })),
+        )
         const meshEntities = renderParts
           .filter((part) => !part.wireframe)
-          .flatMap((part) => renderer.entitiesFromSolids({ color: part.color, smoothNormals: true }, part.geometry))
-        const wireframeSelectionEntities = renderParts.flatMap((part) =>
+          .flatMap((part) =>
+            renderer.entitiesFromSolids({ color: part.color, smoothNormals: true }, part.geometry).map((entity) =>
+              part.color[3] < 1
+                ? {
+                    ...entity,
+                    extras: { depth: { enable: true, mask: false } },
+                  }
+                : entity,
+            ),
+          )
+        const selectionEntities = renderParts.flatMap((part) =>
           part.selectionGeometry
-            ? renderer.entitiesFromSolids({ color: viewerSelectionColor, smoothNormals: false }, part.selectionGeometry)
+            ? renderer
+                .entitiesFromSolids({ color: viewerSelectionColor, smoothNormals: false }, part.selectionGeometry)
+                .map((entity) => ({
+                  ...entity,
+                  extras: {
+                    cull: { enable: false },
+                    depth: { enable: true, func: 'lequal' },
+                  },
+                }))
             : [],
         )
-        geometryEntities = [...meshEntities, ...wireframeEntities, ...wireframeSelectionEntities]
+        geometryEntities = xrayEnabled
+          ? [...wireframeEntities, ...meshEntities, ...selectionEntities]
+          : [...meshEntities, ...wireframeEntities, ...selectionEntities]
         if (cacheKey) {
           rendererEntityCacheRef.current.set(cacheKey, geometryEntities)
           if (rendererEntityCacheRef.current.size > 16) {
@@ -511,10 +549,16 @@ function JscadViewer({
 
       optionsRef.current.entities = [...referenceEntitiesRef.current, ...geometryEntities, ...rayPathEntities]
       if (shouldFit) {
+        const meshFitEntities = geometryEntities.filter((entity) => {
+          const visuals = entity.visuals
+          return (
+            typeof visuals === 'object' && visuals !== null && 'drawCmd' in visuals && visuals.drawCmd === 'drawMesh'
+          )
+        })
         const zoomed = renderer.controls.orbit.zoomToFit({
           camera: cameraRef.current,
           controls: controlsRef.current,
-          entities: geometryEntities,
+          entities: meshFitEntities.length > 0 ? meshFitEntities : geometryEntities,
         })
         Object.assign(cameraRef.current, zoomed.camera)
         Object.assign(controlsRef.current, zoomed.controls)
@@ -546,6 +590,7 @@ function JscadViewer({
     rayPathEntities,
     renderScene,
     selectionMatches,
+    xrayEnabled,
   ])
 
   const renderWithControls = () => {
@@ -622,7 +667,9 @@ function JscadViewer({
         onSetCameraView={setCameraView}
         onToggleSource={onToggleSource}
         onToggleViewerExpanded={onToggleViewerExpanded}
+        onToggleXray={() => setXrayEnabled((current) => !current)}
         viewerExpanded={viewerExpanded}
+        xrayEnabled={xrayEnabled}
       />
 
       <div aria-label="Geometry Viewer" className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
@@ -693,16 +740,18 @@ function JscadViewer({
             lastPointRef.current = null
             if (lastPoint.button !== 0 || lastPoint.moved || pickMode === 'off' || !cameraRef.current) return
             const rect = event.currentTarget.getBoundingClientRect()
-            const hit = pickCadViewerTarget(pickParts, cameraRef.current as CadViewerPickingCamera, {
+            const point = {
               height: rect.height,
               width: rect.width,
               x: event.clientX - rect.left,
               y: event.clientY - rect.top,
-            })
-            if (!hit || (pickMode === 'surface' && !hit.surfaceId)) {
+            }
+            const hits = pickCadViewerTargets(pickParts, cameraRef.current as CadViewerPickingCamera, point, pickMode)
+            if (hits.length === 0) {
               onSelectionQueryChange?.(null)
               return
             }
+            const hit = xrayEnabled ? hits[hits.length - 1] : hits[0]
             onSelectionQueryChange?.({
               kind: pickMode,
               match: 'exact',
