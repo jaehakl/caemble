@@ -28,6 +28,7 @@ from .types import (
 
 TResult = TypeVar("TResult")
 EventCallback = Callable[[JobEvent], None]
+JOB_RESULT_PAYLOAD_ATTACHMENTS = "gpstation.job-result.payload-attachments"
 
 
 @dataclass(slots=True)
@@ -303,7 +304,9 @@ class GpStationJobPeer:
                 try:
                     if isinstance(raw_message, str):
                         message = json.loads(raw_message)
-                        await self._handle_control_message(message)
+                        await self._handle_control_message(
+                            message, len(raw_message.encode("utf-8"))
+                        )
                     else:
                         await self._handle_binary_message(raw_message)
                 except Exception as exc:
@@ -312,7 +315,11 @@ class GpStationJobPeer:
         except asyncio.CancelledError:
             return
 
-    async def _handle_control_message(self, message: dict[str, Any]) -> None:
+    async def _handle_control_message(
+        self,
+        message: dict[str, Any],
+        control_bytes: int | None = None,
+    ) -> None:
         kind = message.get("kind")
         if kind == "job.error":
             detail = message.get("detail") if isinstance(message.get("detail"), str) else "job error"
@@ -361,13 +368,37 @@ class GpStationJobPeer:
         files: dict[str, _IncomingFile] = {}
         for raw_attachment in raw_attachments:
             metadata = self._parse_attachment_metadata(raw_attachment)
+            if metadata.id in files:
+                raise GpStationProtocolError(
+                    f"duplicate job result attachment id: {metadata.id}"
+                )
             attachments.append(metadata)
             files[metadata.id] = _IncomingFile(metadata=metadata)
+        payload_attachment_ids = set(
+            self._result_payload_attachment_ids(message.get("payload"), validate=False)
+        )
+        user_attachments = [
+            attachment
+            for attachment in attachments
+            if attachment.id not in payload_attachment_ids
+        ]
         emit_diagnostic(
             self._peer_connection,
             self._data_channel,
             self._diagnostic,
-            ConnectDiagnosticEvent(stage="job-result", message="received job result"),
+            ConnectDiagnosticEvent(
+                stage="job-result",
+                message="received job result",
+                call_id=call_id,
+                attachment_count=len(user_attachments),
+                attachment_bytes=sum(attachment.size for attachment in user_attachments),
+                control_bytes=control_bytes,
+                payload_attachment_bytes=sum(
+                    attachment.size
+                    for attachment in attachments
+                    if attachment.id in payload_attachment_ids
+                ),
+            ),
         )
         self._response = _PendingResponse(
             id=call_id,
@@ -385,12 +416,39 @@ class GpStationJobPeer:
         call_id = header.get("callId")
         if self._pending_call is None or self._pending_call.id != call_id:
             raise GpStationProtocolError(f"unexpected attachment chunk call id: {call_id}")
-        attachment_id = header["attachmentId"]
+        attachment_id = header.get("attachmentId")
+        if not isinstance(attachment_id, str) or attachment_id not in self._response.files:
+            raise GpStationProtocolError(
+                f"unknown job result attachment id: {attachment_id}"
+            )
         incoming_file = self._response.files[attachment_id]
+        if incoming_file.complete:
+            raise GpStationProtocolError(
+                f"attachment chunk received after final chunk: {attachment_id}"
+            )
+        index = header.get("index")
+        if not isinstance(index, int) or isinstance(index, bool) or index != incoming_file.next_index:
+            raise GpStationProtocolError(
+                f"unexpected attachment chunk index for {attachment_id}: "
+                f"{index}; expected {incoming_file.next_index}"
+            )
+        final = header.get("final")
+        if not isinstance(final, bool):
+            raise GpStationProtocolError(f"invalid attachment final flag: {attachment_id}")
+        received_size = incoming_file.received_size + len(body)
+        if received_size > incoming_file.metadata.size or (
+            final and received_size != incoming_file.metadata.size
+        ):
+            raise GpStationProtocolError(
+                f"attachment size mismatch for {attachment_id}: "
+                f"received {received_size}; expected {incoming_file.metadata.size}"
+            )
+        if not final and received_size == incoming_file.metadata.size:
+            raise GpStationProtocolError(f"attachment final chunk missing for {attachment_id}")
         incoming_file.chunks.append(body)
-        incoming_file.received_size += len(body)
+        incoming_file.received_size = received_size
         incoming_file.next_index += 1
-        incoming_file.complete = bool(header.get("final"))
+        incoming_file.complete = final
         if all(item.complete for item in self._response.files.values()):
             await self._resolve_pending_call()
 
@@ -399,6 +457,26 @@ class GpStationJobPeer:
             return
         pending = self._pending_call
         response = self._response
+        payload_attachment_ids = set(
+            self._result_payload_attachment_ids(response.payload, validate=True)
+        )
+        payload = response.payload
+        if payload_attachment_ids:
+            storage = response.payload["storage"]
+            raw_payload = b"".join(
+                chunk
+                for attachment_id in storage["ids"]
+                for chunk in response.files[attachment_id].chunks
+            )
+            if len(raw_payload) != storage["byteLength"]:
+                raise GpStationProtocolError(
+                    f"job result payload size mismatch: received {len(raw_payload)}; "
+                    f"expected {storage['byteLength']}"
+                )
+            try:
+                payload = json.loads(raw_payload.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise GpStationProtocolError("invalid job result payload attachment JSON") from exc
         await self._acknowledge_result(pending.id)
         files = [
             ReceivedFile(
@@ -409,10 +487,45 @@ class GpStationJobPeer:
                 data=b"".join(response.files[metadata.id].chunks),
             )
             for metadata in response.attachments
+            if metadata.id not in payload_attachment_ids
         ]
         self._clear_pending_call()
         if not pending.future.done():
-            pending.future.set_result(CallResult(payload=response.payload, files=files))
+            pending.future.set_result(CallResult(payload=payload, files=files))
+
+    def _result_payload_attachment_ids(
+        self,
+        payload: Any,
+        *,
+        validate: bool,
+    ) -> list[str]:
+        if not isinstance(payload, dict) or payload.get("kind") != JOB_RESULT_PAYLOAD_ATTACHMENTS:
+            return []
+        storage = payload.get("storage")
+        valid = (
+            isinstance(storage, dict)
+            and storage.get("kind") == "attachments"
+            and isinstance(storage.get("ids"), list)
+            and bool(storage["ids"])
+            and all(isinstance(item, str) for item in storage["ids"])
+            and isinstance(storage.get("byteLength"), int)
+            and not isinstance(storage.get("byteLength"), bool)
+            and storage["byteLength"] >= 0
+        )
+        if not valid:
+            if validate:
+                raise GpStationProtocolError("invalid job result payload attachment storage")
+            return []
+        ids = storage["ids"]
+        if validate and len(set(ids)) != len(ids):
+            raise GpStationProtocolError("duplicate job result payload attachment id")
+        if validate:
+            for attachment_id in ids:
+                if self._response is None or attachment_id not in self._response.files:
+                    raise GpStationProtocolError(
+                        f"missing job result payload attachment: {attachment_id}"
+                    )
+        return ids
 
     async def _acknowledge_result(self, call_id: str) -> None:
         self._ensure_open("acknowledge job result")
@@ -487,11 +600,22 @@ class GpStationJobPeer:
 
     @staticmethod
     def _parse_attachment_metadata(value: Any) -> AttachmentMetadata:
+        if not isinstance(value, dict):
+            raise GpStationProtocolError("invalid job result attachment metadata")
+        attachment_id = value.get("id")
+        size = value.get("size")
+        if (
+            not isinstance(attachment_id, str)
+            or not isinstance(size, int)
+            or isinstance(size, bool)
+            or size < 0
+        ):
+            raise GpStationProtocolError("invalid job result attachment metadata")
         return AttachmentMetadata(
-            id=value["id"],
+            id=attachment_id,
             name=value.get("name"),
             mime_type=value.get("mimeType"),
-            size=value.get("size", 0),
+            size=size,
         )
 
     @staticmethod

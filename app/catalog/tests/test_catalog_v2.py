@@ -4,6 +4,7 @@ import sqlite3
 import unittest
 
 from caemble_catalog import open_catalog
+from caemble_catalog.admin import insert_solver_manifest
 from caemble_catalog.cli import build_parser
 from caemble_catalog.schema import APPLICATION_ID, SCHEMA_VERSION, create_schema
 
@@ -58,6 +59,113 @@ class CatalogV2Tests(unittest.TestCase):
             ]
         )
         self.assertEqual(arguments.implementation_abi, 2)
+
+    def test_structured_bundle_members_contribute_quantity_kind_usages(self) -> None:
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        create_schema(connection)
+        connection.executemany(
+            "INSERT INTO quantity_kinds VALUES (?, ?, ?, ?, ?)",
+            [
+                ("ElectricFieldStrength", "electromagnetism", 1, None, 0),
+                ("Time", "general", 0, None, 0),
+                ("Length", "general", 0, None, 0),
+            ],
+        )
+        insert_solver_manifest(
+            connection,
+            {
+                "implementation": "app.solvers.example.entry:implementation",
+                "abiVersion": 2,
+                "descriptor": {
+                    "name": "example",
+                    "version": "1.0.0",
+                    "description": "Example structured bundle solver",
+                    "referenceLengthUnit": "m",
+                    "minimumOutputs": 1,
+                    "parameters": {},
+                    "materials": [],
+                    "inputPorts": {},
+                    "observations": {},
+                    "methods": {
+                        "initializations": [],
+                        "boundaryConditions": [],
+                        "outputs": [
+                            {
+                                "methodId": "example.field-series",
+                                "description": "Field time series",
+                                "minimumOccurrences": 1,
+                                "maximumOccurrences": 1,
+                                "target": {
+                                    "source": "task",
+                                    "kind": "geometry",
+                                    "minimumTargets": 1,
+                                    "maximumTargets": 1,
+                                    "minimumResolved": 1,
+                                    "maximumResolved": 1,
+                                },
+                                "parameters": {},
+                                "artifactType": "example/field-series@1",
+                                "data": {
+                                    "resourceKind": "structuredBundle",
+                                    "members": {
+                                        "field": {
+                                            "dtype": "float32",
+                                            "quantityKind": "ElectricFieldStrength",
+                                            "unit": "V/m",
+                                            "tensorOrder": 1,
+                                            "axes": [
+                                                {
+                                                    "name": "time",
+                                                    "quantityKind": "Time",
+                                                    "unit": "s",
+                                                },
+                                                {
+                                                    "name": "x",
+                                                    "quantityKind": "Length",
+                                                    "unit": "m",
+                                                },
+                                            ],
+                                        }
+                                    },
+                                },
+                            }
+                        ],
+                    },
+                },
+            },
+        )
+
+        usages = connection.execute(
+            """SELECT quantity_kind, context, path, unit
+               FROM solver_quantity_kind_usages
+               ORDER BY ordinal"""
+        ).fetchall()
+
+        self.assertEqual(
+            [tuple(row) for row in usages],
+            [
+                (
+                    "ElectricFieldStrength",
+                    "output",
+                    "methods.outputs.example.field-series.data.members.field",
+                    "V/m",
+                ),
+                (
+                    "Time",
+                    "axis",
+                    "methods.outputs.example.field-series.data.members.field.axes[0]",
+                    "s",
+                ),
+                (
+                    "Length",
+                    "axis",
+                    "methods.outputs.example.field-series.data.members.field.axes[1]",
+                    "m",
+                ),
+            ],
+        )
+        connection.close()
 
 
 if __name__ == "__main__":

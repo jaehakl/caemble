@@ -116,6 +116,8 @@ export type ConnectDiagnosticEvent = {
   callId?: string;
   attachmentCount?: number;
   attachmentBytes?: number;
+  controlBytes?: number;
+  payloadAttachmentBytes?: number;
   bufferedAmount?: number;
   elapsedMs?: number;
   stageStartedAt?: number;

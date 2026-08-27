@@ -40,6 +40,16 @@ def _insert_data_usages(
                 (*solver, ordinal, quantity_kind, f"{path}.axes[{axis_index}]", axis.get("unit")),
             )
             ordinal += 1
+    if data.get("resourceKind") == "structuredBundle":
+        for name, member in data.get("members", {}).items():
+            ordinal = _insert_data_usages(
+                connection,
+                solver,
+                member,
+                context,
+                f"{path}.members.{name}",
+                ordinal,
+            )
     return ordinal
 
 

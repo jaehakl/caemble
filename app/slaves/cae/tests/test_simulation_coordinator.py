@@ -11,7 +11,7 @@ from app.runtime_kernel.api import InputArtifact, SolverResult
 from app.runtime_kernel.coordinator import SimulationApi
 from app.runtime_kernel.coordinator.run import CaeRun
 from app.runtime_kernel.execution import SolverExecutionTransaction
-from app.runtime_kernel.resources import ArtifactHandle, StatePatch
+from app.runtime_kernel.resources import ArtifactHandle, StatePatch, StructuredBundle
 from app.runtime_kernel.transport import RecordPacket, RecordResourceHold
 
 
@@ -141,6 +141,42 @@ async def test_typed_handoff_unchanged_revision_record_lease_and_release(
     sim.release(field)
     with pytest.raises(CaeError, match="live artifact"):
         await sim.run(run.consumer, state=produced["state"], inputs={"field": field})
+    sim.close()
+
+
+@pytest.mark.asyncio
+async def test_record_structured_bundle_materializes_mappings_without_copying_arrays() -> None:
+    run = FakeRun()
+    sim = SimulationApi(run)
+    values = np.arange(12, dtype=np.float32).reshape(2, 2, 3)
+    handle = sim._artifacts.publish(
+        StructuredBundle(
+            "test/field-series@1",
+            {
+                "field": {"value": values},
+                "time": np.array([0.0, 1.0], dtype=np.float32),
+            },
+        ),
+        producer_task="producer",
+        solver_name="producer",
+        solver_version="1.0.0",
+        output_name="field",
+        artifact_type="test/field-series@1",
+        state_revision=0,
+        copy_arrays=False,
+    )
+    resolved = sim._artifacts.resolve(handle)
+
+    await sim.record("field-series", handle)
+
+    assert run.recorded is not None
+    recorded = run.recorded[1]
+    assert isinstance(recorded, dict)
+    assert isinstance(recorded["field"], dict)
+    assert recorded["field"]["value"] is resolved.members["field"]["value"]
+    assert recorded["time"] is resolved.members["time"]
+    assert not recorded["field"]["value"].flags.writeable
+    assert_lease_count(sim, handle, 1)
     sim.close()
 
 

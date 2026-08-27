@@ -136,6 +136,11 @@ class CandidateSummary:
 class ConnectDiagnosticEvent:
     stage: str
     message: str
+    call_id: str | None = None
+    attachment_count: int | None = None
+    attachment_bytes: int | None = None
+    control_bytes: int | None = None
+    payload_attachment_bytes: int | None = None
     elapsed_ms: int | None = None
     stage_started_at_ms: int | None = None
     prewarm_hit: bool | None = None

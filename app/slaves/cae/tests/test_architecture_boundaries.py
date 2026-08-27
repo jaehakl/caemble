@@ -82,6 +82,10 @@ def test_versioned_solver_packages_do_not_import_unversioned_solver_modules() ->
             "app.solvers.ray_tracing",
             "app.solvers.ray_tracing.v0_2_0",
         ),
+        APP / "solvers" / "fdtd" / "v1_0_0": (
+            "app.solvers.fdtd",
+            "app.solvers.fdtd.v1_0_0",
+        ),
     }
     violations = {
         str(path.relative_to(APP)): [

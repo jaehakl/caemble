@@ -14,6 +14,7 @@ const REQUEST_ATTACHMENT_CHUNK_SIZE = 16 * 1024;
 const BUFFERED_AMOUNT_HIGH_WATER_MARK = 512 * 1024;
 const BUFFERED_AMOUNT_LOW_THRESHOLD = 128 * 1024;
 const BUFFERED_AMOUNT_DRAIN_TIMEOUT_MS = 30_000;
+const JOB_RESULT_PAYLOAD_ATTACHMENTS = 'gpstation.job-result.payload-attachments';
 
 type JobControlFrame = {
   kind: string;
@@ -41,6 +42,7 @@ export class GpStationJobPeer {
   private finishJobId?: string;
   private finishSent = false;
   private isClosed = false;
+  private receiveChain: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly peerConnection: RTCPeerConnection,
@@ -49,7 +51,9 @@ export class GpStationJobPeer {
   ) {
     this.dataChannel.binaryType = 'arraybuffer';
     this.dataChannel.addEventListener('message', (event) => {
-      void this.handleDataMessage(event.data);
+      this.receiveChain = this.receiveChain
+        .then(() => this.handleDataMessage(event.data))
+        .catch((error) => this.rejectPendingCall(asError(error)));
     });
     this.dataChannel.addEventListener('close', () => this.rejectOpenWork(new Error('data channel closed')));
     this.dataChannel.addEventListener('error', () => this.rejectOpenWork(new Error('data channel error')));
@@ -281,18 +285,17 @@ export class GpStationJobPeer {
   }
 
   private async handleDataMessage(rawData: unknown): Promise<void> {
-    try {
-      if (typeof rawData === 'string') {
-        await this.handleControlMessage(JSON.parse(rawData) as JobControlFrame);
-        return;
-      }
-      await this.handleBinaryMessage(await rawToUint8Array(rawData));
-    } catch (error) {
-      this.rejectPendingCall(asError(error));
+    if (typeof rawData === 'string') {
+      await this.handleControlMessage(
+        JSON.parse(rawData) as JobControlFrame,
+        new TextEncoder().encode(rawData).byteLength,
+      );
+      return;
     }
+    await this.handleBinaryMessage(await rawToUint8Array(rawData));
   }
 
-  private async handleControlMessage(message: JobControlFrame): Promise<void> {
+  private async handleControlMessage(message: JobControlFrame, controlBytes?: number): Promise<void> {
     if (message.kind === 'job.error') {
       if (message.id && this.pendingCall?.id === message.id) {
         this.rejectPendingCall(new Error(message.detail || 'job error'));
@@ -332,16 +335,34 @@ export class GpStationJobPeer {
     if (!message.id || !this.pendingCall || this.pendingCall.id !== message.id) {
       throw new Error(`unexpected job result: ${message.id ?? 'missing id'}`);
     }
+    const payloadAttachmentIds = this.resultPayloadAttachmentIds(message.payload, false);
+    const userAttachments = (message.attachments ?? []).filter(
+      (attachment) => !payloadAttachmentIds.has(attachment.id),
+    );
     emitDiagnostic(this.peerConnection, this.dataChannel, this.diagnostic, {
       stage: 'job-result',
       message: 'received job result',
       callId: message.id,
-      attachmentCount: message.attachments?.length ?? 0,
-      attachmentBytes: (message.attachments ?? []).reduce((total, attachment) => total + attachment.size, 0),
+      attachmentCount: userAttachments.length,
+      attachmentBytes: userAttachments.reduce((total, attachment) => total + attachment.size, 0),
+      controlBytes,
+      payloadAttachmentBytes: (message.attachments ?? [])
+        .filter((attachment) => payloadAttachmentIds.has(attachment.id))
+        .reduce((total, attachment) => total + attachment.size, 0),
       bufferedAmount: this.dataChannel.bufferedAmount,
     });
     const files = new Map<string, IncomingFile>();
     for (const attachment of message.attachments ?? []) {
+      if (
+        typeof attachment.id !== 'string' ||
+        !Number.isSafeInteger(attachment.size) ||
+        attachment.size < 0
+      ) {
+        throw new Error('invalid job result attachment metadata');
+      }
+      if (files.has(attachment.id)) {
+        throw new Error(`duplicate job result attachment id: ${attachment.id}`);
+      }
       files.set(attachment.id, {
         ...attachment,
         chunks: [],
@@ -357,7 +378,7 @@ export class GpStationJobPeer {
       files,
     };
     if (files.size === 0) {
-      this.resolvePendingCall();
+      await this.resolvePendingCall();
     }
   }
 
@@ -369,42 +390,125 @@ export class GpStationJobPeer {
     if (this.pendingCall?.id !== header.callId) {
       throw new Error(`unexpected attachment chunk call id: ${header.callId}`);
     }
-    const file = this.response.files.get(header.attachmentId)!;
+    const file = this.response.files.get(header.attachmentId);
+    if (!file) {
+      throw new Error(`unknown job result attachment id: ${header.attachmentId}`);
+    }
+    if (file.complete) {
+      throw new Error(`attachment chunk received after final chunk: ${header.attachmentId}`);
+    }
+    if (!Number.isSafeInteger(header.index) || header.index !== file.nextIndex) {
+      throw new Error(
+        `unexpected attachment chunk index for ${header.attachmentId}: ${header.index}; expected ${file.nextIndex}`,
+      );
+    }
+    if (typeof header.final !== 'boolean') {
+      throw new Error(`invalid attachment final flag: ${header.attachmentId}`);
+    }
+    const receivedSize = file.receivedSize + body.byteLength;
+    if (receivedSize > file.size || (header.final && receivedSize !== file.size)) {
+      throw new Error(
+        `attachment size mismatch for ${header.attachmentId}: received ${receivedSize}; expected ${file.size}`,
+      );
+    }
+    if (!header.final && receivedSize === file.size) {
+      throw new Error(`attachment final chunk missing for ${header.attachmentId}`);
+    }
     file.chunks.push(body);
-    file.receivedSize += body.byteLength;
+    file.receivedSize = receivedSize;
     file.nextIndex += 1;
     file.complete = header.final;
     if ([...this.response.files.values()].every((item) => item.complete)) {
-      this.resolvePendingCall();
+      await this.resolvePendingCall();
     }
   }
 
-  private resolvePendingCall(): void {
+  private async resolvePendingCall(): Promise<void> {
     if (!this.response || !this.pendingCall) {
       return;
+    }
+    const response = this.response;
+    const payloadAttachmentIds = this.resultPayloadAttachmentIds(response.payload, true);
+    let payload = response.payload;
+    if (payloadAttachmentIds.size > 0) {
+      const storage = (response.payload as { storage: { byteLength: number } }).storage;
+      const payloadBlob = new Blob(
+        [...payloadAttachmentIds]
+          .flatMap((id) => response.files.get(id)?.chunks ?? [])
+          .map(toArrayBuffer),
+        { type: 'application/json; charset=utf-8' },
+      );
+      if (payloadBlob.size !== storage.byteLength) {
+        throw new Error(
+          `job result payload size mismatch: received ${payloadBlob.size}; expected ${storage.byteLength}`,
+        );
+      }
+      payload = JSON.parse(await payloadBlob.text()) as unknown;
     }
     try {
       this.acknowledgeResult(
         this.pendingCall.id,
-        this.response.attachments.length,
-        this.response.attachments.reduce((total, attachment) => total + attachment.size, 0),
+        response.attachments.filter((attachment) => !payloadAttachmentIds.has(attachment.id)).length,
+        response.attachments
+          .filter((attachment) => !payloadAttachmentIds.has(attachment.id))
+          .reduce((total, attachment) => total + attachment.size, 0),
       );
     } catch (error) {
       this.rejectPendingCall(asError(error));
       return;
     }
     const pending = this.pendingCall;
-    const response = this.response;
     this.clearPendingCall();
-    const files = response.attachments.map((metadata) => {
-      const file = response.files.get(metadata.id);
-      const chunks = file?.chunks ?? [];
-      return {
-        ...metadata,
-        blob: new Blob(chunks.map(toArrayBuffer), { type: metadata.mimeType }),
-      };
-    });
-    pending.resolve({ payload: response.payload, files });
+    const files = response.attachments
+      .filter((metadata) => !payloadAttachmentIds.has(metadata.id))
+      .map((metadata) => {
+        const file = response.files.get(metadata.id);
+        const chunks = file?.chunks ?? [];
+        return {
+          ...metadata,
+          blob: new Blob(chunks.map(toArrayBuffer), { type: metadata.mimeType }),
+        };
+      });
+    pending.resolve({ payload, files });
+  }
+
+  private resultPayloadAttachmentIds(payload: unknown, validate: boolean): Set<string> {
+    if (
+      !payload ||
+      typeof payload !== 'object' ||
+      (payload as { kind?: unknown }).kind !== JOB_RESULT_PAYLOAD_ATTACHMENTS
+    ) {
+      return new Set();
+    }
+    const storage = (payload as { storage?: unknown }).storage;
+    if (!storage || typeof storage !== 'object') {
+      if (validate) throw new Error('job result payload attachment storage is missing');
+      return new Set();
+    }
+    const candidate = storage as { kind?: unknown; ids?: unknown; byteLength?: unknown };
+    if (
+      candidate.kind !== 'attachments' ||
+      !Array.isArray(candidate.ids) ||
+      candidate.ids.length === 0 ||
+      candidate.ids.some((id) => typeof id !== 'string') ||
+      !Number.isSafeInteger(candidate.byteLength) ||
+      (candidate.byteLength as number) < 0
+    ) {
+      if (validate) throw new Error('invalid job result payload attachment storage');
+      return new Set();
+    }
+    const ids = new Set(candidate.ids as string[]);
+    if (validate && ids.size !== candidate.ids.length) {
+      throw new Error('duplicate job result payload attachment id');
+    }
+    if (validate) {
+      for (const id of ids) {
+        if (!this.response?.files.has(id)) {
+          throw new Error(`missing job result payload attachment: ${id}`);
+        }
+      }
+    }
+    return ids;
   }
 
   private rejectOpenWork(error: Error): void {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
@@ -69,7 +70,7 @@ def encode_tensor(
     raw_value = value
     if isinstance(value, dict) and "value" in value:
         raw_value = value["value"]
-        axes = value.get("axes")
+        axes = _materialize_metadata(value.get("axes"))
     dtype_name = schema["dtype"]
 
     if dtype_name == "string":
@@ -98,6 +99,18 @@ def encode_tensor(
         return _inline_tensor(shape, axes, inline_value), [], len(raw)
     attachments = _shard(name, sequence, raw, "application/octet-stream")
     return _attachment_tensor(shape, axes, attachments, len(raw)), attachments, len(raw)
+
+
+def _materialize_metadata(value: Any) -> Any:
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, Mapping):
+        return {name: _materialize_metadata(item) for name, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_materialize_metadata(item) for item in value]
+    return value
 
 
 def is_ray_path_recorded_data_name(name: str) -> bool:

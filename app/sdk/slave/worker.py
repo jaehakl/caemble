@@ -10,7 +10,12 @@ from typing import Any
 from sdk.protocol.messages import DataChannelAttachment, DataChannelMessage
 
 from sdk.slave.app import SlaveApp, SlaveContext
-from sdk.slave.channel import decode_binary_frame, send_job_result, wait_for_buffered_amount
+from sdk.slave.channel import (
+    JobResultControlFrameTooLarge,
+    decode_binary_frame,
+    send_job_result,
+    wait_for_buffered_amount,
+)
 from sdk.slave.config import (
     RTC_ICE_GATHER_TIMEOUT_ENV,
     build_rtc_configuration,
@@ -637,7 +642,17 @@ async def run_worker_job_call(
             )
             send_started_at = time.perf_counter()
             try:
-                drain_duration_ms = await send_job_result(channel, call_id, response)
+                drain_duration_ms, control_bytes, payload_attachment_bytes = await send_job_result(
+                    channel, call_id, response
+                )
+            except JobResultControlFrameTooLarge as exc:
+                log(
+                    f"job call result rejected: id={call_id} type={call_type} "
+                    f"attachments={attachment_count} attachment_bytes={attachment_bytes} "
+                    f"error_type={type(exc).__name__} error={exc}"
+                )
+                send_job_error(channel, call_id, "job_result_control_frame_too_large", str(exc))
+                return
             except Exception as exc:
                 log(
                     f"job call result send failed: id={call_id} type={call_type} "
@@ -651,6 +666,7 @@ async def run_worker_job_call(
             log(
                 f"job call result sent: id={call_id} type={call_type} "
                 f"attachments={attachment_count} attachment_bytes={attachment_bytes} "
+                f"control_bytes={control_bytes} payload_attachment_bytes={payload_attachment_bytes} "
                 f"send_duration_ms={elapsed_ms(send_started_at)} drain_duration_ms={drain_duration_ms} "
                 f"buffered_amount={getattr(channel, 'bufferedAmount', 0)} "
                 f"channel_state={getattr(channel, 'readyState', 'unknown')}"

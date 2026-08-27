@@ -429,6 +429,8 @@ function transportDiagnosticDetails(event: ConnectDiagnosticEvent): RuntimeActiv
     'callId',
     'attachmentCount',
     'attachmentBytes',
+    'controlBytes',
+    'payloadAttachmentBytes',
     'bufferedAmount',
     'elapsedMs',
     'stageStartedAt',

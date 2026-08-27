@@ -485,7 +485,7 @@ class SimulationApi:
             if not self._artifacts.is_live(value):
                 raise CaeError("invalid_record", "RecordedData references a released or foreign artifact")
             leases.append(self._resources.acquire(value.resource_ref, owner=f"record:{self._run.run_id}"))
-            materialized = self._artifacts.resolve(value)
+            materialized = self._artifacts.materialize(value, copy_arrays=False)
             if isinstance(materialized, Field):
                 return materialized.values
             if isinstance(materialized, StructuredBundle):
