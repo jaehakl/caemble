@@ -63,7 +63,7 @@ export type AgentExperimentChange = Readonly<{
 
 type AgentApplyRequest = Readonly<{
   runId: string
-  finalBundle: ExperimentSourceBundle
+  finalDocument: Readonly<{ kind: 'experiment'; sourceBundle: ExperimentSourceBundle }>
   baseHash: string
   sourceHash: string
   stagedRevision: number
@@ -231,7 +231,7 @@ export function useCaeWorkbenchState(
       let next: ExperimentSourceDocument
       let finalHash: string
       try {
-        next = createExperimentDocument(request.finalBundle)
+        next = createExperimentDocument(request.finalDocument.sourceBundle)
         finalHash = await cadSourceHash(next)
       } catch (cause: unknown) {
         return { status: 'conflicted' as const, message: cause instanceof Error ? cause.message : String(cause) }

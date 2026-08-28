@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
 import { catalogApi } from '@/api/catalog'
 import { convertUcumValue, type RecordedDataRule, type UcumUnit } from '@/lib/cad'
 import { identityCartesianBasis } from '@/lib/quantitykind'
@@ -17,6 +16,7 @@ import {
   type ResolvedRecordedTensor,
 } from './recordedData'
 import { componentIndexPaths, componentLabel } from './recordedComponents'
+import { Heatmap } from './Heatmap'
 
 type RecordedDataResultsProps = {
   displayUnits?: RecordedDataDisplayUnits
@@ -163,123 +163,6 @@ export function LineChart({
           {maximum.toPrecision(4)}
         </text>
         <text fill="#64748b" fontSize="10" textAnchor="end" x={left - 8} y={top + height}>
-          {minimum.toPrecision(4)}
-        </text>
-      </svg>
-    </div>
-  )
-}
-
-function heatmapColor(value: number, minimum: number, maximum: number) {
-  const ratio = maximum === minimum ? 0.5 : Math.max(0, Math.min(1, (value - minimum) / (maximum - minimum)))
-  const hue = 260 - ratio * 210
-  const lightness = 28 + ratio * 34
-  return `hsl(${hue} 78% ${lightness}%)`
-}
-
-export function Heatmap({
-  columnTicks,
-  getValue,
-  resultUnit,
-  rowTicks,
-  xTitle,
-  yTitle,
-}: {
-  columnTicks: readonly (number | string)[]
-  getValue: (rowIndex: number, columnIndex: number) => number
-  resultUnit: UcumUnit | undefined
-  rowTicks: readonly (number | string)[]
-  xTitle: string
-  yTitle: string
-}) {
-  let minimum = Number.POSITIVE_INFINITY
-  let maximum = Number.NEGATIVE_INFINITY
-  rowTicks.forEach((_row, rowIndex) =>
-    columnTicks.forEach((_column, columnIndex) => {
-      const value = getValue(rowIndex, columnIndex)
-      minimum = Math.min(minimum, value)
-      maximum = Math.max(maximum, value)
-    }),
-  )
-  const left = 72
-  const top = 20
-  const width = 680
-  const height = 236
-  const cellWidth = width / columnTicks.length
-  const cellHeight = height / rowTicks.length
-  const columnStep = Math.max(1, Math.ceil(columnTicks.length / 8))
-  const rowStep = Math.max(1, Math.ceil(rowTicks.length / 6))
-  const columnLabelIndices: number[] = []
-  for (let index = 0; index < columnTicks.length; index += columnStep) columnLabelIndices.push(index)
-  if (columnLabelIndices[columnLabelIndices.length - 1] !== columnTicks.length - 1) {
-    columnLabelIndices.push(columnTicks.length - 1)
-  }
-  const rowLabelIndices: number[] = []
-  for (let index = 0; index < rowTicks.length; index += rowStep) rowLabelIndices.push(index)
-  if (rowLabelIndices[rowLabelIndices.length - 1] !== rowTicks.length - 1) rowLabelIndices.push(rowTicks.length - 1)
-  const rowStride = Math.max(1, Math.ceil(rowTicks.length / 100))
-  const renderedRowCount = Math.ceil(rowTicks.length / rowStride)
-  const columnStride = Math.max(1, Math.ceil((columnTicks.length * renderedRowCount) / 10_000))
-  const cells: ReactNode[] = []
-  for (let rowIndex = 0; rowIndex < rowTicks.length; rowIndex += rowStride) {
-    for (let columnIndex = 0; columnIndex < columnTicks.length; columnIndex += columnStride) {
-      const value = getValue(rowIndex, columnIndex)
-      cells.push(
-        <rect
-          fill={heatmapColor(value, minimum, maximum)}
-          height={Math.min(rowStride, rowTicks.length - rowIndex) * cellHeight + 0.25}
-          key={`${rowIndex}-${columnIndex}`}
-          width={Math.min(columnStride, columnTicks.length - columnIndex) * cellWidth + 0.25}
-          x={left + columnIndex * cellWidth}
-          y={top + rowIndex * cellHeight}
-        >
-          <title>{`${String(rowTicks[rowIndex])}, ${String(columnTicks[columnIndex])}: ${value} ${unitLabel(resultUnit)}`}</title>
-        </rect>,
-      )
-    }
-  }
-
-  return (
-    <div
-      className="h-80 w-full overflow-hidden rounded border border-slate-200 bg-white"
-      data-result-visualization="heatmap"
-    >
-      <svg aria-label="Recorded heatmap" className="h-full w-full" role="img" viewBox="0 0 800 320">
-        {cells}
-        {columnLabelIndices.map((index) => (
-          <text
-            fill="#64748b"
-            fontSize="10"
-            key={index}
-            textAnchor="middle"
-            x={left + (index + 0.5) * cellWidth}
-            y={top + height + 18}
-          >
-            {String(columnTicks[index])}
-          </text>
-        ))}
-        {rowLabelIndices.map((index) => (
-          <text
-            fill="#64748b"
-            fontSize="10"
-            key={index}
-            textAnchor="end"
-            x={left - 7}
-            y={top + (index + 0.65) * cellHeight}
-          >
-            {String(rowTicks[index])}
-          </text>
-        ))}
-        <text fill="#475569" fontSize="11" textAnchor="middle" x={left + width / 2} y="307">
-          {xTitle}
-        </text>
-        <text fill="#475569" fontSize="11" textAnchor="middle" transform="rotate(-90 16 138)" x="16" y="138">
-          {yTitle}
-        </text>
-        <text fill="#64748b" fontSize="10" x="758" y={top + 10}>
-          {maximum.toPrecision(4)}
-        </text>
-        <text fill="#64748b" fontSize="10" x="758" y={top + height}>
           {minimum.toPrecision(4)}
         </text>
       </svg>

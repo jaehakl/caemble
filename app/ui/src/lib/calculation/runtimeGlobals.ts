@@ -1,3 +1,7 @@
+export const CALCULATION_INDEX_GUARD_GLOBAL = '__caembleRuntimeIndex'
+export const CALCULATION_INDEX_POLICY_MESSAGE =
+  'Dynamic Calculation indexes must resolve to non-negative safe integers.'
+
 export const CALCULATION_SHADOWED_GLOBAL_NAMES = Object.freeze([
   'Atomics',
   'Blob',

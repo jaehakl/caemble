@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { FilePlus2, LoaderCircle, Trash2 } from 'lucide-react'
+import { FilePlus2, LoaderCircle, RotateCcw, Sparkles, Trash2, X } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -12,10 +12,12 @@ import {
 } from 'react'
 import { toast } from 'sonner'
 import { dbTables, getListRequest, type CalculationRecord } from '@/api'
+import type { AiAgentApplyRequest, AiAgentApplyResult } from '@/api/aiAgent'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { MeasurementExplorer } from '@/features/cae-workbench/measurement'
-import type { BottomDockMode, SavedMeasurement } from '@/features/cae-workbench/types'
+import type { BottomDockMode, SavedMeasurement, SavedRecordedData } from '@/features/cae-workbench/types'
+import { CadDiffEditor } from '@/features/viewer/editor/CadDiffEditor'
 import {
   CALCULATION_SOURCE_SKELETON,
   CalculationExecutionError,
@@ -45,6 +47,29 @@ export type CalculationSaveState = Readonly<{
   disabledReason?: string
 }>
 
+export type CalculationAgentBridge = Readonly<{
+  calculationId: number | null
+  experimentId: number
+  name: string
+  description: string
+  sourceCode: string
+  baseHash: string | null
+  context: Readonly<Record<string, unknown>>
+  editable: boolean
+  targetLabel: string
+  workspaceSession: number
+  apply: (request: AiAgentApplyRequest) => Promise<AiAgentApplyResult>
+}>
+
+type CalculationAgentChange = Readonly<{
+  runId: string
+  status: 'applied' | 'conflicted'
+  before: string
+  after: string
+  addedLines: number
+  removedLines: number
+}>
+
 function emptyCalculationDraft(): CalculationDraft {
   return { id: null, description: '', name: '', sourceCode: CALCULATION_SOURCE_SKELETON }
 }
@@ -67,8 +92,31 @@ function sameDraft(left: CalculationDraft, right: CalculationDraft) {
   )
 }
 
+async function calculationSourceHash(source: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source))
+  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('')
+}
+
+function calculationChangedLines(before: string, after: string) {
+  const beforeLines = before.split('\n')
+  const afterLines = after.split('\n')
+  let prefix = 0
+  while (prefix < beforeLines.length && prefix < afterLines.length && beforeLines[prefix] === afterLines[prefix])
+    prefix++
+  let suffix = 0
+  while (
+    suffix < beforeLines.length - prefix &&
+    suffix < afterLines.length - prefix &&
+    beforeLines[beforeLines.length - suffix - 1] === afterLines[afterLines.length - suffix - 1]
+  ) {
+    suffix++
+  }
+  return { addedLines: afterLines.length - prefix - suffix, removedLines: beforeLines.length - prefix - suffix }
+}
+
 export function CalculationWorkbench({
   authenticated,
+  agentWorkspaceSession,
   bottom,
   bottomHeightRatio,
   bottomMode,
@@ -81,6 +129,7 @@ export function CalculationWorkbench({
   measurementLoading,
   menubar,
   onActivity,
+  onAgentBridgeChange,
   onCalculationIdChange,
   onBottomHeightRatioChange,
   onColumnRatiosChange,
@@ -93,6 +142,7 @@ export function CalculationWorkbench({
   onSelectMeasurement,
   onClearMeasurement,
   recordedData,
+  recordedRows,
   recordedRules,
   ribbon,
   rowRatios,
@@ -103,6 +153,7 @@ export function CalculationWorkbench({
   viewerExpanded,
 }: {
   authenticated: boolean
+  agentWorkspaceSession: number
   bottom: ReactNode
   bottomHeightRatio: number
   bottomMode: BottomDockMode
@@ -115,6 +166,7 @@ export function CalculationWorkbench({
   measurementLoading: boolean
   menubar: ReactNode
   onActivity: RuntimeActivityCallback
+  onAgentBridgeChange: (bridge: CalculationAgentBridge | null) => void
   onCalculationIdChange: (calculationId: number | null) => void
   onBottomHeightRatioChange: (ratio: number) => void
   onColumnRatiosChange: (ratios: readonly [number, number, number, number]) => void
@@ -127,6 +179,7 @@ export function CalculationWorkbench({
   onSelectMeasurement: (row: SavedMeasurement) => void
   onClearMeasurement: () => void
   recordedData: RecordedData | null | undefined
+  recordedRows: readonly SavedRecordedData[]
   recordedRules: readonly RecordedDataRule[]
   ribbon: ReactNode
   rowRatios: readonly number[]
@@ -146,6 +199,14 @@ export function CalculationWorkbench({
     status: 'idle',
     message: 'Recorded Measurement와 Calculation source를 선택하세요.',
   })
+  const [agentIdentity, setAgentIdentity] = useState<Readonly<{ sourceCode: string; hash: string }> | null>(null)
+  const [agentChange, setAgentChange] = useState<CalculationAgentChange | null>(null)
+  const [agentDiffOpen, setAgentDiffOpen] = useState(false)
+  const [agentTargetSession, setAgentTargetSession] = useState(0)
+  const draftRef = useRef(draft)
+  const editableRef = useRef(editable)
+  draftRef.current = draft
+  editableRef.current = editable
   const appliedExperimentRef = useRef(experimentId)
   const selectedCalculationRef = useRef(selectedCalculationId)
   const mutationSequenceRef = useRef(0)
@@ -153,6 +214,7 @@ export function CalculationWorkbench({
   const previewSequenceRef = useRef(0)
   const previewAbortRef = useRef<AbortController | null>(null)
   const dirty = !sameDraft(draft, baseline)
+  const calculationWorkspaceSession = agentWorkspaceSession * 1_000_000 + agentTargetSession
   const saveDisabledReason = !authenticated
     ? '로그인 후 사용할 수 있습니다.'
     : experimentId === null
@@ -188,11 +250,150 @@ export function CalculationWorkbench({
     () => buildCalculationRecordedData(recordedRules, recordedData),
     [recordedData, recordedRules],
   )
+  const agentContext = useMemo(() => {
+    const rowIds = new Map(recordedRows.map((row) => [row.name, row.id ?? null]))
+    const sampleTicks = (ticks: readonly (number | string)[]) => ({
+      count: ticks.length,
+      first: ticks.slice(0, 4),
+      last: ticks.length > 4 ? ticks.slice(-4) : [],
+    })
+    const recorded = recordedSnapshot.summaries.map((summary) => {
+      const leaf = recordedSnapshot.input?.[summary.path]
+      return {
+        id: rowIds.get(summary.path) ?? null,
+        path: summary.path,
+        dtype: leaf?.dtype ?? summary.dtype,
+        shape: summary.shape,
+        actualAxisLengths: summary.actualAxisLengths,
+        axes: (leaf?.axes ?? summary.axes).map((axis) => ({
+          name: axis.name,
+          unit: axis.unit ?? null,
+          ticks: sampleTicks(axis.ticks),
+        })),
+        quantityKind: summary.quantityKind,
+        tensorOrder: leaf?.tensorOrder ?? summary.tensorOrder,
+        unit: summary.unit,
+        valid: summary.valid,
+        error: summary.error,
+      }
+    })
+    const previewContext =
+      preview.status === 'success'
+        ? {
+            status: preview.status,
+            dtype: preview.output.dtype,
+            shape: preview.output.shape,
+            axes: preview.output.axes.map((axis) => ({
+              name: axis.name,
+              unit: axis.unit ?? null,
+              ticks: sampleTicks(axis.ticks),
+            })),
+            values:
+              typeof preview.output.data === 'number'
+                ? { count: 1, first: [preview.output.data], last: [] }
+                : {
+                    count: preview.output.data.length,
+                    first: preview.output.data.slice(0, 16),
+                    last: preview.output.data.length > 16 ? preview.output.data.slice(-16) : [],
+                  },
+          }
+        : preview.status === 'error'
+          ? { status: preview.status, code: preview.code, message: preview.message }
+          : { status: preview.status, message: preview.message }
+    const context: Record<string, unknown> = {
+      calculation: { dirty, isNew: draft.id === null },
+      measurementId,
+      recordedData: recorded,
+      preview: previewContext,
+    }
+    while (new TextEncoder().encode(JSON.stringify(context)).byteLength > 32 * 1024 && recorded.length) {
+      recorded.pop()
+      context.recordedDataOmitted = recordedSnapshot.summaries.length - recorded.length
+    }
+    return Object.freeze(context)
+  }, [dirty, draft.id, measurementId, preview, recordedRows, recordedSnapshot])
   const invalidatePreview = useCallback((message: string) => {
     previewSequenceRef.current += 1
     previewAbortRef.current?.abort()
     setPreview({ status: 'loading', message })
   }, [])
+
+  useEffect(() => {
+    let active = true
+    setAgentIdentity(null)
+    void calculationSourceHash(draft.sourceCode).then((hash) => {
+      if (active) setAgentIdentity({ sourceCode: draft.sourceCode, hash })
+    })
+    return () => {
+      active = false
+    }
+  }, [draft.sourceCode])
+
+  const applyAgentSource = useCallback(
+    async (request: AiAgentApplyRequest): Promise<AiAgentApplyResult> => {
+      const finalDocument = request.finalDocument
+      const current = draftRef.current
+      if (
+        finalDocument.kind !== 'calculation' ||
+        finalDocument.experimentId !== experimentId ||
+        finalDocument.calculationId !== current.id
+      ) {
+        return { status: 'conflicted', message: 'Agent Calculation target이 현재 draft와 일치하지 않습니다.' }
+      }
+      const [currentHash, finalHash] = await Promise.all([
+        calculationSourceHash(current.sourceCode),
+        calculationSourceHash(finalDocument.sourceCode),
+      ])
+      if (finalHash !== request.sourceHash) {
+        return { status: 'conflicted', message: 'Agent 완료 source의 SHA-256이 일치하지 않습니다.' }
+      }
+      const changed = {
+        runId: request.runId,
+        before: current.sourceCode,
+        after: finalDocument.sourceCode,
+        ...calculationChangedLines(current.sourceCode, finalDocument.sourceCode),
+      }
+      if (
+        !editableRef.current ||
+        currentHash !== request.baseHash ||
+        request.workspaceSession !== calculationWorkspaceSession
+      ) {
+        setAgentChange({ ...changed, status: 'conflicted' })
+        setAgentDiffOpen(true)
+        return {
+          status: 'conflicted',
+          message: 'Calculation source 또는 target이 변경되어 staged diff만 보존했습니다.',
+        }
+      }
+      if (current.sourceCode === finalDocument.sourceCode) return { status: 'applied', changedFiles: 0 }
+      invalidatePreview('AI source 변경을 기다리는 중…')
+      setDraft((value) => ({ ...value, sourceCode: finalDocument.sourceCode }))
+      setAgentChange({ ...changed, status: 'applied' })
+      setAgentDiffOpen(false)
+      return { status: 'applied', changedFiles: 1, firstChangedFile: 'calculation.js' }
+    },
+    [calculationWorkspaceSession, experimentId, invalidatePreview],
+  )
+
+  const agentBridge = useMemo<CalculationAgentBridge | null>(() => {
+    if (experimentId === null) return null
+    return Object.freeze({
+      calculationId: draft.id,
+      experimentId,
+      name: draft.name,
+      description: draft.description,
+      sourceCode: draft.sourceCode,
+      baseHash: agentIdentity?.sourceCode === draft.sourceCode ? agentIdentity.hash : null,
+      context: agentContext,
+      editable,
+      targetLabel: draft.id === null ? 'Calculation New' : `Calculation #${draft.id}`,
+      workspaceSession: calculationWorkspaceSession,
+      apply: applyAgentSource,
+    })
+  }, [agentContext, agentIdentity, applyAgentSource, calculationWorkspaceSession, draft, editable, experimentId])
+
+  useEffect(() => onAgentBridgeChange(agentBridge), [agentBridge, onAgentBridgeChange])
+  useEffect(() => () => onAgentBridgeChange(null), [onAgentBridgeChange])
 
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange])
   useEffect(() => () => onDirtyChange(false), [onDirtyChange])
@@ -208,6 +409,9 @@ export function CalculationWorkbench({
     setSaving(false)
     setDeleting(false)
     setSaveDialogOpen(false)
+    setAgentChange(null)
+    setAgentDiffOpen(false)
+    setAgentTargetSession((value) => value + 1)
     const next = emptyCalculationDraft()
     setDraft(next)
     setBaseline(next)
@@ -220,6 +424,9 @@ export function CalculationWorkbench({
     setSaving(false)
     setDeleting(false)
     setSaveDialogOpen(false)
+    setAgentChange(null)
+    setAgentDiffOpen(false)
+    setAgentTargetSession((value) => value + 1)
     if (selectedCalculationId !== null) return
     const next = emptyCalculationDraft()
     setDraft(next)
@@ -326,14 +533,27 @@ export function CalculationWorkbench({
           if (sequence !== previewSequenceRef.current || controller.signal.aborted) return
           const error =
             cause instanceof CalculationExecutionError
-              ? { code: cause.code, message: cause.message }
-              : { code: 'runtime' as const, message: cause instanceof Error ? cause.message : String(cause) }
+              ? { code: cause.code, diagnostic: cause.diagnostic, message: cause.message }
+              : {
+                  code: 'runtime' as const,
+                  diagnostic: undefined,
+                  message: cause instanceof Error ? cause.message : String(cause),
+                }
           if (error.code === 'cancelled') return
+          const activityMessage = error.diagnostic
+            ? [
+                `calculation.js:${error.diagnostic.range.startLineNumber}:${error.diagnostic.range.startColumn} ${error.message}`,
+                error.diagnostic.sourceLine,
+                `${' '.repeat(Math.max(0, error.diagnostic.range.startColumn - 1))}${'^'.repeat(
+                  Math.max(1, error.diagnostic.range.endColumn - error.diagnostic.range.startColumn),
+                )}`,
+              ].join('\n')
+            : error.message
           onActivity({
             source: 'calculation',
             level: 'error',
             phase: error.code,
-            message: error.message,
+            message: activityMessage,
           })
           setPreview({ ...error, status: 'error' })
         })
@@ -358,6 +578,9 @@ export function CalculationWorkbench({
       if (saving || deleting) return false
       if (dirty && !window.confirm('저장하지 않은 Calculation 편집을 버리고 선택을 바꿀까요?')) return false
       setSaveDialogOpen(false)
+      setAgentChange(null)
+      setAgentDiffOpen(false)
+      setAgentTargetSession((value) => value + 1)
       invalidatePreview('Calculation source를 바꾸는 중…')
       setDraft(next)
       setBaseline(next)
@@ -367,72 +590,78 @@ export function CalculationWorkbench({
     [deleting, dirty, invalidatePreview, onCalculationIdChange, saving],
   )
 
-  const save = useCallback(async (values?: CalculationSaveValues) => {
-    if (!authenticated || !editable) {
-      toast.error('이 Experiment의 Calculation을 저장할 권한이 없습니다.')
-      return false
-    }
-    if (!experimentId) {
-      toast.error('먼저 저장된 Experiment를 여세요.')
-      return false
-    }
-    const name = (values?.name ?? draft.name).trim()
-    if (!name) {
-      toast.error('Calculation 이름을 입력하세요.')
-      return false
-    }
-    if (saving || deleting) return false
-    const description = (values?.description ?? draft.description).trim()
-    const sequence = ++mutationSequenceRef.current
-    setSaving(true)
-    try {
-      const [result] = await dbTables.Calculation.upsertRow([
-        {
-          ...(draft.id === null ? {} : { id: draft.id }),
-          description: description || null,
-          experiment_id: experimentId,
-          name,
-          source_code: draft.sourceCode,
-        },
-      ])
-      if (sequence !== mutationSequenceRef.current) {
-        await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculations'] })
-        await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] })
+  const save = useCallback(
+    async (values?: CalculationSaveValues) => {
+      if (!authenticated || !editable) {
+        toast.error('이 Experiment의 Calculation을 저장할 권한이 없습니다.')
         return false
       }
-      const next = { ...draft, description, id: result.id, name }
-      setDraft(next)
-      setBaseline(next)
-      selectedCalculationRef.current = result.id
-      onCalculationIdChange(result.id)
-      await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculations'] })
-      await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] })
-      await onUsageChanged().catch((cause: unknown) => {
-        toast.error(
-          `Calculation은 저장했지만 Experiment 사용량을 갱신하지 못했습니다: ${cause instanceof Error ? cause.message : String(cause)}`,
-        )
-      })
-      toast.success('Calculation을 저장했습니다.')
-      return true
-    } catch (cause: unknown) {
-      if (sequence === mutationSequenceRef.current) {
-        toast.error(cause instanceof Error ? cause.message : String(cause))
+      if (!experimentId) {
+        toast.error('먼저 저장된 Experiment를 여세요.')
+        return false
       }
-      return false
-    } finally {
-      if (sequence === mutationSequenceRef.current) setSaving(false)
-    }
-  }, [
-    authenticated,
-    deleting,
-    draft,
-    editable,
-    experimentId,
-    onCalculationIdChange,
-    onUsageChanged,
-    queryClient,
-    saving,
-  ])
+      const name = (values?.name ?? draft.name).trim()
+      if (!name) {
+        toast.error('Calculation 이름을 입력하세요.')
+        return false
+      }
+      if (saving || deleting) return false
+      const description = (values?.description ?? draft.description).trim()
+      const sequence = ++mutationSequenceRef.current
+      setSaving(true)
+      try {
+        const [result] = await dbTables.Calculation.upsertRow([
+          {
+            ...(draft.id === null ? {} : { id: draft.id }),
+            description: description || null,
+            experiment_id: experimentId,
+            name,
+            source_code: draft.sourceCode,
+          },
+        ])
+        if (sequence !== mutationSequenceRef.current) {
+          await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculations'] })
+          await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] })
+          return false
+        }
+        const next = { ...draft, description, id: result.id, name }
+        setDraft(next)
+        setBaseline(next)
+        setAgentChange(null)
+        setAgentDiffOpen(false)
+        setAgentTargetSession((value) => value + 1)
+        selectedCalculationRef.current = result.id
+        onCalculationIdChange(result.id)
+        await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculations'] })
+        await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] })
+        await onUsageChanged().catch((cause: unknown) => {
+          toast.error(
+            `Calculation은 저장했지만 Experiment 사용량을 갱신하지 못했습니다: ${cause instanceof Error ? cause.message : String(cause)}`,
+          )
+        })
+        toast.success('Calculation을 저장했습니다.')
+        return true
+      } catch (cause: unknown) {
+        if (sequence === mutationSequenceRef.current) {
+          toast.error(cause instanceof Error ? cause.message : String(cause))
+        }
+        return false
+      } finally {
+        if (sequence === mutationSequenceRef.current) setSaving(false)
+      }
+    },
+    [
+      authenticated,
+      deleting,
+      draft,
+      editable,
+      experimentId,
+      onCalculationIdChange,
+      onUsageChanged,
+      queryClient,
+      saving,
+    ],
+  )
 
   const openSaveDialog = useCallback(() => {
     if (saveDisabledReason) {
@@ -462,8 +691,7 @@ export function CalculationWorkbench({
   }, [contextPending])
 
   useEffect(
-    () => () =>
-      onSaveStateChange({ disabled: true, disabledReason: 'Calculation Editor를 불러오는 중입니다.' }),
+    () => () => onSaveStateChange({ disabled: true, disabledReason: 'Calculation Editor를 불러오는 중입니다.' }),
     [onSaveStateChange],
   )
 
@@ -475,6 +703,9 @@ export function CalculationWorkbench({
       setDraft(next)
       setBaseline(next)
       setSaveDialogOpen(false)
+      setAgentChange(null)
+      setAgentDiffOpen(false)
+      setAgentTargetSession((value) => value + 1)
       return
     }
     if (
@@ -497,6 +728,9 @@ export function CalculationWorkbench({
       setDraft(next)
       setBaseline(next)
       setSaveDialogOpen(false)
+      setAgentChange(null)
+      setAgentDiffOpen(false)
+      setAgentTargetSession((value) => value + 1)
       selectedCalculationRef.current = null
       onCalculationIdChange(null)
       await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculations'] })
@@ -521,6 +755,19 @@ export function CalculationWorkbench({
     if (event.target instanceof Element && event.target.closest('.monaco-editor')) return
     event.preventDefault()
     saveFromShortcut()
+  }
+
+  const undoAgentChange = () => {
+    if (!agentChange || agentChange.status !== 'applied') return
+    if (draftRef.current.sourceCode !== agentChange.after) {
+      toast.error('AI 적용 후 source가 다시 변경되어 자동 Undo할 수 없습니다. Diff에서 확인하세요.')
+      setAgentDiffOpen(true)
+      return
+    }
+    invalidatePreview('AI source 변경을 되돌리는 중…')
+    setDraft((value) => ({ ...value, sourceCode: agentChange.before }))
+    setAgentChange(null)
+    setAgentDiffOpen(false)
   }
 
   return (
@@ -608,16 +855,62 @@ export function CalculationWorkbench({
         columnRatios={columnRatios}
         editor={
           <section className="flex h-full min-h-0 flex-col" onKeyDown={editorKeyDown}>
+            {agentChange ? (
+              <div className="flex shrink-0 items-center justify-between gap-2 border-b bg-amber-50 px-3 py-1.5 text-xs text-amber-950">
+                <span className="flex min-w-0 items-center gap-2">
+                  <Sparkles className="size-3.5 shrink-0" />
+                  <strong>{agentChange.status === 'applied' ? 'AI 미검증' : 'AI staged'}</strong>
+                  <span className="text-amber-800">
+                    +{agentChange.addedLines} / -{agentChange.removedLines} lines
+                  </span>
+                </span>
+                <span className="flex shrink-0 items-center gap-1">
+                  <Button size="sm" type="button" variant="outline" onClick={() => setAgentDiffOpen((value) => !value)}>
+                    JavaScript Diff
+                  </Button>
+                  {agentChange.status === 'applied' ? (
+                    <Button size="sm" type="button" variant="outline" onClick={undoAgentChange}>
+                      <RotateCcw /> Undo
+                    </Button>
+                  ) : null}
+                  <Button
+                    aria-label="AI 변경 상태 닫기"
+                    size="icon"
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      setAgentChange(null)
+                      setAgentDiffOpen(false)
+                    }}
+                  >
+                    <X />
+                  </Button>
+                </span>
+              </div>
+            ) : null}
             <div className="min-h-0 flex-1">
-              <CalculationSourceEditor
-                disabled={saving || deleting}
-                sourceCode={draft.sourceCode}
-                onSave={saveFromShortcut}
-                onSourceCodeChange={(sourceCode) => {
-                  invalidatePreview('Source 변경을 기다리는 중…')
-                  setDraft((current) => ({ ...current, sourceCode }))
-                }}
-              />
+              {agentChange && agentDiffOpen ? (
+                <CadDiffEditor
+                  changeId={agentChange.runId}
+                  language="javascript"
+                  modelPath="file:///calculation-agent-diff.js"
+                  modified={agentChange.after}
+                  original={agentChange.before}
+                  readOnly
+                  onChange={() => undefined}
+                />
+              ) : (
+                <CalculationSourceEditor
+                  diagnostic={preview.status === 'error' && preview.code === 'policy' ? preview.diagnostic : undefined}
+                  disabled={saving || deleting}
+                  sourceCode={draft.sourceCode}
+                  onSave={saveFromShortcut}
+                  onSourceCodeChange={(sourceCode) => {
+                    invalidatePreview('Source 변경을 기다리는 중…')
+                    setDraft((current) => ({ ...current, sourceCode }))
+                  }}
+                />
+              )}
             </div>
           </section>
         }

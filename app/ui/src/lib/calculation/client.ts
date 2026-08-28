@@ -131,7 +131,14 @@ function executeCompiledCalculation(
               throw new Error('The isolated Calculation runner response identity is invalid.')
             }
             if (event.data.response.type === 'calculation-error') {
-              fail(new CalculationExecutionError(event.data.response.errorCode, event.data.response.message), false)
+              fail(
+                new CalculationExecutionError(
+                  event.data.response.errorCode,
+                  event.data.response.message,
+                  event.data.response.diagnostic,
+                ),
+                false,
+              )
               return
             }
             const output = normalizeCalculationRunnerOutput(event.data.response.output)

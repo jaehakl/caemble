@@ -92,13 +92,26 @@ export const calculationExecutionErrorCodes = [
 
 export type CalculationExecutionErrorCode = (typeof calculationExecutionErrorCodes)[number]
 
+export type CalculationSourceDiagnostic = Readonly<{
+  message: string
+  range: Readonly<{
+    startLineNumber: number
+    startColumn: number
+    endLineNumber: number
+    endColumn: number
+  }>
+  sourceLine: string
+}>
+
 export class CalculationExecutionError extends Error {
   readonly code: CalculationExecutionErrorCode
+  readonly diagnostic: CalculationSourceDiagnostic | undefined
 
-  constructor(code: CalculationExecutionErrorCode, message: string) {
+  constructor(code: CalculationExecutionErrorCode, message: string, diagnostic?: CalculationSourceDiagnostic) {
     super(message)
     this.name = 'CalculationExecutionError'
     this.code = code
+    this.diagnostic = diagnostic
   }
 }
 

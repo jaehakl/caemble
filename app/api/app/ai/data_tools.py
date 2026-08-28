@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import math
 import struct
 from datetime import date, datetime
@@ -11,6 +12,7 @@ from sqlalchemy import Text, and_, cast, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import (
+    Calculation,
     Experiment,
     Material,
     MaterialName,
@@ -77,6 +79,30 @@ class VisibleDataReader:
                 }
                 for row in rows
             ]
+        if resource == "calculation":
+            statement = (
+                select(
+                    Calculation.id,
+                    Calculation.experiment_id,
+                    Calculation.name,
+                    Calculation.description,
+                    Calculation.updated_at,
+                )
+                .join(Experiment, Experiment.id == Calculation.experiment_id)
+                .where(
+                    _visible(Experiment.user_id, self.user_id),
+                    or_(
+                        Calculation.name.ilike(pattern, escape="\\"),
+                        Calculation.description.ilike(pattern, escape="\\"),
+                    ),
+                )
+                .order_by(Calculation.updated_at.desc(), Calculation.id.desc())
+                .limit(limit)
+            )
+            return [
+                _json_mapping(row)
+                for row in (await self.db.execute(statement)).mappings().all()
+            ]
         model, columns, searchable, visibility = self._simple_search_spec(resource)
         statement = (
             select(*columns)
@@ -134,6 +160,35 @@ class VisibleDataReader:
                 ],
                 "updatedAt": _json_value(row["updated_at"]),
             }
+        if resource == "calculation":
+            row = (
+                await self.db.execute(
+                    select(
+                        Calculation.id,
+                        Calculation.experiment_id,
+                        Calculation.name,
+                        Calculation.description,
+                        Calculation.source_code,
+                        Calculation.updated_at,
+                    )
+                    .join(Experiment, Experiment.id == Calculation.experiment_id)
+                    .where(
+                        Calculation.id == resource_id,
+                        _visible(Experiment.user_id, self.user_id),
+                    )
+                )
+            ).mappings().one_or_none()
+            if row is None:
+                raise VisibleDataError("Visible Calculation was not found")
+            return {
+                "id": row["id"],
+                "experimentId": row["experiment_id"],
+                "name": row["name"],
+                "description": row["description"],
+                "sourceCharacters": len(row["source_code"]),
+                "sourceSha256": _text_hash(row["source_code"]),
+                "updatedAt": _json_value(row["updated_at"]),
+            }
         if resource == "measurement":
             row = await self._one_visible(
                 select(
@@ -148,10 +203,29 @@ class VisibleDataReader:
                 resource_id,
                 own_only=True,
             )
+            recorded_rows = (
+                await self.db.execute(
+                    select(
+                        RecordedData.id,
+                        RecordedData.name,
+                        RecordedData.quantity_kind,
+                        RecordedData.tensor_order,
+                        RecordedData.dtype,
+                        RecordedData.data_schema,
+                        RecordedData.file_size,
+                    )
+                    .where(
+                        RecordedData.measurement_id == resource_id,
+                        RecordedData.user_id == self.user_id,
+                    )
+                    .order_by(RecordedData.name, RecordedData.id)
+                )
+            ).mappings().all()
             return {
                 **_json_mapping(row),
                 "vars": _bounded_value(row["vars"]),
                 "material_parameters": _bounded_value(row["material_parameters"]),
+                "recordedData": [_json_mapping(item) for item in recorded_rows],
             }
         if resource == "recorded_data":
             row = await self._recorded_row(resource_id, include_data=False)
@@ -166,6 +240,39 @@ class VisibleDataReader:
         offset: int,
         length: int,
     ) -> dict[str, Any]:
+        if resource == "calculation":
+            row = (
+                await self.db.execute(
+                    select(Calculation.id, Calculation.name, Calculation.source_code)
+                    .join(Experiment, Experiment.id == Calculation.experiment_id)
+                    .where(
+                        Calculation.id == resource_id,
+                        _visible(Experiment.user_id, self.user_id),
+                    )
+                )
+            ).mappings().one_or_none()
+            if row is None:
+                raise VisibleDataError("Visible Calculation was not found")
+            if path is not None:
+                raise VisibleDataError("Calculation source path must be null")
+            source = row["source_code"]
+            if offset > len(source):
+                raise VisibleDataError("Source offset is outside the Calculation")
+            content = source[offset : offset + length]
+            next_offset = offset + len(content)
+            return {
+                "resource": resource,
+                "id": resource_id,
+                "path": None,
+                "sha256": _text_hash(source),
+                "offset": offset,
+                "totalCharacters": len(source),
+                "content": content,
+                "nextOffset": next_offset if next_offset < len(source) else None,
+                "provenance": _provenance(resource, resource_id, row["name"]),
+            }
+        if resource != "experiment":
+            raise VisibleDataError("Visible source resource is not supported")
         row = await self._one_visible(
             select(Experiment.id, Experiment.name, Experiment.source_hash, Experiment.source_bundle),
             Experiment,
@@ -459,3 +566,7 @@ def _provenance(
         "resourceType": resource,
         "resourceId": resource_id,
     }
+
+
+def _text_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()

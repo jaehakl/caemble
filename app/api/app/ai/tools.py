@@ -8,8 +8,9 @@ from caemble_catalog import CatalogError
 from fastapi import HTTPException
 
 from ai.cad_reference import cad_authoring_reference_details
+from ai.calculation_reference import calculation_authoring_reference_details
 from ai.data_tools import VisibleDataError, VisibleDataReader, VisibleResource
-from ai.workspace import StagedExperiment, WorkspaceEditError
+from ai.workspace import StagedCalculation, StagedExperiment, WorkspaceEditError
 
 
 @dataclass(frozen=True)
@@ -29,7 +30,7 @@ class ToolExecutor:
         *,
         data: VisibleDataReader,
         catalog: Any,
-        workspace: StagedExperiment,
+        workspace: StagedExperiment | StagedCalculation,
     ):
         self.data = data
         self.catalog = catalog
@@ -59,6 +60,9 @@ class ToolExecutor:
                 value,
                 f"Read official CAD authoring reference for {len(value['elements'])} elements",
             )
+        if name == "get_calculation_authoring_reference":
+            value = calculation_authoring_reference_details(arguments["sections"])
+            return ToolExecution(value, "Read Calculation authoring reference")
         if name == "search_catalog":
             query = arguments["query"]
             limit = arguments["limit"]
@@ -118,14 +122,26 @@ class ToolExecutor:
             provenance = [value.pop("provenance")]
             return ToolExecution(value, f"Read {len(value['values'])} RecordedData values", provenance)
         if name == "list_experiment_files":
-            return ToolExecution(self.workspace.manifest(), "Listed staged Experiment files")
+            experiment = (
+                self.workspace.reference_experiment
+                if isinstance(self.workspace, StagedCalculation)
+                else self.workspace
+            )
+            return ToolExecution(experiment.manifest(), "Listed staged Experiment files")
         if name == "read_experiment_file":
             path = arguments["path"]
             offset = arguments["offset"]
             length = arguments["length"]
-            chunk = self.workspace.read_file(path, offset=offset, length=length)
+            experiment = (
+                self.workspace.reference_experiment
+                if isinstance(self.workspace, StagedCalculation)
+                else self.workspace
+            )
+            chunk = experiment.read_file(path, offset=offset, length=length)
             return ToolExecution(chunk.as_dict(), f"Read staged {chunk.path}")
         if name == "write_experiment_file":
+            if isinstance(self.workspace, StagedCalculation):
+                raise WorkspaceEditError("Experiment source is read-only in a Calculation run")
             path = arguments["path"]
             expected_sha256 = arguments.get("expectedSha256")
             value = self.workspace.write_file(
@@ -135,15 +151,29 @@ class ToolExecutor:
             )
             return ToolExecution(value, f"Staged {path}")
         if name == "delete_experiment_file":
+            if isinstance(self.workspace, StagedCalculation):
+                raise WorkspaceEditError("Experiment source is read-only in a Calculation run")
             path = arguments["path"]
             expected_sha256 = arguments["expectedSha256"]
             value = self.workspace.delete_file(path, expected_sha256)
             return ToolExecution(value, f"Deleted staged {path}")
+        if name == "read_calculation_source":
+            if not isinstance(self.workspace, StagedCalculation):
+                raise WorkspaceEditError("Calculation source is unavailable")
+            chunk = self.workspace.read_source(offset=arguments["offset"], length=arguments["length"])
+            return ToolExecution(chunk.as_dict(), "Read staged Calculation source")
+        if name == "write_calculation_source":
+            if not isinstance(self.workspace, StagedCalculation):
+                raise WorkspaceEditError("Calculation source is unavailable")
+            value = self.workspace.write_source(arguments["content"], arguments["expectedSha256"])
+            return ToolExecution(value, "Staged Calculation source")
         raise ValueError("Agent tool is not supported")
 
 
-def agent_tool_definitions() -> list[dict[str, Any]]:
-    return [
+def agent_tool_definitions(
+    workspace: StagedExperiment | StagedCalculation,
+) -> list[dict[str, Any]]:
+    common = [
         _tool(
             "get_cad_authoring_reference",
             "Read the server-bundled official CAD authoring contracts for primitives and operations before creating or editing geometry.tsx.",
@@ -192,7 +222,7 @@ def agent_tool_definitions() -> list[dict[str, Any]]:
         ),
         _tool(
             "read_visible_source",
-            "Read a source chunk from a visible Experiment.",
+            "Read a source chunk from a visible Experiment or Calculation.",
             {
                 "resource": {"type": "string"},
                 "id": _integer_schema(),
@@ -213,13 +243,39 @@ def agent_tool_definitions() -> list[dict[str, Any]]:
         _tool("list_experiment_files", "List staged Experiment files and hashes.", {}),
         _tool(
             "read_experiment_file",
-            "Read a chunk of a staged Experiment source file before editing it.",
+            "Read a chunk of the current Experiment source. It is read-only in a Calculation run.",
             {
                 "path": _string_schema(),
                 "offset": _integer_schema(),
                 "length": _integer_schema(),
             },
         ),
+    ]
+    if isinstance(workspace, StagedCalculation):
+        tools = [
+            *common,
+            _tool(
+                "get_calculation_authoring_reference",
+                "Read generated Calculation contract, limits, Math.js API, Monaco declaration, or skeleton.",
+                {"sections": {"type": "array", "items": {"type": "string"}}},
+            ),
+            _tool(
+                "read_calculation_source",
+                "Read a Calculation source chunk and its SHA-256 before editing.",
+                {"offset": _integer_schema(), "length": _integer_schema()},
+            ),
+        ]
+        if workspace.editable:
+            tools.append(
+                _tool(
+                    "write_calculation_source",
+                    "Replace the complete staged Calculation source using its last observed SHA-256.",
+                    {"content": _string_schema(), "expectedSha256": {"type": "string"}},
+                )
+            )
+        return tools
+    return [
+        *common,
         _tool(
             "write_experiment_file",
             "Replace one staged source file using its last observed SHA-256, or null for a new TS/TSX file.",

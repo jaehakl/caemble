@@ -4,6 +4,7 @@ import {
   calculationExecutionErrorCodes,
   type CalculationExecutionErrorCode,
   type CalculationInput,
+  type CalculationSourceDiagnostic,
   type NormalizedCalculationOutput,
   type CompiledCalculationSource,
 } from './types'
@@ -33,6 +34,7 @@ export type CalculationRunError = Readonly<{
   sourceHash: string
   errorCode: CalculationExecutionErrorCode
   message: string
+  diagnostic?: CalculationSourceDiagnostic
 }>
 
 export type CalculationRunResponse = CalculationRunSuccess | CalculationRunError
@@ -85,6 +87,27 @@ function secureIdentity(value: Record<string, unknown>) {
 function secureNonce(value: unknown): asserts value is string {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9-]{16,128}$/u.test(value)) {
     throw new Error('Calculation runner nonce is invalid.')
+  }
+}
+
+function assertCalculationSourceDiagnostic(value: unknown): asserts value is CalculationSourceDiagnostic | undefined {
+  if (value === undefined) return
+  const diagnostic = secureRecord(value)
+  const range = secureRecord(diagnostic.range)
+  if (
+    typeof diagnostic.message !== 'string' ||
+    typeof diagnostic.sourceLine !== 'string' ||
+    !Number.isSafeInteger(range.startLineNumber) ||
+    (range.startLineNumber as number) < 1 ||
+    !Number.isSafeInteger(range.startColumn) ||
+    (range.startColumn as number) < 1 ||
+    range.endLineNumber !== range.startLineNumber ||
+    !Number.isSafeInteger(range.endColumn) ||
+    (range.endColumn as number) < (range.startColumn as number) ||
+    (range.startColumn as number) > (diagnostic.sourceLine as string).length + 1 ||
+    (range.endColumn as number) > (diagnostic.sourceLine as string).length + 1
+  ) {
+    throw new Error('Calculation source diagnostic is invalid.')
   }
 }
 
@@ -155,12 +178,20 @@ export function assertCalculationRunnerResultEnvelope(
   }
   secureIdentity(response)
   if (typeof response.sourceHash !== 'string') throw new Error('Calculation runner source identity is invalid.')
-  if (
-    response.type === 'calculation-error' &&
-    (!calculationExecutionErrorCodes.includes(response.errorCode as CalculationExecutionErrorCode) ||
-      typeof response.message !== 'string')
-  ) {
-    throw new Error('Calculation runner error is invalid.')
+  if (response.type === 'calculation-error') {
+    if (
+      !calculationExecutionErrorCodes.includes(response.errorCode as CalculationExecutionErrorCode) ||
+      typeof response.message !== 'string'
+    ) {
+      throw new Error('Calculation runner error is invalid.')
+    }
+    assertCalculationSourceDiagnostic(response.diagnostic)
+    if (
+      response.diagnostic !== undefined &&
+      (response.diagnostic as CalculationSourceDiagnostic).message !== response.message
+    ) {
+      throw new Error('Calculation runner error diagnostic does not match its message.')
+    }
   }
 }
 

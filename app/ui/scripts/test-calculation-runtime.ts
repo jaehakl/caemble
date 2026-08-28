@@ -4,8 +4,12 @@ import { CALCULATION_MATHJS_NAMES } from '../src/lib/calculation/mathjsManifest'
 import { CALCULATION_MATHJS_RUNTIME } from '../src/lib/calculation/mathRuntime'
 import { CALCULATION_SHADOWED_GLOBAL_NAMES } from '../src/lib/calculation/runtimeGlobals'
 import { createCalculationInput } from '../src/lib/calculation/input'
+import { calculationIndex } from '../src/lib/calculation/indexGuard'
 import { createCalculationConsole } from '../src/lib/calculation/log'
-import { assertCalculationRunnerLogEnvelope } from '../src/lib/calculation/protocol'
+import {
+  assertCalculationRunnerLogEnvelope,
+  assertCalculationRunnerResultEnvelope,
+} from '../src/lib/calculation/protocol'
 import { analyzeCalculationSource } from '../src/lib/calculation/sourcePolicy'
 import {
   CALCULATION_INPUT_MAX_BYTES,
@@ -87,6 +91,82 @@ assert.equal(ode.y[0], 1)
 assert.doesNotThrow(() => analyzeCalculationSource(CALCULATION_SOURCE_SKELETON))
 assert.doesNotThrow(() => analyzeCalculationSource('export default function run(record) { return record }'))
 assert.doesNotThrow(() => analyzeCalculationSource('export default function run(value) { return value }'))
+
+function assertPolicyRange(source: string, lineNumber: number, token: string, message: string) {
+  let error: unknown
+  try {
+    analyzeCalculationSource(source)
+  } catch (cause) {
+    error = cause
+  }
+  assert.ok(error instanceof CalculationExecutionError)
+  assert.equal(error.code, 'policy')
+  assert.ok(error.diagnostic)
+  const sourceLine = source.split(/\r?\n/u)[lineNumber - 1] ?? ''
+  const startColumn = sourceLine.indexOf(token) + 1
+  assert.notEqual(startColumn, 0)
+  assert.deepEqual(error.diagnostic.range, {
+    startLineNumber: lineNumber,
+    startColumn,
+    endLineNumber: lineNumber,
+    endColumn: startColumn + token.length,
+  })
+  assert.equal(error.diagnostic.sourceLine, sourceLine)
+  assert.match(error.diagnostic.message, new RegExp(message, 'u'))
+}
+
+assertPolicyRange(
+  "import { mean } from 'other'\nexport default function run(input) { return input }",
+  1,
+  "'other'",
+  'limited',
+)
+assertPolicyRange(
+  "import { evaluate } from 'mathjs'\nexport default function run(input) { return input }",
+  1,
+  'evaluate',
+  'not available',
+)
+assertPolicyRange("export default function run(input) {\n  return import('other')\n}", 2, 'import', 'Dynamic import')
+assertPolicyRange('export default function run(input) { return Math.random() }', 1, 'random', 'Random functions')
+assertPolicyRange(
+  "export default function run(input) { console.error(input); return { dtype: 'float64', data: 1 } }",
+  1,
+  'error',
+  'console\\.log',
+)
+assertPolicyRange("export default function run(input) { return fetch('/') }", 1, 'fetch', 'Global runtime access')
+assertPolicyRange(
+  'export default function run({ input }) { return input }',
+  1,
+  '{ input }',
+  'exactly one input parameter',
+)
+
+assertPolicyRange(
+  'export default async function run(input) {\n  return await input\n}',
+  1,
+  'async function run(input) {',
+  'synchronous',
+)
+
+const missingExportSource = "import { mean } from 'mathjs'"
+let missingExportError: unknown
+try {
+  analyzeCalculationSource(missingExportSource)
+} catch (cause) {
+  missingExportError = cause
+}
+assert.ok(missingExportError instanceof CalculationExecutionError)
+assert.deepEqual(missingExportError.diagnostic?.range, {
+  startLineNumber: 1,
+  startColumn: missingExportSource.length + 1,
+  endLineNumber: 1,
+  endColumn: missingExportSource.length + 1,
+})
+assert.equal(missingExportError.diagnostic?.sourceLine, missingExportSource)
+assert.match(missingExportError.diagnostic?.message ?? '', /exactly one default function/u)
+
 assert.throws(() =>
   analyzeCalculationSource(
     "export default function run(input: CalculationInput) { return { dtype: 'float64', data: input } }",
@@ -103,14 +183,44 @@ assert.throws(() =>
     "export default function run(input) { console.error(input); return { dtype: 'float64', data: 1 } }",
   ),
 )
-assert.throws(() =>
+assert.doesNotThrow(() =>
   analyzeCalculationSource(
     "export default function run(input) { console['log'](input); return { dtype: 'float64', data: 1 } }",
   ),
 )
-assert.throws(() =>
+assert.doesNotThrow(() =>
   analyzeCalculationSource(
     "export default function run(input) { const log = console.log; log(input); return { dtype: 'float64', data: 1 } }",
+  ),
+)
+assert.doesNotThrow(() =>
+  analyzeCalculationSource(
+    "export default function run(input) { const logger = console; logger.log(input); return { dtype: 'float64', data: 1 } }",
+  ),
+)
+assert.throws(() =>
+  analyzeCalculationSource(
+    "export default function run(input) { const logger = console; logger.error(input); return { dtype: 'float64', data: 1 } }",
+  ),
+)
+assert.doesNotThrow(() =>
+  analyzeCalculationSource(
+    "export default function run(input) { const deterministic = Math; return { dtype: 'float64', data: deterministic.sin(0) } }",
+  ),
+)
+assert.throws(() =>
+  analyzeCalculationSource(
+    "export default function run(input) { const deterministic = Math; return { dtype: 'float64', data: deterministic.random() } }",
+  ),
+)
+assert.throws(() =>
+  analyzeCalculationSource(
+    "export default function run(input) { const deterministic = Math; const name = 'sin'; return { dtype: 'float64', data: deterministic[name](0) } }",
+  ),
+)
+assert.doesNotThrow(() =>
+  analyzeCalculationSource(
+    "export default function run(input) { const values = [1, 2]; const base = Number(input.offset); return { dtype: 'float64', data: values[base] } }",
   ),
 )
 assert.throws(() =>
@@ -123,9 +233,27 @@ assert.throws(() => analyzeCalculationSource('const state = 1; export default fu
 assert.throws(() => analyzeCalculationSource('export default async function run(input) { return input }'))
 assert.throws(() => analyzeCalculationSource("export default function run(input) { return Math['random']() }"))
 assert.throws(() => analyzeCalculationSource("export default function run(input) { return fetch('/') }"))
-assert.throws(() =>
+assert.doesNotThrow(() =>
   analyzeCalculationSource(
     "export default function run(input) { const key = ['con', 'structor'].join(''); return (() => {})[key] }",
+  ),
+)
+assert.throws(() =>
+  analyzeCalculationSource(
+    'export default function run(input) { const NativeObject = Object; return NativeObject.values(input) }',
+  ),
+)
+assert.throws(() =>
+  analyzeCalculationSource(
+    'export default function run(input) { const NativeArray = Array; return NativeArray.from(input) }',
+  ),
+)
+assert.throws(() =>
+  analyzeCalculationSource('export default function run(input) { return Object.getPrototypeOf(input) }'),
+)
+assert.throws(() =>
+  analyzeCalculationSource(
+    "export default function run(input) { return Object.getOwnPropertyDescriptor(input, 'value') }",
   ),
 )
 assert.throws(() =>
@@ -170,10 +298,70 @@ for (const source of [
   'export default function run(input) { return Atomics.load(new Int32Array(new SharedArrayBuffer(4)), 0) }',
   'export default function run(input) { return Number(crossOriginIsolated) }',
   'export default function run(input) { return Number((1000).toLocaleString().length) }',
-  'export default function run(input) { return Number(Object.keys(console).length) }',
 ] as const) {
   assert.throws(() => analyzeCalculationSource(source))
 }
+assert.doesNotThrow(() =>
+  analyzeCalculationSource(
+    "export default function run(input) { return { dtype: 'float64', data: Object.keys(console).length } }",
+  ),
+)
+
+const dynamicIndexDiagnostic = {
+  message: 'Dynamic Calculation indexes must resolve to non-negative safe integers.',
+  range: { startLineNumber: 2, startColumn: 17, endLineNumber: 2, endColumn: 21 },
+  sourceLine: '  return values[base]',
+}
+assert.equal(calculationIndex(0, dynamicIndexDiagnostic), 0)
+assert.equal(calculationIndex(Number.MAX_SAFE_INTEGER, dynamicIndexDiagnostic), Number.MAX_SAFE_INTEGER)
+for (const invalidIndex of ['0', -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 0n, undefined] as const) {
+  assert.throws(
+    () => calculationIndex(invalidIndex, dynamicIndexDiagnostic),
+    (error: unknown) =>
+      error instanceof CalculationExecutionError &&
+      error.code === 'policy' &&
+      error.message === dynamicIndexDiagnostic.message &&
+      error.diagnostic?.range.startLineNumber === 2 &&
+      error.diagnostic.range.startColumn === 17,
+  )
+}
+
+const diagnosticEnvelope = {
+  type: 'operation-result',
+  operation: 'calculate',
+  nonce: '12345678-1234-1234-1234-123456789012',
+  response: {
+    type: 'calculation-error',
+    requestId: 'request',
+    revision: 1,
+    sourceHash: 'source-hash',
+    errorCode: 'policy',
+    message: dynamicIndexDiagnostic.message,
+    diagnostic: dynamicIndexDiagnostic,
+  },
+} as const
+assert.doesNotThrow(() => assertCalculationRunnerResultEnvelope(diagnosticEnvelope))
+assert.throws(() =>
+  assertCalculationRunnerResultEnvelope({
+    ...diagnosticEnvelope,
+    response: {
+      ...diagnosticEnvelope.response,
+      diagnostic: { ...dynamicIndexDiagnostic, message: 'mismatched' },
+    },
+  }),
+)
+assert.throws(() =>
+  assertCalculationRunnerResultEnvelope({
+    ...diagnosticEnvelope,
+    response: {
+      ...diagnosticEnvelope.response,
+      diagnostic: {
+        ...dynamicIndexDiagnostic,
+        range: { ...dynamicIndexDiagnostic.range, startColumn: 0 },
+      },
+    },
+  }),
+)
 
 const input = {
   signal: {

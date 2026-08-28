@@ -2,10 +2,24 @@ import { API_URL, ApiError, request } from './http'
 import type { ExperimentRecord } from './types'
 
 export type AiAgentSourceBundle = ExperimentRecord['source_bundle']
-export type AiAgentSourceDocument = Readonly<{
+export const AI_AGENT_WORKSPACE_SCHEMA_VERSION = 'caemble-ai-agent-v5-calculation-source' as const
+
+export type AiAgentExperimentDocument = Readonly<{
   kind: 'experiment'
   sourceBundle: AiAgentSourceBundle
 }>
+export type AiAgentCalculationDocument = Readonly<{
+  kind: 'calculation'
+  calculationId: number | null
+  experimentId: number
+  name: string
+  description: string
+  sourceCode: string
+  editable: boolean
+  context: Readonly<Record<string, unknown>>
+  referenceExperiment: AiAgentExperimentDocument
+}>
+export type AiAgentSourceDocument = AiAgentExperimentDocument | AiAgentCalculationDocument
 
 export const AI_AGENT_PROVIDER_QUERY_KEY = ['ai-agent', 'providers'] as const
 export const AI_AGENT_PROVIDER = 'openai' as const
@@ -33,6 +47,12 @@ export type AiAgentMessage = Readonly<{
   role: 'user' | 'assistant'
   content: string
 }>
+
+export type AiAgentConversationMessage = AiAgentMessage &
+  Readonly<{
+    targetKey: string
+    targetLabel: string
+  }>
 
 export type AiAgentProvenance = Readonly<{
   kind: string
@@ -67,8 +87,9 @@ export type AiAgentCredentialTestResult = Readonly<{
 
 export type AiAgentApplyRequest = Readonly<{
   runId: string
-  finalBundle: AiAgentSourceBundle
+  finalDocument: AiAgentSourceDocument
   baseHash: string
+  referenceHash: string | null
   sourceHash: string
   stagedRevision: number
   workspaceSession: number
@@ -92,9 +113,11 @@ export type AiAgentRunStart = Readonly<{
   model: string
   reasoningEffort: AiAgentReasoningEffort
   workspace: Readonly<{
+    schemaVersion: typeof AI_AGENT_WORKSPACE_SCHEMA_VERSION
     experimentId: number | null
     document: AiAgentSourceDocument
     baseHash: string
+    referenceHash: string | null
     activeFile: string | null
     workspaceSession: number
   }>
@@ -142,7 +165,7 @@ export type AiAgentServerEvent =
       Readonly<{
         type: 'run.completed'
         message: string
-        finalBundle: AiAgentSourceBundle | null
+        finalDocument: AiAgentSourceDocument | null
         baseHash: string
         sourceHash: string | null
         stagedRevision: number
@@ -169,18 +192,22 @@ export const aiAgentApi = Object.freeze({
         }>[]
       }>[]
     }>('get', '/ai/providers')
-    return response.providers.map((provider) => Object.freeze({
-      id: provider.provider,
-      label: provider.displayName,
-      configured: provider.configured,
-      credentialVersion: provider.credentialVersion,
-      updatedAt: provider.updatedAt,
-      models: provider.models.map((model) => Object.freeze({
-        id: model.id,
-        label: model.displayName,
-        reasoningEfforts: model.reasoningEfforts,
-      })),
-    }))
+    return response.providers.map((provider) =>
+      Object.freeze({
+        id: provider.provider,
+        label: provider.displayName,
+        configured: provider.configured,
+        credentialVersion: provider.credentialVersion,
+        updatedAt: provider.updatedAt,
+        models: provider.models.map((model) =>
+          Object.freeze({
+            id: model.id,
+            label: model.displayName,
+            reasoningEfforts: model.reasoningEfforts,
+          }),
+        ),
+      }),
+    )
   },
   async saveCredential(provider: string, apiKey: string) {
     await request<unknown>('put', `/ai/providers/${encodeURIComponent(provider)}/credential`, { apiKey })
@@ -286,6 +313,9 @@ export function connectAiAgent({
 }
 
 const SESSION_STORAGE_KEY = 'caemble.ai-helper.agent-session'
+const CONVERSATION_STORAGE_KEY = 'caemble.ai-helper.conversation-v1'
+const MAX_CONVERSATION_MESSAGES = 200
+const MAX_CONVERSATION_BYTES = 1024 * 1024
 
 export type AiAgentSessionBinding = Readonly<{
   userId: string
@@ -293,6 +323,10 @@ export type AiAgentSessionBinding = Readonly<{
   model: string
   credentialVersion: string | number | null
   experimentId: number | null
+  documentKind: AiAgentSourceDocument['kind']
+  documentId: number | null
+  schemaVersion: typeof AI_AGENT_WORKSPACE_SCHEMA_VERSION
+  referenceHash: string | null
   workspaceSession: number
   permissionFingerprint: string
 }>
@@ -302,14 +336,18 @@ export function loadAiAgentSession(binding: AiAgentSessionBinding) {
   if (!serialized) return null
   const value = JSON.parse(serialized) as Record<string, unknown>
   if (
-      value.userId !== binding.userId ||
-      value.provider !== binding.provider ||
-      value.model !== binding.model ||
-      value.credentialVersion !== binding.credentialVersion ||
-      value.experimentId !== binding.experimentId ||
-      value.workspaceSession !== binding.workspaceSession ||
-      value.permissionFingerprint !== binding.permissionFingerprint
-    ) {
+    value.userId !== binding.userId ||
+    value.provider !== binding.provider ||
+    value.model !== binding.model ||
+    value.credentialVersion !== binding.credentialVersion ||
+    value.experimentId !== binding.experimentId ||
+    value.documentKind !== binding.documentKind ||
+    value.documentId !== binding.documentId ||
+    value.schemaVersion !== binding.schemaVersion ||
+    value.referenceHash !== binding.referenceHash ||
+    value.workspaceSession !== binding.workspaceSession ||
+    value.permissionFingerprint !== binding.permissionFingerprint
+  ) {
     sessionStorage.removeItem(SESSION_STORAGE_KEY)
     return null
   }
@@ -322,6 +360,55 @@ export function saveAiAgentSession(binding: AiAgentSessionBinding, envelope: str
 
 export function clearAiAgentSession() {
   sessionStorage.removeItem(SESSION_STORAGE_KEY)
+}
+
+export function loadAiAgentConversation(userId: string): readonly AiAgentConversationMessage[] {
+  const serialized = sessionStorage.getItem(CONVERSATION_STORAGE_KEY)
+  if (!serialized) return []
+  try {
+    const value = JSON.parse(serialized) as Record<string, unknown>
+    if (value.version !== 1 || value.userId !== userId || !Array.isArray(value.messages)) {
+      sessionStorage.removeItem(CONVERSATION_STORAGE_KEY)
+      return []
+    }
+    const messages = value.messages.filter(
+      (message): message is AiAgentConversationMessage =>
+        typeof message === 'object' &&
+        message !== null &&
+        ((message as Record<string, unknown>).role === 'user' ||
+          (message as Record<string, unknown>).role === 'assistant') &&
+        typeof (message as Record<string, unknown>).content === 'string' &&
+        typeof (message as Record<string, unknown>).targetKey === 'string' &&
+        typeof (message as Record<string, unknown>).targetLabel === 'string',
+    )
+    if (messages.length !== value.messages.length) throw new Error('Invalid AI Agent conversation')
+    return boundAiAgentConversation(userId, messages)
+  } catch {
+    sessionStorage.removeItem(CONVERSATION_STORAGE_KEY)
+    return []
+  }
+}
+
+export function saveAiAgentConversation(userId: string, messages: readonly AiAgentConversationMessage[]) {
+  const bounded = boundAiAgentConversation(userId, messages)
+  sessionStorage.setItem(CONVERSATION_STORAGE_KEY, JSON.stringify({ version: 1, userId, messages: bounded }))
+  return bounded
+}
+
+export function clearAiAgentConversation() {
+  sessionStorage.removeItem(CONVERSATION_STORAGE_KEY)
+}
+
+function boundAiAgentConversation(userId: string, messages: readonly AiAgentConversationMessage[]) {
+  const bounded = messages.slice(-MAX_CONVERSATION_MESSAGES)
+  while (
+    bounded.length &&
+    new TextEncoder().encode(JSON.stringify({ version: 1, userId, messages: bounded })).byteLength >
+      MAX_CONVERSATION_BYTES
+  ) {
+    bounded.splice(0, bounded[0]?.role === 'user' && bounded[1]?.role === 'assistant' ? 2 : 1)
+  }
+  return bounded
 }
 
 function asRecord(value: unknown) {

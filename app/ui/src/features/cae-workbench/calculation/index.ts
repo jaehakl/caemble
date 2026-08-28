@@ -1,1 +1,1 @@
-export { CalculationWorkbench, type CalculationSaveState } from './CalculationWorkbench'
+export { CalculationWorkbench, type CalculationAgentBridge, type CalculationSaveState } from './CalculationWorkbench'

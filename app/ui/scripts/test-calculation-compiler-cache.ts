@@ -2,8 +2,16 @@ import assert from 'node:assert/strict'
 import { calculationMonacoStubState } from './calculation-monaco-stub'
 import { compileCalculationSource } from '../src/lib/calculation/compiler'
 import { CALCULATION_SOURCE_SKELETON } from '../src/lib/calculation/declarations'
+import { calculationIndex } from '../src/lib/calculation/indexGuard'
 import { CALCULATION_MATHJS_RUNTIME } from '../src/lib/calculation/mathRuntime'
-import type { CalculationInput, CalculationInputAxis, CalculationInputLeaf } from '../src/lib/calculation/types'
+import { CALCULATION_INDEX_GUARD_GLOBAL } from '../src/lib/calculation/runtimeGlobals'
+import {
+  CalculationExecutionError,
+  type CalculationInput,
+  type CalculationInputAxis,
+  type CalculationInputLeaf,
+  type CompiledCalculationSource,
+} from '../src/lib/calculation/types'
 import { assertCalculationInput, normalizeCalculationOutput } from '../src/lib/calculation/validation'
 
 function sourceWithValue(value: number) {
@@ -37,6 +45,17 @@ function calculationInput(
   }
 }
 
+function loadCalculation(compiled: CompiledCalculationSource) {
+  const calculationModule = { exports: {} as Record<string, unknown> }
+  new Function('module', 'exports', 'require', CALCULATION_INDEX_GUARD_GLOBAL, compiled.code)(
+    calculationModule,
+    calculationModule.exports,
+    () => ({}),
+    calculationIndex,
+  )
+  return calculationModule.exports.default as (input: unknown) => unknown
+}
+
 async function main() {
   assert.match(CALCULATION_SOURCE_SKELETON, /export default function calculate\(record\)/u)
   assert.doesNotMatch(
@@ -59,6 +78,42 @@ async function main() {
     dtype: 'float64',
     data: 0,
   })
+
+  const computedIndexSource = `export default function calculate(input) {
+  void input
+  const matrix = [[1, 2], [3, 4]]
+  const typed = new Float64Array([10, 20])
+  const output = [0, 0, 0, 0]
+  for (let row = 0; row < 2; row += 1) {
+    for (let column = 0; column < 2; column += 1) {
+      const cellIndex = row * 2 + column
+      output[cellIndex] = matrix?.[row]?.[column] + typed[column]
+    }
+  }
+  const first = 0
+  output[first]++
+  return { dtype: 'float64', data: output }
+}`
+  const computedIndexCalculation = loadCalculation(await compileCalculationSource(computedIndexSource))
+  assert.deepEqual(computedIndexCalculation({}), { dtype: 'float64', data: [12, 22, 13, 24] })
+
+  const guardedIndexSource = `export default function calculate(input) {
+  const values = [10]
+  const index = input.index
+  return { dtype: 'float64', data: values[index] }
+}`
+  const guardedIndexCalculation = loadCalculation(await compileCalculationSource(guardedIndexSource))
+  assert.deepEqual(guardedIndexCalculation({ index: 0 }), { dtype: 'float64', data: 10 })
+  for (const index of ['0', 'constructor', -1, 0.5, Number.NaN, Number.POSITIVE_INFINITY, 0n] as const) {
+    assert.throws(
+      () => guardedIndexCalculation({ index }),
+      (error: unknown) =>
+        error instanceof CalculationExecutionError &&
+        error.code === 'policy' &&
+        error.diagnostic?.sourceLine === "  return { dtype: 'float64', data: values[index] }" &&
+        error.diagnostic.range.startColumn === 43,
+    )
+  }
 
   const compiledSkeleton = await compileCalculationSource(CALCULATION_SOURCE_SKELETON)
   const skeletonModule = { exports: {} as Record<string, unknown> }

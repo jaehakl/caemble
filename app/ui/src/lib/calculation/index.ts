@@ -33,6 +33,7 @@ export type {
   CalculationInputLeaf,
   CalculationLogEntry,
   CalculationOutput,
+  CalculationSourceDiagnostic,
   CompiledCalculationSource,
   MathJsMatrix,
   NormalizedCalculationOutput,

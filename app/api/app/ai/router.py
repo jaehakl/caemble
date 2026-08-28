@@ -11,6 +11,7 @@ from typing import Any
 from caemble_catalog import Catalog
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from pydantic import ValidationError
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai.agent import AgentRunner, permission_fingerprint
@@ -20,7 +21,8 @@ from ai.models import RunCancel, RunStart, parse_client_message
 from ai.provider import ProviderError, create_provider_adapter
 from ai.session import SessionEnvelopeCodec, SessionEnvelopeError
 from ai.tools import ToolExecutor
-from ai.workspace import StagedExperiment, WorkspaceEditError
+from ai.workspace import StagedCalculation, StagedExperiment, WorkspaceEditError
+from db import Calculation, Experiment
 from settings import settings
 from user_auth.routes import check_user, get_db
 
@@ -40,7 +42,7 @@ class WebSocketEventEmitter:
         self.run_id = run_id
         self.sequence = 0
         self._send_lock = asyncio.Lock()
-        self._workspace: StagedExperiment | None = None
+        self._workspace: StagedExperiment | StagedCalculation | None = None
         self._staged_revision = 0
         self._source_hash: str | None = None
 
@@ -48,7 +50,7 @@ class WebSocketEventEmitter:
         self._staged_revision = staged_revision
         self._source_hash = source_hash
 
-    def bind_workspace(self, workspace: StagedExperiment) -> None:
+    def bind_workspace(self, workspace: StagedExperiment | StagedCalculation) -> None:
         self._workspace = workspace
 
     async def emit(self, event_type: str, **payload: Any) -> None:
@@ -112,11 +114,26 @@ async def run_agent(
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
         run_id = uuid.uuid4().hex
+        first = await _authorize_calculation_workspace(db, user.id, first)
+        await db.rollback()
         start_message = first
         started_at = time.perf_counter()
         emitter = WebSocketEventEmitter(websocket, run_id)
         emitter.set_workspace_identity(0, first.workspace.baseHash)
-        workspace = StagedExperiment(first.workspace.document.sourceBundle)
+        document = first.workspace.document
+        workspace = (
+            StagedExperiment(document.sourceBundle)
+            if document.kind == "experiment"
+            else StagedCalculation(
+                calculation_id=document.calculationId,
+                experiment_id=document.experimentId,
+                name=document.name,
+                description=document.description,
+                source_code=document.sourceCode,
+                editable=document.editable,
+                reference_experiment=document.referenceExperiment.sourceBundle,
+            )
+        )
         emitter.bind_workspace(workspace)
         await emitter.emit("run.started", status="started")
         logger.info(
@@ -345,3 +362,44 @@ def _safe_error_message(error: Exception) -> str:
     if isinstance(error, TimeoutError):
         return "The AI Agent run timed out"
     return "The AI Agent run failed"
+
+
+async def _authorize_calculation_workspace(
+    db: AsyncSession,
+    user_id: str,
+    start: RunStart,
+) -> RunStart:
+    document = start.workspace.document
+    if document.kind != "calculation":
+        return start
+    experiment = (
+        await db.execute(
+            select(Experiment.id, Experiment.user_id).where(
+                Experiment.id == document.experimentId,
+                or_(Experiment.user_id.is_(None), Experiment.user_id == user_id),
+            )
+        )
+    ).mappings().one_or_none()
+    if experiment is None:
+        raise WorkspaceEditError("Calculation Experiment is not visible")
+    editable = experiment["user_id"] == user_id
+    updates: dict[str, Any] = {"editable": editable}
+    if document.calculationId is not None:
+        calculation = (
+            await db.execute(
+                select(Calculation.name, Calculation.description).where(
+                    Calculation.id == document.calculationId,
+                    Calculation.experiment_id == document.experimentId,
+                )
+            )
+        ).mappings().one_or_none()
+        if calculation is None:
+            raise WorkspaceEditError("Calculation was not found in this Experiment")
+        updates.update(
+            name=calculation["name"],
+            description=calculation["description"] or "",
+        )
+    authorized_document = document.model_copy(update=updates)
+    return start.model_copy(
+        update={"workspace": start.workspace.model_copy(update={"document": authorized_document})}
+    )

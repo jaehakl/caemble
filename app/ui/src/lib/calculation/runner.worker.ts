@@ -6,7 +6,8 @@ import {
   type CalculationRunnerOperationEnvelope,
   type CalculationRunnerResultEnvelope,
 } from './protocol'
-import { CALCULATION_SHADOWED_GLOBAL_NAMES } from './runtimeGlobals'
+import { calculationIndex } from './indexGuard'
+import { CALCULATION_INDEX_GUARD_GLOBAL, CALCULATION_SHADOWED_GLOBAL_NAMES } from './runtimeGlobals'
 import { createCalculationConsole } from './log'
 import { assertCalculationInput, normalizeCalculationOutput } from './validation'
 import { CalculationExecutionError } from './types'
@@ -36,7 +37,7 @@ function executeCalculation(envelope: CalculationRunnerOperationEnvelope, emitLo
   }
   const createRunner = new Function(
     'eval',
-    `return function(module, exports, require, Math, ${CALCULATION_SHADOWED_GLOBAL_NAMES.join(', ')}) {
+    `return function(module, exports, require, Math, ${CALCULATION_INDEX_GUARD_GLOBAL}, ${CALCULATION_SHADOWED_GLOBAL_NAMES.join(', ')}) {
       "use strict";
       ${compiledSource.code}
       return module.exports;
@@ -49,6 +50,7 @@ function executeCalculation(envelope: CalculationRunnerOperationEnvelope, emitLo
     module.exports,
     requireMathJs,
     deterministicMath,
+    calculationIndex,
     ...CALCULATION_SHADOWED_GLOBAL_NAMES.map((name) => (name === 'console' ? calculationConsole : undefined)),
   )
   const calculate = module.exports.default
@@ -90,6 +92,7 @@ function handleOperation(value: unknown) {
       sourceHash: request.compiledSource.sourceHash,
       errorCode: error instanceof CalculationExecutionError ? error.code : 'runtime',
       message: error instanceof Error ? error.message : String(error),
+      ...(error instanceof CalculationExecutionError && error.diagnostic ? { diagnostic: error.diagnostic } : {}),
     }
   }
   const envelope: CalculationRunnerResultEnvelope = {

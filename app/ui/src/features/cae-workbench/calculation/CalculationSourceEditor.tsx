@@ -1,13 +1,38 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type * as Monaco from 'monaco-editor'
-import { CALCULATION_MONACO_DECLARATION } from '@/lib/calculation'
+import { CALCULATION_MONACO_DECLARATION, type CalculationSourceDiagnostic } from '@/lib/calculation'
+
+const calculationPolicyMarkerOwner = 'caemble-calculation-policy'
+
+function setPolicyMarker(
+  monaco: typeof Monaco,
+  model: Monaco.editor.ITextModel,
+  diagnostic: CalculationSourceDiagnostic | undefined,
+) {
+  monaco.editor.setModelMarkers(
+    model,
+    calculationPolicyMarkerOwner,
+    diagnostic
+      ? [
+          {
+            ...diagnostic.range,
+            message: diagnostic.message,
+            severity: monaco.MarkerSeverity.Error,
+            source: 'Calculation policy',
+          },
+        ]
+      : [],
+  )
+}
 
 export function CalculationSourceEditor({
+  diagnostic,
   disabled = false,
   sourceCode,
   onSave,
   onSourceCodeChange,
 }: {
+  diagnostic?: CalculationSourceDiagnostic
   disabled?: boolean
   sourceCode: string
   onSave: () => void
@@ -15,7 +40,9 @@ export function CalculationSourceEditor({
 }) {
   const editorHostRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
+  const monacoRef = useRef<typeof Monaco | null>(null)
   const modelRef = useRef<Monaco.editor.ITextModel | null>(null)
+  const diagnosticRef = useRef(diagnostic)
   const onSaveRef = useRef(onSave)
   const onSourceCodeChangeRef = useRef(onSourceCodeChange)
   const sourceCodeRef = useRef(sourceCode)
@@ -27,6 +54,7 @@ export function CalculationSourceEditor({
   onSourceCodeChangeRef.current = onSourceCodeChange
   sourceCodeRef.current = sourceCode
   disabledRef.current = disabled
+  diagnosticRef.current = diagnostic
 
   useEffect(() => {
     const host = editorHostRef.current
@@ -59,7 +87,9 @@ export function CalculationSourceEditor({
         contentSubscription = model.onDidChangeContent(() => {
           if (!applyingSourceRef.current) onSourceCodeChangeRef.current(model.getValue())
         })
+        setPolicyMarker(monaco, model, diagnosticRef.current)
         editorRef.current = editor
+        monacoRef.current = monaco
         modelRef.current = model
       })
       .catch((cause: unknown) => {
@@ -69,14 +99,20 @@ export function CalculationSourceEditor({
       cancelled = true
       contentSubscription?.dispose()
       extraLibrary?.dispose()
+      if (monacoRef.current && modelRef.current) setPolicyMarker(monacoRef.current, modelRef.current, undefined)
       editorRef.current?.dispose()
       modelRef.current?.dispose()
       editorRef.current = null
+      monacoRef.current = null
       modelRef.current = null
     }
   }, [modelId])
 
   useEffect(() => editorRef.current?.updateOptions({ readOnly: disabled }), [disabled])
+
+  useEffect(() => {
+    if (monacoRef.current && modelRef.current) setPolicyMarker(monacoRef.current, modelRef.current, diagnostic)
+  }, [diagnostic])
 
   useEffect(() => {
     const model = modelRef.current

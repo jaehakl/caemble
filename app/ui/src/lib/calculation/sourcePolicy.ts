@@ -1,10 +1,11 @@
 import { parse } from '@babel/parser'
 import traverseModule from '@babel/traverse'
+import type { NodePath } from '@babel/traverse'
 import type * as t from '@babel/types'
 import type { File } from '@babel/types'
 import { CALCULATION_MATHJS_NAMES } from './mathjsManifest'
 import { CALCULATION_SHADOWED_GLOBAL_NAMES } from './runtimeGlobals'
-import { CalculationExecutionError } from './types'
+import { CalculationExecutionError, type CalculationSourceDiagnostic } from './types'
 
 const traverse = (traverseModule as unknown as { default?: typeof traverseModule }).default ?? traverseModule
 const allowedMathJsNames = new Set<string>(CALCULATION_MATHJS_NAMES)
@@ -94,8 +95,37 @@ const blockedGlobals = new Set([
   'sessionStorage',
 ])
 
-function policyError(message: string): never {
-  throw new CalculationExecutionError('policy', message)
+export function createCalculationSourceDiagnostic(
+  source: string,
+  message: string,
+  node?: t.Node | null,
+): CalculationSourceDiagnostic {
+  const sourceLines = source.split(/\r?\n/u)
+  const startLineNumber = node?.loc?.start.line ?? Math.max(1, sourceLines.length)
+  const sourceLine = sourceLines[startLineNumber - 1] ?? ''
+  const startColumn = (node?.loc?.start.column ?? sourceLine.length) + 1
+  const endColumn =
+    node?.loc?.end.line === startLineNumber
+      ? Math.max(startColumn, node.loc.end.column + 1)
+      : Math.max(startColumn, sourceLine.length + 1)
+  return {
+    message,
+    range: { startLineNumber, startColumn, endLineNumber: startLineNumber, endColumn },
+    sourceLine,
+  }
+}
+
+function policyError(source: string, message: string, node?: t.Node | null): never {
+  throw new CalculationExecutionError('policy', message, createCalculationSourceDiagnostic(source, message, node))
+}
+
+function resolvesToGlobalAlias(path: NodePath<t.Expression>, globalName: 'console' | 'Math'): boolean {
+  if (path.node.type !== 'Identifier') return false
+  const binding = path.scope.getBinding(path.node.name)
+  if (!binding) return path.node.name === globalName
+  if (!binding.constant || !binding.path.isVariableDeclarator()) return false
+  const initializer = binding.path.get('init')
+  return initializer.isIdentifier() && resolvesToGlobalAlias(initializer, globalName)
 }
 
 export function analyzeCalculationSource(source: string): File {
@@ -111,48 +141,54 @@ export function analyzeCalculationSource(source: string): File {
   let defaultExportCount = 0
   ast.program.body.forEach((statement) => {
     if (statement.type === 'ImportDeclaration') {
-      if (statement.source.value !== 'mathjs') policyError(`Calculation imports are limited to 'mathjs'.`)
+      if (statement.source.value !== 'mathjs')
+        policyError(source, `Calculation imports are limited to 'mathjs'.`, statement.source)
       if (statement.importKind === 'type')
-        policyError("Calculation runtime imports must use named values from 'mathjs'.")
+        policyError(source, "Calculation runtime imports must use named values from 'mathjs'.", statement)
       statement.specifiers.forEach((specifier) => {
         if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') {
-          policyError("Only named imports from 'mathjs' are supported.")
+          policyError(source, "Only named imports from 'mathjs' are supported.", specifier)
         }
         const imported = specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value
         if (!allowedMathJsNames.has(imported))
-          policyError(`Math.js API is not available in Calculation v1: ${imported}`)
+          policyError(source, `Math.js API is not available in Calculation v1: ${imported}`, specifier.imported)
       })
       return
     }
     if (statement.type === 'ExportDefaultDeclaration') {
       defaultExportCount += 1
       if (statement.declaration.type !== 'FunctionDeclaration') {
-        policyError('Calculation must use a default-exported function declaration.')
+        policyError(source, 'Calculation must use a default-exported function declaration.', statement.declaration)
       }
       if (statement.declaration.async || statement.declaration.generator) {
-        policyError('Calculation default export must be a synchronous function.')
+        policyError(source, 'Calculation default export must be a synchronous function.', statement.declaration)
       }
       if (statement.declaration.params.length !== 1 || statement.declaration.params[0].type !== 'Identifier') {
-        policyError('Calculation default export must accept exactly one input parameter.')
+        policyError(
+          source,
+          'Calculation default export must accept exactly one input parameter.',
+          statement.declaration.params[1] ?? statement.declaration.params[0] ?? statement.declaration,
+        )
       }
       return
     }
     if (statement.type === 'ExportNamedDeclaration' || statement.type === 'ExportAllDeclaration') {
-      policyError('Calculation can export only one default function.')
+      policyError(source, 'Calculation can export only one default function.', statement)
     }
-    policyError('Calculation module can contain only Math.js imports and one default function.')
+    policyError(source, 'Calculation module can contain only Math.js imports and one default function.', statement)
   })
-  if (defaultExportCount !== 1) policyError('Calculation must export exactly one default function.')
+  if (defaultExportCount !== 1) policyError(source, 'Calculation must export exactly one default function.')
 
   traverse(ast, {
-    AwaitExpression() {
-      policyError('Calculation source must be synchronous; await is not supported.')
+    AwaitExpression(path) {
+      policyError(source, 'Calculation source must be synchronous; await is not supported.', path.node)
     },
     CallExpression(path) {
-      if (path.node.callee.type === 'Import') policyError('Dynamic import is not supported in Calculation source.')
+      if (path.node.callee.type === 'Import')
+        policyError(source, 'Dynamic import is not supported in Calculation source.', path.node.callee)
     },
-    ImportExpression() {
-      policyError('Dynamic import is not supported in Calculation source.')
+    ImportExpression(path) {
+      policyError(source, 'Dynamic import is not supported in Calculation source.', path.node)
     },
     'MemberExpression|OptionalMemberExpression'(path) {
       const node = path.node as t.MemberExpression | t.OptionalMemberExpression
@@ -162,85 +198,83 @@ export function analyzeCalculationSource(source: string): File {
           : node.property.type === 'StringLiteral' || node.property.type === 'NumericLiteral'
             ? String(node.property.value)
             : null
-      if (node.computed && memberName === null) {
-        policyError('Computed Calculation members must use a fixed string or numeric property.')
+      if (
+        node.computed &&
+        node.property.type === 'NumericLiteral' &&
+        (!Number.isSafeInteger(node.property.value) || node.property.value < 0)
+      ) {
+        policyError(source, 'Calculation numeric indexes must be non-negative safe integers.', node.property)
       }
-      if (node.object.type === 'Identifier' && node.object.name === 'console' && !path.scope.getBinding('console')) {
-        if (node.computed || memberName !== 'log') {
-          policyError('Calculation source supports only direct console.log(...) calls.')
+      const objectPath = path.get('object')
+      if (objectPath.isExpression() && resolvesToGlobalAlias(objectPath, 'console')) {
+        if (memberName !== 'log') {
+          policyError(source, 'Calculation console exposes only console.log.', node.property)
         }
       }
       if (memberName !== null && blockedMemberNames.has(memberName)) {
-        policyError(`Prototype access is not supported in Calculation source: ${memberName}.`)
+        policyError(source, `Prototype access is not supported in Calculation source: ${memberName}.`, node.property)
       }
       if (node.object.type === 'Identifier' && node.object.name === 'Object' && !path.scope.getBinding('Object')) {
         if (
           !memberName ||
           !['entries', 'freeze', 'fromEntries', 'hasOwn', 'is', 'isFrozen', 'keys', 'values'].includes(memberName)
         ) {
-          policyError(`Object.${memberName ?? '<computed>'} is not supported in Calculation source.`)
+          policyError(
+            source,
+            `Object.${memberName ?? '<computed>'} is not supported in Calculation source.`,
+            node.property,
+          )
         }
       }
       if (node.object.type === 'Identifier' && node.object.name === 'Array' && !path.scope.getBinding('Array')) {
         if (!memberName || !['from', 'isArray', 'of'].includes(memberName)) {
-          policyError(`Array.${memberName ?? '<computed>'} is not supported in Calculation source.`)
+          policyError(
+            source,
+            `Array.${memberName ?? '<computed>'} is not supported in Calculation source.`,
+            node.property,
+          )
         }
       }
-      if (node.object.type !== 'Identifier' || node.object.name !== 'Math' || path.scope.getBinding('Math')) return
-      if (memberName === 'random') policyError('Random functions are not supported in Calculation v1.')
-      if (memberName === null) policyError('Computed Math members must use a fixed deterministic property name.')
+      if (!objectPath.isExpression() || !resolvesToGlobalAlias(objectPath, 'Math')) return
+      if (memberName === 'random')
+        policyError(source, 'Random functions are not supported in Calculation v1.', node.property)
+      if (memberName === null)
+        policyError(source, 'Computed Math members must use a fixed deterministic property name.', node.property)
     },
     ReferencedIdentifier(path) {
       if (path.findParent((parent) => parent.isTSType())) return
       if (path.scope.getBinding(path.node.name)) return
-      if (path.node.name === 'console') {
-        const member = path.parentPath
-        const call = member.parentPath
-        if (
-          member.isMemberExpression() &&
-          member.node.object === path.node &&
-          !member.node.computed &&
-          member.node.property.type === 'Identifier' &&
-          member.node.property.name === 'log' &&
-          call?.isCallExpression() &&
-          call.node.callee === member.node
-        ) {
-          return
-        }
-        policyError('Calculation source supports only direct console.log(...) calls.')
-      }
-      if (path.node.name === 'Math') {
-        const parent = path.parentPath
-        if ((parent.isMemberExpression() || parent.isOptionalMemberExpression()) && parent.node.object === path.node)
-          return
-        policyError('Aliasing Math is not supported in Calculation source.')
-      }
+      if (path.node.name === 'console' || path.node.name === 'Math') return
       if (path.node.name === 'Object' || path.node.name === 'Array') {
         const parent = path.parentPath
         if ((parent.isMemberExpression() || parent.isOptionalMemberExpression()) && parent.node.object === path.node)
           return
-        policyError(`Aliasing ${path.node.name} is not supported in Calculation source.`)
+        policyError(source, `Aliasing ${path.node.name} is not supported in Calculation source.`, path.node)
       }
       if (blockedGlobals.has(path.node.name)) {
-        policyError(`Global runtime access is not supported in Calculation source: ${path.node.name}.`)
+        policyError(
+          source,
+          `Global runtime access is not supported in Calculation source: ${path.node.name}.`,
+          path.node,
+        )
       }
       if (!allowedRuntimeGlobals.has(path.node.name)) {
-        policyError(`Calculation source references an unsupported global: ${path.node.name}.`)
+        policyError(source, `Calculation source references an unsupported global: ${path.node.name}.`, path.node)
       }
     },
     ObjectProperty(path) {
       const key = path.node.key
       if (path.node.computed && key.type !== 'StringLiteral' && key.type !== 'NumericLiteral') {
-        policyError('Computed Calculation properties must use a fixed string or numeric property.')
+        policyError(source, 'Computed Calculation properties must use a fixed string or numeric property.', key)
       }
       const name = key.type === 'Identifier' ? key.name : key.type === 'StringLiteral' ? key.value : null
       if (name !== null && blockedMemberNames.has(name)) {
-        policyError(`Prototype property access is not supported in Calculation source: ${name}.`)
+        policyError(source, `Prototype property access is not supported in Calculation source: ${name}.`, key)
       }
     },
     ObjectMethod(path) {
       if (path.node.computed && path.node.key.type !== 'StringLiteral' && path.node.key.type !== 'NumericLiteral') {
-        policyError('Computed Calculation methods must use a fixed string or numeric property.')
+        policyError(source, 'Computed Calculation methods must use a fixed string or numeric property.', path.node.key)
       }
     },
   })

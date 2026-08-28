@@ -24,9 +24,13 @@ class AgentSessionState:
     model: str
     credential_fingerprint: str
     credential_version: int
+    schema_version: str
+    document_kind: str
+    document_id: int | None
     active_experiment_id: int | None
     workspace_session: int
     workspace_hash: str
+    reference_hash: str | None
     permission_fingerprint: str
     provider_items: list[dict[str, Any]] = field(default_factory=list)
     turns: list[dict[str, str]] = field(default_factory=list)
@@ -40,9 +44,13 @@ class AgentSessionState:
             "model": self.model,
             "credentialFingerprint": self.credential_fingerprint,
             "credentialVersion": self.credential_version,
+            "schemaVersion": self.schema_version,
+            "documentKind": self.document_kind,
+            "documentId": self.document_id,
             "activeExperimentId": self.active_experiment_id,
             "workspaceSession": self.workspace_session,
             "workspaceHash": self.workspace_hash,
+            "referenceHash": self.reference_hash,
             "permissionFingerprint": self.permission_fingerprint,
             "providerItems": self.provider_items,
             "turns": self.turns,
@@ -65,9 +73,13 @@ class AgentSessionState:
             model=value["model"],
             credential_fingerprint=value["credentialFingerprint"],
             credential_version=credential_version,
+            schema_version=value.get("schemaVersion", ""),
+            document_kind=value.get("documentKind", ""),
+            document_id=value.get("documentId"),
             active_experiment_id=active_experiment_id,
             workspace_session=workspace_session,
             workspace_hash=value["workspaceHash"],
+            reference_hash=value.get("referenceHash"),
             permission_fingerprint=value["permissionFingerprint"],
             provider_items=provider_items,
             turns=turns,
@@ -103,9 +115,13 @@ class SessionEnvelopeCodec:
         model: str,
         credential_fingerprint: str,
         credential_version: int,
+        schema_version: str,
+        document_kind: str,
+        document_id: int | None,
         active_experiment_id: int | None,
         workspace_session: int,
         workspace_hash: str,
+        reference_hash: str | None,
         permission_fingerprint: str,
     ) -> AgentSessionState:
         try:
@@ -135,9 +151,13 @@ class SessionEnvelopeCodec:
             state.permission_fingerprint,
         )
         if (
-            state.active_experiment_id != active_experiment_id
+            state.schema_version != schema_version
+            or state.document_kind != document_kind
+            or state.document_id != document_id
+            or state.active_experiment_id != active_experiment_id
             or state.workspace_session != workspace_session
             or not hmac.compare_digest(state.workspace_hash, workspace_hash)
+            or state.reference_hash != reference_hash
             or not all(
                 hmac.compare_digest(left, right)
                 for left, right in zip(actual, expected, strict=True)

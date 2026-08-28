@@ -66,7 +66,7 @@ class CalculationBackendContractTests(unittest.TestCase):
 
     def test_legacy_models_are_not_ai_visible_resources(self) -> None:
         reader = VisibleDataReader(None, "user-id")  # type: ignore[arg-type]
-        for resource in ("designer_model", "predictor_model", "calculation"):
+        for resource in ("designer_model", "predictor_model"):
             with self.subTest(resource=resource), self.assertRaises(VisibleDataError):
                 reader._simple_search_spec(resource)
 

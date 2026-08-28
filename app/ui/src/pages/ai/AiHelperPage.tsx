@@ -20,30 +20,35 @@ import {
   AI_AGENT_PROVIDER,
   AI_AGENT_PROVIDER_QUERY_KEY,
   AI_AGENT_REASONING_EFFORTS,
+  AI_AGENT_WORKSPACE_SCHEMA_VERSION,
   aiAgentApi,
   aiAgentProviderFailureMessage,
+  clearAiAgentConversation,
   clearAiAgentSession,
   connectAiAgent,
+  loadAiAgentConversation,
   loadAiAgentSession,
+  saveAiAgentConversation,
   saveAiAgentSession,
   type AiAgentApplyRequest,
   type AiAgentApplyResult,
+  type AiAgentConversationMessage,
   type AiAgentContextUsage,
   type AiAgentMessage,
   type AiAgentProvenance,
   type AiAgentReasoningEffort,
   type AiAgentServerEvent,
+  type AiAgentSourceDocument,
 } from '@/api/aiAgent'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { WorkbenchSignInPrompt } from '@/features/auth/WorkbenchSignInPrompt'
 import { useAuth } from '@/features/auth/use-auth'
-import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { WorkbenchTabId } from '@/features/cae-workbench/types'
 import { runtimeErrorMessage } from '@/features/runtime/format'
 
-type AiHelperMessage = AiAgentMessage & Readonly<{ id: number; streaming: boolean }>
+type AiHelperMessage = AiAgentConversationMessage & Readonly<{ id: number; streaming: boolean }>
 type AiHelperActivity = Readonly<{
   id: string
   label: string
@@ -54,18 +59,24 @@ type AiHelperActivity = Readonly<{
 export type AiHelperWorkspaceProps = Readonly<{
   activeExperimentFile: string | null
   activeTab: WorkbenchTabId
-  baseHash?: string | null
-  onApplyStagedBundle?: (request: AiAgentApplyRequest) => Promise<AiAgentApplyResult>
+  target: Readonly<{
+    document: AiAgentSourceDocument
+    baseHash: string | null
+    referenceHash: string | null
+    experimentId: number | null
+    key: string
+    workspaceSession: number
+    label: string
+  }> | null
+  onApplyStagedDocument?: (request: AiAgentApplyRequest) => Promise<AiAgentApplyResult>
   onRequestLogin?: () => void
-  workbench: CaeWorkbenchState
 }>
 
 export function AiHelperWorkspace({
   activeExperimentFile,
-  baseHash,
-  onApplyStagedBundle,
+  target,
+  onApplyStagedDocument,
   onRequestLogin,
-  workbench,
 }: AiHelperWorkspaceProps) {
   const auth = useAuth()
   const providers = useQuery({
@@ -76,9 +87,10 @@ export function AiHelperWorkspace({
   })
   const [providerId, setProviderId] = useState<string>(AI_AGENT_PROVIDER)
   const [modelId, setModelId] = useState<string>(AI_AGENT_MODEL)
-  const [reasoningEffort, setReasoningEffort] = useState<AiAgentReasoningEffort>('medium')
+  const [reasoningEffort, setReasoningEffort] = useState<AiAgentReasoningEffort>('none')
   const [prompt, setPrompt] = useState('')
   const [messages, setMessages] = useState<readonly AiHelperMessage[]>([])
+  const [conversationUserId, setConversationUserId] = useState<string | null>(null)
   const [activity, setActivity] = useState<readonly AiHelperActivity[]>([])
   const [provenance, setProvenance] = useState<readonly AiAgentProvenance[]>([])
   const [contextUsage, setContextUsage] = useState<AiAgentContextUsage | null>(null)
@@ -95,35 +107,44 @@ export function AiHelperWorkspace({
   const runFinishedRef = useRef(true)
   const runWorkspaceIdentityRef = useRef<Readonly<{
     baseHash: string
+    referenceHash: string | null
     workspaceSession: number
   }> | null>(null)
   const selectedProvider = providers.data?.find(({ id }) => id === providerId) ?? null
   const selectedModel = selectedProvider?.models.find(({ id }) => id === modelId) ?? null
   const credentialReady = selectedProvider?.configured === true
+  const targetReady =
+    target !== null &&
+    target.baseHash !== null &&
+    (target.document.kind === 'experiment' || target.referenceHash !== null)
   const sessionBinding = useMemo(
     () =>
-      auth.user && selectedProvider
+      auth.user && selectedProvider && target
         ? {
             userId: String(auth.user.id),
             provider: providerId,
             model: modelId,
             credentialVersion: selectedProvider.credentialVersion,
-            experimentId: workbench.experimentId,
-            workspaceSession: workbench.agentWorkspaceSession,
+            experimentId: target.experimentId,
+            documentKind: target.document.kind,
+            documentId: target.document.kind === 'calculation' ? target.document.calculationId : target.experimentId,
+            schemaVersion: AI_AGENT_WORKSPACE_SCHEMA_VERSION,
+            referenceHash: target.referenceHash,
+            workspaceSession: target.workspaceSession,
             permissionFingerprint: [...auth.user.roles].sort().join(','),
           }
         : null,
-    [auth.user, modelId, providerId, selectedProvider, workbench.agentWorkspaceSession, workbench.experimentId],
+    [auth.user, modelId, providerId, selectedProvider, target],
   )
   const runSessionBindingRef = useRef(sessionBinding)
   const sessionBindingFingerprint = sessionBinding
     ? JSON.stringify(sessionBinding)
     : auth.isAuthenticated && auth.user
-      ? `${auth.user.id}:${[...auth.user.roles].sort().join(',')}:unconfigured`
+      ? `${auth.user.id}:${[...auth.user.roles].sort().join(',')}:unconfigured:${target?.key ?? 'none'}`
       : null
   const sessionBindingFingerprintRef = useRef(sessionBindingFingerprint)
-  const applyHandlerRef = useRef(onApplyStagedBundle)
-  applyHandlerRef.current = onApplyStagedBundle
+  const applyHandlerRef = useRef(onApplyStagedDocument)
+  applyHandlerRef.current = onApplyStagedDocument
 
   useEffect(() => {
     const availableProviders = providers.data ?? []
@@ -138,35 +159,82 @@ export function AiHelperWorkspace({
   useEffect(() => {
     if (!selectedModel || selectedModel.reasoningEfforts.includes(reasoningEffort)) return
     setReasoningEffort(
-      selectedModel.reasoningEfforts.includes('medium') ? 'medium' : (selectedModel.reasoningEfforts[0] ?? 'medium'),
+      selectedModel.reasoningEfforts.includes('none') ? 'none' : (selectedModel.reasoningEfforts[0] ?? 'none'),
     )
   }, [reasoningEffort, selectedModel])
 
   useEffect(() => {
-    if (sessionBindingFingerprintRef.current !== sessionBindingFingerprint) {
+    const previousFingerprint = sessionBindingFingerprintRef.current
+    if (previousFingerprint !== sessionBindingFingerprint) {
       sessionBindingFingerprintRef.current = sessionBindingFingerprint
+      const interrupted = !runFinishedRef.current
       runFinishedRef.current = true
       connectionRef.current?.close()
       connectionRef.current = null
       activeRunIdRef.current = null
-      assistantIdRef.current = null
+      lastSequenceRef.current = Number.MAX_SAFE_INTEGER
+      if (interrupted) finishAssistant('작업 대상 또는 Agent 설정이 변경되어 실행을 취소했습니다.')
       runWorkspaceIdentityRef.current = null
       runSessionBindingRef.current = null
       setBusy(false)
       setStatus('대기 중')
-      setMessages([])
       setActivity([])
       setProvenance([])
       setContextUsage(null)
       setError(null)
+      if (!sessionBinding && previousFingerprint?.startsWith('{')) clearAiAgentSession()
     }
     if (!sessionBinding) {
-      if (sessionBindingFingerprint === null) clearAiAgentSession()
       setSessionEnvelope(null)
       return
     }
     setSessionEnvelope(loadAiAgentSession(sessionBinding))
   }, [sessionBinding, sessionBindingFingerprint])
+
+  useEffect(() => {
+    const userId = auth.user ? String(auth.user.id) : null
+    if (!userId) {
+      if (!auth.isLoading) {
+        clearAiAgentConversation()
+        clearAiAgentSession()
+        if (conversationUserId !== null) {
+          setMessages([])
+          setConversationUserId(null)
+        }
+      }
+      return
+    }
+    if (conversationUserId === userId) return
+    const stored = loadAiAgentConversation(userId)
+    messageIdRef.current = stored.length
+    setMessages(stored.map((message, index) => ({ ...message, id: index + 1, streaming: false })))
+    setConversationUserId(userId)
+  }, [auth.isLoading, auth.user, conversationUserId])
+
+  useEffect(() => {
+    const userId = auth.user ? String(auth.user.id) : null
+    if (!userId || conversationUserId !== userId) return
+    const timeout = window.setTimeout(() => {
+      const completed = messages
+        .filter((message) => !message.streaming)
+        .map(({ role, content, targetKey, targetLabel }) => ({ role, content, targetKey, targetLabel }))
+      if (!completed.length) {
+        clearAiAgentConversation()
+        return
+      }
+      const stored = saveAiAgentConversation(userId, completed)
+      let removeCount = completed.length - stored.length
+      if (removeCount <= 0) return
+      setMessages((items) =>
+        items.filter((message) => {
+          if (message.streaming || removeCount <= 0) return true
+          removeCount -= 1
+          return false
+        }),
+      )
+    }, 250)
+    return () => window.clearTimeout(timeout)
+  }, [auth.user, conversationUserId, messages])
 
   useEffect(
     () => () => {
@@ -230,10 +298,7 @@ export function AiHelperWorkspace({
     setProvenance(event.provenance)
     setContextUsage(event.contextUsage)
     const runWorkspaceIdentity = runWorkspaceIdentityRef.current
-    if (
-      !runWorkspaceIdentity ||
-      event.baseHash !== runWorkspaceIdentity.baseHash
-    ) {
+    if (!runWorkspaceIdentity || event.baseHash !== runWorkspaceIdentity.baseHash) {
       const message = 'Agent 완료 결과의 Workspace identity가 실행 시작 시점과 일치하지 않습니다.'
       setError(message)
       updateActivity({ id: 'apply', label: '코드 편집기 반영', status: 'failed', summary: message })
@@ -247,7 +312,7 @@ export function AiHelperWorkspace({
       setSessionEnvelope(event.sessionContextEnvelope)
     }
 
-    if (!event.finalBundle) {
+    if (!event.finalDocument) {
       try {
         persistSessionEnvelope()
       } catch (nextError) {
@@ -268,8 +333,9 @@ export function AiHelperWorkspace({
       setStatus('코드 편집기에 반영 중')
       const result = await applyHandlerRef.current({
         runId: event.runId,
-        finalBundle: event.finalBundle,
+        finalDocument: event.finalDocument,
         baseHash: runWorkspaceIdentity.baseHash,
+        referenceHash: runWorkspaceIdentity.referenceHash,
         sourceHash: event.sourceHash,
         stagedRevision: event.stagedRevision,
         workspaceSession: runWorkspaceIdentity.workspaceSession,
@@ -375,8 +441,14 @@ export function AiHelperWorkspace({
 
   async function sendPrompt() {
     const value = prompt.trim()
-    const document = workbench.experiment
-    if (!baseHash || !sessionBinding) {
+    const document = target?.document ?? null
+    const baseHash = target?.baseHash ?? null
+    if (
+      !target ||
+      !sessionBinding ||
+      baseHash === null ||
+      (document?.kind === 'calculation' && target.referenceHash === null)
+    ) {
       setError('Workspace context 준비 중입니다. 잠시 후 다시 시도하세요.')
       return
     }
@@ -393,8 +465,15 @@ export function AiHelperWorkspace({
     assistantIdRef.current = assistantId
     setMessages((items) => [
       ...items.map((message) => (message.streaming ? { ...message, streaming: false } : message)),
-      { id: userId, role: 'user', content: value, streaming: false },
-      { id: assistantId, role: 'assistant', content: '', streaming: true },
+      { id: userId, role: 'user', content: value, streaming: false, targetKey: target.key, targetLabel: target.label },
+      {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        streaming: true,
+        targetKey: target.key,
+        targetLabel: target.label,
+      },
     ])
     setPrompt('')
     setActivity([])
@@ -406,7 +485,11 @@ export function AiHelperWorkspace({
     runFinishedRef.current = false
     activeRunIdRef.current = null
     lastSequenceRef.current = -1
-    runWorkspaceIdentityRef.current = { baseHash, workspaceSession: workbench.agentWorkspaceSession }
+    runWorkspaceIdentityRef.current = {
+      baseHash,
+      referenceHash: target.referenceHash,
+      workspaceSession: target.workspaceSession,
+    }
     runSessionBindingRef.current = sessionBinding
 
     const connection = connectAiAgent({
@@ -428,12 +511,18 @@ export function AiHelperWorkspace({
         model: modelId,
         reasoningEffort,
         workspace: {
-          experimentId: workbench.experimentId,
+          schemaVersion: AI_AGENT_WORKSPACE_SCHEMA_VERSION,
+          experimentId: target.experimentId,
           document,
           baseHash,
+          referenceHash: target.referenceHash,
           activeFile:
-            activeExperimentFile && activeExperimentFile in document.sourceBundle.files ? activeExperimentFile : null,
-          workspaceSession: workbench.agentWorkspaceSession,
+            document.kind === 'experiment' &&
+            activeExperimentFile &&
+            activeExperimentFile in document.sourceBundle.files
+              ? activeExperimentFile
+              : null,
+          workspaceSession: target.workspaceSession,
         },
         ...(sessionEnvelope ? { sessionContextEnvelope: sessionEnvelope } : {}),
       })
@@ -465,6 +554,7 @@ export function AiHelperWorkspace({
 
   function resetConversation() {
     if (busy) return
+    clearAiAgentConversation()
     clearAiAgentSession()
     setSessionEnvelope(null)
     setMessages([])
@@ -483,6 +573,7 @@ export function AiHelperWorkspace({
           <span className="truncate font-semibold">
             {selectedProvider?.label || 'AI'} · {selectedModel?.label || modelId || '모델 미선택'}
           </span>
+          <Badge className="border bg-background text-foreground">{target?.label ?? '대상 없음'}</Badge>
           <Badge className={busy ? 'bg-primary text-primary-foreground' : undefined}>{status}</Badge>
         </div>
         <div className="flex items-center gap-2">
@@ -514,24 +605,33 @@ export function AiHelperWorkspace({
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
         {messages.length ? (
           <div className="space-y-5">
-            {messages.map((message) => (
-              <div className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'} key={message.id}>
-                <div
-                  className={
-                    message.role === 'user'
-                      ? 'max-w-[82%] rounded-2xl rounded-br-sm bg-primary px-4 py-3 text-sm whitespace-pre-wrap text-primary-foreground'
-                      : 'max-w-[92%] rounded-2xl rounded-bl-sm border bg-muted/30 px-4 py-3 text-sm'
-                  }
-                >
-                  {message.role === 'assistant' ? (
-                    <div className="space-y-3 overflow-hidden break-words [&_a]:text-primary [&_a]:underline [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-zinc-950 [&_pre]:p-3 [&_pre]:text-zinc-50 [&_ul]:list-disc [&_ul]:pl-5">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {message.content || (message.streaming ? '…' : '')}
-                      </ReactMarkdown>
-                    </div>
-                  ) : (
-                    message.content
-                  )}
+            {messages.map((message, index) => (
+              <div className="space-y-3" key={message.id}>
+                {index === 0 || messages[index - 1]?.targetKey !== message.targetKey ? (
+                  <div className="flex items-center gap-3 text-[11px] font-medium text-muted-foreground">
+                    <span className="h-px flex-1 bg-border" />
+                    <span>{message.targetLabel}</span>
+                    <span className="h-px flex-1 bg-border" />
+                  </div>
+                ) : null}
+                <div className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
+                  <div
+                    className={
+                      message.role === 'user'
+                        ? 'max-w-[82%] rounded-2xl rounded-br-sm bg-primary px-4 py-3 text-sm whitespace-pre-wrap text-primary-foreground'
+                        : 'max-w-[92%] rounded-2xl rounded-bl-sm border bg-muted/30 px-4 py-3 text-sm'
+                    }
+                  >
+                    {message.role === 'assistant' ? (
+                      <div className="space-y-3 overflow-hidden break-words [&_a]:text-primary [&_a]:underline [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-zinc-950 [&_pre]:p-3 [&_pre]:text-zinc-50 [&_ul]:list-disc [&_ul]:pl-5">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {message.content || (message.streaming ? '…' : '')}
+                        </ReactMarkdown>
+                      </div>
+                    ) : (
+                      message.content
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -598,7 +698,9 @@ export function AiHelperWorkspace({
         ) : (
           <div className="flex h-full min-h-52 flex-col items-center justify-center text-center">
             <Bot className="mb-3 size-10 text-muted-foreground" />
-            <p className="font-medium">현재 Experiment를 Agent와 함께 편집하세요.</p>
+            <p className="font-medium">
+              {target ? `${target.label} source를 Agent와 함께 편집하세요.` : '편집 대상을 여세요.'}
+            </p>
           </div>
         )}
       </div>
@@ -644,14 +746,7 @@ export function AiHelperWorkspace({
             </Button>
           ) : (
             <Button
-              disabled={
-                !credentialReady ||
-                providers.isLoading ||
-                !selectedModel ||
-                !prompt.trim() ||
-                !workbench.experiment ||
-                !baseHash
-              }
+              disabled={!credentialReady || providers.isLoading || !selectedModel || !prompt.trim() || !targetReady}
               type="submit"
             >
               <Send />
@@ -737,9 +832,10 @@ function boundedRecentMessages(messages: readonly AiHelperMessage[]) {
   let bytes = 0
   for (const message of [...messages].reverse()) {
     if (selected.length >= 6 || message.streaming || !message.content) continue
-    const nextBytes = new TextEncoder().encode(message.content).byteLength
+    const content = `[이전 작업 대상: ${message.targetLabel}]\n${message.content}`
+    const nextBytes = new TextEncoder().encode(content).byteLength
     if (bytes + nextBytes > 64 * 1024) break
-    selected.unshift({ role: message.role, content: message.content })
+    selected.unshift({ role: message.role, content })
     bytes += nextBytes
   }
   return Object.freeze(selected)
@@ -748,6 +844,7 @@ function boundedRecentMessages(messages: readonly AiHelperMessage[]) {
 function toolLabel(name: string) {
   const labels: Record<string, string> = {
     get_cad_authoring_reference: 'CAD 문법 상세 조회',
+    get_calculation_authoring_reference: 'Calculation 작성 계약 조회',
     search_catalog: '카탈로그 검색',
     get_catalog_item: '카탈로그 상세 조회',
     search_visible_data: 'Visible 데이터 검색',
@@ -758,6 +855,8 @@ function toolLabel(name: string) {
     read_experiment_file: 'staged source 읽기',
     write_experiment_file: 'staged source 수정',
     delete_experiment_file: 'staged source 삭제',
+    read_calculation_source: 'Calculation source 읽기',
+    write_calculation_source: 'Calculation source 수정',
   }
   return labels[name] ?? name
 }

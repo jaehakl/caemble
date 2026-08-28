@@ -132,6 +132,82 @@ class StagedExperiment:
         }
 
 
+class StagedCalculation:
+    def __init__(
+        self,
+        *,
+        calculation_id: int | None,
+        experiment_id: int,
+        name: str,
+        description: str,
+        source_code: str,
+        editable: bool,
+        reference_experiment: ExperimentSourceBundle,
+    ):
+        self.calculation_id = calculation_id
+        self.experiment_id = experiment_id
+        self.name = name
+        self.description = description
+        self.editable = editable
+        self._source_code = source_code
+        self._source_hash = text_hash(source_code)
+        self._initial_hash = self._source_hash
+        self.reference_experiment = StagedExperiment(reference_experiment)
+        self.revision = 0
+
+    @property
+    def source_hash(self) -> str:
+        return self._source_hash
+
+    @property
+    def changed(self) -> bool:
+        return self.source_hash != self._initial_hash
+
+    @property
+    def source_code(self) -> str:
+        return self._source_code
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "kind": "calculation",
+            "calculationId": self.calculation_id,
+            "experimentId": self.experiment_id,
+            "revision": self.revision,
+            "sourceHash": self.source_hash,
+            "changed": self.changed,
+            "characters": len(self._source_code),
+            "editable": self.editable,
+        }
+
+    def read_source(self, *, offset: int, length: int) -> FileChunk:
+        if offset > len(self._source_code):
+            raise WorkspaceEditError("Source offset is outside the Calculation")
+        content = self._source_code[offset : offset + length]
+        next_offset = offset + len(content)
+        return FileChunk(
+            path="calculation.js",
+            sha256=self.source_hash,
+            offset=offset,
+            total_characters=len(self._source_code),
+            content=content,
+            next_offset=next_offset if next_offset < len(self._source_code) else None,
+        )
+
+    def write_source(self, content: str, expected_sha256: str) -> dict[str, Any]:
+        if not self.editable:
+            raise WorkspaceEditError("Calculation source is read-only")
+        if not _secure_equal(self.source_hash, expected_sha256):
+            raise WorkspaceEditError("Calculation source changed before this write")
+        self._source_code = content
+        self._source_hash = text_hash(content)
+        self.revision += 1
+        return {
+            "sha256": self.source_hash,
+            "stagedRevision": self.revision,
+            "sourceHash": self.source_hash,
+        }
+
+
 def require_safe_source_path(path: str) -> None:
     if (
         not path

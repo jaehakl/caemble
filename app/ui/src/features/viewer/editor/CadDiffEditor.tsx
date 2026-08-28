@@ -5,7 +5,7 @@ import type { CadDiagnostic } from '@/lib/cad'
 type CadDiffEditorProps = {
   changeId: string
   diagnostics?: readonly CadDiagnostic[]
-  language?: 'python' | 'typescript'
+  language?: 'javascript' | 'python' | 'typescript'
   modelPath: string
   modified: string
   onChange: (value: string) => void
