@@ -3,12 +3,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import (
     GetListRequestBase,
-    GetListResponseBase,
     MaterialBase,
     MaterialNameBase,
     MaterialParameterBase,
     MaterialParameterQualifierBase,
-    UpsertResponseBase,
     UserData,
 )
 from service.material import (
@@ -32,7 +30,7 @@ from user_auth.utils.auth_wrapper import require_roles
 router = APIRouter()
 
 
-@router.post("/material/list", response_model=GetListResponseBase, tags=["material"])
+@router.post("/material/list", tags=["material"])
 async def list_materials(
     request: GetListRequestBase,
     db: AsyncSession = Depends(get_db),
@@ -43,7 +41,6 @@ async def list_materials(
 
 @router.post(
     "/material/upsert",
-    response_model=list[UpsertResponseBase],
     tags=["material"],
 )
 async def upsert_materials(
@@ -66,7 +63,6 @@ async def delete_materials(
 
 @router.post(
     "/material_name/list",
-    response_model=GetListResponseBase,
     tags=["material_name"],
 )
 async def list_material_names(
@@ -79,7 +75,6 @@ async def list_material_names(
 
 @router.post(
     "/material_name/upsert",
-    response_model=list[UpsertResponseBase],
     tags=["material_name"],
 )
 async def upsert_material_names(
@@ -102,7 +97,6 @@ async def delete_material_names(
 
 @router.post(
     "/material_parameter/list",
-    response_model=GetListResponseBase,
     tags=["material_parameter"],
 )
 async def list_material_parameters(
@@ -115,7 +109,6 @@ async def list_material_parameters(
 
 @router.post(
     "/material_parameter/upsert",
-    response_model=list[UpsertResponseBase],
     tags=["material_parameter"],
 )
 async def upsert_material_parameters(
@@ -142,7 +135,6 @@ async def delete_material_parameters(
 
 @router.post(
     "/material_parameter_qualifier/list",
-    response_model=GetListResponseBase,
     tags=["material_parameter_qualifier"],
 )
 async def list_material_parameter_qualifiers(
@@ -155,7 +147,6 @@ async def list_material_parameter_qualifiers(
 
 @router.post(
     "/material_parameter_qualifier/upsert",
-    response_model=list[UpsertResponseBase],
     tags=["material_parameter_qualifier"],
 )
 async def upsert_material_parameter_qualifiers(

@@ -9,7 +9,6 @@ from sqlalchemy import Text, and_, cast, func, inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from models import GetListResponseBase
 from utils.datetime_utils import db_datetime_to_utc, parse_api_datetime_to_utc
 from utils.crud.common import (
     CrudSpec,
@@ -497,7 +496,7 @@ async def get_list_response(
     base_clause: Any | None = None,
     *,
     user: Any | None = None,
-) -> GetListResponseBase:
+) -> dict[str, Any]:
     scope_clause = build_scope_clause(
         spec,
         user,
@@ -510,7 +509,4 @@ async def get_list_response(
     entities = await _get_entities(db, request, spec, where_clause)
     items = await serialize_list_entities(db, entities, spec)
 
-    return GetListResponseBase(
-        total=total,
-        items=items,
-    )
+    return {"total": total, "items": items}

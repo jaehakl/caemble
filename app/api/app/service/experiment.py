@@ -13,13 +13,33 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import Calculation, Experiment, ExperimentNamespace, Measurement, RecordedData
 from models import (
-    ExperimentDerivedCounts,
+    ExperimentBase,
     ExperimentSourceBundle,
+    GetListRequestBase,
     SaveExperimentRequest,
-    SaveExperimentResponse,
+    UserData,
 )
 from user_auth.db import User
+from utils.crud import CrudSpec, get_list_response
 from utils.crud.common import is_admin_user, normalize_int_ids
+
+
+EXPERIMENT_CRUD_SPEC = CrudSpec(
+    model=Experiment,
+    schema=ExperimentBase,
+    search_aliases={
+        "workbench": (
+            "name",
+            "description",
+            "namespace",
+            "repository_slug",
+            "experiment_key",
+            "source_bundle",
+        ),
+        "repository": ("repository_slug",),
+        "key": ("experiment_key",),
+    },
+)
 
 
 def _bad(message: Any, *, code: int = status.HTTP_422_UNPROCESSABLE_ENTITY) -> HTTPException:
@@ -108,9 +128,12 @@ async def _cleanup_empty_namespaces(db: AsyncSession, user_id: str, namespaces: 
 async def _derived_counts(
     db: AsyncSession,
     experiment_ids: Iterable[int],
-) -> dict[int, ExperimentDerivedCounts]:
+) -> dict[int, dict[str, int]]:
     ids = normalize_int_ids(experiment_ids)
-    counts = {experiment_id: ExperimentDerivedCounts() for experiment_id in ids}
+    counts = {
+        experiment_id: {"measurements": 0, "recordedData": 0, "calculations": 0}
+        for experiment_id in ids
+    }
     if not ids:
         return counts
     queries = (
@@ -120,12 +143,12 @@ async def _derived_counts(
     )
     for field, query in queries:
         for experiment_id, count in (await db.execute(query)).all():
-            setattr(counts[experiment_id], field, count)
+            counts[experiment_id][field] = count
     return counts
 
 
-def _source_locked(counts: ExperimentDerivedCounts) -> bool:
-    return any(counts.model_dump().values())
+def _source_locked(counts: dict[str, int]) -> bool:
+    return any(counts.values())
 
 
 async def experiment_usage(db: AsyncSession, experiment_ids: Iterable[int], *, user: Any) -> dict[str, Any]:
@@ -142,7 +165,7 @@ async def experiment_usage(db: AsyncSession, experiment_ids: Iterable[int], *, u
             {
                 "experimentId": experiment_id,
                 "sourceLocked": _source_locked(counts[experiment_id]),
-                "derivedCounts": counts[experiment_id].model_dump(),
+                "derivedCounts": counts[experiment_id],
             }
             for experiment_id in ids
         ]
@@ -152,20 +175,20 @@ async def experiment_usage(db: AsyncSession, experiment_ids: Iterable[int], *, u
 def _save_response(
     experiment: Experiment,
     action: str,
-    counts: ExperimentDerivedCounts,
-) -> SaveExperimentResponse:
-    return SaveExperimentResponse(
-        id=experiment.id,
-        action=action,
-        namespace=experiment.namespace,
-        repository=experiment.repository_slug,
-        key=experiment.experiment_key,
-        version=_version_text(experiment),
-        coordinate=_coordinate(experiment),
-        bundleHash=experiment.source_hash,
-        sourceLocked=_source_locked(counts),
-        derivedCounts=counts,
-    )
+    counts: dict[str, int],
+) -> dict[str, Any]:
+    return {
+        "id": experiment.id,
+        "action": action,
+        "namespace": experiment.namespace,
+        "repository": experiment.repository_slug,
+        "key": experiment.experiment_key,
+        "version": _version_text(experiment),
+        "coordinate": _coordinate(experiment),
+        "bundleHash": experiment.source_hash,
+        "sourceLocked": _source_locked(counts),
+        "derivedCounts": counts,
+    }
 
 
 async def save_experiment(
@@ -173,7 +196,7 @@ async def save_experiment(
     request: SaveExperimentRequest,
     *,
     user: Any,
-) -> SaveExperimentResponse:
+) -> dict[str, Any]:
     source_bundle = _source_bundle_payload(request.sourceBundle)
     source_hash = _bundle_hash(source_bundle)
     name = request.name.strip()
@@ -183,7 +206,7 @@ async def save_experiment(
     if namespace == "caemble":
         raise _bad("The caemble namespace is reserved for Examples.", code=status.HTTP_409_CONFLICT)
 
-    counts = ExperimentDerivedCounts()
+    counts = {"measurements": 0, "recordedData": 0, "calculations": 0}
     if request.mode == "create":
         major, minor, patch = _parse_version(request.initialVersion)
         owner = await db.scalar(select(User).where(User.id == user.id).with_for_update())
@@ -267,7 +290,7 @@ async def save_experiment(
                     {
                         "code": "experiment_source_locked",
                         "message": "Experiment source cannot be overwritten while derived data exists.",
-                        "derivedCounts": counts.model_dump(),
+                        "derivedCounts": counts,
                     },
                     code=status.HTTP_409_CONFLICT,
                 )
@@ -414,17 +437,16 @@ async def experiment_versions(
                 "coordinate": _coordinate(row),
                 "bundleHash": row.source_hash,
                 "sourceLocked": _source_locked(derived),
-                "derivedCounts": derived.model_dump(),
+                "derivedCounts": derived,
             }
         )
     return {"items": items}
 
 
 async def enrich_experiment_list(db: AsyncSession, response: Any) -> Any:
-    raw_items = response.items if hasattr(response, "items") else response["items"]
     items = [
         item.model_dump(mode="json") if hasattr(item, "model_dump") else dict(item)
-        for item in raw_items
+        for item in response["items"]
     ]
     ids = [item["id"] for item in items]
     counts = await _derived_counts(db, ids)
@@ -439,11 +461,23 @@ async def enrich_experiment_list(db: AsyncSession, response: Any) -> Any:
                 "coordinate": f"caemble:experiment/{item['namespace']}/{item['repository_slug']}/{item['experiment_key']}@{version}",
                 "bundleHash": item["source_hash"],
                 "sourceLocked": _source_locked(derived),
-                "derivedCounts": derived.model_dump(),
+                "derivedCounts": derived,
             }
         )
-    if hasattr(response, "items"):
-        response.items = items
-    else:
-        response["items"] = items
+    response["items"] = items
     return response
+
+
+async def list_experiments(
+    db: AsyncSession,
+    request: GetListRequestBase,
+    *,
+    user: UserData | None,
+) -> dict[str, Any]:
+    response = await get_list_response(
+        db,
+        request,
+        EXPERIMENT_CRUD_SPEC,
+        user=user,
+    )
+    return await enrich_experiment_list(db, response)

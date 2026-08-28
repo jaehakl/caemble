@@ -3,15 +3,7 @@ import { Matrix, solve } from 'ml-matrix'
 import { PCA } from 'ml-pca'
 import { RandomForestRegression } from 'ml-random-forest'
 import { mean, quantileSorted, sampleCorrelation, sampleStandardDeviation, silhouette } from 'simple-statistics'
-import type { MeasurementRecord, RecordedDataRecord } from '@/api'
-import {
-  createDataTensorAccessor,
-  isDataTensor,
-  type DataTensor,
-  type DataDType,
-  type DataSchema,
-  type DataTensorAccessor,
-} from '@/lib/cad'
+import type { CalculationDataAnalysisItem, MeasurementRecord } from '@/api'
 import type {
   AnalysisColumnDescriptor,
   AnalysisMiningResult,
@@ -88,82 +80,8 @@ type TrainedPredictionModel = Readonly<{
   intervalRadius: number
 }>
 
-type RecordedTensorView = Readonly<{
-  accessor: Pick<DataTensorAccessor, 'at' | 'shape' | 'size'>
-  quantityKind?: string
-  schema: DataSchema
-  signature: string
-  tensorOrder: number
-  unit?: string
-}>
-
-const RECORDED_QUANTILE_SAMPLE_LIMIT = 4_096
-
-export type AnalysisQuantityKindTensorOrders = ReadonlyMap<string, number>
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function collectQuantityKindFields(value: unknown, names: Set<string>) {
-  if (Array.isArray(value)) {
-    value.forEach((item) => collectQuantityKindFields(item, names))
-    return
-  }
-  if (!isRecord(value)) return
-  Object.entries(value).forEach(([key, item]) => {
-    if ((key === 'quantityKind' || key === 'quantity_kind') && typeof item === 'string' && item) names.add(item)
-    else collectQuantityKindFields(item, names)
-  })
-}
-
-export function collectAnalysisQuantityKindNames(
-  measurements: readonly MeasurementRecord[],
-  recordedData: readonly RecordedDataRecord[],
-) {
-  const names = new Set<string>()
-  measurements.forEach((measurement) => collectQuantityKindFields(measurement.material_parameters, names))
-  recordedData
-    .filter((row) => !row.name.startsWith('rayPaths.'))
-    .forEach((row) => {
-      if (row.quantity_kind) names.add(row.quantity_kind)
-      collectQuantityKindFields(row.data_schema, names)
-    })
-  return Object.freeze([...names].sort())
-}
-
-function quantityKindTensorOrder(name: string, tensorOrders: AnalysisQuantityKindTensorOrders) {
-  const tensorOrder = tensorOrders.get(name)
-  if (tensorOrder === undefined) throw new Error(`QuantityKind ${name}의 Catalog 정의가 없습니다.`)
-  return tensorOrder
-}
-
-function catalogIndependentDataTensor(
-  schema: DataSchema,
-  tensor: DataTensor,
-  tensorOrder: number,
-): Readonly<{ schema: DataSchema; tensor: DataTensor }> {
-  if (!schema.quantityKind) return { schema, tensor }
-  const normalizedSchema = Object.freeze({
-    ...Object.fromEntries(Object.entries(schema).filter(([key]) => key !== 'quantityKind' && key !== 'basis')),
-    axes: Object.freeze([
-      ...(schema.axes ?? []),
-      ...Array.from({ length: tensorOrder }, (_, index) =>
-        Object.freeze({ length: 3, name: `QuantityKind component ${index}` }),
-      ),
-    ]),
-  }) as DataSchema
-  if (!tensor.axes) return { schema: normalizedSchema, tensor }
-  return {
-    schema: normalizedSchema,
-    tensor: Object.freeze({
-      ...tensor,
-      axes: Object.freeze([
-        ...tensor.axes,
-        ...Array.from({ length: tensorOrder }, () => Object.freeze({ ticks: Object.freeze([0, 1, 2]) })),
-      ]),
-    }),
-  }
 }
 
 function finiteNumber(value: unknown): value is number {
@@ -259,215 +177,6 @@ function extractMaterials(
   })
 }
 
-function recordedTargets(
-  row: RecordedDataRecord,
-  tensorOrders: AnalysisQuantityKindTensorOrders,
-): Readonly<{
-  observations: readonly Readonly<{
-    key: string
-    label: string
-    value: number
-    statistic?: string
-  }>[]
-  quantityKind?: string
-  signature: string
-  unit?: string
-}> | null {
-  const tensor = recordedTensor(row, tensorOrders)
-  if (!tensor || tensor.schema.dtype === 'bool' || tensor.schema.dtype === 'string' || tensor.accessor.size === 0) {
-    return null
-  }
-  const componentSize = 3 ** tensor.tensorOrder
-  if (!Number.isSafeInteger(componentSize) || componentSize <= 0 || tensor.accessor.size % componentSize !== 0) {
-    return null
-  }
-  const valueCount = tensor.accessor.size / componentSize
-  const sampleStep = Math.max(1, Math.ceil(valueCount / RECORDED_QUANTILE_SAMPLE_LIMIT))
-  const quantileSample: number[] = []
-  let average = 0
-  let count = 0
-  let maximum = Number.NEGATIVE_INFINITY
-  let minimum = Number.POSITIVE_INFINITY
-  let squaredDeviation = 0
-  let singleValue = 0
-  for (let valueIndex = 0; valueIndex < valueCount; valueIndex += 1) {
-    const index = valueIndex * componentSize
-    let value: number
-    if (componentSize === 1) {
-      const component = tensor.accessor.at(index)
-      if (typeof component !== 'number') return null
-      value = component
-    } else {
-      let squared = 0
-      for (let componentIndex = 0; componentIndex < componentSize; componentIndex += 1) {
-        const component = tensor.accessor.at(index + componentIndex)
-        if (typeof component !== 'number') return null
-        squared += component ** 2
-      }
-      value = Math.sqrt(squared)
-    }
-    count += 1
-    const delta = value - average
-    average += delta / count
-    squaredDeviation += delta * (value - average)
-    minimum = Math.min(minimum, value)
-    maximum = Math.max(maximum, value)
-    singleValue = value
-    if (valueIndex % sampleStep === 0 || valueIndex === valueCount - 1) quantileSample.push(value)
-  }
-
-  if (count === 1) {
-    return {
-      observations: [
-        {
-          key: `target:${row.name}`,
-          label: row.name,
-          value: singleValue,
-          ...(tensor.tensorOrder > 0 ? { statistic: 'magnitude' } : {}),
-        },
-      ],
-      ...(tensor.quantityKind ? { quantityKind: tensor.quantityKind } : {}),
-      signature: tensor.signature,
-      ...(tensor.unit ? { unit: tensor.unit } : {}),
-    }
-  }
-
-  quantileSample.sort((left, right) => left - right)
-  const summaries = {
-    mean: average,
-    std: Math.sqrt(squaredDeviation / (count - 1)),
-    min: minimum,
-    max: maximum,
-    p05: quantileSorted(quantileSample, 0.05),
-    p50: quantileSorted(quantileSample, 0.5),
-    p95: quantileSorted(quantileSample, 0.95),
-  }
-  return {
-    observations: Object.entries(summaries).map(([statistic, value]) => ({
-      key: `target:${row.name}:${statistic}`,
-      label: `${row.name} · ${statistic}`,
-      statistic,
-      value,
-    })),
-    ...(tensor.quantityKind ? { quantityKind: tensor.quantityKind } : {}),
-    signature: tensor.signature,
-    ...(tensor.unit ? { unit: tensor.unit } : {}),
-  }
-}
-
-function recordedTensor(
-  row: RecordedDataRecord,
-  tensorOrders: AnalysisQuantityKindTensorOrders,
-): RecordedTensorView | null {
-  if (!isRecord(row.data)) return null
-  if (!isDataTensor(row.data)) {
-    const legacy = numericTensor(row.data.value)
-    if (!legacy) return null
-    const storedSchema = row.data_schema as DataSchema | null | undefined
-    const tensorOrder =
-      storedSchema?.quantityKind === undefined
-        ? row.tensor_order
-        : quantityKindTensorOrder(storedSchema.quantityKind, tensorOrders)
-    if (
-      storedSchema &&
-      (storedSchema.dtype !== row.dtype ||
-        storedSchema.quantityKind !== (row.quantity_kind ?? undefined) ||
-        tensorOrder !== row.tensor_order)
-    ) {
-      return null
-    }
-    return {
-      accessor: {
-        at: (index) => legacy.flat[index],
-        shape: legacy.shape,
-        size: legacy.flat.length,
-      },
-      ...(storedSchema?.quantityKind || row.quantity_kind
-        ? { quantityKind: storedSchema?.quantityKind ?? row.quantity_kind ?? undefined }
-        : {}),
-      schema: storedSchema ?? ({ dtype: row.dtype as DataDType } as DataSchema),
-      signature: storedSchema
-        ? `schema:${JSON.stringify(storedSchema)}`
-        : `legacy:${row.dtype}:${row.quantity_kind ?? ''}:${row.tensor_order}`,
-      tensorOrder,
-      ...(storedSchema?.unit ? { unit: storedSchema.unit } : {}),
-    }
-  }
-  try {
-    const storedSchema = row.data_schema as DataSchema | null | undefined
-    let schema: DataSchema
-    let tensorOrder: number
-    if (storedSchema) {
-      if (storedSchema.dtype !== row.dtype) return null
-      tensorOrder =
-        storedSchema.quantityKind === undefined ? 0 : quantityKindTensorOrder(storedSchema.quantityKind, tensorOrders)
-      if (storedSchema.quantityKind !== (row.quantity_kind ?? undefined) || tensorOrder !== row.tensor_order) {
-        return null
-      }
-      schema = storedSchema
-    } else {
-      tensorOrder = row.tensor_order
-      const outerRank = row.data.shape.length - tensorOrder
-      if (outerRank < 0) return null
-      const quantityMetadata =
-        row.dtype.startsWith('float') && row.quantity_kind
-          ? (() => {
-              if (quantityKindTensorOrder(row.quantity_kind, tensorOrders) !== tensorOrder) {
-                throw new Error('Legacy RecordedData QuantityKind does not match tensor_order.')
-              }
-              return { quantityKind: row.quantity_kind, unit: '1' }
-            })()
-          : {}
-      schema = {
-        dtype: row.dtype as DataDType,
-        ...quantityMetadata,
-        axes: row.data.shape.slice(0, outerRank).map((length) => ({ length })),
-      } as DataSchema
-    }
-    const catalogIndependent = catalogIndependentDataTensor(schema, row.data, tensorOrder)
-    const accessor = createDataTensorAccessor(
-      catalogIndependent.schema,
-      catalogIndependent.tensor,
-      `RecordedData ${JSON.stringify(row.name)}`,
-    )
-    return {
-      accessor,
-      ...(storedSchema?.quantityKind ? { quantityKind: storedSchema.quantityKind } : {}),
-      schema,
-      signature: storedSchema
-        ? `schema:${JSON.stringify(storedSchema)}`
-        : `legacy:${row.dtype}:${row.quantity_kind ?? ''}:${row.tensor_order}`,
-      tensorOrder,
-      ...(storedSchema?.unit ? { unit: storedSchema.unit } : {}),
-    }
-  } catch {
-    return null
-  }
-}
-
-function categoricalValues(value: unknown): string[] {
-  if (typeof value === 'boolean' || typeof value === 'string') return [String(value)]
-  if (!Array.isArray(value)) return []
-  return value.flatMap(categoricalValues)
-}
-
-function forEachRecordedCategoricalValue(
-  row: RecordedDataRecord,
-  tensorOrders: AnalysisQuantityKindTensorOrders,
-  visit: (value: string) => void,
-): void {
-  if (isRecord(row.data) && !isDataTensor(row.data)) {
-    categoricalValues(row.data.value).forEach(visit)
-    return
-  }
-  const tensor = recordedTensor(row, tensorOrders)
-  if (!tensor) return
-  for (let index = 0; index < tensor.accessor.size; index += 1) {
-    const value = tensor.accessor.at(index)
-    if (typeof value === 'boolean' || typeof value === 'string') visit(String(value))
-  }
-}
-
 function describeColumn(state: ColumnState, values: Float64Array, rowCount: number): AnalysisColumnDescriptor {
   const finite = Array.from(values).filter(Number.isFinite)
   const sorted = [...finite].sort((left, right) => left - right)
@@ -533,7 +242,7 @@ function sourceOrder(source: AnalysisColumnDescriptor['source']) {
   return {
     'measurement-vars': 0,
     'measurement-material': 1,
-    'recorded-data': 2,
+    'calculation-data': 2,
   }[source]
 }
 
@@ -580,63 +289,34 @@ export function stableSignature(rows: readonly Readonly<{ id?: number; updated_a
   return `${(first >>> 0).toString(16).padStart(8, '0')}${(second >>> 0).toString(16).padStart(8, '0')}`
 }
 
-export function createMeasurementRanges(ids: readonly number[]) {
-  const normalized = [...new Set(ids)].filter((id) => Number.isSafeInteger(id) && id > 0).sort((a, b) => a - b)
-  const ranges: Readonly<{ min: number; max: number; ids: readonly number[] }>[] = []
-  let current: number[] = []
-  for (const id of normalized) {
-    const first = current[0]
-    if (current.length > 0 && (current.length >= 500 || id - first > 2_000)) {
-      ranges.push({ min: current[0], max: current[current.length - 1], ids: current })
-      current = []
-    }
-    current.push(id)
-  }
-  if (current.length > 0) ranges.push({ min: current[0], max: current[current.length - 1], ids: current })
-  return ranges
-}
-
 export function buildAnalysisDataset({
+  calculationData,
   experimentId,
   fingerprint,
   measurements,
-  quantityKindTensorOrders = new Map(),
-  recordedData,
 }: {
+  calculationData: readonly CalculationDataAnalysisItem[]
   experimentId: number
   fingerprint: string
   measurements: readonly MeasurementRecord[]
-  quantityKindTensorOrders?: AnalysisQuantityKindTensorOrders
-  recordedData: readonly RecordedDataRecord[]
 }): AnalysisDataset {
+  const measurementIds = new Set(calculationData.map((row) => row.measurement_id))
   const usableMeasurements = measurements.filter(
-    (row): row is MeasurementRecord & { id: number } => Number.isSafeInteger(row.id) && (row.id ?? 0) > 0,
+    (row): row is MeasurementRecord & { id: number } =>
+      Number.isSafeInteger(row.id) && (row.id ?? 0) > 0 && measurementIds.has(row.id as number),
   )
-  const recordedByMeasurement = new Map<number, RecordedDataRecord[]>()
-  recordedData
-    .filter((row) => !row.name.startsWith('rayPaths.'))
-    .forEach((row) => {
-      const rows = recordedByMeasurement.get(row.measurement_id) ?? []
-      rows.push(row)
-      recordedByMeasurement.set(row.measurement_id, rows)
-    })
+  const calculationDataByMeasurement = new Map<number, CalculationDataAnalysisItem[]>()
+  calculationData.forEach((row) => {
+    const rows = calculationDataByMeasurement.get(row.measurement_id) ?? []
+    rows.push(row)
+    calculationDataByMeasurement.set(row.measurement_id, rows)
+  })
 
   const states = new Map<string, ColumnState>()
   const materialSignatures = new Map<string, Set<string>>()
-  const targetSignatures = new Map<string, Set<string>>()
-  const targetKeysByName = new Map<string, Set<string>>()
-  const categoricalStates = new Map<
-    string,
-    {
-      counts: Map<string, number>
-      dtype: string
-      name: string
-      quantityKind?: string
-      signatures: Set<string>
-    }
-  >()
+  const targetSignatures = new Map<number, Set<string>>()
+  const targetKeysByCalculation = new Map<number, Set<string>>()
   const identities: RowIdentity[] = []
-  let recordedDataCount = 0
 
   const observe = (observation: NumericObservation, rowIndex: number) => {
     let state = states.get(observation.key)
@@ -665,10 +345,7 @@ export function buildAnalysisDataset({
 
   usableMeasurements.forEach((measurement) => {
     const rowIndex = identities.length
-    identities.push({
-      measurementId: measurement.id,
-      inputFingerprint: inputFingerprint(measurement),
-    })
+    identities.push({ measurementId: measurement.id, inputFingerprint: inputFingerprint(measurement) })
     states.forEach((state) => state.values.push(Number.NaN))
 
     const observations: NumericObservation[] = []
@@ -684,61 +361,43 @@ export function buildAnalysisDataset({
     }
     observations.forEach((observation) => observe(observation, rowIndex))
 
-    const resultRows = recordedByMeasurement.get(measurement.id) ?? []
-    recordedDataCount += resultRows.length
+    const resultRows = calculationDataByMeasurement.get(measurement.id) ?? []
     resultRows.forEach((resultRow) => {
-      const storedSchema = resultRow.data_schema
-      const storedQuantityKind = storedSchema?.quantityKind
-      const quantityKind = typeof storedQuantityKind === 'string'
-        ? storedQuantityKind
-        : resultRow.quantity_kind ?? undefined
-      const schemaSignature = storedSchema
-        ? `schema:${JSON.stringify(storedSchema)}`
-        : `legacy:${resultRow.dtype}:${resultRow.quantity_kind ?? ''}:${resultRow.tensor_order}`
-      const signatures = targetSignatures.get(resultRow.name) ?? new Set<string>()
-      signatures.add(schemaSignature)
-      targetSignatures.set(resultRow.name, signatures)
-      if (resultRow.dtype === 'bool' || resultRow.dtype === 'string') {
-        const state = categoricalStates.get(resultRow.name) ?? {
-          counts: new Map<string, number>(),
-          dtype: resultRow.dtype,
-          name: resultRow.name,
-          ...(quantityKind ? { quantityKind } : {}),
-          signatures: new Set<string>(),
-        }
-        state.signatures.add(schemaSignature)
-        forEachRecordedCategoricalValue(resultRow, quantityKindTensorOrders, (value) => {
-          state.counts.set(value, (state.counts.get(value) ?? 0) + 1)
-        })
-        categoricalStates.set(resultRow.name, state)
-      }
-      const extracted = recordedTargets(resultRow, quantityKindTensorOrders)
-      if (!extracted) return
-      const keys = targetKeysByName.get(resultRow.name) ?? new Set<string>()
-      extracted.observations.forEach((target) => {
+      const summary = resultRow.summary
+      const rank = summary.kind === 'tensor' ? summary.rank : 0
+      const signatures = targetSignatures.get(resultRow.calculation_id) ?? new Set<string>()
+      signatures.add(`${resultRow.dtype}:${rank}`)
+      targetSignatures.set(resultRow.calculation_id, signatures)
+      const targets: readonly Readonly<{ key: string; statistic?: string; value: number }>[] =
+        summary.kind === 'scalar'
+          ? [{ key: `target:calculation:${resultRow.calculation_id}`, value: summary.value }]
+          : (['mean', 'std'] as const).flatMap((statistic) => {
+              const value = summary[statistic]
+              return value === null
+                ? []
+                : [{ key: `target:calculation:${resultRow.calculation_id}:${statistic}`, statistic, value }]
+            })
+      const keys = targetKeysByCalculation.get(resultRow.calculation_id) ?? new Set<string>()
+      targets.forEach((target) => {
         keys.add(target.key)
         let state = states.get(target.key)
         if (!state) {
           state = {
             key: target.key,
-            label: target.label,
+            label: `${resultRow.calculation_name}${target.statistic ? ` · ${target.statistic}` : ''}`,
             kind: 'target',
-            source: 'recorded-data',
+            source: 'calculation-data',
             values: Array(rowIndex + 1).fill(Number.NaN),
-            ...(extracted.quantityKind ? { quantityKind: extracted.quantityKind } : {}),
-            ...(extracted.unit ? { unit: extracted.unit } : {}),
             ...(target.statistic ? { statistic: target.statistic } : {}),
           }
           states.set(target.key, state)
         } else {
           while (state.values.length <= rowIndex) state.values.push(Number.NaN)
-          if (state.quantityKind !== extracted.quantityKind || state.unit !== extracted.unit) {
-            state.invalidReason = 'Recorded Data QuantityKind가 행마다 다릅니다.'
-          }
+          state.label = `${resultRow.calculation_name}${target.statistic ? ` · ${target.statistic}` : ''}`
         }
         state.values[rowIndex] = target.value
       })
-      targetKeysByName.set(resultRow.name, keys)
+      targetKeysByCalculation.set(resultRow.calculation_id, keys)
     })
   })
 
@@ -748,11 +407,11 @@ export function buildAnalysisDataset({
       if (state.root === root) state.invalidReason = 'Material shape 또는 unit이 행마다 다릅니다.'
     })
   })
-  targetSignatures.forEach((signatures, name) => {
+  targetSignatures.forEach((signatures, calculationId) => {
     if (signatures.size <= 1) return
-    targetKeysByName.get(name)?.forEach((key) => {
+    targetKeysByCalculation.get(calculationId)?.forEach((key) => {
       const state = states.get(key)
-      if (state) state.invalidReason = 'Recorded Data schema가 행마다 다릅니다.'
+      if (state) state.invalidReason = 'CalculationData dtype 또는 rank가 Measurement마다 다릅니다.'
     })
   })
 
@@ -778,32 +437,16 @@ export function buildAnalysisDataset({
     .map((column) => column.descriptor)
     .sort((left, right) => sourceOrder(left.source) - sourceOrder(right.source) || left.key.localeCompare(right.key))
 
-  const warnings: string[] = []
-  if (recordedDataCount === 0 && identities.length > 0) {
-    warnings.push('분석할 Recorded Data가 없습니다.')
-  }
-
   return {
     profile: {
       fingerprint,
       experimentId,
       rowCount: identities.length,
-      preparedCount: usableMeasurements.filter((row) => row.recorded_at === null).length,
-      recordedMeasurementCount: usableMeasurements.filter((row) => row.recorded_at !== null).length,
-      recordedDataCount,
+      measurementCount: identities.length,
+      calculationDataCount: calculationData.length,
+      calculationCount: new Set(calculationData.map((row) => row.calculation_id)).size,
       columns: descriptors,
-      categoricalSummaries: [...categoricalStates.values()]
-        .map((state) => ({
-          name: state.name,
-          dtype: state.dtype,
-          ...(state.quantityKind ? { quantityKind: state.quantityKind } : {}),
-          counts: [...state.counts.entries()]
-            .map(([value, count]) => ({ value, count }))
-            .sort((left, right) => right.count - left.count || left.value.localeCompare(right.value)),
-          ...(state.signatures.size > 1 ? { excludedReason: 'Recorded Data schema가 행마다 다릅니다.' } : {}),
-        }))
-        .sort((left, right) => left.name.localeCompare(right.name)),
-      warnings,
+      warnings: identities.length === 0 ? ['분석할 CalculationData가 없습니다.'] : [],
     },
     rows: identities,
     columns,
@@ -1005,7 +648,9 @@ export function analyzeRelationships(
   )
   const targets = [...dataset.columns.values()].filter(
     (column) =>
-      column.descriptor.kind === 'target' && column.descriptor.source === 'recorded-data' && column.descriptor.eligible,
+      column.descriptor.kind === 'target' &&
+      column.descriptor.source === 'calculation-data' &&
+      column.descriptor.eligible,
   )
   const pairs: AnalysisRelationshipsResult['pairs'][number][] = []
   inputs.forEach((input, inputIndex) => {
@@ -1039,8 +684,8 @@ export function getRelationshipPlot(
 ): AnalysisRelationshipPlot {
   const input = requireColumns(dataset, [inputKey], 'feature')[0]
   const target = requireColumns(dataset, [targetKey], 'target')[0]
-  if (input.descriptor.source !== 'measurement-vars' || target.descriptor.source !== 'recorded-data') {
-    throw new Error('관계 그래프는 input vars와 Recorded Data 조합만 지원합니다.')
+  if (input.descriptor.source !== 'measurement-vars' || target.descriptor.source !== 'calculation-data') {
+    throw new Error('관계 그래프는 input vars와 CalculationData 조합만 지원합니다.')
   }
   const result = relationshipStatistics(input.values, target.values)
   return {

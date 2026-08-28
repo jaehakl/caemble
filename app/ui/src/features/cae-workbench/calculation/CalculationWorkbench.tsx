@@ -672,6 +672,7 @@ export function CalculationWorkbench({
         if (sequence !== mutationSequenceRef.current) {
           await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculations'] })
           await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculation-data'] })
+          await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'measurements'] })
           await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] })
           return false
         }
@@ -685,6 +686,7 @@ export function CalculationWorkbench({
         onCalculationIdChange(result.id)
         await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculations'] })
         await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculation-data'] })
+        await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'measurements'] })
         await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] })
         await onUsageChanged().catch((cause: unknown) => {
           toast.error(
@@ -774,6 +776,7 @@ export function CalculationWorkbench({
       if (sequence !== mutationSequenceRef.current) {
         await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculations'] })
         await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculation-data'] })
+        await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'measurements'] })
         await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] })
         return
       }
@@ -788,6 +791,7 @@ export function CalculationWorkbench({
       onCalculationIdChange(null)
       await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculations'] })
       await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculation-data'] })
+      await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'measurements'] })
       await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] })
       await onUsageChanged().catch((cause: unknown) => {
         toast.error(
@@ -986,6 +990,13 @@ export function CalculationWorkbench({
               {inputPanel === 'measurements' ? (
                 <MeasurementExplorer
                   busy={busy}
+                  calculationTotal={
+                    calculationsQuery.isError
+                      ? 'error'
+                      : calculationsQuery.isFetching || !calculationsQuery.isSuccess
+                        ? 'loading'
+                        : rows.length
+                  }
                   className="min-h-0 gap-2"
                   enabled={authenticated}
                   experimentId={experimentId}

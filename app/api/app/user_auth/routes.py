@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from db import SessionLocal
-from models import AuthenticatedUserData, UserData
+from models import UserData
 from settings import settings
 from user_auth.db import Identity, OAuthProvider, OAuthState, Role, User, UserRole
 from user_auth.utils.auth_utils import (
@@ -74,10 +74,6 @@ def user_data(user: User) -> UserData:
         experiment_namespaces=sorted(item.namespace for item in user.experiment_namespaces),
         roles=[entry.role.name for entry in user.user_roles],
     )
-
-
-def authenticated_user_data(user: User) -> AuthenticatedUserData:
-    return AuthenticatedUserData(**user_data(user).model_dump())
 
 
 @router.get("/google/start")
@@ -263,8 +259,8 @@ async def google_callback(request: Request, state: str = "", code: str = "", db:
     return response
 
 
-@router.get("/me", response_model=AuthenticatedUserData)
-async def check_user(request: Request, db: AsyncSession = Depends(get_db)) -> AuthenticatedUserData:
+@router.get("/me", response_model=UserData)
+async def check_user(request: Request, db: AsyncSession = Depends(get_db)) -> UserData:
     token = request.cookies.get("access_token")
     if not token:
         authorization = request.headers.get("Authorization", "")
@@ -282,7 +278,7 @@ async def check_user(request: Request, db: AsyncSession = Depends(get_db)) -> Au
     ).where(User.id == claims["sub"]).execution_options(populate_existing=True))
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User inactive")
-    return authenticated_user_data(user)
+    return user_data(user)
 
 
 @router.get("/refresh")

@@ -1,30 +1,19 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy import and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db import RecordedData
-from models import GetListResponseBase, RecordedDataBase, RecordedDataListRequest, UserData
+from models import RecordedDataListRequest, UserData
+from service.recorded_data import list_recorded_data as list_recorded_data_rows
 from user_auth.routes import get_db
 from user_auth.utils.auth_wrapper import require_roles
-from utils.crud import CrudSpec, get_list_response
 
 
 router = APIRouter(prefix="/recorded_data", tags=["recorded_data"])
-CRUD_SPEC = CrudSpec(model=RecordedData, schema=RecordedDataBase)
 
 
-@router.post("/list", response_model=GetListResponseBase)
+@router.post("/list")
 async def list_recorded_data(
     request: RecordedDataListRequest,
     db: AsyncSession = Depends(get_db),
     user: UserData | None = Depends(require_roles(["*"])),
 ):
-    base_clause = (
-        None
-        if request.include_system
-        else and_(
-            ~RecordedData.name.like("@caemble/%"),
-            ~RecordedData.name.like("rayPaths.%"),
-        )
-    )
-    return await get_list_response(db, request, CRUD_SPEC, base_clause, user=user)
+    return await list_recorded_data_rows(db, request, user=user)

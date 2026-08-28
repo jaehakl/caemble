@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import base64
-from typing import Any
-
 from caemble_catalog import Catalog, CatalogAmbiguousError, CatalogNotFoundError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
@@ -22,6 +19,22 @@ from catalog_models import (
     SolverDetail,
     SolverSummary,
 )
+from service.catalog import (
+    build_runtime_slice,
+    catalog_meta,
+    get_experiment,
+    get_material_model,
+    get_material_parameter,
+    get_quantity_kind,
+    get_solver,
+    list_experiments,
+    list_material_models,
+    list_material_parameters,
+    list_quantity_kinds,
+    list_solvers,
+    search_catalog,
+)
+
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
 
@@ -29,42 +42,39 @@ router = APIRouter(prefix="/catalog", tags=["catalog"])
 def get_catalog(request: Request) -> Catalog:
     catalog = getattr(request.app.state, "catalog", None)
     if not isinstance(catalog, Catalog):
-        raise HTTPException(status_code=503, detail={"code": "catalog_unavailable", "message": "Catalog is unavailable."})
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "catalog_unavailable", "message": "Catalog is unavailable."},
+        )
     return catalog
 
 
-def _offset(cursor: str | None) -> int:
-    if cursor is None:
-        return 0
-    value = base64.urlsafe_b64decode(cursor.encode("ascii") + b"===").decode("ascii")
-    return int(value)
-
-
-def _cursor(offset: int, count: int, total: int) -> str | None:
-    next_offset = offset + count
-    if next_offset >= total:
-        return None
-    return base64.urlsafe_b64encode(str(next_offset).encode("ascii")).decode("ascii").rstrip("=")
-
-
-def _cache(response: Response, catalog: Catalog) -> None:
-    revision = catalog.meta()["catalogRevision"]
+def _cache(response: Response, revision: str) -> None:
     response.headers["ETag"] = f'"{revision}"'
-    response.headers["Cache-Control"] = "public, max-age=300, stale-while-revalidate=3600"
+    response.headers["Cache-Control"] = (
+        "public, max-age=300, stale-while-revalidate=3600"
+    )
 
 
 def _not_found(error: CatalogNotFoundError) -> HTTPException:
-    return HTTPException(status_code=404, detail={"code": "catalog_not_found", "message": str(error)})
+    return HTTPException(
+        status_code=404,
+        detail={"code": "catalog_not_found", "message": str(error)},
+    )
 
 
 def _ambiguous(error: CatalogAmbiguousError) -> HTTPException:
-    return HTTPException(status_code=409, detail={"code": "catalog_ambiguous", "message": str(error)})
+    return HTTPException(
+        status_code=409,
+        detail={"code": "catalog_ambiguous", "message": str(error)},
+    )
 
 
 @router.get("/meta", response_model=CatalogMeta)
 def meta(response: Response, catalog: Catalog = Depends(get_catalog)):
-    _cache(response, catalog)
-    return catalog.meta()
+    result, revision = catalog_meta(catalog)
+    _cache(response, revision)
+    return result
 
 
 @router.get("/quantity-kinds", response_model=CatalogPage[QuantityKind])
@@ -81,8 +91,8 @@ def quantity_kinds(
     cursor: str | None = Query(default=None),
     catalog: Catalog = Depends(get_catalog),
 ):
-    offset = _offset(cursor)
-    items, total = catalog.list_quantity_kinds(
+    result, revision = list_quantity_kinds(
+        catalog,
         query=q,
         domain=domain,
         solver_name=solver_name,
@@ -91,19 +101,23 @@ def quantity_kinds(
         unit=unit,
         tensor_order=tensor_order,
         limit=limit,
-        offset=offset,
+        cursor=cursor,
     )
-    _cache(response, catalog)
-    return {"items": items, "nextCursor": _cursor(offset, len(items), total), "total": total}
+    _cache(response, revision)
+    return result
 
 
 @router.get("/quantity-kinds/{name:path}", response_model=QuantityKindDetail)
-def quantity_kind(name: str, response: Response, catalog: Catalog = Depends(get_catalog)):
+def quantity_kind(
+    name: str,
+    response: Response,
+    catalog: Catalog = Depends(get_catalog),
+):
     try:
-        result = {**catalog.quantity_kind(name), **catalog.quantity_kind_relations(name)}
+        result, revision = get_quantity_kind(catalog, name)
     except CatalogNotFoundError as error:
         raise _not_found(error) from error
-    _cache(response, catalog)
+    _cache(response, revision)
     return result
 
 
@@ -119,27 +133,31 @@ def material_parameters(
     cursor: str | None = Query(default=None),
     catalog: Catalog = Depends(get_catalog),
 ):
-    offset = _offset(cursor)
-    items, total = catalog.list_material_parameters(
+    result, revision = list_material_parameters(
+        catalog,
         query=q,
         domain=domain,
+        quantity_kind=quantity_kind,
         solver_name=solver_name,
         solver_version=solver_version,
-        quantity_kind=quantity_kind,
         limit=limit,
-        offset=offset,
+        cursor=cursor,
     )
-    _cache(response, catalog)
-    return {"items": items, "nextCursor": _cursor(offset, len(items), total), "total": total}
+    _cache(response, revision)
+    return result
 
 
 @router.get("/material-parameters/{key:path}", response_model=MaterialParameterDetail)
-def material_parameter(key: str, response: Response, catalog: Catalog = Depends(get_catalog)):
+def material_parameter(
+    key: str,
+    response: Response,
+    catalog: Catalog = Depends(get_catalog),
+):
     try:
-        result = {**catalog.material_parameter(key), **catalog.material_parameter_relations(key)}
+        result, revision = get_material_parameter(catalog, key)
     except CatalogNotFoundError as error:
         raise _not_found(error) from error
-    _cache(response, catalog)
+    _cache(response, revision)
     return result
 
 
@@ -151,19 +169,27 @@ def material_models(
     cursor: str | None = Query(default=None),
     catalog: Catalog = Depends(get_catalog),
 ):
-    offset = _offset(cursor)
-    items, total = catalog.list_material_models(query=q, limit=limit, offset=offset)
-    _cache(response, catalog)
-    return {"items": items, "nextCursor": _cursor(offset, len(items), total), "total": total}
+    result, revision = list_material_models(
+        catalog,
+        query=q,
+        limit=limit,
+        cursor=cursor,
+    )
+    _cache(response, revision)
+    return result
 
 
 @router.get("/material-models/{key:path}", response_model=MaterialModel)
-def material_model(key: str, response: Response, catalog: Catalog = Depends(get_catalog)):
+def material_model(
+    key: str,
+    response: Response,
+    catalog: Catalog = Depends(get_catalog),
+):
     try:
-        result = catalog.material_model(key)
+        result, revision = get_material_model(catalog, key)
     except CatalogNotFoundError as error:
         raise _not_found(error) from error
-    _cache(response, catalog)
+    _cache(response, revision)
     return result
 
 
@@ -175,19 +201,28 @@ def solvers(
     cursor: str | None = Query(default=None),
     catalog: Catalog = Depends(get_catalog),
 ):
-    offset = _offset(cursor)
-    items, total = catalog.page_solvers(query=q, limit=limit, offset=offset)
-    _cache(response, catalog)
-    return {"items": items, "nextCursor": _cursor(offset, len(items), total), "total": total}
+    result, revision = list_solvers(
+        catalog,
+        query=q,
+        limit=limit,
+        cursor=cursor,
+    )
+    _cache(response, revision)
+    return result
 
 
 @router.get("/solvers/{name}/{version}", response_model=SolverDetail)
-def solver(name: str, version: str, response: Response, catalog: Catalog = Depends(get_catalog)):
+def solver(
+    name: str,
+    version: str,
+    response: Response,
+    catalog: Catalog = Depends(get_catalog),
+):
     try:
-        result = catalog.solver_detail(name, version)
+        result, revision = get_solver(catalog, name, version)
     except CatalogNotFoundError as error:
         raise _not_found(error) from error
-    _cache(response, catalog)
+    _cache(response, revision)
     return result
 
 
@@ -203,18 +238,18 @@ def experiments(
     cursor: str | None = Query(default=None),
     catalog: Catalog = Depends(get_catalog),
 ):
-    offset = _offset(cursor)
-    items, total = catalog.list_experiments(
+    result, revision = list_experiments(
+        catalog,
         query=q,
         solver_name=solver_name,
         solver_version=solver_version,
         namespace=namespace,
         repository=repository,
         limit=limit,
-        offset=offset,
+        cursor=cursor,
     )
-    _cache(response, catalog)
-    return {"items": items, "nextCursor": _cursor(offset, len(items), total), "total": total}
+    _cache(response, revision)
+    return result
 
 
 @router.get("/experiments/{key}", response_model=ExperimentDetail)
@@ -227,12 +262,18 @@ def experiment(
     catalog: Catalog = Depends(get_catalog),
 ):
     try:
-        result = catalog.experiment(key, namespace=namespace, repository=repository, version=version)
+        result, revision = get_experiment(
+            catalog,
+            key,
+            namespace=namespace,
+            repository=repository,
+            version=version,
+        )
     except CatalogNotFoundError as error:
         raise _not_found(error) from error
     except CatalogAmbiguousError as error:
         raise _ambiguous(error) from error
-    _cache(response, catalog)
+    _cache(response, revision)
     return result
 
 
@@ -243,20 +284,20 @@ def search(
     limit: int = Query(default=30),
     catalog: Catalog = Depends(get_catalog),
 ):
-    _cache(response, catalog)
-    return {"items": catalog.search(q, limit=limit)}
+    result, revision = search_catalog(catalog, q, limit=limit)
+    _cache(response, revision)
+    return result
 
 
 @router.post("/runtime-slice", response_model=CatalogRuntimeSlice)
-def runtime_slice(request: CatalogRuntimeSliceRequest, response: Response, catalog: Catalog = Depends(get_catalog)):
+def runtime_slice(
+    request: CatalogRuntimeSliceRequest,
+    response: Response,
+    catalog: Catalog = Depends(get_catalog),
+):
     try:
-        result = catalog.runtime_slice(
-            solvers=[(item.name, item.version) for item in request.solvers],
-            quantity_kinds=request.quantityKinds,
-            material_parameters=request.materialParameters,
-            material_models=request.materialModels,
-        )
+        result, revision = build_runtime_slice(catalog, request)
     except CatalogNotFoundError as error:
         raise _not_found(error) from error
-    _cache(response, catalog)
+    _cache(response, revision)
     return result

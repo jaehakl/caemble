@@ -9,7 +9,6 @@ from sqlalchemy import inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import UpsertResponseBase
 from utils.crud.common import (
     CrudSpec,
     get_scope_owner_ids,
@@ -61,7 +60,7 @@ async def upsert_items(
     spec: CrudSpec[Any, Any],
     *,
     user: Any | None,
-) -> list[UpsertResponseBase]:
+) -> list[dict[str, int]]:
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
     if not items:
@@ -192,4 +191,4 @@ async def upsert_items(
             detail=_constraint_detail(error),
         ) from error
 
-    return [UpsertResponseBase(id=entity.id) for entity in pending_entities]
+    return [{"id": entity.id} for entity in pending_entities]

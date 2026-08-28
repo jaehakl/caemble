@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import type { SavedMeasurement } from '../types'
+import { measurementCalculationPointState, type CalculationTotalState } from './measurementCalculationPoint'
 
 const fallbackPageSize = 12
 const pointGapPx = 12
@@ -14,6 +15,7 @@ const pointSizePx = 32
 
 export function MeasurementExplorer({
   busy = false,
+  calculationTotal,
   className,
   enabled = true,
   experimentId,
@@ -23,6 +25,7 @@ export function MeasurementExplorer({
   selectedId,
 }: {
   busy?: boolean
+  calculationTotal?: CalculationTotalState
   className?: string
   enabled?: boolean
   experimentId: number | null
@@ -200,7 +203,25 @@ export function MeasurementExplorer({
         />
       </label>
       <div className="flex shrink-0 items-center justify-between gap-3">
-        <span className="text-xs text-muted-foreground">{selectedRows.size.toLocaleString()}개 선택</span>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="text-xs text-muted-foreground">{selectedRows.size.toLocaleString()}개 선택</span>
+          {calculationTotal !== undefined ? (
+            <span
+              aria-label="Measurement 상태 범례"
+              className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground"
+            >
+              <span className="inline-flex items-center gap-1">
+                <span className="size-2 rounded-sm bg-slate-300 ring-1 ring-slate-400" /> Run 전
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="size-2 rounded-sm bg-amber-400 ring-1 ring-amber-700" /> Calculation 미완료
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="size-2 rounded-sm bg-emerald-500 ring-1 ring-emerald-700" /> 완료
+              </span>
+            </span>
+          ) : null}
+        </div>
         {onDelete ? (
           <Button
             disabled={selectedRows.size === 0 || deleting || busy}
@@ -240,7 +261,11 @@ export function MeasurementExplorer({
           >
             {rows.map((row) => {
               const selected = selectedRows.has(row.id)
-              const status = row.recorded_at ? 'Recorded' : 'Prepared'
+              const calculationState =
+                calculationTotal === undefined
+                  ? null
+                  : measurementCalculationPointState(row.recorded_at, row.calculation_data_count, calculationTotal)
+              const status = calculationState?.description ?? (row.recorded_at ? 'Recorded' : 'Prepared')
               return (
                 <li key={row.id}>
                   <button
@@ -249,9 +274,10 @@ export function MeasurementExplorer({
                     aria-pressed={selected}
                     className={cn(
                       'size-8 rounded-sm border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-                      row.recorded_at
-                        ? 'border-emerald-700 bg-emerald-500 hover:bg-emerald-600'
-                        : 'border-slate-400 bg-slate-300 hover:bg-slate-400',
+                      calculationState?.className ??
+                        (row.recorded_at
+                          ? 'border-emerald-700 bg-emerald-500 hover:bg-emerald-600'
+                          : 'border-slate-400 bg-slate-300 hover:bg-slate-400'),
                       selected && 'ring-2 ring-primary ring-offset-1',
                       row.id === selectedId && 'outline-2 outline-offset-2 outline-orange-500',
                     )}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import sys
 import unittest
 from importlib.util import module_from_spec, spec_from_file_location
@@ -14,10 +15,12 @@ sys.path.insert(0, str(APP_DIR))
 import db  # noqa: E402
 import gpstation.db  # noqa: E402, F401
 import main  # noqa: E402
+import models as api_models  # noqa: E402
 import user_auth.db  # noqa: E402, F401
 from ai.data_tools import VisibleDataError, VisibleDataReader  # noqa: E402
-from models import CalculationDataOutput, ExperimentDerivedCounts  # noqa: E402
-from pydantic import ValidationError  # noqa: E402
+from model_validators import validate_calculation_data_selectors  # noqa: E402
+from models import CalculationDataOutput, MeasurementBase  # noqa: E402
+from pydantic import BaseModel, ValidationError  # noqa: E402
 
 
 class CalculationBackendContractTests(unittest.TestCase):
@@ -78,12 +81,36 @@ class CalculationBackendContractTests(unittest.TestCase):
         )
         openapi = main.app.openapi()
         for path in (
+            "/calculation_data/analysis",
+            "/calculation_data/analysis/status",
             "/calculation_data/missing",
             "/calculation_data/save",
             "/calculation_data/scalars",
         ):
             self.assertIn(path, openapi["paths"])
         self.assertIn("CalculationDataOutput", openapi["components"]["schemas"])
+        self.assertNotIn("CalculationDataAnalysisResponse", openapi["components"]["schemas"])
+        self.assertNotIn("CalculationDataAnalysisStatusResponse", openapi["components"]["schemas"])
+
+        def body_properties(path: str) -> set[str]:
+            schema = openapi["paths"][path]["post"]["requestBody"]["content"]["application/json"]["schema"]
+            component = schema["$ref"].rsplit("/", 1)[-1]
+            return set(openapi["components"]["schemas"][component]["properties"])
+
+        self.assertEqual({"experimentIds"}, body_properties("/experiment/usage"))
+        self.assertEqual({"experiment_id"}, body_properties("/calculation_data/analysis"))
+        self.assertEqual(
+            {"experiment_id", "calculation_id", "measurement_id"},
+            body_properties("/calculation_data/missing"),
+        )
+        self.assertEqual(
+            {"calculation_id", "measurement_id", "source_hash", "data"},
+            body_properties("/calculation_data/save"),
+        )
+        self.assertEqual(
+            {"calculation_id", "exclude_measurement_id"},
+            body_properties("/calculation_data/scalars"),
+        )
 
     def test_calculation_data_output_validation(self) -> None:
         scalar = CalculationDataOutput.model_validate(
@@ -109,11 +136,39 @@ class CalculationBackendContractTests(unittest.TestCase):
             with self.subTest(payload=payload), self.assertRaises(ValidationError):
                 CalculationDataOutput.model_validate(payload)
 
-    def test_derived_counts_use_calculations(self) -> None:
-        self.assertEqual(
-            {"measurements", "recordedData", "calculations"},
-            set(ExperimentDerivedCounts().model_dump()),
+    def test_measurement_contract_includes_calculation_data_count(self) -> None:
+        measurement = MeasurementBase(
+            user_id="00000000-0000-0000-0000-000000000001",
+            experiment_id=1,
+            vars={},
+            material_parameters={},
         )
+        self.assertEqual(measurement.calculation_data_count, 0)
+
+    def test_models_module_keeps_only_required_pydantic_models(self) -> None:
+        model_names = {
+            name
+            for name, value in vars(api_models).items()
+            if inspect.isclass(value)
+            and value.__module__ == "models"
+            and issubclass(value, BaseModel)
+        }
+        self.assertEqual(22, len(model_names))
+        self.assertTrue(
+            {
+                "AuthenticatedUserData",
+                "GetListResponseBase",
+                "UpsertResponseBase",
+                "ExperimentDerivedCounts",
+                "MeasurementSaveResponse",
+                "CalculationDataAnalysisResponse",
+            }.isdisjoint(model_names)
+        )
+
+    def test_calculation_data_selector_validation_is_external(self) -> None:
+        validate_calculation_data_selectors(1, None)
+        with self.assertRaisesRegex(ValueError, "cannot be combined"):
+            validate_calculation_data_selectors(1, 2)
 
     def test_legacy_models_are_not_ai_visible_resources(self) -> None:
         reader = VisibleDataReader(None, "user-id")  # type: ignore[arg-type]

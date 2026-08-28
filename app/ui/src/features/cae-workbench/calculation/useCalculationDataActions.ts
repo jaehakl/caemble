@@ -169,6 +169,7 @@ export function useCalculationDataActions({
       } finally {
         if (controllerRef.current === controller) controllerRef.current = null
         await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculation-data'] })
+        await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'measurements'] })
       }
       return {
         total: state.total,

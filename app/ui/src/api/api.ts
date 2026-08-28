@@ -16,7 +16,6 @@ export type GetListRequest = Readonly<{
 
 export type UpsertResponse = Readonly<{
   id: number
-  fk_not_found?: Readonly<Record<string, readonly number[]>> | null
 }>
 
 export type AccessKeyScope = 'client' | 'launcher'
@@ -229,6 +228,7 @@ type MeasurementRecord = Readonly<{
   vars: Readonly<Record<string, unknown>>
   material_parameters: MeasurementMaterialParameters
   recorded_at: string | null
+  calculation_data_count: number
 }>
 type RecordedDataRecord = Readonly<{
   id?: number
@@ -268,6 +268,27 @@ export type CalculationDataMissingRequest = Readonly<{
   measurement_id?: number
 }>
 export type CalculationDataScalar = Readonly<{ measurement_id: number; value: number }>
+export type CalculationDataAnalysisSummary =
+  | Readonly<{ kind: 'scalar'; value: number }>
+  | Readonly<{ kind: 'tensor'; rank: 1 | 2; count: number; mean: number | null; std: number | null }>
+export type CalculationDataAnalysisItem = Readonly<{
+  calculation_id: number
+  calculation_name: string
+  measurement_id: number
+  dtype: CalculationDataOutput['dtype']
+  summary: CalculationDataAnalysisSummary
+}>
+export type CalculationDataAnalysisResponse = Readonly<{
+  fingerprint: string
+  total: number
+  measurement_count: number
+  items: readonly CalculationDataAnalysisItem[]
+}>
+export type CalculationDataAnalysisStatus = Readonly<{
+  fingerprint: string
+  total: number
+  measurement_count: number
+}>
 
 type RuntimeCrudListRequest = Readonly<{
   offset: number
@@ -407,6 +428,12 @@ export const dbTables = {
     deleteRows: (ids: readonly number[]) => request<null>('delete', '/calculation/', ids),
   },
   CalculationData: {
+    analysis: (experimentId: number) =>
+      request<CalculationDataAnalysisResponse>('post', '/calculation_data/analysis', { experiment_id: experimentId }),
+    analysisStatus: (experimentId: number) =>
+      request<CalculationDataAnalysisStatus>('post', '/calculation_data/analysis/status', {
+        experiment_id: experimentId,
+      }),
     missing: (payload: CalculationDataMissingRequest) =>
       request<{ total: number; items: CalculationDataTarget[] }>('post', '/calculation_data/missing', payload),
     save: (

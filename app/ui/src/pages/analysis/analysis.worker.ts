@@ -1,14 +1,11 @@
 /// <reference lib="webworker" />
 
 import { dbTables, getListRequest } from '@/api'
-import { catalogApi } from '@/api/catalog'
-import type { MeasurementRecord, RecordedDataRecord } from '@/api'
+import type { CalculationDataAnalysisResponse, MeasurementRecord } from '@/api'
 import {
   analyzeRelationships,
   buildAnalysisDataset,
-  collectAnalysisQuantityKindNames,
   createCsv,
-  createMeasurementRanges,
   getTablePage,
   getRelationshipPlot,
   mineDataset,
@@ -24,7 +21,7 @@ type ContextRows = Readonly<{
 
 type LoadedContext = Readonly<{
   rows: ContextRows
-  recordedData: readonly RecordedDataRecord[]
+  calculationData: CalculationDataAnalysisResponse
   fingerprint: string
   measurementSignature: string
 }>
@@ -32,6 +29,8 @@ type LoadedContext = Readonly<{
 let dataset: ReturnType<typeof buildAnalysisDataset> | null = null
 let experimentId: number | null = null
 let measurementSignature = ''
+let calculationDataFingerprint = ''
+let analysisMeasurementIds = new Set<number>()
 
 function postResponse(response: AnalysisWorkerResponse) {
   self.postMessage(response)
@@ -49,7 +48,7 @@ function postProgress(requestId: string, stage: AnalysisProgressStage, completed
 
 async function loadContextRows(selectedExperimentId: number): Promise<ContextRows> {
   const measurementRequest = {
-    ...getListRequest('mine'),
+    ...getListRequest('visible'),
     limit: null,
     filter: { experiment_id: [selectedExperimentId, selectedExperimentId] },
   }
@@ -57,61 +56,19 @@ async function loadContextRows(selectedExperimentId: number): Promise<ContextRow
   return { measurements: response.items.filter((row) => row.experiment_id === selectedExperimentId) }
 }
 
-async function loadRecordedData(
-  requestId: string,
-  measurements: readonly MeasurementRecord[],
-): Promise<RecordedDataRecord[]> {
-  const measurementIds = measurements
-    .map((measurement) => measurement.id)
-    .filter((id): id is number => Number.isSafeInteger(id) && (id ?? 0) > 0)
-  const ranges = createMeasurementRanges(measurementIds)
-  if (ranges.length === 0) {
-    postProgress(requestId, 'Recorded Data 조회', 0, 0)
-    return []
-  }
-
-  const allowedMeasurementIds = new Set(measurementIds)
-  const responses: RecordedDataRecord[][] = Array.from({ length: ranges.length }, () => [])
-  let nextIndex = 0
-  let completed = 0
-  postProgress(requestId, 'Recorded Data 조회', completed, ranges.length)
-
-  const fetchNext = async (): Promise<void> => {
-    while (nextIndex < ranges.length) {
-      const index = nextIndex
-      nextIndex += 1
-      const range = ranges[index]
-      const exactIds = new Set(range.ids)
-      const response = await dbTables.RecordedData.listRows({
-        ...getListRequest('mine'),
-        include_system: false,
-        limit: null,
-        filter: { measurement_id: [range.min, range.max] },
-      })
-      responses[index] = response.items.filter(
-        (row) =>
-          exactIds.has(row.measurement_id) &&
-          allowedMeasurementIds.has(row.measurement_id) &&
-          !row.name.startsWith('rayPaths.'),
-      )
-      completed += 1
-      postProgress(requestId, 'Recorded Data 조회', completed, ranges.length)
-    }
-  }
-
-  await Promise.all(Array.from({ length: Math.min(4, ranges.length) }, () => fetchNext()))
-  return responses.flat()
-}
-
 async function loadContext(requestId: string, selectedExperimentId: number): Promise<LoadedContext> {
   postProgress(requestId, 'Measurement 조회')
   const rows = await loadContextRows(selectedExperimentId)
-  const recordedData = await loadRecordedData(requestId, rows.measurements)
-  const currentMeasurementSignature = stableSignature(rows.measurements)
+  postProgress(requestId, 'Calculation Data 조회')
+  const calculationData = await dbTables.CalculationData.analysis(selectedExperimentId)
+  const measurementIds = new Set(calculationData.items.map((row) => row.measurement_id))
+  const currentMeasurementSignature = stableSignature(
+    rows.measurements.filter((row) => row.id !== undefined && measurementIds.has(row.id)),
+  )
   return {
     rows,
-    recordedData,
-    fingerprint: [currentMeasurementSignature, stableSignature(recordedData)].join(':'),
+    calculationData,
+    fingerprint: [currentMeasurementSignature, calculationData.fingerprint].join(':'),
     measurementSignature: currentMeasurementSignature,
   }
 }
@@ -125,27 +82,16 @@ async function handleRequest(request: AnalysisWorkerRequest) {
   if (request.type === 'load-context') {
     experimentId = request.experimentId
     const loaded = await loadContext(request.requestId, request.experimentId)
-    postProgress(request.requestId, 'Catalog 조회')
-    const quantityKindNames = collectAnalysisQuantityKindNames(loaded.rows.measurements, loaded.recordedData)
-    const quantityKindTensorOrders = new Map<string, number>()
-    for (let offset = 0; offset < quantityKindNames.length; offset += 256) {
-      const slice = await catalogApi.runtimeSlice({
-        solvers: [],
-        quantityKinds: quantityKindNames.slice(offset, offset + 256),
-        materialParameters: [],
-        materialModels: [],
-      })
-      slice.quantityKinds.forEach((definition) => quantityKindTensorOrders.set(definition.name, definition.tensorOrder))
-    }
     postProgress(request.requestId, '데이터셋 구성')
     dataset = buildAnalysisDataset({
+      calculationData: loaded.calculationData.items,
       experimentId: request.experimentId,
       measurements: loaded.rows.measurements,
-      quantityKindTensorOrders,
-      recordedData: loaded.recordedData,
       fingerprint: loaded.fingerprint,
     })
     measurementSignature = loaded.measurementSignature
+    calculationDataFingerprint = loaded.calculationData.fingerprint
+    analysisMeasurementIds = new Set(loaded.calculationData.items.map((row) => row.measurement_id))
     postResponse({ type: 'profile', requestId: request.requestId, profile: dataset.profile })
     return
   }
@@ -155,15 +101,20 @@ async function handleRequest(request: AnalysisWorkerRequest) {
       postResponse({ type: 'stale', requestId: request.requestId, stale: false })
       return
     }
-    const response = await dbTables.Measurement.listRows({
-      ...getListRequest('mine'),
-      limit: null,
-      filter: { experiment_id: [experimentId, experimentId] },
-    })
+    const [response, status] = await Promise.all([
+      dbTables.Measurement.listRows({
+        ...getListRequest('visible'),
+        limit: null,
+        filter: { experiment_id: [experimentId, experimentId] },
+      }),
+      dbTables.CalculationData.analysisStatus(experimentId),
+    ])
     postResponse({
       type: 'stale',
       requestId: request.requestId,
-      stale: stableSignature(response.items) !== measurementSignature,
+      stale:
+        stableSignature(response.items.filter((row) => row.id !== undefined && analysisMeasurementIds.has(row.id))) !==
+          measurementSignature || status.fingerprint !== calculationDataFingerprint,
     })
     return
   }

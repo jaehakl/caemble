@@ -4,7 +4,7 @@ export type AnalysisColumnDescriptor = Readonly<{
   key: string
   label: string
   kind: AnalysisColumnKind
-  source: 'measurement-material' | 'measurement-vars' | 'recorded-data'
+  source: 'calculation-data' | 'measurement-material' | 'measurement-vars'
   count: number
   distinctCount: number
   distinctInputCount?: number
@@ -30,17 +30,10 @@ export type AnalysisProfile = Readonly<{
   fingerprint: string
   experimentId: number
   rowCount: number
-  preparedCount: number
-  recordedMeasurementCount: number
-  recordedDataCount: number
+  measurementCount: number
+  calculationDataCount: number
+  calculationCount: number
   columns: readonly AnalysisColumnDescriptor[]
-  categoricalSummaries: readonly Readonly<{
-    name: string
-    dtype: string
-    quantityKind?: string
-    counts: readonly Readonly<{ value: string; count: number }>[]
-    excludedReason?: string
-  }>[]
   warnings: readonly string[]
 }>
 
@@ -136,8 +129,7 @@ export type AnalysisTablePage = Readonly<{
 
 export type AnalysisProgressStage =
   | 'Measurement 조회'
-  | 'Recorded Data 조회'
-  | 'Catalog 조회'
+  | 'Calculation Data 조회'
   | '데이터셋 구성'
   | '통계 계산'
   | '상관 분석'

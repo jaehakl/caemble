@@ -27,26 +27,28 @@ sys.path.insert(0, str(APP_DIR))
 from db import Calculation, CalculationData, Experiment, Measurement, make_async_db_url  # noqa: E402
 from models import (  # noqa: E402
     CalculationBase,
-    CalculationDataMissingRequest,
-    CalculationDataSaveRequest,
-    CalculationDataScalarListRequest,
+    CalculationDataOutput,
     CalculationListRequest,
     ExperimentSourceBundle,
+    GetListRequestBase,
     RoleEnum,
     SaveExperimentRequest,
     UserData,
 )
-from routers.calculation import (  # noqa: E402
+from service.calculation import (  # noqa: E402
     delete_calculations,
     list_calculations,
     upsert_calculations,
 )
-from routers.calculation_data import (  # noqa: E402
+from service.calculation_data import (  # noqa: E402
+    analyze_calculation_data,
+    calculation_data_analysis_status,
     list_calculation_data_scalars,
     missing_calculation_data,
     save_calculation_data,
 )
 from service.experiment import _derived_counts, experiment_usage, save_experiment  # noqa: E402
+from service.measurement_service import list_measurements  # noqa: E402
 from settings import settings  # noqa: E402
 
 
@@ -280,6 +282,7 @@ async def _verify_crud_contract(database: str) -> None:
     try:
         async with sessions() as session:
             result = await upsert_calculations(
+                session,
                 [
                     CalculationBase(
                         experiment_id=experiment_id,
@@ -288,10 +291,9 @@ async def _verify_crud_contract(database: str) -> None:
                         source_code="export default () => ({ shape: [], data: 1, axes: [] })",
                     )
                 ],
-                session,
-                owner,
+                user=owner,
             )
-            calculation_id = result[0].id
+            calculation_id = result[0]["id"]
 
         async with sessions() as session:
             request = CalculationListRequest(
@@ -300,27 +302,24 @@ async def _verify_crud_contract(database: str) -> None:
                 sort=["name", "asc"],
                 random=True,
             )
-            response = await list_calculations(
-                request,
-                session,
-                owner,
-            )
-            assert response.total == 1
-            assert response.items[0].id == calculation_id
+            response = await list_calculations(session, request, user=owner)
+            assert response["total"] == 1
+            assert response["items"][0].id == calculation_id
             assert request.sort == ["updated_at", "desc"]
             assert request.random is False
 
         async with sessions() as session:
             hidden = await list_calculations(
-                CalculationListRequest(experiment_id=experiment_id, limit=None),
                 session,
-                other,
+                CalculationListRequest(experiment_id=experiment_id, limit=None),
+                user=other,
             )
-            assert hidden.total == 0
+            assert hidden["total"] == 0
 
         async with sessions() as session:
             try:
                 await upsert_calculations(
+                    session,
                     [
                         CalculationBase(
                             id=calculation_id,
@@ -329,8 +328,7 @@ async def _verify_crud_contract(database: str) -> None:
                             source_code="export default () => ({ shape: [], data: 0, axes: [] })",
                         )
                     ],
-                    session,
-                    other,
+                    user=other,
                 )
             except HTTPException as error:
                 assert error.status_code == 404
@@ -339,7 +337,7 @@ async def _verify_crud_contract(database: str) -> None:
 
         async with sessions() as session:
             try:
-                await delete_calculations([calculation_id], session, other)
+                await delete_calculations(session, [calculation_id], user=other)
             except HTTPException as error:
                 assert error.status_code == 404
             else:
@@ -348,6 +346,7 @@ async def _verify_crud_contract(database: str) -> None:
         async with sessions() as session:
             try:
                 await upsert_calculations(
+                    session,
                     [
                         CalculationBase(
                             id=calculation_id,
@@ -356,8 +355,7 @@ async def _verify_crud_contract(database: str) -> None:
                             source_code="export default () => ({ shape: [], data: 1, axes: [] })",
                         )
                     ],
-                    session,
-                    admin,
+                    user=admin,
                 )
             except HTTPException as error:
                 assert error.status_code == 409
@@ -367,6 +365,7 @@ async def _verify_crud_contract(database: str) -> None:
         async with sessions() as session:
             try:
                 await upsert_calculations(
+                    session,
                     [
                         CalculationBase(
                             experiment_id=experiment_id,
@@ -374,8 +373,7 @@ async def _verify_crud_contract(database: str) -> None:
                             source_code="export default () => ({ shape: [], data: 2, axes: [] })",
                         )
                     ],
-                    session,
-                    owner,
+                    user=owner,
                 )
             except HTTPException as error:
                 assert error.status_code == 409
@@ -384,7 +382,7 @@ async def _verify_crud_contract(database: str) -> None:
 
         async with sessions() as session:
             counts = (await _derived_counts(session, [experiment_id]))[experiment_id]
-            assert counts.calculations == 1
+            assert counts["calculations"] == 1
             usage = await experiment_usage(session, [experiment_id], user=owner)
             assert usage["items"][0]["sourceLocked"] is True
             assert usage["items"][0]["derivedCounts"]["calculations"] == 1
@@ -416,11 +414,12 @@ async def _verify_crud_contract(database: str) -> None:
                 raise AssertionError("Experiment source overwrite ignored Calculation lock")
 
         async with sessions() as session:
-            await delete_calculations([calculation_id], session, owner)
+            await delete_calculations(session, [calculation_id], user=owner)
             assert await session.scalar(select(func.count()).select_from(Calculation)) == 0
 
         async with sessions() as session:
             created = await upsert_calculations(
+                session,
                 [
                     CalculationBase(
                         experiment_id=experiment_id,
@@ -428,8 +427,7 @@ async def _verify_crud_contract(database: str) -> None:
                         source_code="export default () => ({ shape: [], data: 1, axes: [] })",
                     )
                 ],
-                session,
-                owner,
+                user=owner,
             )
             assert created
             await session.execute(delete(Experiment).where(Experiment.id == experiment_id))
@@ -454,6 +452,7 @@ async def _verify_calculation_data_contract(database: str) -> None:
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     owner = UserData(id=owner_id, roles=[RoleEnum.user])
     other = UserData(id=other_id, roles=[RoleEnum.user])
+    admin = UserData(id="00000000-0000-0000-0000-000000000001", roles=[RoleEnum.admin])
     source = "export default () => ({ dtype: 'float64', data: 1 })"
     source_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
     changed_source = "export default () => ({ dtype: 'float64', data: 2 })"
@@ -461,132 +460,225 @@ async def _verify_calculation_data_contract(database: str) -> None:
     try:
         async with sessions() as session:
             created = await upsert_calculations(
+                session,
                 [
                     CalculationBase(experiment_id=experiment_id, name="Scalar", source_code=source),
                     CalculationBase(experiment_id=experiment_id, name="Other", source_code=source),
                 ],
-                session,
-                owner,
+                user=owner,
             )
-            first_calculation_id, second_calculation_id = (item.id for item in created)
+            first_calculation_id, second_calculation_id = (item["id"] for item in created)
 
         async with sessions() as session:
             other_created = await upsert_calculations(
-                [CalculationBase(experiment_id=other_experiment_id, name="Hidden", source_code=source)],
                 session,
-                other,
+                [CalculationBase(experiment_id=other_experiment_id, name="Hidden", source_code=source)],
+                user=other,
             )
-            other_calculation_id = other_created[0].id
+            other_calculation_id = other_created[0]["id"]
 
         async with sessions() as session:
             all_missing = await missing_calculation_data(
-                CalculationDataMissingRequest(experiment_id=experiment_id), session, owner
+                session, experiment_id, None, None, user=owner
             )
-            assert all_missing.total == 4
-            assert prepared_measurement_id not in {item.measurement_id for item in all_missing.items}
+            assert all_missing["total"] == 4
+            assert prepared_measurement_id not in {
+                item["measurement_id"] for item in all_missing["items"]
+            }
             selected_calculation = await missing_calculation_data(
-                CalculationDataMissingRequest(
-                    experiment_id=experiment_id,
-                    calculation_id=first_calculation_id,
-                ),
                 session,
-                owner,
+                experiment_id,
+                first_calculation_id,
+                None,
+                user=owner,
             )
-            assert selected_calculation.total == 2
+            assert selected_calculation["total"] == 2
             selected_measurement = await missing_calculation_data(
-                CalculationDataMissingRequest(
-                    experiment_id=experiment_id,
-                    measurement_id=first_measurement_id,
-                ),
                 session,
-                owner,
+                experiment_id,
+                None,
+                first_measurement_id,
+                user=owner,
             )
-            assert selected_measurement.total == 2
+            assert selected_measurement["total"] == 2
 
         async with sessions() as session:
             saved = await save_calculation_data(
-                CalculationDataSaveRequest(
-                    calculation_id=first_calculation_id,
-                    measurement_id=first_measurement_id,
-                    source_hash=source_hash,
-                    data=scalar,
-                ),
                 session,
-                owner,
+                first_calculation_id,
+                first_measurement_id,
+                source_hash,
+                CalculationDataOutput.model_validate(scalar),
+                user=owner,
             )
             duplicate = await save_calculation_data(
-                CalculationDataSaveRequest(
-                    calculation_id=first_calculation_id,
-                    measurement_id=first_measurement_id,
-                    source_hash=source_hash,
-                    data={**scalar, "data": 99},
-                ),
                 session,
-                owner,
+                first_calculation_id,
+                first_measurement_id,
+                source_hash,
+                CalculationDataOutput.model_validate({**scalar, "data": 99}),
+                user=owner,
             )
-            assert saved.created is True
-            assert duplicate.id == saved.id
-            assert duplicate.created is False
-            row = await session.get(CalculationData, saved.id)
+            assert saved["created"] is True
+            assert duplicate["id"] == saved["id"]
+            assert duplicate["created"] is False
+            row = await session.get(CalculationData, saved["id"])
             assert row is not None and row.data["data"] == 1.5
 
         async with sessions() as session:
             await save_calculation_data(
-                CalculationDataSaveRequest(
-                    calculation_id=first_calculation_id,
-                    measurement_id=second_measurement_id,
-                    source_hash=source_hash,
-                    data={**scalar, "data": 3},
-                ),
                 session,
-                owner,
+                first_calculation_id,
+                second_measurement_id,
+                source_hash,
+                CalculationDataOutput.model_validate({**scalar, "data": 3}),
+                user=owner,
             )
             scalar_rows = await list_calculation_data_scalars(
-                CalculationDataScalarListRequest(
-                    calculation_id=first_calculation_id,
-                    exclude_measurement_id=first_measurement_id,
-                ),
                 session,
-                owner,
+                first_calculation_id,
+                first_measurement_id,
+                user=owner,
             )
-            assert scalar_rows.total == 1
-            assert scalar_rows.items[0].measurement_id == second_measurement_id
-            assert scalar_rows.items[0].value == 3
+            assert scalar_rows["total"] == 1
+            assert scalar_rows["items"][0]["measurement_id"] == second_measurement_id
+            assert scalar_rows["items"][0]["value"] == 3
 
         async with sessions() as session:
             await save_calculation_data(
-                CalculationDataSaveRequest(
-                    calculation_id=second_calculation_id,
-                    measurement_id=first_measurement_id,
-                    source_hash=source_hash,
-                    data={
+                session,
+                second_calculation_id,
+                first_measurement_id,
+                source_hash,
+                CalculationDataOutput.model_validate(
+                    {
                         "dtype": "float64",
                         "shape": [2],
                         "data": [1, 2],
                         "axes": [{"name": "x", "ticks": [0, 1]}],
-                    },
+                    }
                 ),
-                session,
-                owner,
+                user=owner,
             )
             scalar_rows = await list_calculation_data_scalars(
-                CalculationDataScalarListRequest(calculation_id=second_calculation_id),
                 session,
-                owner,
+                second_calculation_id,
+                None,
+                user=owner,
             )
-            assert scalar_rows.total == 0
+            assert scalar_rows["total"] == 0
+
+        async with sessions() as session:
+            measurement_response = await list_measurements(
+                session,
+                GetListRequestBase(
+                    scope="mine",
+                    limit=None,
+                    filter={"experiment_id": [experiment_id, experiment_id]},
+                ),
+                user=owner,
+            )
+            counts = {
+                item.id: item.calculation_data_count for item in measurement_response["items"]
+            }
+            assert counts[first_measurement_id] == 2
+            assert counts[second_measurement_id] == 1
+            assert counts[prepared_measurement_id] == 0
+            hidden_measurements = await list_measurements(
+                session,
+                GetListRequestBase(
+                    scope="mine",
+                    limit=None,
+                    filter={"experiment_id": [experiment_id, experiment_id]},
+                ),
+                user=other,
+            )
+            assert hidden_measurements["total"] == 0
+
+        async with sessions() as session:
+            extra = await upsert_calculations(
+                session,
+                [
+                    CalculationBase(experiment_id=experiment_id, name="Single", source_code=source),
+                    CalculationBase(experiment_id=experiment_id, name="Empty", source_code=source),
+                ],
+                user=owner,
+            )
+            single_calculation_id, empty_calculation_id = (item["id"] for item in extra)
+            await save_calculation_data(
+                session,
+                single_calculation_id,
+                first_measurement_id,
+                source_hash,
+                CalculationDataOutput.model_validate(
+                    {
+                        "dtype": "float64",
+                        "shape": [1],
+                        "data": [4],
+                        "axes": [{"name": "x", "ticks": [0]}],
+                    }
+                ),
+                user=owner,
+            )
+            await save_calculation_data(
+                session,
+                empty_calculation_id,
+                first_measurement_id,
+                source_hash,
+                CalculationDataOutput.model_validate(
+                    {
+                        "dtype": "float64",
+                        "shape": [0, 2],
+                        "data": [],
+                        "axes": [
+                            {"name": "x", "ticks": []},
+                            {"name": "y", "ticks": [0, 1]},
+                        ],
+                    }
+                ),
+                user=owner,
+            )
+            analysis = await analyze_calculation_data(
+                session,
+                experiment_id,
+                user=owner,
+            )
+            assert analysis["total"] == 5
+            assert analysis["measurement_count"] == 2
+            by_calculation = {
+                item["calculation_id"]: item for item in analysis["items"]
+            }
+            assert by_calculation[first_calculation_id]["summary"]["kind"] == "scalar"
+            tensor_summary = by_calculation[second_calculation_id]["summary"]
+            assert tensor_summary["kind"] == "tensor"
+            assert tensor_summary["mean"] == 1.5
+            assert round(tensor_summary["std"] or 0, 8) == round(2 ** -0.5, 8)
+            single_summary = by_calculation[single_calculation_id]["summary"]
+            assert single_summary["kind"] == "tensor"
+            assert single_summary["mean"] == 4
+            assert single_summary["std"] == 0
+            empty_summary = by_calculation[empty_calculation_id]["summary"]
+            assert empty_summary["kind"] == "tensor"
+            assert empty_summary["count"] == 0
+            assert empty_summary["mean"] is None and empty_summary["std"] is None
+            initial_analysis_fingerprint = analysis["fingerprint"]
+            status_response = await calculation_data_analysis_status(
+                session,
+                experiment_id,
+                user=owner,
+            )
+            assert status_response["fingerprint"] == initial_analysis_fingerprint
+            assert status_response["total"] == analysis["total"]
 
         async with sessions() as session:
             try:
                 await save_calculation_data(
-                    CalculationDataSaveRequest(
-                        calculation_id=first_calculation_id,
-                        measurement_id=other_measurement_id,
-                        source_hash=source_hash,
-                        data=scalar,
-                    ),
                     session,
-                    owner,
+                    first_calculation_id,
+                    other_measurement_id,
+                    source_hash,
+                    CalculationDataOutput.model_validate(scalar),
+                    user=owner,
                 )
             except HTTPException as error:
                 assert error.status_code == 404
@@ -595,6 +687,7 @@ async def _verify_calculation_data_contract(database: str) -> None:
 
         async with sessions() as session:
             await upsert_calculations(
+                session,
                 [
                     CalculationBase(
                         id=first_calculation_id,
@@ -604,17 +697,24 @@ async def _verify_calculation_data_contract(database: str) -> None:
                         source_code=source,
                     )
                 ],
-                session,
-                owner,
+                user=owner,
             )
             assert await session.scalar(
                 select(func.count()).select_from(CalculationData).where(
                     CalculationData.calculation_id == first_calculation_id
                 )
             ) == 2
+            renamed_status = await calculation_data_analysis_status(
+                session,
+                experiment_id,
+                user=owner,
+            )
+            assert renamed_status["fingerprint"] != initial_analysis_fingerprint
+            renamed_analysis_fingerprint = renamed_status["fingerprint"]
 
         async with sessions() as session:
             await upsert_calculations(
+                session,
                 [
                     CalculationBase(
                         id=first_calculation_id,
@@ -623,24 +723,41 @@ async def _verify_calculation_data_contract(database: str) -> None:
                         source_code=changed_source,
                     )
                 ],
-                session,
-                owner,
+                user=owner,
             )
             assert await session.scalar(
                 select(func.count()).select_from(CalculationData).where(
                     CalculationData.calculation_id == first_calculation_id
                 )
             ) == 0
+            changed_status = await calculation_data_analysis_status(
+                session,
+                experiment_id,
+                user=owner,
+            )
+            assert changed_status["fingerprint"] != renamed_analysis_fingerprint
+            measurement_response = await list_measurements(
+                session,
+                GetListRequestBase(
+                    scope="mine",
+                    limit=None,
+                    filter={"experiment_id": [experiment_id, experiment_id]},
+                ),
+                user=owner,
+            )
+            counts = {
+                item.id: item.calculation_data_count for item in measurement_response["items"]
+            }
+            assert counts[first_measurement_id] == 3
+            assert counts[second_measurement_id] == 0
             try:
                 await save_calculation_data(
-                    CalculationDataSaveRequest(
-                        calculation_id=first_calculation_id,
-                        measurement_id=first_measurement_id,
-                        source_hash=source_hash,
-                        data=scalar,
-                    ),
                     session,
-                    owner,
+                    first_calculation_id,
+                    first_measurement_id,
+                    source_hash,
+                    CalculationDataOutput.model_validate(scalar),
+                    user=owner,
                 )
             except HTTPException as error:
                 assert error.status_code == 409
@@ -648,11 +765,27 @@ async def _verify_calculation_data_contract(database: str) -> None:
                 raise AssertionError("CalculationData accepted a stale Calculation source")
 
         async with sessions() as session:
+            await save_calculation_data(
+                session,
+                other_calculation_id,
+                other_measurement_id,
+                source_hash,
+                CalculationDataOutput.model_validate(scalar),
+                user=other,
+            )
+            admin_analysis = await analyze_calculation_data(
+                session,
+                other_experiment_id,
+                user=admin,
+            )
+            assert admin_analysis["total"] == 1
             try:
                 await missing_calculation_data(
-                    CalculationDataMissingRequest(experiment_id=other_experiment_id),
                     session,
-                    owner,
+                    other_experiment_id,
+                    None,
+                    None,
+                    user=owner,
                 )
             except HTTPException as error:
                 assert error.status_code == 404
@@ -660,14 +793,12 @@ async def _verify_calculation_data_contract(database: str) -> None:
                 raise AssertionError("Another owner's CalculationData targets were visible")
             try:
                 await save_calculation_data(
-                    CalculationDataSaveRequest(
-                        calculation_id=other_calculation_id,
-                        measurement_id=other_measurement_id,
-                        source_hash=source_hash,
-                        data=scalar,
-                    ),
                     session,
-                    owner,
+                    other_calculation_id,
+                    other_measurement_id,
+                    source_hash,
+                    CalculationDataOutput.model_validate(scalar),
+                    user=owner,
                 )
             except HTTPException as error:
                 assert error.status_code == 404

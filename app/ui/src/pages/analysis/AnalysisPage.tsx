@@ -336,7 +336,7 @@ function ColumnPicker({
         </span>
       </div>
       <div className="max-h-80 space-y-3 overflow-y-auto rounded-lg border p-2">
-        {(['measurement-vars', 'measurement-material', 'recorded-data'] as const).map((source) => {
+        {(['measurement-vars', 'measurement-material', 'calculation-data'] as const).map((source) => {
           const group = shown.filter((column) => column.source === source)
           if (group.length === 0) return null
           return (
@@ -346,7 +346,7 @@ function ColumnPicker({
                   ? 'Input vars'
                   : source === 'measurement-material'
                     ? 'Material'
-                    : 'Recorded Data'}
+                    : 'Calculation Data'}
               </p>
               {group.map((column) => {
                 const checked = selected.includes(column.key)
@@ -860,7 +860,7 @@ export function AnalysisWorkspace({
         <Card>
           <CardHeader>
             <CardTitle>로그인이 필요합니다</CardTitle>
-            <CardDescription>내 Measurement와 Recorded Data를 브라우저에서 분석하려면 로그인하세요.</CardDescription>
+            <CardDescription>내 Measurement와 CalculationData를 브라우저에서 분석하려면 로그인하세요.</CardDescription>
           </CardHeader>
           <CardContent>
             <Button type="button" onClick={onRequestLogin}>
@@ -892,7 +892,7 @@ export function AnalysisWorkspace({
           <h2 className="mt-1 text-xl font-semibold tracking-tight">Analysis · {currentTabLabel}</h2>
           {!embedded ? (
             <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-              같은 Experiment의 Measurement와 Recorded Data를 브라우저 Worker에서 분석합니다.
+              같은 Experiment의 Measurement 입력과 CalculationData를 브라우저 Worker에서 분석합니다.
             </p>
           ) : null}
         </div>
@@ -918,7 +918,7 @@ export function AnalysisWorkspace({
         <div className="flex flex-col gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950 sm:flex-row sm:items-center">
           <AlertTriangle className="size-5 shrink-0" />
           <p className="flex-1 text-sm">
-            다른 화면에서 Measurement가 변경되었습니다. 현재 분석 결과는 이전 데이터입니다.
+            Measurement 입력 또는 CalculationData가 변경되었습니다. 현재 분석 결과는 이전 데이터입니다.
           </p>
           <Button onClick={restartWorker} size="sm" variant="outline">
             <RefreshCw />
@@ -976,7 +976,7 @@ export function AnalysisWorkspace({
           <TabsContent className="space-y-4" value="explore">
             <AnalysisSettingsSlot
               container={settingsContainer}
-              description="input vars 하나와 숫자 Recorded Data 하나를 선택하면 산점도가 즉시 갱신됩니다."
+              description="input vars 하나와 숫자 CalculationData 하나를 선택하면 산점도가 즉시 갱신됩니다."
               id="explore"
               title="Explore"
             >
@@ -988,23 +988,23 @@ export function AnalysisWorkspace({
               />
               <SearchableColumnSelect
                 columns={targetColumns}
-                label="Recorded Data"
+                label="Calculation Data"
                 onChange={(value) => requestRelationshipPlot(exploreInputKey, value)}
                 value={exploreTargetKey}
               />
             </AnalysisSettingsSlot>
 
             <div className="grid [grid-template-columns:repeat(auto-fit,minmax(150px,1fr))] gap-3">
-              <MetricCard label="Recorded Measurements" value={profile.recordedMeasurementCount} />
+              <MetricCard label="Measurements with data" value={profile.measurementCount} />
               <MetricCard
                 label="Input vars"
                 value={inputColumns.length}
                 detail={`${featureColumns.length}개 전체 feature`}
               />
               <MetricCard
-                label="Recorded outputs"
+                label="Calculation outputs"
                 value={targetColumns.length}
-                detail={`${profile.recordedDataCount}개 Stored Data`}
+                detail={`${profile.calculationDataCount}개 저장 결과 · ${profile.calculationCount}개 Calculation`}
               />
               <MetricCard label="Calculated pairs" value={relationships?.pairs.length ?? 0} detail="|Pearson r| 순" />
             </div>
@@ -1045,7 +1045,7 @@ export function AnalysisWorkspace({
                   </>
                 ) : (
                   <p className="py-20 text-center text-sm text-muted-foreground">
-                    선택할 수 있는 input vars와 Recorded Data 조합이 없습니다.
+                    선택할 수 있는 input vars와 CalculationData 조합이 없습니다.
                   </p>
                 )}
               </CardContent>
@@ -1059,7 +1059,7 @@ export function AnalysisWorkspace({
               <CardHeader>
                 <CardTitle>Strongest relationships</CardTitle>
                 <CardDescription>
-                  계산 가능한 모든 input vars × Recorded Data 조합을 |Pearson r| 순으로 표시합니다. 최소 표본 수는
+                  계산 가능한 모든 input vars × CalculationData 조합을 |Pearson r| 순으로 표시합니다. 최소 표본 수는
                   3개입니다.
                 </CardDescription>
               </CardHeader>
@@ -1081,7 +1081,7 @@ export function AnalysisWorkspace({
                         <TableRow>
                           <TableHead className="w-14">순위</TableHead>
                           <TableHead>Input</TableHead>
-                          <TableHead>Recorded Data</TableHead>
+                          <TableHead>Calculation Data</TableHead>
                           <TableHead>Pearson</TableHead>
                           <TableHead>Spearman</TableHead>
                           <TableHead>n</TableHead>
@@ -1336,7 +1336,7 @@ export function AnalysisWorkspace({
                 <span className="font-medium">Prediction target</span>
                 <Select onValueChange={setPredictionTargetKey} value={predictionTargetKey || undefined}>
                   <SelectTrigger aria-label="Prediction target">
-                    <SelectValue placeholder="Recorded Data 선택" />
+                    <SelectValue placeholder="Calculation Data 선택" />
                   </SelectTrigger>
                   <SelectContent>
                     {targetColumns.map((column) => (
@@ -1626,7 +1626,7 @@ export function AnalysisWorkspace({
                     <SelectItem value="all">모든 source</SelectItem>
                     <SelectItem value="measurement-vars">Input vars</SelectItem>
                     <SelectItem value="measurement-material">Material</SelectItem>
-                    <SelectItem value="recorded-data">Recorded Data</SelectItem>
+                    <SelectItem value="calculation-data">Calculation Data</SelectItem>
                   </SelectContent>
                 </Select>
                 <Select
@@ -1786,34 +1786,6 @@ export function AnalysisWorkspace({
                 </Table>
               </CardContent>
             </Card>
-            {profile.categoricalSummaries.length > 0 ? (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Boolean · String 빈도</CardTitle>
-                  <CardDescription>숫자 관계 분석과 Prediction에는 포함하지 않습니다.</CardDescription>
-                </CardHeader>
-                <CardContent className="grid [grid-template-columns:repeat(auto-fit,minmax(260px,1fr))] gap-3">
-                  {profile.categoricalSummaries.map((summary) => (
-                    <div className="rounded-lg border p-3" key={summary.name}>
-                      <p className="font-medium">{summary.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {[summary.dtype, summary.quantityKind].filter(Boolean).join(' · ')}
-                      </p>
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {summary.counts.slice(0, 12).map((count) => (
-                          <Badge className="border bg-transparent text-foreground" key={count.value}>
-                            {count.value}: {count.count}
-                          </Badge>
-                        ))}
-                      </div>
-                      {summary.excludedReason ? (
-                        <p className="mt-2 text-xs text-destructive">{summary.excludedReason}</p>
-                      ) : null}
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-            ) : null}
           </TabsContent>
         </Tabs>
       ) : null}
