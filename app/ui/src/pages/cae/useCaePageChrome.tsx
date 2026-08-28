@@ -122,6 +122,8 @@ export function useCaePageChrome({
       workbench.measurementActions.operation === 'generate-and-run' &&
       workbench.measurementActions.cancelable &&
       !workbench.measurementActions.generateAndRunBatch?.repeat
+    const cancellingCurrentRun =
+      workbench.measurementActions.operation === 'save-and-run' && workbench.measurementActions.cancelable
     const cancellingRepeatRun =
       workbench.measurementActions.operation === 'generate-and-run' &&
       workbench.measurementActions.cancelable &&
@@ -238,6 +240,34 @@ export function useCaePageChrome({
               ? savedReason
               : (draftPreviewReason ?? pendingResultReason ?? candidateEvaluationReason ?? evaluationBusyReason))),
         onSelect: () => runSafely(workbench.measurementActions.saveCurrent),
+      },
+      saveAndRunCurrent: {
+        id: 'save-and-run-current',
+        label: cancellingCurrentRun ? 'Cancel' : 'Save & Run',
+        icon: cancellingCurrentRun ? <Square /> : <Play />,
+        disabled:
+          !cancellingCurrentRun &&
+          (!authenticated ||
+            !workbench.hasTasks ||
+            !workbench.experimentClean ||
+            Boolean(selected) ||
+            workbench.experimentDocument.draftTaskNames.length > 0 ||
+            Boolean(candidateEvaluationReason) ||
+            workbench.measurementActions.busy ||
+            Boolean(workbench.measurementActions.pendingRecordMeasurementId)),
+        disabledReason: cancellingCurrentRun
+          ? undefined
+          : !authenticated
+            ? loginReason
+            : (tasklessReason ??
+              (!workbench.experimentClean
+                ? savedReason
+                : selected
+                  ? '선택한 Prepared Measurement는 Run을 사용하세요.'
+                  : (draftPreviewReason ?? pendingResultReason ?? candidateEvaluationReason ?? evaluationBusyReason))),
+        onSelect: cancellingCurrentRun
+          ? workbench.measurementActions.cancel
+          : () => runSafely(workbench.measurementActions.saveAndRunCurrent),
       },
       saveCalculation: {
         id: 'save-calculation',
@@ -571,7 +601,7 @@ export function useCaePageChrome({
             <WorkbenchRibbonActions actions={[actions.generateCandidate, actions.saveCurrentMeasurement]} />
           </WorkbenchRibbonGroup>
           <WorkbenchRibbonGroup label="Run">
-            <WorkbenchRibbonActions actions={[actions.generateAndRun]} />
+            <WorkbenchRibbonActions actions={[actions.saveAndRunCurrent, actions.generateAndRun]} />
             <label className="flex h-[68px] w-16 shrink-0 flex-col items-center justify-center gap-1 text-[10px] text-muted-foreground">
               <input
                 aria-label="Repeat Run 횟수"

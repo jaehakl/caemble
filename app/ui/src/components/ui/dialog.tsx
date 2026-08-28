@@ -7,10 +7,17 @@ export const Dialog = DialogPrimitive.Root
 export const DialogTrigger = DialogPrimitive.Trigger
 export const DialogClose = DialogPrimitive.Close
 
-export function DialogContent({ className, children, ...props }: ComponentProps<typeof DialogPrimitive.Content>) {
+export function DialogContent({
+  className,
+  children,
+  hideOverlay = false,
+  ...props
+}: ComponentProps<typeof DialogPrimitive.Content> & { hideOverlay?: boolean }) {
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=open]:animate-in" />
+      {hideOverlay ? null : (
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=open]:animate-in" />
+      )}
       <DialogPrimitive.Content
         className={cn(
           'fixed top-1/2 left-1/2 z-50 grid w-fit max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl border border-border bg-background p-6 shadow-lg outline-none sm:max-w-lg',

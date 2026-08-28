@@ -596,6 +596,11 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             bottomHeightRatio={page.bottomHeightRatio}
             bottomMode={page.bottomMode}
             busy={workbench.measurementActions.busy || Boolean(workbench.measurementActions.pendingRecordMeasurementId)}
+            candidateEditingDisabled={
+              workbench.measurementActions.busy || Boolean(workbench.measurementActions.pendingRecordMeasurementId)
+            }
+            candidateSessionKey={`${workbench.experimentId ?? 'none'}:${workbench.experimentDocument.candidateGeneration}`}
+            candidateVars={workbench.candidateVars}
             columnRatios={page.calculationColumnRatios ?? [0.22, 0.26, 0.26, 0.26]}
             contextPending={page.calculationContextPending}
             editable={workbench.experimentManageable}
@@ -608,6 +613,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             onBottomHeightRatioChange={(bottomHeightRatio) =>
               page.setLayout((current) => ({ ...current, bottomHeightRatio }))
             }
+            onCandidateVariableChange={workbench.setCandidateVariable}
             onCalculationIdChange={page.setCalculationId}
             onColumnRatiosChange={(calculationColumnRatios) =>
               page.setLayout((current) => ({ ...current, calculationColumnRatios }))
@@ -632,6 +638,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             saveCommand={calculationSaveCommand}
             outputChartRatio={page.calculationOutputChartRatio ?? 0.65}
             selectedCalculationId={page.calculationId}
+            varsSchema={workbench.experimentDocument.varsSchema}
             viewer={viewerPane}
             viewerExpanded={page.viewerExpanded}
           />

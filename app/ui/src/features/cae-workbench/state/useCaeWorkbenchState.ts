@@ -13,6 +13,7 @@ import {
   createCadSourceDocument,
   createExperimentSourceBundle,
   experimentTaskPaths,
+  type Tensor,
   type ExperimentSourceBundle,
   type ExperimentSourceDocument,
   type Vars,
@@ -27,6 +28,7 @@ import type {
   WorkbenchDraft,
   WorkbenchLayoutState,
 } from '../types'
+import { validateVarsTensor } from '../calculation/varsTensor'
 
 function definitionStatus(
   document: ExperimentSourceDocument | null,
@@ -327,6 +329,31 @@ export function useCaeWorkbenchState(
     selection,
     simulation,
   })
+
+  const setCandidateVariable = useCallback(
+    (key: string, value: Tensor) => {
+      const entry = experimentDocument.varsSchema?.[key]
+      const fallback = experimentDocument.variables
+      if (!entry || (!candidateVars && !fallback)) {
+        toast.error('편집할 Candidate 변수 또는 varsSchema가 준비되지 않았습니다.')
+        return
+      }
+      try {
+        const normalized = validateVarsTensor(value, entry, `Candidate vars.${key}`)
+        if (selection.measurement) clearMeasurement()
+        setCandidateVars((current) => Object.freeze({ ...(current ?? fallback ?? {}), [key]: normalized }))
+      } catch (cause: unknown) {
+        toast.error(cause instanceof Error ? cause.message : String(cause))
+      }
+    },
+    [
+      candidateVars,
+      clearMeasurement,
+      experimentDocument.variables,
+      experimentDocument.varsSchema,
+      selection.measurement,
+    ],
+  )
 
   useEffect(() => setCurrentExperimentId(experimentId), [experimentId, setCurrentExperimentId])
 
@@ -636,6 +663,7 @@ export function useCaeWorkbenchState(
     agentWorkspaceSession: workspaceSession,
     candidateVars,
     candidateMaterialParameters,
+    setCandidateVariable,
     saving,
     selection,
     selectionIds,

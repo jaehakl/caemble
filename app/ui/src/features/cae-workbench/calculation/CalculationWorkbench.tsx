@@ -15,6 +15,7 @@ import { dbTables, getListRequest, type CalculationRecord } from '@/api'
 import type { AiAgentApplyRequest, AiAgentApplyResult } from '@/api/aiAgent'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MeasurementExplorer } from '@/features/cae-workbench/measurement'
 import type { BottomDockMode, SavedMeasurement, SavedRecordedData } from '@/features/cae-workbench/types'
 import { CadDiffEditor } from '@/features/viewer/editor/CadDiffEditor'
@@ -24,7 +25,7 @@ import {
   runCalculation,
   type CalculationInput,
 } from '@/lib/calculation'
-import type { RecordedData, RecordedDataRule } from '@/lib/cad'
+import type { RecordedData, RecordedDataRule, Tensor, Vars, VarsSchemaEntry } from '@/lib/cad'
 import { cn } from '@/lib/utils'
 import { buildCalculationRecordedData } from './calculationRecordedData'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
@@ -33,6 +34,7 @@ import { ResizableCalculationOutput } from './ResizableCalculationOutput'
 import { CalculationSaveDialog, type CalculationSaveValues } from './CalculationSaveDialog'
 import { CalculationSourceEditor } from './CalculationSourceEditor'
 import { ResizableCalculationLayout } from './ResizableCalculationLayout'
+import { VarsPanel } from './VarsPanel'
 
 type SavedCalculation = CalculationRecord & { id: number }
 type CalculationDraft = Readonly<{
@@ -121,6 +123,9 @@ export function CalculationWorkbench({
   bottomHeightRatio,
   bottomMode,
   busy,
+  candidateEditingDisabled,
+  candidateSessionKey,
+  candidateVars,
   columnRatios,
   contextPending,
   editable,
@@ -132,6 +137,7 @@ export function CalculationWorkbench({
   onAgentBridgeChange,
   onCalculationIdChange,
   onBottomHeightRatioChange,
+  onCandidateVariableChange,
   onColumnRatiosChange,
   onDeleteMeasurements,
   onDirtyChange,
@@ -149,6 +155,7 @@ export function CalculationWorkbench({
   saveCommand,
   outputChartRatio,
   selectedCalculationId,
+  varsSchema,
   viewer,
   viewerExpanded,
 }: {
@@ -158,6 +165,9 @@ export function CalculationWorkbench({
   bottomHeightRatio: number
   bottomMode: BottomDockMode
   busy: boolean
+  candidateEditingDisabled: boolean
+  candidateSessionKey: string
+  candidateVars: Readonly<Vars> | null
   columnRatios: readonly number[]
   contextPending: boolean
   editable: boolean
@@ -169,6 +179,7 @@ export function CalculationWorkbench({
   onAgentBridgeChange: (bridge: CalculationAgentBridge | null) => void
   onCalculationIdChange: (calculationId: number | null) => void
   onBottomHeightRatioChange: (ratio: number) => void
+  onCandidateVariableChange: (key: string, value: Tensor) => void
   onColumnRatiosChange: (ratios: readonly [number, number, number, number]) => void
   onDeleteMeasurements: (rows: readonly SavedMeasurement[]) => Promise<boolean>
   onDirtyChange: (dirty: boolean) => void
@@ -186,6 +197,7 @@ export function CalculationWorkbench({
   saveCommand: number
   outputChartRatio: number
   selectedCalculationId: number | null
+  varsSchema: Readonly<Record<string, VarsSchemaEntry>> | null
   viewer: ReactNode
   viewerExpanded: boolean
 }) {
@@ -202,6 +214,7 @@ export function CalculationWorkbench({
   const [agentIdentity, setAgentIdentity] = useState<Readonly<{ sourceCode: string; hash: string }> | null>(null)
   const [agentChange, setAgentChange] = useState<CalculationAgentChange | null>(null)
   const [agentDiffOpen, setAgentDiffOpen] = useState(false)
+  const [inputPanel, setInputPanel] = useState<'measurements' | 'vars'>('measurements')
   const [agentTargetSession, setAgentTargetSession] = useState(0)
   const draftRef = useRef(draft)
   const editableRef = useRef(editable)
@@ -916,23 +929,46 @@ export function CalculationWorkbench({
         }
         measurementExplorer={
           <section className="flex h-full min-h-0 flex-col p-2">
-            <h2 className="mb-2 shrink-0 text-sm font-semibold">Measurements</h2>
-            <MeasurementExplorer
-              busy={busy}
-              className="gap-2"
-              enabled={authenticated}
-              experimentId={experimentId}
-              selectedId={measurementId}
-              onClearSelection={() => {
-                invalidatePreview('Measurement 선택을 해제하는 중…')
-                onClearMeasurement()
-              }}
-              onDelete={onDeleteMeasurements}
-              onSelect={(row) => {
-                invalidatePreview('Measurement RecordedData를 불러오는 중…')
-                onSelectMeasurement(row)
-              }}
-            />
+            <Tabs
+              className="flex min-h-0 flex-1 flex-col"
+              value={inputPanel}
+              onValueChange={(value) => setInputPanel(value as 'measurements' | 'vars')}
+            >
+              <TabsList aria-label="Candidate 입력 패널" className="mb-2 h-8 shrink-0 self-start">
+                <TabsTrigger className="h-6 px-2 text-xs" value="measurements">
+                  Measurements
+                </TabsTrigger>
+                <TabsTrigger className="h-6 px-2 text-xs" value="vars">
+                  Vars
+                </TabsTrigger>
+              </TabsList>
+              {inputPanel === 'measurements' ? (
+                <MeasurementExplorer
+                  busy={busy}
+                  className="min-h-0 gap-2"
+                  enabled={authenticated}
+                  experimentId={experimentId}
+                  selectedId={measurementId}
+                  onClearSelection={() => {
+                    invalidatePreview('Measurement 선택을 해제하는 중…')
+                    onClearMeasurement()
+                  }}
+                  onDelete={onDeleteMeasurements}
+                  onSelect={(row) => {
+                    invalidatePreview('Measurement RecordedData를 불러오는 중…')
+                    onSelectMeasurement(row)
+                  }}
+                />
+              ) : (
+                <VarsPanel
+                  candidateSessionKey={candidateSessionKey}
+                  disabled={candidateEditingDisabled}
+                  schema={varsSchema}
+                  vars={candidateVars}
+                  onVariableChange={onCandidateVariableChange}
+                />
+              )}
+            </Tabs>
           </section>
         }
         onColumnRatiosChange={(ratios) => onColumnRatiosChange(ratios as readonly [number, number, number, number])}
