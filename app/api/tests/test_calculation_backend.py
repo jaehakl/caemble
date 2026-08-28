@@ -16,7 +16,8 @@ import gpstation.db  # noqa: E402, F401
 import main  # noqa: E402
 import user_auth.db  # noqa: E402, F401
 from ai.data_tools import VisibleDataError, VisibleDataReader  # noqa: E402
-from models import ExperimentDerivedCounts  # noqa: E402
+from models import CalculationDataOutput, ExperimentDerivedCounts  # noqa: E402
+from pydantic import ValidationError  # noqa: E402
 
 
 class CalculationBackendContractTests(unittest.TestCase):
@@ -57,6 +58,56 @@ class CalculationBackendContractTests(unittest.TestCase):
         self.assertNotIn("DesignerModelBase", schemas)
         self.assertNotIn("PredictorModelBase", schemas)
         self.assertIn("CalculationBase", schemas)
+
+    def test_calculation_data_metadata_and_api_contract(self) -> None:
+        self.assertIn("calculation_data", db.Base.metadata.tables)
+        table = db.Base.metadata.tables["calculation_data"]
+        self.assertEqual(
+            {"id", "created_at", "updated_at", "calculation_id", "measurement_id", "data"},
+            set(table.columns.keys()),
+        )
+        self.assertEqual(
+            {"calculations.id", "measurements.id"},
+            {foreign_key.target_fullname for column in table.columns for foreign_key in column.foreign_keys},
+        )
+        self.assertTrue(
+            any(
+                constraint.name == "uq_calculation_data_calculation_id_measurement_id"
+                for constraint in table.constraints
+            )
+        )
+        openapi = main.app.openapi()
+        for path in (
+            "/calculation_data/missing",
+            "/calculation_data/save",
+            "/calculation_data/scalars",
+        ):
+            self.assertIn(path, openapi["paths"])
+        self.assertIn("CalculationDataOutput", openapi["components"]["schemas"])
+
+    def test_calculation_data_output_validation(self) -> None:
+        scalar = CalculationDataOutput.model_validate(
+            {"dtype": "float64", "shape": [], "data": 2.5, "axes": []}
+        )
+        self.assertEqual(scalar.data, 2.5)
+        line = CalculationDataOutput.model_validate(
+            {
+                "dtype": "int16",
+                "shape": [2],
+                "data": [1, 2],
+                "axes": [{"name": "x", "ticks": [0, 1]}],
+            }
+        )
+        self.assertEqual(line.shape, [2])
+        invalid_outputs = (
+            {"dtype": "float64", "shape": [2], "data": [1], "axes": [{"name": "x", "ticks": [0, 1]}]},
+            {"dtype": "float64", "shape": [], "data": float("nan"), "axes": []},
+            {"dtype": "uint8", "shape": [], "data": 256, "axes": []},
+            {"dtype": "float64", "shape": [2], "data": [1, 2], "axes": []},
+        )
+        for payload in invalid_outputs:
+            with self.subTest(payload=payload), self.assertRaises(ValidationError):
+                CalculationDataOutput.model_validate(payload)
 
     def test_derived_counts_use_calculations(self) -> None:
         self.assertEqual(

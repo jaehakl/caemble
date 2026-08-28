@@ -304,6 +304,11 @@ class Measurement(TimestampMixin, Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    calculation_data: Mapped[List["CalculationData"]] = relationship(
+        back_populates="measurement",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class RecordedData(TimestampMixin, Base):
@@ -359,3 +364,36 @@ class Calculation(TimestampMixin, Base):
     source_code: Mapped[str] = mapped_column(Text, nullable=False)
 
     experiment: Mapped["Experiment"] = relationship(back_populates="calculations")
+    calculation_data: Mapped[List["CalculationData"]] = relationship(
+        back_populates="calculation",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class CalculationData(TimestampMixin, Base):
+    __tablename__ = "calculation_data"
+    __table_args__ = (
+        UniqueConstraint(
+            "calculation_id",
+            "measurement_id",
+            name="uq_calculation_data_calculation_id_measurement_id",
+        ),
+        Index("ix_calculation_data_measurement_id", "measurement_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    calculation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("calculations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    measurement_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("measurements.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    data: Mapped[Any] = mapped_column(JSONB, nullable=False)
+
+    calculation: Mapped["Calculation"] = relationship(back_populates="calculation_data")
+    measurement: Mapped["Measurement"] = relationship(back_populates="calculation_data")

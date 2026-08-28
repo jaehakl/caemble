@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { CalculationOutputChart } from '../src/features/cae-workbench/calculation/CalculationOutputChart'
+import { buildScalarHistogram } from '../src/features/cae-workbench/calculation/calculationHistogram'
 import { Heatmap } from '../src/features/viewer/viewer/Heatmap'
 
 function renderHeatmap(
@@ -97,4 +98,38 @@ const runtimeErrorMarkup = renderToStaticMarkup(
 assert.ok(runtimeErrorMarkup.includes('상세 오류는 중앙 하단 Console에서 확인하세요.'))
 assert.equal(runtimeErrorMarkup.includes('sensitive runtime detail'), false)
 
-console.info('Calculation heatmap tests passed.')
+const outlierHistogram = buildScalarHistogram([0, 1, 2, 3], 10)
+assert.ok(outlierHistogram)
+assert.equal(outlierHistogram.bins.length, 2)
+assert.equal(outlierHistogram.markerRatio, 1)
+assert.equal(outlierHistogram.domainMin, 0)
+assert.equal(outlierHistogram.domainMax, 10)
+const constantHistogram = buildScalarHistogram([5, 5, 5], 5)
+assert.ok(constantHistogram)
+assert.equal(constantHistogram.bins.length, 1)
+assert.equal(constantHistogram.bins[0].count, 3)
+assert.ok(constantHistogram.domainMin < 5 && constantHistogram.domainMax > 5)
+assert.equal(buildScalarHistogram([], 1), null)
+
+const scalarHistogramMarkup = renderToStaticMarkup(
+  <CalculationOutputChart
+    measurementId={42}
+    preview={{ status: 'success', output: { dtype: 'float64', shape: [], data: 10, axes: [] } }}
+    scalarValues={[0, 1, 2, 3]}
+  />,
+)
+assert.ok(scalarHistogramMarkup.includes('data-result-visualization="histogram"'))
+assert.ok(scalarHistogramMarkup.includes('Measurement #42'))
+assert.ok(scalarHistogramMarkup.includes('Calculation scalar output histogram'))
+
+const scalarWithoutPopulation = renderToStaticMarkup(
+  <CalculationOutputChart
+    comparisonMessage="수정한 Calculation을 저장하세요."
+    preview={{ status: 'success', output: { dtype: 'float64', shape: [], data: 3, axes: [] } }}
+    scalarValues={[]}
+  />,
+)
+assert.ok(scalarWithoutPopulation.includes('data-result-visualization="scalar"'))
+assert.ok(scalarWithoutPopulation.includes('수정한 Calculation을 저장하세요.'))
+
+console.info('Calculation chart tests passed.')

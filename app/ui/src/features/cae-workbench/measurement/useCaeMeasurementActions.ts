@@ -14,6 +14,7 @@ import {
 } from '@/lib/cad'
 import type { CaeDataSelection } from './useCaeDataSelection'
 import type { SavedMeasurement } from '../types'
+import type { CalculationDataActions } from '../calculation/useCalculationDataActions'
 
 type GenerateAndRunState = Readonly<{
   attempt: number
@@ -82,6 +83,7 @@ function recordRequest(
 
 export function useCaeMeasurementActions({
   authenticated,
+  calculationDataActions,
   experimentClean,
   experimentDocument,
   experimentId,
@@ -91,6 +93,7 @@ export function useCaeMeasurementActions({
   simulation,
 }: {
   authenticated: boolean
+  calculationDataActions: CalculationDataActions
   experimentClean: boolean
   experimentDocument: CadDocumentController
   experimentId: number | null
@@ -100,6 +103,8 @@ export function useCaeMeasurementActions({
   simulation: SimulationController
 }) {
   const queryClient = useQueryClient()
+  const cancelCalculationData = calculationDataActions.cancel
+  const calculateMeasurementData = calculationDataActions.calculateMeasurement
   const [operation, setOperation] = useState<
     'candidate' | 'delete' | 'generate-and-run' | 'measurement' | 'record' | 'save' | 'save-and-run' | null
   >(null)
@@ -108,6 +113,7 @@ export function useCaeMeasurementActions({
   const [stage, setStage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pendingRecordMeasurementId, setPendingRecordMeasurementId] = useState<number | null>(null)
+  const [automaticCalculationData, setAutomaticCalculationData] = useState(false)
   const activeMeasurementId = useRef<number | null>(null)
   const generateAndRunCancelRequested = useRef(false)
   const generateAndRunSequence = useRef(0)
@@ -203,6 +209,7 @@ export function useCaeMeasurementActions({
     async (measurementId?: number) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'measurements'] }),
+        queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculation-data'] }),
         queryClient.invalidateQueries({ queryKey: ['analysis', experimentId] }),
         ...(measurementId
           ? [queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'recorded-data', measurementId] })]
@@ -449,7 +456,10 @@ export function useCaeMeasurementActions({
     ) {
       return
     }
-    if (generateAndRunState.phase === 'running') simulation.cancel()
+    if (generateAndRunState.phase === 'running') {
+      if (automaticCalculationData) cancelCalculationData()
+      else simulation.cancel()
+    }
     if (finishGenerateAndRun(generateAndRunState.sequence)) {
       fail(
         new Error(
@@ -459,6 +469,8 @@ export function useCaeMeasurementActions({
       )
     }
   }, [
+    automaticCalculationData,
+    cancelCalculationData,
     experimentClean,
     experimentId,
     experimentSourceHash,
@@ -478,10 +490,23 @@ export function useCaeMeasurementActions({
     ) {
       return
     }
-    if (saveAndRunState.phase === 'running') simulation.cancel()
+    if (saveAndRunState.phase === 'running') {
+      if (automaticCalculationData) cancelCalculationData()
+      else simulation.cancel()
+    }
     fail(new Error('Experiment가 변경되어 Save & Run을 중단했습니다. 저장된 Prepared Measurement는 유지됩니다.'), '')
     finishSaveAndRun()
-  }, [experimentClean, experimentId, experimentSourceHash, fail, finishSaveAndRun, saveAndRunState, simulation])
+  }, [
+    automaticCalculationData,
+    cancelCalculationData,
+    experimentClean,
+    experimentId,
+    experimentSourceHash,
+    fail,
+    finishSaveAndRun,
+    saveAndRunState,
+    simulation,
+  ])
 
   useEffect(() => {
     const state = generateAndRunState
@@ -728,6 +753,7 @@ export function useCaeMeasurementActions({
 
   const persistRecordedData = useCallback(
     async (measurementId: number, request: MeasurementRecordRequest) => {
+      let alreadyRecorded = false
       try {
         await dbTables.Measurement.record(measurementId, request)
       } catch (cause) {
@@ -738,15 +764,30 @@ export function useCaeMeasurementActions({
         pendingRecordRequest.current = null
         await invalidate(measurementId).catch(() => undefined)
         toast.success(`Measurement #${measurementId}의 RecordedData는 이미 저장되어 있었습니다.`)
-        return
+        alreadyRecorded = true
       }
       setPendingRecordMeasurementId(null)
       pendingRecordRequest.current = null
       if (await refreshPersistedMeasurement(measurementId, experimentId)) {
-        toast.success(`Measurement #${measurementId}의 RecordedData를 저장했습니다.`)
+        if (!alreadyRecorded) toast.success(`Measurement #${measurementId}의 RecordedData를 저장했습니다.`)
+      }
+      setAutomaticCalculationData(true)
+      try {
+        const summary = await calculateMeasurementData(measurementId, {
+          onProgress: (progress) =>
+            setStage(`${progress.stage} · ${progress.completed.toLocaleString()}/${progress.total.toLocaleString()}`),
+        })
+        if (summary.failed > 0) {
+          const message = `Measurement #${measurementId} CalculationData 일부를 저장하지 못했습니다: 성공 ${summary.succeeded.toLocaleString()}개, 실패 ${summary.failed.toLocaleString()}개`
+          setError(message)
+          toast.warning(message)
+        }
+        return summary
+      } finally {
+        setAutomaticCalculationData(false)
       }
     },
-    [experimentId, invalidate, refreshPersistedMeasurement, selection],
+    [calculateMeasurementData, experimentId, invalidate, refreshPersistedMeasurement, selection],
   )
 
   const retryRecord = useCallback(async () => {
@@ -757,8 +798,8 @@ export function useCaeMeasurementActions({
     setOperation('record')
     setStage('RecordedData 다시 저장')
     try {
-      await persistRecordedData(measurementId, request)
-      return true
+      const summary = await persistRecordedData(measurementId, request)
+      return summary.failed === 0 && !summary.cancelled
     } catch (cause) {
       fail(cause, 'RecordedData를 다시 저장하지 못했습니다.')
       return false
@@ -790,8 +831,11 @@ export function useCaeMeasurementActions({
         try {
           const request = recordRequest(experimentDocumentRef.current, simulationRef.current)
           pendingRecordRequest.current = request
-          await persistRecordedData(measurementId, request)
-          if (batchState) advanceGenerateAndRun(batchState, true)
+          const summary = await persistRecordedData(measurementId, request)
+          if (batchState) {
+            if (summary.cancelled) finishGenerateAndRun(batchState.sequence)
+            else advanceGenerateAndRun(batchState, summary.failed === 0)
+          }
           if (currentState) finishSaveAndRun()
         } catch (cause) {
           if (pendingRecordRequest.current) setPendingRecordMeasurementId(measurementId)
@@ -838,19 +882,29 @@ export function useCaeMeasurementActions({
     if (
       operation !== 'measurement' &&
       !(operation === 'generate-and-run' && generateAndRunState?.phase === 'running') &&
-      !(operation === 'save-and-run' && saveAndRunState?.phase === 'running')
+      !(operation === 'save-and-run' && saveAndRunState?.phase === 'running') &&
+      !automaticCalculationData
     ) {
       return
     }
     if (operation === 'generate-and-run') generateAndRunCancelRequested.current = true
-    simulation.cancel()
-  }, [generateAndRunState?.phase, operation, saveAndRunState?.phase, simulation])
+    if (automaticCalculationData) cancelCalculationData()
+    else simulation.cancel()
+  }, [
+    automaticCalculationData,
+    cancelCalculationData,
+    generateAndRunState?.phase,
+    operation,
+    saveAndRunState?.phase,
+    simulation,
+  ])
 
   const cancelable =
-    (operation === 'measurement' ||
+    (automaticCalculationData ||
+      operation === 'measurement' ||
       (operation === 'generate-and-run' && generateAndRunState?.phase === 'running') ||
       (operation === 'save-and-run' && saveAndRunState?.phase === 'running')) &&
-    ['preparing', 'running'].includes(simulation.process.status)
+    (automaticCalculationData || ['preparing', 'running'].includes(simulation.process.status))
 
   const generateAndRunBatch = generateAndRunState
     ? Object.freeze({
@@ -863,6 +917,7 @@ export function useCaeMeasurementActions({
     : null
 
   return {
+    automaticCalculationData,
     busy: operation !== null,
     cancel,
     cancelable,

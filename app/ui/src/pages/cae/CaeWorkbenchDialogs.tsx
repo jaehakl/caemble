@@ -84,7 +84,9 @@ export function CaeWorkbenchDialogs({
         }
         onOpenChange={closeDialog}
         onSubmit={async (values) => {
-          if (workbench.measurementActions.busy) throw new Error('CAE 작업이 끝난 뒤 source를 저장하세요.')
+          if (workbench.measurementActions.busy || workbench.calculationDataActions.busy) {
+            throw new Error('CAE 작업이 끝난 뒤 source를 저장하세요.')
+          }
           const mode =
             dialog === 'save-experiment-version'
               ? 'new_version'

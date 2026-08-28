@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import type { CalculationPreviewState } from './CalculationOutputChart'
 import { CalculationOutputChart } from './CalculationOutputChart'
 import { CalculationReturnSummary } from './CalculationReturnSummary'
@@ -9,12 +15,18 @@ const returnMinimum = 112
 
 export function ResizableCalculationOutput({
   chartRatio,
+  comparisonMessage,
+  measurementId,
   onChartRatioChange,
   preview,
+  scalarValues,
 }: {
   chartRatio: number
+  comparisonMessage?: string
+  measurementId?: number | null
   onChartRatioChange: (ratio: number) => void
   preview: CalculationPreviewState
+  scalarValues?: readonly number[]
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [height, setHeight] = useState(0)
@@ -89,7 +101,12 @@ export function ResizableCalculationOutput({
       style={{ gridTemplateRows: `${chartHeight}px ${handleHeight}px minmax(0, 1fr)` }}
     >
       <div className="min-h-0 overflow-hidden">
-        <CalculationOutputChart preview={preview} />
+        <CalculationOutputChart
+          comparisonMessage={comparisonMessage}
+          measurementId={measurementId}
+          preview={preview}
+          scalarValues={scalarValues}
+        />
       </div>
       <div
         aria-label="Output Chart와 Return 요약 높이 조절"

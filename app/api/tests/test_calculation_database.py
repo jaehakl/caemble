@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -23,9 +24,12 @@ API_DIR = Path(__file__).resolve().parents[1]
 APP_DIR = API_DIR / "app"
 sys.path.insert(0, str(APP_DIR))
 
-from db import Calculation, Experiment, make_async_db_url  # noqa: E402
+from db import Calculation, CalculationData, Experiment, Measurement, make_async_db_url  # noqa: E402
 from models import (  # noqa: E402
     CalculationBase,
+    CalculationDataMissingRequest,
+    CalculationDataSaveRequest,
+    CalculationDataScalarListRequest,
     CalculationListRequest,
     ExperimentSourceBundle,
     RoleEnum,
@@ -36,6 +40,11 @@ from routers.calculation import (  # noqa: E402
     delete_calculations,
     list_calculations,
     upsert_calculations,
+)
+from routers.calculation_data import (  # noqa: E402
+    list_calculation_data_scalars,
+    missing_calculation_data,
+    save_calculation_data,
 )
 from service.experiment import _derived_counts, experiment_usage, save_experiment  # noqa: E402
 from settings import settings  # noqa: E402
@@ -139,6 +148,7 @@ async def _calculation_test_databases() -> set[str]:
 async def _replace_calculation_with_legacy_tables(database: str) -> None:
     connection = await asyncpg.connect(**_connect_arguments(database))
     try:
+        await connection.execute("DROP TABLE IF EXISTS calculation_data")
         await connection.execute("DROP TABLE calculations")
         for table in ("designer_models", "predictor_models"):
             await connection.execute(
@@ -187,6 +197,75 @@ async def _seed_owners(database: str) -> tuple[str, str, int, int]:
                 )
             )
         return owner_id, other_id, experiment_ids[0], experiment_ids[1]
+    finally:
+        await connection.close()
+
+
+async def _seed_calculation_data(database: str) -> tuple[str, str, int, int, int, int, int, int]:
+    owner_id = "00000000-0000-0000-0000-000000000303"
+    other_id = "00000000-0000-0000-0000-000000000404"
+    connection = await asyncpg.connect(**_connect_arguments(database))
+    try:
+        await connection.executemany(
+            "INSERT INTO users (id, is_active) VALUES ($1, true)",
+            [(owner_id,), (other_id,)],
+        )
+        await connection.executemany(
+            "INSERT INTO experiment_namespaces (namespace, user_id) VALUES ($1, $2)",
+            [("calc-data-owner", owner_id), ("calc-data-other", other_id)],
+        )
+        experiment_ids = []
+        for namespace, user_id in (("calc-data-owner", owner_id), ("calc-data-other", other_id)):
+            experiment_ids.append(
+                await connection.fetchval(
+                    """
+                    INSERT INTO experiments (
+                        user_id, namespace, repository_slug, experiment_key,
+                        version_major, version_minor, version_patch,
+                        name, source_bundle, source_hash
+                    ) VALUES ($1, $2, 'repo', 'calculation-data', 0, 1, 0, $3, $4::jsonb, $5)
+                    RETURNING id
+                    """,
+                    user_id,
+                    namespace,
+                    namespace,
+                    json.dumps({"files": {"experiment.tsx": "export default null"}}),
+                    f"hash-{namespace}",
+                )
+            )
+        measurement_ids = []
+        for recorded in (True, True, False):
+            measurement_ids.append(
+                await connection.fetchval(
+                    """
+                    INSERT INTO measurements (
+                        user_id, experiment_id, vars, material_parameters, recorded_at
+                    ) VALUES ($1, $2, '{}'::jsonb, '{}'::jsonb, CASE WHEN $3 THEN now() ELSE NULL END)
+                    RETURNING id
+                    """,
+                    owner_id,
+                    experiment_ids[0],
+                    recorded,
+                )
+            )
+        other_measurement_id = await connection.fetchval(
+            """
+            INSERT INTO measurements (user_id, experiment_id, vars, material_parameters, recorded_at)
+            VALUES ($1, $2, '{}'::jsonb, '{}'::jsonb, now()) RETURNING id
+            """,
+            other_id,
+            experiment_ids[1],
+        )
+        return (
+            owner_id,
+            other_id,
+            experiment_ids[0],
+            experiment_ids[1],
+            measurement_ids[0],
+            measurement_ids[1],
+            measurement_ids[2],
+            other_measurement_id,
+        )
     finally:
         await connection.close()
 
@@ -360,6 +439,253 @@ async def _verify_crud_contract(database: str) -> None:
         await engine.dispose()
 
 
+async def _verify_calculation_data_contract(database: str) -> None:
+    (
+        owner_id,
+        other_id,
+        experiment_id,
+        other_experiment_id,
+        first_measurement_id,
+        second_measurement_id,
+        prepared_measurement_id,
+        other_measurement_id,
+    ) = await _seed_calculation_data(database)
+    engine = create_async_engine(make_async_db_url(_database_url(database)))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    owner = UserData(id=owner_id, roles=[RoleEnum.user])
+    other = UserData(id=other_id, roles=[RoleEnum.user])
+    source = "export default () => ({ dtype: 'float64', data: 1 })"
+    source_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    changed_source = "export default () => ({ dtype: 'float64', data: 2 })"
+    scalar = {"dtype": "float64", "shape": [], "data": 1.5, "axes": []}
+    try:
+        async with sessions() as session:
+            created = await upsert_calculations(
+                [
+                    CalculationBase(experiment_id=experiment_id, name="Scalar", source_code=source),
+                    CalculationBase(experiment_id=experiment_id, name="Other", source_code=source),
+                ],
+                session,
+                owner,
+            )
+            first_calculation_id, second_calculation_id = (item.id for item in created)
+
+        async with sessions() as session:
+            other_created = await upsert_calculations(
+                [CalculationBase(experiment_id=other_experiment_id, name="Hidden", source_code=source)],
+                session,
+                other,
+            )
+            other_calculation_id = other_created[0].id
+
+        async with sessions() as session:
+            all_missing = await missing_calculation_data(
+                CalculationDataMissingRequest(experiment_id=experiment_id), session, owner
+            )
+            assert all_missing.total == 4
+            assert prepared_measurement_id not in {item.measurement_id for item in all_missing.items}
+            selected_calculation = await missing_calculation_data(
+                CalculationDataMissingRequest(
+                    experiment_id=experiment_id,
+                    calculation_id=first_calculation_id,
+                ),
+                session,
+                owner,
+            )
+            assert selected_calculation.total == 2
+            selected_measurement = await missing_calculation_data(
+                CalculationDataMissingRequest(
+                    experiment_id=experiment_id,
+                    measurement_id=first_measurement_id,
+                ),
+                session,
+                owner,
+            )
+            assert selected_measurement.total == 2
+
+        async with sessions() as session:
+            saved = await save_calculation_data(
+                CalculationDataSaveRequest(
+                    calculation_id=first_calculation_id,
+                    measurement_id=first_measurement_id,
+                    source_hash=source_hash,
+                    data=scalar,
+                ),
+                session,
+                owner,
+            )
+            duplicate = await save_calculation_data(
+                CalculationDataSaveRequest(
+                    calculation_id=first_calculation_id,
+                    measurement_id=first_measurement_id,
+                    source_hash=source_hash,
+                    data={**scalar, "data": 99},
+                ),
+                session,
+                owner,
+            )
+            assert saved.created is True
+            assert duplicate.id == saved.id
+            assert duplicate.created is False
+            row = await session.get(CalculationData, saved.id)
+            assert row is not None and row.data["data"] == 1.5
+
+        async with sessions() as session:
+            await save_calculation_data(
+                CalculationDataSaveRequest(
+                    calculation_id=first_calculation_id,
+                    measurement_id=second_measurement_id,
+                    source_hash=source_hash,
+                    data={**scalar, "data": 3},
+                ),
+                session,
+                owner,
+            )
+            scalar_rows = await list_calculation_data_scalars(
+                CalculationDataScalarListRequest(
+                    calculation_id=first_calculation_id,
+                    exclude_measurement_id=first_measurement_id,
+                ),
+                session,
+                owner,
+            )
+            assert scalar_rows.total == 1
+            assert scalar_rows.items[0].measurement_id == second_measurement_id
+            assert scalar_rows.items[0].value == 3
+
+        async with sessions() as session:
+            await save_calculation_data(
+                CalculationDataSaveRequest(
+                    calculation_id=second_calculation_id,
+                    measurement_id=first_measurement_id,
+                    source_hash=source_hash,
+                    data={
+                        "dtype": "float64",
+                        "shape": [2],
+                        "data": [1, 2],
+                        "axes": [{"name": "x", "ticks": [0, 1]}],
+                    },
+                ),
+                session,
+                owner,
+            )
+            scalar_rows = await list_calculation_data_scalars(
+                CalculationDataScalarListRequest(calculation_id=second_calculation_id),
+                session,
+                owner,
+            )
+            assert scalar_rows.total == 0
+
+        async with sessions() as session:
+            try:
+                await save_calculation_data(
+                    CalculationDataSaveRequest(
+                        calculation_id=first_calculation_id,
+                        measurement_id=other_measurement_id,
+                        source_hash=source_hash,
+                        data=scalar,
+                    ),
+                    session,
+                    owner,
+                )
+            except HTTPException as error:
+                assert error.status_code == 404
+            else:
+                raise AssertionError("CalculationData accepted a Measurement from another Experiment")
+
+        async with sessions() as session:
+            await upsert_calculations(
+                [
+                    CalculationBase(
+                        id=first_calculation_id,
+                        experiment_id=experiment_id,
+                        name="Scalar renamed",
+                        description="metadata only",
+                        source_code=source,
+                    )
+                ],
+                session,
+                owner,
+            )
+            assert await session.scalar(
+                select(func.count()).select_from(CalculationData).where(
+                    CalculationData.calculation_id == first_calculation_id
+                )
+            ) == 2
+
+        async with sessions() as session:
+            await upsert_calculations(
+                [
+                    CalculationBase(
+                        id=first_calculation_id,
+                        experiment_id=experiment_id,
+                        name="Scalar renamed",
+                        source_code=changed_source,
+                    )
+                ],
+                session,
+                owner,
+            )
+            assert await session.scalar(
+                select(func.count()).select_from(CalculationData).where(
+                    CalculationData.calculation_id == first_calculation_id
+                )
+            ) == 0
+            try:
+                await save_calculation_data(
+                    CalculationDataSaveRequest(
+                        calculation_id=first_calculation_id,
+                        measurement_id=first_measurement_id,
+                        source_hash=source_hash,
+                        data=scalar,
+                    ),
+                    session,
+                    owner,
+                )
+            except HTTPException as error:
+                assert error.status_code == 409
+            else:
+                raise AssertionError("CalculationData accepted a stale Calculation source")
+
+        async with sessions() as session:
+            try:
+                await missing_calculation_data(
+                    CalculationDataMissingRequest(experiment_id=other_experiment_id),
+                    session,
+                    owner,
+                )
+            except HTTPException as error:
+                assert error.status_code == 404
+            else:
+                raise AssertionError("Another owner's CalculationData targets were visible")
+            try:
+                await save_calculation_data(
+                    CalculationDataSaveRequest(
+                        calculation_id=other_calculation_id,
+                        measurement_id=other_measurement_id,
+                        source_hash=source_hash,
+                        data=scalar,
+                    ),
+                    session,
+                    owner,
+                )
+            except HTTPException as error:
+                assert error.status_code == 404
+            else:
+                raise AssertionError("Another owner's CalculationData was writable")
+
+        async with sessions() as session:
+            await session.execute(delete(Measurement).where(Measurement.id == first_measurement_id))
+            await session.commit()
+            assert await session.scalar(
+                select(func.count()).select_from(CalculationData).where(
+                    CalculationData.measurement_id == first_measurement_id
+                )
+            ) == 0
+    finally:
+        await engine.dispose()
+
+
 @unittest.skipUnless(
     os.getenv("RUN_CALCULATION_DB_TESTS") == "1",
     "Set RUN_CALCULATION_DB_TESTS=1 to use disposable PostgreSQL databases.",
@@ -373,10 +699,12 @@ class CalculationDatabaseIntegrationTests(unittest.TestCase):
             _upgrade(empty_database, "head")
             empty_tables = asyncio.run(_table_names(empty_database))
             self.assertIn("calculations", empty_tables)
+            self.assertIn("calculation_data", empty_tables)
             self.assertNotIn("designer_models", empty_tables)
             self.assertNotIn("predictor_models", empty_tables)
             _check(empty_database)
             asyncio.run(_verify_crud_contract(empty_database))
+            asyncio.run(_verify_calculation_data_contract(empty_database))
 
             asyncio.run(_create_database(legacy_database))
             _upgrade(legacy_database, "000000000001")
@@ -384,6 +712,7 @@ class CalculationDatabaseIntegrationTests(unittest.TestCase):
             _upgrade(legacy_database, "head")
             legacy_tables = asyncio.run(_table_names(legacy_database))
             self.assertIn("calculations", legacy_tables)
+            self.assertIn("calculation_data", legacy_tables)
             self.assertNotIn("designer_models", legacy_tables)
             self.assertNotIn("predictor_models", legacy_tables)
             _check(legacy_database)

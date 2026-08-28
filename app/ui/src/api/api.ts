@@ -255,6 +255,20 @@ type CalculationRecord = Readonly<{
   source_code: string
 }>
 
+export type CalculationDataOutput = Readonly<{
+  dtype: 'float32' | 'float64' | 'int8' | 'int16' | 'int32' | 'uint8' | 'uint16' | 'uint32'
+  shape: readonly number[]
+  data: number | readonly number[]
+  axes: readonly Readonly<{ name: string; ticks: readonly number[]; unit?: string }>[]
+}>
+export type CalculationDataTarget = Readonly<{ calculation_id: number; measurement_id: number }>
+export type CalculationDataMissingRequest = Readonly<{
+  experiment_id: number
+  calculation_id?: number
+  measurement_id?: number
+}>
+export type CalculationDataScalar = Readonly<{ measurement_id: number; value: number }>
+
 type RuntimeCrudListRequest = Readonly<{
   offset: number
   limit: number | null
@@ -391,6 +405,20 @@ export const dbTables = {
     upsertRow: (payload: readonly CalculationRecord[]) =>
       request<UpsertResponse[]>('post', '/calculation/upsert', payload),
     deleteRows: (ids: readonly number[]) => request<null>('delete', '/calculation/', ids),
+  },
+  CalculationData: {
+    missing: (payload: CalculationDataMissingRequest) =>
+      request<{ total: number; items: CalculationDataTarget[] }>('post', '/calculation_data/missing', payload),
+    save: (
+      payload: Readonly<{
+        calculation_id: number
+        measurement_id: number
+        source_hash: string
+        data: CalculationDataOutput
+      }>,
+    ) => request<{ id: number; created: boolean }>('post', '/calculation_data/save', payload),
+    scalars: (payload: Readonly<{ calculation_id: number; exclude_measurement_id?: number }>) =>
+      request<{ total: number; items: CalculationDataScalar[] }>('post', '/calculation_data/scalars', payload),
   },
 } as const
 

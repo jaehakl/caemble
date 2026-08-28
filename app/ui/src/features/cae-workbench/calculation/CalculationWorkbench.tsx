@@ -22,6 +22,7 @@ import { CadDiffEditor } from '@/features/viewer/editor/CadDiffEditor'
 import {
   CALCULATION_SOURCE_SKELETON,
   CalculationExecutionError,
+  calculationSourceHash,
   runCalculation,
   type CalculationInput,
 } from '@/lib/calculation'
@@ -94,11 +95,6 @@ function sameDraft(left: CalculationDraft, right: CalculationDraft) {
   )
 }
 
-async function calculationSourceHash(source: string) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source))
-  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('')
-}
-
 function calculationChangedLines(before: string, after: string) {
   const beforeLines = before.split('\n')
   const afterLines = after.split('\n')
@@ -123,6 +119,7 @@ export function CalculationWorkbench({
   bottomHeightRatio,
   bottomMode,
   busy,
+  calculationDataBusy,
   candidateEditingDisabled,
   candidateSessionKey,
   candidateVars,
@@ -165,6 +162,7 @@ export function CalculationWorkbench({
   bottomHeightRatio: number
   bottomMode: BottomDockMode
   busy: boolean
+  calculationDataBusy: boolean
   candidateEditingDisabled: boolean
   candidateSessionKey: string
   candidateVars: Readonly<Vars> | null
@@ -218,8 +216,10 @@ export function CalculationWorkbench({
   const [agentTargetSession, setAgentTargetSession] = useState(0)
   const draftRef = useRef(draft)
   const editableRef = useRef(editable)
+  const calculationDataBusyRef = useRef(calculationDataBusy)
   draftRef.current = draft
   editableRef.current = editable
+  calculationDataBusyRef.current = calculationDataBusy
   const appliedExperimentRef = useRef(experimentId)
   const selectedCalculationRef = useRef(selectedCalculationId)
   const mutationSequenceRef = useRef(0)
@@ -236,11 +236,13 @@ export function CalculationWorkbench({
         ? '이 Experiment의 Calculation을 저장할 권한이 없습니다.'
         : contextPending || selectedCalculationId !== draft.id
           ? 'Calculation context를 불러오는 중입니다.'
-          : saving
-            ? 'Calculation 저장이 진행 중입니다.'
-            : deleting
-              ? 'Calculation 삭제가 진행 중입니다.'
-              : undefined
+          : calculationDataBusy
+            ? 'CalculationData 작업이 진행 중입니다.'
+            : saving
+              ? 'Calculation 저장이 진행 중입니다.'
+              : deleting
+                ? 'Calculation 삭제가 진행 중입니다.'
+                : undefined
   const request = useMemo(
     () => ({
       ...getListRequest('visible', selectedCalculationId ? [selectedCalculationId] : []),
@@ -259,6 +261,26 @@ export function CalculationWorkbench({
     () => (calculationsQuery.data?.items ?? []).filter((row): row is SavedCalculation => typeof row.id === 'number'),
     [calculationsQuery.data?.items],
   )
+  const scalarCalculationId =
+    authenticated &&
+    draft.id !== null &&
+    !dirty &&
+    selectedCalculationId === draft.id &&
+    preview.status === 'success' &&
+    preview.output.shape.length === 0
+      ? draft.id
+      : null
+  const scalarQuery = useQuery({
+    enabled: scalarCalculationId !== null,
+    queryKey: ['cae-workbench', 'calculation-data', 'scalars', scalarCalculationId, measurementId],
+    queryFn: () => {
+      if (scalarCalculationId === null) throw new Error('Scalar Calculation이 선택되지 않았습니다.')
+      return dbTables.CalculationData.scalars({
+        calculation_id: scalarCalculationId,
+        ...(measurementId === null ? {} : { exclude_measurement_id: measurementId }),
+      })
+    },
+  })
   const recordedSnapshot = useMemo(
     () => buildCalculationRecordedData(recordedRules, recordedData),
     [recordedData, recordedRules],
@@ -368,6 +390,7 @@ export function CalculationWorkbench({
       }
       if (
         !editableRef.current ||
+        calculationDataBusyRef.current ||
         currentHash !== request.baseHash ||
         request.workspaceSession !== calculationWorkspaceSession
       ) {
@@ -398,12 +421,21 @@ export function CalculationWorkbench({
       sourceCode: draft.sourceCode,
       baseHash: agentIdentity?.sourceCode === draft.sourceCode ? agentIdentity.hash : null,
       context: agentContext,
-      editable,
+      editable: editable && !calculationDataBusy,
       targetLabel: draft.id === null ? 'Calculation New' : `Calculation #${draft.id}`,
       workspaceSession: calculationWorkspaceSession,
       apply: applyAgentSource,
     })
-  }, [agentContext, agentIdentity, applyAgentSource, calculationWorkspaceSession, draft, editable, experimentId])
+  }, [
+    agentContext,
+    agentIdentity,
+    applyAgentSource,
+    calculationDataBusy,
+    calculationWorkspaceSession,
+    draft,
+    editable,
+    experimentId,
+  ])
 
   useEffect(() => onAgentBridgeChange(agentBridge), [agentBridge, onAgentBridgeChange])
   useEffect(() => () => onAgentBridgeChange(null), [onAgentBridgeChange])
@@ -500,6 +532,10 @@ export function CalculationWorkbench({
       setPreview({ status: 'loading', message: 'Measurement RecordedData를 불러오는 중…' })
       return cancel
     }
+    if (calculationDataBusy) {
+      setPreview({ status: 'loading', message: 'CalculationData 일괄 계산이 진행 중…' })
+      return cancel
+    }
     if (measurementId === null) {
       setPreview({ status: 'idle', message: 'Recorded Measurement를 선택하면 Output을 자동 계산합니다.' })
       return cancel
@@ -577,6 +613,7 @@ export function CalculationWorkbench({
     }
   }, [
     contextPending,
+    calculationDataBusy,
     draft.sourceCode,
     experimentId,
     measurementId,
@@ -634,6 +671,7 @@ export function CalculationWorkbench({
         ])
         if (sequence !== mutationSequenceRef.current) {
           await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculations'] })
+          await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculation-data'] })
           await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] })
           return false
         }
@@ -646,6 +684,7 @@ export function CalculationWorkbench({
         selectedCalculationRef.current = result.id
         onCalculationIdChange(result.id)
         await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculations'] })
+        await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculation-data'] })
         await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] })
         await onUsageChanged().catch((cause: unknown) => {
           toast.error(
@@ -734,6 +773,7 @@ export function CalculationWorkbench({
       await dbTables.Calculation.deleteRows([draft.id])
       if (sequence !== mutationSequenceRef.current) {
         await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculations'] })
+        await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculation-data'] })
         await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] })
         return
       }
@@ -747,6 +787,7 @@ export function CalculationWorkbench({
       selectedCalculationRef.current = null
       onCalculationIdChange(null)
       await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculations'] })
+      await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculation-data'] })
       await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] })
       await onUsageChanged().catch((cause: unknown) => {
         toast.error(
@@ -800,7 +841,7 @@ export function CalculationWorkbench({
               <div className="flex gap-1">
                 <Button
                   aria-label="새 Calculation"
-                  disabled={!editable || experimentId === null || saving || deleting}
+                  disabled={!editable || experimentId === null || saving || deleting || calculationDataBusy}
                   size="icon"
                   title="New"
                   type="button"
@@ -811,7 +852,7 @@ export function CalculationWorkbench({
                 </Button>
                 <Button
                   aria-label="선택한 Calculation 삭제"
-                  disabled={!editable || saving || deleting || (draft.id === null && !dirty)}
+                  disabled={!editable || saving || deleting || calculationDataBusy || (draft.id === null && !dirty)}
                   size="icon"
                   title="Delete"
                   type="button"
@@ -845,7 +886,7 @@ export function CalculationWorkbench({
                           'w-full px-3 py-2 text-left text-xs outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
                           draft.id === row.id && 'bg-accent',
                         )}
-                        disabled={saving || deleting}
+                        disabled={saving || deleting || calculationDataBusy}
                         type="button"
                         onClick={() => replaceDraft(calculationDraft(row), row.id)}
                       >
@@ -915,7 +956,7 @@ export function CalculationWorkbench({
               ) : (
                 <CalculationSourceEditor
                   diagnostic={preview.status === 'error' && preview.code === 'policy' ? preview.diagnostic : undefined}
-                  disabled={saving || deleting}
+                  disabled={saving || deleting || calculationDataBusy}
                   sourceCode={draft.sourceCode}
                   onSave={saveFromShortcut}
                   onSourceCodeChange={(sourceCode) => {
@@ -978,12 +1019,27 @@ export function CalculationWorkbench({
           <section className="flex h-full min-h-0 flex-col">
             <header className="shrink-0 border-b px-3 py-2">
               <h2 className="text-sm font-semibold">Output Chart</h2>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">Output은 저장되지 않습니다.</p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                Preview와 저장된 Measurement별 CalculationData를 비교합니다.
+              </p>
             </header>
             <div className="min-h-0 flex-1 overflow-hidden">
               <ResizableCalculationOutput
                 chartRatio={outputChartRatio}
+                comparisonMessage={
+                  draft.id === null
+                    ? 'Calculation을 저장하면 다른 Measurement와 비교할 수 있습니다.'
+                    : dirty
+                      ? '수정한 Calculation을 저장한 뒤 비교 데이터를 다시 계산하세요.'
+                      : scalarQuery.isFetching
+                        ? '저장된 비교 데이터를 불러오는 중…'
+                        : scalarQuery.isError
+                          ? '저장된 비교 데이터를 불러오지 못했습니다.'
+                          : undefined
+                }
+                measurementId={measurementId}
                 preview={preview}
+                scalarValues={scalarQuery.isFetching ? undefined : scalarQuery.data?.items.map((item) => item.value)}
                 onChartRatioChange={onOutputChartRatioChange}
               />
             </div>

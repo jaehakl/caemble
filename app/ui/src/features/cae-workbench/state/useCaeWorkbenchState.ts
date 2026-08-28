@@ -29,6 +29,7 @@ import type {
   WorkbenchLayoutState,
 } from '../types'
 import { validateVarsTensor } from '../calculation/varsTensor'
+import { useCalculationDataActions } from '../calculation/useCalculationDataActions'
 
 function definitionStatus(
   document: ExperimentSourceDocument | null,
@@ -319,8 +320,10 @@ export function useCaeWorkbenchState(
     return experimentDocument.generateCandidate()
   }, [clearMeasurement, experimentDocument])
 
+  const calculationDataActions = useCalculationDataActions({ authenticated, experimentId, onActivity })
   const measurementActions = useCaeMeasurementActions({
     authenticated,
+    calculationDataActions,
     experimentClean,
     experimentDocument,
     experimentId,
@@ -669,6 +672,7 @@ export function useCaeWorkbenchState(
     selectionIds,
     selectionRestoring: selectionRestoreStatus === 'restoring',
     measurementActions,
+    calculationDataActions,
     experimentDocument,
     simulation,
     applyExperiment,

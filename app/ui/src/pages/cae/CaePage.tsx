@@ -284,6 +284,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     refreshRuntime,
     requestAnalysisCommand,
     requestCalculationSave,
+    selectedCalculationId: page.calculationId,
     requestLabCommand,
     requestMaterialCommand,
     requestRunSelected: page.requestRunSelected,
@@ -366,7 +367,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     page.activeSection === 'experiment' ? (
       <ExperimentManager
         authenticated={auth.isAuthenticated}
-        busy={workbench.saving !== null || workbench.measurementActions.busy}
+        busy={workbench.saving !== null || workbench.measurementActions.busy || workbench.calculationDataActions.busy}
         compact
         selectedId={workbench.experimentId}
         user={auth.user}
@@ -435,7 +436,11 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               agentChange={workbench.agentChange}
               controller={workbench.experimentDocument}
               disabled={
-                !page.initialized || pendingResult || workbench.measurementActions.busy || workbench.saving !== null
+                !page.initialized ||
+                pendingResult ||
+                workbench.measurementActions.busy ||
+                workbench.calculationDataActions.busy ||
+                workbench.saving !== null
               }
               document={workbench.experiment?.kind === 'experiment' ? workbench.experiment : null}
               initialActiveFile={page.activeExperimentFile}
@@ -595,9 +600,16 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             bottom={bottomDock}
             bottomHeightRatio={page.bottomHeightRatio}
             bottomMode={page.bottomMode}
-            busy={workbench.measurementActions.busy || Boolean(workbench.measurementActions.pendingRecordMeasurementId)}
+            busy={
+              workbench.measurementActions.busy ||
+              workbench.calculationDataActions.busy ||
+              Boolean(workbench.measurementActions.pendingRecordMeasurementId)
+            }
+            calculationDataBusy={workbench.calculationDataActions.busy}
             candidateEditingDisabled={
-              workbench.measurementActions.busy || Boolean(workbench.measurementActions.pendingRecordMeasurementId)
+              workbench.measurementActions.busy ||
+              workbench.calculationDataActions.busy ||
+              Boolean(workbench.measurementActions.pendingRecordMeasurementId)
             }
             candidateSessionKey={`${workbench.experimentId ?? 'none'}:${workbench.experimentDocument.candidateGeneration}`}
             candidateVars={workbench.candidateVars}
@@ -714,6 +726,17 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 취소
               </button>
             ) : null}
+          </span>
+        ) : workbench.calculationDataActions.busy ? (
+          <span className="flex items-center gap-2">
+            {workbench.calculationDataActions.progress?.stage}
+            <button
+              className="font-medium text-destructive"
+              type="button"
+              onClick={workbench.calculationDataActions.cancel}
+            >
+              취소
+            </button>
           </span>
         ) : (
           <span>

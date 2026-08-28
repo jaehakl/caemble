@@ -6,6 +6,7 @@ export {
   CALCULATION_SOURCE_SKELETON,
 } from './declarations'
 export { createCalculationInput } from './input'
+export { calculationSourceHash } from './sourceHash'
 export {
   CALCULATION_BLOCKED_MATHJS_NAMES,
   CALCULATION_MATHJS_NAMES,

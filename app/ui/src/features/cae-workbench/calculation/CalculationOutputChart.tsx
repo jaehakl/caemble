@@ -6,6 +6,7 @@ import type {
 } from '@/lib/calculation/types'
 import { Heatmap } from '@/features/viewer/viewer/Heatmap'
 import { LineChart } from '@/features/viewer/viewer/RecordedDataResults'
+import { buildScalarHistogram } from './calculationHistogram'
 
 export type CalculationPreviewState =
   | Readonly<{ status: 'idle'; message: string }>
@@ -29,7 +30,92 @@ const errorTitles: Readonly<Record<CalculationExecutionErrorCode | 'input', stri
   timeout: '30초 실행 시간 초과',
 })
 
-export function CalculationOutputChart({ preview }: { preview: CalculationPreviewState }) {
+function scalarText(value: number) {
+  return Number.isInteger(value)
+    ? value.toLocaleString()
+    : value.toLocaleString(undefined, { maximumSignificantDigits: 7 })
+}
+
+function ScalarHistogram({
+  current,
+  measurementId,
+  values,
+}: {
+  current: number
+  measurementId: number | null
+  values: readonly number[]
+}) {
+  const histogram = buildScalarHistogram(values, current)
+  if (!histogram) return null
+  const left = 48
+  const right = 620
+  const bottom = 190
+  const height = 145
+  const width = right - left
+  const x = (value: number) =>
+    left + ((value - histogram.domainMin) / (histogram.domainMax - histogram.domainMin)) * width
+  const markerX = left + histogram.markerRatio * width
+  return (
+    <div className="h-full min-h-0 overflow-auto" data-result-visualization="histogram">
+      <svg
+        aria-label="Calculation scalar output histogram"
+        className="h-full min-h-56 w-full min-w-[420px]"
+        role="img"
+        viewBox="0 0 640 230"
+      >
+        <line className="stroke-slate-400" x1={left} x2={right} y1={bottom} y2={bottom} />
+        {histogram.bins.map((bin, index) => {
+          const start = x(bin.min)
+          const end = x(bin.max)
+          const barHeight = (bin.count / Math.max(1, histogram.maximumCount)) * height
+          const barWidth = Math.max(3, end - start - 3)
+          return (
+            <rect
+              className="fill-primary/70"
+              height={barHeight}
+              key={`${bin.min}-${bin.max}-${index}`}
+              rx="2"
+              width={barWidth}
+              x={bin.min === bin.max ? Math.max(left, Math.min(right - 12, x(bin.min) - 6)) : start + 1.5}
+              y={bottom - barHeight}
+            >
+              <title>{`${scalarText(bin.min)}–${scalarText(bin.max)}: ${bin.count.toLocaleString()} Measurements`}</title>
+            </rect>
+          )
+        })}
+        <line className="stroke-orange-600" strokeWidth="3" x1={markerX} x2={markerX} y1="25" y2={bottom} />
+        <circle className="fill-orange-600" cx={markerX} cy="25" r="5" />
+        <text
+          className="fill-orange-700 font-medium"
+          fontSize="11"
+          textAnchor={markerX > 520 ? 'end' : markerX < 120 ? 'start' : 'middle'}
+          x={markerX}
+          y="15"
+        >
+          {measurementId === null ? 'Current' : `Measurement #${measurementId}`} · {scalarText(current)}
+        </text>
+        <text className="fill-muted-foreground" fontSize="11" textAnchor="start" x={left} y="211">
+          {scalarText(histogram.domainMin)}
+        </text>
+        <text className="fill-muted-foreground" fontSize="11" textAnchor="end" x={right} y="211">
+          {scalarText(histogram.domainMax)}
+        </text>
+      </svg>
+    </div>
+  )
+}
+
+export function CalculationOutputChart({
+  comparisonMessage,
+  measurementId = null,
+  preview,
+  scalarValues,
+}: {
+  comparisonMessage?: string
+  measurementId?: number | null
+  preview: CalculationPreviewState
+  scalarValues?: readonly number[]
+}) {
   if (preview.status === 'idle') {
     return (
       <div className="grid h-full place-items-center p-6 text-center text-sm text-muted-foreground">
@@ -92,13 +178,21 @@ export function CalculationOutputChart({ preview }: { preview: CalculationPrevie
         </span>
       </header>
       {output.shape.length === 0 ? (
-        <div
-          aria-label="Calculation scalar output"
-          className="flex min-h-40 items-center justify-center rounded border bg-slate-50 px-4 font-mono text-3xl text-slate-900"
-          data-result-visualization="scalar"
-        >
-          {String(data)}
-        </div>
+        scalarValues?.length ? (
+          <ScalarHistogram current={data as number} measurementId={measurementId} values={scalarValues} />
+        ) : (
+          <div className="space-y-3" data-result-visualization="scalar">
+            <div
+              aria-label="Calculation scalar output"
+              className="flex min-h-40 items-center justify-center rounded border bg-slate-50 px-4 font-mono text-3xl text-slate-900"
+            >
+              {String(data)}
+            </div>
+            <p className="text-center text-xs text-muted-foreground">
+              {comparisonMessage ?? '저장된 비교 데이터가 없습니다.'}
+            </p>
+          </div>
+        )
       ) : output.shape.some((length) => length === 0) ? (
         <div
           className="grid min-h-56 place-items-center rounded border border-dashed bg-slate-50 p-4 text-center text-sm text-slate-500"

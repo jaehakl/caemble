@@ -89,7 +89,7 @@ export function useCaePageSession(
         cancel?.()
         return
       }
-      if (workbench.measurementActions.busy || Boolean(workbench.saving)) {
+      if (workbench.measurementActions.busy || workbench.calculationDataActions.busy || Boolean(workbench.saving)) {
         toast.error(workbench.saving ? '저장이 끝난 뒤 source를 바꾸세요.' : 'CAE 작업이 끝난 뒤 source를 바꾸세요.')
         cancel?.()
         return
@@ -112,6 +112,7 @@ export function useCaePageSession(
       runSafely,
       hasUnsavedCalculationWork,
       workbench.hasUnsavedExperimentWork,
+      workbench.calculationDataActions.busy,
       workbench.measurementActions.busy,
       workbench.measurementActions.pendingRecordMeasurementId,
       workbench.saving,

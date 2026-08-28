@@ -1,8 +1,9 @@
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+import math
+from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, EmailStr, Field, RootModel
+from pydantic import BaseModel, EmailStr, Field, RootModel, StrictFloat, StrictInt, model_validator
 
 
 class RoleEnum(str, Enum):
@@ -213,3 +214,119 @@ class CalculationBase(TimestampFields):
     name: str
     description: Optional[str] = None
     source_code: str
+
+
+CalculationDataDType = Literal[
+    "float32",
+    "float64",
+    "int8",
+    "int16",
+    "int32",
+    "uint8",
+    "uint16",
+    "uint32",
+]
+
+
+class CalculationDataAxis(BaseModel):
+    name: str
+    ticks: List[Union[StrictInt, StrictFloat]]
+    unit: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_ticks(self) -> "CalculationDataAxis":
+        if any(isinstance(value, bool) or not math.isfinite(value) for value in self.ticks):
+            raise ValueError("CalculationData axis ticks must be finite numbers.")
+        return self
+
+
+class CalculationDataOutput(BaseModel):
+    dtype: CalculationDataDType
+    shape: List[StrictInt]
+    data: Any
+    axes: List[CalculationDataAxis]
+
+    @model_validator(mode="after")
+    def validate_output(self) -> "CalculationDataOutput":
+        if len(self.shape) > 2:
+            raise ValueError("CalculationData output rank must be between 0 and 2.")
+        if any(isinstance(length, bool) or length < 0 for length in self.shape):
+            raise ValueError("CalculationData shape lengths must be non-negative integers.")
+        if len(self.axes) != len(self.shape):
+            raise ValueError("CalculationData axes must match output rank.")
+        for index, axis in enumerate(self.axes):
+            if len(axis.ticks) != self.shape[index]:
+                raise ValueError("CalculationData axis ticks must match output shape.")
+
+        values = self.data if isinstance(self.data, list) else [self.data]
+        expected = math.prod(self.shape) if self.shape else 1
+        if expected > 5_000_000:
+            raise ValueError("CalculationData output exceeds the element limit.")
+        if len(values) != expected or (self.shape and not isinstance(self.data, list)) or (not self.shape and isinstance(self.data, list)):
+            raise ValueError("CalculationData data must match output shape.")
+        if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) for value in values):
+            raise ValueError("CalculationData values must be finite numbers.")
+
+        integer_ranges = {
+            "int8": (-128, 127),
+            "int16": (-32768, 32767),
+            "int32": (-2147483648, 2147483647),
+            "uint8": (0, 255),
+            "uint16": (0, 65535),
+            "uint32": (0, 4294967295),
+        }
+        bounds = integer_ranges.get(self.dtype)
+        if bounds and any(not isinstance(value, int) or not bounds[0] <= value <= bounds[1] for value in values):
+            raise ValueError(f"CalculationData values must fit {self.dtype}.")
+        if self.dtype == "float32" and any(abs(value) > 3.4028234663852886e38 for value in values):
+            raise ValueError("CalculationData values must fit float32.")
+        return self
+
+
+class CalculationDataMissingRequest(BaseModel):
+    experiment_id: int
+    calculation_id: Optional[int] = None
+    measurement_id: Optional[int] = None
+
+    @model_validator(mode="after")
+    def validate_selector(self) -> "CalculationDataMissingRequest":
+        if self.calculation_id is not None and self.measurement_id is not None:
+            raise ValueError("calculation_id and measurement_id cannot be combined.")
+        return self
+
+
+class CalculationDataTarget(BaseModel):
+    calculation_id: int
+    measurement_id: int
+
+
+class CalculationDataMissingResponse(BaseModel):
+    total: int
+    items: List[CalculationDataTarget]
+
+
+class CalculationDataSaveRequest(BaseModel):
+    calculation_id: int
+    measurement_id: int
+    source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    data: CalculationDataOutput
+
+
+class CalculationDataSaveResponse(BaseModel):
+    id: int
+    created: bool
+
+
+class CalculationDataScalarListRequest(BaseModel):
+    calculation_id: int
+    exclude_measurement_id: Optional[int] = None
+
+
+class CalculationDataScalar(BaseModel):
+    measurement_id: int
+    value: float
+
+
+class CalculationDataScalarListResponse(BaseModel):
+    total: int
+    items: List[CalculationDataScalar]
