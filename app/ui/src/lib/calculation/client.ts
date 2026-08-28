@@ -3,22 +3,33 @@ import type { RunnerCancelOperationEnvelope } from '@/lib/cad/runner/protocol'
 import { compileCalculationSource } from './compiler'
 import {
   assertCalculationRunnerResultEnvelope,
+  assertCalculationRunnerLogEnvelope,
   assertCalculationRunnerStartedEnvelope,
   type CalculationRunRequest,
   type CalculationRunnerOperationEnvelope,
 } from './protocol'
-import { CalculationExecutionError, type CalculationInput, type CalculationOutput } from './types'
-import { assertCalculationInput, normalizeCalculationOutput } from './validation'
+import {
+  CalculationExecutionError,
+  type CalculationInput,
+  type CalculationLogEntry,
+  type NormalizedCalculationOutput,
+} from './types'
+import { assertCalculationInput, normalizeCalculationRunnerOutput } from './validation'
 
 const runnerStartupTimeoutMs = 10_000
 let calculationRevision = 0
 
-function executeCompiledCalculation(request: CalculationRunRequest, signal: AbortSignal | undefined) {
-  return new Promise<CalculationOutput>((resolve, reject) => {
+function executeCompiledCalculation(
+  request: CalculationRunRequest,
+  signal: AbortSignal | undefined,
+  onLog: ((entry: CalculationLogEntry) => void) | undefined,
+) {
+  return new Promise<NormalizedCalculationOutput>((resolve, reject) => {
     const nonce = crypto.randomUUID()
     let finished = false
     let port: MessagePort | null = null
     let started = false
+    let lastLogSequence = 0
     const cleanup = () => {
       window.clearTimeout(startupTimeout)
       signal?.removeEventListener('abort', abort)
@@ -79,6 +90,37 @@ function executeCompiledCalculation(request: CalculationRunRequest, signal: Abor
               window.clearTimeout(startupTimeout)
               return
             }
+            if (
+              typeof event.data === 'object' &&
+              event.data !== null &&
+              'type' in event.data &&
+              event.data.type === 'operation-log'
+            ) {
+              assertCalculationRunnerLogEnvelope(event.data)
+              if (
+                !started ||
+                event.data.nonce !== nonce ||
+                event.data.requestId !== request.requestId ||
+                event.data.revision !== request.revision ||
+                event.data.sourceHash !== request.compiledSource.sourceHash ||
+                event.data.sequence !== lastLogSequence + 1
+              ) {
+                throw new Error('The isolated Calculation runner log identity is invalid.')
+              }
+              lastLogSequence = event.data.sequence
+              try {
+                onLog?.({
+                  requestId: event.data.requestId,
+                  revision: event.data.revision,
+                  sourceHash: event.data.sourceHash,
+                  sequence: event.data.sequence,
+                  message: event.data.message,
+                })
+              } catch {
+                // Observability must not change Calculation execution behavior.
+              }
+              return
+            }
             assertCalculationRunnerResultEnvelope(event.data)
             if (
               event.data.nonce !== nonce ||
@@ -92,7 +134,7 @@ function executeCompiledCalculation(request: CalculationRunRequest, signal: Abor
               fail(new CalculationExecutionError(event.data.response.errorCode, event.data.response.message), false)
               return
             }
-            const output = normalizeCalculationOutput(event.data.response.output)
+            const output = normalizeCalculationRunnerOutput(event.data.response.output)
             finished = true
             cleanup()
             resolve(output)
@@ -127,7 +169,8 @@ export async function runCalculation(options: {
   sourceCode: string
   input: CalculationInput
   signal?: AbortSignal
-}): Promise<CalculationOutput> {
+  onLog?: (entry: CalculationLogEntry) => void
+}): Promise<NormalizedCalculationOutput> {
   if (options.signal?.aborted) throw new CalculationExecutionError('cancelled', 'Calculation execution was cancelled.')
   try {
     assertCalculationInput(options.input)
@@ -153,5 +196,6 @@ export async function runCalculation(options: {
       input: options.input,
     },
     options.signal,
+    options.onLog,
   )
 }

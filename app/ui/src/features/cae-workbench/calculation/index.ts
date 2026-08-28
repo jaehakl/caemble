@@ -1,1 +1,1 @@
-export { CalculationWorkbench } from './CalculationWorkbench'
+export { CalculationWorkbench, type CalculationSaveState } from './CalculationWorkbench'

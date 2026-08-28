@@ -2,6 +2,7 @@ import { cadSnapshotTransferables } from '../execution/meshSerialization'
 import { installCatalogRuntimeSlice } from '@/lib/catalog/runtime'
 import {
   assertCalculationRunnerOperationEnvelope,
+  assertCalculationRunnerLogEnvelope,
   assertCalculationRunnerResultEnvelope,
   calculationRunnerRejectionEnvelope,
   type CalculationRunnerOperationEnvelope,
@@ -210,6 +211,25 @@ function handleCalculationOperation(event: MessageEvent<unknown>, envelope: Calc
           documentType: 'calculation',
         })
         worker.postMessage(envelope)
+        keepWorker = true
+        return
+      }
+      if (
+        typeof workerEvent.data === 'object' &&
+        workerEvent.data !== null &&
+        'type' in workerEvent.data &&
+        workerEvent.data.type === 'operation-log'
+      ) {
+        assertCalculationRunnerLogEnvelope(workerEvent.data)
+        if (
+          workerEvent.data.nonce !== nonce ||
+          workerEvent.data.requestId !== request.requestId ||
+          workerEvent.data.revision !== request.revision ||
+          workerEvent.data.sourceHash !== request.compiledSource.sourceHash
+        ) {
+          throw new Error('The Calculation Worker log identity is invalid.')
+        }
+        port.postMessage(workerEvent.data)
         keepWorker = true
         return
       }

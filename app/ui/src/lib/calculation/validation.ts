@@ -6,7 +6,7 @@ import {
   calculationDtypes,
   calculationInputDtypes,
   type CalculationInput,
-  type CalculationOutput,
+  type NormalizedCalculationOutput,
 } from './types'
 
 const pathPattern = /^[A-Za-z_][A-Za-z0-9_]{0,62}(?:\.[A-Za-z_][A-Za-z0-9_]{0,62})*$/u
@@ -143,25 +143,40 @@ export function assertCalculationInput(value: unknown): asserts value is Calcula
   }
 }
 
-function flattenOutputData(value: unknown, shape: readonly number[], path: string): number | readonly number[] {
-  const isMatrix =
+function isMathJsMatrix(value: unknown): value is {
+  isMatrix: true
+  size: () => unknown
+  toArray: () => unknown
+} {
+  return (
     typeof value === 'object' &&
     value !== null &&
     'isMatrix' in value &&
     value.isMatrix === true &&
     'size' in value &&
-    'toArray' in value
-  if (isMatrix) {
-    const matrixShape = (value as { size: () => unknown }).size()
-    if (
-      !Array.isArray(matrixShape) ||
-      matrixShape.length !== shape.length ||
-      matrixShape.some((length, index) => length !== shape[index])
-    ) {
-      throw new Error(`${path} Math.js Matrix size does not match shape [${shape.join(', ')}].`)
-    }
+    typeof value.size === 'function' &&
+    'toArray' in value &&
+    typeof value.toArray === 'function'
+  )
+}
+
+function inferOutputShape(value: unknown): readonly number[] {
+  if (isMathJsMatrix(value)) return secureShape(value.size(), 'Calculation output Math.js Matrix size')
+  if (typeof value === 'number') return Object.freeze([])
+  if (!Array.isArray(value)) throw new Error('Calculation output data must be a real scalar, array, or Math.js Matrix.')
+  if (value.length === 0) return Object.freeze([0])
+  if (value.every((item) => !Array.isArray(item))) return Object.freeze([value.length])
+  if (value.some((item) => !Array.isArray(item))) throw new Error('Calculation output data is ragged.')
+  const rows = value as readonly unknown[][]
+  const columns = rows[0].length
+  if (rows.some((row) => row.length !== columns || row.some(Array.isArray))) {
+    throw new Error('Calculation output data is ragged or has rank greater than 2.')
   }
-  const matrix = isMatrix ? (value as { toArray: () => unknown }).toArray() : value
+  return Object.freeze([rows.length, columns])
+}
+
+function flattenOutputData(value: unknown, shape: readonly number[], path: string): number | readonly number[] {
+  const matrix = isMathJsMatrix(value) ? value.toArray() : value
   if (shape.length === 0) {
     if (typeof matrix !== 'number') throw new Error(`${path} must be a real scalar.`)
     return matrix
@@ -183,19 +198,37 @@ function flattenOutputData(value: unknown, shape: readonly number[], path: strin
   ) {
     throw new Error(`${path} is ragged or does not match shape [${shape.join(', ')}].`)
   }
-  if (!isMatrix) throw new Error(`${path} must be a flat row-major array; only Math.js Matrix data may be nested.`)
   return Object.freeze(matrix.flat()) as readonly number[]
 }
 
-export function normalizeCalculationOutput(value: unknown): CalculationOutput {
+function defaultAxes(shape: readonly number[]) {
+  const names = shape.length === 1 ? ['index'] : ['row', 'column']
+  return Object.freeze(
+    shape.map((length, index) =>
+      Object.freeze({
+        name: names[index],
+        ticks: Object.freeze(Array.from({ length }, (_, tick) => tick)),
+      }),
+    ),
+  )
+}
+
+export function normalizeCalculationOutput(value: unknown): NormalizedCalculationOutput {
   const output = secureRecord(value, 'Calculation output')
-  const unexpected = Object.keys(output).filter((key) => !['dtype', 'shape', 'data', 'axes'].includes(key))
+  const unexpected = Object.keys(output).filter((key) => !['dtype', 'data', 'axes'].includes(key))
   if (unexpected.length > 0)
     throw new Error(`Calculation output contains unsupported fields: ${unexpected.join(', ')}.`)
+  return normalizeOutputParts(output, inferOutputShape(output.data), true)
+}
+
+function normalizeOutputParts(
+  output: Record<string, unknown>,
+  shape: readonly number[],
+  allowMissingAxes: boolean,
+): NormalizedCalculationOutput {
   if (!calculationDtypes.includes(output.dtype as (typeof calculationDtypes)[number])) {
     throw new Error('Calculation output dtype is invalid.')
   }
-  const shape = secureShape(output.shape, 'Calculation output shape')
   if (shape.length > 2) throw new Error('Calculation output rank must be 0, 1, or 2.')
   const size = shape.reduce((product, length) => product * length, 1)
   if (size > CALCULATION_OUTPUT_MAX_ELEMENTS) {
@@ -221,11 +254,21 @@ export function normalizeCalculationOutput(value: unknown): CalculationOutput {
   if (dtype === 'float32' && values.some((item) => !Number.isFinite(Math.fround(item)))) {
     throw new Error('Calculation output data contains a value outside the float32 finite range.')
   }
-  const axes = validateAxes(output.axes, shape, 'Calculation output axes')
+  if (!allowMissingAxes && output.axes === undefined) throw new Error('Normalized Calculation output axes are missing.')
+  const axes = output.axes === undefined ? defaultAxes(shape) : validateAxes(output.axes, shape, 'Calculation output axes')
   return Object.freeze({
     dtype,
-    shape: Object.freeze([...shape]) as CalculationOutput['shape'],
+    shape: Object.freeze([...shape]) as NormalizedCalculationOutput['shape'],
     data,
     axes,
   })
+}
+
+export function normalizeCalculationRunnerOutput(value: unknown): NormalizedCalculationOutput {
+  const output = secureRecord(value, 'Normalized Calculation output')
+  const unexpected = Object.keys(output).filter((key) => !['dtype', 'shape', 'data', 'axes'].includes(key))
+  if (unexpected.length > 0) {
+    throw new Error(`Normalized Calculation output contains unsupported fields: ${unexpected.join(', ')}.`)
+  }
+  return normalizeOutputParts(output, secureShape(output.shape, 'Normalized Calculation output shape'), false)
 }

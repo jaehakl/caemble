@@ -38,9 +38,9 @@ export function CalculationSourceEditor({
       .then(({ loadMonaco }) => loadMonaco())
       .then((monaco) => {
         if (cancelled) return
-        const uri = monaco.Uri.parse(`file:///calculation-${modelId}.ts`)
-        const model = monaco.editor.createModel(sourceCodeRef.current, 'typescript', uri)
-        extraLibrary = monaco.typescript.typescriptDefaults.addExtraLib(
+        const uri = monaco.Uri.parse(`file:///calculation-${modelId}.js`)
+        const model = monaco.editor.createModel(sourceCodeRef.current, 'javascript', uri)
+        extraLibrary = monaco.typescript.javascriptDefaults.addExtraLib(
           CALCULATION_MONACO_DECLARATION,
           'file:///calculation-api.d.ts',
         )

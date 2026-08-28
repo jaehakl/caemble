@@ -1,5 +1,6 @@
 export const calculationMonacoStubState = {
-  emitCount: 0,
+  compileCount: 0,
+  modelLanguages: [] as string[],
   modelUris: [] as string[],
 }
 
@@ -10,32 +11,26 @@ const monaco = {
     },
   },
   editor: {
-    createModel(_source: string, _language: string, uri: { toString: () => string }) {
+    createModel(_source: string, language: string, uri: { toString: () => string }) {
+      calculationMonacoStubState.modelLanguages.push(language)
       calculationMonacoStubState.modelUris.push(uri.toString())
       return { uri, dispose() {} }
     },
   },
   typescript: {
-    typescriptDefaults: {
+    javascriptDefaults: {
       addExtraLib() {
         return { dispose() {} }
       },
     },
-    async getTypeScriptWorker() {
+    async getJavaScriptWorker() {
       return async () => ({
         async getSyntacticDiagnostics() {
           return []
         },
         async getSemanticDiagnostics() {
+          calculationMonacoStubState.compileCount += 1
           return []
-        },
-        async getEmitOutput() {
-          calculationMonacoStubState.emitCount += 1
-          await new Promise((resolve) => setTimeout(resolve, 0))
-          return {
-            emitSkipped: false,
-            outputFiles: [{ name: 'calculation.js', text: '"use strict"; exports.default = () => undefined;' }],
-          }
         },
       })
     },

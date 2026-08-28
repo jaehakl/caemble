@@ -7,6 +7,7 @@ import {
   type CalculationRunnerResultEnvelope,
 } from './protocol'
 import { CALCULATION_SHADOWED_GLOBAL_NAMES } from './runtimeGlobals'
+import { createCalculationConsole } from './log'
 import { assertCalculationInput, normalizeCalculationOutput } from './validation'
 import { CalculationExecutionError } from './types'
 
@@ -24,7 +25,7 @@ const deterministicMath = Object.freeze(
   ),
 )
 
-function executeCalculation(envelope: CalculationRunnerOperationEnvelope) {
+function executeCalculation(envelope: CalculationRunnerOperationEnvelope, emitLog: (message: string) => void) {
   const { compiledSource, input } = envelope.request
   assertCalculationInput(input)
   freezeInput(input)
@@ -42,12 +43,13 @@ function executeCalculation(envelope: CalculationRunnerOperationEnvelope) {
     }`,
   )
   const runModule = createRunner(undefined) as (...parameters: unknown[]) => Record<string, unknown>
+  const calculationConsole = createCalculationConsole(emitLog)
   runModule(
     module,
     module.exports,
     requireMathJs,
     deterministicMath,
-    ...Array<undefined>(CALCULATION_SHADOWED_GLOBAL_NAMES.length).fill(undefined),
+    ...CALCULATION_SHADOWED_GLOBAL_NAMES.map((name) => (name === 'console' ? calculationConsole : undefined)),
   )
   const calculate = module.exports.default
   if (typeof calculate !== 'function') throw new Error('Compiled Calculation has no default function.')
@@ -57,6 +59,20 @@ function executeCalculation(envelope: CalculationRunnerOperationEnvelope) {
 function handleOperation(value: unknown) {
   assertCalculationRunnerOperationEnvelope(value)
   const { nonce, request } = value
+  let logSequence = 0
+  const emitLog = (message: string) => {
+    logSequence += 1
+    self.postMessage({
+      type: 'operation-log',
+      operation: 'calculate',
+      nonce,
+      requestId: request.requestId,
+      revision: request.revision,
+      sourceHash: request.compiledSource.sourceHash,
+      sequence: logSequence,
+      message,
+    })
+  }
   let response: CalculationRunnerResultEnvelope['response']
   try {
     response = {
@@ -64,7 +80,7 @@ function handleOperation(value: unknown) {
       requestId: request.requestId,
       revision: request.revision,
       sourceHash: request.compiledSource.sourceHash,
-      output: executeCalculation(value),
+      output: executeCalculation(value, emitLog),
     }
   } catch (error) {
     response = {

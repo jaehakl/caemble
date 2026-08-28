@@ -8,6 +8,7 @@ const sourceLabels: Record<RuntimeActivitySource, string> = {
   cad: 'CAD',
   gpstation: 'GPStation',
   cae: 'CAE',
+  calculation: 'Calculation',
 }
 
 export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
@@ -57,6 +58,7 @@ export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
           <option value="cad">CAD</option>
           <option value="gpstation">GPStation</option>
           <option value="cae">CAE</option>
+          <option value="calculation">Calculation</option>
         </select>
         <select
           aria-label="Level 필터"

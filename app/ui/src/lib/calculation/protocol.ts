@@ -1,10 +1,14 @@
 import {
+  CALCULATION_LOG_MAX_ENTRIES,
+  CALCULATION_LOG_MAX_ENTRY_BYTES,
   calculationExecutionErrorCodes,
   type CalculationExecutionErrorCode,
   type CalculationInput,
-  type CalculationOutput,
+  type NormalizedCalculationOutput,
   type CompiledCalculationSource,
 } from './types'
+
+const encoder = new TextEncoder()
 
 export type CalculationRunRequest = Readonly<{
   type: 'calculate'
@@ -19,7 +23,7 @@ export type CalculationRunSuccess = Readonly<{
   requestId: string
   revision: number
   sourceHash: string
-  output: CalculationOutput
+  output: NormalizedCalculationOutput
 }>
 
 export type CalculationRunError = Readonly<{
@@ -46,6 +50,17 @@ export type CalculationRunnerStartedEnvelope = Readonly<{
   requestId: string
   revision: number
   documentType: 'calculation'
+}>
+
+export type CalculationRunnerLogEnvelope = Readonly<{
+  type: 'operation-log'
+  operation: 'calculate'
+  nonce: string
+  requestId: string
+  revision: number
+  sourceHash: string
+  sequence: number
+  message: string
 }>
 
 export type CalculationRunnerResultEnvelope = Readonly<{
@@ -105,6 +120,25 @@ export function assertCalculationRunnerStartedEnvelope(
   }
   secureNonce(envelope.nonce)
   secureIdentity(envelope)
+}
+
+export function assertCalculationRunnerLogEnvelope(value: unknown): asserts value is CalculationRunnerLogEnvelope {
+  const envelope = secureRecord(value)
+  if (envelope.type !== 'operation-log' || envelope.operation !== 'calculate') {
+    throw new Error('Calculation runner log is invalid.')
+  }
+  secureNonce(envelope.nonce)
+  secureIdentity(envelope)
+  if (
+    typeof envelope.sourceHash !== 'string' ||
+    !Number.isSafeInteger(envelope.sequence) ||
+    (envelope.sequence as number) < 1 ||
+    (envelope.sequence as number) > CALCULATION_LOG_MAX_ENTRIES + 1 ||
+    typeof envelope.message !== 'string' ||
+    encoder.encode(envelope.message as string).byteLength > CALCULATION_LOG_MAX_ENTRY_BYTES
+  ) {
+    throw new Error('Calculation runner log is invalid.')
+  }
 }
 
 export function assertCalculationRunnerResultEnvelope(

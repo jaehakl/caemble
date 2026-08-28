@@ -55,6 +55,7 @@ export type WorkbenchLayoutState = Readonly<{
   rightWidthRatio: number
   calculationColumnRatios?: readonly [number, number, number, number]
   calculationLeftRowRatios?: readonly [number, number, number]
+  calculationOutputChartRatio?: number
   bottomMode: BottomDockMode
   bottomHeightRatio: number
   viewerExpanded: boolean
@@ -77,6 +78,7 @@ export const defaultWorkbenchLayoutState: WorkbenchLayoutState = Object.freeze({
   rightWidthRatio: 0.5,
   calculationColumnRatios: Object.freeze([0.22, 0.26, 0.26, 0.26] as const),
   calculationLeftRowRatios: Object.freeze([0.45, 0.25, 0.3] as const),
+  calculationOutputChartRatio: 0.65,
   bottomMode: 'console',
   bottomHeightRatio: 0.5,
   viewerExpanded: false,

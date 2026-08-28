@@ -16,7 +16,7 @@ const maxDetailStringLength = 1024
 const maxIdentifierLength = 256
 const redacted = '[REDACTED]'
 const sensitiveKey = /authorization|cookie|credential|password|passphrase|secret|token|api[-_ ]?key/iu
-const sources = new Set<RuntimeActivitySource>(['cad', 'gpstation', 'cae'])
+const sources = new Set<RuntimeActivitySource>(['cad', 'gpstation', 'cae', 'calculation'])
 const levels = new Set<RuntimeActivityLevel>(['info', 'warning', 'error'])
 const encoder = new TextEncoder()
 

@@ -1,12 +1,12 @@
 import { AlertCircle, LoaderCircle } from 'lucide-react'
-import type { CalculationExecutionErrorCode, CalculationOutput } from '@/lib/calculation'
+import type { CalculationExecutionErrorCode, NormalizedCalculationOutput } from '@/lib/calculation'
 import { Heatmap, LineChart } from '@/features/viewer/viewer/RecordedDataResults'
 
 export type CalculationPreviewState =
   | Readonly<{ status: 'idle'; message: string }>
   | Readonly<{ status: 'loading'; message: string }>
   | Readonly<{ status: 'error'; code: CalculationExecutionErrorCode | 'input'; message: string }>
-  | Readonly<{ status: 'success'; output: CalculationOutput }>
+  | Readonly<{ status: 'success'; output: NormalizedCalculationOutput }>
 
 const errorTitles: Readonly<Record<CalculationExecutionErrorCode | 'input', string>> = Object.freeze({
   cancelled: '계산 취소됨',
@@ -43,7 +43,7 @@ export function CalculationOutputChart({ preview }: { preview: CalculationPrevie
         <div className="max-w-md text-sm text-destructive">
           <AlertCircle className="mx-auto size-7" />
           <p className="mt-3 font-semibold">{errorTitles[preview.code]}</p>
-          <p className="mt-1 text-xs leading-5 whitespace-pre-wrap">{preview.message}</p>
+          <p className="mt-1 text-xs leading-5">상세 오류는 중앙 하단 Console에서 확인하세요.</p>
         </div>
       </div>
     )

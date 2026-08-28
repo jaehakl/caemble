@@ -26,6 +26,22 @@ export function setupMonaco(monaco: typeof Monaco) {
   })
   typescript.typescriptDefaults.setEagerModelSync(true)
 
+  typescript.javascriptDefaults.setCompilerOptions({
+    target: typescript.ScriptTarget.ES2020,
+    module: typescript.ModuleKind.CommonJS,
+    moduleResolution: typescript.ModuleResolutionKind.NodeJs,
+    allowNonTsExtensions: true,
+    allowJs: true,
+    checkJs: true,
+    strict: true,
+    noImplicitAny: false,
+    noEmit: false,
+    noEmitOnError: false,
+    sourceMap: true,
+    inlineSources: true,
+  })
+  typescript.javascriptDefaults.setEagerModelSync(true)
+
   typescript.typescriptDefaults.addExtraLib(coreTypes, 'file:///node_modules/@caemble/core/index.d.ts')
   typescript.typescriptDefaults.addExtraLib(jsxTypes, 'file:///node_modules/@caemble/core/cad-jsx.d.ts')
   didSetup = true

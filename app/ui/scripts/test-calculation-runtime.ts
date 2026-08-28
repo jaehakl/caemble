@@ -4,6 +4,8 @@ import { CALCULATION_MATHJS_NAMES } from '../src/lib/calculation/mathjsManifest'
 import { CALCULATION_MATHJS_RUNTIME } from '../src/lib/calculation/mathRuntime'
 import { CALCULATION_SHADOWED_GLOBAL_NAMES } from '../src/lib/calculation/runtimeGlobals'
 import { createCalculationInput } from '../src/lib/calculation/input'
+import { createCalculationConsole } from '../src/lib/calculation/log'
+import { assertCalculationRunnerLogEnvelope } from '../src/lib/calculation/protocol'
 import { analyzeCalculationSource } from '../src/lib/calculation/sourcePolicy'
 import {
   CALCULATION_INPUT_MAX_BYTES,
@@ -11,7 +13,11 @@ import {
   CalculationExecutionError,
   calculationInputDtypes,
 } from '../src/lib/calculation/types'
-import { assertCalculationInput, normalizeCalculationOutput } from '../src/lib/calculation/validation'
+import {
+  assertCalculationInput,
+  normalizeCalculationOutput,
+  normalizeCalculationRunnerOutput,
+} from '../src/lib/calculation/validation'
 import type { RecordedData, RecordedDataRule } from '../src/lib/cad/model/descriptor'
 
 assert.deepEqual(Object.keys(CALCULATION_MATHJS_RUNTIME).sort(), [...CALCULATION_MATHJS_NAMES].sort())
@@ -62,7 +68,7 @@ assert.deepEqual({ re: complexSquared.re, im: complexSquared.im }, { re: -3, im:
 const complexMagnitude = (CALCULATION_MATHJS_RUNTIME.abs as (value: unknown) => number)(
   (CALCULATION_MATHJS_RUNTIME.complex as (real: number, imaginary: number) => unknown)(3, 4),
 )
-assert.deepEqual(normalizeCalculationOutput({ dtype: 'float64', shape: [], data: complexMagnitude, axes: [] }), {
+assert.deepEqual(normalizeCalculationOutput({ dtype: 'float64', data: complexMagnitude }), {
   dtype: 'float64',
   shape: [],
   data: 5,
@@ -79,82 +85,92 @@ assert.equal(ode.t[0], 0)
 assert.equal(ode.y[0], 1)
 
 assert.doesNotThrow(() => analyzeCalculationSource(CALCULATION_SOURCE_SKELETON))
+assert.doesNotThrow(() => analyzeCalculationSource('export default function run(record) { return record }'))
+assert.doesNotThrow(() => analyzeCalculationSource('export default function run(value) { return value }'))
 assert.throws(() =>
   analyzeCalculationSource(
-    "import random from 'mathjs'; export default function run(input: CalculationInput) { return input }",
+    "export default function run(input: CalculationInput) { return { dtype: 'float64', data: input } }",
+  ),
+)
+assert.throws(() => analyzeCalculationSource('export default function run(input) { return <div>{input}</div> }'))
+assert.doesNotThrow(() =>
+  analyzeCalculationSource(
+    "export default function run(input) { console.log('input', input); return { dtype: 'float64', data: 1 } }",
   ),
 )
 assert.throws(() =>
   analyzeCalculationSource(
-    "import { mean } from 'other'; export default function run(input: CalculationInput) { return input }",
-  ),
-)
-assert.throws(() =>
-  analyzeCalculationSource('const state = 1; export default function run(input: CalculationInput) { return input }'),
-)
-assert.throws(() =>
-  analyzeCalculationSource('export default async function run(input: CalculationInput) { return input }'),
-)
-assert.throws(() =>
-  analyzeCalculationSource("export default function run(input: CalculationInput) { return Math['random']() }"),
-)
-assert.throws(() =>
-  analyzeCalculationSource("export default function run(input: CalculationInput) { return fetch('/') }"),
-)
-assert.throws(() =>
-  analyzeCalculationSource(
-    "export default function run(input: CalculationInput) { const key = ['con', 'structor'].join(''); return (() => {})[key] }",
+    "export default function run(input) { console.error(input); return { dtype: 'float64', data: 1 } }",
   ),
 )
 assert.throws(() =>
   analyzeCalculationSource(
-    "import { evaluate } from 'mathjs'; export default function run(input: CalculationInput) { return input }",
+    "export default function run(input) { console['log'](input); return { dtype: 'float64', data: 1 } }",
   ),
 )
 assert.throws(() =>
   analyzeCalculationSource(
-    "export default function run(input: CalculationInput) { return Reflect.get(() => {}, 'constructor') }",
+    "export default function run(input) { const log = console.log; log(input); return { dtype: 'float64', data: 1 } }",
+  ),
+)
+assert.throws(() =>
+  analyzeCalculationSource("import random from 'mathjs'; export default function run(input) { return input }"),
+)
+assert.throws(() =>
+  analyzeCalculationSource("import { mean } from 'other'; export default function run(input) { return input }"),
+)
+assert.throws(() => analyzeCalculationSource('const state = 1; export default function run(input) { return input }'))
+assert.throws(() => analyzeCalculationSource('export default async function run(input) { return input }'))
+assert.throws(() => analyzeCalculationSource("export default function run(input) { return Math['random']() }"))
+assert.throws(() => analyzeCalculationSource("export default function run(input) { return fetch('/') }"))
+assert.throws(() =>
+  analyzeCalculationSource(
+    "export default function run(input) { const key = ['con', 'structor'].join(''); return (() => {})[key] }",
+  ),
+)
+assert.throws(() =>
+  analyzeCalculationSource("import { evaluate } from 'mathjs'; export default function run(input) { return input }"),
+)
+assert.throws(() =>
+  analyzeCalculationSource("export default function run(input) { return Reflect.get(() => {}, 'constructor') }"),
+)
+assert.throws(() =>
+  analyzeCalculationSource(
+    'export default function run(input) { const { constructor } = () => {}; return constructor }',
   ),
 )
 assert.throws(() =>
   analyzeCalculationSource(
-    'export default function run(input: CalculationInput) { const { constructor } = () => {}; return constructor }',
+    "export default function run(input) { const key = 'constructor'; const { [key]: Constructor } = (() => {}); return Constructor }",
   ),
 )
 assert.throws(() =>
   analyzeCalculationSource(
-    "export default function run(input: CalculationInput) { const key = 'constructor'; const { [key]: Constructor } = (() => {}); return Constructor }",
+    "import { mean } from 'mathjs'; export default function run(input) { return mean._typedFunctionData }",
   ),
 )
 assert.throws(() =>
   analyzeCalculationSource(
-    "import { mean } from 'mathjs'; export default function run(input: CalculationInput) { return (mean as any)._typedFunctionData }",
+    "import { number } from 'mathjs'; export default function run(input) { const { fromJSON } = number; return fromJSON }",
   ),
 )
 assert.throws(() =>
   analyzeCalculationSource(
-    "import { number } from 'mathjs'; export default function run(input: CalculationInput) { const { fromJSON } = number as any; return fromJSON }",
+    "export default function run(input) { return new Intl.DateTimeFormat('en-US', { second: 'numeric' }).format() }",
   ),
 )
 assert.throws(() =>
-  analyzeCalculationSource(
-    "export default function run(input: CalculationInput) { return new Intl.DateTimeFormat('en-US', { second: 'numeric' }).format() }",
-  ),
-)
-assert.throws(() =>
-  analyzeCalculationSource(
-    'export default function run(input: CalculationInput) { return Temporal.Now.instant().epochMilliseconds }',
-  ),
+  analyzeCalculationSource('export default function run(input) { return Temporal.Now.instant().epochMilliseconds }'),
 )
 for (const source of [
-  "export default function run(input: CalculationInput) { return new Event('tick').timeStamp }",
-  "export default function run(input: CalculationInput) { return new File([], 'input').lastModified }",
-  'export default function run(input: CalculationInput) { return URL.createObjectURL(new Blob()).length }',
-  'export default function run(input: CalculationInput) { return Number(new WeakRef(input).deref() !== undefined) }',
-  'export default function run(input: CalculationInput) { return Atomics.load(new Int32Array(new SharedArrayBuffer(4)), 0) }',
-  'export default function run(input: CalculationInput) { return Number(crossOriginIsolated) }',
-  'export default function run(input: CalculationInput) { return Number((1000).toLocaleString().length) }',
-  'export default function run(input: CalculationInput) { return Number(Object.keys(console).length) }',
+  "export default function run(input) { return new Event('tick').timeStamp }",
+  "export default function run(input) { return new File([], 'input').lastModified }",
+  'export default function run(input) { return URL.createObjectURL(new Blob()).length }',
+  'export default function run(input) { return Number(new WeakRef(input).deref() !== undefined) }',
+  'export default function run(input) { return Atomics.load(new Int32Array(new SharedArrayBuffer(4)), 0) }',
+  'export default function run(input) { return Number(crossOriginIsolated) }',
+  'export default function run(input) { return Number((1000).toLocaleString().length) }',
+  'export default function run(input) { return Number(Object.keys(console).length) }',
 ] as const) {
   assert.throws(() => analyzeCalculationSource(source))
 }
@@ -264,7 +280,7 @@ assert.throws(() =>
   ),
 )
 
-assert.deepEqual(normalizeCalculationOutput({ dtype: 'float64', shape: [], data: 2, axes: [] }), {
+assert.deepEqual(normalizeCalculationOutput({ dtype: 'float64', data: 2 }), {
   dtype: 'float64',
   shape: [],
   data: 2,
@@ -273,7 +289,6 @@ assert.deepEqual(normalizeCalculationOutput({ dtype: 'float64', shape: [], data:
 assert.deepEqual(
   normalizeCalculationOutput({
     dtype: 'float32',
-    shape: [2],
     data: [1, 2],
     axes: [{ name: 'x', ticks: [0, 1], unit: 'm' }],
   }),
@@ -283,8 +298,11 @@ assert.throws(
   () =>
     normalizeCalculationOutput({
       dtype: 'float64',
-      shape: [1, CALCULATION_OUTPUT_MAX_ELEMENTS],
-      data: [],
+      data: {
+        isMatrix: true,
+        size: () => [1, CALCULATION_OUTPUT_MAX_ELEMENTS],
+        toArray: () => [],
+      },
       axes: [],
     }),
   (error: unknown) =>
@@ -296,8 +314,13 @@ assert.throws(
   () =>
     normalizeCalculationOutput({
       dtype: 'float64',
-      shape: [1, CALCULATION_OUTPUT_MAX_ELEMENTS + 1],
-      data: [],
+      data: {
+        isMatrix: true,
+        size: () => [1, CALCULATION_OUTPUT_MAX_ELEMENTS + 1],
+        toArray: () => {
+          throw new Error('must not materialize oversized Matrix')
+        },
+      },
       axes: [],
     }),
   (error: unknown) => error instanceof CalculationExecutionError && error.code === 'output-too-large',
@@ -305,8 +328,10 @@ assert.throws(
 assert.deepEqual(
   normalizeCalculationOutput({
     dtype: 'int16',
-    shape: [2, 2],
-    data: [1, 2, 3, 4],
+    data: [
+      [1, 2],
+      [3, 4],
+    ],
     axes: [
       { name: 'y', ticks: [0, 1] },
       { name: 'x', ticks: [0, 1] },
@@ -317,7 +342,6 @@ assert.deepEqual(
 assert.deepEqual(
   normalizeCalculationOutput({
     dtype: 'float64',
-    shape: [2, 2],
     data: {
       isMatrix: true,
       size: () => [2, 2],
@@ -336,21 +360,6 @@ assert.deepEqual(
 assert.throws(() =>
   normalizeCalculationOutput({
     dtype: 'float64',
-    shape: [2, 2],
-    data: [
-      [1, 2],
-      [3, 4],
-    ],
-    axes: [
-      { name: 'y', ticks: [0, 1] },
-      { name: 'x', ticks: [0, 1] },
-    ],
-  }),
-)
-assert.throws(() =>
-  normalizeCalculationOutput({
-    dtype: 'float64',
-    shape: [2, 2],
     data: { isMatrix: true, size: () => [4], toArray: () => [1, 2, 3, 4] },
     axes: [
       { name: 'y', ticks: [0, 1] },
@@ -358,11 +367,95 @@ assert.throws(() =>
     ],
   }),
 )
-assert.throws(() =>
-  normalizeCalculationOutput({ dtype: 'float64', shape: [], data: { isComplex: true, re: 1, im: 2 }, axes: [] }),
+assert.throws(() => normalizeCalculationOutput({ dtype: 'float64', data: { isComplex: true, re: 1, im: 2 }, axes: [] }))
+assert.deepEqual(normalizeCalculationOutput({ dtype: 'float64', data: [] }), {
+  dtype: 'float64',
+  shape: [0],
+  data: [],
+  axes: [{ name: 'index', ticks: [] }],
+})
+assert.deepEqual(normalizeCalculationOutput({ dtype: 'float64', data: [[], []] }), {
+  dtype: 'float64',
+  shape: [2, 0],
+  data: [],
+  axes: [
+    { name: 'row', ticks: [0, 1] },
+    { name: 'column', ticks: [] },
+  ],
+})
+assert.deepEqual(
+  normalizeCalculationOutput({
+    dtype: 'float64',
+    data: [
+      [1, 2],
+      [3, 4],
+    ],
+  }),
+  {
+    dtype: 'float64',
+    shape: [2, 2],
+    data: [1, 2, 3, 4],
+    axes: [
+      { name: 'row', ticks: [0, 1] },
+      { name: 'column', ticks: [0, 1] },
+    ],
+  },
 )
-assert.throws(() => normalizeCalculationOutput({ dtype: 'float64', shape: [], data: complex, axes: [] }))
-assert.throws(() => normalizeCalculationOutput({ dtype: 'float64', shape: [], data: Number.NaN, axes: [] }))
-assert.throws(() => normalizeCalculationOutput({ dtype: 'uint8', shape: [], data: 256, axes: [] }))
-assert.throws(() => normalizeCalculationOutput({ dtype: 'float32', shape: [], data: Number.MAX_VALUE, axes: [] }))
-assert.throws(() => normalizeCalculationOutput({ dtype: 'float64', shape: [], data: 1, axes: [], unit: 'm' }))
+assert.throws(() => normalizeCalculationOutput({ dtype: 'float64', shape: [], data: 1 }))
+assert.deepEqual(
+  normalizeCalculationRunnerOutput({
+    dtype: 'float64',
+    shape: [2],
+    data: [1, 2],
+    axes: [{ name: 'x', ticks: [0, 1] }],
+  }),
+  { dtype: 'float64', shape: [2], data: [1, 2], axes: [{ name: 'x', ticks: [0, 1] }] },
+)
+assert.throws(() => normalizeCalculationRunnerOutput({ dtype: 'float64', shape: [2], data: [1, 2] }))
+assert.throws(() => normalizeCalculationOutput({ dtype: 'float64', data: [1, 2], axes: [] }))
+assert.throws(() => normalizeCalculationOutput({ dtype: 'float64', data: [[1], [2, 3]] }))
+assert.throws(() => normalizeCalculationOutput({ dtype: 'float64', data: [[[1]]] }))
+assert.throws(() => normalizeCalculationOutput({ dtype: 'float64', data: complex, axes: [] }))
+assert.throws(() => normalizeCalculationOutput({ dtype: 'float64', data: Number.NaN, axes: [] }))
+assert.throws(() => normalizeCalculationOutput({ dtype: 'uint8', data: 256, axes: [] }))
+assert.throws(() => normalizeCalculationOutput({ dtype: 'float32', data: Number.MAX_VALUE, axes: [] }))
+assert.throws(() => normalizeCalculationOutput({ dtype: 'float64', data: 1, axes: [], unit: 'm' }))
+
+const logMessages: string[] = []
+const calculationConsole = createCalculationConsole((message) => logMessages.push(message))
+const circular: { self?: unknown } = {}
+circular.self = circular
+calculationConsole.log('value', 3, [1, 2], circular)
+assert.equal(logMessages[0], 'value 3 [1, 2] {self: [Circular]}')
+calculationConsole.log('x'.repeat(10_000))
+assert.equal(new TextEncoder().encode(logMessages[1]).byteLength <= 4 * 1024, true)
+const cappedMessages: string[] = []
+const cappedConsole = createCalculationConsole((message) => cappedMessages.push(message))
+for (let index = 0; index < 102; index += 1) cappedConsole.log(index)
+assert.equal(cappedMessages.length, 101)
+assert.equal(cappedMessages.at(-1), '[Calculation console.log output truncated]')
+
+assert.doesNotThrow(() =>
+  assertCalculationRunnerLogEnvelope({
+    type: 'operation-log',
+    operation: 'calculate',
+    nonce: '12345678-1234-1234-1234-123456789012',
+    requestId: 'request',
+    revision: 1,
+    sourceHash: 'hash',
+    sequence: 1,
+    message: 'hello',
+  }),
+)
+assert.throws(() =>
+  assertCalculationRunnerLogEnvelope({
+    type: 'operation-log',
+    operation: 'calculate',
+    nonce: '12345678-1234-1234-1234-123456789012',
+    requestId: 'request',
+    revision: 1,
+    sourceHash: 'hash',
+    sequence: 0,
+    message: 'hello',
+  }),
+)

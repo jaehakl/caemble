@@ -1,4 +1,4 @@
-export type RuntimeActivitySource = 'cad' | 'gpstation' | 'cae'
+export type RuntimeActivitySource = 'cad' | 'gpstation' | 'cae' | 'calculation'
 
 export type RuntimeActivityLevel = 'info' | 'warning' | 'error'
 

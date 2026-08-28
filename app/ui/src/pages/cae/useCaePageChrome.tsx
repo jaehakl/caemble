@@ -31,6 +31,7 @@ import {
   type WorkbenchAction,
   type WorkbenchRibbonPanel,
 } from '@/features/cae-workbench/chrome'
+import type { CalculationSaveState } from '@/features/cae-workbench/calculation'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { AnalysisTabId, HelpKindId, WorkbenchSectionId } from '@/features/cae-workbench/types'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
@@ -45,11 +46,14 @@ export type MaterialRibbonCommand = 'new' | 'edit' | 'add-name' | 'add-parameter
 export function useCaePageChrome({
   analysisTab,
   authenticated,
+  calculationDirty,
+  calculationSaveState,
   experimentAuthoringState,
   guardReplacement,
   helpKind,
   materialSelected,
   requestAnalysisCommand,
+  requestCalculationSave,
   requestLabCommand,
   requestMaterialCommand,
   refreshRuntime,
@@ -63,11 +67,14 @@ export function useCaePageChrome({
 }: {
   analysisTab: AnalysisTabId
   authenticated: boolean
+  calculationDirty: boolean
+  calculationSaveState: CalculationSaveState
   experimentAuthoringState: CadEditorAuthoringState | null
   guardReplacement: (run: () => unknown | Promise<unknown>) => void
   helpKind: HelpKindId
   materialSelected: boolean
   requestAnalysisCommand: (command: AnalysisRibbonCommand) => void
+  requestCalculationSave: () => void
   requestLabCommand: (command: LabRibbonCommand) => void
   requestMaterialCommand: (command: MaterialRibbonCommand) => void
   refreshRuntime: () => void
@@ -231,6 +238,16 @@ export function useCaePageChrome({
               ? savedReason
               : (draftPreviewReason ?? pendingResultReason ?? candidateEvaluationReason ?? evaluationBusyReason))),
         onSelect: () => runSafely(workbench.measurementActions.saveCurrent),
+      },
+      saveCalculation: {
+        id: 'save-calculation',
+        label: 'Save',
+        icon: <Save />,
+        shortcut: 'Ctrl+S / Cmd+S',
+        disabled: calculationSaveState.disabled,
+        disabledReason: calculationSaveState.disabledReason,
+        pressed: calculationDirty,
+        onSelect: requestCalculationSave,
       },
       generateAndRun: {
         id: 'generate-and-run',
@@ -454,9 +471,12 @@ export function useCaePageChrome({
     )
   }, [
     authenticated,
+    calculationDirty,
+    calculationSaveState,
     guardReplacement,
     materialSelected,
     requestAnalysisCommand,
+    requestCalculationSave,
     requestLabCommand,
     requestMaterialCommand,
     refreshRuntime,
@@ -544,6 +564,9 @@ export function useCaePageChrome({
       label: 'Calculation',
       content: (
         <>
+          <WorkbenchRibbonGroup label="Calculation">
+            <WorkbenchRibbonActions actions={[actions.saveCalculation]} />
+          </WorkbenchRibbonGroup>
           <WorkbenchRibbonGroup label="Measurement">
             <WorkbenchRibbonActions actions={[actions.generateCandidate, actions.saveCurrentMeasurement]} />
           </WorkbenchRibbonGroup>

@@ -3,6 +3,9 @@ import type { DataDType } from '@/lib/cad'
 export const CALCULATION_INPUT_MAX_BYTES = 64 * 1024 * 1024
 export const CALCULATION_OUTPUT_MAX_ELEMENTS = 5_000_000
 export const CALCULATION_TIMEOUT_MS = 30_000
+export const CALCULATION_LOG_MAX_ENTRIES = 100
+export const CALCULATION_LOG_MAX_ENTRY_BYTES = 4 * 1024
+export const CALCULATION_LOG_MAX_BYTES = 64 * 1024
 
 export const calculationInputDtypes = [
   'bool',
@@ -58,9 +61,23 @@ export type MathJsMatrix = Readonly<{
 
 export type CalculationOutput = Readonly<{
   dtype: CalculationDtype
+  data: number | readonly number[] | readonly (readonly number[])[] | MathJsMatrix
+  axes?: readonly CalculationAxis[]
+}>
+
+export type NormalizedCalculationOutput = Readonly<{
+  dtype: CalculationDtype
   shape: readonly [] | readonly [number] | readonly [number, number]
-  data: number | readonly number[] | MathJsMatrix
+  data: number | readonly number[]
   axes: readonly CalculationAxis[]
+}>
+
+export type CalculationLogEntry = Readonly<{
+  requestId: string
+  revision: number
+  sourceHash: string
+  sequence: number
+  message: string
 }>
 
 export const calculationExecutionErrorCodes = [

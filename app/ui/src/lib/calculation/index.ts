@@ -13,6 +13,9 @@ export {
 } from './mathjsManifest'
 export {
   CALCULATION_INPUT_MAX_BYTES,
+  CALCULATION_LOG_MAX_BYTES,
+  CALCULATION_LOG_MAX_ENTRIES,
+  CALCULATION_LOG_MAX_ENTRY_BYTES,
   CALCULATION_OUTPUT_MAX_ELEMENTS,
   CALCULATION_TIMEOUT_MS,
   CalculationExecutionError,
@@ -28,8 +31,10 @@ export type {
   CalculationInputAxis,
   CalculationInputDtype,
   CalculationInputLeaf,
+  CalculationLogEntry,
   CalculationOutput,
   CompiledCalculationSource,
   MathJsMatrix,
+  NormalizedCalculationOutput,
 } from './types'
-export { assertCalculationInput, normalizeCalculationOutput } from './validation'
+export { assertCalculationInput, normalizeCalculationOutput, normalizeCalculationRunnerOutput } from './validation'

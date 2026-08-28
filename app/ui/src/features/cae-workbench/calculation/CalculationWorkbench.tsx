@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { FilePlus2, LoaderCircle, Save, Trash2 } from 'lucide-react'
+import { FilePlus2, LoaderCircle, Trash2 } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -14,7 +14,6 @@ import { toast } from 'sonner'
 import { dbTables, getListRequest, type CalculationRecord } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { MeasurementExplorer } from '@/features/cae-workbench/measurement'
 import type { BottomDockMode, SavedMeasurement } from '@/features/cae-workbench/types'
 import {
@@ -26,7 +25,10 @@ import {
 import type { RecordedData, RecordedDataRule } from '@/lib/cad'
 import { cn } from '@/lib/utils'
 import { buildCalculationRecordedData } from './calculationRecordedData'
-import { CalculationOutputChart, type CalculationPreviewState } from './CalculationOutputChart'
+import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
+import { type CalculationPreviewState } from './CalculationOutputChart'
+import { ResizableCalculationOutput } from './ResizableCalculationOutput'
+import { CalculationSaveDialog, type CalculationSaveValues } from './CalculationSaveDialog'
 import { CalculationSourceEditor } from './CalculationSourceEditor'
 import { ResizableCalculationLayout } from './ResizableCalculationLayout'
 
@@ -36,6 +38,11 @@ type CalculationDraft = Readonly<{
   name: string
   description: string
   sourceCode: string
+}>
+
+export type CalculationSaveState = Readonly<{
+  disabled: boolean
+  disabledReason?: string
 }>
 
 function emptyCalculationDraft(): CalculationDraft {
@@ -73,12 +80,15 @@ export function CalculationWorkbench({
   measurementId,
   measurementLoading,
   menubar,
+  onActivity,
   onCalculationIdChange,
   onBottomHeightRatioChange,
   onColumnRatiosChange,
   onDeleteMeasurements,
   onDirtyChange,
+  onOutputChartRatioChange,
   onRowRatiosChange,
+  onSaveStateChange,
   onUsageChanged,
   onSelectMeasurement,
   onClearMeasurement,
@@ -86,6 +96,8 @@ export function CalculationWorkbench({
   recordedRules,
   ribbon,
   rowRatios,
+  saveCommand,
+  outputChartRatio,
   selectedCalculationId,
   viewer,
   viewerExpanded,
@@ -102,12 +114,15 @@ export function CalculationWorkbench({
   measurementId: number | null
   measurementLoading: boolean
   menubar: ReactNode
+  onActivity: RuntimeActivityCallback
   onCalculationIdChange: (calculationId: number | null) => void
   onBottomHeightRatioChange: (ratio: number) => void
   onColumnRatiosChange: (ratios: readonly [number, number, number, number]) => void
   onDeleteMeasurements: (rows: readonly SavedMeasurement[]) => Promise<boolean>
   onDirtyChange: (dirty: boolean) => void
+  onOutputChartRatioChange: (ratio: number) => void
   onRowRatiosChange: (ratios: readonly [number, number, number]) => void
+  onSaveStateChange: (state: CalculationSaveState) => void
   onUsageChanged: () => Promise<void>
   onSelectMeasurement: (row: SavedMeasurement) => void
   onClearMeasurement: () => void
@@ -115,6 +130,8 @@ export function CalculationWorkbench({
   recordedRules: readonly RecordedDataRule[]
   ribbon: ReactNode
   rowRatios: readonly number[]
+  saveCommand: number
+  outputChartRatio: number
   selectedCalculationId: number | null
   viewer: ReactNode
   viewerExpanded: boolean
@@ -124,6 +141,7 @@ export function CalculationWorkbench({
   const [baseline, setBaseline] = useState<CalculationDraft>(emptyCalculationDraft)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false)
   const [preview, setPreview] = useState<CalculationPreviewState>({
     status: 'idle',
     message: 'Recorded Measurement와 Calculation source를 선택하세요.',
@@ -131,9 +149,23 @@ export function CalculationWorkbench({
   const appliedExperimentRef = useRef(experimentId)
   const selectedCalculationRef = useRef(selectedCalculationId)
   const mutationSequenceRef = useRef(0)
+  const appliedSaveCommandRef = useRef(saveCommand)
   const previewSequenceRef = useRef(0)
   const previewAbortRef = useRef<AbortController | null>(null)
   const dirty = !sameDraft(draft, baseline)
+  const saveDisabledReason = !authenticated
+    ? '로그인 후 사용할 수 있습니다.'
+    : experimentId === null
+      ? '먼저 저장된 Experiment를 여세요.'
+      : !editable
+        ? '이 Experiment의 Calculation을 저장할 권한이 없습니다.'
+        : contextPending || selectedCalculationId !== draft.id
+          ? 'Calculation context를 불러오는 중입니다.'
+          : saving
+            ? 'Calculation 저장이 진행 중입니다.'
+            : deleting
+              ? 'Calculation 삭제가 진행 중입니다.'
+              : undefined
   const request = useMemo(
     () => ({
       ...getListRequest('visible', selectedCalculationId ? [selectedCalculationId] : []),
@@ -164,6 +196,10 @@ export function CalculationWorkbench({
 
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange])
   useEffect(() => () => onDirtyChange(false), [onDirtyChange])
+  useEffect(
+    () => onSaveStateChange({ disabled: saveDisabledReason !== undefined, disabledReason: saveDisabledReason }),
+    [onSaveStateChange, saveDisabledReason],
+  )
 
   useEffect(() => {
     if (appliedExperimentRef.current === experimentId) return
@@ -171,6 +207,7 @@ export function CalculationWorkbench({
     mutationSequenceRef.current += 1
     setSaving(false)
     setDeleting(false)
+    setSaveDialogOpen(false)
     const next = emptyCalculationDraft()
     setDraft(next)
     setBaseline(next)
@@ -182,6 +219,7 @@ export function CalculationWorkbench({
     mutationSequenceRef.current += 1
     setSaving(false)
     setDeleting(false)
+    setSaveDialogOpen(false)
     if (selectedCalculationId !== null) return
     const next = emptyCalculationDraft()
     setDraft(next)
@@ -247,6 +285,12 @@ export function CalculationWorkbench({
       return cancel
     }
     if (!recordedSnapshot.input) {
+      onActivity({
+        source: 'calculation',
+        level: 'error',
+        phase: recordedSnapshot.errorCode ?? 'input',
+        message: recordedSnapshot.error ?? 'RecordedData 입력을 만들지 못했습니다.',
+      })
       setPreview({
         code: recordedSnapshot.errorCode ?? 'input',
         message: recordedSnapshot.error ?? 'RecordedData 입력을 만들지 못했습니다.',
@@ -260,6 +304,16 @@ export function CalculationWorkbench({
       setPreview({ status: 'loading', message: '격리된 Worker에서 계산 중…' })
       void runCalculation({
         input: recordedSnapshot.input as CalculationInput,
+        onLog: (entry) => {
+          if (sequence !== previewSequenceRef.current || controller.signal.aborted) return
+          onActivity({
+            source: 'calculation',
+            level: 'info',
+            phase: 'console.log',
+            message: entry.message,
+            runId: entry.requestId,
+          })
+        },
         signal: controller.signal,
         sourceCode: draft.sourceCode,
       })
@@ -270,15 +324,18 @@ export function CalculationWorkbench({
         })
         .catch((cause: unknown) => {
           if (sequence !== previewSequenceRef.current || controller.signal.aborted) return
-          setPreview(
+          const error =
             cause instanceof CalculationExecutionError
-              ? { code: cause.code, message: cause.message, status: 'error' }
-              : {
-                  code: 'runtime',
-                  message: cause instanceof Error ? cause.message : String(cause),
-                  status: 'error',
-                },
-          )
+              ? { code: cause.code, message: cause.message }
+              : { code: 'runtime' as const, message: cause instanceof Error ? cause.message : String(cause) }
+          if (error.code === 'cancelled') return
+          onActivity({
+            source: 'calculation',
+            level: 'error',
+            phase: error.code,
+            message: error.message,
+          })
+          setPreview({ ...error, status: 'error' })
         })
     }, 500)
     return () => {
@@ -291,6 +348,7 @@ export function CalculationWorkbench({
     experimentId,
     measurementId,
     measurementLoading,
+    onActivity,
     recordedSnapshot,
     selectedCalculationId,
   ])
@@ -299,6 +357,7 @@ export function CalculationWorkbench({
     (next: CalculationDraft, nextId: number | null) => {
       if (saving || deleting) return false
       if (dirty && !window.confirm('저장하지 않은 Calculation 편집을 버리고 선택을 바꿀까요?')) return false
+      setSaveDialogOpen(false)
       invalidatePreview('Calculation source를 바꾸는 중…')
       setDraft(next)
       setBaseline(next)
@@ -308,28 +367,29 @@ export function CalculationWorkbench({
     [deleting, dirty, invalidatePreview, onCalculationIdChange, saving],
   )
 
-  const save = useCallback(async () => {
+  const save = useCallback(async (values?: CalculationSaveValues) => {
     if (!authenticated || !editable) {
       toast.error('이 Experiment의 Calculation을 저장할 권한이 없습니다.')
-      return
+      return false
     }
     if (!experimentId) {
       toast.error('먼저 저장된 Experiment를 여세요.')
-      return
+      return false
     }
-    const name = draft.name.trim()
+    const name = (values?.name ?? draft.name).trim()
     if (!name) {
       toast.error('Calculation 이름을 입력하세요.')
-      return
+      return false
     }
-    if (saving || deleting) return
+    if (saving || deleting) return false
+    const description = (values?.description ?? draft.description).trim()
     const sequence = ++mutationSequenceRef.current
     setSaving(true)
     try {
       const [result] = await dbTables.Calculation.upsertRow([
         {
           ...(draft.id === null ? {} : { id: draft.id }),
-          description: draft.description.trim() || null,
+          description: description || null,
           experiment_id: experimentId,
           name,
           source_code: draft.sourceCode,
@@ -338,9 +398,9 @@ export function CalculationWorkbench({
       if (sequence !== mutationSequenceRef.current) {
         await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculations'] })
         await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] })
-        return
+        return false
       }
-      const next = { ...draft, description: draft.description.trim(), id: result.id, name }
+      const next = { ...draft, description, id: result.id, name }
       setDraft(next)
       setBaseline(next)
       selectedCalculationRef.current = result.id
@@ -353,10 +413,12 @@ export function CalculationWorkbench({
         )
       })
       toast.success('Calculation을 저장했습니다.')
+      return true
     } catch (cause: unknown) {
       if (sequence === mutationSequenceRef.current) {
         toast.error(cause instanceof Error ? cause.message : String(cause))
       }
+      return false
     } finally {
       if (sequence === mutationSequenceRef.current) setSaving(false)
     }
@@ -372,6 +434,39 @@ export function CalculationWorkbench({
     saving,
   ])
 
+  const openSaveDialog = useCallback(() => {
+    if (saveDisabledReason) {
+      toast.error(saveDisabledReason)
+      return
+    }
+    setSaveDialogOpen(true)
+  }, [saveDisabledReason])
+
+  const saveFromShortcut = useCallback(() => {
+    if (saveDisabledReason) {
+      toast.error(saveDisabledReason)
+      return
+    }
+    if (draft.id === null) openSaveDialog()
+    else void save()
+  }, [draft.id, openSaveDialog, save, saveDisabledReason])
+
+  useEffect(() => {
+    if (appliedSaveCommandRef.current === saveCommand) return
+    appliedSaveCommandRef.current = saveCommand
+    if (saveCommand > 0) openSaveDialog()
+  }, [openSaveDialog, saveCommand])
+
+  useEffect(() => {
+    if (contextPending) setSaveDialogOpen(false)
+  }, [contextPending])
+
+  useEffect(
+    () => () =>
+      onSaveStateChange({ disabled: true, disabledReason: 'Calculation Editor를 불러오는 중입니다.' }),
+    [onSaveStateChange],
+  )
+
   const deleteCurrent = async () => {
     if (saving || deleting || !editable) return
     if (draft.id === null) {
@@ -379,6 +474,7 @@ export function CalculationWorkbench({
       const next = emptyCalculationDraft()
       setDraft(next)
       setBaseline(next)
+      setSaveDialogOpen(false)
       return
     }
     if (
@@ -400,6 +496,7 @@ export function CalculationWorkbench({
       const next = emptyCalculationDraft()
       setDraft(next)
       setBaseline(next)
+      setSaveDialogOpen(false)
       selectedCalculationRef.current = null
       onCalculationIdChange(null)
       await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculations'] })
@@ -423,7 +520,7 @@ export function CalculationWorkbench({
     if (!(event.ctrlKey || event.metaKey) || event.key.toLocaleLowerCase() !== 's') return
     if (event.target instanceof Element && event.target.closest('.monaco-editor')) return
     event.preventDefault()
-    void save()
+    saveFromShortcut()
   }
 
   return (
@@ -511,47 +608,11 @@ export function CalculationWorkbench({
         columnRatios={columnRatios}
         editor={
           <section className="flex h-full min-h-0 flex-col" onKeyDown={editorKeyDown}>
-            <header className="shrink-0 space-y-2 border-b p-3">
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="text-sm font-semibold">Source Editor</h2>
-                <div className="flex items-center gap-2">
-                  {dirty ? <Badge className="bg-amber-600 text-white">Dirty</Badge> : null}
-                  <Button
-                    disabled={!dirty || saving || deleting || !editable || experimentId === null || !draft.name.trim()}
-                    size="sm"
-                    type="button"
-                    onClick={() => void save()}
-                  >
-                    {saving ? <LoaderCircle className="animate-spin" /> : <Save />}
-                    Save
-                  </Button>
-                </div>
-              </div>
-              <Input
-                aria-label="Calculation 이름"
-                disabled={saving || deleting}
-                maxLength={255}
-                placeholder="Calculation name"
-                value={draft.name}
-                onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
-              />
-              <textarea
-                aria-label="Calculation 설명"
-                className="min-h-16 w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                placeholder="Description (optional)"
-                disabled={saving || deleting}
-                value={draft.description}
-                onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))}
-              />
-              <p className="text-[11px] text-muted-foreground">
-                Ctrl+S / Cmd+S · 저장과 Output 계산은 서로 독립적입니다.
-              </p>
-            </header>
             <div className="min-h-0 flex-1">
               <CalculationSourceEditor
                 disabled={saving || deleting}
                 sourceCode={draft.sourceCode}
-                onSave={() => void save()}
+                onSave={saveFromShortcut}
                 onSourceCodeChange={(sourceCode) => {
                   invalidatePreview('Source 변경을 기다리는 중…')
                   setDraft((current) => ({ ...current, sourceCode }))
@@ -591,7 +652,11 @@ export function CalculationWorkbench({
               <p className="mt-0.5 text-[11px] text-muted-foreground">Output은 저장되지 않습니다.</p>
             </header>
             <div className="min-h-0 flex-1 overflow-hidden">
-              <CalculationOutputChart preview={preview} />
+              <ResizableCalculationOutput
+                chartRatio={outputChartRatio}
+                preview={preview}
+                onChartRatioChange={onOutputChartRatioChange}
+              />
             </div>
           </section>
         }
@@ -637,6 +702,16 @@ export function CalculationWorkbench({
         rowRatios={rowRatios}
         viewer={viewer}
         viewerExpanded={viewerExpanded}
+      />
+      <CalculationSaveDialog
+        defaults={{ description: draft.description, name: draft.name }}
+        isNew={draft.id === null}
+        open={saveDialogOpen}
+        pending={saving}
+        onOpenChange={setSaveDialogOpen}
+        onSubmit={async (values) => {
+          if (await save(values)) setSaveDialogOpen(false)
+        }}
       />
     </div>
   )

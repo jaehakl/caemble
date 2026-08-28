@@ -84,7 +84,7 @@ const blockedMemberNames = new Set([
   'toLocaleTimeString',
 ])
 const blockedGlobals = new Set([
-  ...CALCULATION_SHADOWED_GLOBAL_NAMES,
+  ...CALCULATION_SHADOWED_GLOBAL_NAMES.filter((name) => name !== 'console'),
   'document',
   'eval',
   'exports',
@@ -101,11 +101,11 @@ function policyError(message: string): never {
 export function analyzeCalculationSource(source: string): File {
   let ast: File
   try {
-    ast = parse(source, { sourceType: 'module', plugins: ['typescript'] })
+    ast = parse(source, { sourceType: 'module' })
   } catch (error) {
     throw new CalculationExecutionError(
       'compile',
-      error instanceof Error ? error.message : 'Calculation source could not be parsed.',
+      error instanceof Error ? error.message : 'Calculation JavaScript could not be parsed.',
     )
   }
   let defaultExportCount = 0
@@ -165,6 +165,11 @@ export function analyzeCalculationSource(source: string): File {
       if (node.computed && memberName === null) {
         policyError('Computed Calculation members must use a fixed string or numeric property.')
       }
+      if (node.object.type === 'Identifier' && node.object.name === 'console' && !path.scope.getBinding('console')) {
+        if (node.computed || memberName !== 'log') {
+          policyError('Calculation source supports only direct console.log(...) calls.')
+        }
+      }
       if (memberName !== null && blockedMemberNames.has(memberName)) {
         policyError(`Prototype access is not supported in Calculation source: ${memberName}.`)
       }
@@ -188,6 +193,22 @@ export function analyzeCalculationSource(source: string): File {
     ReferencedIdentifier(path) {
       if (path.findParent((parent) => parent.isTSType())) return
       if (path.scope.getBinding(path.node.name)) return
+      if (path.node.name === 'console') {
+        const member = path.parentPath
+        const call = member.parentPath
+        if (
+          member.isMemberExpression() &&
+          member.node.object === path.node &&
+          !member.node.computed &&
+          member.node.property.type === 'Identifier' &&
+          member.node.property.name === 'log' &&
+          call?.isCallExpression() &&
+          call.node.callee === member.node
+        ) {
+          return
+        }
+        policyError('Calculation source supports only direct console.log(...) calls.')
+      }
       if (path.node.name === 'Math') {
         const parent = path.parentPath
         if ((parent.isMemberExpression() || parent.isOptionalMemberExpression()) && parent.node.object === path.node)

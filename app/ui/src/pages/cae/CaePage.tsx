@@ -10,7 +10,7 @@ import { WorkbenchBottomDock, WorkbenchMenubar, WorkbenchRibbon, WorkbenchShell 
 import { ConfirmWorkbenchDialog } from '@/features/cae-workbench/dialogs'
 import { ExperimentEditor, SourcePathPickerDialog } from '@/features/cae-workbench/editors'
 import { ExperimentManager } from '@/features/cae-workbench/experiments'
-import { CalculationWorkbench } from '@/features/cae-workbench/calculation'
+import { CalculationWorkbench, type CalculationSaveState } from '@/features/cae-workbench/calculation'
 import { flattenRecordedData, recordedDataRules } from '@/features/cae-workbench/measurement/recordedData'
 import { useCaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { AnalysisTabId, HelpKindId, WorkbenchSectionId } from '@/features/cae-workbench/types'
@@ -67,6 +67,11 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const runtimeConsole = useMemo(() => createRuntimeConsoleStore(), [])
   const workbench = useCaeWorkbenchState(auth.user, auth.isAuthenticated, { onActivity: runtimeConsole.append })
   const [calculationDirty, setCalculationDirty] = useState(false)
+  const [calculationSaveCommand, setCalculationSaveCommand] = useState(0)
+  const [calculationSaveState, setCalculationSaveState] = useState<CalculationSaveState>({
+    disabled: true,
+    disabledReason: 'Calculation Editor를 불러오는 중입니다.',
+  })
   const page = useCaePageSession(workbench, { hasUnsavedCalculationWork: calculationDirty })
   const [experimentAuthoringState, setExperimentAuthoringState] = useState<CadEditorAuthoringState | null>(null)
   const [viewerSelectionQuery, setViewerSelectionQuery] = useState<CadViewerSelectionQuery | null>(null)
@@ -252,6 +257,9 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const requestMaterialCommand = useCallback((type: MaterialRibbonCommand) => {
     setMaterialCommand({ id: ++commandSequence.current, type })
   }, [])
+  const requestCalculationSave = useCallback(() => {
+    setCalculationSaveCommand((current) => current + 1)
+  }, [])
   const refreshRuntime = useCallback(() => {
     void Promise.all([
       queryClient.invalidateQueries({ queryKey: ['runtime', 'launchers'] }),
@@ -262,12 +270,15 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const chrome = useCaePageChrome({
     analysisTab: page.analysisTab,
     authenticated: auth.isAuthenticated,
+    calculationDirty,
+    calculationSaveState,
     experimentAuthoringState,
     guardReplacement: page.guardReplacement,
     helpKind: page.help.kind,
     materialSelected: selectedMaterialId !== null,
     refreshRuntime,
     requestAnalysisCommand,
+    requestCalculationSave,
     requestLabCommand,
     requestMaterialCommand,
     requestRunSelected: page.requestRunSelected,
@@ -533,6 +544,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             measurementId={workbench.selection.measurement?.id ?? null}
             measurementLoading={workbench.selection.loading}
             menubar={menubar}
+            onActivity={runtimeConsole.append}
             onBottomHeightRatioChange={(bottomHeightRatio) =>
               page.setLayout((current) => ({ ...current, bottomHeightRatio }))
             }
@@ -542,9 +554,13 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             }
             onDeleteMeasurements={workbench.measurementActions.deleteMeasurements}
             onDirtyChange={setCalculationDirty}
+            onOutputChartRatioChange={(calculationOutputChartRatio) =>
+              page.setLayout((current) => ({ ...current, calculationOutputChartRatio }))
+            }
             onRowRatiosChange={(calculationLeftRowRatios) =>
               page.setLayout((current) => ({ ...current, calculationLeftRowRatios }))
             }
+            onSaveStateChange={setCalculationSaveState}
             onSelectMeasurement={(row) => page.runSafely(() => workbench.selection.loadMeasurement(row))}
             onClearMeasurement={workbench.selection.clearMeasurement}
             onUsageChanged={workbench.refreshExperimentUsage}
@@ -552,6 +568,8 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             recordedRules={activeRecordedRules}
             ribbon={ribbon}
             rowRatios={page.calculationLeftRowRatios ?? [0.45, 0.25, 0.3]}
+            saveCommand={calculationSaveCommand}
+            outputChartRatio={page.calculationOutputChartRatio ?? 0.65}
             selectedCalculationId={page.calculationId}
             viewer={viewerPane}
             viewerExpanded={page.viewerExpanded}
