@@ -11,7 +11,13 @@ from app.runtime_kernel.api import InputArtifact, SolverResult
 from app.runtime_kernel.coordinator import SimulationApi
 from app.runtime_kernel.coordinator.run import CaeRun
 from app.runtime_kernel.execution import SolverExecutionTransaction
-from app.runtime_kernel.resources import ArtifactHandle, StatePatch, StructuredBundle
+from app.runtime_kernel.resources import (
+    ArtifactHandle,
+    Field,
+    StatePatch,
+    StructuredBundle,
+    StructuredGrid,
+)
 from app.runtime_kernel.transport import RecordPacket, RecordResourceHold
 
 
@@ -299,7 +305,52 @@ async def test_abi2_spatial_field_output_accepts_complete_domain_contract(
 
     produced = await sim.run(run.producer)
 
-    assert produced["artifacts"]["field"].artifact_type == "test/field@1"
+    handle = produced["artifacts"]["field"]
+    assert handle.artifact_type == "test/field@1"
+
+    await sim.record("field", handle)
+
+    assert run.recorded is not None
+    recorded = run.recorded[1]
+    assert isinstance(recorded, dict)
+    assert recorded["axes"] == field["domainRef"]["axes"]
+    np.testing.assert_array_equal(recorded["value"], field["value"])
+    assert_lease_count(sim, handle, 1)
+    sim.close()
+
+
+@pytest.mark.asyncio
+async def test_typed_field_record_preserves_structured_grid_axes_without_copying() -> None:
+    run = FakeRun()
+    sim = SimulationApi(run)
+    axes = (
+        np.array([0.25, 0.75], dtype=np.float64),
+        np.array([1.0, 2.0, 3.0], dtype=np.float64),
+    )
+    domain_ref = sim._resources.ingest(StructuredGrid((2, 3), axes, "m"), copy_arrays=False)
+    values = np.arange(6, dtype=np.float64).reshape(2, 3)
+    handle = sim._artifacts.publish(
+        Field(domain_ref, "cell", "TestField", "1", values),
+        producer_task="producer",
+        solver_name="producer",
+        solver_version="1.0.0",
+        output_name="field",
+        artifact_type="test/field@1",
+        state_revision=0,
+        copy_arrays=False,
+    )
+    resolved = sim._artifacts.resolve(handle)
+
+    await sim.record("field", handle)
+
+    assert run.recorded is not None
+    recorded = run.recorded[1]
+    assert isinstance(recorded, dict)
+    assert recorded["value"] is resolved.values
+    assert len(recorded["axes"]) == 2
+    np.testing.assert_array_equal(recorded["axes"][0]["ticks"], axes[0])
+    np.testing.assert_array_equal(recorded["axes"][1]["ticks"], axes[1])
+    assert_lease_count(sim, handle, 1)
     sim.close()
 
 

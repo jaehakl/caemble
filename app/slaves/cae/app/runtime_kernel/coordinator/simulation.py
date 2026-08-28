@@ -29,6 +29,7 @@ from app.runtime_kernel.resources import (
     StatePut,
     StateStore,
     StructuredBundle,
+    StructuredGrid,
 )
 from app.runtime_kernel.transport import RecordResourceHold
 
@@ -487,10 +488,24 @@ class SimulationApi:
             leases.append(self._resources.acquire(value.resource_ref, owner=f"record:{self._run.run_id}"))
             materialized = self._artifacts.materialize(value, copy_arrays=False)
             if isinstance(materialized, Field):
+                domain = self._resources.resolve(materialized.domain_ref)
+                if isinstance(domain, StructuredGrid):
+                    return {
+                        "value": materialized.values,
+                        "axes": [{"ticks": axis} for axis in domain.axes],
+                    }
+                if isinstance(domain, Mapping) and domain.get("axes") is not None:
+                    return {"value": materialized.values, "axes": domain["axes"]}
                 return materialized.values
             if isinstance(materialized, StructuredBundle):
                 return materialized.members
             if isinstance(materialized, Mapping) and "value" in materialized:
+                axes = materialized.get("axes")
+                domain = materialized.get("domainRef")
+                if axes is None and isinstance(domain, Mapping):
+                    axes = domain.get("axes")
+                if axes is not None:
+                    return {"value": materialized["value"], "axes": axes}
                 return materialized["value"]
             return materialized
         if isinstance(value, Mapping):
