@@ -601,6 +601,16 @@ export function useCaeWorkbenchState(
       `caemble:experiment/${experimentRecord.namespace}/${experimentRecord.repository_slug}/${experimentRecord.experiment_key}@${experimentVersion}`)
     : null
   const sourceLocked = Boolean(experimentRecord?.sourceLocked)
+  const refreshExperimentUsage = useCallback(async () => {
+    if (experimentId === null) return
+    const usage = (await dbTables.Experiment.usage([experimentId])).items[0]
+    if (!usage) return
+    setExperimentRecord((current) =>
+      current?.id === experimentId
+        ? { ...current, derivedCounts: usage.derivedCounts, sourceLocked: usage.sourceLocked }
+        : current,
+    )
+  }, [experimentId])
 
   return {
     experiment,
@@ -619,6 +629,7 @@ export function useCaeWorkbenchState(
     experimentVersion,
     experimentNamespaces: user?.experiment_namespaces ?? [],
     sourceLocked,
+    refreshExperimentUsage,
     hasTasks,
     agentChange,
     agentWorkspaceIdentity: currentAgentWorkspaceIdentity,

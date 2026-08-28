@@ -3,12 +3,11 @@ from gpstation.routers import v1 as gpstation_v1
 from gpstation.routers import web as gpstation_web
 from initserver import server
 from routers import (
+    calculation,
     catalog,
-    designer_model,
     experiment,
     material,
     measurement,
-    predictor_model,
     recorded_data,
     users,
 )
@@ -22,8 +21,7 @@ app.include_router(material.router)
 app.include_router(experiment.router)
 app.include_router(measurement.router)
 app.include_router(recorded_data.router)
-app.include_router(designer_model.router)
-app.include_router(predictor_model.router)
+app.include_router(calculation.router)
 app.include_router(users.router)
 app.include_router(gpstation_web.router)
 app.include_router(gpstation_v1.router)

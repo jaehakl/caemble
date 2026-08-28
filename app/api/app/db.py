@@ -258,12 +258,7 @@ class Experiment(TimestampMixin, Base):
         back_populates="experiment",
         passive_deletes=True,
     )
-    designer_models: Mapped[List["DesignerModel"]] = relationship(
-        back_populates="experiment",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
-    predictor_models: Mapped[List["PredictorModel"]] = relationship(
+    calculations: Mapped[List["Calculation"]] = relationship(
         back_populates="experiment",
         cascade="all, delete-orphan",
         passive_deletes=True,
@@ -342,45 +337,25 @@ class RecordedData(TimestampMixin, Base):
     measurement: Mapped["Measurement"] = relationship(back_populates="recorded_data")
 
 
-class DesignerModel(TimestampMixin, Base):
-    __tablename__ = "designer_models"
+class Calculation(TimestampMixin, Base):
+    __tablename__ = "calculations"
+    __table_args__ = (
+        UniqueConstraint(
+            "experiment_id",
+            "name",
+            name="uq_calculations_experiment_id_name",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[Optional[str]] = mapped_column(
-        UUID(as_uuid=False),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=True,
-    )
     experiment_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("experiments.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    model_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    file_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source_code: Mapped[str] = mapped_column(Text, nullable=False)
 
-    user: Mapped[Optional["User"]] = relationship("User", back_populates="designer_models")
-    experiment: Mapped["Experiment"] = relationship(back_populates="designer_models")
-
-
-class PredictorModel(TimestampMixin, Base):
-    __tablename__ = "predictor_models"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[Optional[str]] = mapped_column(
-        UUID(as_uuid=False),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=True,
-    )
-    experiment_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("experiments.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    model_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    file_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-
-    user: Mapped[Optional["User"]] = relationship("User", back_populates="predictor_models")
-    experiment: Mapped["Experiment"] = relationship(back_populates="predictor_models")
+    experiment: Mapped["Experiment"] = relationship(back_populates="calculations")

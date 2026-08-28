@@ -21,7 +21,7 @@ export type WorkbenchSectionDefinition = Readonly<{
 
 export const defaultWorkbenchSections: readonly WorkbenchSectionDefinition[] = Object.freeze([
   { id: 'experiment', label: 'Experiment' },
-  { id: 'measurement', label: 'Measurement' },
+  { id: 'measurement', label: 'Calculation' },
   { id: 'material', label: 'Material' },
   { id: 'analysis', label: 'Analysis' },
   { id: 'lab', label: 'Lab' },

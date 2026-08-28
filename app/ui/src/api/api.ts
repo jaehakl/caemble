@@ -57,7 +57,8 @@ export type LauncherRuntime = Readonly<{
   metadata: Readonly<Record<string, unknown>>
 }>
 
-export type JobState = 'queued' | 'assigned' | 'answer_ready' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'killed'
+export type JobState =
+  'queued' | 'assigned' | 'answer_ready' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'killed'
 export type JobSummary = Readonly<{
   id: string
   user_id: string
@@ -81,8 +82,7 @@ export type ExperimentSourceBundle = Readonly<{ files: Readonly<Record<string, s
 type ExperimentDerivedCounts = Readonly<{
   measurements: number
   recordedData: number
-  designerModels: number
-  predictorModels: number
+  calculations: number
 }>
 type ExperimentMetadata = Readonly<{
   namespace: string
@@ -123,9 +123,7 @@ type MeasurementMaterialParameters = Readonly<{
 type PersistedDataTensor = Readonly<{
   shape: readonly number[]
   axes?: readonly Readonly<{ ticks?: readonly (number | string)[]; implicitOrdinal?: true }>[]
-  storage:
-    | Readonly<{ kind: 'inline'; value: unknown }>
-    | Readonly<{ kind: 'base64'; data: string; byteLength: number }>
+  storage: Readonly<{ kind: 'inline'; value: unknown }> | Readonly<{ kind: 'base64'; data: string; byteLength: number }>
 }>
 type DataSchema = Readonly<Record<string, unknown>>
 
@@ -247,14 +245,14 @@ type RecordedDataRecord = Readonly<{
   data_url?: string | null
   file_size?: number | null
 }>
-type ModelRecord = Readonly<{
+type CalculationRecord = Readonly<{
   id?: number
   created_at?: string | null
   updated_at?: string | null
-  user_id?: string | null
   experiment_id: number
-  model_url?: string | null
-  file_size?: number | null
+  name: string
+  description?: string | null
+  source_code: string
 }>
 
 type RuntimeCrudListRequest = Readonly<{
@@ -268,7 +266,16 @@ type RuntimeCrudListRequest = Readonly<{
 }>
 
 function runtimeCrudListRequest(overrides: Partial<RuntimeCrudListRequest> = {}): RuntimeCrudListRequest {
-  return { offset: 0, limit: 100, selected_ids: [], search_text: null, text_filter: {}, filter: {}, sort: null, ...overrides }
+  return {
+    offset: 0,
+    limit: 100,
+    selected_ids: [],
+    search_text: null,
+    text_filter: {},
+    filter: {},
+    sort: null,
+    ...overrides,
+  }
 }
 
 export const dbTables = {
@@ -276,83 +283,114 @@ export const dbTables = {
     recordType: undefined as unknown as UserRecord,
     fetchMe: () => request<UserRecord>('get', '/auth/me'),
     getAllUsersAdmin: (limit: number, offset: number) =>
-      request<UserRecord[]>('get', `/user_admin/get_all_users/${encodeURIComponent(String(limit))}/${encodeURIComponent(String(offset))}`),
+      request<UserRecord[]>(
+        'get',
+        `/user_admin/get_all_users/${encodeURIComponent(String(limit))}/${encodeURIComponent(String(offset))}`,
+      ),
     deleteUserAdmin: (id: string) => request<boolean>('get', `/user_admin/delete/${encodeURIComponent(id)}`),
     getUserSummaryAdmin: (userId: string) =>
       request<UserRecord | null>('get', `/user_data/summary/admin/${encodeURIComponent(userId)}`),
     getUserSummaryUser: () => request<UserRecord | null>('get', '/user_data/summary/user'),
   },
   AccessKey: {
-    list: () => request<{ total: number; items: AccessKeyRecord[] }>('post', '/web/crud/access_keys/list', runtimeCrudListRequest({ sort: ['created_at', 'desc'] })),
+    list: () =>
+      request<{ total: number; items: AccessKeyRecord[] }>(
+        'post',
+        '/web/crud/access_keys/list',
+        runtimeCrudListRequest({ sort: ['created_at', 'desc'] }),
+      ),
     create: (value: Readonly<{ name: string; scopes: readonly AccessKeyScope[]; expires_at?: string | null }>) =>
       request<{ access_key: AccessKeyRecord; secret: string }>('post', '/web/users/me/access-tokens', value),
     revoke: (id: string) => request<{ deleted: number }>('post', '/web/crud/access_keys/delete', { ids: [id] }),
   },
   Launcher: {
-    list: () => request<{ total: number; items: LauncherRecord[] }>('post', '/web/crud/launchers/list', runtimeCrudListRequest({ limit: 200, sort: ['last_heartbeat_at', 'desc'] })),
+    list: () =>
+      request<{ total: number; items: LauncherRecord[] }>(
+        'post',
+        '/web/crud/launchers/list',
+        runtimeCrudListRequest({ limit: 200, sort: ['last_heartbeat_at', 'desc'] }),
+      ),
     runtime: () => request<LauncherRuntime[]>('get', '/web/launchers/runtime'),
     reconcile: () => request<{ ok: true; launchers: number }>('post', '/web/launchers/reconcile-disconnected'),
-    cancelCurrentJob: (id: string) => request<{ ok: true }>('post', `/web/launchers/${encodeURIComponent(id)}/cancel-current-job`),
+    cancelCurrentJob: (id: string) =>
+      request<{ ok: true }>('post', `/web/launchers/${encodeURIComponent(id)}/cancel-current-job`),
     resetWorker: (id: string) => request<{ ok: true }>('post', `/web/launchers/${encodeURIComponent(id)}/reset-worker`),
   },
   Job: {
-    list: (activeOnly = true) => request<JobSummary[]>('get', `/web/jobs?${new URLSearchParams({ active_only: String(activeOnly), limit: '200' })}`),
+    list: (activeOnly = true) =>
+      request<JobSummary[]>(
+        'get',
+        `/web/jobs?${new URLSearchParams({ active_only: String(activeOnly), limit: '200' })}`,
+      ),
     kill: (id: string) => request<{ ok: true }>('post', `/web/jobs/${encodeURIComponent(id)}/kill`),
   },
   Material: {
     recordType: undefined as unknown as MaterialRecord,
-    listRows: (payload: GetListRequest = getListRequest()) => request<GetListResponse<MaterialRecord>>('post', '/material/list', payload),
+    listRows: (payload: GetListRequest = getListRequest()) =>
+      request<GetListResponse<MaterialRecord>>('post', '/material/list', payload),
     upsertRow: (payload: readonly MaterialRecord[]) => request<UpsertResponse[]>('post', '/material/upsert', payload),
     deleteRows: (ids: readonly number[]) => request<null>('delete', '/material/', ids),
   },
   MaterialName: {
     recordType: undefined as unknown as MaterialNameRecord,
-    listRows: (payload: GetListRequest = getListRequest()) => request<GetListResponse<MaterialNameRecord>>('post', '/material_name/list', payload),
-    upsertRow: (payload: readonly MaterialNameRecord[]) => request<UpsertResponse[]>('post', '/material_name/upsert', payload),
+    listRows: (payload: GetListRequest = getListRequest()) =>
+      request<GetListResponse<MaterialNameRecord>>('post', '/material_name/list', payload),
+    upsertRow: (payload: readonly MaterialNameRecord[]) =>
+      request<UpsertResponse[]>('post', '/material_name/upsert', payload),
     deleteRows: (ids: readonly number[]) => request<null>('delete', '/material_name/', ids),
   },
   MaterialParameter: {
     recordType: undefined as unknown as MaterialParameterRecord,
-    listRows: (payload: GetListRequest = getListRequest()) => request<GetListResponse<MaterialParameterRecord>>('post', '/material_parameter/list', payload),
-    upsertRow: (payload: readonly MaterialParameterRecord[]) => request<UpsertResponse[]>('post', '/material_parameter/upsert', payload),
+    listRows: (payload: GetListRequest = getListRequest()) =>
+      request<GetListResponse<MaterialParameterRecord>>('post', '/material_parameter/list', payload),
+    upsertRow: (payload: readonly MaterialParameterRecord[]) =>
+      request<UpsertResponse[]>('post', '/material_parameter/upsert', payload),
     deleteRows: (ids: readonly number[]) => request<null>('delete', '/material_parameter/', ids),
   },
   MaterialParameterQualifier: {
     recordType: undefined as unknown as MaterialParameterQualifierRecord,
-    listRows: (payload: GetListRequest = getListRequest()) => request<GetListResponse<MaterialParameterQualifierRecord>>('post', '/material_parameter_qualifier/list', payload),
-    upsertRow: (payload: readonly MaterialParameterQualifierRecord[]) => request<UpsertResponse[]>('post', '/material_parameter_qualifier/upsert', payload),
+    listRows: (payload: GetListRequest = getListRequest()) =>
+      request<GetListResponse<MaterialParameterQualifierRecord>>('post', '/material_parameter_qualifier/list', payload),
+    upsertRow: (payload: readonly MaterialParameterQualifierRecord[]) =>
+      request<UpsertResponse[]>('post', '/material_parameter_qualifier/upsert', payload),
     deleteRows: (ids: readonly number[]) => request<null>('delete', '/material_parameter_qualifier/', ids),
   },
   Experiment: {
     recordType: undefined as unknown as ExperimentRecord,
-    listRows: (payload: GetListRequest = getListRequest()) => request<GetListResponse<ExperimentRecord>>('post', '/experiment/list', payload),
+    listRows: (payload: GetListRequest = getListRequest()) =>
+      request<GetListResponse<ExperimentRecord>>('post', '/experiment/list', payload),
     save: (payload: SaveExperimentRequest) => request<SaveExperimentResponse>('post', '/experiment/save', payload),
     deleteRows: (ids: readonly number[]) => request<null>('delete', '/experiment/', ids),
-    usage: (experimentIds: readonly number[]) => request<{ items: { experimentId: number; sourceLocked: boolean; derivedCounts: ExperimentDerivedCounts }[] }>('post', '/experiment/usage', { experimentIds }),
+    usage: (experimentIds: readonly number[]) =>
+      request<{ items: { experimentId: number; sourceLocked: boolean; derivedCounts: ExperimentDerivedCounts }[] }>(
+        'post',
+        '/experiment/usage',
+        { experimentIds },
+      ),
   },
   Measurement: {
     recordType: undefined as unknown as MeasurementRecord,
-    listRows: (payload: GetListRequest = getListRequest()) => request<GetListResponse<MeasurementRecord>>('post', '/measurement/list', payload),
+    listRows: (payload: GetListRequest = getListRequest()) =>
+      request<GetListResponse<MeasurementRecord>>('post', '/measurement/list', payload),
     create: (payload: MeasurementCreateRequest) => request<{ id: number }>('post', '/measurement/create', payload),
-    record: (id: number, payload: MeasurementRecordRequest) => request<{ id: number }>('post', `/measurement/${id}/record`, payload),
-    readRecordedData: async (id: number) => (await request<MeasurementRecordRequest>('get', `/measurement/${id}/recorded-data`)).recorded_data,
+    record: (id: number, payload: MeasurementRecordRequest) =>
+      request<{ id: number }>('post', `/measurement/${id}/record`, payload),
+    readRecordedData: async (id: number) =>
+      (await request<MeasurementRecordRequest>('get', `/measurement/${id}/recorded-data`)).recorded_data,
     deleteRows: (ids: readonly number[]) => request<null>('delete', '/measurement/', ids),
   },
   RecordedData: {
     recordType: undefined as unknown as RecordedDataRecord,
-    listRows: (payload: GetListRequest = getListRequest()) => request<GetListResponse<RecordedDataRecord>>('post', '/recorded_data/list', payload),
+    listRows: (payload: GetListRequest = getListRequest()) =>
+      request<GetListResponse<RecordedDataRecord>>('post', '/recorded_data/list', payload),
   },
-  DesignerModel: {
-    recordType: undefined as unknown as ModelRecord,
-    listRows: (payload: GetListRequest = getListRequest()) => request<GetListResponse<ModelRecord>>('post', '/designer_model/list', payload),
-    upsertRow: (payload: readonly ModelRecord[]) => request<UpsertResponse[]>('post', '/designer_model/upsert', payload),
-    deleteRows: (ids: readonly number[]) => request<null>('delete', '/designer_model/', ids),
-  },
-  PredictorModel: {
-    recordType: undefined as unknown as ModelRecord,
-    listRows: (payload: GetListRequest = getListRequest()) => request<GetListResponse<ModelRecord>>('post', '/predictor_model/list', payload),
-    upsertRow: (payload: readonly ModelRecord[]) => request<UpsertResponse[]>('post', '/predictor_model/upsert', payload),
-    deleteRows: (ids: readonly number[]) => request<null>('delete', '/predictor_model/', ids),
+  Calculation: {
+    recordType: undefined as unknown as CalculationRecord,
+    listRows: (payload: GetListRequest) =>
+      request<GetListResponse<CalculationRecord>>('post', '/calculation/list', payload),
+    upsertRow: (payload: readonly CalculationRecord[]) =>
+      request<UpsertResponse[]>('post', '/calculation/upsert', payload),
+    deleteRows: (ids: readonly number[]) => request<null>('delete', '/calculation/', ids),
   },
 } as const
 

@@ -39,6 +39,10 @@ class GetListRequestBase(BaseModel):
     random: Optional[bool] = False
 
 
+class CalculationListRequest(GetListRequestBase):
+    experiment_id: Optional[int] = None
+
+
 class RecordedDataListRequest(GetListRequestBase):
     include_system: bool = True
 
@@ -128,8 +132,7 @@ class SaveExperimentRequest(BaseModel):
 class ExperimentDerivedCounts(BaseModel):
     measurements: int = 0
     recordedData: int = 0
-    designerModels: int = 0
-    predictorModels: int = 0
+    calculations: int = 0
 
 
 class SaveExperimentResponse(BaseModel):
@@ -205,15 +208,8 @@ class RecordedDataBase(OwnedTimestampFields):
     file_size: Optional[int] = None
 
 
-class ModelArtifactBase(OwnedTimestampFields):
+class CalculationBase(TimestampFields):
     experiment_id: int
-    model_url: Optional[str] = None
-    file_size: Optional[int] = None
-
-
-class DesignerModelBase(ModelArtifactBase):
-    pass
-
-
-class PredictorModelBase(ModelArtifactBase):
-    pass
+    name: str
+    description: Optional[str] = None
+    source_code: str

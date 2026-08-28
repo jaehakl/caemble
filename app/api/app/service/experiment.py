@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db import DesignerModel, Experiment, ExperimentNamespace, Measurement, PredictorModel, RecordedData
+from db import Calculation, Experiment, ExperimentNamespace, Measurement, RecordedData
 from models import (
     ExperimentDerivedCounts,
     ExperimentSourceBundle,
@@ -116,8 +116,7 @@ async def _derived_counts(
     queries = (
         ("measurements", select(Measurement.experiment_id, func.count(Measurement.id)).where(Measurement.experiment_id.in_(ids)).group_by(Measurement.experiment_id)),
         ("recordedData", select(Measurement.experiment_id, func.count(RecordedData.id)).join(RecordedData, RecordedData.measurement_id == Measurement.id).where(Measurement.experiment_id.in_(ids)).group_by(Measurement.experiment_id)),
-        ("designerModels", select(DesignerModel.experiment_id, func.count(DesignerModel.id)).where(DesignerModel.experiment_id.in_(ids)).group_by(DesignerModel.experiment_id)),
-        ("predictorModels", select(PredictorModel.experiment_id, func.count(PredictorModel.id)).where(PredictorModel.experiment_id.in_(ids)).group_by(PredictorModel.experiment_id)),
+        ("calculations", select(Calculation.experiment_id, func.count(Calculation.id)).where(Calculation.experiment_id.in_(ids)).group_by(Calculation.experiment_id)),
     )
     for field, query in queries:
         for experiment_id, count in (await db.execute(query)).all():

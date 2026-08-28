@@ -1,5 +1,6 @@
 import type { CatalogSearchItem } from '@/api/catalog'
 import { cadElementCatalog } from '@/lib/cad'
+import { CALCULATION_MATHJS_REFERENCE, CALCULATION_SOURCE_SKELETON } from '@/lib/calculation'
 import { docsSectionHref, type DocsSectionId } from './docsRoute'
 
 export type DocsKnowledgeChunk = Readonly<{
@@ -40,7 +41,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       '3. source 상태가 `Ready`가 될 때까지 compile/evaluate 오류를 해결합니다.',
       '4. **Generate Candidate**로 `varsSchema` 범위의 새 변수 조건과 frozen Material 값을 미리 봅니다.',
       '5. 원하는 조건이면 **Save Current Measurement**로 변수와 Material snapshot을 고정합니다. 이 단계는 solver를 실행하지 않습니다.',
-      '6. 상단 **Measurement** 메뉴의 왼쪽 점 배열에서 prepared Measurement를 선택합니다. Ctrl/Cmd+클릭으로 여러 항목을 선택하고 Shift+클릭으로 현재 페이지의 범위를 선택할 수 있습니다.',
+      '6. 상단 **Calculation** 메뉴의 왼쪽 점 배열에서 prepared Measurement를 선택합니다. Ctrl/Cmd+클릭으로 여러 항목을 선택하고 Shift+클릭으로 현재 페이지의 범위를 선택할 수 있습니다.',
       '7. **Generate & Run**은 클릭할 때마다 새 Candidate를 생성하고 새 Measurement로 저장한 뒤 즉시 실행합니다. Candidate 생성이나 저장 단계는 취소할 수 없고, Simulation이 시작된 뒤에는 Cancel할 수 있습니다.',
       '8. 횟수를 입력하고 **Repeat Run**을 누르면 Generate & Run 파이프라인을 순차적으로 N회 시도합니다. 기본값은 10이며, N은 성공 횟수가 아니라 전체 시도 횟수입니다.',
       '9. Repeat Run은 Candidate 평가, Measurement 준비 또는 Simulation이 실패한 시도를 집계하고 다음 시도를 계속합니다. 결과 저장 실패나 명시적 Cancel은 남은 반복을 중단하며, 저장 실패 결과는 **Retry Saving Results**로 다시 저장할 수 있습니다.',
@@ -78,6 +79,47 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       '- 선택한 prepared Measurement만 실행할 수 있고, Recorded 상태가 된 Measurement는 다시 실행할 수 없습니다.',
       '',
       '새 조건으로 다시 계산하려면 기존 Measurement를 덮어쓰지 말고 새 Candidate를 생성한 뒤 새 Measurement로 저장하세요.',
+    ].join('\n'),
+  }),
+  manualChunk({
+    id: 'workbench-calculation',
+    section: 'workbench',
+    anchor: 'workbench-calculation',
+    title: 'Calculation으로 RecordedData 후처리',
+    summary:
+      '선택한 Measurement의 RecordedData를 TypeScript와 Math.js로 계산하고 scalar, line, heatmap으로 확인합니다.',
+    keywords: ['Calculation', 'RecordedData', 'Math.js', 'mathjs', 'Output', 'scalar', 'line', 'heatmap'],
+    content: [
+      '상단 **Calculation** 메뉴는 왼쪽부터 Measurement/RecordedData/Calculation 목록, 3D Viewer, Source Editor, Output Chart를 표시합니다. 3D Viewer 아래에는 공통 AI Agent/Console 도크가 있으며 높이 설정을 다른 메뉴와 공유합니다. 열 경계, 왼쪽 세 영역과 하단 도크 경계는 드래그하거나 키보드 방향키로 조절하며 마지막 Workbench draft에 저장됩니다. Viewer를 확장하면 왼쪽 목록과 Viewer 열을 합쳐 full height Viewer로 사용하고, Source Editor와 Output Chart는 계속 표시합니다.',
+      '',
+      'Calculation의 이름, 설명과 source는 **Save** 또는 `Ctrl+S`/`Cmd+S`로 명시적으로 저장합니다. 저장하지 않은 source도 선택 Measurement에 대해 500ms 뒤 자동 실행하지만 Output은 DB에 저장하지 않습니다. Measurement를 바꾸면 source draft는 유지되고 새 입력으로 다시 계산합니다.',
+      '',
+      'Source는 동기 `default export` 함수 하나여야 하며 package import는 `mathjs`의 named import만 허용합니다.',
+      '',
+      '```ts',
+      ...CALCULATION_SOURCE_SKELETON.trimEnd().split('\n'),
+      '```',
+      '',
+      '입력은 RecordedData leaf의 dotted path를 key로 쓰는 읽기 전용 map입니다. 각 leaf에는 `dtype`, component 차원까지 포함한 전체 `shape`, row-major flat `data`, 외부 `axes`, `quantityKind`, `tensorOrder`, 값 `unit`이 있습니다. RecordedData 패널의 actual axis lengths는 전체 shape에서 `tensorOrder`개의 3차원 component 축을 제외한 값입니다. schema axis/저장 ticks와 실제 shape가 맞지 않으면 axis를 추론하지 않고 `invalid`로 표시합니다.',
+      '',
+      'Output은 `dtype`, 명시적인 rank 0/1/2 `shape`, finite real `data`, 그리고 shape와 정확히 맞는 numeric ticks의 `axes`만 가집니다. Output에는 QuantityKind와 값 unit이 없습니다. rank 0은 scalar, rank 1은 line, rank 2는 heatmap으로 표시합니다. Math.js `Matrix`와 `Complex`는 중간 계산에 사용할 수 있지만 최종 Output의 Matrix는 flat real data로 정규화되고 Complex, NaN, Infinity와 ragged data는 거부됩니다.',
+      '',
+      '### 허용 Math.js API',
+      '',
+      ...CALCULATION_MATHJS_REFERENCE.map(
+        ({ group, names }) => `- **${group}**: ${names.map((name) => `\`${name}\``).join(', ')}`,
+      ),
+      '',
+      '`mathjs` 이외 package, default/namespace/deep/dynamic import, `require`, expression parser와 symbolic API, mutable configuration, BigNumber/Fraction/Unit, random 함수는 허용하지 않습니다. stdlib는 v1에 포함되지 않습니다.',
+      "작성한 source의 비-literal computed member/property(`value[key]`, computed destructuring)는 차단됩니다. 동적 배열 접근에는 `values.at(index)`, `map`, `forEach` 또는 Math.js의 `subset`/`index`를 사용하세요. 고정된 `input['path.to.leaf']`와 숫자 literal index는 허용됩니다.",
+      '',
+      '### 오류와 한도',
+      '',
+      '- 전체 입력은 64 MiB 이하여야 합니다.',
+      '- Output은 최대 5,000,000개의 수치 원소를 가질 수 있습니다.',
+      '- 한 실행은 최대 30초이며 source, Measurement, Calculation 또는 Experiment가 바뀌면 이전 실행을 취소합니다.',
+      '- `shape` 누락, axes 수 또는 ticks 길이 불일치, 유효하지 않은 UCUM axis unit은 Output 계약 오류입니다.',
+      '- `timeout`은 계산량을 줄이고, `input-too-large`는 필요한 RecordedData만 만드는 Experiment 계약으로 나누고, `output-too-large`는 downsample 또는 aggregate한 rank 0/1/2 결과를 반환해 해결합니다.',
     ].join('\n'),
   }),
   manualChunk({
@@ -394,7 +436,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       '',
       'Experiment Manager는 Example과 저장된 사용자 Experiment Version을 엽니다. 저장된 coordinate는 `namespace / repository / key / SemVer`로 식별하며, Repository는 별도 관리 객체가 아니라 저장된 Experiment에서 파생되는 그룹입니다.',
       '',
-      '**Save**는 현재 Version을 덮어쓰고, **Save New Version**은 patch/minor/major를 증가시키며, **Save As**는 새 repository/key의 `0.1.0`을 만듭니다. Measurement나 모델이 연결된 Version은 source만 잠깁니다. source 변경은 새 Version 또는 Save As로 저장하되, name/description 같은 metadata는 현재 Version에 **Save**할 수 있습니다.',
+      '**Save**는 현재 Version을 덮어쓰고, **Save New Version**은 patch/minor/major를 증가시키며, **Save As**는 새 repository/key의 `0.1.0`을 만듭니다. Measurement, RecordedData 또는 Calculation이 연결된 Version은 source만 잠깁니다. source 변경은 새 Version 또는 Save As로 저장하되, name/description 같은 metadata는 현재 Version에 **Save**할 수 있습니다.',
       '',
       'Standalone preview는 선택한 named export를 props 없이 호출할 수 있습니다. 모든 local PascalCase `Geometry<Props>` 함수는 custom prop을 직접 구조 분해하고 각각 명시적인 기본값을 제공해야 합니다. `id`, Material, children과 transform은 evaluator가 공통 기본값을 주입합니다.',
       '',

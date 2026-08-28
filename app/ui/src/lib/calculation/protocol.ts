@@ -1,0 +1,163 @@
+import {
+  calculationExecutionErrorCodes,
+  type CalculationExecutionErrorCode,
+  type CalculationInput,
+  type CalculationOutput,
+  type CompiledCalculationSource,
+} from './types'
+
+export type CalculationRunRequest = Readonly<{
+  type: 'calculate'
+  requestId: string
+  revision: number
+  compiledSource: CompiledCalculationSource
+  input: CalculationInput
+}>
+
+export type CalculationRunSuccess = Readonly<{
+  type: 'calculation-success'
+  requestId: string
+  revision: number
+  sourceHash: string
+  output: CalculationOutput
+}>
+
+export type CalculationRunError = Readonly<{
+  type: 'calculation-error'
+  requestId: string
+  revision: number
+  sourceHash: string
+  errorCode: CalculationExecutionErrorCode
+  message: string
+}>
+
+export type CalculationRunResponse = CalculationRunSuccess | CalculationRunError
+
+export type CalculationRunnerOperationEnvelope = Readonly<{
+  type: 'calculate'
+  nonce: string
+  request: CalculationRunRequest
+}>
+
+export type CalculationRunnerStartedEnvelope = Readonly<{
+  type: 'operation-started'
+  operation: 'calculate'
+  nonce: string
+  requestId: string
+  revision: number
+  documentType: 'calculation'
+}>
+
+export type CalculationRunnerResultEnvelope = Readonly<{
+  type: 'operation-result'
+  operation: 'calculate'
+  nonce: string
+  response: CalculationRunResponse
+}>
+
+function secureRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    throw new Error('Calculation runner message is invalid.')
+  return value as Record<string, unknown>
+}
+
+function secureIdentity(value: Record<string, unknown>) {
+  if (typeof value.requestId !== 'string' || value.requestId.length < 1 || !Number.isSafeInteger(value.revision)) {
+    throw new Error('Calculation runner identity is invalid.')
+  }
+}
+
+function secureNonce(value: unknown): asserts value is string {
+  if (typeof value !== 'string' || !/^[a-zA-Z0-9-]{16,128}$/u.test(value)) {
+    throw new Error('Calculation runner nonce is invalid.')
+  }
+}
+
+export function assertCalculationRunRequest(value: unknown): asserts value is CalculationRunRequest {
+  const request = secureRecord(value)
+  if (request.type !== 'calculate') throw new Error('Calculation runner operation is invalid.')
+  secureIdentity(request)
+  const compiled = secureRecord(request.compiledSource)
+  if (typeof compiled.code !== 'string' || typeof compiled.sourceHash !== 'string') {
+    throw new Error('Compiled Calculation source is invalid.')
+  }
+}
+
+export function assertCalculationRunnerOperationEnvelope(
+  value: unknown,
+): asserts value is CalculationRunnerOperationEnvelope {
+  const envelope = secureRecord(value)
+  if (envelope.type !== 'calculate') throw new Error('Calculation runner operation is invalid.')
+  secureNonce(envelope.nonce)
+  assertCalculationRunRequest(envelope.request)
+}
+
+export function assertCalculationRunnerStartedEnvelope(
+  value: unknown,
+): asserts value is CalculationRunnerStartedEnvelope {
+  const envelope = secureRecord(value)
+  if (
+    envelope.type !== 'operation-started' ||
+    envelope.operation !== 'calculate' ||
+    envelope.documentType !== 'calculation'
+  ) {
+    throw new Error('Calculation runner start is invalid.')
+  }
+  secureNonce(envelope.nonce)
+  secureIdentity(envelope)
+}
+
+export function assertCalculationRunnerResultEnvelope(
+  value: unknown,
+): asserts value is CalculationRunnerResultEnvelope {
+  const envelope = secureRecord(value)
+  if (envelope.type !== 'operation-result' || envelope.operation !== 'calculate') {
+    throw new Error('Calculation runner result is invalid.')
+  }
+  secureNonce(envelope.nonce)
+  const response = secureRecord(envelope.response)
+  if (response.type !== 'calculation-success' && response.type !== 'calculation-error') {
+    throw new Error('Calculation runner response is invalid.')
+  }
+  secureIdentity(response)
+  if (typeof response.sourceHash !== 'string') throw new Error('Calculation runner source identity is invalid.')
+  if (
+    response.type === 'calculation-error' &&
+    (!calculationExecutionErrorCodes.includes(response.errorCode as CalculationExecutionErrorCode) ||
+      typeof response.message !== 'string')
+  ) {
+    throw new Error('Calculation runner error is invalid.')
+  }
+}
+
+export function calculationRunnerRejectionEnvelope(
+  value: unknown,
+  error: unknown,
+): CalculationRunnerResultEnvelope | undefined {
+  try {
+    const envelope = secureRecord(value)
+    secureNonce(envelope.nonce)
+    const request = secureRecord(envelope.request)
+    if (envelope.type !== 'calculate') return undefined
+    return {
+      type: 'operation-result',
+      operation: 'calculate',
+      nonce: envelope.nonce,
+      response: {
+        type: 'calculation-error',
+        requestId: String(request.requestId),
+        revision: Number(request.revision),
+        sourceHash:
+          typeof request.compiledSource === 'object' &&
+          request.compiledSource !== null &&
+          'sourceHash' in request.compiledSource
+            ? String(request.compiledSource.sourceHash)
+            : '',
+        errorCode: 'runtime',
+        message: error instanceof Error ? error.message : String(error),
+      },
+    }
+  } catch {
+    return undefined
+  }
+}

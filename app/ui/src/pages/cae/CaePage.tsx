@@ -2,15 +2,15 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Bot, Database, Rows3 } from 'lucide-react'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation } from 'react-router'
-import type { AiAgentApplyRequest } from '@/api/aiAgent'
+import type { AiAgentApplyRequest, AiAgentApplyResult } from '@/api/aiAgent'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuth } from '@/features/auth/use-auth'
 import { WorkbenchBottomDock, WorkbenchMenubar, WorkbenchRibbon, WorkbenchShell } from '@/features/cae-workbench/chrome'
 import { ConfirmWorkbenchDialog } from '@/features/cae-workbench/dialogs'
-import { ExperimentEditor, RecordedDataEditor, SourcePathPickerDialog } from '@/features/cae-workbench/editors'
+import { ExperimentEditor, SourcePathPickerDialog } from '@/features/cae-workbench/editors'
 import { ExperimentManager } from '@/features/cae-workbench/experiments'
-import { MeasurementDetail, MeasurementExplorer } from '@/features/cae-workbench/measurement'
+import { CalculationWorkbench } from '@/features/cae-workbench/calculation'
 import { flattenRecordedData, recordedDataRules } from '@/features/cae-workbench/measurement/recordedData'
 import { useCaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { AnalysisTabId, HelpKindId, WorkbenchSectionId } from '@/features/cae-workbench/types'
@@ -66,7 +66,8 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const queryClient = useQueryClient()
   const runtimeConsole = useMemo(() => createRuntimeConsoleStore(), [])
   const workbench = useCaeWorkbenchState(auth.user, auth.isAuthenticated, { onActivity: runtimeConsole.append })
-  const page = useCaePageSession(workbench)
+  const [calculationDirty, setCalculationDirty] = useState(false)
+  const page = useCaePageSession(workbench, { hasUnsavedCalculationWork: calculationDirty })
   const [experimentAuthoringState, setExperimentAuthoringState] = useState<CadEditorAuthoringState | null>(null)
   const [viewerSelectionQuery, setViewerSelectionQuery] = useState<CadViewerSelectionQuery | null>(null)
   const [sourceRevealRequest, setSourceRevealRequest] = useState<
@@ -115,22 +116,26 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
 
   const revealSourceLocation = useCallback(
     (location: CadSourcePathLocation) => {
-      setSourcePathPicker(null)
-      setSourceRevealRequest({
-        end: location.end,
-        id: ++commandSequence.current,
-        path: location.path,
-        start: location.start,
-      })
-      page.setLayout((current) => ({
-        ...current,
-        activeExperimentFile: location.path,
-        activeSection: 'experiment',
-        rightTabs: { ...current.rightTabs, experiment: 'source' },
-        viewerExpanded: false,
-      }))
+      const reveal = () => {
+        setSourcePathPicker(null)
+        setSourceRevealRequest({
+          end: location.end,
+          id: ++commandSequence.current,
+          path: location.path,
+          start: location.start,
+        })
+        page.setLayout((current) => ({
+          ...current,
+          activeExperimentFile: location.path,
+          activeSection: 'experiment',
+          rightTabs: { ...current.rightTabs, experiment: 'source' },
+          viewerExpanded: false,
+        }))
+      }
+      if (page.activeSection === 'measurement' && calculationDirty) page.guardReplacement(reveal)
+      else reveal()
     },
-    [page],
+    [calculationDirty, page],
   )
 
   const findSelectionSource = useCallback(
@@ -212,8 +217,15 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   }, [selectedMaterialId])
 
   const setActiveSection = useCallback(
-    (activeSection: WorkbenchSectionId) => page.setLayout((current) => ({ ...current, activeSection })),
-    [page],
+    (activeSection: WorkbenchSectionId) => {
+      const changeSection = () => page.setLayout((current) => ({ ...current, activeSection }))
+      if (page.activeSection === 'measurement' && activeSection !== 'measurement' && calculationDirty) {
+        page.guardReplacement(changeSection)
+      } else {
+        changeSection()
+      }
+    },
+    [calculationDirty, page],
   )
   const setSelectedMaterialId = useCallback(
     (materialId: number | null) => page.setLayout((current) => ({ ...current, materialId })),
@@ -281,7 +293,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const activeFlatRecordedData = pendingResult ? sessionFlatRecordedData : workbench.selection.flatRecordedData
   const activeRecordedSchemas = pendingResult ? sessionRecordedSchemas : workbench.selection.recordedSchemas
   const activeRecordedRules = pendingResult ? sessionRecordedRules : workbench.selection.recordedRules
-  const rayPathsDeclared = 'rayPaths' in activeRecordedSchemas
   const rayPathState = useMemo(() => {
     try {
       return { bundles: parseRayPathBundles(activeRecordedSchemas, activeRecordedData), error: null }
@@ -290,7 +301,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     }
   }, [activeRecordedData, activeRecordedSchemas])
 
-  const applyAgentBundle = async (request: AiAgentApplyRequest) => {
+  const applyAgentBundleNow = async (request: AiAgentApplyRequest) => {
     const result = await workbench.applyAgentBundle(request)
     if (result.firstChangedFile) {
       page.setActiveExperimentFile(result.firstChangedFile)
@@ -302,6 +313,19 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     }
     return result
   }
+  const applyAgentBundle = (request: AiAgentApplyRequest) => {
+    if (page.activeSection !== 'measurement' || !calculationDirty) return applyAgentBundleNow(request)
+    return new Promise<AiAgentApplyResult>((resolve, reject) => {
+      page.guardReplacement(
+        () => applyAgentBundleNow(request).then(resolve, reject),
+        () =>
+          resolve({
+            message: '저장하지 않은 Calculation 편집을 유지하기 위해 Agent 변경을 적용하지 않았습니다.',
+            status: 'conflicted',
+          }),
+      )
+    })
+  }
 
   const leftPane =
     page.activeSection === 'experiment' ? (
@@ -311,34 +335,26 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         compact
         selectedId={workbench.experimentId}
         user={auth.user}
-        onDeleteSelected={workbench.detachDeletedExperiment}
+        onDeleteSelected={() => {
+          page.setCalculationId(null)
+          workbench.detachDeletedExperiment()
+        }}
         onOpenSaved={(row) =>
           page.guardReplacement(async () => {
             await workbench.loadExperiment(row)
-            setActiveSection('experiment')
+            page.setCalculationId(null)
+            page.setLayout((current) => ({ ...current, activeSection: 'experiment' }))
           })
         }
         onOpenExample={(sourceBundle, name, description) =>
           page.guardReplacement(() => {
             workbench.newExperiment(sourceBundle, name, description)
-            setActiveSection('experiment')
+            page.setCalculationId(null)
+            page.setLayout((current) => ({ ...current, activeSection: 'experiment' }))
           })
         }
       />
-    ) : page.activeSection === 'measurement' ? (
-      <div className="flex h-full min-h-0 flex-col gap-3 p-3">
-        <h2 className="font-semibold">Measurements</h2>
-        <MeasurementExplorer
-          busy={workbench.measurementActions.busy || Boolean(workbench.measurementActions.pendingRecordMeasurementId)}
-          enabled={auth.isAuthenticated}
-          experimentId={workbench.experimentId}
-          selectedId={workbench.selection.measurement?.id}
-          onClearSelection={workbench.selection.clearMeasurement}
-          onDelete={(rows) => workbench.measurementActions.deleteMeasurements(rows)}
-          onSelect={(row) => page.runSafely(() => workbench.selection.loadMeasurement(row))}
-        />
-      </div>
-    ) : page.activeSection === 'material' ? (
+    ) : page.activeSection === 'measurement' ? null : page.activeSection === 'material' ? (
       <MaterialList
         command={
           materialCommand?.type === 'new' || materialCommand?.type === 'refresh'
@@ -401,46 +417,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           detail: <ExperimentDetail workbench={workbench} />,
         }}
       />
-    ) : page.activeSection === 'measurement' ? (
-      <PaneTabs
-        label="Measurement"
-        options={[
-          { id: 'recorded-data', label: 'Recorded Data' },
-          { id: 'detail', label: 'Detail' },
-        ]}
-        value={page.rightTabs.measurement}
-        onValueChange={(measurement) =>
-          page.setLayout((current) => ({
-            ...current,
-            rightTabs: { ...current.rightTabs, measurement: measurement as 'recorded-data' | 'detail' },
-          }))
-        }
-        panels={{
-          'recorded-data': (
-            <RecordedDataEditor
-              measurementId={workbench.selection.measurement?.id ?? null}
-              pendingSave={pendingResult}
-              recordedAt={workbench.selection.measurement?.recorded_at ?? null}
-              recordedData={activeFlatRecordedData}
-              rayPathBundles={rayPathState.bundles}
-              rayPathError={rayPathState.error}
-              rayPathsDeclared={rayPathsDeclared}
-              rules={activeRecordedRules}
-            />
-          ),
-          detail: (
-            <MeasurementDetail
-              measurement={workbench.selection.measurement}
-              pendingSave={pendingResult}
-              rayPathBundles={rayPathState.bundles}
-              rayPathError={rayPathState.error}
-              rayPathsDeclared={rayPathsDeclared}
-              recordedRows={workbench.selection.recordedRows}
-            />
-          ),
-        }}
-      />
-    ) : page.activeSection === 'material' ? (
+    ) : page.activeSection === 'measurement' ? null : page.activeSection === 'material' ? (
       selectedMaterialId ? (
         <MaterialDetail
           command={
@@ -496,68 +473,114 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     </div>
   )
 
+  const viewerPane = (
+    <WorkbenchViewer
+      activeExperimentTaskName={page.activeExperimentFile}
+      experiment={workbench.experiment}
+      experimentDocument={workbench.experimentDocument}
+      onFindSelectionSource={findSelectionSource}
+      onSelectionQueryChange={setViewerSelectionQuery}
+      onSelectionSourcePathsChange={handleSelectionSourcePathsChange}
+      onToggleViewerExpanded={() =>
+        page.setLayout((current) => ({ ...current, viewerExpanded: !current.viewerExpanded }))
+      }
+      rayPaths={rayPathState.bundles}
+      selectionQuery={viewerSelectionQuery}
+      selectionSourceStatus={selectionSourceStatus}
+      viewerExpanded={page.viewerExpanded}
+    />
+  )
+  const menubar = <WorkbenchMenubar activeSectionId={page.activeSection} onActiveSectionChange={setActiveSection} />
+  const ribbon = <WorkbenchRibbon activeSectionId={page.activeSection} panels={chrome.ribbonPanels} />
+  const bottomDock = (
+    <WorkbenchBottomDock
+      mode={page.bottomMode}
+      onModeChange={(bottomMode) => page.setLayout((current) => ({ ...current, bottomMode }))}
+      agent={
+        agentActivated ? (
+          <Suspense fallback={<PaneLoading label="AI Agent를 불러오는 중입니다." />}>
+            <AiHelperWorkspace
+              activeExperimentFile={page.activeExperimentFile}
+              activeTab="ai-helper"
+              baseHash={workbench.agentWorkspaceIdentity?.baseHash}
+              workbench={workbench}
+              onApplyStagedBundle={applyAgentBundle}
+              onRequestLogin={() => page.setDialog('account')}
+            />
+          </Suspense>
+        ) : (
+          <PaneEmpty icon={<Bot />} title="AI Agent" />
+        )
+      }
+      console={<RuntimeConsoleView store={runtimeConsole} />}
+    />
+  )
+
   return (
     <main className="flex h-dvh min-h-[560px] min-w-[1280px] flex-col overflow-hidden bg-background text-foreground">
       <div aria-busy={!page.initialized} className="relative min-h-0 flex-1" inert={!page.initialized}>
-        <WorkbenchShell
-          bottom={
-            <WorkbenchBottomDock
-              mode={page.bottomMode}
-              onModeChange={(bottomMode) => page.setLayout((current) => ({ ...current, bottomMode }))}
-              agent={
-                agentActivated ? (
-                  <Suspense fallback={<PaneLoading label="AI Agent를 불러오는 중입니다." />}>
-                    <AiHelperWorkspace
-                      activeExperimentFile={page.activeExperimentFile}
-                      activeTab="ai-helper"
-                      baseHash={workbench.agentWorkspaceIdentity?.baseHash}
-                      workbench={workbench}
-                      onApplyStagedBundle={applyAgentBundle}
-                      onRequestLogin={() => page.setDialog('account')}
-                    />
-                  </Suspense>
-                ) : (
-                  <PaneEmpty icon={<Bot />} title="AI Agent" />
-                )
-              }
-              console={<RuntimeConsoleView store={runtimeConsole} />}
-            />
-          }
-          bottomHeightRatio={page.bottomHeightRatio}
-          bottomMode={page.bottomMode}
-          viewerExpanded={page.viewerExpanded}
-          className="h-full min-h-0"
-          left={leftPane}
-          leftLabel={`${page.activeSection} 목록 및 설정`}
-          leftWidthRatio={page.leftWidthRatio}
-          menubar={<WorkbenchMenubar activeSectionId={page.activeSection} onActiveSectionChange={setActiveSection} />}
-          ribbon={<WorkbenchRibbon activeSectionId={page.activeSection} panels={chrome.ribbonPanels} />}
-          right={rightPane}
-          rightLabel={`${page.activeSection} Detail`}
-          rightWidthRatio={page.rightWidthRatio}
-          viewer={
-            <WorkbenchViewer
-              activeExperimentTaskName={page.activeExperimentFile}
-              experiment={workbench.experiment}
-              experimentDocument={workbench.experimentDocument}
-              onFindSelectionSource={findSelectionSource}
-              onSelectionQueryChange={setViewerSelectionQuery}
-              onSelectionSourcePathsChange={handleSelectionSourcePathsChange}
-              onToggleViewerExpanded={() =>
-                page.setLayout((current) => ({ ...current, viewerExpanded: !current.viewerExpanded }))
-              }
-              rayPaths={rayPathState.bundles}
-              selectionQuery={viewerSelectionQuery}
-              selectionSourceStatus={selectionSourceStatus}
-              viewerExpanded={page.viewerExpanded}
-            />
-          }
-          onBottomHeightRatioChange={(bottomHeightRatio) =>
-            page.setLayout((current) => ({ ...current, bottomHeightRatio }))
-          }
-          onLeftWidthRatioChange={(leftWidthRatio) => page.setLayout((current) => ({ ...current, leftWidthRatio }))}
-          onRightWidthRatioChange={(rightWidthRatio) => page.setLayout((current) => ({ ...current, rightWidthRatio }))}
-        />
+        {page.activeSection === 'measurement' ? (
+          <CalculationWorkbench
+            authenticated={auth.isAuthenticated}
+            bottom={bottomDock}
+            bottomHeightRatio={page.bottomHeightRatio}
+            bottomMode={page.bottomMode}
+            busy={workbench.measurementActions.busy || Boolean(workbench.measurementActions.pendingRecordMeasurementId)}
+            columnRatios={page.calculationColumnRatios ?? [0.22, 0.26, 0.26, 0.26]}
+            contextPending={page.calculationContextPending}
+            editable={workbench.experimentManageable}
+            experimentId={workbench.experimentId}
+            measurementId={workbench.selection.measurement?.id ?? null}
+            measurementLoading={workbench.selection.loading}
+            menubar={menubar}
+            onBottomHeightRatioChange={(bottomHeightRatio) =>
+              page.setLayout((current) => ({ ...current, bottomHeightRatio }))
+            }
+            onCalculationIdChange={page.setCalculationId}
+            onColumnRatiosChange={(calculationColumnRatios) =>
+              page.setLayout((current) => ({ ...current, calculationColumnRatios }))
+            }
+            onDeleteMeasurements={workbench.measurementActions.deleteMeasurements}
+            onDirtyChange={setCalculationDirty}
+            onRowRatiosChange={(calculationLeftRowRatios) =>
+              page.setLayout((current) => ({ ...current, calculationLeftRowRatios }))
+            }
+            onSelectMeasurement={(row) => page.runSafely(() => workbench.selection.loadMeasurement(row))}
+            onClearMeasurement={workbench.selection.clearMeasurement}
+            onUsageChanged={workbench.refreshExperimentUsage}
+            recordedData={activeFlatRecordedData}
+            recordedRules={activeRecordedRules}
+            ribbon={ribbon}
+            rowRatios={page.calculationLeftRowRatios ?? [0.45, 0.25, 0.3]}
+            selectedCalculationId={page.calculationId}
+            viewer={viewerPane}
+            viewerExpanded={page.viewerExpanded}
+          />
+        ) : (
+          <WorkbenchShell
+            bottom={bottomDock}
+            bottomHeightRatio={page.bottomHeightRatio}
+            bottomMode={page.bottomMode}
+            viewerExpanded={page.viewerExpanded}
+            className="h-full min-h-0"
+            left={leftPane}
+            leftLabel={`${page.activeSection} 목록 및 설정`}
+            leftWidthRatio={page.leftWidthRatio}
+            menubar={menubar}
+            ribbon={ribbon}
+            right={rightPane}
+            rightLabel={`${page.activeSection} Detail`}
+            rightWidthRatio={page.rightWidthRatio}
+            viewer={viewerPane}
+            onBottomHeightRatioChange={(bottomHeightRatio) =>
+              page.setLayout((current) => ({ ...current, bottomHeightRatio }))
+            }
+            onLeftWidthRatioChange={(leftWidthRatio) => page.setLayout((current) => ({ ...current, leftWidthRatio }))}
+            onRightWidthRatioChange={(rightWidthRatio) =>
+              page.setLayout((current) => ({ ...current, rightWidthRatio }))
+            }
+          />
+        )}
         {!page.initialized ? (
           <div
             aria-label="CAE 작업 복원 중"
@@ -628,7 +651,11 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         description={page.confirmation?.description ?? ''}
         open={page.confirmation !== null}
         title={page.confirmation?.title ?? ''}
-        onCancel={() => page.setConfirmation(null)}
+        onCancel={() => {
+          const pending = page.confirmation
+          page.setConfirmation(null)
+          pending?.cancel?.()
+        }}
         onConfirm={() => {
           const pending = page.confirmation
           page.setConfirmation(null)

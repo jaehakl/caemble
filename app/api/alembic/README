@@ -1,3 +1,17 @@
-The API starts from the single destructive `000000000001` baseline. Existing
-application schemas must be erased with `reset_schema.py` before applying it;
-the baseline does not support downgrade recovery.
+The API starts from the destructive `000000000001` baseline. Use it only for an
+empty schema; an existing database already stamped at that revision advances
+through the child migrations with `alembic upgrade head`. The baseline and the
+Calculation migration do not support downgrade recovery.
+
+Before applying `000000000002_calculations` to an existing database, take a
+database backup and record the legacy row counts:
+
+```sql
+SELECT COUNT(*) AS designer_model_rows FROM designer_models;
+SELECT COUNT(*) AS predictor_model_rows FROM predictor_models;
+```
+
+The migration conditionally drops those two tables and creates `calculations`.
+It intentionally does not delete objects referenced by legacy `model_url`
+values, so any object-store cleanup is a separate, explicit operation after the
+backup and retention policy have been confirmed.

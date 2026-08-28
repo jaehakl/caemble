@@ -28,5 +28,4 @@ export type MaterialParameterQualifierRecord = DbTableRecord<'MaterialParameterQ
 export type ExperimentRecord = DbTableRecord<'Experiment'>
 export type MeasurementRecord = DbTableRecord<'Measurement'>
 export type RecordedDataRecord = DbTableRecord<'RecordedData'>
-export type DesignerModelRecord = DbTableRecord<'DesignerModel'>
-export type PredictorModelRecord = DbTableRecord<'PredictorModel'>
+export type CalculationRecord = DbTableRecord<'Calculation'>

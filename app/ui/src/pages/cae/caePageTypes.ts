@@ -4,5 +4,6 @@ export type PendingConfirmation = Readonly<{
   title: string
   description: string
   confirmLabel?: string
+  cancel?: () => void
   run: () => unknown | Promise<unknown>
 }>

@@ -20,7 +20,10 @@ The initial migration creates the required `vector` extension. If the
 application database user cannot create extensions, a DBA must create `vector`
 before running Alembic.
 
-A normal install uses the current single baseline against an empty schema.
+A normal install applies the baseline and its child migrations against an empty
+schema. Existing databases already stamped at the baseline advance with the
+same `alembic upgrade head` command; migration-specific destructive preflight
+steps are documented in `alembic/README`.
 
 To erase every application row and recreate PostgreSQL from that baseline, run
 the explicit reset entrypoint. It refuses to run unless the destructive flag is

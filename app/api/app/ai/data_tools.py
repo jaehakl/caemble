@@ -11,13 +11,11 @@ from sqlalchemy import Text, and_, cast, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import (
-    DesignerModel,
     Experiment,
     Material,
     MaterialName,
     MaterialParameter,
     Measurement,
-    PredictorModel,
     RecordedData,
 )
 
@@ -158,19 +156,6 @@ class VisibleDataReader:
         if resource == "recorded_data":
             row = await self._recorded_row(resource_id, include_data=False)
             return _json_mapping(row)
-        if resource in {"designer_model", "predictor_model"}:
-            model = DesignerModel if resource == "designer_model" else PredictorModel
-            row = await self._one_visible(
-                select(
-                    model.id,
-                    model.experiment_id,
-                    model.file_size,
-                    model.updated_at,
-                ),
-                model,
-                resource_id,
-            )
-            return _json_mapping(row)
         raise VisibleDataError("Visible data resource is not supported")
 
     async def read_source(
@@ -273,14 +258,6 @@ class VisibleDataReader:
                 ],
                 [RecordedData.name, RecordedData.quantity_kind, RecordedData.dtype],
                 RecordedData.user_id == self.user_id,
-            )
-        if resource in {"designer_model", "predictor_model"}:
-            model = DesignerModel if resource == "designer_model" else PredictorModel
-            return (
-                model,
-                [model.id, model.experiment_id, model.file_size, model.updated_at],
-                [cast(model.id, Text), cast(model.experiment_id, Text)],
-                _visible(model.user_id, self.user_id),
             )
         raise VisibleDataError("Visible data resource is not supported")
 

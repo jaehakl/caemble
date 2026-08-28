@@ -62,8 +62,7 @@ export function ExperimentDetail({ workbench }: { workbench: CaeWorkbenchState }
         <SummaryCard icon={<FlaskConical />} label="Tasks" value={tasks.length} />
         <SummaryCard icon={<Link2 />} label="Measurements" value={counts?.measurements ?? 0} />
         <SummaryCard icon={<Link2 />} label="RecordedData" value={counts?.recordedData ?? 0} />
-        <SummaryCard icon={<Link2 />} label="Designer" value={counts?.designerModels ?? 0} />
-        <SummaryCard icon={<Link2 />} label="Predictor" value={counts?.predictorModels ?? 0} />
+        <SummaryCard icon={<Link2 />} label="Calculation" value={counts?.calculations ?? 0} />
       </div>
 
       <section className="mt-5 rounded-md border" aria-labelledby="experiment-diagnostics-title">

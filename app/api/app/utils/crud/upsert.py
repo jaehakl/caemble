@@ -50,6 +50,8 @@ def _constraint_detail(error: IntegrityError) -> str:
         "uq_material_names_user_name",
     }:
         return "Material name already exists in this visibility scope."
+    if constraint_name == "uq_calculations_experiment_id_name":
+        return "Calculation name already exists in this Experiment."
     return "Database constraint violation."
 
 

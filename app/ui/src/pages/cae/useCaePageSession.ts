@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router'
+import { useBlocker, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { dbTables, getListRequest } from '@/api'
 import { loadWorkbenchDraft, saveWorkbenchDraft } from '@/features/cae-workbench/storage/draftStorage'
@@ -40,13 +40,23 @@ function starterDraft(): WorkbenchDraft {
   }
 }
 
-export function useCaePageSession(workbench: CaeWorkbenchState) {
+export function useCaePageSession(
+  workbench: CaeWorkbenchState,
+  { hasUnsavedCalculationWork = false }: { hasUnsavedCalculationWork?: boolean } = {},
+) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [dialog, setDialog] = useState<WorkbenchDialog>(null)
   const [confirmation, setConfirmation] = useState<PendingConfirmation | null>(null)
   const [layout, setLayout] = useState<WorkbenchLayoutState>(defaultWorkbenchLayoutState)
   const [initialized, setInitialized] = useState(false)
   const [persistenceAvailable, setPersistenceAvailable] = useState(true)
+  const [calculationId, setCalculationId] = useState<number | null>(null)
+  const [calculationContextPending, setCalculationContextPending] = useState(false)
+  const navigationBlocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      hasUnsavedCalculationWork &&
+      (currentLocation.pathname !== nextLocation.pathname || currentLocation.hash !== nextLocation.hash),
+  )
   const initializingRef = useRef(false)
   const lastSyncedSearchRef = useRef<string | null>(null)
   const externalNavigationRef = useRef(false)
@@ -57,6 +67,15 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
   searchParamsRef.current = searchParams
   workbenchRef.current = workbench
 
+  useEffect(() => {
+    if (navigationBlocker.state !== 'blocked') return
+    if (window.confirm('저장하지 않은 Calculation 편집을 버리고 페이지를 나갈까요?')) {
+      navigationBlocker.proceed()
+    } else {
+      navigationBlocker.reset()
+    }
+  }, [navigationBlocker])
+
   const runSafely = useCallback((run: () => unknown | Promise<unknown>) => {
     void Promise.resolve()
       .then(run)
@@ -64,28 +83,34 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
   }, [])
 
   const guardReplacement = useCallback(
-    (run: () => unknown | Promise<unknown>) => {
+    (run: () => unknown | Promise<unknown>, cancel?: () => void) => {
       if (workbench.measurementActions.pendingRecordMeasurementId) {
         toast.error('실행 결과 저장을 다시 시도한 뒤 Experiment 또는 Measurement를 바꾸세요.')
+        cancel?.()
         return
       }
       if (workbench.measurementActions.busy || Boolean(workbench.saving)) {
         toast.error(workbench.saving ? '저장이 끝난 뒤 source를 바꾸세요.' : 'CAE 작업이 끝난 뒤 source를 바꾸세요.')
+        cancel?.()
         return
       }
-      if (!workbench.hasUnsavedExperimentWork) {
+      if (!workbench.hasUnsavedExperimentWork && !hasUnsavedCalculationWork) {
         runSafely(run)
         return
       }
       setConfirmation({
+        cancel,
         title: '저장하지 않은 편집을 바꿀까요?',
-        description: '저장하지 않은 Experiment 편집 내용이 새 선택으로 대체됩니다.',
+        description: hasUnsavedCalculationWork
+          ? '저장하지 않은 Calculation 편집 내용이 새 선택으로 대체됩니다.'
+          : '저장하지 않은 Experiment 편집 내용이 새 선택으로 대체됩니다.',
         confirmLabel: '편집 내용 바꾸기',
         run,
       })
     },
     [
       runSafely,
+      hasUnsavedCalculationWork,
       workbench.hasUnsavedExperimentWork,
       workbench.measurementActions.busy,
       workbench.measurementActions.pendingRecordMeasurementId,
@@ -120,7 +145,10 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
         if (cancelled) return
         let urlExperimentId = positiveId(initialSearchParams.get('experiment'))
         const urlMeasurementId = positiveId(initialSearchParams.get('measurement'))
+        const urlCalculationId = positiveId(initialSearchParams.get('calculation'))
         if (!urlExperimentId && urlMeasurementId) urlExperimentId = await measurementExperimentId(urlMeasurementId)
+        const effectiveCalculationId = urlExperimentId ? urlCalculationId : null
+        setCalculationId(effectiveCalculationId)
 
         if (draft) setLayout(draft.layout)
 
@@ -132,18 +160,19 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
             !window.confirm('URL의 Experiment와 마지막 로컬 작업이 다릅니다. 확인을 누르면 URL 선택을 엽니다.')
           ) {
             currentWorkbench.restoreDraft(draft)
+            setCalculationId(null)
           } else if (draft && urlExperimentId === draftExperimentId) {
             currentWorkbench.restoreDraft(draft)
             if (urlMeasurementId) currentWorkbench.restoreSelection(urlMeasurementId)
             setLayout((current) => ({
               ...current,
-              activeSection: urlMeasurementId ? 'measurement' : 'experiment',
+              activeSection: urlMeasurementId || effectiveCalculationId ? 'measurement' : 'experiment',
             }))
           } else {
             await currentWorkbench.loadExperiment(urlExperimentId, urlMeasurementId)
             setLayout((current) => ({
               ...current,
-              activeSection: urlMeasurementId ? 'measurement' : 'experiment',
+              activeSection: urlMeasurementId || effectiveCalculationId ? 'measurement' : 'experiment',
             }))
           }
         } else if (draft) {
@@ -171,6 +200,7 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
         const values = {
           experiment: workbench.experimentId,
           measurement: workbench.selectionIds.measurementId,
+          calculation: calculationId,
         }
         Object.entries(values).forEach(([key, value]) => {
           if (value) next.set(key, String(value))
@@ -183,7 +213,7 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
       },
       { replace: true },
     )
-  }, [setSearchParams, workbench.experimentId, workbench.selectionIds.measurementId])
+  }, [calculationId, setSearchParams, workbench.experimentId, workbench.selectionIds.measurementId])
 
   useEffect(() => {
     if (!initialized || searchKey === lastSyncedSearchRef.current) return
@@ -191,6 +221,7 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
     const currentWorkbench = workbenchRef.current
     const requestedExperimentId = positiveId(requested.get('experiment'))
     const measurementId = positiveId(requested.get('measurement'))
+    const requestedCalculationId = positiveId(requested.get('calculation'))
     const navigationSequence = ++externalNavigationSequenceRef.current
     lastSyncedSearchRef.current = searchKey
     externalNavigationRef.current = true
@@ -211,15 +242,33 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
       syncSelectionToUrl()
       return
     }
+    const contextMayChange =
+      requestedCalculationId !== calculationId ||
+      measurementId !== (currentWorkbench.selection.measurement?.id ?? null) ||
+      (requestedExperimentId !== null
+        ? requestedExperimentId !== currentWorkbench.experimentId
+        : measurementId === null && requestedCalculationId === null && currentWorkbench.experimentId !== null)
+    if (contextMayChange) setCalculationContextPending(true)
     void (async () => {
       try {
         const experimentId =
-          requestedExperimentId ?? (measurementId ? await measurementExperimentId(measurementId) : null)
+          requestedExperimentId ??
+          (measurementId
+            ? await measurementExperimentId(measurementId)
+            : requestedCalculationId
+              ? currentWorkbench.experimentId
+              : null)
+        if (navigationSequence !== externalNavigationSequenceRef.current) return
         const experimentChanges = experimentId !== currentWorkbench.experimentId
+        const calculationChanges = requestedCalculationId !== calculationId
         if (
-          experimentChanges &&
-          currentWorkbench.hasUnsavedExperimentWork &&
-          !window.confirm('저장하지 않은 Experiment 편집을 바꾸고 URL의 Experiment를 열까요?')
+          (experimentChanges || calculationChanges) &&
+          (currentWorkbench.hasUnsavedExperimentWork || hasUnsavedCalculationWork) &&
+          !window.confirm(
+            hasUnsavedCalculationWork
+              ? '저장하지 않은 Calculation 편집을 바꾸고 URL의 선택을 열까요?'
+              : '저장하지 않은 Experiment 편집을 바꾸고 URL의 Experiment를 열까요?',
+          )
         ) {
           syncSelectionToUrl()
           return
@@ -228,13 +277,16 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
           if (experimentChanges) await currentWorkbench.loadExperiment(experimentId, measurementId)
           else if (measurementId) await currentWorkbench.selection.loadMeasurement(measurementId, experimentId)
           else currentWorkbench.selection.clearMeasurement()
+          if (navigationSequence !== externalNavigationSequenceRef.current) return
+          setCalculationId(requestedCalculationId)
           setLayout((current) => ({
             ...current,
-            activeSection: measurementId ? 'measurement' : 'experiment',
+            activeSection: measurementId || requestedCalculationId ? 'measurement' : 'experiment',
           }))
         } else {
           const starter = starterDraft()
           currentWorkbench.restoreDraft(starter)
+          setCalculationId(null)
           setLayout(starter.layout)
         }
       } catch (cause: unknown) {
@@ -242,10 +294,13 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
         toast.error(cause instanceof Error ? cause.message : 'URL의 CAE 작업을 열지 못했습니다.')
         syncSelectionToUrl()
       } finally {
-        if (navigationSequence === externalNavigationSequenceRef.current) externalNavigationRef.current = false
+        if (navigationSequence === externalNavigationSequenceRef.current) {
+          externalNavigationRef.current = false
+          setCalculationContextPending(false)
+        }
       }
     })()
-  }, [initialized, searchKey, searchParams, syncSelectionToUrl])
+  }, [calculationId, hasUnsavedCalculationWork, initialized, searchKey, searchParams, syncSelectionToUrl])
 
   useEffect(() => {
     if (!initialized || externalNavigationRef.current || workbench.selectionRestoring) return
@@ -264,14 +319,19 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
   }, [initialized, layout, persistenceAvailable, workbench])
 
   useEffect(() => {
-    if (!workbench.hasUnsavedWork && !workbench.measurementActions.pendingRecordMeasurementId) return
+    if (
+      !workbench.hasUnsavedWork &&
+      !hasUnsavedCalculationWork &&
+      !workbench.measurementActions.pendingRecordMeasurementId
+    )
+      return
     const beforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault()
       event.returnValue = ''
     }
     window.addEventListener('beforeunload', beforeUnload)
     return () => window.removeEventListener('beforeunload', beforeUnload)
-  }, [workbench.hasUnsavedWork, workbench.measurementActions.pendingRecordMeasurementId])
+  }, [hasUnsavedCalculationWork, workbench.hasUnsavedWork, workbench.measurementActions.pendingRecordMeasurementId])
 
   const requestRunSelected = useCallback(() => {
     const runId = workbenchRef.current.measurementActions.runSelected()
@@ -287,6 +347,8 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
 
   return {
     ...layout,
+    calculationContextPending,
+    calculationId,
     confirmation,
     dialog,
     guardReplacement,
@@ -295,6 +357,7 @@ export function useCaePageSession(workbench: CaeWorkbenchState) {
     requestRunSelected,
     runSafely,
     setActiveExperimentFile,
+    setCalculationId,
     setConfirmation,
     setDialog,
     setLayout,

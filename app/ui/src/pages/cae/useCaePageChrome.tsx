@@ -541,7 +541,7 @@ export function useCaePageChrome({
     },
     {
       sectionId: 'measurement',
-      label: 'Measurement',
+      label: 'Calculation',
       content: (
         <>
           <WorkbenchRibbonGroup label="Measurement">

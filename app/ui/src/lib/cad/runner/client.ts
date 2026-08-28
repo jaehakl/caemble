@@ -45,7 +45,7 @@ function runnerLocation() {
   return url
 }
 
-function loadRunnerFrame() {
+export function loadRunnerFrame() {
   runnerFrame ??= new Promise<Readonly<{ frame: HTMLIFrameElement; origin: string }>>((resolve, reject) => {
     let url: URL
     try {

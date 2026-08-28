@@ -181,11 +181,9 @@ export function ExperimentManager({
     mutationFn: async (row: ExperimentRecord) => {
       const usage = (await dbTables.Experiment.usage([row.id])).items[0]
       const counts = usage?.derivedCounts ?? row.derivedCounts
-      const linked = counts
-        ? counts.measurements + counts.recordedData + counts.designerModels + counts.predictorModels
-        : 0
+      const linked = counts ? counts.measurements + counts.recordedData + counts.calculations : 0
       const detail = linked
-        ? `\n연결 데이터 ${linked.toLocaleString()}개도 함께 삭제됩니다 (Measurement ${counts!.measurements}, RecordedData ${counts!.recordedData}, Designer ${counts!.designerModels}, Predictor ${counts!.predictorModels}).`
+        ? `\n연결 데이터 ${linked.toLocaleString()}개도 함께 삭제됩니다 (Measurement ${counts!.measurements}, RecordedData ${counts!.recordedData}, Calculation ${counts!.calculations}).`
         : ''
       const version = row.version ?? `${row.version_major}.${row.version_minor}.${row.version_patch}`
       if (
@@ -297,9 +295,7 @@ export function ExperimentManager({
                   savedRow && user && (savedRow.user_id === user.id || user.roles.includes('admin')),
                 )
                 const counts = savedRow?.derivedCounts
-                const linked = counts
-                  ? counts.measurements + counts.recordedData + counts.designerModels + counts.predictorModels
-                  : 0
+                const linked = counts ? counts.measurements + counts.recordedData + counts.calculations : 0
                 return (
                   <li className={savedRow?.id === selectedId ? 'bg-orange-50/70' : undefined} key={item.coordinate}>
                     <div className={`flex items-start gap-3 ${compact ? 'p-3' : 'p-4'}`}>

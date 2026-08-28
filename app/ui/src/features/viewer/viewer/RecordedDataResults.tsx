@@ -90,7 +90,7 @@ function numericExtent(values: readonly number[]) {
   return minimum === maximum ? { minimum: minimum - 0.5, maximum: maximum + 0.5 } : { minimum, maximum }
 }
 
-function LineChart({
+export function LineChart({
   resultUnit,
   ticks,
   values,
@@ -177,7 +177,7 @@ function heatmapColor(value: number, minimum: number, maximum: number) {
   return `hsl(${hue} 78% ${lightness}%)`
 }
 
-function Heatmap({
+export function Heatmap({
   columnTicks,
   getValue,
   resultUnit,

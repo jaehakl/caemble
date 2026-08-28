@@ -1,0 +1,96 @@
+import { useEffect, useId, useRef, useState } from 'react'
+import type * as Monaco from 'monaco-editor'
+import { CALCULATION_MONACO_DECLARATION } from '@/lib/calculation'
+
+export function CalculationSourceEditor({
+  disabled = false,
+  sourceCode,
+  onSave,
+  onSourceCodeChange,
+}: {
+  disabled?: boolean
+  sourceCode: string
+  onSave: () => void
+  onSourceCodeChange: (sourceCode: string) => void
+}) {
+  const editorHostRef = useRef<HTMLDivElement>(null)
+  const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
+  const modelRef = useRef<Monaco.editor.ITextModel | null>(null)
+  const onSaveRef = useRef(onSave)
+  const onSourceCodeChangeRef = useRef(onSourceCodeChange)
+  const sourceCodeRef = useRef(sourceCode)
+  const disabledRef = useRef(disabled)
+  const applyingSourceRef = useRef(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const modelId = useId().replace(/:/gu, '')
+  onSaveRef.current = onSave
+  onSourceCodeChangeRef.current = onSourceCodeChange
+  sourceCodeRef.current = sourceCode
+  disabledRef.current = disabled
+
+  useEffect(() => {
+    const host = editorHostRef.current
+    if (!host) return
+    let cancelled = false
+    let extraLibrary: Monaco.IDisposable | null = null
+    let contentSubscription: Monaco.IDisposable | null = null
+    void import('@/lib/cad/authoring')
+      .then(({ loadMonaco }) => loadMonaco())
+      .then((monaco) => {
+        if (cancelled) return
+        const uri = monaco.Uri.parse(`file:///calculation-${modelId}.ts`)
+        const model = monaco.editor.createModel(sourceCodeRef.current, 'typescript', uri)
+        extraLibrary = monaco.typescript.typescriptDefaults.addExtraLib(
+          CALCULATION_MONACO_DECLARATION,
+          'file:///calculation-api.d.ts',
+        )
+        const editor = monaco.editor.create(host, {
+          automaticLayout: true,
+          fontFamily: 'JetBrains Mono, Consolas, Monaco, monospace',
+          fontSize: 13,
+          minimap: { enabled: false },
+          model,
+          padding: { top: 12 },
+          readOnly: disabledRef.current,
+          scrollBeyondLastLine: false,
+          tabSize: 2,
+        })
+        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => onSaveRef.current())
+        contentSubscription = model.onDidChangeContent(() => {
+          if (!applyingSourceRef.current) onSourceCodeChangeRef.current(model.getValue())
+        })
+        editorRef.current = editor
+        modelRef.current = model
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) setLoadError(cause instanceof Error ? cause.message : String(cause))
+      })
+    return () => {
+      cancelled = true
+      contentSubscription?.dispose()
+      extraLibrary?.dispose()
+      editorRef.current?.dispose()
+      modelRef.current?.dispose()
+      editorRef.current = null
+      modelRef.current = null
+    }
+  }, [modelId])
+
+  useEffect(() => editorRef.current?.updateOptions({ readOnly: disabled }), [disabled])
+
+  useEffect(() => {
+    const model = modelRef.current
+    if (!model || model.getValue() === sourceCode) return
+    applyingSourceRef.current = true
+    model.setValue(sourceCode)
+    applyingSourceRef.current = false
+  }, [sourceCode])
+
+  return loadError ? (
+    <div className="grid h-full place-items-center p-4 text-center text-sm text-destructive">
+      Monaco Editor를 불러오지 못했습니다: {loadError}
+    </div>
+  ) : (
+    <div className="h-full min-h-0 w-full" ref={editorHostRef} />
+  )
+}

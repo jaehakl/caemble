@@ -5,6 +5,8 @@ import { defineConfig } from 'vite'
 const runnerHtmlPath = fileURLToPath(new URL('./runner.html', import.meta.url))
 const runnerCsp =
   "default-src 'none'; script-src 'self' 'unsafe-eval'; worker-src 'self'; connect-src 'none'; img-src 'none'; style-src 'none'; base-uri 'none'; form-action 'none'"
+const calculationWorkerCsp =
+  "default-src 'none'; script-src 'self' 'unsafe-eval'; worker-src 'none'; connect-src 'none'; img-src 'none'; media-src 'none'; style-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
 
 export default defineConfig({
   appType: 'custom',
@@ -32,6 +34,12 @@ export default defineConfig({
       configureServer(server) {
         server.middlewares.use(async (request, response, next) => {
           const pathname = new URL(request.url ?? '/', 'http://localhost').pathname
+          if (pathname === '/src/lib/calculation/runner.worker.ts') {
+            response.setHeader('Content-Security-Policy', calculationWorkerCsp)
+            response.setHeader('Referrer-Policy', 'no-referrer')
+            next()
+            return
+          }
           if (pathname !== '/' && pathname !== '/runner.html') {
             next()
             return

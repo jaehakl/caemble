@@ -63,8 +63,6 @@ class User(TimestampMixin, Base):
     experiments: Mapped[List["Experiment"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     measurements: Mapped[List["Measurement"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     recorded_data: Mapped[List["RecordedData"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
-    designer_models: Mapped[List["DesignerModel"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
-    predictor_models: Mapped[List["PredictorModel"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     experiment_namespaces: Mapped[List["ExperimentNamespace"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
