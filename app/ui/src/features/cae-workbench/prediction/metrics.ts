@@ -1,4 +1,5 @@
 import type { CalculationDataOutput } from '@/api'
+import { fitTensorDisplayDomain } from '../calculation/tensorDisplayDomain'
 import type { PredictionTensorLayout, PredictionTrainingRow } from './knn'
 
 export type PredictionValidationMetric = Readonly<{
@@ -72,13 +73,7 @@ function flatOutput(output: CalculationDataOutput) {
 
 export function predictionOutputRange(outputs: readonly (CalculationDataOutput | null | undefined)[]) {
   const values = outputs.flatMap((output) => (output ? (flatOutput(output) ?? []) : []))
-  if (values.length === 0) return [-1, 1] as const
-  const minimum = values.reduce((current, value) => Math.min(current, value), Number.POSITIVE_INFINITY)
-  const maximum = values.reduce((current, value) => Math.max(current, value), Number.NEGATIVE_INFINITY)
-  const difference = maximum - minimum
-  const span =
-    Number.isFinite(difference) && difference > 0 ? difference : Math.max(1, Math.abs(minimum), Math.abs(maximum))
-  return [Math.max(-Number.MAX_VALUE, minimum - span * 10), Math.min(Number.MAX_VALUE, maximum + span * 10)] as const
+  return fitTensorDisplayDomain(values)
 }
 
 function outputSignature(output: CalculationDataOutput) {

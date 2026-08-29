@@ -243,7 +243,7 @@ export function PredictionWorkspace({
   const [dataStale, setDataStaleState] = useState(false)
   const [freshnessPending, setFreshnessPendingState] = useState(true)
   const [calculationValues, setCalculationValues] = useState<Readonly<Record<number, CalculationDataOutput>>>({})
-  const [calculationEditorRevision, setCalculationEditorRevision] = useState(0)
+  const [calculationPrimaryRevision, setCalculationPrimaryRevision] = useState(0)
   const [calculationErrors, setCalculationErrors] = useState<Readonly<Record<number, string>>>({})
   const [surrogateValues, setSurrogateValues] = useState<Readonly<Record<number, CalculationDataOutput>>>({})
   const [surrogateErrors, setSurrogateErrors] = useState<Readonly<Record<number, string>>>({})
@@ -464,7 +464,7 @@ export function PredictionWorkspace({
     setDetailsOpen(false)
     calculationValuesRef.current = {}
     setCalculationValues({})
-    setCalculationEditorRevision((current) => current + 1)
+    setCalculationPrimaryRevision((current) => current + 1)
     setCalculationErrors({})
     setSurrogateValues({})
     setSurrogateErrors({})
@@ -497,7 +497,7 @@ export function PredictionWorkspace({
     setContext(null)
     calculationValuesRef.current = {}
     setCalculationValues({})
-    setCalculationEditorRevision((current) => current + 1)
+    setCalculationPrimaryRevision((current) => current + 1)
     setCalculationErrors({})
     setSurrogateValues({})
     setSurrogateErrors({})
@@ -884,7 +884,7 @@ export function PredictionWorkspace({
         if (transaction !== transactionRef.current) return
         calculationValuesRef.current = completed.calculated.values
         setCalculationValues(completed.calculated.values)
-        setCalculationEditorRevision((current) => current + 1)
+        setCalculationPrimaryRevision((current) => current + 1)
         setCalculationErrors(completed.calculated.errors)
         setSurrogateValues({})
         setSurrogateErrors({})
@@ -1046,7 +1046,6 @@ export function PredictionWorkspace({
       const next = Object.freeze({ ...calculationValuesRef.current, [calculationId]: output })
       calculationValuesRef.current = next
       setCalculationValues(next)
-      setCalculationEditorRevision((current) => current + 1)
       if (setup.calculationIds.every((id) => next[id])) void runInverse(next)
       else {
         setBusy(false)
@@ -1087,7 +1086,7 @@ export function PredictionWorkspace({
         setReferenceMeasurementId(preserveExistingTargets ? null : measurementId)
         calculationValuesRef.current = frozen
         setCalculationValues(frozen)
-        setCalculationEditorRevision((current) => current + 1)
+        setCalculationPrimaryRevision((current) => current + 1)
         setCalculationErrors({})
         setDirection('inverse')
         await runInverse(frozen)
@@ -1653,11 +1652,7 @@ export function PredictionWorkspace({
                   : 'incompatible'
                 : 'unavailable'
         const actualOutput = actualStatus === 'ready' ? validationRow?.actual : null
-        const [minimum, maximum] = predictionOutputRange([
-          output,
-          repredictedStatus === 'ready' ? repredictedOutput : null,
-          actualOutput,
-        ])
+        const [minimum, maximum] = predictionOutputRange([output])
         const [constraintMinimum, constraintMaximum] = output
           ? (integerRanges[output.dtype] ??
             (output.dtype === 'float32'
@@ -1771,10 +1766,9 @@ export function PredictionWorkspace({
 
   const varsPane = (
     <PredictionVarsPane
-      candidateSessionKey={`${experimentId ?? 'none'}:${workbench.experimentDocument.candidateGeneration}:prediction`}
+      candidateSessionKey={`${experimentId ?? 'none'}:prediction`}
       direction={direction}
       disabled={validating || dataStale || freshnessPending || !varsSchema || !candidateVars}
-      resetKey={currentCandidateFingerprint}
       schema={varsSchema}
       status={status}
       updating={busy}
@@ -1820,7 +1814,7 @@ export function PredictionWorkspace({
         disabled={validating || dataStale || freshnessPending}
         items={paneItems}
         mode={direction === 'forward' ? 'prediction' : 'target'}
-        resetKey={`${experimentId ?? 'none'}:${calculationEditorRevision}`}
+        resetKey={`${experimentId ?? 'none'}:${calculationPrimaryRevision}`}
         referenceMeasurementId={referenceMeasurementId}
         referenceMeasurements={referenceMeasurements}
         status={status}

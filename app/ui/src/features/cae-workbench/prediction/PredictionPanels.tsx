@@ -39,7 +39,6 @@ export type PredictionVarsPaneProps = Readonly<{
   candidateSessionKey: string
   direction: PredictionDirection
   disabled: boolean
-  resetKey: string | number
   schema: PredictionVarsSchema | null
   status: string
   updating: boolean
@@ -51,7 +50,6 @@ export function PredictionVarsPane({
   candidateSessionKey,
   direction,
   disabled,
-  resetKey,
   schema,
   status,
   updating,
@@ -80,7 +78,6 @@ export function PredictionVarsPane({
         <VarsPanel
           candidateSessionKey={candidateSessionKey}
           disabled={disabled}
-          editorResetKey={resetKey}
           schema={schema}
           vars={vars}
           onVariableChange={onVariableChange}
@@ -305,7 +302,8 @@ export function PredictionCalculationPane({
                         label={item.name}
                         maximum={item.maximum}
                         minimum={item.minimum}
-                        resetKey={`${resetKey}:${item.calculationId}`}
+                        displayDomainResetKey={`${resetKey}:${item.calculationId}`}
+                        selectionResetKey={`${resetKey}:${item.calculationId}`}
                         shape={output.shape}
                         value={varsTensorFromFlat(outputValues!, output.shape)}
                         onValueChange={(value) => {

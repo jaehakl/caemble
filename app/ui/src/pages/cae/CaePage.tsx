@@ -664,7 +664,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               workbench.calculationDataActions.busy ||
               Boolean(workbench.measurementActions.pendingRecordMeasurementId)
             }
-            candidateSessionKey={`${workbench.experimentId ?? 'none'}:${workbench.experimentDocument.candidateGeneration}`}
+            candidateSessionKey={`${workbench.experimentId ?? 'none'}`}
             candidateVars={workbench.candidateVars}
             columnRatios={page.calculationColumnRatios ?? [0.22, 0.26, 0.26, 0.26]}
             contextPending={page.calculationContextPending}

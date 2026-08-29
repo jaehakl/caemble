@@ -12,6 +12,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { Tensor } from '@/lib/cad'
+import { fitTensorDisplayDomain } from './tensorDisplayDomain'
 import {
   clampVarsValue,
   flattenVarsTensor,
@@ -60,10 +61,11 @@ export type TensorEditorProps = Readonly<{
   constraintMaximum?: number
   constraintMinimum?: number
   disabled?: boolean
+  displayDomainResetKey?: string | number
   label: string
   maximum: number
   minimum: number
-  resetKey?: string | number
+  selectionResetKey?: string | number
   shape: readonly number[]
   value: Tensor
   onValueChange: (value: Tensor) => void
@@ -156,7 +158,7 @@ function BarsEditor({
   label,
   maximum,
   minimum,
-  resetKey,
+  selectionResetKey,
   values,
   onCommit,
   onPreview,
@@ -173,7 +175,7 @@ function BarsEditor({
   label: string
   maximum: number
   minimum: number
-  resetKey?: string | number
+  selectionResetKey?: string | number
   values: readonly number[]
   onCommit: (values: readonly number[]) => void
   onPreview: (values: readonly number[]) => void
@@ -190,7 +192,7 @@ function BarsEditor({
     if (inputTimerRef.current !== null) window.clearTimeout(inputTimerRef.current)
     inputTimerRef.current = null
     setInput(String(values[activeIndex] ?? minimum))
-  }, [activeIndex, minimum, resetKey, values])
+  }, [activeIndex, minimum, selectionResetKey, values])
   useEffect(
     () => () => {
       if (inputTimerRef.current !== null) window.clearTimeout(inputTimerRef.current)
@@ -223,7 +225,7 @@ function BarsEditor({
     context.stroke()
     const slot = width / values.length
     values.forEach((value, index) => {
-      const ratioValue = maximum === minimum ? 1 : (value - minimum) / (maximum - minimum)
+      const ratioValue = maximum === minimum ? 1 : Math.max(0, Math.min(1, (value - minimum) / (maximum - minimum)))
       const barHeight = Math.max(1, ratioValue * height)
       context.fillStyle = comparison?.primaryColor ?? (index === activeIndex ? '#1d4ed8' : '#3b82f6')
       context.globalAlpha = index === activeIndex ? 1 : 0.82
@@ -239,14 +241,20 @@ function BarsEditor({
       context.beginPath()
       series.values.forEach((value, index) => {
         const x = left + (index + 0.5) * slot
-        const y = top + ((maximum - value) * height) / Math.max(Number.EPSILON, maximum - minimum)
+        const y = Math.max(
+          top,
+          Math.min(top + height, top + ((maximum - value) * height) / Math.max(Number.EPSILON, maximum - minimum)),
+        )
         if (index === 0) context.moveTo(x, y)
         else context.lineTo(x, y)
       })
       context.stroke()
       series.values.forEach((value, index) => {
         const x = left + (index + 0.5) * slot
-        const y = top + ((maximum - value) * height) / Math.max(Number.EPSILON, maximum - minimum)
+        const y = Math.max(
+          top,
+          Math.min(top + height, top + ((maximum - value) * height) / Math.max(Number.EPSILON, maximum - minimum)),
+        )
         context.beginPath()
         context.arc(x, y, index === activeIndex ? 4 : 2.5, 0, Math.PI * 2)
         context.fill()
@@ -522,7 +530,7 @@ function HeatmapsEditor({
   label,
   maximum,
   minimum,
-  resetKey,
+  selectionResetKey,
   shape,
   values,
   onCommit,
@@ -540,7 +548,7 @@ function HeatmapsEditor({
   label: string
   maximum: number
   minimum: number
-  resetKey?: string | number
+  selectionResetKey?: string | number
   shape: readonly number[]
   values: readonly number[]
   onCommit: (values: readonly number[]) => void
@@ -582,7 +590,7 @@ function HeatmapsEditor({
     wheelTimerRef.current = null
     setInput('')
     setSelection(null)
-  }, [resetKey])
+  }, [selectionResetKey])
   const changeSelection = (update: (value: number) => number, commit: boolean) => {
     if (!selection) return
     const next = updateTensorRectangle(
@@ -841,17 +849,18 @@ export function TensorEditor({
   axes = [],
   comparison,
   disabled = false,
+  displayDomainResetKey,
   label,
   maximum,
   minimum,
-  resetKey,
+  selectionResetKey,
   constraintMaximum = maximum,
   constraintMinimum = minimum,
   shape,
   value,
   onValueChange,
 }: TensorEditorProps) {
-  const controlledValues = useMemo(() => flattenVarsTensor(value, shape, label), [label, resetKey, shape, value])
+  const controlledValues = useMemo(() => flattenVarsTensor(value, shape, label), [label, shape, value])
   const [values, setValues] = useState(controlledValues)
   const flatComparison = useMemo(
     () =>
@@ -873,8 +882,11 @@ export function TensorEditor({
             }),
           }
         : undefined,
-    [comparison, label, resetKey, shape],
+    [comparison, label, shape],
   )
+  const requestedDisplayDomainRef = useRef<readonly [number, number]>([minimum, maximum])
+  requestedDisplayDomainRef.current = [minimum, maximum]
+  const [displayDomain, setDisplayDomain] = useState<readonly [number, number]>([minimum, maximum])
   const shapeRef = useRef(shape)
   const onValueChangeRef = useRef(onValueChange)
   shapeRef.current = shape
@@ -883,6 +895,9 @@ export function TensorEditor({
   useLayoutEffect(() => {
     setValues(controlledValues)
   }, [controlledValues])
+  useLayoutEffect(() => {
+    setDisplayDomain(requestedDisplayDomainRef.current)
+  }, [displayDomainResetKey])
 
   const preview = (next: readonly number[]) => {
     setValues([...next])
@@ -892,36 +907,72 @@ export function TensorEditor({
     onValueChangeRef.current(varsTensorFromFlat(next, shapeRef.current))
   }
 
-  return shape.length <= 1 ? (
-    <BarsEditor
-      axes={axes}
-      comparison={flatComparison}
-      constraintMaximum={constraintMaximum}
-      constraintMinimum={constraintMinimum}
-      disabled={disabled}
-      label={label}
-      maximum={maximum}
-      minimum={minimum}
-      resetKey={resetKey}
-      values={values}
-      onCommit={commit}
-      onPreview={preview}
-    />
+  const readyComparisonValues = flatComparison?.series.flatMap((series) => series.values ?? []) ?? []
+  const displayedValues = [...values, ...readyComparisonValues]
+  const clippedCount = displayedValues.filter((member) => member < displayDomain[0] || member > displayDomain[1]).length
+  const editor =
+    shape.length <= 1 ? (
+      <BarsEditor
+        axes={axes}
+        comparison={flatComparison}
+        constraintMaximum={constraintMaximum}
+        constraintMinimum={constraintMinimum}
+        disabled={disabled}
+        label={label}
+        maximum={displayDomain[1]}
+        minimum={displayDomain[0]}
+        selectionResetKey={selectionResetKey}
+        values={values}
+        onCommit={commit}
+        onPreview={preview}
+      />
+    ) : (
+      <HeatmapsEditor
+        axes={axes}
+        comparison={flatComparison}
+        constraintMaximum={constraintMaximum}
+        constraintMinimum={constraintMinimum}
+        disabled={disabled}
+        label={label}
+        maximum={displayDomain[1]}
+        minimum={displayDomain[0]}
+        selectionResetKey={selectionResetKey}
+        shape={shape}
+        values={values}
+        onCommit={commit}
+        onPreview={preview}
+      />
+    )
+  return comparison ? (
+    <div className="space-y-2">
+      <div
+        className="flex flex-wrap items-center justify-between gap-2 rounded border bg-muted/20 px-2 py-1.5 text-[11px]"
+        data-display-domain-maximum={displayDomain[1]}
+        data-display-domain-minimum={displayDomain[0]}
+      >
+        <span className="font-mono text-muted-foreground">
+          Display range [{formatComparisonValue(displayDomain[0])}, {formatComparisonValue(displayDomain[1])}]
+        </span>
+        <span className="flex items-center gap-2">
+          {clippedCount ? (
+            <span className="font-medium text-amber-700" data-display-domain-clipped={clippedCount}>
+              {clippedCount.toLocaleString()} clipped
+            </span>
+          ) : null}
+          <Button
+            aria-label={`${label} display range 맞춤`}
+            size="sm"
+            type="button"
+            variant="outline"
+            onClick={() => setDisplayDomain(fitTensorDisplayDomain(displayedValues))}
+          >
+            Fit
+          </Button>
+        </span>
+      </div>
+      {editor}
+    </div>
   ) : (
-    <HeatmapsEditor
-      axes={axes}
-      comparison={flatComparison}
-      constraintMaximum={constraintMaximum}
-      constraintMinimum={constraintMinimum}
-      disabled={disabled}
-      label={label}
-      maximum={maximum}
-      minimum={minimum}
-      resetKey={resetKey}
-      shape={shape}
-      values={values}
-      onCommit={commit}
-      onPreview={preview}
-    />
+    editor
   )
 }

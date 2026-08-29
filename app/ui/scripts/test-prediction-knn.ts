@@ -42,6 +42,8 @@ import {
   predictionOutputRange,
 } from '../src/features/cae-workbench/prediction/metrics'
 import { TensorEditor } from '../src/features/cae-workbench/calculation/TensorEditor'
+import { VarsPanel } from '../src/features/cae-workbench/calculation/VarsPanel'
+import { fitTensorDisplayDomain } from '../src/features/cae-workbench/calculation/tensorDisplayDomain'
 import { PredictionWorkerClient, PredictionWorkerRestartError } from '../src/features/cae-workbench/prediction/client'
 import type {
   PredictionWorkerRequest,
@@ -660,8 +662,30 @@ assert.deepEqual(
     { dtype: 'float64', shape: [], data: 2, axes: [] },
     { dtype: 'float64', shape: [], data: 5, axes: [] },
   ]),
-  [-28, 35],
+  [1.85, 5.15],
 )
+assert.deepEqual(fitTensorDisplayDomain([]), [-1, 1])
+assert.deepEqual(fitTensorDisplayDomain([0, 0]), [-0.5, 0.5])
+assert.deepEqual(fitTensorDisplayDomain([-2, 2]), [-2.2, 2.2])
+assert.ok(Math.abs(fitTensorDisplayDomain([0.001, 0.001])[0] - 0.00095) < 1e-15)
+assert.ok(Math.abs(fitTensorDisplayDomain([0.001, 0.001])[1] - 0.00105) < 1e-15)
+
+const varsPanelMarkup = renderToStaticMarkup(
+  createElement(VarsPanel, {
+    candidateSessionKey: 'experiment:1',
+    disabled: false,
+    schema: {
+      pressure: { min: -10, max: 10, shape: [2] },
+      temperature: { min: 0, max: 100, shape: [] },
+    },
+    vars: { pressure: [1, 2], temperature: 25 },
+    onVariableChange: () => undefined,
+  }),
+)
+assert.doesNotMatch(varsPanelMarkup, /role="dialog"/u)
+assert.equal((varsPanelMarkup.match(/aria-expanded="false"/gu) ?? []).length, 2)
+assert.match(varsPanelMarkup, /schema \[-10, 10\]/u)
+assert.match(varsPanelMarkup, /2 cells/u)
 
 let comparisonCommitCount = 0
 const scalarComparisonMarkup = renderToStaticMarkup(
@@ -689,7 +713,7 @@ const scalarComparisonMarkup = renderToStaticMarkup(
       ],
     },
     label: 'Scalar comparison',
-    maximum: 20,
+    maximum: 10,
     minimum: 0,
     shape: [],
     value: 10,
@@ -703,6 +727,9 @@ assert.match(scalarComparisonMarkup, /data-comparison-series="actual"/u)
 assert.match(scalarComparisonMarkup, /Target/u)
 assert.match(scalarComparisonMarkup, /Re-predicted/u)
 assert.match(scalarComparisonMarkup, /Save \+ Run Actual/u)
+assert.match(scalarComparisonMarkup, /Display range \[0, 10\]/u)
+assert.match(scalarComparisonMarkup, /data-display-domain-clipped="2"/u)
+assert.match(scalarComparisonMarkup, />Fit</u)
 assert.equal(comparisonCommitCount, 0)
 
 const updatingComparisonMarkup = renderToStaticMarkup(
