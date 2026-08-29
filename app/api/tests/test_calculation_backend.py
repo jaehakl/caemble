@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import sys
 import unittest
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
+from sqlalchemy import select
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import configure_mappers
 
 
@@ -19,8 +23,18 @@ import models as api_models  # noqa: E402
 import user_auth.db  # noqa: E402, F401
 from ai.data_tools import VisibleDataError, VisibleDataReader  # noqa: E402
 from model_validators import validate_calculation_data_selectors  # noqa: E402
-from models import CalculationDataOutput, MeasurementBase  # noqa: E402
+from models import (  # noqa: E402
+    CalculationDataListRequest,
+    CalculationDataOutput,
+    MeasurementBase,
+    RoleEnum,
+    UserData,
+)
 from pydantic import BaseModel, ValidationError  # noqa: E402
+from service.calculation_data import (  # noqa: E402
+    CALCULATION_DATA_CRUD_SPEC,
+    list_calculation_data,
+)
 
 
 class CalculationBackendContractTests(unittest.TestCase):
@@ -81,6 +95,7 @@ class CalculationBackendContractTests(unittest.TestCase):
         )
         openapi = main.app.openapi()
         for path in (
+            "/calculation_data/list",
             "/calculation_data/analysis",
             "/calculation_data/analysis/status",
             "/calculation_data/missing",
@@ -89,6 +104,9 @@ class CalculationBackendContractTests(unittest.TestCase):
         ):
             self.assertIn(path, openapi["paths"])
         self.assertIn("CalculationDataOutput", openapi["components"]["schemas"])
+        self.assertIn("CalculationDataBase", openapi["components"]["schemas"])
+        self.assertIn("CalculationDataListRequest", openapi["components"]["schemas"])
+        self.assertIn("CalculationDataListResponse", openapi["components"]["schemas"])
         self.assertNotIn("CalculationDataAnalysisResponse", openapi["components"]["schemas"])
         self.assertNotIn("CalculationDataAnalysisStatusResponse", openapi["components"]["schemas"])
 
@@ -98,6 +116,18 @@ class CalculationBackendContractTests(unittest.TestCase):
             return set(openapi["components"]["schemas"][component]["properties"])
 
         self.assertEqual({"experimentIds"}, body_properties("/experiment/usage"))
+        self.assertTrue(
+            {"experiment_id", "selected_ids", "search_text", "filter"}.issubset(
+                body_properties("/calculation_data/list")
+            )
+        )
+        list_schema = openapi["components"]["schemas"]["CalculationDataListRequest"]
+        self.assertEqual(
+            {"experiment_id", "selected_ids"},
+            set(list_schema["required"]),
+        )
+        self.assertEqual(1, list_schema["properties"]["selected_ids"]["minItems"])
+        self.assertEqual(50, list_schema["properties"]["selected_ids"]["maxItems"])
         self.assertEqual({"experiment_id"}, body_properties("/calculation_data/analysis"))
         self.assertEqual(
             {"experiment_id", "calculation_id", "measurement_id"},
@@ -136,6 +166,66 @@ class CalculationBackendContractTests(unittest.TestCase):
             with self.subTest(payload=payload), self.assertRaises(ValidationError):
                 CalculationDataOutput.model_validate(payload)
 
+    def test_calculation_data_list_requires_an_exact_positive_id_selection(self) -> None:
+        request = CalculationDataListRequest(experiment_id=7, selected_ids=[3, 9])
+        self.assertEqual(request.selected_ids, [3, 9])
+        boundary = CalculationDataListRequest(experiment_id=7, selected_ids=list(range(1, 51)))
+        self.assertEqual(len(boundary.selected_ids), 50)
+        invalid_requests = (
+            {"experiment_id": 0, "selected_ids": [1]},
+            {"experiment_id": True, "selected_ids": [1]},
+            {"experiment_id": "7", "selected_ids": [1]},
+            {"experiment_id": 7.0, "selected_ids": [1]},
+            {"experiment_id": 1, "selected_ids": []},
+            {"experiment_id": 1, "selected_ids": [0]},
+            {"experiment_id": 1, "selected_ids": [True]},
+            {"experiment_id": 1, "selected_ids": ["2"]},
+            {"experiment_id": 1, "selected_ids": [2.0]},
+            {"experiment_id": 1, "selected_ids": [2, 2]},
+            {"experiment_id": 1, "selected_ids": list(range(1, 52))},
+        )
+        for payload in invalid_requests:
+            with self.subTest(payload=payload), self.assertRaises(ValidationError):
+                CalculationDataListRequest.model_validate(payload)
+
+    def test_calculation_data_list_base_clause_cannot_expand_selected_ids(self) -> None:
+        request = CalculationDataListRequest(
+            experiment_id=7,
+            selected_ids=[3, 9],
+            search_text="must-not-widen",
+            filter={"calculation_id": [999, 999]},
+        )
+        user = UserData(
+            id="00000000-0000-0000-0000-000000000123",
+            roles=[RoleEnum.user],
+        )
+        get_list_response = AsyncMock(return_value={"total": 0, "items": []})
+
+        async def run() -> str:
+            with patch(
+                "service.calculation_data.get_list_response",
+                new=get_list_response,
+            ):
+                await list_calculation_data(object(), request, user=user)  # type: ignore[arg-type]
+            call = get_list_response.await_args
+            self.assertIs(call.args[1], request)
+            self.assertIs(call.args[2], CALCULATION_DATA_CRUD_SPEC)
+            self.assertEqual(CALCULATION_DATA_CRUD_SPEC.scope_path, ("measurement",))
+            statement = select(db.CalculationData.id).where(call.args[3])
+            return str(
+                statement.compile(
+                    dialect=postgresql.dialect(),
+                    compile_kwargs={"literal_binds": True},
+                )
+            )
+
+        sql = asyncio.run(run())
+        self.assertIn("calculation_data.id IN (3, 9)", sql)
+        self.assertIn("calculations.experiment_id = 7", sql)
+        self.assertIn("measurements.experiment_id = 7", sql)
+        self.assertIn("measurements.user_id = '00000000000000000000000000000123'", sql)
+        self.assertNotIn("999", sql)
+
     def test_measurement_contract_includes_calculation_data_count(self) -> None:
         measurement = MeasurementBase(
             user_id="00000000-0000-0000-0000-000000000001",
@@ -153,7 +243,7 @@ class CalculationBackendContractTests(unittest.TestCase):
             and value.__module__ == "models"
             and issubclass(value, BaseModel)
         }
-        self.assertEqual(22, len(model_names))
+        self.assertEqual(25, len(model_names))
         self.assertTrue(
             {
                 "AuthenticatedUserData",

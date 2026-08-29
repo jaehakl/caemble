@@ -44,6 +44,23 @@ class CalculationListRequest(GetListRequestBase):
     experiment_id: Optional[int] = None
 
 
+class CalculationDataListRequest(GetListRequestBase):
+    experiment_id: StrictInt
+    selected_ids: List[StrictInt] = Field(min_length=1, max_length=50)
+
+    @model_validator(mode="after")
+    def validate_exact_selection(self):
+        if self.experiment_id <= 0:
+            raise ValueError("experiment_id must be a positive integer.")
+        if not self.selected_ids:
+            raise ValueError("selected_ids must contain at least one CalculationData ID.")
+        if any(item_id <= 0 for item_id in self.selected_ids):
+            raise ValueError("selected_ids must contain only positive integers.")
+        if len(set(self.selected_ids)) != len(self.selected_ids):
+            raise ValueError("selected_ids must not contain duplicates.")
+        return self
+
+
 class RecordedDataListRequest(GetListRequestBase):
     include_system: bool = True
 
@@ -206,3 +223,14 @@ class CalculationDataOutput(BaseModel):
     axes: List[CalculationDataAxis]
 
     _validate_output = model_validator(mode="after")(validate_calculation_data_output)
+
+
+class CalculationDataBase(TimestampFields):
+    calculation_id: int
+    measurement_id: int
+    data: CalculationDataOutput
+
+
+class CalculationDataListResponse(BaseModel):
+    total: int
+    items: List[CalculationDataBase]

@@ -16,6 +16,10 @@ import {
   type CalculationSaveState,
 } from '@/features/cae-workbench/calculation'
 import { flattenRecordedData, recordedDataRules } from '@/features/cae-workbench/measurement/recordedData'
+import type {
+  PredictionWorkspaceChromeState,
+  PredictionWorkspaceCommand,
+} from '@/features/cae-workbench/prediction/PredictionWorkspace'
 import { useCaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import type { AnalysisTabId, HelpKindId, WorkbenchSectionId } from '@/features/cae-workbench/types'
 import { WorkbenchViewer } from '@/features/cae-workbench/viewer/WorkbenchViewer'
@@ -42,6 +46,7 @@ import {
   type AnalysisRibbonCommand,
   type LabRibbonCommand,
   type MaterialRibbonCommand,
+  type PredictionRibbonCommand,
 } from './useCaePageChrome'
 import { useCaePageSession } from './useCaePageSession'
 
@@ -53,6 +58,11 @@ const AiChatWorkspace = lazy(() =>
 )
 const AnalysisWorkspace = lazy(() =>
   import('@/pages/analysis/AnalysisPage').then((module) => ({ default: module.AnalysisWorkspace })),
+)
+const PredictionWorkspace = lazy(() =>
+  import('@/features/cae-workbench/prediction/PredictionWorkspace').then((module) => ({
+    default: module.PredictionWorkspace,
+  })),
 )
 
 export function CaePage() {
@@ -96,14 +106,24 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     }>
   >({ files: null, locations: new Map(), pathKey: '' })
   const [analysisSettingsContainer, setAnalysisSettingsContainer] = useState<HTMLDivElement | null>(null)
+  const [predictionVarsContainer, setPredictionVarsContainer] = useState<HTMLDivElement | null>(null)
   const [chatSettingsContainer, setChatSettingsContainer] = useState<HTMLDivElement | null>(null)
   const [analysisCommand, setAnalysisCommand] = useState<AnalysisCommand | null>(null)
+  const [predictionCommand, setPredictionCommand] = useState<PredictionWorkspaceCommand | null>(null)
+  const [predictionState, setPredictionState] = useState<PredictionWorkspaceChromeState>({
+    busy: false,
+    canValidate: false,
+    direction: 'forward',
+    status: 'Prediction을 준비하는 중입니다.',
+    validateDisabledReason: 'Prediction 결과가 필요합니다.',
+  })
   const [chatCommand, setChatCommand] = useState<AiChatCommand | null>(null)
   const [materialCommand, setMaterialCommand] = useState<Readonly<{ id: number; type: MaterialRibbonCommand }> | null>(
     null,
   )
   const [agentActivated, setAgentActivated] = useState(false)
   const [labActivated, setLabActivated] = useState(false)
+  const [predictionActivated, setPredictionActivated] = useState(false)
   const commandSequence = useRef(0)
   const selectedMaterialId = page.materialId
   const selectionSourceFiles =
@@ -214,10 +234,12 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
 
   useEffect(() => {
     if (page.activeSection === 'lab') setLabActivated(true)
+    if (page.activeSection === 'prediction') setPredictionActivated(true)
   }, [page.activeSection])
 
   useEffect(() => {
     if (page.activeSection !== 'analysis') setAnalysisCommand(null)
+    if (page.activeSection !== 'prediction') setPredictionCommand(null)
     if (page.activeSection !== 'lab') setChatCommand(null)
     if (page.activeSection !== 'material') setMaterialCommand(null)
   }, [page.activeSection])
@@ -262,6 +284,9 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const requestMaterialCommand = useCallback((type: MaterialRibbonCommand) => {
     setMaterialCommand({ id: ++commandSequence.current, type })
   }, [])
+  const requestPredictionCommand = useCallback((type: PredictionRibbonCommand) => {
+    setPredictionCommand({ id: ++commandSequence.current, type })
+  }, [])
   const requestCalculationSave = useCallback(() => {
     setCalculationSaveCommand((current) => current + 1)
   }, [])
@@ -284,6 +309,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     refreshRuntime,
     requestAnalysisCommand,
     requestCalculationSave,
+    requestPredictionCommand,
     selectedCalculationId: page.calculationId,
     requestLabCommand,
     requestMaterialCommand,
@@ -294,6 +320,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     setDialog: page.setDialog,
     setHelpKind,
     workbench,
+    predictionState,
   })
 
   const sessionRecordedSchemas = workbench.experimentDocument.simulationProgram?.recordedData ?? Object.freeze({})
@@ -390,7 +417,9 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           })
         }
       />
-    ) : page.activeSection === 'measurement' ? null : page.activeSection === 'material' ? (
+    ) : page.activeSection === 'measurement' ? null : page.activeSection === 'prediction' ? (
+      <div className="h-full min-h-0 overflow-hidden bg-background p-2" ref={setPredictionVarsContainer} />
+    ) : page.activeSection === 'material' ? (
       <MaterialList
         command={
           materialCommand?.type === 'new' || materialCommand?.type === 'refresh'
@@ -457,7 +486,8 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           detail: <ExperimentDetail workbench={workbench} />,
         }}
       />
-    ) : page.activeSection === 'measurement' ? null : page.activeSection === 'material' ? (
+    ) : page.activeSection === 'measurement' || page.activeSection === 'prediction' ? null : page.activeSection ===
+      'material' ? (
       selectedMaterialId ? (
         <MaterialDetail
           command={
@@ -493,9 +523,32 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
 
   const rightPane = (
     <div className="h-full min-h-0 overflow-hidden">
-      <div className={page.activeSection === 'lab' ? 'hidden' : 'h-full min-h-0'} hidden={page.activeSection === 'lab'}>
+      <div
+        className={page.activeSection === 'lab' || page.activeSection === 'prediction' ? 'hidden' : 'h-full min-h-0'}
+        hidden={page.activeSection === 'lab' || page.activeSection === 'prediction'}
+      >
         {contextualRightPane}
       </div>
+      {predictionActivated ? (
+        <div
+          className={page.activeSection === 'prediction' ? 'h-full min-h-0 p-2' : 'hidden'}
+          hidden={page.activeSection !== 'prediction'}
+        >
+          <Suspense fallback={<PaneLoading label="Prediction을 불러오는 중입니다." />}>
+            <PredictionWorkspace
+              active={page.activeSection === 'prediction'}
+              authenticated={auth.isAuthenticated}
+              command={predictionCommand}
+              onActivity={runtimeConsole.append}
+              onChromeStateChange={setPredictionState}
+              onRequestLogin={() => page.setDialog('account')}
+              selectedCalculationId={page.calculationId}
+              varsContainer={predictionVarsContainer}
+              workbench={workbench}
+            />
+          </Suspense>
+        </div>
+      ) : null}
       {labActivated ? (
         <div
           className={page.activeSection === 'lab' ? 'h-full min-h-0' : 'hidden'}

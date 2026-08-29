@@ -272,11 +272,20 @@ export type CalculationDataAnalysisSummary =
   | Readonly<{ kind: 'scalar'; value: number }>
   | Readonly<{ kind: 'tensor'; rank: 1 | 2; count: number; mean: number | null; std: number | null }>
 export type CalculationDataAnalysisItem = Readonly<{
+  calculation_data_id: number
   calculation_id: number
   calculation_name: string
   measurement_id: number
   dtype: CalculationDataOutput['dtype']
   summary: CalculationDataAnalysisSummary
+}>
+export type CalculationDataRecord = Readonly<{
+  id: number
+  created_at?: string | null
+  updated_at?: string | null
+  calculation_id: number
+  measurement_id: number
+  data: CalculationDataOutput
 }>
 export type CalculationDataAnalysisResponse = Readonly<{
   fingerprint: string
@@ -428,6 +437,9 @@ export const dbTables = {
     deleteRows: (ids: readonly number[]) => request<null>('delete', '/calculation/', ids),
   },
   CalculationData: {
+    recordType: undefined as unknown as CalculationDataRecord,
+    listRows: (payload: GetListRequest & Readonly<{ experiment_id: number }>) =>
+      request<GetListResponse<CalculationDataRecord>>('post', '/calculation_data/list', payload),
     analysis: (experimentId: number) =>
       request<CalculationDataAnalysisResponse>('post', '/calculation_data/analysis', { experiment_id: experimentId }),
     analysisStatus: (experimentId: number) =>

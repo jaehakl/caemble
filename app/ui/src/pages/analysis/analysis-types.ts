@@ -7,7 +7,6 @@ export type AnalysisColumnDescriptor = Readonly<{
   source: 'calculation-data' | 'measurement-material' | 'measurement-vars'
   count: number
   distinctCount: number
-  distinctInputCount?: number
   missingRatio: number
   eligible: boolean
   exclusionReason?: string
@@ -83,38 +82,6 @@ export type AnalysisRelationshipPlot = Readonly<{
   }>[]
 }>
 
-export type AnalysisPredictionResult = Readonly<{
-  fingerprint: string
-  targetKey: string
-  featureKeys: readonly string[]
-  selectedModel: 'random-forest' | 'ridge'
-  ridgeAlpha: number
-  metrics: Readonly<{
-    ridge: Readonly<{ r2: number; mae: number; rmse: number }>
-    randomForest: Readonly<{ r2: number; mae: number; rmse: number }>
-  }>
-  importanceMethod: string
-  importances: readonly Readonly<{ key: string; value: number }>[]
-  rows: readonly Readonly<{
-    measurementId: number
-    inputFingerprint: string
-    observed: number
-    predicted: number
-    residual: number
-    fold: number
-  }>[]
-  prediction: number
-  interval: readonly [number, number]
-  extrapolatedFeatureKeys: readonly string[]
-}>
-
-export type AnalysisWhatIfResult = Readonly<{
-  fingerprint: string
-  prediction: number
-  interval: readonly [number, number]
-  extrapolatedFeatureKeys: readonly string[]
-}>
-
 export type AnalysisTablePage = Readonly<{
   fingerprint: string
   offset: number
@@ -128,14 +95,7 @@ export type AnalysisTablePage = Readonly<{
 }>
 
 export type AnalysisProgressStage =
-  | 'Measurement 조회'
-  | 'Calculation Data 조회'
-  | '데이터셋 구성'
-  | '통계 계산'
-  | '상관 분석'
-  | 'PCA·군집'
-  | '교차 검증'
-  | '최종 학습'
+  'Measurement 조회' | 'Calculation Data 조회' | '데이터셋 구성' | '통계 계산' | '상관 분석' | 'PCA·군집'
 
 export type AnalysisWorkerRequest =
   | Readonly<{
@@ -164,18 +124,6 @@ export type AnalysisWorkerRequest =
       outlierFraction: number
     }>
   | Readonly<{
-      type: 'predict-what-if'
-      requestId: string
-      whatIf: Readonly<Record<string, number>>
-    }>
-  | Readonly<{
-      type: 'predict'
-      requestId: string
-      featureKeys: readonly string[]
-      targetKey: string
-      whatIf: Readonly<Record<string, number>>
-    }>
-  | Readonly<{
       type: 'table-page'
       requestId: string
       columnKeys: readonly string[]
@@ -185,7 +133,6 @@ export type AnalysisWorkerRequest =
   | Readonly<{
       type: 'export-csv'
       requestId: string
-      kind: 'dataset' | 'prediction'
       columnKeys: readonly string[]
     }>
 
@@ -221,16 +168,6 @@ export type AnalysisWorkerResponse =
       type: 'mining'
       requestId: string
       result: AnalysisMiningResult
-    }>
-  | Readonly<{
-      type: 'prediction-what-if'
-      requestId: string
-      result: AnalysisWhatIfResult
-    }>
-  | Readonly<{
-      type: 'prediction'
-      requestId: string
-      result: AnalysisPredictionResult
     }>
   | Readonly<{
       type: 'table-page'

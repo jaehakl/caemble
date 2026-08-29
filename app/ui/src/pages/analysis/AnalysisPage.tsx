@@ -1,15 +1,4 @@
-import {
-  AlertTriangle,
-  BrainCircuit,
-  Check,
-  Download,
-  LoaderCircle,
-  LogIn,
-  RefreshCw,
-  Search,
-  Sparkles,
-  X,
-} from 'lucide-react'
+import { AlertTriangle, Check, Download, LoaderCircle, LogIn, RefreshCw, Search, Sparkles, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Badge } from '@/components/ui/badge'
@@ -25,7 +14,6 @@ import { cn } from '@/lib/utils'
 import type {
   AnalysisColumnDescriptor,
   AnalysisMiningResult,
-  AnalysisPredictionResult,
   AnalysisProfile,
   AnalysisProgressStage,
   AnalysisRelationshipPlot,
@@ -40,7 +28,7 @@ export type AnalysisTab = AnalysisTabId
 
 export type AnalysisCommand = Readonly<{
   id: number | string
-  type: 'reload' | 'export-dataset' | 'export-prediction'
+  type: 'reload' | 'export-dataset'
 }>
 
 export type AnalysisWorkspaceProps = {
@@ -167,13 +155,11 @@ type ScatterPoint = Readonly<{
 }>
 
 function ScatterPlot({
-  diagonal = false,
   label,
   points,
   xLabel,
   yLabel,
 }: {
-  diagonal?: boolean
   label: string
   points: readonly ScatterPoint[]
   xLabel: string
@@ -200,8 +186,6 @@ function ScatterPlot({
   const scaleY = (value: number) => bottom - ((value - minY) / (maxY - minY || 1)) * (bottom - top)
   const ticks = Array.from({ length: 5 }, (_, index) => index / 4)
   const colors = ['#ea580c', '#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#dc2626', '#4f46e5']
-  const diagonalStart = Math.max(minX, minY)
-  const diagonalEnd = Math.min(maxX, maxY)
   return (
     <div className="overflow-x-auto">
       <svg aria-label={label} className="h-[380px] w-full min-w-[560px]" role="img" viewBox="0 0 730 390">
@@ -230,17 +214,6 @@ function ScatterPlot({
         })}
         <line stroke="currentColor" strokeOpacity="0.35" x1={left} x2={right} y1={bottom} y2={bottom} />
         <line stroke="currentColor" strokeOpacity="0.35" x1={left} x2={left} y1={top} y2={bottom} />
-        {diagonal && diagonalStart < diagonalEnd ? (
-          <line
-            stroke="currentColor"
-            strokeDasharray="6 5"
-            strokeOpacity="0.45"
-            x1={scaleX(diagonalStart)}
-            x2={scaleX(diagonalEnd)}
-            y1={scaleY(diagonalStart)}
-            y2={scaleY(diagonalEnd)}
-          />
-        ) : null}
         {finite.map((point, index) => (
           <circle
             cx={scaleX(point.x)}
@@ -479,23 +452,19 @@ export function AnalysisWorkspace({
   const [relationships, setRelationships] = useState<AnalysisRelationshipsResult | null>(null)
   const [relationshipPlot, setRelationshipPlot] = useState<AnalysisRelationshipPlot | null>(null)
   const [mining, setMining] = useState<AnalysisMiningResult | null>(null)
-  const [prediction, setPrediction] = useState<AnalysisPredictionResult | null>(null)
   const [tablePage, setTablePage] = useState<AnalysisTablePage | null>(null)
   const [tableOffset, setTableOffset] = useState(0)
   const [relationshipOffset, setRelationshipOffset] = useState(0)
   const [exploreInputKey, setExploreInputKey] = useState('')
   const [exploreTargetKey, setExploreTargetKey] = useState('')
   const [miningFeatureKeys, setMiningFeatureKeys] = useState<readonly string[]>([])
-  const [predictionFeatureKeys, setPredictionFeatureKeys] = useState<readonly string[]>([])
-  const [predictionTargetKey, setPredictionTargetKey] = useState('')
   const [dataColumnKeys, setDataColumnKeys] = useState<readonly string[]>([])
   const [histogramKey, setHistogramKey] = useState('')
   const [profileSearch, setProfileSearch] = useState('')
   const [profileSource, setProfileSource] = useState<'all' | AnalysisColumnDescriptor['source']>('all')
   const [profileStatus, setProfileStatus] = useState<'all' | 'eligible' | 'excluded'>('all')
-  const [whatIf, setWhatIf] = useState<Readonly<Record<string, number>>>({})
   const [outlierPercent, setOutlierPercent] = useState(5)
-  const [busy, setBusy] = useState<'export' | 'load' | 'mine' | 'predict' | 'what-if' | null>(null)
+  const [busy, setBusy] = useState<'export' | 'load' | 'mine' | null>(null)
   const [relationshipsBusy, setRelationshipsBusy] = useState(false)
   const [plotBusy, setPlotBusy] = useState(false)
   const [progress, setProgress] = useState<AnalysisProgressStage | null>(null)
@@ -533,7 +502,6 @@ export function AnalysisWorkspace({
     setRelationships(null)
     setRelationshipPlot(null)
     setMining(null)
-    setPrediction(null)
     setTablePage(null)
     setError(null)
     setStale(false)
@@ -577,12 +545,9 @@ export function AnalysisWorkspace({
         setExploreTargetKey(initialTarget)
         exploreInputRef.current = initialInput
         exploreTargetRef.current = initialTarget
-        setPredictionTargetKey(initialTarget)
         setMiningFeatureKeys(defaultFeatures)
-        setPredictionFeatureKeys(defaultFeatures)
         setDataColumnKeys([initialInput, initialTarget].filter(Boolean))
         setHistogramKey(initialTarget || initialInput)
-        setWhatIf(Object.fromEntries(features.map((column) => [column.key, column.p50 ?? 0])))
         setBusy(null)
         setProgress(null)
         setProgressCount(null)
@@ -628,26 +593,6 @@ export function AnalysisWorkspace({
         setMining(response.result)
         setBusy(null)
         setProgress(null)
-        return
-      }
-      if (response.type === 'prediction' && response.requestId === activeRequestId.current) {
-        setPrediction(response.result)
-        setBusy(null)
-        setProgress(null)
-        return
-      }
-      if (response.type === 'prediction-what-if' && response.requestId === activeRequestId.current) {
-        setPrediction((current) =>
-          current
-            ? {
-                ...current,
-                prediction: response.result.prediction,
-                interval: response.result.interval,
-                extrapolatedFeatureKeys: response.result.extrapolatedFeatureKeys,
-              }
-            : current,
-        )
-        setBusy(null)
         return
       }
       if (response.type === 'table-page' && response.requestId === tableRequestId.current) {
@@ -700,7 +645,6 @@ export function AnalysisWorkspace({
   }, [auth.isAuthenticated, experimentId, nextRequestId, workerGeneration])
 
   useEffect(() => setMining(null), [outlierPercent, miningFeatureKeys])
-  useEffect(() => setPrediction(null), [predictionFeatureKeys, predictionTargetKey])
 
   useEffect(() => {
     if (tab !== 'data' || !profile || !workerRef.current || dataColumnKeys.length === 0) {
@@ -742,15 +686,7 @@ export function AnalysisWorkspace({
   )
   const exploreInput = inputColumns.find((column) => column.key === exploreInputKey)
   const exploreTarget = targetColumns.find((column) => column.key === exploreTargetKey)
-  const predictionTarget = targetColumns.find((column) => column.key === predictionTargetKey)
   const histogramColumn = profile?.columns.find((column) => column.key === histogramKey)
-  const predictionReady = Boolean(
-    predictionTarget &&
-    predictionTarget.count >= 20 &&
-    predictionTarget.distinctCount >= 5 &&
-    (predictionTarget.distinctInputCount ?? 0) >= 5 &&
-    predictionFeatureKeys.length > 0,
-  )
   const filteredProfileColumns = useMemo(() => {
     const needle = profileSearch.trim().toLocaleLowerCase()
     return (
@@ -796,46 +732,18 @@ export function AnalysisWorkspace({
     } satisfies AnalysisWorkerRequest)
   }
 
-  const runPrediction = () => {
-    if (!workerRef.current || !predictionTargetKey || !predictionReady) return
-    const requestId = nextRequestId('predict')
+  const exportCsv = useCallback(() => {
+    if (!workerRef.current || dataColumnKeys.length === 0) return
+    const requestId = nextRequestId('export')
     activeRequestId.current = requestId
-    setBusy('predict')
+    setBusy('export')
     setError(null)
     workerRef.current.postMessage({
-      type: 'predict',
+      type: 'export-csv',
       requestId,
-      featureKeys: predictionFeatureKeys,
-      targetKey: predictionTargetKey,
-      whatIf,
+      columnKeys: dataColumnKeys,
     } satisfies AnalysisWorkerRequest)
-  }
-
-  const runWhatIf = () => {
-    if (!workerRef.current || !prediction) return
-    const requestId = nextRequestId('what-if')
-    activeRequestId.current = requestId
-    setBusy('what-if')
-    setError(null)
-    workerRef.current.postMessage({ type: 'predict-what-if', requestId, whatIf } satisfies AnalysisWorkerRequest)
-  }
-
-  const exportCsv = useCallback(
-    (kind: 'dataset' | 'prediction') => {
-      if (!workerRef.current || (kind === 'dataset' && dataColumnKeys.length === 0)) return
-      const requestId = nextRequestId('export')
-      activeRequestId.current = requestId
-      setBusy('export')
-      setError(null)
-      workerRef.current.postMessage({
-        type: 'export-csv',
-        requestId,
-        kind,
-        columnKeys: dataColumnKeys,
-      } satisfies AnalysisWorkerRequest)
-    },
-    [dataColumnKeys, nextRequestId],
-  )
+  }, [dataColumnKeys, nextRequestId])
 
   const restartWorker = useCallback(() => setWorkerGeneration((generation) => generation + 1), [])
 
@@ -843,8 +751,7 @@ export function AnalysisWorkspace({
     if (!command || handledCommandId.current === command.id) return
     handledCommandId.current = command.id
     if (command.type === 'reload') restartWorker()
-    else if (command.type === 'export-dataset') exportCsv('dataset')
-    else exportCsv('prediction')
+    else exportCsv()
   }, [command, exportCsv, restartWorker])
 
   if (auth.isLoading)
@@ -900,15 +807,11 @@ export function AnalysisWorkspace({
           <div className="flex flex-wrap gap-2">
             <Button
               disabled={!profile || dataColumnKeys.length === 0 || busy !== null}
-              onClick={() => exportCsv('dataset')}
+              onClick={exportCsv}
               variant="outline"
             >
               <Download />
               선택 데이터 CSV
-            </Button>
-            <Button disabled={!prediction || busy !== null} onClick={() => exportCsv('prediction')} variant="outline">
-              <Download />
-              Prediction CSV
             </Button>
           </div>
         ) : null}
@@ -968,7 +871,6 @@ export function AnalysisWorkspace({
             <TabsList className="grid h-auto w-full [grid-template-columns:repeat(auto-fit,minmax(105px,1fr))] gap-1">
               <TabsTrigger value="explore">Explore</TabsTrigger>
               <TabsTrigger value="mining">Mining</TabsTrigger>
-              <TabsTrigger value="prediction">Prediction</TabsTrigger>
               <TabsTrigger value="data">Data</TabsTrigger>
             </TabsList>
           ) : null}
@@ -1321,257 +1223,6 @@ export function AnalysisWorkspace({
             ) : (
               <EmptyResult>
                 feature를 2개 이상 선택하고 Mining을 실행하면 PCA, 군집과 이상치 결과가 여기에 표시됩니다.
-              </EmptyResult>
-            )}
-          </TabsContent>
-
-          <TabsContent className="space-y-4" value="prediction">
-            <AnalysisSettingsSlot
-              container={settingsContainer}
-              description="동일 입력을 fold 사이에 분리해 Ridge와 Random Forest를 비교합니다."
-              id="prediction"
-              title="Prediction 설정"
-            >
-              <label className="space-y-1.5 text-sm">
-                <span className="font-medium">Prediction target</span>
-                <Select onValueChange={setPredictionTargetKey} value={predictionTargetKey || undefined}>
-                  <SelectTrigger aria-label="Prediction target">
-                    <SelectValue placeholder="Calculation Data 선택" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {targetColumns.map((column) => (
-                      <SelectItem key={column.key} value={column.key}>
-                        {columnLabel(column)}
-                        {column.unit ? ` · ${column.unit}` : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </label>
-              <ColumnPicker
-                columns={featureColumns}
-                disabled={busy !== null}
-                max={50}
-                onChange={(keys) => {
-                  setPredictionFeatureKeys(keys)
-                  setWhatIf(
-                    Object.fromEntries(
-                      keys.map((key) => [
-                        key,
-                        whatIf[key] ?? featureColumns.find((column) => column.key === key)?.p50 ?? 0,
-                      ]),
-                    ),
-                  )
-                }}
-                selected={predictionFeatureKeys}
-              />
-              <div className="space-y-1.5 rounded-lg border bg-muted/20 p-3 text-xs">
-                <p className={predictionTarget && predictionTarget.count >= 20 ? 'text-emerald-700' : 'text-amber-700'}>
-                  유효 target 행 {predictionTarget?.count ?? 0} / 20+
-                </p>
-                <p
-                  className={
-                    predictionTarget && predictionTarget.distinctCount >= 5 ? 'text-emerald-700' : 'text-amber-700'
-                  }
-                >
-                  서로 다른 target 값 {predictionTarget?.distinctCount ?? 0} / 5+
-                </p>
-                <p
-                  className={
-                    predictionTarget && (predictionTarget.distinctInputCount ?? 0) >= 5
-                      ? 'text-emerald-700'
-                      : 'text-amber-700'
-                  }
-                >
-                  서로 다른 입력 {predictionTarget?.distinctInputCount ?? 0} / 5+
-                </p>
-                <p className={predictionFeatureKeys.length > 0 ? 'text-emerald-700' : 'text-amber-700'}>
-                  선택 feature {predictionFeatureKeys.length} / 1+
-                </p>
-              </div>
-              <Button className="w-full" disabled={busy !== null || !predictionReady} onClick={runPrediction}>
-                {busy === 'predict' ? <LoaderCircle className="animate-spin" /> : <BrainCircuit />}모델 비교·학습
-              </Button>
-              {prediction ? (
-                <div className="space-y-3 border-t pt-4">
-                  <div>
-                    <p className="text-sm font-medium">What-if 입력</p>
-                    <p className="mt-1 text-xs text-muted-foreground">재학습 없이 현재 최종 모델에 적용합니다.</p>
-                  </div>
-                  <div className="max-h-80 space-y-3 overflow-y-auto pr-1">
-                    {predictionFeatureKeys.map((key) => {
-                      const column = featureColumns.find((item) => item.key === key)
-                      if (!column) return null
-                      const value = whatIf[key] ?? column.p50 ?? 0
-                      const outside =
-                        (column.min !== undefined && value < column.min) ||
-                        (column.max !== undefined && value > column.max)
-                      return (
-                        <label className="block space-y-1 text-sm" key={key}>
-                          <span className="block truncate font-medium" title={key}>
-                            {columnLabel(column)}
-                          </span>
-                          <Input
-                            onChange={(event) =>
-                              setWhatIf((current) => ({ ...current, [key]: Number(event.target.value) }))
-                            }
-                            step="any"
-                            type="number"
-                            value={value}
-                          />
-                          <span className={cn('text-xs text-muted-foreground', outside && 'text-amber-700')}>
-                            관측 {formatNumber(column.min)}–{formatNumber(column.max)}
-                            {outside ? ' · 외삽' : ''}
-                          </span>
-                        </label>
-                      )
-                    })}
-                  </div>
-                  <Button className="w-full" disabled={busy !== null} onClick={runWhatIf}>
-                    {busy === 'what-if' ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}What-if 계산
-                  </Button>
-                </div>
-              ) : null}
-            </AnalysisSettingsSlot>
-            {busy === 'predict' ? (
-              <EmptyResult>
-                <span>
-                  <LoaderCircle className="mx-auto mb-3 size-6 animate-spin text-primary" />
-                  {progress ?? '교차 검증과 최종 학습을 진행하는 중입니다.'}
-                </span>
-              </EmptyResult>
-            ) : prediction ? (
-              <>
-                <div className="grid [grid-template-columns:repeat(auto-fit,minmax(170px,1fr))] gap-3">
-                  <MetricCard
-                    label="Selected model"
-                    value={prediction.selectedModel === 'ridge' ? 'Ridge' : 'Random Forest'}
-                  />
-                  <MetricCard
-                    label="OOF R²"
-                    value={prediction.metrics[prediction.selectedModel === 'ridge' ? 'ridge' : 'randomForest'].r2}
-                  />
-                  <MetricCard
-                    label="OOF MAE"
-                    value={prediction.metrics[prediction.selectedModel === 'ridge' ? 'ridge' : 'randomForest'].mae}
-                  />
-                  <MetricCard
-                    label="OOF RMSE"
-                    value={prediction.metrics[prediction.selectedModel === 'ridge' ? 'ridge' : 'randomForest'].rmse}
-                  />
-                </div>
-                <div className="grid [grid-template-columns:repeat(auto-fit,minmax(360px,1fr))] gap-4">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Model comparison</CardTitle>
-                      <CardDescription>동일한 grouped folds에서 계산한 OOF 지표입니다.</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Model</TableHead>
-                            <TableHead>R²</TableHead>
-                            <TableHead>MAE</TableHead>
-                            <TableHead>RMSE</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          <TableRow>
-                            <TableCell>
-                              Ridge{prediction.selectedModel === 'ridge' ? <Badge className="ml-2">선택</Badge> : null}
-                            </TableCell>
-                            <TableCell>{formatNumber(prediction.metrics.ridge.r2)}</TableCell>
-                            <TableCell>{formatNumber(prediction.metrics.ridge.mae)}</TableCell>
-                            <TableCell>{formatNumber(prediction.metrics.ridge.rmse)}</TableCell>
-                          </TableRow>
-                          <TableRow>
-                            <TableCell>
-                              Random Forest
-                              {prediction.selectedModel === 'random-forest' ? (
-                                <Badge className="ml-2">선택</Badge>
-                              ) : null}
-                            </TableCell>
-                            <TableCell>{formatNumber(prediction.metrics.randomForest.r2)}</TableCell>
-                            <TableCell>{formatNumber(prediction.metrics.randomForest.mae)}</TableCell>
-                            <TableCell>{formatNumber(prediction.metrics.randomForest.rmse)}</TableCell>
-                          </TableRow>
-                        </TableBody>
-                      </Table>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Observed × out-of-fold prediction</CardTitle>
-                      <CardDescription>점선은 관측값과 예측값이 같은 기준선입니다.</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <ScatterPlot
-                        diagonal
-                        label="관측값과 out-of-fold 예측값"
-                        points={prediction.rows.map((row) => ({
-                          x: row.observed,
-                          y: row.predicted,
-                          measurementId: row.measurementId,
-                          cluster: row.fold,
-                        }))}
-                        xLabel="관측값"
-                        yLabel="OOF 예측값"
-                      />
-                    </CardContent>
-                  </Card>
-                </div>
-                <div className="grid [grid-template-columns:repeat(auto-fit,minmax(320px,1fr))] gap-4">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Feature importance</CardTitle>
-                      <CardDescription>{prediction.importanceMethod}</CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      {prediction.importances.slice(0, 15).map((importance) => (
-                        <div
-                          className="grid grid-cols-[minmax(0,1fr)_minmax(80px,140px)_48px] items-center gap-2 text-sm"
-                          key={importance.key}
-                        >
-                          <span className="truncate" title={importance.key}>
-                            {columnLabel(featureColumns.find((column) => column.key === importance.key))}
-                          </span>
-                          <span className="h-2 overflow-hidden rounded-full bg-muted">
-                            <span className="block h-full bg-primary" style={{ width: `${importance.value * 100}%` }} />
-                          </span>
-                          <span className="text-right tabular-nums">{(importance.value * 100).toFixed(1)}%</span>
-                        </div>
-                      ))}
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>What-if result</CardTitle>
-                      <CardDescription>
-                        범위는 grouped OOF 절대 잔차의 90분위수이며 통계적 신뢰구간이 아닙니다.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <p className="text-3xl font-semibold tabular-nums">{formatNumber(prediction.prediction)}</p>
-                      <p className="mt-2 text-sm text-muted-foreground">
-                        잔차 기반 범위 {formatNumber(prediction.interval[0])}–{formatNumber(prediction.interval[1])}
-                      </p>
-                      {prediction.extrapolatedFeatureKeys.length > 0 ? (
-                        <p className="mt-3 text-sm text-amber-700">
-                          관측 범위를 벗어난 feature:{' '}
-                          {prediction.extrapolatedFeatureKeys
-                            .map((key) => columnLabel(featureColumns.find((column) => column.key === key)))
-                            .join(', ')}
-                        </p>
-                      ) : null}
-                    </CardContent>
-                  </Card>
-                </div>
-              </>
-            ) : (
-              <EmptyResult>
-                조건을 충족하는 target과 feature를 선택한 뒤 모델을 학습하면 OOF 검증, 중요도와 What-if 결과가
-                표시됩니다.
               </EmptyResult>
             )}
           </TabsContent>

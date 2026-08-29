@@ -1,4 +1,5 @@
 import type { WorkbenchDraft } from '../types'
+import { analysisTabIds, defaultWorkbenchLayoutState, workbenchSectionIds } from '../types'
 
 export const WORKBENCH_DRAFT_STORAGE_KEY = 'caemble:workbench-draft'
 const RETIRED_DRAFT_KEYS = ['caemble:cae-workbench-draft', 'caemble:cae-workbench-draft:v1'] as const
@@ -6,7 +7,15 @@ const RETIRED_DRAFT_KEYS = ['caemble:cae-workbench-draft', 'caemble:cae-workbenc
 export async function loadWorkbenchDraft(): Promise<WorkbenchDraft | null> {
   RETIRED_DRAFT_KEYS.forEach((key) => sessionStorage.removeItem(key))
   const serialized = sessionStorage.getItem(WORKBENCH_DRAFT_STORAGE_KEY)
-  return serialized === null ? null : (JSON.parse(serialized) as WorkbenchDraft)
+  if (serialized === null) return null
+  const draft = JSON.parse(serialized) as WorkbenchDraft
+  const activeSection = workbenchSectionIds.includes(draft.layout.activeSection)
+    ? draft.layout.activeSection
+    : defaultWorkbenchLayoutState.activeSection
+  const analysisTab = analysisTabIds.includes(draft.layout.analysisTab)
+    ? draft.layout.analysisTab
+    : defaultWorkbenchLayoutState.analysisTab
+  return { ...draft, layout: { ...draft.layout, activeSection, analysisTab } }
 }
 
 export async function saveWorkbenchDraft(draft: WorkbenchDraft) {

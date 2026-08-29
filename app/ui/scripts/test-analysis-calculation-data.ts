@@ -8,7 +8,6 @@ import {
   getRelationshipPlot,
   getTablePage,
   mineDataset,
-  predictDataset,
 } from '../src/pages/analysis/analysis-engine'
 
 const measurements = [
@@ -137,22 +136,28 @@ const mining = mineDataset(dataset, {
   outlierFraction: 0.05,
 })
 assert.equal(mining.points.length, 24)
-const prediction = predictDataset(dataset, {
-  featureKeys: ['measurement.vars.x', 'measurement.vars.z'],
-  targetKey: scalarKey,
-  whatIf: { 'measurement.vars.x': 25, 'measurement.vars.z': 625 },
-})
-assert.equal(prediction.rows.length, 24)
-assert.ok(Number.isFinite(prediction.prediction))
 
 const table = getTablePage(dataset, ['measurement.vars.x', scalarKey, tensorMeanKey], 0, 100)
 assert.equal(table.rows.length, 24)
 assert.deepEqual(table.rows[0].values, [1, 5, 11])
-const csv = await createCsv(dataset, 'dataset', ['measurement.vars.x', scalarKey]).text()
+const csv = await createCsv(dataset, ['measurement.vars.x', scalarKey]).text()
 assert.match(csv, /measurement_id,input_fingerprint,measurement\.vars\.x,target:calculation:10/u)
 assert.doesNotMatch(csv, /\[object Object\]/u)
 
 const workerSource = readFileSync('src/pages/analysis/analysis.worker.ts', 'utf8')
 assert.doesNotMatch(workerSource, /RecordedData|Recorded Data|dbTables\.RecordedData/u)
+assert.doesNotMatch(workerSource, /predict(?:-what-if)?|analysis-prediction\.csv/iu)
+
+const pageSource = readFileSync('src/pages/analysis/AnalysisPage.tsx', 'utf8')
+assert.doesNotMatch(pageSource, /value="prediction"|Prediction CSV|export-prediction/u)
+
+const engineSource = readFileSync('src/pages/analysis/analysis-engine.ts', 'utf8')
+assert.doesNotMatch(engineSource, /ml-random-forest|predictDataset|fitRidge|RandomForestRegression/u)
+
+const typesSource = readFileSync('src/pages/analysis/analysis-types.ts', 'utf8')
+assert.doesNotMatch(typesSource, /AnalysisPredictionResult|AnalysisWhatIfResult|type: 'predict/u)
+
+const docsSource = readFileSync('src/pages/docs/docsKnowledge.ts', 'utf8')
+assert.doesNotMatch(docsSource, /Analysis: Explore, Mining, Prediction|Prediction CSV|OOF 검증으로 Ridge/u)
 
 console.info('CalculationData Analysis tests passed.')

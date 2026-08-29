@@ -13,6 +13,7 @@ export type WorkbenchTabId = 'experiment' | 'experiments' | 'recorded-data' | 'a
 export const workbenchSectionIds = [
   'experiment',
   'measurement',
+  'prediction',
   'material',
   'analysis',
   'lab',
@@ -30,7 +31,7 @@ export type ExperimentRightTabId = (typeof experimentRightTabIds)[number]
 export const measurementRightTabIds = ['recorded-data', 'detail'] as const
 export type MeasurementRightTabId = (typeof measurementRightTabIds)[number]
 
-export const analysisTabIds = ['explore', 'mining', 'prediction', 'data'] as const
+export const analysisTabIds = ['explore', 'mining', 'data'] as const
 export type AnalysisTabId = (typeof analysisTabIds)[number]
 
 export const helpKindIds = ['manual', 'geometry', 'materials', 'quantity-kinds', 'solvers'] as const

@@ -1,4 +1,4 @@
-import type { Tensor, VarsSchemaEntry } from '@/lib/cad'
+import type { Tensor, Vars, VarsSchemaEntry } from '@/lib/cad'
 
 export type TensorRectangle = Readonly<{
   rowStart: number
@@ -48,6 +48,20 @@ export function validateVarsTensor(value: Tensor, entry: VarsSchemaEntry, label 
     }
   })
   return varsTensorFromFlat(flat, entry.shape)
+}
+
+export function validateVarsChanges(
+  changes: Readonly<Vars>,
+  schema: Readonly<Record<string, VarsSchemaEntry>>,
+  label = 'Candidate vars',
+) {
+  const normalized: Vars = {}
+  Object.entries(changes).forEach(([key, value]) => {
+    const entry = schema[key]
+    if (!entry) throw new Error(`${label}.${key} does not exist in varsSchema.`)
+    normalized[key] = validateVarsTensor(value, entry, `${label}.${key}`)
+  })
+  return Object.freeze(normalized)
 }
 
 export function clampVarsValue(value: number, minimum: number, maximum: number) {

@@ -1,18 +1,15 @@
 import { kmeans } from 'ml-kmeans'
-import { Matrix, solve } from 'ml-matrix'
+import { Matrix } from 'ml-matrix'
 import { PCA } from 'ml-pca'
-import { RandomForestRegression } from 'ml-random-forest'
 import { mean, quantileSorted, sampleCorrelation, sampleStandardDeviation, silhouette } from 'simple-statistics'
 import type { CalculationDataAnalysisItem, MeasurementRecord } from '@/api'
 import type {
   AnalysisColumnDescriptor,
   AnalysisMiningResult,
-  AnalysisPredictionResult,
   AnalysisProfile,
   AnalysisRelationshipPlot,
   AnalysisRelationshipsResult,
   AnalysisTablePage,
-  AnalysisWhatIfResult,
 } from './analysis-types'
 
 type RowIdentity = Readonly<{
@@ -30,8 +27,6 @@ export type AnalysisDataset = {
   rows: readonly RowIdentity[]
   columns: ReadonlyMap<string, AnalysisColumn>
   lastMining: AnalysisMiningResult | null
-  lastPrediction: AnalysisPredictionResult | null
-  lastPredictionModel: TrainedPredictionModel | null
 }
 
 type ColumnState = {
@@ -64,20 +59,6 @@ type FittedPreprocessor = Readonly<{
   standardDeviations: readonly number[]
   indicatorIndexes: readonly number[]
   expandedFeatureIndexes: readonly number[]
-}>
-
-type RidgeModel = Readonly<{
-  coefficients: readonly number[]
-  intercept: number
-}>
-
-type TrainedPredictionModel = Readonly<{
-  featureKeys: readonly string[]
-  targetKey: string
-  preprocessor: FittedPreprocessor
-  model:
-    Readonly<{ kind: 'ridge'; value: RidgeModel }> | Readonly<{ kind: 'random-forest'; value: RandomForestRegression }>
-  intervalRadius: number
 }>
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -420,18 +401,7 @@ export function buildAnalysisDataset({
     while (state.values.length < identities.length) state.values.push(Number.NaN)
     const values = Float64Array.from(state.values)
     const descriptor = describeColumn(state, values, identities.length)
-    columns.set(state.key, {
-      descriptor:
-        state.kind === 'target'
-          ? {
-              ...descriptor,
-              distinctInputCount: new Set(
-                identities.filter((_, index) => Number.isFinite(values[index])).map((row) => row.inputFingerprint),
-              ).size,
-            }
-          : descriptor,
-      values,
-    })
+    columns.set(state.key, { descriptor, values })
   })
   const descriptors = [...columns.values()]
     .map((column) => column.descriptor)
@@ -451,8 +421,6 @@ export function buildAnalysisDataset({
     rows: identities,
     columns,
     lastMining: null,
-    lastPrediction: null,
-    lastPredictionModel: null,
   }
 }
 
@@ -521,73 +489,6 @@ function transformRows(
       (value, column) => (value - preprocessor.means[column]) / preprocessor.standardDeviations[column],
     )
   })
-}
-
-function fitRidge(matrix: readonly (readonly number[])[], target: readonly number[], alpha: number): RidgeModel {
-  const x = new Matrix(matrix as number[][])
-  const yMean = mean(target as number[])
-  const y = Matrix.columnVector(target.map((value) => value - yMean))
-  const xt = x.transpose()
-  const regularized = xt.mmul(x)
-  for (let index = 0; index < regularized.rows; index += 1) {
-    regularized.set(index, index, regularized.get(index, index) + alpha)
-  }
-  const coefficients = solve(regularized, xt.mmul(y), true).getColumn(0)
-  return { coefficients, intercept: yMean }
-}
-
-function predictRidge(model: RidgeModel, matrix: readonly (readonly number[])[]) {
-  return matrix.map(
-    (row) => model.intercept + row.reduce((sum, value, index) => sum + value * model.coefficients[index], 0),
-  )
-}
-
-function fitForest(matrix: number[][], target: number[], seed: number) {
-  const featureCount = matrix[0].length
-  const model = new RandomForestRegression({
-    maxFeatures: Math.max(1, Math.floor(Math.sqrt(featureCount))),
-    replacement: false,
-    nEstimators: 50,
-    seed,
-    useSampleBagging: true,
-    noOOB: true,
-    selectionMethod: 'mean',
-    treeOptions: { maxDepth: 20, minNumSamples: 3 },
-  })
-  model.train(matrix, target)
-  return model
-}
-
-function metrics(observed: readonly number[], predicted: readonly number[]) {
-  const residuals = observed.map((value, index) => value - predicted[index])
-  const mae = mean(residuals.map(Math.abs))
-  const rmse = Math.sqrt(mean(residuals.map((value) => value ** 2)))
-  const observedMean = mean(observed as number[])
-  const total = observed.reduce((sum, value) => sum + (value - observedMean) ** 2, 0)
-  const error = residuals.reduce((sum, value) => sum + value ** 2, 0)
-  return { r2: total > 0 ? 1 - error / total : 0, mae, rmse }
-}
-
-function groupFolds(rows: readonly RowIdentity[], rowIndexes: readonly number[]) {
-  const groups = new Map<string, number[]>()
-  rowIndexes.forEach((rowIndex) => {
-    const fingerprint = rows[rowIndex].inputFingerprint
-    const group = groups.get(fingerprint) ?? []
-    group.push(rowIndex)
-    groups.set(fingerprint, group)
-  })
-  if (groups.size < 5) throw new Error('Prediction에는 서로 다른 Measurement 입력이 5개 이상 필요합니다.')
-  const foldCount = Math.min(5, groups.size)
-  const folds = Array.from({ length: foldCount }, () => [] as number[])
-  const sizes = Array(foldCount).fill(0) as number[]
-  ;[...groups.entries()]
-    .sort((left, right) => right[1].length - left[1].length || left[0].localeCompare(right[0]))
-    .forEach(([, group]) => {
-      const targetFold = sizes.indexOf(Math.min(...sizes))
-      folds[targetFold].push(...group)
-      sizes[targetFold] += group.length
-    })
-  return folds
 }
 
 function rawFeatureRows(dataset: AnalysisDataset, featureKeys: readonly string[]) {
@@ -803,176 +704,6 @@ export function mineDataset(
   return result
 }
 
-export function predictDataset(
-  dataset: AnalysisDataset,
-  {
-    featureKeys,
-    targetKey,
-    whatIf,
-  }: {
-    featureKeys: readonly string[]
-    targetKey: string
-    whatIf: Readonly<Record<string, number>>
-  },
-  onFinalTraining?: () => void,
-): AnalysisPredictionResult {
-  dataset.lastPrediction = null
-  dataset.lastPredictionModel = null
-  if (featureKeys.length === 0) throw new Error('Prediction에는 feature가 필요합니다.')
-  const target = requireColumns(dataset, [targetKey], 'target')[0]
-  requireColumns(dataset, featureKeys, 'feature')
-  const validIndexes = dataset.rows.map((_, index) => index).filter((index) => Number.isFinite(target.values[index]))
-  if (validIndexes.length < 20) throw new Error('Prediction에는 target이 있는 Measurement가 20개 이상 필요합니다.')
-  const observed = validIndexes.map((index) => target.values[index])
-  if (new Set(observed).size < 5) throw new Error('Prediction target에는 서로 다른 값이 5개 이상 필요합니다.')
-  const folds = groupFolds(dataset.rows, validIndexes)
-  const rawAll = rawFeatureRows(dataset, featureKeys)
-  const ridgeAlphas = [1e-4, 1e-3, 1e-2, 1e-1, 1, 10, 100, 1_000, 10_000]
-  const ridgePredictions = new Map(ridgeAlphas.map((alpha) => [alpha, new Map<number, number>()]))
-  const forestPredictions = new Map<number, number>()
-  const foldByRow = new Map<number, number>()
-
-  folds.forEach((testIndexes, foldIndex) => {
-    const testSet = new Set(testIndexes)
-    const trainIndexes = validIndexes.filter((index) => !testSet.has(index))
-    const preprocessor = fittedPreprocessor(rawAll, trainIndexes, featureKeys)
-    const trainMatrix = transformRows(rawAll, trainIndexes, preprocessor)
-    const testMatrix = transformRows(rawAll, testIndexes, preprocessor)
-    const trainTarget = trainIndexes.map((index) => target.values[index])
-    ridgeAlphas.forEach((alpha) => {
-      const model = fitRidge(trainMatrix, trainTarget, alpha)
-      predictRidge(model, testMatrix).forEach((value, index) => {
-        ridgePredictions.get(alpha)?.set(testIndexes[index], value)
-      })
-    })
-    const forest = fitForest(trainMatrix, trainTarget, 42)
-    forest.predict(testMatrix).forEach((value, index) => forestPredictions.set(testIndexes[index], value))
-    testIndexes.forEach((rowIndex) => foldByRow.set(rowIndex, foldIndex))
-  })
-
-  const ridgeMetrics = ridgeAlphas.map((alpha) => {
-    const predictions = validIndexes.map((index) => ridgePredictions.get(alpha)?.get(index) ?? Number.NaN)
-    return { alpha, predictions, metrics: metrics(observed, predictions) }
-  })
-  const bestRidge = ridgeMetrics.reduce((best, candidate) =>
-    candidate.metrics.rmse < best.metrics.rmse ? candidate : best,
-  )
-  const forestOof = validIndexes.map((index) => forestPredictions.get(index) ?? Number.NaN)
-  const forestMetrics = metrics(observed, forestOof)
-  const selectedModel = forestMetrics.rmse < bestRidge.metrics.rmse ? 'random-forest' : 'ridge'
-  const selectedOof = selectedModel === 'random-forest' ? forestOof : bestRidge.predictions
-
-  onFinalTraining?.()
-  const finalPreprocessor = fittedPreprocessor(rawAll, validIndexes, featureKeys)
-  const finalMatrix = transformRows(rawAll, validIndexes, finalPreprocessor)
-  let expandedImportance: readonly number[]
-  let importanceMethod: string
-  let trainedModel: TrainedPredictionModel['model']
-  if (selectedModel === 'ridge') {
-    const model = fitRidge(finalMatrix, observed, bestRidge.alpha)
-    trainedModel = { kind: 'ridge', value: model }
-    expandedImportance = model.coefficients.map(Math.abs)
-    importanceMethod = '표준화 Ridge coefficient 절댓값'
-  } else {
-    const model = fitForest(finalMatrix, observed, 42)
-    trainedModel = { kind: 'random-forest', value: model }
-    expandedImportance = (model as RandomForestRegression & { featureImportance(): number[] })
-      .featureImportance()
-      .map((value: number) => (Number.isFinite(value) ? value : 0))
-    importanceMethod = 'Random Forest impurity importance'
-  }
-  const importanceByFeature = featureKeys.map(() => 0)
-  expandedImportance.forEach((value, index) => {
-    const featureIndex = finalPreprocessor.expandedFeatureIndexes[index]
-    importanceByFeature[featureIndex] += value
-  })
-  const importanceTotal = importanceByFeature.reduce((sum, value) => sum + value, 0) || 1
-  const importances = featureKeys
-    .map((key, index) => ({ key, value: importanceByFeature[index] / importanceTotal }))
-    .sort((left, right) => right.value - left.value)
-
-  const residuals = observed.map((value, index) => value - selectedOof[index])
-  const absoluteResiduals = residuals.map(Math.abs).sort((left, right) => left - right)
-  const radius = quantileSorted(absoluteResiduals, 0.9)
-  const trained: TrainedPredictionModel = {
-    featureKeys,
-    targetKey,
-    preprocessor: finalPreprocessor,
-    model: trainedModel,
-    intervalRadius: radius,
-  }
-  dataset.lastPredictionModel = trained
-  const whatIfResult = evaluateWhatIf(dataset, trained, whatIf)
-
-  const result: AnalysisPredictionResult = {
-    fingerprint: dataset.profile.fingerprint,
-    targetKey,
-    featureKeys,
-    selectedModel,
-    ridgeAlpha: bestRidge.alpha,
-    metrics: { ridge: bestRidge.metrics, randomForest: forestMetrics },
-    importanceMethod,
-    importances,
-    rows: validIndexes.map((rowIndex, index) => ({
-      ...dataset.rows[rowIndex],
-      observed: observed[index],
-      predicted: selectedOof[index],
-      residual: residuals[index],
-      fold: foldByRow.get(rowIndex) ?? 0,
-    })),
-    prediction: whatIfResult.prediction,
-    interval: whatIfResult.interval,
-    extrapolatedFeatureKeys: whatIfResult.extrapolatedFeatureKeys,
-  }
-  dataset.lastPrediction = result
-  return result
-}
-
-function evaluateWhatIf(
-  dataset: AnalysisDataset,
-  trained: TrainedPredictionModel,
-  whatIf: Readonly<Record<string, number>>,
-): AnalysisWhatIfResult {
-  const raw = [trained.featureKeys.map((key) => whatIf[key])]
-  const matrix = transformRows(raw, [0], trained.preprocessor)
-  const prediction =
-    trained.model.kind === 'ridge'
-      ? predictRidge(trained.model.value, matrix)[0]
-      : trained.model.value.predict(matrix)[0]
-  const extrapolatedFeatureKeys = trained.featureKeys.filter((key) => {
-    const descriptor = dataset.columns.get(key)?.descriptor
-    const value = whatIf[key]
-    return (
-      !Number.isFinite(value) ||
-      (descriptor?.min !== undefined && value < descriptor.min) ||
-      (descriptor?.max !== undefined && value > descriptor.max)
-    )
-  })
-  return {
-    fingerprint: dataset.profile.fingerprint,
-    prediction,
-    interval: [prediction - trained.intervalRadius, prediction + trained.intervalRadius],
-    extrapolatedFeatureKeys,
-  }
-}
-
-export function predictWhatIf(
-  dataset: AnalysisDataset,
-  whatIf: Readonly<Record<string, number>>,
-): AnalysisWhatIfResult {
-  if (!dataset.lastPredictionModel) throw new Error('먼저 Prediction 모델을 학습하세요.')
-  const result = evaluateWhatIf(dataset, dataset.lastPredictionModel, whatIf)
-  if (dataset.lastPrediction) {
-    dataset.lastPrediction = {
-      ...dataset.lastPrediction,
-      prediction: result.prediction,
-      interval: result.interval,
-      extrapolatedFeatureKeys: result.extrapolatedFeatureKeys,
-    }
-  }
-  return result
-}
-
 export function getTablePage(
   dataset: AnalysisDataset,
   columnKeys: readonly string[],
@@ -1002,55 +733,20 @@ function csvCell(value: unknown) {
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
 }
 
-export function createCsv(dataset: AnalysisDataset, kind: 'dataset' | 'prediction', columnKeys: readonly string[]) {
+export function createCsv(dataset: AnalysisDataset, columnKeys: readonly string[]) {
   const lines: string[] = []
-  if (kind === 'prediction') {
-    const prediction = dataset.lastPrediction
-    if (!prediction) throw new Error('먼저 Prediction을 실행하세요.')
+  const columns = requireColumns(dataset, columnKeys)
+  lines.push(['measurement_id', 'input_fingerprint', ...columnKeys].map(csvCell).join(','))
+  dataset.rows.forEach((row, rowIndex) => {
     lines.push(
       [
-        'measurement_id',
-        'input_fingerprint',
-        'observed',
-        'predicted',
-        'residual',
-        'fold',
-        'cluster',
-        'anomaly_score',
-      ].join(','),
+        row.measurementId,
+        row.inputFingerprint,
+        ...columns.map((column) => (Number.isFinite(column.values[rowIndex]) ? column.values[rowIndex] : null)),
+      ]
+        .map(csvCell)
+        .join(','),
     )
-    const miningByMeasurement = new Map((dataset.lastMining?.points ?? []).map((point) => [point.measurementId, point]))
-    prediction.rows.forEach((row) => {
-      const mining = miningByMeasurement.get(row.measurementId)
-      lines.push(
-        [
-          row.measurementId,
-          row.inputFingerprint,
-          row.observed,
-          row.predicted,
-          row.residual,
-          row.fold,
-          mining?.cluster,
-          mining?.anomalyScore,
-        ]
-          .map(csvCell)
-          .join(','),
-      )
-    })
-  } else {
-    const columns = requireColumns(dataset, columnKeys)
-    lines.push(['measurement_id', 'input_fingerprint', ...columnKeys].map(csvCell).join(','))
-    dataset.rows.forEach((row, rowIndex) => {
-      lines.push(
-        [
-          row.measurementId,
-          row.inputFingerprint,
-          ...columns.map((column) => (Number.isFinite(column.values[rowIndex]) ? column.values[rowIndex] : null)),
-        ]
-          .map(csvCell)
-          .join(','),
-      )
-    })
-  }
+  })
   return new Blob([`\uFEFF${lines.join('\r\n')}`], { type: 'text/csv;charset=utf-8' })
 }

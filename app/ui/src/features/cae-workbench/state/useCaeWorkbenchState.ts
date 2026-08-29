@@ -28,7 +28,7 @@ import type {
   WorkbenchDraft,
   WorkbenchLayoutState,
 } from '../types'
-import { validateVarsTensor } from '../calculation/varsTensor'
+import { validateVarsChanges } from '../calculation/varsTensor'
 import { useCalculationDataActions } from '../calculation/useCalculationDataActions'
 
 function definitionStatus(
@@ -98,6 +98,7 @@ async function fetchExperiment(id: number) {
 }
 
 export type UseCaeWorkbenchStateOptions = Readonly<{ onActivity?: RuntimeActivityCallback }>
+export type CandidateVariablesOrigin = 'user-vars' | 'prediction-inverse'
 
 export function useCaeWorkbenchState(
   user: UserData | null,
@@ -333,20 +334,27 @@ export function useCaeWorkbenchState(
     simulation,
   })
 
-  const setCandidateVariable = useCallback(
-    (key: string, value: Tensor) => {
-      const entry = experimentDocument.varsSchema?.[key]
+  const setCandidateVariables = useCallback(
+    (variables: Readonly<Vars>, _origin: CandidateVariablesOrigin) => {
+      const schema = experimentDocument.varsSchema
       const fallback = experimentDocument.variables
-      if (!entry || (!candidateVars && !fallback)) {
+      if (!schema || (!candidateVars && !fallback)) {
         toast.error('편집할 Candidate 변수 또는 varsSchema가 준비되지 않았습니다.')
-        return
+        return false
       }
       try {
-        const normalized = validateVarsTensor(value, entry, `Candidate vars.${key}`)
+        const variableKeys = Object.keys(variables).sort()
+        const schemaKeys = Object.keys(schema).sort()
+        if (variableKeys.length !== schemaKeys.length || variableKeys.some((key, index) => key !== schemaKeys[index])) {
+          throw new Error('Candidate vars는 현재 varsSchema와 정확히 같은 key를 가져야 합니다.')
+        }
+        const normalized = validateVarsChanges(variables, schema)
         if (selection.measurement) clearMeasurement()
-        setCandidateVars((current) => Object.freeze({ ...(current ?? fallback ?? {}), [key]: normalized }))
+        setCandidateVars(Object.freeze(normalized))
+        return true
       } catch (cause: unknown) {
         toast.error(cause instanceof Error ? cause.message : String(cause))
+        return false
       }
     },
     [
@@ -356,6 +364,17 @@ export function useCaeWorkbenchState(
       experimentDocument.varsSchema,
       selection.measurement,
     ],
+  )
+  const setCandidateVariable = useCallback(
+    (key: string, value: Tensor) => {
+      const current = candidateVars ?? experimentDocument.variables
+      if (!current) {
+        toast.error('편집할 Candidate 변수가 준비되지 않았습니다.')
+        return false
+      }
+      return setCandidateVariables({ ...current, [key]: value }, 'user-vars')
+    },
+    [candidateVars, experimentDocument.variables, setCandidateVariables],
   )
 
   useEffect(() => setCurrentExperimentId(experimentId), [experimentId, setCurrentExperimentId])
@@ -667,6 +686,7 @@ export function useCaeWorkbenchState(
     candidateVars,
     candidateMaterialParameters,
     setCandidateVariable,
+    setCandidateVariables,
     saving,
     selection,
     selectionIds,

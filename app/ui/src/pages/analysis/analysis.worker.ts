@@ -9,8 +9,6 @@ import {
   getTablePage,
   getRelationshipPlot,
   mineDataset,
-  predictDataset,
-  predictWhatIf,
   stableSignature,
 } from './analysis-engine'
 import type { AnalysisProgressStage, AnalysisWorkerRequest, AnalysisWorkerResponse } from './analysis-types'
@@ -146,28 +144,6 @@ async function handleRequest(request: AnalysisWorkerRequest) {
     postResponse({ type: 'mining', requestId: request.requestId, result })
     return
   }
-  if (request.type === 'predict') {
-    postProgress(request.requestId, '교차 검증')
-    const result = predictDataset(
-      currentDataset,
-      {
-        featureKeys: request.featureKeys,
-        targetKey: request.targetKey,
-        whatIf: request.whatIf,
-      },
-      () => postProgress(request.requestId, '최종 학습'),
-    )
-    postResponse({ type: 'prediction', requestId: request.requestId, result })
-    return
-  }
-  if (request.type === 'predict-what-if') {
-    postResponse({
-      type: 'prediction-what-if',
-      requestId: request.requestId,
-      result: predictWhatIf(currentDataset, request.whatIf),
-    })
-    return
-  }
   if (request.type === 'table-page') {
     postResponse({
       type: 'table-page',
@@ -176,12 +152,12 @@ async function handleRequest(request: AnalysisWorkerRequest) {
     })
     return
   }
-  const blob = createCsv(currentDataset, request.kind, request.columnKeys)
+  const blob = createCsv(currentDataset, request.columnKeys)
   postResponse({
     type: 'csv',
     requestId: request.requestId,
     blob,
-    filename: request.kind === 'prediction' ? 'analysis-prediction.csv' : 'analysis-data.csv',
+    filename: 'analysis-data.csv',
   })
 }
 

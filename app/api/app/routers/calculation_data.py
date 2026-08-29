@@ -3,10 +3,16 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import CalculationDataOutput, UserData
+from models import (
+    CalculationDataListRequest,
+    CalculationDataListResponse,
+    CalculationDataOutput,
+    UserData,
+)
 from service.calculation_data import (
     analyze_calculation_data as analyze_calculation_data_rows,
     calculation_data_analysis_status as get_calculation_data_analysis_status,
+    list_calculation_data as list_calculation_data_rows,
     list_calculation_data_scalars as list_calculation_data_scalar_rows,
     missing_calculation_data as list_missing_calculation_data,
     save_calculation_data as save_calculation_data_row,
@@ -16,6 +22,15 @@ from user_auth.utils.auth_wrapper import require_roles
 
 
 router = APIRouter(prefix="/calculation_data", tags=["calculation_data"])
+
+
+@router.post("/list", response_model=CalculationDataListResponse)
+async def list_calculation_data(
+    request: CalculationDataListRequest,
+    db: AsyncSession = Depends(get_db),
+    user: UserData = Depends(require_roles(["admin", "user"])),
+):
+    return await list_calculation_data_rows(db, request, user=user)
 
 
 @router.post("/analysis")

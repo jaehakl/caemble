@@ -3,7 +3,6 @@ import {
   Beaker,
   BookOpenText,
   Boxes,
-  BrainCircuit,
   ChartNoAxesCombined,
   CircleUserRound,
   Database,
@@ -13,6 +12,7 @@ import {
   GitBranch,
   Layers3,
   MessageCircle,
+  Info,
   Pencil,
   Play,
   Plus,
@@ -21,6 +21,7 @@ import {
   RotateCw,
   Save,
   SaveAll,
+  SlidersHorizontal,
   Sparkles,
   Square,
   Trash2,
@@ -39,7 +40,15 @@ import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 import type { WorkbenchDialog } from './caePageTypes'
 import { GeometryAuthoringRibbon } from './GeometryAuthoringRibbon'
 
-export type AnalysisRibbonCommand = 'reload' | 'export-dataset' | 'export-prediction'
+export type AnalysisRibbonCommand = 'reload' | 'export-dataset'
+export type PredictionRibbonCommand = 'settings' | 'details' | 'validate' | 'cancel'
+export type PredictionRibbonState = Readonly<{
+  busy: boolean
+  canValidate: boolean
+  direction: 'forward' | 'inverse'
+  status: string
+  validateDisabledReason?: string
+}>
 export type LabRibbonCommand = 'new' | 'end' | 'cancel'
 export type MaterialRibbonCommand = 'new' | 'edit' | 'add-name' | 'add-parameter' | 'delete' | 'refresh'
 
@@ -57,6 +66,7 @@ export function useCaePageChrome({
   selectedCalculationId,
   requestLabCommand,
   requestMaterialCommand,
+  requestPredictionCommand,
   refreshRuntime,
   requestRunSelected,
   runSafely,
@@ -65,6 +75,7 @@ export function useCaePageChrome({
   setDialog,
   setHelpKind,
   workbench,
+  predictionState,
 }: {
   analysisTab: AnalysisTabId
   authenticated: boolean
@@ -79,6 +90,7 @@ export function useCaePageChrome({
   selectedCalculationId: number | null
   requestLabCommand: (command: LabRibbonCommand) => void
   requestMaterialCommand: (command: MaterialRibbonCommand) => void
+  requestPredictionCommand: (command: PredictionRibbonCommand) => void
   refreshRuntime: () => void
   requestRunSelected: () => void
   runSafely: (run: () => unknown | Promise<unknown>) => void
@@ -87,6 +99,7 @@ export function useCaePageChrome({
   setDialog: Dispatch<SetStateAction<WorkbenchDialog>>
   setHelpKind: (kind: HelpKindId) => void
   workbench: CaeWorkbenchState
+  predictionState: PredictionRibbonState
 }) {
   const [repeatCountInput, setRepeatCountInput] = useState('10')
   const repeatCount = Number(repeatCountInput)
@@ -540,13 +553,39 @@ export function useCaePageChrome({
         disabledReason: !authenticated ? loginReason : undefined,
         onSelect: () => requestAnalysisCommand('export-dataset'),
       },
-      analysisPrediction: {
-        id: 'analysis-prediction',
-        label: 'Prediction CSV',
-        icon: <Download />,
+      predictionSettings: {
+        id: 'prediction-settings',
+        label: 'Prediction Settings',
+        icon: <SlidersHorizontal />,
+        disabled: !authenticated || predictionState.busy,
+        disabledReason: !authenticated
+          ? loginReason
+          : predictionState.busy
+            ? '현재 Prediction 작업이 끝난 뒤 설정을 바꾸세요.'
+            : undefined,
+        onSelect: () => requestPredictionCommand('settings'),
+      },
+      predictionDetails: {
+        id: 'prediction-details',
+        label: 'Model Details',
+        icon: <Info />,
         disabled: !authenticated,
         disabledReason: !authenticated ? loginReason : undefined,
-        onSelect: () => requestAnalysisCommand('export-prediction'),
+        onSelect: () => requestPredictionCommand('details'),
+      },
+      predictionValidate: {
+        id: 'prediction-validate',
+        label: 'Save & Run',
+        icon: <Play />,
+        disabled: !predictionState.canValidate,
+        disabledReason: predictionState.validateDisabledReason,
+        onSelect: () => requestPredictionCommand('validate'),
+      },
+      predictionCancel: {
+        id: 'prediction-cancel',
+        label: 'Cancel',
+        icon: <Square />,
+        onSelect: () => requestPredictionCommand('cancel'),
       },
       settingRefresh: { id: 'setting-refresh', label: 'Refresh', icon: <RefreshCw />, onSelect: refreshRuntime },
     }
@@ -569,6 +608,7 @@ export function useCaePageChrome({
     requestCalculationSave,
     requestLabCommand,
     requestMaterialCommand,
+    requestPredictionCommand,
     refreshRuntime,
     requestRunSelected,
     repeatCount,
@@ -576,13 +616,14 @@ export function useCaePageChrome({
     runSafely,
     setActiveSection,
     setDialog,
+    predictionState,
     workbench,
   ])
 
-  const analysisActions = (['explore', 'mining', 'prediction', 'data'] as const).map((tab) => ({
+  const analysisActions = (['explore', 'mining', 'data'] as const).map((tab) => ({
     id: `analysis-${tab}`,
     label: tab[0].toUpperCase() + tab.slice(1),
-    icon: tab === 'prediction' ? <BrainCircuit /> : tab === 'mining' ? <Sparkles /> : <ChartNoAxesCombined />,
+    icon: tab === 'mining' ? <Sparkles /> : <ChartNoAxesCombined />,
     pressed: analysisTab === tab,
     onSelect: () => setAnalysisTab(tab),
   }))
@@ -709,6 +750,30 @@ export function useCaePageChrome({
       ),
     },
     {
+      sectionId: 'prediction',
+      label: 'Prediction',
+      content: (
+        <>
+          <WorkbenchRibbonGroup label="Prediction">
+            <WorkbenchRibbonActions actions={[actions.predictionSettings, actions.predictionDetails]} />
+          </WorkbenchRibbonGroup>
+          <WorkbenchRibbonGroup label="Direction">
+            <div className="flex h-[68px] min-w-36 flex-col justify-center px-2 text-[10px] text-muted-foreground">
+              <span className="font-medium text-foreground capitalize">{predictionState.direction}</span>
+              <span className="max-w-48 truncate" title={predictionState.status}>
+                {predictionState.status}
+              </span>
+            </div>
+          </WorkbenchRibbonGroup>
+          <WorkbenchRibbonGroup label="Validation">
+            <WorkbenchRibbonActions
+              actions={predictionState.busy ? [actions.predictionCancel] : [actions.predictionValidate]}
+            />
+          </WorkbenchRibbonGroup>
+        </>
+      ),
+    },
+    {
       sectionId: 'material',
       label: 'Material',
       content: (
@@ -735,9 +800,7 @@ export function useCaePageChrome({
             <WorkbenchRibbonActions actions={analysisActions} />
           </WorkbenchRibbonGroup>
           <WorkbenchRibbonGroup label="Data">
-            <WorkbenchRibbonActions
-              actions={[actions.analysisReload, actions.analysisDataset, actions.analysisPrediction]}
-            />
+            <WorkbenchRibbonActions actions={[actions.analysisReload, actions.analysisDataset]} />
           </WorkbenchRibbonGroup>
         </>
       ),

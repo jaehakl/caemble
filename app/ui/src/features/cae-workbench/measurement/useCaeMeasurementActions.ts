@@ -14,7 +14,7 @@ import {
 } from '@/lib/cad'
 import type { CaeDataSelection } from './useCaeDataSelection'
 import type { SavedMeasurement } from '../types'
-import type { CalculationDataActions } from '../calculation/useCalculationDataActions'
+import type { CalculationDataActions, CalculationDataRunSummary } from '../calculation/useCalculationDataActions'
 
 type GenerateAndRunState = Readonly<{
   attempt: number
@@ -32,11 +32,24 @@ type GenerateAndRunState = Readonly<{
 }>
 
 type SaveAndRunState = Readonly<{
+  attemptId: number
   baselineRevision: number
   experimentId: number
   measurementId: number | null
   phase: 'saving' | 'measurement' | 'running'
   sourceHash: string
+}>
+
+export type SaveAndRunCompletion = Readonly<{
+  attemptId: number
+  measurementId: number
+  recordedDataSaved: true
+  calculationSummary: CalculationDataRunSummary
+}>
+
+type SaveAndRunCompletionCallbacks = Readonly<{
+  resolve: (completion: SaveAndRunCompletion) => void
+  reject: (cause: Error) => void
 }>
 
 function isSchemaLeaf(value: ResolvedDataSchemaNode): value is ResolvedDataSchema {
@@ -115,6 +128,9 @@ export function useCaeMeasurementActions({
   const [pendingRecordMeasurementId, setPendingRecordMeasurementId] = useState<number | null>(null)
   const [automaticCalculationData, setAutomaticCalculationData] = useState(false)
   const activeMeasurementId = useRef<number | null>(null)
+  const saveAndRunAttemptSequence = useRef(0)
+  const activeSaveAndRunAttempt = useRef<number | null>(null)
+  const saveAndRunCompletion = useRef<(SaveAndRunCompletionCallbacks & Readonly<{ attemptId: number }>) | null>(null)
   const generateAndRunCancelRequested = useRef(false)
   const generateAndRunSequence = useRef(0)
   const generateAndRunStep = useRef<GenerateAndRunState['phase'] | null>(null)
@@ -154,12 +170,47 @@ export function useCaeMeasurementActions({
     [],
   )
 
-  const finishSaveAndRun = useCallback(() => {
+  const resolveSaveAndRun = useCallback((completion: SaveAndRunCompletion) => {
+    const pending = saveAndRunCompletion.current
+    if (!pending || pending.attemptId !== completion.attemptId) return false
+    saveAndRunCompletion.current = null
+    pending.resolve(completion)
+    return true
+  }, [])
+
+  const rejectSaveAndRun = useCallback((attemptId: number, cause: unknown, fallback: string) => {
+    const pending = saveAndRunCompletion.current
+    if (!pending || pending.attemptId !== attemptId) return false
+    saveAndRunCompletion.current = null
+    pending.reject(
+      cause instanceof Error
+        ? cause
+        : new Error(
+            typeof cause === 'string' && cause.length > 0 ? cause : fallback || 'Save & Run이 완료되지 않았습니다.',
+          ),
+    )
+    return true
+  }, [])
+
+  const finishSaveAndRun = useCallback((attemptId: number) => {
+    if (activeSaveAndRunAttempt.current !== attemptId) return false
+    activeSaveAndRunAttempt.current = null
     activeMeasurementId.current = null
     setSaveAndRunState(null)
     setOperation(null)
     setStage(null)
+    return true
   }, [])
+
+  useEffect(
+    () => () => {
+      const pending = saveAndRunCompletion.current
+      saveAndRunCompletion.current = null
+      activeSaveAndRunAttempt.current = null
+      pending?.reject(new Error('Save & Run이 완료되기 전에 작업 화면이 종료되었습니다.'))
+    },
+    [],
+  )
 
   const startGenerateAndRunAttempt = useCallback((state: GenerateAndRunState) => {
     if (generateAndRunSequence.current !== state.sequence) return false
@@ -363,65 +414,98 @@ export function useCaeMeasurementActions({
     }
   }, [fail, operation, pendingRecordMeasurementId, refreshPersistedMeasurement, requireSavableCandidate])
 
-  const saveAndRunCurrent = useCallback(() => {
-    if (operation || pendingRecordMeasurementId || experimentDocument.runIsBusy) return false
-    setError(null)
-    try {
-      const request = requireSavableCandidate()
-      const state: SaveAndRunState = {
-        baselineRevision: experimentDocument.revision,
-        experimentId: request.experiment_id,
-        measurementId: null,
-        phase: 'saving',
-        sourceHash: request.experiment_source_hash,
+  const startSaveAndRun = useCallback(
+    (completion?: SaveAndRunCompletionCallbacks) => {
+      const unavailableReason =
+        activeSaveAndRunAttempt.current !== null || operation
+          ? '다른 Measurement 작업이 진행 중입니다.'
+          : pendingRecordMeasurementId
+            ? '실행 결과 저장을 다시 시도한 뒤 Save & Run을 시작하세요.'
+            : experimentDocument.runIsBusy
+              ? 'Experiment 평가가 완료된 뒤 Save & Run을 시작하세요.'
+              : null
+      if (unavailableReason) {
+        completion?.reject(new Error(unavailableReason))
+        return false
       }
-      setOperation('save-and-run')
-      setSaveAndRunState(state)
-      setStage('Current Candidate 저장')
-      void (async () => {
-        try {
-          const { id } = await dbTables.Measurement.create(request)
-          const identity = experimentIdentityRef.current
-          if (
-            !identity.experimentClean ||
-            identity.experimentId !== state.experimentId ||
-            identity.experimentSourceHash !== state.sourceHash
-          ) {
-            throw new Error(
-              'Experiment가 변경되어 Save & Run을 중단했습니다. 저장된 Prepared Measurement는 유지됩니다.',
-            )
-          }
-          const measurementState: SaveAndRunState = {
-            ...state,
-            baselineRevision: experimentDocumentRef.current.revision,
-            measurementId: id,
-            phase: 'measurement',
-          }
-          setSaveAndRunState(measurementState)
-          setStage('Measurement 평가')
-          const row = await refreshPersistedMeasurement(id, state.experimentId)
-          if (!row) throw new Error(`Measurement #${id}은 저장되었지만 Save & Run을 계속할 수 없습니다.`)
-        } catch (cause) {
-          fail(cause, '현재 Candidate를 저장하지 못했습니다.')
-          finishSaveAndRun()
+
+      const attemptId = ++saveAndRunAttemptSequence.current
+      activeSaveAndRunAttempt.current = attemptId
+      if (completion) saveAndRunCompletion.current = { attemptId, ...completion }
+      setError(null)
+      try {
+        const request = requireSavableCandidate()
+        const state: SaveAndRunState = {
+          attemptId,
+          baselineRevision: experimentDocument.revision,
+          experimentId: request.experiment_id,
+          measurementId: null,
+          phase: 'saving',
+          sourceHash: request.experiment_source_hash,
         }
-      })()
-      return true
-    } catch (cause) {
-      fail(cause, 'Save & Run을 시작하지 못했습니다.')
-      finishSaveAndRun()
-      return false
-    }
-  }, [
-    experimentDocument.revision,
-    experimentDocument.runIsBusy,
-    fail,
-    finishSaveAndRun,
-    operation,
-    pendingRecordMeasurementId,
-    refreshPersistedMeasurement,
-    requireSavableCandidate,
-  ])
+        setOperation('save-and-run')
+        setSaveAndRunState(state)
+        setStage('Current Candidate 저장')
+        void (async () => {
+          try {
+            const { id } = await dbTables.Measurement.create(request)
+            if (activeSaveAndRunAttempt.current !== attemptId) return
+            const identity = experimentIdentityRef.current
+            if (
+              !identity.experimentClean ||
+              identity.experimentId !== state.experimentId ||
+              identity.experimentSourceHash !== state.sourceHash
+            ) {
+              throw new Error(
+                'Experiment가 변경되어 Save & Run을 중단했습니다. 저장된 Prepared Measurement는 유지됩니다.',
+              )
+            }
+            const measurementState: SaveAndRunState = {
+              ...state,
+              baselineRevision: experimentDocumentRef.current.revision,
+              measurementId: id,
+              phase: 'measurement',
+            }
+            setSaveAndRunState(measurementState)
+            setStage('Measurement 평가')
+            const row = await refreshPersistedMeasurement(id, state.experimentId)
+            if (activeSaveAndRunAttempt.current !== attemptId) return
+            if (!row) throw new Error(`Measurement #${id}은 저장되었지만 Save & Run을 계속할 수 없습니다.`)
+          } catch (cause) {
+            if (activeSaveAndRunAttempt.current !== attemptId) return
+            rejectSaveAndRun(attemptId, cause, '현재 Candidate를 저장하지 못했습니다.')
+            fail(cause, '현재 Candidate를 저장하지 못했습니다.')
+            finishSaveAndRun(attemptId)
+          }
+        })()
+        return true
+      } catch (cause) {
+        rejectSaveAndRun(attemptId, cause, 'Save & Run을 시작하지 못했습니다.')
+        fail(cause, 'Save & Run을 시작하지 못했습니다.')
+        finishSaveAndRun(attemptId)
+        return false
+      }
+    },
+    [
+      experimentDocument.revision,
+      experimentDocument.runIsBusy,
+      fail,
+      finishSaveAndRun,
+      operation,
+      pendingRecordMeasurementId,
+      refreshPersistedMeasurement,
+      rejectSaveAndRun,
+      requireSavableCandidate,
+    ],
+  )
+  const saveAndRunCurrent = useCallback(() => startSaveAndRun(), [startSaveAndRun])
+  const saveAndRunCurrentAsync = useCallback(
+    () =>
+      new Promise<SaveAndRunCompletion>((resolve, reject) => {
+        startSaveAndRun({ resolve, reject })
+      }),
+    [startSaveAndRun],
+  )
 
   const deleteMeasurements = useCallback(
     async (rows: readonly SavedMeasurement[]) => {
@@ -494,8 +578,12 @@ export function useCaeMeasurementActions({
       if (automaticCalculationData) cancelCalculationData()
       else simulation.cancel()
     }
-    fail(new Error('Experiment가 변경되어 Save & Run을 중단했습니다. 저장된 Prepared Measurement는 유지됩니다.'), '')
-    finishSaveAndRun()
+    const cause = new Error(
+      'Experiment가 변경되어 Save & Run을 중단했습니다. 저장된 Prepared Measurement는 유지됩니다.',
+    )
+    rejectSaveAndRun(saveAndRunState.attemptId, cause, '')
+    fail(cause, '')
+    finishSaveAndRun(saveAndRunState.attemptId)
   }, [
     automaticCalculationData,
     cancelCalculationData,
@@ -504,6 +592,7 @@ export function useCaeMeasurementActions({
     experimentSourceHash,
     fail,
     finishSaveAndRun,
+    rejectSaveAndRun,
     saveAndRunState,
     simulation,
   ])
@@ -673,17 +762,18 @@ export function useCaeMeasurementActions({
       return
     }
     if (selection.measurement && selection.measurement.id !== state.measurementId) {
-      fail(new Error('Save & Run을 위해 저장한 Measurement 선택이 변경되었습니다.'), '')
-      finishSaveAndRun()
+      const cause = new Error('Save & Run을 위해 저장한 Measurement 선택이 변경되었습니다.')
+      rejectSaveAndRun(state.attemptId, cause, '')
+      fail(cause, '')
+      finishSaveAndRun(state.attemptId)
       return
     }
     if (!selection.measurement || experimentDocument.revision <= state.baselineRevision) return
     if (experimentDocument.status === 'Error') {
-      fail(
-        new Error(experimentDocument.error?.message ?? '저장된 Measurement 평가에 실패했습니다.'),
-        '저장된 Measurement 평가에 실패했습니다.',
-      )
-      finishSaveAndRun()
+      const cause = new Error(experimentDocument.error?.message ?? '저장된 Measurement 평가에 실패했습니다.')
+      rejectSaveAndRun(state.attemptId, cause, '저장된 Measurement 평가에 실패했습니다.')
+      fail(cause, '저장된 Measurement 평가에 실패했습니다.')
+      finishSaveAndRun(state.attemptId)
       return
     }
     if (
@@ -693,8 +783,10 @@ export function useCaeMeasurementActions({
       return
     }
     if (!simulation.canRun) {
-      fail(new Error('저장된 Measurement를 실행할 수 없습니다.'), '')
-      finishSaveAndRun()
+      const cause = new Error('저장된 Measurement를 실행할 수 없습니다.')
+      rejectSaveAndRun(state.attemptId, cause, '')
+      fail(cause, '')
+      finishSaveAndRun(state.attemptId)
       return
     }
 
@@ -705,8 +797,10 @@ export function useCaeMeasurementActions({
     const runId = simulation.run()
     if (!runId) {
       activeMeasurementId.current = null
-      fail(new Error('Simulation을 시작하지 못했습니다.'), '')
-      finishSaveAndRun()
+      const cause = new Error('Simulation을 시작하지 못했습니다.')
+      rejectSaveAndRun(state.attemptId, cause, '')
+      fail(cause, '')
+      finishSaveAndRun(state.attemptId)
     }
   }, [
     experimentDocument.error?.message,
@@ -716,6 +810,7 @@ export function useCaeMeasurementActions({
     fail,
     finishSaveAndRun,
     operation,
+    rejectSaveAndRun,
     saveAndRunState,
     selection.measurement,
     simulation,
@@ -814,6 +909,7 @@ export function useCaeMeasurementActions({
       operation === 'generate-and-run' && generateAndRunState?.phase === 'running' ? generateAndRunState : null
     const currentState = operation === 'save-and-run' && saveAndRunState?.phase === 'running' ? saveAndRunState : null
     if (operation !== 'measurement' && !batchState && !currentState) return
+    if (currentState && activeSaveAndRunAttempt.current !== currentState.attemptId) return
     const measurementId = activeMeasurementId.current
     if (!measurementId) return
     if (simulation.process.status === 'preparing' || simulation.process.status === 'running') {
@@ -832,16 +928,33 @@ export function useCaeMeasurementActions({
           const request = recordRequest(experimentDocumentRef.current, simulationRef.current)
           pendingRecordRequest.current = request
           const summary = await persistRecordedData(measurementId, request)
+          if (currentState && activeSaveAndRunAttempt.current !== currentState.attemptId) return
           if (batchState) {
             if (summary.cancelled) finishGenerateAndRun(batchState.sequence)
             else advanceGenerateAndRun(batchState, summary.failed === 0)
           }
-          if (currentState) finishSaveAndRun()
+          if (currentState) {
+            if (summary.cancelled) {
+              rejectSaveAndRun(currentState.attemptId, 'CalculationData 계산이 취소되었습니다.', '')
+            } else {
+              resolveSaveAndRun(
+                Object.freeze({
+                  attemptId: currentState.attemptId,
+                  measurementId,
+                  recordedDataSaved: true as const,
+                  calculationSummary: summary,
+                }),
+              )
+            }
+            finishSaveAndRun(currentState.attemptId)
+          }
         } catch (cause) {
+          if (currentState && activeSaveAndRunAttempt.current !== currentState.attemptId) return
           if (pendingRecordRequest.current) setPendingRecordMeasurementId(measurementId)
+          if (currentState) rejectSaveAndRun(currentState.attemptId, cause, 'RecordedData를 저장하지 못했습니다.')
           fail(cause, 'RecordedData를 저장하지 못했습니다.')
           if (batchState) finishGenerateAndRun(batchState.sequence)
-          if (currentState) finishSaveAndRun()
+          if (currentState) finishSaveAndRun(currentState.attemptId)
         } finally {
           if (!batchState && !currentState) {
             setOperation(null)
@@ -853,12 +966,14 @@ export function useCaeMeasurementActions({
     }
     if (simulation.process.status === 'failed' || simulation.process.status === 'cancelled') {
       activeMeasurementId.current = null
-      fail(simulation.process.error ?? 'Simulation이 완료되지 않았습니다.', 'Simulation이 완료되지 않았습니다.')
+      const cause = simulation.process.error ?? 'Simulation이 완료되지 않았습니다.'
+      if (currentState) rejectSaveAndRun(currentState.attemptId, cause, 'Simulation이 완료되지 않았습니다.')
+      fail(cause, 'Simulation이 완료되지 않았습니다.')
       if (batchState) {
         if (generateAndRunCancelRequested.current) finishGenerateAndRun(batchState.sequence)
         else advanceGenerateAndRun(batchState, false)
       } else if (currentState) {
-        finishSaveAndRun()
+        finishSaveAndRun(currentState.attemptId)
       } else {
         setOperation(null)
         setStage(null)
@@ -872,6 +987,8 @@ export function useCaeMeasurementActions({
     generateAndRunState,
     operation,
     persistRecordedData,
+    rejectSaveAndRun,
+    resolveSaveAndRun,
     saveAndRunState,
     simulation.process.error,
     simulation.process.stage,
@@ -879,10 +996,23 @@ export function useCaeMeasurementActions({
   ])
 
   const cancel = useCallback(() => {
+    if (operation === 'save-and-run' && saveAndRunState) {
+      if (saveAndRunState.phase === 'running') {
+        if (automaticCalculationData) cancelCalculationData()
+        else simulation.cancel()
+      }
+      const cause = new Error(
+        saveAndRunState.measurementId
+          ? `Save & Run을 취소했습니다. Prepared Measurement #${saveAndRunState.measurementId}은 유지됩니다.`
+          : 'Save & Run을 취소했습니다. 이미 전송된 Prepared Measurement 저장 요청은 완료될 수 있습니다.',
+      )
+      rejectSaveAndRun(saveAndRunState.attemptId, cause, '')
+      finishSaveAndRun(saveAndRunState.attemptId)
+      return
+    }
     if (
       operation !== 'measurement' &&
       !(operation === 'generate-and-run' && generateAndRunState?.phase === 'running') &&
-      !(operation === 'save-and-run' && saveAndRunState?.phase === 'running') &&
       !automaticCalculationData
     ) {
       return
@@ -893,9 +1023,11 @@ export function useCaeMeasurementActions({
   }, [
     automaticCalculationData,
     cancelCalculationData,
+    finishSaveAndRun,
     generateAndRunState?.phase,
     operation,
-    saveAndRunState?.phase,
+    rejectSaveAndRun,
+    saveAndRunState,
     simulation,
   ])
 
@@ -903,8 +1035,10 @@ export function useCaeMeasurementActions({
     (automaticCalculationData ||
       operation === 'measurement' ||
       (operation === 'generate-and-run' && generateAndRunState?.phase === 'running') ||
-      (operation === 'save-and-run' && saveAndRunState?.phase === 'running')) &&
-    (automaticCalculationData || ['preparing', 'running'].includes(simulation.process.status))
+      operation === 'save-and-run') &&
+    (operation === 'save-and-run' ||
+      automaticCalculationData ||
+      ['preparing', 'running'].includes(simulation.process.status))
 
   const generateAndRunBatch = generateAndRunState
     ? Object.freeze({
@@ -932,6 +1066,7 @@ export function useCaeMeasurementActions({
     repeatGenerateAndRun,
     runSelected,
     saveAndRunCurrent,
+    saveAndRunCurrentAsync,
     saveCurrent,
     stage,
   }

@@ -11,6 +11,7 @@ export type {
   AccessKeyScope,
   CalculationDataMissingRequest,
   CalculationDataOutput,
+  CalculationDataRecord,
   CalculationDataScalar,
   CalculationDataTarget,
   GetListRequest,

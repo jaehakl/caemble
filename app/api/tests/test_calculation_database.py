@@ -27,6 +27,7 @@ sys.path.insert(0, str(APP_DIR))
 from db import Calculation, CalculationData, Experiment, Measurement, make_async_db_url  # noqa: E402
 from models import (  # noqa: E402
     CalculationBase,
+    CalculationDataListRequest,
     CalculationDataOutput,
     CalculationListRequest,
     ExperimentSourceBundle,
@@ -43,6 +44,7 @@ from service.calculation import (  # noqa: E402
 from service.calculation_data import (  # noqa: E402
     analyze_calculation_data,
     calculation_data_analysis_status,
+    list_calculation_data,
     list_calculation_data_scalars,
     missing_calculation_data,
     save_calculation_data,
@@ -545,7 +547,7 @@ async def _verify_calculation_data_contract(database: str) -> None:
             assert scalar_rows["items"][0]["value"] == 3
 
         async with sessions() as session:
-            await save_calculation_data(
+            tensor_saved = await save_calculation_data(
                 session,
                 second_calculation_id,
                 first_measurement_id,
@@ -560,6 +562,32 @@ async def _verify_calculation_data_contract(database: str) -> None:
                 ),
                 user=owner,
             )
+            selected_rows = await list_calculation_data(
+                session,
+                CalculationDataListRequest(
+                    experiment_id=experiment_id,
+                    selected_ids=[saved["id"], tensor_saved["id"]],
+                    search_text="cannot widen the exact IDs",
+                    filter={"calculation_id": [0, 999_999]},
+                    limit=None,
+                ),
+                user=owner,
+            )
+            assert selected_rows["total"] == 2
+            assert {item.id for item in selected_rows["items"]} == {
+                saved["id"],
+                tensor_saved["id"],
+            }
+            hidden_rows = await list_calculation_data(
+                session,
+                CalculationDataListRequest(
+                    experiment_id=experiment_id,
+                    selected_ids=[saved["id"], tensor_saved["id"]],
+                    limit=None,
+                ),
+                user=other,
+            )
+            assert hidden_rows["total"] == 0
             scalar_rows = await list_calculation_data_scalars(
                 session,
                 second_calculation_id,
@@ -645,6 +673,9 @@ async def _verify_calculation_data_contract(database: str) -> None:
             )
             assert analysis["total"] == 5
             assert analysis["measurement_count"] == 2
+            assert len(
+                {item["calculation_data_id"] for item in analysis["items"]}
+            ) == analysis["total"]
             by_calculation = {
                 item["calculation_id"]: item for item in analysis["items"]
             }
@@ -765,7 +796,7 @@ async def _verify_calculation_data_contract(database: str) -> None:
                 raise AssertionError("CalculationData accepted a stale Calculation source")
 
         async with sessions() as session:
-            await save_calculation_data(
+            other_saved = await save_calculation_data(
                 session,
                 other_calculation_id,
                 other_measurement_id,
@@ -779,6 +810,38 @@ async def _verify_calculation_data_contract(database: str) -> None:
                 user=admin,
             )
             assert admin_analysis["total"] == 1
+            assert admin_analysis["items"][0]["calculation_data_id"] == other_saved["id"]
+            owner_list = await list_calculation_data(
+                session,
+                CalculationDataListRequest(
+                    experiment_id=other_experiment_id,
+                    selected_ids=[other_saved["id"]],
+                    limit=None,
+                ),
+                user=owner,
+            )
+            assert owner_list["total"] == 0
+            wrong_experiment_list = await list_calculation_data(
+                session,
+                CalculationDataListRequest(
+                    experiment_id=experiment_id,
+                    selected_ids=[other_saved["id"]],
+                    limit=None,
+                ),
+                user=admin,
+            )
+            assert wrong_experiment_list["total"] == 0
+            admin_list = await list_calculation_data(
+                session,
+                CalculationDataListRequest(
+                    experiment_id=other_experiment_id,
+                    selected_ids=[other_saved["id"]],
+                    limit=None,
+                ),
+                user=admin,
+            )
+            assert admin_list["total"] == 1
+            assert admin_list["items"][0].data.data == scalar["data"]
             try:
                 await missing_calculation_data(
                     session,

@@ -8,6 +8,7 @@ import {
   tensorSliceCoordinates,
   tensorSliceCount,
   updateTensorRectangle,
+  validateVarsChanges,
   varsBarIndex,
   validateVarsTensor,
   varsTensorFromFlat,
@@ -57,6 +58,42 @@ assert.throws(() =>
     entry,
   ),
 )
+
+const normalizedChanges = validateVarsChanges(
+  {
+    matrix: [
+      [1, 2],
+      [3, 4],
+    ],
+    scalar: 5,
+  },
+  {
+    matrix: entry,
+    scalar: { shape: [], min: 0, max: 10 },
+  },
+)
+assert.deepEqual(normalizedChanges, {
+  matrix: [
+    [1, 2],
+    [3, 4],
+  ],
+  scalar: 5,
+})
+assert.ok(Object.isFrozen(normalizedChanges))
+assert.ok(Object.isFrozen(normalizedChanges.matrix))
+assert.throws(() =>
+  validateVarsChanges(
+    {
+      matrix: [
+        [1, 2],
+        [3, 11],
+      ],
+      scalar: 5,
+    },
+    { matrix: entry, scalar: { shape: [], min: 0, max: 10 } },
+  ),
+)
+assert.throws(() => validateVarsChanges({ unknown: 1 }, { scalar: { shape: [], min: 0, max: 10 } }))
 
 const selection = rectangleFromCells(2, 3, 0, 1)
 assert.deepEqual(selection, { rowStart: 0, rowEnd: 2, columnStart: 1, columnEnd: 3 })

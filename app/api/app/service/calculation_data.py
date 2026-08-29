@@ -6,13 +6,26 @@ import math
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import Calculation, CalculationData, Experiment, Measurement
 from model_validators import validate_calculation_data_selectors
-from models import CalculationDataOutput, UserData
+from models import (
+    CalculationDataBase,
+    CalculationDataListRequest,
+    CalculationDataOutput,
+    UserData,
+)
+from utils.crud import CrudSpec, get_list_response
 from utils.crud.common import is_admin_user
+
+
+CALCULATION_DATA_CRUD_SPEC = CrudSpec(
+    model=CalculationData,
+    schema=CalculationDataBase,
+    scope_path=("measurement",),
+)
 
 
 def _can_access(owner_id: str, user: UserData) -> bool:
@@ -66,6 +79,31 @@ async def _analysis_rows(
     if not is_admin_user(user):
         statement = statement.where(Measurement.user_id == user.id)
     return (await db.execute(statement)).all()
+
+
+async def list_calculation_data(
+    db: AsyncSession,
+    request: CalculationDataListRequest,
+    *,
+    user: UserData,
+) -> dict[str, Any]:
+    measurement_clause = Measurement.experiment_id == request.experiment_id
+    if not is_admin_user(user):
+        measurement_clause = and_(measurement_clause, Measurement.user_id == user.id)
+    base_clause = and_(
+        CalculationData.id.in_(request.selected_ids),
+        CalculationData.calculation.has(
+            Calculation.experiment_id == request.experiment_id
+        ),
+        CalculationData.measurement.has(measurement_clause),
+    )
+    return await get_list_response(
+        db,
+        request,
+        CALCULATION_DATA_CRUD_SPEC,
+        base_clause,
+        user=user,
+    )
 
 
 def _analysis_fingerprint(rows) -> str:
@@ -137,6 +175,7 @@ async def analyze_calculation_data(
         )
         items.append(
             {
+                "calculation_data_id": row.calculation_data_id,
                 "calculation_id": row.calculation_id,
                 "calculation_name": row.calculation_name,
                 "measurement_id": row.measurement_id,
