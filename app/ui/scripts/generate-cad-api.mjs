@@ -282,10 +282,7 @@ const coreDeclaration = await formatGenerated(
   'src/lib/cad/api/caemble-core.d.ts',
   await readFile(coreDeclarationPath, 'utf8').then((source) =>
     source
-      .replace(
-        /^\/\/ @caemble\/core declaration version: .*$/m,
-        '// Generated @caemble/core declaration.',
-      )
+      .replace(/^\/\/ @caemble\/core declaration version: .*$/m, '// Generated @caemble/core declaration.')
       .replace(
         /\/\/ <generated:primitive-authoring-bindings>[\s\S]*?\/\/ <\/generated:primitive-authoring-bindings>/,
         primitiveAuthoringDeclarations(),
@@ -308,24 +305,16 @@ await Promise.all([
   emit('src/lib/quantitykind/index.ts', await formatGenerated('src/lib/quantitykind/index.ts', quantityKindFacade())),
 ])
 
-const [authoringReferenceModule, generatedElementsModule] = await Promise.all([
+const [authoringReferenceModule, generatedElementsModule, localExperimentCodeModule] = await Promise.all([
   loadBundledModule(path.join(root, 'src/lib/cad/authoringReference.ts')),
   loadBundledModule(path.join(root, 'src/lib/cad/elements/generated.ts')),
+  loadBundledModule(path.join(root, 'src/lib/localExperimentCode.ts')),
 ])
-const geometrySkeletonExperiment = catalogQuery(
-  'experiment',
-  'geometry-authoring-skeleton',
-  '1.0.0',
-  '--namespace',
-  'caemble',
-  '--repository',
-  'getting-started',
-)
 const authoringReferencePayload = authoringReferenceModule.buildCadAuthoringReference({
   authoringContract: generatedElementsModule.cadAuthoringContract,
   elements: generatedElementsModule.cadElementCatalog,
-  experimentSkeleton: geometrySkeletonExperiment.sourceBundle.files['experiment.tsx'],
-  geometrySkeleton: geometrySkeletonExperiment.sourceBundle.files['geometry.tsx'],
+  experimentSkeleton: localExperimentCodeModule.starterExperimentSourceBundle.files['experiment.tsx'],
+  geometrySkeleton: localExperimentCodeModule.starterExperimentSourceBundle.files['geometry.tsx'],
 })
 await emit('../api/app/ai/cad_authoring_reference.json', `${JSON.stringify(authoringReferencePayload, null, 2)}\n`)
 

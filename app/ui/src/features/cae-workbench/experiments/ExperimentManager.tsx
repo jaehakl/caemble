@@ -143,27 +143,21 @@ export function ExperimentManager({
     [managedVersions, namespace],
   )
   const visibleVersions = useMemo(() => {
-    const grouped = new Map<string, ManagedExperimentVersion[]>()
-    managedVersions
+    return managedVersions
       .filter(
         (item) =>
           (namespace === 'all' || item.namespace === namespace) &&
           (repository === 'all' || item.repository === repository),
       )
-      .forEach((item) => {
-        grouped.set(item.identity, [...(grouped.get(item.identity) ?? []), item])
-      })
-    return [...grouped.entries()]
-      .sort(([left], [right]) => left.localeCompare(right))
-      .flatMap(([, versions]) => {
-        versions.sort(
-          (left, right) =>
-            right.versionParts[0] - left.versionParts[0] ||
-            right.versionParts[1] - left.versionParts[1] ||
-            right.versionParts[2] - left.versionParts[2],
-        )
-        return versions
-      })
+      .sort(
+        (left, right) =>
+          (left.kind === right.kind ? 0 : left.kind === 'saved' ? -1 : 1) ||
+          left.identity.localeCompare(right.identity) ||
+          right.versionParts[0] - left.versionParts[0] ||
+          right.versionParts[1] - left.versionParts[1] ||
+          right.versionParts[2] - left.versionParts[2] ||
+          left.coordinate.localeCompare(right.coordinate),
+      )
   }, [managedVersions, namespace, repository])
 
   const filtersReady = !exampleQuery.isPending && (!authenticated || !savedQuery.isPending)

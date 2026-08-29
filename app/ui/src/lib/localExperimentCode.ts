@@ -1,4 +1,4 @@
-import { createExperimentSourceBundle } from './cad'
+import { createExperimentSourceBundle } from './cad/source/document'
 import { DRAFT_TASK_KERNEL } from './catalog/draftTask'
 
 const starterExperimentCode = `import { experiment } from '@caemble/core'

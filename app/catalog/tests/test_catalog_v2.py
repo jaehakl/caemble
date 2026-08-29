@@ -43,6 +43,58 @@ class CatalogV2Tests(unittest.TestCase):
         self.assertEqual(joule["payloadKind"], "field")
         self.assertEqual(joule["data"]["quantityKind"], "PowerDensity")
 
+    def test_published_catalog_contains_curated_electro_thermal_notched_example(self) -> None:
+        removed_keys = {
+            "basketball-goal",
+            "geometry-authoring-skeleton",
+            "dc-resolution-study",
+            "dc-uniform-bar",
+            "dc-notched-current-density",
+            "electro-thermal-uniform-bar",
+        }
+        with open_catalog() as catalog:
+            experiments, total = catalog.list_experiments(limit=100)
+            example = catalog.experiment(
+                "electro-thermal-notched-bar",
+                namespace="caemble",
+                repository="verified",
+                version="1.0.0",
+            )
+
+        self.assertEqual(total, 8)
+        self.assertTrue(removed_keys.isdisjoint(item["key"] for item in experiments))
+        self.assertEqual(example["title"], "Electro-Thermal Notched Bar")
+        self.assertEqual(
+            [(item["name"], item["version"]) for item in example["relatedSolvers"]],
+            [("dc-current-density", "0.2.0"), ("steady-state-heat", "0.1.0")],
+        )
+        self.assertEqual(
+            set(example["sourceBundle"]["files"]),
+            {
+                "experiment.tsx",
+                "geometry.tsx",
+                "material.tsx",
+                "simulate.py",
+                "tasks/electric.tsx",
+                "tasks/thermal.tsx",
+            },
+        )
+        experiment_source = example["sourceBundle"]["files"]["experiment.tsx"]
+        simulation_source = example["sourceBundle"]["files"]["simulate.py"]
+        electric_source = example["sourceBundle"]["files"]["tasks/electric.tsx"]
+        thermal_source = example["sourceBundle"]["files"]["tasks/thermal.tsx"]
+        self.assertTrue(
+            all(
+                key in experiment_source
+                for key in ("currentDensity", "totalCurrent", "temperature", "maximumTemperature")
+            )
+        )
+        self.assertIn("methodId: 'dc.joule-heating'", electric_source)
+        self.assertIn("value: [40, 21, 21]", electric_source)
+        self.assertIn("value: [40, 21, 21]", thermal_source)
+        self.assertIn('inputs={"heatSource": electric["artifacts"]["jouleHeating"]}', simulation_source)
+        self.assertIn('sim.release(electric["artifacts"]["jouleHeating"])', simulation_source)
+
     def test_new_solver_cli_defaults_to_abi_v2(self) -> None:
         arguments = build_parser().parse_args(
             [
