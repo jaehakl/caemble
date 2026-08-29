@@ -44,7 +44,14 @@ import {
 import { TensorEditor } from '../src/features/cae-workbench/calculation/TensorEditor'
 import { VarsPanel } from '../src/features/cae-workbench/calculation/VarsPanel'
 import { fitTensorDisplayDomain } from '../src/features/cae-workbench/calculation/tensorDisplayDomain'
+import { createRuntimeConsoleStore } from '../src/features/runtime-console/store'
 import { PredictionWorkerClient, PredictionWorkerRestartError } from '../src/features/cae-workbench/prediction/client'
+import {
+  emitPredictionCohortDiagnostics,
+  emitPredictionQueryDiagnostics,
+  PREDICTION_CONSOLE_DIAGNOSTIC_LIMIT,
+} from '../src/features/cae-workbench/prediction/diagnostics'
+import { PredictionCalculationPane } from '../src/features/cae-workbench/prediction/PredictionPanels'
 import type {
   PredictionWorkerRequest,
   PredictionWorkerResponse,
@@ -291,6 +298,22 @@ const integerForward = buildPredictionKnnModel({
   ],
 })
 assert.equal(predictWithKnn(integerForward, [scalar('x', 1)]).output[0].values[0], 2)
+const currentSchemaNormalizedForward = buildPredictionKnnModel({
+  direction: 'forward',
+  fingerprint: 'current-output-dtype',
+  k: 2,
+  weighting: 'uniform',
+  inputKeys: ['x'],
+  outputKeys: ['count'],
+  outputDtypes: { count: 'float64' },
+  rows: [
+    row(1, [scalar('x', 0)], [{ layout: intLayout, values: [0] }]),
+    row(2, [scalar('x', 2)], [{ layout: intLayout, values: [3] }]),
+  ],
+})
+const currentSchemaNormalizedResult = predictWithKnn(currentSchemaNormalizedForward, [scalar('x', 1)]).output[0]
+assert.equal(currentSchemaNormalizedResult.layout.dtype, 'float64')
+assert.equal(currentSchemaNormalizedResult.values[0], 1.5)
 const float16Layout = { key: 'half', dtype: 'float16', shape: [] } as const
 const float16Forward = buildPredictionKnnModel({
   direction: 'forward',
@@ -324,10 +347,22 @@ const selected = selectPredictionCohort({
     row(5, [layoutA, scalar('extra', 1)], [scalar('v', 5)]),
   ],
 })
-assert.deepEqual(selected.summary.includedMeasurementIds, [2, 3])
-assert.equal(selected.summary.excluded['layout-mismatch'], 1)
+assert.deepEqual(selected.summary.includedMeasurementIds, [1, 2, 3])
+assert.deepEqual(selected.summary.warningMeasurementIds, [2, 3])
+assert.equal(selected.summary.excluded['layout-mismatch'], 0)
 assert.equal(selected.summary.excluded['missing-block'], 1)
 assert.equal(selected.summary.excluded['extra-block'], 1)
+const axesTickWarning = selected.summary.diagnostics.find(
+  (diagnostic) => diagnostic.blockKey === 'target' && diagnostic.fieldPath === 'axes[0].ticks',
+)
+assert.ok(axesTickWarning)
+assert.equal(axesTickWarning.direction, 'inverse')
+assert.equal(axesTickWarning.disposition, 'included-with-warning')
+assert.equal(axesTickWarning.baselineMeasurementId, 1)
+assert.deepEqual(axesTickWarning.measurementIds, [2, 3])
+assert.equal(axesTickWarning.firstMismatchIndex, 0)
+assert.equal(axesTickWarning.mismatchCount, 2)
+assert.equal(axesTickWarning.maxAbsoluteDifference, 19)
 
 const schemaCohort = selectPredictionCohort({
   direction: 'forward',
@@ -340,8 +375,252 @@ const schemaCohort = selectPredictionCohort({
     row(3, [scalar('x', 2)], [scalar('recorded', 3, { dataSchemaSignature: 'schema-a' })]),
   ],
 })
-assert.deepEqual(schemaCohort.summary.includedMeasurementIds, [1, 3])
-assert.equal(schemaCohort.summary.excluded['layout-mismatch'], 1)
+assert.deepEqual(schemaCohort.summary.includedMeasurementIds, [1, 2, 3])
+assert.deepEqual(schemaCohort.summary.warningMeasurementIds, [2])
+assert.equal(schemaCohort.summary.excluded['layout-mismatch'], 0)
+assert.deepEqual(
+  schemaCohort.summary.diagnostics.find((diagnostic) => diagnostic.fieldPath === 'dataSchemaSignature')?.measurementIds,
+  [2],
+)
+
+const twentyFiveRows = selectPredictionCohort({
+  direction: 'forward',
+  fingerprint: 'same-shape-different-ticks',
+  inputKeys: ['x'],
+  outputKeys: ['recorded'],
+  rows: Array.from({ length: 25 }, (_item, index) =>
+    row(
+      index + 1,
+      [scalar('x', index)],
+      [
+        {
+          layout: {
+            key: 'recorded',
+            dtype: 'float64',
+            shape: [2],
+            axes: [{ name: 'sample', ticks: index < 3 ? [0, 1] : [0, 2] }],
+          },
+          values: [index, index + 1],
+        },
+      ],
+    ),
+  ),
+})
+assert.equal(twentyFiveRows.summary.includedRows, 25)
+assert.equal(twentyFiveRows.summary.excluded['layout-mismatch'], 0)
+assert.deepEqual(
+  twentyFiveRows.summary.warningMeasurementIds,
+  Array.from({ length: 22 }, (_item, index) => index + 4),
+)
+const twentyFiveTickWarning = twentyFiveRows.summary.diagnostics.find(
+  (diagnostic) => diagnostic.fieldPath === 'axes[0].ticks',
+)
+assert.ok(twentyFiveTickWarning)
+assert.equal(twentyFiveTickWarning.baselineMeasurementId, 1)
+assert.deepEqual(
+  twentyFiveTickWarning.measurementIds,
+  Array.from({ length: 22 }, (_item, index) => index + 4),
+)
+assert.equal(twentyFiveTickWarning.firstMismatchIndex, 1)
+assert.equal(twentyFiveTickWarning.mismatchCount, 1)
+assert.equal(twentyFiveTickWarning.maxAbsoluteDifference, 1)
+
+const metadataCohort = selectPredictionCohort({
+  direction: 'forward',
+  fingerprint: 'metadata-warning-only',
+  inputKeys: ['x'],
+  outputKeys: ['recorded'],
+  rows: [
+    row(
+      1,
+      [scalar('x', 0)],
+      [
+        {
+          layout: {
+            key: 'recorded',
+            dtype: 'float64',
+            shape: [2],
+            axes: [{ name: 'time', ticks: [0, 1], unit: 's' }],
+            tensorOrder: 0,
+            unit: 'Pa',
+            quantityKind: 'Pressure',
+            dataSchemaSignature: 'schema-a',
+          },
+          values: [1, 2],
+        },
+      ],
+    ),
+    row(
+      2,
+      [scalar('x', 1)],
+      [
+        {
+          layout: {
+            key: 'recorded',
+            dtype: 'float32',
+            shape: [2],
+            tensorOrder: 1,
+            unit: 'kPa',
+            quantityKind: 'Stress',
+            dataSchemaSignature: 'schema-b',
+          },
+          values: [3, 4],
+        },
+      ],
+    ),
+  ],
+})
+assert.deepEqual(metadataCohort.summary.includedMeasurementIds, [1, 2])
+assert.deepEqual(metadataCohort.summary.warningMeasurementIds, [2])
+for (const fieldPath of ['dtype', 'tensorOrder', 'unit', 'quantityKind', 'dataSchemaSignature', 'axes.length']) {
+  assert.ok(metadataCohort.summary.diagnostics.some((diagnostic) => diagnostic.fieldPath === fieldPath))
+}
+
+const shapeCohort = selectPredictionCohort({
+  direction: 'inverse',
+  fingerprint: 'shape-only-groups',
+  inputKeys: ['target'],
+  outputKeys: ['v'],
+  rows: [
+    row(1, [tensor('target', [1, 2], [2])], [scalar('v', 1)]),
+    row(2, [tensor('target', [3, 4], [2])], [scalar('v', 2)]),
+    row(3, [tensor('target', [5, 6], [1, 2])], [scalar('v', 3)]),
+    row(4, [tensor('target', [7, 8], [1, 2])], [scalar('v', 4)]),
+  ],
+})
+assert.deepEqual(shapeCohort.summary.includedMeasurementIds, [1, 2])
+assert.equal(shapeCohort.summary.excluded['layout-mismatch'], 2)
+const shapeDiagnostic = shapeCohort.summary.diagnostics.find(
+  (diagnostic) => diagnostic.reason === 'layout-mismatch' && diagnostic.fieldPath === 'shape',
+)
+assert.ok(shapeDiagnostic)
+assert.equal(shapeDiagnostic.baselineMeasurementId, 1)
+assert.equal(shapeDiagnostic.expected, '[2]')
+assert.equal(shapeDiagnostic.actual, '[1,2]')
+assert.deepEqual(shapeDiagnostic.measurementIds, [3, 4])
+
+const independentRecordA = selectPredictionCohort({
+  direction: 'forward',
+  fingerprint: 'record-a-independent-shape',
+  inputKeys: ['v'],
+  outputKeys: ['record-a'],
+  rows: [
+    row(1, [scalar('v', 1)], [tensor('record-a', [1, 2], [2])]),
+    row(2, [scalar('v', 2)], [tensor('record-a', [3, 4], [2])]),
+    row(3, [scalar('v', 3)], [tensor('record-a', [5, 6], [1, 2])]),
+    row(4, [scalar('v', 4)], [tensor('record-a', [7, 8], [1, 2])]),
+  ],
+})
+const independentRecordB = selectPredictionCohort({
+  direction: 'forward',
+  fingerprint: 'record-b-independent-shape',
+  inputKeys: ['v'],
+  outputKeys: ['record-b'],
+  rows: [1, 2, 3, 4].map((measurementId) =>
+    row(measurementId, [scalar('v', measurementId)], [scalar('record-b', measurementId * 10)]),
+  ),
+})
+assert.deepEqual(independentRecordA.summary.includedMeasurementIds, [1, 2])
+assert.equal(independentRecordA.summary.excluded['layout-mismatch'], 2)
+assert.deepEqual(independentRecordB.summary.includedMeasurementIds, [1, 2, 3, 4])
+assert.equal(independentRecordB.summary.excluded['layout-mismatch'], 0)
+
+const queryModel = buildPredictionKnnModel({
+  direction: 'inverse',
+  fingerprint: 'shape-only-query',
+  inputKeys: ['target'],
+  outputKeys: ['v'],
+  rows: [row(1, [layoutB], [scalar('v', 1)]), row(2, [layoutA], [scalar('v', 2)])],
+})
+const metadataQueryResult = predictWithKnn(queryModel, [
+  {
+    layout: {
+      key: 'target',
+      dtype: 'float32',
+      shape: [2],
+      axes: [{ name: 'renamed', ticks: ['a', 'b'], unit: 'index' }],
+      unit: 'other',
+    },
+    values: [1, 2],
+  },
+])
+assert.ok(metadataQueryResult.queryDiagnostics.some((diagnostic) => diagnostic.fieldPath === 'dtype'))
+assert.ok(metadataQueryResult.queryDiagnostics.some((diagnostic) => diagnostic.fieldPath === 'axes[0].ticks'))
+const queryActivities: string[] = []
+const queryFingerprints = new Set<string>()
+assert.equal(
+  emitPredictionQueryDiagnostics(metadataQueryResult, 'shape-only-query', queryFingerprints, (activity) => {
+    queryActivities.push(activity.message)
+  }),
+  true,
+)
+assert.ok(queryActivities.some((message) => message.includes('cell index 기준')))
+assert.equal(
+  emitPredictionQueryDiagnostics(metadataQueryResult, 'shape-only-query', queryFingerprints, (activity) => {
+    queryActivities.push(activity.message)
+  }),
+  false,
+)
+assert.throws(
+  () => predictWithKnn(queryModel, [tensor('target', [1, 2], [1, 2])]),
+  (error: unknown) => error instanceof PredictionModelError && error.code === 'invalid-data',
+)
+
+const cappedDiagnostics = selectPredictionCohort({
+  direction: 'forward',
+  fingerprint: 'diagnostic-group-cap',
+  inputKeys: ['x'],
+  outputKeys: ['recorded'],
+  rows: Array.from({ length: 502 }, (_item, index) =>
+    row(index + 1, [scalar('x', index)], [scalar('recorded', index, { unit: `unit-${index}` })]),
+  ),
+})
+assert.equal(cappedDiagnostics.summary.diagnostics.length, 500)
+assert.equal(cappedDiagnostics.summary.omittedDiagnosticGroups, 1)
+const diagnosticActivities: { message: string; source: string }[] = []
+const diagnosticFingerprints = new Set<string>()
+const cappedProfile = {
+  direction: 'forward',
+  activeInputBlockCount: 1,
+  rowCount: cappedDiagnostics.summary.includedRows,
+  k: 15,
+  weighting: 'distance',
+  inputScaling: 'range',
+  inputLayouts: cappedDiagnostics.inputLayouts,
+  inputScales: new Float64Array(),
+  inputBlockWeights: { x: 1 },
+  inputSize: 1,
+  outputSize: 1,
+  persistentBytes: 0,
+  workingSetBytes: 0,
+  includedMeasurementIds: cappedDiagnostics.summary.includedMeasurementIds,
+  warningMeasurementIds: cappedDiagnostics.summary.warningMeasurementIds,
+  dominantShapeSignature: cappedDiagnostics.summary.dominantShapeSignature,
+  baselineMeasurementId: cappedDiagnostics.summary.baselineMeasurementId,
+  diagnostics: cappedDiagnostics.summary.diagnostics,
+  omittedDiagnosticGroups: cappedDiagnostics.summary.omittedDiagnosticGroups,
+  excluded: cappedDiagnostics.summary.excluded,
+} as const
+assert.equal(PREDICTION_CONSOLE_DIAGNOSTIC_LIMIT, 100)
+assert.equal(
+  emitPredictionCohortDiagnostics(cappedProfile, 'diagnostic-group-cap', diagnosticFingerprints, (activity) => {
+    diagnosticActivities.push({ message: activity.message, source: activity.source })
+  }),
+  true,
+)
+assert.equal(diagnosticActivities.length, 101)
+const runtimeConsole = createRuntimeConsoleStore({ createId: () => 'prediction-event', now: () => 1 })
+runtimeConsole.append({ source: 'prediction', level: 'warning', message: 'shape metadata warning' })
+assert.equal(runtimeConsole.getSnapshot().events[0].source, 'prediction')
+assert.ok(diagnosticActivities.every((activity) => activity.source === 'prediction'))
+assert.match(diagnosticActivities.at(-1)!.message, /401개 진단 그룹/u)
+assert.equal(
+  emitPredictionCohortDiagnostics(cappedProfile, 'diagnostic-group-cap', diagnosticFingerprints, (activity) => {
+    diagnosticActivities.push({ message: activity.message, source: activity.source })
+  }),
+  false,
+)
+assert.equal(diagnosticActivities.length, 101)
 
 const allConstantModel = buildPredictionKnnModel({
   direction: 'inverse',
@@ -518,6 +797,15 @@ const reconstructedInline = reconstructedRecorded['group.inline']
 assert.ok(isDataTensor(reconstructedInline))
 const inlineRule = recordedSamples.rules.find((rule) => rule.label === 'group.inline')!
 assert.deepEqual(createDataTensorAccessor(inlineRule.result, reconstructedInline).materialize(), [1.5, 2.5])
+const ordinalFallbacks: { axisIndex: number; blockKey: string; length: number }[] = []
+predictedRecordedData(
+  recordedSamples.samples.map((sample) =>
+    sample.layout.key === 'group.inline' ? { ...sample, layout: { ...sample.layout, axes: undefined } } : sample,
+  ),
+  recordedSamples.rules,
+  (warning) => ordinalFallbacks.push(warning),
+)
+assert.deepEqual(ordinalFallbacks, [{ axisIndex: 0, blockKey: 'group.inline', length: 2 }])
 assert.throws(() => predictedRecordedData(recordedSamples.samples.slice(1), recordedSamples.rules))
 
 const calculationTensor = {
@@ -528,6 +816,14 @@ const calculationTensor = {
 } as const satisfies CalculationDataOutput
 const calculationTensorSample = calculationOutputSample(7, calculationTensor)
 assert.deepEqual(calculationOutputFromSample(calculationTensorSample), calculationTensor)
+const dtypeMetadataOnlySample = calculationOutputSample(8, {
+  dtype: 'uint8',
+  shape: [],
+  data: 300,
+  axes: [],
+})
+assert.equal(dtypeMetadataOnlySample.values[0], 300)
+assert.throws(() => calculationOutputFromSample(dtypeMetadataOnlySample), /uint8 범위/u)
 assert.deepEqual(calculationOutputTensor(calculationTensor), [1, 2])
 assert.deepEqual(calculationOutputWithTensor(calculationTensor, [4, 5]).data, [4, 5])
 assert.throws(() =>
@@ -557,7 +853,7 @@ const calculationRows = [
 const inverseRows = inverseTrainingRows(measurementRows, calculationRows, [7], varsSchema)
 assert.equal(inverseRows.length, 4)
 assert.equal(inverseRows[1].inputs.length, 0)
-assert.ok(Number.isNaN(inverseRows[2].inputs[0].values[0]))
+assert.deepEqual(inverseRows[2].inputs[0].values, [1])
 assert.ok(Number.isNaN(inverseRows[3].outputs[0].values[0]))
 const inverseCohort = selectPredictionCohort({
   direction: 'inverse',
@@ -571,6 +867,17 @@ assert.deepEqual(inverseCohort.summary.includedMeasurementIds, [1])
 assert.equal(inverseCohort.summary.excluded['missing-block'], 1)
 assert.equal(inverseCohort.summary.excluded['invalid-tensor'], 2)
 assert.equal(inverseCohort.summary.totalRows, 4)
+assert.ok(
+  inverseCohort.summary.diagnostics.some(
+    (diagnostic) =>
+      diagnostic.disposition === 'excluded' &&
+      diagnostic.measurementIds.includes(3) &&
+      diagnostic.fieldPath === 'data.length' &&
+      diagnostic.expected === '2' &&
+      diagnostic.actual === '1',
+  ),
+)
+assert.ok(inverseCohort.summary.diagnostics.every((diagnostic) => diagnostic.baselineMeasurementId === 1))
 assert.throws(() => inverseTrainingRows(measurementRows, calculationRows, [7, 7], varsSchema))
 
 assert.equal(predictionFingerprint([{ z: 1, a: 2 }]), predictionFingerprint([{ a: 2, z: 1 }]))
@@ -686,6 +993,20 @@ assert.doesNotMatch(varsPanelMarkup, /role="dialog"/u)
 assert.equal((varsPanelMarkup.match(/aria-expanded="false"/gu) ?? []).length, 2)
 assert.match(varsPanelMarkup, /schema \[-10, 10\]/u)
 assert.match(varsPanelMarkup, /2 cells/u)
+
+const calculationPaneMarkup = renderToStaticMarkup(
+  createElement(PredictionCalculationPane, {
+    disabled: false,
+    items: [],
+    mode: 'prediction',
+    resetKey: 'prediction:1',
+    status: 'ready',
+    updating: false,
+    onOutputChange: () => undefined,
+  }),
+)
+assert.doesNotMatch(calculationPaneMarkup, /기준 Measurement/u)
+assert.doesNotMatch(calculationPaneMarkup, /reference measurement/i)
 
 let comparisonCommitCount = 0
 const scalarComparisonMarkup = renderToStaticMarkup(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Iterable
 from typing import Any
 
@@ -11,9 +12,12 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db import Calculation, Experiment, ExperimentNamespace, Measurement, RecordedData
+from db import Calculation, Experiment, ExperimentNamespace, ExperimentRecord, Measurement, RecordedData
 from models import (
     ExperimentBase,
+    ExperimentRecordBase,
+    ExperimentRecordContract,
+    ExperimentRecordListRequest,
     ExperimentSourceBundle,
     GetListRequestBase,
     SaveExperimentRequest,
@@ -40,6 +44,14 @@ EXPERIMENT_CRUD_SPEC = CrudSpec(
         "key": ("experiment_key",),
     },
 )
+
+EXPERIMENT_RECORD_CRUD_SPEC = CrudSpec(
+    model=ExperimentRecord,
+    schema=ExperimentRecordBase,
+    scope_path=("experiment",),
+)
+
+_RECORD_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}(?:\.[A-Za-z_][A-Za-z0-9_]{0,62})*$")
 
 
 def _bad(message: Any, *, code: int = status.HTTP_422_UNPROCESSABLE_ENTITY) -> HTTPException:
@@ -86,6 +98,79 @@ def _bump_version(experiment: Experiment, bump: str) -> tuple[int, int, int]:
 
 def _source_bundle_payload(bundle: ExperimentSourceBundle) -> dict[str, Any]:
     return bundle.model_dump(mode="json")
+
+
+def _record_payload(record: ExperimentRecordContract | ExperimentRecord) -> dict[str, Any]:
+    return {
+        "name": record.name,
+        "quantity_kind": record.quantity_kind,
+        "tensor_order": record.tensor_order,
+        "dtype": record.dtype,
+        "data_schema": record.data_schema,
+    }
+
+
+def _record_hash(payload: dict[str, Any]) -> str:
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+async def _sync_experiment_records(
+    db: AsyncSession,
+    experiment: Experiment,
+    records: list[ExperimentRecordContract],
+    counts: dict[str, int],
+) -> None:
+    requested: dict[str, dict[str, Any]] = {}
+    for record in records:
+        payload = _record_payload(record)
+        name = record.name.strip()
+        if not _RECORD_NAME.fullmatch(name):
+            raise _bad(f"Invalid ExperimentRecord name: {record.name}")
+        if name in requested:
+            raise _bad(f"Duplicate ExperimentRecord name: {name}")
+        if record.tensor_order < 0:
+            raise _bad(f"ExperimentRecord tensor_order must be non-negative: {name}")
+        payload["name"] = name
+        requested[name] = payload
+
+    existing = list(
+        (
+            await db.scalars(
+                select(ExperimentRecord)
+                .where(ExperimentRecord.experiment_id == experiment.id)
+                .order_by(ExperimentRecord.id)
+                .with_for_update()
+            )
+        ).all()
+    )
+    existing_payloads = {record.name: _record_payload(record) for record in existing}
+    if existing_payloads != requested and _source_locked(counts):
+        raise _bad(
+            {
+                "code": "experiment_record_contract_locked",
+                "message": "ExperimentRecord contract cannot change while derived data exists.",
+                "expected": existing_payloads,
+                "actual": requested,
+            },
+            code=status.HTTP_409_CONFLICT,
+        )
+
+    existing_by_name = {record.name: record for record in existing}
+    for name, payload in requested.items():
+        record = existing_by_name.get(name)
+        if record is None:
+            record = ExperimentRecord(experiment_id=experiment.id)
+            db.add(record)
+        record.name = name
+        record.quantity_kind = payload["quantity_kind"]
+        record.tensor_order = payload["tensor_order"]
+        record.dtype = payload["dtype"]
+        record.data_schema = payload["data_schema"]
+        record.contract_hash = _record_hash(payload)
+    missing_ids = [record.id for record in existing if record.name not in requested]
+    if missing_ids:
+        await db.execute(delete(ExperimentRecord).where(ExperimentRecord.id.in_(missing_ids)))
 
 
 async def _claim_namespace(db: AsyncSession, user_id: str, namespace: str) -> None:
@@ -346,6 +431,8 @@ async def save_experiment(
             await _cleanup_empty_namespaces(db, owner.id, [previous_namespace])
     try:
         await db.flush()
+        await _sync_experiment_records(db, experiment, request.records, counts)
+        await db.flush()
         await db.commit()
     except IntegrityError as error:
         await db.rollback()
@@ -481,3 +568,18 @@ async def list_experiments(
         user=user,
     )
     return await enrich_experiment_list(db, response)
+
+
+async def list_experiment_records(
+    db: AsyncSession,
+    request: ExperimentRecordListRequest,
+    *,
+    user: UserData | None,
+) -> dict[str, Any]:
+    return await get_list_response(
+        db,
+        request,
+        EXPERIMENT_RECORD_CRUD_SPEC,
+        ExperimentRecord.experiment_id == request.experiment_id,
+        user=user,
+    )

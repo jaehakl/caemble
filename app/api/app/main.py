@@ -7,6 +7,7 @@ from routers import (
     calculation_data,
     catalog,
     experiment,
+    experiment_record,
     material,
     measurement,
     recorded_data,
@@ -20,6 +21,7 @@ app.include_router(ai_router)
 app.include_router(catalog.router)
 app.include_router(material.router)
 app.include_router(experiment.router)
+app.include_router(experiment_record.router)
 app.include_router(measurement.router)
 app.include_router(recorded_data.router)
 app.include_router(calculation.router)

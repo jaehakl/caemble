@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db import (
     Calculation,
     Experiment,
+    ExperimentRecord,
     Material,
     MaterialName,
     MaterialParameter,
@@ -113,6 +114,11 @@ class VisibleDataReader:
             .order_by(model.updated_at.desc(), model.id.desc())
             .limit(limit)
         )
+        if resource == "recorded_data":
+            statement = statement.join(
+                ExperimentRecord,
+                ExperimentRecord.id == RecordedData.experiment_record_id,
+            )
         return [_json_mapping(row) for row in (await self.db.execute(statement)).mappings().all()]
 
     async def detail(self, resource: VisibleResource, resource_id: int) -> dict[str, Any]:
@@ -207,18 +213,22 @@ class VisibleDataReader:
                 await self.db.execute(
                     select(
                         RecordedData.id,
-                        RecordedData.name,
-                        RecordedData.quantity_kind,
-                        RecordedData.tensor_order,
-                        RecordedData.dtype,
-                        RecordedData.data_schema,
+                        ExperimentRecord.name,
+                        ExperimentRecord.quantity_kind,
+                        ExperimentRecord.tensor_order,
+                        ExperimentRecord.dtype,
+                        ExperimentRecord.data_schema,
                         RecordedData.file_size,
+                    )
+                    .join(
+                        ExperimentRecord,
+                        ExperimentRecord.id == RecordedData.experiment_record_id,
                     )
                     .where(
                         RecordedData.measurement_id == resource_id,
                         RecordedData.user_id == self.user_id,
                     )
-                    .order_by(RecordedData.name, RecordedData.id)
+                    .order_by(ExperimentRecord.name, RecordedData.id)
                 )
             ).mappings().all()
             return {
@@ -356,14 +366,14 @@ class VisibleDataReader:
                 [
                     RecordedData.id,
                     RecordedData.measurement_id,
-                    RecordedData.name,
-                    RecordedData.quantity_kind,
-                    RecordedData.dtype,
-                    RecordedData.tensor_order,
+                    ExperimentRecord.name,
+                    ExperimentRecord.quantity_kind,
+                    ExperimentRecord.dtype,
+                    ExperimentRecord.tensor_order,
                     RecordedData.file_size,
                     RecordedData.updated_at,
                 ],
-                [RecordedData.name, RecordedData.quantity_kind, RecordedData.dtype],
+                [ExperimentRecord.name, ExperimentRecord.quantity_kind, ExperimentRecord.dtype],
                 RecordedData.user_id == self.user_id,
             )
         raise VisibleDataError("Visible data resource is not supported")
@@ -417,11 +427,11 @@ class VisibleDataReader:
         columns = [
             RecordedData.id,
             RecordedData.measurement_id,
-            RecordedData.name,
-            RecordedData.quantity_kind,
-            RecordedData.tensor_order,
-            RecordedData.dtype,
-            RecordedData.data_schema,
+            ExperimentRecord.name,
+            ExperimentRecord.quantity_kind,
+            ExperimentRecord.tensor_order,
+            ExperimentRecord.dtype,
+            ExperimentRecord.data_schema,
             RecordedData.file_size,
             RecordedData.updated_at,
         ]
@@ -429,7 +439,12 @@ class VisibleDataReader:
             columns.append(RecordedData.data)
         row = (
             await self.db.execute(
-                select(*columns).where(
+                select(*columns)
+                .join(
+                    ExperimentRecord,
+                    ExperimentRecord.id == RecordedData.experiment_record_id,
+                )
+                .where(
                     RecordedData.id == resource_id,
                     RecordedData.user_id == self.user_id,
                 )

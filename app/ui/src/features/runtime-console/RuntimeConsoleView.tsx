@@ -9,6 +9,7 @@ const sourceLabels: Record<RuntimeActivitySource, string> = {
   gpstation: 'GPStation',
   cae: 'CAE',
   calculation: 'Calculation',
+  prediction: 'Prediction',
 }
 
 export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
@@ -59,6 +60,7 @@ export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
           <option value="gpstation">GPStation</option>
           <option value="cae">CAE</option>
           <option value="calculation">Calculation</option>
+          <option value="prediction">Prediction</option>
         </select>
         <select
           aria-label="Level 필터"

@@ -1,4 +1,4 @@
-import { dbTables, type SaveExperimentResponse } from '@/api'
+import { dbTables, type ExperimentRecordContract, type SaveExperimentResponse } from '@/api'
 import { rawCodeHash, type CadSourceDocument, type ExperimentSourceBundle } from '@/lib/cad'
 import type { DefinitionFormValues, ExperimentSaveMode } from './SaveDefinitionDialog'
 
@@ -29,12 +29,14 @@ export async function saveCadDefinition({
   mode,
   savedSourceBundle,
   selectedId,
+  records,
   values,
 }: {
   document: CadSourceDocument
   mode: ExperimentSaveMode
   savedSourceBundle?: ExperimentSourceBundle | null
   selectedId: number | null
+  records: readonly ExperimentRecordContract[]
   values: DefinitionFormValues
 }): Promise<
   SaveExperimentResponse & {
@@ -63,6 +65,7 @@ export async function saveCadDefinition({
     description: values.description || null,
     sourceBundle,
     bundleHash,
+    records,
   })
   return { ...result, sourceBundle }
 }

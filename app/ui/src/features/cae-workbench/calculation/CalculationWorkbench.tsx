@@ -11,29 +11,39 @@ import {
   type ReactNode,
 } from 'react'
 import { toast } from 'sonner'
-import { dbTables, getListRequest, type CalculationRecord } from '@/api'
+import {
+  dbTables,
+  getListRequest,
+  type CalculationOutputLayout,
+  type CalculationRecord,
+  type ExperimentRecordedDataRecord,
+} from '@/api'
 import type { AiAgentApplyRequest, AiAgentApplyResult } from '@/api/aiAgent'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MeasurementExplorer } from '@/features/cae-workbench/measurement'
 import type { BottomDockMode, SavedMeasurement, SavedRecordedData } from '@/features/cae-workbench/types'
 import { CadDiffEditor } from '@/features/viewer/editor/CadDiffEditor'
 import {
-  CALCULATION_SOURCE_SKELETON,
   CalculationExecutionError,
+  analyzeCalculationDependencies,
+  calculationExperimentRecordReference,
+  calculationInputBindingName,
+  calculationSourceSkeleton,
   calculationSourceHash,
   runCalculation,
   type CalculationInput,
 } from '@/lib/calculation'
 import type { RecordedData, RecordedDataRule, Tensor, Vars, VarsSchemaEntry } from '@/lib/cad'
 import { cn } from '@/lib/utils'
-import { buildCalculationRecordedData } from './calculationRecordedData'
+import { buildCalculationRecordedData, summarizeCalculationRecordedData } from './calculationRecordedData'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
 import { type CalculationPreviewState } from './CalculationOutputChart'
 import { ResizableCalculationOutput } from './ResizableCalculationOutput'
 import { CalculationSaveDialog, type CalculationSaveValues } from './CalculationSaveDialog'
-import { CalculationSourceEditor } from './CalculationSourceEditor'
+import { ExperimentRecordCatalog } from './ExperimentRecordCatalog'
+import { buildExperimentRecordCatalogItems, requiredCalculationRecordedDataRules } from './experimentRecordCatalogModel'
+import { CalculationSourceEditor, type CalculationSourceEditorHandle } from './CalculationSourceEditor'
 import { ResizableCalculationLayout } from './ResizableCalculationLayout'
 import { VarsPanel } from './VarsPanel'
 
@@ -73,8 +83,8 @@ type CalculationAgentChange = Readonly<{
   removedLines: number
 }>
 
-function emptyCalculationDraft(): CalculationDraft {
-  return { id: null, description: '', name: '', sourceCode: CALCULATION_SOURCE_SKELETON }
+function emptyCalculationDraft(recordName?: string): CalculationDraft {
+  return { id: null, description: '', name: '', sourceCode: calculationSourceSkeleton(recordName) }
 }
 
 function calculationDraft(row: SavedCalculation): CalculationDraft {
@@ -226,9 +236,10 @@ export function CalculationWorkbench({
   const appliedSaveCommandRef = useRef(saveCommand)
   const previewSequenceRef = useRef(0)
   const previewAbortRef = useRef<AbortController | null>(null)
+  const sourceEditorRef = useRef<CalculationSourceEditorHandle | null>(null)
   const dirty = !sameDraft(draft, baseline)
   const calculationWorkspaceSession = agentWorkspaceSession * 1_000_000 + agentTargetSession
-  const saveDisabledReason = !authenticated
+  const baseSaveDisabledReason = !authenticated
     ? '로그인 후 사용할 수 있습니다.'
     : experimentId === null
       ? '먼저 저장된 Experiment를 여세요.'
@@ -261,6 +272,71 @@ export function CalculationWorkbench({
     () => (calculationsQuery.data?.items ?? []).filter((row): row is SavedCalculation => typeof row.id === 'number'),
     [calculationsQuery.data?.items],
   )
+  const experimentRecordsQuery = useQuery({
+    enabled: authenticated && experimentId !== null,
+    queryKey: ['cae-workbench', 'experiment-records', experimentId],
+    queryFn: () =>
+      dbTables.ExperimentRecord.listRows({
+        ...getListRequest('visible'),
+        experiment_id: experimentId!,
+        filter: { experiment_id: [experimentId!, experimentId!] },
+        limit: null,
+        sort: ['name', 'asc'],
+      }),
+  })
+  const experimentRecords = useMemo(
+    () => experimentRecordsQuery.data?.items ?? Object.freeze([] as ExperimentRecordedDataRecord[]),
+    [experimentRecordsQuery.data?.items],
+  )
+  const dependencyState = useMemo(() => {
+    try {
+      return {
+        error: null,
+        names: analyzeCalculationDependencies(
+          draft.sourceCode,
+          experimentRecords.map((record) => record.name),
+        ),
+      }
+    } catch (cause: unknown) {
+      return {
+        error: cause instanceof Error ? cause : new Error(String(cause)),
+        names: Object.freeze([] as string[]),
+      }
+    }
+  }, [draft.sourceCode, experimentRecords])
+  const requiredRules = useMemo(
+    () => requiredCalculationRecordedDataRules(recordedRules, dependencyState.names),
+    [dependencyState.names, recordedRules],
+  )
+  const inputBindingState = useMemo(() => {
+    try {
+      return { error: null, name: calculationInputBindingName(draft.sourceCode) }
+    } catch (cause: unknown) {
+      return { error: cause instanceof Error ? cause.message : String(cause), name: null }
+    }
+  }, [draft.sourceCode])
+  const selectedRow = rows.find((row) => row.id === draft.id) ?? null
+  const requiresPreflight =
+    draft.id === null ||
+    selectedRow === null ||
+    selectedRow.contract_status !== 'ready' ||
+    selectedRow.source_code !== draft.sourceCode
+  const saveDisabledReason =
+    baseSaveDisabledReason ??
+    (experimentRecordsQuery.isPending
+      ? 'ExperimentRecord 계약을 불러오는 중입니다.'
+      : dependencyState.error
+        ? dependencyState.error.message
+        : requiresPreflight && preview.status !== 'success'
+          ? '현재 source와 Measurement에 대한 성공한 preflight가 필요합니다.'
+          : undefined)
+  useEffect(() => {
+    const recordName = experimentRecords[0]?.name
+    if (!recordName || draft.id !== null || draft.sourceCode !== calculationSourceSkeleton()) return
+    const next = emptyCalculationDraft(recordName)
+    setDraft(next)
+    setBaseline(next)
+  }, [draft.id, draft.sourceCode, experimentRecords])
   const scalarCalculationId =
     authenticated &&
     draft.id !== null &&
@@ -282,8 +358,32 @@ export function CalculationWorkbench({
     },
   })
   const recordedSnapshot = useMemo(
-    () => buildCalculationRecordedData(recordedRules, recordedData),
-    [recordedData, recordedRules],
+    () => buildCalculationRecordedData(requiredRules, recordedData),
+    [recordedData, requiredRules],
+  )
+  const catalogSummaries = useMemo(() => {
+    const requiredByPath = new Map(recordedSnapshot.summaries.map((summary) => [summary.path, summary]))
+    return summarizeCalculationRecordedData(recordedRules, recordedData).map(
+      (summary) => requiredByPath.get(summary.path) ?? summary,
+    )
+  }, [recordedData, recordedRules, recordedSnapshot.summaries])
+  const experimentRecordCatalogItems = useMemo(
+    () =>
+      buildExperimentRecordCatalogItems(
+        experimentRecords,
+        dependencyState.error ? null : dependencyState.names,
+        measurementId !== null,
+        measurementLoading,
+        catalogSummaries,
+      ),
+    [
+      catalogSummaries,
+      dependencyState.error,
+      dependencyState.names,
+      experimentRecords,
+      measurementId,
+      measurementLoading,
+    ],
   )
   const agentContext = useMemo(() => {
     const rowIds = new Map(recordedRows.map((row) => [row.name, row.id ?? null]))
@@ -312,6 +412,21 @@ export function CalculationWorkbench({
         error: summary.error,
       }
     })
+    const availableExperimentRecords = [...experimentRecordCatalogItems]
+      .sort(
+        (left, right) =>
+          Number(right.used === true) - Number(left.used === true) || left.record.name.localeCompare(right.record.name),
+      )
+      .map(({ record, status, used }) => ({
+        id: record.id,
+        name: record.name,
+        dtype: record.dtype,
+        tensorOrder: record.tensor_order,
+        quantityKind: record.quantity_kind,
+        dataSchema: record.data_schema ?? null,
+        used,
+        selectedMeasurementStatus: status,
+      }))
     const previewContext =
       preview.status === 'success'
         ? {
@@ -338,15 +453,23 @@ export function CalculationWorkbench({
     const context: Record<string, unknown> = {
       calculation: { dirty, isNew: draft.id === null },
       measurementId,
+      experimentRecords: availableExperimentRecords,
       recordedData: recorded,
       preview: previewContext,
+    }
+    while (
+      new TextEncoder().encode(JSON.stringify(context)).byteLength > 32 * 1024 &&
+      availableExperimentRecords.length
+    ) {
+      availableExperimentRecords.pop()
+      context.experimentRecordsOmitted = experimentRecordCatalogItems.length - availableExperimentRecords.length
     }
     while (new TextEncoder().encode(JSON.stringify(context)).byteLength > 32 * 1024 && recorded.length) {
       recorded.pop()
       context.recordedDataOmitted = recordedSnapshot.summaries.length - recorded.length
     }
     return Object.freeze(context)
-  }, [dirty, draft.id, measurementId, preview, recordedRows, recordedSnapshot])
+  }, [dirty, draft.id, experimentRecordCatalogItems, measurementId, preview, recordedRows, recordedSnapshot])
   const invalidatePreview = useCallback((message: string) => {
     previewSequenceRef.current += 1
     previewAbortRef.current?.abort()
@@ -457,10 +580,10 @@ export function CalculationWorkbench({
     setAgentChange(null)
     setAgentDiffOpen(false)
     setAgentTargetSession((value) => value + 1)
-    const next = emptyCalculationDraft()
+    const next = emptyCalculationDraft(experimentRecords[0]?.name)
     setDraft(next)
     setBaseline(next)
-  }, [experimentId])
+  }, [experimentId, experimentRecords])
 
   useEffect(() => {
     if (selectedCalculationRef.current === selectedCalculationId) return
@@ -473,10 +596,10 @@ export function CalculationWorkbench({
     setAgentDiffOpen(false)
     setAgentTargetSession((value) => value + 1)
     if (selectedCalculationId !== null) return
-    const next = emptyCalculationDraft()
+    const next = emptyCalculationDraft(experimentRecords[0]?.name)
     setDraft(next)
     setBaseline(next)
-  }, [selectedCalculationId])
+  }, [experimentRecords, selectedCalculationId])
 
   useEffect(() => {
     if (selectedCalculationId === null) return
@@ -497,7 +620,7 @@ export function CalculationWorkbench({
     ) {
       return
     }
-    const next = emptyCalculationDraft()
+    const next = emptyCalculationDraft(experimentRecords[0]?.name)
     setDraft(next)
     setBaseline(next)
     selectedCalculationRef.current = null
@@ -507,6 +630,7 @@ export function CalculationWorkbench({
     calculationsQuery.isFetching,
     calculationsQuery.isSuccess,
     contextPending,
+    experimentRecords,
     onCalculationIdChange,
     rows,
     selectedCalculationId,
@@ -534,6 +658,20 @@ export function CalculationWorkbench({
     }
     if (calculationDataBusy) {
       setPreview({ status: 'loading', message: 'CalculationData 일괄 계산이 진행 중…' })
+      return cancel
+    }
+    if (experimentRecordsQuery.isPending) {
+      setPreview({ status: 'loading', message: 'ExperimentRecord 계약을 불러오는 중…' })
+      return cancel
+    }
+    if (dependencyState.error) {
+      const error = dependencyState.error
+      setPreview({
+        code: error instanceof CalculationExecutionError ? error.code : 'policy',
+        diagnostic: error instanceof CalculationExecutionError ? error.diagnostic : undefined,
+        message: error.message,
+        status: 'error',
+      })
       return cancel
     }
     if (measurementId === null) {
@@ -614,8 +752,10 @@ export function CalculationWorkbench({
   }, [
     contextPending,
     calculationDataBusy,
+    dependencyState.error,
     draft.sourceCode,
     experimentId,
+    experimentRecordsQuery.isPending,
     measurementId,
     measurementLoading,
     onActivity,
@@ -660,6 +800,39 @@ export function CalculationWorkbench({
       const sequence = ++mutationSequenceRef.current
       setSaving(true)
       try {
+        if (dependencyState.error) throw dependencyState.error
+        const sourceHash = await calculationSourceHash(draft.sourceCode)
+        let outputLayout: CalculationOutputLayout | null = selectedRow?.output_layout ?? null
+        let preflightMeasurementId = selectedRow?.preflight_measurement_id ?? null
+        let experimentRecordIds = [...(selectedRow?.experiment_record_ids ?? [])]
+        if (requiresPreflight) {
+          if (preview.status !== 'success' || measurementId === null) {
+            throw new Error('현재 source와 선택한 Measurement에 대한 성공한 preflight가 필요합니다.')
+          }
+          outputLayout = Object.freeze({
+            dtype: preview.output.dtype,
+            shape: Object.freeze([...preview.output.shape]),
+            axes: Object.freeze(
+              preview.output.axes.map((axis) =>
+                Object.freeze({
+                  name: axis.name,
+                  ticks: Object.freeze([...axis.ticks]),
+                  ...(axis.unit === undefined ? {} : { unit: axis.unit }),
+                }),
+              ),
+            ),
+          })
+          preflightMeasurementId = measurementId
+          const recordsByName = new Map(experimentRecords.map((record) => [record.name, record.id]))
+          experimentRecordIds = dependencyState.names.map((name) => {
+            const recordId = recordsByName.get(name)
+            if (recordId === undefined) throw new Error(`ExperimentRecord를 찾을 수 없습니다: ${name}`)
+            return recordId
+          })
+        }
+        if (!outputLayout || preflightMeasurementId === null) {
+          throw new Error('저장된 Calculation preflight 계약이 없습니다.')
+        }
         const [result] = await dbTables.Calculation.upsertRow([
           {
             ...(draft.id === null ? {} : { id: draft.id }),
@@ -667,6 +840,11 @@ export function CalculationWorkbench({
             experiment_id: experimentId,
             name,
             source_code: draft.sourceCode,
+            source_hash: sourceHash,
+            output_layout: outputLayout,
+            preflight_measurement_id: preflightMeasurementId,
+            contract_status: 'ready',
+            experiment_record_ids: experimentRecordIds,
           },
         ])
         if (sequence !== mutationSequenceRef.current) {
@@ -708,11 +886,18 @@ export function CalculationWorkbench({
       authenticated,
       deleting,
       draft,
+      dependencyState.error,
+      dependencyState.names,
       editable,
       experimentId,
+      experimentRecords,
+      measurementId,
       onCalculationIdChange,
       onUsageChanged,
       queryClient,
+      preview,
+      requiresPreflight,
+      selectedRow,
       saving,
     ],
   )
@@ -753,7 +938,7 @@ export function CalculationWorkbench({
     if (saving || deleting || !editable) return
     if (draft.id === null) {
       if (dirty && !window.confirm('저장하지 않은 새 Calculation draft를 버릴까요?')) return
-      const next = emptyCalculationDraft()
+      const next = emptyCalculationDraft(experimentRecords[0]?.name)
       setDraft(next)
       setBaseline(next)
       setSaveDialogOpen(false)
@@ -780,7 +965,7 @@ export function CalculationWorkbench({
         await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] })
         return
       }
-      const next = emptyCalculationDraft()
+      const next = emptyCalculationDraft(experimentRecords[0]?.name)
       setDraft(next)
       setBaseline(next)
       setSaveDialogOpen(false)
@@ -828,6 +1013,35 @@ export function CalculationWorkbench({
     setAgentDiffOpen(false)
   }
 
+  const sourceEditorDisabled =
+    !editable || saving || deleting || calculationDataBusy || contextPending || selectedCalculationId !== draft.id
+  const insertDisabledReason = !editable
+    ? '이 Experiment의 Calculation source를 편집할 권한이 없습니다.'
+    : saving
+      ? 'Calculation 저장이 진행 중입니다.'
+      : deleting
+        ? 'Calculation 삭제가 진행 중입니다.'
+        : calculationDataBusy
+          ? 'CalculationData 작업이 진행 중입니다.'
+          : contextPending || selectedCalculationId !== draft.id
+            ? 'Calculation context를 불러오는 중입니다.'
+            : agentChange && agentDiffOpen
+              ? 'AI diff를 닫은 뒤 Source Editor에 삽입하세요.'
+              : inputBindingState.error
+                ? inputBindingState.error
+                : null
+  const insertExperimentRecord = (recordName: string) => {
+    if (insertDisabledReason) return
+    try {
+      const reference = calculationExperimentRecordReference(draft.sourceCode, recordName)
+      if (!sourceEditorRef.current?.insertAtSelection(reference)) {
+        toast.error('Source Editor가 준비되지 않았습니다. 잠시 후 다시 시도하세요.')
+      }
+    } catch (cause: unknown) {
+      toast.error(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
       <header className="shrink-0">
@@ -850,7 +1064,7 @@ export function CalculationWorkbench({
                   title="New"
                   type="button"
                   variant="outline"
-                  onClick={() => replaceDraft(emptyCalculationDraft(), null)}
+                  onClick={() => replaceDraft(emptyCalculationDraft(experimentRecords[0]?.name), null)}
                 >
                   <FilePlus2 />
                 </Button>
@@ -959,8 +1173,9 @@ export function CalculationWorkbench({
                 />
               ) : (
                 <CalculationSourceEditor
+                  ref={sourceEditorRef}
                   diagnostic={preview.status === 'error' && preview.code === 'policy' ? preview.diagnostic : undefined}
-                  disabled={saving || deleting || calculationDataBusy}
+                  disabled={sourceEditorDisabled}
                   sourceCode={draft.sourceCode}
                   onSave={saveFromShortcut}
                   onSourceCodeChange={(sourceCode) => {
@@ -1057,43 +1272,15 @@ export function CalculationWorkbench({
           </section>
         }
         recordedDataSummary={
-          <section className="flex h-full min-h-0 flex-col p-2">
-            <h2 className="mb-2 shrink-0 text-sm font-semibold">RecordedData</h2>
-            <div className="min-h-0 flex-1 overflow-auto rounded border">
-              {measurementId === null ? (
-                <div className="grid h-full min-h-20 place-items-center p-3 text-center text-xs text-muted-foreground">
-                  Measurement를 선택하세요.
-                </div>
-              ) : recordedSnapshot.summaries.length ? (
-                <ul className="divide-y">
-                  {recordedSnapshot.summaries.map((summary) => (
-                    <li
-                      className="space-y-1 px-2 py-2 text-[11px]"
-                      key={summary.path}
-                      title={summary.error ?? undefined}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="min-w-0 truncate font-mono font-medium">{summary.path}</span>
-                        <Badge className={summary.valid ? 'bg-emerald-600 text-white' : 'bg-destructive text-white'}>
-                          axes {summary.actualAxisLengths ? JSON.stringify(summary.actualAxisLengths) : '—'}
-                          {summary.valid ? '' : ' · invalid'}
-                        </Badge>
-                      </div>
-                      <div className="flex flex-wrap gap-x-3 text-muted-foreground">
-                        <span>QuantityKind: {summary.quantityKind ?? '—'}</span>
-                        <span>unit: {summary.unit ?? '—'}</span>
-                      </div>
-                      {summary.error ? <p className="line-clamp-2 text-destructive">{summary.error}</p> : null}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="grid h-full min-h-20 place-items-center p-3 text-center text-xs text-muted-foreground">
-                  RecordedData가 없습니다.
-                </div>
-              )}
-            </div>
-          </section>
+          <ExperimentRecordCatalog
+            analysisError={dependencyState.error?.message ?? null}
+            experimentId={experimentId}
+            insertDisabledReason={insertDisabledReason}
+            items={experimentRecordCatalogItems}
+            loading={experimentRecordsQuery.isLoading}
+            loadError={experimentRecordsQuery.isError}
+            onInsert={insertExperimentRecord}
+          />
         }
         rowRatios={rowRatios}
         viewer={viewer}

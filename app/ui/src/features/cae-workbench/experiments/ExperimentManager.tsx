@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { LoaderCircle, Search, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { dbTables, getListRequest, type ExperimentRecord, type GetListRequest, type UserData } from '@/api'
+import { dbTables, getListRequest, type GetListRequest, type SavedExperimentRecord, type UserData } from '@/api'
 import { catalogApi, catalogQueryKeys, type CatalogExperimentListItem } from '@/api/catalog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -47,7 +47,7 @@ type ManagedExperimentVersion =
       repository: string
       version: string
       versionParts: readonly [number, number, number]
-      row: ExperimentRecord
+      row: SavedExperimentRecord
     }>
 
 export function ExperimentManager({
@@ -172,7 +172,7 @@ export function ExperimentManager({
   }, [filtersReady, repositories, repository])
 
   const deleteMutation = useMutation({
-    mutationFn: async (row: ExperimentRecord) => {
+    mutationFn: async (row: SavedExperimentRecord) => {
       const usage = (await dbTables.Experiment.usage([row.id])).items[0]
       const counts = usage?.derivedCounts ?? row.derivedCounts
       const linked = counts ? counts.measurements + counts.recordedData + counts.calculations : 0

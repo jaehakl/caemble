@@ -14,6 +14,8 @@ export {
 export type {
   PredictionAxis,
   PredictionCohortExclusionReason,
+  PredictionCohortDiagnosticDisposition,
+  PredictionCohortDiagnosticGroup,
   PredictionCohort,
   PredictionCohortOptions,
   PredictionCohortSummary,
@@ -23,6 +25,7 @@ export type {
   PredictionMemoryEstimate,
   PredictionNeighbor,
   PredictionNumericDtype,
+  PredictionQueryDiagnostic,
   PredictionResult,
   PredictionTensorLayout,
   PredictionTensorSample,

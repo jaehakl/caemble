@@ -8,6 +8,21 @@ def validate_calculation_data_axis(value: Any) -> Any:
     return value
 
 
+def validate_calculation_output_layout(value: Any) -> Any:
+    if len(value.shape) > 2:
+        raise ValueError("Calculation output rank must be between 0 and 2.")
+    if any(isinstance(length, bool) or length < 0 for length in value.shape):
+        raise ValueError("Calculation output shape lengths must be non-negative integers.")
+    if len(value.axes) != len(value.shape):
+        raise ValueError("Calculation output axes must match output rank.")
+    for index, axis in enumerate(value.axes):
+        if len(axis.ticks) != value.shape[index]:
+            raise ValueError("Calculation output axis ticks must match output shape.")
+    if (math.prod(value.shape) if value.shape else 1) > 5_000_000:
+        raise ValueError("Calculation output exceeds the element limit.")
+    return value
+
+
 def validate_calculation_data_output(value: Any) -> Any:
     if len(value.shape) > 2:
         raise ValueError("CalculationData output rank must be between 0 and 2.")

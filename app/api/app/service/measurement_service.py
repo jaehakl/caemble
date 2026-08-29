@@ -4,14 +4,13 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db import CalculationData, Experiment, Measurement, RecordedData
+from db import CalculationData, Experiment, ExperimentRecord, Measurement, RecordedData
 from models import (
     GetListRequestBase,
     MeasurementBase,
     MeasurementCreateRequest,
+    MeasurementRecordedDataResponse,
     MeasurementRecordRequest,
-    MeasurementSaveRecordedData,
-    MeasurementSaveRecordedDataGroup,
     UserData,
 )
 from utils.crud import CrudSpec, delete_items, get_list_response
@@ -61,7 +60,7 @@ async def get_recorded_data(
     measurement_id: int,
     *,
     user: UserData,
-) -> MeasurementRecordRequest:
+) -> MeasurementRecordedDataResponse:
     measurement = await db.get(Measurement, measurement_id)
     if measurement is None or (
         not is_admin_user(user) and measurement.user_id != user.id
@@ -69,26 +68,28 @@ async def get_recorded_data(
         raise LookupError("Measurement not found.")
 
     rows = (
-        await db.scalars(
-            select(RecordedData)
+        await db.execute(
+            select(RecordedData, ExperimentRecord)
+            .join(ExperimentRecord, ExperimentRecord.id == RecordedData.experiment_record_id)
             .where(RecordedData.measurement_id == measurement_id)
             .order_by(RecordedData.id)
         )
     ).all()
     tree: dict[str, object] = {}
-    for row in rows:
-        names = row.name.split(".")
+    for row, record in rows:
+        names = record.name.split(".")
         group = tree
         for name in names[:-1]:
             group = group.setdefault(name, {})  # type: ignore[assignment]
         group[names[-1]] = {
-            "quantity_kind": row.quantity_kind,
-            "tensor_order": row.tensor_order,
-            "dtype": row.dtype,
-            "data_schema": row.data_schema,
+            "experiment_record_id": record.id,
+            "quantity_kind": record.quantity_kind,
+            "tensor_order": record.tensor_order,
+            "dtype": record.dtype,
+            "data_schema": record.data_schema,
             "data": row.data,
         }
-    return MeasurementRecordRequest.model_validate({"recorded_data": tree})
+    return MeasurementRecordedDataResponse.model_validate({"recorded_data": tree})
 
 
 async def create_measurement(
@@ -130,21 +131,6 @@ async def record_measurement(
     *,
     user: UserData,
 ) -> dict[str, int]:
-    leaves: list[tuple[str, MeasurementSaveRecordedData]] = []
-
-    def flatten(
-        prefix: str,
-        node: MeasurementSaveRecordedData | MeasurementSaveRecordedDataGroup,
-    ) -> None:
-        if isinstance(node, MeasurementSaveRecordedData):
-            leaves.append((prefix, node))
-            return
-        for name, member in node.root.items():
-            flatten(f"{prefix}.{name}", member)
-
-    for name, node in request.recorded_data.items():
-        flatten(name, node)
-
     measurement = await db.scalar(
         select(Measurement)
         .where(Measurement.id == measurement_id)
@@ -154,22 +140,33 @@ async def record_measurement(
         not is_admin_user(user) and measurement.user_id != user.id
     ):
         raise LookupError("Measurement not found.")
+    record_ids = [item.experiment_record_id for item in request.recorded_data]
+    if len(record_ids) != len(set(record_ids)):
+        raise ValueError("recorded_data must not contain duplicate ExperimentRecord IDs.")
+    valid_ids = set(
+        (
+            await db.scalars(
+                select(ExperimentRecord.id).where(
+                    ExperimentRecord.id.in_(record_ids),
+                    ExperimentRecord.experiment_id == measurement.experiment_id,
+                )
+            )
+        ).all()
+    )
+    if valid_ids != set(record_ids):
+        raise ValueError("Every ExperimentRecord must belong to the Measurement Experiment.")
     try:
         db.add_all(
             [
                 RecordedData(
                     user_id=measurement.user_id,
                     measurement_id=measurement.id,
-                    name=name,
-                    quantity_kind=item.quantity_kind,
-                    tensor_order=item.tensor_order,
-                    dtype=item.dtype,
-                    data_schema=item.data_schema,
+                    experiment_record_id=item.experiment_record_id,
                     data=item.data,
                     data_url=None,
                     file_size=None,
                 )
-                for name, item in leaves
+                for item in request.recorded_data
             ]
         )
         measurement.recorded_at = datetime.now(timezone.utc)

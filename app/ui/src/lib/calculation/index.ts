@@ -4,9 +4,15 @@ export {
   CALCULATION_MATHJS_DECLARATION,
   CALCULATION_MONACO_DECLARATION,
   CALCULATION_SOURCE_SKELETON,
+  calculationSourceSkeleton,
 } from './declarations'
 export { createCalculationInput } from './input'
 export { calculationSourceHash } from './sourceHash'
+export {
+  analyzeCalculationDependencies,
+  calculationExperimentRecordReference,
+  calculationInputBindingName,
+} from './dependencies'
 export {
   CALCULATION_BLOCKED_MATHJS_NAMES,
   CALCULATION_MATHJS_NAMES,

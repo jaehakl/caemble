@@ -116,6 +116,7 @@ export type PredictionCalculationPaneItem = Readonly<{
   primary: Readonly<{
     output: CalculationDataOutput | null
     role: 'predicted' | 'target'
+    status: 'ready' | 'updating' | 'unavailable'
   }>
   repredicted?: PredictionCalculationSeries
 }>
@@ -142,10 +143,7 @@ export type PredictionCalculationPaneProps = Readonly<{
   resetKey: string | number
   status: string
   updating: boolean
-  referenceMeasurements?: readonly Readonly<{ id: number; label: string }>[]
-  referenceMeasurementId?: number | null
   onOutputChange: (calculationId: number, output: CalculationDataOutput) => void
-  onReferenceMeasurementChange?: (id: number) => void
 }>
 
 export function PredictionCalculationPane({
@@ -155,10 +153,7 @@ export function PredictionCalculationPane({
   resetKey,
   status,
   updating,
-  referenceMeasurements,
-  referenceMeasurementId,
   onOutputChange,
-  onReferenceMeasurementChange,
 }: PredictionCalculationPaneProps) {
   return (
     <section className="flex h-full min-h-0 flex-col gap-2" aria-label="Prediction calculation data">
@@ -177,28 +172,6 @@ export function PredictionCalculationPane({
             {status}
           </p>
         </div>
-        {referenceMeasurements?.length ? (
-          <Select
-            disabled={disabled || !onReferenceMeasurementChange}
-            value={
-              referenceMeasurementId === null || referenceMeasurementId === undefined
-                ? ''
-                : String(referenceMeasurementId)
-            }
-            onValueChange={(value) => onReferenceMeasurementChange?.(Number(value))}
-          >
-            <SelectTrigger aria-label="기준 Measurement" className="h-8 w-52 text-xs">
-              <SelectValue placeholder="기준 Measurement 선택" />
-            </SelectTrigger>
-            <SelectContent>
-              {referenceMeasurements.map((measurement) => (
-                <SelectItem key={measurement.id} value={String(measurement.id)}>
-                  {measurement.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : null}
       </header>
 
       <div
@@ -297,7 +270,7 @@ export function PredictionCalculationPane({
                         }}
                         constraintMaximum={item.constraintMaximum}
                         constraintMinimum={item.constraintMinimum}
-                        disabled={disabled}
+                        disabled={disabled || item.primary.status !== 'ready'}
                         key={`${item.calculationId}:${output.dtype}:${JSON.stringify(output.shape)}`}
                         label={item.name}
                         maximum={item.maximum}
@@ -357,6 +330,7 @@ export type PredictionSetupBusyAction = 'apply' | 'calculate-missing' | 'reload'
 
 export type PredictionSetupCalculation = Readonly<{
   description?: string | null
+  dependencyNames?: readonly string[]
   disabled?: boolean
   disabledReason?: string
   id: number
@@ -371,7 +345,7 @@ export type PredictionSetupDialogProps = Readonly<{
   calculateMissingDisabled?: boolean
   calculationWeights: Readonly<Record<number, number>>
   calculations: readonly PredictionSetupCalculation[]
-  cohortSummary: PredictionCohortSummary | null
+  cohortSummaries: Partial<Record<PredictionDirection, PredictionCohortSummary>>
   kMode: PredictionKMode
   manualK: number
   manualKMaximum?: number
@@ -388,15 +362,16 @@ export type PredictionSetupDialogProps = Readonly<{
   onKModeChange: (mode: PredictionKMode) => void
   onManualKChange: (k: number) => void
   onOpenChange: (open: boolean) => void
+  onOpenDiagnostics: (direction: PredictionDirection) => void
   onReload: () => void
   onWeightingChange: (weighting: PredictionWeighting) => void
 }>
 
 const exclusionLabels: Readonly<Record<PredictionCohortExclusionReason, string>> = {
   'extra-block': '예상하지 않은 데이터 블록',
-  'fixed-layout-mismatch': '고정 layout 불일치',
+  'fixed-layout-mismatch': '현재 schema shape 불일치',
   'invalid-tensor': '유효하지 않은 tensor',
-  'layout-mismatch': '대표 cohort layout 불일치',
+  'layout-mismatch': 'dominant cohort shape 불일치',
   'missing-block': '필수 데이터 누락',
 }
 
@@ -407,7 +382,7 @@ export function PredictionSetupDialog({
   calculateMissingDisabled = false,
   calculationWeights,
   calculations,
-  cohortSummary,
+  cohortSummaries,
   kMode,
   manualK,
   manualKMaximum,
@@ -424,14 +399,11 @@ export function PredictionSetupDialog({
   onKModeChange,
   onManualKChange,
   onOpenChange,
+  onOpenDiagnostics,
   onReload,
   onWeightingChange,
 }: PredictionSetupDialogProps) {
   const busy = busyAction !== null
-  const excludedRows = cohortSummary
-    ? Object.values(cohortSummary.excluded).reduce((total, count) => total + count, 0)
-    : 0
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[calc(100vh-2rem)] w-[min(920px,calc(100vw-2rem))] max-w-none grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-none">
@@ -479,6 +451,11 @@ export function PredictionSetupDialog({
                           {calculation.description ? (
                             <span className="mt-1 line-clamp-2 block text-xs text-muted-foreground">
                               {calculation.description}
+                            </span>
+                          ) : null}
+                          {calculation.dependencyNames?.length ? (
+                            <span className="mt-1 block text-[11px] text-muted-foreground">
+                              Records · {calculation.dependencyNames.join(', ')}
                             </span>
                           ) : null}
                           {calculation.disabledReason ? (
@@ -574,52 +551,94 @@ export function PredictionSetupDialog({
             </Card>
           </section>
 
-          <Card>
-            <CardHeader className="p-4 pb-3">
-              <CardTitle className="text-sm">Cohort 요약</CardTitle>
-              <CardDescription className="text-xs">
-                엄격한 numeric layout 조건을 통과한 Measurement입니다.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3 p-4 pt-0">
-              {cohortSummary ? (
-                <>
-                  <div className="grid grid-cols-3 gap-2 text-center">
-                    <div className="rounded-md border bg-muted/20 p-2">
-                      <p className="text-lg font-semibold tabular-nums">{cohortSummary.totalRows.toLocaleString()}</p>
-                      <p className="text-[11px] text-muted-foreground">전체</p>
-                    </div>
-                    <div className="rounded-md border bg-muted/20 p-2">
-                      <p className="text-lg font-semibold tabular-nums">
-                        {cohortSummary.includedRows.toLocaleString()}
-                      </p>
-                      <p className="text-[11px] text-muted-foreground">포함</p>
-                    </div>
-                    <div className="rounded-md border bg-muted/20 p-2">
-                      <p className="text-lg font-semibold tabular-nums">{excludedRows.toLocaleString()}</p>
-                      <p className="text-[11px] text-muted-foreground">제외</p>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(Object.entries(cohortSummary.excluded) as readonly [PredictionCohortExclusionReason, number][])
-                      .filter(([, count]) => count > 0)
-                      .map(([reason, count]) => (
-                        <Badge key={reason}>
-                          {exclusionLabels[reason]} {count.toLocaleString()}
-                        </Badge>
-                      ))}
-                    {excludedRows === 0 ? (
-                      <span className="text-xs text-muted-foreground">제외된 행이 없습니다.</span>
-                    ) : null}
-                  </div>
-                </>
-              ) : (
-                <p className="py-4 text-center text-sm text-muted-foreground">
-                  변경한 설정을 Apply하면 현재 방향의 strict cohort를 확인할 수 있습니다.
-                </p>
-              )}
-            </CardContent>
-          </Card>
+          <section className="space-y-3" aria-labelledby="prediction-cohort-summary-heading">
+            <div>
+              <h3 className="text-sm font-semibold" id="prediction-cohort-summary-heading">
+                방향별 Cohort
+              </h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Forward는 ExperimentRecord별 독립 shape cohort, Inverse는 저장 Output 계약을 사용합니다.
+              </p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              {(['forward', 'inverse'] as const).map((cohortDirection) => {
+                const summary = cohortSummaries[cohortDirection]
+                const excludedRows = summary
+                  ? Object.values(summary.excluded).reduce((total, count) => total + count, 0)
+                  : 0
+                return (
+                  <Card key={cohortDirection}>
+                    <CardHeader className="p-4 pb-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <CardTitle className="text-sm capitalize">{cohortDirection}</CardTitle>
+                        {summary ? (
+                          <Button
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                            onClick={() => onOpenDiagnostics(cohortDirection)}
+                          >
+                            진단 보기
+                          </Button>
+                        ) : null}
+                      </div>
+                      <CardDescription className="text-xs">
+                        {summary
+                          ? `shape baseline · Measurement #${summary.baselineMeasurementId}`
+                          : '아직 모델을 만들지 않았습니다.'}
+                      </CardDescription>
+                      {summary ? (
+                        <p
+                          className="truncate font-mono text-[10px] text-muted-foreground"
+                          title={summary.dominantShapeSignature}
+                        >
+                          {summary.dominantShapeSignature}
+                        </p>
+                      ) : null}
+                    </CardHeader>
+                    <CardContent className="space-y-3 p-4 pt-0">
+                      {summary ? (
+                        <>
+                          <div className="grid grid-cols-4 gap-1 text-center">
+                            {[
+                              ['전체', summary.totalRows],
+                              ['포함', summary.includedRows],
+                              ['제외', excludedRows],
+                              ['경고', summary.warningMeasurementIds.length],
+                            ].map(([label, count]) => (
+                              <div className="rounded-md border bg-muted/20 p-1.5" key={label}>
+                                <p className="font-semibold tabular-nums">{Number(count).toLocaleString()}</p>
+                                <p className="text-[10px] text-muted-foreground">{label}</p>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {(Object.entries(summary.excluded) as readonly [PredictionCohortExclusionReason, number][])
+                              .filter(([, count]) => count > 0)
+                              .map(([reason, count]) => (
+                                <Badge key={reason}>
+                                  {exclusionLabels[reason]} {count.toLocaleString()}
+                                </Badge>
+                              ))}
+                            {summary.warningMeasurementIds.length ? (
+                              <Badge>metadata 경고 {summary.warningMeasurementIds.length.toLocaleString()}</Badge>
+                            ) : null}
+                            {excludedRows === 0 && summary.warningMeasurementIds.length === 0 ? (
+                              <span className="text-xs text-muted-foreground">제외·경고가 없습니다.</span>
+                            ) : null}
+                          </div>
+                        </>
+                      ) : (
+                        <p className="py-4 text-center text-xs text-muted-foreground">
+                          해당 방향을 실행하면 표시됩니다.
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
+                )
+              })}
+            </div>
+          </section>
           {validationMessage ? (
             <div className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
               <AlertCircle className="mt-0.5 size-4 shrink-0" />
@@ -660,15 +679,23 @@ export function PredictionSetupDialog({
 }
 
 export type PredictionDetailsDialogProps = Readonly<{
+  direction: PredictionDirection
   exclusions?: Readonly<Record<string, number>>
   neighbors: readonly PredictionNeighbor[]
   open: boolean
-  profile: PredictionWorkerModelProfile | null
+  profiles: Partial<Record<PredictionDirection, PredictionWorkerModelProfile>>
+  forwardRecordProfiles?: readonly Readonly<{
+    error: string | null
+    name: string
+    profile: PredictionWorkerModelProfile | null
+    recordId: number
+  }>[]
   resultText?: string | null
   retryCalculationsDisabled?: boolean
   retryingCalculations?: boolean
   validationComparisons?: readonly PredictionValidationComparison[]
   validationText?: string | null
+  onDirectionChange: (direction: PredictionDirection) => void
   onOpenChange: (open: boolean) => void
   onRetryCalculations?: () => void
 }>
@@ -788,19 +815,23 @@ function PredictionValidationComparisonCard({ comparison }: { comparison: Predic
 }
 
 export function PredictionDetailsDialog({
+  direction,
   exclusions,
+  forwardRecordProfiles = [],
   neighbors,
   open,
-  profile,
+  profiles,
   resultText,
   retryCalculationsDisabled = false,
   retryingCalculations = false,
   validationComparisons = [],
   validationText,
+  onDirectionChange,
   onOpenChange,
   onRetryCalculations,
 }: PredictionDetailsDialogProps) {
-  const resolvedExclusions = exclusions ?? profile?.excluded ?? {}
+  const profile = profiles[direction] ?? null
+  const resolvedExclusions: Readonly<Record<string, number>> = exclusions ?? profile?.excluded ?? {}
   const visibleExclusions = Object.entries(resolvedExclusions).filter(([, count]) => count > 0)
 
   return (
@@ -808,45 +839,109 @@ export function PredictionDetailsDialog({
       <DialogContent className="max-h-[calc(100vh-2rem)] w-[min(860px,calc(100vw-2rem))] max-w-none grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-none">
         <DialogHeader>
           <DialogTitle>Prediction 세부 정보</DialogTitle>
-          <DialogDescription>현재 모델 profile, 실제 사용한 이웃과 cohort 제외 사유를 확인합니다.</DialogDescription>
+          <DialogDescription>
+            방향별 모델 profile, 실제 사용한 이웃과 Record별 cohort shape 진단을 확인합니다.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="min-h-0 space-y-4 overflow-y-auto pr-1">
+          <Select value={direction} onValueChange={(value) => onDirectionChange(value as PredictionDirection)}>
+            <SelectTrigger aria-label="진단 방향" className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="forward">Forward 진단</SelectItem>
+              <SelectItem value="inverse">Inverse 진단</SelectItem>
+            </SelectContent>
+          </Select>
+          {direction === 'forward' && forwardRecordProfiles.length ? (
+            <Card>
+              <CardHeader className="p-4 pb-3">
+                <CardTitle className="text-sm">ExperimentRecord별 Forward 모델</CardTitle>
+                <CardDescription className="text-xs">
+                  각 Record의 shape 불일치는 이 행의 cohort에만 영향을 줍니다.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-4 pt-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Record</TableHead>
+                      <TableHead>Cohort / k</TableHead>
+                      <TableHead>Dominant shape</TableHead>
+                      <TableHead>제외</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {forwardRecordProfiles.map((record) => (
+                      <TableRow key={record.recordId}>
+                        <TableCell>
+                          <p className="font-medium">{record.name}</p>
+                          <p className="text-[10px] text-muted-foreground">ExperimentRecord #{record.recordId}</p>
+                        </TableCell>
+                        <TableCell className="tabular-nums">
+                          {record.profile ? `${record.profile.rowCount} / ${record.profile.k}` : '—'}
+                        </TableCell>
+                        <TableCell className="max-w-64 truncate font-mono text-[10px]" title={record.error ?? record.profile?.dominantShapeSignature}>
+                          {record.error ?? record.profile?.dominantShapeSignature ?? '모델 없음'}
+                        </TableCell>
+                        <TableCell className="tabular-nums">
+                          {record.profile
+                            ? Object.values(record.profile.excluded)
+                                .reduce((total, count) => total + count, 0)
+                                .toLocaleString()
+                            : '—'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          ) : null}
           {profile ? (
-            <section className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Prediction model profile">
-              <div className="rounded-lg border bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">Direction</p>
-                <p className="mt-1 font-semibold">{profile.direction === 'forward' ? 'Forward' : 'Inverse'}</p>
-              </div>
-              <div className="rounded-lg border bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">Cohort / k</p>
-                <p className="mt-1 font-semibold tabular-nums">
-                  {profile.rowCount.toLocaleString()} / {profile.k.toLocaleString()}
-                </p>
-              </div>
-              <div className="rounded-lg border bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">Weighting</p>
-                <p className="mt-1 font-semibold capitalize">{profile.weighting}</p>
-              </div>
-              <div className="rounded-lg border bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">Scaling</p>
-                <p className="mt-1 font-semibold">{profile.inputScaling}</p>
-              </div>
-              <div className="rounded-lg border bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">Input size</p>
-                <p className="mt-1 font-semibold tabular-nums">{profile.inputSize.toLocaleString()}</p>
-              </div>
-              <div className="rounded-lg border bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">Output size</p>
-                <p className="mt-1 font-semibold tabular-nums">{profile.outputSize.toLocaleString()}</p>
-              </div>
-              <div className="rounded-lg border bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">Persistent memory</p>
-                <p className="mt-1 font-semibold tabular-nums">{profile.persistentBytes.toLocaleString()} B</p>
-              </div>
-              <div className="rounded-lg border bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">Working set</p>
-                <p className="mt-1 font-semibold tabular-nums">{profile.workingSetBytes.toLocaleString()} B</p>
+            <section className="space-y-2" aria-label="Prediction model profile">
+              <p
+                className="truncate rounded-md border bg-muted/20 px-3 py-2 font-mono text-xs text-muted-foreground"
+                title={profile.dominantShapeSignature}
+              >
+                Shape baseline · Measurement #{profile.baselineMeasurementId} · {profile.dominantShapeSignature}
+              </p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs text-muted-foreground">Direction</p>
+                  <p className="mt-1 font-semibold">{profile.direction === 'forward' ? 'Forward' : 'Inverse'}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs text-muted-foreground">Cohort / k</p>
+                  <p className="mt-1 font-semibold tabular-nums">
+                    {profile.rowCount.toLocaleString()} / {profile.k.toLocaleString()}
+                  </p>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs text-muted-foreground">Weighting</p>
+                  <p className="mt-1 font-semibold capitalize">{profile.weighting}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs text-muted-foreground">Scaling</p>
+                  <p className="mt-1 font-semibold">{profile.inputScaling}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs text-muted-foreground">Input size</p>
+                  <p className="mt-1 font-semibold tabular-nums">{profile.inputSize.toLocaleString()}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs text-muted-foreground">Output size</p>
+                  <p className="mt-1 font-semibold tabular-nums">{profile.outputSize.toLocaleString()}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs text-muted-foreground">Persistent memory</p>
+                  <p className="mt-1 font-semibold tabular-nums">{profile.persistentBytes.toLocaleString()} B</p>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs text-muted-foreground">Working set</p>
+                  <p className="mt-1 font-semibold tabular-nums">{profile.workingSetBytes.toLocaleString()} B</p>
+                </div>
               </div>
             </section>
           ) : (
@@ -890,9 +985,12 @@ export function PredictionDetailsDialog({
 
           <Card>
             <CardHeader className="p-4 pb-3">
-              <CardTitle className="text-sm">Cohort exclusions</CardTitle>
+              <CardTitle className="text-sm">Cohort diagnostics</CardTitle>
+              <CardDescription className="text-xs">
+                shape 불일치는 제외되며 metadata 불일치는 cell index 기준으로 포함됩니다.
+              </CardDescription>
             </CardHeader>
-            <CardContent className="p-4 pt-0">
+            <CardContent className="space-y-3 p-4 pt-0">
               {visibleExclusions.length ? (
                 <div className="flex flex-wrap gap-2">
                   {visibleExclusions.map(([reason, count]) => (
@@ -904,6 +1002,86 @@ export function PredictionDetailsDialog({
               ) : (
                 <p className="text-sm text-muted-foreground">제외된 Measurement가 없습니다.</p>
               )}
+              {profile?.diagnostics.length ? (
+                <Table containerClassName="max-h-96 overflow-auto rounded border">
+                  <TableHeader className="sticky top-0 bg-background">
+                    <TableRow>
+                      <TableHead>처리</TableHead>
+                      <TableHead>Measurement</TableHead>
+                      <TableHead>Block / field</TableHead>
+                      <TableHead>차이</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {profile.diagnostics.map((diagnostic, index) => (
+                      <TableRow
+                        key={`${diagnostic.disposition}:${diagnostic.blockKey}:${diagnostic.fieldPath}:${index}`}
+                      >
+                        <TableCell>
+                          <Badge>
+                            {diagnostic.disposition === 'excluded'
+                              ? `제외 · ${exclusionLabels[diagnostic.reason as PredictionCohortExclusionReason]}`
+                              : '경고·포함 · metadata'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="max-w-48 text-xs">
+                          {diagnostic.measurementIds.map((id) => `#${id}`).join(', ')}
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          <span className="block font-medium">
+                            {diagnostic.side} · {diagnostic.blockKey}
+                          </span>
+                          <span className="font-mono text-muted-foreground">{diagnostic.fieldPath}</span>
+                        </TableCell>
+                        <TableCell className="max-w-80 text-xs">
+                          <details>
+                            <summary className="cursor-pointer truncate">
+                              {diagnostic.expected} → {diagnostic.actual}
+                            </summary>
+                            <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 break-all">
+                              <dt className="text-muted-foreground">Baseline</dt>
+                              <dd>
+                                {diagnostic.baselineMeasurementId
+                                  ? `Measurement #${diagnostic.baselineMeasurementId}`
+                                  : '현재 계약'}
+                              </dd>
+                              <dt className="text-muted-foreground">Expected</dt>
+                              <dd className="font-mono">{diagnostic.expected}</dd>
+                              <dt className="text-muted-foreground">Actual</dt>
+                              <dd className="font-mono">{diagnostic.actual}</dd>
+                              {diagnostic.mismatchCount !== undefined ? (
+                                <>
+                                  <dt className="text-muted-foreground">Mismatch</dt>
+                                  <dd>{diagnostic.mismatchCount.toLocaleString()} cells</dd>
+                                </>
+                              ) : null}
+                              {diagnostic.firstMismatchIndex !== undefined ? (
+                                <>
+                                  <dt className="text-muted-foreground">First index</dt>
+                                  <dd>{diagnostic.firstMismatchIndex.toLocaleString()}</dd>
+                                </>
+                              ) : null}
+                              {diagnostic.maxAbsoluteDifference !== undefined ? (
+                                <>
+                                  <dt className="text-muted-foreground">Max Δ</dt>
+                                  <dd>{formatMetric(diagnostic.maxAbsoluteDifference)}</dd>
+                                </>
+                              ) : null}
+                            </dl>
+                          </details>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : profile ? (
+                <p className="text-sm text-muted-foreground">layout 차이가 없습니다.</p>
+              ) : null}
+              {profile?.omittedDiagnosticGroups ? (
+                <p className="text-xs text-amber-700">
+                  진단 한도로 {profile.omittedDiagnosticGroups.toLocaleString()}개 그룹을 생략했습니다.
+                </p>
+              ) : null}
             </CardContent>
           </Card>
 

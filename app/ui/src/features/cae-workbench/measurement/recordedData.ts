@@ -7,7 +7,8 @@ import type {
   ResolvedDataSchema,
   ResolvedDataSchemaNode,
 } from '@/lib/cad'
-import type { MeasurementRecordedData, RecordedDataSaveLeaf } from '@/api'
+import { persistDataSchema } from '@/lib/cad/model/dataTensor'
+import type { ExperimentRecordContract, MeasurementRecordedData, RecordedDataSaveLeaf } from '@/api'
 import type { SavedRecordedData } from '../types'
 
 const namePattern = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/u
@@ -40,6 +41,26 @@ function freezeTree(value: Record<string, unknown>): Readonly<Record<string, unk
 
 function schemaLeaf(value: ResolvedDataSchemaNode): value is ResolvedDataSchema {
   return 'dtype' in value
+}
+
+export function experimentRecordContracts(schemas: RecordedDataSchemaTree): readonly ExperimentRecordContract[] {
+  const records: ExperimentRecordContract[] = []
+  const visit = (node: ResolvedDataSchemaNode, path: string) => {
+    if (schemaLeaf(node)) {
+      const { tensorOrder, ...dataSchema } = node
+      records.push({
+        name: path,
+        quantity_kind: node.quantityKind ?? null,
+        tensor_order: tensorOrder,
+        dtype: node.dtype,
+        data_schema: persistDataSchema(dataSchema),
+      })
+      return
+    }
+    Object.entries(node).forEach(([name, member]) => visit(member, `${path}.${name}`))
+  }
+  Object.entries(schemas).forEach(([name, node]) => visit(node, name))
+  return Object.freeze(records)
 }
 
 export function recordedDataRules(schemas: RecordedDataSchemaTree, methodId: string): readonly RecordedDataRule[] {
@@ -116,6 +137,7 @@ export function recordedDataTreeSnapshot(tree: MeasurementRecordedData, measurem
       const leaf = node as RecordedDataSaveLeaf
       rows.push({
         measurement_id: measurementId,
+        experiment_record_id: leaf.experiment_record_id,
         name: path,
         quantity_kind: leaf.quantity_kind,
         tensor_order: leaf.tensor_order,

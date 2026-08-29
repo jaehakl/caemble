@@ -93,6 +93,11 @@ self.onmessage = (event: MessageEvent<PredictionWorkerRequest>) => {
           persistentBytes: model.memory.persistentBytes,
           workingSetBytes: model.memory.workingSetBytes,
           includedMeasurementIds: model.cohort.includedMeasurementIds,
+          warningMeasurementIds: model.cohort.warningMeasurementIds,
+          dominantShapeSignature: model.cohort.dominantShapeSignature,
+          baselineMeasurementId: model.cohort.baselineMeasurementId,
+          diagnostics: model.cohort.diagnostics,
+          omittedDiagnosticGroups: model.cohort.omittedDiagnosticGroups,
           excluded: model.cohort.excluded,
         },
       })

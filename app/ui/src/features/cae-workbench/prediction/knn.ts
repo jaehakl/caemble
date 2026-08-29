@@ -54,11 +54,33 @@ export type PredictionTrainingRow = Readonly<{
 export type PredictionCohortExclusionReason =
   'missing-block' | 'extra-block' | 'invalid-tensor' | 'fixed-layout-mismatch' | 'layout-mismatch'
 
+export type PredictionCohortDiagnosticDisposition = 'included-with-warning' | 'excluded'
+
+export type PredictionCohortDiagnosticGroup = Readonly<{
+  direction: PredictionDirection
+  disposition: PredictionCohortDiagnosticDisposition
+  reason: PredictionCohortExclusionReason | 'metadata-mismatch'
+  side: 'input' | 'output'
+  blockKey: string
+  fieldPath: string
+  baselineMeasurementId: number | null
+  expected: string
+  actual: string
+  measurementIds: readonly number[]
+  mismatchCount?: number
+  firstMismatchIndex?: number
+  maxAbsoluteDifference?: number
+}>
+
 export type PredictionCohortSummary = Readonly<{
   totalRows: number
   includedRows: number
   includedMeasurementIds: readonly number[]
-  canonicalLayoutSignature: string
+  warningMeasurementIds: readonly number[]
+  dominantShapeSignature: string
+  baselineMeasurementId: number
+  diagnostics: readonly PredictionCohortDiagnosticGroup[]
+  omittedDiagnosticGroups: number
   excluded: Readonly<Record<PredictionCohortExclusionReason, number>>
 }>
 
@@ -69,9 +91,11 @@ export type PredictionCohortOptions = Readonly<{
   weighting?: PredictionWeighting
   inputScaling?: PredictionInputScaling
   inputBlockWeights?: Readonly<Record<string, number>>
+  outputDtypes?: Readonly<Record<string, PredictionNumericDtype>>
   inputKeys: readonly string[]
   outputKeys: readonly string[]
   rows: readonly PredictionTrainingRow[]
+  diagnoseMetadata?: boolean
   fixedInputLayouts?: readonly PredictionTensorLayout[]
   fixedOutputLayouts?: readonly PredictionTensorLayout[]
   persistentArrayLimitBytes?: number
@@ -97,6 +121,7 @@ export type PredictionKnnModel = Readonly<{
   weighting: PredictionWeighting
   inputScaling: PredictionInputScaling
   inputBlockWeights: Readonly<Record<string, number>>
+  outputDtypes: Readonly<Record<string, PredictionNumericDtype>>
   rowCount: number
   inputSize: number
   outputSize: number
@@ -124,6 +149,16 @@ export type PredictionNeighbor = Readonly<{
   weight: number
 }>
 
+export type PredictionQueryDiagnostic = Readonly<{
+  blockKey: string
+  fieldPath: string
+  expected: string
+  actual: string
+  mismatchCount?: number
+  firstMismatchIndex?: number
+  maxAbsoluteDifference?: number
+}>
+
 export type PredictionResult = Readonly<{
   direction: PredictionDirection
   fingerprint: string
@@ -131,9 +166,11 @@ export type PredictionResult = Readonly<{
   neighbors: readonly PredictionNeighbor[]
   extrapolatedInputKeys: readonly string[]
   constantInputKeysChanged: readonly string[]
+  queryDiagnostics: readonly PredictionQueryDiagnostic[]
 }>
 
 const numericDtypeSet = new Set<string>(predictionNumericDtypes)
+const PREDICTION_DIAGNOSTIC_GROUP_LIMIT = 500
 const integerRanges: Readonly<Record<string, readonly [number, number]>> = Object.freeze({
   int8: [-128, 127],
   int16: [-32_768, 32_767],
@@ -224,28 +261,6 @@ export function predictionLayoutSignature(layout: PredictionTensorLayout) {
   })
 }
 
-function validateSample(sample: PredictionTensorSample) {
-  validateLayout(sample.layout)
-  if (sample.values.length !== tensorElementCount(sample.layout.shape)) {
-    throw new PredictionModelError('invalid-data', `Prediction tensor ${sample.layout.key} does not match its shape.`)
-  }
-  const range = integerRanges[sample.layout.dtype]
-  sample.values.forEach((value) => {
-    if (
-      !Number.isFinite(value) ||
-      (range !== undefined && (!Number.isSafeInteger(value) || value < range[0] || value > range[1])) ||
-      (sample.layout.dtype === 'float16' && !Number.isFinite(float16Number(value))) ||
-      (sample.layout.dtype === 'float32' && !Number.isFinite(Math.fround(value))) ||
-      (sample.layout.minimum !== undefined && (value < sample.layout.minimum || value > sample.layout.maximum!))
-    ) {
-      throw new PredictionModelError(
-        'invalid-data',
-        `Prediction tensor ${sample.layout.key} contains an invalid value.`,
-      )
-    }
-  })
-}
-
 function uniqueKeys(keys: readonly string[], label: string) {
   const result = [...keys]
   if (result.some((key) => !key.trim()) || new Set(result).size !== result.length) {
@@ -270,25 +285,204 @@ function orderedSamples(
   fixed: ReadonlyMap<string, PredictionTensorLayout> | null,
 ) {
   const map = new Map(samples.map((sample) => [sample.layout.key, sample] as const))
-  if (map.size !== samples.length)
-    throw new PredictionModelError('invalid-data', 'Prediction row contains duplicate blocks.')
-  if (keys.some((key) => !map.has(key))) return { reason: 'missing-block' as const }
-  if (samples.some((sample) => !keys.includes(sample.layout.key))) return { reason: 'extra-block' as const }
-  const ordered = keys.map((key) => map.get(key)!)
-  try {
-    ordered.forEach(validateSample)
-  } catch {
-    return { reason: 'invalid-tensor' as const }
-  }
-  if (
-    fixed &&
-    ordered.some(
-      (sample) => predictionLayoutSignature(sample.layout) !== predictionLayoutSignature(fixed.get(sample.layout.key)!),
+  if (map.size !== samples.length) {
+    const duplicate = samples.find(
+      (sample, index) => samples.findIndex((item) => item.layout.key === sample.layout.key) !== index,
     )
-  ) {
-    return { reason: 'fixed-layout-mismatch' as const }
+    return {
+      reason: 'invalid-tensor' as const,
+      blockKey: duplicate?.layout.key ?? keys[0],
+      actual: 'duplicate block',
+    }
+  }
+  const missingKey = keys.find((key) => !map.has(key))
+  if (missingKey) return { reason: 'missing-block' as const, blockKey: missingKey, actual: 'missing' }
+  const extraSample = samples.find((sample) => !keys.includes(sample.layout.key))
+  if (extraSample) {
+    return { reason: 'extra-block' as const, blockKey: extraSample.layout.key, actual: 'unexpected block' }
+  }
+  const ordered = keys.map((key) => map.get(key)!)
+  for (const sample of ordered) {
+    if (!sample.layout.key.trim() || !numericDtypeSet.has(sample.layout.dtype)) {
+      return {
+        reason: 'invalid-tensor' as const,
+        blockKey: sample.layout.key,
+        fieldPath: 'dtype',
+        expected: 'numeric dtype',
+        actual: sample.layout.dtype,
+      }
+    }
+    let elementCount: number
+    try {
+      elementCount = tensorElementCount(sample.layout.shape)
+    } catch (cause: unknown) {
+      return {
+        reason: 'invalid-tensor' as const,
+        blockKey: sample.layout.key,
+        fieldPath: 'shape',
+        expected: 'finite non-negative dimensions',
+        actual: cause instanceof Error ? cause.message : String(cause),
+      }
+    }
+    if (sample.values.length !== elementCount) {
+      return {
+        reason: 'invalid-tensor' as const,
+        blockKey: sample.layout.key,
+        fieldPath: 'data.length',
+        expected: String(elementCount),
+        actual: String(sample.values.length),
+      }
+    }
+    const invalidValueIndex = sample.values.findIndex((value) => typeof value !== 'number' || !Number.isFinite(value))
+    if (invalidValueIndex >= 0) {
+      return {
+        reason: 'invalid-tensor' as const,
+        blockKey: sample.layout.key,
+        fieldPath: `values[${invalidValueIndex}]`,
+        expected: 'finite number',
+        actual: String(sample.values[invalidValueIndex]),
+      }
+    }
+  }
+  if (fixed) {
+    const mismatch = ordered.find(
+      (sample) => JSON.stringify(sample.layout.shape) !== JSON.stringify(fixed.get(sample.layout.key)!.shape),
+    )
+    if (mismatch) {
+      return {
+        reason: 'fixed-layout-mismatch' as const,
+        blockKey: mismatch.layout.key,
+        expected: JSON.stringify(fixed.get(mismatch.layout.key)!.shape),
+        actual: JSON.stringify(mismatch.layout.shape),
+      }
+    }
   }
   return { samples: ordered }
+}
+
+function predictionShapeSignature(layout: PredictionTensorLayout) {
+  return { key: layout.key, shape: [...layout.shape] }
+}
+
+type PendingDiagnostic = Omit<PredictionCohortDiagnosticGroup, 'direction' | 'measurementIds'> &
+  Readonly<{ measurementId: number }>
+
+function summarizeMetadata(value: unknown) {
+  if (value === undefined) return '∅'
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  const serialized = JSON.stringify(value)
+  return serialized.length > 180 ? `${serialized.slice(0, 177)}…` : serialized
+}
+
+function layoutMetadataDiagnostics(
+  baseline: PredictionTensorLayout,
+  actual: PredictionTensorLayout,
+  context: Readonly<{
+    baselineMeasurementId: number
+    blockKey: string
+    measurementId: number
+    side: 'input' | 'output'
+  }>,
+) {
+  const diagnostics: PendingDiagnostic[] = []
+  const add = (
+    fieldPath: string,
+    expected: unknown,
+    next: unknown,
+    extra: Partial<Pick<PendingDiagnostic, 'firstMismatchIndex' | 'maxAbsoluteDifference' | 'mismatchCount'>> = {},
+  ) => {
+    if (JSON.stringify(expected) === JSON.stringify(next)) return
+    diagnostics.push({
+      disposition: 'included-with-warning',
+      reason: 'metadata-mismatch',
+      side: context.side,
+      blockKey: context.blockKey,
+      fieldPath,
+      baselineMeasurementId: context.baselineMeasurementId,
+      expected: summarizeMetadata(expected),
+      actual: summarizeMetadata(next),
+      measurementId: context.measurementId,
+      ...extra,
+    })
+  }
+  add('dtype', baseline.dtype, actual.dtype)
+  add('tensorOrder', baseline.tensorOrder ?? 0, actual.tensorOrder ?? 0)
+  add('unit', baseline.unit, actual.unit)
+  add('quantityKind', baseline.quantityKind, actual.quantityKind)
+  add('minimum', baseline.minimum, actual.minimum)
+  add('maximum', baseline.maximum, actual.maximum)
+  add('dataSchemaSignature', baseline.dataSchemaSignature, actual.dataSchemaSignature)
+  add('axes.length', baseline.axes?.length ?? 0, actual.axes?.length ?? 0)
+  const axisCount = Math.max(baseline.axes?.length ?? 0, actual.axes?.length ?? 0)
+  for (let axisIndex = 0; axisIndex < axisCount; axisIndex += 1) {
+    const expectedAxis = baseline.axes?.[axisIndex]
+    const actualAxis = actual.axes?.[axisIndex]
+    add(`axes[${axisIndex}].name`, expectedAxis?.name, actualAxis?.name)
+    add(`axes[${axisIndex}].unit`, expectedAxis?.unit, actualAxis?.unit)
+    const expectedTicks = expectedAxis?.ticks
+    const actualTicks = actualAxis?.ticks
+    if (JSON.stringify(expectedTicks) === JSON.stringify(actualTicks)) continue
+    const length = Math.max(expectedTicks?.length ?? 0, actualTicks?.length ?? 0)
+    let firstMismatchIndex = -1
+    let mismatchCount = 0
+    let maxAbsoluteDifference = 0
+    for (let tickIndex = 0; tickIndex < length; tickIndex += 1) {
+      const expectedTick = expectedTicks?.[tickIndex]
+      const actualTick = actualTicks?.[tickIndex]
+      if (expectedTick === actualTick) continue
+      if (firstMismatchIndex < 0) firstMismatchIndex = tickIndex
+      mismatchCount += 1
+      if (typeof expectedTick === 'number' && typeof actualTick === 'number') {
+        maxAbsoluteDifference = Math.max(maxAbsoluteDifference, Math.abs(expectedTick - actualTick))
+      }
+    }
+    const expectedTick = firstMismatchIndex < 0 ? undefined : expectedTicks?.[firstMismatchIndex]
+    const actualTick = firstMismatchIndex < 0 ? undefined : actualTicks?.[firstMismatchIndex]
+    diagnostics.push({
+      disposition: 'included-with-warning',
+      reason: 'metadata-mismatch',
+      side: context.side,
+      blockKey: context.blockKey,
+      fieldPath: `axes[${axisIndex}].ticks`,
+      baselineMeasurementId: context.baselineMeasurementId,
+      expected: `length ${expectedTicks?.length ?? 0}; [${firstMismatchIndex}] ${summarizeMetadata(expectedTick)}`,
+      actual: `length ${actualTicks?.length ?? 0}; [${firstMismatchIndex}] ${summarizeMetadata(actualTick)}`,
+      measurementId: context.measurementId,
+      firstMismatchIndex: Math.max(0, firstMismatchIndex),
+      mismatchCount,
+      ...(maxAbsoluteDifference > 0 ? { maxAbsoluteDifference } : {}),
+    })
+  }
+  return diagnostics
+}
+
+function groupDiagnostics(diagnostics: readonly PendingDiagnostic[], direction: PredictionDirection) {
+  const groups = new Map<string, PredictionCohortDiagnosticGroup & { measurementIds: number[] }>()
+  diagnostics.forEach(({ measurementId, ...diagnostic }) => {
+    const complete = { direction, ...diagnostic }
+    const key = JSON.stringify(complete)
+    const current = groups.get(key)
+    if (current) {
+      current.measurementIds.push(measurementId)
+      return
+    }
+    groups.set(key, { ...complete, measurementIds: [measurementId] })
+  })
+  const ordered = [...groups.values()]
+    .map((group) =>
+      Object.freeze({ ...group, measurementIds: Object.freeze(group.measurementIds.sort((a, b) => a - b)) }),
+    )
+    .sort(
+      (left, right) =>
+        left.measurementIds[0] - right.measurementIds[0] ||
+        left.side.localeCompare(right.side) ||
+        left.blockKey.localeCompare(right.blockKey) ||
+        left.fieldPath.localeCompare(right.fieldPath),
+    )
+  return Object.freeze({
+    diagnostics: Object.freeze(ordered.slice(0, PREDICTION_DIAGNOSTIC_GROUP_LIMIT)),
+    omitted: Math.max(0, ordered.length - PREDICTION_DIAGNOSTIC_GROUP_LIMIT),
+  })
 }
 
 export function selectPredictionCohort(options: PredictionCohortOptions): PredictionCohort {
@@ -309,6 +503,7 @@ export function selectPredictionCohort(options: PredictionCohortOptions): Predic
   }
   const ids = new Set<number>()
   const groups = new Map<string, PredictionTrainingRow[]>()
+  const pendingDiagnostics: PendingDiagnostic[] = []
   options.rows.forEach((row) => {
     if (!Number.isSafeInteger(row.measurementId) || row.measurementId < 1 || ids.has(row.measurementId)) {
       throw new PredictionModelError('invalid-data', 'Prediction rows require unique positive Measurement IDs.')
@@ -317,39 +512,139 @@ export function selectPredictionCohort(options: PredictionCohortOptions): Predic
     const inputs = orderedSamples(row.inputs, inputKeys, fixedInputs)
     if ('reason' in inputs && inputs.reason !== undefined) {
       excluded[inputs.reason] += 1
+      pendingDiagnostics.push({
+        disposition: 'excluded',
+        reason: inputs.reason,
+        side: 'input',
+        blockKey:
+          ('blockKey' in inputs && inputs.blockKey) ||
+          inputKeys.find((key) => !row.inputs.some((sample) => sample.layout.key === key)) ||
+          inputKeys[0]!,
+        fieldPath:
+          ('fieldPath' in inputs && inputs.fieldPath) ||
+          (inputs.reason === 'fixed-layout-mismatch' ? 'shape' : inputs.reason),
+        baselineMeasurementId: null,
+        expected:
+          ('expected' in inputs && inputs.expected) ||
+          (inputs.reason === 'missing-block' ? 'required block' : 'valid finite tensor'),
+        actual:
+          ('actual' in inputs && inputs.actual) || (inputs.reason === 'extra-block' ? 'unexpected block' : 'missing'),
+        measurementId: row.measurementId,
+      })
       return
     }
     const outputs = orderedSamples(row.outputs, outputKeys, fixedOutputs)
     if ('reason' in outputs && outputs.reason !== undefined) {
       excluded[outputs.reason] += 1
+      pendingDiagnostics.push({
+        disposition: 'excluded',
+        reason: outputs.reason,
+        side: 'output',
+        blockKey:
+          ('blockKey' in outputs && outputs.blockKey) ||
+          outputKeys.find((key) => !row.outputs.some((sample) => sample.layout.key === key)) ||
+          outputKeys[0]!,
+        fieldPath:
+          ('fieldPath' in outputs && outputs.fieldPath) ||
+          (outputs.reason === 'fixed-layout-mismatch' ? 'shape' : outputs.reason),
+        baselineMeasurementId: null,
+        expected:
+          ('expected' in outputs && outputs.expected) ||
+          (outputs.reason === 'missing-block' ? 'required block' : 'valid finite tensor'),
+        actual:
+          ('actual' in outputs && outputs.actual) ||
+          (outputs.reason === 'extra-block' ? 'unexpected block' : 'missing'),
+        measurementId: row.measurementId,
+      })
       return
     }
     const normalized = { ...row, inputs: Object.freeze(inputs.samples), outputs: Object.freeze(outputs.samples) }
     const signature = JSON.stringify([
-      ...inputs.samples.map((sample) => predictionLayoutSignature(sample.layout)),
-      ...outputs.samples.map((sample) => predictionLayoutSignature(sample.layout)),
+      ...inputs.samples.map((sample) => predictionShapeSignature(sample.layout)),
+      ...outputs.samples.map((sample) => predictionShapeSignature(sample.layout)),
     ])
     const group = groups.get(signature) ?? []
     group.push(normalized)
     groups.set(signature, group)
   })
-  const selected = [...groups.entries()].sort(
-    ([leftSignature, left], [rightSignature, right]) =>
-      right.length - left.length || (leftSignature < rightSignature ? -1 : leftSignature > rightSignature ? 1 : 0),
-  )[0]
+  const selected = [...groups.entries()].sort(([leftSignature, left], [rightSignature, right]) => {
+    const leftMinimumId = Math.min(...left.map((row) => row.measurementId))
+    const rightMinimumId = Math.min(...right.map((row) => row.measurementId))
+    return right.length - left.length || leftMinimumId - rightMinimumId || leftSignature.localeCompare(rightSignature)
+  })[0]
   if (!selected) {
     throw new PredictionModelError('insufficient-cohort', 'No complete Prediction cohort is available.')
   }
-  const [canonicalLayoutSignature, selectedRows] = selected
-  groups.forEach((rows, signature) => {
-    if (signature !== canonicalLayoutSignature) excluded['layout-mismatch'] += rows.length
-  })
+  const [dominantShapeSignature, selectedRows] = selected
   selectedRows.sort((left, right) => left.measurementId - right.measurementId)
+  const baseline = selectedRows[0]
+  groups.forEach((rows, signature) => {
+    if (signature === dominantShapeSignature) return
+    excluded['layout-mismatch'] += rows.length
+    rows.forEach((row) => {
+      ;(['input', 'output'] as const).forEach((side) => {
+        const samples = side === 'input' ? row.inputs : row.outputs
+        const baselineSamples = side === 'input' ? baseline.inputs : baseline.outputs
+        samples.forEach((sample, index) => {
+          if (JSON.stringify(sample.layout.shape) === JSON.stringify(baselineSamples[index].layout.shape)) return
+          pendingDiagnostics.push({
+            disposition: 'excluded',
+            reason: 'layout-mismatch',
+            side,
+            blockKey: sample.layout.key,
+            fieldPath: 'shape',
+            baselineMeasurementId: baseline.measurementId,
+            expected: JSON.stringify(baselineSamples[index].layout.shape),
+            actual: JSON.stringify(sample.layout.shape),
+            measurementId: row.measurementId,
+          })
+        })
+      })
+    })
+  })
+  if (options.diagnoseMetadata !== false) {
+    selectedRows.forEach((row) => {
+      if (row.measurementId === baseline.measurementId) return
+      ;(['input', 'output'] as const).forEach((side) => {
+        const samples = side === 'input' ? row.inputs : row.outputs
+        const baselineSamples = side === 'input' ? baseline.inputs : baseline.outputs
+        samples.forEach((sample, index) => {
+          pendingDiagnostics.push(
+            ...layoutMetadataDiagnostics(baselineSamples[index].layout, sample.layout, {
+              baselineMeasurementId: baseline.measurementId,
+              blockKey: sample.layout.key,
+              measurementId: row.measurementId,
+              side,
+            }),
+          )
+        })
+      })
+    })
+  }
+  const completedDiagnostics = pendingDiagnostics.map((diagnostic) =>
+    diagnostic.baselineMeasurementId === null
+      ? Object.freeze({ ...diagnostic, baselineMeasurementId: baseline.measurementId })
+      : diagnostic,
+  )
+  const groupedDiagnostics = groupDiagnostics(completedDiagnostics, options.direction)
+  const warningMeasurementIds = Object.freeze(
+    [
+      ...new Set(
+        pendingDiagnostics
+          .filter((item) => item.disposition === 'included-with-warning')
+          .map((item) => item.measurementId),
+      ),
+    ].sort((left, right) => left - right),
+  )
   const summary: PredictionCohortSummary = Object.freeze({
     totalRows: options.rows.length,
     includedRows: selectedRows.length,
     includedMeasurementIds: Object.freeze(selectedRows.map((row) => row.measurementId)),
-    canonicalLayoutSignature,
+    warningMeasurementIds,
+    dominantShapeSignature,
+    baselineMeasurementId: baseline.measurementId,
+    diagnostics: groupedDiagnostics.diagnostics,
+    omittedDiagnosticGroups: groupedDiagnostics.omitted,
     excluded: Object.freeze(excluded),
   })
   return Object.freeze({
@@ -535,6 +830,19 @@ export function buildPredictionKnnModel(options: PredictionCohortOptions): Predi
       }),
     ),
   )
+  const outputKeySet = new Set(cohort.outputLayouts.map((layout) => layout.key))
+  if (
+    Object.entries(options.outputDtypes ?? {}).some(
+      ([key, dtype]) => !outputKeySet.has(key) || !numericDtypeSet.has(dtype),
+    )
+  ) {
+    throw new PredictionModelError('invalid-data', 'Prediction output dtype overrides contain an unknown key or dtype.')
+  }
+  const outputDtypes = Object.freeze(
+    Object.fromEntries(
+      cohort.outputLayouts.map((layout) => [layout.key, options.outputDtypes?.[layout.key] ?? layout.dtype]),
+    ) as Record<string, PredictionNumericDtype>,
+  )
   if (
     !cohort.inputLayouts.some(
       (layout, block) => inputOffsets[block + 1] > inputOffsets[block] && inputBlockWeights[layout.key] > 0,
@@ -570,6 +878,7 @@ export function buildPredictionKnnModel(options: PredictionCohortOptions): Predi
     weighting: options.weighting ?? 'distance',
     inputScaling,
     inputBlockWeights,
+    outputDtypes,
     rowCount: cohort.rows.length,
     inputSize,
     outputSize,
@@ -607,7 +916,27 @@ function flattenQuery(model: PredictionKnnModel, samples: readonly PredictionTen
     query.set(sample.values, offset)
     offset += sample.values.length
   })
-  return query
+  const queryDiagnostics = ordered.samples.flatMap((sample, index) =>
+    layoutMetadataDiagnostics(model.inputLayouts[index], sample.layout, {
+      baselineMeasurementId: model.cohort.baselineMeasurementId,
+      blockKey: sample.layout.key,
+      measurementId: 0,
+      side: 'input',
+    }).map((diagnostic) =>
+      Object.freeze({
+        blockKey: diagnostic.blockKey,
+        fieldPath: diagnostic.fieldPath,
+        expected: diagnostic.expected,
+        actual: diagnostic.actual,
+        ...(diagnostic.mismatchCount === undefined ? {} : { mismatchCount: diagnostic.mismatchCount }),
+        ...(diagnostic.firstMismatchIndex === undefined ? {} : { firstMismatchIndex: diagnostic.firstMismatchIndex }),
+        ...(diagnostic.maxAbsoluteDifference === undefined
+          ? {}
+          : { maxAbsoluteDifference: diagnostic.maxAbsoluteDifference }),
+      }),
+    ),
+  )
+  return Object.freeze({ query, queryDiagnostics: Object.freeze(queryDiagnostics) })
 }
 
 function float16Number(value: number) {
@@ -644,7 +973,7 @@ export function predictWithKnn(
   fingerprint = model.fingerprint,
 ): PredictionResult {
   if (fingerprint !== model.fingerprint) throw new PredictionModelError('stale-model', 'Prediction model is stale.')
-  const query = flattenQuery(model, querySamples)
+  const { query, queryDiagnostics } = flattenQuery(model, querySamples)
   const distanceNorms = new Float64Array(model.rowCount)
   const extrapolated = new Set<string>()
   const constantChanged = new Set<string>()
@@ -726,16 +1055,17 @@ export function predictWithKnn(
     })
     predicted[column] = scaled * maximum
   }
-  const output = model.outputLayouts.map((layout, block) =>
-    Object.freeze({
-      layout,
+  const output = model.outputLayouts.map((layout, block) => {
+    const outputLayout = Object.freeze({ ...layout, dtype: model.outputDtypes[layout.key] })
+    return Object.freeze({
+      layout: outputLayout,
       values: Object.freeze(
         Array.from(predicted.slice(model.outputOffsets[block], model.outputOffsets[block + 1]), (value) =>
-          postprocessPrediction(value, layout, model.direction),
+          postprocessPrediction(value, outputLayout, model.direction),
         ),
       ),
-    }),
-  )
+    })
+  })
   return Object.freeze({
     direction: model.direction,
     fingerprint: model.fingerprint,
@@ -751,6 +1081,7 @@ export function predictWithKnn(
     ),
     extrapolatedInputKeys: Object.freeze([...extrapolated].sort()),
     constantInputKeysChanged: Object.freeze([...constantChanged].sort()),
+    queryDiagnostics,
   })
 }
 

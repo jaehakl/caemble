@@ -7,6 +7,7 @@ from pydantic import BaseModel, EmailStr, Field, RootModel, StrictFloat, StrictI
 from model_validators import (
     validate_calculation_data_axis,
     validate_calculation_data_output,
+    validate_calculation_output_layout,
 )
 
 
@@ -44,6 +45,10 @@ class CalculationListRequest(GetListRequestBase):
     experiment_id: Optional[int] = None
 
 
+class ExperimentRecordListRequest(GetListRequestBase):
+    experiment_id: StrictInt
+
+
 class CalculationDataListRequest(GetListRequestBase):
     experiment_id: StrictInt
     selected_ids: List[StrictInt] = Field(min_length=1, max_length=50)
@@ -63,6 +68,8 @@ class CalculationDataListRequest(GetListRequestBase):
 
 class RecordedDataListRequest(GetListRequestBase):
     include_system: bool = True
+    experiment_id: Optional[StrictInt] = None
+    experiment_record_ids: Optional[List[StrictInt]] = None
 
 
 class TimestampFields(BaseModel):
@@ -122,6 +129,24 @@ class ExperimentBase(OwnedTimestampFields):
     source_hash: str
 
 
+class ExperimentRecordContract(BaseModel):
+    name: str
+    quantity_kind: Optional[str] = None
+    tensor_order: int
+    dtype: str
+    data_schema: Optional[Dict[str, Any]] = None
+
+
+class ExperimentRecordBase(TimestampFields, ExperimentRecordContract):
+    experiment_id: int
+    contract_hash: str
+
+
+class ExperimentRecordListResponse(BaseModel):
+    total: int
+    items: List[ExperimentRecordBase]
+
+
 class SaveExperimentRequest(BaseModel):
     mode: str
     namespace: str
@@ -135,6 +160,7 @@ class SaveExperimentRequest(BaseModel):
     description: Optional[str] = None
     sourceBundle: ExperimentSourceBundle
     bundleHash: str
+    records: List[ExperimentRecordContract]
 
 
 class MeasurementBase(OwnedTimestampFields):
@@ -147,23 +173,26 @@ class MeasurementBase(OwnedTimestampFields):
 
 
 class MeasurementSaveRecordedData(BaseModel):
-    quantity_kind: Optional[str] = None
-    tensor_order: int
-    dtype: str
-    data_schema: Dict[str, Any]
+    experiment_record_id: StrictInt
     data: Any
 
 
-class MeasurementSaveRecordedDataGroup(
-    RootModel[Dict[str, Union[MeasurementSaveRecordedData, "MeasurementSaveRecordedDataGroup"]]]
+class MeasurementRecordedDataLeaf(BaseModel):
+    experiment_record_id: StrictInt
+    quantity_kind: Optional[str] = None
+    tensor_order: int
+    dtype: str
+    data_schema: Optional[Dict[str, Any]] = None
+    data: Any
+
+
+class MeasurementRecordedDataGroup(
+    RootModel[Dict[str, Union[MeasurementRecordedDataLeaf, "MeasurementRecordedDataGroup"]]]
 ):
     pass
 
 
-MeasurementSaveRecordedDataNode = Union[
-    MeasurementSaveRecordedData,
-    MeasurementSaveRecordedDataGroup,
-]
+MeasurementRecordedDataNode = Union[MeasurementRecordedDataLeaf, MeasurementRecordedDataGroup]
 
 
 class MeasurementCreateRequest(BaseModel):
@@ -174,27 +203,20 @@ class MeasurementCreateRequest(BaseModel):
 
 
 class MeasurementRecordRequest(BaseModel):
-    recorded_data: Dict[str, MeasurementSaveRecordedDataNode] = Field(default_factory=dict)
+    recorded_data: List[MeasurementSaveRecordedData] = Field(default_factory=list)
+
+
+class MeasurementRecordedDataResponse(BaseModel):
+    recorded_data: Dict[str, MeasurementRecordedDataNode] = Field(default_factory=dict)
 
 
 class RecordedDataBase(OwnedTimestampFields):
     user_id: str
     measurement_id: int
-    name: str
-    quantity_kind: Optional[str] = None
-    tensor_order: int
-    dtype: str
-    data_schema: Optional[Dict[str, Any]] = None
+    experiment_record_id: int
     data: Any = None
     data_url: Optional[str] = None
     file_size: Optional[int] = None
-
-
-class CalculationBase(TimestampFields):
-    experiment_id: int
-    name: str
-    description: Optional[str] = None
-    source_code: str
 
 
 CalculationDataDType = Literal[
@@ -214,6 +236,26 @@ class CalculationDataAxis(BaseModel):
     ticks: List[Union[StrictInt, StrictFloat]]
     unit: Optional[str] = None
     _validate_ticks = model_validator(mode="after")(validate_calculation_data_axis)
+
+
+class CalculationOutputLayout(BaseModel):
+    dtype: CalculationDataDType
+    shape: List[StrictInt]
+    axes: List[CalculationDataAxis]
+
+    _validate_layout = model_validator(mode="after")(validate_calculation_output_layout)
+
+
+class CalculationBase(TimestampFields):
+    experiment_id: int
+    name: str
+    description: Optional[str] = None
+    source_code: str
+    source_hash: Optional[str] = None
+    output_layout: Optional[CalculationOutputLayout] = None
+    preflight_measurement_id: Optional[StrictInt] = None
+    contract_status: Literal["ready", "needs_preflight"] = "needs_preflight"
+    experiment_record_ids: List[StrictInt] = Field(default_factory=list)
 
 
 class CalculationDataOutput(BaseModel):

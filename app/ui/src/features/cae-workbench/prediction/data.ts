@@ -1,5 +1,11 @@
-import type { CalculationDataOutput, CalculationDataRecord, MeasurementRecordedData, MeasurementRecord } from '@/api'
-import { recordedDataTreeSnapshot } from '@/features/cae-workbench/measurement/recordedData'
+import type {
+  CalculationDataOutput,
+  CalculationDataRecord,
+  MeasurementRecordedData,
+  MeasurementRecord,
+  RecordedDataRecord,
+} from '@/api'
+import { recordedDataSnapshot, recordedDataTreeSnapshot } from '@/features/cae-workbench/measurement/recordedData'
 import { flattenVarsTensor, varsTensorFromFlat } from '@/features/cae-workbench/calculation/varsTensor'
 import { createDataTensor, createDataTensorAccessor, isDataTensor } from '@/lib/cad/model/dataTensor'
 import type { RecordedData, RecordedDataRule, RecordedDataTensor } from '@/lib/cad/model/descriptor'
@@ -19,9 +25,11 @@ const calculationIntegerRanges: Readonly<Record<string, readonly [number, number
   int8: [-128, 127],
   int16: [-32_768, 32_767],
   int32: [-2_147_483_648, 2_147_483_647],
+  int64: [-Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER],
   uint8: [0, 255],
   uint16: [0, 65_535],
   uint32: [0, 4_294_967_295],
+  uint64: [0, Number.MAX_SAFE_INTEGER],
 })
 type VarsSchema = Readonly<Record<string, VarsSchemaEntry>>
 
@@ -73,41 +81,27 @@ export function predictionVarsSamples(vars: Readonly<Vars>, schema: VarsSchema):
 function recordedLayout(rule: RecordedDataRule, tensor: RecordedDataTensor): PredictionTensorLayout {
   const result = rule.result
   const tensorOrder = (result as typeof result & Readonly<{ tensorOrder?: number }>).tensorOrder ?? 0
-  if (!Number.isSafeInteger(tensorOrder) || tensorOrder < 0 || tensorOrder > tensor.shape.length) {
-    throw new Error(`${rule.label}의 tensorOrder가 shape와 맞지 않습니다.`)
-  }
-  const externalRank = tensor.shape.length - tensorOrder
   const schemaAxes = result.axes ?? []
   const storedAxes = tensor.axes ?? []
-  if (schemaAxes.length !== externalRank || storedAxes.length !== externalRank) {
-    throw new Error(`${rule.label}의 axes가 외부 tensor rank와 맞지 않습니다.`)
-  }
   return Object.freeze({
     key: rule.label,
     dtype: requireNumericDtype(result.dtype, rule.label),
     shape: Object.freeze([...tensor.shape]),
     dataSchemaSignature: predictionFingerprint([result]),
     axes: Object.freeze(
-      schemaAxes.map((schemaAxis, index) => {
-        const length = tensor.shape[index]
-        if (schemaAxis.length !== undefined && schemaAxis.length !== length) {
-          throw new Error(`${rule.label} axis ${index}의 schema length가 tensor shape와 다릅니다.`)
-        }
+      Array.from({ length: Math.max(schemaAxes.length, storedAxes.length) }, (_item, index) => {
+        const schemaAxis = schemaAxes[index]
+        const length = tensor.shape[index] ?? 0
         const storedAxis = storedAxes[index]
         const ticks =
-          storedAxis.ticks ??
-          (storedAxis.implicitOrdinal === true ? Array.from({ length }, (_item, tick) => tick) : schemaAxis.ticks)
-        if (
-          ticks === undefined ||
-          ticks.length !== length ||
-          ticks.some((tick) => typeof tick !== 'string' && (typeof tick !== 'number' || !Number.isFinite(tick)))
-        ) {
-          throw new Error(`${rule.label} axis ${index}의 ticks가 tensor shape와 맞지 않습니다.`)
-        }
+          storedAxis?.ticks ??
+          (storedAxis?.implicitOrdinal === true
+            ? Array.from({ length }, (_item, tick) => tick)
+            : (schemaAxis?.ticks ?? []))
         return Object.freeze({
-          name: schemaAxis.name ?? `axis ${index}`,
+          name: schemaAxis?.name ?? `axis ${index}`,
           ticks: Object.freeze([...ticks]),
-          ...('unit' in schemaAxis && schemaAxis.unit ? { unit: schemaAxis.unit } : {}),
+          ...(schemaAxis && 'unit' in schemaAxis && schemaAxis.unit ? { unit: schemaAxis.unit } : {}),
         })
       }),
     ),
@@ -138,6 +132,22 @@ export function predictionRecordedSamples(
   return Object.freeze({ rules: snapshot.rules, samples: Object.freeze(samples) })
 }
 
+export function predictionRecordedRowSample(row: RecordedDataRecord): PredictionTensorSample {
+  const snapshot = recordedDataSnapshot([row])
+  const rule = snapshot.rules[0]
+  const tensor = rule ? snapshot.flatData[rule.label] : undefined
+  if (!rule || !isDataTensor(tensor)) throw new Error(`${row.name} RecordedData tensor가 없습니다.`)
+  const layout = recordedLayout(rule, tensor)
+  const accessor = createDataTensorAccessor(rule.result, tensor, rule.label)
+  return Object.freeze({
+    layout,
+    values: requireFlatNumbers(
+      Array.from({ length: accessor.size }, (_item, index) => accessor.at(index)),
+      rule.label,
+    ),
+  })
+}
+
 export function predictionRecordedSamplesMatchRules(
   samples: readonly PredictionTensorSample[],
   rules: readonly RecordedDataRule[],
@@ -155,6 +165,7 @@ export function predictionRecordedSamplesMatchRules(
 export function predictedRecordedData(
   samples: readonly PredictionTensorSample[],
   rules: readonly RecordedDataRule[],
+  onOrdinalAxisFallback?: (warning: Readonly<{ axisIndex: number; blockKey: string; length: number }>) => void,
 ): RecordedData {
   const ruleMap = new Map(rules.map((rule) => [rule.label, rule]))
   const sampleMap = new Map(samples.map((sample) => [sample.layout.key, sample]))
@@ -166,12 +177,7 @@ export function predictedRecordedData(
       rules.map((rule) => {
         const sample = sampleMap.get(rule.label)
         if (!sample) throw new Error(`${rule.label} RecordedData Prediction 값이 없습니다.`)
-        if (sample.layout.dtype !== requireNumericDtype(rule.result.dtype, rule.label)) {
-          throw new Error(`${rule.label} RecordedData dtype이 현재 Experiment rule과 다릅니다.`)
-        }
-        if (sample.layout.dataSchemaSignature !== predictionFingerprint([rule.result])) {
-          throw new Error(`${rule.label} RecordedData schema가 현재 Experiment rule과 다릅니다.`)
-        }
+        requireNumericDtype(rule.result.dtype, rule.label)
         if (sample.layout.shape.some((length) => !Number.isSafeInteger(length) || length < 0)) {
           throw new Error(`${rule.label} RecordedData Prediction shape가 올바르지 않습니다.`)
         }
@@ -179,8 +185,26 @@ export function predictedRecordedData(
         if (!Number.isSafeInteger(expectedSize) || sample.values.length !== expectedSize) {
           throw new Error(`${rule.label} RecordedData Prediction 값이 shape와 맞지 않습니다.`)
         }
-        const value = varsTensorFromFlat(sample.values, sample.layout.shape)
-        const axes = sample.layout.axes?.map((axis) => Object.freeze({ ticks: Object.freeze([...axis.ticks]) }))
+        const integerRange = calculationIntegerRanges[rule.result.dtype]
+        const normalizedValues = sample.values.map((member) =>
+          integerRange
+            ? Math.min(integerRange[1], Math.max(integerRange[0], Math.round(member)))
+            : rule.result.dtype === 'float32'
+              ? Math.fround(member)
+              : member,
+        )
+        const value = varsTensorFromFlat(normalizedValues, sample.layout.shape)
+        const tensorOrder = (rule.result as typeof rule.result & Readonly<{ tensorOrder?: number }>).tensorOrder ?? 0
+        const externalShape = sample.layout.shape.slice(0, sample.layout.shape.length - tensorOrder)
+        const axes = (rule.result.axes ?? []).map((axis, index) => {
+          const storedTicks = sample.layout.axes?.[index]?.ticks
+          let ticks = storedTicks?.length === externalShape[index] ? storedTicks : axis.ticks
+          if (ticks?.length !== externalShape[index]) {
+            ticks = Array.from({ length: externalShape[index] ?? 0 }, (_item, tick) => tick)
+            onOrdinalAxisFallback?.({ axisIndex: index, blockKey: rule.label, length: externalShape[index] ?? 0 })
+          }
+          return Object.freeze({ ticks: Object.freeze([...ticks]) })
+        })
         return [rule.label, createDataTensor(rule.result, { value, ...(axes?.length ? { axes } : {}) })]
       }),
     ),
@@ -215,7 +239,6 @@ export function calculationOutputSample(
     }),
     values: requireFlatNumbers(values, label),
   })
-  calculationOutputFromSample(sample)
   return sample
 }
 

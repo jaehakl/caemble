@@ -263,6 +263,47 @@ class Experiment(TimestampMixin, Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    experiment_records: Mapped[List["ExperimentRecord"]] = relationship(
+        back_populates="experiment",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class ExperimentRecord(TimestampMixin, Base):
+    __tablename__ = "experiment_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "experiment_id",
+            "name",
+            name="uq_experiment_records_experiment_id_name",
+        ),
+        Index("ix_experiment_records_experiment_id", "experiment_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    experiment_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("experiments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    quantity_kind: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tensor_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    dtype: Mapped[str] = mapped_column(Text, nullable=False)
+    data_schema: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
+    contract_hash: Mapped[str] = mapped_column(Text, nullable=False)
+
+    experiment: Mapped["Experiment"] = relationship(back_populates="experiment_records")
+    recorded_data: Mapped[List["RecordedData"]] = relationship(
+        back_populates="experiment_record",
+        passive_deletes=True,
+    )
+    calculations: Mapped[List["Calculation"]] = relationship(
+        secondary="calculation_experiment_records",
+        back_populates="experiment_records",
+        viewonly=True,
+    )
 
 
 class Measurement(TimestampMixin, Base):
@@ -314,7 +355,11 @@ class Measurement(TimestampMixin, Base):
 class RecordedData(TimestampMixin, Base):
     __tablename__ = "recorded_data"
     __table_args__ = (
-        UniqueConstraint("measurement_id", "name", name="uq_recorded_data_measurement_id_name"),
+        UniqueConstraint(
+            "measurement_id",
+            "experiment_record_id",
+            name="uq_recorded_data_measurement_id_experiment_record_id",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -329,17 +374,34 @@ class RecordedData(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    quantity_kind: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    tensor_order: Mapped[int] = mapped_column(Integer, nullable=False)
-    dtype: Mapped[str] = mapped_column(Text, nullable=False)
-    data_schema: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
+    experiment_record_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("experiment_records.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     data: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
     data_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     file_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
 
     user: Mapped["User"] = relationship("User", back_populates="recorded_data")
     measurement: Mapped["Measurement"] = relationship(back_populates="recorded_data")
+    experiment_record: Mapped["ExperimentRecord"] = relationship(back_populates="recorded_data")
+
+
+class CalculationExperimentRecord(Base):
+    __tablename__ = "calculation_experiment_records"
+
+    calculation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("calculations.id", name="fk_calc_records_calculation", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    experiment_record_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("experiment_records.id", name="fk_calc_records_record", ondelete="CASCADE"),
+        primary_key=True,
+    )
 
 
 class Calculation(TimestampMixin, Base):
@@ -362,10 +424,31 @@ class Calculation(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     source_code: Mapped[str] = mapped_column(Text, nullable=False)
+    source_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    output_layout: Mapped[Optional[Any]] = mapped_column(JSONB, nullable=True)
+    preflight_measurement_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("measurements.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    contract_status: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default="needs_preflight",
+    )
 
     experiment: Mapped["Experiment"] = relationship(back_populates="calculations")
     calculation_data: Mapped[List["CalculationData"]] = relationship(
         back_populates="calculation",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    experiment_records: Mapped[List["ExperimentRecord"]] = relationship(
+        secondary="calculation_experiment_records",
+        back_populates="calculations",
+        viewonly=True,
+    )
+    experiment_record_links: Mapped[List["CalculationExperimentRecord"]] = relationship(
         cascade="all, delete-orphan",
         passive_deletes=True,
     )

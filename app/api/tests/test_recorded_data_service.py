@@ -25,7 +25,7 @@ class RecordedDataServiceTests(unittest.IsolatedAsyncioTestCase):
                 user=None,
             )
             clause = get_list.await_args.args[3]
-            self.assertIn("recorded_data.name NOT LIKE", str(clause))
+            self.assertIn("experiment_records.name NOT LIKE", str(clause))
             self.assertEqual(2, str(clause).count("NOT LIKE"))
 
             await list_recorded_data(

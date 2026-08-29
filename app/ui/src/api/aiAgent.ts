@@ -1,7 +1,7 @@
 import { API_URL, ApiError, request } from './http'
-import type { ExperimentRecord } from './types'
+import type { SavedExperimentRecord } from './types'
 
-export type AiAgentSourceBundle = ExperimentRecord['source_bundle']
+export type AiAgentSourceBundle = SavedExperimentRecord['source_bundle']
 export const AI_AGENT_WORKSPACE_SCHEMA_VERSION = 'caemble-ai-agent-v5-calculation-source' as const
 
 export type AiAgentExperimentDocument = Readonly<{

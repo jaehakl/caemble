@@ -80,9 +80,16 @@ export function useCalculationDataActions({
           filter: { experiment_id: [experimentId, experimentId] },
           sort: ['updated_at', 'desc'] as const,
         }
-        const [missing, calculationList] = await Promise.all([
+        const [missing, calculationList, experimentRecordList] = await Promise.all([
           dbTables.CalculationData.missing({ experiment_id: experimentId, ...selectors }),
           dbTables.Calculation.listRows(calculationRequest),
+          dbTables.ExperimentRecord.listRows({
+            ...getListRequest('visible'),
+            experiment_id: experimentId,
+            filter: { experiment_id: [experimentId, experimentId] },
+            limit: null,
+            sort: ['name', 'asc'],
+          }),
         ])
         const calculations = new Map(
           calculationList.items
@@ -90,6 +97,7 @@ export function useCalculationDataActions({
             .map((row) => [row.id, row]),
         )
         const sourceHashes = new Map<number, Promise<string>>()
+        const recordNames = new Map(experimentRecordList.items.map((record) => [record.id, record.name]))
         update({ total: missing.total, stage: missing.total ? `${options.label} 준비` : `${options.label} 완료` })
 
         const summary = await executeCalculationDataBatch({
@@ -105,8 +113,18 @@ export function useCalculationDataActions({
           execute: async (target, input) => {
             const calculation = calculations.get(target.calculation_id)
             if (!calculation) throw new Error('저장된 Calculation source를 찾을 수 없습니다.')
+            if (calculation.contract_status !== 'ready') throw new Error('Calculation preflight 계약이 준비되지 않았습니다.')
+            const requiredInput = Object.freeze(
+              Object.fromEntries(
+                calculation.experiment_record_ids.map((recordId) => {
+                  const name = recordNames.get(recordId)
+                  if (!name || !(name in input)) throw new Error(`필수 ExperimentRecord #${recordId}가 없습니다.`)
+                  return [name, input[name]]
+                }),
+              ),
+            )
             const output = await runCalculation({
-              input,
+              input: requiredInput,
               sourceCode: calculation.source_code,
               signal: controller.signal,
               onLog: (entry) =>

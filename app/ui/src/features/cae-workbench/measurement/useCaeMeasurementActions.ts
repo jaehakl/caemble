@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { dbTables, type MeasurementRecordRequest } from '@/api'
+import { dbTables, getListRequest, type ExperimentRecordedDataRecord, type MeasurementRecordRequest } from '@/api'
 import type { CadDocumentController, SimulationController } from '@/features/viewer/workspace/useCadWorkspace'
 import {
-  persistDataSchema,
   persistDataTensor,
   type RecordedDataNode,
   type RecordedDataGroup,
@@ -63,35 +62,32 @@ function generateAndRunStage(state: GenerateAndRunState, value: string) {
 function recordRequest(
   experimentDocument: CadDocumentController,
   simulation: SimulationController,
+  records: readonly ExperimentRecordedDataRecord[],
 ): MeasurementRecordRequest {
   const result = simulation.recordedData
   const schemas = experimentDocument.simulationProgram?.recordedData
   if (!result || !schemas || simulation.stale) throw new Error('저장 가능한 최신 RecordedData가 없습니다.')
 
-  type SavedNode = MeasurementRecordRequest['recorded_data'][string]
-  const persistNode = (spec: ResolvedDataSchemaNode, data: RecordedDataNode, path: string): SavedNode => {
+  const recordsByName = new Map(records.map((record) => [record.name, record]))
+  const saved: MeasurementRecordRequest['recorded_data'][number][] = []
+  const persistNode = (spec: ResolvedDataSchemaNode, data: RecordedDataNode, path: string) => {
     if (isSchemaLeaf(spec)) {
       const tensor = data as RecordedDataTensor
-      const { tensorOrder, ...dataSchema } = spec
-      return {
-        quantity_kind: spec.quantityKind ?? null,
-        tensor_order: tensorOrder,
-        dtype: spec.dtype,
-        data_schema: persistDataSchema(dataSchema),
+      const record = recordsByName.get(path)
+      if (!record) throw new Error(`저장된 ExperimentRecord를 찾을 수 없습니다: ${path}`)
+      saved.push({
+        experiment_record_id: record.id,
         data: persistDataTensor(spec, tensor, path),
-      }
+      })
+      return
     }
     const names = Object.keys(spec)
     const group = data as RecordedDataGroup
-    return Object.freeze(
-      Object.fromEntries(names.map((name) => [name, persistNode(spec[name], group[name], `${path}.${name}`)])),
-    )
+    names.forEach((name) => persistNode(spec[name], group[name], `${path}.${name}`))
   }
   const names = Object.keys(result)
-  const recordedData = Object.freeze(
-    Object.fromEntries(names.map((name) => [name, persistNode(schemas[name], result[name], `RecordedData ${name}`)])),
-  )
-  return { recorded_data: recordedData }
+  names.forEach((name) => persistNode(schemas[name], result[name], name))
+  return { recorded_data: Object.freeze(saved) }
 }
 
 export function useCaeMeasurementActions({
@@ -116,6 +112,18 @@ export function useCaeMeasurementActions({
   simulation: SimulationController
 }) {
   const queryClient = useQueryClient()
+  const experimentRecordsQuery = useQuery({
+    enabled: authenticated && experimentId !== null,
+    queryKey: ['cae-workbench', 'experiment-records', experimentId],
+    queryFn: () =>
+      dbTables.ExperimentRecord.listRows({
+        ...getListRequest('visible'),
+        experiment_id: experimentId!,
+        filter: { experiment_id: [experimentId!, experimentId!] },
+        limit: null,
+        sort: ['name', 'asc'],
+      }),
+  })
   const cancelCalculationData = calculationDataActions.cancel
   const calculateMeasurementData = calculationDataActions.calculateMeasurement
   const [operation, setOperation] = useState<
@@ -925,7 +933,9 @@ export function useCaeMeasurementActions({
       setStage(batchState ? generateAndRunStage(batchState, 'RecordedData 저장') : 'RecordedData 저장')
       void (async () => {
         try {
-          const request = recordRequest(experimentDocumentRef.current, simulationRef.current)
+          const records = experimentRecordsQuery.data?.items
+          if (!records) throw new Error('ExperimentRecord 계약을 불러오지 못했습니다.')
+          const request = recordRequest(experimentDocumentRef.current, simulationRef.current, records)
           pendingRecordRequest.current = request
           const summary = await persistRecordedData(measurementId, request)
           if (currentState && activeSaveAndRunAttempt.current !== currentState.attemptId) return
@@ -985,6 +995,7 @@ export function useCaeMeasurementActions({
     finishGenerateAndRun,
     finishSaveAndRun,
     generateAndRunState,
+    experimentRecordsQuery.data?.items,
     operation,
     persistRecordedData,
     rejectSaveAndRun,

@@ -11,6 +11,7 @@ export type {
   AccessKeyScope,
   CalculationDataMissingRequest,
   CalculationDataOutput,
+  CalculationOutputLayout,
   CalculationDataRecord,
   CalculationDataScalar,
   CalculationDataTarget,
@@ -23,6 +24,8 @@ export type {
   MeasurementCreateRequest,
   MeasurementRecordRequest,
   MeasurementRecordedData,
+  ExperimentRecordedDataRecord,
+  ExperimentRecordContract,
   RecordedDataSaveLeaf,
   SaveExperimentResponse,
   SaveExperimentRequest,
@@ -34,7 +37,7 @@ export type MaterialRecord = DbTableRecord<'Material'>
 export type MaterialNameRecord = DbTableRecord<'MaterialName'>
 export type MaterialParameterRecord = DbTableRecord<'MaterialParameter'>
 export type MaterialParameterQualifierRecord = DbTableRecord<'MaterialParameterQualifier'>
-export type ExperimentRecord = DbTableRecord<'Experiment'>
+export type SavedExperimentRecord = DbTableRecord<'Experiment'>
 export type MeasurementRecord = DbTableRecord<'Measurement'>
 export type RecordedDataRecord = DbTableRecord<'RecordedData'>
 export type CalculationRecord = DbTableRecord<'Calculation'>

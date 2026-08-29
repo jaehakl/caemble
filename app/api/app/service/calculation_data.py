@@ -9,7 +9,14 @@ from fastapi import HTTPException, status
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db import Calculation, CalculationData, Experiment, Measurement
+from db import (
+    Calculation,
+    CalculationData,
+    CalculationExperimentRecord,
+    Experiment,
+    Measurement,
+    RecordedData,
+)
 from model_validators import validate_calculation_data_selectors
 from models import (
     CalculationDataBase,
@@ -71,6 +78,7 @@ async def _analysis_rows(
         .join(Measurement, Measurement.id == CalculationData.measurement_id)
         .where(
             Calculation.experiment_id == experiment_id,
+            Calculation.contract_status == "ready",
             Measurement.experiment_id == experiment_id,
             Measurement.recorded_at.is_not(None),
         )
@@ -245,6 +253,27 @@ async def missing_calculation_data(
         CalculationData.calculation_id == Calculation.id,
         CalculationData.measurement_id == Measurement.id,
     )
+    required_records = (
+        select(func.count(CalculationExperimentRecord.experiment_record_id))
+        .where(CalculationExperimentRecord.calculation_id == Calculation.id)
+        .correlate(Calculation)
+        .scalar_subquery()
+    )
+    available_records = (
+        select(func.count(CalculationExperimentRecord.experiment_record_id))
+        .select_from(CalculationExperimentRecord)
+        .join(
+            RecordedData,
+            and_(
+                RecordedData.experiment_record_id
+                == CalculationExperimentRecord.experiment_record_id,
+                RecordedData.measurement_id == Measurement.id,
+            ),
+        )
+        .where(CalculationExperimentRecord.calculation_id == Calculation.id)
+        .correlate(Calculation, Measurement)
+        .scalar_subquery()
+    )
     statement = (
         select(
             Calculation.id.label("calculation_id"),
@@ -254,8 +283,10 @@ async def missing_calculation_data(
         .join(Measurement, Measurement.experiment_id == Calculation.experiment_id)
         .where(
             Calculation.experiment_id == experiment_id,
+            Calculation.contract_status == "ready",
             Measurement.recorded_at.is_not(None),
             ~existing.exists(),
+            available_records == required_records,
         )
         .order_by(Measurement.id, Calculation.id)
     )
@@ -295,10 +326,31 @@ async def save_calculation_data(
         )
     await _require_experiment(db, calculation.experiment_id, user)
     current_hash = hashlib.sha256(calculation.source_code.encode("utf-8")).hexdigest()
-    if current_hash != source_hash:
+    if (
+        current_hash != source_hash
+        or calculation.source_hash != source_hash
+        or calculation.contract_status != "ready"
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Calculation source changed while CalculationData was running.",
+        )
+
+    expected_layout = calculation.output_layout
+    actual_layout = {
+        "dtype": data.dtype,
+        "shape": data.shape,
+        "axes": [axis.model_dump(mode="json") for axis in data.axes],
+    }
+    if expected_layout != actual_layout:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "calculation_output_layout_mismatch",
+                "message": "Calculation output does not match its saved preflight layout.",
+                "expected": expected_layout,
+                "actual": actual_layout,
+            },
         )
 
     measurement = await db.scalar(
@@ -315,6 +367,35 @@ async def save_calculation_data(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Recorded Measurement not found.",
+        )
+
+    required_record_ids = set(
+        (
+            await db.scalars(
+                select(CalculationExperimentRecord.experiment_record_id).where(
+                    CalculationExperimentRecord.calculation_id == calculation.id
+                )
+            )
+        ).all()
+    )
+    available_record_ids = set(
+        (
+            await db.scalars(
+                select(RecordedData.experiment_record_id).where(
+                    RecordedData.measurement_id == measurement.id,
+                    RecordedData.experiment_record_id.in_(required_record_ids),
+                )
+            )
+        ).all()
+    )
+    if available_record_ids != required_record_ids:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "calculation_input_record_missing",
+                "message": "Measurement does not contain every required ExperimentRecord.",
+                "missingExperimentRecordIds": sorted(required_record_ids - available_record_ids),
+            },
         )
 
     existing = await db.scalar(

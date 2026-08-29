@@ -1,8 +1,18 @@
 import assert from 'node:assert/strict'
 import { CALCULATION_SOURCE_SKELETON } from '../src/lib/calculation/declarations'
+import {
+  analyzeCalculationDependencies,
+  calculationExperimentRecordReference,
+  calculationInputBindingName,
+} from '../src/lib/calculation/dependencies'
 import { CALCULATION_MATHJS_NAMES } from '../src/lib/calculation/mathjsManifest'
 import { CALCULATION_MATHJS_RUNTIME } from '../src/lib/calculation/mathRuntime'
 import { CALCULATION_SHADOWED_GLOBAL_NAMES } from '../src/lib/calculation/runtimeGlobals'
+import {
+  buildExperimentRecordCatalogItems,
+  requiredCalculationRecordedDataRules,
+} from '../src/features/cae-workbench/calculation/experimentRecordCatalogModel'
+import { insertCalculationSourceAtSelection } from '../src/features/cae-workbench/calculation/calculationSourceInsertion'
 import { createCalculationInput } from '../src/lib/calculation/input'
 import { calculationIndex } from '../src/lib/calculation/indexGuard'
 import { createCalculationConsole } from '../src/lib/calculation/log'
@@ -91,6 +101,189 @@ assert.equal(ode.y[0], 1)
 assert.doesNotThrow(() => analyzeCalculationSource(CALCULATION_SOURCE_SKELETON))
 assert.doesNotThrow(() => analyzeCalculationSource('export default function run(record) { return record }'))
 assert.doesNotThrow(() => analyzeCalculationSource('export default function run(value) { return value }'))
+
+const experimentRecordNames = ['group.signal', 'signal', 'temperature'] as const
+assert.equal(calculationInputBindingName('export default function calculate(input) { return input.signal }'), 'input')
+assert.equal(
+  calculationExperimentRecordReference(
+    'export default function calculate(measurement) { return measurement.signal }',
+    'group.signal',
+  ),
+  'measurement["group.signal"]',
+)
+assert.equal(
+  calculationExperimentRecordReference(
+    'export default function calculate(record) { return record.signal }',
+    'signal"quoted',
+  ),
+  'record["signal\\"quoted"]',
+)
+assert.throws(() => calculationInputBindingName('export default function calculate({ signal }) { return signal }'))
+const insertionOperations: string[] = []
+const insertionSelection = {
+  startLineNumber: 2,
+  startColumn: 5,
+  endLineNumber: 3,
+  endColumn: 8,
+} as never
+const insertionEditor = {
+  executeEdits(source: string, edits: readonly { text: string }[]) {
+    insertionOperations.push(`edit:${source}:${edits[0]?.text}`)
+    return true
+  },
+  focus() {
+    insertionOperations.push('focus')
+  },
+  getSelection() {
+    return insertionSelection
+  },
+  pushUndoStop() {
+    insertionOperations.push('undo')
+    return true
+  },
+  setPosition(position: { lineNumber: number; column: number }) {
+    insertionOperations.push(`cursor:${position.lineNumber}:${position.column}`)
+  },
+}
+assert.equal(insertCalculationSourceAtSelection(insertionEditor as never, 'record["signal"]'), true)
+assert.equal(insertCalculationSourceAtSelection(insertionEditor as never, 'record["group.signal"]'), true)
+assert.deepEqual(insertionOperations, [
+  'undo',
+  'edit:experiment-record-insert:record["signal"]',
+  'cursor:2:21',
+  'undo',
+  'focus',
+  'undo',
+  'edit:experiment-record-insert:record["group.signal"]',
+  'cursor:2:27',
+  'undo',
+  'focus',
+])
+const catalogRecords = [
+  {
+    id: 1,
+    experiment_id: 4,
+    name: 'group.signal',
+    quantity_kind: null,
+    tensor_order: 0,
+    dtype: 'float64',
+    data_schema: { dtype: 'float64', axes: [{ name: 'sample' }] },
+    contract_hash: 'group-hash',
+  },
+  {
+    id: 2,
+    experiment_id: 4,
+    name: 'signal',
+    quantity_kind: null,
+    tensor_order: 0,
+    dtype: 'float64',
+    data_schema: { dtype: 'float64' },
+    contract_hash: 'signal-hash',
+  },
+  {
+    id: 3,
+    experiment_id: 4,
+    name: 'temperature',
+    quantity_kind: 'Temperature',
+    tensor_order: 0,
+    dtype: 'float64',
+    data_schema: { dtype: 'float64', unit: 'K' },
+    contract_hash: 'temperature-hash',
+  },
+] as const
+const catalogSummaries = [
+  {
+    path: 'signal',
+    dtype: 'float64',
+    shape: [2],
+    actualAxisLengths: [2],
+    axes: [],
+    quantityKind: null,
+    tensorOrder: 0,
+    unit: null,
+    present: true,
+    valid: true,
+    error: null,
+  },
+  {
+    path: 'temperature',
+    dtype: 'float64',
+    shape: null,
+    actualAxisLengths: null,
+    axes: [],
+    quantityKind: 'Temperature',
+    tensorOrder: 0,
+    unit: 'K',
+    present: true,
+    valid: false,
+    error: 'temperature: invalid tensor',
+  },
+] as const
+const catalog = buildExperimentRecordCatalogItems(catalogRecords, ['signal'], true, false, catalogSummaries)
+assert.deepEqual(
+  catalog.map(({ record }) => record.name),
+  ['group.signal', 'signal', 'temperature'],
+)
+assert.deepEqual(
+  catalog.map(({ status }) => status),
+  ['missing', 'ready', 'invalid'],
+)
+assert.deepEqual(
+  catalog.map(({ used }) => used),
+  [false, true, false],
+)
+assert.deepEqual(
+  buildExperimentRecordCatalogItems(catalogRecords, null, false, false, catalogSummaries).map(({ status, used }) => ({
+    status,
+    used,
+  })),
+  [
+    { status: 'unselected', used: null },
+    { status: 'unselected', used: null },
+    { status: 'unselected', used: null },
+  ],
+)
+assert.deepEqual(
+  buildExperimentRecordCatalogItems(catalogRecords, ['signal'], true, true, catalogSummaries).map(
+    ({ status }) => status,
+  ),
+  ['loading', 'loading', 'loading'],
+)
+assert.deepEqual(
+  analyzeCalculationDependencies(
+    "export default function run(record) { return { dtype: 'float64', data: record.signal.data[0] + record['group.signal'].data[0] } }",
+    experimentRecordNames,
+  ),
+  ['group.signal', 'signal'],
+)
+assert.deepEqual(
+  analyzeCalculationDependencies(
+    "export default function run(record) { const { signal, 'group.signal': grouped } = record; return { dtype: 'float64', data: signal.data[0] + grouped.data[0] } }",
+    experimentRecordNames,
+  ),
+  ['group.signal', 'signal'],
+)
+assert.deepEqual(
+  analyzeCalculationDependencies(
+    "export default function run(record) { const input = record; return { dtype: 'float64', data: input.temperature.data } }",
+    experimentRecordNames,
+  ),
+  ['temperature'],
+)
+for (const source of [
+  "export default function run(record) { const key = 'signal'; return { dtype: 'float64', data: record[key].data } }",
+  "export default function run(record) { return { dtype: 'float64', data: Object.values(record)[0].data } }",
+  "export default function run(record) { const copy = { ...record }; return { dtype: 'float64', data: copy.signal.data } }",
+  "export default function run(record) { const consume = value => value; return { dtype: 'float64', data: consume(record) } }",
+  "export default function run(record) { let input = record; input = {}; return { dtype: 'float64', data: input.signal.data } }",
+  "export default function run(record) { return { dtype: 'float64', data: record.unknown.data } }",
+] as const) {
+  assert.throws(
+    () => analyzeCalculationDependencies(source, experimentRecordNames),
+    (error: unknown) =>
+      error instanceof CalculationExecutionError && error.code === 'policy' && Boolean(error.diagnostic),
+  )
+}
 
 function assertPolicyRange(source: string, lineNumber: number, token: string, message: string) {
   let error: unknown
@@ -391,6 +584,7 @@ const recorded = {
 } as RecordedData
 assert.deepEqual(createCalculationInput([rule], recorded).signal.data, [10, 20])
 const secondRule = { ...rule, label: 'signal2' } as RecordedDataRule
+assert.deepEqual(requiredCalculationRecordedDataRules([rule, secondRule], ['signal']), [rule])
 assert.throws(
   () =>
     createCalculationInput([rule, secondRule], {

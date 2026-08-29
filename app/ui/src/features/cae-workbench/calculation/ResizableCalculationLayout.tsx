@@ -271,7 +271,7 @@ export function ResizableCalculationLayout({
       }
     >
       <section
-        aria-label="Measurement, RecordedData와 Calculation 목록"
+        aria-label="Measurement, ExperimentRecord와 RecordedData, Calculation 목록"
         className={cn('grid min-h-0 min-w-0 overflow-hidden', viewerExpanded && 'hidden')}
         hidden={viewerExpanded}
         style={{

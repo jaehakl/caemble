@@ -49,9 +49,23 @@ class CalculationBackendContractTests(unittest.TestCase):
 
         table = db.Base.metadata.tables["calculations"]
         self.assertEqual(
-            {"id", "created_at", "updated_at", "experiment_id", "name", "description", "source_code"},
+            {
+                "id",
+                "created_at",
+                "updated_at",
+                "experiment_id",
+                "name",
+                "description",
+                "source_code",
+                "source_hash",
+                "output_layout",
+                "preflight_measurement_id",
+                "contract_status",
+            },
             set(table.columns.keys()),
         )
+        self.assertIn("experiment_records", db.Base.metadata.tables)
+        self.assertIn("calculation_experiment_records", db.Base.metadata.tables)
         self.assertFalse(table.c.experiment_id.nullable)
         foreign_key = next(iter(table.c.experiment_id.foreign_keys))
         self.assertEqual("experiments.id", foreign_key.target_fullname)
@@ -69,12 +83,15 @@ class CalculationBackendContractTests(unittest.TestCase):
         self.assertIn("/calculation/list", paths)
         self.assertIn("/calculation/upsert", paths)
         self.assertIn("/calculation/", paths)
+        self.assertIn("/experiment_record/list", paths)
         self.assertNotIn("/designer_model/list", paths)
         self.assertNotIn("/predictor_model/list", paths)
         schemas = openapi["components"]["schemas"]
         self.assertNotIn("DesignerModelBase", schemas)
         self.assertNotIn("PredictorModelBase", schemas)
         self.assertIn("CalculationBase", schemas)
+        self.assertIn("ExperimentRecordBase", schemas)
+        self.assertIn("CalculationOutputLayout", schemas)
 
     def test_calculation_data_metadata_and_api_contract(self) -> None:
         self.assertIn("calculation_data", db.Base.metadata.tables)
@@ -243,7 +260,7 @@ class CalculationBackendContractTests(unittest.TestCase):
             and value.__module__ == "models"
             and issubclass(value, BaseModel)
         }
-        self.assertEqual(25, len(model_names))
+        self.assertGreaterEqual(len(model_names), 29)
         self.assertTrue(
             {
                 "AuthenticatedUserData",

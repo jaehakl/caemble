@@ -8,6 +8,7 @@ import re
 import sys
 import unittest
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import asyncpg
@@ -24,12 +25,21 @@ API_DIR = Path(__file__).resolve().parents[1]
 APP_DIR = API_DIR / "app"
 sys.path.insert(0, str(APP_DIR))
 
-from db import Calculation, CalculationData, Experiment, Measurement, make_async_db_url  # noqa: E402
+from db import (  # noqa: E402
+    Calculation,
+    CalculationData,
+    Experiment,
+    ExperimentRecord,
+    Measurement,
+    RecordedData,
+    make_async_db_url,
+)
 from models import (  # noqa: E402
     CalculationBase,
     CalculationDataListRequest,
     CalculationDataOutput,
     CalculationListRequest,
+    CalculationOutputLayout,
     ExperimentSourceBundle,
     GetListRequestBase,
     RoleEnum,
@@ -153,6 +163,7 @@ async def _replace_calculation_with_legacy_tables(database: str) -> None:
     connection = await asyncpg.connect(**_connect_arguments(database))
     try:
         await connection.execute("DROP TABLE IF EXISTS calculation_data")
+        await connection.execute("DROP TABLE IF EXISTS calculation_experiment_records")
         await connection.execute("DROP TABLE calculations")
         for table in ("designer_models", "predictor_models"):
             await connection.execute(
@@ -203,6 +214,105 @@ async def _seed_owners(database: str) -> tuple[str, str, int, int]:
         return owner_id, other_id, experiment_ids[0], experiment_ids[1]
     finally:
         await connection.close()
+
+
+async def _seed_conflicting_legacy_recorded_data(database: str) -> tuple[int, int]:
+    owner_id = "00000000-0000-0000-0000-000000000505"
+    connection = await asyncpg.connect(**_connect_arguments(database))
+    try:
+        await connection.execute("DROP TABLE IF EXISTS calculation_experiment_records")
+        await connection.execute("DROP TABLE recorded_data")
+        await connection.execute("DROP TABLE experiment_records")
+        await connection.execute(
+            """
+            CREATE TABLE recorded_data (
+                id SERIAL PRIMARY KEY,
+                user_id UUID NULL REFERENCES users(id) ON DELETE SET NULL,
+                measurement_id INTEGER NOT NULL REFERENCES measurements(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                quantity_kind TEXT NULL,
+                tensor_order INTEGER NOT NULL,
+                dtype TEXT NOT NULL,
+                data_schema JSONB NULL,
+                data JSONB NULL,
+                data_url TEXT NULL,
+                file_size BIGINT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                CONSTRAINT uq_recorded_data_measurement_id_name UNIQUE (measurement_id, name)
+            )
+            """
+        )
+        await connection.execute("INSERT INTO users (id, is_active) VALUES ($1, true)", owner_id)
+        await connection.execute(
+            "INSERT INTO experiment_namespaces (namespace, user_id) VALUES ('record-conflict', $1)",
+            owner_id,
+        )
+        experiment_id = await connection.fetchval(
+            """
+            INSERT INTO experiments (
+                user_id, namespace, repository_slug, experiment_key,
+                version_major, version_minor, version_patch,
+                name, source_bundle, source_hash
+            ) VALUES ($1, 'record-conflict', 'repo', 'experiment', 0, 1, 0,
+                'record-conflict', '{}'::jsonb, 'record-conflict-hash')
+            RETURNING id
+            """,
+            owner_id,
+        )
+        measurement_ids = []
+        for _ in range(2):
+            measurement_ids.append(
+                await connection.fetchval(
+                    """
+                    INSERT INTO measurements (user_id, experiment_id, vars, material_parameters, recorded_at)
+                    VALUES ($1, $2, '{}'::jsonb, '{}'::jsonb, now()) RETURNING id
+                    """,
+                    owner_id,
+                    experiment_id,
+                )
+            )
+        await connection.executemany(
+            """
+            INSERT INTO recorded_data (
+                user_id, measurement_id, name, quantity_kind, tensor_order, dtype, data_schema, data
+            ) VALUES ($1, $2, 'signal', 'Signal', 0, $3, '{}'::jsonb, '{}'::jsonb)
+            """,
+            [
+                (owner_id, measurement_ids[0], "float32"),
+                (owner_id, measurement_ids[1], "float64"),
+            ],
+        )
+        return measurement_ids[0], measurement_ids[1]
+    finally:
+        await connection.close()
+
+
+def _ready_calculation(
+    experiment_id: int,
+    name: str,
+    source_code: str,
+    preflight_measurement_id: int,
+    *,
+    calculation_id: int | None = None,
+    description: str | None = None,
+    output_layout: dict[str, object] | None = None,
+    record_ids: list[int] | None = None,
+) -> CalculationBase:
+    return CalculationBase(
+        id=calculation_id,
+        experiment_id=experiment_id,
+        name=name,
+        description=description,
+        source_code=source_code,
+        source_hash=hashlib.sha256(source_code.encode("utf-8")).hexdigest(),
+        output_layout=CalculationOutputLayout.model_validate(
+            output_layout or {"dtype": "float64", "shape": [], "axes": []}
+        ),
+        preflight_measurement_id=preflight_measurement_id,
+        contract_status="ready",
+        experiment_record_ids=record_ids or [],
+    )
 
 
 async def _seed_calculation_data(database: str) -> tuple[str, str, int, int, int, int, int, int]:
@@ -283,14 +393,36 @@ async def _verify_crud_contract(database: str) -> None:
     admin = UserData(id=owner_id, roles=[RoleEnum.admin])
     try:
         async with sessions() as session:
+            owner_preflight = Measurement(
+                user_id=owner_id,
+                experiment_id=experiment_id,
+                vars={},
+                material_parameters={},
+                recorded_at=datetime.now(timezone.utc),
+            )
+            other_preflight = Measurement(
+                user_id=other_id,
+                experiment_id=other_experiment_id,
+                vars={},
+                material_parameters={},
+                recorded_at=datetime.now(timezone.utc),
+            )
+            session.add_all([owner_preflight, other_preflight])
+            await session.flush()
+            owner_preflight_id = owner_preflight.id
+            other_preflight_id = other_preflight.id
+            await session.commit()
+
+        async with sessions() as session:
             result = await upsert_calculations(
                 session,
                 [
-                    CalculationBase(
+                    _ready_calculation(
                         experiment_id=experiment_id,
                         name="Magnitude",
                         description="Example",
                         source_code="export default () => ({ shape: [], data: 1, axes: [] })",
+                        preflight_measurement_id=owner_preflight_id,
                     )
                 ],
                 user=owner,
@@ -323,11 +455,12 @@ async def _verify_crud_contract(database: str) -> None:
                 await upsert_calculations(
                     session,
                     [
-                        CalculationBase(
-                            id=calculation_id,
+                        _ready_calculation(
+                            calculation_id=calculation_id,
                             experiment_id=experiment_id,
                             name="Not mine",
                             source_code="export default () => ({ shape: [], data: 0, axes: [] })",
+                            preflight_measurement_id=owner_preflight_id,
                         )
                     ],
                     user=other,
@@ -350,11 +483,12 @@ async def _verify_crud_contract(database: str) -> None:
                 await upsert_calculations(
                     session,
                     [
-                        CalculationBase(
-                            id=calculation_id,
+                        _ready_calculation(
+                            calculation_id=calculation_id,
                             experiment_id=other_experiment_id,
                             name="Magnitude",
                             source_code="export default () => ({ shape: [], data: 1, axes: [] })",
+                            preflight_measurement_id=other_preflight_id,
                         )
                     ],
                     user=admin,
@@ -369,10 +503,11 @@ async def _verify_crud_contract(database: str) -> None:
                 await upsert_calculations(
                     session,
                     [
-                        CalculationBase(
+                        _ready_calculation(
                             experiment_id=experiment_id,
                             name="Magnitude",
                             source_code="export default () => ({ shape: [], data: 2, axes: [] })",
+                            preflight_measurement_id=owner_preflight_id,
                         )
                     ],
                     user=owner,
@@ -405,6 +540,7 @@ async def _verify_crud_contract(database: str) -> None:
                             files={"experiment.tsx": "export default 1"}
                         ),
                         bundleHash="client-value-is-not-trusted",
+                        records=[],
                     ),
                     user=owner,
                 )
@@ -420,13 +556,38 @@ async def _verify_crud_contract(database: str) -> None:
             assert await session.scalar(select(func.count()).select_from(Calculation)) == 0
 
         async with sessions() as session:
+            experiment_record = ExperimentRecord(
+                experiment_id=experiment_id,
+                name="signal",
+                quantity_kind="Signal",
+                tensor_order=0,
+                dtype="float64",
+                data_schema={},
+                contract_hash="record-contract",
+            )
+            session.add(experiment_record)
+            await session.flush()
+            session.add(
+                RecordedData(
+                    user_id=owner_id,
+                    measurement_id=owner_preflight_id,
+                    experiment_record_id=experiment_record.id,
+                    data={"shape": [], "storage": {"kind": "inline", "value": 1}},
+                )
+            )
+            await session.commit()
+            experiment_record_id = experiment_record.id
+
+        async with sessions() as session:
             created = await upsert_calculations(
                 session,
                 [
-                    CalculationBase(
+                    _ready_calculation(
                         experiment_id=experiment_id,
                         name="Cascade",
                         source_code="export default () => ({ shape: [], data: 1, axes: [] })",
+                        preflight_measurement_id=owner_preflight_id,
+                        record_ids=[experiment_record_id],
                     )
                 ],
                 user=owner,
@@ -464,8 +625,18 @@ async def _verify_calculation_data_contract(database: str) -> None:
             created = await upsert_calculations(
                 session,
                 [
-                    CalculationBase(experiment_id=experiment_id, name="Scalar", source_code=source),
-                    CalculationBase(experiment_id=experiment_id, name="Other", source_code=source),
+                    _ready_calculation(experiment_id, "Scalar", source, first_measurement_id),
+                    _ready_calculation(
+                        experiment_id,
+                        "Other",
+                        source,
+                        first_measurement_id,
+                        output_layout={
+                            "dtype": "float64",
+                            "shape": [2],
+                            "axes": [{"name": "x", "ticks": [0, 1]}],
+                        },
+                    ),
                 ],
                 user=owner,
             )
@@ -474,7 +645,7 @@ async def _verify_calculation_data_contract(database: str) -> None:
         async with sessions() as session:
             other_created = await upsert_calculations(
                 session,
-                [CalculationBase(experiment_id=other_experiment_id, name="Hidden", source_code=source)],
+                [_ready_calculation(other_experiment_id, "Hidden", source, other_measurement_id)],
                 user=other,
             )
             other_calculation_id = other_created[0]["id"]
@@ -627,8 +798,31 @@ async def _verify_calculation_data_contract(database: str) -> None:
             extra = await upsert_calculations(
                 session,
                 [
-                    CalculationBase(experiment_id=experiment_id, name="Single", source_code=source),
-                    CalculationBase(experiment_id=experiment_id, name="Empty", source_code=source),
+                    _ready_calculation(
+                        experiment_id,
+                        "Single",
+                        source,
+                        first_measurement_id,
+                        output_layout={
+                            "dtype": "float64",
+                            "shape": [1],
+                            "axes": [{"name": "x", "ticks": [0]}],
+                        },
+                    ),
+                    _ready_calculation(
+                        experiment_id,
+                        "Empty",
+                        source,
+                        first_measurement_id,
+                        output_layout={
+                            "dtype": "float64",
+                            "shape": [0, 2],
+                            "axes": [
+                                {"name": "x", "ticks": []},
+                                {"name": "y", "ticks": [0, 1]},
+                            ],
+                        },
+                    ),
                 ],
                 user=owner,
             )
@@ -720,12 +914,13 @@ async def _verify_calculation_data_contract(database: str) -> None:
             await upsert_calculations(
                 session,
                 [
-                    CalculationBase(
-                        id=first_calculation_id,
-                        experiment_id=experiment_id,
-                        name="Scalar renamed",
+                    _ready_calculation(
+                        experiment_id,
+                        "Scalar renamed",
+                        source,
+                        first_measurement_id,
+                        calculation_id=first_calculation_id,
                         description="metadata only",
-                        source_code=source,
                     )
                 ],
                 user=owner,
@@ -747,11 +942,12 @@ async def _verify_calculation_data_contract(database: str) -> None:
             await upsert_calculations(
                 session,
                 [
-                    CalculationBase(
-                        id=first_calculation_id,
-                        experiment_id=experiment_id,
-                        name="Scalar renamed",
-                        source_code=changed_source,
+                    _ready_calculation(
+                        experiment_id,
+                        "Scalar renamed",
+                        changed_source,
+                        first_measurement_id,
+                        calculation_id=first_calculation_id,
                     )
                 ],
                 user=owner,
@@ -888,6 +1084,7 @@ class CalculationDatabaseIntegrationTests(unittest.TestCase):
     def test_empty_and_existing_head_migrations_and_crud(self) -> None:
         empty_database = f"caemble_calculation_test_{uuid.uuid4().hex}"
         legacy_database = f"caemble_calculation_test_{uuid.uuid4().hex}"
+        conflict_database = f"caemble_calculation_test_{uuid.uuid4().hex}"
         try:
             asyncio.run(_create_database(empty_database))
             _upgrade(empty_database, "head")
@@ -910,12 +1107,27 @@ class CalculationDatabaseIntegrationTests(unittest.TestCase):
             self.assertNotIn("designer_models", legacy_tables)
             self.assertNotIn("predictor_models", legacy_tables)
             _check(legacy_database)
+
+            asyncio.run(_create_database(conflict_database))
+            _upgrade(conflict_database, "000000000003")
+            first_measurement_id, second_measurement_id = asyncio.run(
+                _seed_conflicting_legacy_recorded_data(conflict_database)
+            )
+            with self.assertRaises(Exception) as migration_error:
+                _upgrade(conflict_database, "head")
+            message = str(migration_error.exception)
+            self.assertIn("ExperimentRecord backfill found conflicting metadata", message)
+            self.assertIn(str(first_measurement_id), message)
+            self.assertIn(str(second_measurement_id), message)
+            self.assertIn("dtype", message)
         finally:
             settings.db_url = ORIGINAL_DB_URL
             asyncio.run(_drop_database(empty_database))
             asyncio.run(_drop_database(legacy_database))
+            asyncio.run(_drop_database(conflict_database))
         self.assertNotIn(empty_database, asyncio.run(_calculation_test_databases()))
         self.assertNotIn(legacy_database, asyncio.run(_calculation_test_databases()))
+        self.assertNotIn(conflict_database, asyncio.run(_calculation_test_databases()))
 
 
 if __name__ == "__main__":

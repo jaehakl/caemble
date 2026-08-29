@@ -30,6 +30,7 @@ import type {
 } from '../types'
 import { validateVarsChanges } from '../calculation/varsTensor'
 import { useCalculationDataActions } from '../calculation/useCalculationDataActions'
+import { experimentRecordContracts } from '../measurement/recordedData'
 
 function definitionStatus(
   document: ExperimentSourceDocument | null,
@@ -535,6 +536,7 @@ export function useCaeWorkbenchState(
           mode,
           savedSourceBundle: experimentId ? baselineExperimentBundle : null,
           selectedId: experimentId,
+          records: experimentRecordContracts(experimentDocument.simulationProgram?.recordedData ?? Object.freeze({})),
           values,
         })
         const fetched = await fetchExperiment(result.id).catch(() => null)
@@ -579,6 +581,7 @@ export function useCaeWorkbenchState(
       experimentId,
       experimentRecord,
       experimentSourceValidated,
+      experimentDocument.simulationProgram?.recordedData,
       invalidate,
       user,
     ],

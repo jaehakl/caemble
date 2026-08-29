@@ -16,10 +16,14 @@ const reference = {
   contract: {
     export: 'One synchronous default-export function with one identifier parameter.',
     import: "Only named imports from 'mathjs' are allowed.",
-    input: 'A read-only dotted-path map of RecordedData tensor leaves.',
+    input: 'A read-only dotted-path map of ExperimentRecord-backed RecordedData tensor leaves.',
+    dependencies:
+      'Use only fixed record.member, record[\'dotted.path\'], static object destructuring, or traceable const aliases. Dynamic keys, enumeration, spread, reassignment, and passing or returning the whole record are rejected when saving.',
     output: 'Return { dtype, data, axes? }; shape is inferred from rank-0/1/2 finite real data.',
     axes: 'Axes are optional. When supplied, every axis and tick must match the inferred shape and units use UCUM.',
     validation: 'Complex final values, NaN, Infinity, ragged arrays, rank above 2, and explicit shape are rejected.',
+    persistence:
+      'Saving a new or source-changed Calculation requires a successful preflight; its source hash, ExperimentRecord dependencies, and exact dtype/shape/axes output layout become the stored contract.',
     indexing:
       'Dynamic bracket indexes are allowed only when they resolve to non-negative safe integers. Dynamic string properties are rejected.',
     console:

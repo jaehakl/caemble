@@ -1,3 +1,4 @@
+import hashlib
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -5,8 +6,16 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db import Calculation, CalculationData, Experiment
-from models import CalculationBase, CalculationListRequest, UserData
+from db import (
+    Calculation,
+    CalculationData,
+    CalculationExperimentRecord,
+    Experiment,
+    ExperimentRecord,
+    Measurement,
+    RecordedData,
+)
+from models import CalculationBase, CalculationListRequest, CalculationOutputLayout, UserData
 from utils.crud import CrudSpec, delete_items, get_list_response
 from utils.crud.common import is_admin_user
 
@@ -15,7 +24,26 @@ CALCULATION_CRUD_SPEC = CrudSpec(
     model=Calculation,
     schema=CalculationBase,
     scope_path=("experiment",),
+    relation_aliases={"experiment_record_ids": "experiment_records"},
 )
+
+
+def _layout_payload(layout: CalculationOutputLayout | dict[str, Any]) -> dict[str, Any]:
+    return (
+        layout.model_dump(mode="json")
+        if isinstance(layout, CalculationOutputLayout)
+        else CalculationOutputLayout.model_validate(layout).model_dump(mode="json")
+    )
+
+
+def _data_layout(data: dict[str, Any]) -> dict[str, Any]:
+    return _layout_payload(
+        {
+            "dtype": data.get("dtype"),
+            "shape": data.get("shape"),
+            "axes": data.get("axes"),
+        }
+    )
 
 
 async def list_calculations(
@@ -65,7 +93,28 @@ async def upsert_calculations(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Calculation name is required.",
             )
-        normalized_items.append(item.model_copy(update={"name": name}))
+        source_hash = hashlib.sha256(item.source_code.encode("utf-8")).hexdigest()
+        if item.contract_status != "ready":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Calculation must have a successful current preflight before saving.",
+            )
+        if item.source_hash != source_hash:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Calculation source changed after preflight.",
+            )
+        if item.output_layout is None or item.preflight_measurement_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Calculation output layout and preflight Measurement are required.",
+            )
+        if len(item.experiment_record_ids) != len(set(item.experiment_record_ids)):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Calculation ExperimentRecord IDs must not contain duplicates.",
+            )
+        normalized_items.append(item.model_copy(update={"name": name, "source_hash": source_hash}))
 
     experiment_ids = sorted({item.experiment_id for item in normalized_items})
     experiments = (
@@ -87,6 +136,59 @@ async def upsert_calculations(
                 detail="experiment_id not found.",
             )
 
+    requested_record_ids = sorted(
+        {record_id for item in normalized_items for record_id in item.experiment_record_ids}
+    )
+    experiment_records = list(
+        (
+            await db.scalars(
+                select(ExperimentRecord)
+                .where(ExperimentRecord.id.in_(requested_record_ids))
+                .order_by(ExperimentRecord.id)
+            )
+        ).all()
+    )
+    records_by_id = {record.id: record for record in experiment_records}
+    for item in normalized_items:
+        invalid = [
+            record_id
+            for record_id in item.experiment_record_ids
+            if record_id not in records_by_id
+            or records_by_id[record_id].experiment_id != item.experiment_id
+        ]
+        if invalid:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"ExperimentRecord does not belong to the Calculation Experiment: {invalid}",
+            )
+        measurement = await db.get(Measurement, item.preflight_measurement_id)
+        if (
+            measurement is None
+            or measurement.experiment_id != item.experiment_id
+            or measurement.recorded_at is None
+            or (not is_admin_user(user) and measurement.user_id != user.id)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Preflight Measurement is unavailable or belongs to another Experiment.",
+            )
+        available_record_ids = set(
+            (
+                await db.scalars(
+                    select(RecordedData.experiment_record_id).where(
+                        RecordedData.measurement_id == measurement.id,
+                        RecordedData.experiment_record_id.in_(item.experiment_record_ids),
+                    )
+                )
+            ).all()
+        )
+        if available_record_ids != set(item.experiment_record_ids):
+            missing = sorted(set(item.experiment_record_ids) - available_record_ids)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Preflight Measurement is missing required ExperimentRecords: {missing}",
+            )
+
     supplied_ids = sorted({item.id for item in normalized_items if item.id is not None})
     existing_rows = (
         await db.scalars(
@@ -105,6 +207,7 @@ async def upsert_calculations(
         )
 
     pending: list[Calculation] = []
+    dependencies: list[tuple[Calculation, CalculationBase]] = []
     for item in normalized_items:
         row = existing_by_id.get(item.id)
         if row is None:
@@ -125,16 +228,54 @@ async def upsert_calculations(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Calculation cannot be moved to another Experiment.",
                 )
-            if row.source_code != item.source_code:
+            source_changed = row.source_code != item.source_code
+            if source_changed:
                 await db.execute(
                     delete(CalculationData).where(CalculationData.calculation_id == row.id)
                 )
+            elif row.output_layout != _layout_payload(item.output_layout):
+                existing_outputs = list(
+                    (
+                        await db.scalars(
+                            select(CalculationData.data).where(CalculationData.calculation_id == row.id)
+                        )
+                    ).all()
+                )
+                incompatible = [
+                    index for index, output in enumerate(existing_outputs) if _data_layout(output) != _layout_payload(item.output_layout)
+                ]
+                if incompatible:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Existing CalculationData does not match the new preflight output layout.",
+                    )
         row.name = item.name
         row.description = item.description
         row.source_code = item.source_code
+        row.source_hash = item.source_hash
+        row.output_layout = _layout_payload(item.output_layout)
+        row.preflight_measurement_id = item.preflight_measurement_id
+        row.contract_status = "ready"
         pending.append(row)
+        dependencies.append((row, item))
 
     try:
+        await db.flush()
+        for row, item in dependencies:
+            await db.execute(
+                delete(CalculationExperimentRecord).where(
+                    CalculationExperimentRecord.calculation_id == row.id
+                )
+            )
+            db.add_all(
+                [
+                    CalculationExperimentRecord(
+                        calculation_id=row.id,
+                        experiment_record_id=record_id,
+                    )
+                    for record_id in sorted(item.experiment_record_ids)
+                ]
+            )
         await db.flush()
         await db.commit()
     except IntegrityError as error:

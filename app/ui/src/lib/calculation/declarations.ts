@@ -85,7 +85,7 @@ export const CALCULATION_MATHJS_DECLARATION = CALCULATION_MONACO_DECLARATION
 export const CALCULATION_SOURCE_SKELETON = `import { mean, range, reshape, zeros } from 'mathjs'
 
 export default function calculate(record) {
-  const source = Object.values(record)[0]
+  const source = record['signal']
 
   // 1. Decide which two dimensions to display.
   const shape = source?.shape ?? []
@@ -122,3 +122,11 @@ export default function calculate(record) {
   return { dtype: 'float64', data, axes }
 }
 `
+
+export function calculationSourceSkeleton(recordName?: string) {
+  if (!recordName) return CALCULATION_SOURCE_SKELETON
+  return CALCULATION_SOURCE_SKELETON.replace(
+    "record['signal']",
+    `record[${JSON.stringify(recordName)}]`,
+  )
+}

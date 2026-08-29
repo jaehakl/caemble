@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models import (
     GetListRequestBase,
     MeasurementCreateRequest,
+    MeasurementRecordedDataResponse,
     MeasurementRecordRequest,
     UserData,
 )
@@ -44,6 +45,11 @@ async def create_measurement(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(error),
         ) from error
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(error),
+        ) from error
     except IntegrityError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -70,6 +76,11 @@ async def record_measurement(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(error),
         ) from error
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(error),
+        ) from error
     except IntegrityError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -77,7 +88,7 @@ async def record_measurement(
         ) from error
 
 
-@router.get("/{measurement_id}/recorded-data", response_model=MeasurementRecordRequest)
+@router.get("/{measurement_id}/recorded-data", response_model=MeasurementRecordedDataResponse)
 async def get_measurement_recorded_data(
     measurement_id: int,
     db: AsyncSession = Depends(get_db),

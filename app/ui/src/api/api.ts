@@ -91,6 +91,14 @@ type ExperimentMetadata = Readonly<{
   description: string | null
   sourceBundle: ExperimentSourceBundle
   bundleHash: string
+  records: readonly ExperimentRecordContract[]
+}>
+export type ExperimentRecordContract = Readonly<{
+  name: string
+  quantity_kind: string | null
+  tensor_order: number
+  dtype: string
+  data_schema: DataSchema | null
 }>
 export type SaveExperimentRequest = ExperimentMetadata &
   (
@@ -127,6 +135,7 @@ type PersistedDataTensor = Readonly<{
 type DataSchema = Readonly<Record<string, unknown>>
 
 export type RecordedDataSaveLeaf = Readonly<{
+  experiment_record_id: number
   quantity_kind: string | null
   tensor_order: number
   dtype: string
@@ -142,7 +151,9 @@ export type MeasurementCreateRequest = Readonly<{
   vars: Readonly<Record<string, unknown>>
   material_parameters: MeasurementMaterialParameters
 }>
-export type MeasurementRecordRequest = Readonly<{ recorded_data: MeasurementRecordedData }>
+export type MeasurementRecordRequest = Readonly<{
+  recorded_data: readonly Readonly<{ experiment_record_id: number; data: PersistedDataTensor }>[]
+}>
 export type GetListResponse<TItem> = { items: TItem[]; total: number }
 
 type UserRecord = Readonly<{
@@ -196,7 +207,7 @@ type MaterialParameterQualifierRecord = Readonly<{
   name: string
   value: number
 }>
-type ExperimentRecord = Readonly<{
+type SavedExperimentRecord = Readonly<{
   id: number
   created_at?: string | null
   updated_at?: string | null
@@ -219,6 +230,18 @@ type ExperimentRecord = Readonly<{
   sourceLocked?: boolean
   derivedCounts?: ExperimentDerivedCounts
 }>
+export type ExperimentRecordedDataRecord = Readonly<{
+  id: number
+  created_at?: string | null
+  updated_at?: string | null
+  experiment_id: number
+  name: string
+  quantity_kind: string | null
+  tensor_order: number
+  dtype: string
+  data_schema?: DataSchema | null
+  contract_hash: string
+}>
 type MeasurementRecord = Readonly<{
   id?: number
   created_at?: string | null
@@ -236,6 +259,7 @@ type RecordedDataRecord = Readonly<{
   updated_at?: string | null
   user_id?: string | null
   measurement_id: number
+  experiment_record_id: number
   name: string
   quantity_kind: string | null
   tensor_order: number
@@ -253,6 +277,11 @@ type CalculationRecord = Readonly<{
   name: string
   description?: string | null
   source_code: string
+  source_hash?: string | null
+  output_layout?: CalculationOutputLayout | null
+  preflight_measurement_id?: number | null
+  contract_status: 'ready' | 'needs_preflight'
+  experiment_record_ids: readonly number[]
 }>
 
 export type CalculationDataOutput = Readonly<{
@@ -261,6 +290,7 @@ export type CalculationDataOutput = Readonly<{
   data: number | readonly number[]
   axes: readonly Readonly<{ name: string; ticks: readonly number[]; unit?: string }>[]
 }>
+export type CalculationOutputLayout = Omit<CalculationDataOutput, 'data'>
 export type CalculationDataTarget = Readonly<{ calculation_id: number; measurement_id: number }>
 export type CalculationDataMissingRequest = Readonly<{
   experiment_id: number
@@ -400,9 +430,9 @@ export const dbTables = {
     deleteRows: (ids: readonly number[]) => request<null>('delete', '/material_parameter_qualifier/', ids),
   },
   Experiment: {
-    recordType: undefined as unknown as ExperimentRecord,
+    recordType: undefined as unknown as SavedExperimentRecord,
     listRows: (payload: GetListRequest = getListRequest()) =>
-      request<GetListResponse<ExperimentRecord>>('post', '/experiment/list', payload),
+      request<GetListResponse<SavedExperimentRecord>>('post', '/experiment/list', payload),
     save: (payload: SaveExperimentRequest) => request<SaveExperimentResponse>('post', '/experiment/save', payload),
     deleteRows: (ids: readonly number[]) => request<null>('delete', '/experiment/', ids),
     usage: (experimentIds: readonly number[]) =>
@@ -412,6 +442,11 @@ export const dbTables = {
         { experimentIds },
       ),
   },
+  ExperimentRecord: {
+    recordType: undefined as unknown as ExperimentRecordedDataRecord,
+    listRows: (payload: GetListRequest & Readonly<{ experiment_id: number }>) =>
+      request<GetListResponse<ExperimentRecordedDataRecord>>('post', '/experiment_record/list', payload),
+  },
   Measurement: {
     recordType: undefined as unknown as MeasurementRecord,
     listRows: (payload: GetListRequest = getListRequest()) =>
@@ -420,12 +455,16 @@ export const dbTables = {
     record: (id: number, payload: MeasurementRecordRequest) =>
       request<{ id: number }>('post', `/measurement/${id}/record`, payload),
     readRecordedData: async (id: number) =>
-      (await request<MeasurementRecordRequest>('get', `/measurement/${id}/recorded-data`)).recorded_data,
+      (await request<Readonly<{ recorded_data: MeasurementRecordedData }>>('get', `/measurement/${id}/recorded-data`))
+        .recorded_data,
     deleteRows: (ids: readonly number[]) => request<null>('delete', '/measurement/', ids),
   },
   RecordedData: {
     recordType: undefined as unknown as RecordedDataRecord,
-    listRows: (payload: GetListRequest = getListRequest()) =>
+    listRows: (
+      payload: GetListRequest &
+        Readonly<{ experiment_id?: number; experiment_record_ids?: readonly number[] }> = getListRequest(),
+    ) =>
       request<GetListResponse<RecordedDataRecord>>('post', '/recorded_data/list', payload),
   },
   Calculation: {

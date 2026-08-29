@@ -1,4 +1,11 @@
-import type { PredictionCohortOptions, PredictionResult, PredictionTensorLayout, PredictionTensorSample } from './knn'
+import type {
+  PredictionCohortDiagnosticGroup,
+  PredictionCohortExclusionReason,
+  PredictionCohortOptions,
+  PredictionResult,
+  PredictionTensorLayout,
+  PredictionTensorSample,
+} from './knn'
 
 type PredictionWorkerIdentity = Readonly<{
   requestId: string
@@ -28,7 +35,12 @@ export type PredictionWorkerModelProfile = Readonly<{
   persistentBytes: number
   workingSetBytes: number
   includedMeasurementIds: readonly number[]
-  excluded: Readonly<Record<string, number>>
+  warningMeasurementIds: readonly number[]
+  dominantShapeSignature: string
+  baselineMeasurementId: number
+  diagnostics: readonly PredictionCohortDiagnosticGroup[]
+  omittedDiagnosticGroups: number
+  excluded: Readonly<Record<PredictionCohortExclusionReason, number>>
 }>
 
 export type PredictionWorkerResponse =
