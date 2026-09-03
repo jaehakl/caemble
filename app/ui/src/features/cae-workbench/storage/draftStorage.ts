@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { savedExperimentRecordSchema } from '@/contracts/api/experimentValidators'
 import type { PrivateQueryScope } from '@/features/auth/queryKeys'
-import type { WorkbenchDraft } from '../types'
+import type { WorkbenchDraft, WorkbenchSelectionContext } from '../types'
 import {
   analysisTabIds,
   bottomDockModes,
@@ -13,11 +13,8 @@ import {
 } from '../types'
 
 export const WORKBENCH_DRAFT_STORAGE_KEY = 'caemble:workbench-draft'
-const WORKBENCH_DRAFT_SCHEMA_VERSION = 1 as const
-const RETIRED_DRAFT_KEYS = [
-  'caemble:cae-workbench-draft',
-  'caemble:cae-workbench-draft:v1',
-] as const
+export const WORKBENCH_DRAFT_SCHEMA_VERSION = 2 as const
+const RETIRED_DRAFT_KEYS = ['caemble:cae-workbench-draft', 'caemble:cae-workbench-draft:v1'] as const
 
 const sourceBundleSchema = z.object({ files: z.record(z.string(), z.string()) }).passthrough()
 const ratioSchema = z.number().finite().min(0).max(1)
@@ -33,7 +30,7 @@ const frozenMaterialParametersSchema = z
       .optional(),
   })
   .passthrough()
-const storedDraftSchema = z
+const storedDraftBaseSchema = z
   .object({
     savedAt: z.number().finite(),
     experiment: z.object({
@@ -53,7 +50,6 @@ const storedDraftSchema = z
         .passthrough()
         .nullable(),
     }),
-    selection: z.object({ measurementId: z.number().int().positive().nullable() }),
     layout: z
       .object({
         activeSection: z.enum(workbenchSectionIds).catch(defaultWorkbenchLayoutState.activeSection),
@@ -85,13 +81,38 @@ const storedDraftSchema = z
   })
   .passthrough()
 
-const storedDraftEnvelopeSchema = z
-  .object({
-    version: z.literal(WORKBENCH_DRAFT_SCHEMA_VERSION),
-    ownerScope: z.string().min(1),
-    draft: storedDraftSchema,
-  })
+const storedDraftV1Schema = storedDraftBaseSchema.extend({
+  selection: z.object({ measurementId: z.number().int().positive().nullable() }),
+})
+const storedDraftV2Schema = storedDraftBaseSchema.extend({
+  selection: z.object({
+    experimentId: z.number().int().positive().nullable(),
+    measurementId: z.number().int().positive().nullable(),
+    calculationId: z.number().int().positive().nullable(),
+  }),
+})
+const storedDraftEnvelopeV1Schema = z
+  .object({ version: z.literal(1), ownerScope: z.string().min(1), draft: storedDraftV1Schema })
   .passthrough()
+const storedDraftEnvelopeV2Schema = z
+  .object({ version: z.literal(WORKBENCH_DRAFT_SCHEMA_VERSION), ownerScope: z.string().min(1), draft: storedDraftV2Schema })
+  .passthrough()
+
+function normalizeStoredDraft(
+  draft: z.infer<typeof storedDraftV1Schema> | z.infer<typeof storedDraftV2Schema>,
+): WorkbenchDraft {
+  const experimentId = draft.experiment.record?.id ?? null
+  const v2Selection = 'experimentId' in draft.selection ? draft.selection : null
+  const selection: WorkbenchSelectionContext =
+    experimentId === null
+      ? { experimentId: null, measurementId: null, calculationId: null }
+      : v2Selection === null
+        ? { experimentId, measurementId: draft.selection.measurementId, calculationId: null }
+        : v2Selection.experimentId === experimentId
+          ? { ...v2Selection, experimentId }
+          : { experimentId, measurementId: null, calculationId: null }
+  return { ...draft, selection } as WorkbenchDraft
+}
 
 export function workbenchDraftStorageKey(ownerScope: PrivateQueryScope) {
   return `${WORKBENCH_DRAFT_STORAGE_KEY}:${encodeURIComponent(ownerScope)}`
@@ -108,7 +129,9 @@ export async function loadWorkbenchDraft(
     RETIRED_DRAFT_KEYS.forEach((key) => sessionStorage.removeItem(key))
     if (legacySerialized === null) return null
     try {
-      const draft = storedDraftSchema.parse(JSON.parse(legacySerialized)) as WorkbenchDraft
+      const parsed = JSON.parse(legacySerialized)
+      const v2Result = storedDraftV2Schema.safeParse(parsed)
+      const draft = normalizeStoredDraft(v2Result.success ? v2Result.data : storedDraftV1Schema.parse(parsed))
       if (!confirmUnownedLegacyMigration?.()) return null
       await saveWorkbenchDraft(ownerScope, draft)
       sessionStorage.removeItem(WORKBENCH_DRAFT_STORAGE_KEY)
@@ -120,12 +143,23 @@ export async function loadWorkbenchDraft(
   }
   RETIRED_DRAFT_KEYS.forEach((key) => sessionStorage.removeItem(key))
   try {
-    const envelope = storedDraftEnvelopeSchema.parse(JSON.parse(serialized))
-    if (envelope.ownerScope !== ownerScope) {
+    const parsed = JSON.parse(serialized)
+    const v2Result = storedDraftEnvelopeV2Schema.safeParse(parsed)
+    if (v2Result.success) {
+      if (v2Result.data.ownerScope !== ownerScope) {
+        sessionStorage.removeItem(storageKey)
+        return null
+      }
+      return normalizeStoredDraft(v2Result.data.draft)
+    }
+    const v1Envelope = storedDraftEnvelopeV1Schema.parse(parsed)
+    if (v1Envelope.ownerScope !== ownerScope) {
       sessionStorage.removeItem(storageKey)
       return null
     }
-    return envelope.draft as WorkbenchDraft
+    const draft = normalizeStoredDraft(v1Envelope.draft)
+    await saveWorkbenchDraft(ownerScope, draft)
+    return draft
   } catch {
     sessionStorage.removeItem(storageKey)
     return null
@@ -133,9 +167,10 @@ export async function loadWorkbenchDraft(
 }
 
 export async function saveWorkbenchDraft(ownerScope: PrivateQueryScope, draft: WorkbenchDraft) {
+  const normalizedDraft = normalizeStoredDraft(storedDraftV2Schema.parse(draft))
   sessionStorage.setItem(
     workbenchDraftStorageKey(ownerScope),
-    JSON.stringify({ version: WORKBENCH_DRAFT_SCHEMA_VERSION, ownerScope, draft }),
+    JSON.stringify({ version: WORKBENCH_DRAFT_SCHEMA_VERSION, ownerScope, draft: normalizedDraft }),
   )
 }
 

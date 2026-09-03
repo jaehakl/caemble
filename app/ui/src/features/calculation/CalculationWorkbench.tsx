@@ -17,7 +17,12 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { usePrivateQueryScope } from '@/features/auth/use-auth'
 import { MeasurementExplorer } from '@/features/measurement'
-import type { BottomDockMode, SavedMeasurement, SavedRecordedData } from '@/features/cae-workbench/types'
+import type {
+  BottomDockMode,
+  SavedMeasurement,
+  SavedRecordedData,
+  WorkbenchCalculationSelection,
+} from '@/features/cae-workbench/types'
 import { CadDiffEditor } from '@/features/viewer/editor/CadDiffEditor'
 import {
   analyzeCalculationDependencies,
@@ -112,7 +117,7 @@ export type CalculationWorkbenchProps = Readonly<{
   menubar: ReactNode
   onActivity: RuntimeActivityCallback
   onAgentBridgeChange: (bridge: CalculationAgentBridge | null) => void
-  onCalculationIdChange: (calculationId: number | null) => void
+  onCalculationSelectionChange: (selection: WorkbenchCalculationSelection) => boolean
   onBottomHeightRatioChange: (ratio: number) => void
   onCandidateVariableChange: (key: string, value: Tensor) => void
   onColumnRatiosChange: (ratios: readonly [number, number, number, number]) => void
@@ -162,7 +167,7 @@ export function CalculationWorkbench({
   menubar,
   onActivity,
   onAgentBridgeChange,
-  onCalculationIdChange,
+  onCalculationSelectionChange,
   onBottomHeightRatioChange,
   onCandidateVariableChange,
   onColumnRatiosChange,
@@ -188,6 +193,10 @@ export function CalculationWorkbench({
   viewer,
   viewerExpanded,
 }: CalculationWorkbenchProps) {
+  const changeCalculationSelection = useCallback(
+    (calculationId: number | null) => onCalculationSelectionChange({ experimentId, calculationId }),
+    [experimentId, onCalculationSelectionChange],
+  )
   const queryClient = useQueryClient()
   const queryScope = usePrivateQueryScope()
   const [editing, dispatchEditing] = useReducer(calculationEditingReducer, initialCalculationEditingState)
@@ -624,10 +633,13 @@ export function CalculationWorkbench({
     ) {
       return
     }
+    if (dirty || agentChange !== null) {
+      dispatchEditing({ type: 'serverSnapshotMissing', recordName: experimentRecords[0]?.name })
+      return
+    }
+    if (!changeCalculationSelection(null)) return
     dispatchEditing({ type: 'serverSnapshotMissing', recordName: experimentRecords[0]?.name })
-    if (dirty || agentChange !== null) return
     selectedCalculationRef.current = null
-    onCalculationIdChange(null)
     toast.error('선택한 Calculation이 없거나 현재 Experiment에 속하지 않습니다.')
   }, [
     calculationsQuery.isFetching,
@@ -636,7 +648,7 @@ export function CalculationWorkbench({
     contextPending,
     dirty,
     experimentRecords,
-    onCalculationIdChange,
+    changeCalculationSelection,
     rows,
     selectedCalculationId,
   ])
@@ -645,13 +657,13 @@ export function CalculationWorkbench({
     (next: CalculationDraft, nextId: number | null, serverSnapshot: SavedCalculation | null = null) => {
       if (saving || deleting) return false
       if (dirty && !window.confirm('저장하지 않은 Calculation 편집을 버리고 선택을 바꿀까요?')) return false
+      if (!changeCalculationSelection(nextId)) return false
       setSaveDialogOpen(false)
       invalidatePreview('Calculation source를 바꾸는 중…')
       dispatchEditing({ type: 'draftReplaced', draft: next, serverSnapshot })
-      onCalculationIdChange(nextId)
       return true
     },
-    [deleting, dirty, invalidatePreview, onCalculationIdChange, saving],
+    [changeCalculationSelection, deleting, dirty, invalidatePreview, saving],
   )
 
   useEffect(() => {
@@ -784,9 +796,10 @@ export function CalculationWorkbench({
           return false
         }
         const next = { ...draft, description, id: result.id, name }
-        dispatchEditing({ type: 'saveCommitted', draft: next })
-        selectedCalculationRef.current = result.id
-        onCalculationIdChange(result.id)
+        if (changeCalculationSelection(result.id)) {
+          dispatchEditing({ type: 'saveCommitted', draft: next })
+          selectedCalculationRef.current = result.id
+        }
         await invalidateCalculationMutation(queryClient, queryScope, experimentId)
         await onUsageChanged().catch((cause: unknown) => {
           toast.error(
@@ -814,7 +827,7 @@ export function CalculationWorkbench({
       experimentId,
       experimentRecords,
       measurementId,
-      onCalculationIdChange,
+      changeCalculationSelection,
       onUsageChanged,
       persistable,
       queryClient,
@@ -891,10 +904,11 @@ export function CalculationWorkbench({
         await invalidateCalculationMutation(queryClient, queryScope, experimentId)
         return
       }
-      dispatchEditing({ type: 'deleted', recordName: experimentRecords[0]?.name })
-      setSaveDialogOpen(false)
-      selectedCalculationRef.current = null
-      onCalculationIdChange(null)
+      if (changeCalculationSelection(null)) {
+        dispatchEditing({ type: 'deleted', recordName: experimentRecords[0]?.name })
+        setSaveDialogOpen(false)
+        selectedCalculationRef.current = null
+      }
       await invalidateCalculationMutation(queryClient, queryScope, experimentId)
       await onUsageChanged().catch((cause: unknown) => {
         toast.error(

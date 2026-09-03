@@ -202,7 +202,9 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       'Validation',
     ],
     content: [
-      '파라미터 없이 Workbench를 열면 **Prediction**에서 시작합니다. 왼쪽 위 Experiment 선택기는 로그인 사용자의 **내 Experiment**를 먼저, 큐레이션된 **Demo**를 다음에 표시합니다. 비로그인 사용자는 대표 Demo가 자동으로 열리며 `?experiment=…&section=prediction` URL을 그대로 공유할 수 있습니다.',
+      'Workbench를 처음 열면 **Prediction**에서 시작합니다. 왼쪽 위 Experiment 선택기는 로그인 사용자의 **내 Experiment**를 먼저, 큐레이션된 **Demo**를 다음에 표시하며 비로그인 사용자는 대표 Demo가 자동으로 열립니다.',
+      '',
+      '이후 새로고침에서는 브라우저 탭에 저장된 마지막 탭과 Experiment·Measurement·Calculation 선택을 다시 검증한 뒤, 여전히 현재 Experiment에 속하고 접근 가능한 선택만 복원합니다. 공유 URL은 `?experiment=ID`만 지원합니다. 탭과 Measurement·Calculation 선택은 URL에 저장하지 않으며, 기존 `section`, `measurement`, `calculation`, `structure`, `sample`, `setup` 파라미터는 적용하지 않고 자동으로 제거합니다.',
       '',
       '상단 **Prediction** 메뉴는 현재 Experiment의 저장된 Recorded Measurement를 학습 데이터로 사용합니다. 왼쪽 **Vars**와 오른쪽 **Calculation Data** 사이의 중앙 3D Viewer 및 하단 AI Agent/Console은 다른 Workbench와 같은 상태로 유지됩니다. Demo의 Vars와 Target 조작은 로컬 Candidate에만 적용됩니다. Demo 원본과 저장 데이터는 guest와 일반 사용자에게 읽기 전용이며, admin에게만 관리 작업이 열립니다.',
       '',

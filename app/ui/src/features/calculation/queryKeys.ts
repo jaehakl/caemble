@@ -8,6 +8,8 @@ export const calculationQueryKeys = {
     [...calculationQueryKeys.all(scope), 'list', experimentId] as const,
   list: (scope: PrivateQueryScope, experimentId: number | null, request: GetListRequest) =>
     [...calculationQueryKeys.lists(scope, experimentId), request] as const,
+  detail: (scope: PrivateQueryScope, experimentId: number, calculationId: number) =>
+    [...calculationQueryKeys.all(scope), 'detail', experimentId, calculationId] as const,
 }
 
 export const calculationDataQueryKeys = {

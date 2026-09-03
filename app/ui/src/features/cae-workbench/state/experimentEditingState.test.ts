@@ -152,7 +152,7 @@ describe('experimentEditingReducer', () => {
         description: 'restored locally',
       },
       candidate: { vars: { width: 8 }, materialParameters },
-      selection: { measurementId: 12 },
+      selection: { experimentId: 9, measurementId: 12, calculationId: 7 },
       layout: defaultWorkbenchLayoutState,
     }
 

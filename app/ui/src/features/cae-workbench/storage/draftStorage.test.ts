@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { defaultWorkbenchLayoutState, type WorkbenchDraft } from '../types'
-import { clearWorkbenchDraft, loadWorkbenchDraft, saveWorkbenchDraft, workbenchDraftStorageKey } from './draftStorage'
+import {
+  clearWorkbenchDraft,
+  loadWorkbenchDraft,
+  saveWorkbenchDraft,
+  WORKBENCH_DRAFT_SCHEMA_VERSION,
+  workbenchDraftStorageKey,
+} from './draftStorage'
 
 const draft: WorkbenchDraft = {
   savedAt: 123,
@@ -15,7 +21,7 @@ const draft: WorkbenchDraft = {
     description: '',
   },
   candidate: { vars: null, materialParameters: null },
-  selection: { measurementId: null },
+  selection: { experimentId: null, measurementId: null, calculationId: null },
   layout: defaultWorkbenchLayoutState,
 }
 
@@ -59,6 +65,7 @@ describe('Workbench draft storage', () => {
           source_hash: 'hash',
         },
       },
+      selection: { experimentId: 1, measurementId: null, calculationId: null },
     } satisfies WorkbenchDraft
     sessionStorage.setItem('caemble:workbench-draft', JSON.stringify(accountDraft))
 
@@ -76,6 +83,92 @@ describe('Workbench draft storage', () => {
     await expect(loadWorkbenchDraft('public', () => false)).resolves.toBeNull()
     expect(sessionStorage.getItem('caemble:workbench-draft')).not.toBeNull()
     expect(sessionStorage.getItem(workbenchDraftStorageKey('public'))).toBeNull()
+  })
+
+  it('migrates a scoped v1 draft while preserving its Experiment and Measurement', async () => {
+    const record = {
+      id: 4,
+      user_id: 'first',
+      namespace: 'first',
+      repository_slug: 'private',
+      experiment_key: 'draft',
+      version_major: 1,
+      version_minor: 0,
+      version_patch: 0,
+      name: 'Private',
+      source_bundle: draft.experiment.baselineBundle!,
+      source_hash: 'hash',
+    }
+    const storageKey = workbenchDraftStorageKey('user:first')
+    sessionStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        version: 1,
+        ownerScope: 'user:first',
+        draft: { ...draft, experiment: { ...draft.experiment, record }, selection: { measurementId: 12 } },
+      }),
+    )
+
+    const restored = await loadWorkbenchDraft('user:first')
+    expect(restored?.selection).toEqual({ experimentId: 4, measurementId: 12, calculationId: null })
+    expect(JSON.parse(sessionStorage.getItem(storageKey)!).version).toBe(WORKBENCH_DRAFT_SCHEMA_VERSION)
+  })
+
+  it('round-trips the full scoped selection context', async () => {
+    const record = {
+      id: 4,
+      user_id: 'first',
+      namespace: 'first',
+      repository_slug: 'private',
+      experiment_key: 'draft',
+      version_major: 1,
+      version_minor: 0,
+      version_patch: 0,
+      name: 'Private',
+      source_bundle: draft.experiment.baselineBundle!,
+      source_hash: 'hash',
+    }
+    const selectedDraft: WorkbenchDraft = {
+      ...draft,
+      experiment: { ...draft.experiment, record },
+      selection: { experimentId: 4, measurementId: 12, calculationId: 9 },
+    }
+
+    await saveWorkbenchDraft('user:first', selectedDraft)
+    await expect(loadWorkbenchDraft('user:first')).resolves.toEqual(selectedDraft)
+  })
+
+  it('discards child IDs when the stored parent does not match the draft Experiment', async () => {
+    const record = {
+      id: 4,
+      user_id: 'first',
+      namespace: 'first',
+      repository_slug: 'private',
+      experiment_key: 'draft',
+      version_major: 1,
+      version_minor: 0,
+      version_patch: 0,
+      name: 'Private',
+      source_bundle: draft.experiment.baselineBundle!,
+      source_hash: 'hash',
+    }
+    const storageKey = workbenchDraftStorageKey('user:first')
+    sessionStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        version: WORKBENCH_DRAFT_SCHEMA_VERSION,
+        ownerScope: 'user:first',
+        draft: {
+          ...draft,
+          experiment: { ...draft.experiment, record },
+          selection: { experimentId: 8, measurementId: 12, calculationId: 9 },
+        },
+      }),
+    )
+
+    const restored = await loadWorkbenchDraft('user:first')
+    expect(restored?.experiment.record?.id).toBe(4)
+    expect(restored?.selection).toEqual({ experimentId: 4, measurementId: null, calculationId: null })
   })
 
   it('normalizes retired layout enum values without discarding the draft', async () => {

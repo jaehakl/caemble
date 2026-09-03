@@ -1,23 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { readWorkbenchUrlSelection, replacementDisposition, writeWorkbenchUrlSelection } from './sessionPolicy'
+import { readWorkbenchUrlExperiment, replacementDisposition, writeWorkbenchUrlExperiment } from './sessionPolicy'
 
 describe('Workbench session policy', () => {
-  it('accepts only positive integer IDs and known sections from the URL', () => {
-    expect(
-      readWorkbenchUrlSelection(new URLSearchParams('experiment=4&measurement=-1&calculation=1.5&section=measurement')),
-    ).toEqual({ experimentId: 4, measurementId: null, calculationId: null, section: 'measurement' })
-    expect(readWorkbenchUrlSelection(new URLSearchParams('experiment=NaN&section=unknown')).section).toBeNull()
+  it('reads only a positive integer Experiment ID from the URL', () => {
+    expect(readWorkbenchUrlExperiment(new URLSearchParams('experiment=4&measurement=8&section=measurement'))).toBe(4)
+    expect(readWorkbenchUrlExperiment(new URLSearchParams('experiment=-1'))).toBeNull()
+    expect(readWorkbenchUrlExperiment(new URLSearchParams('experiment=1.5'))).toBeNull()
+    expect(readWorkbenchUrlExperiment(new URLSearchParams('experiment=NaN'))).toBeNull()
   })
 
-  it('preserves unrelated params while replacing selection and removing legacy selection params', () => {
-    const next = writeWorkbenchUrlSelection(new URLSearchParams('keep=yes&structure=3&sample=2&setup=1'), {
-      experimentId: 7,
-      measurementId: null,
-      calculationId: 9,
-      section: 'measurement',
-    })
+  it('preserves unrelated params and canonicalizes all retired Workbench params', () => {
+    const next = writeWorkbenchUrlExperiment(
+      new URLSearchParams(
+        'keep=yes&experiment=3&measurement=8&calculation=9&section=measurement&structure=3&sample=2&setup=1',
+      ),
+      7,
+    )
 
-    expect(next.toString()).toBe('keep=yes&experiment=7&calculation=9&section=measurement')
+    expect(next.toString()).toBe('keep=yes&experiment=7')
+    expect(writeWorkbenchUrlExperiment(next, null).toString()).toBe('keep=yes')
   })
 
   it('gives pending persistence and active work priority over dirty confirmation', () => {

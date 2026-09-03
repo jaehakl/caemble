@@ -23,8 +23,10 @@ import type {
   DefinitionStatus,
   SavedExperiment,
   SavedMeasurement,
+  WorkbenchCalculationSelection,
   WorkbenchDraft,
   WorkbenchLayoutState,
+  WorkbenchSelectionContext,
 } from '../types'
 import { validateVarsChanges } from '@/features/calculation/varsTensor'
 import { useCalculationDataActions } from '@/features/calculation/useCalculationDataActions'
@@ -108,6 +110,16 @@ export function useCaeWorkbenchState(
   const [saving, setSaving] = useState<'experiment' | null>(null)
   const [pendingMeasurementId, setPendingMeasurementId] = useState<number | null>(null)
   const [selectionRestoreStatus, setSelectionRestoreStatus] = useState<'idle' | 'restoring' | 'failed'>('idle')
+  const [storedSelectionContext, setStoredSelectionContext] = useState<WorkbenchSelectionContext>({
+    experimentId: null,
+    measurementId: null,
+    calculationId: null,
+  })
+  const selectionContextRef = useRef<WorkbenchSelectionContext>({
+    experimentId: null,
+    measurementId: null,
+    calculationId: null,
+  })
   const requestSequence = useRef(0)
   const experimentRef = useRef(experiment)
   const authenticatedRef = useRef(authenticated)
@@ -116,21 +128,67 @@ export function useCaeWorkbenchState(
   const experimentId = experimentRecord?.id ?? null
   const baseSelection = useCaeDataSelection(experimentId, 'visible')
   const { clearMeasurement: clearBaseMeasurement, loadMeasurement: loadBaseMeasurement } = baseSelection
+  const selectionContext = useMemo<WorkbenchSelectionContext>(
+    () =>
+      storedSelectionContext.experimentId === experimentId
+        ? storedSelectionContext
+        : experimentId === null
+          ? { experimentId: null, measurementId: null, calculationId: null }
+          : { experimentId, measurementId: null, calculationId: null },
+    [experimentId, storedSelectionContext],
+  )
   const experimentDirty = Boolean(experiment && !sourceBundlesEqual(experiment.sourceBundle, baselineExperimentBundle))
   const hasUnsavedExperimentWork = experimentDirty
   const experimentClean = Boolean(experimentId && !experimentDirty)
   const hasTasks = Boolean(experiment && experimentTaskPaths(experiment.sourceBundle).length)
 
   const clearMeasurement = useCallback(() => {
+    const current = selectionContextRef.current
+    if (current.experimentId !== experimentId) return false
     setPendingMeasurementId(null)
     setSelectionRestoreStatus('idle')
     clearBaseMeasurement()
-  }, [clearBaseMeasurement])
+    const next = { ...current, measurementId: null }
+    selectionContextRef.current = next
+    setStoredSelectionContext(next)
+    return true
+  }, [clearBaseMeasurement, experimentId])
+
+  const resetSelectionForExperiment = useCallback(
+    (nextExperimentId: number | null) => {
+      const next: WorkbenchSelectionContext =
+        nextExperimentId === null
+          ? { experimentId: null, measurementId: null, calculationId: null }
+          : { experimentId: nextExperimentId, measurementId: null, calculationId: null }
+      setPendingMeasurementId(null)
+      setSelectionRestoreStatus('idle')
+      clearBaseMeasurement()
+      selectionContextRef.current = next
+      setStoredSelectionContext(next)
+    },
+    [clearBaseMeasurement],
+  )
 
   const loadMeasurement = useCallback(
-    async (value: number | SavedMeasurement, expectedExperimentId: number | null = experimentId) => {
+    async (
+      value: number | SavedMeasurement,
+      expectedExperimentId: number | null = typeof value === 'number' ? experimentId : value.experiment_id,
+    ) => {
+      if (
+        expectedExperimentId === null ||
+        expectedExperimentId !== experimentId ||
+        selectionContextRef.current.experimentId !== expectedExperimentId
+      ) {
+        return null
+      }
       const row = await loadBaseMeasurement(value, expectedExperimentId)
       if (!row) return null
+      if (row.experiment_id !== expectedExperimentId) return null
+      const current = selectionContextRef.current
+      if (current.experimentId !== row.experiment_id) return null
+      const next = { ...current, measurementId: row.id }
+      selectionContextRef.current = next
+      setStoredSelectionContext(next)
       dispatchEditing({
         type: 'candidateLoaded',
         vars: row.vars as Readonly<Vars>,
@@ -402,6 +460,12 @@ export function useCaeWorkbenchState(
     setSelectionRestoreStatus('restoring')
     void loadMeasurement(measurementId, experimentId).catch((cause: unknown) => {
       if (measurementId !== pendingMeasurementId) return
+      const current = selectionContextRef.current
+      if (current.experimentId === experimentId && current.measurementId === measurementId) {
+        const next = { ...current, measurementId: null }
+        selectionContextRef.current = next
+        setStoredSelectionContext(next)
+      }
       setPendingMeasurementId(null)
       setSelectionRestoreStatus('failed')
       toast.error(cause instanceof Error ? cause.message : '저장된 Measurement 선택을 복원하지 못했습니다.')
@@ -411,11 +475,11 @@ export function useCaeWorkbenchState(
   const applyExperimentState = useCallback(
     (row: SavedExperiment) => {
       const document = createExperimentDocument(row.source_bundle)
-      clearMeasurement()
+      resetSelectionForExperiment(row.id)
       experimentRef.current = document
       dispatchEditing({ type: 'recordLoaded', document, record: row })
     },
-    [clearMeasurement],
+    [resetSelectionForExperiment],
   )
 
   const applyExperiment = useCallback(
@@ -427,7 +491,7 @@ export function useCaeWorkbenchState(
   )
 
   const loadExperiment = useCallback(
-    async (value: number | SavedExperiment, measurementId?: number | null) => {
+    async (value: number | SavedExperiment) => {
       const sequence = ++requestSequence.current
       const row =
         typeof value === 'number'
@@ -435,19 +499,24 @@ export function useCaeWorkbenchState(
           : value
       if (sequence !== requestSequence.current) return row
       applyExperimentState(row)
-      if (measurementId) setPendingMeasurementId(measurementId)
       return row
     },
     [applyExperimentState, queryClient, queryScope],
   )
 
-  const restoreSelection = useCallback(
-    (measurementId: number | null) => {
-      setPendingMeasurementId(measurementId)
-      setSelectionRestoreStatus(measurementId ? 'restoring' : 'idle')
-      if (!measurementId) clearMeasurement()
+  const selectCalculation = useCallback(
+    ({ experimentId: requestedExperimentId, calculationId }: WorkbenchCalculationSelection) => {
+      if (requestedExperimentId !== experimentId || (calculationId !== null && requestedExperimentId === null)) {
+        return false
+      }
+      const current = selectionContextRef.current
+      if (current.experimentId !== requestedExperimentId) return false
+      const next = { ...current, calculationId } as WorkbenchSelectionContext
+      selectionContextRef.current = next
+      setStoredSelectionContext(next)
+      return true
     },
-    [clearMeasurement],
+    [experimentId],
   )
 
   const newExperiment = useCallback(
@@ -458,11 +527,11 @@ export function useCaeWorkbenchState(
     ) => {
       const document = createExperimentDocument(sourceBundle)
       requestSequence.current += 1
-      clearMeasurement()
+      resetSelectionForExperiment(null)
       experimentRef.current = document
       dispatchEditing({ type: 'newStarted', document, sourceBundle, name, description })
     },
-    [clearMeasurement],
+    [resetSelectionForExperiment],
   )
 
   const detachDeletedExperiment = useCallback(() => {
@@ -470,10 +539,10 @@ export function useCaeWorkbenchState(
     if (!current) return
     const document = createExperimentDocument(current.sourceBundle)
     requestSequence.current += 1
-    clearMeasurement()
+    resetSelectionForExperiment(null)
     experimentRef.current = document
     dispatchEditing({ type: 'detached', document })
-  }, [clearMeasurement])
+  }, [resetSelectionForExperiment])
 
   const invalidate = useCallback(
     async (changedExperimentId: number) => {
@@ -534,6 +603,7 @@ export function useCaeWorkbenchState(
         }
         await invalidate(result.id)
         if (sourceSequence !== requestSequence.current) return result
+        if (result.id !== experimentId) resetSelectionForExperiment(result.id)
         dispatchEditing({
           type: 'saveCommitted',
           record: row,
@@ -556,6 +626,7 @@ export function useCaeWorkbenchState(
       invalidate,
       queryClient,
       queryScope,
+      resetSelectionForExperiment,
       user,
     ],
   )
@@ -564,6 +635,13 @@ export function useCaeWorkbenchState(
     (draft: WorkbenchDraft) => {
       requestSequence.current += 1
       clearBaseMeasurement()
+      const restoredExperimentId = draft.experiment.record?.id ?? null
+      const restoredSelection: WorkbenchSelectionContext =
+        restoredExperimentId === null
+          ? { experimentId: null, measurementId: null, calculationId: null }
+          : draft.selection.experimentId === restoredExperimentId
+            ? draft.selection
+            : { experimentId: restoredExperimentId, measurementId: null, calculationId: null }
       const document = draft.experiment.document
         ? createExperimentDocument(draft.experiment.document.sourceBundle)
         : null
@@ -574,15 +652,12 @@ export function useCaeWorkbenchState(
         document,
         candidateMaterialParameters: authenticated ? draft.candidate.materialParameters : null,
       })
-      setPendingMeasurementId(draft.selection.measurementId)
-      setSelectionRestoreStatus(draft.selection.measurementId ? 'restoring' : 'idle')
+      selectionContextRef.current = restoredSelection
+      setStoredSelectionContext(restoredSelection)
+      setPendingMeasurementId(restoredSelection.measurementId)
+      setSelectionRestoreStatus(restoredSelection.measurementId ? 'restoring' : 'idle')
     },
     [authenticated, clearBaseMeasurement],
-  )
-
-  const selectionIds = useMemo(
-    () => ({ measurementId: pendingMeasurementId ?? selection.measurement?.id ?? null }),
-    [pendingMeasurementId, selection.measurement?.id],
   )
 
   const draft = useCallback(
@@ -596,7 +671,7 @@ export function useCaeWorkbenchState(
         description: experimentDescription,
       },
       candidate: { vars: candidateVars, materialParameters: candidateMaterialParameters },
-      selection: selectionIds,
+      selection: selectionContext,
       layout,
     }),
     [
@@ -607,7 +682,7 @@ export function useCaeWorkbenchState(
       experimentDescription,
       experimentName,
       experimentRecord,
-      selectionIds,
+      selectionContext,
     ],
   )
 
@@ -668,7 +743,8 @@ export function useCaeWorkbenchState(
     setCandidateVariables,
     saving,
     selection,
-    selectionIds,
+    selectionContext,
+    selectCalculation,
     selectionRestoring: pendingMeasurementId !== null || selectionRestoreStatus === 'restoring',
     measurementActions,
     calculationDataActions,
@@ -676,7 +752,6 @@ export function useCaeWorkbenchState(
     simulation,
     applyExperiment,
     loadExperiment,
-    restoreSelection,
     newExperiment,
     detachDeletedExperiment,
     saveExperiment,

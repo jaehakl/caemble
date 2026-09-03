@@ -236,7 +236,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     requestAnalysisCommand,
     requestCalculationSave,
     requestPredictionCommand,
-    selectedCalculationId: page.calculationId,
+    selectedCalculationId: workbench.selectionContext.calculationId,
     requestLabCommand,
     requestMaterialCommand,
     requestRunSelected: page.requestRunSelected,
@@ -325,20 +325,17 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         selectedId={workbench.experimentId}
         user={auth.user}
         onDeleteSelected={() => {
-          page.setCalculationId(null)
           workbench.detachDeletedExperiment()
         }}
         onOpenSaved={(row) =>
           page.guardReplacement(async () => {
             await workbench.loadExperiment(row)
-            page.setCalculationId(null)
             page.setLayout((current) => ({ ...current, activeSection: 'experiment' }))
           })
         }
         onOpenExample={(sourceBundle, name, description) =>
           page.guardReplacement(() => {
             workbench.newExperiment(sourceBundle, name, description)
-            page.setCalculationId(null)
             page.setLayout((current) => ({ ...current, activeSection: 'experiment' }))
           })
         }
@@ -471,12 +468,11 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               onExperimentChange={(row) =>
                 page.guardReplacement(async () => {
                   await workbench.loadExperiment(row)
-                  page.setCalculationId(null)
                   page.setLayout((current) => ({ ...current, activeSection: 'prediction' }))
                 })
               }
               onRequestLogin={() => page.setDialog('account')}
-              selectedCalculationId={page.calculationId}
+              selectedCalculationId={workbench.selectionContext.calculationId}
               varsContainer={predictionVarsContainer}
               workbench={workbench}
             />
@@ -596,7 +592,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               onOpenExperiment={(row) =>
                 page.guardReplacement(async () => {
                   await workbench.loadExperiment(row)
-                  page.setCalculationId(null)
                   page.setLayout((current) => ({ ...current, activeSection: 'experiment' }))
                 })
               }
@@ -621,7 +616,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             }
             candidateSessionKey={`${workbench.experimentId ?? 'none'}`}
             candidateVars={workbench.candidateVars}
-            contextPending={page.calculationContextPending}
+            contextPending={workbench.selectionRestoring}
             persistable={calculationAccess.persistable}
             sourceEditable={calculationAccess.sourceEditable}
             experimentId={workbench.experimentId}
@@ -632,7 +627,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             onActivity={runtimeConsole.append}
             onAgentBridgeChange={setCalculationAgentBridge}
             onCandidateVariableChange={workbench.setCandidateVariable}
-            onCalculationIdChange={page.setCalculationId}
+            onCalculationSelectionChange={workbench.selectCalculation}
             onDeleteMeasurements={workbench.measurementActions.deleteMeasurements}
             onDirtyChange={setCalculationDirty}
             onRequestLogin={() => page.setDialog('account')}
@@ -646,7 +641,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             recordedRules={activeRecordedRules}
             ribbon={ribbon}
             saveCommand={calculationSaveCommand}
-            selectedCalculationId={page.calculationId}
+            selectedCalculationId={workbench.selectionContext.calculationId}
             varsSchema={workbench.experimentDocument.varsSchema}
             viewer={viewerPane}
           />

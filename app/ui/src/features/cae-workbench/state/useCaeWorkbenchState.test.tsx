@@ -1,13 +1,14 @@
 import type { PropsWithChildren } from 'react'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { UserData } from '@/api'
 import { defaultWorkbenchLayoutState, type SavedExperiment, type WorkbenchDraft } from '../types'
 import { useCaeWorkbenchState } from './useCaeWorkbenchState'
 
 const mocks = vi.hoisted(() => ({
   clearBaseMeasurement: vi.fn(),
+  loadBaseMeasurement: vi.fn(),
   measurement: {
     id: 41,
     experiment_id: 7,
@@ -42,7 +43,7 @@ vi.mock('@/features/measurement/useCaeDataSelection', async () => {
         loading: false,
         clearAll: clearMeasurement,
         clearMeasurement,
-        loadMeasurement: vi.fn(),
+        loadMeasurement: mocks.loadBaseMeasurement,
       }
     },
   }
@@ -102,9 +103,31 @@ const secondUserDraft: WorkbenchDraft = {
     description: '',
   },
   candidate: { vars: null, materialParameters: null },
-  selection: { measurementId: null },
+  selection: { experimentId: null, measurementId: null, calculationId: null },
   layout: defaultWorkbenchLayoutState,
 }
+
+function savedExperiment(id: number): SavedExperiment {
+  return {
+    id,
+    description: null,
+    experiment_key: `experiment-${id}`,
+    name: `Experiment ${id}`,
+    namespace: 'first',
+    repository_slug: `experiment-${id}`,
+    source_bundle: { files: { 'experiment.tsx': 'export default null' } },
+    source_hash: `hash-${id}`,
+    user_id: 'first',
+    version_major: 1,
+    version_minor: 0,
+    version_patch: 0,
+  } as SavedExperiment
+}
+
+beforeEach(() => {
+  mocks.clearBaseMeasurement.mockClear()
+  mocks.loadBaseMeasurement.mockReset().mockResolvedValue(mocks.measurement)
+})
 
 describe('useCaeWorkbenchState draft restoration', () => {
   it('clears the previous account Measurement and RecordedData before restoring a null selection', () => {
@@ -127,7 +150,11 @@ describe('useCaeWorkbenchState draft restoration', () => {
     expect(result.current.selection.measurement).toBeNull()
     expect(result.current.selection.recordedRows).toEqual([])
     expect(result.current.selection.recordedData).toEqual({})
-    expect(result.current.selectionIds.measurementId).toBeNull()
+    expect(result.current.selectionContext).toEqual({
+      experimentId: null,
+      measurementId: null,
+      calculationId: null,
+    })
   })
 
   it('commits only the latest Experiment when requests finish out of order', async () => {
@@ -154,28 +181,82 @@ describe('useCaeWorkbenchState draft restoration', () => {
     })
     await waitFor(() => expect([...pending.keys()]).toEqual([7, 8]))
 
-    const row = (id: number): SavedExperiment =>
-      ({
-        id,
-        description: null,
-        experiment_key: `experiment-${id}`,
-        name: `Experiment ${id}`,
-        namespace: 'first',
-        repository_slug: `experiment-${id}`,
-        source_bundle: { files: { 'experiment.tsx': 'export default null' } },
-        source_hash: `hash-${id}`,
-        user_id: 'first',
-        version_major: 1,
-        version_minor: 0,
-        version_patch: 0,
-      }) as SavedExperiment
-
-    act(() => pending.get(8)?.(row(8)))
+    act(() => pending.get(8)?.(savedExperiment(8)))
     await act(async () => void (await second))
-    act(() => pending.get(7)?.(row(7)))
+    act(() => pending.get(7)?.(savedExperiment(7)))
     await act(async () => void (await first))
 
     expect(result.current.experimentId).toBe(8)
     expect(result.current.experimentName).toBe('Experiment 8')
+  })
+
+  it('clears both child selections atomically when the Experiment changes', () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    const { result } = renderHook(() => useCaeWorkbenchState(firstUser, true), { wrapper })
+    const experiment = savedExperiment(7)
+    const selectedDraft: WorkbenchDraft = {
+      ...secondUserDraft,
+      experiment: {
+        record: experiment,
+        baselineBundle: experiment.source_bundle,
+        document: { kind: 'experiment', sourceBundle: experiment.source_bundle },
+        name: experiment.name,
+        description: '',
+      },
+      selection: { experimentId: 7, measurementId: 41, calculationId: 12 },
+    }
+
+    act(() => result.current.restoreDraft(selectedDraft))
+    expect(result.current.selectionContext).toEqual({ experimentId: 7, measurementId: 41, calculationId: 12 })
+
+    act(() => result.current.applyExperiment(savedExperiment(8)))
+    expect(result.current.selectionContext).toEqual({ experimentId: 8, measurementId: null, calculationId: null })
+  })
+
+  it('keeps same-parent Measurement and Calculation selections together and rejects foreign children', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    const { result } = renderHook(() => useCaeWorkbenchState(firstUser, true), { wrapper })
+
+    act(() => result.current.applyExperiment(savedExperiment(7)))
+    expect(result.current.selectCalculation({ experimentId: 7, calculationId: 12 })).toBe(true)
+    await act(async () => void (await result.current.selection.loadMeasurement(mocks.measurement)))
+    expect(result.current.selectionContext).toEqual({ experimentId: 7, measurementId: 41, calculationId: 12 })
+
+    const callsBeforeForeignSelection = mocks.loadBaseMeasurement.mock.calls.length
+    expect(result.current.selectCalculation({ experimentId: 8, calculationId: 13 })).toBe(false)
+    await expect(
+      result.current.selection.loadMeasurement({ ...mocks.measurement, experiment_id: 8 }),
+    ).resolves.toBeNull()
+    expect(mocks.loadBaseMeasurement).toHaveBeenCalledTimes(callsBeforeForeignSelection)
+    expect(result.current.selectionContext).toEqual({ experimentId: 7, measurementId: 41, calculationId: 12 })
+  })
+
+  it('ignores late Measurement and Calculation selections from the previous Experiment', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    const { result } = renderHook(() => useCaeWorkbenchState(firstUser, true), { wrapper })
+    let resolveMeasurement!: (value: typeof mocks.measurement) => void
+    mocks.loadBaseMeasurement.mockImplementationOnce(() => new Promise((resolve) => (resolveMeasurement = resolve)))
+
+    act(() => result.current.applyExperiment(savedExperiment(7)))
+    const staleCalculationSelection = result.current.selectCalculation
+    let pendingMeasurement!: ReturnType<typeof result.current.selection.loadMeasurement>
+    act(() => {
+      pendingMeasurement = result.current.selection.loadMeasurement(mocks.measurement, 7)
+    })
+    act(() => result.current.applyExperiment(savedExperiment(8)))
+    expect(staleCalculationSelection({ experimentId: 7, calculationId: 12 })).toBe(false)
+    resolveMeasurement(mocks.measurement)
+    await act(async () => void (await pendingMeasurement))
+
+    expect(result.current.selectionContext).toEqual({ experimentId: 8, measurementId: null, calculationId: null })
   })
 })

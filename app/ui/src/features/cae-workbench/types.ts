@@ -6,6 +6,16 @@ export type SavedExperiment = SavedExperimentRecord & { id: number }
 export type SavedMeasurement = MeasurementRecord & { id: number }
 export type SavedRecordedData = RecordedDataRecord & { id?: number }
 
+export type WorkbenchSelectionContext = Readonly<
+  | { experimentId: null; measurementId: null; calculationId: null }
+  | { experimentId: number; measurementId: number | null; calculationId: number | null }
+>
+
+export type WorkbenchCalculationSelection = Readonly<{
+  experimentId: number | null
+  calculationId: number | null
+}>
+
 export type DefinitionStatus = 'empty' | 'new' | 'saved-clean' | 'saved-dirty'
 
 /** @deprecated The v14 editor dock is retained only for draft migration. */
@@ -103,9 +113,7 @@ export type WorkbenchDraftDomain = Readonly<{
     vars: Readonly<Vars> | null
     materialParameters: SavedMeasurement['material_parameters'] | null
   }>
-  selection: Readonly<{
-    measurementId: number | null
-  }>
+  selection: WorkbenchSelectionContext
 }>
 
 export type WorkbenchDraft = WorkbenchDraftDomain &

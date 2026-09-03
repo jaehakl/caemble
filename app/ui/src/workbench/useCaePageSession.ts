@@ -1,43 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { useBlocker, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import type { PrivateQueryScope } from '@/features/auth/queryKeys'
 import type { PendingConfirmation } from '@/features/cae-workbench/caePageTypes'
-import { availableExperimentsQueryOptions, experimentDetailQueryOptions } from '@/features/experiment/queryOptions'
-import { measurementDetailQueryOptions } from '@/features/measurement/queryOptions'
+import { calculationDetailQueryOptions } from '@/features/calculation/queryOptions'
 import { loadWorkbenchDraft, saveWorkbenchDraft } from '@/features/cae-workbench/storage/draftStorage'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import { defaultWorkbenchLayoutState, type WorkbenchDraft } from '@/features/cae-workbench/types'
-import { createCadSourceDocument } from '@/lib/cad/source'
-import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
-import { useWorkbenchShell } from '@/workbench/state/workbenchShellStore'
 import {
   draftNeedsPredictionLandingPreservation,
   predictionLandingExperiment,
 } from '@/features/cae-workbench/predictionLandingPolicy'
-import { readWorkbenchUrlSelection, replacementDisposition, writeWorkbenchUrlSelection } from './sessionPolicy'
-
-async function measurementExperimentId(queryClient: QueryClient, queryScope: PrivateQueryScope, measurementId: number) {
-  const measurement = await queryClient.fetchQuery(measurementDetailQueryOptions(queryScope, measurementId))
-  return measurement.experiment_id
-}
-
-function starterDraft(): WorkbenchDraft {
-  return {
-    savedAt: Date.now(),
-    experiment: {
-      record: null,
-      baselineBundle: starterExperimentSourceBundle,
-      document: createCadSourceDocument('experiment', starterExperimentSourceBundle),
-      name: 'Starter Experiment',
-      description: '브라우저에서 바로 편집하고 렌더링할 수 있는 로컬 Starter입니다.',
-    },
-    candidate: { vars: null, materialParameters: null },
-    selection: { measurementId: null },
-    layout: defaultWorkbenchLayoutState,
-  }
-}
+import { availableExperimentsQueryOptions, experimentDetailQueryOptions } from '@/features/experiment/queryOptions'
+import { measurementDetailQueryOptions } from '@/features/measurement/queryOptions'
+import { createCadSourceDocument } from '@/lib/cad/source'
+import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
+import { useWorkbenchShell } from '@/workbench/state/workbenchShellStore'
+import { readWorkbenchUrlExperiment, replacementDisposition, writeWorkbenchUrlExperiment } from './sessionPolicy'
 
 export function useCaePageSession(
   workbench: CaeWorkbenchState,
@@ -62,8 +42,6 @@ export function useCaePageSession(
   const [confirmation, setConfirmation] = useState<PendingConfirmation | null>(null)
   const [initialized, setInitialized] = useState(false)
   const [persistenceAvailable, setPersistenceAvailable] = useState(true)
-  const [calculationId, setCalculationId] = useState<number | null>(null)
-  const [calculationContextPending, setCalculationContextPending] = useState(false)
   const createDraft = workbench.draft
   const navigationBlocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
@@ -71,9 +49,6 @@ export function useCaePageSession(
       (currentLocation.pathname !== nextLocation.pathname || currentLocation.hash !== nextLocation.hash),
   )
   const initializingRef = useRef(false)
-  const lastSyncedSearchRef = useRef<string | null>(null)
-  const externalNavigationRef = useRef(false)
-  const externalNavigationSequenceRef = useRef(0)
   const searchParamsRef = useRef(searchParams)
   const workbenchRef = useRef(workbench)
   const searchKey = searchParams.toString()
@@ -98,16 +73,7 @@ export function useCaePageSession(
   useEffect(() => {
     if (allowAdminSection !== false || layout.activeSection !== 'admin') return
     setLayout((current) => ({ ...current, activeSection: 'prediction' }))
-    setSearchParams(
-      (current) => {
-        const next = new URLSearchParams(current)
-        next.set('section', 'prediction')
-        lastSyncedSearchRef.current = next.toString()
-        return next
-      },
-      { replace: true },
-    )
-  }, [allowAdminSection, layout.activeSection, setLayout, setSearchParams])
+  }, [allowAdminSection, layout.activeSection, setLayout])
 
   useEffect(() => {
     if (navigationBlocker.state !== 'blocked') return
@@ -189,23 +155,31 @@ export function useCaePageSession(
   useEffect(() => {
     if (authPending || initializingRef.current) return
     const initialSearchParams = searchParamsRef.current
-    const initialSearchKey = initialSearchParams.toString()
     const currentWorkbench = workbenchRef.current
     initializingRef.current = true
     setInitialized(false)
     setPersistenceAvailable(true)
-    externalNavigationRef.current = true
-    lastSyncedSearchRef.current = initialSearchKey
     setLayout(defaultWorkbenchLayoutState)
-    currentWorkbench.restoreDraft(starterDraft())
+    currentWorkbench.restoreDraft({
+      savedAt: Date.now(),
+      experiment: {
+        record: null,
+        baselineBundle: starterExperimentSourceBundle,
+        document: createCadSourceDocument('experiment', starterExperimentSourceBundle),
+        name: 'Starter Experiment',
+        description: '브라우저에서 바로 편집하고 렌더링할 수 있는 로컬 Starter입니다.',
+      },
+      candidate: { vars: null, materialParameters: null },
+      selection: { experimentId: null, measurementId: null, calculationId: null },
+      layout: defaultWorkbenchLayoutState,
+    })
 
     let cancelled = false
     void (async () => {
       let draft: WorkbenchDraft | null = null
       try {
-        const initialQueryScope = queryScope
         try {
-          draft = await loadWorkbenchDraft(initialQueryScope, () =>
+          draft = await loadWorkbenchDraft(queryScope, () =>
             window.confirm(
               '업데이트 전에 저장된 로컬 작업은 계정 정보가 없습니다. 이 브라우저의 이전 작업이 맞다면 현재 세션으로 가져올까요?',
             ),
@@ -216,74 +190,104 @@ export function useCaePageSession(
           toast.error(cause instanceof Error ? cause.message : 'CAE draft 저장소를 읽지 못했습니다.')
         }
         if (cancelled) return
-        const urlSelection = readWorkbenchUrlSelection(initialSearchParams)
-        let urlExperimentId = urlSelection.experimentId
-        const urlMeasurementId = urlSelection.measurementId
-        const urlCalculationId = urlSelection.calculationId
-        const requestedSection = urlSelection.section
-        if (!urlExperimentId && urlMeasurementId) {
-          urlExperimentId = await measurementExperimentId(queryClient, initialQueryScope, urlMeasurementId)
-          if (cancelled) return
-        }
-        const effectiveCalculationId = urlExperimentId ? urlCalculationId : null
-        const initialSection =
-          requestedSection ??
-          (urlMeasurementId || effectiveCalculationId ? 'measurement' : urlExperimentId ? 'experiment' : 'prediction')
-        setCalculationId(effectiveCalculationId)
 
+        const urlExperimentId = readWorkbenchUrlExperiment(initialSearchParams)
+        const draftExperimentId = draft?.experiment.record?.id ?? null
         const draftNeedsPreservation = draftNeedsPredictionLandingPreservation(draft, starterExperimentSourceBundle)
+        let restoreLocalDraft = false
+        let openedUrlExperiment = false
 
-        if (draft) setLayout({ ...draft.layout, activeSection: initialSection })
-
-        if (urlExperimentId) {
-          const draftExperimentId = draft?.experiment.record?.id ?? null
-          if (
-            draft &&
-            draftNeedsPreservation &&
-            urlExperimentId !== draftExperimentId &&
-            !window.confirm('URL의 Experiment와 마지막 로컬 작업이 다릅니다. 확인을 누르면 URL 선택을 엽니다.')
-          ) {
-            currentWorkbench.restoreDraft(draft)
-            setCalculationId(null)
-          } else if (draft && urlExperimentId === draftExperimentId) {
-            currentWorkbench.restoreDraft(draft)
-            if (urlMeasurementId) currentWorkbench.restoreSelection(urlMeasurementId)
-            setLayout((current) => ({
-              ...current,
-              activeSection: initialSection,
-            }))
+        if (urlExperimentId !== null) {
+          const sameExperiment = urlExperimentId === draftExperimentId
+          const openUrlExperiment =
+            sameExperiment ||
+            !draft ||
+            !draftNeedsPreservation ||
+            window.confirm('URL의 Experiment와 마지막 로컬 작업이 다릅니다. 확인을 누르면 URL 선택을 엽니다.')
+          if (!openUrlExperiment) {
+            restoreLocalDraft = true
           } else {
-            const row = await queryClient.fetchQuery(experimentDetailQueryOptions(initialQueryScope, urlExperimentId))
-            if (cancelled) return
-            await currentWorkbench.loadExperiment(row, urlMeasurementId)
-            if (cancelled) return
-            setLayout((current) => ({
-              ...current,
-              activeSection: initialSection,
-            }))
+            try {
+              const row = await queryClient.fetchQuery(experimentDetailQueryOptions(queryScope, urlExperimentId))
+              if (cancelled) return
+              if (sameExperiment && draft) {
+                restoreLocalDraft = true
+              } else {
+                await currentWorkbench.loadExperiment(row)
+                if (cancelled) return
+                setLayout({ ...defaultWorkbenchLayoutState, activeSection: 'prediction' })
+                openedUrlExperiment = true
+              }
+            } catch (cause: unknown) {
+              if (cancelled) return
+              toast.error(cause instanceof Error ? cause.message : 'URL의 Experiment를 열지 못했습니다.')
+              if (draft && draftExperimentId === urlExperimentId) {
+                draft = {
+                  ...draft,
+                  experiment: { ...draft.experiment, record: null, baselineBundle: null },
+                  selection: { experimentId: null, measurementId: null, calculationId: null },
+                  layout: { ...draft.layout, activeSection: 'prediction' },
+                }
+              }
+              if (draft) restoreLocalDraft = true
+            }
           }
-        } else {
-          if (draftNeedsPreservation && draft) {
+        }
+
+        if (!openedUrlExperiment) {
+          const shouldRestoreDraft = Boolean(
+            draft && (restoreLocalDraft || draft.experiment.record || draftNeedsPreservation),
+          )
+          if (draft && shouldRestoreDraft) {
+            const experimentId = draft.selection.experimentId
+            if (experimentId !== null) {
+              const requestedMeasurementId = draft.selection.measurementId
+              const requestedCalculationId = draft.selection.calculationId
+              const [measurementResult, calculationResult] = await Promise.allSettled([
+                requestedMeasurementId === null
+                  ? Promise.resolve(null)
+                  : queryClient.fetchQuery(measurementDetailQueryOptions(queryScope, requestedMeasurementId)),
+                requestedCalculationId === null
+                  ? Promise.resolve(null)
+                  : queryClient.fetchQuery(
+                      calculationDetailQueryOptions(queryScope, experimentId, requestedCalculationId),
+                    ),
+              ])
+              if (cancelled) return
+              const measurementId =
+                measurementResult.status === 'fulfilled' && measurementResult.value?.experiment_id === experimentId
+                  ? requestedMeasurementId
+                  : null
+              const calculationId =
+                calculationResult.status === 'fulfilled' && calculationResult.value?.experiment_id === experimentId
+                  ? requestedCalculationId
+                  : null
+              if (
+                (requestedMeasurementId !== null && measurementId === null) ||
+                (requestedCalculationId !== null && calculationId === null)
+              ) {
+                toast.info('저장된 자식 선택이 없거나 현재 Experiment에 속하지 않아 해당 선택만 해제했습니다.')
+              }
+              draft = { ...draft, selection: { experimentId, measurementId, calculationId } }
+            }
             currentWorkbench.restoreDraft(draft)
+            setLayout(draft.layout)
           } else {
-            const available = await queryClient.ensureQueryData(availableExperimentsQueryOptions(initialQueryScope))
+            const available = await queryClient.ensureQueryData(availableExperimentsQueryOptions(queryScope))
             if (cancelled) return
-            const draftExperimentId = draft?.experiment.record?.id ?? null
             const selected = predictionLandingExperiment(available, draftExperimentId)
             if (selected) {
               await currentWorkbench.loadExperiment(selected)
               if (cancelled) return
-            } else if (draft) currentWorkbench.restoreDraft(draft)
+            }
+            setLayout(defaultWorkbenchLayoutState)
           }
-          setLayout((current) => ({ ...current, activeSection: initialSection }))
         }
       } catch (cause: unknown) {
         if (cancelled) return
-        if (draft) currentWorkbench.restoreDraft(draft)
         toast.error(cause instanceof Error ? cause.message : 'CAE 작업을 복원하지 못했습니다.')
       }
       if (cancelled) return
-      externalNavigationRef.current = false
       setInitialized(true)
     })()
 
@@ -293,140 +297,16 @@ export function useCaePageSession(
     }
   }, [authPending, queryClient, queryScope, setLayout])
 
-  const syncSelectionToUrl = useCallback(() => {
+  useEffect(() => {
+    if (!initialized) return
     setSearchParams(
       (current) => {
-        const next = writeWorkbenchUrlSelection(current, {
-          experimentId: workbench.experimentId,
-          measurementId: workbench.selectionIds.measurementId,
-          calculationId,
-          section: layout.activeSection,
-        })
-        const nextKey = next.toString()
-        lastSyncedSearchRef.current = nextKey
-        return nextKey === current.toString() ? current : next
+        const next = writeWorkbenchUrlExperiment(current, workbench.experimentId)
+        return next.toString() === current.toString() ? current : next
       },
       { replace: true },
     )
-  }, [
-    calculationId,
-    layout.activeSection,
-    setSearchParams,
-    workbench.experimentId,
-    workbench.selectionIds.measurementId,
-  ])
-
-  useEffect(() => {
-    if (!initialized || searchKey === lastSyncedSearchRef.current) return
-    const requested = new URLSearchParams(searchParams)
-    const currentWorkbench = workbenchRef.current
-    const requestedSelection = readWorkbenchUrlSelection(requested)
-    const requestedExperimentId = requestedSelection.experimentId
-    const measurementId = requestedSelection.measurementId
-    const requestedCalculationId = requestedSelection.calculationId
-    const requestedSection = requestedSelection.section
-    const navigationSequence = ++externalNavigationSequenceRef.current
-    lastSyncedSearchRef.current = searchKey
-    externalNavigationRef.current = true
-
-    const blockingDisposition = replacementDisposition({
-      calculationDirty: false,
-      calculationRunning: currentWorkbench.calculationDataActions.busy,
-      experimentDirty: false,
-      measurementRunning: currentWorkbench.measurementActions.busy,
-      pendingRecord: Boolean(currentWorkbench.measurementActions.pendingRecordMeasurementId),
-      saving: Boolean(currentWorkbench.saving),
-    })
-    if (blockingDisposition === 'blocked-by-pending-record') {
-      externalNavigationRef.current = false
-      toast.error('실행 결과 저장을 다시 시도한 뒤 다른 Experiment 또는 Measurement를 여세요.')
-      syncSelectionToUrl()
-      return
-    }
-    if (blockingDisposition === 'blocked-by-save' || blockingDisposition === 'blocked-by-running-workflow') {
-      externalNavigationRef.current = false
-      toast.error(
-        blockingDisposition === 'blocked-by-save'
-          ? '저장이 끝난 뒤 다른 Experiment를 여세요.'
-          : 'CAE 작업이 끝난 뒤 다른 Experiment를 여세요.',
-      )
-      syncSelectionToUrl()
-      return
-    }
-    const contextMayChange =
-      requestedCalculationId !== calculationId ||
-      measurementId !== (currentWorkbench.selection.measurement?.id ?? null) ||
-      (requestedExperimentId !== null
-        ? requestedExperimentId !== currentWorkbench.experimentId
-        : measurementId === null && requestedCalculationId === null && currentWorkbench.experimentId !== null)
-    if (contextMayChange) setCalculationContextPending(true)
-    void (async () => {
-      try {
-        const experimentId =
-          requestedExperimentId ??
-          (measurementId
-            ? await measurementExperimentId(queryClient, queryScope, measurementId)
-            : requestedCalculationId
-              ? currentWorkbench.experimentId
-              : null)
-        if (navigationSequence !== externalNavigationSequenceRef.current) return
-        const experimentChanges = experimentId !== currentWorkbench.experimentId
-        const calculationChanges = requestedCalculationId !== calculationId
-        if (
-          (experimentChanges || calculationChanges) &&
-          (currentWorkbench.hasUnsavedExperimentWork || hasUnsavedCalculationWork) &&
-          !window.confirm(
-            hasUnsavedCalculationWork
-              ? '저장하지 않은 Calculation 편집을 바꾸고 URL의 선택을 열까요?'
-              : '저장하지 않은 Experiment 편집을 바꾸고 URL의 Experiment를 열까요?',
-          )
-        ) {
-          syncSelectionToUrl()
-          return
-        }
-        if (experimentId) {
-          if (experimentChanges) await currentWorkbench.loadExperiment(experimentId, measurementId)
-          else if (measurementId) await currentWorkbench.selection.loadMeasurement(measurementId, experimentId)
-          else currentWorkbench.selection.clearMeasurement()
-          if (navigationSequence !== externalNavigationSequenceRef.current) return
-          setCalculationId(requestedCalculationId)
-          setLayout((current) => ({
-            ...current,
-            activeSection: requestedSection ?? (measurementId || requestedCalculationId ? 'measurement' : 'experiment'),
-          }))
-        } else {
-          const starter = starterDraft()
-          currentWorkbench.restoreDraft(starter)
-          setCalculationId(null)
-          setLayout({ ...starter.layout, activeSection: requestedSection ?? 'prediction' })
-        }
-      } catch (cause: unknown) {
-        if (navigationSequence !== externalNavigationSequenceRef.current) return
-        toast.error(cause instanceof Error ? cause.message : 'URL의 CAE 작업을 열지 못했습니다.')
-        syncSelectionToUrl()
-      } finally {
-        if (navigationSequence === externalNavigationSequenceRef.current) {
-          externalNavigationRef.current = false
-          setCalculationContextPending(false)
-        }
-      }
-    })()
-  }, [
-    calculationId,
-    hasUnsavedCalculationWork,
-    initialized,
-    queryClient,
-    queryScope,
-    searchKey,
-    searchParams,
-    setLayout,
-    syncSelectionToUrl,
-  ])
-
-  useEffect(() => {
-    if (!initialized || externalNavigationRef.current || workbench.selectionRestoring) return
-    syncSelectionToUrl()
-  }, [initialized, syncSelectionToUrl, workbench.selectionRestoring])
+  }, [initialized, searchKey, setSearchParams, workbench.experimentId])
 
   useEffect(() => {
     if (!initialized || !persistenceAvailable) return
@@ -468,8 +348,6 @@ export function useCaePageSession(
 
   return {
     ...layout,
-    calculationContextPending,
-    calculationId,
     confirmation,
     dialog,
     guardReplacement,
@@ -478,7 +356,6 @@ export function useCaePageSession(
     requestRunSelected,
     runSafely,
     setActiveExperimentFile,
-    setCalculationId,
     setConfirmation,
     setDialog,
     setLayout,
