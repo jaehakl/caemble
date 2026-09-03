@@ -31,6 +31,8 @@ import {
   inverseTrainingRows,
   predictedRecordedData,
   predictionFingerprint,
+  predictionForwardRefreshState,
+  predictionForwardResultIsCurrent,
   predictionRecordedSamples,
   predictionRecordedSamplesMatchRules,
   predictionVarsLayouts,
@@ -127,6 +129,62 @@ const previousCandidateFingerprint = varsFingerprint(previousCandidate)
 const sampledCandidateFingerprint = varsFingerprint(sampledCandidate)
 assert.notEqual(previousCandidateFingerprint, sampledCandidateFingerprint)
 assert.equal(varsFingerprint(null), 'none')
+const forwardRefreshState = (overrides: Partial<Parameters<typeof predictionForwardRefreshState>[0]> = {}) =>
+  predictionForwardRefreshState({
+    candidateReady: true,
+    completedFingerprint: previousCandidateFingerprint,
+    currentFingerprint: previousCandidateFingerprint,
+    failureFingerprint: null,
+    ...overrides,
+  })
+assert.equal(forwardRefreshState(), 'ready')
+assert.equal(
+  forwardRefreshState({ candidateReady: false, currentFingerprint: sampledCandidateFingerprint }),
+  'waiting-candidate',
+)
+assert.equal(
+  forwardRefreshState({
+    completedFingerprint: previousCandidateFingerprint,
+    currentFingerprint: sampledCandidateFingerprint,
+  }),
+  'updating',
+)
+assert.equal(
+  forwardRefreshState({
+    completedFingerprint: previousCandidateFingerprint,
+    currentFingerprint: sampledCandidateFingerprint,
+    failureFingerprint: sampledCandidateFingerprint,
+  }),
+  'failed',
+)
+assert.equal(
+  forwardRefreshState({
+    completedFingerprint: sampledCandidateFingerprint,
+    currentFingerprint: sampledCandidateFingerprint,
+    failureFingerprint: previousCandidateFingerprint,
+  }),
+  'ready',
+)
+assert.equal(
+  predictionForwardResultIsCurrent({
+    candidateReady: true,
+    currentCandidateFingerprint: sampledCandidateFingerprint,
+    currentTransaction: 12,
+    expectedFingerprint: sampledCandidateFingerprint,
+    transaction: 12,
+  }),
+  true,
+)
+assert.equal(
+  predictionForwardResultIsCurrent({
+    candidateReady: true,
+    currentCandidateFingerprint: previousCandidateFingerprint,
+    currentTransaction: 13,
+    expectedFingerprint: sampledCandidateFingerprint,
+    transaction: 12,
+  }),
+  false,
+)
 const candidateWait = (overrides: Partial<Parameters<typeof predictionSamplingCandidateWaitResult>[0]> = {}) =>
   predictionSamplingCandidateWaitResult({
     baselineRevision: 7,

@@ -377,3 +377,38 @@ export function predictionFingerprint(parts: readonly unknown[]) {
     )
   })
 }
+
+export type PredictionForwardRefreshState = 'waiting-candidate' | 'updating' | 'ready' | 'failed'
+
+export function predictionForwardRefreshState({
+  candidateReady,
+  completedFingerprint,
+  currentFingerprint,
+  failureFingerprint,
+}: Readonly<{
+  candidateReady: boolean
+  completedFingerprint: string | null
+  currentFingerprint: string
+  failureFingerprint: string | null
+}>): PredictionForwardRefreshState {
+  if (!candidateReady) return 'waiting-candidate'
+  if (completedFingerprint === currentFingerprint) return 'ready'
+  if (failureFingerprint === currentFingerprint) return 'failed'
+  return 'updating'
+}
+
+export function predictionForwardResultIsCurrent({
+  candidateReady,
+  currentCandidateFingerprint,
+  currentTransaction,
+  expectedFingerprint,
+  transaction,
+}: Readonly<{
+  candidateReady: boolean
+  currentCandidateFingerprint: string
+  currentTransaction: number
+  expectedFingerprint: string
+  transaction: number
+}>) {
+  return candidateReady && transaction === currentTransaction && currentCandidateFingerprint === expectedFingerprint
+}

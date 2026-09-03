@@ -28,6 +28,8 @@ import {
   inverseTrainingRows,
   predictedRecordedData,
   predictionFingerprint,
+  predictionForwardRefreshState,
+  predictionForwardResultIsCurrent,
   predictionRecordedRowSample,
   predictionVarsLayouts,
   predictionVarsSamples,
@@ -135,6 +137,11 @@ type ForwardRecordProfile = Readonly<{
   name: string
   profile: PredictionWorkerModelProfile | null
   recordId: number
+}>
+
+type ForwardRefreshFailure = Readonly<{
+  fingerprint: string
+  message: string
 }>
 
 type ValidationRow = Readonly<{
@@ -348,7 +355,7 @@ export function PredictionWorkspace({
   const previousMutableDataBusyRef = useRef(workbench.measurementActions.busy || workbench.calculationDataActions.busy)
   const calculationAbortRef = useRef<AbortController | null>(null)
   const suppressedCandidateRef = useRef<string | null>(null)
-  const lastCandidateRef = useRef('none')
+  const activeForwardVarsFingerprintRef = useRef<string | null>(null)
   const modelCacheRef = useRef<Partial<Record<PredictionDirection, ModelCache>>>({})
   const forwardModelCacheRef = useRef<ForwardModelBundle | null>(null)
   const emittedDiagnosticFingerprintsRef = useRef(new Set<string>())
@@ -398,6 +405,7 @@ export function PredictionWorkspace({
   const [profiles, setProfiles] = useState<Partial<Record<PredictionDirection, PredictionWorkerModelProfile>>>({})
   const [lastResult, setLastResult] = useState<PredictionResult | null>(null)
   const [forwardVarsFingerprint, setForwardVarsFingerprint] = useState<string | null>(null)
+  const [forwardFailure, setForwardFailure] = useState<ForwardRefreshFailure | null>(null)
   const [inverseVarsFingerprint, setInverseVarsFingerprint] = useState<string | null>(null)
   const [validation, setValidation] = useState<ValidationResult | null>(null)
   const [samplingProgress, setSamplingProgress] = useState<SamplingProgress | null>(null)
@@ -421,6 +429,29 @@ export function PredictionWorkspace({
   const varsSchema = workbench.experimentDocument.varsSchema as VarsSchema | null
   const candidateVars = workbench.candidateVars
   const currentCandidateFingerprint = candidateFingerprint(candidateVars)
+  const candidateEvaluationReady = Boolean(
+    workbench.experimentDocument.status === 'Ready' &&
+    workbench.experimentDocument.successfulRevision === workbench.experimentDocument.revision &&
+    workbench.experimentDocument.variables &&
+    candidateFingerprint(workbench.experimentDocument.variables) === currentCandidateFingerprint,
+  )
+  const currentForwardFailure = forwardFailure?.fingerprint === currentCandidateFingerprint ? forwardFailure : null
+  const forwardRefreshState = predictionForwardRefreshState({
+    candidateReady: candidateEvaluationReady,
+    completedFingerprint: forwardVarsFingerprint,
+    currentFingerprint: currentCandidateFingerprint,
+    failureFingerprint: currentForwardFailure?.fingerprint ?? null,
+  })
+  const forwardRefreshing =
+    direction === 'forward' &&
+    active &&
+    contextExperimentMatches &&
+    !freshnessPending &&
+    !dataStale &&
+    candidateVars !== null &&
+    setup.calculationIds.length > 0 &&
+    (forwardRefreshState === 'waiting-candidate' || forwardRefreshState === 'updating')
+  const predictionUpdating = busy || forwardRefreshing
   const profile = profiles[direction] ?? null
   const candidateFingerprintRef = useRef(currentCandidateFingerprint)
   const candidateVarsRef = useRef(candidateVars)
@@ -530,6 +561,7 @@ export function PredictionWorkspace({
     cancelSamplingCandidateWaitRef.current = null
     calculationAbortRef.current?.abort()
     calculationAbortRef.current = null
+    activeForwardVarsFingerprintRef.current = null
     if (ownedCalculationDataOperationRef.current) cancelCalculationDataRef.current()
     ownedCalculationDataOperationRef.current = false
     const predictionCanceled = clientRef.current?.cancelPending() ?? false
@@ -642,6 +674,7 @@ export function PredictionWorkspace({
         setNeighborsByDirection({})
         setLastResult(null)
         setForwardVarsFingerprint(null)
+        setForwardFailure(null)
         setInverseVarsFingerprint(null)
         setSurrogateValues({})
         setSurrogateErrors({})
@@ -650,7 +683,6 @@ export function PredictionWorkspace({
         setFreshnessPending(false)
         skipNextPredictionBusyCheckRef.current = true
         if (!options.preserveValidation) setValidation(null)
-        lastCandidateRef.current = currentCandidateFingerprint
         setSetup((current) => {
           const valid = current.calculationIds.filter((id) => readyCalculations.some((row) => row.id === id))
           const fallback =
@@ -696,15 +728,7 @@ export function PredictionWorkspace({
         if (revision === loadRevisionRef.current) setBusy(false)
       }
     },
-    [
-      dataReadable,
-      cancelCurrent,
-      currentCandidateFingerprint,
-      experimentId,
-      selectedCalculationId,
-      setFreshnessPending,
-      setDataStale,
-    ],
+    [dataReadable, cancelCurrent, experimentId, selectedCalculationId, setFreshnessPending, setDataStale],
   )
 
   useLayoutEffect(() => {
@@ -725,7 +749,8 @@ export function PredictionWorkspace({
     setDirection('forward')
     setProfiles({})
     setNeighborsByDirection({})
-    lastCandidateRef.current = 'none'
+    activeForwardVarsFingerprintRef.current = null
+    setForwardFailure(null)
     if (active) {
       autoLoadAttemptRef.current = `${dataReadable}:${experimentId ?? 'none'}`
       void reloadData()
@@ -758,6 +783,7 @@ export function PredictionWorkspace({
     setNeighborsByDirection({})
     setLastResult(null)
     setForwardVarsFingerprint(null)
+    setForwardFailure(null)
     setInverseVarsFingerprint(null)
     setStatus('Prediction 가능한 Experiment를 선택하세요.')
   }, [cancelCurrent, dataReadable])
@@ -1307,26 +1333,49 @@ export function PredictionWorkspace({
 
   const runForward = useCallback(
     async (vars: Readonly<Vars>) => {
+      const expectedFingerprint = candidateFingerprint(vars)
+      const document = experimentDocumentRef.current
       if (
         freshnessPendingRef.current ||
         dataStaleRef.current ||
         !context ||
         context.experimentId !== experimentId ||
-        !setup.calculationIds.length
+        !setup.calculationIds.length ||
+        document.status !== 'Ready' ||
+        document.successfulRevision !== document.revision ||
+        candidateFingerprint(document.variables) !== expectedFingerprint ||
+        candidateFingerprintRef.current !== expectedFingerprint ||
+        activeForwardVarsFingerprintRef.current === expectedFingerprint
       )
         return
       primaryRevisionRef.current += 1
       const transaction = ++transactionRef.current
+      activeForwardVarsFingerprintRef.current = expectedFingerprint
       calculationAbortRef.current?.abort()
       if (clientRef.current?.cancelPending()) clearModelCaches()
       setDirection('forward')
       setBusy(true)
       setForwardVarsFingerprint(null)
+      setForwardFailure(null)
       setInverseVarsFingerprint(null)
+      setCalculationErrors({})
       setStatus('Forward · RecordedData를 예측하는 중…')
       try {
         const completed = await forwardOutputs(vars, transaction)
-        if (transaction !== transactionRef.current) return
+        const completedDocument = experimentDocumentRef.current
+        if (
+          !predictionForwardResultIsCurrent({
+            candidateReady:
+              completedDocument.status === 'Ready' &&
+              completedDocument.successfulRevision === completedDocument.revision &&
+              candidateFingerprint(completedDocument.variables) === expectedFingerprint,
+            currentCandidateFingerprint: candidateFingerprintRef.current,
+            currentTransaction: transactionRef.current,
+            expectedFingerprint,
+            transaction,
+          })
+        )
+          return
         calculationValuesRef.current = completed.calculated.values
         setCalculationValues(completed.calculated.values)
         setCalculationPrimaryRevision((current) => current + 1)
@@ -1336,25 +1385,38 @@ export function PredictionWorkspace({
         setNeighborsByDirection((current) => ({ ...current, forward: completed.result.neighbors }))
         setLastResult(completed.result)
         rememberProfile(completed.model.profile, completed.model.fingerprint)
-        setForwardVarsFingerprint(candidateFingerprint(vars))
+        const calculationFailure = setup.calculationIds
+          .map((id) => completed.calculated.errors[id])
+          .find((message): message is string => Boolean(message))
+        if (calculationFailure) {
+          setForwardFailure(Object.freeze({ fingerprint: expectedFingerprint, message: calculationFailure }))
+          setStatus(`Forward 결과 갱신 실패 · ${calculationFailure}`)
+          return
+        }
+        setForwardVarsFingerprint(expectedFingerprint)
+        setForwardFailure(null)
         if (userChangedVarsRef.current) setGuideProgress((current) => ({ ...current, forward: true }))
         setInverseVarsFingerprint(null)
-        setStatus(
-          Object.keys(completed.calculated.errors).length
-            ? 'Forward 완료 · 일부 Calculation 실패'
-            : 'Forward 완료 · CalculationData가 최신입니다.',
-        )
+        setStatus('Forward 완료 · CalculationData가 최신입니다.')
       } catch (cause: unknown) {
-        if (transaction !== transactionRef.current || (cause as { name?: string })?.name === 'AbortError') return
+        if (transaction !== transactionRef.current) return
+        if ((cause as { name?: string })?.name === 'AbortError') {
+          setStatus('현재 Vars의 Forward 갱신을 다시 예약하는 중…')
+          return
+        }
         clearModelCaches()
         const message = cause instanceof Error ? cause.message : String(cause)
-        setStatus(message)
+        setForwardFailure(Object.freeze({ fingerprint: expectedFingerprint, message }))
+        setStatus(`Forward 결과 갱신 실패 · ${message}`)
         toast.error(message)
       } finally {
+        if (activeForwardVarsFingerprintRef.current === expectedFingerprint) {
+          activeForwardVarsFingerprintRef.current = null
+        }
         if (transaction === transactionRef.current) setBusy(false)
       }
     },
-    [context, experimentId, forwardOutputs, rememberProfile, setup.calculationIds.length],
+    [context, experimentId, forwardOutputs, rememberProfile, setup.calculationIds],
   )
 
   const runInverse = useCallback(
@@ -1370,12 +1432,14 @@ export function PredictionWorkspace({
         return
       primaryRevisionRef.current += 1
       const transaction = ++transactionRef.current
+      activeForwardVarsFingerprintRef.current = null
       calculationAbortRef.current?.abort()
       if (clientRef.current?.cancelPending()) clearModelCaches()
       setDirection('inverse')
       setBusy(true)
       setInverseVarsFingerprint(null)
       setForwardVarsFingerprint(null)
+      setForwardFailure(null)
       setSurrogateValues({})
       setSurrogateErrors({})
       setStatus('Inverse · Vars를 예측하는 중…')
@@ -1472,11 +1536,17 @@ export function PredictionWorkspace({
       dataStale ||
       !contextExperimentMatches ||
       !candidateVars ||
-      !setup.calculationIds.length
+      !setup.calculationIds.length ||
+      direction !== 'forward' ||
+      validating ||
+      retryingValidation ||
+      samplingProgress !== null ||
+      forwardVarsFingerprint === currentCandidateFingerprint ||
+      currentForwardFailure ||
+      activeForwardVarsFingerprintRef.current === currentCandidateFingerprint ||
+      !candidateEvaluationReady
     )
       return
-    if (currentCandidateFingerprint === lastCandidateRef.current) return
-    lastCandidateRef.current = currentCandidateFingerprint
     if (suppressedCandidateRef.current === currentCandidateFingerprint) {
       suppressedCandidateRef.current = null
       return
@@ -1487,10 +1557,17 @@ export function PredictionWorkspace({
     candidateVars,
     contextExperimentMatches,
     currentCandidateFingerprint,
+    currentForwardFailure,
+    candidateEvaluationReady,
     dataStale,
+    direction,
+    forwardVarsFingerprint,
     freshnessPending,
+    retryingValidation,
     runForward,
+    samplingProgress,
     setup.calculationIds.length,
+    validating,
   ])
 
   const changeCalculationOutput = useCallback(
@@ -1498,11 +1575,13 @@ export function PredictionWorkspace({
       if (freshnessPendingRef.current || dataStaleRef.current) return
       primaryRevisionRef.current += 1
       transactionRef.current += 1
+      activeForwardVarsFingerprintRef.current = null
       calculationAbortRef.current?.abort()
       if (clientRef.current?.cancelPending()) clearModelCaches()
       setDirection('inverse')
       setInverseVarsFingerprint(null)
       setForwardVarsFingerprint(null)
+      setForwardFailure(null)
       setValidation(null)
       setSurrogateValues({})
       setSurrogateErrors({})
@@ -1524,50 +1603,51 @@ export function PredictionWorkspace({
     if (!contextExperimentMatches) return '현재 Experiment의 Prediction 데이터를 불러오는 중입니다.'
     if (freshnessPending) return 'Prediction 데이터 최신성을 확인하는 중입니다.'
     if (!workbench.experimentClean || experimentId === null) return '저장되고 수정되지 않은 Experiment가 필요합니다.'
-    if (busy || workbench.measurementActions.busy || workbench.calculationDataActions.busy)
+    if (
+      validating ||
+      retryingValidation ||
+      samplingProgress !== null ||
+      workbench.measurementActions.busy ||
+      workbench.calculationDataActions.busy
+    )
       return '진행 중인 작업이 있습니다.'
     if (dataStale) return 'Prediction 데이터를 Reload하세요.'
-    if (workbench.experimentDocument.runIsBusy) return 'Candidate 평가가 완료될 때까지 기다리세요.'
-    if (
-      workbench.experimentDocument.status !== 'Ready' ||
-      workbench.experimentDocument.successfulRevision !== workbench.experimentDocument.revision ||
-      !workbench.experimentDocument.variables ||
-      !workbench.experimentDocument.materialParameters ||
-      candidateFingerprint(workbench.experimentDocument.variables) !== currentCandidateFingerprint
-    ) {
-      return '현재 Candidate의 평가 결과가 준비되지 않았습니다.'
-    }
+    if (!candidateEvaluationReady) return '현재 Candidate를 평가하는 중입니다.'
+    if (direction === 'forward' && currentForwardFailure)
+      return `Forward 결과 갱신 실패: ${currentForwardFailure.message}`
+    if (direction === 'forward' && forwardRefreshState === 'updating')
+      return '현재 Vars의 Forward 결과를 갱신하는 중입니다.'
+    if (busy) return '진행 중인 작업이 있습니다.'
+    if (!workbench.experimentDocument.materialParameters) return '현재 Candidate의 평가 결과가 준비되지 않았습니다.'
     if (workbench.experimentDocument.draftTaskNames.length > 0) {
       return 'Solver가 선택되지 않은 Draft Task가 있어 검증할 수 없습니다.'
     }
     if (setup.calculationIds.some((id) => !calculationValues[id])) return '모든 선택 Calculation의 값이 필요합니다.'
-    if (direction === 'forward' && forwardVarsFingerprint !== currentCandidateFingerprint)
-      return '현재 Vars와 Forward 결과가 다릅니다.'
     if (direction === 'inverse' && inverseVarsFingerprint !== currentCandidateFingerprint)
       return '현재 Vars가 최신 Inverse 결과가 아닙니다.'
     return undefined
   }, [
     authenticated,
     busy,
+    candidateEvaluationReady,
     calculationValues,
     contextExperimentMatches,
+    currentForwardFailure,
     currentCandidateFingerprint,
     dataStale,
     direction,
     experimentId,
-    forwardVarsFingerprint,
+    forwardRefreshState,
     freshnessPending,
     inverseVarsFingerprint,
+    retryingValidation,
+    samplingProgress,
     setup.calculationIds,
+    validating,
     workbench.calculationDataActions.busy,
     workbench.experimentDocument.draftTaskNames,
     workbench.experimentDocument.materialParameters,
-    workbench.experimentDocument.revision,
-    workbench.experimentDocument.runIsBusy,
     workbench.experimentClean,
-    workbench.experimentDocument.status,
-    workbench.experimentDocument.successfulRevision,
-    workbench.experimentDocument.variables,
     workbench.measurementActions.busy,
     workbench.experimentManageable,
   ])
@@ -1648,8 +1728,10 @@ export function PredictionWorkspace({
       let recorded = 0
       let attempted = 0
       let stoppedReason: string | null = null
+      activeForwardVarsFingerprintRef.current = null
       clientRef.current.reset()
       clearModelCaches()
+      setForwardFailure(null)
       setBusy(true)
       setSamplingProgress({ attempt: 0, failures: 0, phase: 'sampling', recorded: 0, sessionId, successes: 0, total })
       setValidation(null)
@@ -1812,6 +1894,7 @@ export function PredictionWorkspace({
           await clientRef.current?.dropSampling(sessionId).catch(() => undefined)
           clearModelCaches()
           setForwardVarsFingerprint(null)
+          setForwardFailure(null)
           setInverseVarsFingerprint(null)
           if (recorded > 0) setFreshnessPending(true)
           else setFreshnessPending(false)
@@ -2007,6 +2090,7 @@ export function PredictionWorkspace({
       clientRef.current?.reset()
       clearModelCaches()
       setForwardVarsFingerprint(null)
+      setForwardFailure(null)
       setInverseVarsFingerprint(null)
       setFreshnessPending(true)
     } catch (cause: unknown) {
@@ -2015,6 +2099,7 @@ export function PredictionWorkspace({
         clientRef.current?.reset()
         clearModelCaches()
         setForwardVarsFingerprint(null)
+        setForwardFailure(null)
         setInverseVarsFingerprint(null)
         setFreshnessPending(true)
       }
@@ -2177,8 +2262,15 @@ export function PredictionWorkspace({
     } else if (command.type === 'details') {
       setDetailsDirection(direction)
       setDetailsOpen(true)
-    } else if (command.type === 'cancel') cancelCurrent()
-    else if (command.type === 'sample') void sampleAndRun(command.sampleCount ?? 10)
+    } else if (command.type === 'cancel') {
+      suppressedCandidateRef.current = currentCandidateFingerprint
+      if (direction === 'forward' && forwardVarsFingerprint !== currentCandidateFingerprint) {
+        setForwardFailure(
+          Object.freeze({ fingerprint: currentCandidateFingerprint, message: '사용자가 Forward 갱신을 취소했습니다.' }),
+        )
+      }
+      cancelCurrent()
+    } else if (command.type === 'sample') void sampleAndRun(command.sampleCount ?? 10)
     else void validatePrediction()
   }, [command?.id])
 
@@ -2220,8 +2312,10 @@ export function PredictionWorkspace({
       return
     }
     const transaction = ++transactionRef.current
+    activeForwardVarsFingerprintRef.current = null
     calculationAbortRef.current?.abort()
     if (clientRef.current?.cancelPending()) clearModelCaches()
+    setForwardFailure(null)
     setBusy(true)
     setStatus('새 Calculation Target을 현재 Candidate의 Forward 예측으로 초기화하는 중…')
     try {
@@ -2264,9 +2358,10 @@ export function PredictionWorkspace({
     setProfiles({})
     setNeighborsByDirection({})
     inverseRowsRef.current = null
-    lastCandidateRef.current = currentCandidateFingerprint
+    activeForwardVarsFingerprintRef.current = null
+    setForwardFailure(null)
     setSetupAppliedRevision((current) => current + 1)
-  }, [cancelCurrent, currentCandidateFingerprint, setupDraft, setupDraftError])
+  }, [cancelCurrent, setupDraft, setupDraftError])
 
   useEffect(() => {
     if (!setupAppliedRevision || !context) return
@@ -2392,6 +2487,37 @@ export function PredictionWorkspace({
               ? [-3.402_823_466_385_288_6e38, 3.402_823_466_385_288_6e38]
               : [-Number.MAX_VALUE, Number.MAX_VALUE]))
           : [-Number.MAX_VALUE, Number.MAX_VALUE]
+        const primaryStatus =
+          direction === 'forward'
+            ? forwardRefreshState === 'ready'
+              ? committedOutput
+                ? ('ready' as const)
+                : ('unavailable' as const)
+              : forwardRefreshState === 'failed'
+                ? ('unavailable' as const)
+                : ('updating' as const)
+            : committedOutput
+              ? ('ready' as const)
+              : busy
+                ? ('updating' as const)
+                : ('unavailable' as const)
+        const primaryError =
+          calculationErrors[calculation.id] ??
+          (direction === 'forward'
+            ? forwardRefreshState === 'waiting-candidate'
+              ? '현재 Candidate를 평가하는 중입니다.'
+              : forwardRefreshState === 'updating'
+                ? '현재 Vars의 Forward 결과를 갱신하는 중입니다.'
+                : forwardRefreshState === 'failed'
+                  ? (currentForwardFailure?.message ?? 'Forward 결과 갱신에 실패했습니다.')
+                  : committedOutput
+                    ? null
+                    : 'Prediction 결과가 없습니다.'
+            : committedOutput
+              ? null
+              : busy
+                ? 'Prediction 결과를 계산하는 중입니다.'
+                : 'Prediction 결과가 없습니다.')
         return Object.freeze({
           actual: Object.freeze({
             error:
@@ -2410,11 +2536,9 @@ export function PredictionWorkspace({
           primary: Object.freeze({
             output,
             role: direction === 'forward' ? 'predicted' : 'target',
-            status: committedOutput ? ('ready' as const) : busy ? ('updating' as const) : ('unavailable' as const),
+            status: primaryStatus,
           }),
-          error:
-            calculationErrors[calculation.id] ??
-            (committedOutput ? null : busy ? 'Prediction 결과를 계산하는 중입니다.' : 'Prediction 결과가 없습니다.'),
+          error: primaryError,
           extrapolated:
             direction === 'inverse' &&
             Boolean(lastResult?.extrapolatedInputKeys.includes(`calculation:${calculation.id}`)),
@@ -2442,8 +2566,10 @@ export function PredictionWorkspace({
       calculationErrors,
       calculationValues,
       currentCandidateFingerprint,
+      currentForwardFailure,
       direction,
       experimentId,
+      forwardRefreshState,
       lastResult,
       retryingValidation,
       selectedCalculations,
@@ -2526,7 +2652,7 @@ export function PredictionWorkspace({
       samplingRanges={effectiveSamplingRanges}
       schema={varsSchema}
       status={status}
-      updating={busy}
+      updating={predictionUpdating}
       vars={candidateVars}
       onDismissGuide={() => setGuideProgress({ forward: true, inverse: true })}
       onExperimentChange={(id) => {
@@ -2545,16 +2671,21 @@ export function PredictionWorkspace({
         if (candidateFingerprint(nextVars) === currentCandidateFingerprint) return
         if (!workbench.setCandidateVariables(nextVars, 'user-vars')) return
         userChangedVarsRef.current = true
+        suppressedCandidateRef.current = null
         primaryRevisionRef.current += 1
         transactionRef.current += 1
+        activeForwardVarsFingerprintRef.current = null
         calculationAbortRef.current?.abort()
         if (clientRef.current?.cancelPending()) clearModelCaches()
         setDirection('forward')
         setForwardVarsFingerprint(null)
+        setForwardFailure(null)
         setInverseVarsFingerprint(null)
+        setCalculationErrors({})
         setValidation(null)
         setSurrogateValues({})
         setSurrogateErrors({})
+        setStatus('현재 Candidate를 평가하는 중…')
       }}
     />
   )
@@ -2584,7 +2715,7 @@ export function PredictionWorkspace({
         mode={direction === 'forward' ? 'prediction' : 'target'}
         resetKey={`${experimentId ?? 'none'}:${calculationPrimaryRevision}`}
         status={status}
-        updating={busy}
+        updating={predictionUpdating}
         onOutputChange={changeCalculationOutput}
       />
       <PredictionSetupDialog
