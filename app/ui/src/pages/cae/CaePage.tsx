@@ -726,6 +726,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             experimentId={workbench.experimentId}
             measurementId={workbench.selection.measurement?.id ?? null}
             measurementLoading={workbench.selection.loading}
+            measurementSelectionPending={workbench.selectionRestoring}
             menubar={menubar}
             onActivity={runtimeConsole.append}
             onAgentBridgeChange={setCalculationAgentBridge}

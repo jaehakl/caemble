@@ -9,19 +9,19 @@ type VarsSchema = Readonly<Record<string, VarsSchemaEntry>>
 
 export function VarsPanel({
   candidateSessionKey,
+  expandFirstByDefault = false,
   disabled,
   schema,
   vars,
   onVariableChange,
 }: {
   candidateSessionKey: string
+  expandFirstByDefault?: boolean
   disabled: boolean
   schema: VarsSchema | null
   vars: Readonly<Vars> | null
   onVariableChange: (key: string, value: Tensor) => void
 }) {
-  const [selectedKey, setSelectedKey] = useState<string | null>(null)
-  const previousSessionRef = useRef(candidateSessionKey)
   const schemaKey = useMemo(
     () =>
       schema
@@ -29,14 +29,29 @@ export function VarsPanel({
         : 'none',
     [schema],
   )
+  const defaultExpandedKey = useMemo(
+    () =>
+      expandFirstByDefault && schema && vars
+        ? (Object.keys(schema).find((key) => vars[key] !== undefined) ?? null)
+        : null,
+    [expandFirstByDefault, schema, vars],
+  )
+  const [selectedKey, setSelectedKey] = useState<string | null>(defaultExpandedKey)
+  const previousSessionRef = useRef(candidateSessionKey)
   const previousSchemaRef = useRef(schemaKey)
+  const previousDefaultExpandedKeyRef = useRef(defaultExpandedKey)
   useEffect(() => {
-    if (previousSessionRef.current !== candidateSessionKey || previousSchemaRef.current !== schemaKey) {
-      setSelectedKey(null)
+    const contextChanged = previousSessionRef.current !== candidateSessionKey || previousSchemaRef.current !== schemaKey
+    if (
+      contextChanged ||
+      (expandFirstByDefault && previousDefaultExpandedKeyRef.current === null && defaultExpandedKey !== null)
+    ) {
+      setSelectedKey(defaultExpandedKey)
     }
     previousSessionRef.current = candidateSessionKey
     previousSchemaRef.current = schemaKey
-  }, [candidateSessionKey, schemaKey])
+    previousDefaultExpandedKeyRef.current = defaultExpandedKey
+  }, [candidateSessionKey, defaultExpandedKey, expandFirstByDefault, schemaKey])
 
   const entry = selectedKey && schema ? schema[selectedKey] : undefined
   return (

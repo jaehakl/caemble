@@ -141,6 +141,7 @@ export function CalculationWorkbench({
   experimentId,
   measurementId,
   measurementLoading,
+  measurementSelectionPending,
   menubar,
   onActivity,
   onAgentBridgeChange,
@@ -187,6 +188,7 @@ export function CalculationWorkbench({
   experimentId: number | null
   measurementId: number | null
   measurementLoading: boolean
+  measurementSelectionPending: boolean
   menubar: ReactNode
   onActivity: RuntimeActivityCallback
   onAgentBridgeChange: (bridge: CalculationAgentBridge | null) => void
@@ -238,6 +240,8 @@ export function CalculationWorkbench({
   calculationDataBusyRef.current = calculationDataBusy
   const appliedExperimentRef = useRef(experimentId)
   const selectedCalculationRef = useRef(selectedCalculationId)
+  const defaultCalculationExperimentRef = useRef<number | null>(null)
+  const defaultMeasurementExperimentRef = useRef<number | null>(null)
   const mutationSequenceRef = useRef(0)
   const appliedSaveCommandRef = useRef(saveCommand)
   const previewSequenceRef = useRef(0)
@@ -280,6 +284,30 @@ export function CalculationWorkbench({
   const rows = useMemo(
     () => (calculationsQuery.data?.items ?? []).filter((row): row is SavedCalculation => typeof row.id === 'number'),
     [calculationsQuery.data?.items],
+  )
+  const defaultMeasurementRequest = useMemo(
+    () => ({
+      ...getListRequest('visible'),
+      limit: 1,
+      filter: { experiment_id: [experimentId, experimentId] },
+      null_filter: { recorded_at: 'is_not_null' as const },
+      sort: ['updated_at', 'desc'] as const,
+    }),
+    [experimentId],
+  )
+  const defaultMeasurementQuery = useQuery({
+    enabled:
+      dataReadable &&
+      experimentId !== null &&
+      measurementId === null &&
+      !measurementLoading &&
+      !measurementSelectionPending &&
+      !contextPending,
+    queryFn: () => dbTables.Measurement.listRows(defaultMeasurementRequest),
+    queryKey: ['cae-workbench', 'measurements', 'default-recorded', defaultMeasurementRequest],
+  })
+  const defaultMeasurement = defaultMeasurementQuery.data?.items.find(
+    (row): row is SavedMeasurement => typeof row.id === 'number',
   )
   const experimentRecordsQuery = useQuery({
     enabled: dataReadable && experimentId !== null,
@@ -789,6 +817,60 @@ export function CalculationWorkbench({
     [deleting, dirty, invalidatePreview, onCalculationIdChange, saving],
   )
 
+  useEffect(() => {
+    if (
+      experimentId === null ||
+      contextPending ||
+      measurementLoading ||
+      measurementSelectionPending ||
+      defaultMeasurementExperimentRef.current === experimentId
+    ) {
+      return
+    }
+    if (measurementId !== null) {
+      defaultMeasurementExperimentRef.current = experimentId
+      return
+    }
+    if (!defaultMeasurementQuery.isSuccess || defaultMeasurementQuery.isFetching) return
+    defaultMeasurementExperimentRef.current = experimentId
+    if (!defaultMeasurement) return
+    invalidatePreview('Measurement RecordedData를 불러오는 중…')
+    onSelectMeasurement(defaultMeasurement)
+  }, [
+    contextPending,
+    defaultMeasurement,
+    defaultMeasurementQuery.isFetching,
+    defaultMeasurementQuery.isSuccess,
+    experimentId,
+    invalidatePreview,
+    measurementId,
+    measurementLoading,
+    measurementSelectionPending,
+    onSelectMeasurement,
+  ])
+
+  useEffect(() => {
+    if (experimentId === null || contextPending || defaultCalculationExperimentRef.current === experimentId) {
+      return
+    }
+    if (selectedCalculationId !== null) {
+      defaultCalculationExperimentRef.current = experimentId
+      return
+    }
+    if (!calculationsQuery.isSuccess || calculationsQuery.isFetching) return
+    defaultCalculationExperimentRef.current = experimentId
+    if (!rows[0]) return
+    replaceDraft(calculationDraft(rows[0]), rows[0].id)
+  }, [
+    calculationsQuery.isFetching,
+    calculationsQuery.isSuccess,
+    contextPending,
+    experimentId,
+    replaceDraft,
+    rows,
+    selectedCalculationId,
+  ])
+
   const save = useCallback(
     async (values?: CalculationSaveValues) => {
       if (!authenticated || !persistable) {
@@ -1088,7 +1170,10 @@ export function CalculationWorkbench({
                   title="New"
                   type="button"
                   variant="outline"
-                  onClick={() => replaceDraft(emptyCalculationDraft(experimentRecords[0]?.name), null)}
+                  onClick={() => {
+                    defaultCalculationExperimentRef.current = experimentId
+                    replaceDraft(emptyCalculationDraft(experimentRecords[0]?.name), null)
+                  }}
                 >
                   <FilePlus2 />
                 </Button>

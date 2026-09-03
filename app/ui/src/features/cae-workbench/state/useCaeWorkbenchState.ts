@@ -698,7 +698,7 @@ export function useCaeWorkbenchState(
     saving,
     selection,
     selectionIds,
-    selectionRestoring: selectionRestoreStatus === 'restoring',
+    selectionRestoring: pendingMeasurementId !== null || selectionRestoreStatus === 'restoring',
     measurementActions,
     calculationDataActions,
     experimentDocument,

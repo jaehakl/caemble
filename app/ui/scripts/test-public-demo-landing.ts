@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import type { AvailableExperimentRecord } from '@/api'
 import { defaultWorkbenchLayoutState, workbenchSectionIds, type WorkbenchDraft } from '@/features/cae-workbench/types'
 import {
@@ -69,6 +70,21 @@ assert(
     starterBundle,
   ),
   'meaningful local Draft must be preserved',
+)
+
+const varsPanelSource = readFileSync('src/features/cae-workbench/calculation/VarsPanel.tsx', 'utf8')
+const predictionPanelsSource = readFileSync('src/features/cae-workbench/prediction/PredictionPanels.tsx', 'utf8')
+assert(
+  /expandFirstByDefault = false/u.test(varsPanelSource),
+  'shared Vars panels must remain collapsed unless the caller opts in',
+)
+assert(
+  /previousDefaultExpandedKeyRef\.current === null && defaultExpandedKey !== null/u.test(varsPanelSource),
+  'the first available Prediction feature must expand once without reopening after a manual collapse',
+)
+assert(
+  /<VarsPanel[\s\S]*?expandFirstByDefault[\s\S]*?schema=\{schema\}/u.test(predictionPanelsSource),
+  'Prediction must opt into expanding its first feature',
 )
 
 console.log('Public Demo landing policy tests passed.')

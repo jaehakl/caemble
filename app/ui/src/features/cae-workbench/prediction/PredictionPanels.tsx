@@ -152,6 +152,7 @@ export function PredictionVarsPane({
         <VarsPanel
           candidateSessionKey={candidateSessionKey}
           disabled={disabled}
+          expandFirstByDefault
           schema={schema}
           vars={vars}
           onVariableChange={onVariableChange}
