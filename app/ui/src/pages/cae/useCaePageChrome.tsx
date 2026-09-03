@@ -108,7 +108,10 @@ export function useCaePageChrome({
   const repeatCountValid = repeatCountInput.trim() !== '' && Number.isSafeInteger(repeatCount) && repeatCount > 0
   const actions = useMemo<Record<string, WorkbenchAction>>(() => {
     const loginReason = '로그인 후 사용할 수 있습니다.'
-    const demoReadOnlyReason = workbench.experimentIsDemo ? '공개 Demo 원본과 데이터는 읽기 전용입니다.' : undefined
+    const demoReadOnlyReason =
+      workbench.experimentIsDemo && !workbench.experimentManageable
+        ? '공개 Demo 원본과 데이터는 읽기 전용입니다.'
+        : undefined
     const savedReason = '저장되고 편집되지 않은 Experiment가 필요합니다.'
     const sourceValidationReason = 'Experiment source 오류를 수정하고 의미 검사를 완료한 뒤 저장하세요.'
     const tasklessReason = !workbench.hasTasks

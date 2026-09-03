@@ -7,7 +7,7 @@ export function calculationAccessPolicy({
   experimentIsDemo: boolean
   experimentManageable: boolean
 }) {
-  const demoSandbox = dataReadable && experimentIsDemo
+  const demoSandbox = dataReadable && experimentIsDemo && !experimentManageable
   return {
     demoSandbox,
     persistable: experimentManageable,

@@ -1016,6 +1016,21 @@ async def _verify_calculation_data_contract(database: str) -> None:
 
             session.add(ExperimentDemo(experiment_id=experiment_id, display_order=0, is_default=True))
             await session.commit()
+            admin_demo_calculation = await upsert_calculations(
+                session,
+                [_ready_calculation(experiment_id, "Admin Demo Edit", source, first_measurement_id)],
+                user=admin,
+            )
+            admin_demo_targets = await missing_calculation_data(
+                session,
+                experiment_id,
+                admin_demo_calculation[0]["id"],
+                None,
+                user=admin,
+            )
+            assert admin_demo_targets["total"] >= 1
+            await delete_calculations(session, [admin_demo_calculation[0]["id"]], user=admin)
+            assert await session.get(ExperimentDemo, experiment_id) is not None
             guest_measurements = await list_measurements(
                 session,
                 GetListRequestBase(

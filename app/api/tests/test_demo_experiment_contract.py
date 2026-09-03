@@ -115,6 +115,10 @@ class DemoExperimentContractTests(unittest.TestCase):
                 await require_experiment_write(database, 7, SimpleNamespace(id="admin-owner", roles=[])),
                 experiment,
             )
+            self.assertIs(
+                await require_experiment_write(database, 7, SimpleNamespace(id="other-admin", roles=["admin"])),
+                experiment,
+            )
 
         import asyncio
 

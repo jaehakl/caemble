@@ -11,7 +11,7 @@ from typing import Any
 from caemble_catalog import Catalog
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from pydantic import ValidationError
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai.agent import AgentRunner, permission_fingerprint
@@ -22,9 +22,11 @@ from ai.provider import ProviderError, create_provider_adapter
 from ai.session import SessionEnvelopeCodec, SessionEnvelopeError
 from ai.tools import ToolExecutor
 from ai.workspace import StagedCalculation, StagedExperiment, WorkspaceEditError
-from db import Calculation, Experiment
+from db import Calculation, Experiment, ExperimentDemo
+from models import UserData
 from settings import settings
 from user_auth.routes import check_user, get_db
+from utils.crud.common import is_admin_user
 
 
 logger = logging.getLogger(__name__)
@@ -114,7 +116,7 @@ async def run_agent(
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
         run_id = uuid.uuid4().hex
-        first = await _authorize_calculation_workspace(db, user.id, first)
+        first = await _authorize_calculation_workspace(db, user, first)
         await db.rollback()
         start_message = first
         started_at = time.perf_counter()
@@ -366,7 +368,7 @@ def _safe_error_message(error: Exception) -> str:
 
 async def _authorize_calculation_workspace(
     db: AsyncSession,
-    user_id: str,
+    user: UserData,
     start: RunStart,
 ) -> RunStart:
     document = start.workspace.document
@@ -374,15 +376,22 @@ async def _authorize_calculation_workspace(
         return start
     experiment = (
         await db.execute(
-            select(Experiment.id, Experiment.user_id).where(
-                Experiment.id == document.experimentId,
-                or_(Experiment.user_id.is_(None), Experiment.user_id == user_id),
+            select(
+                Experiment.id,
+                Experiment.user_id,
+                ExperimentDemo.experiment_id.label("demo_experiment_id"),
             )
+            .outerjoin(ExperimentDemo, ExperimentDemo.experiment_id == Experiment.id)
+            .where(Experiment.id == document.experimentId)
         )
     ).mappings().one_or_none()
-    if experiment is None:
+    admin = is_admin_user(user)
+    demo = experiment is not None and experiment["demo_experiment_id"] is not None
+    if experiment is None or not (
+        admin or experiment["user_id"] is None or experiment["user_id"] == user.id or demo
+    ):
         raise WorkspaceEditError("Calculation Experiment is not visible")
-    editable = experiment["user_id"] == user_id
+    editable = admin or experiment["user_id"] == user.id or demo
     updates: dict[str, Any] = {"editable": editable}
     if document.calculationId is not None:
         calculation = (

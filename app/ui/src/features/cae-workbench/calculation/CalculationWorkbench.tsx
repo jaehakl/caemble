@@ -156,6 +156,7 @@ export function CalculationWorkbench({
   onRowRatiosChange,
   onSaveStateChange,
   onUsageChanged,
+  publicDemoMutable,
   onSelectMeasurement,
   onClearMeasurement,
   recordedData,
@@ -203,6 +204,7 @@ export function CalculationWorkbench({
   onRowRatiosChange: (ratios: readonly [number, number, number]) => void
   onSaveStateChange: (state: CalculationSaveState) => void
   onUsageChanged: () => Promise<void>
+  publicDemoMutable: boolean
   onSelectMeasurement: (row: SavedMeasurement) => void
   onClearMeasurement: () => void
   recordedData: RecordedData | null | undefined
@@ -1055,7 +1057,7 @@ export function CalculationWorkbench({
     if (!persistable) return
     if (
       !window.confirm(
-        `${draft.name || `Calculation #${draft.id}`}을 영구 삭제할까요?${dirty ? '\n저장하지 않은 편집도 함께 사라집니다.' : ''}`,
+        `${draft.name || `Calculation #${draft.id}`}을 영구 삭제할까요?${dirty ? '\n저장하지 않은 편집도 함께 사라집니다.' : ''}${publicDemoMutable ? '\n공개 Demo 데이터에 즉시 반영되며 Prediction이 Not Ready가 될 수 있습니다.' : ''}`,
       )
     ) {
       return
@@ -1340,6 +1342,7 @@ export function CalculationWorkbench({
                     onClearMeasurement()
                   }}
                   onDelete={persistable ? onDeleteMeasurements : undefined}
+                  publicDataWarning={publicDemoMutable}
                   onSelect={(row) => {
                     invalidatePreview('Measurement RecordedData를 불러오는 중…')
                     onSelectMeasurement(row)

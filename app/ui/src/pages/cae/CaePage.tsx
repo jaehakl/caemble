@@ -486,7 +486,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               controller={workbench.experimentDocument}
               disabled={
                 !page.initialized ||
-                workbench.experimentIsDemo ||
+                Boolean(workbench.experimentRecord && !workbench.experimentManageable) ||
                 pendingResult ||
                 workbench.measurementActions.busy ||
                 workbench.calculationDataActions.busy ||
@@ -751,6 +751,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             onSelectMeasurement={(row) => page.runSafely(() => workbench.selection.loadMeasurement(row))}
             onClearMeasurement={workbench.selection.clearMeasurement}
             onUsageChanged={workbench.refreshExperimentUsage}
+            publicDemoMutable={workbench.experimentIsDemo && workbench.experimentManageable}
             recordedData={activeFlatRecordedData}
             recordedRows={activeRecordedRows}
             recordedRules={activeRecordedRules}
@@ -808,9 +809,11 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           ) : null}
           {workbench.experimentIsDemo ? (
             <Badge className="h-5 rounded-sm bg-primary px-1.5 text-primary-foreground">
-              {page.activeSection === 'measurement'
-                ? 'Demo · 원본 데이터 읽기 전용 · Calculation 로컬 미리보기'
-                : 'Demo · 읽기 전용'}
+              {workbench.experimentManageable
+                ? 'Demo · 관리자 편집 가능'
+                : page.activeSection === 'measurement'
+                  ? 'Demo · 원본 데이터 읽기 전용 · Calculation 로컬 미리보기'
+                  : 'Demo · 읽기 전용'}
             </Badge>
           ) : null}
           {workbench.experimentDirty ? (

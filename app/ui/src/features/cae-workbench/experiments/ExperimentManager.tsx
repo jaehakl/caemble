@@ -166,10 +166,13 @@ export function ExperimentManager({
       const detail = linked
         ? `\n연결 데이터 ${linked.toLocaleString()}개도 함께 삭제됩니다 (Measurement ${counts!.measurements}, RecordedData ${counts!.recordedData}, Calculation ${counts!.calculations}).`
         : ''
+      const demoDetail = row.isDemo
+        ? '\n공개 Demo에서 즉시 제거되며, 다음 정상 Demo가 대표 Demo로 승격될 수 있습니다.'
+        : ''
       const version = row.version ?? `${row.version_major}.${row.version_minor}.${row.version_patch}`
       if (
         !window.confirm(
-          `${row.namespace}/${row.repository_slug}/${row.experiment_key}@${version}을 영구 삭제할까요?${detail}`,
+          `${row.namespace}/${row.repository_slug}/${row.experiment_key}@${version}을 영구 삭제할까요?${detail}${demoDetail}`,
         )
       ) {
         return false
@@ -182,6 +185,8 @@ export function ExperimentManager({
       if (row.id === selectedId) onDeleteSelected?.(row as SavedExperiment)
       await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] })
       await queryClient.invalidateQueries({ queryKey: ['experiment', 'available'] })
+      await queryClient.invalidateQueries({ queryKey: ['admin', 'demo-experiments'] })
+      await queryClient.invalidateQueries({ queryKey: ['admin', 'experiments'] })
       await queryClient.invalidateQueries({ queryKey: authQueryKey })
       toast.success('Experiment Version을 삭제했습니다.')
     },
@@ -275,9 +280,8 @@ export function ExperimentManager({
                 const savedRow = item.kind === 'saved' ? item.row : null
                 const manageable = Boolean(
                   savedRow &&
-                  !savedRow.isDemo &&
                   user &&
-                  (savedRow.user_id === user.id || user.roles.includes('admin')),
+                  (user.roles.includes('admin') || (!savedRow.isDemo && savedRow.user_id === user.id)),
                 )
                 const counts = savedRow?.derivedCounts
                 const linked = counts ? counts.measurements + counts.recordedData + counts.calculations : 0
@@ -301,7 +305,9 @@ export function ExperimentManager({
                             <LoaderCircle className="size-4 animate-spin" />
                           ) : null}
                           {savedRow?.sourceLocked ? <Badge className="bg-amber-600 text-white">Locked</Badge> : null}
-                          {savedRow?.isDemo ? <Badge>Demo · 읽기 전용</Badge> : null}
+                          {savedRow?.isDemo ? (
+                            <Badge>{manageable ? 'Demo · 관리자 편집 가능' : 'Demo · 읽기 전용'}</Badge>
+                          ) : null}
                           {linked ? (
                             <Badge className="border bg-transparent text-foreground">
                               연결 데이터 {linked.toLocaleString()}

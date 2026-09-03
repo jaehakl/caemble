@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from cryptography.fernet import Fernet
 from pydantic import ValidationError
@@ -12,6 +13,7 @@ APP_DIR = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP_DIR))
 
 from ai.models import AGENT_WORKSPACE_SCHEMA_VERSION, RunStart  # noqa: E402
+from ai.router import _authorize_calculation_workspace  # noqa: E402
 from ai.data_tools import VisibleDataReader  # noqa: E402
 from ai.session import AgentSessionState, SessionEnvelopeCodec, SessionEnvelopeError  # noqa: E402
 from ai.tools import agent_tool_definitions  # noqa: E402
@@ -168,6 +170,41 @@ class _Database:
 
     async def execute(self, _statement: object) -> _Rows:
         return self.results.pop(0)
+
+
+class AiCalculationAuthorizationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_admin_can_edit_another_owners_calculation_workspace(self) -> None:
+        payload = calculation_start()
+        payload["workspace"]["document"]["calculationId"] = None  # type: ignore[index]
+        start = RunStart.model_validate(payload)
+        authorized = await _authorize_calculation_workspace(
+            _Database(_Rows(one={"id": 7, "user_id": "owner", "demo_experiment_id": None})),  # type: ignore[arg-type]
+            SimpleNamespace(id="admin", roles=["admin"]),  # type: ignore[arg-type]
+            start,
+        )
+        self.assertTrue(authorized.workspace.document.editable)
+
+    async def test_demo_viewer_keeps_local_ai_source_editing(self) -> None:
+        payload = calculation_start()
+        payload["workspace"]["document"]["calculationId"] = None  # type: ignore[index]
+        start = RunStart.model_validate(payload)
+        authorized = await _authorize_calculation_workspace(
+            _Database(_Rows(one={"id": 7, "user_id": "owner", "demo_experiment_id": 7})),  # type: ignore[arg-type]
+            SimpleNamespace(id="viewer", roles=["user"]),  # type: ignore[arg-type]
+            start,
+        )
+        self.assertTrue(authorized.workspace.document.editable)
+
+    async def test_foreign_non_demo_workspace_remains_hidden(self) -> None:
+        payload = calculation_start()
+        payload["workspace"]["document"]["calculationId"] = None  # type: ignore[index]
+        start = RunStart.model_validate(payload)
+        with self.assertRaisesRegex(WorkspaceEditError, "not visible"):
+            await _authorize_calculation_workspace(
+                _Database(_Rows(one={"id": 7, "user_id": "owner", "demo_experiment_id": None})),  # type: ignore[arg-type]
+                SimpleNamespace(id="viewer", roles=["user"]),  # type: ignore[arg-type]
+                start,
+            )
 
 
 class AiCalculationVisibleDataTests(unittest.IsolatedAsyncioTestCase):

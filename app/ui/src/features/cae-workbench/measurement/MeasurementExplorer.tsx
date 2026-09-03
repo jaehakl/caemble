@@ -21,6 +21,7 @@ export function MeasurementExplorer({
   experimentId,
   onClearSelection,
   onDelete,
+  publicDataWarning = false,
   onSelect,
   selectedId,
 }: {
@@ -31,6 +32,7 @@ export function MeasurementExplorer({
   experimentId: number | null
   onClearSelection?: () => void
   onDelete?: (rows: readonly SavedMeasurement[]) => Promise<boolean>
+  publicDataWarning?: boolean
   onSelect: (row: SavedMeasurement) => void
   selectedId?: number | null
 }) {
@@ -171,7 +173,7 @@ export function MeasurementExplorer({
     const recordedCount = selected.filter((row) => row.recorded_at).length
     if (
       !window.confirm(
-        `선택한 Measurement ${selected.length.toLocaleString()}개를 영구 삭제할까요?\nRecorded Measurement ${recordedCount.toLocaleString()}개에 연결된 RecordedData도 함께 삭제됩니다.`,
+        `선택한 Measurement ${selected.length.toLocaleString()}개를 영구 삭제할까요?\nRecorded Measurement ${recordedCount.toLocaleString()}개에 연결된 RecordedData도 함께 삭제됩니다.${publicDataWarning ? '\n공개 Demo 데이터에 즉시 반영되며 Prediction이 Not Ready가 될 수 있습니다.' : ''}`,
       )
     ) {
       return

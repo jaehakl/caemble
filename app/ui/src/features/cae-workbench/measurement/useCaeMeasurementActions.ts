@@ -270,6 +270,9 @@ export function useCaeMeasurementActions({
         queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'measurements'] }),
         queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculation-data'] }),
         queryClient.invalidateQueries({ queryKey: ['analysis', experimentId] }),
+        queryClient.invalidateQueries({ queryKey: ['experiment', 'available'] }),
+        queryClient.invalidateQueries({ queryKey: ['admin', 'demo-experiments'] }),
+        queryClient.invalidateQueries({ queryKey: ['admin', 'experiments'] }),
         ...(measurementId
           ? [queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'recorded-data', measurementId] })]
           : []),

@@ -510,6 +510,9 @@ export function useCaeWorkbenchState(
       queryClient.invalidateQueries({ queryKey: ['work', 'experiments'] }),
       queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiment'] }),
       queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] }),
+      queryClient.invalidateQueries({ queryKey: ['experiment', 'available'] }),
+      queryClient.invalidateQueries({ queryKey: ['admin', 'demo-experiments'] }),
+      queryClient.invalidateQueries({ queryKey: ['admin', 'experiments'] }),
       queryClient.invalidateQueries({ queryKey: authQueryKey }),
     ])
   }, [queryClient])
@@ -643,9 +646,8 @@ export function useCaeWorkbenchState(
 
   const experimentManageable = Boolean(
     experimentRecord &&
-    !experimentRecord.isDemo &&
     user &&
-    (experimentRecord.user_id === user.id || user.roles.includes('admin')),
+    (user.roles.includes('admin') || (!experimentRecord.isDemo && experimentRecord.user_id === user.id)),
   )
   const experimentIsDemo = Boolean(experimentRecord?.isDemo)
   const experimentVersion = experimentRecord
@@ -666,7 +668,12 @@ export function useCaeWorkbenchState(
         ? { ...current, derivedCounts: usage.derivedCounts, sourceLocked: usage.sourceLocked }
         : current,
     )
-  }, [experimentId])
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['experiment', 'available'] }),
+      queryClient.invalidateQueries({ queryKey: ['admin', 'demo-experiments'] }),
+      queryClient.invalidateQueries({ queryKey: ['admin', 'experiments'] }),
+    ])
+  }, [experimentId, queryClient])
 
   return {
     experiment,

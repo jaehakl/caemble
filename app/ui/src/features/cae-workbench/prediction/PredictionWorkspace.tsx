@@ -1441,6 +1441,7 @@ export function PredictionWorkspace({
 
   const validationDisabledReason = useMemo(() => {
     if (!authenticated) return '로그인 후 검증할 수 있습니다.'
+    if (!workbench.experimentManageable) return '이 Experiment의 데이터를 변경할 권한이 없습니다.'
     if (!contextExperimentMatches) return '현재 Experiment의 Prediction 데이터를 불러오는 중입니다.'
     if (freshnessPending) return 'Prediction 데이터 최신성을 확인하는 중입니다.'
     if (!workbench.experimentClean || experimentId === null) return '저장되고 수정되지 않은 Experiment가 필요합니다.'
@@ -1489,6 +1490,7 @@ export function PredictionWorkspace({
     workbench.experimentDocument.successfulRevision,
     workbench.experimentDocument.variables,
     workbench.measurementActions.busy,
+    workbench.experimentManageable,
   ])
 
   const validatePrediction = useCallback(async () => {
@@ -1686,6 +1688,7 @@ export function PredictionWorkspace({
       experimentId === null ||
       validation.experimentId !== experimentId ||
       !contextExperimentMatches ||
+      !workbench.experimentManageable ||
       busyRef.current ||
       freshnessPendingRef.current ||
       !validation.rows.some((row) => row.error)
@@ -1802,7 +1805,13 @@ export function PredictionWorkspace({
         setRetryingValidation(false)
       }
     }
-  }, [contextExperimentMatches, experimentId, validation, workbench.calculationDataActions])
+  }, [
+    contextExperimentMatches,
+    experimentId,
+    validation,
+    workbench.calculationDataActions,
+    workbench.experimentManageable,
+  ])
 
   useEffect(() => {
     if (!command) return
@@ -1917,6 +1926,7 @@ export function PredictionWorkspace({
       freshnessPendingRef.current ||
       dataStaleRef.current ||
       !contextExperimentMatches ||
+      !workbench.experimentManageable ||
       workbench.measurementActions.busy ||
       workbench.calculationDataActions.busy
     )
@@ -1944,6 +1954,7 @@ export function PredictionWorkspace({
     reloadData,
     setupDraft.calculationIds,
     workbench.calculationDataActions,
+    workbench.experimentManageable,
     workbench.measurementActions.busy,
   ])
 
@@ -2147,6 +2158,7 @@ export function PredictionWorkspace({
       disabled={validating || dataStale || freshnessPending || !varsSchema || !candidateVars}
       guideVisible={workbench.experimentIsDemo && (!guideProgress.forward || !guideProgress.inverse)}
       isDemo={workbench.experimentIsDemo}
+      manageable={workbench.experimentManageable}
       loadingExperiments={availableQuery.isPending}
       mine={availableQuery.data?.mine ?? []}
       schema={varsSchema}
@@ -2223,10 +2235,17 @@ export function PredictionWorkspace({
           dataStale ||
           freshnessPending ||
           !contextExperimentMatches ||
+          !workbench.experimentManageable ||
           workbench.measurementActions.busy ||
           workbench.calculationDataActions.busy
         }
-        calculateMissingLabel={authenticated ? '누락 데이터 계산' : '로그인하여 데이터 계산'}
+        calculateMissingLabel={
+          authenticated
+            ? workbench.experimentManageable
+              ? '누락 데이터 계산'
+              : '데이터 변경 권한 없음'
+            : '로그인하여 데이터 계산'
+        }
         calculations={
           contextExperimentMatches
             ? context.calculations.map((calculation) => ({
@@ -2342,7 +2361,9 @@ export function PredictionWorkspace({
         validationText={validationText}
         onDirectionChange={setDetailsDirection}
         onOpenChange={setDetailsOpen}
-        onRetryCalculations={validation ? () => void retryValidationCalculations() : undefined}
+        onRetryCalculations={
+          validation && workbench.experimentManageable ? () => void retryValidationCalculations() : undefined
+        }
       />
     </>
   )

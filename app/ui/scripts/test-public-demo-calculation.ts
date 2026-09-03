@@ -22,6 +22,15 @@ const authenticatedDemo = calculationAccessPolicy({
 assert(authenticatedDemo.sourceEditable, 'authenticated Demo viewers must keep the same local sandbox')
 assert(!authenticatedDemo.persistable, 'authenticated Demo viewers must not mutate the Demo')
 
+const adminDemo = calculationAccessPolicy({
+  dataReadable: true,
+  experimentIsDemo: true,
+  experimentManageable: true,
+})
+assert(!adminDemo.demoSandbox, 'admin Demo editing must not use the local-only sandbox')
+assert(adminDemo.sourceEditable, 'admin Demo Calculation source must be editable')
+assert(adminDemo.persistable, 'admin Demo Calculations must be persistable')
+
 const owner = calculationAccessPolicy({
   dataReadable: true,
   experimentIsDemo: false,
@@ -39,6 +48,8 @@ assert(!anonymousPrivate.persistable, 'private Calculations must remain non-pers
 
 const workbenchSource = readFileSync('src/features/cae-workbench/calculation/CalculationWorkbench.tsx', 'utf8')
 const pageSource = readFileSync('src/pages/cae/CaePage.tsx', 'utf8')
+const chromeSource = readFileSync('src/pages/cae/useCaePageChrome.tsx', 'utf8')
+const predictionSource = readFileSync('src/features/cae-workbench/prediction/PredictionWorkspace.tsx', 'utf8')
 const stateSource = readFileSync('src/features/cae-workbench/state/useCaeWorkbenchState.ts', 'utf8')
 assert(
   /null_filter: \{ recorded_at: 'is_not_null' as const \}/u.test(workbenchSource) &&
@@ -67,6 +78,26 @@ assert(
   /measurementSelectionPending=\{workbench\.selectionRestoring\}/u.test(pageSource) &&
     /pendingMeasurementId !== null \|\| selectionRestoreStatus === 'restoring'/u.test(stateSource),
   'URL Measurement restoration must block the automatic default selection',
+)
+assert(
+  /user\.roles\.includes\('admin'\) \|\| \(!experimentRecord\.isDemo && experimentRecord\.user_id === user\.id\)/u.test(
+    stateSource,
+  ),
+  'only admins or non-Demo owners must receive persistent Experiment access',
+)
+assert(
+  /publicDemoMutable=\{workbench\.experimentIsDemo && workbench\.experimentManageable\}/u.test(pageSource),
+  'admin Demo mutations must carry the public-data warning context',
+)
+assert(
+  /workbench\.experimentIsDemo && !workbench\.experimentManageable/u.test(chromeSource),
+  'Demo ribbon actions must remain read-only only for non-admin viewers',
+)
+assert(
+  /if \(!workbench\.experimentManageable\) return '이 Experiment의 데이터를 변경할 권한이 없습니다\.'/u.test(
+    predictionSource,
+  ) && /!workbench\.experimentManageable \|\|[\s\S]*?workbench\.measurementActions\.busy/u.test(predictionSource),
+  'Prediction validation and missing-data writes must require persistent Experiment access',
 )
 
 console.log('Public Demo Calculation access tests passed.')

@@ -43,6 +43,7 @@ export type PredictionVarsPaneProps = Readonly<{
   disabled: boolean
   guideVisible: boolean
   isDemo: boolean
+  manageable: boolean
   loadingExperiments: boolean
   mine: readonly AvailableExperimentRecord[]
   schema: PredictionVarsSchema | null
@@ -62,6 +63,7 @@ export function PredictionVarsPane({
   disabled,
   guideVisible,
   isDemo,
+  manageable,
   loadingExperiments,
   mine,
   schema,
@@ -72,6 +74,7 @@ export function PredictionVarsPane({
   onExperimentChange,
   onVariableChange,
 }: PredictionVarsPaneProps) {
+  const currentExperiment = [...mine, ...demos].find((experiment) => experiment.id === currentExperimentId)
   return (
     <section className="flex h-full min-h-0 flex-col gap-2" aria-label="Prediction vars">
       <div className="rounded-lg border bg-card p-2.5">
@@ -112,8 +115,17 @@ export function PredictionVarsPane({
         {isDemo ? (
           <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
             <Badge>Demo</Badge>
-            <Badge className="border bg-transparent text-foreground">읽기 전용</Badge>
-            <span>브라우저 Prediction은 자유롭게 체험할 수 있습니다.</span>
+            <Badge className="border bg-transparent text-foreground">
+              {manageable ? '관리자 편집 가능' : '읽기 전용'}
+            </Badge>
+            {currentExperiment && !currentExperiment.predictionReady ? (
+              <Badge className="bg-destructive text-white">Not Ready</Badge>
+            ) : null}
+            <span>
+              {manageable
+                ? '저장 작업은 현재 공개 데이터에 즉시 반영됩니다.'
+                : '브라우저 Prediction은 자유롭게 체험할 수 있습니다.'}
+            </span>
           </div>
         ) : null}
       </div>

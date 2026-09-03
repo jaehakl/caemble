@@ -113,7 +113,8 @@ export function useCalculationDataActions({
           execute: async (target, input) => {
             const calculation = calculations.get(target.calculation_id)
             if (!calculation) throw new Error('저장된 Calculation source를 찾을 수 없습니다.')
-            if (calculation.contract_status !== 'ready') throw new Error('Calculation preflight 계약이 준비되지 않았습니다.')
+            if (calculation.contract_status !== 'ready')
+              throw new Error('Calculation preflight 계약이 준비되지 않았습니다.')
             const requiredInput = Object.freeze(
               Object.fromEntries(
                 calculation.experiment_record_ids.map((recordId) => {
@@ -188,6 +189,9 @@ export function useCalculationDataActions({
         if (controllerRef.current === controller) controllerRef.current = null
         await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'calculation-data'] })
         await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'measurements'] })
+        await queryClient.invalidateQueries({ queryKey: ['experiment', 'available'] })
+        await queryClient.invalidateQueries({ queryKey: ['admin', 'demo-experiments'] })
+        await queryClient.invalidateQueries({ queryKey: ['admin', 'experiments'] })
       }
       return {
         total: state.total,
