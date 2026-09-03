@@ -22,6 +22,10 @@ export function varsSchemaFingerprint(schema: VarsSchema) {
   )
 }
 
+export function varsFingerprint(vars: Readonly<Vars> | null) {
+  return vars ? JSON.stringify(vars) : 'none'
+}
+
 function randomTensor(shape: readonly number[], min: number, max: number): Tensor {
   if (shape.length === 0) return min === max ? min : min + Math.random() * (max - min)
   return Array.from({ length: shape[0] }, () => randomTensor(shape.slice(1), min, max))

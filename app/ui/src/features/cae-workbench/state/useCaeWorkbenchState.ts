@@ -13,6 +13,7 @@ import {
   createCadSourceDocument,
   createExperimentSourceBundle,
   experimentTaskPaths,
+  varsFingerprint,
   type Tensor,
   type ExperimentSourceBundle,
   type ExperimentSourceDocument,
@@ -388,7 +389,8 @@ export function useCaeWorkbenchState(
       experimentDocument.resultSessionKey !== workspaceSession ||
       experimentDocument.status !== 'Ready' ||
       experimentDocument.successfulRevision !== experimentDocument.revision ||
-      !experimentDocument.variables
+      !experimentDocument.variables ||
+      (candidateVars !== null && varsFingerprint(candidateVars) !== varsFingerprint(experimentDocument.variables))
     ) {
       return
     }
@@ -401,6 +403,7 @@ export function useCaeWorkbenchState(
     experimentDocument.status,
     experimentDocument.successfulRevision,
     experimentDocument.variables,
+    candidateVars,
     selection.measurement,
     workspaceSession,
   ])

@@ -35,6 +35,58 @@ export type PredictionSamplingSession = {
   readonly emitted: Set<string>
 }
 
+export type PredictionSamplingCandidateWaitResult = Readonly<{
+  observedExpectedCandidate: boolean
+  state: 'cancelled' | 'error' | 'pending' | 'ready' | 'replaced' | 'source-changed' | 'timeout'
+}>
+
+export function predictionSamplingCandidateWaitResult({
+  baselineRevision,
+  cancelRequested,
+  currentCandidateFingerprint,
+  deadline,
+  documentCandidateFingerprint,
+  documentRevision,
+  documentStatus,
+  expectedFingerprint,
+  now,
+  observedExpectedCandidate,
+  sourceChanged,
+  successfulRevision,
+}: Readonly<{
+  baselineRevision: number
+  cancelRequested: boolean
+  currentCandidateFingerprint: string
+  deadline: number
+  documentCandidateFingerprint: string
+  documentRevision: number
+  documentStatus: string
+  expectedFingerprint: string
+  now: number
+  observedExpectedCandidate: boolean
+  sourceChanged: boolean
+  successfulRevision: number
+}>): PredictionSamplingCandidateWaitResult {
+  if (cancelRequested) return { observedExpectedCandidate, state: 'cancelled' }
+  if (sourceChanged) return { observedExpectedCandidate, state: 'source-changed' }
+  const observed = observedExpectedCandidate || currentCandidateFingerprint === expectedFingerprint
+  if (observed && currentCandidateFingerprint !== expectedFingerprint) {
+    return { observedExpectedCandidate: true, state: 'replaced' }
+  }
+  if (documentRevision <= baselineRevision) return { observedExpectedCandidate: observed, state: 'pending' }
+  if (documentStatus === 'Error') return { observedExpectedCandidate: observed, state: 'error' }
+  if (
+    observed &&
+    documentStatus === 'Ready' &&
+    successfulRevision === documentRevision &&
+    documentCandidateFingerprint === expectedFingerprint
+  ) {
+    return { observedExpectedCandidate: true, state: 'ready' }
+  }
+  if (now >= deadline) return { observedExpectedCandidate: observed, state: 'timeout' }
+  return { observedExpectedCandidate: observed, state: 'pending' }
+}
+
 function elementCount(shape: readonly number[]) {
   return shape.reduce((total, length) => {
     if (!Number.isSafeInteger(length) || length < 0 || !Number.isSafeInteger(total * length)) {

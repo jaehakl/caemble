@@ -52,7 +52,13 @@ export type {
   TaskModelContext,
   VarsSchemaDefinition,
 } from './model/definition'
-export { generateRandomVars, normalizeVars, normalizeVarsSchema, varsSchemaFingerprint } from './model/vars'
+export {
+  generateRandomVars,
+  normalizeVars,
+  normalizeVarsSchema,
+  varsFingerprint,
+  varsSchemaFingerprint,
+} from './model/vars'
 export { convertUcumValue, normalizeUcumUnit } from './model/units'
 export { normalizeDataValueDescriptor } from './model/core'
 export type {

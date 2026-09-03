@@ -9,6 +9,7 @@ import type {
   MeasurementRecordedData,
 } from '../src/api'
 import { createDataTensorAccessor, isDataTensor } from '../src/lib/cad/model/dataTensor'
+import { varsFingerprint } from '../src/lib/cad/model/vars'
 import {
   buildPredictionKnnModel,
   estimatePredictionMemory,
@@ -40,6 +41,7 @@ import {
   acceptPredictionSamplingCenter,
   createPredictionSamplingSession,
   nextPredictionSamplingCandidate,
+  predictionSamplingCandidateWaitResult,
 } from '../src/features/cae-workbench/prediction/sampling'
 import {
   comparePredictionOutput,
@@ -119,6 +121,59 @@ assert.equal(samplingCreated.session.centers.length, 2)
 assert.equal(failedCandidateSession.centers.length, 1)
 assert.ok(adaptiveCandidate.length > 0)
 
+const previousCandidate = Object.freeze({ x: 5, field: Object.freeze([5, 5]) })
+const sampledCandidate = Object.freeze({ x: 7, field: Object.freeze([7, 7]) })
+const previousCandidateFingerprint = varsFingerprint(previousCandidate)
+const sampledCandidateFingerprint = varsFingerprint(sampledCandidate)
+assert.notEqual(previousCandidateFingerprint, sampledCandidateFingerprint)
+assert.equal(varsFingerprint(null), 'none')
+const candidateWait = (overrides: Partial<Parameters<typeof predictionSamplingCandidateWaitResult>[0]> = {}) =>
+  predictionSamplingCandidateWaitResult({
+    baselineRevision: 7,
+    cancelRequested: false,
+    currentCandidateFingerprint: previousCandidateFingerprint,
+    deadline: 100,
+    documentCandidateFingerprint: previousCandidateFingerprint,
+    documentRevision: 7,
+    documentStatus: 'Ready',
+    expectedFingerprint: sampledCandidateFingerprint,
+    now: 0,
+    observedExpectedCandidate: false,
+    sourceChanged: false,
+    successfulRevision: 7,
+    ...overrides,
+  })
+assert.deepEqual(candidateWait(), { observedExpectedCandidate: false, state: 'pending' })
+assert.deepEqual(
+  candidateWait({
+    currentCandidateFingerprint: sampledCandidateFingerprint,
+    documentRevision: 8,
+    successfulRevision: 8,
+  }),
+  { observedExpectedCandidate: true, state: 'pending' },
+)
+assert.deepEqual(
+  candidateWait({
+    currentCandidateFingerprint: sampledCandidateFingerprint,
+    documentCandidateFingerprint: sampledCandidateFingerprint,
+    documentRevision: 8,
+    successfulRevision: 8,
+  }),
+  { observedExpectedCandidate: true, state: 'ready' },
+)
+assert.equal(candidateWait({ observedExpectedCandidate: true }).state, 'replaced')
+assert.equal(
+  candidateWait({
+    currentCandidateFingerprint: sampledCandidateFingerprint,
+    documentRevision: 8,
+    documentStatus: 'Error',
+  }).state,
+  'error',
+)
+assert.equal(candidateWait({ documentRevision: 8, documentStatus: 'Evaluating', now: 100 }).state, 'timeout')
+assert.equal(candidateWait({ cancelRequested: true }).state, 'cancelled')
+assert.equal(candidateWait({ sourceChanged: true }).state, 'source-changed')
+
 const midpointSession = createPredictionSamplingSession({
   fingerprint: 'midpoint',
   totalAttempts: 1,
@@ -143,12 +198,7 @@ assert.throws(
 )
 
 const resetValues = compatibleVarsResetValues(
-  [
-    { nonzero: [1, 2] },
-    { nonzero: [1, 4] },
-    { nonzero: [3, 4] },
-    { nonzero: [3, 2] },
-  ],
+  [{ nonzero: [1, 2] }, { nonzero: [1, 4] }, { nonzero: [3, 4] }, { nonzero: [3, 2] }],
   { nonzero: { shape: [2], min: 1, max: 10 } },
 )
 assert.deepEqual(resetValues.nonzero, [1, 2])
