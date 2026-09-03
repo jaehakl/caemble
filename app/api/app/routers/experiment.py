@@ -55,7 +55,7 @@ async def get_experiment_usage(
 async def list_experiment_versions(
     experiment_id: int,
     db: AsyncSession = Depends(get_db),
-    user: UserData = Depends(require_roles(["admin", "user"])),
+    user: UserData | None = Depends(require_roles(["*"])),
 ):
     return await experiment_versions(db, experiment_id, user=user)
 

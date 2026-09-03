@@ -219,6 +219,7 @@ export function MaterialList({
   embedded = false,
   onSelectMaterial,
   selectedMaterialId,
+  scope = 'visible',
 }: {
   className?: string
   command?: Readonly<{ id: number; type: 'new' | 'refresh' }> | null
@@ -226,18 +227,19 @@ export function MaterialList({
   embedded?: boolean
   onSelectMaterial: (id: number) => void
   selectedMaterialId?: number | null
+  scope?: 'visible' | 'mine' | 'public'
 }) {
   const { isAuthenticated } = useAuth()
   const queryClient = useQueryClient()
   const [query, setQuery] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
-  const request = useMemo(() => allRowsRequest(), [])
+  const request = useMemo(() => allRowsRequest(scope), [scope])
   const materialsQuery = useQuery({
-    queryKey: ['materials', 'list'],
+    queryKey: ['materials', 'list', scope],
     queryFn: () => dbTables.Material.listRows(request),
   })
   const namesQuery = useQuery({
-    queryKey: ['materials', 'names'],
+    queryKey: ['materials', 'names', scope],
     queryFn: () => dbTables.MaterialName.listRows(request),
   })
 

@@ -78,7 +78,7 @@ export type JobSummary = Readonly<{
 }>
 
 export type ExperimentSourceBundle = Readonly<{ files: Readonly<Record<string, string>> }>
-type ExperimentDerivedCounts = Readonly<{
+export type ExperimentDerivedCounts = Readonly<{
   measurements: number
   recordedData: number
   calculations: number
@@ -156,7 +156,7 @@ export type MeasurementRecordRequest = Readonly<{
 }>
 export type GetListResponse<TItem> = { items: TItem[]; total: number }
 
-type UserRecord = Readonly<{
+export type UserRecord = Readonly<{
   id: string
   email?: string | null
   display_name?: string | null
@@ -167,7 +167,7 @@ type UserRecord = Readonly<{
   updated_at?: string | null
   experiment_namespaces: readonly string[]
 }>
-type MaterialRecord = Readonly<{
+export type MaterialRecord = Readonly<{
   id?: number
   created_at?: string | null
   updated_at?: string | null
@@ -207,7 +207,7 @@ type MaterialParameterQualifierRecord = Readonly<{
   name: string
   value: number
 }>
-type SavedExperimentRecord = Readonly<{
+export type SavedExperimentRecord = Readonly<{
   id: number
   created_at?: string | null
   updated_at?: string | null
@@ -229,6 +229,24 @@ type SavedExperimentRecord = Readonly<{
   bundleHash?: string
   sourceLocked?: boolean
   derivedCounts?: ExperimentDerivedCounts
+  isDemo?: boolean
+  demoOrder?: number | null
+  demoDefault?: boolean
+}>
+export type AvailableExperimentRecord = SavedExperimentRecord &
+  Readonly<{
+    predictionReady: boolean
+    predictionCounts: Readonly<{
+      recordedMeasurements: number
+      readyCalculations: number
+      calculationData: number
+    }>
+    demoOrder: number | null
+    demoDefault: boolean
+  }>
+export type AvailableExperimentsResponse = Readonly<{
+  mine: readonly AvailableExperimentRecord[]
+  demos: readonly AvailableExperimentRecord[]
 }>
 export type ExperimentRecordedDataRecord = Readonly<{
   id: number
@@ -361,7 +379,7 @@ export const dbTables = {
         'get',
         `/user_admin/get_all_users/${encodeURIComponent(String(limit))}/${encodeURIComponent(String(offset))}`,
       ),
-    deleteUserAdmin: (id: string) => request<boolean>('get', `/user_admin/delete/${encodeURIComponent(id)}`),
+    deleteUserAdmin: (id: string) => request<boolean>('delete', `/user_admin/${encodeURIComponent(id)}`),
     getUserSummaryAdmin: (userId: string) =>
       request<UserRecord | null>('get', `/user_data/summary/admin/${encodeURIComponent(userId)}`),
     getUserSummaryUser: () => request<UserRecord | null>('get', '/user_data/summary/user'),
@@ -441,6 +459,13 @@ export const dbTables = {
         '/experiment/usage',
         { experimentIds },
       ),
+    available: () => request<AvailableExperimentsResponse>('get', '/experiment/available'),
+    demoCandidates: () => request<{ items: AvailableExperimentRecord[] }>('get', '/admin/demo-experiments/candidates'),
+    replaceDemos: (experimentIds: readonly number[], defaultExperimentId: number | null) =>
+      request<AvailableExperimentsResponse>('put', '/admin/demo-experiments', {
+        experiment_ids: experimentIds,
+        default_experiment_id: defaultExperimentId,
+      }),
   },
   ExperimentRecord: {
     recordType: undefined as unknown as ExperimentRecordedDataRecord,
@@ -464,8 +489,7 @@ export const dbTables = {
     listRows: (
       payload: GetListRequest &
         Readonly<{ experiment_id?: number; experiment_record_ids?: readonly number[] }> = getListRequest(),
-    ) =>
-      request<GetListResponse<RecordedDataRecord>>('post', '/recorded_data/list', payload),
+    ) => request<GetListResponse<RecordedDataRecord>>('post', '/recorded_data/list', payload),
   },
   Calculation: {
     recordType: undefined as unknown as CalculationRecord,

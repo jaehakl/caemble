@@ -9,6 +9,9 @@ from unittest.mock import AsyncMock, patch
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP_DIR))
 
+import db  # noqa: E402, F401
+import gpstation.db  # noqa: E402, F401
+import user_auth.db  # noqa: E402, F401
 from models import RecordedDataListRequest  # noqa: E402
 from service.recorded_data import list_recorded_data  # noqa: E402
 

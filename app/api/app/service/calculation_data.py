@@ -26,37 +26,19 @@ from models import (
 )
 from utils.crud import CrudSpec, get_list_response
 from utils.crud.common import is_admin_user
+from service.experiment_access import require_experiment_read, require_experiment_write
 
 
 CALCULATION_DATA_CRUD_SPEC = CrudSpec(
     model=CalculationData,
     schema=CalculationDataBase,
-    scope_path=("measurement",),
+    scope_path=("measurement", "experiment"),
 )
-
-
-def _can_access(owner_id: str, user: UserData) -> bool:
-    return is_admin_user(user) or owner_id == user.id
-
-
-async def _require_experiment(
-    db: AsyncSession,
-    experiment_id: int,
-    user: UserData,
-) -> Experiment:
-    experiment = await db.get(Experiment, experiment_id)
-    if experiment is None or not _can_access(experiment.user_id, user):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Experiment not found.",
-        )
-    return experiment
 
 
 async def _analysis_rows(
     db: AsyncSession,
     experiment_id: int,
-    user: UserData,
     *,
     include_data: bool,
 ):
@@ -84,8 +66,6 @@ async def _analysis_rows(
         )
         .order_by(CalculationData.measurement_id, CalculationData.calculation_id)
     )
-    if not is_admin_user(user):
-        statement = statement.where(Measurement.user_id == user.id)
     return (await db.execute(statement)).all()
 
 
@@ -93,11 +73,9 @@ async def list_calculation_data(
     db: AsyncSession,
     request: CalculationDataListRequest,
     *,
-    user: UserData,
+    user: UserData | None,
 ) -> dict[str, Any]:
     measurement_clause = Measurement.experiment_id == request.experiment_id
-    if not is_admin_user(user):
-        measurement_clause = and_(measurement_clause, Measurement.user_id == user.id)
     base_clause = and_(
         CalculationData.id.in_(request.selected_ids),
         CalculationData.calculation.has(
@@ -169,10 +147,10 @@ async def analyze_calculation_data(
     db: AsyncSession,
     experiment_id: int,
     *,
-    user: UserData,
+    user: UserData | None,
 ) -> dict[str, Any]:
-    await _require_experiment(db, experiment_id, user)
-    rows = await _analysis_rows(db, experiment_id, user, include_data=True)
+    await require_experiment_read(db, experiment_id, user)
+    rows = await _analysis_rows(db, experiment_id, include_data=True)
     items = []
     for row in rows:
         output = CalculationDataOutput.model_validate(row.data)
@@ -203,10 +181,10 @@ async def calculation_data_analysis_status(
     db: AsyncSession,
     experiment_id: int,
     *,
-    user: UserData,
+    user: UserData | None,
 ) -> dict[str, Any]:
-    await _require_experiment(db, experiment_id, user)
-    rows = await _analysis_rows(db, experiment_id, user, include_data=False)
+    await require_experiment_read(db, experiment_id, user)
+    rows = await _analysis_rows(db, experiment_id, include_data=False)
     return {
         "fingerprint": _analysis_fingerprint(rows),
         "total": len(rows),
@@ -229,7 +207,7 @@ async def missing_calculation_data(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(error),
         ) from error
-    await _require_experiment(db, experiment_id, user)
+    await require_experiment_write(db, experiment_id, user)
     if calculation_id is not None:
         calculation = await db.get(Calculation, calculation_id)
         if calculation is None or calculation.experiment_id != experiment_id:
@@ -242,7 +220,7 @@ async def missing_calculation_data(
         if (
             measurement is None
             or measurement.experiment_id != experiment_id
-            or not _can_access(measurement.user_id, user)
+            or (not is_admin_user(user) and measurement.user_id != user.id)
         ):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -324,7 +302,7 @@ async def save_calculation_data(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Calculation not found.",
         )
-    await _require_experiment(db, calculation.experiment_id, user)
+    await require_experiment_write(db, calculation.experiment_id, user)
     current_hash = hashlib.sha256(calculation.source_code.encode("utf-8")).hexdigest()
     if (
         current_hash != source_hash
@@ -362,7 +340,7 @@ async def save_calculation_data(
         measurement is None
         or measurement.experiment_id != calculation.experiment_id
         or measurement.recorded_at is None
-        or not _can_access(measurement.user_id, user)
+        or (not is_admin_user(user) and measurement.user_id != user.id)
     ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -428,7 +406,7 @@ async def list_calculation_data_scalars(
     calculation_id: int,
     exclude_measurement_id: int | None,
     *,
-    user: UserData,
+    user: UserData | None,
 ) -> dict[str, Any]:
     calculation = await db.get(Calculation, calculation_id)
     if calculation is None:
@@ -436,7 +414,7 @@ async def list_calculation_data_scalars(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Calculation not found.",
         )
-    await _require_experiment(db, calculation.experiment_id, user)
+    await require_experiment_read(db, calculation.experiment_id, user)
 
     statement = (
         select(
@@ -446,12 +424,11 @@ async def list_calculation_data_scalars(
         .join(Measurement, Measurement.id == CalculationData.measurement_id)
         .where(
             CalculationData.calculation_id == calculation.id,
+            Measurement.experiment_id == calculation.experiment_id,
             func.jsonb_array_length(CalculationData.data["shape"]) == 0,
         )
         .order_by(CalculationData.measurement_id)
     )
-    if not is_admin_user(user):
-        statement = statement.where(Measurement.user_id == user.id)
     if exclude_measurement_id is not None:
         statement = statement.where(
             CalculationData.measurement_id != exclude_measurement_id

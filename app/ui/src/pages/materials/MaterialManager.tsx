@@ -6,10 +6,12 @@ export function MaterialManager({
   materialId,
   onMaterialIdChange,
   onRequestLogin,
+  scope = 'visible',
 }: {
   materialId?: number | null
   onMaterialIdChange?: (id: number | null) => void
   onRequestLogin?: () => void
+  scope?: 'visible' | 'mine' | 'public'
 }) {
   const [internalMaterialId, setInternalMaterialId] = useState<number | null>(materialId ?? null)
   const selectedMaterialId = materialId === undefined ? internalMaterialId : materialId
@@ -19,7 +21,7 @@ export function MaterialManager({
   }
 
   return selectedMaterialId === null ? (
-    <MaterialList embedded onSelectMaterial={selectMaterial} />
+    <MaterialList embedded scope={scope} onSelectMaterial={selectMaterial} />
   ) : (
     <MaterialDetail
       embedded

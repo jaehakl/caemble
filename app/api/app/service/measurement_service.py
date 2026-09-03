@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any
 
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,11 +14,17 @@ from models import (
     MeasurementRecordRequest,
     UserData,
 )
+from service.experiment_access import require_experiment_read
 from utils.crud import CrudSpec, delete_items, get_list_response
 from utils.crud.common import is_admin_user
 
 
-MEASUREMENT_CRUD_SPEC = CrudSpec(model=Measurement, schema=MeasurementBase)
+MEASUREMENT_CRUD_SPEC = CrudSpec(
+    model=Measurement,
+    schema=MeasurementBase,
+    scope_path=("experiment",),
+)
+MEASUREMENT_WRITE_CRUD_SPEC = CrudSpec(model=Measurement, schema=MeasurementBase)
 
 
 async def list_measurements(
@@ -59,13 +66,15 @@ async def get_recorded_data(
     db: AsyncSession,
     measurement_id: int,
     *,
-    user: UserData,
+    user: UserData | None,
 ) -> MeasurementRecordedDataResponse:
     measurement = await db.get(Measurement, measurement_id)
-    if measurement is None or (
-        not is_admin_user(user) and measurement.user_id != user.id
-    ):
+    if measurement is None:
         raise LookupError("Measurement not found.")
+    try:
+        await require_experiment_read(db, measurement.experiment_id, user)
+    except HTTPException as error:
+        raise LookupError("Measurement not found.") from error
 
     rows = (
         await db.execute(
@@ -184,4 +193,4 @@ async def delete_measurements(
     *,
     user: UserData,
 ) -> None:
-    await delete_items(db, MEASUREMENT_CRUD_SPEC, ids, user=user)
+    await delete_items(db, MEASUREMENT_WRITE_CRUD_SPEC, ids, user=user)

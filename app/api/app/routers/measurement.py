@@ -92,7 +92,7 @@ async def record_measurement(
 async def get_measurement_recorded_data(
     measurement_id: int,
     db: AsyncSession = Depends(get_db),
-    user: UserData = Depends(require_roles(["admin", "user"])),
+    user: UserData | None = Depends(require_roles(["*"])),
 ):
     try:
         return await get_recorded_data(db, measurement_id, user=user)

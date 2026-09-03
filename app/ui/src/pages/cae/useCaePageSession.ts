@@ -6,12 +6,15 @@ import { loadWorkbenchDraft, saveWorkbenchDraft } from '@/features/cae-workbench
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import {
   defaultWorkbenchLayoutState,
+  workbenchSectionIds,
   type WorkbenchDraft,
   type WorkbenchLayoutState,
+  type WorkbenchSectionId,
 } from '@/features/cae-workbench/types'
 import { createCadSourceDocument } from '@/lib/cad'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 import type { PendingConfirmation, WorkbenchDialog } from './caePageTypes'
+import { draftNeedsPredictionLandingPreservation, predictionLandingExperiment } from './predictionLandingPolicy'
 
 function positiveId(value: string | null) {
   const parsed = Number(value)
@@ -42,7 +45,10 @@ function starterDraft(): WorkbenchDraft {
 
 export function useCaePageSession(
   workbench: CaeWorkbenchState,
-  { hasUnsavedCalculationWork = false }: { hasUnsavedCalculationWork?: boolean } = {},
+  {
+    hasUnsavedCalculationWork = false,
+    allowAdminSection = null,
+  }: { hasUnsavedCalculationWork?: boolean; allowAdminSection?: boolean | null } = {},
 ) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [dialog, setDialog] = useState<WorkbenchDialog>(null)
@@ -66,6 +72,20 @@ export function useCaePageSession(
   const searchKey = searchParams.toString()
   searchParamsRef.current = searchParams
   workbenchRef.current = workbench
+
+  useEffect(() => {
+    if (allowAdminSection !== false || layout.activeSection !== 'admin') return
+    setLayout((current) => ({ ...current, activeSection: 'prediction' }))
+    setSearchParams(
+      (current) => {
+        const next = new URLSearchParams(current)
+        next.set('section', 'prediction')
+        lastSyncedSearchRef.current = next.toString()
+        return next
+      },
+      { replace: true },
+    )
+  }, [allowAdminSection, layout.activeSection, setSearchParams])
 
   useEffect(() => {
     if (navigationBlocker.state !== 'blocked') return
@@ -147,16 +167,26 @@ export function useCaePageSession(
         let urlExperimentId = positiveId(initialSearchParams.get('experiment'))
         const urlMeasurementId = positiveId(initialSearchParams.get('measurement'))
         const urlCalculationId = positiveId(initialSearchParams.get('calculation'))
+        const requestedSectionValue = initialSearchParams.get('section')
+        const requestedSection = workbenchSectionIds.includes(requestedSectionValue as WorkbenchSectionId)
+          ? (requestedSectionValue as WorkbenchSectionId)
+          : null
         if (!urlExperimentId && urlMeasurementId) urlExperimentId = await measurementExperimentId(urlMeasurementId)
         const effectiveCalculationId = urlExperimentId ? urlCalculationId : null
+        const initialSection =
+          requestedSection ??
+          (urlMeasurementId || effectiveCalculationId ? 'measurement' : urlExperimentId ? 'experiment' : 'prediction')
         setCalculationId(effectiveCalculationId)
 
-        if (draft) setLayout(draft.layout)
+        const draftNeedsPreservation = draftNeedsPredictionLandingPreservation(draft, starterExperimentSourceBundle)
+
+        if (draft) setLayout({ ...draft.layout, activeSection: initialSection })
 
         if (urlExperimentId) {
           const draftExperimentId = draft?.experiment.record?.id ?? null
           if (
             draft &&
+            draftNeedsPreservation &&
             urlExperimentId !== draftExperimentId &&
             !window.confirm('URL의 Experiment와 마지막 로컬 작업이 다릅니다. 확인을 누르면 URL 선택을 엽니다.')
           ) {
@@ -167,17 +197,26 @@ export function useCaePageSession(
             if (urlMeasurementId) currentWorkbench.restoreSelection(urlMeasurementId)
             setLayout((current) => ({
               ...current,
-              activeSection: urlMeasurementId || effectiveCalculationId ? 'measurement' : 'experiment',
+              activeSection: initialSection,
             }))
           } else {
             await currentWorkbench.loadExperiment(urlExperimentId, urlMeasurementId)
             setLayout((current) => ({
               ...current,
-              activeSection: urlMeasurementId || effectiveCalculationId ? 'measurement' : 'experiment',
+              activeSection: initialSection,
             }))
           }
-        } else if (draft) {
-          currentWorkbench.restoreDraft(draft)
+        } else {
+          if (draftNeedsPreservation && draft) {
+            currentWorkbench.restoreDraft(draft)
+          } else {
+            const available = await dbTables.Experiment.available()
+            const draftExperimentId = draft?.experiment.record?.id ?? null
+            const selected = predictionLandingExperiment(available, draftExperimentId)
+            if (selected) await currentWorkbench.loadExperiment(selected)
+            else if (draft) currentWorkbench.restoreDraft(draft)
+          }
+          setLayout((current) => ({ ...current, activeSection: initialSection }))
         }
       } catch (cause: unknown) {
         if (draft) currentWorkbench.restoreDraft(draft)
@@ -207,6 +246,7 @@ export function useCaePageSession(
           if (value) next.set(key, String(value))
           else next.delete(key)
         })
+        next.set('section', layout.activeSection)
         ;['structure', 'sample', 'setup'].forEach((key) => next.delete(key))
         const nextKey = next.toString()
         lastSyncedSearchRef.current = nextKey
@@ -214,7 +254,13 @@ export function useCaePageSession(
       },
       { replace: true },
     )
-  }, [calculationId, setSearchParams, workbench.experimentId, workbench.selectionIds.measurementId])
+  }, [
+    calculationId,
+    layout.activeSection,
+    setSearchParams,
+    workbench.experimentId,
+    workbench.selectionIds.measurementId,
+  ])
 
   useEffect(() => {
     if (!initialized || searchKey === lastSyncedSearchRef.current) return
@@ -223,6 +269,10 @@ export function useCaePageSession(
     const requestedExperimentId = positiveId(requested.get('experiment'))
     const measurementId = positiveId(requested.get('measurement'))
     const requestedCalculationId = positiveId(requested.get('calculation'))
+    const requestedSectionValue = requested.get('section')
+    const requestedSection = workbenchSectionIds.includes(requestedSectionValue as WorkbenchSectionId)
+      ? (requestedSectionValue as WorkbenchSectionId)
+      : null
     const navigationSequence = ++externalNavigationSequenceRef.current
     lastSyncedSearchRef.current = searchKey
     externalNavigationRef.current = true
@@ -282,13 +332,13 @@ export function useCaePageSession(
           setCalculationId(requestedCalculationId)
           setLayout((current) => ({
             ...current,
-            activeSection: measurementId || requestedCalculationId ? 'measurement' : 'experiment',
+            activeSection: requestedSection ?? (measurementId || requestedCalculationId ? 'measurement' : 'experiment'),
           }))
         } else {
           const starter = starterDraft()
           currentWorkbench.restoreDraft(starter)
           setCalculationId(null)
-          setLayout(starter.layout)
+          setLayout({ ...starter.layout, activeSection: requestedSection ?? 'prediction' })
         }
       } catch (cause: unknown) {
         if (navigationSequence !== externalNavigationSequenceRef.current) return

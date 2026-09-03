@@ -25,6 +25,7 @@ export const defaultWorkbenchSections: readonly WorkbenchSectionDefinition[] = O
   { id: 'prediction', label: 'Prediction' },
   { id: 'material', label: 'Material' },
   { id: 'analysis', label: 'Analysis' },
+  { id: 'admin', label: 'Admin' },
   { id: 'lab', label: 'Lab' },
   { id: 'help', label: 'Help' },
   { id: 'setting', label: 'Setting' },

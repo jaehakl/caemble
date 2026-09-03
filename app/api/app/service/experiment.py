@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db import Calculation, Experiment, ExperimentNamespace, ExperimentRecord, Measurement, RecordedData
+from db import Calculation, Experiment, ExperimentDemo, ExperimentNamespace, ExperimentRecord, Measurement, RecordedData
 from models import (
     ExperimentBase,
     ExperimentRecordBase,
@@ -24,6 +24,7 @@ from models import (
     UserData,
 )
 from user_auth.db import User
+from service.experiment_access import require_experiment_read
 from utils.crud import CrudSpec, get_list_response
 from utils.crud.common import is_admin_user, normalize_int_ids
 
@@ -465,6 +466,17 @@ async def delete_experiment_versions(
     for row in rows:
         namespaces_by_owner.setdefault(row.user_id, set()).add(row.namespace)
     await db.execute(delete(Experiment).where(Experiment.id.in_(ids)))
+    remaining_demos = list(
+        (
+            await db.scalars(
+                select(ExperimentDemo)
+                .order_by(ExperimentDemo.display_order, ExperimentDemo.experiment_id)
+                .with_for_update()
+            )
+        ).all()
+    )
+    if remaining_demos and not any(demo.is_default for demo in remaining_demos):
+        remaining_demos[0].is_default = True
     for owner_id, namespaces in namespaces_by_owner.items():
         await _cleanup_empty_namespaces(db, owner_id, namespaces)
     await db.commit()
@@ -474,20 +486,28 @@ async def experiment_versions(
     db: AsyncSession,
     experiment_id: int,
     *,
-    user: Any,
+    user: Any | None,
 ) -> dict[str, Any]:
     selected = await db.get(Experiment, experiment_id)
-    if selected is None or (not is_admin_user(user) and selected.user_id != user.id):
+    if selected is None:
         raise _bad("Experiment not found.", code=status.HTTP_404_NOT_FOUND)
+    await require_experiment_read(db, experiment_id, user=user)
+    can_read_sibling_versions = is_admin_user(user) or (user is not None and selected.user_id == user.id)
     rows = list(
         (
             await db.scalars(
                 select(Experiment)
                 .where(
-                    Experiment.user_id == selected.user_id,
-                    Experiment.namespace == selected.namespace,
-                    Experiment.repository_slug == selected.repository_slug,
-                    Experiment.experiment_key == selected.experiment_key,
+                    (
+                        (
+                            (Experiment.user_id == selected.user_id)
+                            & (Experiment.namespace == selected.namespace)
+                            & (Experiment.repository_slug == selected.repository_slug)
+                            & (Experiment.experiment_key == selected.experiment_key)
+                        )
+                        if can_read_sibling_versions
+                        else Experiment.id == selected.id
+                    ),
                 )
                 .order_by(
                     Experiment.version_major.desc(),
@@ -537,6 +557,12 @@ async def enrich_experiment_list(db: AsyncSession, response: Any) -> Any:
     ]
     ids = [item["id"] for item in items]
     counts = await _derived_counts(db, ids)
+    demos = {
+        demo.experiment_id: demo
+        for demo in (
+            await db.scalars(select(ExperimentDemo).where(ExperimentDemo.experiment_id.in_(ids)))
+        ).all()
+    }
     for item in items:
         version = f"{item['version_major']}.{item['version_minor']}.{item['version_patch']}"
         derived = counts[item["id"]]
@@ -549,6 +575,9 @@ async def enrich_experiment_list(db: AsyncSession, response: Any) -> Any:
                 "bundleHash": item["source_hash"],
                 "sourceLocked": _source_locked(derived),
                 "derivedCounts": derived,
+                "isDemo": item["id"] in demos,
+                "demoOrder": demos[item["id"]].display_order if item["id"] in demos else None,
+                "demoDefault": demos[item["id"]].is_default if item["id"] in demos else False,
             }
         )
     response["items"] = items

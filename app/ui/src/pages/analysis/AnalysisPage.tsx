@@ -33,6 +33,7 @@ export type AnalysisCommand = Readonly<{
 
 export type AnalysisWorkspaceProps = {
   command?: AnalysisCommand | null
+  dataReadable?: boolean
   experimentId: number | null
   embedded?: boolean
   onRequestLogin?: () => void
@@ -438,6 +439,7 @@ function EmptyResult({ children }: { children: ReactNode }) {
 
 export function AnalysisWorkspace({
   command,
+  dataReadable: dataReadableProp,
   experimentId,
   embedded = false,
   onRequestLogin,
@@ -446,6 +448,7 @@ export function AnalysisWorkspace({
   tab: controlledTab,
 }: AnalysisWorkspaceProps) {
   const auth = useAuth()
+  const dataReadable = dataReadableProp ?? auth.isAuthenticated
   const [workspaceTab, setWorkspaceTab] = useState<AnalysisTab>(controlledTab ?? 'explore')
   const tab = controlledTab ?? workspaceTab
   const [profile, setProfile] = useState<AnalysisProfile | null>(null)
@@ -493,7 +496,7 @@ export function AnalysisWorkspace({
   }, [])
 
   useEffect(() => {
-    if (!auth.isAuthenticated || experimentId === null) return
+    if (!dataReadable || experimentId === null) return
     const workerUrl = new URL(analysisWorkerAssetUrl, window.location.href)
     workerUrl.searchParams.set('response-policy', 'connect-self-v1')
     const worker = new Worker(workerUrl, { type: 'module' })
@@ -642,7 +645,7 @@ export function AnalysisWorkspace({
       worker.terminate()
       if (workerRef.current === worker) workerRef.current = null
     }
-  }, [auth.isAuthenticated, experimentId, nextRequestId, workerGeneration])
+  }, [dataReadable, experimentId, nextRequestId, workerGeneration])
 
   useEffect(() => setMining(null), [outlierPercent, miningFeatureKeys])
 
@@ -761,7 +764,7 @@ export function AnalysisWorkspace({
       </div>
     )
 
-  if (!auth.isAuthenticated) {
+  if (!dataReadable) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-12">
         <Card>

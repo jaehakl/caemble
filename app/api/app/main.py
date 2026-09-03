@@ -6,6 +6,7 @@ from routers import (
     calculation,
     calculation_data,
     catalog,
+    demo_experiment,
     experiment,
     experiment_record,
     material,
@@ -26,6 +27,7 @@ app.include_router(measurement.router)
 app.include_router(recorded_data.router)
 app.include_router(calculation.router)
 app.include_router(calculation_data.router)
+app.include_router(demo_experiment.router)
 app.include_router(users.router)
 app.include_router(gpstation_web.router)
 app.include_router(gpstation_v1.router)

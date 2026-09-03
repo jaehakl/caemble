@@ -1,5 +1,5 @@
-import { AlertCircle, Calculator, LoaderCircle, RefreshCw } from 'lucide-react'
-import type { CalculationDataOutput } from '@/api'
+import { AlertCircle, Calculator, LoaderCircle, RefreshCw, X } from 'lucide-react'
+import type { AvailableExperimentRecord, CalculationDataOutput } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -37,27 +37,101 @@ const directionLabels: Readonly<Record<PredictionDirection, string>> = {
 
 export type PredictionVarsPaneProps = Readonly<{
   candidateSessionKey: string
+  currentExperimentId: number | null
+  demos: readonly AvailableExperimentRecord[]
   direction: PredictionDirection
   disabled: boolean
+  guideVisible: boolean
+  isDemo: boolean
+  loadingExperiments: boolean
+  mine: readonly AvailableExperimentRecord[]
   schema: PredictionVarsSchema | null
   status: string
   updating: boolean
   vars: Readonly<Vars> | null
+  onDismissGuide: () => void
+  onExperimentChange: (experimentId: number) => void
   onVariableChange: (key: string, value: Tensor) => void
 }>
 
 export function PredictionVarsPane({
   candidateSessionKey,
+  currentExperimentId,
+  demos,
   direction,
   disabled,
+  guideVisible,
+  isDemo,
+  loadingExperiments,
+  mine,
   schema,
   status,
   updating,
   vars,
+  onDismissGuide,
+  onExperimentChange,
   onVariableChange,
 }: PredictionVarsPaneProps) {
   return (
     <section className="flex h-full min-h-0 flex-col gap-2" aria-label="Prediction vars">
+      <div className="rounded-lg border bg-card p-2.5">
+        <label className="mb-1.5 block text-xs font-medium text-muted-foreground" htmlFor="prediction-experiment">
+          Experiment
+        </label>
+        <select
+          className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+          disabled={loadingExperiments}
+          id="prediction-experiment"
+          value={currentExperimentId ?? ''}
+          onChange={(event) => onExperimentChange(Number(event.target.value))}
+        >
+          {currentExperimentId === null ? <option value="">선택하세요</option> : null}
+          {mine.length ? (
+            <optgroup label="내 Experiment">
+              {mine.map((experiment) => (
+                <option key={experiment.id} value={experiment.id}>
+                  {experiment.isDemo ? '(Demo) ' : ''}
+                  {experiment.name}
+                </option>
+              ))}
+            </optgroup>
+          ) : null}
+          {demos.length ? (
+            <optgroup label="Demo">
+              {demos
+                .filter((experiment) => !mine.some((owned) => owned.id === experiment.id))
+                .map((experiment) => (
+                  <option key={experiment.id} value={experiment.id}>
+                    {experiment.demoDefault ? '★ ' : ''}
+                    {experiment.name}
+                  </option>
+                ))}
+            </optgroup>
+          ) : null}
+        </select>
+        {isDemo ? (
+          <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Badge>Demo</Badge>
+            <Badge className="border bg-transparent text-foreground">읽기 전용</Badge>
+            <span>브라우저 Prediction은 자유롭게 체험할 수 있습니다.</span>
+          </div>
+        ) : null}
+      </div>
+      {guideVisible ? (
+        <div className="relative rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 pr-9 text-xs leading-5">
+          <strong>1.</strong> Vars를 바꿔 Forward 결과를 확인하세요. <strong>2.</strong> 오른쪽 결과를 Target으로 움직여
+          Inverse Design과 Viewer 형상 변화를 확인하세요.
+          <Button
+            aria-label="Prediction 안내 닫기"
+            className="absolute top-1 right-1 size-7"
+            size="icon"
+            variant="ghost"
+            onClick={onDismissGuide}
+          >
+            <X className="size-3.5" />
+          </Button>
+        </div>
+      ) : null}
       <header className="flex flex-wrap items-start justify-between gap-2 rounded-lg border bg-card px-3 py-2.5">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold">Vars</h3>
@@ -343,6 +417,7 @@ export type PredictionSetupDialogProps = Readonly<{
   autoK?: number | null
   busyAction?: PredictionSetupBusyAction
   calculateMissingDisabled?: boolean
+  calculateMissingLabel?: string
   calculationWeights: Readonly<Record<number, number>>
   calculations: readonly PredictionSetupCalculation[]
   cohortSummaries: Partial<Record<PredictionDirection, PredictionCohortSummary>>
@@ -380,6 +455,7 @@ export function PredictionSetupDialog({
   autoK,
   busyAction = null,
   calculateMissingDisabled = false,
+  calculateMissingLabel = '누락 데이터 계산',
   calculationWeights,
   calculations,
   cohortSummaries,
@@ -660,7 +736,7 @@ export function PredictionSetupDialog({
               onClick={onCalculateMissing}
             >
               {busyAction === 'calculate-missing' ? <LoaderCircle className="animate-spin" /> : <Calculator />}
-              누락 데이터 계산
+              {calculateMissingLabel}
             </Button>
           </div>
           <div className="flex gap-2">
@@ -882,7 +958,10 @@ export function PredictionDetailsDialog({
                         <TableCell className="tabular-nums">
                           {record.profile ? `${record.profile.rowCount} / ${record.profile.k}` : '—'}
                         </TableCell>
-                        <TableCell className="max-w-64 truncate font-mono text-[10px]" title={record.error ?? record.profile?.dominantShapeSignature}>
+                        <TableCell
+                          className="max-w-64 truncate font-mono text-[10px]"
+                          title={record.error ?? record.profile?.dominantShapeSignature}
+                        >
                           {record.error ?? record.profile?.dominantShapeSignature ?? '모델 없음'}
                         </TableCell>
                         <TableCell className="tabular-nums">

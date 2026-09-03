@@ -55,6 +55,7 @@ export type MaterialRibbonCommand = 'new' | 'edit' | 'add-name' | 'add-parameter
 export function useCaePageChrome({
   analysisTab,
   authenticated,
+  dataReadable,
   calculationDirty,
   calculationSaveState,
   experimentAuthoringState,
@@ -79,6 +80,7 @@ export function useCaePageChrome({
 }: {
   analysisTab: AnalysisTabId
   authenticated: boolean
+  dataReadable: boolean
   calculationDirty: boolean
   calculationSaveState: CalculationSaveState
   experimentAuthoringState: CadEditorAuthoringState | null
@@ -157,6 +159,22 @@ export function useCaePageChrome({
               'Starter Experiment',
               '로컬에서 즉시 편집할 수 있는 Starter Box Experiment입니다.',
             )
+            setActiveSection('experiment')
+          }),
+      },
+      editDemoCopy: {
+        id: 'edit-demo-copy',
+        label: 'Edit a copy',
+        icon: <Pencil />,
+        disabled: !workbench.experimentRecord?.isDemo,
+        disabledReason: !workbench.experimentRecord?.isDemo
+          ? 'Demo Experiment를 열었을 때 사용할 수 있습니다.'
+          : undefined,
+        onSelect: () =>
+          guardReplacement(() => {
+            const demo = workbench.experimentRecord
+            if (!demo?.isDemo) return
+            workbench.newExperiment(demo.source_bundle, `${demo.name} Copy`, demo.description ?? '')
             setActiveSection('experiment')
           }),
       },
@@ -239,23 +257,23 @@ export function useCaePageChrome({
         label: 'Save Current',
         icon: <Beaker />,
         disabled:
-          !authenticated ||
-          !workbench.hasTasks ||
-          !workbench.experimentClean ||
-          workbench.experimentDocument.draftTaskNames.length > 0 ||
-          workbench.experimentDocument.status !== 'Ready' ||
-          workbench.experimentDocument.successfulRevision !== workbench.experimentDocument.revision ||
-          !workbench.experimentDocument.variables ||
-          !workbench.experimentDocument.materialParameters ||
-          caeBusy ||
-          Boolean(workbench.measurementActions.pendingRecordMeasurementId),
+          authenticated &&
+          (!workbench.hasTasks ||
+            !workbench.experimentClean ||
+            workbench.experimentDocument.draftTaskNames.length > 0 ||
+            workbench.experimentDocument.status !== 'Ready' ||
+            workbench.experimentDocument.successfulRevision !== workbench.experimentDocument.revision ||
+            !workbench.experimentDocument.variables ||
+            !workbench.experimentDocument.materialParameters ||
+            caeBusy ||
+            Boolean(workbench.measurementActions.pendingRecordMeasurementId)),
         disabledReason: !authenticated
           ? loginReason
           : (tasklessReason ??
             (!workbench.experimentClean
               ? savedReason
               : (draftPreviewReason ?? pendingResultReason ?? candidateEvaluationReason ?? evaluationBusyReason))),
-        onSelect: () => runSafely(workbench.measurementActions.saveCurrent),
+        onSelect: () => (authenticated ? runSafely(workbench.measurementActions.saveCurrent) : setDialog('account')),
       },
       saveAndRunCurrent: {
         id: 'save-and-run-current',
@@ -263,8 +281,8 @@ export function useCaePageChrome({
         icon: cancellingCurrentRun ? <Square /> : <Play />,
         disabled:
           !cancellingCurrentRun &&
-          (!authenticated ||
-            !workbench.hasTasks ||
+          authenticated &&
+          (!workbench.hasTasks ||
             !workbench.experimentClean ||
             Boolean(selected) ||
             workbench.experimentDocument.draftTaskNames.length > 0 ||
@@ -283,17 +301,17 @@ export function useCaePageChrome({
                   : (draftPreviewReason ?? pendingResultReason ?? candidateEvaluationReason ?? evaluationBusyReason))),
         onSelect: cancellingCurrentRun
           ? workbench.measurementActions.cancel
-          : () => runSafely(workbench.measurementActions.saveAndRunCurrent),
+          : () => (authenticated ? runSafely(workbench.measurementActions.saveAndRunCurrent) : setDialog('account')),
       },
       saveCalculation: {
         id: 'save-calculation',
         label: 'Save',
         icon: <Save />,
         shortcut: 'Ctrl+S / Cmd+S',
-        disabled: calculationSaveState.disabled,
-        disabledReason: calculationSaveState.disabledReason,
+        disabled: authenticated && calculationSaveState.disabled,
+        disabledReason: authenticated ? calculationSaveState.disabledReason : loginReason,
         pressed: calculationDirty,
-        onSelect: requestCalculationSave,
+        onSelect: () => (authenticated ? requestCalculationSave() : setDialog('account')),
       },
       cancelCalculationData: {
         id: 'cancel-calculation-data',
@@ -308,7 +326,7 @@ export function useCaePageChrome({
         label: 'Selected Calc',
         icon: <Database />,
         disabled:
-          !authenticated || !workbench.experimentId || selectedCalculationId === null || calculationDirty || caeBusy,
+          authenticated && (!workbench.experimentId || selectedCalculationId === null || calculationDirty || caeBusy),
         disabledReason: !authenticated
           ? loginReason
           : !workbench.experimentId
@@ -319,6 +337,7 @@ export function useCaePageChrome({
                 ? 'Calculation source를 저장한 뒤 실행하세요.'
                 : busyReason,
         onSelect: () => {
+          if (!authenticated) return setDialog('account')
           if (selectedCalculationId !== null)
             runSafely(() => workbench.calculationDataActions.calculateSelected(selectedCalculationId))
         },
@@ -327,7 +346,7 @@ export function useCaePageChrome({
         id: 'calculate-measurement-data',
         label: 'Selected Measurement',
         icon: <Beaker />,
-        disabled: !authenticated || !workbench.experimentId || !selected?.recorded_at || caeBusy,
+        disabled: authenticated && (!workbench.experimentId || !selected?.recorded_at || caeBusy),
         disabledReason: !authenticated
           ? loginReason
           : !workbench.experimentId
@@ -336,6 +355,7 @@ export function useCaePageChrome({
               ? 'Recorded Measurement를 선택하세요.'
               : busyReason,
         onSelect: () => {
+          if (!authenticated) return setDialog('account')
           if (selected?.recorded_at)
             runSafely(() => workbench.calculationDataActions.calculateMeasurement(selected.id, { announce: true }))
         },
@@ -344,13 +364,14 @@ export function useCaePageChrome({
         id: 'calculate-all-data',
         label: 'All Missing',
         icon: <SaveAll />,
-        disabled: !authenticated || !workbench.experimentId || caeBusy,
+        disabled: authenticated && (!workbench.experimentId || caeBusy),
         disabledReason: !authenticated
           ? loginReason
           : !workbench.experimentId
             ? '저장된 Experiment가 필요합니다.'
             : busyReason,
-        onSelect: () => runSafely(workbench.calculationDataActions.calculateAll),
+        onSelect: () =>
+          authenticated ? runSafely(workbench.calculationDataActions.calculateAll) : setDialog('account'),
       },
       generateAndRun: {
         id: 'generate-and-run',
@@ -358,8 +379,8 @@ export function useCaePageChrome({
         icon: cancellingGeneratedRun ? <Square /> : <Rocket />,
         disabled:
           !cancellingGeneratedRun &&
-          (!authenticated ||
-            !workbench.experiment ||
+          authenticated &&
+          (!workbench.experiment ||
             !workbench.hasTasks ||
             !workbench.experimentClean ||
             workbench.experimentDocument.draftTaskNames.length > 0 ||
@@ -379,7 +400,7 @@ export function useCaePageChrome({
                   : (draftPreviewReason ?? pendingResultReason ?? evaluationBusyReason ?? sourceLockReason))),
         onSelect: cancellingGeneratedRun
           ? workbench.measurementActions.cancel
-          : () => runSafely(workbench.measurementActions.generateAndRun),
+          : () => (authenticated ? runSafely(workbench.measurementActions.generateAndRun) : setDialog('account')),
       },
       repeatGenerateAndRun: {
         id: 'repeat-generate-and-run',
@@ -387,8 +408,8 @@ export function useCaePageChrome({
         icon: cancellingRepeatRun ? <Square /> : <RefreshCw />,
         disabled:
           !cancellingRepeatRun &&
+          authenticated &&
           (!repeatCountValid ||
-            !authenticated ||
             !workbench.experiment ||
             !workbench.hasTasks ||
             !workbench.experimentClean ||
@@ -411,7 +432,10 @@ export function useCaePageChrome({
                     : (draftPreviewReason ?? pendingResultReason ?? evaluationBusyReason ?? sourceLockReason))),
         onSelect: cancellingRepeatRun
           ? workbench.measurementActions.cancel
-          : () => runSafely(() => workbench.measurementActions.repeatGenerateAndRun(repeatCount)),
+          : () =>
+              authenticated
+                ? runSafely(() => workbench.measurementActions.repeatGenerateAndRun(repeatCount))
+                : setDialog('account'),
       },
       runSelected: {
         id: 'run-selected',
@@ -419,8 +443,8 @@ export function useCaePageChrome({
         icon: cancellingSelectedRun ? <Square /> : <Play />,
         disabled:
           !cancellingSelectedRun &&
-          (!authenticated ||
-            !workbench.hasTasks ||
+          authenticated &&
+          (!workbench.hasTasks ||
             !workbench.experimentClean ||
             !selected ||
             Boolean(selected?.recorded_at) ||
@@ -439,7 +463,9 @@ export function useCaePageChrome({
                   : selected.recorded_at
                     ? 'Recorded Measurement는 다시 실행할 수 없습니다.'
                     : (pendingResultReason ?? draftPreviewReason ?? evaluationBusyReason))),
-        onSelect: cancellingSelectedRun ? workbench.measurementActions.cancel : () => runSafely(requestRunSelected),
+        onSelect: cancellingSelectedRun
+          ? workbench.measurementActions.cancel
+          : () => (authenticated ? runSafely(requestRunSelected) : setDialog('account')),
       },
       retryRecord: {
         id: 'retry-record',
@@ -455,8 +481,8 @@ export function useCaePageChrome({
         id: 'analyze-measurements',
         label: 'Analysis',
         icon: <ChartNoAxesCombined />,
-        disabled: !authenticated || !workbench.experimentClean,
-        disabledReason: !authenticated ? loginReason : !workbench.experimentClean ? savedReason : undefined,
+        disabled: !dataReadable || (authenticated && !workbench.experimentClean),
+        disabledReason: !dataReadable ? loginReason : !workbench.experimentClean ? savedReason : undefined,
         onSelect: () => setActiveSection('analysis'),
       },
       materialNew: {
@@ -541,25 +567,25 @@ export function useCaePageChrome({
         id: 'analysis-reload',
         label: 'Reload',
         icon: <RefreshCw />,
-        disabled: !authenticated,
-        disabledReason: !authenticated ? loginReason : undefined,
+        disabled: !dataReadable,
+        disabledReason: !dataReadable ? '먼저 공개 Demo 또는 내 Experiment를 여세요.' : undefined,
         onSelect: () => requestAnalysisCommand('reload'),
       },
       analysisDataset: {
         id: 'analysis-dataset',
         label: 'Data CSV',
         icon: <Download />,
-        disabled: !authenticated,
-        disabledReason: !authenticated ? loginReason : undefined,
+        disabled: !dataReadable,
+        disabledReason: !dataReadable ? '먼저 공개 Demo 또는 내 Experiment를 여세요.' : undefined,
         onSelect: () => requestAnalysisCommand('export-dataset'),
       },
       predictionSettings: {
         id: 'prediction-settings',
         label: 'Prediction Settings',
         icon: <SlidersHorizontal />,
-        disabled: !authenticated || predictionState.busy,
-        disabledReason: !authenticated
-          ? loginReason
+        disabled: !dataReadable || predictionState.busy,
+        disabledReason: !dataReadable
+          ? '먼저 공개 Demo 또는 내 Experiment를 여세요.'
           : predictionState.busy
             ? '현재 Prediction 작업이 끝난 뒤 설정을 바꾸세요.'
             : undefined,
@@ -569,17 +595,19 @@ export function useCaePageChrome({
         id: 'prediction-details',
         label: 'Model Details',
         icon: <Info />,
-        disabled: !authenticated,
-        disabledReason: !authenticated ? loginReason : undefined,
+        disabled: !dataReadable,
+        disabledReason: !dataReadable ? '먼저 공개 Demo 또는 내 Experiment를 여세요.' : undefined,
         onSelect: () => requestPredictionCommand('details'),
       },
       predictionValidate: {
         id: 'prediction-validate',
         label: 'Save & Run',
         icon: <Play />,
-        disabled: !predictionState.canValidate,
-        disabledReason: predictionState.validateDisabledReason,
-        onSelect: () => requestPredictionCommand('validate'),
+        disabled: authenticated && !predictionState.canValidate,
+        disabledReason: authenticated
+          ? predictionState.validateDisabledReason
+          : '로그인하여 저장하고 Simulation을 실행하세요.',
+        onSelect: () => (authenticated ? requestPredictionCommand('validate') : setDialog('account')),
       },
       predictionCancel: {
         id: 'prediction-cancel',
@@ -600,6 +628,7 @@ export function useCaePageChrome({
     )
   }, [
     authenticated,
+    dataReadable,
     calculationDirty,
     calculationSaveState,
     guardReplacement,
@@ -675,6 +704,7 @@ export function useCaePageChrome({
             <WorkbenchRibbonActions
               actions={[
                 actions.newExperiment,
+                ...(workbench.experimentIsDemo ? [actions.editDemoCopy] : []),
                 actions.saveExperiment,
                 actions.saveExperimentVersion,
                 actions.saveExperimentAs,

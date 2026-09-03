@@ -132,7 +132,7 @@ export function useCaeWorkbenchState(
   experimentRef.current = experiment
 
   const experimentId = experimentRecord?.id ?? null
-  const baseSelection = useCaeDataSelection(experimentId, user?.roles.includes('admin') ? 'visible' : 'mine')
+  const baseSelection = useCaeDataSelection(experimentId, 'visible')
   const { clearMeasurement: clearBaseMeasurement, loadMeasurement: loadBaseMeasurement } = baseSelection
   const experimentDirty = Boolean(experiment && !sourceBundlesEqual(experiment.sourceBundle, baselineExperimentBundle))
   const hasUnsavedExperimentWork = experimentDirty
@@ -404,7 +404,7 @@ export function useCaeWorkbenchState(
   ])
 
   useEffect(() => {
-    if (!authenticated || !pendingMeasurementId || !experimentId) return
+    if ((!authenticated && !experimentRecord?.isDemo) || !pendingMeasurementId || !experimentId) return
     const measurementId = pendingMeasurementId
     setSelectionRestoreStatus('restoring')
     void loadMeasurement(measurementId, experimentId).catch((cause: unknown) => {
@@ -413,7 +413,7 @@ export function useCaeWorkbenchState(
       setSelectionRestoreStatus('failed')
       toast.error(cause instanceof Error ? cause.message : '저장된 Measurement 선택을 복원하지 못했습니다.')
     })
-  }, [authenticated, experimentId, loadMeasurement, pendingMeasurementId])
+  }, [authenticated, experimentId, experimentRecord?.isDemo, loadMeasurement, pendingMeasurementId])
 
   const applyExperimentState = useCallback(
     (row: SavedExperiment) => {
@@ -642,8 +642,12 @@ export function useCaeWorkbenchState(
   )
 
   const experimentManageable = Boolean(
-    experimentRecord && user && (experimentRecord.user_id === user.id || user.roles.includes('admin')),
+    experimentRecord &&
+    !experimentRecord.isDemo &&
+    user &&
+    (experimentRecord.user_id === user.id || user.roles.includes('admin')),
   )
+  const experimentIsDemo = Boolean(experimentRecord?.isDemo)
   const experimentVersion = experimentRecord
     ? (experimentRecord.version ??
       `${experimentRecord.version_major}.${experimentRecord.version_minor}.${experimentRecord.version_patch}`)
@@ -677,6 +681,7 @@ export function useCaeWorkbenchState(
     experimentClean,
     experimentStatus: definitionStatus(experiment, experimentRecord, experimentDirty),
     experimentManageable,
+    experimentIsDemo,
     experimentCoordinate,
     experimentVersion,
     experimentNamespaces: user?.experiment_namespaces ?? [],

@@ -1,5 +1,6 @@
 from typing import Optional
 
+from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -34,44 +35,39 @@ class UserService:
         """
         사용자 목록을 가져옵니다.
         """
-        try:
-            stmt = select(User).options(
-                selectinload(User.user_roles).selectinload(UserRole.role)
-            )
-            if offset is not None:
-                stmt = stmt.offset(offset)
-            if limit is not None:
-                stmt = stmt.limit(limit)
-            
-            users = (await db.execute(stmt)).scalars().all()
-            
-            return [_to_user_data(user) for user in users]
-        except Exception as e:
-            print(f"Error fetching users: {str(e)}")
-            return []
+        stmt = select(User).options(
+            selectinload(User.user_roles).selectinload(UserRole.role)
+        ).order_by(User.created_at.desc(), User.id)
+        if offset is not None:
+            stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+
+        users = (await db.execute(stmt)).scalars().all()
+        return [_to_user_data(user) for user in users]
     
     @staticmethod
     async def delete_user(id: str, db: AsyncSession, user_id: str) -> bool:
+        if id == user_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Administrators cannot delete their own account.",
+            )
         try:
-            # 사용자 존재 여부 확인
             user = (await db.execute(
                 select(User).where(User.id == id)
             )).scalars().first()
             if not user:
-                print(f"User not found: {id}")
-                return False
-            
-            # 사용자 삭제. 각 연관 데이터는 DB의 CASCADE/SET NULL 보존 정책을 따른다.
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+
             await db.delete(user)
             await db.commit()
-            
-            print(f"User deleted successfully: {id}")
             return True
-            
-        except Exception as e:
+        except HTTPException:
+            raise
+        except Exception:
             await db.rollback()
-            print(f"Error deleting user: {str(e)}")
-            return False
+            raise
 
     async def get_user_summary(
         who: str,

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends
+from gpstation.utils.csrf import require_web_csrf
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import UserData
@@ -19,7 +20,7 @@ async def api_get_user_list(
     return await UserService.get_users(limit, offset, db=db, user_id=user.id)
 
 
-@router.get("/user_admin/delete/{id}")
+@router.delete("/user_admin/{id}", dependencies=[Depends(require_web_csrf)])
 async def api_delete_user(id: str, db: AsyncSession = Depends(get_db), user=Depends(require_roles(["admin"]))):
     return await UserService.delete_user(id, db=db, user_id=user.id)
 

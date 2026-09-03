@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { LoaderCircle, Search, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { dbTables, getListRequest, type GetListRequest, type SavedExperimentRecord, type UserData } from '@/api'
+import { dbTables, type SavedExperimentRecord, type UserData } from '@/api'
 import { catalogApi, catalogQueryKeys, type CatalogExperimentListItem } from '@/api/catalog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -70,27 +70,9 @@ export function ExperimentManager({
     queryKey: catalogQueryKeys.experiments({ q: search.trim(), limit: 100 }),
     queryFn: () => catalogApi.listExperiments({ q: search.trim(), limit: 100 }),
   })
-  const savedRequest = useMemo<GetListRequest>(
-    () => ({
-      ...getListRequest('mine'),
-      limit: null,
-      search_text: search.trim() || null,
-      text_filter: search.trim() ? { workbench: [search.trim()] } : ({} as Record<string, string[]>),
-      sort: [
-        ['namespace', 'asc'],
-        ['repository_slug', 'asc'],
-        ['experiment_key', 'asc'],
-        ['version_major', 'desc'],
-        ['version_minor', 'desc'],
-        ['version_patch', 'desc'],
-      ],
-    }),
-    [search],
-  )
-  const savedQuery = useQuery({
-    queryKey: ['cae-workbench', 'experiments', savedRequest],
-    queryFn: () => dbTables.Experiment.listRows(savedRequest),
-    enabled: authenticated,
+  const availableQuery = useQuery({
+    queryKey: ['experiment', 'available', authenticated],
+    queryFn: dbTables.Experiment.available,
   })
   const managedVersions = useMemo<readonly ManagedExperimentVersion[]>(() => {
     const examples = (exampleQuery.data?.items ?? []).map((item): ManagedExperimentVersion => {
@@ -109,25 +91,30 @@ export function ExperimentManager({
         item,
       }
     })
-    const saved = (savedQuery.data?.items ?? []).map((row): ManagedExperimentVersion => {
-      const version = row.version ?? `${row.version_major}.${row.version_minor}.${row.version_patch}`
-      const identity = `${row.namespace}/${row.repository_slug}/${row.experiment_key}`
-      return {
-        kind: 'saved',
-        coordinate: row.coordinate ?? `caemble:experiment/${identity}@${version}`,
-        description: row.description || '설명 없음',
-        experimentKey: row.experiment_key,
-        identity,
-        name: row.name,
-        namespace: row.namespace,
-        repository: row.repository_slug,
-        version,
-        versionParts: [row.version_major, row.version_minor, row.version_patch],
-        row,
-      }
-    })
+    const needle = search.trim().toLocaleLowerCase()
+    const mine = availableQuery.data?.mine ?? []
+    const mineIds = new Set(mine.map((row) => row.id))
+    const saved = [...mine, ...(availableQuery.data?.demos ?? []).filter((row) => !mineIds.has(row.id))]
+      .filter((row) => !needle || `${row.name} ${row.description ?? ''}`.toLocaleLowerCase().includes(needle))
+      .map((row): ManagedExperimentVersion => {
+        const version = row.version ?? `${row.version_major}.${row.version_minor}.${row.version_patch}`
+        const identity = `${row.namespace}/${row.repository_slug}/${row.experiment_key}`
+        return {
+          kind: 'saved',
+          coordinate: row.coordinate ?? `caemble:experiment/${identity}@${version}`,
+          description: row.description || '설명 없음',
+          experimentKey: row.experiment_key,
+          identity,
+          name: row.name,
+          namespace: row.namespace,
+          repository: row.repository_slug,
+          version,
+          versionParts: [row.version_major, row.version_minor, row.version_patch],
+          row,
+        }
+      })
     return Object.freeze([...examples, ...saved])
-  }, [exampleQuery.data?.items, savedQuery.data?.items])
+  }, [availableQuery.data, exampleQuery.data?.items, search])
   const namespaces = useMemo(() => {
     return [...new Set(managedVersions.map((item) => item.namespace))].sort()
   }, [managedVersions])
@@ -160,7 +147,7 @@ export function ExperimentManager({
       )
   }, [managedVersions, namespace, repository])
 
-  const filtersReady = !exampleQuery.isPending && (!authenticated || !savedQuery.isPending)
+  const filtersReady = !exampleQuery.isPending && !availableQuery.isPending
   useEffect(() => {
     if (filtersReady && namespace !== 'all' && !namespaces.includes(namespace)) {
       setNamespace('all')
@@ -194,6 +181,7 @@ export function ExperimentManager({
       if (!deleted) return
       if (row.id === selectedId) onDeleteSelected?.(row as SavedExperiment)
       await queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] })
+      await queryClient.invalidateQueries({ queryKey: ['experiment', 'available'] })
       await queryClient.invalidateQueries({ queryKey: authQueryKey })
       toast.success('Experiment Version을 삭제했습니다.')
     },
@@ -273,7 +261,7 @@ export function ExperimentManager({
               Example 목록을 불러오지 못했습니다.
             </div>
           ) : null}
-          {authenticated && savedQuery.isError ? (
+          {availableQuery.isError ? (
             <div
               className="border-b border-destructive/25 bg-destructive/5 px-4 py-3 text-sm text-destructive"
               role="alert"
@@ -286,7 +274,10 @@ export function ExperimentManager({
               {visibleVersions.map((item) => {
                 const savedRow = item.kind === 'saved' ? item.row : null
                 const manageable = Boolean(
-                  savedRow && user && (savedRow.user_id === user.id || user.roles.includes('admin')),
+                  savedRow &&
+                  !savedRow.isDemo &&
+                  user &&
+                  (savedRow.user_id === user.id || user.roles.includes('admin')),
                 )
                 const counts = savedRow?.derivedCounts
                 const linked = counts ? counts.measurements + counts.recordedData + counts.calculations : 0
@@ -310,6 +301,7 @@ export function ExperimentManager({
                             <LoaderCircle className="size-4 animate-spin" />
                           ) : null}
                           {savedRow?.sourceLocked ? <Badge className="bg-amber-600 text-white">Locked</Badge> : null}
+                          {savedRow?.isDemo ? <Badge>Demo · 읽기 전용</Badge> : null}
                           {linked ? (
                             <Badge className="border bg-transparent text-foreground">
                               연결 데이터 {linked.toLocaleString()}
@@ -340,7 +332,7 @@ export function ExperimentManager({
                 )
               })}
             </ul>
-          ) : exampleQuery.isPending || (authenticated && savedQuery.isPending) ? (
+          ) : exampleQuery.isPending || availableQuery.isPending ? (
             <ManagerMessage loading>Experiment 목록을 불러오는 중…</ManagerMessage>
           ) : (
             <ManagerMessage>조건에 맞는 Experiment가 없습니다.</ManagerMessage>

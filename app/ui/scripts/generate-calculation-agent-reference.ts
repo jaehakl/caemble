@@ -11,6 +11,7 @@ import {
 
 const root = process.cwd()
 const outputPath = path.resolve(root, '../api/app/ai/calculation_authoring_reference.json')
+const normalizeNewlines = (value: string) => value.replace(/\r\n/g, '\n')
 const reference = {
   language: 'javascript',
   contract: {
@@ -18,7 +19,7 @@ const reference = {
     import: "Only named imports from 'mathjs' are allowed.",
     input: 'A read-only dotted-path map of ExperimentRecord-backed RecordedData tensor leaves.',
     dependencies:
-      'Use only fixed record.member, record[\'dotted.path\'], static object destructuring, or traceable const aliases. Dynamic keys, enumeration, spread, reassignment, and passing or returning the whole record are rejected when saving.',
+      "Use only fixed record.member, record['dotted.path'], static object destructuring, or traceable const aliases. Dynamic keys, enumeration, spread, reassignment, and passing or returning the whole record are rejected when saving.",
     output: 'Return { dtype, data, axes? }; shape is inferred from rank-0/1/2 finite real data.',
     axes: 'Axes are optional. When supplied, every axis and tick must match the inferred shape and units use UCUM.',
     validation: 'Complex final values, NaN, Infinity, ragged arrays, rank above 2, and explicit shape are rejected.',
@@ -39,14 +40,18 @@ const reference = {
     relatedContextBytes: 32 * 1024,
   },
   mathjs: CALCULATION_MATHJS_REFERENCE,
-  declaration: CALCULATION_MONACO_DECLARATION,
-  skeleton: CALCULATION_SOURCE_SKELETON,
+  declaration: normalizeNewlines(CALCULATION_MONACO_DECLARATION),
+  skeleton: normalizeNewlines(CALCULATION_SOURCE_SKELETON),
 }
 const serialized = `${JSON.stringify(reference, null, 2)}\n`
 
 if (process.argv.includes('--check')) {
   const current = await readFile(outputPath, 'utf8')
-  assert.equal(current, serialized, 'Calculation Agent reference is stale. Run npm run generate:calculation-agent.')
+  assert.equal(
+    current.replace(/\r\n/g, '\n'),
+    serialized,
+    'Calculation Agent reference is stale. Run npm run generate:calculation-agent.',
+  )
 } else {
   await writeFile(outputPath, serialized, 'utf8')
 }

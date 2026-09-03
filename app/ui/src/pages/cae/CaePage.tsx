@@ -6,7 +6,13 @@ import type { AiAgentApplyRequest, AiAgentApplyResult } from '@/api/aiAgent'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuth } from '@/features/auth/use-auth'
-import { WorkbenchBottomDock, WorkbenchMenubar, WorkbenchRibbon, WorkbenchShell } from '@/features/cae-workbench/chrome'
+import {
+  defaultWorkbenchSections,
+  WorkbenchBottomDock,
+  WorkbenchMenubar,
+  WorkbenchRibbon,
+  WorkbenchShell,
+} from '@/features/cae-workbench/chrome'
 import { ConfirmWorkbenchDialog } from '@/features/cae-workbench/dialogs'
 import { ExperimentEditor, SourcePathPickerDialog } from '@/features/cae-workbench/editors'
 import { ExperimentManager } from '@/features/cae-workbench/experiments'
@@ -39,6 +45,7 @@ import { MaterialDetail } from '@/pages/materials/MaterialDetailPage'
 import { MaterialList } from '@/pages/materials/MaterialListPage'
 import { NotFoundPage } from '@/pages/not-found/NotFoundPage'
 import { CaeWorkbenchDialogs } from './CaeWorkbenchDialogs'
+import { AdminWorkspace } from './AdminWorkspace'
 import { ExperimentDetail } from './WorkbenchDetails'
 import { WorkbenchHelpDetail, WorkbenchHelpExplorer } from './WorkbenchHelp'
 import {
@@ -87,7 +94,10 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     disabledReason: 'Calculation Editor를 불러오는 중입니다.',
   })
   const [calculationAgentBridge, setCalculationAgentBridge] = useState<CalculationAgentBridge | null>(null)
-  const page = useCaePageSession(workbench, { hasUnsavedCalculationWork: calculationDirty })
+  const page = useCaePageSession(workbench, {
+    hasUnsavedCalculationWork: calculationDirty,
+    allowAdminSection: auth.isPending ? null : Boolean(auth.user?.roles.includes('admin')),
+  })
   const [experimentAuthoringState, setExperimentAuthoringState] = useState<CadEditorAuthoringState | null>(null)
   const [viewerSelectionQuery, setViewerSelectionQuery] = useState<CadViewerSelectionQuery | null>(null)
   const [sourceRevealRequest, setSourceRevealRequest] = useState<
@@ -250,6 +260,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
 
   const setActiveSection = useCallback(
     (activeSection: WorkbenchSectionId) => {
+      if (activeSection === 'admin' && !auth.user?.roles.includes('admin')) return
       const changeSection = () => page.setLayout((current) => ({ ...current, activeSection }))
       if (page.activeSection === 'measurement' && activeSection !== 'measurement' && calculationDirty) {
         page.guardReplacement(changeSection)
@@ -257,8 +268,9 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         changeSection()
       }
     },
-    [calculationDirty, page],
+    [auth.user?.roles, calculationDirty, page],
   )
+
   const setSelectedMaterialId = useCallback(
     (materialId: number | null) => page.setLayout((current) => ({ ...current, materialId })),
     [page],
@@ -300,6 +312,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const chrome = useCaePageChrome({
     analysisTab: page.analysisTab,
     authenticated: auth.isAuthenticated,
+    dataReadable: auth.isAuthenticated || workbench.experimentIsDemo,
     calculationDirty,
     calculationSaveState,
     experimentAuthoringState,
@@ -466,6 +479,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               controller={workbench.experimentDocument}
               disabled={
                 !page.initialized ||
+                workbench.experimentIsDemo ||
                 pendingResult ||
                 workbench.measurementActions.busy ||
                 workbench.calculationDataActions.busy ||
@@ -507,6 +521,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       <Suspense fallback={<PaneLoading label="Analysis를 불러오는 중입니다." />}>
         <AnalysisWorkspace
           command={analysisCommand}
+          dataReadable={auth.isAuthenticated || workbench.experimentIsDemo}
           embedded
           experimentId={workbench.experimentId}
           settingsContainer={analysisSettingsContainer}
@@ -538,9 +553,17 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             <PredictionWorkspace
               active={page.activeSection === 'prediction'}
               authenticated={auth.isAuthenticated}
+              dataReadable={auth.isAuthenticated || workbench.experimentIsDemo}
               command={predictionCommand}
               onActivity={runtimeConsole.append}
               onChromeStateChange={setPredictionState}
+              onExperimentChange={(row) =>
+                page.guardReplacement(async () => {
+                  await workbench.loadExperiment(row)
+                  page.setCalculationId(null)
+                  page.setLayout((current) => ({ ...current, activeSection: 'prediction' }))
+                })
+              }
               onRequestLogin={() => page.setDialog('account')}
               selectedCalculationId={page.calculationId}
               varsContainer={predictionVarsContainer}
@@ -583,7 +606,15 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       viewerExpanded={page.viewerExpanded}
     />
   )
-  const menubar = <WorkbenchMenubar activeSectionId={page.activeSection} onActiveSectionChange={setActiveSection} />
+  const menubar = (
+    <WorkbenchMenubar
+      activeSectionId={page.activeSection}
+      sections={defaultWorkbenchSections.filter(
+        (section) => section.id !== 'admin' || auth.user?.roles.includes('admin'),
+      )}
+      onActiveSectionChange={setActiveSection}
+    />
+  )
   const ribbon = <WorkbenchRibbon activeSectionId={page.activeSection} panels={chrome.ribbonPanels} />
   const experimentHash = workbench.agentWorkspaceIdentity?.baseHash ?? null
   const agentTarget =
@@ -646,9 +677,24 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   return (
     <main className="flex h-dvh min-h-[560px] min-w-[1280px] flex-col overflow-hidden bg-background text-foreground">
       <div aria-busy={!page.initialized} className="relative min-h-0 flex-1" inert={!page.initialized}>
-        {page.activeSection === 'measurement' ? (
+        {page.activeSection === 'admin' && auth.user?.roles.includes('admin') ? (
+          <div className="flex h-full min-h-0 flex-col">
+            {menubar}
+            <AdminWorkspace
+              currentUser={auth.user}
+              onOpenExperiment={(row) =>
+                page.guardReplacement(async () => {
+                  await workbench.loadExperiment(row)
+                  page.setCalculationId(null)
+                  page.setLayout((current) => ({ ...current, activeSection: 'experiment' }))
+                })
+              }
+            />
+          </div>
+        ) : page.activeSection === 'measurement' ? (
           <CalculationWorkbench
             authenticated={auth.isAuthenticated}
+            dataReadable={auth.isAuthenticated || workbench.experimentIsDemo}
             agentWorkspaceSession={workbench.agentWorkspaceSession}
             bottom={bottomDock}
             bottomHeightRatio={page.bottomHeightRatio}
@@ -749,6 +795,9 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           </Badge>
           {workbench.experimentVersion ? (
             <Badge className="h-5 rounded-sm px-1.5">v{workbench.experimentVersion}</Badge>
+          ) : null}
+          {workbench.experimentIsDemo ? (
+            <Badge className="h-5 rounded-sm bg-primary px-1.5 text-primary-foreground">Demo · 읽기 전용</Badge>
           ) : null}
           {workbench.experimentDirty ? (
             <Badge className="h-5 rounded-sm bg-destructive px-1.5 text-white">Dirty</Badge>

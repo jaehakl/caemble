@@ -29,7 +29,7 @@ class UserData(BaseModel):
 
 
 class GetListRequestBase(BaseModel):
-    scope: str = "visible"
+    scope: Literal["visible", "mine", "public"] = "visible"
     offset: Optional[int] = 0
     limit: Optional[int] = None
     selected_ids: Optional[List[int]] = None
@@ -39,6 +39,23 @@ class GetListRequestBase(BaseModel):
     null_filter: Optional[Dict[str, str]] = None
     sort: Optional[Union[List[str], List[List[str]]]] = None
     random: Optional[bool] = False
+
+
+class DemoExperimentUpdateRequest(BaseModel):
+    experiment_ids: List[StrictInt]
+    default_experiment_id: Optional[StrictInt] = None
+
+    @model_validator(mode="after")
+    def validate_demo_selection(self):
+        if any(experiment_id <= 0 for experiment_id in self.experiment_ids):
+            raise ValueError("experiment_ids must contain only positive integers.")
+        if len(set(self.experiment_ids)) != len(self.experiment_ids):
+            raise ValueError("experiment_ids must not contain duplicates.")
+        if self.experiment_ids and self.default_experiment_id not in self.experiment_ids:
+            raise ValueError("default_experiment_id must be one of experiment_ids.")
+        if not self.experiment_ids and self.default_experiment_id is not None:
+            raise ValueError("default_experiment_id must be null when experiment_ids is empty.")
+        return self
 
 
 class CalculationListRequest(GetListRequestBase):

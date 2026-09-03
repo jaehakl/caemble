@@ -227,7 +227,7 @@ class CalculationBackendContractTests(unittest.TestCase):
             call = get_list_response.await_args
             self.assertIs(call.args[1], request)
             self.assertIs(call.args[2], CALCULATION_DATA_CRUD_SPEC)
-            self.assertEqual(CALCULATION_DATA_CRUD_SPEC.scope_path, ("measurement",))
+            self.assertEqual(CALCULATION_DATA_CRUD_SPEC.scope_path, ("measurement", "experiment"))
             statement = select(db.CalculationData.id).where(call.args[3])
             return str(
                 statement.compile(
@@ -240,7 +240,6 @@ class CalculationBackendContractTests(unittest.TestCase):
         self.assertIn("calculation_data.id IN (3, 9)", sql)
         self.assertIn("calculations.experiment_id = 7", sql)
         self.assertIn("measurements.experiment_id = 7", sql)
-        self.assertIn("measurements.user_id = '00000000000000000000000000000123'", sql)
         self.assertNotIn("999", sql)
 
     def test_measurement_contract_includes_calculation_data_count(self) -> None:

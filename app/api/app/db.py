@@ -6,6 +6,8 @@ from typing import Any, List, Optional
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
+    Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -268,6 +270,36 @@ class Experiment(TimestampMixin, Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    demo: Mapped[Optional["ExperimentDemo"]] = relationship(
+        back_populates="experiment",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
+    )
+
+
+class ExperimentDemo(TimestampMixin, Base):
+    __tablename__ = "experiment_demos"
+    __table_args__ = (
+        CheckConstraint("display_order >= 0", name="ck_experiment_demos_display_order_nonnegative"),
+        UniqueConstraint("display_order", name="uq_experiment_demos_display_order"),
+        Index(
+            "uq_experiment_demos_single_default",
+            "is_default",
+            unique=True,
+            postgresql_where=text("is_default"),
+        ),
+    )
+
+    experiment_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("experiments.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+
+    experiment: Mapped["Experiment"] = relationship(back_populates="demo")
 
 
 class ExperimentRecord(TimestampMixin, Base):

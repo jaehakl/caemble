@@ -28,7 +28,7 @@ router = APIRouter(prefix="/calculation_data", tags=["calculation_data"])
 async def list_calculation_data(
     request: CalculationDataListRequest,
     db: AsyncSession = Depends(get_db),
-    user: UserData = Depends(require_roles(["admin", "user"])),
+    user: UserData | None = Depends(require_roles(["*"])),
 ):
     return await list_calculation_data_rows(db, request, user=user)
 
@@ -37,7 +37,7 @@ async def list_calculation_data(
 async def analyze_calculation_data(
     experiment_id: Annotated[int, Body(embed=True)],
     db: AsyncSession = Depends(get_db),
-    user: UserData = Depends(require_roles(["admin", "user"])),
+    user: UserData | None = Depends(require_roles(["*"])),
 ):
     return await analyze_calculation_data_rows(db, experiment_id, user=user)
 
@@ -46,7 +46,7 @@ async def analyze_calculation_data(
 async def calculation_data_analysis_status(
     experiment_id: Annotated[int, Body(embed=True)],
     db: AsyncSession = Depends(get_db),
-    user: UserData = Depends(require_roles(["admin", "user"])),
+    user: UserData | None = Depends(require_roles(["*"])),
 ):
     return await get_calculation_data_analysis_status(db, experiment_id, user=user)
 
@@ -92,7 +92,7 @@ async def list_calculation_data_scalars(
     calculation_id: Annotated[int, Body()],
     exclude_measurement_id: Annotated[int | None, Body()] = None,
     db: AsyncSession = Depends(get_db),
-    user: UserData = Depends(require_roles(["admin", "user"])),
+    user: UserData | None = Depends(require_roles(["*"])),
 ):
     return await list_calculation_data_scalar_rows(
         db,

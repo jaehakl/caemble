@@ -124,6 +124,7 @@ function calculationChangedLines(before: string, after: string) {
 
 export function CalculationWorkbench({
   authenticated,
+  dataReadable,
   agentWorkspaceSession,
   bottom,
   bottomHeightRatio,
@@ -167,6 +168,7 @@ export function CalculationWorkbench({
   viewerExpanded,
 }: {
   authenticated: boolean
+  dataReadable: boolean
   agentWorkspaceSession: number
   bottom: ReactNode
   bottomHeightRatio: number
@@ -264,7 +266,7 @@ export function CalculationWorkbench({
     [experimentId, selectedCalculationId],
   )
   const calculationsQuery = useQuery({
-    enabled: authenticated && experimentId !== null,
+    enabled: dataReadable && experimentId !== null,
     queryFn: () => dbTables.Calculation.listRows(request),
     queryKey: ['cae-workbench', 'calculations', request],
   })
@@ -273,7 +275,7 @@ export function CalculationWorkbench({
     [calculationsQuery.data?.items],
   )
   const experimentRecordsQuery = useQuery({
-    enabled: authenticated && experimentId !== null,
+    enabled: dataReadable && experimentId !== null,
     queryKey: ['cae-workbench', 'experiment-records', experimentId],
     queryFn: () =>
       dbTables.ExperimentRecord.listRows({
@@ -338,7 +340,7 @@ export function CalculationWorkbench({
     setBaseline(next)
   }, [draft.id, draft.sourceCode, experimentRecords])
   const scalarCalculationId =
-    authenticated &&
+    dataReadable &&
     draft.id !== null &&
     !dirty &&
     selectedCalculationId === draft.id &&
@@ -1213,7 +1215,7 @@ export function CalculationWorkbench({
                         : rows.length
                   }
                   className="min-h-0 gap-2"
-                  enabled={authenticated}
+                  enabled={dataReadable}
                   experimentId={experimentId}
                   selectedId={measurementId}
                   onClearSelection={() => {

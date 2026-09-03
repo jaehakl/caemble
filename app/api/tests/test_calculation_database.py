@@ -29,6 +29,7 @@ from db import (  # noqa: E402
     Calculation,
     CalculationData,
     Experiment,
+    ExperimentDemo,
     ExperimentRecord,
     Measurement,
     RecordedData,
@@ -59,7 +60,12 @@ from service.calculation_data import (  # noqa: E402
     missing_calculation_data,
     save_calculation_data,
 )
-from service.experiment import _derived_counts, experiment_usage, save_experiment  # noqa: E402
+from service.experiment import (  # noqa: E402
+    _derived_counts,
+    delete_experiment_versions,
+    experiment_usage,
+    save_experiment,
+)
 from service.measurement_service import list_measurements  # noqa: E402
 from settings import settings  # noqa: E402
 
@@ -1007,6 +1013,65 @@ async def _verify_calculation_data_contract(database: str) -> None:
             )
             assert admin_analysis["total"] == 1
             assert admin_analysis["items"][0]["calculation_data_id"] == other_saved["id"]
+
+            session.add(ExperimentDemo(experiment_id=experiment_id, display_order=0, is_default=True))
+            await session.commit()
+            guest_measurements = await list_measurements(
+                session,
+                GetListRequestBase(
+                    limit=None,
+                    filter={"experiment_id": [experiment_id, experiment_id]},
+                ),
+                user=None,
+            )
+            assert guest_measurements["total"] == 3
+            guest_calculations = await list_calculations(
+                session,
+                CalculationListRequest(experiment_id=experiment_id, limit=None),
+                user=None,
+            )
+            assert guest_calculations["total"] >= 1
+            guest_analysis = await analyze_calculation_data(session, experiment_id, user=None)
+            assert guest_analysis["total"] >= 1
+            guest_ids = [item["calculation_data_id"] for item in guest_analysis["items"]]
+            guest_data = await list_calculation_data(
+                session,
+                CalculationDataListRequest(
+                    experiment_id=experiment_id,
+                    selected_ids=guest_ids,
+                    limit=None,
+                ),
+                user=None,
+            )
+            assert guest_data["total"] == len(guest_ids)
+            try:
+                await analyze_calculation_data(session, other_experiment_id, user=None)
+            except HTTPException as error:
+                assert error.status_code == 404
+            else:
+                raise AssertionError("Anonymous user could read a non-Demo Experiment")
+            try:
+                await missing_calculation_data(
+                    session,
+                    experiment_id,
+                    None,
+                    None,
+                    user=None,  # type: ignore[arg-type]
+                )
+            except HTTPException as error:
+                assert error.status_code == 404
+            else:
+                raise AssertionError("Anonymous user could mutate Demo CalculationData")
+
+            await session.execute(delete(ExperimentDemo).where(ExperimentDemo.experiment_id == experiment_id))
+            await session.commit()
+            try:
+                await analyze_calculation_data(session, experiment_id, user=None)
+            except HTTPException as error:
+                assert error.status_code == 404
+            else:
+                raise AssertionError("Anonymous Demo access survived public removal")
+
             owner_list = await list_calculation_data(
                 session,
                 CalculationDataListRequest(
@@ -1072,6 +1137,18 @@ async def _verify_calculation_data_contract(database: str) -> None:
                     CalculationData.measurement_id == first_measurement_id
                 )
             ) == 0
+
+        async with sessions() as session:
+            session.add_all(
+                [
+                    ExperimentDemo(experiment_id=experiment_id, display_order=0, is_default=True),
+                    ExperimentDemo(experiment_id=other_experiment_id, display_order=1, is_default=False),
+                ]
+            )
+            await session.commit()
+            await delete_experiment_versions(session, [experiment_id], user=admin)
+            promoted = await session.get(ExperimentDemo, other_experiment_id)
+            assert promoted is not None and promoted.is_default is True
     finally:
         await engine.dispose()
 
@@ -1091,6 +1168,7 @@ class CalculationDatabaseIntegrationTests(unittest.TestCase):
             empty_tables = asyncio.run(_table_names(empty_database))
             self.assertIn("calculations", empty_tables)
             self.assertIn("calculation_data", empty_tables)
+            self.assertIn("experiment_demos", empty_tables)
             self.assertNotIn("designer_models", empty_tables)
             self.assertNotIn("predictor_models", empty_tables)
             _check(empty_database)
@@ -1104,6 +1182,7 @@ class CalculationDatabaseIntegrationTests(unittest.TestCase):
             legacy_tables = asyncio.run(_table_names(legacy_database))
             self.assertIn("calculations", legacy_tables)
             self.assertIn("calculation_data", legacy_tables)
+            self.assertIn("experiment_demos", legacy_tables)
             self.assertNotIn("designer_models", legacy_tables)
             self.assertNotIn("predictor_models", legacy_tables)
             _check(legacy_database)

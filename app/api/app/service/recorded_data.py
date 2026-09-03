@@ -9,7 +9,11 @@ from models import RecordedDataBase, RecordedDataListRequest, UserData
 from utils.crud import CrudSpec, get_list_response
 
 
-RECORDED_DATA_CRUD_SPEC = CrudSpec(model=RecordedData, schema=RecordedDataBase)
+RECORDED_DATA_CRUD_SPEC = CrudSpec(
+    model=RecordedData,
+    schema=RecordedDataBase,
+    scope_path=("measurement", "experiment"),
+)
 
 
 async def list_recorded_data(

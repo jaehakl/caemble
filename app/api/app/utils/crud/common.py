@@ -182,7 +182,12 @@ def build_scope_clause(
     write: bool,
     read_scope: str = "visible",
 ) -> Any | None:
-    relationships, _, owner_column = _scope_parts(spec)
+    relationships, owner_model, owner_column = _scope_parts(spec)
+    demo_clause = None
+    if getattr(owner_model, "__tablename__", None) == "experiments":
+        from db import ExperimentDemo
+
+        demo_clause = owner_model.id.in_(select(ExperimentDemo.experiment_id))
     if write:
         if is_admin_user(user):
             return None
@@ -195,13 +200,17 @@ def build_scope_clause(
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required for mine scope.")
             clause = owner_column == user.id
         elif read_scope == "public":
-            clause = owner_column.is_(None)
+            clause = demo_clause if demo_clause is not None else owner_column.is_(None)
         elif is_admin_user(user):
             return None
         elif user is None:
-            clause = owner_column.is_(None)
+            clause = demo_clause if demo_clause is not None else owner_column.is_(None)
         else:
-            clause = or_(owner_column.is_(None), owner_column == user.id)
+            clause = (
+                or_(owner_column == user.id, demo_clause)
+                if demo_clause is not None
+                else or_(owner_column.is_(None), owner_column == user.id)
+            )
 
     for relationship_attr in reversed(relationships):
         clause = relationship_attr.has(clause)

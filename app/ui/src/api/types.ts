@@ -5,6 +5,8 @@ export type {
   CalculationDataAnalysisResponse,
   CalculationDataAnalysisStatus,
   CalculationDataAnalysisSummary,
+  AvailableExperimentRecord,
+  AvailableExperimentsResponse,
   DbTableName,
   DbTableRecord,
   AccessKeyRecord,
@@ -30,6 +32,7 @@ export type {
   SaveExperimentResponse,
   SaveExperimentRequest,
   UpsertResponse,
+  UserRecord,
 } from './api'
 
 export type UserData = Awaited<ReturnType<typeof dbTables.User.fetchMe>>

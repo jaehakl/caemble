@@ -1,9 +1,11 @@
+import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
 import {
   dbTables,
   getListRequest,
+  type AvailableExperimentRecord,
   type CalculationDataAnalysisResponse,
   type CalculationDataOutput,
   type CalculationOutputLayout,
@@ -244,9 +246,7 @@ function cohortSummary(
   })
 }
 
-function aggregateForwardProfiles(
-  models: readonly ForwardModelEntry[],
-): PredictionWorkerModelProfile {
+function aggregateForwardProfiles(models: readonly ForwardModelEntry[]): PredictionWorkerModelProfile {
   const profiles = models.map((model) => model.profile)
   const excluded = {
     'missing-block': 0,
@@ -296,9 +296,11 @@ function aggregateForwardProfiles(
 export function PredictionWorkspace({
   active,
   authenticated,
+  dataReadable,
   command,
   onActivity,
   onChromeStateChange,
+  onExperimentChange,
   onRequestLogin,
   selectedCalculationId,
   varsContainer,
@@ -306,9 +308,11 @@ export function PredictionWorkspace({
 }: {
   active: boolean
   authenticated: boolean
+  dataReadable: boolean
   command: PredictionWorkspaceCommand | null
   onActivity?: RuntimeActivityCallback
   onChromeStateChange: (state: PredictionWorkspaceChromeState) => void
+  onExperimentChange: (experiment: AvailableExperimentRecord) => void
   onRequestLogin: () => void
   selectedCalculationId: number | null
   varsContainer: HTMLDivElement | null
@@ -336,6 +340,7 @@ export function PredictionWorkspace({
   const modelCacheRef = useRef<Partial<Record<PredictionDirection, ModelCache>>>({})
   const forwardModelCacheRef = useRef<ForwardModelBundle | null>(null)
   const emittedDiagnosticFingerprintsRef = useRef(new Set<string>())
+  const userChangedVarsRef = useRef(false)
   const inverseRowsRef = useRef<Readonly<{ key: string; rows: readonly PredictionTrainingRow[] }> | null>(null)
   const cancelMeasurementRef = useRef(workbench.measurementActions.cancel)
   const cancelCalculationDataRef = useRef(workbench.calculationDataActions.cancel)
@@ -356,6 +361,14 @@ export function PredictionWorkspace({
   const [detailsDirection, setDetailsDirection] = useState<PredictionDirection>('forward')
   const [setupBusyAction, setSetupBusyAction] = useState<PredictionSetupBusyAction>(null)
   const [direction, setDirection] = useState<PredictionDirection>('forward')
+  const [guideProgress, setGuideProgress] = useState(() => {
+    try {
+      const complete = sessionStorage.getItem('caemble.prediction-guide-complete') === '1'
+      return { forward: complete, inverse: complete }
+    } catch {
+      return { forward: false, inverse: false }
+    }
+  })
   const [status, setStatus] = useState('Prediction 데이터를 준비하세요.')
   const [busy, setBusy] = useState(false)
   const [validating, setValidating] = useState(false)
@@ -384,6 +397,10 @@ export function PredictionWorkspace({
 
   const experimentId = workbench.experimentId
   const experimentIdRef = useRef(experimentId)
+  const availableQuery = useQuery({
+    queryKey: ['experiment', 'available', authenticated],
+    queryFn: dbTables.Experiment.available,
+  })
   const contextExperimentMatches = context?.experimentId === experimentId
   const varsSchema = workbench.experimentDocument.varsSchema as VarsSchema | null
   const candidateVars = workbench.candidateVars
@@ -400,6 +417,15 @@ export function PredictionWorkspace({
   contextRef.current = context
   experimentIdRef.current = experimentId
   candidateFingerprintRef.current = currentCandidateFingerprint
+
+  useEffect(() => {
+    if (!guideProgress.forward || !guideProgress.inverse) return
+    try {
+      sessionStorage.setItem('caemble.prediction-guide-complete', '1')
+    } catch {
+      // Session storage can be unavailable in hardened browser contexts.
+    }
+  }, [guideProgress])
 
   const setFreshnessPending = useCallback((pending: boolean) => {
     freshnessPendingRef.current = pending
@@ -465,10 +491,12 @@ export function PredictionWorkspace({
   }, [active, cancelCurrent, setFreshnessPending])
 
   const reloadData = useCallback(async () => {
-    if (!authenticated || experimentId === null) {
+    if (!dataReadable || experimentId === null) {
       setContext(null)
       setStatus(
-        authenticated ? '저장된 Experiment가 필요합니다.' : '로그인 후 Measurement 데이터를 사용할 수 있습니다.',
+        experimentId === null
+          ? 'Prediction 가능한 Experiment를 선택하세요.'
+          : '이 Experiment의 데이터를 읽을 수 없습니다.',
       )
       return
     }
@@ -587,7 +615,7 @@ export function PredictionWorkspace({
       if (revision === loadRevisionRef.current) setBusy(false)
     }
   }, [
-    authenticated,
+    dataReadable,
     cancelCurrent,
     currentCandidateFingerprint,
     experimentId,
@@ -615,20 +643,20 @@ export function PredictionWorkspace({
     setNeighborsByDirection({})
     lastCandidateRef.current = 'none'
     if (active) {
-      autoLoadAttemptRef.current = `${authenticated}:${experimentId ?? 'none'}`
+      autoLoadAttemptRef.current = `${dataReadable}:${experimentId ?? 'none'}`
       void reloadData()
     }
   }, [experimentId])
 
   useEffect(() => {
-    const loadKey = `${authenticated}:${experimentId ?? 'none'}`
-    if (!active || !authenticated || context || busy || autoLoadAttemptRef.current === loadKey) return
+    const loadKey = `${dataReadable}:${experimentId ?? 'none'}`
+    if (!active || !dataReadable || context || busy || autoLoadAttemptRef.current === loadKey) return
     autoLoadAttemptRef.current = loadKey
     void reloadData()
-  }, [active, authenticated, busy, context, experimentId, reloadData])
+  }, [active, busy, context, dataReadable, experimentId, reloadData])
 
   useEffect(() => {
-    if (authenticated) return
+    if (dataReadable) return
     autoLoadAttemptRef.current = null
     loadRevisionRef.current += 1
     cancelCurrent()
@@ -647,11 +675,11 @@ export function PredictionWorkspace({
     setLastResult(null)
     setForwardVarsFingerprint(null)
     setInverseVarsFingerprint(null)
-    setStatus('로그인 후 Measurement 데이터를 사용할 수 있습니다.')
-  }, [authenticated, cancelCurrent])
+    setStatus('Prediction 가능한 Experiment를 선택하세요.')
+  }, [cancelCurrent, dataReadable])
 
   const checkDataFingerprint = useCallback(async () => {
-    if (!authenticated || experimentId === null || !context || context.experimentId !== experimentId || busyRef.current)
+    if (!dataReadable || experimentId === null || !context || context.experimentId !== experimentId || busyRef.current)
       return
     setFreshnessPending(true)
     const checkRevision = ++checkingFingerprintRef.current
@@ -718,7 +746,7 @@ export function PredictionWorkspace({
         setStatus('Prediction 데이터 최신성을 확인하지 못했습니다. Reload Data를 실행하세요.')
       }
     }
-  }, [authenticated, context, experimentId, setFreshnessPending])
+  }, [context, dataReadable, experimentId, setFreshnessPending])
 
   useEffect(() => {
     if (!active) return
@@ -784,7 +812,10 @@ export function PredictionWorkspace({
         records.map((record) => [record.id, record.contract_hash]),
       ])
       const cached = forwardModelCacheRef.current
-      if (cached?.fingerprint === fingerprint && cached.models.every((model) => model.workerEpoch === clientRef.current!.epoch)) {
+      if (
+        cached?.fingerprint === fingerprint &&
+        cached.models.every((model) => model.workerEpoch === clientRef.current!.epoch)
+      ) {
         return cached
       }
 
@@ -1138,7 +1169,10 @@ export function PredictionWorkspace({
             result.neighbors.forEach((neighbor) => {
               const current = neighborMap.get(neighbor.measurementId)
               neighborMap.set(neighbor.measurementId, {
-                distanceSquared: Math.min(current?.distanceSquared ?? Number.POSITIVE_INFINITY, neighbor.distanceSquared),
+                distanceSquared: Math.min(
+                  current?.distanceSquared ?? Number.POSITIVE_INFINITY,
+                  neighbor.distanceSquared,
+                ),
                 weight: (current?.weight ?? 0) + neighbor.weight / results.length,
               })
             }),
@@ -1224,6 +1258,7 @@ export function PredictionWorkspace({
         setLastResult(completed.result)
         rememberProfile(completed.model.profile, completed.model.fingerprint)
         setForwardVarsFingerprint(candidateFingerprint(vars))
+        if (userChangedVarsRef.current) setGuideProgress((current) => ({ ...current, forward: true }))
         setInverseVarsFingerprint(null)
         setStatus(
           Object.keys(completed.calculated.errors).length
@@ -1305,6 +1340,7 @@ export function PredictionWorkspace({
         }
         suppressedCandidateRef.current = nextFingerprint
         setInverseVarsFingerprint(nextFingerprint)
+        setGuideProgress((current) => ({ ...current, inverse: true }))
         setForwardVarsFingerprint(null)
         setNeighborsByDirection((current) => ({ ...current, inverse: result.neighbors }))
         setLastResult(result)
@@ -1934,7 +1970,8 @@ export function PredictionWorkspace({
     () =>
       selectedCalculations.map((calculation) => {
         const committedOutput = calculationValues[calculation.id] ?? null
-        const output = committedOutput ?? (calculation.output_layout ? calculationPlaceholder(calculation.output_layout) : null)
+        const output =
+          committedOutput ?? (calculation.output_layout ? calculationPlaceholder(calculation.output_layout) : null)
         const validationSnapshotCurrent =
           validation?.direction === direction &&
           validation.experimentId === experimentId &&
@@ -2103,19 +2140,33 @@ export function PredictionWorkspace({
 
   const varsPane = (
     <PredictionVarsPane
+      currentExperimentId={experimentId}
       candidateSessionKey={`${experimentId ?? 'none'}:prediction`}
+      demos={availableQuery.data?.demos ?? []}
       direction={direction}
       disabled={validating || dataStale || freshnessPending || !varsSchema || !candidateVars}
+      guideVisible={workbench.experimentIsDemo && (!guideProgress.forward || !guideProgress.inverse)}
+      isDemo={workbench.experimentIsDemo}
+      loadingExperiments={availableQuery.isPending}
+      mine={availableQuery.data?.mine ?? []}
       schema={varsSchema}
       status={status}
       updating={busy}
       vars={candidateVars}
+      onDismissGuide={() => setGuideProgress({ forward: true, inverse: true })}
+      onExperimentChange={(id) => {
+        const row = [...(availableQuery.data?.mine ?? []), ...(availableQuery.data?.demos ?? [])].find(
+          (item) => item.id === id,
+        )
+        if (row && row.id !== experimentId) onExperimentChange(row)
+      }}
       onVariableChange={(key: string, value: Tensor) => {
         if (freshnessPendingRef.current || dataStaleRef.current) return
         if (!candidateVars) return
         const nextVars = Object.freeze({ ...candidateVars, [key]: value })
         if (candidateFingerprint(nextVars) === currentCandidateFingerprint) return
         if (!workbench.setCandidateVariables(nextVars, 'user-vars')) return
+        userChangedVarsRef.current = true
         primaryRevisionRef.current += 1
         transactionRef.current += 1
         calculationAbortRef.current?.abort()
@@ -2130,16 +2181,19 @@ export function PredictionWorkspace({
     />
   )
 
-  if (!authenticated) {
+  if (!dataReadable) {
     return (
-      <div className="grid h-full place-items-center p-6 text-center">
-        <div>
-          <p className="font-medium">Prediction은 저장된 Measurement가 필요합니다.</p>
-          <button className="mt-3 text-sm font-medium text-primary underline" type="button" onClick={onRequestLogin}>
-            로그인
-          </button>
+      <>
+        {varsContainer ? createPortal(varsPane, varsContainer) : null}
+        <div className="grid h-full place-items-center p-6 text-center">
+          <div>
+            <p className="font-medium">왼쪽에서 공개 Demo를 선택하거나 로그인하세요.</p>
+            <button className="mt-3 text-sm font-medium text-primary underline" type="button" onClick={onRequestLogin}>
+              로그인
+            </button>
+          </div>
         </div>
-      </div>
+      </>
     )
   }
 
@@ -2172,6 +2226,7 @@ export function PredictionWorkspace({
           workbench.measurementActions.busy ||
           workbench.calculationDataActions.busy
         }
+        calculateMissingLabel={authenticated ? '누락 데이터 계산' : '로그인하여 데이터 계산'}
         calculations={
           contextExperimentMatches
             ? context.calculations.map((calculation) => ({
@@ -2219,7 +2274,7 @@ export function PredictionWorkspace({
         }
         weighting={setupDraft.weighting}
         onApply={applySetup}
-        onCalculateMissing={() => void calculateMissing()}
+        onCalculateMissing={() => (authenticated ? void calculateMissing() : onRequestLogin())}
         onCalculationSelectedChange={(calculationId, selected) =>
           setSetupDraft((current) => {
             const calculationIds = selected
