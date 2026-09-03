@@ -1,5 +1,6 @@
 import type { MeasurementRecord, RecordedDataRecord, SavedExperimentRecord } from '@/api'
-import type { ExperimentSourceBundle, ExperimentSourceDocument, Vars } from '@/lib/cad'
+import type { Vars } from '@/lib/cad/model'
+import type { ExperimentSourceBundle, ExperimentSourceDocument } from '@/lib/cad/source'
 
 export type SavedExperiment = SavedExperimentRecord & { id: number }
 export type SavedMeasurement = MeasurementRecord & { id: number }

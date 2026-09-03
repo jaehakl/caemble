@@ -1,5 +1,5 @@
-import { loadRunnerFrame } from '@/lib/cad/runner/client'
-import type { RunnerCancelOperationEnvelope } from '@/lib/cad/runner/protocol'
+import { loadRunnerFrame } from '@/platform/isolated-runner/client'
+import type { RunnerCancelOperationEnvelope } from '@/platform/isolated-runner/protocol'
 import { compileCalculationSource } from './compiler'
 import {
   assertCalculationRunnerResultEnvelope,

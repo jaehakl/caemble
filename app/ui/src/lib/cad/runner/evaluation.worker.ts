@@ -16,7 +16,7 @@ import {
   assertRunnerOperationEnvelope,
   type RunnerOperationEnvelope,
   type RunnerOperationResultEnvelope,
-} from './protocol'
+} from '@/platform/isolated-runner/protocol'
 import { installCatalogRuntimeSlice } from '@/lib/catalog/runtime'
 
 function handleOperation(value: unknown) {

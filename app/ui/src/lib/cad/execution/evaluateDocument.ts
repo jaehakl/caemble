@@ -1,14 +1,19 @@
 import { compileCadDocument } from '../compiler/monacoCompiler'
-import { evaluateInIsolatedRunner, inspectInIsolatedRunner, previewGeometryInIsolatedRunner } from '../runner/client'
+import {
+  evaluateInIsolatedRunner,
+  inspectInIsolatedRunner,
+  previewGeometryInIsolatedRunner,
+} from '@/platform/isolated-runner/client'
 import {
   assertCadEvaluationRequest,
   assertCadGeometryPreviewRequest,
   assertCadInspectionRequest,
-} from '../runner/protocol'
+} from '@/platform/isolated-runner/protocol'
 import {
   EXPERIMENT_SIMULATION_PATH,
   type CadEvaluationInput,
   type ExperimentSourceDocument,
+  type ExperimentSourceBundle,
 } from '../source/document'
 import type { UcumUnit } from '../model/units'
 import { deserializeCadScene } from './mesh'
@@ -24,22 +29,25 @@ import type {
 } from '../worker/protocol'
 import type { EvaluatedExperimentSnapshot } from './snapshot'
 import type { VarsSchemaEntry } from '../model/vars'
-import { fetchCatalogRuntimeSlice } from '@/lib/catalog/references'
 import { installCatalogRuntimeSlice, registerSourceCatalogRuntimeSlice } from '@/lib/catalog/runtime'
 import type { CatalogRuntimeSlice } from '@/contracts/catalog'
+
+export type CatalogRuntimeSliceFetcher = (bundle: ExperimentSourceBundle) => Promise<CatalogRuntimeSlice>
+
+type CatalogRuntimeSliceOptions =
+  | Readonly<{ catalog: CatalogRuntimeSlice; catalogFetcher?: never }>
+  | Readonly<{ catalog?: never; catalogFetcher: CatalogRuntimeSliceFetcher }>
 
 export type EvaluateDocumentOptions = Readonly<{
   signal?: AbortSignal
   timeoutMs?: 3000 | 10000 | 30000
-  catalog?: CatalogRuntimeSlice
-}>
+}> &
+  CatalogRuntimeSliceOptions
 
-export type GeometryModuleEvaluationOptions = Readonly<{
-  signal?: AbortSignal
-  timeoutMs?: 3000 | 10000 | 30000
-  catalog?: CatalogRuntimeSlice
-  lengthUnit?: UcumUnit
-}>
+export type GeometryModuleEvaluationOptions = EvaluateDocumentOptions &
+  Readonly<{
+    lengthUnit?: UcumUnit
+  }>
 
 export type GeometryModulePreview = Readonly<{
   path: string
@@ -60,6 +68,11 @@ export class CadDocumentEvaluationError extends Error {
     this.name = 'CadDocumentEvaluationError'
     this.diagnostics = diagnostics
   }
+}
+
+function resolveCatalogRuntimeSlice(bundle: ExperimentSourceBundle, options: CatalogRuntimeSliceOptions) {
+  if (options.catalog !== undefined) return Promise.resolve(options.catalog)
+  return options.catalogFetcher(bundle)
 }
 
 function timeoutPromise<Response, Result>(
@@ -114,12 +127,11 @@ function timeoutPromise<Response, Result>(
 
 export async function inspectDocument(
   document: ExperimentSourceDocument,
-  options: EvaluateDocumentOptions = {},
+  options: EvaluateDocumentOptions,
 ): Promise<CadDocumentInspection> {
-  const catalog = options.catalog ?? (await fetchCatalogRuntimeSlice(document.sourceBundle))
+  const catalog = await resolveCatalogRuntimeSlice(document.sourceBundle, options)
   installCatalogRuntimeSlice(catalog)
   const compiledDocument = await compileCadDocument(document, {
-    ...options,
     catalogRevision: catalog.catalogRevision,
     catalog,
   })
@@ -145,12 +157,11 @@ export async function inspectDocument(
 
 export async function evaluateDocument(
   input: CadEvaluationInput,
-  options: EvaluateDocumentOptions = {},
+  options: EvaluateDocumentOptions,
 ): Promise<EvaluatedExperimentSnapshot> {
-  const catalog = options.catalog ?? (await fetchCatalogRuntimeSlice(input.document.sourceBundle))
+  const catalog = await resolveCatalogRuntimeSlice(input.document.sourceBundle, options)
   installCatalogRuntimeSlice(catalog)
   const compiledDocument = await compileCadDocument(input.document, {
-    ...options,
     catalogRevision: catalog.catalogRevision,
     catalog,
   })
@@ -179,9 +190,9 @@ export async function evaluateGeometryModule(
   document: ExperimentSourceDocument,
   path: string,
   exportName: string,
-  options: GeometryModuleEvaluationOptions = {},
+  options: GeometryModuleEvaluationOptions,
 ): Promise<GeometryModulePreview> {
-  const catalog = options.catalog ?? (await fetchCatalogRuntimeSlice(document.sourceBundle))
+  const catalog = await resolveCatalogRuntimeSlice(document.sourceBundle, options)
   const compiledDocument = await compileCadDocument(document, {
     catalogRevision: catalog.catalogRevision,
     catalog,

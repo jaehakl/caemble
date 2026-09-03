@@ -1,5 +1,5 @@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { MeasurementExplorer } from '../measurement/MeasurementExplorer'
+import { MeasurementExplorer } from '@/features/measurement/MeasurementExplorer'
 import type { SavedMeasurement } from '../types'
 
 export function MeasurementPickerDialog({

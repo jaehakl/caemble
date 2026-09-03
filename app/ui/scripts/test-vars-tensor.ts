@@ -15,7 +15,7 @@ import {
   varsTensorFromFlat,
   varsValueFromVerticalPosition,
   varsWheelStep,
-} from '../src/features/cae-workbench/calculation/varsTensor'
+} from '../src/features/calculation/varsTensor'
 
 assert.equal(tensorElementCount([]), 1)
 assert.equal(tensorElementCount([2, 3, 4]), 24)

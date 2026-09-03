@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import CadViewer from '@/features/viewer/viewer/CadViewer'
-import { experimentTaskName, type ExperimentSourceDocument, type RayPathBundle } from '@/lib/cad'
+import type { RayPathBundle } from '@/lib/cad/model'
+import { experimentTaskName, type ExperimentSourceDocument } from '@/lib/cad/source'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
 import type { CadViewerSelectionQuery, CadViewerSourceLookupStatus } from '@/features/viewer/viewer/selection'
 

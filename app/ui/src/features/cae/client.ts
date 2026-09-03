@@ -23,13 +23,14 @@ import {
   type RuntimeActivityCallback,
   type RuntimeActivityDetails,
 } from '@/features/runtime-console/types'
-import type {
-  BuiltMeasurement,
-  DataTensor,
-  RecordedData,
-  RecordedDataNode,
-} from '../../lib/cad'
-import { registerDataTensorAttachment, releaseDataTensorAttachments } from '../../lib/cad'
+import type { BuiltMeasurement } from '@/lib/cad/execution'
+import {
+  registerDataTensorAttachment,
+  releaseDataTensorAttachments,
+  type DataTensor,
+  type RecordedData,
+  type RecordedDataNode,
+} from '@/lib/cad/model'
 
 const CONNECT_TIMEOUT_MS = 60_000
 const FINISH_TIMEOUT_MS = 60_000

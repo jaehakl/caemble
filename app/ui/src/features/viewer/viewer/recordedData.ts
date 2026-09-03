@@ -1,6 +1,14 @@
-import type { RecordedData, RecordedDataAxis, RecordedDataRule, RecordedDataTensor, UcumUnit } from '@/lib/cad'
-import { convertUcumValue, isDataTensor } from '@/lib/cad'
-import { normalizeRecordedDataTensor, type ResolvedRecordedTensor } from '@/lib/cad'
+import {
+  convertUcumValue,
+  isDataTensor,
+  normalizeRecordedDataTensor,
+  type RecordedData,
+  type RecordedDataAxis,
+  type RecordedDataRule,
+  type RecordedDataTensor,
+  type ResolvedRecordedTensor,
+  type UcumUnit,
+} from '@/lib/cad/model'
 import type { CatalogQuantityKind } from '@/api/catalog'
 
 export type CadViewerRecordedAxis = RecordedDataAxis

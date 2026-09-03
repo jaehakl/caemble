@@ -8,7 +8,7 @@ import {
   getRelationshipPlot,
   getTablePage,
   mineDataset,
-} from '../src/pages/analysis/analysis-engine'
+} from '../src/features/analysis/analysis-engine'
 
 const measurements = [
   ...Array.from({ length: 24 }, (_, index) => ({
@@ -144,20 +144,20 @@ const csv = await createCsv(dataset, ['measurement.vars.x', scalarKey]).text()
 assert.match(csv, /measurement_id,input_fingerprint,measurement\.vars\.x,target:calculation:10/u)
 assert.doesNotMatch(csv, /\[object Object\]/u)
 
-const workerSource = readFileSync('src/pages/analysis/analysis.worker.ts', 'utf8')
+const workerSource = readFileSync('src/features/analysis/analysis.worker.ts', 'utf8')
 assert.doesNotMatch(workerSource, /RecordedData|Recorded Data|dbTables\.RecordedData/u)
 assert.doesNotMatch(workerSource, /predict(?:-what-if)?|analysis-prediction\.csv/iu)
 
-const pageSource = readFileSync('src/pages/analysis/AnalysisPage.tsx', 'utf8')
+const pageSource = readFileSync('src/features/analysis/AnalysisPage.tsx', 'utf8')
 assert.doesNotMatch(pageSource, /value="prediction"|Prediction CSV|export-prediction/u)
 
-const engineSource = readFileSync('src/pages/analysis/analysis-engine.ts', 'utf8')
+const engineSource = readFileSync('src/features/analysis/analysis-engine.ts', 'utf8')
 assert.doesNotMatch(engineSource, /ml-random-forest|predictDataset|fitRidge|RandomForestRegression/u)
 
-const typesSource = readFileSync('src/pages/analysis/analysis-types.ts', 'utf8')
+const typesSource = readFileSync('src/features/analysis/analysis-types.ts', 'utf8')
 assert.doesNotMatch(typesSource, /AnalysisPredictionResult|AnalysisWhatIfResult|type: 'predict/u)
 
-const docsSource = readFileSync('src/pages/docs/docsKnowledge.ts', 'utf8')
+const docsSource = readFileSync('src/features/docs/docsKnowledge.ts', 'utf8')
 assert.doesNotMatch(docsSource, /Analysis: Explore, Mining, Prediction|Prediction CSV|OOF 검증으로 Ridge/u)
 
 console.info('CalculationData Analysis tests passed.')

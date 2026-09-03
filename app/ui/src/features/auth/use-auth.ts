@@ -1,20 +1,23 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { dbTables, logout } from '@/api'
+import { logout } from '@/api'
+import { clearPrivateQueryCache } from './queryCache'
+import { authQueryOptions } from './queryOptions'
+import { authQueryKey, privateQueryScope } from './queryKeys'
 
-export const authQueryKey = ['auth', 'me'] as const
+export { authQueryKey } from './queryKeys'
 
 export function useAuth() {
-  const query = useQuery({
-    queryKey: authQueryKey,
-    queryFn: () => dbTables.User.fetchMe(),
-    retry: false,
-    staleTime: 60_000,
-  })
+  const query = useQuery(authQueryOptions)
   return {
     ...query,
     isAuthenticated: Boolean(query.data?.is_active),
+    queryScope: privateQueryScope(query.data),
     user: query.data ?? null,
   }
+}
+
+export function usePrivateQueryScope() {
+  return privateQueryScope(useQuery(authQueryOptions).data)
 }
 
 export function useLogout() {
@@ -23,7 +26,7 @@ export function useLogout() {
     mutationFn: logout,
     onSuccess: () => {
       queryClient.setQueryData(authQueryKey, null)
-      queryClient.removeQueries({ queryKey: ['work'] })
+      clearPrivateQueryCache(queryClient)
     },
   })
 }

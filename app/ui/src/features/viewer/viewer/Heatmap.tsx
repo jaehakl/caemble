@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import type { UcumUnit } from '@/lib/cad'
+import type { UcumUnit } from '@/lib/cad/model'
 
 function heatmapColor(value: number, minimum: number, maximum: number) {
   const ratio = maximum === minimum ? 0.5 : Math.max(0, Math.min(1, (value - minimum) / (maximum - minimum)))

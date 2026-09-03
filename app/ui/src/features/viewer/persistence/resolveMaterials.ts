@@ -1,5 +1,5 @@
 import { dbTables, getListRequest } from '@/api'
-import { deserializeCadScene, type EvaluatedExperimentSnapshot } from '@/lib/cad'
+import { deserializeCadScene, type EvaluatedExperimentSnapshot } from '@/lib/cad/execution'
 import {
   projectMaterialResolution,
   resolveMaterialParameters,

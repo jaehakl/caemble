@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { executeCalculationDataBatch } from '../src/features/cae-workbench/calculation/calculationDataBatch'
+import { executeCalculationDataBatch } from '../src/features/calculation/calculationDataBatch'
 
 const targets = [
   { calculation_id: 1, measurement_id: 10 },

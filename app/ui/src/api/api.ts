@@ -1,361 +1,108 @@
 import { API_URL, request } from './http'
+import type { RequestContext } from './http'
+import type {
+  AccessKeyRecord,
+  AccessKeyScope,
+  AvailableExperimentRecord,
+  AvailableExperimentsResponse,
+  CalculationDataAnalysisResponse,
+  CalculationDataAnalysisStatus,
+  CalculationDataMissingRequest,
+  CalculationDataMissingResponse,
+  CalculationDataOutput,
+  CalculationDataRecord,
+  CalculationDataSaveResponse,
+  CalculationDataScalar,
+  CalculationRecord,
+  CalculationUpsertInput,
+  DbTableName,
+  DbTableRecord,
+  ExperimentRecordedDataRecord,
+  ExperimentUsageResponse,
+  GetListRequest,
+  GetListResponse,
+  JobSummary,
+  LauncherRecord,
+  LauncherRuntime,
+  MaterialNameRecord,
+  MaterialNameUpsertInput,
+  MaterialParameterQualifierRecord,
+  MaterialParameterQualifierUpsertInput,
+  MaterialParameterRecord,
+  MaterialParameterUpsertInput,
+  MaterialRecord,
+  MaterialUpsertInput,
+  MeasurementCreateRequest,
+  MeasurementRecord,
+  MeasurementRecordedData,
+  MeasurementRecordRequest,
+  PersistedCalculationRecord,
+  PersistedMaterialNameRecord,
+  PersistedMaterialParameterQualifierRecord,
+  PersistedMaterialParameterRecord,
+  PersistedMaterialRecord,
+  PersistedMeasurementRecord,
+  PersistedRecordedDataRecord,
+  RecordedDataRecord,
+  RuntimeCrudListRequest,
+  SaveExperimentRequest,
+  SaveExperimentResponse,
+  SavedExperimentRecord,
+  UpsertResponse,
+  UserRecord,
+} from '@/contracts/api'
+import {
+  parseCalculationDataAnalysisResponse,
+  parseCalculationDataAnalysisStatus,
+  parseCalculationDataListResponse,
+  parseCalculationDataMissingResponse,
+  parseCalculationDataSaveResponse,
+  parseCalculationDataScalarsResponse,
+  parseCalculationListResponse,
+} from '@/contracts/api/calculationValidators'
+import {
+  parseAvailableExperimentsResponse,
+  parseDemoCandidatesResponse,
+  parseExperimentListResponse,
+  parseExperimentRecordListResponse,
+  parseExperimentUsageResponse,
+  parseSaveExperimentResponse,
+} from '@/contracts/api/experimentValidators'
+import {
+  parseMaterialListResponse,
+  parseMaterialNameListResponse,
+  parseMaterialParameterListResponse,
+  parseMaterialParameterQualifierListResponse,
+} from '@/contracts/api/materialValidators'
+import {
+  parseMeasurementListResponse,
+  parseMeasurementRecordedDataResponse,
+  parseRecordedDataListResponse,
+} from '@/contracts/api/measurementValidators'
+import {
+  parseAccessKeyCreateResponse,
+  parseAccessKeyListResponse,
+  parseDeletedResponse,
+  parseJobSummaryList,
+  parseLauncherListResponse,
+  parseLauncherReconcileResponse,
+  parseLauncherRuntimeList,
+  parseNullableUserRecord,
+  parseOkResponse,
+  parseUserRecord,
+  parseUserRecordList,
+} from '@/contracts/api/runtimeValidators'
+import {
+  parseBooleanResponse,
+  parseEmptyResponse,
+  parseIdResponse,
+  parseUpsertResponseList,
+} from '@/contracts/api/validators'
 
-export type GetListRequest = Readonly<{
-  scope?: 'visible' | 'mine' | 'public'
-  offset: number
-  limit: number | null
-  selected_ids: readonly number[]
-  search_text: string | null
-  text_filter: Readonly<Record<string, readonly string[]>>
-  filter: Readonly<Record<string, readonly unknown[]>>
-  null_filter?: Readonly<Record<string, 'is_null' | 'is_not_null'>>
-  sort: readonly [string, 'asc' | 'desc'] | readonly (readonly [string, 'asc' | 'desc'])[] | null
-  random?: boolean
-  include_system?: boolean
-}>
+export type * from '@/contracts/api'
 
-export type UpsertResponse = Readonly<{
-  id: number
-}>
-
-export type AccessKeyScope = 'client' | 'launcher'
-export type AccessKeyRecord = Readonly<{
-  id: string
-  user_id: string
-  key_type: string
-  name: string
-  key_prefix: string
-  scopes: readonly string[]
-  status: string
-  last_used_at?: string | null
-  expires_at?: string | null
-  created_at?: string | null
-  revoked_at?: string | null
-}>
-
-export type LauncherRecord = Readonly<{
-  id: string
-  user_id: string
-  launcher_name: string
-  ip_address?: string | null
-  status: string
-  slave_app_ids: readonly string[]
-  connected_at?: string | null
-  last_heartbeat_at?: string | null
-  disconnected_at?: string | null
-  created_at?: string | null
-  updated_at?: string | null
-}>
-
-export type LauncherRuntime = Readonly<{
-  launcher_id: string
-  current_job_id?: string | null
-  loaded_slave_app_id?: string | null
-  worker_status?: string | null
-  resetting: boolean
-  metadata: Readonly<Record<string, unknown>>
-}>
-
-export type JobState =
-  'queued' | 'assigned' | 'answer_ready' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'killed'
-export type JobSummary = Readonly<{
-  id: string
-  user_id: string
-  handler_type: string
-  slave_app_id: string
-  state: JobState
-  latest_progress: Readonly<{ time: string; progress: unknown }> | null
-  launcher_id?: string | null
-  assigned_at?: string | null
-  answer_ready_at?: string | null
-  started_at?: string | null
-  finished_at?: string | null
-  cancel_requested_at?: string | null
-  last_error?: string | null
-  attempt_count: number
-  created_at?: string | null
-  updated_at?: string | null
-}>
-
-export type ExperimentSourceBundle = Readonly<{ files: Readonly<Record<string, string>> }>
-export type ExperimentDerivedCounts = Readonly<{
-  measurements: number
-  recordedData: number
-  calculations: number
-}>
-type ExperimentMetadata = Readonly<{
-  namespace: string
-  repository: string
-  key: string
-  name: string
-  description: string | null
-  sourceBundle: ExperimentSourceBundle
-  bundleHash: string
-  records: readonly ExperimentRecordContract[]
-}>
-export type ExperimentRecordContract = Readonly<{
-  name: string
-  quantity_kind: string | null
-  tensor_order: number
-  dtype: string
-  data_schema: DataSchema | null
-}>
-export type SaveExperimentRequest = ExperimentMetadata &
-  (
-    | Readonly<{ mode: 'create'; initialVersion?: '0.1.0' }>
-    | Readonly<{ mode: 'overwrite'; experimentId: number; baseBundleHash: string }>
-    | Readonly<{ mode: 'new_version'; experimentId: number; baseBundleHash: string; bump: 'patch' | 'minor' | 'major' }>
-  )
-export type SaveExperimentResponse = Readonly<{
-  id: number
-  action: 'create' | 'overwrite' | 'new_version'
-  namespace: string
-  repository: string
-  key: string
-  version: string
-  coordinate: string
-  bundleHash: string
-  sourceLocked: boolean
-  derivedCounts: ExperimentDerivedCounts
-}>
-
-type MaterialSnapshot = Readonly<{
-  materials: Readonly<Record<string, Readonly<Record<string, unknown>>>>
-  materialColors?: Readonly<Record<string, unknown>>
-}>
-type MeasurementMaterialParameters = Readonly<{
-  experiment: MaterialSnapshot
-  tasks: Readonly<Record<string, MaterialSnapshot>>
-}>
-type PersistedDataTensor = Readonly<{
-  shape: readonly number[]
-  axes?: readonly Readonly<{ ticks?: readonly (number | string)[]; implicitOrdinal?: true }>[]
-  storage: Readonly<{ kind: 'inline'; value: unknown }> | Readonly<{ kind: 'base64'; data: string; byteLength: number }>
-}>
-type DataSchema = Readonly<Record<string, unknown>>
-
-export type RecordedDataSaveLeaf = Readonly<{
-  experiment_record_id: number
-  quantity_kind: string | null
-  tensor_order: number
-  dtype: string
-  data_schema: DataSchema
-  data: PersistedDataTensor
-}>
-export interface RecordedDataSaveGroup extends Readonly<Record<string, RecordedDataSaveNode>> {}
-export type RecordedDataSaveNode = RecordedDataSaveLeaf | RecordedDataSaveGroup
-export interface MeasurementRecordedData extends Readonly<Record<string, RecordedDataSaveNode>> {}
-export type MeasurementCreateRequest = Readonly<{
-  experiment_id: number
-  experiment_source_hash: string
-  vars: Readonly<Record<string, unknown>>
-  material_parameters: MeasurementMaterialParameters
-}>
-export type MeasurementRecordRequest = Readonly<{
-  recorded_data: readonly Readonly<{ experiment_record_id: number; data: PersistedDataTensor }>[]
-}>
-export type GetListResponse<TItem> = { items: TItem[]; total: number }
-
-export type UserRecord = Readonly<{
-  id: string
-  email?: string | null
-  display_name?: string | null
-  picture_url?: string | null
-  is_active?: boolean | null
-  roles: readonly string[]
-  created_at?: string | null
-  updated_at?: string | null
-  experiment_namespaces: readonly string[]
-}>
-export type MaterialRecord = Readonly<{
-  id?: number
-  created_at?: string | null
-  updated_at?: string | null
-  user_id?: string | null
-  inchi?: string | null
-  description?: string | null
-  color?: string | null
-}>
-type MaterialNameRecord = Readonly<{
-  id?: number
-  created_at?: string | null
-  updated_at?: string | null
-  user_id?: string | null
-  material_id: number
-  name: string
-}>
-type MaterialParameterRecord = Readonly<{
-  id?: number
-  created_at?: string | null
-  updated_at?: string | null
-  user_id?: string | null
-  material_id: number
-  name: string
-  value: unknown | null
-  source?: string | null
-  version?: string | null
-  description?: string | null
-  temperature?: number | null
-  pressure?: number | null
-  frequency?: number | null
-}>
-type MaterialParameterQualifierRecord = Readonly<{
-  id?: number
-  created_at?: string | null
-  updated_at?: string | null
-  material_parameter_id: number
-  name: string
-  value: number
-}>
-export type SavedExperimentRecord = Readonly<{
-  id: number
-  created_at?: string | null
-  updated_at?: string | null
-  user_id?: string | null
-  namespace: string
-  repository_slug: string
-  experiment_key: string
-  version_major: number
-  version_minor: number
-  version_patch: number
-  name: string
-  description?: string | null
-  source_bundle: ExperimentSourceBundle
-  source_hash: string
-  repository?: string
-  key?: string
-  version?: string
-  coordinate?: string
-  bundleHash?: string
-  sourceLocked?: boolean
-  derivedCounts?: ExperimentDerivedCounts
-  isDemo?: boolean
-  demoOrder?: number | null
-  demoDefault?: boolean
-}>
-export type AvailableExperimentRecord = SavedExperimentRecord &
-  Readonly<{
-    predictionReady: boolean
-    predictionCounts: Readonly<{
-      recordedMeasurements: number
-      readyCalculations: number
-      calculationData: number
-    }>
-    demoOrder: number | null
-    demoDefault: boolean
-  }>
-export type AvailableExperimentsResponse = Readonly<{
-  mine: readonly AvailableExperimentRecord[]
-  demos: readonly AvailableExperimentRecord[]
-}>
-export type ExperimentRecordedDataRecord = Readonly<{
-  id: number
-  created_at?: string | null
-  updated_at?: string | null
-  experiment_id: number
-  name: string
-  quantity_kind: string | null
-  tensor_order: number
-  dtype: string
-  data_schema?: DataSchema | null
-  contract_hash: string
-}>
-type MeasurementRecord = Readonly<{
-  id?: number
-  created_at?: string | null
-  updated_at?: string | null
-  user_id?: string | null
-  experiment_id: number
-  vars: Readonly<Record<string, unknown>>
-  material_parameters: MeasurementMaterialParameters
-  recorded_at: string | null
-  calculation_data_count: number
-}>
-type RecordedDataRecord = Readonly<{
-  id?: number
-  created_at?: string | null
-  updated_at?: string | null
-  user_id?: string | null
-  measurement_id: number
-  experiment_record_id: number
-  name: string
-  quantity_kind: string | null
-  tensor_order: number
-  dtype: string
-  data_schema?: DataSchema | null
-  data?: unknown | null
-  data_url?: string | null
-  file_size?: number | null
-}>
-type CalculationRecord = Readonly<{
-  id?: number
-  created_at?: string | null
-  updated_at?: string | null
-  experiment_id: number
-  name: string
-  description?: string | null
-  source_code: string
-  source_hash?: string | null
-  output_layout?: CalculationOutputLayout | null
-  preflight_measurement_id?: number | null
-  contract_status: 'ready' | 'needs_preflight'
-  experiment_record_ids: readonly number[]
-}>
-
-export type CalculationDataOutput = Readonly<{
-  dtype: 'float32' | 'float64' | 'int8' | 'int16' | 'int32' | 'uint8' | 'uint16' | 'uint32'
-  shape: readonly number[]
-  data: number | readonly number[]
-  axes: readonly Readonly<{ name: string; ticks: readonly number[]; unit?: string }>[]
-}>
-export type CalculationOutputLayout = Omit<CalculationDataOutput, 'data'>
-export type CalculationDataTarget = Readonly<{ calculation_id: number; measurement_id: number }>
-export type CalculationDataMissingRequest = Readonly<{
-  experiment_id: number
-  calculation_id?: number
-  measurement_id?: number
-}>
-export type CalculationDataScalar = Readonly<{ measurement_id: number; value: number }>
-export type CalculationDataAnalysisSummary =
-  | Readonly<{ kind: 'scalar'; value: number }>
-  | Readonly<{ kind: 'tensor'; rank: 1 | 2; count: number; mean: number | null; std: number | null }>
-export type CalculationDataAnalysisItem = Readonly<{
-  calculation_data_id: number
-  calculation_id: number
-  calculation_name: string
-  measurement_id: number
-  dtype: CalculationDataOutput['dtype']
-  summary: CalculationDataAnalysisSummary
-}>
-export type CalculationDataRecord = Readonly<{
-  id: number
-  created_at?: string | null
-  updated_at?: string | null
-  calculation_id: number
-  measurement_id: number
-  data: CalculationDataOutput
-}>
-export type CalculationDataAnalysisResponse = Readonly<{
-  fingerprint: string
-  total: number
-  measurement_count: number
-  items: readonly CalculationDataAnalysisItem[]
-}>
-export type CalculationDataAnalysisStatus = Readonly<{
-  fingerprint: string
-  total: number
-  measurement_count: number
-}>
-
-type RuntimeCrudListRequest = Readonly<{
-  offset: number
-  limit: number | null
-  selected_ids: readonly string[]
-  search_text: string | null
-  text_filter: Readonly<Record<string, readonly string[]>>
-  filter: Readonly<Record<string, readonly unknown[]>>
-  sort: readonly [string, 'asc' | 'desc'] | null
-}>
+const csrfRequired = { csrf: 'required' } as const
+const csrfOmitted = { csrf: 'omit' } as const
 
 function runtimeCrudListRequest(overrides: Partial<RuntimeCrudListRequest> = {}): RuntimeCrudListRequest {
   return {
@@ -373,144 +120,314 @@ function runtimeCrudListRequest(overrides: Partial<RuntimeCrudListRequest> = {})
 export const dbTables = {
   User: {
     recordType: undefined as unknown as UserRecord,
-    fetchMe: () => request<UserRecord>('get', '/auth/me'),
-    getAllUsersAdmin: (limit: number, offset: number) =>
+    fetchMe: (context?: RequestContext) =>
+      request<UserRecord>('get', '/auth/me', undefined, { signal: context?.signal, validate: parseUserRecord }),
+    getAllUsersAdmin: (limit: number, offset: number, context?: RequestContext) =>
       request<UserRecord[]>(
         'get',
         `/user_admin/get_all_users/${encodeURIComponent(String(limit))}/${encodeURIComponent(String(offset))}`,
+        undefined,
+        { signal: context?.signal, validate: parseUserRecordList },
       ),
-    deleteUserAdmin: (id: string) => request<boolean>('delete', `/user_admin/${encodeURIComponent(id)}`),
-    getUserSummaryAdmin: (userId: string) =>
-      request<UserRecord | null>('get', `/user_data/summary/admin/${encodeURIComponent(userId)}`),
-    getUserSummaryUser: () => request<UserRecord | null>('get', '/user_data/summary/user'),
+    deleteUserAdmin: (id: string) =>
+      request<boolean>('delete', `/user_admin/${encodeURIComponent(id)}`, undefined, {
+        ...csrfRequired,
+        validate: parseBooleanResponse,
+      }),
+    getUserSummaryAdmin: (userId: string, context?: RequestContext) =>
+      request<UserRecord | null>('get', `/user_data/summary/admin/${encodeURIComponent(userId)}`, undefined, {
+        signal: context?.signal,
+        validate: parseNullableUserRecord,
+      }),
+    getUserSummaryUser: (context?: RequestContext) =>
+      request<UserRecord | null>('get', '/user_data/summary/user', undefined, {
+        signal: context?.signal,
+        validate: parseNullableUserRecord,
+      }),
   },
   AccessKey: {
-    list: () =>
+    list: (context?: RequestContext) =>
       request<{ total: number; items: AccessKeyRecord[] }>(
         'post',
         '/web/crud/access_keys/list',
         runtimeCrudListRequest({ sort: ['created_at', 'desc'] }),
+        { ...csrfRequired, signal: context?.signal, validate: parseAccessKeyListResponse },
       ),
     create: (value: Readonly<{ name: string; scopes: readonly AccessKeyScope[]; expires_at?: string | null }>) =>
-      request<{ access_key: AccessKeyRecord; secret: string }>('post', '/web/users/me/access-tokens', value),
-    revoke: (id: string) => request<{ deleted: number }>('post', '/web/crud/access_keys/delete', { ids: [id] }),
+      request<{ access_key: AccessKeyRecord; secret: string }>('post', '/web/users/me/access-tokens', value, {
+        ...csrfRequired,
+        validate: parseAccessKeyCreateResponse,
+      }),
+    revoke: (id: string) =>
+      request<{ deleted: number }>(
+        'post',
+        '/web/crud/access_keys/delete',
+        { ids: [id] },
+        {
+          ...csrfRequired,
+          validate: parseDeletedResponse,
+        },
+      ),
   },
   Launcher: {
-    list: () =>
+    list: (context?: RequestContext) =>
       request<{ total: number; items: LauncherRecord[] }>(
         'post',
         '/web/crud/launchers/list',
         runtimeCrudListRequest({ limit: 200, sort: ['last_heartbeat_at', 'desc'] }),
+        { ...csrfRequired, signal: context?.signal, validate: parseLauncherListResponse },
       ),
-    runtime: () => request<LauncherRuntime[]>('get', '/web/launchers/runtime'),
-    reconcile: () => request<{ ok: true; launchers: number }>('post', '/web/launchers/reconcile-disconnected'),
+    runtime: (context?: RequestContext) =>
+      request<LauncherRuntime[]>('get', '/web/launchers/runtime', undefined, {
+        signal: context?.signal,
+        validate: parseLauncherRuntimeList,
+      }),
+    reconcile: () =>
+      request<{ ok: true; launchers: number }>('post', '/web/launchers/reconcile-disconnected', undefined, {
+        ...csrfRequired,
+        validate: parseLauncherReconcileResponse,
+      }),
     cancelCurrentJob: (id: string) =>
-      request<{ ok: true }>('post', `/web/launchers/${encodeURIComponent(id)}/cancel-current-job`),
-    resetWorker: (id: string) => request<{ ok: true }>('post', `/web/launchers/${encodeURIComponent(id)}/reset-worker`),
+      request<{ ok: true }>('post', `/web/launchers/${encodeURIComponent(id)}/cancel-current-job`, undefined, {
+        ...csrfRequired,
+        validate: parseOkResponse,
+      }),
+    resetWorker: (id: string) =>
+      request<{ ok: true }>('post', `/web/launchers/${encodeURIComponent(id)}/reset-worker`, undefined, {
+        ...csrfRequired,
+        validate: parseOkResponse,
+      }),
   },
   Job: {
-    list: (activeOnly = true) =>
+    list: (activeOnly = true, context?: RequestContext) =>
       request<JobSummary[]>(
         'get',
         `/web/jobs?${new URLSearchParams({ active_only: String(activeOnly), limit: '200' })}`,
+        undefined,
+        { signal: context?.signal, validate: parseJobSummaryList },
       ),
-    kill: (id: string) => request<{ ok: true }>('post', `/web/jobs/${encodeURIComponent(id)}/kill`),
+    kill: (id: string) =>
+      request<{ ok: true }>('post', `/web/jobs/${encodeURIComponent(id)}/kill`, undefined, {
+        ...csrfRequired,
+        validate: parseOkResponse,
+      }),
   },
   Material: {
     recordType: undefined as unknown as MaterialRecord,
-    listRows: (payload: GetListRequest = getListRequest()) =>
-      request<GetListResponse<MaterialRecord>>('post', '/material/list', payload),
-    upsertRow: (payload: readonly MaterialRecord[]) => request<UpsertResponse[]>('post', '/material/upsert', payload),
-    deleteRows: (ids: readonly number[]) => request<null>('delete', '/material/', ids),
+    listRows: (payload: GetListRequest = getListRequest(), context?: RequestContext) =>
+      request<GetListResponse<PersistedMaterialRecord>>('post', '/material/list', payload, {
+        ...csrfOmitted,
+        signal: context?.signal,
+        validate: parseMaterialListResponse,
+      }),
+    upsertRow: (payload: readonly MaterialUpsertInput[]) =>
+      request<UpsertResponse[]>('post', '/material/upsert', payload, {
+        ...csrfOmitted,
+        validate: parseUpsertResponseList,
+      }),
+    deleteRows: (ids: readonly number[]) =>
+      request<void>('delete', '/material/', ids, { ...csrfOmitted, validate: parseEmptyResponse }),
   },
   MaterialName: {
     recordType: undefined as unknown as MaterialNameRecord,
-    listRows: (payload: GetListRequest = getListRequest()) =>
-      request<GetListResponse<MaterialNameRecord>>('post', '/material_name/list', payload),
-    upsertRow: (payload: readonly MaterialNameRecord[]) =>
-      request<UpsertResponse[]>('post', '/material_name/upsert', payload),
-    deleteRows: (ids: readonly number[]) => request<null>('delete', '/material_name/', ids),
+    listRows: (payload: GetListRequest = getListRequest(), context?: RequestContext) =>
+      request<GetListResponse<PersistedMaterialNameRecord>>('post', '/material_name/list', payload, {
+        ...csrfOmitted,
+        signal: context?.signal,
+        validate: parseMaterialNameListResponse,
+      }),
+    upsertRow: (payload: readonly MaterialNameUpsertInput[]) =>
+      request<UpsertResponse[]>('post', '/material_name/upsert', payload, {
+        ...csrfOmitted,
+        validate: parseUpsertResponseList,
+      }),
+    deleteRows: (ids: readonly number[]) =>
+      request<void>('delete', '/material_name/', ids, { ...csrfOmitted, validate: parseEmptyResponse }),
   },
   MaterialParameter: {
     recordType: undefined as unknown as MaterialParameterRecord,
-    listRows: (payload: GetListRequest = getListRequest()) =>
-      request<GetListResponse<MaterialParameterRecord>>('post', '/material_parameter/list', payload),
-    upsertRow: (payload: readonly MaterialParameterRecord[]) =>
-      request<UpsertResponse[]>('post', '/material_parameter/upsert', payload),
-    deleteRows: (ids: readonly number[]) => request<null>('delete', '/material_parameter/', ids),
+    listRows: (payload: GetListRequest = getListRequest(), context?: RequestContext) =>
+      request<GetListResponse<PersistedMaterialParameterRecord>>('post', '/material_parameter/list', payload, {
+        ...csrfOmitted,
+        signal: context?.signal,
+        validate: parseMaterialParameterListResponse,
+      }),
+    upsertRow: (payload: readonly MaterialParameterUpsertInput[]) =>
+      request<UpsertResponse[]>('post', '/material_parameter/upsert', payload, {
+        ...csrfOmitted,
+        validate: parseUpsertResponseList,
+      }),
+    deleteRows: (ids: readonly number[]) =>
+      request<void>('delete', '/material_parameter/', ids, { ...csrfOmitted, validate: parseEmptyResponse }),
   },
   MaterialParameterQualifier: {
     recordType: undefined as unknown as MaterialParameterQualifierRecord,
-    listRows: (payload: GetListRequest = getListRequest()) =>
-      request<GetListResponse<MaterialParameterQualifierRecord>>('post', '/material_parameter_qualifier/list', payload),
-    upsertRow: (payload: readonly MaterialParameterQualifierRecord[]) =>
-      request<UpsertResponse[]>('post', '/material_parameter_qualifier/upsert', payload),
-    deleteRows: (ids: readonly number[]) => request<null>('delete', '/material_parameter_qualifier/', ids),
+    listRows: (payload: GetListRequest = getListRequest(), context?: RequestContext) =>
+      request<GetListResponse<PersistedMaterialParameterQualifierRecord>>(
+        'post',
+        '/material_parameter_qualifier/list',
+        payload,
+        {
+          ...csrfOmitted,
+          signal: context?.signal,
+          validate: parseMaterialParameterQualifierListResponse,
+        },
+      ),
+    upsertRow: (payload: readonly MaterialParameterQualifierUpsertInput[]) =>
+      request<UpsertResponse[]>('post', '/material_parameter_qualifier/upsert', payload, {
+        ...csrfOmitted,
+        validate: parseUpsertResponseList,
+      }),
+    deleteRows: (ids: readonly number[]) =>
+      request<void>('delete', '/material_parameter_qualifier/', ids, {
+        ...csrfOmitted,
+        validate: parseEmptyResponse,
+      }),
   },
   Experiment: {
     recordType: undefined as unknown as SavedExperimentRecord,
-    listRows: (payload: GetListRequest = getListRequest()) =>
-      request<GetListResponse<SavedExperimentRecord>>('post', '/experiment/list', payload),
-    save: (payload: SaveExperimentRequest) => request<SaveExperimentResponse>('post', '/experiment/save', payload),
-    deleteRows: (ids: readonly number[]) => request<null>('delete', '/experiment/', ids),
+    listRows: (payload: GetListRequest = getListRequest(), context?: RequestContext) =>
+      request<GetListResponse<SavedExperimentRecord>>('post', '/experiment/list', payload, {
+        ...csrfRequired,
+        signal: context?.signal,
+        validate: parseExperimentListResponse,
+      }),
+    save: (payload: SaveExperimentRequest) =>
+      request<SaveExperimentResponse>('post', '/experiment/save', payload, {
+        ...csrfRequired,
+        validate: parseSaveExperimentResponse,
+      }),
+    deleteRows: (ids: readonly number[]) =>
+      request<void>('delete', '/experiment/', ids, { ...csrfRequired, validate: parseEmptyResponse }),
     usage: (experimentIds: readonly number[]) =>
-      request<{ items: { experimentId: number; sourceLocked: boolean; derivedCounts: ExperimentDerivedCounts }[] }>(
+      request<ExperimentUsageResponse>(
         'post',
         '/experiment/usage',
         { experimentIds },
+        {
+          ...csrfRequired,
+          validate: parseExperimentUsageResponse,
+        },
       ),
-    available: () => request<AvailableExperimentsResponse>('get', '/experiment/available'),
-    demoCandidates: () => request<{ items: AvailableExperimentRecord[] }>('get', '/admin/demo-experiments/candidates'),
-    replaceDemos: (experimentIds: readonly number[], defaultExperimentId: number | null) =>
-      request<AvailableExperimentsResponse>('put', '/admin/demo-experiments', {
-        experiment_ids: experimentIds,
-        default_experiment_id: defaultExperimentId,
+    available: (context?: RequestContext) =>
+      request<AvailableExperimentsResponse>('get', '/experiment/available', undefined, {
+        signal: context?.signal,
+        validate: parseAvailableExperimentsResponse,
       }),
+    demoCandidates: (context?: RequestContext) =>
+      request<{ items: AvailableExperimentRecord[] }>('get', '/admin/demo-experiments/candidates', undefined, {
+        signal: context?.signal,
+        validate: parseDemoCandidatesResponse,
+      }),
+    replaceDemos: (experimentIds: readonly number[], defaultExperimentId: number | null) =>
+      request<AvailableExperimentsResponse>(
+        'put',
+        '/admin/demo-experiments',
+        {
+          experiment_ids: experimentIds,
+          default_experiment_id: defaultExperimentId,
+        },
+        { ...csrfRequired, validate: parseAvailableExperimentsResponse },
+      ),
   },
   ExperimentRecord: {
     recordType: undefined as unknown as ExperimentRecordedDataRecord,
-    listRows: (payload: GetListRequest & Readonly<{ experiment_id: number }>) =>
-      request<GetListResponse<ExperimentRecordedDataRecord>>('post', '/experiment_record/list', payload),
+    listRows: (payload: GetListRequest & Readonly<{ experiment_id: number }>, context?: RequestContext) =>
+      request<GetListResponse<ExperimentRecordedDataRecord>>('post', '/experiment_record/list', payload, {
+        ...csrfOmitted,
+        signal: context?.signal,
+        validate: parseExperimentRecordListResponse,
+      }),
   },
   Measurement: {
     recordType: undefined as unknown as MeasurementRecord,
-    listRows: (payload: GetListRequest = getListRequest()) =>
-      request<GetListResponse<MeasurementRecord>>('post', '/measurement/list', payload),
-    create: (payload: MeasurementCreateRequest) => request<{ id: number }>('post', '/measurement/create', payload),
+    listRows: (payload: GetListRequest = getListRequest(), context?: RequestContext) =>
+      request<GetListResponse<PersistedMeasurementRecord>>('post', '/measurement/list', payload, {
+        ...csrfOmitted,
+        signal: context?.signal,
+        validate: parseMeasurementListResponse,
+      }),
+    create: (payload: MeasurementCreateRequest) =>
+      request<{ id: number }>('post', '/measurement/create', payload, {
+        ...csrfOmitted,
+        validate: parseIdResponse,
+      }),
     record: (id: number, payload: MeasurementRecordRequest) =>
-      request<{ id: number }>('post', `/measurement/${id}/record`, payload),
-    readRecordedData: async (id: number) =>
-      (await request<Readonly<{ recorded_data: MeasurementRecordedData }>>('get', `/measurement/${id}/recorded-data`))
-        .recorded_data,
-    deleteRows: (ids: readonly number[]) => request<null>('delete', '/measurement/', ids),
+      request<{ id: number }>('post', `/measurement/${id}/record`, payload, {
+        ...csrfOmitted,
+        validate: parseIdResponse,
+      }),
+    readRecordedData: async (id: number, context?: RequestContext) =>
+      (
+        await request<Readonly<{ recorded_data: MeasurementRecordedData }>>(
+          'get',
+          `/measurement/${id}/recorded-data`,
+          undefined,
+          { signal: context?.signal, validate: parseMeasurementRecordedDataResponse },
+        )
+      ).recorded_data,
+    deleteRows: (ids: readonly number[]) =>
+      request<void>('delete', '/measurement/', ids, { ...csrfOmitted, validate: parseEmptyResponse }),
   },
   RecordedData: {
     recordType: undefined as unknown as RecordedDataRecord,
     listRows: (
       payload: GetListRequest &
         Readonly<{ experiment_id?: number; experiment_record_ids?: readonly number[] }> = getListRequest(),
-    ) => request<GetListResponse<RecordedDataRecord>>('post', '/recorded_data/list', payload),
+      context?: RequestContext,
+    ) =>
+      request<GetListResponse<PersistedRecordedDataRecord>>('post', '/recorded_data/list', payload, {
+        ...csrfOmitted,
+        signal: context?.signal,
+        validate: parseRecordedDataListResponse,
+      }),
   },
   Calculation: {
     recordType: undefined as unknown as CalculationRecord,
-    listRows: (payload: GetListRequest) =>
-      request<GetListResponse<CalculationRecord>>('post', '/calculation/list', payload),
-    upsertRow: (payload: readonly CalculationRecord[]) =>
-      request<UpsertResponse[]>('post', '/calculation/upsert', payload),
-    deleteRows: (ids: readonly number[]) => request<null>('delete', '/calculation/', ids),
+    listRows: (payload: GetListRequest, context?: RequestContext) =>
+      request<GetListResponse<PersistedCalculationRecord>>('post', '/calculation/list', payload, {
+        ...csrfOmitted,
+        signal: context?.signal,
+        validate: parseCalculationListResponse,
+      }),
+    upsertRow: (payload: readonly CalculationUpsertInput[]) =>
+      request<UpsertResponse[]>('post', '/calculation/upsert', payload, {
+        ...csrfOmitted,
+        validate: parseUpsertResponseList,
+      }),
+    deleteRows: (ids: readonly number[]) =>
+      request<void>('delete', '/calculation/', ids, { ...csrfOmitted, validate: parseEmptyResponse }),
   },
   CalculationData: {
     recordType: undefined as unknown as CalculationDataRecord,
-    listRows: (payload: GetListRequest & Readonly<{ experiment_id: number }>) =>
-      request<GetListResponse<CalculationDataRecord>>('post', '/calculation_data/list', payload),
-    analysis: (experimentId: number) =>
-      request<CalculationDataAnalysisResponse>('post', '/calculation_data/analysis', { experiment_id: experimentId }),
-    analysisStatus: (experimentId: number) =>
-      request<CalculationDataAnalysisStatus>('post', '/calculation_data/analysis/status', {
-        experiment_id: experimentId,
+    listRows: (payload: GetListRequest & Readonly<{ experiment_id: number }>, context?: RequestContext) =>
+      request<GetListResponse<CalculationDataRecord>>('post', '/calculation_data/list', payload, {
+        ...csrfOmitted,
+        signal: context?.signal,
+        validate: parseCalculationDataListResponse,
       }),
-    missing: (payload: CalculationDataMissingRequest) =>
-      request<{ total: number; items: CalculationDataTarget[] }>('post', '/calculation_data/missing', payload),
+    analysis: (experimentId: number, context?: RequestContext) =>
+      request<CalculationDataAnalysisResponse>(
+        'post',
+        '/calculation_data/analysis',
+        { experiment_id: experimentId },
+        { ...csrfOmitted, signal: context?.signal, validate: parseCalculationDataAnalysisResponse },
+      ),
+    analysisStatus: (experimentId: number, context?: RequestContext) =>
+      request<CalculationDataAnalysisStatus>(
+        'post',
+        '/calculation_data/analysis/status',
+        {
+          experiment_id: experimentId,
+        },
+        { ...csrfOmitted, signal: context?.signal, validate: parseCalculationDataAnalysisStatus },
+      ),
+    missing: (payload: CalculationDataMissingRequest, context?: RequestContext) =>
+      request<CalculationDataMissingResponse>('post', '/calculation_data/missing', payload, {
+        ...csrfOmitted,
+        signal: context?.signal,
+        validate: parseCalculationDataMissingResponse,
+      }),
     save: (
       payload: Readonly<{
         calculation_id: number
@@ -518,11 +435,26 @@ export const dbTables = {
         source_hash: string
         data: CalculationDataOutput
       }>,
-    ) => request<{ id: number; created: boolean }>('post', '/calculation_data/save', payload),
-    scalars: (payload: Readonly<{ calculation_id: number; exclude_measurement_id?: number }>) =>
-      request<{ total: number; items: CalculationDataScalar[] }>('post', '/calculation_data/scalars', payload),
+      context?: RequestContext,
+    ) =>
+      request<CalculationDataSaveResponse>('post', '/calculation_data/save', payload, {
+        ...csrfOmitted,
+        signal: context?.signal,
+        validate: parseCalculationDataSaveResponse,
+      }),
+    scalars: (
+      payload: Readonly<{ calculation_id: number; exclude_measurement_id?: number }>,
+      context?: RequestContext,
+    ) =>
+      request<{ total: number; items: CalculationDataScalar[] }>('post', '/calculation_data/scalars', payload, {
+        ...csrfOmitted,
+        signal: context?.signal,
+        validate: parseCalculationDataScalarsResponse,
+      }),
   },
-} as const
+} as const satisfies Record<string, unknown> & {
+  readonly [TTable in DbTableName]: Readonly<{ recordType: DbTableRecord<TTable> }> & Record<string, unknown>
+}
 
 export { API_URL }
 
@@ -535,12 +467,12 @@ export function startGoogleLogin(returnTo?: string) {
 }
 
 export function logout() {
-  return request<{ ok: true }>('post', '/auth/logout')
+  return request<{ ok: true }>('post', '/auth/logout', undefined, { ...csrfOmitted, validate: parseOkResponse })
 }
 
 export function getListRequest(
   scope: NonNullable<GetListRequest['scope']> = 'visible',
-  selectedIds: number[] = [],
+  selectedIds: readonly number[] = [],
 ): GetListRequest {
   return {
     scope,
@@ -554,12 +486,3 @@ export function getListRequest(
     sort: ['updated_at', 'desc'],
   }
 }
-
-export type DbTableName = {
-  [TTable in keyof typeof dbTables]: 'recordType' extends keyof (typeof dbTables)[TTable] ? TTable : never
-}[keyof typeof dbTables]
-export type DbTableRecord<TTable extends DbTableName> = (typeof dbTables)[TTable] extends {
-  recordType: infer TRecord
-}
-  ? TRecord
-  : never

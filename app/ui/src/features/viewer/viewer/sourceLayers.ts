@@ -1,18 +1,9 @@
 import { transforms } from '@jscad/modeling'
-import { convertUcumValue, type CadScenePart, type CadSceneTreeNode, type UcumUnit } from '@/lib/cad'
+import { convertUcumValue, type UcumUnit } from '@/lib/cad/model'
+import type { CadViewerSelectionMatch, JscadViewerLayer } from './model'
 import { createRenderParts, type RenderPartSelection } from './renderParts'
-import type { CadViewerSelectionMatch } from './selection'
 
-export type CadViewerSource = 'experiment' | 'task'
-
-export type JscadViewerLayer = Readonly<{
-  source: CadViewerSource
-  taskName?: string
-  lengthUnit: UcumUnit
-  parts: CadScenePart[]
-  tree: CadSceneTreeNode
-  sceneHash?: string | null
-}>
+export type { CadViewerSource, JscadViewerLayer } from './model'
 
 export function scaleViewerLayers(
   layers: readonly JscadViewerLayer[],

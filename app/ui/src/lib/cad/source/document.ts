@@ -1,4 +1,7 @@
 import type { Tensor } from '../model/types'
+import type { ExperimentSourceBundle } from '@/contracts/cad-persistence'
+
+export type { ExperimentSourceBundle } from '@/contracts/cad-persistence'
 
 export const EXPERIMENT_ENTRY_PATH = 'experiment.tsx' as const
 export const EXPERIMENT_GEOMETRY_PATH = 'geometry.tsx' as const
@@ -7,7 +10,6 @@ export const EXPERIMENT_SIMULATION_PATH = 'simulate.py' as const
 export const EXPERIMENT_TASK_PATH = /^tasks\/([A-Za-z][A-Za-z0-9_-]*)\.tsx$/u
 
 export type CadDocumentType = 'experiment'
-export type ExperimentSourceBundle = Readonly<{ files: Readonly<Record<string, string>> }>
 export type ExperimentSourceDocument = Readonly<{
   kind: 'experiment'
   sourceBundle: ExperimentSourceBundle

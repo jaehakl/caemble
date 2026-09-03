@@ -1,4 +1,5 @@
-import type { BuiltMeasurement, DataTensor } from '../../lib/cad'
+import type { BuiltMeasurement } from '@/lib/cad/execution'
+import type { DataTensor } from '@/lib/cad/model'
 
 export type CaeRecordedDataValue = DataTensor | CaeRecordedDataGroup
 // Recursive group nodes require an interface; a direct type alias is rejected as circular by TypeScript.

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { catalogApi } from '@/api/catalog'
-import { convertUcumValue, type RecordedDataRule, type UcumUnit } from '@/lib/cad'
+import { recordedDataRuntimeQueryOptions } from '@/features/catalog/queryOptions'
+import { convertUcumValue, type RecordedDataRule, type UcumUnit } from '@/lib/cad/model'
 import { identityCartesianBasis } from '@/lib/quantitykind'
 import {
   convertRecordedNumericTicks,
@@ -610,17 +610,7 @@ function CatalogHydratedRecordedDataResults({
       ),
     [rules],
   )
-  const catalogQuery = useQuery({
-    enabled: quantityKindNames.length > 0,
-    queryKey: ['catalog', 'recorded-data', quantityKindNames],
-    queryFn: () =>
-      catalogApi.runtimeSlice({
-        solvers: [],
-        quantityKinds: quantityKindNames,
-        materialParameters: [],
-        materialModels: [],
-      }),
-  })
+  const catalogQuery = useQuery(recordedDataRuntimeQueryOptions(quantityKindNames, quantityKindNames.length > 0))
   if (quantityKindNames.length > 0 && catalogQuery.isPending) {
     return (
       <section

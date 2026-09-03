@@ -1,6 +1,11 @@
-import { isRayPathRecordedDataName, type RayPathBundle, type RecordedData, type RecordedDataRule } from '@/lib/cad'
+import {
+  isRayPathRecordedDataName,
+  type RayPathBundle,
+  type RecordedData,
+  type RecordedDataRule,
+} from '@/lib/cad/model'
 import RecordedDataResults from '@/features/viewer/viewer/RecordedDataResults'
-import { RayPathSystemCard } from '../measurement/RayPathSystemCard'
+import { RayPathSystemCard } from '@/features/measurement/RayPathSystemCard'
 
 export type RecordedDataEditorProps = {
   measurementId: number | null

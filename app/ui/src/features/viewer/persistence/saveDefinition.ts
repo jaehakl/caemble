@@ -1,5 +1,6 @@
 import { dbTables, type ExperimentRecordContract, type SaveExperimentResponse } from '@/api'
-import { rawCodeHash, type CadSourceDocument, type ExperimentSourceBundle } from '@/lib/cad'
+import { rawCodeHash } from '@/lib/cad/compiler/semanticHash'
+import type { CadSourceDocument, ExperimentSourceBundle } from '@/lib/cad/source'
 import type { DefinitionFormValues, ExperimentSaveMode } from './SaveDefinitionDialog'
 
 function canonicalBundle(bundle: ExperimentSourceBundle) {

@@ -4,7 +4,7 @@ import { defaultWorkbenchLayoutState, workbenchSectionIds, type WorkbenchDraft }
 import {
   draftNeedsPredictionLandingPreservation,
   predictionLandingExperiment,
-} from '@/pages/cae/predictionLandingPolicy'
+} from '@/features/cae-workbench/predictionLandingPolicy'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message)
@@ -72,8 +72,8 @@ assert(
   'meaningful local Draft must be preserved',
 )
 
-const varsPanelSource = readFileSync('src/features/cae-workbench/calculation/VarsPanel.tsx', 'utf8')
-const predictionPanelsSource = readFileSync('src/features/cae-workbench/prediction/PredictionPanels.tsx', 'utf8')
+const varsPanelSource = readFileSync('src/features/calculation/VarsPanel.tsx', 'utf8')
+const predictionPanelsSource = readFileSync('src/features/prediction/PredictionPanels.tsx', 'utf8')
 assert(
   /expandFirstByDefault = false/u.test(varsPanelSource),
   'shared Vars panels must remain collapsed unless the caller opts in',

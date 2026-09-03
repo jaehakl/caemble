@@ -1,10 +1,7 @@
-import type { MeasurementCreateRequest } from '@/api'
-import type { FrozenMaterialParameters } from '@/lib/material'
+import type { MeasurementCreateRequest, MeasurementMaterialParameters } from '@/contracts/api/measurement'
+import type { FrozenMaterialParameters } from '@/contracts/material'
 
-export type MeasurementMaterialParameters = Readonly<{
-  experiment: FrozenMaterialParameters
-  tasks: Readonly<Record<string, FrozenMaterialParameters>>
-}>
+export type { MeasurementMaterialParameters } from '@/contracts/api/measurement'
 
 export function readMeasurementMaterialParameters(
   value: unknown,

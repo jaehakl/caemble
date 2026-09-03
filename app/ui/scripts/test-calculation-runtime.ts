@@ -11,8 +11,8 @@ import { CALCULATION_SHADOWED_GLOBAL_NAMES } from '../src/lib/calculation/runtim
 import {
   buildExperimentRecordCatalogItems,
   requiredCalculationRecordedDataRules,
-} from '../src/features/cae-workbench/calculation/experimentRecordCatalogModel'
-import { insertCalculationSourceAtSelection } from '../src/features/cae-workbench/calculation/calculationSourceInsertion'
+} from '../src/features/calculation/experimentRecordCatalogModel'
+import { insertCalculationSourceAtSelection } from '../src/features/calculation/calculationSourceInsertion'
 import { createCalculationInput } from '../src/lib/calculation/input'
 import { calculationIndex } from '../src/lib/calculation/indexGuard'
 import { createCalculationConsole } from '../src/lib/calculation/log'

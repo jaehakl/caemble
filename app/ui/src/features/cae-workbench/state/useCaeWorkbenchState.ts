@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { dbTables, getListRequest, type UserData } from '@/api'
-import { authQueryKey } from '@/features/auth/use-auth'
+import { dbTables, type UserData } from '@/api'
+import { privateQueryScope } from '@/features/auth/queryKeys'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
-import { useCurrentCadSelection } from '@/features/viewer/current-cad-selection'
 import type { DefinitionFormValues, ExperimentSaveMode } from '@/features/viewer/persistence/SaveDefinitionDialog'
 import { saveCadDefinition } from '@/features/viewer/persistence/saveDefinition'
 import { useCadWorkspace, type CandidateVarsRegeneratedEvent } from '@/features/viewer/workspace/useCadWorkspace'
@@ -13,15 +12,13 @@ import {
   createCadSourceDocument,
   createExperimentSourceBundle,
   experimentTaskPaths,
-  varsFingerprint,
-  type Tensor,
   type ExperimentSourceBundle,
   type ExperimentSourceDocument,
-  type Vars,
-} from '@/lib/cad'
+} from '@/lib/cad/source'
+import { varsFingerprint, type Tensor, type Vars } from '@/lib/cad/model'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
-import { useCaeDataSelection } from '../measurement/useCaeDataSelection'
-import { useCaeMeasurementActions } from '../measurement/useCaeMeasurementActions'
+import { useCaeDataSelection } from '@/features/measurement/useCaeDataSelection'
+import { useCaeMeasurementActions } from '@/features/measurement/useCaeMeasurementActions'
 import type {
   DefinitionStatus,
   SavedExperiment,
@@ -29,9 +26,12 @@ import type {
   WorkbenchDraft,
   WorkbenchLayoutState,
 } from '../types'
-import { validateVarsChanges } from '../calculation/varsTensor'
-import { useCalculationDataActions } from '../calculation/useCalculationDataActions'
-import { experimentRecordContracts } from '../measurement/recordedData'
+import { validateVarsChanges } from '@/features/calculation/varsTensor'
+import { useCalculationDataActions } from '@/features/calculation/useCalculationDataActions'
+import { experimentDetailQueryOptions } from '@/features/experiment/queryOptions'
+import { experimentRecordContracts } from '@/features/measurement/recordedData'
+import { invalidateExperimentMutation, invalidateExperimentSummaries } from '@/features/experiment/queryInvalidation'
+import { experimentEditingReducer, initialExperimentEditingState } from './experimentEditingState'
 
 function definitionStatus(
   document: ExperimentSourceDocument | null,
@@ -53,18 +53,7 @@ function createExperimentDocument(sourceBundle: ExperimentSourceBundle) {
   return createCadSourceDocument('experiment', sourceBundle)
 }
 
-export type AgentExperimentChange = Readonly<{
-  runId: string
-  appliedAt: number
-  status: 'applied' | 'conflicted'
-  files: readonly Readonly<{
-    path: string
-    before: string | null
-    after: string | null
-    addedLines: number
-    removedLines: number
-  }>[]
-}>
+export type { AgentExperimentChange } from './experimentEditingState'
 
 type AgentApplyRequest = Readonly<{
   runId: string
@@ -93,12 +82,6 @@ function changedLineCounts(before: string | null, after: string | null) {
   return { addedLines: afterLines.length - prefix - suffix, removedLines: beforeLines.length - prefix - suffix }
 }
 
-async function fetchExperiment(id: number) {
-  const row = (await dbTables.Experiment.listRows(getListRequest('visible', [id]))).items[0]
-  if (!row) throw new Error(`Experiment #${id}을 찾을 수 없습니다.`)
-  return row as SavedExperiment
-}
-
 export type UseCaeWorkbenchStateOptions = Readonly<{ onActivity?: RuntimeActivityCallback }>
 export type CandidateVariablesOrigin = 'user-vars' | 'prediction-inverse' | 'prediction-sampling'
 
@@ -108,25 +91,23 @@ export function useCaeWorkbenchState(
   { onActivity }: UseCaeWorkbenchStateOptions = {},
 ) {
   const queryClient = useQueryClient()
-  const { setCurrentExperimentId } = useCurrentCadSelection()
-  const [experiment, setExperiment] = useState<ExperimentSourceDocument | null>(null)
-  const [experimentRecord, setExperimentRecord] = useState<SavedExperiment | null>(null)
-  const [baselineExperimentBundle, setBaselineExperimentBundle] = useState<ExperimentSourceBundle | null>(null)
-  const [experimentName, setExperimentName] = useState('Untitled Experiment')
-  const [experimentDescription, setExperimentDescription] = useState('')
-  const [candidateVars, setCandidateVars] = useState<Readonly<Vars> | null>(null)
-  const [candidateMaterialParameters, setCandidateMaterialParameters] = useState<
-    SavedMeasurement['material_parameters'] | null
-  >(null)
+  const queryScope = privateQueryScope(user)
+  const [editing, dispatchEditing] = useReducer(experimentEditingReducer, initialExperimentEditingState)
+  const {
+    document: experiment,
+    record: experimentRecord,
+    baselineBundle: baselineExperimentBundle,
+    name: experimentName,
+    description: experimentDescription,
+    candidateVars,
+    candidateMaterialParameters,
+    workspaceSession,
+    agentChange,
+    agentWorkspaceIdentity,
+  } = editing
   const [saving, setSaving] = useState<'experiment' | null>(null)
   const [pendingMeasurementId, setPendingMeasurementId] = useState<number | null>(null)
   const [selectionRestoreStatus, setSelectionRestoreStatus] = useState<'idle' | 'restoring' | 'failed'>('idle')
-  const [workspaceSession, setWorkspaceSession] = useState(0)
-  const [agentChange, setAgentChange] = useState<AgentExperimentChange | null>(null)
-  const [agentWorkspaceIdentity, setAgentWorkspaceIdentity] = useState<Readonly<{
-    baseHash: string
-    document: ExperimentSourceDocument
-  }> | null>(null)
   const requestSequence = useRef(0)
   const experimentRef = useRef(experiment)
   const authenticatedRef = useRef(authenticated)
@@ -150,8 +131,11 @@ export function useCaeWorkbenchState(
     async (value: number | SavedMeasurement, expectedExperimentId: number | null = experimentId) => {
       const row = await loadBaseMeasurement(value, expectedExperimentId)
       if (!row) return null
-      setCandidateVars(row.vars as Readonly<Vars>)
-      setCandidateMaterialParameters(row.material_parameters)
+      dispatchEditing({
+        type: 'candidateLoaded',
+        vars: row.vars as Readonly<Vars>,
+        materialParameters: row.material_parameters,
+      })
       setPendingMeasurementId(null)
       setSelectionRestoreStatus('idle')
       return row
@@ -167,22 +151,22 @@ export function useCaeWorkbenchState(
   useEffect(() => {
     const wasAuthenticated = authenticatedRef.current
     authenticatedRef.current = authenticated
-    if (authenticated && !wasAuthenticated && !selection.measurement) setCandidateMaterialParameters(null)
+    if (authenticated && !wasAuthenticated && !selection.measurement) {
+      dispatchEditing({ type: 'candidateMaterialCleared' })
+    }
   }, [authenticated, selection.measurement])
 
   const handleExperimentChange = useCallback(
     (document: ExperimentSourceDocument) => {
       experimentRef.current = document
-      setAgentWorkspaceIdentity(null)
-      setExperiment(document)
+      dispatchEditing({ type: 'sourceEdited', document })
       clearMeasurement()
-      setCandidateMaterialParameters(null)
     },
     [clearMeasurement],
   )
 
   const handleCandidateVarsRegenerated = useCallback((event: CandidateVarsRegeneratedEvent) => {
-    setCandidateVars(event.vars)
+    dispatchEditing({ type: 'candidateVariablesChanged', vars: event.vars })
     toast.info(
       event.reason === 'schema-changed'
         ? 'varsSchema가 변경되어 모든 Candidate 변수를 새로 생성했습니다.'
@@ -205,18 +189,21 @@ export function useCaeWorkbenchState(
 
   useEffect(() => {
     if (!experiment) {
-      setAgentWorkspaceIdentity(null)
+      dispatchEditing({ type: 'agentWorkspaceIdentityChanged', identity: null })
       return
     }
     let active = true
     void cadSourceHash(experiment).then(
       (baseHash) => {
         if (active) {
-          setAgentWorkspaceIdentity(Object.freeze({ baseHash, document: experiment }))
+          dispatchEditing({
+            type: 'agentWorkspaceIdentityChanged',
+            identity: Object.freeze({ baseHash, document: experiment }),
+          })
         }
       },
       () => {
-        if (active) setAgentWorkspaceIdentity(null)
+        if (active) dispatchEditing({ type: 'agentWorkspaceIdentityChanged', identity: null })
       },
     )
     return () => {
@@ -264,11 +251,12 @@ export function useCaeWorkbenchState(
       })
       const firstChangedFile = files[0]?.path ?? null
       if (conflicted) {
-        setAgentChange(
-          files.length
+        dispatchEditing({
+          type: 'agentChangeChanged',
+          change: files.length
             ? Object.freeze({ runId: request.runId, appliedAt: Date.now(), status: 'conflicted' as const, files })
             : null,
-        )
+        })
         return {
           status: 'conflicted' as const,
           message: 'Agent 실행 중 Experiment source가 변경되어 staged diff만 표시했습니다.',
@@ -278,11 +266,12 @@ export function useCaeWorkbenchState(
       }
       if (!files.length) return { status: 'applied' as const, firstChangedFile: null, changedFiles: 0 }
       experimentRef.current = next
-      setAgentWorkspaceIdentity(null)
-      setExperiment(next)
+      dispatchEditing({
+        type: 'agentApplied',
+        document: next,
+        change: Object.freeze({ runId: request.runId, appliedAt: Date.now(), status: 'applied' as const, files }),
+      })
       clearMeasurement()
-      setCandidateMaterialParameters(null)
-      setAgentChange(Object.freeze({ runId: request.runId, appliedAt: Date.now(), status: 'applied' as const, files }))
       return { status: 'applied' as const, firstChangedFile, changedFiles: files.length }
     },
     [clearMeasurement, workspaceSession],
@@ -292,7 +281,7 @@ export function useCaeWorkbenchState(
     const current = experimentRef.current
     if (!current || !agentChange) return false
     if (agentChange.status === 'conflicted') {
-      setAgentChange(null)
+      dispatchEditing({ type: 'agentChangeChanged', change: null })
       toast.success('AI Agent staged diff를 닫았습니다.')
       return true
     }
@@ -307,19 +296,15 @@ export function useCaeWorkbenchState(
     }
     const restored = createExperimentDocument(createExperimentSourceBundle(files))
     experimentRef.current = restored
-    setAgentWorkspaceIdentity(null)
-    setExperiment(restored)
+    dispatchEditing({ type: 'agentUndoApplied', document: restored })
     clearMeasurement()
-    setCandidateMaterialParameters(null)
-    setAgentChange(null)
     toast.success('AI Agent 변경을 되돌렸습니다.')
     return true
   }, [agentChange, clearMeasurement])
 
   const generateCandidate = useCallback(() => {
     clearMeasurement()
-    setCandidateVars(null)
-    setCandidateMaterialParameters(null)
+    dispatchEditing({ type: 'candidateCleared' })
     return experimentDocument.generateCandidate()
   }, [clearMeasurement, experimentDocument])
 
@@ -352,8 +337,11 @@ export function useCaeWorkbenchState(
         }
         const normalized = validateVarsChanges(variables, schema)
         if (selection.measurement) clearMeasurement()
-        if (origin === 'prediction-sampling') setCandidateMaterialParameters(null)
-        setCandidateVars(Object.freeze(normalized))
+        dispatchEditing({
+          type: 'candidateVariablesChanged',
+          vars: Object.freeze(normalized),
+          clearMaterialParameters: origin === 'prediction-sampling',
+        })
         return true
       } catch (cause: unknown) {
         toast.error(cause instanceof Error ? cause.message : String(cause))
@@ -366,7 +354,6 @@ export function useCaeWorkbenchState(
       experimentDocument.variables,
       experimentDocument.varsSchema,
       selection.measurement,
-      setCandidateMaterialParameters,
     ],
   )
   const setCandidateVariable = useCallback(
@@ -381,8 +368,6 @@ export function useCaeWorkbenchState(
     [candidateVars, experimentDocument.variables, setCandidateVariables],
   )
 
-  useEffect(() => setCurrentExperimentId(experimentId), [experimentId, setCurrentExperimentId])
-
   useEffect(() => {
     if (
       selection.measurement ||
@@ -394,8 +379,11 @@ export function useCaeWorkbenchState(
     ) {
       return
     }
-    setCandidateVars(experimentDocument.variables)
-    if (experimentDocument.materialParameters) setCandidateMaterialParameters(experimentDocument.materialParameters)
+    dispatchEditing({
+      type: 'candidateEvaluationAccepted',
+      vars: experimentDocument.variables,
+      ...(experimentDocument.materialParameters ? { materialParameters: experimentDocument.materialParameters } : {}),
+    })
   }, [
     experimentDocument.materialParameters,
     experimentDocument.resultSessionKey,
@@ -423,18 +411,9 @@ export function useCaeWorkbenchState(
   const applyExperimentState = useCallback(
     (row: SavedExperiment) => {
       const document = createExperimentDocument(row.source_bundle)
-      setWorkspaceSession((current) => current + 1)
-      setAgentWorkspaceIdentity(null)
-      setAgentChange(null)
       clearMeasurement()
       experimentRef.current = document
-      setExperiment(document)
-      setExperimentRecord(row)
-      setBaselineExperimentBundle(row.source_bundle)
-      setExperimentName(row.name)
-      setExperimentDescription(row.description ?? '')
-      setCandidateVars(null)
-      setCandidateMaterialParameters(null)
+      dispatchEditing({ type: 'recordLoaded', document, record: row })
     },
     [clearMeasurement],
   )
@@ -450,13 +429,16 @@ export function useCaeWorkbenchState(
   const loadExperiment = useCallback(
     async (value: number | SavedExperiment, measurementId?: number | null) => {
       const sequence = ++requestSequence.current
-      const row = typeof value === 'number' ? await fetchExperiment(value) : value
+      const row =
+        typeof value === 'number'
+          ? await queryClient.fetchQuery(experimentDetailQueryOptions(queryScope, value))
+          : value
       if (sequence !== requestSequence.current) return row
       applyExperimentState(row)
       if (measurementId) setPendingMeasurementId(measurementId)
       return row
     },
-    [applyExperimentState],
+    [applyExperimentState, queryClient, queryScope],
   )
 
   const restoreSelection = useCallback(
@@ -476,18 +458,9 @@ export function useCaeWorkbenchState(
     ) => {
       const document = createExperimentDocument(sourceBundle)
       requestSequence.current += 1
-      setWorkspaceSession((current) => current + 1)
-      setAgentWorkspaceIdentity(null)
-      setAgentChange(null)
       clearMeasurement()
       experimentRef.current = document
-      setExperiment(document)
-      setExperimentRecord(null)
-      setBaselineExperimentBundle(sourceBundle)
-      setExperimentName(name)
-      setExperimentDescription(description)
-      setCandidateVars(null)
-      setCandidateMaterialParameters(null)
+      dispatchEditing({ type: 'newStarted', document, sourceBundle, name, description })
     },
     [clearMeasurement],
   )
@@ -497,30 +470,17 @@ export function useCaeWorkbenchState(
     if (!current) return
     const document = createExperimentDocument(current.sourceBundle)
     requestSequence.current += 1
-    setWorkspaceSession((value) => value + 1)
-    setAgentWorkspaceIdentity(null)
-    setAgentChange(null)
     clearMeasurement()
     experimentRef.current = document
-    setExperiment(document)
-    setExperimentRecord(null)
-    setBaselineExperimentBundle(null)
-    setCandidateVars(null)
-    setCandidateMaterialParameters(null)
+    dispatchEditing({ type: 'detached', document })
   }, [clearMeasurement])
 
-  const invalidate = useCallback(async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['experiments'] }),
-      queryClient.invalidateQueries({ queryKey: ['work', 'experiments'] }),
-      queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiment'] }),
-      queryClient.invalidateQueries({ queryKey: ['cae-workbench', 'experiments'] }),
-      queryClient.invalidateQueries({ queryKey: ['experiment', 'available'] }),
-      queryClient.invalidateQueries({ queryKey: ['admin', 'demo-experiments'] }),
-      queryClient.invalidateQueries({ queryKey: ['admin', 'experiments'] }),
-      queryClient.invalidateQueries({ queryKey: authQueryKey }),
-    ])
-  }, [queryClient])
+  const invalidate = useCallback(
+    async (changedExperimentId: number) => {
+      await invalidateExperimentMutation(queryClient, queryScope, changedExperimentId)
+    },
+    [queryClient, queryScope],
+  )
 
   const saveExperiment = useCallback(
     async (values: DefinitionFormValues, mode: ExperimentSaveMode) => {
@@ -547,7 +507,9 @@ export function useCaeWorkbenchState(
           records: experimentRecordContracts(experimentDocument.simulationProgram?.recordedData ?? Object.freeze({})),
           values,
         })
-        const fetched = await fetchExperiment(result.id).catch(() => null)
+        const fetched = await queryClient
+          .fetchQuery(experimentDetailQueryOptions(queryScope, result.id))
+          .catch(() => null)
         const [major, minor, patch] = result.version.split('.').map(Number)
         const row: SavedExperiment = fetched ?? {
           id: result.id,
@@ -570,12 +532,13 @@ export function useCaeWorkbenchState(
           sourceLocked: result.sourceLocked,
           derivedCounts: result.derivedCounts,
         }
-        await invalidate()
+        await invalidate(result.id)
         if (sourceSequence !== requestSequence.current) return result
-        setExperimentRecord(row)
-        setBaselineExperimentBundle(savedDocument.sourceBundle)
-        setExperimentName(row.name)
-        setExperimentDescription(row.description ?? '')
+        dispatchEditing({
+          type: 'saveCommitted',
+          record: row,
+          baselineBundle: savedDocument.sourceBundle,
+        })
         return result
       } finally {
         setSaving(null)
@@ -591,6 +554,8 @@ export function useCaeWorkbenchState(
       experimentSourceValidated,
       experimentDocument.simulationProgram?.recordedData,
       invalidate,
+      queryClient,
+      queryScope,
       user,
     ],
   )
@@ -598,24 +563,21 @@ export function useCaeWorkbenchState(
   const restoreDraft = useCallback(
     (draft: WorkbenchDraft) => {
       requestSequence.current += 1
-      setWorkspaceSession((current) => current + 1)
-      setAgentWorkspaceIdentity(null)
-      setAgentChange(null)
+      clearBaseMeasurement()
       const document = draft.experiment.document
         ? createExperimentDocument(draft.experiment.document.sourceBundle)
         : null
       experimentRef.current = document
-      setExperiment(document)
-      setExperimentRecord(draft.experiment.record)
-      setBaselineExperimentBundle(draft.experiment.baselineBundle)
-      setExperimentName(draft.experiment.name)
-      setExperimentDescription(draft.experiment.description)
-      setCandidateVars(draft.candidate.vars)
-      setCandidateMaterialParameters(authenticated ? draft.candidate.materialParameters : null)
+      dispatchEditing({
+        type: 'draftRestored',
+        draft,
+        document,
+        candidateMaterialParameters: authenticated ? draft.candidate.materialParameters : null,
+      })
       setPendingMeasurementId(draft.selection.measurementId)
       setSelectionRestoreStatus(draft.selection.measurementId ? 'restoring' : 'idle')
     },
-    [authenticated],
+    [authenticated, clearBaseMeasurement],
   )
 
   const selectionIds = useMemo(
@@ -668,17 +630,14 @@ export function useCaeWorkbenchState(
     if (experimentId === null) return
     const usage = (await dbTables.Experiment.usage([experimentId])).items[0]
     if (!usage) return
-    setExperimentRecord((current) =>
-      current?.id === experimentId
-        ? { ...current, derivedCounts: usage.derivedCounts, sourceLocked: usage.sourceLocked }
-        : current,
-    )
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['experiment', 'available'] }),
-      queryClient.invalidateQueries({ queryKey: ['admin', 'demo-experiments'] }),
-      queryClient.invalidateQueries({ queryKey: ['admin', 'experiments'] }),
-    ])
-  }, [experimentId, queryClient])
+    dispatchEditing({
+      type: 'usageRefreshed',
+      experimentId,
+      derivedCounts: usage.derivedCounts,
+      sourceLocked: usage.sourceLocked,
+    })
+    await invalidateExperimentSummaries(queryClient, queryScope, experimentId)
+  }, [experimentId, queryClient, queryScope])
 
   return {
     experiment,

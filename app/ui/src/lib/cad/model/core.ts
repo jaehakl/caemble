@@ -1,13 +1,10 @@
 import type { Tensor, Vars, Vec3 } from './types'
 import { CadModelError } from './errors'
-import type { MaterialModelKey, MaterialPropertyKey } from '../../material/data'
-import { getRuntimeMaterialParameter } from '../../catalog/runtime'
 import { Material } from './material'
 import type {
   DataDType,
   DataValueDescriptor,
   FloatDataDType,
-  MaterialSampledRelation,
   ResolvedMaterialDataValueDescriptor,
   ResolvedMaterialVariables,
   ScalarValue,
@@ -28,6 +25,12 @@ export type {
   SurfaceGroupMap,
 } from './structure'
 export { Material } from './material'
+export {
+  DEFAULT_MATERIAL_ERROR_RATE,
+  normalizeMaterialDataValueDescriptor,
+  normalizeMaterialErrorRate,
+  normalizeMaterialSampledRelation,
+} from './materialNormalization'
 export { CadModelError } from './errors'
 export { Mat } from './descriptor'
 export type {
@@ -111,33 +114,6 @@ export function normalizeDataValue(
 
 export function normalizeDataValueDescriptor(value: unknown, _path = 'Data value descriptor'): DataValueDescriptor {
   return value as DataValueDescriptor
-}
-
-export const DEFAULT_MATERIAL_ERROR_RATE = 0.001
-
-export function normalizeMaterialErrorRate(value: unknown, _path: string, fallback = DEFAULT_MATERIAL_ERROR_RATE) {
-  return (value ?? fallback) as number
-}
-
-export function normalizeMaterialDataValueDescriptor(
-  key: MaterialPropertyKey,
-  value: Record<string, unknown>,
-  _path: string,
-  defaultErrorRate = DEFAULT_MATERIAL_ERROR_RATE,
-): ResolvedMaterialDataValueDescriptor {
-  return Object.freeze({
-    ...value,
-    quantityKind: getRuntimeMaterialParameter(key)?.quantityKind,
-    errorRate: value.errorRate ?? defaultErrorRate,
-  }) as ResolvedMaterialDataValueDescriptor
-}
-
-export function normalizeMaterialSampledRelation(
-  _key: MaterialModelKey,
-  value: Record<string, unknown>,
-  _path: string,
-): MaterialSampledRelation {
-  return value as MaterialSampledRelation
 }
 
 export function applyMaterialErrorMultiplier(

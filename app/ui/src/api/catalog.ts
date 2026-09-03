@@ -15,7 +15,22 @@ import type {
   CatalogSolverListItem,
   ListQuery,
 } from '@/contracts/catalog'
-import { request } from './http'
+import {
+  parseCatalogExperimentDetail,
+  parseCatalogExperimentList,
+  parseCatalogMaterialModel,
+  parseCatalogMaterialModelList,
+  parseCatalogMaterialParameterDetail,
+  parseCatalogMaterialParameterList,
+  parseCatalogMeta,
+  parseCatalogQuantityKindDetail,
+  parseCatalogQuantityKindList,
+  parseCatalogRuntimeSlice,
+  parseCatalogSearchResponse,
+  parseCatalogSolverDetail,
+  parseCatalogSolverList,
+} from '@/contracts/catalogValidators'
+import { request, type RequestContext } from './http'
 
 export type CatalogExperimentIdentity = Readonly<{
   key: string
@@ -53,57 +68,117 @@ export type {
 export const catalogQueryKeys = {
   root: ['catalog'] as const,
   meta: ['catalog', 'meta'] as const,
-  quantityKinds: (query: ListQuery) => ['catalog', 'quantity-kinds', query] as const,
+  quantityKindsList: (query: ListQuery) => ['catalog', 'quantity-kinds', 'list', query] as const,
+  quantityKindsInfinite: (query: ListQuery) => ['catalog', 'quantity-kinds', 'infinite', query] as const,
   quantityKind: (name: string) => ['catalog', 'quantity-kind', name] as const,
-  materialParameters: (query: ListQuery) => ['catalog', 'material-parameters', query] as const,
+  materialParametersList: (query: ListQuery) => ['catalog', 'material-parameters', 'list', query] as const,
+  materialParametersInfinite: (query: ListQuery) => ['catalog', 'material-parameters', 'infinite', query] as const,
   materialParameter: (key: string) => ['catalog', 'material-parameter', key] as const,
   materialModels: (query: ListQuery) => ['catalog', 'material-models', query] as const,
+  materialModel: (key: string) => ['catalog', 'material-model', key] as const,
+  materialManagerRuntime: (parameterNames: readonly string[]) =>
+    ['catalog', 'material-manager-runtime', parameterNames] as const,
+  recordedDataRuntime: (quantityKindNames: readonly string[]) =>
+    ['catalog', 'recorded-data-runtime', quantityKindNames] as const,
   solvers: (query: ListQuery) => ['catalog', 'solvers', query] as const,
   solver: (name: string, version: string) => ['catalog', 'solver', name, version] as const,
   experiments: (query: ListQuery) => ['catalog', 'experiments', query] as const,
   experiment: (identity: string | CatalogExperimentIdentity) =>
     ['catalog', 'experiment', typeof identity === 'string' ? identity : identity.coordinate] as const,
-  search: (query: string) => ['catalog', 'search', query] as const,
+  search: (query: string, limit: number) => ['catalog', 'search', query, limit] as const,
 } as const
 
 export const catalogApi = {
-  meta: () => request<CatalogMeta>('get', catalogUrl('/meta')),
-  listQuantityKinds: (query: ListQuery = {}) =>
-    request<CatalogList<CatalogQuantityKind>>('get', catalogUrl('/quantity-kinds', query)),
-  getQuantityKind: (name: string) =>
-    request<CatalogQuantityKindDetail>('get', catalogUrl(`/quantity-kinds/${encodeURIComponent(name)}`)),
-  listMaterialParameters: (query: ListQuery = {}) =>
-    request<CatalogList<CatalogMaterialParameter>>('get', catalogUrl('/material-parameters', query)),
-  getMaterialParameter: (key: string) =>
-    request<CatalogMaterialParameterDetail>('get', catalogUrl(`/material-parameters/${encodeURIComponent(key)}`)),
-  listMaterialModels: (query: ListQuery = {}) =>
-    request<CatalogList<CatalogMaterialModel>>('get', catalogUrl('/material-models', query)),
-  getMaterialModel: (key: string) =>
-    request<CatalogMaterialModel>('get', catalogUrl(`/material-models/${encodeURIComponent(key)}`)),
-  listSolvers: (query: ListQuery = {}) =>
-    request<CatalogList<CatalogSolverListItem>>('get', catalogUrl('/solvers', query)),
-  getSolver: (name: string, version: string) =>
+  meta: (context?: RequestContext) =>
+    request<CatalogMeta>('get', catalogUrl('/meta'), undefined, {
+      signal: context?.signal,
+      validate: parseCatalogMeta,
+    }),
+  listQuantityKinds: (query: ListQuery = {}, context?: RequestContext) =>
+    request<CatalogList<CatalogQuantityKind>>('get', catalogUrl('/quantity-kinds', query), undefined, {
+      signal: context?.signal,
+      validate: parseCatalogQuantityKindList,
+    }),
+  getQuantityKind: (name: string, context?: RequestContext) =>
+    request<CatalogQuantityKindDetail>(
+      'get',
+      catalogUrl(`/quantity-kinds/${encodeURIComponent(name)}`),
+      undefined,
+      { signal: context?.signal, validate: parseCatalogQuantityKindDetail },
+    ),
+  listMaterialParameters: (query: ListQuery = {}, context?: RequestContext) =>
+    request<CatalogList<CatalogMaterialParameter>>('get', catalogUrl('/material-parameters', query), undefined, {
+      signal: context?.signal,
+      validate: parseCatalogMaterialParameterList,
+    }),
+  getMaterialParameter: (key: string, context?: RequestContext) =>
+    request<CatalogMaterialParameterDetail>(
+      'get',
+      catalogUrl(`/material-parameters/${encodeURIComponent(key)}`),
+      undefined,
+      { signal: context?.signal, validate: parseCatalogMaterialParameterDetail },
+    ),
+  listMaterialModels: (query: ListQuery = {}, context?: RequestContext) =>
+    request<CatalogList<CatalogMaterialModel>>('get', catalogUrl('/material-models', query), undefined, {
+      signal: context?.signal,
+      validate: parseCatalogMaterialModelList,
+    }),
+  getMaterialModel: (key: string, context?: RequestContext) =>
+    request<CatalogMaterialModel>(
+      'get',
+      catalogUrl(`/material-models/${encodeURIComponent(key)}`),
+      undefined,
+      { signal: context?.signal, validate: parseCatalogMaterialModel },
+    ),
+  listSolvers: (query: ListQuery = {}, context?: RequestContext) =>
+    request<CatalogList<CatalogSolverListItem>>('get', catalogUrl('/solvers', query), undefined, {
+      signal: context?.signal,
+      validate: parseCatalogSolverList,
+    }),
+  getSolver: (name: string, version: string, context?: RequestContext) =>
     request<CatalogSolverDetail>(
       'get',
       catalogUrl(`/solvers/${encodeURIComponent(name)}/${encodeURIComponent(version)}`),
+      undefined,
+      { signal: context?.signal, validate: parseCatalogSolverDetail },
     ),
-  listExperiments: (query: ListQuery = {}) =>
-    request<CatalogList<CatalogExperimentListItem>>('get', catalogUrl('/experiments', query)),
-  async getExperiment(identity: string | CatalogExperimentIdentity) {
-    const parsed = typeof identity === 'string' && identity.startsWith('caemble:experiment/')
-      ? identity.slice('caemble:experiment/'.length).split('/')
-      : null
+  listExperiments: (query: ListQuery = {}, context?: RequestContext) =>
+    request<CatalogList<CatalogExperimentListItem>>('get', catalogUrl('/experiments', query), undefined, {
+      signal: context?.signal,
+      validate: parseCatalogExperimentList,
+    }),
+  async getExperiment(identity: string | CatalogExperimentIdentity, context?: RequestContext) {
+    const parsed =
+      typeof identity === 'string' && identity.startsWith('caemble:experiment/')
+        ? identity.slice('caemble:experiment/'.length).split('/')
+        : null
     const coordinateTail = parsed?.[parsed.length - 1]?.split('@')
     const key = typeof identity === 'string' ? (coordinateTail?.[0] ?? identity) : identity.key
-    const query = typeof identity === 'string'
-      ? parsed && coordinateTail
-        ? { namespace: parsed[0], repository: parsed[1], version: coordinateTail[1] }
-        : {}
-      : { namespace: identity.namespace, repository: identity.repository, version: identity.version }
-    return request<CatalogExperimentDetail>('get', catalogUrl(`/experiments/${encodeURIComponent(key)}`, query))
+    const query =
+      typeof identity === 'string'
+        ? parsed && coordinateTail
+          ? { namespace: parsed[0], repository: parsed[1], version: coordinateTail[1] }
+          : {}
+        : { namespace: identity.namespace, repository: identity.repository, version: identity.version }
+    return request<CatalogExperimentDetail>(
+      'get',
+      catalogUrl(`/experiments/${encodeURIComponent(key)}`, query),
+      undefined,
+      { signal: context?.signal, validate: parseCatalogExperimentDetail },
+    )
   },
-  search: async (q: string, limit = 50) =>
-    (await request<Readonly<{ items: readonly CatalogSearchItem[] }>>('get', catalogUrl('/search', { q, limit }))).items,
-  runtimeSlice: (payload: CatalogRuntimeSliceRequest) =>
-    request<CatalogRuntimeSlice>('post', catalogUrl('/runtime-slice'), payload),
+  search: async (q: string, limit = 50, context?: RequestContext) =>
+    (
+      await request<Readonly<{ items: readonly CatalogSearchItem[] }>>(
+        'get',
+        catalogUrl('/search', { q, limit }),
+        undefined,
+        { signal: context?.signal, validate: parseCatalogSearchResponse },
+      )
+    ).items,
+  runtimeSlice: (payload: CatalogRuntimeSliceRequest, context?: RequestContext) =>
+    request<CatalogRuntimeSlice>('post', catalogUrl('/runtime-slice'), payload, {
+      signal: context?.signal,
+      validate: parseCatalogRuntimeSlice,
+    }),
 } as const

@@ -8,7 +8,7 @@ import {
   experimentTaskName,
   experimentTaskPaths,
   type ExperimentSourceDocument,
-} from '@/lib/cad'
+} from '@/lib/cad/source'
 import { draftTaskCode } from '@/lib/localExperimentCode'
 import CadEditor from '@/features/viewer/editor/CadEditor'
 import type { CadEditorAuthoringState, CadEditorRevealRequest } from '@/features/viewer/editor/CadEditor'

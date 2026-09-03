@@ -1,4 +1,4 @@
-import type { CadSceneMaterial, CadScenePart } from '@/lib/cad'
+import type { CadSceneMaterial, CadScenePart } from '@/lib/cad/evaluation/types'
 
 export const unassignedGeometryColor = '#475569'
 

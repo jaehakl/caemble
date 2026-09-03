@@ -1,4 +1,7 @@
-import { API_URL, ApiError, request } from './http'
+import { z } from 'zod'
+import { experimentSourceBundleSchema } from '@/contracts/api/experimentValidators'
+import { parseEmptyResponse } from '@/contracts/api/validators'
+import { API_URL, ApiError, request, type RequestContext } from './http'
 import type { SavedExperimentRecord } from './types'
 
 export type AiAgentSourceBundle = SavedExperimentRecord['source_bundle']
@@ -21,10 +24,31 @@ export type AiAgentCalculationDocument = Readonly<{
 }>
 export type AiAgentSourceDocument = AiAgentExperimentDocument | AiAgentCalculationDocument
 
-export const AI_AGENT_PROVIDER_QUERY_KEY = ['ai-agent', 'providers'] as const
 export const AI_AGENT_PROVIDER = 'openai' as const
 export const AI_AGENT_MODEL = 'gpt-5.6-luna' as const
 export const AI_AGENT_REASONING_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+
+const providerModelSchema = z
+  .object({
+    id: z.string().min(1),
+    displayName: z.string().min(1),
+    reasoningEfforts: z.array(z.enum(AI_AGENT_REASONING_EFFORTS)),
+  })
+  .passthrough()
+const providerDataSchema = z
+  .object({
+    provider: z.string().min(1),
+    displayName: z.string().min(1),
+    configured: z.boolean(),
+    credentialVersion: z.number().int().positive().nullable(),
+    updatedAt: z.string().min(1).nullable(),
+    models: z.array(providerModelSchema),
+  })
+  .passthrough()
+const providersResponseSchema = z.object({ providers: z.array(providerDataSchema) }).passthrough()
+const credentialTestResultSchema = z
+  .object({ provider: z.string().min(1), model: z.string().min(1), ok: z.literal(true) })
+  .passthrough()
 
 export type AiAgentReasoningEffort = (typeof AI_AGENT_REASONING_EFFORTS)[number]
 
@@ -176,8 +200,115 @@ export type AiAgentServerEvent =
   | (AiAgentEventBase & Readonly<{ type: 'run.failed' }> & AiAgentProviderFailure)
   | (AiAgentEventBase & Readonly<{ type: 'run.cancelled'; message?: string }>)
 
+const experimentDocumentSchema = z
+  .object({
+    kind: z.literal('experiment'),
+    sourceBundle: experimentSourceBundleSchema,
+  })
+  .passthrough()
+
+const sourceDocumentSchema = z.discriminatedUnion('kind', [
+  experimentDocumentSchema,
+  z
+    .object({
+      kind: z.literal('calculation'),
+      calculationId: z.number().int().nullable(),
+      experimentId: z.number().int(),
+      name: z.string(),
+      description: z.string(),
+      sourceCode: z.string(),
+      editable: z.boolean(),
+      context: z.record(z.string(), z.unknown()),
+      referenceExperiment: experimentDocumentSchema,
+    })
+    .passthrough(),
+])
+
+const provenanceSchema = z
+  .object({
+    kind: z.string(),
+    label: z.string(),
+    resourceType: z.string().optional(),
+    resourceId: z.union([z.string(), z.number()]).optional(),
+    revision: z.string().optional(),
+    href: z.string().optional(),
+  })
+  .passthrough()
+
+const contextUsageSchema = z
+  .object({
+    inputTokens: z.number().optional(),
+    outputTokens: z.number().optional(),
+    contextTokens: z.number().optional(),
+    cachedTokens: z.number().optional(),
+    cacheWriteTokens: z.number().optional(),
+    compacted: z.boolean().optional(),
+  })
+  .passthrough()
+
+const serverEventBaseSchema = z
+  .object({
+    runId: z.string().min(1),
+    sequence: z.number().int().positive(),
+  })
+  .passthrough()
+
+const serverEventSchema: z.ZodType<AiAgentServerEvent> = z.discriminatedUnion('type', [
+  serverEventBaseSchema.extend({ type: z.literal('run.started'), status: z.string().optional() }),
+  serverEventBaseSchema.extend({ type: z.literal('run.status'), status: z.string() }),
+  serverEventBaseSchema.extend({ type: z.literal('message.delta'), delta: z.string() }),
+  serverEventBaseSchema.extend({
+    type: z.literal('workspace.changed'),
+    stagedRevision: z.number().int().nonnegative(),
+    sourceHash: z.string(),
+    changedFiles: z.array(z.string()),
+  }),
+  serverEventBaseSchema.extend({
+    type: z.literal('context.updated'),
+    estimatedTokens: z.number().int().nonnegative(),
+    includedKeys: z.array(z.string()),
+    omittedKeys: z.array(z.string()),
+    compacted: z.boolean(),
+  }),
+  serverEventBaseSchema.extend({
+    type: z.literal('tool.started'),
+    callId: z.string(),
+    name: z.string(),
+    summary: z.string().optional(),
+  }),
+  serverEventBaseSchema.extend({
+    type: z.literal('tool.completed'),
+    callId: z.string(),
+    name: z.string(),
+    summary: z.string().optional(),
+  }),
+  serverEventBaseSchema.extend({
+    type: z.literal('run.completed'),
+    message: z.string(),
+    finalDocument: sourceDocumentSchema.nullable(),
+    baseHash: z.string(),
+    sourceHash: z.string().nullable(),
+    stagedRevision: z.number().int().nonnegative(),
+    sessionContextEnvelope: z.string().nullable(),
+    contextUsage: contextUsageSchema.nullable(),
+    provenance: z.array(provenanceSchema),
+  }),
+  serverEventBaseSchema.extend({
+    type: z.literal('run.failed'),
+    code: z.string().optional(),
+    message: z.string(),
+    retryable: z.boolean().optional(),
+    providerRequestId: z.string().optional(),
+  }),
+  serverEventBaseSchema.extend({ type: z.literal('run.cancelled'), message: z.string().optional() }),
+])
+
+export function parseAiAgentServerEvent(value: unknown): AiAgentServerEvent {
+  return serverEventSchema.parse(value)
+}
+
 export const aiAgentApi = Object.freeze({
-  async listProviders() {
+  async listProviders(context?: RequestContext) {
     const response = await request<{
       providers: readonly Readonly<{
         provider: string
@@ -191,7 +322,7 @@ export const aiAgentApi = Object.freeze({
           reasoningEfforts: readonly AiAgentReasoningEffort[]
         }>[]
       }>[]
-    }>('get', '/ai/providers')
+    }>('get', '/ai/providers', undefined, { ...context, validate: (value) => providersResponseSchema.parse(value) })
     return response.providers.map((provider) =>
       Object.freeze({
         id: provider.provider,
@@ -210,13 +341,22 @@ export const aiAgentApi = Object.freeze({
     )
   },
   async saveCredential(provider: string, apiKey: string) {
-    await request<unknown>('put', `/ai/providers/${encodeURIComponent(provider)}/credential`, { apiKey })
+    await request<unknown>('put', `/ai/providers/${encodeURIComponent(provider)}/credential`, { apiKey }, {
+      validate: (value) => providerDataSchema.parse(value),
+    })
   },
   async deleteCredential(provider: string) {
-    await request<unknown>('delete', `/ai/providers/${encodeURIComponent(provider)}/credential`)
+    await request<void>('delete', `/ai/providers/${encodeURIComponent(provider)}/credential`, undefined, {
+      validate: parseEmptyResponse,
+    })
   },
   async testCredential(provider: string) {
-    return request<AiAgentCredentialTestResult>('post', `/ai/providers/${encodeURIComponent(provider)}/credential/test`)
+    return request<AiAgentCredentialTestResult>(
+      'post',
+      `/ai/providers/${encodeURIComponent(provider)}/credential/test`,
+      undefined,
+      { validate: (value) => credentialTestResultSchema.parse(value) as AiAgentCredentialTestResult },
+    )
   },
 })
 
@@ -288,7 +428,7 @@ export function connectAiAgent({
   socket.onmessage = ({ data }) => {
     eventQueue = eventQueue
       .then(async () => {
-        const event = (typeof data === 'string' ? JSON.parse(data) : data) as AiAgentServerEvent
+        const event = parseAiAgentServerEvent(typeof data === 'string' ? JSON.parse(data) : data)
         await onEvent(event)
       })
       .catch(() => onClose('AI Agent 응답을 처리하지 못했습니다.'))
@@ -331,27 +471,65 @@ export type AiAgentSessionBinding = Readonly<{
   permissionFingerprint: string
 }>
 
+const storedSessionSchema = z
+  .object({
+    userId: z.string(),
+    provider: z.string(),
+    model: z.string(),
+    credentialVersion: z.union([z.string(), z.number()]).nullable(),
+    experimentId: z.number().int().nullable(),
+    documentKind: z.enum(['experiment', 'calculation']),
+    documentId: z.number().int().nullable(),
+    schemaVersion: z.literal(AI_AGENT_WORKSPACE_SCHEMA_VERSION),
+    referenceHash: z.string().nullable(),
+    workspaceSession: z.number().int().nonnegative(),
+    permissionFingerprint: z.string(),
+    envelope: z.string(),
+  })
+  .passthrough()
+
+const conversationMessageSchema = z
+  .object({
+    role: z.enum(['user', 'assistant']),
+    content: z.string(),
+    targetKey: z.string(),
+    targetLabel: z.string(),
+  })
+  .passthrough()
+
+const storedConversationSchema = z
+  .object({
+    version: z.literal(1),
+    userId: z.string(),
+    messages: z.array(conversationMessageSchema),
+  })
+  .passthrough()
+
 export function loadAiAgentSession(binding: AiAgentSessionBinding) {
   const serialized = sessionStorage.getItem(SESSION_STORAGE_KEY)
   if (!serialized) return null
-  const value = JSON.parse(serialized) as Record<string, unknown>
-  if (
-    value.userId !== binding.userId ||
-    value.provider !== binding.provider ||
-    value.model !== binding.model ||
-    value.credentialVersion !== binding.credentialVersion ||
-    value.experimentId !== binding.experimentId ||
-    value.documentKind !== binding.documentKind ||
-    value.documentId !== binding.documentId ||
-    value.schemaVersion !== binding.schemaVersion ||
-    value.referenceHash !== binding.referenceHash ||
-    value.workspaceSession !== binding.workspaceSession ||
-    value.permissionFingerprint !== binding.permissionFingerprint
-  ) {
-    sessionStorage.removeItem(SESSION_STORAGE_KEY)
-    return null
+  try {
+    const value = storedSessionSchema.parse(JSON.parse(serialized))
+    if (
+      value.userId === binding.userId &&
+      value.provider === binding.provider &&
+      value.model === binding.model &&
+      value.credentialVersion === binding.credentialVersion &&
+      value.experimentId === binding.experimentId &&
+      value.documentKind === binding.documentKind &&
+      value.documentId === binding.documentId &&
+      value.schemaVersion === binding.schemaVersion &&
+      value.referenceHash === binding.referenceHash &&
+      value.workspaceSession === binding.workspaceSession &&
+      value.permissionFingerprint === binding.permissionFingerprint
+    ) {
+      return value.envelope
+    }
+  } catch {
+    // Malformed or obsolete session data is discarded below.
   }
-  return value.envelope as string
+  sessionStorage.removeItem(SESSION_STORAGE_KEY)
+  return null
 }
 
 export function saveAiAgentSession(binding: AiAgentSessionBinding, envelope: string) {
@@ -366,27 +544,13 @@ export function loadAiAgentConversation(userId: string): readonly AiAgentConvers
   const serialized = sessionStorage.getItem(CONVERSATION_STORAGE_KEY)
   if (!serialized) return []
   try {
-    const value = JSON.parse(serialized) as Record<string, unknown>
-    if (value.version !== 1 || value.userId !== userId || !Array.isArray(value.messages)) {
-      sessionStorage.removeItem(CONVERSATION_STORAGE_KEY)
-      return []
-    }
-    const messages = value.messages.filter(
-      (message): message is AiAgentConversationMessage =>
-        typeof message === 'object' &&
-        message !== null &&
-        ((message as Record<string, unknown>).role === 'user' ||
-          (message as Record<string, unknown>).role === 'assistant') &&
-        typeof (message as Record<string, unknown>).content === 'string' &&
-        typeof (message as Record<string, unknown>).targetKey === 'string' &&
-        typeof (message as Record<string, unknown>).targetLabel === 'string',
-    )
-    if (messages.length !== value.messages.length) throw new Error('Invalid AI Agent conversation')
-    return boundAiAgentConversation(userId, messages)
+    const value = storedConversationSchema.parse(JSON.parse(serialized))
+    if (value.userId === userId) return boundAiAgentConversation(userId, value.messages)
   } catch {
-    sessionStorage.removeItem(CONVERSATION_STORAGE_KEY)
-    return []
+    // Malformed or obsolete conversation data is discarded below.
   }
+  sessionStorage.removeItem(CONVERSATION_STORAGE_KEY)
+  return []
 }
 
 export function saveAiAgentConversation(userId: string, messages: readonly AiAgentConversationMessage[]) {

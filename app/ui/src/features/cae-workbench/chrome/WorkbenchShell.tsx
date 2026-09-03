@@ -3,6 +3,27 @@ import { cn } from '@/lib/utils'
 import { defaultWorkbenchLayoutState, workbenchLayoutLimits, type BottomDockMode } from '../types'
 import { ResizableWorkbenchLayout } from './ResizableWorkbenchLayout'
 
+export type WorkbenchShellProps = Readonly<{
+  menubar: ReactNode
+  ribbon: ReactNode
+  left: ReactNode
+  viewer: ReactNode
+  right: ReactNode
+  bottom: ReactNode
+  bottomMode: BottomDockMode
+  leftWidthRatio?: number
+  rightWidthRatio?: number
+  bottomHeightRatio?: number
+  viewerExpanded?: boolean
+  onLeftWidthRatioChange?: (ratio: number) => void
+  onRightWidthRatioChange?: (ratio: number) => void
+  onBottomHeightRatioChange?: (ratio: number) => void
+  leftLabel?: string
+  viewerLabel?: string
+  rightLabel?: string
+  className?: string
+}>
+
 export function WorkbenchShell({
   menubar,
   ribbon,
@@ -22,26 +43,7 @@ export function WorkbenchShell({
   viewerLabel,
   rightLabel,
   className,
-}: {
-  menubar: ReactNode
-  ribbon: ReactNode
-  left: ReactNode
-  viewer: ReactNode
-  right: ReactNode
-  bottom: ReactNode
-  bottomMode: BottomDockMode
-  leftWidthRatio?: number
-  rightWidthRatio?: number
-  bottomHeightRatio?: number
-  viewerExpanded?: boolean
-  onLeftWidthRatioChange?: (ratio: number) => void
-  onRightWidthRatioChange?: (ratio: number) => void
-  onBottomHeightRatioChange?: (ratio: number) => void
-  leftLabel?: string
-  viewerLabel?: string
-  rightLabel?: string
-  className?: string
-}) {
+}: WorkbenchShellProps) {
   return (
     <div
       className={cn('flex h-full min-h-0 flex-col overflow-hidden bg-background', className)}

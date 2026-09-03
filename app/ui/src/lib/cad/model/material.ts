@@ -6,7 +6,7 @@ import {
   normalizeMaterialDataValueDescriptor,
   normalizeMaterialErrorRate,
   normalizeMaterialSampledRelation,
-} from './core'
+} from './materialNormalization'
 
 export class Material {
   readonly name: string

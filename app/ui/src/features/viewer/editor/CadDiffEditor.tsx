@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type * as Monaco from 'monaco-editor'
-import type { CadDiagnostic } from '@/lib/cad'
+import type { CadDiagnostic } from '@/lib/cad/worker/protocol'
 
 type CadDiffEditorProps = {
   changeId: string

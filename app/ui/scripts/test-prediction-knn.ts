@@ -21,8 +21,8 @@ import {
   type PredictionTensorLayout,
   type PredictionTensorSample,
   type PredictionTrainingRow,
-} from '../src/features/cae-workbench/prediction/knn'
-import { predictionWorkerResponseIsCurrent } from '../src/features/cae-workbench/prediction/protocol'
+} from '../src/features/prediction/knn'
+import { predictionWorkerResponseIsCurrent } from '../src/features/prediction/protocol'
 import {
   calculationOutputFromSample,
   calculationOutputSample,
@@ -37,35 +37,32 @@ import {
   predictionRecordedSamplesMatchRules,
   predictionVarsLayouts,
   predictionVarsSamples,
-} from '../src/features/cae-workbench/prediction/data'
-import { compatibleVarsResetValues } from '../src/features/cae-workbench/calculation/varsTensor'
+} from '../src/features/prediction/data'
+import { compatibleVarsResetValues } from '../src/features/calculation/varsTensor'
 import {
   acceptPredictionSamplingCenter,
   createPredictionSamplingSession,
   nextPredictionSamplingCandidate,
   predictionSamplingCandidateWaitResult,
-} from '../src/features/cae-workbench/prediction/sampling'
+} from '../src/features/prediction/sampling'
 import {
   comparePredictionOutput,
   inverseValidationAggregateError,
   inverseValidationAggregateErrorFromScales,
   predictionOutputRange,
-} from '../src/features/cae-workbench/prediction/metrics'
-import { TensorEditor } from '../src/features/cae-workbench/calculation/TensorEditor'
-import { VarsPanel } from '../src/features/cae-workbench/calculation/VarsPanel'
-import { fitTensorDisplayDomain } from '../src/features/cae-workbench/calculation/tensorDisplayDomain'
+} from '../src/features/prediction/metrics'
+import { TensorEditor } from '../src/features/calculation/TensorEditor'
+import { VarsPanel } from '../src/features/calculation/VarsPanel'
+import { fitTensorDisplayDomain } from '../src/features/calculation/tensorDisplayDomain'
 import { createRuntimeConsoleStore } from '../src/features/runtime-console/store'
-import { PredictionWorkerClient, PredictionWorkerRestartError } from '../src/features/cae-workbench/prediction/client'
+import { PredictionWorkerClient, PredictionWorkerRestartError } from '../src/features/prediction/client'
 import {
   emitPredictionCohortDiagnostics,
   emitPredictionQueryDiagnostics,
   PREDICTION_CONSOLE_DIAGNOSTIC_LIMIT,
-} from '../src/features/cae-workbench/prediction/diagnostics'
-import { PredictionCalculationPane } from '../src/features/cae-workbench/prediction/PredictionPanels'
-import type {
-  PredictionWorkerRequest,
-  PredictionWorkerResponse,
-} from '../src/features/cae-workbench/prediction/protocol'
+} from '../src/features/prediction/diagnostics'
+import { PredictionCalculationPane } from '../src/features/prediction/PredictionPanels'
+import type { PredictionWorkerRequest, PredictionWorkerResponse } from '../src/features/prediction/protocol'
 
 const scalar = (key: string, value: number, extra: Partial<PredictionTensorLayout> = {}): PredictionTensorSample => ({
   layout: { key, dtype: 'float64', shape: [], ...extra },
@@ -990,6 +987,7 @@ encodedBytes.writeDoubleLE(-2.25, 8)
 const recordedTree = {
   group: {
     inline: {
+      experiment_record_id: 11,
       quantity_kind: null,
       tensor_order: 0,
       dtype: 'float64',
@@ -1001,6 +999,7 @@ const recordedTree = {
       },
     },
     encoded: {
+      experiment_record_id: 12,
       quantity_kind: null,
       tensor_order: 0,
       dtype: 'float64',

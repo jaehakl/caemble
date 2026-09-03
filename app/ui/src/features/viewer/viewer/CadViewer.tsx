@@ -3,7 +3,7 @@ import { resolveCadViewerContent, type CadViewerDocument } from './cadViewerCont
 import JscadViewer from './JscadViewer'
 import type { CadViewerSource } from './sourceLayers'
 import type { CadViewerSelectionQuery, CadViewerSourceLookupStatus } from './selection'
-import type { RayPathBundle } from '@/lib/cad'
+import type { RayPathBundle } from '@/lib/cad/model'
 
 export type { CadViewerDocument } from './cadViewerContent'
 

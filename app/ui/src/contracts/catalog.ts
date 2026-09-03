@@ -1,4 +1,4 @@
-import type { KernelDescriptor } from '@/lib/cad/simulation'
+import type { KernelDescriptor } from './solver'
 
 export type CatalogQuantityKind = Readonly<{
   name: string
@@ -111,7 +111,7 @@ export type CatalogExperimentDetail = CatalogExperimentListItem &
   }>
 
 export type CatalogSearchItem = Readonly<{
-  kind: 'quantityKind' | 'materialParameter' | 'materialModel' | 'solver' | 'experiment'
+  kind: string
   key: string
   title: string
   subtitle: string

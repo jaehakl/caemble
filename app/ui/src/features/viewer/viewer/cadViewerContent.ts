@@ -1,4 +1,4 @@
-import type { CadScene } from '@/lib/cad'
+import type { CadScene } from '@/lib/cad/evaluation/types'
 import type { JscadViewerLayer } from './sourceLayers'
 
 export type CadViewerDocument = Readonly<{

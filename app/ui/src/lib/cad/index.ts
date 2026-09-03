@@ -175,6 +175,7 @@ export {
 } from './execution/evaluateDocument'
 export type {
   CadDocumentInspection,
+  CatalogRuntimeSliceFetcher,
   EvaluateDocumentOptions,
   GeometryModuleEvaluationOptions,
   GeometryModulePreview,
@@ -236,7 +237,11 @@ export {
   compiledCadSemanticHash,
   rawCodeHash,
 } from './compiler/semanticHash'
-export { evaluateInIsolatedRunner, inspectInIsolatedRunner, previewGeometryInIsolatedRunner } from './runner/client'
+export {
+  evaluateInIsolatedRunner,
+  inspectInIsolatedRunner,
+  previewGeometryInIsolatedRunner,
+} from '@/platform/isolated-runner/client'
 export type { ArrayAttributes } from './elements/operations/array/definition'
 export type { BooleanAttributes } from './elements/operations/booleans/definition'
 export type { ShellAttributes } from './elements/operations/shell/definition'

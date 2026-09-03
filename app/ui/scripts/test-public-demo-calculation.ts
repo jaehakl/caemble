@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { calculationAccessPolicy } from '@/features/cae-workbench/calculation/calculationAccessPolicy'
+import { calculationAccessPolicy } from '@/features/calculation/calculationAccessPolicy'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message)
@@ -46,10 +46,10 @@ const anonymousPrivate = calculationAccessPolicy({
 assert(!anonymousPrivate.sourceEditable, 'private Calculations must remain unavailable to anonymous users')
 assert(!anonymousPrivate.persistable, 'private Calculations must remain non-persistable to anonymous users')
 
-const workbenchSource = readFileSync('src/features/cae-workbench/calculation/CalculationWorkbench.tsx', 'utf8')
-const pageSource = readFileSync('src/pages/cae/CaePage.tsx', 'utf8')
-const chromeSource = readFileSync('src/pages/cae/useCaePageChrome.tsx', 'utf8')
-const predictionSource = readFileSync('src/features/cae-workbench/prediction/PredictionWorkspace.tsx', 'utf8')
+const workbenchSource = readFileSync('src/features/calculation/CalculationWorkbench.tsx', 'utf8')
+const pageSource = readFileSync('src/workbench/CaeWorkbenchRoute.tsx', 'utf8')
+const chromeSource = readFileSync('src/features/cae-workbench/useCaePageChrome.tsx', 'utf8')
+const predictionSource = readFileSync('src/features/prediction/PredictionWorkspace.tsx', 'utf8')
 const stateSource = readFileSync('src/features/cae-workbench/state/useCaeWorkbenchState.ts', 'utf8')
 assert(
   /null_filter: \{ recorded_at: 'is_not_null' as const \}/u.test(workbenchSource) &&
@@ -66,7 +66,7 @@ assert(
 assert(
   /if \(selectedCalculationId !== null\) \{[\s\S]*?defaultCalculationExperimentRef\.current = experimentId/u.test(
     workbenchSource,
-  ) && /replaceDraft\(calculationDraft\(rows\[0\]\), rows\[0\]\.id\)/u.test(workbenchSource),
+  ) && /replaceDraft\(calculationDraftFromRecord\(rows\[0\]\), rows\[0\]\.id, rows\[0\]\)/u.test(workbenchSource),
   'an existing or restored Calculation must take precedence over the first list item',
 )
 assert(

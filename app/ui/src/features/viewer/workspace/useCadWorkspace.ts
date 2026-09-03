@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { releaseRecordedDataAttachments, simulate } from '@/features/cae/client'
 import {
   emitRuntimeActivity,
@@ -9,58 +9,50 @@ import {
   EXPERIMENT_SIMULATION_PATH,
   addExperimentSourceFile,
   addExperimentTask,
+  removeExperimentSourceFile,
+  removeExperimentTask,
+  updateCadSource,
+  updateExperimentSourceFile,
+  type ExperimentSourceDocument,
+} from '@/lib/cad/source'
+import { CadCompilationError } from '@/lib/cad/compiler/monacoCompiler'
+import type { CadScene } from '@/lib/cad/evaluation/types'
+import {
   applyFrozenMaterialParameters,
   buildMeasurement,
-  CadCompilationError,
   CadDocumentEvaluationError,
   deserializeCadScene,
   evaluateDocument,
-  generateRandomVars,
   inspectDocument,
+  unresolvedMeasurementMaterialRoles,
+  type BuiltMeasurement,
+  type EvaluatedExperimentSnapshot,
+} from '@/lib/cad/execution'
+import {
+  generateRandomVars,
   normalizeVars,
   normalizeVarsSchema,
-  removeExperimentSourceFile,
-  removeExperimentTask,
-  unresolvedMeasurementMaterialRoles,
-  updateCadSource,
-  updateExperimentSourceFile,
   varsSchemaFingerprint,
-  type BuiltMeasurement,
-  type CadDiagnostic,
-  type CadScene,
-  type EvaluatedExperimentSnapshot,
-  type ExperimentSourceDocument,
   type RecordedData,
   type Vars,
-} from '@/lib/cad'
+} from '@/lib/cad/model'
 import type { SimulationProgramManifest } from '@/lib/cad/simulation'
-import { fetchCatalogRuntimeSlice } from '@/lib/catalog/references'
+import type { CadDiagnostic } from '@/lib/cad/worker/protocol'
 import { sourceCatalogRuntimeSlice } from '@/lib/catalog/runtime'
 import { catalogDraftTaskNames } from '@/lib/catalog/solverTasks'
 import type { MeasurementMaterialParameters } from '../persistence/contracts'
 import { resolveDocumentMaterials } from '../persistence/resolveMaterials'
+import {
+  cadWorkspaceLifecycleReducer,
+  initialCadWorkspaceLifecycleState,
+  type AppStatus,
+  type RunError,
+} from './cadWorkspaceLifecycle'
+import { fetchCatalogRuntimeSlice } from './catalogRuntime'
 import type { SimulationProcess } from './simulationUiTypes'
 
-export type AppStatus =
-  'Dirty' | 'Checking' | 'Compiling' | 'Evaluating' | 'Resolving Materials' | 'Ready' | 'Rendering' | 'Error'
+export type { AppStatus, RunError } from './cadWorkspaceLifecycle'
 export type EvaluationTimeoutMs = 3000 | 10000 | 30000
-
-export type RunError = Readonly<{
-  title: string
-  message: string
-  stack?: string
-}>
-
-const idleSimulationProcess: SimulationProcess = Object.freeze({
-  runId: null,
-  status: 'idle',
-  engine: null,
-  stage: null,
-  error: null,
-  startedAt: null,
-  finishedAt: null,
-})
-const simulationEngine = Object.freeze({ name: 'caemble-cae', version: '1' })
 
 function requestId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`
@@ -163,9 +155,10 @@ export function useCadWorkspace(
     onCandidateVarsRegenerated,
   }: UseCadWorkspaceOptions = {},
 ) {
+  const [lifecycle, dispatchLifecycle] = useReducer(cadWorkspaceLifecycleReducer, initialCadWorkspaceLifecycleState)
+  const { error, process, stale, status } = lifecycle
   const [diagnostics, setDiagnostics] = useState<readonly CadDiagnostic[]>([])
   const [draftTaskNames, setDraftTaskNames] = useState<readonly string[]>([])
-  const [error, setError] = useState<RunError | null>(null)
   const [evaluatedSnapshot, setEvaluatedSnapshot] = useState<EvaluatedExperimentSnapshot | null>(null)
   const [evaluationTimeoutMs, setEvaluationTimeoutMs] = useState<EvaluationTimeoutMs>(3000)
   const [generation, setGeneration] = useState(0)
@@ -176,17 +169,14 @@ export function useCadWorkspace(
   const [revision, setRevision] = useState(0)
   const [scene, setScene] = useState<CadScene | null>(null)
   const [simulationProgram, setSimulationProgram] = useState<SimulationProgramManifest | null>(null)
-  const [status, setStatus] = useState<AppStatus>('Ready')
   const [successfulCandidateGeneration, setSuccessfulCandidateGeneration] = useState(0)
   const [successfulRevision, setSuccessfulRevision] = useState(-1)
   const [validatedRevision, setValidatedRevision] = useState(-1)
   const [taskScenes, setTaskScenes] = useState<Readonly<Record<string, CadScene>>>(Object.freeze({}))
   const [variables, setVariables] = useState<Readonly<Vars> | null>(null)
   const [varsSchema, setVarsSchema] = useState<EvaluatedExperimentSnapshot['varsSchema'] | null>(null)
-  const [process, setProcess] = useState<SimulationProcess>(idleSimulationProcess)
   const [recordedData, setRecordedData] = useState<RecordedData | null>(null)
   const [resultSessionKey, setResultSessionKey] = useState<string | number | null>(null)
-  const [stale, setStale] = useState(false)
 
   const activeEvaluationRef = useRef<AbortController | null>(null)
   const activeRunRef = useRef<Readonly<{
@@ -245,28 +235,25 @@ export function useCadWorkspace(
   statusRef.current = status
   successfulRevisionRef.current = successfulRevision
 
-  const updateStatus = useCallback((next: AppStatus) => {
-    statusRef.current = next
-    setStatus(next)
-  }, [])
-
   const invalidateSimulation = useCallback(() => {
-    if (recordedDataRef.current) setStale(true)
+    const hasRecordedData = recordedDataRef.current !== null
     const active = activeRunRef.current
-    if (!active) return
-    activeRunRef.current = null
-    active.abort.abort()
-    setProcess(
-      Object.freeze({
-        runId: active.runId ?? active.requestId,
-        status: 'cancelled',
-        engine: simulationEngine,
-        stage: null,
-        error: 'Simulation run was invalidated by an Experiment or candidate change.',
-        startedAt: active.startedAt,
-        finishedAt: Date.now(),
-      }),
-    )
+    if (!hasRecordedData && !active) return
+    if (active) {
+      activeRunRef.current = null
+      active.abort.abort()
+    }
+    dispatchLifecycle({
+      type: 'simulationInvalidated',
+      hasRecordedData,
+      active: active
+        ? {
+            runId: active.runId ?? active.requestId,
+            startedAt: active.startedAt,
+            finishedAt: Date.now(),
+          }
+        : null,
+    })
   }, [])
 
   const varsKey = useMemo(() => stableInput(candidateVars ?? null), [candidateVars])
@@ -305,7 +292,6 @@ export function useCadWorkspace(
     successfulRevisionRef.current = -1
     setDiagnostics([])
     setDraftTaskNames([])
-    setError(null)
     const resetPreview = resetKeyRef.current !== resetKey
     resetKeyRef.current = resetKey
     const sessionCandidateVars = resetPreview ? undefined : candidateVars
@@ -339,7 +325,8 @@ export function useCadWorkspace(
       setScene(null)
       setTaskScenes(Object.freeze({}))
       setVarsSchema(null)
-      updateStatus('Ready')
+      statusRef.current = 'Ready'
+      dispatchLifecycle({ type: 'sourceCleared' })
       return
     }
 
@@ -354,9 +341,11 @@ export function useCadWorkspace(
         : null
     if (candidateProvenance !== 'editable') editableMaterialEchoRef.current = null
     if (prepared) {
-      updateStatus('Evaluating')
+      statusRef.current = 'Evaluating'
+      dispatchLifecycle({ type: 'evaluationStarted' })
     } else {
-      updateStatus('Checking')
+      statusRef.current = 'Checking'
+      dispatchLifecycle({ type: 'sourceChecking' })
       emitRuntimeActivity(onActivityRef.current, {
         source: 'cad',
         level: 'info',
@@ -371,6 +360,8 @@ export function useCadWorkspace(
         ? Promise.resolve(prepared)
         : fetchCatalogRuntimeSlice(evaluationDocument.sourceBundle).then(async (catalog) => {
             if (abort.signal.aborted || revisionRef.current !== requestRevision) throw abort.signal.reason
+            statusRef.current = 'Compiling'
+            dispatchLifecycle({ type: 'compilationStarted' })
             emitRuntimeActivity(onActivityRef.current, {
               source: 'cad',
               level: 'info',
@@ -442,7 +433,8 @@ export function useCadWorkspace(
         }
         let nextVars: Readonly<Vars>
         if (candidateProvenance === 'persisted-measurement' && candidateVarsPending && sessionCandidateVars === undefined) {
-          updateStatus('Checking')
+          statusRef.current = 'Checking'
+          dispatchLifecycle({ type: 'candidatePending' })
           return
         } else if (explicitGeneration) {
           nextVars = generateCandidateVars()
@@ -473,7 +465,8 @@ export function useCadWorkspace(
             nextVars = generateCandidateVars('invalid-candidate')
           }
         }
-        updateStatus('Evaluating')
+        statusRef.current = 'Evaluating'
+        dispatchLifecycle({ type: 'evaluationStarted' })
         emitRuntimeActivity(onActivityRef.current, {
           source: 'cad',
           level: 'info',
@@ -502,7 +495,8 @@ export function useCadWorkspace(
             sourceHash: snapshot.sourceHash,
           },
         })
-        updateStatus('Resolving Materials')
+        statusRef.current = 'Resolving Materials'
+        dispatchLifecycle({ type: 'materialsResolutionStarted' })
         emitRuntimeActivity(onActivityRef.current, {
           source: 'cad',
           level: 'info',
@@ -580,7 +574,8 @@ export function useCadWorkspace(
           completeCandidateGeneration()
           successfulRevisionRef.current = requestRevision
           setSuccessfulRevision(requestRevision)
-          updateStatus('Ready')
+          statusRef.current = 'Ready'
+          dispatchLifecycle({ type: 'evaluationSucceeded' })
           reportReady({ revision: requestRevision, unresolvedMaterialRoles: unresolved.length })
           return
         }
@@ -600,7 +595,8 @@ export function useCadWorkspace(
           completeCandidateGeneration()
           successfulRevisionRef.current = requestRevision
           setSuccessfulRevision(requestRevision)
-          updateStatus('Ready')
+          statusRef.current = 'Ready'
+          dispatchLifecycle({ type: 'evaluationSucceeded' })
           reportReady({ revision: requestRevision, draftTaskCount: nextDraftTaskNames.length })
           return
         }
@@ -624,7 +620,8 @@ export function useCadWorkspace(
         completeCandidateGeneration()
         successfulRevisionRef.current = requestRevision
         setSuccessfulRevision(requestRevision)
-        updateStatus('Ready')
+        statusRef.current = 'Ready'
+        dispatchLifecycle({ type: 'evaluationSucceeded' })
         reportReady({ revision: requestRevision, warningCount: resolutionWarnings.length })
       })
       .catch((cause: unknown) => {
@@ -637,7 +634,7 @@ export function useCadWorkspace(
         const evaluation = cause instanceof CadDocumentEvaluationError ? cause : null
         const measurementVars = cause instanceof MeasurementVarsError
         setDiagnostics(compilation?.diagnostics ?? evaluation?.diagnostics ?? [])
-        setError({
+        const nextError: RunError = {
           title: compilation
             ? compilation.errorType === 'policy'
               ? 'Source Policy Error'
@@ -649,8 +646,9 @@ export function useCadWorkspace(
               : 'Experiment Error',
           message: cause instanceof Error ? cause.message : String(cause),
           ...(cause instanceof Error && cause.stack ? { stack: cause.stack } : {}),
-        })
-        updateStatus('Error')
+        }
+        statusRef.current = 'Error'
+        dispatchLifecycle({ type: 'evaluationFailed', error: nextError })
         emitRuntimeActivity(onActivityRef.current, {
           source: 'cad',
           level: 'error',
@@ -678,7 +676,6 @@ export function useCadWorkspace(
     materialDependencyKey,
     resetKey,
     sourceOnlyMaterials,
-    updateStatus,
     candidateDependencyKey,
   ])
 
@@ -745,38 +742,37 @@ export function useCadWorkspace(
   )
   const handleRenderStart = useCallback(() => {
     if (statusRef.current !== 'Ready') return
-    updateStatus('Rendering')
+    statusRef.current = 'Rendering'
+    dispatchLifecycle({ type: 'renderStarted' })
     emitRuntimeActivity(onActivityRef.current, {
       source: 'cad',
       level: 'info',
       phase: 'render.started',
       message: '3D CAD View 렌더링을 시작했습니다.',
     })
-  }, [updateStatus])
+  }, [])
   const handleRenderEnd = useCallback(() => {
     if (statusRef.current !== 'Rendering') return
-    updateStatus('Ready')
+    statusRef.current = 'Ready'
+    dispatchLifecycle({ type: 'renderSucceeded' })
     emitRuntimeActivity(onActivityRef.current, {
       source: 'cad',
       level: 'info',
       phase: 'render.completed',
       message: '3D CAD View 렌더링을 완료했습니다.',
     })
-  }, [updateStatus])
-  const handleRenderError = useCallback(
-    (message: string) => {
-      if (statusRef.current === 'Error') return
-      setError({ title: 'Rendering Error', message })
-      updateStatus('Error')
-      emitRuntimeActivity(onActivityRef.current, {
-        source: 'cad',
-        level: 'error',
-        phase: 'render.failed',
-        message,
-      })
-    },
-    [updateStatus],
-  )
+  }, [])
+  const handleRenderError = useCallback((message: string) => {
+    if (statusRef.current === 'Error') return
+    statusRef.current = 'Error'
+    dispatchLifecycle({ type: 'renderFailed', error: { title: 'Rendering Error', message } })
+    emitRuntimeActivity(onActivityRef.current, {
+      source: 'cad',
+      level: 'error',
+      phase: 'render.failed',
+      message,
+    })
+  }, [])
 
   const ownsCurrentSession = resultSessionKey === resetKey
   const currentValidatedRevision =
@@ -814,18 +810,7 @@ export function useCadWorkspace(
     releaseRecordedDataAttachments(recordedDataRef.current)
     recordedDataRef.current = null
     setRecordedData(null)
-    setStale(false)
-    setProcess(
-      Object.freeze({
-        runId: id,
-        status: 'preparing',
-        engine: simulationEngine,
-        stage: 'startup',
-        error: null,
-        startedAt,
-        finishedAt: null,
-      }),
-    )
+    dispatchLifecycle({ type: 'simulationStarted', runId: id, startedAt })
     const abort = new AbortController()
     activeRunRef.current = Object.freeze({ abort, requestId: id, runId: null, startedAt })
     void simulate(built, {
@@ -841,32 +826,23 @@ export function useCadWorkspace(
         const active = activeRunRef.current
         if (active?.requestId !== id) return
         if (active.runId !== progress.runId) activeRunRef.current = Object.freeze({ ...active, runId: progress.runId })
-        setProcess(
-          Object.freeze({
-            runId: progress.runId,
-            status: 'running',
-            engine: simulationEngine,
-            stage: `${progress.task}: ${progress.stage}`,
-            error: null,
-            startedAt,
-            finishedAt: null,
-          }),
-        )
+        dispatchLifecycle({
+          type: 'simulationProgressed',
+          runId: progress.runId,
+          stage: `${progress.task}: ${progress.stage}`,
+          startedAt,
+        })
       },
       onStatus(nextStatus) {
         const active = activeRunRef.current
         if (active?.requestId !== id) return
-        setProcess(
-          Object.freeze({
-            runId: active.runId ?? id,
-            status: nextStatus === 'validating' ? 'preparing' : 'running',
-            engine: simulationEngine,
-            stage: nextStatus,
-            error: null,
-            startedAt,
-            finishedAt: null,
-          }),
-        )
+        dispatchLifecycle({
+          type: 'simulationStatusChanged',
+          runId: active.runId ?? id,
+          status: nextStatus === 'validating' ? 'preparing' : 'running',
+          stage: nextStatus,
+          startedAt,
+        })
       },
     })
       .then((result) => {
@@ -878,18 +854,13 @@ export function useCadWorkspace(
         activeRunRef.current = null
         recordedDataRef.current = result
         setRecordedData(result)
-        setStale(builtMeasurementRef.current !== built)
-        setProcess(
-          Object.freeze({
-            runId: active.runId ?? id,
-            status: 'succeeded',
-            engine: simulationEngine,
-            stage: null,
-            error: null,
-            startedAt,
-            finishedAt: Date.now(),
-          }),
-        )
+        dispatchLifecycle({
+          type: 'simulationSucceeded',
+          runId: active.runId ?? id,
+          startedAt,
+          finishedAt: Date.now(),
+          stale: builtMeasurementRef.current !== built,
+        })
       })
       .catch((cause: unknown) => {
         const active = activeRunRef.current
@@ -898,17 +869,13 @@ export function useCadWorkspace(
         releaseRecordedDataAttachments(recordedDataRef.current)
         recordedDataRef.current = null
         setRecordedData(null)
-        setProcess(
-          Object.freeze({
-            runId: active.runId ?? id,
-            status: 'failed',
-            engine: simulationEngine,
-            stage: null,
-            error: cause instanceof Error ? cause.message : String(cause),
-            startedAt,
-            finishedAt: Date.now(),
-          }),
-        )
+        dispatchLifecycle({
+          type: 'simulationFailed',
+          runId: active.runId ?? id,
+          startedAt,
+          finishedAt: Date.now(),
+          error: cause instanceof Error ? cause.message : String(cause),
+        })
       })
     return id
   }, [runtimeEnabled])
@@ -921,17 +888,12 @@ export function useCadWorkspace(
     releaseRecordedDataAttachments(recordedDataRef.current)
     recordedDataRef.current = null
     setRecordedData(null)
-    setProcess(
-      Object.freeze({
-        runId: active.runId ?? active.requestId,
-        status: 'cancelled',
-        engine: simulationEngine,
-        stage: null,
-        error: 'Simulation run was cancelled.',
-        startedAt: active.startedAt,
-        finishedAt: Date.now(),
-      }),
-    )
+    dispatchLifecycle({
+      type: 'simulationCancelled',
+      runId: active.runId ?? active.requestId,
+      startedAt: active.startedAt,
+      finishedAt: Date.now(),
+    })
   }, [])
 
   const taskSceneHashes = useMemo(

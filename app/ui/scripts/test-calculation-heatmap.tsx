@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { CalculationOutputChart } from '../src/features/cae-workbench/calculation/CalculationOutputChart'
-import { buildScalarHistogram } from '../src/features/cae-workbench/calculation/calculationHistogram'
+import { CalculationOutputChart } from '../src/features/calculation/CalculationOutputChart'
+import { buildScalarHistogram } from '../src/features/calculation/calculationHistogram'
 import { Heatmap } from '../src/features/viewer/viewer/Heatmap'
 
 function renderHeatmap(

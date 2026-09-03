@@ -1,5 +1,4 @@
 import type { Expression, ObjectExpression, ObjectMethod, ObjectProperty } from '@babel/types'
-import { catalogApi } from '@/api/catalog'
 import type { CatalogRuntimeSlice, CatalogRuntimeSliceRequest } from '@/contracts/catalog'
 import {
   analyzeTaskSource,
@@ -22,7 +21,7 @@ import { experimentTypeScriptPaths } from '../cad/source/moduleResolution'
 import { DRAFT_TASK_KERNEL } from './draftTask'
 
 export type CatalogSourceReferences = CatalogRuntimeSliceRequest & Readonly<{ draftTaskNames: readonly string[] }>
-const sliceCache = new Map<string, Promise<CatalogRuntimeSlice>>()
+export type CatalogRuntimeSliceResolver = (bundle: ExperimentSourceBundle) => Promise<CatalogRuntimeSlice>
 
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object') {
@@ -212,34 +211,38 @@ export function extractCatalogSourceReferences(bundle: ExperimentSourceBundle): 
   })
 }
 
-export async function fetchCatalogRuntimeSlice(bundle: ExperimentSourceBundle): Promise<CatalogRuntimeSlice> {
-  const references = extractCatalogSourceReferences(bundle)
-  if (
-    references.solvers.length === 0 &&
-    references.quantityKinds.length === 0 &&
-    references.materialParameters.length === 0 &&
-    references.materialModels.length === 0
-  ) {
-    return EMPTY_DRAFT_CATALOG_RUNTIME_SLICE
+export function createCachedCatalogRuntimeSliceResolver(
+  fetchRuntimeSlice: (request: CatalogRuntimeSliceRequest) => Promise<CatalogRuntimeSlice>,
+): CatalogRuntimeSliceResolver {
+  const sliceCache = new Map<string, Promise<CatalogRuntimeSlice>>()
+  return async (bundle) => {
+    const references = extractCatalogSourceReferences(bundle)
+    if (
+      references.solvers.length === 0 &&
+      references.quantityKinds.length === 0 &&
+      references.materialParameters.length === 0 &&
+      references.materialModels.length === 0
+    ) {
+      return EMPTY_DRAFT_CATALOG_RUNTIME_SLICE
+    }
+    const request: CatalogRuntimeSliceRequest = Object.freeze({
+      solvers: references.solvers,
+      quantityKinds: references.quantityKinds,
+      materialParameters: references.materialParameters,
+      materialModels: references.materialModels,
+    })
+    const key = JSON.stringify(request)
+    let cached = sliceCache.get(key)
+    if (!cached) {
+      cached = fetchRuntimeSlice(request)
+        .then(deepFreeze)
+        .catch((error) => {
+          sliceCache.delete(key)
+          throw error
+        })
+      sliceCache.set(key, cached)
+      if (sliceCache.size > 32) sliceCache.delete(sliceCache.keys().next().value!)
+    }
+    return cached
   }
-  const request: CatalogRuntimeSliceRequest = Object.freeze({
-    solvers: references.solvers,
-    quantityKinds: references.quantityKinds,
-    materialParameters: references.materialParameters,
-    materialModels: references.materialModels,
-  })
-  const key = JSON.stringify(request)
-  let cached = sliceCache.get(key)
-  if (!cached) {
-    cached = catalogApi
-      .runtimeSlice(request)
-      .then(deepFreeze)
-      .catch((error) => {
-        sliceCache.delete(key)
-        throw error
-      })
-    sliceCache.set(key, cached)
-    if (sliceCache.size > 32) sliceCache.delete(sliceCache.keys().next().value!)
-  }
-  return cached
 }

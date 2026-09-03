@@ -1,4 +1,4 @@
-import type { DataDType } from '@/lib/cad'
+import type { DataDType } from '@/lib/cad/model'
 
 export const CALCULATION_INPUT_MAX_BYTES = 64 * 1024 * 1024
 export const CALCULATION_OUTPUT_MAX_ELEMENTS = 5_000_000

@@ -36,16 +36,39 @@ npm run build
 
 ## Ownership
 
-- `src/app`: providers and the `/` + `/docs` router.
-- `src/pages/cae`: Workbench chrome, session, and dialog orchestration.
-- `src/pages/docs`: the canonical user manual shell.
-- `src/features`: authentication, Viewer/editor persistence, AI, and the thin
-  CAE client.
-- `src/api`: typed HTTP and WebSocket clients.
-- `src/lib/cad`: source model, generated CAD API declarations, compiler, isolated runner,
-  evaluation, and serialization.
-- `src/lib/material`, `src/lib/quantitykind`, `src/lib/solver`: domain models
-  that consume API/catalog contracts.
+- `src/app`: providers and router bootstrap.
+- `src/routes`: only the `/`, `/docs`, and Not Found route entries.
+- `src/workbench`: Workbench session orchestration, scoped shell store, and
+  feature-to-shell adapters.
+- `src/features`: user-facing workflows such as Experiment, Measurement,
+  Calculation, Prediction, Analysis, Viewer, Materials, AI, and Runtime.
+- `src/contracts`: serialized contracts grouped by owning domain. `src/api/types.ts`
+  remains a compatibility re-export, not the source of new contracts.
+- `src/api`: HTTP transport and the existing `dbTables` endpoint facade.
+- `src/platform/isolated-runner`: the generic cross-origin iframe runner client,
+  frame, and protocol.
+- `src/lib/cad`, `src/lib/material`, and `src/lib/quantitykind`: framework-free
+  domain models, compilation, evaluation, and serialization.
+- `src/shared`: application-independent UI and layout primitives.
+
+Dependencies flow from app/routes into workbench/features, then into
+domain/platform and contracts/shared. `npm run check:dependencies` rejects
+cycles and reverse imports.
+
+Keep `dbTables` keys, method names, endpoints, and `recordType` compatibility
+stable. New serialized types belong to their owning `src/contracts` module;
+validate unknown HTTP, storage, WebSocket, and Worker payloads at the boundary.
+
+## Validation
+
+Run the complete maintainability check with:
+
+```powershell
+npm run check
+```
+
+`npm run build` additionally type-checks the application, builds the local SDK,
+and verifies the Calculation bundle.
 
 The [architecture guide](../../docs/architecture.md) describes Experiment
 bundle flow. Keep user-facing authoring examples

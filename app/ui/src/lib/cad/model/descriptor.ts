@@ -11,6 +11,10 @@ import type {
   MaterialPropertyKey,
   MaterialPropertyQuantityKind,
 } from '../../material/data'
+import type {
+  PersistedDataTensor as PersistedDataTensorContract,
+  RecordedDataAxis as RecordedDataAxisContract,
+} from '@/contracts/cad-persistence'
 import type { UcumUnit } from './units'
 
 export type ExperimentTarget = `${'experiment' | 'task'}.${'geometry' | 'surface'}.${string}`
@@ -123,10 +127,7 @@ export type ExperimentRule<TParameters extends ExperimentParameters = Experiment
 export type RecordedDataRule<TParameters extends ExperimentParameters = ExperimentParameters> = Readonly<
   ExperimentRule<TParameters> & { result: RecordedDataResult }
 >
-export type RecordedDataAxis = Readonly<{
-  ticks?: readonly (number | string)[]
-  implicitOrdinal?: true
-}>
+export type RecordedDataAxis = RecordedDataAxisContract
 export type DataTensor = Readonly<{
   shape: readonly number[]
   axes?: readonly RecordedDataAxis[]
@@ -135,13 +136,7 @@ export type DataTensor = Readonly<{
     | Readonly<{ kind: 'attachments'; ids: readonly string[]; byteLength: number }>
     | Readonly<{ kind: 'base64'; data: string; byteLength: number }>
 }>
-export type PersistedDataTensor = Readonly<{
-  shape: readonly number[]
-  axes?: readonly RecordedDataAxis[]
-  storage:
-    | Readonly<{ kind: 'inline'; value: unknown }>
-    | Readonly<{ kind: 'base64'; data: string; byteLength: number }>
-}>
+export type PersistedDataTensor = PersistedDataTensorContract
 export type DataTensorInput = Readonly<{
   value: boolean | string | number | readonly unknown[]
   axes?: readonly RecordedDataAxis[]

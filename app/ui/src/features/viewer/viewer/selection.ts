@@ -1,38 +1,27 @@
 import { geometries } from '@jscad/modeling'
-import type { CadScenePart, CadSceneTreeNode } from '@/lib/cad'
-import type { CadViewerSource, JscadViewerLayer } from './sourceLayers'
+import type { CadScenePart, CadSceneTreeNode } from '@/lib/cad/evaluation/types'
+import { cross, dot, subtract } from '@/lib/cad/geometry/vec3'
+import type {
+  CadViewerLayerScope,
+  CadViewerPickingCamera,
+  CadViewerPickMode,
+  CadViewerSelectionMatch,
+  CadViewerSelectionQuery,
+  CadViewerSource,
+  JscadViewerLayer,
+} from './model'
 
-export type CadViewerPickMode = 'off' | 'geometry' | 'surface'
-export type CadViewerSourceLookupStatus = 'checking' | 'available' | 'missing'
+export type {
+  CadViewerLayerScope,
+  CadViewerPickingCamera,
+  CadViewerPickMode,
+  CadViewerSelectionMatch,
+  CadViewerSelectionQuery,
+  CadViewerSourceLookupStatus,
+} from './model'
 
-export type CadViewerLayerScope =
-  Readonly<{ source: 'experiment' }> | Readonly<{ source: 'task'; taskName: string }> | Readonly<{ source: 'visible' }>
-
-export type CadViewerSelectionQuery = Readonly<{
-  kind: 'geometry' | 'surface'
-  match: 'exact' | 'local'
-  origin: 'code' | 'viewer'
-  scope: CadViewerLayerScope
-  value: string
-}>
-
-export type CadViewerSelectionMatch = Readonly<{
-  geometryId: string
-  source: CadViewerSource
-  surfaceId?: string
-  taskName?: string
-}>
-
-export type CadViewerPickingCamera = Readonly<{
-  aspect: number
-  fov: number
-  position: readonly number[]
-  target: readonly number[]
-  up: readonly number[]
-}>
-
-type PickPolygon = Readonly<{ vertices: readonly (readonly number[])[] }>
 type Vec3 = readonly [number, number, number]
+type PickPolygon = Readonly<{ vertices: readonly Vec3[] }>
 
 type CadViewerPickPart = Readonly<{
   bounds: readonly [Vec3, Vec3]
@@ -152,23 +141,7 @@ export function createCadViewerPickParts(layers: readonly JscadViewerLayer[]): C
   )
 }
 
-function subtract(left: readonly number[], right: readonly number[]): Vec3 {
-  return [left[0] - right[0], left[1] - right[1], left[2] - right[2]]
-}
-
-function cross(left: readonly number[], right: readonly number[]): Vec3 {
-  return [
-    left[1] * right[2] - left[2] * right[1],
-    left[2] * right[0] - left[0] * right[2],
-    left[0] * right[1] - left[1] * right[0],
-  ]
-}
-
-function dot(left: readonly number[], right: readonly number[]) {
-  return left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
-}
-
-function normalize(value: readonly number[]): Vec3 | null {
+function normalize(value: Vec3): Vec3 | null {
   const length = Math.hypot(value[0], value[1], value[2])
   return Number.isFinite(length) && length > 1e-12 ? [value[0] / length, value[1] / length, value[2] / length] : null
 }
@@ -194,7 +167,7 @@ function pointerRay(
   return direction ? { direction, origin: camera.position } : null
 }
 
-function rayIntersectsBounds(origin: readonly number[], direction: readonly number[], bounds: readonly [Vec3, Vec3]) {
+function rayIntersectsBounds(origin: Vec3, direction: Vec3, bounds: readonly [Vec3, Vec3]) {
   let near = 0
   let far = Number.POSITIVE_INFINITY
   for (let axis = 0; axis < 3; axis += 1) {
@@ -211,13 +184,7 @@ function rayIntersectsBounds(origin: readonly number[], direction: readonly numb
   return far >= 0
 }
 
-function rayTriangleDistance(
-  origin: readonly number[],
-  direction: readonly number[],
-  first: readonly number[],
-  second: readonly number[],
-  third: readonly number[],
-) {
+function rayTriangleDistance(origin: Vec3, direction: Vec3, first: Vec3, second: Vec3, third: Vec3) {
   const firstEdge = subtract(second, first)
   const secondEdge = subtract(third, first)
   const determinantVector = cross(direction, secondEdge)
