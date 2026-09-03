@@ -108,6 +108,7 @@ export function useCaePageChrome({
   const repeatCountValid = repeatCountInput.trim() !== '' && Number.isSafeInteger(repeatCount) && repeatCount > 0
   const actions = useMemo<Record<string, WorkbenchAction>>(() => {
     const loginReason = '로그인 후 사용할 수 있습니다.'
+    const demoReadOnlyReason = workbench.experimentIsDemo ? '공개 Demo 원본과 데이터는 읽기 전용입니다.' : undefined
     const savedReason = '저장되고 편집되지 않은 Experiment가 필요합니다.'
     const sourceValidationReason = 'Experiment source 오류를 수정하고 의미 검사를 완료한 뒤 저장하세요.'
     const tasklessReason = !workbench.hasTasks
@@ -258,7 +259,8 @@ export function useCaePageChrome({
         icon: <Beaker />,
         disabled:
           authenticated &&
-          (!workbench.hasTasks ||
+          (Boolean(demoReadOnlyReason) ||
+            !workbench.hasTasks ||
             !workbench.experimentClean ||
             workbench.experimentDocument.draftTaskNames.length > 0 ||
             workbench.experimentDocument.status !== 'Ready' ||
@@ -269,7 +271,8 @@ export function useCaePageChrome({
             Boolean(workbench.measurementActions.pendingRecordMeasurementId)),
         disabledReason: !authenticated
           ? loginReason
-          : (tasklessReason ??
+          : (demoReadOnlyReason ??
+            tasklessReason ??
             (!workbench.experimentClean
               ? savedReason
               : (draftPreviewReason ?? pendingResultReason ?? candidateEvaluationReason ?? evaluationBusyReason))),
@@ -282,7 +285,8 @@ export function useCaePageChrome({
         disabled:
           !cancellingCurrentRun &&
           authenticated &&
-          (!workbench.hasTasks ||
+          (Boolean(demoReadOnlyReason) ||
+            !workbench.hasTasks ||
             !workbench.experimentClean ||
             Boolean(selected) ||
             workbench.experimentDocument.draftTaskNames.length > 0 ||
@@ -293,7 +297,8 @@ export function useCaePageChrome({
           ? undefined
           : !authenticated
             ? loginReason
-            : (tasklessReason ??
+            : (demoReadOnlyReason ??
+              tasklessReason ??
               (!workbench.experimentClean
                 ? savedReason
                 : selected
@@ -326,16 +331,22 @@ export function useCaePageChrome({
         label: 'Selected Calc',
         icon: <Database />,
         disabled:
-          authenticated && (!workbench.experimentId || selectedCalculationId === null || calculationDirty || caeBusy),
+          authenticated &&
+          (Boolean(demoReadOnlyReason) ||
+            !workbench.experimentId ||
+            selectedCalculationId === null ||
+            calculationDirty ||
+            caeBusy),
         disabledReason: !authenticated
           ? loginReason
-          : !workbench.experimentId
-            ? '저장된 Experiment가 필요합니다.'
-            : selectedCalculationId === null
-              ? '저장된 Calculation을 선택하세요.'
-              : calculationDirty
-                ? 'Calculation source를 저장한 뒤 실행하세요.'
-                : busyReason,
+          : (demoReadOnlyReason ??
+            (!workbench.experimentId
+              ? '저장된 Experiment가 필요합니다.'
+              : selectedCalculationId === null
+                ? '저장된 Calculation을 선택하세요.'
+                : calculationDirty
+                  ? 'Calculation source를 저장한 뒤 실행하세요.'
+                  : busyReason)),
         onSelect: () => {
           if (!authenticated) return setDialog('account')
           if (selectedCalculationId !== null)
@@ -346,14 +357,17 @@ export function useCaePageChrome({
         id: 'calculate-measurement-data',
         label: 'Selected Measurement',
         icon: <Beaker />,
-        disabled: authenticated && (!workbench.experimentId || !selected?.recorded_at || caeBusy),
+        disabled:
+          authenticated &&
+          (Boolean(demoReadOnlyReason) || !workbench.experimentId || !selected?.recorded_at || caeBusy),
         disabledReason: !authenticated
           ? loginReason
-          : !workbench.experimentId
-            ? '저장된 Experiment가 필요합니다.'
-            : !selected?.recorded_at
-              ? 'Recorded Measurement를 선택하세요.'
-              : busyReason,
+          : (demoReadOnlyReason ??
+            (!workbench.experimentId
+              ? '저장된 Experiment가 필요합니다.'
+              : !selected?.recorded_at
+                ? 'Recorded Measurement를 선택하세요.'
+                : busyReason)),
         onSelect: () => {
           if (!authenticated) return setDialog('account')
           if (selected?.recorded_at)
@@ -364,12 +378,10 @@ export function useCaePageChrome({
         id: 'calculate-all-data',
         label: 'All Missing',
         icon: <SaveAll />,
-        disabled: authenticated && (!workbench.experimentId || caeBusy),
+        disabled: authenticated && (Boolean(demoReadOnlyReason) || !workbench.experimentId || caeBusy),
         disabledReason: !authenticated
           ? loginReason
-          : !workbench.experimentId
-            ? '저장된 Experiment가 필요합니다.'
-            : busyReason,
+          : (demoReadOnlyReason ?? (!workbench.experimentId ? '저장된 Experiment가 필요합니다.' : busyReason)),
         onSelect: () =>
           authenticated ? runSafely(workbench.calculationDataActions.calculateAll) : setDialog('account'),
       },
@@ -380,7 +392,8 @@ export function useCaePageChrome({
         disabled:
           !cancellingGeneratedRun &&
           authenticated &&
-          (!workbench.experiment ||
+          (Boolean(demoReadOnlyReason) ||
+            !workbench.experiment ||
             !workbench.hasTasks ||
             !workbench.experimentClean ||
             workbench.experimentDocument.draftTaskNames.length > 0 ||
@@ -392,12 +405,13 @@ export function useCaePageChrome({
           ? undefined
           : !authenticated
             ? loginReason
-            : !workbench.experiment
-              ? 'Experiment source가 없습니다.'
-              : (tasklessReason ??
-                (!workbench.experimentClean
-                  ? savedReason
-                  : (draftPreviewReason ?? pendingResultReason ?? evaluationBusyReason ?? sourceLockReason))),
+            : (demoReadOnlyReason ??
+              (!workbench.experiment
+                ? 'Experiment source가 없습니다.'
+                : (tasklessReason ??
+                  (!workbench.experimentClean
+                    ? savedReason
+                    : (draftPreviewReason ?? pendingResultReason ?? evaluationBusyReason ?? sourceLockReason))))),
         onSelect: cancellingGeneratedRun
           ? workbench.measurementActions.cancel
           : () => (authenticated ? runSafely(workbench.measurementActions.generateAndRun) : setDialog('account')),
@@ -409,7 +423,8 @@ export function useCaePageChrome({
         disabled:
           !cancellingRepeatRun &&
           authenticated &&
-          (!repeatCountValid ||
+          (Boolean(demoReadOnlyReason) ||
+            !repeatCountValid ||
             !workbench.experiment ||
             !workbench.hasTasks ||
             !workbench.experimentClean ||
@@ -424,12 +439,13 @@ export function useCaePageChrome({
             ? '반복 횟수는 양의 정수여야 합니다.'
             : !authenticated
               ? loginReason
-              : !workbench.experiment
-                ? 'Experiment source가 없습니다.'
-                : (tasklessReason ??
-                  (!workbench.experimentClean
-                    ? savedReason
-                    : (draftPreviewReason ?? pendingResultReason ?? evaluationBusyReason ?? sourceLockReason))),
+              : (demoReadOnlyReason ??
+                (!workbench.experiment
+                  ? 'Experiment source가 없습니다.'
+                  : (tasklessReason ??
+                    (!workbench.experimentClean
+                      ? savedReason
+                      : (draftPreviewReason ?? pendingResultReason ?? evaluationBusyReason ?? sourceLockReason))))),
         onSelect: cancellingRepeatRun
           ? workbench.measurementActions.cancel
           : () =>
@@ -444,7 +460,8 @@ export function useCaePageChrome({
         disabled:
           !cancellingSelectedRun &&
           authenticated &&
-          (!workbench.hasTasks ||
+          (Boolean(demoReadOnlyReason) ||
+            !workbench.hasTasks ||
             !workbench.experimentClean ||
             !selected ||
             Boolean(selected?.recorded_at) ||
@@ -455,7 +472,8 @@ export function useCaePageChrome({
           ? undefined
           : !authenticated
             ? loginReason
-            : (tasklessReason ??
+            : (demoReadOnlyReason ??
+              tasklessReason ??
               (!workbench.experimentClean
                 ? savedReason
                 : !selected

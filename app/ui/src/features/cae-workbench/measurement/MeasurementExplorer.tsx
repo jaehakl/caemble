@@ -83,7 +83,7 @@ export function MeasurementExplorer({
     const textFilter: Record<string, string[]> =
       trimmed && !Number.isSafeInteger(searchedId) ? { vars: [trimmed], material_parameters: [trimmed] } : {}
     return {
-      ...getListRequest('mine'),
+      ...getListRequest('visible'),
       offset: page * pageSize,
       limit: pageSize,
       selected_ids: Number.isSafeInteger(searchedId) && searchedId > 0 ? [searchedId] : [],

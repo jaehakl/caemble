@@ -136,7 +136,8 @@ export function CalculationWorkbench({
   candidateVars,
   columnRatios,
   contextPending,
-  editable,
+  persistable,
+  sourceEditable,
   experimentId,
   measurementId,
   measurementLoading,
@@ -150,6 +151,7 @@ export function CalculationWorkbench({
   onDeleteMeasurements,
   onDirtyChange,
   onOutputChartRatioChange,
+  onRequestLogin,
   onRowRatiosChange,
   onSaveStateChange,
   onUsageChanged,
@@ -180,7 +182,8 @@ export function CalculationWorkbench({
   candidateVars: Readonly<Vars> | null
   columnRatios: readonly number[]
   contextPending: boolean
-  editable: boolean
+  persistable: boolean
+  sourceEditable: boolean
   experimentId: number | null
   measurementId: number | null
   measurementLoading: boolean
@@ -194,6 +197,7 @@ export function CalculationWorkbench({
   onDeleteMeasurements: (rows: readonly SavedMeasurement[]) => Promise<boolean>
   onDirtyChange: (dirty: boolean) => void
   onOutputChartRatioChange: (ratio: number) => void
+  onRequestLogin: () => void
   onRowRatiosChange: (ratios: readonly [number, number, number]) => void
   onSaveStateChange: (state: CalculationSaveState) => void
   onUsageChanged: () => Promise<void>
@@ -227,10 +231,10 @@ export function CalculationWorkbench({
   const [inputPanel, setInputPanel] = useState<'measurements' | 'vars'>('measurements')
   const [agentTargetSession, setAgentTargetSession] = useState(0)
   const draftRef = useRef(draft)
-  const editableRef = useRef(editable)
+  const sourceEditableRef = useRef(sourceEditable)
   const calculationDataBusyRef = useRef(calculationDataBusy)
   draftRef.current = draft
-  editableRef.current = editable
+  sourceEditableRef.current = sourceEditable
   calculationDataBusyRef.current = calculationDataBusy
   const appliedExperimentRef = useRef(experimentId)
   const selectedCalculationRef = useRef(selectedCalculationId)
@@ -241,12 +245,15 @@ export function CalculationWorkbench({
   const sourceEditorRef = useRef<CalculationSourceEditorHandle | null>(null)
   const dirty = !sameDraft(draft, baseline)
   const calculationWorkspaceSession = agentWorkspaceSession * 1_000_000 + agentTargetSession
+  const demoSandbox = sourceEditable && !persistable
   const baseSaveDisabledReason = !authenticated
     ? '로그인 후 사용할 수 있습니다.'
     : experimentId === null
       ? '먼저 저장된 Experiment를 여세요.'
-      : !editable
-        ? '이 Experiment의 Calculation을 저장할 권한이 없습니다.'
+      : !persistable
+        ? demoSandbox
+          ? '공개 Demo Calculation은 저장할 수 없습니다. 로컬 미리보기만 사용할 수 있습니다.'
+          : '이 Experiment의 Calculation을 저장할 권한이 없습니다.'
         : contextPending || selectedCalculationId !== draft.id
           ? 'Calculation context를 불러오는 중입니다.'
           : calculationDataBusy
@@ -514,7 +521,7 @@ export function CalculationWorkbench({
         ...calculationChangedLines(current.sourceCode, finalDocument.sourceCode),
       }
       if (
-        !editableRef.current ||
+        !sourceEditableRef.current ||
         calculationDataBusyRef.current ||
         currentHash !== request.baseHash ||
         request.workspaceSession !== calculationWorkspaceSession
@@ -546,7 +553,7 @@ export function CalculationWorkbench({
       sourceCode: draft.sourceCode,
       baseHash: agentIdentity?.sourceCode === draft.sourceCode ? agentIdentity.hash : null,
       context: agentContext,
-      editable: editable && !calculationDataBusy,
+      editable: sourceEditable && !calculationDataBusy,
       targetLabel: draft.id === null ? 'Calculation New' : `Calculation #${draft.id}`,
       workspaceSession: calculationWorkspaceSession,
       apply: applyAgentSource,
@@ -558,7 +565,7 @@ export function CalculationWorkbench({
     calculationDataBusy,
     calculationWorkspaceSession,
     draft,
-    editable,
+    sourceEditable,
     experimentId,
   ])
 
@@ -784,8 +791,12 @@ export function CalculationWorkbench({
 
   const save = useCallback(
     async (values?: CalculationSaveValues) => {
-      if (!authenticated || !editable) {
-        toast.error('이 Experiment의 Calculation을 저장할 권한이 없습니다.')
+      if (!authenticated || !persistable) {
+        toast.error(
+          demoSandbox
+            ? '공개 Demo Calculation은 저장할 수 없습니다. 로컬 미리보기만 사용할 수 있습니다.'
+            : '이 Experiment의 Calculation을 저장할 권한이 없습니다.',
+        )
         return false
       }
       if (!experimentId) {
@@ -890,12 +901,13 @@ export function CalculationWorkbench({
       draft,
       dependencyState.error,
       dependencyState.names,
-      editable,
+      demoSandbox,
       experimentId,
       experimentRecords,
       measurementId,
       onCalculationIdChange,
       onUsageChanged,
+      persistable,
       queryClient,
       preview,
       requiresPreflight,
@@ -905,21 +917,29 @@ export function CalculationWorkbench({
   )
 
   const openSaveDialog = useCallback(() => {
+    if (!authenticated) {
+      onRequestLogin()
+      return
+    }
     if (saveDisabledReason) {
       toast.error(saveDisabledReason)
       return
     }
     setSaveDialogOpen(true)
-  }, [saveDisabledReason])
+  }, [authenticated, onRequestLogin, saveDisabledReason])
 
   const saveFromShortcut = useCallback(() => {
+    if (!authenticated) {
+      onRequestLogin()
+      return
+    }
     if (saveDisabledReason) {
       toast.error(saveDisabledReason)
       return
     }
     if (draft.id === null) openSaveDialog()
     else void save()
-  }, [draft.id, openSaveDialog, save, saveDisabledReason])
+  }, [authenticated, draft.id, onRequestLogin, openSaveDialog, save, saveDisabledReason])
 
   useEffect(() => {
     if (appliedSaveCommandRef.current === saveCommand) return
@@ -937,8 +957,9 @@ export function CalculationWorkbench({
   )
 
   const deleteCurrent = async () => {
-    if (saving || deleting || !editable) return
+    if (saving || deleting) return
     if (draft.id === null) {
+      if (!sourceEditable) return
       if (dirty && !window.confirm('저장하지 않은 새 Calculation draft를 버릴까요?')) return
       const next = emptyCalculationDraft(experimentRecords[0]?.name)
       setDraft(next)
@@ -949,6 +970,7 @@ export function CalculationWorkbench({
       setAgentTargetSession((value) => value + 1)
       return
     }
+    if (!persistable) return
     if (
       !window.confirm(
         `${draft.name || `Calculation #${draft.id}`}을 영구 삭제할까요?${dirty ? '\n저장하지 않은 편집도 함께 사라집니다.' : ''}`,
@@ -1016,8 +1038,8 @@ export function CalculationWorkbench({
   }
 
   const sourceEditorDisabled =
-    !editable || saving || deleting || calculationDataBusy || contextPending || selectedCalculationId !== draft.id
-  const insertDisabledReason = !editable
+    !sourceEditable || saving || deleting || calculationDataBusy || contextPending || selectedCalculationId !== draft.id
+  const insertDisabledReason = !sourceEditable
     ? '이 Experiment의 Calculation source를 편집할 권한이 없습니다.'
     : saving
       ? 'Calculation 저장이 진행 중입니다.'
@@ -1061,7 +1083,7 @@ export function CalculationWorkbench({
               <div className="flex gap-1">
                 <Button
                   aria-label="새 Calculation"
-                  disabled={!editable || experimentId === null || saving || deleting || calculationDataBusy}
+                  disabled={!sourceEditable || experimentId === null || saving || deleting || calculationDataBusy}
                   size="icon"
                   title="New"
                   type="button"
@@ -1072,7 +1094,12 @@ export function CalculationWorkbench({
                 </Button>
                 <Button
                   aria-label="선택한 Calculation 삭제"
-                  disabled={!editable || saving || deleting || calculationDataBusy || (draft.id === null && !dirty)}
+                  disabled={
+                    saving ||
+                    deleting ||
+                    calculationDataBusy ||
+                    (draft.id === null ? !sourceEditable || !dirty : !persistable)
+                  }
                   size="icon"
                   title="Delete"
                   type="button"
@@ -1129,6 +1156,11 @@ export function CalculationWorkbench({
         columnRatios={columnRatios}
         editor={
           <section className="flex h-full min-h-0 flex-col" onKeyDown={editorKeyDown}>
+            {demoSandbox ? (
+              <div className="shrink-0 border-b bg-sky-50 px-3 py-1.5 text-xs text-sky-950">
+                Demo 원본과 저장 데이터는 읽기 전용입니다. 이 source 변경은 로컬 Preview에만 적용됩니다.
+              </div>
+            ) : null}
             {agentChange ? (
               <div className="flex shrink-0 items-center justify-between gap-2 border-b bg-amber-50 px-3 py-1.5 text-xs text-amber-950">
                 <span className="flex min-w-0 items-center gap-2">
@@ -1222,7 +1254,7 @@ export function CalculationWorkbench({
                     invalidatePreview('Measurement 선택을 해제하는 중…')
                     onClearMeasurement()
                   }}
-                  onDelete={onDeleteMeasurements}
+                  onDelete={persistable ? onDeleteMeasurements : undefined}
                   onSelect={(row) => {
                     invalidatePreview('Measurement RecordedData를 불러오는 중…')
                     onSelectMeasurement(row)
@@ -1256,9 +1288,13 @@ export function CalculationWorkbench({
                 chartRatio={outputChartRatio}
                 comparisonMessage={
                   draft.id === null
-                    ? 'Calculation을 저장하면 다른 Measurement와 비교할 수 있습니다.'
+                    ? demoSandbox
+                      ? '새 로컬 Draft는 Preview만 표시하며 Demo에 저장되지 않습니다.'
+                      : 'Calculation을 저장하면 다른 Measurement와 비교할 수 있습니다.'
                     : dirty
-                      ? '수정한 Calculation을 저장한 뒤 비교 데이터를 다시 계산하세요.'
+                      ? demoSandbox
+                        ? '로컬 수정 중에는 Preview만 표시합니다. 저장된 비교 데이터는 원본 source 기준입니다.'
+                        : '수정한 Calculation을 저장한 뒤 비교 데이터를 다시 계산하세요.'
                       : scalarQuery.isFetching
                         ? '저장된 비교 데이터를 불러오는 중…'
                         : scalarQuery.isError

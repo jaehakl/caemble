@@ -204,9 +204,9 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
     content: [
       '파라미터 없이 Workbench를 열면 **Prediction**에서 시작합니다. 왼쪽 위 Experiment 선택기는 로그인 사용자의 **내 Experiment**를 먼저, 큐레이션된 **Demo**를 다음에 표시합니다. 비로그인 사용자는 대표 Demo가 자동으로 열리며 `?experiment=…&section=prediction` URL을 그대로 공유할 수 있습니다.',
       '',
-      '상단 **Prediction** 메뉴는 현재 Experiment의 저장된 Recorded Measurement를 학습 데이터로 사용합니다. 왼쪽 **Vars**와 오른쪽 **Calculation Data** 사이의 중앙 3D Viewer 및 하단 AI Agent/Console은 다른 Workbench와 같은 상태로 유지됩니다. Demo의 **Demo · 읽기 전용** 표시는 원본 source와 데이터를 수정할 수 없다는 뜻이며, Vars와 Target 조작은 로컬 Candidate에만 적용됩니다.',
+      '상단 **Prediction** 메뉴는 현재 Experiment의 저장된 Recorded Measurement를 학습 데이터로 사용합니다. 왼쪽 **Vars**와 오른쪽 **Calculation Data** 사이의 중앙 3D Viewer 및 하단 AI Agent/Console은 다른 Workbench와 같은 상태로 유지됩니다. Demo 표시는 원본 source와 데이터를 수정할 수 없다는 뜻이며, Vars와 Target 조작은 로컬 Candidate에만 적용됩니다.',
       '',
-      '공개 Demo에서는 로그인하지 않아도 Forward Prediction, Inverse Design, Calculation 데이터 탐색, Analysis 그래프·표·CSV와 Experiment/Calculation source를 볼 수 있습니다. **Save & Run**, Simulation, 누락 데이터 계산, Measurement·Calculation 저장과 삭제는 로그인 및 소유권이 필요합니다. **Edit a copy**는 source bundle만 새 로컬 Draft로 복제하며 원격 ID, Measurement, Calculation과 공개 Demo 데이터 연결은 복제하지 않습니다.',
+      '공개 Demo에서는 로그인하지 않아도 Forward Prediction, Inverse Design, Calculation 데이터 탐색, Analysis 그래프·표·CSV와 Experiment source를 볼 수 있습니다. Calculation 탭에서는 Demo의 Measurement 점과 RecordedData를 선택하고, 기존 Calculation source를 수정하거나 새 로컬 Draft를 만들어 Output을 즉시 미리볼 수 있습니다. 이 편집은 현재 Workbench에만 남고 원본 Calculation과 저장 데이터는 바뀌지 않으며, 탭을 떠날 때 폐기 확인 후 새로고침하면 원본으로 돌아갑니다. Demo 원본의 **Save & Run**, Simulation, 누락 데이터 계산, Measurement·Calculation 저장과 삭제는 로그인 상태에서도 사용할 수 없습니다. 일반 Experiment에서 이 작업들은 로그인과 기존 소유권이 필요합니다. **Edit a copy**는 Experiment source bundle만 새 로컬 Draft로 복제하며 원격 ID, Measurement, Calculation과 공개 Demo 데이터 연결은 복제하지 않습니다.',
       '',
       '### 마지막 편집이 예측 방향을 정합니다',
       '',

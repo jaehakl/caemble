@@ -17,6 +17,7 @@ import { ConfirmWorkbenchDialog } from '@/features/cae-workbench/dialogs'
 import { ExperimentEditor, SourcePathPickerDialog } from '@/features/cae-workbench/editors'
 import { ExperimentManager } from '@/features/cae-workbench/experiments'
 import {
+  calculationAccessPolicy,
   CalculationWorkbench,
   type CalculationAgentBridge,
   type CalculationSaveState,
@@ -87,6 +88,12 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const queryClient = useQueryClient()
   const runtimeConsole = useMemo(() => createRuntimeConsoleStore(), [])
   const workbench = useCaeWorkbenchState(auth.user, auth.isAuthenticated, { onActivity: runtimeConsole.append })
+  const experimentDataReadable = auth.isAuthenticated || workbench.experimentIsDemo
+  const calculationAccess = calculationAccessPolicy({
+    dataReadable: experimentDataReadable,
+    experimentIsDemo: workbench.experimentIsDemo,
+    experimentManageable: workbench.experimentManageable,
+  })
   const [calculationDirty, setCalculationDirty] = useState(false)
   const [calculationSaveCommand, setCalculationSaveCommand] = useState(0)
   const [calculationSaveState, setCalculationSaveState] = useState<CalculationSaveState>({
@@ -312,7 +319,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const chrome = useCaePageChrome({
     analysisTab: page.analysisTab,
     authenticated: auth.isAuthenticated,
-    dataReadable: auth.isAuthenticated || workbench.experimentIsDemo,
+    dataReadable: experimentDataReadable,
     calculationDirty,
     calculationSaveState,
     experimentAuthoringState,
@@ -521,7 +528,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       <Suspense fallback={<PaneLoading label="Analysis를 불러오는 중입니다." />}>
         <AnalysisWorkspace
           command={analysisCommand}
-          dataReadable={auth.isAuthenticated || workbench.experimentIsDemo}
+          dataReadable={experimentDataReadable}
           embedded
           experimentId={workbench.experimentId}
           settingsContainer={analysisSettingsContainer}
@@ -553,7 +560,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             <PredictionWorkspace
               active={page.activeSection === 'prediction'}
               authenticated={auth.isAuthenticated}
-              dataReadable={auth.isAuthenticated || workbench.experimentIsDemo}
+              dataReadable={experimentDataReadable}
               command={predictionCommand}
               onActivity={runtimeConsole.append}
               onChromeStateChange={setPredictionState}
@@ -694,7 +701,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         ) : page.activeSection === 'measurement' ? (
           <CalculationWorkbench
             authenticated={auth.isAuthenticated}
-            dataReadable={auth.isAuthenticated || workbench.experimentIsDemo}
+            dataReadable={experimentDataReadable}
             agentWorkspaceSession={workbench.agentWorkspaceSession}
             bottom={bottomDock}
             bottomHeightRatio={page.bottomHeightRatio}
@@ -714,7 +721,8 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             candidateVars={workbench.candidateVars}
             columnRatios={page.calculationColumnRatios ?? [0.22, 0.26, 0.26, 0.26]}
             contextPending={page.calculationContextPending}
-            editable={workbench.experimentManageable}
+            persistable={calculationAccess.persistable}
+            sourceEditable={calculationAccess.sourceEditable}
             experimentId={workbench.experimentId}
             measurementId={workbench.selection.measurement?.id ?? null}
             measurementLoading={workbench.selection.loading}
@@ -734,6 +742,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             onOutputChartRatioChange={(calculationOutputChartRatio) =>
               page.setLayout((current) => ({ ...current, calculationOutputChartRatio }))
             }
+            onRequestLogin={() => page.setDialog('account')}
             onRowRatiosChange={(calculationLeftRowRatios) =>
               page.setLayout((current) => ({ ...current, calculationLeftRowRatios }))
             }
@@ -797,7 +806,11 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             <Badge className="h-5 rounded-sm px-1.5">v{workbench.experimentVersion}</Badge>
           ) : null}
           {workbench.experimentIsDemo ? (
-            <Badge className="h-5 rounded-sm bg-primary px-1.5 text-primary-foreground">Demo · 읽기 전용</Badge>
+            <Badge className="h-5 rounded-sm bg-primary px-1.5 text-primary-foreground">
+              {page.activeSection === 'measurement'
+                ? 'Demo · 원본 데이터 읽기 전용 · Calculation 로컬 미리보기'
+                : 'Demo · 읽기 전용'}
+            </Badge>
           ) : null}
           {workbench.experimentDirty ? (
             <Badge className="h-5 rounded-sm bg-destructive px-1.5 text-white">Dirty</Badge>
