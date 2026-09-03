@@ -51,7 +51,12 @@ async function ensureCsrfToken() {
 
 async function send<T>(method: HttpMethod, url: string, data?: unknown, retryCsrf = true): Promise<T> {
   const csrfProtected =
-    method !== 'get' && (url.startsWith('/web/') || url.startsWith('/ai/') || url.startsWith('/experiment/'))
+    method !== 'get' &&
+    (url.startsWith('/web/') ||
+      url.startsWith('/ai/') ||
+      url.startsWith('/experiment/') ||
+      url.startsWith('/admin/') ||
+      url.startsWith('/user_admin/'))
   const headers = new Headers(data === undefined ? undefined : { 'content-type': 'application/json' })
   if (csrfProtected) headers.set('X-CSRF-Token', await ensureCsrfToken())
   const response = await fetch(`${API_URL}${url}`, {
