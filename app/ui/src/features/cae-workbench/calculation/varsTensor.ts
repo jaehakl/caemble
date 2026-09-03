@@ -64,6 +64,48 @@ export function validateVarsChanges(
   return Object.freeze(normalized)
 }
 
+export function compatibleVarsResetValues(
+  dataset: readonly Readonly<Vars>[],
+  schema: Readonly<Record<string, VarsSchemaEntry>>,
+): Readonly<Record<string, Tensor | undefined>> {
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(schema).map(([key, entry]) => {
+        if (entry.min <= 0 && entry.max >= 0) {
+          return [key, varsTensorFromFlat(Array(tensorElementCount(entry.shape)).fill(0), entry.shape)]
+        }
+        const compatible = dataset.flatMap((vars) => {
+          const value = vars[key]
+          if (value === undefined) return []
+          try {
+            const row = flattenVarsTensor(value, entry.shape, `vars.${key}`)
+            return row.every((member) => member >= entry.min && member <= entry.max) ? [row] : []
+          } catch {
+            return []
+          }
+        })
+        if (!compatible.length) return [key, undefined]
+        const reset = Array.from({ length: compatible[0].length }, (_item, coordinate) => {
+          const values = compatible.map((row) => row[coordinate]).sort((left, right) => left - right)
+          const median =
+            values.length % 2 === 1
+              ? values[(values.length - 1) / 2]
+              : (values[values.length / 2 - 1] + values[values.length / 2]) / 2
+          const counts = new Map<number, number>()
+          values.forEach((value) => counts.set(value, (counts.get(value) ?? 0) + 1))
+          return [...counts.entries()].sort(
+            ([leftValue, leftCount], [rightValue, rightCount]) =>
+              rightCount - leftCount ||
+              Math.abs(leftValue - median) - Math.abs(rightValue - median) ||
+              leftValue - rightValue,
+          )[0][0]
+        })
+        return [key, varsTensorFromFlat(reset, entry.shape)]
+      }),
+    ),
+  )
+}
+
 export function clampVarsValue(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value))
 }
@@ -123,6 +165,37 @@ export function updateTensorRectangle(
     for (let column = rectangle.columnStart; column <= rectangle.columnEnd; column += 1) {
       const index = sliceOffset + row * columns + column
       next[index] = update(next[index])
+    }
+  }
+  return next
+}
+
+export function updateTensorBrush(
+  values: readonly number[],
+  rows: number,
+  columns: number,
+  sliceIndex: number,
+  from: Readonly<{ row: number; column: number }>,
+  to: Readonly<{ row: number; column: number }>,
+  radius: number,
+  update: (value: number, index: number) => number,
+) {
+  const next = [...values]
+  const rowDelta = to.row - from.row
+  const columnDelta = to.column - from.column
+  const pathSteps = Math.max(Math.abs(rowDelta), Math.abs(columnDelta))
+  for (let step = 0; step <= pathSteps; step += 1) {
+    const row = pathSteps === 0 ? from.row : Math.round(from.row + (rowDelta * step) / pathSteps)
+    const column = pathSteps === 0 ? from.column : Math.round(from.column + (columnDelta * step) / pathSteps)
+    for (let rowOffset = -radius; rowOffset <= radius; rowOffset += 1) {
+      for (let columnOffset = -radius; columnOffset <= radius; columnOffset += 1) {
+        if (rowOffset * rowOffset + columnOffset * columnOffset > radius * radius) continue
+        const targetRow = row + rowOffset
+        const targetColumn = column + columnOffset
+        if (targetRow < 0 || targetRow >= rows || targetColumn < 0 || targetColumn >= columns) continue
+        const index = sliceIndex * rows * columns + targetRow * columns + targetColumn
+        next[index] = update(next[index], index)
+      }
     }
   }
   return next

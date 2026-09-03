@@ -20,7 +20,7 @@ import { calculationSourceHash, runCalculation } from '@/lib/calculation'
 import type { Tensor, Vars, VarsSchemaEntry } from '@/lib/cad'
 import type { CaeWorkbenchState } from '../state/useCaeWorkbenchState'
 import { buildCalculationRecordedData } from '../calculation/calculationRecordedData'
-import { varsTensorFromFlat } from '../calculation/varsTensor'
+import { compatibleVarsResetValues, varsTensorFromFlat } from '../calculation/varsTensor'
 import { recordedDataRules } from '../measurement/recordedData'
 import { PredictionWorkerClient, PredictionWorkerRestartError } from './client'
 import {
@@ -60,6 +60,7 @@ import type {
   PredictionWeighting,
 } from './knn'
 import type { PredictionWorkerModelProfile } from './protocol'
+import type { PredictionSamplingRange } from './sampling'
 
 type SavedCalculation = CalculationRecord & Readonly<{ id: number }>
 type SavedMeasurement = MeasurementRecord & Readonly<{ id: number }>
@@ -67,14 +68,17 @@ type VarsSchema = Readonly<Record<string, VarsSchemaEntry>>
 
 export type PredictionWorkspaceCommand = Readonly<{
   id: number
-  type: 'settings' | 'details' | 'validate' | 'cancel'
+  type: 'settings' | 'details' | 'validate' | 'sample' | 'cancel'
+  sampleCount?: number
 }>
 
 export type PredictionWorkspaceChromeState = Readonly<{
   busy: boolean
+  canSample: boolean
   canValidate: boolean
   direction: PredictionDirection
   status: string
+  sampleDisabledReason?: string
   validateDisabledReason?: string
 }>
 
@@ -100,6 +104,16 @@ type ModelCache = Readonly<{
   generation: number
   profile: PredictionWorkerModelProfile
   workerEpoch: number
+}>
+
+type SamplingProgress = Readonly<{
+  attempt: number
+  failures: number
+  phase: 'candidate' | 'simulation' | 'stopping'
+  recorded: number
+  sessionId: string
+  successes: number
+  total: number
 }>
 
 type ForwardModelEntry = ModelCache &
@@ -326,6 +340,7 @@ export function PredictionWorkspace({
   const transactionRef = useRef(0)
   const validationRevisionRef = useRef(0)
   const validationActiveRef = useRef(false)
+  const samplingRevisionRef = useRef(0)
   const ownedCalculationDataOperationRef = useRef(false)
   const checkingFingerprintRef = useRef(0)
   const previousActiveRef = useRef(active)
@@ -388,10 +403,14 @@ export function PredictionWorkspace({
   const [forwardVarsFingerprint, setForwardVarsFingerprint] = useState<string | null>(null)
   const [inverseVarsFingerprint, setInverseVarsFingerprint] = useState<string | null>(null)
   const [validation, setValidation] = useState<ValidationResult | null>(null)
+  const [samplingProgress, setSamplingProgress] = useState<SamplingProgress | null>(null)
+  const samplingProgressRef = useRef(samplingProgress)
+  const [samplingRanges, setSamplingRanges] = useState<Readonly<Record<string, PredictionSamplingRange>>>({})
   const calculationValuesRef = useRef(calculationValues)
   const busyRef = useRef(busy)
   calculationValuesRef.current = calculationValues
   busyRef.current = busy
+  samplingProgressRef.current = samplingProgress
   cancelMeasurementRef.current = workbench.measurementActions.cancel
   cancelCalculationDataRef.current = workbench.calculationDataActions.cancel
 
@@ -407,6 +426,16 @@ export function PredictionWorkspace({
   const currentCandidateFingerprint = candidateFingerprint(candidateVars)
   const profile = profiles[direction] ?? null
   const candidateFingerprintRef = useRef(currentCandidateFingerprint)
+  const candidateVarsRef = useRef(candidateVars)
+  const experimentDocumentRef = useRef(workbench.experimentDocument)
+  const measurementActionsRef = useRef(workbench.measurementActions)
+  const setCandidateVariablesRef = useRef(workbench.setCandidateVariables)
+  const sourceIdentity = predictionFingerprint([
+    experimentId,
+    workbench.experiment?.sourceBundle.files ?? null,
+    workbench.experimentRecord?.source_hash ?? null,
+  ])
+  const sourceIdentityRef = useRef(sourceIdentity)
   const selectedCalculations = useMemo(
     () =>
       contextExperimentMatches
@@ -417,6 +446,45 @@ export function PredictionWorkspace({
   contextRef.current = context
   experimentIdRef.current = experimentId
   candidateFingerprintRef.current = currentCandidateFingerprint
+  candidateVarsRef.current = candidateVars
+  experimentDocumentRef.current = workbench.experimentDocument
+  measurementActionsRef.current = workbench.measurementActions
+  setCandidateVariablesRef.current = workbench.setCandidateVariables
+  sourceIdentityRef.current = sourceIdentity
+
+  const samplingRangeResetKey = predictionFingerprint([
+    experimentId,
+    Object.entries(varsSchema ?? {}).map(([key, entry]) => [key, entry.shape, entry.min, entry.max]),
+  ])
+  const defaultSamplingRanges = useMemo(
+    () =>
+      Object.freeze(
+        Object.fromEntries(
+          Object.entries(varsSchema ?? {}).map(([key, entry]) => [
+            key,
+            Object.freeze({ min: entry.min, max: entry.max }),
+          ]),
+        ),
+      ),
+    [samplingRangeResetKey],
+  )
+  useEffect(() => setSamplingRanges(defaultSamplingRanges), [defaultSamplingRanges, samplingRangeResetKey])
+  const effectiveSamplingRanges =
+    Object.keys(samplingRanges).length === Object.keys(defaultSamplingRanges).length
+      ? samplingRanges
+      : defaultSamplingRanges
+  const resetValues = useMemo(
+    () =>
+      compatibleVarsResetValues(
+        contextExperimentMatches
+          ? context.measurements.flatMap((measurement) =>
+              measurement.vars ? [measurement.vars as Readonly<Vars>] : [],
+            )
+          : [],
+        varsSchema ?? {},
+      ),
+    [context, contextExperimentMatches, varsSchema],
+  )
 
   useEffect(() => {
     if (!guideProgress.forward || !guideProgress.inverse) return
@@ -456,6 +524,7 @@ export function PredictionWorkspace({
     loadRevisionRef.current += 1
     transactionRef.current += 1
     validationRevisionRef.current += 1
+    samplingRevisionRef.current += 1
     primaryRevisionRef.current += 1
     calculationAbortRef.current?.abort()
     calculationAbortRef.current = null
@@ -472,6 +541,13 @@ export function PredictionWorkspace({
       setDataStale(true)
     }
     validationActiveRef.current = false
+    if (samplingProgressRef.current) {
+      cancelMeasurementRef.current()
+      if (!predictionCanceled) clientRef.current?.reset()
+      clearModelCaches()
+      if (samplingProgressRef.current.recorded > 0) setFreshnessPending(true)
+      setSamplingProgress(null)
+    }
     setBusy(false)
     setValidating(false)
     setRetryingValidation(false)
@@ -490,138 +566,144 @@ export function PredictionWorkspace({
     if (wasActive && !active && (busyRef.current || ownedCalculationDataOperationRef.current)) cancelCurrent()
   }, [active, cancelCurrent, setFreshnessPending])
 
-  const reloadData = useCallback(async () => {
-    if (!dataReadable || experimentId === null) {
-      setContext(null)
-      setStatus(
-        experimentId === null
-          ? 'Prediction 가능한 Experiment를 선택하세요.'
-          : '이 Experiment의 데이터를 읽을 수 없습니다.',
-      )
-      return
-    }
-    cancelCurrent()
-    const revision = ++loadRevisionRef.current
-    setFreshnessPending(true)
-    setBusy(true)
-    setStatus('Measurement와 CalculationData를 불러오는 중…')
-    try {
-      const listRequest = {
-        ...getListRequest('visible'),
-        limit: null,
-        filter: { experiment_id: [experimentId, experimentId] },
+  const reloadData = useCallback(
+    async (options: Readonly<{ automatic?: boolean; preserveValidation?: boolean }> = {}) => {
+      if (!dataReadable || experimentId === null) {
+        setContext(null)
+        setStatus(
+          experimentId === null
+            ? 'Prediction 가능한 Experiment를 선택하세요.'
+            : '이 Experiment의 데이터를 읽을 수 없습니다.',
+        )
+        return
       }
-      const [calculationResponse, measurementResponse, experimentRecordResponse, analysis] = await Promise.all([
-        dbTables.Calculation.listRows(listRequest),
-        dbTables.Measurement.listRows(listRequest),
-        dbTables.ExperimentRecord.listRows({ ...listRequest, experiment_id: experimentId }),
-        dbTables.CalculationData.analysis(experimentId),
-      ])
-      if (revision !== loadRevisionRef.current) return
-      transactionRef.current += 1
-      primaryRevisionRef.current += 1
-      calculationAbortRef.current?.abort()
-      calculationAbortRef.current = null
-      clientRef.current?.reset()
-      const calculations = calculationResponse.items.filter(
-        (row): row is SavedCalculation => typeof row.id === 'number',
-      )
-      const measurements = measurementResponse.items.filter(
-        (row): row is SavedMeasurement => typeof row.id === 'number' && row.recorded_at !== null,
-      )
-      const experimentRecords = Object.freeze(experimentRecordResponse.items)
-      const readyCalculations = calculations.filter(
-        (row) => row.contract_status === 'ready' && row.output_layout && row.source_hash,
-      )
-      const fingerprint = predictionFingerprint([
-        experimentId,
-        analysis.fingerprint,
-        measurements.map((row) => [row.id, row.updated_at, row.recorded_at]),
-        experimentRecords.map((record) => [record.id, record.contract_hash]),
-        calculations.map((row) => [
-          row.id,
-          row.updated_at,
-          row.source_hash,
-          row.output_layout,
-          row.experiment_record_ids,
-          row.contract_status,
-        ]),
-      ])
-      setContext(
-        Object.freeze({
-          analysis,
-          calculations: Object.freeze(calculations),
+      cancelCurrent()
+      const revision = ++loadRevisionRef.current
+      setFreshnessPending(true)
+      setBusy(true)
+      setStatus('Measurement와 CalculationData를 불러오는 중…')
+      try {
+        const listRequest = {
+          ...getListRequest('visible'),
+          limit: null,
+          filter: { experiment_id: [experimentId, experimentId] },
+        }
+        const [calculationResponse, measurementResponse, experimentRecordResponse, analysis] = await Promise.all([
+          dbTables.Calculation.listRows(listRequest),
+          dbTables.Measurement.listRows(listRequest),
+          dbTables.ExperimentRecord.listRows({ ...listRequest, experiment_id: experimentId }),
+          dbTables.CalculationData.analysis(experimentId),
+        ])
+        if (revision !== loadRevisionRef.current) return
+        transactionRef.current += 1
+        primaryRevisionRef.current += 1
+        calculationAbortRef.current?.abort()
+        calculationAbortRef.current = null
+        clientRef.current?.reset()
+        const calculations = calculationResponse.items.filter(
+          (row): row is SavedCalculation => typeof row.id === 'number',
+        )
+        const measurements = measurementResponse.items.filter(
+          (row): row is SavedMeasurement => typeof row.id === 'number' && row.recorded_at !== null,
+        )
+        const experimentRecords = Object.freeze(experimentRecordResponse.items)
+        const readyCalculations = calculations.filter(
+          (row) => row.contract_status === 'ready' && row.output_layout && row.source_hash,
+        )
+        const fingerprint = predictionFingerprint([
           experimentId,
-          experimentRecords,
-          fingerprint,
-          measurements: Object.freeze(measurements),
-        }),
-      )
-      clearModelCaches()
-      inverseRowsRef.current = null
-      setProfiles({})
-      setNeighborsByDirection({})
-      setLastResult(null)
-      setForwardVarsFingerprint(null)
-      setInverseVarsFingerprint(null)
-      setSurrogateValues({})
-      setSurrogateErrors({})
-      setCalculationErrors({})
-      setDataStale(false)
-      setFreshnessPending(false)
-      skipNextPredictionBusyCheckRef.current = true
-      setValidation(null)
-      lastCandidateRef.current = currentCandidateFingerprint
-      setSetup((current) => {
-        const valid = current.calculationIds.filter((id) => readyCalculations.some((row) => row.id === id))
-        const fallback =
-          valid.length > 0
-            ? valid
-            : [
-                selectedCalculationId && readyCalculations.some((row) => row.id === selectedCalculationId)
-                  ? selectedCalculationId
-                  : readyCalculations[0]?.id,
-              ].filter((id): id is number => typeof id === 'number')
-        return Object.freeze({
-          ...current,
-          calculationIds: Object.freeze(fallback),
-          calculationWeights: Object.freeze(
-            Object.fromEntries(fallback.map((id) => [id, current.calculationWeights[id] ?? 1])),
-          ),
+          analysis.fingerprint,
+          measurements.map((row) => [row.id, row.updated_at, row.recorded_at]),
+          experimentRecords.map((record) => [record.id, record.contract_hash]),
+          calculations.map((row) => [
+            row.id,
+            row.updated_at,
+            row.source_hash,
+            row.output_layout,
+            row.experiment_record_ids,
+            row.contract_status,
+          ]),
+        ])
+        setContext(
+          Object.freeze({
+            analysis,
+            calculations: Object.freeze(calculations),
+            experimentId,
+            experimentRecords,
+            fingerprint,
+            measurements: Object.freeze(measurements),
+          }),
+        )
+        clearModelCaches()
+        inverseRowsRef.current = null
+        setProfiles({})
+        setNeighborsByDirection({})
+        setLastResult(null)
+        setForwardVarsFingerprint(null)
+        setInverseVarsFingerprint(null)
+        setSurrogateValues({})
+        setSurrogateErrors({})
+        setCalculationErrors({})
+        setDataStale(false)
+        setFreshnessPending(false)
+        skipNextPredictionBusyCheckRef.current = true
+        if (!options.preserveValidation) setValidation(null)
+        lastCandidateRef.current = currentCandidateFingerprint
+        setSetup((current) => {
+          const valid = current.calculationIds.filter((id) => readyCalculations.some((row) => row.id === id))
+          const fallback =
+            valid.length > 0
+              ? valid
+              : [
+                  selectedCalculationId && readyCalculations.some((row) => row.id === selectedCalculationId)
+                    ? selectedCalculationId
+                    : readyCalculations[0]?.id,
+                ].filter((id): id is number => typeof id === 'number')
+          return Object.freeze({
+            ...current,
+            calculationIds: Object.freeze(fallback),
+            calculationWeights: Object.freeze(
+              Object.fromEntries(fallback.map((id) => [id, current.calculationWeights[id] ?? 1])),
+            ),
+          })
         })
-      })
-      setSetupDraft((current) => {
-        const valid = current.calculationIds.filter((id) => readyCalculations.some((row) => row.id === id))
-        return Object.freeze({
-          ...current,
-          calculationIds: Object.freeze(valid),
-          calculationWeights: Object.freeze(
-            Object.fromEntries(valid.map((id) => [id, current.calculationWeights[id] ?? 1])),
-          ),
+        setSetupDraft((current) => {
+          const valid = current.calculationIds.filter((id) => readyCalculations.some((row) => row.id === id))
+          return Object.freeze({
+            ...current,
+            calculationIds: Object.freeze(valid),
+            calculationWeights: Object.freeze(
+              Object.fromEntries(valid.map((id) => [id, current.calculationWeights[id] ?? 1])),
+            ),
+          })
         })
-      })
-      setStatus(
-        measurements.length
-          ? `${measurements.length.toLocaleString()}개 Measurement 준비됨`
-          : 'Recorded Measurement가 없습니다.',
-      )
-      setSetupAppliedRevision((current) => current + 1)
-    } catch (cause: unknown) {
-      if (revision !== loadRevisionRef.current) return
-      const message = cause instanceof Error ? cause.message : String(cause)
-      setStatus(message)
-      toast.error(message)
-    } finally {
-      if (revision === loadRevisionRef.current) setBusy(false)
-    }
-  }, [
-    dataReadable,
-    cancelCurrent,
-    currentCandidateFingerprint,
-    experimentId,
-    selectedCalculationId,
-    setFreshnessPending,
-  ])
+        setStatus(
+          measurements.length
+            ? `${measurements.length.toLocaleString()}개 Measurement 준비됨`
+            : 'Recorded Measurement가 없습니다.',
+        )
+        setSetupAppliedRevision((current) => current + 1)
+      } catch (cause: unknown) {
+        if (revision !== loadRevisionRef.current) return
+        const message = cause instanceof Error ? cause.message : String(cause)
+        setStatus(message)
+        if (options.automatic) setDataStale(true)
+        setFreshnessPending(false)
+        toast.error(message)
+      } finally {
+        if (revision === loadRevisionRef.current) setBusy(false)
+      }
+    },
+    [
+      dataReadable,
+      cancelCurrent,
+      currentCandidateFingerprint,
+      experimentId,
+      selectedCalculationId,
+      setFreshnessPending,
+      setDataStale,
+    ],
+  )
 
   useLayoutEffect(() => {
     validationRevisionRef.current += 1
@@ -724,16 +806,9 @@ export function PredictionWorkspace({
         ]),
       ])
       if (fingerprint !== context.fingerprint) {
-        transactionRef.current += 1
-        primaryRevisionRef.current += 1
-        calculationAbortRef.current?.abort()
-        calculationAbortRef.current = null
-        clientRef.current?.reset()
-        clearModelCaches()
-        setForwardVarsFingerprint(null)
-        setInverseVarsFingerprint(null)
-        setDataStale(true)
-        setStatus('Measurement 또는 Calculation이 변경되었습니다. Reload Data로 모델을 갱신하세요.')
+        setStatus('Measurement 또는 Calculation 변경 감지 · 모델을 자동 갱신하는 중…')
+        await reloadData({ automatic: true, preserveValidation: true })
+        return
       }
       setFreshnessPending(false)
     } catch {
@@ -743,10 +818,12 @@ export function PredictionWorkspace({
         experimentIdRef.current === experimentId &&
         contextRef.current === context
       ) {
+        setDataStale(true)
+        setFreshnessPending(false)
         setStatus('Prediction 데이터 최신성을 확인하지 못했습니다. Reload Data를 실행하세요.')
       }
     }
-  }, [context, dataReadable, experimentId, setFreshnessPending])
+  }, [context, dataReadable, experimentId, reloadData, setFreshnessPending])
 
   useEffect(() => {
     if (!active) return
@@ -1493,6 +1570,246 @@ export function PredictionWorkspace({
     workbench.experimentManageable,
   ])
 
+  const samplingDisabledReason = useMemo(() => {
+    if (!authenticated) return '로그인 후 sampling할 수 있습니다.'
+    if (!workbench.experimentManageable) return '이 Experiment의 데이터를 변경할 권한이 없습니다.'
+    if (!contextExperimentMatches || !varsSchema) return '현재 Experiment의 Prediction 데이터를 불러오는 중입니다.'
+    if (freshnessPending) return 'Prediction 데이터 최신성을 확인하는 중입니다.'
+    if (!workbench.experimentClean || experimentId === null) return '저장되고 수정되지 않은 Experiment가 필요합니다.'
+    if (busy || workbench.measurementActions.busy || workbench.calculationDataActions.busy)
+      return '진행 중인 작업이 있습니다.'
+    if (dataStale) return 'Prediction 데이터를 Reload하세요.'
+    if (workbench.measurementActions.pendingRecordMeasurementId) return 'RecordedData 저장을 먼저 다시 시도하세요.'
+    if (workbench.experimentDocument.draftTaskNames.length > 0) return 'Solver가 선택되지 않은 Draft Task가 있습니다.'
+    let active = false
+    for (const [key, entry] of Object.entries(varsSchema)) {
+      const range = effectiveSamplingRanges[key]
+      if (
+        !range ||
+        !Number.isFinite(range.min) ||
+        !Number.isFinite(range.max) ||
+        range.min < entry.min ||
+        range.max > entry.max ||
+        range.min > range.max
+      ) {
+        return `${key} sampling 범위가 schema 범위 안의 올바른 Min/Max여야 합니다.`
+      }
+      if (range.min < range.max) active = true
+    }
+    if (!active) return 'Sampling 범위가 고정되지 않은 Vars가 하나 이상 필요합니다.'
+    return undefined
+  }, [
+    authenticated,
+    busy,
+    contextExperimentMatches,
+    dataStale,
+    effectiveSamplingRanges,
+    experimentId,
+    freshnessPending,
+    varsSchema,
+    workbench.calculationDataActions.busy,
+    workbench.experimentClean,
+    workbench.experimentDocument.draftTaskNames,
+    workbench.experimentManageable,
+    workbench.measurementActions.busy,
+    workbench.measurementActions.pendingRecordMeasurementId,
+  ])
+
+  const sampleAndRun = useCallback(
+    async (total: number) => {
+      if (samplingDisabledReason) {
+        toast.error(samplingDisabledReason)
+        return
+      }
+      if (!Number.isSafeInteger(total) || total <= 0 || !clientRef.current || !context || !varsSchema) {
+        toast.error('Sampling N은 양의 JavaScript safe integer여야 합니다.')
+        return
+      }
+      const revision = ++samplingRevisionRef.current
+      const sessionId = crypto.randomUUID()
+      const fingerprint = predictionFingerprint([
+        'prediction-sampling',
+        context.fingerprint,
+        sourceIdentity,
+        effectiveSamplingRanges,
+        total,
+      ])
+      const centers = context.measurements.flatMap((measurement) => {
+        try {
+          return [predictionVarsSamples(measurement.vars as Readonly<Vars>, varsSchema)]
+        } catch {
+          return []
+        }
+      })
+      let successes = 0
+      let failures = 0
+      let recorded = 0
+      let attempted = 0
+      let stoppedReason: string | null = null
+      clientRef.current.reset()
+      clearModelCaches()
+      setBusy(true)
+      setSamplingProgress({ attempt: 0, failures: 0, phase: 'candidate', recorded: 0, sessionId, successes: 0, total })
+      setValidation(null)
+      setStatus('Sampling 후보 안전 예산을 확인하는 중…')
+      try {
+        const profile = await clientRef.current.startSampling(sessionId, {
+          fingerprint,
+          totalAttempts: total,
+          layouts: predictionVarsLayouts(varsSchema),
+          ranges: effectiveSamplingRanges,
+          centers,
+        })
+        if (revision !== samplingRevisionRef.current) return
+        onActivity?.({
+          source: 'prediction',
+          level: 'info',
+          phase: 'sampling',
+          message: `[Sampling] ${profile.existingCenterCount.toLocaleString()} centers · ${profile.candidateCount.toLocaleString()} candidates/window · ${profile.activeComponentCount.toLocaleString()} active components`,
+        })
+        for (let attempt = 1; attempt <= total; attempt += 1) {
+          if (revision !== samplingRevisionRef.current) break
+          if (sourceIdentityRef.current !== sourceIdentity) {
+            stoppedReason = 'Experiment 또는 source가 변경되었습니다.'
+            break
+          }
+          attempted = attempt
+          setSamplingProgress({ attempt, failures, phase: 'candidate', recorded, sessionId, successes, total })
+          setStatus(`${attempt}/${total} · Candidate 평가 · 성공 ${successes} · 실패 ${failures}`)
+          let sample: readonly import('./knn').PredictionTensorSample[] | null = null
+          try {
+            sample = await clientRef.current.nextSample(sessionId, fingerprint, attempt)
+            if (revision !== samplingRevisionRef.current) break
+            const nextVars = Object.freeze(
+              Object.fromEntries(
+                sample.map((entry) => [entry.layout.key, varsTensorFromFlat(entry.values, entry.layout.shape)]),
+              ),
+            ) as Readonly<Vars>
+            const expectedFingerprint = candidateFingerprint(nextVars)
+            const baselineRevision = experimentDocumentRef.current.revision
+            suppressedCandidateRef.current = expectedFingerprint
+            if (!setCandidateVariablesRef.current(nextVars, 'prediction-sampling')) {
+              throw new Error('Sampling Candidate Vars를 적용하지 못했습니다.')
+            }
+            await new Promise<void>((resolve, reject) => {
+              const poll = () => {
+                if (revision !== samplingRevisionRef.current) {
+                  reject(new DOMException('Sampling이 취소되었습니다.', 'AbortError'))
+                  return
+                }
+                if (sourceIdentityRef.current !== sourceIdentity) {
+                  reject(new Error('Experiment 또는 source가 변경되어 Sampling을 중단합니다.'))
+                  return
+                }
+                const document = experimentDocumentRef.current
+                const currentVars = candidateVarsRef.current
+                if (
+                  currentVars &&
+                  candidateFingerprint(currentVars) === expectedFingerprint &&
+                  document.variables &&
+                  candidateFingerprint(document.variables) === expectedFingerprint &&
+                  document.revision > baselineRevision &&
+                  document.successfulRevision === document.revision &&
+                  document.status === 'Ready'
+                ) {
+                  resolve()
+                  return
+                }
+                if (document.revision > baselineRevision && document.status === 'Error') {
+                  reject(new Error(document.error?.message ?? 'Sampling Candidate 평가에 실패했습니다.'))
+                  return
+                }
+                window.setTimeout(poll, 50)
+              }
+              poll()
+            })
+            if (revision !== samplingRevisionRef.current) break
+            setSamplingProgress({ attempt, failures, phase: 'simulation', recorded, sessionId, successes, total })
+            setStatus(`${attempt}/${total} · Simulation 및 RecordedData 저장 · 성공 ${successes} · 실패 ${failures}`)
+            const completion = await measurementActionsRef.current.saveAndRunCurrentAsync()
+            if (revision !== samplingRevisionRef.current) break
+            recorded += 1
+            await clientRef.current.acceptSample(sessionId, fingerprint, sample)
+            if (completion.calculationSummary.failed === 0 && !completion.calculationSummary.cancelled) successes += 1
+            else failures += 1
+          } catch (cause: unknown) {
+            if (revision !== samplingRevisionRef.current || (cause as { name?: string })?.name === 'AbortError') break
+            failures += 1
+            const message = cause instanceof Error ? cause.message : String(cause)
+            const saveBlocked =
+              Boolean(measurementActionsRef.current.pendingRecordMeasurementId) ||
+              /RecordedData.*저장|저장.*RecordedData/.test(message)
+            onActivity?.({
+              source: 'prediction',
+              level: 'error',
+              phase: 'sampling',
+              message: `[Sampling ${attempt}/${total}] ${message}`,
+            })
+            if (saveBlocked || sourceIdentityRef.current !== sourceIdentity) {
+              stoppedReason = message
+              setStatus(`${attempt}/${total} · Sampling 중단 · ${message}`)
+              break
+            }
+          }
+        }
+      } catch (cause: unknown) {
+        if (revision === samplingRevisionRef.current && (cause as { name?: string })?.name !== 'AbortError') {
+          const message = cause instanceof Error ? cause.message : String(cause)
+          setStatus(`Sampling 실패 · ${message}`)
+          toast.error(message)
+        }
+      } finally {
+        if (revision === samplingRevisionRef.current) {
+          setSamplingProgress({
+            attempt: Math.min(total, samplingProgressRef.current?.attempt ?? total),
+            failures,
+            phase: 'stopping',
+            recorded,
+            sessionId,
+            successes,
+            total,
+          })
+          await clientRef.current?.dropSampling(sessionId).catch(() => undefined)
+          clearModelCaches()
+          setForwardVarsFingerprint(null)
+          setInverseVarsFingerprint(null)
+          if (recorded > 0) setFreshnessPending(true)
+          else setFreshnessPending(false)
+          setStatus(
+            stoppedReason
+              ? `Sampling 중단 · ${attempted}/${total}회 · 성공 ${successes} · 실패 ${failures} · ${stoppedReason}`
+              : `Sampling 완료 · ${attempted}/${total}회 · 성공 ${successes} · 실패 ${failures} · Recorded ${recorded}`,
+          )
+          setSamplingProgress(null)
+          if (recorded === 0) skipNextPredictionBusyCheckRef.current = true
+          setBusy(false)
+          if (recorded === 0 && candidateVarsRef.current) {
+            window.setTimeout(() => void runForward(candidateVarsRef.current!), 0)
+          }
+        }
+      }
+    },
+    [
+      clearModelCaches,
+      context,
+      effectiveSamplingRanges,
+      onActivity,
+      runForward,
+      samplingDisabledReason,
+      setFreshnessPending,
+      sourceIdentity,
+      varsSchema,
+      workbench,
+    ],
+  )
+
+  useEffect(() => {
+    if (!samplingProgress || samplingProgress.phase !== 'simulation' || !workbench.measurementActions.stage) return
+    setStatus(
+      `${samplingProgress.attempt}/${samplingProgress.total} · ${workbench.measurementActions.stage} · 성공 ${samplingProgress.successes} · 실패 ${samplingProgress.failures}`,
+    )
+  }, [samplingProgress, workbench.measurementActions.stage])
+
   const validatePrediction = useCallback(async () => {
     if (freshnessPendingRef.current) {
       toast.error('Prediction 데이터 최신성을 확인하는 중입니다.')
@@ -1517,7 +1834,6 @@ export function PredictionWorkspace({
     setValidating(true)
     setSetupOpen(false)
     setDetailsDirection(frozenDirection)
-    setDetailsOpen(true)
     setStatus('Validation · Candidate 저장과 Simulation 실행 중…')
     let datasetMutated = false
     try {
@@ -1652,7 +1968,7 @@ export function PredictionWorkspace({
       clearModelCaches()
       setForwardVarsFingerprint(null)
       setInverseVarsFingerprint(null)
-      setDataStale(true)
+      setFreshnessPending(true)
     } catch (cause: unknown) {
       if (validationRevision !== validationRevisionRef.current) return
       if (datasetMutated) {
@@ -1660,7 +1976,7 @@ export function PredictionWorkspace({
         clearModelCaches()
         setForwardVarsFingerprint(null)
         setInverseVarsFingerprint(null)
-        setDataStale(true)
+        setFreshnessPending(true)
       }
       const message = cause instanceof Error ? cause.message : String(cause)
       setStatus(`Validation 실패 · ${message}`)
@@ -1822,6 +2138,7 @@ export function PredictionWorkspace({
       setDetailsDirection(direction)
       setDetailsOpen(true)
     } else if (command.type === 'cancel') cancelCurrent()
+    else if (command.type === 'sample') void sampleAndRun(command.sampleCount ?? 10)
     else void validatePrediction()
   }, [command?.id])
 
@@ -1970,12 +2287,14 @@ export function PredictionWorkspace({
   useEffect(() => {
     onChromeStateChange({
       busy,
+      canSample: samplingDisabledReason === undefined,
       canValidate: validationDisabledReason === undefined,
       direction,
+      sampleDisabledReason: samplingDisabledReason,
       status,
       validateDisabledReason: validationDisabledReason,
     })
-  }, [busy, direction, onChromeStateChange, status, validationDisabledReason])
+  }, [busy, direction, onChromeStateChange, samplingDisabledReason, status, validationDisabledReason])
 
   const paneItems = useMemo<readonly PredictionCalculationPaneItem[]>(
     () =>
@@ -2155,12 +2474,16 @@ export function PredictionWorkspace({
       candidateSessionKey={`${experimentId ?? 'none'}:prediction`}
       demos={availableQuery.data?.demos ?? []}
       direction={direction}
-      disabled={validating || dataStale || freshnessPending || !varsSchema || !candidateVars}
+      disabled={
+        validating || samplingProgress !== null || dataStale || freshnessPending || !varsSchema || !candidateVars
+      }
       guideVisible={workbench.experimentIsDemo && (!guideProgress.forward || !guideProgress.inverse)}
       isDemo={workbench.experimentIsDemo}
       manageable={workbench.experimentManageable}
       loadingExperiments={availableQuery.isPending}
       mine={availableQuery.data?.mine ?? []}
+      resetValues={resetValues}
+      samplingRanges={effectiveSamplingRanges}
       schema={varsSchema}
       status={status}
       updating={busy}
@@ -2172,6 +2495,9 @@ export function PredictionWorkspace({
         )
         if (row && row.id !== experimentId) onExperimentChange(row)
       }}
+      onSamplingRangeChange={(key, range) =>
+        setSamplingRanges((current) => Object.freeze({ ...current, [key]: Object.freeze(range) }))
+      }
       onVariableChange={(key: string, value: Tensor) => {
         if (freshnessPendingRef.current || dataStaleRef.current) return
         if (!candidateVars) return
@@ -2321,11 +2647,6 @@ export function PredictionWorkspace({
         onKModeChange={(kMode) => setSetupDraft((current) => Object.freeze({ ...current, kMode }))}
         onManualKChange={(manualK) => setSetupDraft((current) => Object.freeze({ ...current, manualK }))}
         onOpenChange={setSetupOpen}
-        onOpenDiagnostics={(nextDirection) => {
-          setDetailsDirection(nextDirection)
-          setSetupOpen(false)
-          setDetailsOpen(true)
-        }}
         onReload={() => void reloadFromSetup()}
         onWeightingChange={(weighting) => setSetupDraft((current) => Object.freeze({ ...current, weighting }))}
       />

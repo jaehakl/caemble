@@ -35,6 +35,12 @@ import {
   predictionVarsLayouts,
   predictionVarsSamples,
 } from '../src/features/cae-workbench/prediction/data'
+import { compatibleVarsResetValues } from '../src/features/cae-workbench/calculation/varsTensor'
+import {
+  acceptPredictionSamplingCenter,
+  createPredictionSamplingSession,
+  nextPredictionSamplingCandidate,
+} from '../src/features/cae-workbench/prediction/sampling'
 import {
   comparePredictionOutput,
   inverseValidationAggregateError,
@@ -74,6 +80,78 @@ const row = (
   inputs: readonly PredictionTensorSample[],
   outputs: readonly PredictionTensorSample[],
 ): PredictionTrainingRow => ({ measurementId, inputs, outputs })
+
+const samplingLayouts = [scalar('x', 0, { minimum: 0, maximum: 10 }).layout, tensor('field', [0, 0], [2]).layout]
+const samplingRanges = { x: { min: 0, max: 10 }, field: { min: 0, max: 10 } }
+const samplingCenter = [scalar('x', 5), tensor('field', [5, 5], [2])]
+const samplingCreated = createPredictionSamplingSession({
+  fingerprint: 'sampling-v1',
+  totalAttempts: 3,
+  layouts: samplingLayouts,
+  ranges: samplingRanges,
+  centers: [samplingCenter, samplingCenter, [scalar('x', 11), tensor('field', [5, 5], [2])]],
+})
+assert.equal(samplingCreated.profile.existingCenterCount, 1)
+assert.equal(samplingCreated.profile.activeBlockCount, 2)
+assert.equal(samplingCreated.profile.activeComponentCount, 3)
+assert.ok(samplingCreated.profile.candidateCount >= 32)
+const deterministicCreated = createPredictionSamplingSession({
+  fingerprint: 'sampling-v1',
+  totalAttempts: 3,
+  layouts: samplingLayouts,
+  ranges: samplingRanges,
+  centers: [samplingCenter],
+})
+const firstCandidate = nextPredictionSamplingCandidate(samplingCreated.session, 1)
+assert.deepEqual(firstCandidate, nextPredictionSamplingCandidate(deterministicCreated.session, 1))
+assert.equal(acceptPredictionSamplingCenter(samplingCreated.session, firstCandidate), 2)
+const adaptiveCandidate = nextPredictionSamplingCandidate(samplingCreated.session, 2)
+const failedCandidateSession = createPredictionSamplingSession({
+  fingerprint: 'sampling-v1',
+  totalAttempts: 3,
+  layouts: samplingLayouts,
+  ranges: samplingRanges,
+  centers: [samplingCenter],
+}).session
+nextPredictionSamplingCandidate(failedCandidateSession, 1)
+nextPredictionSamplingCandidate(failedCandidateSession, 2)
+assert.equal(samplingCreated.session.centers.length, 2)
+assert.equal(failedCandidateSession.centers.length, 1)
+assert.ok(adaptiveCandidate.length > 0)
+
+const midpointSession = createPredictionSamplingSession({
+  fingerprint: 'midpoint',
+  totalAttempts: 1,
+  layouts: samplingLayouts,
+  ranges: { x: { min: 2, max: 2 }, field: { min: -2, max: 2 } },
+  centers: [],
+}).session
+assert.deepEqual(
+  nextPredictionSamplingCandidate(midpointSession, 1).map((sample) => sample.values),
+  [[2], [0, 0]],
+)
+assert.throws(
+  () =>
+    createPredictionSamplingSession({
+      fingerprint: 'unsafe',
+      totalAttempts: 300,
+      layouts: [tensor('wide', Array(1000).fill(0), [1000]).layout],
+      ranges: { wide: { min: 0, max: 1 } },
+      centers: [],
+    }),
+  (error: unknown) => error instanceof PredictionModelError && error.code === 'memory-limit',
+)
+
+const resetValues = compatibleVarsResetValues(
+  [
+    { nonzero: [1, 2] },
+    { nonzero: [1, 4] },
+    { nonzero: [3, 4] },
+    { nonzero: [3, 2] },
+  ],
+  { nonzero: { shape: [2], min: 1, max: 10 } },
+)
+assert.deepEqual(resetValues.nonzero, [1, 2])
 
 const balancedRows = [
   row(1, [scalar('small', 0), tensor('large', [0, 0, 0, 0])], [scalar('result', 0, { minimum: 0, maximum: 10 })]),
@@ -134,6 +212,51 @@ try {
   assert.equal(workerClient.cancelPending(), true)
   await assert.rejects(cancelledPrediction, (error: unknown) => (error as { name?: string }).name === 'AbortError')
   assert.equal(workerClient.epoch, 4)
+
+  const samplingReady = workerClient.startSampling('sampling-session', {
+    fingerprint: 'sampling-worker',
+    totalAttempts: 1,
+    layouts: samplingLayouts,
+    ranges: samplingRanges,
+    centers: [],
+  })
+  const samplingReadyRequest = fakeWorkers[3].lastRequest!
+  fakeWorkers[3].onmessage?.({
+    data: {
+      type: 'sampling-ready',
+      requestId: samplingReadyRequest.requestId,
+      sessionId: 'sampling-session',
+      fingerprint: 'sampling-worker',
+      profile: { activeBlockCount: 2, activeComponentCount: 3, existingCenterCount: 0, candidateCount: 4096 },
+    },
+  })
+  assert.equal((await samplingReady).candidateCount, 4096)
+
+  const samplingCandidate = workerClient.nextSample('sampling-session', 'sampling-worker', 1)
+  const samplingCandidateRequest = fakeWorkers[3].lastRequest!
+  fakeWorkers[3].onmessage?.({
+    data: {
+      type: 'sampling-candidate',
+      requestId: samplingCandidateRequest.requestId,
+      sessionId: 'sampling-session',
+      fingerprint: 'sampling-worker',
+      sample: samplingCenter,
+    },
+  })
+  assert.deepEqual(await samplingCandidate, samplingCenter)
+
+  const acceptedSample = workerClient.acceptSample('sampling-session', 'sampling-worker', samplingCenter)
+  const acceptedSampleRequest = fakeWorkers[3].lastRequest!
+  fakeWorkers[3].onmessage?.({
+    data: {
+      type: 'sampling-accepted',
+      requestId: acceptedSampleRequest.requestId,
+      sessionId: 'sampling-session',
+      fingerprint: 'sampling-worker',
+      centerCount: 1,
+    },
+  })
+  assert.equal(await acceptedSample, 1)
   workerClient.dispose()
 } finally {
   if (originalWorker === undefined) Reflect.deleteProperty(globalThis, 'Worker')
@@ -1129,7 +1252,7 @@ assert.match(heatmapComparisonMarkup, /data-comparison-layout="parallel-heatmaps
 assert.match(heatmapComparisonMarkup, /data-comparison-series="primary"/u)
 assert.match(heatmapComparisonMarkup, /data-comparison-series="repredicted"/u)
 assert.match(heatmapComparisonMarkup, /실제 결과가 없습니다\./u)
-assert.equal((heatmapComparisonMarkup.match(/type="number"/gu) ?? []).length, 1)
+assert.equal((heatmapComparisonMarkup.match(/type="number"/gu) ?? []).length, 2)
 assert.equal(comparisonCommitCount, 0)
 
 console.info('Prediction kNN tests passed.')

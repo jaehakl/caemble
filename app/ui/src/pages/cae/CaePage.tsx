@@ -129,6 +129,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const [predictionCommand, setPredictionCommand] = useState<PredictionWorkspaceCommand | null>(null)
   const [predictionState, setPredictionState] = useState<PredictionWorkspaceChromeState>({
     busy: false,
+    canSample: false,
     canValidate: false,
     direction: 'forward',
     status: 'Prediction을 준비하는 중입니다.',
@@ -303,8 +304,8 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const requestMaterialCommand = useCallback((type: MaterialRibbonCommand) => {
     setMaterialCommand({ id: ++commandSequence.current, type })
   }, [])
-  const requestPredictionCommand = useCallback((type: PredictionRibbonCommand) => {
-    setPredictionCommand({ id: ++commandSequence.current, type })
+  const requestPredictionCommand = useCallback((type: PredictionRibbonCommand, sampleCount?: number) => {
+    setPredictionCommand({ id: ++commandSequence.current, type, sampleCount })
   }, [])
   const requestCalculationSave = useCallback(() => {
     setCalculationSaveCommand((current) => current + 1)

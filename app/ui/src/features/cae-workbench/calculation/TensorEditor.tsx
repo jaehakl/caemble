@@ -8,7 +8,7 @@ import {
   type PointerEvent,
   type WheelEvent,
 } from 'react'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { Brush, ChevronLeft, ChevronRight, Eraser, Redo2, RotateCcw, Undo2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { Tensor } from '@/lib/cad'
@@ -21,6 +21,7 @@ import {
   tensorSliceCoordinates,
   tensorSliceCount,
   updateTensorRectangle,
+  updateTensorBrush,
   varsBarIndex,
   varsTensorFromFlat,
   varsValueFromVerticalPosition,
@@ -30,6 +31,7 @@ import {
 
 type Selection = Readonly<{ sliceIndex: number; rectangle: TensorRectangle }>
 type HoveredCell = Readonly<{ sliceIndex: number; row: number; column: number }>
+type HeatmapMode = 'brush' | 'eraser' | 'region-wheel' | 'region-value'
 
 export type TensorEditorComparisonStatus = 'ready' | 'updating' | 'unavailable' | 'incompatible'
 
@@ -65,6 +67,7 @@ export type TensorEditorProps = Readonly<{
   label: string
   maximum: number
   minimum: number
+  resetValue?: Tensor
   selectionResetKey?: string | number
   shape: readonly number[]
   value: Tensor
@@ -394,12 +397,16 @@ function HeatmapCanvas({
   label,
   maximum,
   minimum,
+  mode,
   rows,
   hoveredCell,
   selection,
   sliceIndex,
   values,
   onSelect,
+  onPaintStart,
+  onPaintPath,
+  onPaintEnd,
   onHover,
   onWheelSelection,
 }: {
@@ -408,17 +415,26 @@ function HeatmapCanvas({
   label: string
   maximum: number
   minimum: number
+  mode: HeatmapMode
   rows: number
   hoveredCell: HoveredCell | null
   selection: Selection | null
   sliceIndex: number
   values: readonly number[]
   onSelect: (selection: Selection) => void
+  onPaintStart: () => void
+  onPaintPath: (
+    sliceIndex: number,
+    from: Readonly<{ row: number; column: number }>,
+    to: Readonly<{ row: number; column: number }>,
+  ) => void
+  onPaintEnd: () => void
   onHover: (cell: HoveredCell | null) => void
   onWheelSelection: (event: WheelEvent<HTMLCanvasElement>) => void
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const anchorRef = useRef<Readonly<{ row: number; column: number }> | null>(null)
+  const previousPaintCellRef = useRef<Readonly<{ row: number; column: number }> | null>(null)
   const size = useCanvasSize(canvasRef)
   useLayoutEffect(() => {
     const canvas = canvasRef.current
@@ -498,13 +514,25 @@ function HeatmapCanvas({
       onPointerDown={(event) => {
         if (disabled || maximum === minimum) return
         const next = cell(event)
-        anchorRef.current = next
         event.currentTarget.setPointerCapture(event.pointerId)
-        onSelect({ sliceIndex, rectangle: rectangleFromCells(next.row, next.column, next.row, next.column) })
+        if (mode === 'brush' || mode === 'eraser') {
+          previousPaintCellRef.current = next
+          onPaintStart()
+          onPaintPath(sliceIndex, next, next)
+        } else {
+          anchorRef.current = next
+          onSelect({ sliceIndex, rectangle: rectangleFromCells(next.row, next.column, next.row, next.column) })
+        }
       }}
       onPointerMove={(event) => {
         const next = cell(event)
         onHover({ sliceIndex, row: next.row, column: next.column })
+        if ((mode === 'brush' || mode === 'eraser') && event.currentTarget.hasPointerCapture(event.pointerId)) {
+          const previous = previousPaintCellRef.current ?? next
+          onPaintPath(sliceIndex, previous, next)
+          previousPaintCellRef.current = next
+          return
+        }
         const anchor = anchorRef.current
         if (!anchor || !event.currentTarget.hasPointerCapture(event.pointerId)) return
         onSelect({
@@ -512,8 +540,21 @@ function HeatmapCanvas({
           rectangle: rectangleFromCells(anchor.row, anchor.column, next.row, next.column),
         })
       }}
-      onPointerUp={() => {
+      onPointerUp={(event) => {
         anchorRef.current = null
+        if (previousPaintCellRef.current) {
+          previousPaintCellRef.current = null
+          onPaintEnd()
+        }
+        if (event.currentTarget.hasPointerCapture(event.pointerId))
+          event.currentTarget.releasePointerCapture(event.pointerId)
+      }}
+      onPointerCancel={() => {
+        anchorRef.current = null
+        if (previousPaintCellRef.current) {
+          previousPaintCellRef.current = null
+          onPaintEnd()
+        }
       }}
       onPointerLeave={() => onHover(null)}
       onWheel={onWheelSelection}
@@ -530,6 +571,7 @@ function HeatmapsEditor({
   label,
   maximum,
   minimum,
+  resetValues,
   selectionResetKey,
   shape,
   values,
@@ -548,6 +590,7 @@ function HeatmapsEditor({
   label: string
   maximum: number
   minimum: number
+  resetValues: readonly number[] | null
   selectionResetKey?: string | number
   shape: readonly number[]
   values: readonly number[]
@@ -563,8 +606,15 @@ function HeatmapsEditor({
   const [selection, setSelection] = useState<Selection | null>(null)
   const [hoveredCell, setHoveredCell] = useState<HoveredCell | null>(null)
   const [input, setInput] = useState('')
-  const inputTimerRef = useRef<number | null>(null)
+  const [mode, setMode] = useState<HeatmapMode>('brush')
+  const [radiusInput, setRadiusInput] = useState(String(Math.min(2, Math.max(rows, columns))))
+  const [strengthInput, setStrengthInput] = useState(String(Math.max(Number.EPSILON, (maximum - minimum) * 0.05)))
   const wheelTimerRef = useRef<number | null>(null)
+  const wheelStartRef = useRef<readonly number[] | null>(null)
+  const strokeStartRef = useRef<readonly number[] | null>(null)
+  const undoRef = useRef<Readonly<{ before: readonly number[]; after: readonly number[] }>[]>([])
+  const redoRef = useRef<Readonly<{ before: readonly number[]; after: readonly number[] }>[]>([])
+  const [, setHistoryRevision] = useState(0)
   const latestValuesRef = useRef(values)
   latestValuesRef.current = values
   const inputNumber = Number(input)
@@ -583,11 +633,25 @@ function HeatmapsEditor({
     : null
 
   useEffect(() => setSelection(null), [page])
+  const radius = Number(radiusInput)
+  const radiusValid = Number.isInteger(radius) && radius >= 1 && radius <= Math.max(rows, columns)
+  const strength = Number(strengthInput)
+  const strengthValid = strengthInput.trim() !== '' && Number.isFinite(strength) && strength > 0
+  const recordCommit = (before: readonly number[], after: readonly number[]) => {
+    if (before.length === after.length && before.every((value, index) => value === after[index])) return
+    undoRef.current = [...undoRef.current.slice(-19), { before: [...before], after: [...after] }]
+    redoRef.current = []
+    setHistoryRevision((current) => current + 1)
+    onCommit(after)
+  }
   useEffect(() => {
-    if (inputTimerRef.current !== null) window.clearTimeout(inputTimerRef.current)
     if (wheelTimerRef.current !== null) window.clearTimeout(wheelTimerRef.current)
-    inputTimerRef.current = null
     wheelTimerRef.current = null
+    wheelStartRef.current = null
+    strokeStartRef.current = null
+    undoRef.current = []
+    redoRef.current = []
+    setHistoryRevision((current) => current + 1)
     setInput('')
     setSelection(null)
   }, [selectionResetKey])
@@ -607,21 +671,45 @@ function HeatmapsEditor({
     return next
   }
   const wheel = (event: WheelEvent<HTMLCanvasElement>, sliceIndex: number) => {
-    if (disabled || maximum === minimum || selection?.sliceIndex !== sliceIndex) return
+    if (disabled || mode !== 'region-wheel' || maximum === minimum || selection?.sliceIndex !== sliceIndex) return
     event.preventDefault()
+    if (!wheelStartRef.current) wheelStartRef.current = [...latestValuesRef.current]
     const step = varsWheelStep({ shape, min: minimum, max: maximum }, event.shiftKey, event.altKey)
     const direction = event.deltaY < 0 ? 1 : -1
     changeSelection((value) => clampVarsValue(value + direction * step, constraintMinimum, constraintMaximum), false)
     if (wheelTimerRef.current !== null) window.clearTimeout(wheelTimerRef.current)
     wheelTimerRef.current = window.setTimeout(() => {
-      onCommit(latestValuesRef.current)
+      recordCommit(wheelStartRef.current ?? latestValuesRef.current, latestValuesRef.current)
+      wheelStartRef.current = null
       wheelTimerRef.current = null
     }, 250)
   }
 
+  const paintPath = (
+    sliceIndex: number,
+    from: Readonly<{ row: number; column: number }>,
+    to: Readonly<{ row: number; column: number }>,
+  ) => {
+    if (!radiusValid || (mode === 'brush' && !strengthValid) || (mode === 'eraser' && !resetValues)) return
+    const next = updateTensorBrush(
+      latestValuesRef.current,
+      rows,
+      columns,
+      sliceIndex,
+      from,
+      to,
+      radius,
+      (value, index) =>
+        mode === 'eraser'
+          ? resetValues![index]
+          : clampVarsValue(value + strength, constraintMinimum, constraintMaximum),
+    )
+    latestValuesRef.current = next
+    onPreview(next)
+  }
+
   useEffect(
     () => () => {
-      if (inputTimerRef.current !== null) window.clearTimeout(inputTimerRef.current)
       if (wheelTimerRef.current !== null) window.clearTimeout(wheelTimerRef.current)
     },
     [],
@@ -630,6 +718,119 @@ function HeatmapsEditor({
   return (
     <div className="space-y-3">
       {comparison ? <ComparisonLegend activeIndex={hoverIndex} comparison={comparison} primaryValues={values} /> : null}
+      <div className="flex flex-wrap items-end gap-1 rounded border bg-muted/20 p-1.5" data-tensor-toolbar="true">
+        <Button
+          aria-pressed={mode === 'brush'}
+          disabled={disabled}
+          size="sm"
+          type="button"
+          variant={mode === 'brush' ? 'default' : 'outline'}
+          onClick={() => setMode('brush')}
+        >
+          <Brush /> Brush
+        </Button>
+        <Button
+          aria-pressed={mode === 'eraser'}
+          disabled={disabled || !resetValues}
+          size="sm"
+          type="button"
+          variant={mode === 'eraser' ? 'default' : 'outline'}
+          onClick={() => setMode('eraser')}
+        >
+          <Eraser /> Eraser
+        </Button>
+        <Button
+          aria-pressed={mode === 'region-wheel'}
+          disabled={disabled}
+          size="sm"
+          type="button"
+          variant={mode === 'region-wheel' ? 'default' : 'outline'}
+          onClick={() => setMode('region-wheel')}
+        >
+          Region + Wheel
+        </Button>
+        <Button
+          aria-pressed={mode === 'region-value'}
+          disabled={disabled}
+          size="sm"
+          type="button"
+          variant={mode === 'region-value' ? 'default' : 'outline'}
+          onClick={() => setMode('region-value')}
+        >
+          Region + Value
+        </Button>
+        <label className="grid gap-0.5 px-1 text-[10px] text-muted-foreground">
+          Radius
+          <Input
+            className="h-7 w-16"
+            disabled={disabled}
+            max={Math.max(rows, columns)}
+            min={1}
+            step={1}
+            type="number"
+            value={radiusInput}
+            onChange={(event) => setRadiusInput(event.target.value)}
+          />
+        </label>
+        <label className="grid gap-0.5 px-1 text-[10px] text-muted-foreground">
+          Strength
+          <Input
+            className="h-7 w-24"
+            disabled={disabled}
+            min={Number.EPSILON}
+            step="any"
+            type="number"
+            value={strengthInput}
+            onChange={(event) => setStrengthInput(event.target.value)}
+          />
+        </label>
+        <Button
+          aria-label="Tensor 전체 Reset"
+          disabled={disabled || !resetValues}
+          size="sm"
+          type="button"
+          variant="outline"
+          onClick={() => recordCommit(latestValuesRef.current, resetValues!)}
+        >
+          <RotateCcw /> Reset
+        </Button>
+        <Button
+          aria-label="Tensor 편집 Undo"
+          disabled={disabled || undoRef.current.length === 0}
+          size="icon"
+          type="button"
+          variant="outline"
+          onClick={() => {
+            const entry = undoRef.current[undoRef.current.length - 1]
+            if (!entry) return
+            undoRef.current = undoRef.current.slice(0, -1)
+            redoRef.current = [...redoRef.current, entry]
+            latestValuesRef.current = [...entry.before]
+            setHistoryRevision((current) => current + 1)
+            onCommit(entry.before)
+          }}
+        >
+          <Undo2 />
+        </Button>
+        <Button
+          aria-label="Tensor 편집 Redo"
+          disabled={disabled || redoRef.current.length === 0}
+          size="icon"
+          type="button"
+          variant="outline"
+          onClick={() => {
+            const entry = redoRef.current[redoRef.current.length - 1]
+            if (!entry) return
+            redoRef.current = redoRef.current.slice(0, -1)
+            undoRef.current = [...undoRef.current.slice(-19), entry]
+            latestValuesRef.current = [...entry.after]
+            setHistoryRevision((current) => current + 1)
+            onCommit(entry.after)
+          }}
+        >
+          <Redo2 />
+        </Button>
+      </div>
       {shape.length > 2 ? (
         <div className="flex items-center justify-between gap-2 text-xs">
           <span className="text-muted-foreground">Last two axes · {sliceCount.toLocaleString()} slices</span>
@@ -705,11 +906,21 @@ function HeatmapsEditor({
               hoveredCell={hoveredCell}
               maximum={maximum}
               minimum={minimum}
+              mode={mode}
               rows={rows}
               selection={selection}
               sliceIndex={sliceIndex}
               values={values}
               onHover={setHoveredCell}
+              onPaintEnd={() => {
+                const before = strokeStartRef.current
+                strokeStartRef.current = null
+                if (before) recordCommit(before, latestValuesRef.current)
+              }}
+              onPaintPath={paintPath}
+              onPaintStart={() => {
+                strokeStartRef.current = [...latestValuesRef.current]
+              }}
               onSelect={setSelection}
               onWheelSelection={(event) => wheel(event, sliceIndex)}
             />
@@ -751,11 +962,15 @@ function HeatmapsEditor({
                     label={`${label} ${series.label}`}
                     maximum={maximum}
                     minimum={minimum}
+                    mode="region-value"
                     rows={rows}
                     selection={null}
                     sliceIndex={0}
                     values={series.values}
                     onHover={setHoveredCell}
+                    onPaintEnd={() => undefined}
+                    onPaintPath={() => undefined}
+                    onPaintStart={() => undefined}
                     onSelect={() => undefined}
                     onWheelSelection={() => undefined}
                   />
@@ -778,69 +993,51 @@ function HeatmapsEditor({
             ))
           : null}
       </div>
-      <div className="flex items-end gap-2">
-        <label className="min-w-0 flex-1 text-xs font-medium">
-          <span className="mb-1 block">
-            {selection
-              ? `slice ${selection.sliceIndex} · rows ${selection.rectangle.rowStart}–${selection.rectangle.rowEnd} · columns ${selection.rectangle.columnStart}–${selection.rectangle.columnEnd}`
-              : 'Select a rectangular region'}
-          </span>
-          <Input
-            aria-invalid={input.trim() !== '' && !inputValid}
-            disabled={disabled || constraintMaximum === constraintMinimum || !selection}
-            max={constraintMaximum}
-            min={constraintMinimum}
-            placeholder="Selected region value"
-            step="any"
-            type="number"
-            value={input}
-            onBlur={() => {
-              if (!inputValid) return
-              if (inputTimerRef.current !== null) window.clearTimeout(inputTimerRef.current)
-              inputTimerRef.current = null
-              changeSelection(() => inputNumber, true)
+      {mode === 'region-value' ? (
+        <div className="flex items-end gap-2">
+          <label className="min-w-0 flex-1 text-xs font-medium">
+            <span className="mb-1 block">
+              {selection
+                ? `slice ${selection.sliceIndex} · rows ${selection.rectangle.rowStart}–${selection.rectangle.rowEnd} · columns ${selection.rectangle.columnStart}–${selection.rectangle.columnEnd}`
+                : 'Select a rectangular region'}
+            </span>
+            <Input
+              aria-invalid={input.trim() !== '' && !inputValid}
+              disabled={disabled || constraintMaximum === constraintMinimum || !selection}
+              max={constraintMaximum}
+              min={constraintMinimum}
+              placeholder="Selected region value"
+              step="any"
+              type="number"
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+                if (event.key === 'Enter' && inputValid) {
+                  const before = [...latestValuesRef.current]
+                  const next = changeSelection(() => inputNumber, false)
+                  if (next) recordCommit(before, next)
+                }
+              }}
+            />
+          </label>
+          <Button
+            disabled={disabled || constraintMaximum === constraintMinimum || !selection || !inputValid}
+            type="button"
+            onClick={() => {
+              const before = [...latestValuesRef.current]
+              const next = changeSelection(() => inputNumber, false)
+              if (next) recordCommit(before, next)
             }}
-            onChange={(event) => {
-              const nextInput = event.target.value
-              setInput(nextInput)
-              if (inputTimerRef.current !== null) window.clearTimeout(inputTimerRef.current)
-              const nextValue = Number(nextInput)
-              if (
-                nextInput.trim() !== '' &&
-                Number.isFinite(nextValue) &&
-                nextValue >= constraintMinimum &&
-                nextValue <= constraintMaximum
-              ) {
-                inputTimerRef.current = window.setTimeout(() => {
-                  changeSelection(() => nextValue, true)
-                  inputTimerRef.current = null
-                }, 350)
-              }
-            }}
-            onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
-              if (event.key === 'Enter' && inputValid) {
-                if (inputTimerRef.current !== null) window.clearTimeout(inputTimerRef.current)
-                inputTimerRef.current = null
-                changeSelection(() => inputNumber, true)
-              }
-            }}
-          />
-        </label>
-        <Button
-          disabled={disabled || constraintMaximum === constraintMinimum || !selection || !inputValid}
-          type="button"
-          onClick={() => {
-            if (inputTimerRef.current !== null) window.clearTimeout(inputTimerRef.current)
-            inputTimerRef.current = null
-            changeSelection(() => inputNumber, true)
-          }}
-        >
-          Apply
-        </Button>
-      </div>
-      <p className="text-[11px] text-muted-foreground">
-        Drag to select. Wheel changes by 1% of the range; Shift uses 10× and Alt uses 0.1×.
-      </p>
+          >
+            Apply
+          </Button>
+        </div>
+      ) : null}
+      {mode === 'region-wheel' ? (
+        <p className="text-[11px] text-muted-foreground">
+          Drag to select. Wheel changes by 1% of the range; Shift uses 10× and Alt uses 0.1×.
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -853,6 +1050,7 @@ export function TensorEditor({
   label,
   maximum,
   minimum,
+  resetValue,
   selectionResetKey,
   constraintMaximum = maximum,
   constraintMinimum = minimum,
@@ -861,7 +1059,19 @@ export function TensorEditor({
   onValueChange,
 }: TensorEditorProps) {
   const controlledValues = useMemo(() => flattenVarsTensor(value, shape, label), [label, shape, value])
+  const resetValues = useMemo(() => {
+    if (constraintMinimum <= 0 && constraintMaximum >= 0) return controlledValues.map(() => 0)
+    if (resetValue === undefined) return null
+    try {
+      return flattenVarsTensor(resetValue, shape, `${label} reset`)
+    } catch {
+      return null
+    }
+  }, [constraintMaximum, constraintMinimum, controlledValues, label, resetValue, shape])
   const [values, setValues] = useState(controlledValues)
+  const [externalValueRevision, setExternalValueRevision] = useState(0)
+  const previousControlledValuesRef = useRef(controlledValues)
+  const ownCommitRef = useRef<readonly number[] | null>(null)
   const flatComparison = useMemo(
     () =>
       comparison
@@ -894,6 +1104,22 @@ export function TensorEditor({
 
   useLayoutEffect(() => {
     setValues(controlledValues)
+    const previous = previousControlledValuesRef.current
+    const changed =
+      previous.length !== controlledValues.length ||
+      previous.some((member, index) => member !== controlledValues[index])
+    if (changed) {
+      const own = ownCommitRef.current
+      if (
+        !own ||
+        own.length !== controlledValues.length ||
+        own.some((member, index) => member !== controlledValues[index])
+      ) {
+        setExternalValueRevision((current) => current + 1)
+      }
+    }
+    ownCommitRef.current = null
+    previousControlledValuesRef.current = controlledValues
   }, [controlledValues])
   useLayoutEffect(() => {
     setDisplayDomain(requestedDisplayDomainRef.current)
@@ -903,6 +1129,7 @@ export function TensorEditor({
     setValues([...next])
   }
   const commit = (next: readonly number[]) => {
+    ownCommitRef.current = [...next]
     setValues([...next])
     onValueChangeRef.current(varsTensorFromFlat(next, shapeRef.current))
   }
@@ -921,7 +1148,7 @@ export function TensorEditor({
         label={label}
         maximum={displayDomain[1]}
         minimum={displayDomain[0]}
-        selectionResetKey={selectionResetKey}
+        selectionResetKey={`${selectionResetKey ?? 'value'}:${JSON.stringify(shape)}:${externalValueRevision}`}
         values={values}
         onCommit={commit}
         onPreview={preview}
@@ -936,7 +1163,8 @@ export function TensorEditor({
         label={label}
         maximum={displayDomain[1]}
         minimum={displayDomain[0]}
-        selectionResetKey={selectionResetKey}
+        resetValues={resetValues}
+        selectionResetKey={`${selectionResetKey ?? 'value'}:${JSON.stringify(shape)}:${externalValueRevision}`}
         shape={shape}
         values={values}
         onCommit={commit}

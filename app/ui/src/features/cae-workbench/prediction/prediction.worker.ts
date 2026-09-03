@@ -8,15 +8,22 @@ import {
   PREDICTION_WORKING_SET_LIMIT_BYTES,
   type PredictionKnnModel,
 } from './knn'
+import {
+  acceptPredictionSamplingCenter,
+  createPredictionSamplingSession,
+  nextPredictionSamplingCandidate,
+  type PredictionSamplingSession,
+} from './sampling'
 import type { PredictionWorkerRequest, PredictionWorkerResponse } from './protocol'
 
 const models = new Map<string, Readonly<{ generation: number; model: PredictionKnnModel }>>()
+const samplingSessions = new Map<string, PredictionSamplingSession>()
 
 function respond(response: PredictionWorkerResponse) {
   self.postMessage(response)
 }
 
-function identity(request: Exclude<PredictionWorkerRequest, Readonly<{ type: 'dispose'; requestId: string }>>) {
+function identity(request: Extract<PredictionWorkerRequest, Readonly<{ modelId: string }>>) {
   return {
     requestId: request.requestId,
     modelId: request.modelId,
@@ -30,7 +37,53 @@ self.onmessage = (event: MessageEvent<PredictionWorkerRequest>) => {
   try {
     if (request.type === 'dispose') {
       models.clear()
+      samplingSessions.clear()
       respond({ type: 'disposed', requestId: request.requestId })
+      return
+    }
+    if (request.type === 'start-sampling') {
+      const created = createPredictionSamplingSession(request.options)
+      samplingSessions.set(request.sessionId, created.session)
+      respond({
+        type: 'sampling-ready',
+        requestId: request.requestId,
+        sessionId: request.sessionId,
+        fingerprint: request.options.fingerprint,
+        profile: created.profile,
+      })
+      return
+    }
+    if (request.type === 'next-sample') {
+      const session = samplingSessions.get(request.sessionId)
+      if (!session || session.fingerprint !== request.fingerprint) {
+        throw new PredictionModelError('stale-model', 'Sampling session이 현재 Experiment와 일치하지 않습니다.')
+      }
+      respond({
+        type: 'sampling-candidate',
+        requestId: request.requestId,
+        sessionId: request.sessionId,
+        fingerprint: request.fingerprint,
+        sample: nextPredictionSamplingCandidate(session, request.attempt),
+      })
+      return
+    }
+    if (request.type === 'accept-sample') {
+      const session = samplingSessions.get(request.sessionId)
+      if (!session || session.fingerprint !== request.fingerprint) {
+        throw new PredictionModelError('stale-model', 'Sampling session이 현재 Experiment와 일치하지 않습니다.')
+      }
+      respond({
+        type: 'sampling-accepted',
+        requestId: request.requestId,
+        sessionId: request.sessionId,
+        fingerprint: request.fingerprint,
+        centerCount: acceptPredictionSamplingCenter(session, request.sample),
+      })
+      return
+    }
+    if (request.type === 'drop-sampling') {
+      samplingSessions.delete(request.sessionId)
+      respond({ type: 'sampling-dropped', requestId: request.requestId, sessionId: request.sessionId })
       return
     }
     if (request.type === 'drop-model') {

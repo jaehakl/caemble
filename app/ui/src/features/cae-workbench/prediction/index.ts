@@ -34,3 +34,14 @@ export type {
 } from './knn'
 export { predictionWorkerResponseIsCurrent } from './protocol'
 export type { PredictionWorkerModelProfile, PredictionWorkerRequest, PredictionWorkerResponse } from './protocol'
+export {
+  acceptPredictionSamplingCenter,
+  createPredictionSamplingSession,
+  nextPredictionSamplingCandidate,
+} from './sampling'
+export type {
+  PredictionSamplingOptions,
+  PredictionSamplingProfile,
+  PredictionSamplingRange,
+  PredictionSamplingSession,
+} from './sampling'

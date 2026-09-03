@@ -99,7 +99,7 @@ async function fetchExperiment(id: number) {
 }
 
 export type UseCaeWorkbenchStateOptions = Readonly<{ onActivity?: RuntimeActivityCallback }>
-export type CandidateVariablesOrigin = 'user-vars' | 'prediction-inverse'
+export type CandidateVariablesOrigin = 'user-vars' | 'prediction-inverse' | 'prediction-sampling'
 
 export function useCaeWorkbenchState(
   user: UserData | null,
@@ -336,7 +336,7 @@ export function useCaeWorkbenchState(
   })
 
   const setCandidateVariables = useCallback(
-    (variables: Readonly<Vars>, _origin: CandidateVariablesOrigin) => {
+    (variables: Readonly<Vars>, origin: CandidateVariablesOrigin) => {
       const schema = experimentDocument.varsSchema
       const fallback = experimentDocument.variables
       if (!schema || (!candidateVars && !fallback)) {
@@ -351,6 +351,7 @@ export function useCaeWorkbenchState(
         }
         const normalized = validateVarsChanges(variables, schema)
         if (selection.measurement) clearMeasurement()
+        if (origin === 'prediction-sampling') setCandidateMaterialParameters(null)
         setCandidateVars(Object.freeze(normalized))
         return true
       } catch (cause: unknown) {
@@ -364,6 +365,7 @@ export function useCaeWorkbenchState(
       experimentDocument.variables,
       experimentDocument.varsSchema,
       selection.measurement,
+      setCandidateMaterialParameters,
     ],
   )
   const setCandidateVariable = useCallback(

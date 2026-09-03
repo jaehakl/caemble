@@ -46,6 +46,7 @@ import { buildExperimentRecordCatalogItems, requiredCalculationRecordedDataRules
 import { CalculationSourceEditor, type CalculationSourceEditorHandle } from './CalculationSourceEditor'
 import { ResizableCalculationLayout } from './ResizableCalculationLayout'
 import { VarsPanel } from './VarsPanel'
+import { compatibleVarsResetValues } from './varsTensor'
 
 type SavedCalculation = CalculationRecord & { id: number }
 type CalculationDraft = Readonly<{
@@ -310,6 +311,31 @@ export function CalculationWorkbench({
   })
   const defaultMeasurement = defaultMeasurementQuery.data?.items.find(
     (row): row is SavedMeasurement => typeof row.id === 'number',
+  )
+  const resetMeasurementsRequest = useMemo(
+    () => ({
+      ...getListRequest('visible'),
+      limit: null,
+      filter: { experiment_id: [experimentId, experimentId] },
+      null_filter: { recorded_at: 'is_not_null' as const },
+      sort: ['id', 'asc'] as const,
+    }),
+    [experimentId],
+  )
+  const resetMeasurementsQuery = useQuery({
+    enabled: dataReadable && experimentId !== null && inputPanel === 'vars' && varsSchema !== null,
+    queryFn: () => dbTables.Measurement.listRows(resetMeasurementsRequest),
+    queryKey: ['cae-workbench', 'measurements', 'vars-reset', resetMeasurementsRequest],
+  })
+  const candidateResetValues = useMemo(
+    () =>
+      compatibleVarsResetValues(
+        (resetMeasurementsQuery.data?.items ?? []).flatMap((measurement) =>
+          measurement.vars ? [measurement.vars as Readonly<Vars>] : [],
+        ),
+        varsSchema ?? {},
+      ),
+    [resetMeasurementsQuery.data?.items, varsSchema],
   )
   const experimentRecordsQuery = useQuery({
     enabled: dataReadable && experimentId !== null,
@@ -1352,6 +1378,7 @@ export function CalculationWorkbench({
                 <VarsPanel
                   candidateSessionKey={candidateSessionKey}
                   disabled={candidateEditingDisabled}
+                  resetValues={candidateResetValues}
                   schema={varsSchema}
                   vars={candidateVars}
                   onVariableChange={onCandidateVariableChange}

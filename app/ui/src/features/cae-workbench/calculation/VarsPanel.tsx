@@ -12,14 +12,20 @@ export function VarsPanel({
   expandFirstByDefault = false,
   disabled,
   schema,
+  samplingRanges,
+  resetValues,
   vars,
+  onSamplingRangeChange,
   onVariableChange,
 }: {
   candidateSessionKey: string
   expandFirstByDefault?: boolean
   disabled: boolean
   schema: VarsSchema | null
+  samplingRanges?: Readonly<Record<string, Readonly<{ min: number; max: number }>>>
+  resetValues?: Readonly<Record<string, Tensor | undefined>>
   vars: Readonly<Vars> | null
+  onSamplingRangeChange?: (key: string, range: Readonly<{ min: number; max: number }>) => void
   onVariableChange: (key: string, value: Tensor) => void
 }) {
   const schemaKey = useMemo(
@@ -98,13 +104,50 @@ export function VarsPanel({
                   </span>
                 </button>
                 {expanded && entry ? (
-                  <div className="border-t p-2">
+                  <div className="grid gap-2 border-t p-2">
+                    {samplingRanges?.[key] && onSamplingRangeChange ? (
+                      <div className="grid grid-cols-2 gap-2 rounded border bg-muted/30 p-2">
+                        <label className="grid gap-1 text-[11px] text-muted-foreground">
+                          Sampling Min
+                          <input
+                            className="h-8 rounded border bg-background px-2 font-mono text-xs text-foreground"
+                            disabled={disabled}
+                            max={samplingRanges[key].max}
+                            min={item.min}
+                            type="number"
+                            value={samplingRanges[key].min}
+                            onChange={(event) => {
+                              const next = event.currentTarget.valueAsNumber
+                              if (Number.isFinite(next))
+                                onSamplingRangeChange(key, { ...samplingRanges[key], min: next })
+                            }}
+                          />
+                        </label>
+                        <label className="grid gap-1 text-[11px] text-muted-foreground">
+                          Sampling Max
+                          <input
+                            className="h-8 rounded border bg-background px-2 font-mono text-xs text-foreground"
+                            disabled={disabled}
+                            max={item.max}
+                            min={samplingRanges[key].min}
+                            type="number"
+                            value={samplingRanges[key].max}
+                            onChange={(event) => {
+                              const next = event.currentTarget.valueAsNumber
+                              if (Number.isFinite(next))
+                                onSamplingRangeChange(key, { ...samplingRanges[key], max: next })
+                            }}
+                          />
+                        </label>
+                      </div>
+                    ) : null}
                     <TensorEditor
                       disabled={disabled}
                       key={`${candidateSessionKey}:${schemaKey}:${key}`}
                       label={key}
                       maximum={item.max}
                       minimum={item.min}
+                      resetValue={resetValues?.[key]}
                       selectionResetKey={`${candidateSessionKey}:${schemaKey}:${key}`}
                       shape={item.shape}
                       value={value}

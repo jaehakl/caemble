@@ -1,6 +1,8 @@
 import type {
   PredictionCohortOptions,
   PredictionResult,
+  PredictionSamplingOptions,
+  PredictionSamplingProfile,
   PredictionTensorSample,
   PredictionWorkerModelProfile,
   PredictionWorkerRequest,
@@ -95,6 +97,41 @@ export class PredictionWorkerClient {
     })
     if (response.type !== 'prediction') throw new Error('Prediction 결과 응답이 올바르지 않습니다.')
     return response.result
+  }
+
+  async startSampling(sessionId: string, options: PredictionSamplingOptions): Promise<PredictionSamplingProfile> {
+    const response = await this.request({ type: 'start-sampling', requestId: crypto.randomUUID(), sessionId, options })
+    if (response.type !== 'sampling-ready') throw new Error('Prediction sampling 준비 응답이 올바르지 않습니다.')
+    return response.profile
+  }
+
+  async nextSample(sessionId: string, fingerprint: string, attempt: number) {
+    const response = await this.request({
+      type: 'next-sample',
+      requestId: crypto.randomUUID(),
+      sessionId,
+      fingerprint,
+      attempt,
+    })
+    if (response.type !== 'sampling-candidate') throw new Error('Prediction sampling 후보 응답이 올바르지 않습니다.')
+    return response.sample
+  }
+
+  async acceptSample(sessionId: string, fingerprint: string, sample: readonly PredictionTensorSample[]) {
+    const response = await this.request({
+      type: 'accept-sample',
+      requestId: crypto.randomUUID(),
+      sessionId,
+      fingerprint,
+      sample,
+    })
+    if (response.type !== 'sampling-accepted') throw new Error('Prediction sampling center 응답이 올바르지 않습니다.')
+    return response.centerCount
+  }
+
+  async dropSampling(sessionId: string) {
+    const response = await this.request({ type: 'drop-sampling', requestId: crypto.randomUUID(), sessionId })
+    if (response.type !== 'sampling-dropped') throw new Error('Prediction sampling 종료 응답이 올바르지 않습니다.')
   }
 
   cancelPending() {

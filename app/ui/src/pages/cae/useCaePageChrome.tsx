@@ -41,12 +41,14 @@ import type { WorkbenchDialog } from './caePageTypes'
 import { GeometryAuthoringRibbon } from './GeometryAuthoringRibbon'
 
 export type AnalysisRibbonCommand = 'reload' | 'export-dataset'
-export type PredictionRibbonCommand = 'settings' | 'details' | 'validate' | 'cancel'
+export type PredictionRibbonCommand = 'settings' | 'details' | 'validate' | 'sample' | 'cancel'
 export type PredictionRibbonState = Readonly<{
   busy: boolean
+  canSample: boolean
   canValidate: boolean
   direction: 'forward' | 'inverse'
   status: string
+  sampleDisabledReason?: string
   validateDisabledReason?: string
 }>
 export type LabRibbonCommand = 'new' | 'end' | 'cancel'
@@ -92,7 +94,7 @@ export function useCaePageChrome({
   selectedCalculationId: number | null
   requestLabCommand: (command: LabRibbonCommand) => void
   requestMaterialCommand: (command: MaterialRibbonCommand) => void
-  requestPredictionCommand: (command: PredictionRibbonCommand) => void
+  requestPredictionCommand: (command: PredictionRibbonCommand, sampleCount?: number) => void
   refreshRuntime: () => void
   requestRunSelected: () => void
   runSafely: (run: () => unknown | Promise<unknown>) => void
@@ -106,6 +108,10 @@ export function useCaePageChrome({
   const [repeatCountInput, setRepeatCountInput] = useState('10')
   const repeatCount = Number(repeatCountInput)
   const repeatCountValid = repeatCountInput.trim() !== '' && Number.isSafeInteger(repeatCount) && repeatCount > 0
+  const [samplingCountInput, setSamplingCountInput] = useState('10')
+  const samplingCount = Number(samplingCountInput)
+  const samplingCountValid =
+    samplingCountInput.trim() !== '' && Number.isSafeInteger(samplingCount) && samplingCount > 0
   const actions = useMemo<Record<string, WorkbenchAction>>(() => {
     const loginReason = '로그인 후 사용할 수 있습니다.'
     const demoReadOnlyReason =
@@ -630,6 +636,18 @@ export function useCaePageChrome({
           : '로그인하여 저장하고 Simulation을 실행하세요.',
         onSelect: () => (authenticated ? requestPredictionCommand('validate') : setDialog('account')),
       },
+      predictionSample: {
+        id: 'prediction-sample',
+        label: 'Sample & Run',
+        icon: <Sparkles />,
+        disabled: authenticated && (!samplingCountValid || !predictionState.canSample),
+        disabledReason: authenticated
+          ? !samplingCountValid
+            ? 'N은 양의 JavaScript safe integer여야 합니다.'
+            : predictionState.sampleDisabledReason
+          : '로그인하여 sampling Measurement를 저장하세요.',
+        onSelect: () => (authenticated ? requestPredictionCommand('sample', samplingCount) : setDialog('account')),
+      },
       predictionCancel: {
         id: 'prediction-cancel',
         label: 'Cancel',
@@ -820,6 +838,23 @@ export function useCaePageChrome({
             <WorkbenchRibbonActions
               actions={predictionState.busy ? [actions.predictionCancel] : [actions.predictionValidate]}
             />
+          </WorkbenchRibbonGroup>
+          <WorkbenchRibbonGroup label="Sampling">
+            <label className="flex h-[68px] w-16 shrink-0 flex-col items-center justify-center gap-1 text-[10px] text-muted-foreground">
+              <input
+                aria-label="Sample & Run 횟수"
+                aria-invalid={!samplingCountValid}
+                className="h-7 w-14 rounded border border-border bg-background px-1 text-center text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={predictionState.busy}
+                min="1"
+                step="1"
+                type="number"
+                value={samplingCountInput}
+                onChange={(event) => setSamplingCountInput(event.target.value)}
+              />
+              <span>Times</span>
+            </label>
+            <WorkbenchRibbonActions actions={predictionState.busy ? [] : [actions.predictionSample]} />
           </WorkbenchRibbonGroup>
         </>
       ),

@@ -27,6 +27,7 @@ import type {
 } from './knn'
 import { comparePredictionOutput, predictionOutputRange, type PredictionValidationMetric } from './metrics'
 import type { PredictionWorkerModelProfile } from './protocol'
+import type { PredictionSamplingRange } from './sampling'
 
 export type PredictionVarsSchema = Readonly<Record<string, VarsSchemaEntry>>
 
@@ -47,11 +48,14 @@ export type PredictionVarsPaneProps = Readonly<{
   loadingExperiments: boolean
   mine: readonly AvailableExperimentRecord[]
   schema: PredictionVarsSchema | null
+  samplingRanges: Readonly<Record<string, PredictionSamplingRange>>
+  resetValues: Readonly<Record<string, Tensor | undefined>>
   status: string
   updating: boolean
   vars: Readonly<Vars> | null
   onDismissGuide: () => void
   onExperimentChange: (experimentId: number) => void
+  onSamplingRangeChange: (key: string, range: PredictionSamplingRange) => void
   onVariableChange: (key: string, value: Tensor) => void
 }>
 
@@ -67,11 +71,14 @@ export function PredictionVarsPane({
   loadingExperiments,
   mine,
   schema,
+  samplingRanges,
+  resetValues,
   status,
   updating,
   vars,
   onDismissGuide,
   onExperimentChange,
+  onSamplingRangeChange,
   onVariableChange,
 }: PredictionVarsPaneProps) {
   const currentExperiment = [...mine, ...demos].find((experiment) => experiment.id === currentExperimentId)
@@ -166,7 +173,10 @@ export function PredictionVarsPane({
           disabled={disabled}
           expandFirstByDefault
           schema={schema}
+          samplingRanges={samplingRanges}
+          resetValues={resetValues}
           vars={vars}
+          onSamplingRangeChange={onSamplingRangeChange}
           onVariableChange={onVariableChange}
         />
       </div>
@@ -450,7 +460,6 @@ export type PredictionSetupDialogProps = Readonly<{
   onKModeChange: (mode: PredictionKMode) => void
   onManualKChange: (k: number) => void
   onOpenChange: (open: boolean) => void
-  onOpenDiagnostics: (direction: PredictionDirection) => void
   onReload: () => void
   onWeightingChange: (weighting: PredictionWeighting) => void
 }>
@@ -488,7 +497,6 @@ export function PredictionSetupDialog({
   onKModeChange,
   onManualKChange,
   onOpenChange,
-  onOpenDiagnostics,
   onReload,
   onWeightingChange,
 }: PredictionSetupDialogProps) {
@@ -658,19 +666,7 @@ export function PredictionSetupDialog({
                 return (
                   <Card key={cohortDirection}>
                     <CardHeader className="p-4 pb-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <CardTitle className="text-sm capitalize">{cohortDirection}</CardTitle>
-                        {summary ? (
-                          <Button
-                            size="sm"
-                            type="button"
-                            variant="outline"
-                            onClick={() => onOpenDiagnostics(cohortDirection)}
-                          >
-                            진단 보기
-                          </Button>
-                        ) : null}
-                      </div>
+                      <CardTitle className="text-sm capitalize">{cohortDirection}</CardTitle>
                       <CardDescription className="text-xs">
                         {summary
                           ? `shape baseline · Measurement #${summary.baselineMeasurementId}`
