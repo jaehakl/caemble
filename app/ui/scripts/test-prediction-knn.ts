@@ -51,9 +51,9 @@ import {
   inverseValidationAggregateErrorFromScales,
   predictionOutputRange,
 } from '../src/features/prediction/metrics'
-import { TensorEditor } from '../src/features/calculation/TensorEditor'
+import { TensorEditor } from '../src/components/tensor-editor'
 import { VarsPanel } from '../src/features/calculation/VarsPanel'
-import { fitTensorDisplayDomain } from '../src/features/calculation/tensorDisplayDomain'
+import { fitTensorDisplayDomain } from '../src/components/tensor-editor/displayDomain'
 import { createRuntimeConsoleStore } from '../src/features/runtime-console/store'
 import { PredictionWorkerClient, PredictionWorkerRestartError } from '../src/features/prediction/client'
 import {

@@ -1,5 +1,5 @@
 import type { CalculationDataOutput } from '@/api'
-import { fitTensorDisplayDomain } from '../calculation/tensorDisplayDomain'
+import { fitTensorDisplayDomain } from '@/components/tensor-editor/displayDomain'
 import type { PredictionTensorLayout, PredictionTrainingRow } from './knn'
 
 export type PredictionValidationMetric = Readonly<{

@@ -6,9 +6,14 @@ import type { AvailableExperimentRecord, CalculationDataOutput, CalculationOutpu
 import { usePrivateQueryScope } from '@/features/auth/use-auth'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
 import { calculationSourceHash } from '@/lib/calculation'
-import { varsFingerprint as candidateFingerprint, type Tensor, type Vars } from '@/lib/cad/model'
+import {
+  varsFingerprint as candidateFingerprint,
+  varsTensorFromFlat,
+  type Tensor,
+  type Vars,
+} from '@/lib/cad/model'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
-import { compatibleVarsResetValues, varsTensorFromFlat } from '../calculation/varsTensor'
+import { compatibleVarsResetValues } from '../calculation/varsTensor'
 import { availableExperimentsQueryOptions } from '../experiment/queryOptions'
 import {
   predictionFingerprint,

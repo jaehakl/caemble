@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, LoaderCircle } from 'lucide-react'
+import { TensorEditor } from '@/components/tensor-editor'
 import { Badge } from '@/components/ui/badge'
-import type { Tensor, Vars, VarsSchemaEntry } from '@/lib/cad/model'
-import { TensorEditor } from './TensorEditor'
-import { flattenVarsTensor } from './varsTensor'
+import { flattenVarsTensor, type Tensor, type Vars, type VarsSchemaEntry } from '@/lib/cad/model'
 
 type VarsSchema = Readonly<Record<string, VarsSchemaEntry>>
 

@@ -1,21 +1,18 @@
 import assert from 'node:assert/strict'
 import {
   clampVarsValue,
-  flattenVarsTensor,
   rectangleFromCells,
   tensorCellFromPoint,
-  tensorElementCount,
   tensorSliceCoordinates,
   tensorSliceCount,
   updateTensorRectangle,
   updateTensorBrush,
-  validateVarsChanges,
   varsBarIndex,
-  validateVarsTensor,
-  varsTensorFromFlat,
   varsValueFromVerticalPosition,
   varsWheelStep,
-} from '../src/features/calculation/varsTensor'
+} from '../src/components/tensor-editor/model'
+import { validateVarsChanges, validateVarsTensor } from '../src/features/calculation/varsTensor'
+import { flattenVarsTensor, tensorElementCount, varsTensorFromFlat } from '../src/lib/cad/model/tensor'
 
 assert.equal(tensorElementCount([]), 1)
 assert.equal(tensorElementCount([2, 3, 4]), 24)

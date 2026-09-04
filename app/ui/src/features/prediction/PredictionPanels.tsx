@@ -1,5 +1,6 @@
 import { AlertCircle, Calculator, LoaderCircle, RefreshCw, X } from 'lucide-react'
 import type { AvailableExperimentRecord, CalculationDataOutput } from '@/api'
+import { TensorEditor, type TensorEditorComparisonStatus } from '@/components/tensor-editor'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -14,10 +15,8 @@ import {
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import type { Tensor, Vars, VarsSchemaEntry } from '@/lib/cad/model'
-import { TensorEditor, type TensorEditorComparisonStatus } from '../calculation/TensorEditor'
+import { flattenVarsTensor, varsTensorFromFlat, type Tensor, type Vars, type VarsSchemaEntry } from '@/lib/cad/model'
 import { VarsPanel } from '../calculation/VarsPanel'
-import { flattenVarsTensor, varsTensorFromFlat } from '../calculation/varsTensor'
 import type {
   PredictionCohortExclusionReason,
   PredictionCohortSummary,

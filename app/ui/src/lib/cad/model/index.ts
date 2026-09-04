@@ -11,6 +11,7 @@ export type {
   VarsSchemaDefinition,
 } from './definition'
 export { generateRandomVars, normalizeVars, normalizeVarsSchema, varsFingerprint, varsSchemaFingerprint } from './vars'
+export { flattenVarsTensor, tensorElementCount, varsTensorFromFlat } from './tensor'
 export { convertUcumValue, normalizeUcumUnit } from './units'
 export type { UcumUnit } from './units'
 export type { Rotation, Tensor, Vars, Vec3 } from './types'

@@ -6,9 +6,9 @@ import type {
   RecordedDataRecord,
 } from '@/api'
 import { recordedDataSnapshot, recordedDataTreeSnapshot } from '@/features/measurement/recordedData'
-import { flattenVarsTensor, varsTensorFromFlat } from '@/features/calculation/varsTensor'
 import { createDataTensor, createDataTensorAccessor, isDataTensor } from '@/lib/cad/model/dataTensor'
 import type { RecordedData, RecordedDataRule, RecordedDataTensor } from '@/lib/cad/model/descriptor'
+import { flattenVarsTensor, varsTensorFromFlat } from '@/lib/cad/model/tensor'
 import type { Tensor, Vars } from '@/lib/cad/model/types'
 import type { VarsSchemaEntry } from '@/lib/cad/model/vars'
 import {

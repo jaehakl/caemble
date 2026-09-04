@@ -11,11 +11,10 @@ import {
 import { Brush, ChevronLeft, ChevronRight, Eraser, Redo2, RotateCcw, Undo2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import type { Tensor } from '@/lib/cad/model'
-import { fitTensorDisplayDomain } from './tensorDisplayDomain'
+import { flattenVarsTensor, varsTensorFromFlat, type Tensor } from '@/lib/cad/model'
+import { fitTensorDisplayDomain } from './displayDomain'
 import {
   clampVarsValue,
-  flattenVarsTensor,
   rectangleFromCells,
   tensorCellFromPoint,
   tensorSliceCoordinates,
@@ -23,11 +22,10 @@ import {
   updateTensorRectangle,
   updateTensorBrush,
   varsBarIndex,
-  varsTensorFromFlat,
   varsValueFromVerticalPosition,
   varsWheelStep,
   type TensorRectangle,
-} from './varsTensor'
+} from './model'
 
 type Selection = Readonly<{ sliceIndex: number; rectangle: TensorRectangle }>
 type HoveredCell = Readonly<{ sliceIndex: number; row: number; column: number }>
@@ -567,6 +565,7 @@ function HeatmapsEditor({
   comparison,
   constraintMaximum,
   constraintMinimum,
+  defaultStrength,
   disabled,
   label,
   maximum,
@@ -586,6 +585,7 @@ function HeatmapsEditor({
   }>
   constraintMaximum: number
   constraintMinimum: number
+  defaultStrength: number
   disabled: boolean
   label: string
   maximum: number
@@ -608,7 +608,9 @@ function HeatmapsEditor({
   const [input, setInput] = useState('')
   const [mode, setMode] = useState<HeatmapMode>('brush')
   const [radiusInput, setRadiusInput] = useState(String(Math.min(2, Math.max(rows, columns))))
-  const [strengthInput, setStrengthInput] = useState(String(Math.max(Number.EPSILON, (maximum - minimum) * 0.05)))
+  const [strengthInput, setStrengthInput] = useState(String(defaultStrength))
+  const defaultStrengthRef = useRef(defaultStrength)
+  defaultStrengthRef.current = defaultStrength
   const wheelTimerRef = useRef<number | null>(null)
   const wheelStartRef = useRef<readonly number[] | null>(null)
   const strokeStartRef = useRef<readonly number[] | null>(null)
@@ -653,6 +655,7 @@ function HeatmapsEditor({
     redoRef.current = []
     setHistoryRevision((current) => current + 1)
     setInput('')
+    setStrengthInput(String(defaultStrengthRef.current))
     setSelection(null)
   }, [selectionResetKey])
   const changeSelection = (update: (value: number) => number, commit: boolean) => {
@@ -1097,6 +1100,7 @@ export function TensorEditor({
   const requestedDisplayDomainRef = useRef<readonly [number, number]>([minimum, maximum])
   requestedDisplayDomainRef.current = [minimum, maximum]
   const [displayDomain, setDisplayDomain] = useState<readonly [number, number]>([minimum, maximum])
+  const defaultStrength = Math.max(Number.EPSILON, (maximum - minimum) * 0.05)
   const shapeRef = useRef(shape)
   const onValueChangeRef = useRef(onValueChange)
   shapeRef.current = shape
@@ -1159,6 +1163,7 @@ export function TensorEditor({
         comparison={flatComparison}
         constraintMaximum={constraintMaximum}
         constraintMinimum={constraintMinimum}
+        defaultStrength={defaultStrength}
         disabled={disabled}
         label={label}
         maximum={displayDomain[1]}
