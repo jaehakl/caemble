@@ -56,6 +56,7 @@ describe('measurementLifecycleReducer', () => {
       busy: false,
       operation: null,
       stage: null,
+      status: 'succeeded',
       error: null,
     })
   })

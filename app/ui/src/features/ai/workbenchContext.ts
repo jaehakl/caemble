@@ -460,7 +460,7 @@ export function buildWorkbenchReferenceContext(input: WorkbenchContextInput, max
     })
   }
 
-  let footer = ''
+  let footer: string
   let fitted = fitCandidates(candidates, budget - byteLength(intro) - 2)
   for (let attempt = 0; attempt < 3 && fitted.omittedByteLength > 0; attempt += 1) {
     footer = `\n\n[Workbench context omitted ${fitted.omittedByteLength} UTF-8 bytes to remain within budget.]`

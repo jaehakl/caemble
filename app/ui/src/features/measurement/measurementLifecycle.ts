@@ -206,5 +206,6 @@ export function selectMeasurementLifecycle(state: MeasurementLifecycleState) {
     pendingRecordMeasurementId: state.pendingRecordMeasurementId,
     saveAndRunState: state.saveAndRunState,
     stage: state.stage,
+    status: state.status,
   }
 }

@@ -34,10 +34,25 @@ export default defineConfig(({ mode }) => ({
   },
   build: {
     target: 'es2022',
+    chunkSizeWarningLimit: 4096,
     commonjsOptions: {
       strictRequires: ['**/node_modules/@babel/**'],
     },
     rollupOptions: {
+      onwarn(warning, warn) {
+        if (
+          warning.code === 'PLUGIN_WARNING' &&
+          warning.plugin === 'vite:resolve' &&
+          warning.message.includes('node:module') &&
+          warning.message.includes('manifold-3d/manifold.js')
+        ) {
+          return
+        }
+        if (warning.code === 'INVALID_ANNOTATION' && /[/\\]node_modules[/\\]zod[/\\]/.test(warning.id ?? '')) {
+          return
+        }
+        warn(warning)
+      },
       input: {
         main: 'index.html',
         runner: 'runner.html',

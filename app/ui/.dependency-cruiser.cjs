@@ -83,7 +83,7 @@ module.exports = {
       comment: 'All imports must resolve.',
       severity: 'error',
       from: {},
-      to: { couldNotResolve: true },
+      to: { couldNotResolve: true, pathNot: '\\?(worker|url)$' },
     },
   ],
   options: {
@@ -92,6 +92,10 @@ module.exports = {
     },
     exclude: {
       path: '(^|/)node_modules/|\\.d\\.ts$',
+    },
+    enhancedResolveOptions: {
+      exportsFields: ['exports'],
+      conditionNames: ['import', 'require', 'node', 'default', 'types'],
     },
     tsConfig: {
       fileName: 'tsconfig.app.json',

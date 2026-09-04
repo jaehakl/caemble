@@ -13,14 +13,14 @@ if errorlevel 1 exit /b 1
 
 echo [1/5] Installing JavaScript SDK dependencies
 cd /d "%SDK_DIR%"
-call npm ci || goto :fail
+call npm ci --no-fund || goto :fail
 
 echo [2/5] Building JavaScript SDK
 call npm run build || goto :fail
 
 echo [3/5] Installing UI dependencies
 cd /d "%UI_DIR%"
-call npm ci || goto :fail
+call npm ci --no-fund || goto :fail
 
 echo [4/5] Building production UI
 set "VITE_API_BASE_URL=/api"
