@@ -60,6 +60,23 @@ describe('measurementLifecycleReducer', () => {
     })
   })
 
+  it('returns the existing state for duplicate progress', () => {
+    const running = measurementLifecycleReducer(initialMeasurementLifecycleState, {
+      type: 'start',
+      operation: 'save-and-run',
+      status: 'running',
+      stage: 'Simulation 실행',
+    })
+
+    expect(
+      measurementLifecycleReducer(running, {
+        type: 'progress',
+        status: 'running',
+        stage: 'Simulation 실행',
+      }),
+    ).toBe(running)
+  })
+
   it('keeps a failed RecordedData save available for retry after the operation finishes', () => {
     const running = measurementLifecycleReducer(initialMeasurementLifecycleState, {
       type: 'start',

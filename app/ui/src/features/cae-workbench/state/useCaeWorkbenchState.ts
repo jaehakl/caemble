@@ -127,7 +127,19 @@ export function useCaeWorkbenchState(
 
   const experimentId = experimentRecord?.id ?? null
   const baseSelection = useCaeDataSelection(experimentId, 'visible')
-  const { clearMeasurement: clearBaseMeasurement, loadMeasurement: loadBaseMeasurement } = baseSelection
+  const {
+    clearMeasurement: clearBaseMeasurement,
+    flatRecordedData,
+    loadMeasurement: loadBaseMeasurement,
+    loading: measurementLoading,
+    materialSnapshot,
+    measurement,
+    recordedData,
+    recordedRows,
+    recordedRules,
+    recordedSchemas,
+    variables: measurementVariables,
+  } = baseSelection
   const selectionContext = useMemo<WorkbenchSelectionContext>(
     () =>
       storedSelectionContext.experimentId === experimentId
@@ -202,8 +214,33 @@ export function useCaeWorkbenchState(
   )
 
   const selection = useMemo(
-    () => ({ ...baseSelection, clearAll: clearMeasurement, clearMeasurement, loadMeasurement }),
-    [baseSelection, clearMeasurement, loadMeasurement],
+    () => ({
+      measurement,
+      recordedRows,
+      recordedData,
+      flatRecordedData,
+      recordedRules,
+      recordedSchemas,
+      variables: measurementVariables,
+      materialSnapshot,
+      loading: measurementLoading,
+      clearAll: clearMeasurement,
+      clearMeasurement,
+      loadMeasurement,
+    }),
+    [
+      clearMeasurement,
+      flatRecordedData,
+      loadMeasurement,
+      materialSnapshot,
+      measurement,
+      measurementLoading,
+      measurementVariables,
+      recordedData,
+      recordedRows,
+      recordedRules,
+      recordedSchemas,
+    ],
   )
 
   useEffect(() => {

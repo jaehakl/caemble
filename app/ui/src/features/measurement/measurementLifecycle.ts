@@ -109,16 +109,29 @@ export function measurementLifecycleReducer(
         generateAndRunState: action.generateAndRunState ?? null,
         saveAndRunState: action.saveAndRunState ?? null,
       }
-    case 'progress':
+    case 'progress': {
       if (state.operation === null) return state
+      const status = action.status ?? state.status
+      const stage = action.stage ?? state.stage
+      const generateAndRunState =
+        'generateAndRunState' in action ? (action.generateAndRunState ?? null) : state.generateAndRunState
+      const saveAndRunState = 'saveAndRunState' in action ? (action.saveAndRunState ?? null) : state.saveAndRunState
+      if (
+        status === state.status &&
+        stage === state.stage &&
+        generateAndRunState === state.generateAndRunState &&
+        saveAndRunState === state.saveAndRunState
+      ) {
+        return state
+      }
       return {
         ...state,
-        status: action.status ?? state.status,
-        stage: action.stage ?? state.stage,
-        generateAndRunState:
-          'generateAndRunState' in action ? (action.generateAndRunState ?? null) : state.generateAndRunState,
-        saveAndRunState: 'saveAndRunState' in action ? (action.saveAndRunState ?? null) : state.saveAndRunState,
+        status,
+        stage,
+        generateAndRunState,
+        saveAndRunState,
       }
+    }
     case 'calculationStarted':
       if (state.operation === null) return state
       return {

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type PropsWithChildren } from 'react'
+import { useCallback, useState, type PropsWithChildren } from 'react'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -201,15 +201,11 @@ describe('useCaeMeasurementActions workflows', () => {
           if (row) setSelectedMeasurement(row)
           return row
         }, [])
-        const selection = useMemo(
-          () =>
-            ({
-              measurement: selectedMeasurement,
-              clearMeasurement,
-              loadMeasurement,
-            }) as unknown as CaeDataSelection,
-          [clearMeasurement, loadMeasurement, selectedMeasurement],
-        )
+        const selection = {
+          measurement: selectedMeasurement,
+          clearMeasurement,
+          loadMeasurement,
+        } as unknown as CaeDataSelection
         return {
           ...useCaeMeasurementActions({
             authenticated: true,
@@ -238,7 +234,7 @@ describe('useCaeMeasurementActions workflows', () => {
     rows.set(saved.id, saved)
     mocks.create.mockResolvedValue({ id: saved.id })
     const run = vi.fn(() => 'save-run-1')
-    const rendered = renderActions({ initialSimulation: simulation({ run }) })
+    const rendered = renderActions({ initialMeasurement: measurement(40), initialSimulation: simulation({ run }) })
     await waitFor(() => expect(mocks.experimentRecordList).toHaveBeenCalledOnce())
 
     let completionPromise!: ReturnType<typeof rendered.result.current.saveAndRunCurrentAsync>
@@ -252,6 +248,40 @@ describe('useCaeMeasurementActions workflows', () => {
       simulationController: simulation({ run }),
     })
     await waitFor(() => expect(run).toHaveBeenCalledOnce())
+
+    rendered.rerender({
+      experimentDocument: document({ revision: 2, successfulRevision: 2 }),
+      simulationController: simulation({
+        run,
+        process: {
+          runId: 'save-run-1',
+          status: 'preparing',
+          engine: null,
+          stage: 'Solver 준비',
+          error: null,
+          startedAt: 1,
+          finishedAt: null,
+        },
+      }),
+    })
+    await waitFor(() => expect(rendered.result.current.stage).toBe('Solver 준비'))
+
+    rendered.rerender({
+      experimentDocument: document({ revision: 2, successfulRevision: 2 }),
+      simulationController: simulation({
+        run,
+        process: {
+          runId: 'save-run-1',
+          status: 'running',
+          engine: { name: 'test', version: '1' },
+          stage: 'Solver 실행',
+          error: null,
+          startedAt: 1,
+          finishedAt: null,
+        },
+      }),
+    })
+    await waitFor(() => expect(rendered.result.current.stage).toBe('Solver 실행'))
 
     rendered.rerender({
       experimentDocument: document({ revision: 2, successfulRevision: 2 }),

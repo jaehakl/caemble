@@ -50,6 +50,22 @@ describe('useCaeDataSelection', () => {
     mocks.readRecordedData.mockReset()
   })
 
+  it('keeps the public snapshot identity across an unrelated parent rerender', () => {
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    const rendered = renderHook(({ marker }) => ({ marker, selection: useCaeDataSelection(10, 'visible') }), {
+      initialProps: { marker: 0 },
+      wrapper,
+    })
+    const initialSelection = rendered.result.current.selection
+
+    rendered.rerender({ marker: 1 })
+
+    expect(rendered.result.current.marker).toBe(1)
+    expect(rendered.result.current.selection).toBe(initialSelection)
+  })
+
   it('aborts the superseded request and only commits the latest Measurement', async () => {
     let firstSignal: AbortSignal | undefined
     mocks.readRecordedData

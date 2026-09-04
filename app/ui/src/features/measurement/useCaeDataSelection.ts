@@ -80,20 +80,23 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
     [measurement?.id, recordedDataTree],
   )
 
-  return {
-    measurement,
-    recordedRows: snapshot.rows,
-    recordedData: snapshot.data,
-    flatRecordedData: snapshot.flatData,
-    recordedRules: snapshot.rules,
-    recordedSchemas: snapshot.schemas,
-    variables: measurement?.vars as Readonly<Vars> | undefined,
-    materialSnapshot: measurement?.material_parameters ?? null,
-    loading,
-    clearAll: clearMeasurement,
-    clearMeasurement,
-    loadMeasurement,
-  }
+  return useMemo(
+    () => ({
+      measurement,
+      recordedRows: snapshot.rows,
+      recordedData: snapshot.data,
+      flatRecordedData: snapshot.flatData,
+      recordedRules: snapshot.rules,
+      recordedSchemas: snapshot.schemas,
+      variables: measurement?.vars as Readonly<Vars> | undefined,
+      materialSnapshot: measurement?.material_parameters ?? null,
+      loading,
+      clearAll: clearMeasurement,
+      clearMeasurement,
+      loadMeasurement,
+    }),
+    [clearMeasurement, loadMeasurement, loading, measurement, snapshot],
+  )
 }
 
 export type CaeDataSelection = ReturnType<typeof useCaeDataSelection>
