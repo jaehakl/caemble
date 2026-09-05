@@ -30,6 +30,7 @@ import { runtimeQueryKeys } from '@/features/runtime/queryKeys'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
 import { useSelectionSourceNavigation } from '@/features/cae-workbench/viewer/useSelectionSourceNavigation'
 import { parseRayPathBundles } from '@/lib/cad/model'
+import { RayPathSystemCard } from '@/features/measurement/RayPathSystemCard'
 import { WorkbenchShellProvider } from '@/workbench/state/workbenchShellStore'
 import { CalculationWorkbenchContainer } from '@/workbench/CalculationWorkbenchContainer'
 import { WorkbenchShellContainer } from '@/workbench/WorkbenchShellContainer'
@@ -599,6 +600,13 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
           </div>
         ) : page.activeSection === 'measurement' ? (
           <CalculationWorkbenchContainer
+            recordedDataSystemResult={
+              <RayPathSystemCard
+                bundles={rayPathState.bundles}
+                declared={'rayPaths' in activeRecordedSchemas}
+                error={rayPathState.error}
+              />
+            }
             authenticated={auth.isAuthenticated}
             dataReadable={experimentDataReadable}
             agentWorkspaceSession={workbench.agentWorkspaceSession}

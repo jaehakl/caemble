@@ -1,4 +1,5 @@
 import type { CatalogRuntimeSlice } from '@/contracts/catalog'
+import { geometries } from '@jscad/modeling'
 import { DRAFT_TASK_KERNEL } from '@/lib/catalog/draftTask'
 import type { EvaluatedRuntimeDocumentSnapshot } from '../execution/snapshot'
 import type { CadScene, CadScenePart } from '../evaluation/types'
@@ -400,6 +401,29 @@ function validateCalls(
       return
     }
     validateParameters(call.parameters, method.parameters, `${callPath}.parameters`, catalog, issues)
+    if (method.methodId === 'ray.reflection-grating' && isRecord(call.parameters)) {
+      const { orders, efficiencies, grooveDirection } = call.parameters
+      const orderValues = isRecord(orders) ? orders.value : undefined
+      const efficiencyValues = isRecord(efficiencies) ? efficiencies.value : undefined
+      const groove = isRecord(grooveDirection) ? grooveDirection.value : undefined
+      if (Array.isArray(orderValues) && Array.isArray(efficiencyValues)) {
+        if (orderValues.length === 0 || orderValues.length !== efficiencyValues.length)
+          addIssue(issues, `${callPath}.parameters`, 'orders and efficiencies must have the same non-zero length.')
+        if (new Set(orderValues).size !== orderValues.length)
+          addIssue(issues, `${callPath}.parameters.orders`, 'diffraction orders must not contain duplicates.')
+        if (isRecord(efficiencies) && typeof efficiencies.unit === 'string' && efficiencyValues.every((value) => typeof value === 'number')) {
+          try {
+            const total = convertUcumValue(efficiencyValues.reduce((sum: number, value: number) => sum + value, 0), efficiencies.unit, '{fraction}', callPath)
+            if (total > 1)
+              addIssue(issues, `${callPath}.parameters.efficiencies`, 'diffraction efficiencies must sum to at most 1.')
+          } catch {
+            // validateParameters reports incompatible units above.
+          }
+        }
+      }
+      if (Array.isArray(groove) && groove.every((value) => value === 0))
+        addIssue(issues, `${callPath}.parameters.grooveDirection`, 'must be a non-zero world-space direction.')
+    }
     if (!Array.isArray(call.target)) {
       addIssue(issues, `${callPath}.target`, 'must be an array.')
       return
@@ -429,6 +453,33 @@ function validateCalls(
       }
       if (group.missingMemberIds.length > 0) {
         addIssue(issues, targetPath, `references unresolved members: ${group.missingMemberIds.join(', ')}.`)
+      }
+      if (method.methodId === 'ray.reflection-grating' && isRecord(call.parameters)) {
+        const direction = call.parameters.grooveDirection
+        const groove = isRecord(direction) ? direction.value : undefined
+        if (Array.isArray(groove) && groove.length === 3 && groove.every((value) => typeof value === 'number')) {
+          const length = Math.hypot(...groove)
+          let firstNormal: readonly number[] | undefined
+          for (const part of scene.parts) {
+            const selected = part.surfaces.filter((surface) => group.surfaceIds.includes(surface.id))
+            if (!selected.length) continue
+            const polygons = geometries.geom3.toPolygons(part.geometry as ReturnType<typeof geometries.geom3.create>)
+            for (const surface of selected) {
+              for (const polygonIndex of surface.polygonIndices) {
+                const normal = geometries.poly3.plane(polygons[polygonIndex]).slice(0, 3)
+                if (firstNormal && normal.some((value, axis) => Math.abs(value - firstNormal![axis]) > 1e-6)) {
+                  addIssue(issues, targetPath, 'reflection gratings require a planar surface with consistent normals.')
+                  break
+                }
+                firstNormal ??= normal
+                if (Math.abs(normal.reduce((sum, value, axis) => sum + value * groove[axis], 0)) > length * 1e-6) {
+                  addIssue(issues, `${callPath}.parameters.grooveDirection`, 'must be tangent to the grating surface.')
+                  break
+                }
+              }
+            }
+          }
+        }
       }
       resolvedCount += method.target.kind === 'geometry' ? group.geometryIds.length : group.surfaceIds.length
     })

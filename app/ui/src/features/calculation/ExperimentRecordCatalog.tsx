@@ -1,5 +1,5 @@
 import { Braces, LoaderCircle, Search } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -47,6 +47,7 @@ export function ExperimentRecordCatalog({
   loading,
   loadError,
   onInsert,
+  systemResult,
 }: {
   analysisError: string | null
   experimentId: number | null
@@ -55,6 +56,7 @@ export function ExperimentRecordCatalog({
   loading: boolean
   loadError: boolean
   onInsert: (recordName: string) => void
+  systemResult?: ReactNode
 }) {
   const [search, setSearch] = useState('')
   useEffect(() => setSearch(''), [experimentId])
@@ -101,6 +103,7 @@ export function ExperimentRecordCatalog({
         ) : null}
       </header>
       <div className="min-h-0 flex-1 overflow-auto rounded border">
+        {systemResult}
         {experimentId === null ? (
           <div className="grid h-full min-h-20 place-items-center p-3 text-center text-xs text-muted-foreground">
             먼저 저장된 Experiment를 여세요.

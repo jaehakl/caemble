@@ -14,6 +14,7 @@ export const RAY_PATH_EVENT_NAMES = Object.freeze([
   'power-cutoff',
   'max-bounces',
   'roulette',
+  'diffraction',
 ] as const)
 export type RayPathEventName = (typeof RAY_PATH_EVENT_NAMES)[number]
 export type RayPathBundle = Readonly<{

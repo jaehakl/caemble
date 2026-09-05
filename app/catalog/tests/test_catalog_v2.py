@@ -61,7 +61,7 @@ class CatalogV2Tests(unittest.TestCase):
                 version="1.0.0",
             )
 
-        self.assertEqual(total, 8)
+        self.assertEqual(total, 9)
         self.assertTrue(removed_keys.isdisjoint(item["key"] for item in experiments))
         self.assertEqual(example["title"], "Electro-Thermal Notched Bar")
         self.assertEqual(
@@ -94,6 +94,22 @@ class CatalogV2Tests(unittest.TestCase):
         self.assertIn("value: [40, 21, 21]", thermal_source)
         self.assertIn('inputs={"heatSource": electric["artifacts"]["jouleHeating"]}', simulation_source)
         self.assertIn('sim.release(electric["artifacts"]["jouleHeating"])', simulation_source)
+
+    def test_spectrometer_has_versioned_grating_solver_and_complete_bundle(self) -> None:
+        with open_catalog() as catalog:
+            example = catalog.experiment('caemble:experiment/caemble/verified/czerny-turner-spectrometer@1.0.0')
+            solver = catalog.get_solver_manifest('ray-tracing', '0.3.0')
+            original = catalog.get_solver_manifest('ray-tracing', '0.2.0')
+        self.assertEqual(example['title'], 'Czerny–Turner Spectrometer')
+        self.assertEqual([(s['name'], s['version']) for s in example['relatedSolvers']], [('ray-tracing', '0.3.0')])
+        self.assertEqual(set(example['sourceBundle']['files']), {
+            'experiment.tsx', 'geometry.tsx', 'layout.ts', 'material.tsx', 'simulate.py', 'tasks/trace.tsx',
+        })
+        self.assertEqual(solver['abiVersion'], 2)
+        self.assertEqual(solver['implementation'], 'app.solvers.ray_tracing.v0_3_0.entry:implementation')
+        method = next(m for m in solver['descriptor']['methods']['boundaryConditions'] if m['methodId'] == 'ray.reflection-grating')
+        self.assertEqual(set(method['parameters']), {'spacing', 'grooveDirection', 'orders', 'efficiencies'})
+        self.assertNotIn('ray.reflection-grating', {m['methodId'] for m in original['descriptor']['methods']['boundaryConditions']})
 
     def test_new_solver_cli_defaults_to_abi_v2(self) -> None:
         arguments = build_parser().parse_args(

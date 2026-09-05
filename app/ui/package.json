@@ -15,6 +15,7 @@
     "check:calculation-build": "node scripts/check-calculation-build.mjs",
     "test": "vitest run",
     "test:unit": "vitest run",
+    "test:spectrometer": "esbuild scripts/test-spectrometer.ts --bundle --platform=node --format=esm --external:typescript --external:@babel/* --alias:@=./src --outfile=node_modules/.tmp/test-spectrometer.mjs && node node_modules/.tmp/test-spectrometer.mjs",
     "test:unit:watch": "vitest",
     "test:legacy": "npm run test:ai-agent && npm run test:calculation && npm run test:analysis && npm run test:http && npm run test:api-contract && npm run test:vars && npm run test:prediction",
     "test:ai-agent": "esbuild scripts/test-ai-agent-conversation.ts --bundle --platform=node --format=esm --define:import.meta.env={} --alias:@=./src --outfile=node_modules/.tmp/test-ai-agent-conversation.mjs && node node_modules/.tmp/test-ai-agent-conversation.mjs",
