@@ -3,13 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
+
 from app.methods.structured import VoxelDomain, build_voxel_domain, structured_grid_ref
 from app.runtime_kernel.api import SolverInvocation
 from app.runtime_kernel.api.world import (
     experiment_scene,
     geometry_part,
     grid_shape,
-    material_scalar,
+    material_property_value,
     scalar_parameter,
     single_method,
     surface,
@@ -59,7 +61,7 @@ async def build_heat_domain(context: SolverInvocation) -> HeatDomain:
             root_ids=[part["id"]],
             reference_length_unit=context.descriptor["referenceLengthUnit"],
         ),
-        material_scalar(context.world, part, context.descriptor, "thermal.conductivity"),
+        float(np.trace(material_property_value(context.world, part, context.descriptor, "thermal.conductivity").reshape(3, 3)) / 3),
         scalar_parameter(boundaries[0]["parameters"]["temperature"]),
         scalar_parameter(boundaries[1]["parameters"]["temperature"]),
     )

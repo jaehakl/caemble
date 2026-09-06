@@ -15,7 +15,7 @@ from app.runtime_kernel.api.world import (
     geometry_part,
     geometry_parts,
     grid_shape,
-    material_scalar,
+    material_property_value,
     scalar_parameter,
     surface,
     target_group,
@@ -61,7 +61,10 @@ async def build_dc_domain(context: SolverInvocation) -> DcDomain:
     ]
     legacy_mode = len(legacy_source) == len(legacy_reference) == 1 and not electrode_source and not electrode_reference
     shape = grid_shape(grid_rule)
-    conductivities = [material_scalar(world, part, descriptor, "electrical.conductivity") for part in parts]
+    conductivities = [
+        float(np.trace(material_property_value(world, part, descriptor, "electrical.conductivity").reshape(3, 3)) / 3)
+        for part in parts
+    ]
     fixed_values: np.ndarray[Any, Any] | None = None
     geometry_hashes = [scene["geometryHash"]]
     root_ids = [part["id"] for part in parts]
@@ -83,7 +86,7 @@ async def build_dc_domain(context: SolverInvocation) -> DcDomain:
         source_parts = geometry_parts(task, target_group(source_rule, "geometry", "task"))
         reference_parts = geometry_parts(task, target_group(reference_rule, "geometry", "task"))
         conductivities.extend(
-            material_scalar(world, part, descriptor, "electrical.conductivity", "task")
+            float(np.trace(material_property_value(world, part, descriptor, "electrical.conductivity", "task").reshape(3, 3)) / 3)
             for part in source_parts + reference_parts
         )
         electrode_domain = await build_electrode_voxel_domain(

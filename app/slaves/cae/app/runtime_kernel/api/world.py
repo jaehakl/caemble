@@ -58,13 +58,14 @@ def scalar_parameter(value: Any) -> float:
     return float(value)
 
 
-def material_scalar(
+def material_property_value(
     world: dict[str, Any],
     part: dict[str, Any],
     solver_descriptor: dict[str, Any],
     property_name: str,
     source: str = "experiment",
-) -> float:
+) -> np.ndarray[Any, Any]:
+    """Read a material property in the solver's unit without reducing its tensor."""
     material_name = part["material"]["name"]
     descriptor = world["materials"][source]["parameters"]["materials"][material_name][
         property_name
@@ -77,5 +78,16 @@ def material_scalar(
     path = f"material {material_name!r}.{property_name}.value"
     offset = convert_ucum_value(0, descriptor["unit"], expected["unit"], path)
     scale = convert_ucum_value(1, descriptor["unit"], expected["unit"], path) - offset
-    array = np.asarray(descriptor["value"], dtype=np.float64).reshape((3, 3)) * scale + offset
-    return float(np.trace(array) / 3)
+    return np.asarray(descriptor["value"], dtype=np.float64) * scale + offset
+
+
+def material_scalar(
+    world: dict[str, Any],
+    part: dict[str, Any],
+    solver_descriptor: dict[str, Any],
+    property_name: str,
+    source: str = "experiment",
+) -> float:
+    """Compatibility reduction for solvers using the historical isotropic mean."""
+    value = material_property_value(world, part, solver_descriptor, property_name, source)
+    return float(np.trace(value.reshape((3, 3))) / 3)
