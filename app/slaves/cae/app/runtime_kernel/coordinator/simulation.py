@@ -196,32 +196,46 @@ class SimulationApi:
                 hold.release()
             raise
 
-    def release(self, value: Any) -> None:
+    def release(self, value: Any, *, keep: Any = None) -> None:
         self._ensure_open()
-        handles: list[ArtifactHandle] = []
+        candidates: dict[tuple[Any, ...], ArtifactHandle | StateHandle] = {}
+        protected: dict[tuple[Any, ...], ArtifactHandle | StateHandle] = {}
 
-        def collect(item: Any) -> None:
-            if isinstance(item, ArtifactHandle):
+        def collect(item: Any, target: dict[tuple[Any, ...], ArtifactHandle | StateHandle]) -> None:
+            if isinstance(item, StateHandle):
+                if not self._states.is_live(item):
+                    raise CaeError("invalid_release", "sim.release received a released or foreign state")
+                target[("state", item.state_store_id, item.revision)] = item
+            elif isinstance(item, ArtifactHandle):
                 if not self._artifacts.is_live(item):
                     raise CaeError("invalid_release", "sim.release received a released or foreign artifact")
-                handles.append(item)
+                target[("artifact", item.artifact_store_id, item.artifact_id)] = item
             elif isinstance(item, Mapping):
                 for child in item.values():
-                    collect(child)
+                    collect(child, target)
             elif isinstance(item, (list, tuple)):
                 for child in item:
-                    collect(child)
+                    collect(child, target)
             else:
-                raise CaeError("invalid_release", "sim.release accepts artifact handles returned by sim.run")
+                raise CaeError("invalid_release", "sim.release accepts state roots and artifact handles returned by sim.run")
 
-        collect(value)
-        if not handles:
-            raise CaeError("invalid_release", "sim.release found no artifact handles")
-        seen: set[str] = set()
-        for handle in handles:
-            if handle.artifact_id not in seen:
-                self._artifacts.release(handle)
-                seen.add(handle.artifact_id)
+        collect(value, candidates)
+        if not candidates:
+            raise CaeError("invalid_release", "sim.release found no state or artifact handles")
+        if keep is not None:
+            collect(keep, protected)
+        releasing = [item for key, item in candidates.items() if key not in protected]
+        try:
+            for item in releasing:
+                if isinstance(item, StateHandle):
+                    self._states.check_releasable(item)
+        except ResourceScopeError as exc:
+            raise CaeError("invalid_release", str(exc)) from exc
+        for item in releasing:
+            if isinstance(item, StateHandle):
+                self._states.release(item)
+            else:
+                self._artifacts.release(item)
 
     def state_revision(self, value: Any) -> int:
         if value is None:

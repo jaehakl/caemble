@@ -42,3 +42,25 @@ async def simulate(*, sim, tasks, vars):
             task_names={"electric"},
             recorded_names=set(),
         )
+
+
+def test_program_allows_state_release_with_current_state_and_checkpoint_kept() -> None:
+    source = """
+async def simulate(*, sim, tasks, vars):
+    initial = await sim.run(tasks["step"])
+    checkpoint = initial["state"]
+    state = checkpoint
+    for step in range(3):
+        result = await sim.run(tasks["step"], state=state)
+        sim.release(state, keep=(result["state"], checkpoint))
+        state = result["state"]
+    return state
+"""
+
+    simulate = validate_and_load_simulate(
+        source,
+        task_names={"step"},
+        recorded_names=set(),
+    )
+
+    assert simulate.__name__ == "simulate"
