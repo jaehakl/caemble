@@ -49,12 +49,12 @@ CAE worker 코드는 다음 세 계층으로 나뉩니다.
 ```text
 app/slaves/cae/app/
 ├─ runtime_kernel/
-│  ├─ api/             Solver ABI와 단위 계약
-│  ├─ coordinator/     SimulationApi, program, 호출 transaction
+│  ├─ api/             Solver ABI, StatePatch, 독립적인 DomainValue/FieldValue, 단위 계약
+│  ├─ coordinator/     RunPlan/TaskSpec, SimulationApi, program, commit/rollback
 │  ├─ execution/       spawn child, IPC, mmap serialization
 │  ├─ resources/       state, artifact, buffer, cache
 │  ├─ catalog/         descriptor snapshot과 locator 조회
-│  └─ transport/       GPStation handler와 record lifecycle
+│  └─ transport/       GPStation handler, 기록 schema 변환, record ACK lifecycle
 ├─ methods/
 │  ├─ geometry/        canonical geometry와 provenance
 │  ├─ structured/      Box, Field, Partition, Halo, Stencil, voxel domain
@@ -78,7 +78,9 @@ app/slaves/cae/app/
       └─ outputs.py
 ```
 
-의존 방향은 `runtime_kernel.api/resources <- methods <- solvers`입니다.
+Solver의 공개 의존 방향은 `runtime_kernel.api <- methods <- solvers`입니다.
+Runtime 내부의 `resources`는 자원 그래프와 lease를 소유합니다. 신규 Solver는
+Store를 생성하거나 `ResourceRef`를 입출력 값에 넣지 않습니다.
 
 - resident `coordinator`, `transport`는 `methods`나 `solvers`를 import하지
   않습니다. Catalog locator의 구현 모듈은 spawn된 child에서만 import합니다.
@@ -92,10 +94,16 @@ app/slaves/cae/app/
   root입니다. `cal_E` 같은 계산 연산은 외부 함수나 객체로 주입하며 거대한
   Framework base class로 옮기지 않습니다.
 
-저장소 루트의 `runtime.py`, `kernels.py`, `program.py`, `handlers.py`와 기존
+CAE의 `app/runtime.py`, `kernels.py`, `program.py`, `handlers.py`와 기존
 `solver_framework` import는 이전 구현을 위한 compatibility facade일 수
 있습니다. 신규 코드는 `runtime_kernel`과 역할별 `methods` package를 직접
 사용합니다.
+
+`RunPlan`은 Measurement 준비 시 normalized config, frozen descriptor, locator,
+ABI, output 계약과 world snapshot을 `TaskSpec`으로 고정합니다. 각 호출은
+등록된 task identity로 spec을 선택하며, 실행 때 Catalog나 다른 객체의 private
+dictionary를 다시 조합하지 않습니다. `coordinator/commit.py`는 결과 검증,
+state/artifact 등록과 mmap transaction 확정의 실패 복구를 한 경로로 수행합니다.
 
 ## 기본 원칙
 
@@ -227,8 +235,7 @@ implementation = SolverImplementation(abi_version=2, run=run)
 
 - normalized task config와 task identity
 - common/task scene 및 frozen Material snapshot을 포함하는 world
-- immutable input으로 취급해야 하는 `StateView` 또는 process-transport용
-  detached `Mapping`
+- immutable input으로 취급해야 하는 detached `Mapping` state
 - Catalog input port 검증을 마친 `InputArtifact`
 - child에서 바인딩한 canonical `GeometryService`
 - progress callback과 cooperative cancellation token
@@ -281,6 +288,24 @@ Legacy Solver가 기존 state mapping 자체를 반환하면 빈 patch로, 새 d
 반환하면 root replacement patch로 변환합니다. 따라서 기존
 `result["state"]["rayPaths"]` 같은 Mapping 읽기도 유지됩니다.
 
+`StateRevision`에는 revision ID, parent revision과 producer task만 남습니다.
+live root와 lease는 별도로 관리하므로 명시적으로 state를 해제해도 계산 계보는
+run이 끝날 때까지 보존됩니다. 기존 program의 과거 revision을 자동 해제하지
+않습니다.
+
+`sim.release(state, keep=next_state)`는 이전과 다음 revision이 같으면 아무것도
+해제하지 않습니다. checkpoint까지 보호하려면 `keep=(next_state, checkpoint)`를
+사용합니다. state/artifact 또는 이를 담은 mapping/list/tuple을 받을 수 있으며,
+보호할 handle도 같은 형식입니다. 비교 기준은 내용 동등성이 아닌 Store와
+revision/artifact ID입니다. 모든 대상을 먼저 검사한 뒤 해제합니다.
+
+해제된 state root의 새 읽기와 `sim.run(state=...)`는 거부됩니다. 이미 꺼낸
+array의 일반 Python 참조는 그대로 유효하며, 그런 참조가 있으면 mmap도 남을
+수 있습니다. run의 시작점인 empty revision 0의 해제는 no-op입니다. 호출 중인
+base state의 해제는 거부하고, invocation이 끝난 후 해제할 수 있습니다. 따라서
+빈 patch가 기존 live handle을 반환하는 계약을 유지하며 해제된 handle을
+다시 활성화하지 않습니다.
+
 ## Resource와 typed artifact
 
 State와 Artifact의 실제 값은 resident coordinator가 소유하는 공통
@@ -288,11 +313,18 @@ State와 Artifact의 실제 값은 resident coordinator가 소유하는 공통
 tensor뿐 아니라 structured grid, unstructured mesh, field, particle set,
 ray set, structured bundle을 표현할 수 있습니다.
 
-공간 field에는 적어도 domain reference, node/edge/face/cell/particle/ray
-location, QuantityKind, unit, basis/components와 values가 있어야 합니다. 같은
-field 값을 State와 여러 Artifact가 참조할 때 ResourceStore가 buffer를
-공유하므로 Solver가 사본 공유를 위해 별도 object-identity 규칙을 만들지
-않습니다.
+Solver 경계에서는 `StructuredGridValue`, `UnstructuredMeshValue`,
+`ParticleSetValue`, `RaySetValue`, `FieldValue`, `BundleValue`를 사용합니다.
+`FieldValue.domain`은 실제 domain 값이고, 좌표·connectivity·위치·QuantityKind·
+unit·basis/components·values를 다른 child가 Store 조회 없이 해석할 수 있습니다.
+부모는 이를 내부 domain/field node와 `ResourceRef`로 변환합니다. 기존
+structured-field/ray-path mapping은 compatibility 경계에서 기존 표현으로
+유지합니다.
+
+StatePatch와 여러 Artifact를 한 번에 ingest할 때 동일한 domain과 array의
+공유 관계를 보존합니다. mmap으로 전달된 배열은 backing buffer를 재사용하며,
+Python 객체 identity가 바뀌어도 별도 buffer 사본을 만들 필요가 없습니다.
+값이 같다는 이유로 모든 배열을 전역 해시하여 합치지는 않습니다.
 
 `ArtifactHandle`은 다음 provenance를 갖는 run-scoped typed export입니다.
 
@@ -305,16 +337,39 @@ field 값을 State와 여러 Artifact가 참조할 때 ResourceStore가 buffer�
 Coordinator는 요청하지 않은 output, 누락된 output, 잘못된 artifact type과
 관측값을 commit 전에 거부합니다. Consumer는 Catalog input port로 받은
 `InputArtifact.value`를 사용합니다. 서로 다른 domain의 field를 shape만 보고
-reshape하지 않고 `methods.coupling`의 명시적인 interpolation, L2 또는
-conservative projection을 적용합니다. 같은 domain이면 backing resource를
-복사하지 않고 사용할 수 있습니다.
+reshape하지 않고 해당 domain에 맞는 명시적인 coupling method를 적용합니다.
+현재 제공하는 보존형 method의 지원 범위는 아래의 scalar cell average입니다.
+같은 domain이면 backing resource를 복사하지 않고 사용할 수 있습니다.
 
-`sim.release(handle)`는 artifact lease만 해제합니다. 같은 Resource를 state,
+`sim.release(handle)`는 해당 artifact 또는 state root의 lease를 해제합니다.
+같은 Resource를 다른 state,
 다른 artifact, 실행 transaction 또는 RecordPacket이 참조하면 실제 buffer는
 남습니다. `sim.record()`는 브라우저 ACK가 끝날 때까지 별도 lease를 잡은 뒤
 해제하므로 Solver나 `simulate.py`가 array를 `resize(0)` 하거나 dict를
 `clear()`해서 수명을 관리하지 않습니다. Released/foreign handle과 다른
 Measurement run의 state는 거부됩니다.
+
+## RecordedData 변환 경계
+
+`transport/recording.py`는 live artifact를 선언된 기록 schema의 값 트리로
+변환하고, 기존 `tensor.py`는 inline tensor 또는 binary attachment를 만듭니다.
+Solver output 계약과 RecordedData schema는 별개입니다. 기존 dtype leaf는
+values와 structured axes를 기존 wire 형식으로 기록합니다.
+
+domain을 보존하려면 새 group schema에 `domain`, `location`, `quantity`,
+`valueUnit`, `values`를 명시합니다. mesh domain은 `kind`, `identity`,
+`lengthUnit`, `points`, `cells`를 제공하고, named cell block은 `cells` 아래에
+선언합니다. structured domain은 `shape`, `coordinates.axis0`,
+`coordinates.axis1` 등의 좌표 vector를 제공합니다. 선택한 `components`,
+`componentBasis`, `metadata`와 domain provenance도 선언한 하위 멤버만 기록하며,
+없는 값을 요청하면 기록이 실패합니다.
+
+Float leaf에는 기존 QuantityKind·unit·필요한 basis를 선언합니다. group의
+멤버 이름으로 `unit`, `quantityKind`, `basis`, `axes`, `tensorOrder`를 사용하면
+기존 authoring descriptor와 충돌하므로 위의 projection 이름을 사용합니다.
+이 확장은 worker 기록의 의미 보존을 제공하며 범용 mesh viewer나 영속 checkpoint
+복원을 추가하지 않습니다. complex tensor dtype은 추가하지 않고, 필요한
+실수부·허수부를 명시적인 기존 dtype leaf로 기록합니다.
 
 ## 호출별 process transaction
 
@@ -335,6 +390,7 @@ resident coordinator
 ```
 
 큰 CPU NumPy array는 parent가 소유하는 file-backed mmap buffer로 전달합니다.
+base state와 input artifact는 호출별 독립 lease로 commit/rollback까지 유지합니다.
 Child crash, timeout, validation failure나 cancellation이면 provisional buffer와
 결과를 rollback합니다. 먼저 cancellation token으로 cooperative cancel을
 요청하고 grace period에도 종료하지 않으면 그 child만 terminate합니다.
@@ -366,11 +422,31 @@ emitter, detector와 boundary를 찾습니다.
 property도 QuantityKind 차원에 따라 local unit으로 변환합니다. 이 변환은
 저장된 Geometry와 frozen Material snapshot을 수정하지 않습니다.
 
+물성의 값 읽기·단위 변환과 3×3 tensor의 `trace / 3` scalar 환산은 별도
+책임입니다. 환산은 이를 사용하는 numerical method에서 명시적으로 수행하며
+기존 수치 가정을 일반적인 Runtime 물성 조회 속에 숨기지 않습니다.
+
 Structured field를 내보낼 때는 계산 domain identity를 함께 구성합니다.
 예를 들어 DC의 Joule heating과 Heat의 source field는 동일 domain이면 값을
 그대로 공유하고, domain이 다르면 conservative projection을 거칩니다.
 새 Solver에서 shape가 같다는 이유만으로 서로 다른 grid/mesh의 field를
 결합하지 않습니다.
+
+`methods.coupling.values`의 `project_structured_scalar_cell_averages`와
+structured↔orthotope adapter는 `FieldValue`를 받아 같은 물리 metadata를 가진
+새 field를 반환합니다. 수치 계산은 기존 overlap projection에 위임합니다.
+orthotope는 축에 정렬된 segment/quad/hex만 지원하며 일반 tetrahedral mesh,
+회전한 cell과 서로 다른 영역의 projection은 지원하지 않습니다. Named cell
+block의 값 순서는 mapping의 block 순서입니다.
+
+격자 간 projection에는 각 domain 단위의 `source_spacing`/`target_spacing`을
+명시합니다. Solver가 보존한 domain metadata의 spacing을 전달해도 되지만,
+좌표 vector만 보고 한 cell 축의 폭을 추정하지 않습니다. 동일한 structured
+domain에서는 dtype을 바꾸거나 배열을 복사하지 않고 값을 공유합니다.
+
+형상을 바꾼 결과는 새로운 domain identity와 원본을 가리키는 별도 provenance를
+가집니다. 원본 scene/material snapshot을 변경하지 않으며 다음 Solver에는
+기존 typed input port로 변형 domain/field를 전달합니다.
 
 ## Non-sequential ray tracing
 
@@ -401,7 +477,10 @@ Solver나 Runtime 경계를 변경할 때 최소한 다음을 확인합니다.
 
 - 기존 DC, Heat, Ray와 verified Experiment bundle이 source 변경 없이 실행
 - `sim.run()` state의 nested read, unchanged patch와 branch
+- state/checkpoint 명시적 해제, busy-state 거부와 과거 handle 보관 시 buffer 수
 - Electro-Thermal typed artifact handoff 및 domain projection 보존량
+- 서로 다른 child 사이의 독립적인 mesh/field/particle/bundle 전달
+- domain 보존 기록 schema의 inline/attachment encode/decode 왕복
 - foreign/released handle과 artifact type mismatch 거부
 - child crash, timeout, cancellation, 결과 검증 실패 시 commit/파일 잔존 없음
 - 여러 artifact의 동일 Resource 공유와 독립 provenance/release
@@ -409,6 +488,19 @@ Solver나 Runtime 경계를 변경할 때 최소한 다음을 확인합니다.
 - geometry cache hit/miss에서 동일한 numerical result
 - 반복 호출 후 child PID, mmap, child workspace와 run cache 정리
 - import-boundary 검사에서 resident Runtime의 Solver/Method eager import 차단
+
+CAE directory에서 같은 pytest 진입점으로 단위·의존 방향·CPU 통합 검사를
+실행합니다. CUDA 검사는 별도로 선택하고 실제 device가 없을 때의 skip을
+성공적인 GPU 검증으로 보고하지 않습니다.
+
+```powershell
+poetry run python -m pytest tests -m "not cuda"
+poetry run python -m pytest tests/test_fdtd_cuda.py -m cuda
+```
+
+반복 자원 검사에서는 revision metadata 수, ResourceStore node 수, mmap 파일
+수를 따로 확인합니다. 호출 준비 비용과 전달 시간은 같은 입력으로 비교하며,
+측정 없이 성능 개선을 주장하거나 기존 수치 허용오차를 넓히지 않습니다.
 
 새 Solver에는 실제로 실행 가능한 Experiment 예제를 Catalog에 함께 둡니다.
 예제는 literal Solver name/SemVer와 method IDs, Geometry/material 연결,

@@ -31,3 +31,7 @@ priority = "explicit"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["cuda: numerical checks on a real CUDA device (select explicitly with -m cuda)"]
