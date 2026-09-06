@@ -6,8 +6,7 @@ import contextlib
 import logging
 import time
 import uuid
-from collections.abc import Iterator, Mapping
-from types import MappingProxyType
+from collections.abc import Mapping
 from typing import Any, Callable
 
 from sdk.protocol.messages import DataChannelMessage
@@ -15,10 +14,9 @@ from sdk.slave import SlaveContext
 from sdk.slave.runtime import emit
 
 from app.errors import CaeError, ProtocolError
-from app.runtime_kernel.coordinator.kernels import normalize_kernel_tasks, resolve_output_specs, solver_spec
+from app.runtime_kernel.coordinator.plan import RunPlan, read_only
 from app.runtime_kernel.coordinator.simulation import SimulationApi as RuntimeSimulationApi
 from app.runtime_kernel.coordinator.program import validate_and_load_simulate
-from app.runtime_kernel.catalog import solver_catalog
 from app.runtime_kernel.transport import RecordPacket, RecordResourceHold
 from app.tensor import encode_recorded_data
 
@@ -28,34 +26,6 @@ DEFAULT_MAX_RUN_SECONDS = 2 * 60 * 60
 HEARTBEAT_SECONDS = 5
 LIVENESS_SECONDS = 5 * 60
 logger = logging.getLogger(__name__)
-
-
-class _TaskHandles(Mapping[str, Any]):
-    def __init__(self, tasks: dict[str, Any]) -> None:
-        self._tasks = MappingProxyType(tasks)
-
-    def __getitem__(self, name: str) -> Any:
-        if not isinstance(name, str):
-            raise CaeError(
-                "invalid_input",
-                f"simulate.py tasks[{name!r}] requires a declared Task name string",
-            )
-        try:
-            return self._tasks[name]
-        except KeyError:
-            raise CaeError(
-                "invalid_input",
-                f"simulate.py tasks[{name!r}] is not declared",
-            ) from None
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self._tasks)
-
-    def __len__(self) -> int:
-        return len(self._tasks)
-
-    def __contains__(self, name: object) -> bool:
-        return isinstance(name, str) and name in self._tasks
 
 
 class CaeRun:
@@ -77,34 +47,9 @@ class CaeRun:
             task_names=tasks,
             recorded_names=self.schemas,
         )
-        normalized_tasks = normalize_kernel_tasks(tasks)
-        canonical_tasks = copy.deepcopy(
-            tasks if normalized_tasks is None else normalized_tasks
-        )
-        self._task_descriptors = {
-            name: solver_spec(task, name)
-            for name, task in canonical_tasks.items()
-        }
-        self._task_abi_versions = {
-            name: solver_catalog.abi_version(task["kernel"]["name"], task["kernel"]["version"])
-            for name, task in canonical_tasks.items()
-        }
-        self._output_specs = {
-            name: resolve_output_specs(task, name)
-            for name, task in canonical_tasks.items()
-        }
-        self._task_scenes = self.measurement["experiment"]["taskScenes"]
-        self._task_material_parameters = self.measurement["taskMaterialParameters"]
-        self._task_material_warnings = self.measurement["taskMaterialWarnings"]
-        task_handles = {
-            name: _read_only(task)
-            for name, task in canonical_tasks.items()
-        }
-        self.tasks = _TaskHandles(task_handles)
-        self._registered_tasks = tuple(
-            (name, task_handles[name], canonical_tasks[name])
-            for name in canonical_tasks
-        )
+        self.plan = RunPlan.prepare(self.measurement, tasks, self.schemas)
+        self.schemas = self.plan.schemas
+        self.tasks = self.plan.tasks
         self.run_id = str(uuid.uuid4())
         self.max_run_seconds = max_run_seconds
         self.job_id = job_id
@@ -281,7 +226,7 @@ class CaeRun:
         try:
             sim = RuntimeSimulationApi(self)
             self.simulation_api = sim
-            simulation_vars = _read_only(_variables(self.measurement))
+            simulation_vars = read_only(_variables(self.measurement))
             await self._status("running")
             final_state = await asyncio.wait_for(
                 self.simulate(
@@ -453,14 +398,6 @@ class CaeRun:
 
 
 SimulationApi = RuntimeSimulationApi
-
-
-def _read_only(value: Any) -> Any:
-    if isinstance(value, dict):
-        return MappingProxyType({key: _read_only(item) for key, item in value.items()})
-    if isinstance(value, list):
-        return tuple(_read_only(item) for item in value)
-    return value
 
 
 def _validate_record_group_members(path: str, schema: dict[str, Any], value: Any) -> None:

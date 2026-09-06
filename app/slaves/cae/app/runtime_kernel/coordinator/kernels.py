@@ -6,10 +6,11 @@ from app.runtime_kernel.api import (
     SolverInvocation,
     SolverResourceServices,
     SolverResult,
-    adapt_legacy_result,
 )
+from app.runtime_kernel.compat.legacy import adapt_legacy_result
 from app.runtime_kernel.catalog import solver_catalog
 from app.runtime_kernel.catalog.normalization import normalize_task_config
+from app.runtime_kernel.coordinator.plan import TaskSpec, detached
 from app.runtime_kernel.execution import (
     CancellationSignal,
     SolverExecutionTransaction,
@@ -93,6 +94,7 @@ async def run_kernel_transaction(
     timeout: float | None = None,
     executor: SpawnSolverExecutor | None = None,
     resources: SolverResourceServices | None = None,
+    task_spec: TaskSpec | None = None,
 ) -> SolverExecutionTransaction[SolverResult]:
     del geometry
     kernel = task["kernel"]
@@ -104,18 +106,18 @@ async def run_kernel_transaction(
         world=world,
         geometry=None,
         progress=None,
-        descriptor=solver_catalog.descriptor(name, version),
+        descriptor=(detached(task_spec.descriptor) if task_spec is not None else solver_catalog.descriptor(name, version)),
         materials=world.get("materials", {}),
         resources=resources or SolverResourceServices(),
         task_name=task_name,
     )
     transaction = await (executor or _executor).execute_transaction(
-        solver_catalog.locator(name, version),
+        task_spec.locator if task_spec is not None else solver_catalog.locator(name, version),
         invocation,
         progress=progress,
         cancellation=cancellation,
         timeout=timeout,
-        abi_version=solver_catalog.abi_version(name, version),
+        abi_version=(task_spec.abi_version if task_spec is not None else solver_catalog.abi_version(name, version)),
     )
     try:
         result = transaction.value

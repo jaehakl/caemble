@@ -1,43 +1,51 @@
 from __future__ import annotations
 
 import asyncio
-import copy
-import numbers
 import tempfile
 import time
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Protocol
 
 from app.errors import CaeError
-from app.runtime_kernel.catalog import solver_catalog
 from app.runtime_kernel.coordinator.contracts import validate_artifact_payload
 from app.runtime_kernel.coordinator.kernels import run_kernel_transaction
-from app.runtime_kernel.api import InputArtifact, SolverResourceServices, SolverResult
+from app.runtime_kernel.coordinator.commit import commit_result
+from app.runtime_kernel.coordinator.plan import RunPlan, TaskSpec, detached
+from app.runtime_kernel.api import InputArtifact, SolverResourceServices
 from app.runtime_kernel.execution import MmapPayloadCodec, SpawnSolverExecutor
 from app.runtime_kernel.resources import (
     ArtifactHandle,
     ArtifactStore,
     BufferStore,
     Field,
-    ResourceLease,
-    ResourceRef,
-    ResourceScopeError,
-    ResourceStore,
-    StateDelete,
-    StateHandle,
-    StatePatch,
-    StatePut,
-    StateStore,
     StructuredBundle,
     StructuredGrid,
+    ResourceLease,
+    ResourceScopeError,
+    ResourceStore,
+    StateHandle,
+    StateStore,
 )
 from app.runtime_kernel.transport import RecordResourceHold
+
+
+class SimulationHost(Protocol):
+    plan: RunPlan
+    run_id: str
+    max_run_seconds: int
+    trace: list[dict[str, Any]]
+
+    async def progress(self, progress: Any) -> None: ...
+
+    async def record(
+        self, name: str, value: Any, *, resource_hold: RecordResourceHold | None = None
+    ) -> None: ...
 
 
 class SimulationApi:
     """Resident, run-scoped coordinator exposed to trusted ``simulate.py``."""
 
-    def __init__(self, run: Any) -> None:
+    def __init__(self, run: SimulationHost) -> None:
         self._run = run
         self._resources = ResourceStore(f"run-{run.run_id}")
         self._states = StateStore(self._resources, state_store_id=f"states-{run.run_id}")
@@ -76,43 +84,12 @@ class SimulationApi:
         if not isinstance(raw_inputs, dict):
             raise CaeError("invalid_input", "sim.run inputs must be an object")
 
-        registered = next(
-            (
-                (name, normalized)
-                for name, candidate, normalized in self._run._registered_tasks
-                if candidate is task
-            ),
-            None,
-        )
-        if registered is None:
-            raise CaeError(
-                "invalid_input",
-                "sim.run only accepts a task registered by this BuiltMeasurement",
-            )
-        task_name, normalized_task = registered
-        normalized_task = copy.deepcopy(normalized_task)
+        task_spec = self._run.plan.resolve(task)
+        task_name = task_spec.name
+        normalized_task = detached(task_spec.task)
         kernel = normalized_task["kernel"]
         base_state = self._base_state(options.get("state"))
-        descriptor = self._run._task_descriptors[task_name]
-        trace_inputs, invocation_inputs = self._validate_inputs(
-            task_name,
-            descriptor,
-            raw_inputs,
-        )
-        world = {
-            "experiment": self._run.measurement["experiment"]["scene"],
-            "task": self._run._task_scenes[task_name],
-            "materials": {
-                "experiment": {
-                    "parameters": self._run.measurement["materialParameters"],
-                    "warnings": self._run.measurement["materialWarnings"],
-                },
-                "task": {
-                    "parameters": self._run._task_material_parameters[task_name],
-                    "warnings": self._run._task_material_warnings[task_name],
-                },
-            },
-        }
+        world = self._run.plan.world(task_spec)
 
         async def report(progress: Any) -> None:
             value = progress if isinstance(progress, dict) else {}
@@ -125,7 +102,11 @@ class SimulationApi:
                 }
             )
 
+        input_leases: list[ResourceLease] = []
+        state_lease = self._states.acquire_invocation(base_state, owner=f"invocation:{task_name}")
+        trace_inputs: dict[str, Any] = {}
         try:
+            trace_inputs, invocation_inputs = self._validate_inputs(task_spec, raw_inputs, input_leases)
             transaction = await run_kernel_transaction(
                 normalized_task,
                 base_state.to_mutable(),
@@ -133,28 +114,18 @@ class SimulationApi:
                 world,
                 report,
                 task_name=task_name,
+                task_spec=task_spec,
                 timeout=float(self._run.max_run_seconds),
                 executor=self._executor,
                 resources=SolverResourceServices(
                     geometry_cache_path=self._geometry_cache.name,
                 ),
             )
-            try:
-                result = transaction.value
-                output_state, artifacts = self._commit_result(task_name, kernel, base_state, result)
-                try:
-                    if not transaction.commit():
-                        raise RuntimeError("solver execution transaction was already finalized")
-                except BaseException:
-                    for handle in artifacts.values():
-                        if self._artifacts.is_live(handle):
-                            self._artifacts.release(handle)
-                    if output_state is not base_state:
-                        self._states.rollback(output_state)
-                    raise
-            except BaseException:
-                transaction.rollback()
-                raise
+            result = transaction.value
+            output_state, artifacts = commit_result(
+                transaction, task_spec, base_state,
+                resources=self._resources, states=self._states, artifacts=self._artifacts,
+            )
         except asyncio.CancelledError:
             raise
         except CaeError:
@@ -174,6 +145,11 @@ class SimulationApi:
                 }
             )
             raise
+
+        finally:
+            for lease in reversed(input_leases):
+                self._resources.release(lease)
+            self._states.release_invocation(state_lease)
 
         finished_at = int(time.time() * 1000)
         self._run.trace.append(
@@ -281,11 +257,12 @@ class SimulationApi:
 
     def _validate_inputs(
         self,
-        task_name: str,
-        descriptor: Mapping[str, Any],
+        task_spec: TaskSpec,
         inputs: Mapping[str, Any],
+        leases: list[ResourceLease],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        ports = descriptor["inputPorts"]
+        task_name = task_spec.name
+        ports = task_spec.descriptor["inputPorts"]
         unknown = next((name for name in inputs if name not in ports), None)
         if unknown is not None:
             raise CaeError("invalid_input", f"task {task_name} input port {unknown!r} is not declared")
@@ -321,15 +298,12 @@ class SimulationApi:
                         f"{candidate.artifact_type!r}",
                     ) from exc
                 provenance = candidate.provenance
-                materialized = self._artifacts.materialize(candidate)
-                if self._run._task_abi_versions[task_name] >= 2:
+                leases.append(self._resources.acquire(candidate.resource_ref, owner=f"invocation:{task_name}"))
+                materialized = self._artifacts.materialize(candidate, copy_arrays=False)
+                if task_spec.abi_version >= 2:
                     contract = port.get("data")
                     if isinstance(contract, Mapping):
-                        payload_kind = port.get("payloadKind")
-                        if payload_kind is None:
-                            payload_kind = solver_catalog.artifact_type(
-                                provenance.artifact_type
-                            ).get("payloadKind")
+                        payload_kind = port.get("payloadKind") or task_spec.artifact_payload_kinds.get(provenance.artifact_type)
                         try:
                             validate_artifact_payload(
                                 materialized,
@@ -359,127 +333,6 @@ class SimulationApi:
             trace[port_name] = trace_values if isinstance(raw, list) else trace_values[0]
             invocation_inputs[port_name] = tuple(typed) if isinstance(raw, list) else typed[0]
         return trace, invocation_inputs
-
-    def _commit_result(
-        self,
-        task_name: str,
-        kernel: Mapping[str, Any],
-        base_state: StateHandle,
-        result: SolverResult,
-    ) -> tuple[StateHandle, dict[str, ArtifactHandle]]:
-        if not isinstance(result, SolverResult):
-            raise TypeError("solver result does not implement ABI-v2 SolverResult")
-        if not isinstance(result.state_patch, StatePatch):
-            raise TypeError("solver state_patch must be a StatePatch")
-        if not isinstance(result.artifacts, Mapping) or not isinstance(result.observations, Mapping):
-            raise TypeError("solver artifacts and observations must be mappings")
-        observation_specs = self._run._task_descriptors[task_name].get("observations", {})
-        unknown_observations = sorted(set(result.observations) - set(observation_specs))
-        if unknown_observations:
-            raise CaeError(
-                "invalid_solver_result",
-                f"task {task_name} returned unknown observations {unknown_observations!r}",
-            )
-        observation_types = {
-            "number": lambda value: isinstance(value, numbers.Real) and not isinstance(value, bool),
-            "string": lambda value: isinstance(value, str),
-            "boolean": lambda value: isinstance(value, bool),
-        }
-        for name, value in result.observations.items():
-            expected = observation_specs[name]["type"]
-            if expected not in observation_types or not observation_types[expected](value):
-                raise CaeError(
-                    "invalid_solver_result",
-                    f"task {task_name} observation {name!r} must be {expected}",
-                )
-        output_specs = self._run._output_specs[task_name]
-        missing = sorted(set(output_specs) - set(result.artifacts))
-        unknown = sorted(set(result.artifacts) - set(output_specs))
-        if missing or unknown:
-            details = []
-            if missing:
-                details.append(f"missing {missing!r}")
-            if unknown:
-                details.append(f"unknown {unknown!r}")
-            raise CaeError(
-                "invalid_solver_result",
-                f"task {task_name} returned incorrect artifacts: {', '.join(details)}",
-            )
-        for output_name, spec in output_specs.items():
-            if not isinstance(spec.get("artifactType"), str) or not spec["artifactType"]:
-                raise CaeError(
-                    "invalid_solver_result",
-                    f"task {task_name} output {output_name!r} has no canonical artifact type",
-                )
-            data = spec.get("data")
-            if not isinstance(data, Mapping):
-                raise CaeError(
-                    "invalid_solver_result",
-                    f"task {task_name} output {output_name!r} has no artifact data contract",
-                )
-            try:
-                payload_kind = None
-                if self._run._task_abi_versions[task_name] >= 2:
-                    payload_kind = spec.get("payloadKind")
-                    if payload_kind is None:
-                        payload_kind = solver_catalog.artifact_type(
-                            spec["artifactType"]
-                        ).get("payloadKind")
-                validate_artifact_payload(
-                    result.artifacts[output_name],
-                    data,
-                    f"task {task_name} output {output_name!r}",
-                    require_spatial_field=payload_kind == "field",
-                )
-            except (TypeError, ValueError) as exc:
-                raise CaeError("invalid_solver_result", str(exc)) from exc
-
-        patch_values = [
-            operation.value
-            for operation in result.state_patch.operations
-            if isinstance(operation, StatePut)
-        ]
-        artifact_names = list(result.artifacts)
-        roots = self._resources.ingest_many(
-            (*patch_values, *(result.artifacts[name] for name in artifact_names)),
-            copy_arrays=False,
-        )
-        patch_refs = iter(roots[: len(patch_values)])
-        operations = tuple(
-            StatePut(operation.path, next(patch_refs))
-            if isinstance(operation, StatePut)
-            else StateDelete(operation.path)
-            for operation in result.state_patch.operations
-        )
-        handles: dict[str, ArtifactHandle] = {}
-        output_state = base_state
-        try:
-            output_state = self._states.commit(base_state, StatePatch(operations), copy_arrays=False)
-            artifact_refs = roots[len(patch_values) :]
-            for output_name, ref in zip(artifact_names, artifact_refs, strict=True):
-                spec = output_specs[output_name]
-                handles[output_name] = self._artifacts.publish(
-                    ref,
-                    producer_task=task_name,
-                    solver_name=str(kernel["name"]),
-                    solver_version=str(kernel["version"]),
-                    output_name=output_name,
-                    artifact_type=spec["artifactType"],
-                    state_revision=output_state.revision,
-                    data=spec.get("data"),
-                    copy_arrays=False,
-                )
-            return output_state, handles
-        except BaseException:
-            for handle in handles.values():
-                if self._artifacts.is_live(handle):
-                    self._artifacts.release(handle)
-            if output_state is not base_state:
-                self._states.rollback(output_state)
-            for ref in roots:
-                if self._resources.contains(ref):
-                    self._resources.discard(ref)
-            raise
 
     def _materialize_for_record(self, value: Any, leases: list[ResourceLease]) -> Any:
         if isinstance(value, ArtifactHandle):

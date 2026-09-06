@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
@@ -10,6 +11,7 @@ from app.errors import CaeError
 from app.runtime_kernel.api import InputArtifact, SolverResult
 from app.runtime_kernel.coordinator import SimulationApi
 from app.runtime_kernel.coordinator.run import CaeRun
+from app.runtime_kernel.coordinator.plan import RunPlan, TaskSpec, detached
 from app.runtime_kernel.execution import SolverExecutionTransaction
 from app.runtime_kernel.resources import (
     ArtifactHandle,
@@ -27,49 +29,58 @@ class FakeRun:
         self.max_run_seconds = 10
         self.trace: list[dict[str, Any]] = []
         self.progress_values: list[Any] = []
-        self.measurement = {
-            "experiment": {"scene": {}},
-            "materialParameters": {},
-            "materialWarnings": [],
+        output_specs = {
+            "producer": {"field": {
+                "artifactType": "test/field@1",
+                "data": {"dtype": "float64", "axes": [{"name": "x"}]},
+            }},
+            "consumer": {"answer": {
+                "artifactType": "test/scalar@1", "data": {"dtype": "float64"},
+            }},
         }
-        self._task_scenes = {"producer": {}, "consumer": {}}
-        self._task_material_parameters = {"producer": {}, "consumer": {}}
-        self._task_material_warnings = {"producer": [], "consumer": []}
-        self.producer = {"kernel": {"name": "producer", "version": "1.0.0"}}
-        self.consumer = {"kernel": {"name": "consumer", "version": "1.0.0"}}
-        self._registered_tasks = (
-            ("producer", self.producer, {**self.producer, "config": {}}),
-            ("consumer", self.consumer, {**self.consumer, "config": {}}),
-        )
-        self._task_descriptors = {
+        descriptors = {
             "producer": {"inputPorts": {}},
-            "consumer": {
-                "inputPorts": {
-                    "field": {
-                        "artifactTypes": ["test/field@1"],
-                        "minimumOccurrences": 1,
-                        "maximumOccurrences": 1,
-                    }
-                }
-            },
+            "consumer": {"inputPorts": {"field": {
+                "artifactTypes": ["test/field@1"], "minimumOccurrences": 1, "maximumOccurrences": 1,
+            }}},
         }
-        self._task_abi_versions = {"producer": 1, "consumer": 1}
-        self._output_specs = {
-            "producer": {
-                "field": {
-                    "artifactType": "test/field@1",
-                    "data": {"dtype": "float64", "axes": [{"name": "x"}]},
-                }
-            },
-            "consumer": {
-                "answer": {
-                    "artifactType": "test/scalar@1",
-                    "data": {"dtype": "float64"},
-                }
-            },
+        specs = {
+            name: TaskSpec(
+                name=name, task={"kernel": {"name": name, "version": "1.0.0"}, "config": {}},
+                descriptor=descriptors[name], locator=f"unused:{name}", abi_version=1,
+                output_specs=output_specs[name], scene={}, material_parameters={},
+            )
+            for name in ("producer", "consumer")
         }
+        self.plan = RunPlan(specs, {}, {}, (), {
+            "field": {"dtype": "float64", "axes": [{"name": "x"}]},
+            "field-series": {
+                "field": {"dtype": "float32", "axes": [{"name": "time"}, {"name": "x"}, {"name": "y"}]},
+                "time": {"dtype": "float32", "axes": [{"name": "time"}]},
+            },
+        })
         self.recorded: tuple[str, Any] | None = None
         self.on_record = None
+
+    @property
+    def producer(self):
+        return self.plan.tasks["producer"]
+
+    @property
+    def consumer(self):
+        return self.plan.tasks["consumer"]
+
+    def configure_task(self, name, *, outputs=None, inputs=None, abi_version=2):
+        spec = self.plan.task_specs[name]
+        output_specs = detached(spec.output_specs)
+        descriptor = detached(spec.descriptor)
+        for key, value in (outputs or {}).items():
+            output_specs[key].update(value)
+        for key, value in (inputs or {}).items():
+            descriptor["inputPorts"][key].update(value)
+        specs = dict(self.plan.task_specs)
+        specs[name] = replace(spec, abi_version=abi_version, output_specs=output_specs, descriptor=descriptor)
+        self.plan = replace(self.plan, task_specs=specs)
 
     async def progress(self, value: Any) -> None:
         self.progress_values.append(value)
@@ -244,9 +255,7 @@ async def test_abi2_spatial_field_output_requires_complete_metadata(
 
     monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invalid)
     run = FakeRun()
-    run._task_abi_versions["producer"] = 2
-    run._output_specs["producer"]["field"].update(
-        {
+    run.configure_task("producer", outputs={"field": {
             "payloadKind": "field",
             "data": {
                 "dtype": "float64",
@@ -254,7 +263,7 @@ async def test_abi2_spatial_field_output_requires_complete_metadata(
                 "quantityKind": "TestField",
                 "unit": "1",
             },
-        }
+        }}
     )
     sim = SimulationApi(run)
 
@@ -289,9 +298,7 @@ async def test_abi2_spatial_field_output_accepts_complete_domain_contract(
 
     monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invoke)
     run = FakeRun()
-    run._task_abi_versions["producer"] = 2
-    run._output_specs["producer"]["field"].update(
-        {
+    run.configure_task("producer", outputs={"field": {
             "payloadKind": "field",
             "data": {
                 "dtype": "float64",
@@ -299,7 +306,7 @@ async def test_abi2_spatial_field_output_accepts_complete_domain_contract(
                 "quantityKind": "TestField",
                 "unit": "1",
             },
-        }
+        }}
     )
     sim = SimulationApi(run)
 
@@ -370,9 +377,7 @@ async def test_abi2_spatial_input_rejects_legacy_tensor_before_solver_runs(
 
     monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invoke)
     run = FakeRun()
-    run._task_abi_versions["consumer"] = 2
-    run._task_descriptors["consumer"]["inputPorts"]["field"].update(
-        {
+    run.configure_task("consumer", inputs={"field": {
             "payloadKind": "field",
             "data": {
                 "dtype": "float64",
@@ -380,7 +385,7 @@ async def test_abi2_spatial_input_rejects_legacy_tensor_before_solver_runs(
                 "quantityKind": "TestField",
                 "unit": "1",
             },
-        }
+        }}
     )
     sim = SimulationApi(run)
     produced = await sim.run(run.producer)
@@ -575,3 +580,180 @@ async def test_cae_run_defers_resource_close_until_active_execution_stops(
 
 def assert_lease_count(sim: SimulationApi, handle: ArtifactHandle, expected: int) -> None:
     assert sim._resources.lease_count(handle.resource_ref) == expected
+
+
+@pytest.mark.asyncio
+async def test_task_plan_owns_immutable_handles_and_detaches_each_invocation(monkeypatch):
+    run = FakeRun()
+    task = run.producer
+    with pytest.raises(TypeError):
+        task["kernel"]["name"] = "changed"
+    with pytest.raises(TypeError):
+        run.plan.task_specs["producer"].output_specs["field"]["artifactType"] = "changed"
+    sim = SimulationApi(run)
+    with pytest.raises(CaeError, match="registered by this BuiltMeasurement"):
+        await sim.run(detached(task))
+    with pytest.raises(CaeError, match="registered by this BuiltMeasurement"):
+        await sim.run(FakeRun().producer)
+
+    async def invoke(normalized, *args, **kwargs):
+        assert normalized["kernel"]["name"] == "producer"
+        assert kwargs["task_spec"] is run.plan.task_specs["producer"]
+        normalized["kernel"]["name"] = "child-local-change"
+        return SolverExecutionTransaction(SolverResult(artifacts={"field": np.ones(2)}))
+
+    monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invoke)
+    await sim.run(task)
+    await sim.run(task)
+    assert task["kernel"]["name"] == "producer"
+    sim.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["second-artifact", "ingest", "finalized", "cancelled", "noop"])
+async def test_commit_failure_has_one_complete_rollback_path(monkeypatch, failure):
+    from app.runtime_kernel.coordinator.commit import commit_result
+    from app.runtime_kernel.resources import CyclicResourceError
+
+    run = FakeRun()
+    sim = SimulationApi(run)
+    spec = replace(run.plan.task_specs["producer"], output_specs={
+        name: {"artifactType": "test/field@1", "data": {"dtype": "float64", "axes": [{"name": "x"}]}}
+        for name in ("first", "second")
+    })
+    baseline = sim._resources.stats()
+    base = sim._states.empty
+    patch = StatePatch().put("uncommitted", np.ones(2))
+    expected = RuntimeError
+    if failure == "noop":
+        patch = StatePatch()
+    elif failure == "ingest":
+        cyclic = {}
+        cyclic["cycle"] = cyclic
+        patch = StatePatch().put("cycle", cyclic)
+        expected = CyclicResourceError
+    rollback_calls = []
+    cancellation = asyncio.CancelledError("cancel commit")
+
+    def finalize():
+        if failure == "cancelled":
+            raise cancellation
+        if failure == "noop":
+            raise RuntimeError("mmap commit failed with unchanged state")
+
+    transaction = SolverExecutionTransaction(
+        SolverResult(patch, {"first": np.ones(2), "second": np.ones(2)}),
+        commit=finalize, rollback=lambda: rollback_calls.append("rollback"),
+    )
+    if failure == "finalized":
+        transaction.rollback()
+    elif failure == "second-artifact":
+        publish = sim._artifacts.publish
+
+        def publish_one(ref, **kwargs):
+            if kwargs["output_name"] == "second":
+                raise RuntimeError("second publish failed")
+            return publish(ref, **kwargs)
+
+        monkeypatch.setattr(sim._artifacts, "publish", publish_one)
+    elif failure == "cancelled":
+        expected = asyncio.CancelledError
+    with pytest.raises(expected) as raised:
+        commit_result(transaction, spec, base, resources=sim._resources, states=sim._states, artifacts=sim._artifacts)
+    if failure == "cancelled":
+        assert raised.value is cancellation
+    assert transaction.status == "rolled_back"
+    assert rollback_calls == ["rollback"]
+    assert sim._artifacts.handles() == ()
+    assert [revision.revision for revision in sim._states.revisions()] == [0]
+    assert sim._resources.stats() == baseline
+    sim.close()
+
+
+@pytest.mark.asyncio
+async def test_release_keep_preserves_noop_revision_and_checkpoint(monkeypatch):
+    async def invoke(task, state, *args, **kwargs):
+        patch = StatePatch() if state.get("step") else StatePatch().put("step", 1)
+        return SolverExecutionTransaction(SolverResult(patch, {"field": np.ones(2)}))
+
+    monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invoke)
+    run = FakeRun()
+    sim = SimulationApi(run)
+    first = await sim.run(run.producer)
+    second = await sim.run(run.producer, state=first["state"])
+    assert second["state"] is first["state"]
+    sim.release([first["state"], first["state"]], keep=second["state"])
+    assert second["state"]["step"] == 1
+    branch = sim._states.commit(first["state"], StatePatch().put("step", 2))
+    sim.release({"old": first["state"], "branch": branch}, keep=[branch])
+    assert branch["step"] == 2
+    assert not sim._states.is_live(first["state"])
+    assert sim._artifacts.is_live(first["artifacts"]["field"])
+    with pytest.raises(CaeError, match="released or foreign state"):
+        sim.release(first["state"])
+    sim.release(branch)
+    sim.close()
+
+
+@pytest.mark.asyncio
+async def test_invocation_holds_inputs_and_rejects_busy_state_release_atomically(monkeypatch):
+    entered = asyncio.Event()
+    resume = asyncio.Event()
+
+    async def invoke(task, state, inputs, *args, **kwargs):
+        if task["kernel"]["name"] == "producer":
+            return SolverExecutionTransaction(SolverResult(StatePatch().put("step", 1), {"field": np.ones(3)}))
+        entered.set()
+        await resume.wait()
+        assert state["step"] == 1
+        assert np.sum(inputs["field"].value) == 3
+        return SolverExecutionTransaction(SolverResult(artifacts={"answer": 3.0}))
+
+    monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invoke)
+    run = FakeRun()
+    sim = SimulationApi(run)
+    produced = await sim.run(run.producer)
+    base, artifact = produced["state"], produced["artifacts"]["field"]
+    task = asyncio.create_task(sim.run(run.consumer, state=base, inputs={"field": artifact}))
+    await entered.wait()
+    assert sim._resources.lease_count(artifact.resource_ref) == 2
+    with pytest.raises(CaeError, match="invocation"):
+        sim.release([artifact, base])
+    assert sim._artifacts.is_live(artifact)
+    sim.release(base, keep=base)
+    sim.release(artifact)
+    assert sim._resources.contains(artifact.resource_ref)
+    resume.set()
+    result = await task
+    assert result["state"] is base
+    assert not sim._resources.contains(artifact.resource_ref)
+    sim.release(base)
+    sim.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_invocation_releases_holds_and_keeps_cancellation(monkeypatch):
+    entered = asyncio.Event()
+    cancellation = asyncio.CancelledError("solver stopped")
+
+    async def invoke(task, *args, **kwargs):
+        if task["kernel"]["name"] == "producer":
+            return SolverExecutionTransaction(SolverResult(StatePatch().put("step", 1), {"field": np.ones(3)}))
+        entered.set()
+        raise cancellation
+
+    monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invoke)
+    run = FakeRun()
+    sim = SimulationApi(run)
+    produced = await sim.run(run.producer)
+    base, artifact = produced["state"], produced["artifacts"]["field"]
+    baseline = sim._resources.stats()
+    with pytest.raises(asyncio.CancelledError) as raised:
+        await sim.run(run.consumer, state=base, inputs={"field": artifact})
+    assert raised.value is cancellation
+    assert entered.is_set()
+    assert sim._resources.stats() == baseline
+    assert sim._resources.lease_count(artifact.resource_ref) == 1
+    sim.release(base)
+    assert sim._artifacts.is_live(artifact)
+    sim.close()
