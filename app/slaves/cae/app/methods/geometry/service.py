@@ -12,7 +12,7 @@ import manifold3d as manifold
 import numpy as np
 
 from app.methods.geometry.models import ShellLayerGeometry, TriangleProvenance, TriangularMesh
-from app.runtime_kernel.api import ContentKey, FileResourceCache
+from app.runtime_kernel.api import ContentKey, ValueCache
 from app.runtime_kernel.api.units import convert_ucum_value
 
 _BACKEND_VERSION = "manifold3d-3.5.1"
@@ -36,7 +36,7 @@ class _ShellBoundaryData:
 class GeometryService:
     """Run-scoped access to canonical geometry and shared triangulation."""
 
-    def __init__(self, *, cache: FileResourceCache | None = None) -> None:
+    def __init__(self, *, cache: ValueCache | None = None) -> None:
         self._meshes: dict[tuple[str, str, str, str, str], TriangularMesh] = {}
         self._shell_layers: dict[tuple[str, str, str, str], ShellLayerGeometry] = {}
         self._cache = cache

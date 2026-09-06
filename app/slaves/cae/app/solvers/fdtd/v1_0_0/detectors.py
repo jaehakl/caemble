@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from app.runtime_kernel.api import StructuredBundle
+from app.runtime_kernel.api import BundleValue
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,9 +54,9 @@ class TimeDetector:
         )
         self.times.append(time)
 
-    def artifact(self) -> StructuredBundle:
+    def artifact(self) -> BundleValue:
         values = np.stack(self.samples).astype(np.float32, copy=False)
-        return StructuredBundle(
+        return BundleValue(
             self.artifact_type,
             {
                 "field": _field_member(
@@ -112,12 +112,12 @@ class SpectralDetector:
         self.accumulator.add_(phase.reshape((-1, 1, 1, 1, 1)) * sampled.unsqueeze(0))
         self.sample_count += 1
 
-    def artifact(self) -> StructuredBundle:
+    def artifact(self) -> BundleValue:
         if self.sample_count == 0:
             raise ValueError("spectral detector received no samples")
         values = (self.accumulator / self.sample_count).detach().cpu()
         axes = (self.frequencies, *self.region.ticks)
-        return StructuredBundle(
+        return BundleValue(
             self.artifact_type,
             {
                 "real": _field_member(

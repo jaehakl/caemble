@@ -2,21 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from enum import StrEnum
 from typing import Any
 
-
-class FieldLocation(StrEnum):
-    NODE = "node"
-    EDGE = "edge"
-    FACE = "face"
-    CELL = "cell"
-    PARTICLE = "particle"
-    RAY = "ray"
+from app.runtime_kernel.api.values import FieldLocation
 
 
 @dataclass(frozen=True, slots=True)
-class Field:
+class WorkingField:
     name: str
     values: Any
     location: FieldLocation = FieldLocation.CELL
@@ -31,5 +23,8 @@ class Field:
     def domain_ref(self) -> Any:
         return self.domain
 
-    def with_values(self, values: Any) -> Field:
+    def with_values(self, values: Any) -> WorkingField:
         return replace(self, values=values)
+
+
+Field = WorkingField

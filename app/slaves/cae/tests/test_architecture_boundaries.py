@@ -23,7 +23,8 @@ def imported_modules(path: Path) -> set[str]:
 
 def test_resident_coordinator_has_no_method_or_solver_dependency() -> None:
     paths = [
-        *sorted((APP / "runtime_kernel" / "coordinator").glob("*.py")),
+        *sorted((APP / "runtime_kernel" / "coordinator").rglob("*.py")),
+        *sorted((APP / "runtime_kernel" / "transport").rglob("*.py")),
     ]
     forbidden = ("app.methods", "app.solvers", "app.solver_framework")
     violations = {
@@ -50,6 +51,56 @@ def test_methods_have_no_solver_or_coordinator_dependency() -> None:
         for path in (APP / "methods").rglob("*.py")
     }
     assert not {path: modules for path, modules in violations.items() if modules}
+
+
+def test_solver_api_import_does_not_load_runtime_implementations() -> None:
+    script = (
+        "import json, sys; from app.runtime_kernel.api import *; "
+        "print(json.dumps(sorted(name for name in sys.modules "
+        "if name.startswith(('app.runtime_kernel.resources', "
+        "'app.runtime_kernel.execution', 'app.runtime_kernel.coordinator', "
+        "'app.runtime_kernel.transport', 'app.methods', 'app.solvers', "
+        "'app.solver_framework')))))"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).parents[1],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(completed.stdout) == []
+
+
+def test_methods_and_solvers_do_not_use_internal_resource_exports() -> None:
+    internal_exports = {
+        "ArtifactHandle", "ArtifactProvenance", "ArtifactStore", "BufferStore",
+        "BufferLease", "Field", "FileResourceCache", "ImmutableResourceCache",
+        "LegacySolverAdapter", "ResourceLease", "ResourceRef", "ResourceStore",
+        "ResourceTreeRef", "StateHandle", "StateRevision", "StateStore", "StateView",
+    }
+    violations: dict[str, list[str]] = {}
+    for directory in (APP / "methods", APP / "solvers"):
+        for path in directory.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            imports = imported_modules(path)
+            found = sorted(
+                module for module in imports
+                if module.startswith("app.runtime_kernel.")
+                and not module.startswith("app.runtime_kernel.api")
+            )
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module in {
+                    "app.runtime_kernel.api", "app.runtime_kernel.api.models",
+                }:
+                    found.extend(
+                        f"{node.module}.{alias.name}"
+                        for alias in node.names
+                        if alias.name in internal_exports or alias.name == "*"
+                    )
+            if found:
+                violations[str(path.relative_to(APP))] = found
+    assert not violations
 
 
 def test_importing_resident_runtime_does_not_import_solver_or_method_modules() -> None:

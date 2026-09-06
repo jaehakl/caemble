@@ -1,4 +1,3 @@
-from app.methods.fields.models import Field, FieldLocation
+from app.methods.fields.models import Field, FieldLocation, WorkingField
 
-__all__ = ["Field", "FieldLocation"]
-
+__all__ = ["WorkingField", "Field", "FieldLocation"]

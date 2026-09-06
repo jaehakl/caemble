@@ -1,4 +1,4 @@
-from app.methods.fields import Field
+from app.methods.fields import Field, WorkingField
 from app.methods.structured.box import Box, Halo, Partition, Stencil, StencilTerm
 from app.methods.structured.fields import (
     STRUCTURED_FIELD_KIND,
@@ -36,6 +36,7 @@ __all__ = [
     "Stencil",
     "StencilTerm",
     "VoxelDomain",
+    "WorkingField",
     "axis_ticks",
     "build_voxel_domain",
     "dense_field",

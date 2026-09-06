@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
-from app.methods.fields import Field
+from app.methods.fields import WorkingField
 
 Result = TypeVar("Result")
 Offset = tuple[int, ...]
@@ -94,14 +94,14 @@ class Stencil:
 class Box:
     partition: Partition
     halo: Halo
-    fields: dict[str, Field] = field(default_factory=dict)
+    fields: dict[str, WorkingField] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def add(self, value: Field) -> Field:
+    def add(self, value: WorkingField) -> WorkingField:
         self.fields[value.name] = value
         return value
 
-    def field(self, name: str) -> Field:
+    def field(self, name: str) -> WorkingField:
         return self.fields[name]
 
     def apply(self, operator: Callable[..., Result], *args: Any, **kwargs: Any) -> Result:
@@ -109,7 +109,7 @@ class Box:
 
     def exchange(
         self,
-        exchanger: Callable[[Field, Partition, Halo], Any],
+        exchanger: Callable[[WorkingField, Partition, Halo], Any],
         names: tuple[str, ...] | None = None,
     ) -> None:
         for name in names or tuple(self.fields):
