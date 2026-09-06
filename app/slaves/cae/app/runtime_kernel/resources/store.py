@@ -10,15 +10,10 @@ from typing import Any
 import numpy as np
 
 from app.runtime_kernel.resources.buffers import BufferLease, BufferStore
-from app.runtime_kernel.resources.models import (
-    CyclicResourceError,
-    Field,
-    FieldLocation,
+from app.runtime_kernel.resources.nodes import (
     FieldResource,
     MappingResource,
-    ParticleSet,
     ParticleSetResource,
-    RaySet,
     RaySetResource,
     ResourceDescription,
     ResourceKind,
@@ -30,22 +25,20 @@ from app.runtime_kernel.resources.models import (
     ResourceScopeError,
     ResourceStoreStats,
     ResourceValidationError,
-    ScalarResource,
     SequenceResource,
-    StructuredBundle,
     StructuredBundleResource,
-    StructuredGrid,
     StructuredGridResource,
     TensorResource,
-    UnstructuredMesh,
     UnstructuredMeshResource,
+)
+from app.runtime_kernel.resources.value_io import (
+    ingest_value,
+    materialize_value,
+    resolve_value,
 )
 
 StatePath = tuple[Hashable, ...]
 _DELETE = object()
-_STRUCTURED_GRID_TAG = "caemble.structured-grid/v1"
-_STRUCTURED_FIELD_TAG = "caemble.structured-field/v1"
-_RAY_PATH_BUNDLE_TAG = "caemble.ray-path-bundle/v1"
 
 
 class ResourceStore:
@@ -79,17 +72,17 @@ class ResourceStore:
             created: list[str] = []
             try:
                 return tuple(
-                    self._ingest(value, memo, active, created, copy_arrays) for value in values
+                    ingest_value(self, value, memo, active, created, copy_arrays) for value in values
                 )
             except BaseException:
                 self._rollback_created(created)
                 raise
 
     def resolve(self, ref: ResourceRef) -> Any:
-        """Return an immutable Python view of a resource tree."""
+        """Return an immutable Store-local view, retaining legacy field references."""
         with self._lock:
             self._validate_ref(ref)
-            return self._resolve(ref, {})
+            return resolve_value(self, ref, {})
 
     def materialize(
         self,
@@ -98,12 +91,12 @@ class ResourceStore:
         mutable: bool = True,
         copy_arrays: bool = True,
     ) -> Any:
-        """Export a detached Python tree, normally for a legacy solver boundary."""
-        if not mutable:
-            return self.resolve(ref)
+        """Export self-contained solver values without runtime resource references."""
         with self._lock:
             self._validate_ref(ref)
-            return self._materialize_mutable(ref, {}, copy_arrays)
+            if not mutable:
+                return resolve_value(self, ref, {}, detached=True)
+            return materialize_value(self, ref, {}, copy_arrays)
 
     def acquire(self, ref: ResourceRef, *, owner: str | None = None) -> ResourceLease:
         with self._lock:
@@ -217,7 +210,7 @@ class ResourceStore:
                 )
             if isinstance(node, FieldResource):
                 values = self._tensor(node.values, "field values")
-                basis = None if node.basis is None else self._resolve(node.basis, {})
+                basis = None if node.basis is None else resolve_value(self, node.basis, {})
                 return ResourceDescription(
                     ref,
                     node.kind,
@@ -315,553 +308,6 @@ class ResourceStore:
             self._inbound_references.clear()
             self._closed = True
 
-    def _ingest(
-        self,
-        value: Any,
-        memo: dict[int, ResourceRef],
-        active: set[int],
-        created: list[str],
-        copy_arrays: bool,
-    ) -> ResourceRef:
-        if isinstance(value, ResourceRef):
-            self._validate_ref(value)
-            return value
-
-        tracked = isinstance(
-            value,
-            (
-                Mapping,
-                list,
-                tuple,
-                np.ndarray,
-                StructuredGrid,
-                UnstructuredMesh,
-                Field,
-                ParticleSet,
-                RaySet,
-                StructuredBundle,
-            ),
-        )
-        value_id = id(value)
-        if tracked and value_id in memo:
-            return memo[value_id]
-        if tracked and value_id in active:
-            raise CyclicResourceError("cyclic mappings and sequences are not supported")
-        if tracked:
-            active.add(value_id)
-
-        try:
-            if isinstance(value, np.ndarray):
-                array = np.array(value, copy=copy_arrays, order="K", subok=True)
-                array.flags.writeable = False
-                ref = self._add_node(TensorResource(array), created)
-            elif isinstance(value, StructuredGrid):
-                ref = self._ingest_structured_grid(
-                    value,
-                    memo,
-                    active,
-                    created,
-                    copy_arrays,
-                )
-            elif isinstance(value, UnstructuredMesh):
-                ref = self._ingest_unstructured_mesh(
-                    value,
-                    memo,
-                    active,
-                    created,
-                    copy_arrays,
-                )
-            elif isinstance(value, Field):
-                ref = self._ingest_field(value, memo, active, created, copy_arrays)
-            elif isinstance(value, ParticleSet):
-                ref = self._ingest_particle_set(
-                    value,
-                    memo,
-                    active,
-                    created,
-                    copy_arrays,
-                )
-            elif isinstance(value, RaySet):
-                ref = self._ingest_ray_set(value, memo, active, created, copy_arrays)
-            elif isinstance(value, StructuredBundle):
-                ref = self._ingest_structured_bundle(
-                    value,
-                    memo,
-                    active,
-                    created,
-                    copy_arrays,
-                )
-            elif isinstance(value, Mapping) and value.get("kind") == _STRUCTURED_GRID_TAG:
-                ref = self._ingest_tagged_structured_grid(
-                    value,
-                    memo,
-                    active,
-                    created,
-                    copy_arrays,
-                )
-            elif isinstance(value, Mapping) and value.get("kind") == _STRUCTURED_FIELD_TAG:
-                ref = self._ingest_tagged_structured_field(
-                    value,
-                    memo,
-                    active,
-                    created,
-                    copy_arrays,
-                )
-            elif isinstance(value, Mapping) and value.get("kind") == _RAY_PATH_BUNDLE_TAG:
-                ref = self._ingest_tagged_structured_bundle(
-                    value,
-                    memo,
-                    active,
-                    created,
-                    copy_arrays,
-                )
-            elif isinstance(value, Mapping):
-                ref = self._ingest_plain_mapping(
-                    value,
-                    memo,
-                    active,
-                    created,
-                    copy_arrays,
-                )
-            elif isinstance(value, (list, tuple)):
-                items = tuple(
-                    self._ingest(item, memo, active, created, copy_arrays) for item in value
-                )
-                ref = self._add_node(
-                    SequenceResource(items, "tuple" if isinstance(value, tuple) else "list"),
-                    created,
-                )
-            else:
-                ref = self._add_node(ScalarResource(copy.deepcopy(value)), created)
-        finally:
-            if tracked:
-                active.discard(value_id)
-
-        if tracked:
-            memo[value_id] = ref
-        return ref
-
-    def _ingest_plain_mapping(
-        self,
-        value: Mapping[Any, Any],
-        memo: dict[int, ResourceRef],
-        active: set[int],
-        created: list[str],
-        copy_arrays: bool,
-    ) -> ResourceRef:
-        return self._add_node(
-            MappingResource(
-                tuple(
-                    (
-                        copy.deepcopy(key),
-                        self._ingest(item, memo, active, created, copy_arrays),
-                    )
-                    for key, item in value.items()
-                )
-            ),
-            created,
-        )
-
-    def _ingest_tagged_structured_grid(
-        self,
-        value: Mapping[Any, Any],
-        memo: dict[int, ResourceRef],
-        active: set[int],
-        created: list[str],
-        copy_arrays: bool,
-    ) -> ResourceRef:
-        raw_shape = value.get("shape")
-        raw_axes = value.get("axes")
-        unit = value.get("referenceLengthUnit")
-        identity = value.get("id")
-        if not isinstance(raw_shape, (list, tuple)) or not raw_shape:
-            raise ResourceValidationError("tagged structured grid must declare a shape")
-        shape = tuple(raw_shape)
-        if any(isinstance(size, bool) or not isinstance(size, int) or size <= 0 for size in shape):
-            raise ResourceValidationError("tagged structured grid shape must contain positive integers")
-        if not isinstance(raw_axes, (list, tuple)) or len(raw_axes) != len(shape):
-            raise ResourceValidationError("tagged structured grid must have one axis per dimension")
-        if not isinstance(unit, str) or not unit:
-            raise ResourceValidationError("tagged structured grid must declare a reference length unit")
-        if identity is not None and (not isinstance(identity, str) or not identity):
-            raise ResourceValidationError("tagged structured grid identity must be a non-empty string")
-
-        axes: list[ResourceRef] = []
-        for index, (axis, size) in enumerate(zip(raw_axes, shape, strict=True)):
-            if not isinstance(axis, Mapping) or "ticks" not in axis:
-                raise ResourceValidationError(f"tagged structured grid axis {index} must declare ticks")
-            ticks = np.asarray(axis["ticks"], dtype=np.float64)
-            if ticks.ndim != 1 or ticks.shape[0] != size:
-                raise ResourceValidationError(
-                    f"tagged structured grid axis {index} must have shape ({size},)"
-                )
-            if not np.all(np.isfinite(ticks)):
-                raise ResourceValidationError(
-                    f"tagged structured grid axis {index} must contain finite coordinates"
-                )
-            differences = np.diff(ticks)
-            if differences.size and not (
-                np.all(differences > 0) or np.all(differences < 0)
-            ):
-                raise ResourceValidationError(
-                    f"tagged structured grid axis {index} must be strictly monotonic"
-                )
-            axes.append(self._ingest(ticks, memo, active, created, copy_arrays))
-        metadata = self._ingest(
-            {"wireKind": _STRUCTURED_GRID_TAG},
-            memo,
-            active,
-            created,
-            copy_arrays,
-        )
-        wire = self._ingest_plain_mapping(value, memo, active, created, copy_arrays)
-        return self._add_node(
-            StructuredGridResource(shape, tuple(axes), unit, identity, metadata, wire),
-            created,
-        )
-
-    def _ingest_tagged_structured_field(
-        self,
-        value: Mapping[Any, Any],
-        memo: dict[int, ResourceRef],
-        active: set[int],
-        created: list[str],
-        copy_arrays: bool,
-    ) -> ResourceRef:
-        domain = value.get("domainRef")
-        if not isinstance(domain, Mapping):
-            raise ResourceValidationError("tagged structured field must declare a domainRef")
-        try:
-            location = FieldLocation(value.get("location"))
-        except ValueError as error:
-            raise ResourceValidationError("tagged structured field has an invalid location") from error
-        quantity_kind = value.get("quantityKind")
-        unit = value.get("unit")
-        if not isinstance(quantity_kind, str) or not quantity_kind:
-            raise ResourceValidationError("tagged structured field must declare a QuantityKind")
-        if not isinstance(unit, str) or not unit:
-            raise ResourceValidationError("tagged structured field must declare a unit")
-        if "value" not in value:
-            raise ResourceValidationError("tagged structured field must contain values")
-
-        wire = self._ingest_plain_mapping(value, memo, active, created, copy_arrays)
-        wire_node = self._require_mapping(wire, "tagged structured field")
-        children = dict(wire_node.items)
-        domain_ref = children["domainRef"]
-        if self.kind(domain_ref) is not ResourceKind.STRUCTURED_GRID:
-            raise ResourceValidationError("tagged structured field domainRef must be a structured grid")
-        values_ref = children["value"]
-        values = self._tensor(values_ref, "tagged structured field values")
-        self._require_numeric(values, "tagged structured field values")
-        basis = children.get("basis")
-        raw_components = value.get("components")
-        components: tuple[str, ...] | None = None
-        if raw_components is not None:
-            if not isinstance(raw_components, (list, tuple)) or not raw_components or any(
-                not isinstance(component, str) or not component
-                for component in raw_components
-            ):
-                raise ResourceValidationError(
-                    "tagged structured field components must be non-empty strings"
-                )
-            components = tuple(raw_components)
-            if values.ndim == 0 or values.shape[-1] != len(components):
-                raise ResourceValidationError(
-                    "tagged structured field values trailing dimension must match components"
-                )
-        domain_node = self._node(domain_ref)
-        if not isinstance(domain_node, StructuredGridResource):
-            raise ResourceValidationError("tagged structured field domainRef is invalid")
-        if tuple(values.shape[: len(domain_node.shape)]) != domain_node.shape:
-            raise ResourceValidationError("tagged structured field values do not match its domain shape")
-        metadata = self._ingest(
-            {"wireKind": _STRUCTURED_FIELD_TAG},
-            memo,
-            active,
-            created,
-            copy_arrays,
-        )
-        return self._add_node(
-            FieldResource(
-                domain_ref,
-                location,
-                quantity_kind,
-                unit,
-                values_ref,
-                basis,
-                components,
-                metadata,
-                wire,
-            ),
-            created,
-        )
-
-    def _ingest_tagged_structured_bundle(
-        self,
-        value: Mapping[Any, Any],
-        memo: dict[int, ResourceRef],
-        active: set[int],
-        created: list[str],
-        copy_arrays: bool,
-    ) -> ResourceRef:
-        if not isinstance(value.get("members"), Mapping):
-            raise ResourceValidationError("tagged structured bundle must declare members")
-        wire = self._ingest_plain_mapping(value, memo, active, created, copy_arrays)
-        wire_node = self._require_mapping(wire, "tagged structured bundle")
-        members = dict(wire_node.items)["members"]
-        self._require_mapping(members, "tagged structured bundle members")
-        metadata = self._ingest(
-            {"wireKind": _RAY_PATH_BUNDLE_TAG},
-            memo,
-            active,
-            created,
-            copy_arrays,
-        )
-        return self._add_node(
-            StructuredBundleResource(_RAY_PATH_BUNDLE_TAG, members, metadata, wire),
-            created,
-        )
-
-    def _ingest_structured_grid(
-        self,
-        value: StructuredGrid,
-        memo: dict[int, ResourceRef],
-        active: set[int],
-        created: list[str],
-        copy_arrays: bool,
-    ) -> ResourceRef:
-        axes = tuple(
-            self._ingest(axis, memo, active, created, copy_arrays) for axis in value.axes
-        )
-        for index, (axis_ref, size) in enumerate(zip(axes, value.shape, strict=True)):
-            axis = self._tensor(axis_ref, f"structured grid axis {index}")
-            if axis.ndim != 1 or axis.shape[0] != size:
-                raise ResourceValidationError(
-                    f"structured grid axis {index} must have shape ({size},)"
-                )
-            self._require_numeric(axis, f"structured grid axis {index}")
-            if not np.all(np.isfinite(axis)):
-                raise ResourceValidationError(
-                    f"structured grid axis {index} must contain finite coordinates"
-                )
-            differences = np.diff(axis)
-            if differences.size and not (
-                np.all(differences > 0) or np.all(differences < 0)
-            ):
-                raise ResourceValidationError(
-                    f"structured grid axis {index} must be strictly monotonic"
-                )
-        metadata = self._ingest(value.metadata, memo, active, created, copy_arrays)
-        self._require_mapping(metadata, "structured grid metadata")
-        return self._add_node(
-            StructuredGridResource(
-                value.shape,
-                axes,
-                value.unit,
-                value.identity,
-                metadata,
-            ),
-            created,
-        )
-
-    def _ingest_unstructured_mesh(
-        self,
-        value: UnstructuredMesh,
-        memo: dict[int, ResourceRef],
-        active: set[int],
-        created: list[str],
-        copy_arrays: bool,
-    ) -> ResourceRef:
-        points_ref = self._ingest(value.points, memo, active, created, copy_arrays)
-        cells_ref = self._ingest(value.cells, memo, active, created, copy_arrays)
-        metadata = self._ingest(value.metadata, memo, active, created, copy_arrays)
-        points = self._tensor(points_ref, "mesh points")
-        self._require_numeric(points, "mesh points")
-        if points.ndim != 2 or points.shape[1] == 0:
-            raise ResourceValidationError("mesh points must have shape [point, coordinate]")
-        self._validate_connectivity(cells_ref, points.shape[0])
-        self._require_mapping(metadata, "mesh metadata")
-        return self._add_node(
-            UnstructuredMeshResource(
-                points_ref,
-                cells_ref,
-                value.unit,
-                value.identity,
-                metadata,
-            ),
-            created,
-        )
-
-    def _ingest_field(
-        self,
-        value: Field,
-        memo: dict[int, ResourceRef],
-        active: set[int],
-        created: list[str],
-        copy_arrays: bool,
-    ) -> ResourceRef:
-        self._validate_ref(value.domain_ref)
-        domain_kind = self.kind(value.domain_ref)
-        spatial = {ResourceKind.STRUCTURED_GRID, ResourceKind.UNSTRUCTURED_MESH}
-        expected = {
-            FieldLocation.PARTICLE: {ResourceKind.PARTICLE_SET},
-            FieldLocation.RAY: {ResourceKind.RAY_SET},
-        }.get(value.location, spatial)
-        if domain_kind not in expected:
-            raise ResourceValidationError(
-                f"{value.location.value} field cannot reference {domain_kind.value} domain"
-            )
-        values_ref = self._ingest(value.values, memo, active, created, copy_arrays)
-        values = self._tensor(values_ref, "field values")
-        self._require_numeric(values, "field values")
-        if value.components is not None and (
-            values.ndim == 0 or values.shape[-1] != len(value.components)
-        ):
-            raise ResourceValidationError(
-                "field values trailing dimension must match components"
-            )
-        basis = (
-            None
-            if value.basis is None
-            else self._ingest(value.basis, memo, active, created, copy_arrays)
-        )
-        metadata = self._ingest(value.metadata, memo, active, created, copy_arrays)
-        self._require_mapping(metadata, "field metadata")
-        return self._add_node(
-            FieldResource(
-                value.domain_ref,
-                value.location,
-                value.quantity_kind,
-                value.unit,
-                values_ref,
-                basis,
-                value.components,
-                metadata,
-            ),
-            created,
-        )
-
-    def _ingest_particle_set(
-        self,
-        value: ParticleSet,
-        memo: dict[int, ResourceRef],
-        active: set[int],
-        created: list[str],
-        copy_arrays: bool,
-    ) -> ResourceRef:
-        positions_ref = self._ingest(value.positions, memo, active, created, copy_arrays)
-        attributes = self._ingest(value.attributes, memo, active, created, copy_arrays)
-        metadata = self._ingest(value.metadata, memo, active, created, copy_arrays)
-        positions = self._tensor(positions_ref, "particle positions")
-        self._require_numeric(positions, "particle positions")
-        if positions.ndim != 2 or positions.shape[1] == 0:
-            raise ResourceValidationError(
-                "particle positions must have shape [particle, coordinate]"
-            )
-        self._validate_attributes(attributes, positions.shape[0], "particle")
-        self._require_mapping(metadata, "particle metadata")
-        return self._add_node(
-            ParticleSetResource(
-                positions_ref,
-                value.unit,
-                attributes,
-                value.identity,
-                metadata,
-            ),
-            created,
-        )
-
-    def _ingest_ray_set(
-        self,
-        value: RaySet,
-        memo: dict[int, ResourceRef],
-        active: set[int],
-        created: list[str],
-        copy_arrays: bool,
-    ) -> ResourceRef:
-        origins_ref = self._ingest(value.origins, memo, active, created, copy_arrays)
-        directions_ref = self._ingest(value.directions, memo, active, created, copy_arrays)
-        attributes = self._ingest(value.attributes, memo, active, created, copy_arrays)
-        metadata = self._ingest(value.metadata, memo, active, created, copy_arrays)
-        origins = self._tensor(origins_ref, "ray origins")
-        directions = self._tensor(directions_ref, "ray directions")
-        self._require_numeric(origins, "ray origins")
-        self._require_numeric(directions, "ray directions")
-        if origins.ndim != 2 or origins.shape[1] == 0:
-            raise ResourceValidationError("ray origins must have shape [ray, coordinate]")
-        if directions.shape != origins.shape:
-            raise ResourceValidationError("ray directions must match ray origins shape")
-        if np.any(np.linalg.norm(directions, axis=1) == 0):
-            raise ResourceValidationError("ray directions cannot be zero")
-        self._validate_attributes(attributes, origins.shape[0], "ray")
-        self._require_mapping(metadata, "ray metadata")
-        return self._add_node(
-            RaySetResource(
-                origins_ref,
-                directions_ref,
-                value.unit,
-                attributes,
-                value.identity,
-                metadata,
-            ),
-            created,
-        )
-
-    def _ingest_structured_bundle(
-        self,
-        value: StructuredBundle,
-        memo: dict[int, ResourceRef],
-        active: set[int],
-        created: list[str],
-        copy_arrays: bool,
-    ) -> ResourceRef:
-        members = self._ingest(value.members, memo, active, created, copy_arrays)
-        metadata = self._ingest(value.metadata, memo, active, created, copy_arrays)
-        self._require_mapping(members, "structured bundle members")
-        self._require_mapping(metadata, "structured bundle metadata")
-        return self._add_node(
-            StructuredBundleResource(value.bundle_type, members, metadata),
-            created,
-        )
-
-    def _validate_connectivity(self, ref: ResourceRef, point_count: int) -> None:
-        node = self._node(ref)
-        if isinstance(node, TensorResource):
-            connectivities = (("cells", node.array),)
-        elif isinstance(node, MappingResource):
-            if not node.items:
-                raise ResourceValidationError("mesh cells cannot be empty")
-            connectivities = tuple(
-                (str(name), self._tensor(child, f"mesh cell block {name!r}"))
-                for name, child in node.items
-            )
-        else:
-            raise ResourceValidationError("mesh cells must be a tensor or named tensor mapping")
-        for name, connectivity in connectivities:
-            if connectivity.ndim != 2 or connectivity.shape[1] == 0:
-                raise ResourceValidationError(
-                    f"mesh cell block {name!r} must have shape [cell, node]"
-                )
-            if not np.issubdtype(connectivity.dtype, np.integer):
-                raise ResourceValidationError(
-                    f"mesh cell block {name!r} must contain integer point indexes"
-                )
-            if connectivity.size and (
-                int(connectivity.min()) < 0 or int(connectivity.max()) >= point_count
-            ):
-                raise ResourceValidationError(
-                    f"mesh cell block {name!r} contains an out-of-range point index"
-                )
-
-    def _validate_attributes(self, ref: ResourceRef, count: int, owner: str) -> None:
-        node = self._require_mapping(ref, f"{owner} attributes")
-        for name, child in node.items:
-            values = self._tensor(child, f"{owner} attribute {name!r}")
-            if values.ndim == 0 or values.shape[0] != count:
-                raise ResourceValidationError(
-                    f"{owner} attribute {name!r} must have first dimension {count}"
-                )
-
     def _tensor(self, ref: ResourceRef, name: str) -> np.ndarray[Any, Any]:
         node = self._node(ref)
         if not isinstance(node, TensorResource):
@@ -880,7 +326,7 @@ class ResourceStore:
             raise ResourceValidationError(f"{name} must use a numeric dtype")
 
     def _resource_metadata(self, ref: ResourceRef, **standard: Any) -> Mapping[str, Any]:
-        metadata = dict(self._resolve(ref, {}))
+        metadata = dict(resolve_value(self, ref, {}))
         metadata.update(standard)
         return MappingProxyType(metadata)
 
@@ -906,212 +352,6 @@ class ResourceStore:
         if created is not None:
             created.append(resource_id)
         return ResourceRef(self.store_id, resource_id)
-
-    def _resolve(self, ref: ResourceRef, memo: dict[str, Any]) -> Any:
-        if ref.resource_id in memo:
-            return memo[ref.resource_id]
-        node = self._node(ref)
-        if isinstance(node, TensorResource):
-            memo[ref.resource_id] = node.array
-            return node.array
-        if isinstance(node, StructuredGridResource):
-            if node.wire is not None:
-                value = self._resolve(node.wire, memo)
-                memo[ref.resource_id] = value
-                return value
-            value = StructuredGrid(
-                node.shape,
-                tuple(self._resolve(axis, memo) for axis in node.axes),
-                node.unit,
-                node.identity,
-                self._resolve(node.metadata, memo),
-            )
-            memo[ref.resource_id] = value
-            return value
-        if isinstance(node, UnstructuredMeshResource):
-            value = UnstructuredMesh(
-                self._resolve(node.points, memo),
-                self._resolve(node.cells, memo),
-                node.unit,
-                node.identity,
-                self._resolve(node.metadata, memo),
-            )
-            memo[ref.resource_id] = value
-            return value
-        if isinstance(node, FieldResource):
-            if node.wire is not None:
-                value = self._resolve(node.wire, memo)
-                memo[ref.resource_id] = value
-                return value
-            value = Field(
-                node.domain_ref,
-                node.location,
-                node.quantity_kind,
-                node.unit,
-                self._resolve(node.values, memo),
-                None if node.basis is None else self._resolve(node.basis, memo),
-                node.components,
-                self._resolve(node.metadata, memo),
-            )
-            memo[ref.resource_id] = value
-            return value
-        if isinstance(node, ParticleSetResource):
-            value = ParticleSet(
-                self._resolve(node.positions, memo),
-                node.unit,
-                self._resolve(node.attributes, memo),
-                node.identity,
-                self._resolve(node.metadata, memo),
-            )
-            memo[ref.resource_id] = value
-            return value
-        if isinstance(node, RaySetResource):
-            value = RaySet(
-                self._resolve(node.origins, memo),
-                self._resolve(node.directions, memo),
-                node.unit,
-                self._resolve(node.attributes, memo),
-                node.identity,
-                self._resolve(node.metadata, memo),
-            )
-            memo[ref.resource_id] = value
-            return value
-        if isinstance(node, StructuredBundleResource):
-            if node.wire is not None:
-                value = self._resolve(node.wire, memo)
-                memo[ref.resource_id] = value
-                return value
-            value = StructuredBundle(
-                node.bundle_type,
-                self._resolve(node.members, memo),
-                self._resolve(node.metadata, memo),
-            )
-            memo[ref.resource_id] = value
-            return value
-        if isinstance(node, MappingResource):
-            resolved = {
-                key: self._resolve(child, memo)
-                for key, child in node.items
-            }
-            value = MappingProxyType(resolved)
-            memo[ref.resource_id] = value
-            return value
-        if isinstance(node, SequenceResource):
-            value = tuple(self._resolve(child, memo) for child in node.items)
-            memo[ref.resource_id] = value
-            return value
-        value = copy.deepcopy(node.value)
-        memo[ref.resource_id] = value
-        return value
-
-    def _materialize_mutable(
-        self,
-        ref: ResourceRef,
-        memo: dict[str, Any],
-        copy_arrays: bool,
-    ) -> Any:
-        if ref.resource_id in memo:
-            return memo[ref.resource_id]
-        node = self._node(ref)
-        if isinstance(node, TensorResource):
-            value = np.array(node.array, copy=True) if copy_arrays else node.array
-            memo[ref.resource_id] = value
-            return value
-        if isinstance(node, StructuredGridResource):
-            if node.wire is not None:
-                value = self._materialize_mutable(node.wire, memo, copy_arrays)
-                memo[ref.resource_id] = value
-                return value
-            value = StructuredGrid(
-                node.shape,
-                tuple(
-                    self._materialize_mutable(axis, memo, copy_arrays)
-                    for axis in node.axes
-                ),
-                node.unit,
-                node.identity,
-                self._materialize_mutable(node.metadata, memo, copy_arrays),
-            )
-            memo[ref.resource_id] = value
-            return value
-        if isinstance(node, UnstructuredMeshResource):
-            value = UnstructuredMesh(
-                self._materialize_mutable(node.points, memo, copy_arrays),
-                self._materialize_mutable(node.cells, memo, copy_arrays),
-                node.unit,
-                node.identity,
-                self._materialize_mutable(node.metadata, memo, copy_arrays),
-            )
-            memo[ref.resource_id] = value
-            return value
-        if isinstance(node, FieldResource):
-            if node.wire is not None:
-                value = self._materialize_mutable(node.wire, memo, copy_arrays)
-                memo[ref.resource_id] = value
-                return value
-            value = Field(
-                node.domain_ref,
-                node.location,
-                node.quantity_kind,
-                node.unit,
-                self._materialize_mutable(node.values, memo, copy_arrays),
-                None
-                if node.basis is None
-                else self._materialize_mutable(node.basis, memo, copy_arrays),
-                node.components,
-                self._materialize_mutable(node.metadata, memo, copy_arrays),
-            )
-            memo[ref.resource_id] = value
-            return value
-        if isinstance(node, ParticleSetResource):
-            value = ParticleSet(
-                self._materialize_mutable(node.positions, memo, copy_arrays),
-                node.unit,
-                self._materialize_mutable(node.attributes, memo, copy_arrays),
-                node.identity,
-                self._materialize_mutable(node.metadata, memo, copy_arrays),
-            )
-            memo[ref.resource_id] = value
-            return value
-        if isinstance(node, RaySetResource):
-            value = RaySet(
-                self._materialize_mutable(node.origins, memo, copy_arrays),
-                self._materialize_mutable(node.directions, memo, copy_arrays),
-                node.unit,
-                self._materialize_mutable(node.attributes, memo, copy_arrays),
-                node.identity,
-                self._materialize_mutable(node.metadata, memo, copy_arrays),
-            )
-            memo[ref.resource_id] = value
-            return value
-        if isinstance(node, StructuredBundleResource):
-            if node.wire is not None:
-                value = self._materialize_mutable(node.wire, memo, copy_arrays)
-                memo[ref.resource_id] = value
-                return value
-            value = StructuredBundle(
-                node.bundle_type,
-                self._materialize_mutable(node.members, memo, copy_arrays),
-                self._materialize_mutable(node.metadata, memo, copy_arrays),
-            )
-            memo[ref.resource_id] = value
-            return value
-        if isinstance(node, MappingResource):
-            value: dict[Any, Any] = {}
-            memo[ref.resource_id] = value
-            value.update(
-                (key, self._materialize_mutable(child, memo, copy_arrays))
-                for key, child in node.items
-            )
-            return value
-        if isinstance(node, SequenceResource):
-            values = [self._materialize_mutable(child, memo, copy_arrays) for child in node.items]
-            value = tuple(values) if node.sequence_type == "tuple" else values
-            memo[ref.resource_id] = value
-            return value
-        value = copy.deepcopy(node.value)
-        memo[ref.resource_id] = value
-        return value
 
     def _rewrite(
         self,

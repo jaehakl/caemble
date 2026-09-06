@@ -5,6 +5,7 @@ from typing import Any
 
 import numpy as np
 
+from app.runtime_kernel.api import BundleValue, FieldValue
 from app.runtime_kernel.resources import Field, StructuredBundle
 
 
@@ -18,7 +19,7 @@ def validate_artifact_payload(
     """Validate the storage contract projected from a Catalog artifact type."""
 
     if contract.get("resourceKind") == "structuredBundle":
-        members = value.members if isinstance(value, StructuredBundle) else (
+        members = value.members if isinstance(value, (BundleValue, StructuredBundle)) else (
             value.get("members") if isinstance(value, Mapping) else None
         )
         if not isinstance(members, Mapping):
@@ -41,7 +42,7 @@ def validate_artifact_payload(
             validate_artifact_payload(members[name], member_contract, f"{path}.{name}")
         return
 
-    if isinstance(value, Field):
+    if isinstance(value, (FieldValue, Field)):
         if require_spatial_field:
             if value.location.value not in {"node", "edge", "face", "cell"}:
                 raise ValueError(f"{path}.location is not spatial")

@@ -17,9 +17,6 @@ from app.runtime_kernel.resources import (
     ArtifactHandle,
     ArtifactStore,
     BufferStore,
-    Field,
-    StructuredBundle,
-    StructuredGrid,
     ResourceLease,
     ResourceScopeError,
     ResourceStore,
@@ -27,6 +24,7 @@ from app.runtime_kernel.resources import (
     StateStore,
 )
 from app.runtime_kernel.transport import RecordResourceHold
+from app.runtime_kernel.transport.recording import materialize_record_value
 
 
 class SimulationHost(Protocol):
@@ -186,7 +184,12 @@ class SimulationApi:
 
         hold = RecordResourceHold(release_leases)
         try:
-            materialized = self._materialize_for_record(value, leases)
+            if not isinstance(name, str) or name not in self._run.plan.schemas:
+                raise CaeError("invalid_record", f"RecordedData {name!r} is not declared")
+            materialized = materialize_record_value(
+                value, self._run.plan.schemas[name], resources=self._resources,
+                artifacts=self._artifacts, owner=f"record:{name}", leases=leases,
+            )
             await self._run.record(name, materialized, resource_hold=hold)
         except BaseException:
             if not hold.handed_off:
@@ -333,41 +336,6 @@ class SimulationApi:
             trace[port_name] = trace_values if isinstance(raw, list) else trace_values[0]
             invocation_inputs[port_name] = tuple(typed) if isinstance(raw, list) else typed[0]
         return trace, invocation_inputs
-
-    def _materialize_for_record(self, value: Any, leases: list[ResourceLease]) -> Any:
-        if isinstance(value, ArtifactHandle):
-            if not self._artifacts.is_live(value):
-                raise CaeError("invalid_record", "RecordedData references a released or foreign artifact")
-            leases.append(self._resources.acquire(value.resource_ref, owner=f"record:{self._run.run_id}"))
-            materialized = self._artifacts.materialize(value, copy_arrays=False)
-            if isinstance(materialized, Field):
-                domain = self._resources.resolve(materialized.domain_ref)
-                if isinstance(domain, StructuredGrid):
-                    return {
-                        "value": materialized.values,
-                        "axes": [{"ticks": axis} for axis in domain.axes],
-                    }
-                if isinstance(domain, Mapping) and domain.get("axes") is not None:
-                    return {"value": materialized.values, "axes": domain["axes"]}
-                return materialized.values
-            if isinstance(materialized, StructuredBundle):
-                return materialized.members
-            if isinstance(materialized, Mapping) and "value" in materialized:
-                axes = materialized.get("axes")
-                domain = materialized.get("domainRef")
-                if axes is None and isinstance(domain, Mapping):
-                    axes = domain.get("axes")
-                if axes is not None:
-                    return {"value": materialized["value"], "axes": axes}
-                return materialized["value"]
-            return materialized
-        if isinstance(value, Mapping):
-            return {name: self._materialize_for_record(item, leases) for name, item in value.items()}
-        if isinstance(value, tuple):
-            return tuple(self._materialize_for_record(item, leases) for item in value)
-        if isinstance(value, list):
-            return [self._materialize_for_record(item, leases) for item in value]
-        return value
 
     def _ensure_open(self) -> None:
         if self._closed:
