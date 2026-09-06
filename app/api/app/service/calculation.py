@@ -36,14 +36,18 @@ def _layout_payload(layout: CalculationOutputLayout | dict[str, Any]) -> dict[st
     )
 
 
-def _data_layout(data: dict[str, Any]) -> dict[str, Any]:
-    return _layout_payload(
+def calculation_output_contract(data: dict[str, Any]) -> dict[str, Any]:
+    """Compare output structure while preserving per-Measurement coordinates in storage."""
+    layout = _layout_payload(
         {
             "dtype": data.get("dtype"),
             "shape": data.get("shape"),
             "axes": data.get("axes"),
         }
     )
+    for axis in layout["axes"]:
+        del axis["ticks"]
+    return layout
 
 
 async def list_calculations(
@@ -242,7 +246,10 @@ async def upsert_calculations(
                     ).all()
                 )
                 incompatible = [
-                    index for index, output in enumerate(existing_outputs) if _data_layout(output) != _layout_payload(item.output_layout)
+                    index
+                    for index, output in enumerate(existing_outputs)
+                    if calculation_output_contract(output)
+                    != calculation_output_contract(_layout_payload(item.output_layout))
                 ]
                 if incompatible:
                     raise HTTPException(

@@ -27,6 +27,7 @@ from models import (
 from utils.crud import CrudSpec, get_list_response
 from utils.crud.common import is_admin_user
 from service.experiment_access import require_experiment_read, require_experiment_write
+from service.calculation import calculation_output_contract
 
 
 CALCULATION_DATA_CRUD_SPEC = CrudSpec(
@@ -320,12 +321,15 @@ async def save_calculation_data(
         "shape": data.shape,
         "axes": [axis.model_dump(mode="json") for axis in data.axes],
     }
-    if expected_layout != actual_layout:
+    if (
+        expected_layout is None
+        or calculation_output_contract(expected_layout) != calculation_output_contract(actual_layout)
+    ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={
                 "code": "calculation_output_layout_mismatch",
-                "message": "Calculation output does not match its saved preflight layout.",
+                "message": "Calculation output dtype, shape, axis names or units do not match its saved preflight layout.",
                 "expected": expected_layout,
                 "actual": actual_layout,
             },

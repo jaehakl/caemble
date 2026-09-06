@@ -160,7 +160,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze(
       '',
       '`reshape`는 shape 변경, `mean`/`sum`은 축약, `subset`과 `index`는 slicing, `map`은 element-wise 변환, `transpose`와 `squeeze`는 축 정리에 사용합니다. 빈 축의 2차원 shape를 유지해야 할 때는 `zeros(rows, columns)`를 반환할 수 있습니다.',
       '',
-      '작성하는 Output은 `dtype`, finite real `data`, 선택적인 `axes`만 가집니다. `shape`를 작성하면 오류이며 scalar는 `[]`, flat array는 `[length]`, 직사각 2D array는 `[rows, columns]`, Math.js Matrix는 `size()`에서 자동 추론합니다. axes를 생략하면 `index` 또는 `row`/`column` ordinal ticks를 생성하고, 제공하면 모든 축과 ticks 길이가 추론 shape에 정확히 맞아야 합니다. 성공한 preflight의 dtype·shape·axes는 저장 뒤 강제 계약이 되며 이후 어느 Measurement에서든 하나라도 달라지면 해당 CalculationData만 저장하지 않습니다. Output에는 QuantityKind와 값 unit이 없습니다. rank 0은 scalar, rank 1은 line, rank 2는 heatmap으로 표시합니다.',
+      '작성하는 Output은 `dtype`, finite real `data`, 선택적인 `axes`만 가집니다. `shape`를 작성하면 오류이며 scalar는 `[]`, flat array는 `[length]`, 직사각 2D array는 `[rows, columns]`, Math.js Matrix는 `size()`에서 자동 추론합니다. axes를 생략하면 `index` 또는 `row`/`column` ordinal ticks를 생성하고, 제공하면 모든 축과 ticks 길이가 추론 shape에 정확히 맞아야 합니다. 성공한 preflight의 dtype·shape·축 이름·단위는 저장 뒤 강제 계약이 됩니다. 축 좌표(ticks)의 값은 Measurement마다 달라도 저장할 수 있으며, 각 결과의 실제 좌표를 보존해 표시합니다. ticks는 유한한 숫자이고 개수가 해당 shape와 일치해야 합니다. Prediction의 예측 결과 계약 검사와 결과 비교에는 별도로 좌표 일치를 요구하므로, CalculationData 저장에 성공해도 Prediction에서 호환되지 않을 수 있습니다. Output에는 QuantityKind와 값 unit이 없습니다. rank 0은 scalar, rank 1은 line, rank 2는 heatmap으로 표시합니다.',
       '2차원 heatmap은 tensor의 columns:rows shape 비율을 유지해 각 cell을 정사각형으로 표시하며, Output Chart의 가용 영역과 splitter 조절에 맞춰 확대됩니다. 숫자 축 라벨은 최대 유효숫자 5개로 반올림하지만 hover 좌표와 Return 데이터는 원본 정밀도를 유지합니다.',
       '',
       '### 허용 Math.js API',
