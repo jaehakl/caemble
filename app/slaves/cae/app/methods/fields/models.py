@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from app.runtime_kernel.api.values import FieldLocation
+from app.kernel.api.values import FieldLocation
 
 
 @dataclass(frozen=True, slots=True)

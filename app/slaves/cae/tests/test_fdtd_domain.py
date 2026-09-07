@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from app.solvers.fdtd.v1_0_0.domain import FDTDRegion, build_fdtd_domain
+from app.solvers.fdtd.domain import FDTDRegion, build_fdtd_domain
 
 
 def test_main_is_ceil_expanded_around_its_fixed_center() -> None:

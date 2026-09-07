@@ -6,10 +6,10 @@ from typing import Any
 import numpy as np
 import pytest
 
-from app.runtime_kernel.api import BundleValue, FieldValue, StructuredGridValue, UnstructuredMeshValue
-from app.runtime_kernel.resources import ArtifactStore, ResourceStore
-from app.runtime_kernel.transport.recording import materialize_record_value
-from app.tensor import decode_attachment_tensors, encode_recorded_data
+from app.kernel.api import BundleValue, FieldValue, StructuredGridValue, UnstructuredMeshValue
+from app.kernel.resources import ArtifactStore, ResourceStore
+from app.kernel.transport.recording import materialize_record_value
+from app.kernel.transport.tensor import decode_attachment_tensors, encode_recorded_data
 from tests.recording_fixtures import MESH_FIELD_SCHEMA
 
 
@@ -99,6 +99,32 @@ def test_structured_field_leaf_retains_axes_and_group_uses_coordinates() -> None
         resources.close()
 
 
+def test_structured_field_record_preserves_explicit_spacing_on_single_cell_axes() -> None:
+    resources = ResourceStore()
+    artifacts = ArtifactStore(resources)
+    domain = StructuredGridValue(
+        (1, 3), (np.array([1.25]), np.array([0.1, 0.3, 0.5])), "m",
+        metadata={"spacings": (2.5, 0.2)},
+    )
+    field = FieldValue(domain, "cell", "Temperature", "K", np.ones((1, 3)))
+    schema = {"dtype": "float64", "axes": [{"name": "x"}, {"name": "y"}]}
+    try:
+        recorded = materialize_record_value(
+            field, schema, resources=resources, artifacts=artifacts, owner="record", leases=[],
+        )
+        assert recorded["value"] is field.values
+        assert recorded["axes"][0]["ticks"] is domain.axes[0]
+        assert [axis["spacing"] for axis in recorded["axes"]] == [2.5, 0.2]
+        encoded, _, _ = encode_recorded_data("temperature", schema, recorded, 1)
+        assert encoded["axes"] == [
+            {"ticks": [1.25], "spacing": 2.5},
+            {"ticks": [0.1, 0.3, 0.5], "spacing": 0.2},
+        ]
+    finally:
+        artifacts.close()
+        resources.close()
+
+
 def test_ordinary_record_group_does_not_silently_drop_unknown_members() -> None:
     resources = ResourceStore()
     artifacts = ArtifactStore(resources)
@@ -113,7 +139,7 @@ def test_ordinary_record_group_does_not_silently_drop_unknown_members() -> None:
         resources.close()
 
 
-def test_legacy_bundle_tensor_axes_are_values_not_nested_schemas() -> None:
+def test_bundle_tensor_axes_are_values_not_nested_schemas() -> None:
     resources = ResourceStore()
     artifacts = ArtifactStore(resources)
     ticks = np.arange(3, dtype=np.float64)

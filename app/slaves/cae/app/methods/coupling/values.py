@@ -12,7 +12,7 @@ from app.methods.coupling.cell import (
 )
 from app.methods.coupling.structured import project_cell_field_conservative
 from app.methods.mesh import UnstructuredMesh
-from app.runtime_kernel.api import FieldLocation, FieldValue, StructuredGridValue, UnstructuredMeshValue
+from app.kernel.api import FieldLocation, FieldValue, StructuredGridValue, UnstructuredMeshValue
 
 
 def project_structured_scalar_cell_averages(
@@ -39,8 +39,11 @@ def project_structured_scalar_cell_averages(
             raise ValueError("same-domain scalar field shape must match the target grid")
         return replace(field, domain=target)
     values = project_cell_field_conservative(
-        {"value": field.values, "domainRef": _grid_ref(field.domain, source_spacing)},
-        _grid_ref(target, target_spacing),
+        field.values,
+        _grid_axes(field.domain, source_spacing),
+        _grid_axes(target, target_spacing),
+        source_unit=field.domain.unit,
+        target_unit=target.unit,
     )
     return replace(field, domain=target, values=values)
 
@@ -64,13 +67,10 @@ def project_structured_scalar_cell_averages_to_orthotopes(
     if isinstance(cells, Mapping):
         cells = np.concatenate(tuple(cells.values()), axis=0)
     values = project_structured_to_unstructured_cell_field_conservative(
-        {
-            "location": "cell",
-            "value": field.values,
-            "domainRef": _grid_ref(field.domain, source_spacing),
-        },
+        field,
         UnstructuredMesh(target.points, cells),
         target_length_unit=target.unit,
+        source_spacing=source_spacing,
     )
     return replace(field, domain=target, values=values)
 
@@ -96,23 +96,20 @@ def project_orthotope_scalar_cell_averages_to_structured(
     values = project_unstructured_to_structured_cell_field_conservative(
         field.values,
         UnstructuredMesh(field.domain.points, cells),
-        _grid_ref(target, target_spacing),
+        target,
         source_length_unit=field.domain.unit,
+        target_spacing=target_spacing,
     )
     return replace(field, domain=target, values=values)
 
 
-def _grid_ref(
+def _grid_axes(
     domain: StructuredGridValue,
     spacing: Sequence[float] | None,
-) -> dict[str, Any]:
+) -> list[Mapping[str, Any]]:
     if spacing is None:
         raise ValueError("structured cell-average projection requires explicit axis spacing")
-    return {
-        "shape": domain.shape,
-        "referenceLengthUnit": domain.unit,
-        "axes": [
-            {"ticks": ticks, "spacing": width}
-            for ticks, width in zip(domain.axes, spacing, strict=True)
-        ],
-    }
+    return [
+        {"ticks": ticks, "spacing": width}
+        for ticks, width in zip(domain.axes, spacing, strict=True)
+    ]

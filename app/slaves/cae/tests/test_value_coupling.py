@@ -10,7 +10,7 @@ from app.methods.coupling import (
     project_structured_scalar_cell_averages,
     project_structured_scalar_cell_averages_to_orthotopes,
 )
-from app.runtime_kernel.api import FieldValue, StructuredGridValue, UnstructuredMeshValue
+from app.kernel.api import FieldValue, StructuredGridValue, UnstructuredMeshValue
 
 
 def test_same_structured_domain_keeps_array_dtype_and_metadata() -> None:

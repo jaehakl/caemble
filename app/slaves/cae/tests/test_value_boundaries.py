@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import gc
+import importlib
 import pickle
 from collections.abc import Mapping
 from typing import Any
@@ -9,7 +10,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from app.runtime_kernel.api import (
+from app.kernel.api import (
     BundleValue,
     ContentKey,
     FieldValue,
@@ -19,8 +20,8 @@ from app.runtime_kernel.api import (
     StructuredGridValue,
     UnstructuredMeshValue,
 )
-from app.runtime_kernel.execution import MmapPayloadCodec
-from app.runtime_kernel.resources import BufferStore, Field, ResourceRef, ResourceStore
+from app.kernel.execution import MmapPayloadCodec
+from app.kernel.resources import BufferStore, ResourceRef, ResourceStore
 
 
 def _assert_detached(value: Any) -> None:
@@ -49,24 +50,21 @@ def mesh() -> UnstructuredMeshValue:
 
 
 @pytest.mark.parametrize("mutable", (True, False))
-@pytest.mark.parametrize("legacy", (True, False))
 def test_field_materialize_detaches_domain_for_another_store(
-    mesh: UnstructuredMeshValue, mutable: bool, legacy: bool,
+    mesh: UnstructuredMeshValue, mutable: bool,
 ) -> None:
     source = ResourceStore()
     consumer = ResourceStore()
     try:
         values = np.array([300.0, 310.0, 320.0, 330.0])
-        field = (
-            Field(source.ingest(mesh), "node", "Temperature", "K", values)
-            if legacy else FieldValue(mesh, "node", "Temperature", "K", values)
-        )
+        field = FieldValue(mesh, "node", "Temperature", "K", values)
         root = source.ingest(field)
         lease = source.acquire(root)
-        # Store-local compatibility views still expose the registered resource ID.
         local = source.resolve(root)
-        assert isinstance(local, Field)
-        assert source.contains(local.domain_ref)
+        assert isinstance(local, FieldValue)
+        _assert_detached(local)
+        assert local.domain.identity == "mesh-deformed"
+        assert not local.values.flags.writeable
 
         exported = source.materialize(root, mutable=mutable)
         _assert_detached(exported)
@@ -99,65 +97,43 @@ def test_field_materialize_detaches_domain_for_another_store(
         consumer.close()
 
 
-def test_domain_aliases_and_internal_ref_constructors_are_compatible() -> None:
-    from app.runtime_kernel import api
-    from app.runtime_kernel.api.models import LegacySolverAdapter, adapt_legacy_result
-    from app.runtime_kernel.resources import (
-        ParticleSet, RaySet, StructuredBundle, StructuredGrid, UnstructuredMesh,
-    )
+def test_solver_api_has_no_runtime_or_legacy_exports() -> None:
+    from app.kernel import api, resources
 
-    assert StructuredGrid is api.StructuredGrid is StructuredGridValue
-    assert UnstructuredMesh is api.UnstructuredMesh is UnstructuredMeshValue
-    assert ParticleSet is api.ParticleSet is ParticleSetValue
-    assert RaySet is api.RaySet is RaySetValue
-    assert StructuredBundle is api.StructuredBundle is BundleValue
-    assert api.ResourceStore is ResourceStore
-    assert api.LegacySolverAdapter is LegacySolverAdapter
-    assert api.adapt_legacy_result is adapt_legacy_result
-    resources = ResourceStore()
-    try:
-        axis = resources.ingest(np.array([0.0, 1.0]))
-        grid = resources.ingest(StructuredGrid((2,), (axis,), "m"))
-        field = resources.ingest(Field(grid, "cell", "Temperature", "K", axis))
-        detached = resources.materialize(field, copy_arrays=False)
-        _assert_detached(detached)
-        assert detached.domain.axes[0] is detached.values
-        assert resources.describe(grid).children[0] == axis
-    finally:
-        resources.close()
+    for name in (
+        "StructuredGrid", "UnstructuredMesh", "ParticleSet", "RaySet", "StructuredBundle",
+        "Field", "ResourceStore", "LegacySolverAdapter", "adapt_legacy_result",
+    ):
+        assert not hasattr(api, name)
+    for name in ("Field", "StructuredGrid", "UnstructuredMesh", "StructuredBundle", "ResourceTreeRef"):
+        assert not hasattr(resources, name)
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("app.kernel.resources.models")
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("app.kernel.compat.legacy")
 
 
-def test_prior_value_pickle_paths_and_content_keys_remain_compatible(
+def test_canonical_value_pickle_round_trip_preserves_content_keys(
     mesh: UnstructuredMeshValue,
 ) -> None:
     values = [
-        (mesh, "app.runtime_kernel.resources.models", "UnstructuredMesh"),
-        (StructuredGridValue((2,), (np.array([0.0, 1.0]),), "m"),
-         "app.runtime_kernel.resources.models", "StructuredGrid"),
-        (ParticleSetValue(np.zeros((2, 3)), "m"),
-         "app.runtime_kernel.resources.models", "ParticleSet"),
-        (RaySetValue(np.zeros((1, 3)), np.array([[1.0, 0.0, 0.0]]), "m"),
-         "app.runtime_kernel.resources.models", "RaySet"),
-        (BundleValue("test/domain", {"mesh": mesh}),
-         "app.runtime_kernel.resources.models", "StructuredBundle"),
-        (ContentKey.from_parts("geometry", "sample"),
-         "app.runtime_kernel.resources.cache", "ContentKey"),
-        (StatePatch().put("step", 1), "app.runtime_kernel.resources.state", "StatePatch"),
+        mesh,
+        StructuredGridValue((2,), (np.array([0.0, 1.0]),), "m"),
+        ParticleSetValue(np.zeros((2, 3)), "m"),
+        RaySetValue(np.zeros((1, 3)), np.array([[1.0, 0.0, 0.0]]), "m"),
+        BundleValue("test/domain", {"mesh": mesh}),
+        ContentKey.from_parts("geometry", "sample"),
+        StatePatch().put("step", 1),
     ]
-    for value, module, name in values:
-        value_type = type(value)
-        # Encode the old pickle GLOBAL path; restore the class before decoding.
-        previous = (value_type.__module__, value_type.__name__, value_type.__qualname__)
-        try:
-            value_type.__module__, value_type.__name__, value_type.__qualname__ = module, name, name
-            encoded = pickle.dumps(value)
-        finally:
-            value_type.__module__, value_type.__name__, value_type.__qualname__ = previous
-        restored = pickle.loads(encoded)
-        assert type(restored) is value_type
-        assert ContentKey.from_parts("compatibility", restored) == ContentKey.from_parts("compatibility", value)
+    for value in values:
+        restored = pickle.loads(pickle.dumps(value))
+        assert type(restored) is type(value)
+        assert type(restored).__module__.startswith("app.kernel.api.")
+        assert ContentKey.from_parts("round-trip", restored) == ContentKey.from_parts("round-trip", value)
         _assert_detached(restored)
     assert ContentKey.from_parts("domain", mesh) == ContentKey.from_parts("domain", dataclasses.asdict(mesh))
+    with pytest.raises(ModuleNotFoundError):
+        pickle.loads(b"capp.kernel.resources.models\nUnstructuredMesh\n.")
 
 
 @pytest.mark.parametrize("mutable", (True, False))

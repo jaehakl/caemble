@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from app.tensor import encode_recorded_data
+from app.kernel.transport.tensor import encode_recorded_data
 from sdk.protocol.messages import DataChannelAttachment, DataChannelMessage
 from sdk.slave.app import SlaveApp, SlaveContext
 from sdk.slave.channel import (

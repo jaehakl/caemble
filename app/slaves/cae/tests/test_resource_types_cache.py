@@ -11,21 +11,24 @@ import numpy as np
 import pytest
 
 from app.methods.geometry import GeometryService
-from app.runtime_kernel.resources import (
-    ArtifactStore,
+from app.kernel.api import (
     ContentKey,
-    Field,
+    FieldValue,
     FieldLocation,
+    ParticleSetValue,
+    RaySetValue,
+    BundleValue,
+    StructuredGridValue,
+    UnstructuredMeshValue,
+)
+from app.kernel.coordinator.contracts import validate_artifact_payload
+from app.kernel.resources import (
+    ArtifactStore,
     FileResourceCache,
     ImmutableResourceCache,
-    ParticleSet,
-    RaySet,
     ResourceKind,
     ResourceStore,
     ResourceValidationError,
-    StructuredBundle,
-    StructuredGrid,
-    UnstructuredMesh,
 )
 
 
@@ -35,50 +38,49 @@ def _publish_file_cache(root: str, key: ContentKey, value: str) -> str:
 
 def test_structured_grid_and_field_are_immutable_linked_resources() -> None:
     resources = ResourceStore()
-    grid_ref = resources.ingest(
-        StructuredGrid(
-            shape=(2, 3),
-            axes=(np.array([0.0, 1.0]), np.array([2.0, 3.0, 4.0])),
-            unit="m",
-            identity="grid-a",
-            metadata={"geometryHash": "abc"},
-        )
+    grid = StructuredGridValue(
+        shape=(2, 3),
+        axes=(np.array([0.0, 1.0]), np.array([2.0, 3.0, 4.0])),
+        unit="m",
+        identity="grid-a",
+        metadata={"geometryHash": "abc"},
     )
     values = np.arange(12, dtype=np.float64).reshape(2, 3, 2)
-    field_ref, bundle_ref = resources.ingest_many(
-        (
-            Field(
-                domain_ref=grid_ref,
-                location="cell",
-                quantity_kind="ElectricCurrentDensity",
-                unit="A/m2",
-                values=values,
-                basis={"kind": "cartesian"},
-                components=("x", "y"),
-                metadata={"solver": "dc"},
-            ),
-            StructuredBundle("test/vector-field", {"values": values}),
-        )
-    )
+    field_ref, bundle_ref = resources.ingest_many((
+        FieldValue(
+            domain=grid,
+            location="cell",
+            quantity_kind="ElectricCurrentDensity",
+            unit="A/m2",
+            values=values,
+            basis={"kind": "cartesian"},
+            components=("x", "y"),
+            metadata={"solver": "dc"},
+        ),
+        BundleValue("test/vector-field", {"values": values, "domain": grid}),
+    ))
     field_lease = resources.acquire(field_ref)
     bundle_lease = resources.acquire(bundle_ref)
 
     field = resources.resolve(field_ref)
     bundle = resources.resolve(bundle_ref)
-    assert isinstance(field, Field)
+    assert isinstance(field, FieldValue)
     assert field.location is FieldLocation.CELL
-    assert field.domain_ref == grid_ref
+    assert field.domain.identity == "grid-a"
+    assert field.domain.metadata["geometryHash"] == "abc"
+    assert field.domain.axes[0] is bundle.members["domain"].axes[0]
     assert field.values is bundle.members["values"]
     assert not field.values.flags.writeable
     assert isinstance(field.metadata, Mapping)
 
     description = resources.describe(field_ref)
+    grid_ref = description.metadata["domainRef"]
     assert description.kind is ResourceKind.FIELD
     assert description.shape == (2, 3, 2)
-    assert description.metadata["domainRef"] == grid_ref
+    assert resources.kind(grid_ref) is ResourceKind.STRUCTURED_GRID
     assert description.metadata["quantityKind"] == "ElectricCurrentDensity"
     assert description.metadata["components"] == ("x", "y")
-    assert resources.reference_count(grid_ref) == 1
+    assert resources.reference_count(grid_ref) == 2
 
     detached = resources.materialize(field_ref)
     assert detached.values.flags.writeable
@@ -86,114 +88,76 @@ def test_structured_grid_and_field_are_immutable_linked_resources() -> None:
     assert field.values[0, 0, 0] == 0
 
     resources.release(field_lease)
-    assert not resources.contains(grid_ref)
+    assert resources.contains(grid_ref)
     resources.release(bundle_lease)
+    assert not resources.contains(grid_ref)
+    resources.close()
 
 
-def test_tagged_structured_field_uses_typed_resources_with_legacy_mapping_views() -> None:
-    resources = ResourceStore()
-    values = np.arange(12, dtype=np.float64).reshape(2, 3, 2)
-    domain = {
-        "kind": "caemble.structured-grid/v1",
-        "id": "grid-wire-a",
-        "referenceLengthUnit": "m",
-        "shape": [2, 3],
-        "axes": [
-            {"ticks": [0.25, 0.75], "spacing": 0.5},
-            {"ticks": [1.0, 2.0, 3.0], "spacing": 1.0},
-        ],
+def test_field_contract_rejects_tagged_mapping_payloads() -> None:
+    values = np.arange(3, dtype=np.float64)
+    contract = {
+        "dtype": "float64", "quantityKind": "Temperature", "unit": "K",
+        "axes": [{"name": "x"}],
     }
-    field = {
-        "kind": "caemble.structured-field/v1",
-        "domainRef": domain,
-        "location": "cell",
-        "quantityKind": "ElectricCurrentDensity",
-        "unit": "A/m2",
-        "value": values,
-        "axes": [{"label": "x"}, {"label": "y"}],
-        "basis": [[1.0, 0.0], [0.0, 1.0]],
-        "components": ["x", "y"],
+    tagged = {
+        "kind": "caemble.structured-field/v1", "value": values,
+        "domainRef": {"kind": "caemble.structured-grid/v1", "shape": [3]},
+        "location": "cell", "quantityKind": "Temperature", "unit": "K",
     }
-
-    field_ref = resources.ingest(field, copy_arrays=False)
-    lease = resources.acquire(field_ref)
-    description = resources.describe(field_ref)
-
-    assert resources.kind(field_ref) is ResourceKind.FIELD
-    assert description.metadata["quantityKind"] == "ElectricCurrentDensity"
-    assert description.metadata["basis"] == ((1.0, 0.0), (0.0, 1.0))
-    assert description.metadata["components"] == ("x", "y")
-    domain_ref = description.metadata["domainRef"]
-    assert resources.kind(domain_ref) is ResourceKind.STRUCTURED_GRID
-    resolved = resources.resolve(field_ref)
-    assert isinstance(resolved, Mapping)
-    assert resolved["kind"] == "caemble.structured-field/v1"
-    assert resolved["domainRef"]["kind"] == "caemble.structured-grid/v1"
-    assert resolved["value"] is values
-    assert not resolved["value"].flags.writeable
-
-    materialized = resources.materialize(field_ref)
-    assert isinstance(materialized, dict)
-    assert isinstance(materialized["domainRef"], dict)
-    assert materialized["value"].flags.writeable
-    materialized["value"][0, 0, 0] = -1
-    assert resolved["value"][0, 0, 0] == 0
-
-    resources.release(lease)
-    assert not resources.contains(field_ref)
+    with pytest.raises(ValueError, match="must be a FieldValue"):
+        validate_artifact_payload(tagged, contract, "field", require_spatial_field=True)
+    domain = StructuredGridValue((3,), (values,), "m")
+    validate_artifact_payload(
+        FieldValue(domain, "cell", "Temperature", "K", values),
+        contract, "field", require_spatial_field=True,
+    )
 
 
-def test_tagged_ray_path_bundle_uses_typed_resource_with_legacy_mapping_view() -> None:
+def test_bundle_resources_preserve_arrays_and_reject_tagged_contract_payloads() -> None:
     resources = ResourceStore()
     artifacts = ArtifactStore(resources)
     origins = np.zeros((2, 3), dtype=np.float64)
-    bundle = {
-        "kind": "caemble.ray-path-bundle/v1",
-        "members": {
-            "origins": origins,
-            "rootIds": ["source-a", "source-b"],
-        },
-    }
-
+    bundle = BundleValue("test/rays", {"origins": origins, "rootIds": ["source-a", "source-b"]})
     handle = artifacts.publish(
-        bundle,
-        producer_task="ray",
-        solver_name="ray-tracing",
-        solver_version="0.2.0",
-        output_name="rayPaths",
-        artifact_type="ray-path-bundle",
-        state_revision=1,
+        bundle, producer_task="ray", solver_name="test-ray", solver_version="1.0.0",
+        output_name="rayPaths", artifact_type="test/rays@1", state_revision=1,
         copy_arrays=False,
     )
     bundle_ref = handle.resource_ref
     description = resources.describe(bundle_ref)
-
     assert resources.kind(bundle_ref) is ResourceKind.STRUCTURED_BUNDLE
-    assert description.metadata["bundleType"] == "caemble.ray-path-bundle/v1"
+    assert description.metadata["bundleType"] == "test/rays"
     assert set(description.metadata["members"]) == {"origins", "rootIds"}
     resolved = artifacts.resolve(handle)
-    assert isinstance(resolved, Mapping)
-    assert resolved["kind"] == "caemble.ray-path-bundle/v1"
-    assert resolved["members"]["origins"] is origins
-    assert not resolved["members"]["origins"].flags.writeable
+    assert isinstance(resolved, BundleValue)
+    assert resolved.members["origins"] is origins
+    assert not resolved.members["origins"].flags.writeable
+    with pytest.raises(TypeError):
+        resolved.members["rootIds"] = ()
 
     transport_view = artifacts.materialize(handle)
-    assert transport_view["members"]["origins"] is origins
-    assert not transport_view["members"]["origins"].flags.writeable
-
+    assert transport_view.members["origins"] is origins
+    assert not transport_view.members["origins"].flags.writeable
     materialized = artifacts.materialize(handle, copy_arrays=True)
-    assert materialized["kind"] == "caemble.ray-path-bundle/v1"
-    assert isinstance(materialized["members"], dict)
-    assert materialized["members"]["origins"].flags.writeable
-
+    assert materialized.bundle_type == "test/rays"
+    assert isinstance(materialized.members, dict)
+    assert materialized.members["origins"].flags.writeable
+    with pytest.raises(ValueError, match="must be a BundleValue"):
+        validate_artifact_payload(
+            {"kind": "caemble.ray-path-bundle/v1", "members": bundle.members},
+            {"resourceKind": "structuredBundle", "members": {}}, "paths",
+        )
     artifacts.release(handle)
     assert not resources.contains(bundle_ref)
+    artifacts.close()
+    resources.close()
 
 
 def test_unstructured_mesh_particle_and_ray_resources_validate_topology() -> None:
     resources = ResourceStore()
     mesh_ref = resources.ingest(
-        UnstructuredMesh(
+        UnstructuredMeshValue(
             points=np.array(
                 [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
             ),
@@ -202,14 +166,14 @@ def test_unstructured_mesh_particle_and_ray_resources_validate_topology() -> Non
         )
     )
     particles_ref = resources.ingest(
-        ParticleSet(
+        ParticleSetValue(
             positions=np.array([[0.0, 0.0], [1.0, 1.0]]),
             unit="m",
             attributes={"mass": np.array([1.0, 2.0])},
         )
     )
     rays_ref = resources.ingest(
-        RaySet(
+        RaySetValue(
             origins=np.zeros((2, 3)),
             directions=np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
             unit="m",
@@ -223,7 +187,7 @@ def test_unstructured_mesh_particle_and_ray_resources_validate_topology() -> Non
 
     with pytest.raises(ResourceValidationError, match="out-of-range"):
         resources.ingest(
-            UnstructuredMesh(
+            UnstructuredMeshValue(
                 points=np.zeros((2, 3)),
                 cells=np.array([[0, 2]], dtype=np.int64),
                 unit="m",
@@ -231,27 +195,25 @@ def test_unstructured_mesh_particle_and_ray_resources_validate_topology() -> Non
         )
     with pytest.raises(ResourceValidationError, match="first dimension 2"):
         resources.ingest(
-            ParticleSet(
+            ParticleSetValue(
                 positions=np.zeros((2, 3)),
                 unit="m",
                 attributes={"mass": np.ones(3)},
             )
         )
     with pytest.raises(ResourceValidationError, match="cannot be zero"):
-        resources.ingest(RaySet(np.zeros((1, 3)), np.zeros((1, 3)), "m"))
+        resources.ingest(RaySetValue(np.zeros((1, 3)), np.zeros((1, 3)), "m"))
 
 
 def test_field_metadata_and_domain_are_validated() -> None:
     resources = ResourceStore()
-    grid_ref = resources.ingest(
-        StructuredGrid((2,), (np.array([0.0, 1.0]),), "m")
-    )
-    particles_ref = resources.ingest(ParticleSet(np.zeros((2, 3)), "m"))
+    grid = StructuredGridValue((2,), (np.array([0.0, 1.0]),), "m")
+    particles = ParticleSetValue(np.zeros((2, 3)), "m")
 
     with pytest.raises(ResourceValidationError, match="trailing dimension"):
         resources.ingest(
-            Field(
-                grid_ref,
+            FieldValue(
+                grid,
                 "cell",
                 "Velocity",
                 "m/s",
@@ -261,8 +223,8 @@ def test_field_metadata_and_domain_are_validated() -> None:
         )
     with pytest.raises(ResourceValidationError, match="cannot reference"):
         resources.ingest(
-            Field(
-                particles_ref,
+            FieldValue(
+                particles,
                 "cell",
                 "Temperature",
                 "K",
@@ -270,7 +232,7 @@ def test_field_metadata_and_domain_are_validated() -> None:
             )
         )
     with pytest.raises(ValueError, match="quantity_kind"):
-        Field(grid_ref, "cell", "", "K", np.ones(2))
+        FieldValue(grid, "cell", "", "K", np.ones(2))
 
 
 def test_content_keys_are_canonical_and_include_array_content() -> None:

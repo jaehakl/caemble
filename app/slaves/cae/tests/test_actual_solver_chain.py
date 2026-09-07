@@ -6,9 +6,12 @@ from typing import Any
 import numpy as np
 import pytest
 
-from app.kernels import run_kernel
-from app.runtime_kernel.api import InputArtifact, SolverResourceServices
-from app.runtime_kernel.resources import FileResourceCache
+from app.kernel.coordinator.invocation import execute_solver
+from app.kernel.coordinator.plan import TaskSpec
+from app.kernel.catalog import SolverCatalog
+from app.kernel.execution import SpawnSolverExecutor
+from app.kernel.api import FieldValue, InputArtifact, SolverResourceServices
+from app.kernel.resources import FileResourceCache
 
 
 def scene() -> dict[str, Any]:
@@ -96,15 +99,10 @@ def parameter(value: Any) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("dc_version", "heat_version"),
-    (("0.2.0", "0.1.0"), ("0.3.0", "0.2.0")),
-)
-async def test_dc_to_heat_runs_in_distinct_children(
-    dc_version: str,
-    heat_version: str,
-    tmp_path: Path,
-) -> None:
+async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path) -> None:
+    dc_version, heat_version = "0.4.0", "0.3.0"
+    catalog = SolverCatalog.discover()
+    executor = SpawnSolverExecutor()
     progress: list[Any] = []
     resources = SolverResourceServices(geometry_cache_path=str(tmp_path))
 
@@ -145,19 +143,25 @@ async def test_dc_to_heat_runs_in_distinct_children(
             ],
         },
     }
-    electric = await run_kernel(
-        dc_task,
+    dc_spec = TaskSpec(
+        "electric", dc_task, catalog.descriptor("dc-current-density", dc_version),
+        catalog.locator("dc-current-density", dc_version), 2, {}, {}, {},
+    )
+    electric_transaction = await execute_solver(
+        dc_spec,
         {},
         {},
         world(),
         report,
-        task_name="electric",
+        executor=executor,
         timeout=30,
         resources=resources,
     )
+    electric = electric_transaction.value
+    electric_transaction.commit()
     joule = electric.artifacts["jouleHeating"]
-    assert joule["kind"] == "caemble.structured-field/v1"
-    assert joule["domainRef"]["shape"] == [6, 4, 4]
+    assert isinstance(joule, FieldValue)
+    assert joule.domain.shape == (6, 4, 4)
     assert electric.artifacts["totalCurrent"]["value"] > 0
 
     heat_task = {
@@ -205,17 +209,23 @@ async def test_dc_to_heat_runs_in_distinct_children(
         None,
         joule,
     )
-    thermal = await run_kernel(
-        heat_task,
+    heat_spec = TaskSpec(
+        "thermal", heat_task, catalog.descriptor("steady-state-heat", heat_version),
+        catalog.locator("steady-state-heat", heat_version), 2, {}, {}, {},
+    )
+    thermal_transaction = await execute_solver(
+        heat_spec,
         {},
         {"heatSource": source},
         world(),
         report,
-        task_name="thermal",
+        executor=executor,
         timeout=30,
         resources=resources,
     )
-    temperature = np.asarray(thermal.artifacts["temperature"]["value"])
+    thermal = thermal_transaction.value
+    thermal_transaction.commit()
+    temperature = np.asarray(thermal.artifacts["temperature"].values)
     assert temperature.shape == (6, 4, 4)
     assert thermal.artifacts["maximumTemperature"]["value"] >= 300.0
     assert electric.state_patch.is_empty and thermal.state_patch.is_empty

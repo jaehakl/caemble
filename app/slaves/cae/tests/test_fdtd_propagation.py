@@ -3,9 +3,9 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from app.solvers.fdtd.v1_0_0.materials import build_update_coefficients
-from app.solvers.fdtd.v1_0_0.physics import EPSILON_0, MU_0, FDTDEngine
-from app.solvers.fdtd.v1_0_0.pml import CpmlState
+from app.solvers.fdtd.materials import build_update_coefficients
+from app.solvers.fdtd.physics import EPSILON_0, MU_0, FDTDEngine
+from app.solvers.fdtd.pml import CpmlState
 
 
 def _vacuum_engine(cell_count: int, *, pml_cells: int = 0) -> FDTDEngine:

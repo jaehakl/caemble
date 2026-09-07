@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from app.runtime_kernel.coordinator import SimulationApi
-from app.runtime_kernel.coordinator.plan import RunPlan, TaskSpec, detached
+from app.kernel.coordinator import SimulationApi
+from app.kernel.coordinator.plan import RunPlan, TaskSpec, detached
 
 
 def test_task_snapshot_and_each_invocation_isolate_nested_numpy_arrays():

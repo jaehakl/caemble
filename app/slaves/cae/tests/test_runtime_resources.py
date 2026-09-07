@@ -6,23 +6,22 @@ from collections.abc import Mapping
 import numpy as np
 import pytest
 
-from app.runtime_kernel.api import (
-    LegacySolverAdapter,
+from app.kernel.api import (
     SolverImplementation,
     SolverInvocation,
     SolverResult,
+    StatePatch,
 )
-from app.runtime_kernel.execution import MmapPayloadCodec
-from app.runtime_kernel.resources import (
+from app.kernel.execution import MmapPayloadCodec
+from app.kernel.resources import (
     ArtifactStore,
     BufferStore,
     ResourceLeaseError,
     ResourceNotFoundError,
     ResourceStore,
-    StatePatch,
     StateStore,
 )
-from app.runtime_kernel.transport import RecordResourceHold
+from app.kernel.transport import RecordResourceHold
 
 
 def test_resource_store_preserves_aliases_and_exposes_immutable_views() -> None:
@@ -235,45 +234,28 @@ def test_record_ack_hold_keeps_artifact_mmap_until_release() -> None:
 
 
 @pytest.mark.asyncio
-async def test_legacy_adapter_converts_full_state_to_patch() -> None:
-    async def progress(_: object) -> None:
-        return None
+async def test_solver_implementation_returns_explicit_state_patch() -> None:
+    async def run(invocation: SolverInvocation) -> SolverResult:
+        return SolverResult(
+            state_patch=StatePatch().put("continued", invocation.state["seed"] + 1),
+            artifacts={"field": np.array([1.0])},
+            observations={"iterations": 4},
+        )
 
-    async def legacy(invocation: SolverInvocation) -> dict[str, object]:
-        return {
-            "state": {"continued": invocation.state["seed"] + 1},
-            "artifacts": {"field": np.array([1.0])},
-            "observations": {"iterations": 4},
-        }
-
-    invocation = SolverInvocation(
-        config={},
-        state={"seed": 2},
-        inputs={},
-        world={},
-        geometry=None,
-        progress=progress,
-        descriptor={},
-    )
-    adapter = LegacySolverAdapter(legacy)
-    result = await adapter.run(invocation)
-
-    assert isinstance(result, SolverResult)
-    assert result.state_patch.operations[0].value == {"continued": 3}
+    invocation = SolverInvocation({}, {"seed": 2}, {}, {}, None, None, {})
+    implementation = SolverImplementation(abi_version=2, run=run)
+    result = await implementation(invocation)
+    assert result.state_patch.operations[0].path == ("continued",)
+    assert result.state_patch.operations[0].value == 3
+    assert invocation.state == {"seed": 2}
     assert result.observations["iterations"] == 4
-    implementation = SolverImplementation(abi_version=2, run=adapter.run)
-    assert (await implementation(invocation)).artifacts.keys() == {"field"}
+    np.testing.assert_array_equal(result.artifacts["field"], [1.0])
 
 
-@pytest.mark.asyncio
-async def test_legacy_adapter_preserves_unchanged_state_revision() -> None:
-    async def progress(_: object) -> None:
-        return None
+@pytest.mark.parametrize("abi_version", (1, 3))
+def test_solver_implementation_rejects_unsupported_abi(abi_version: int) -> None:
+    async def run(invocation: SolverInvocation) -> SolverResult:
+        return SolverResult()
 
-    async def legacy(invocation: SolverInvocation) -> dict[str, object]:
-        return {"state": invocation.state, "artifacts": {}}
-
-    invocation = SolverInvocation({}, {"seed": 2}, {}, {}, None, progress, {})
-    result = await LegacySolverAdapter(legacy)(invocation)
-
-    assert result.state_patch.is_empty
+    with pytest.raises(ValueError, match="only supports ABI version 2"):
+        SolverImplementation(abi_version=abi_version, run=run)

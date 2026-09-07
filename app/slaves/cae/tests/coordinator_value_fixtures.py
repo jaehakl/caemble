@@ -4,7 +4,7 @@ import os
 
 import numpy as np
 
-from app.runtime_kernel.api import (
+from app.kernel.api import (
     BundleValue, FieldValue, ParticleSetValue, SolverImplementation,
     SolverInvocation, SolverResult, StatePatch, UnstructuredMeshValue,
 )

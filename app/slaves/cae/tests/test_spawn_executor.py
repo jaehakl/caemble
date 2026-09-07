@@ -13,8 +13,8 @@ from typing import Any
 
 import numpy as np
 
-from app.runtime_kernel.api import InputArtifact, SolverInvocation, SolverResult
-from app.runtime_kernel.execution import (
+from app.kernel.api import InputArtifact, SolverInvocation, SolverResult
+from app.kernel.execution import (
     RemoteSolverError,
     SolverExecutionCancelled,
     SolverExecutionStartupTimeout,
@@ -23,8 +23,7 @@ from app.runtime_kernel.execution import (
     SolverProcessExitedError,
     SpawnSolverExecutor,
 )
-from app.solver_framework.geometry import GeometryService
-from app.solver_framework.models import SolverContext
+from tests.solver_test_support import invocation
 from tests.executor_transport_fixtures import (
     SlowInvocationDecodeCodec,
     SlowPicklePayloadCodec,
@@ -54,136 +53,51 @@ class SpawnSolverExecutorTests(unittest.IsolatedAsyncioTestCase):
             running = False
             await heartbeat_task
 
-    async def test_legacy_async_runner_transports_numpy_and_progress(self) -> None:
+    async def test_solver_transports_numpy_and_progress(self) -> None:
         self.assertNotIn(_FIXTURES, sys.modules)
-        progress: list[dict[str, object]] = []
-        context = SolverContext(
-            config={"gain": 3.0},
-            state={"step": 2},
+        progress = []
+        context = SolverInvocation(
+            config={"gain": 3.0}, state={"step": 2},
             inputs={"values": np.asarray([1.0, 2.0, 3.0])},
-            world={},
-            geometry=GeometryService(),
-            # The executor strips this unpicklable callback before spawn.
-            progress=lambda _: None,
-            descriptor={},
+            world={}, geometry=None, progress=lambda _: None, descriptor={},
         )
-
         result = await SpawnSolverExecutor().execute(
-            f"{_FIXTURES}:legacy_run",
-            context,
-            progress=progress.append,
+            f"{_FIXTURES}:scale_values", context, progress=progress.append,
         )
-
-        np.testing.assert_array_equal(result["outputs"]["values"], [3.0, 6.0, 9.0])
-        self.assertEqual(result["state"], {"step": 2})
-        self.assertNotEqual(result["pid"], os.getpid())
+        np.testing.assert_array_equal(result.artifacts["values"], [3.0, 6.0, 9.0])
+        self.assertTrue(result.state_patch.is_empty)
+        self.assertEqual(context.state, {"step": 2})
+        self.assertNotEqual(result.observations["pid"], os.getpid())
         self.assertEqual(progress[0]["stage"], "fixture")
         self.assertNotIn(_FIXTURES, sys.modules)
 
     async def test_each_invocation_uses_a_distinct_child(self) -> None:
         executor = SpawnSolverExecutor()
-
-        def context() -> SolverContext:
-            return SolverContext(
-                config={"gain": 1},
-                state={},
-                inputs={"values": np.asarray([1])},
-                world={},
-                geometry=GeometryService(),
-                progress=lambda _: None,
-                descriptor={},
-            )
-
         first, second = await asyncio.gather(
-            executor.execute(f"{_FIXTURES}:legacy_run", context()),
-            executor.execute(f"{_FIXTURES}:legacy_run", context()),
+            executor.execute(f"{_FIXTURES}:payload_size", invocation({"payload": b"one"})),
+            executor.execute(f"{_FIXTURES}:payload_size", invocation({"payload": b"two"})),
         )
+        self.assertNotEqual(first.artifacts["pid"], second.artifacts["pid"])
 
-        self.assertNotEqual(first["pid"], second["pid"])
+    async def test_callable_without_implementation_is_rejected(self) -> None:
+        with self.assertRaisesRegex(RemoteSolverError, "must export an ABI 2 SolverImplementation"):
+            await SpawnSolverExecutor().execute(f"{_FIXTURES}:unregistered_runner", invocation())
 
-    async def test_detects_abi_v2_implementation_by_duck_typing(self) -> None:
-        progress: list[dict[str, object]] = []
-        result = await SpawnSolverExecutor().execute(
-            f"{_FIXTURES}:v2_implementation",
-            {"state": {"branch": "a"}},
-            progress=progress.append,
-        )
-
-        self.assertEqual(result["state"], {"branch": "a"})
-        self.assertEqual(result["outputs"], {"abiVersion": 2})
-        self.assertEqual(progress, [{"stage": "abi-v2"}])
-
-    async def test_catalog_abi_must_match_the_child_entry(self) -> None:
-        with self.assertRaises(RemoteSolverError) as raised:
+    async def test_abi_one_is_rejected(self) -> None:
+        with self.assertRaisesRegex(RemoteSolverError, "unsupported Catalog solver ABI"):
             await SpawnSolverExecutor().execute(
-                f"{_FIXTURES}:legacy_run",
-                {},
-                abi_version=2,
+                f"{_FIXTURES}:payload_size", invocation({"payload": b"x"}), abi_version=1,
             )
 
-        self.assertIn("Catalog declares ABI 2", str(raised.exception))
-
-    async def test_legacy_locator_adapts_abi_v2_invocation_inside_child(self) -> None:
-        progress: list[dict[str, object]] = []
-        invocation = SolverInvocation(
-            config={},
-            state={"step": 1},
-            inputs={
-                "source": InputArtifact(
-                    "artifact-1",
-                    "test/scalar@1",
-                    "producer",
-                    "producer-solver",
-                    "1.0.0",
-                    "source",
-                    1,
-                    None,
-                    3.0,
-                )
-            },
-            world={},
-            geometry=None,
-            progress=None,
-            descriptor={},
-        )
-
-        result = await SpawnSolverExecutor().execute(
-            f"{_FIXTURES}:legacy_solver_context",
-            invocation,
-            progress=progress.append,
-        )
-
-        self.assertIsInstance(result, SolverResult)
-        self.assertTrue(result.state_patch.is_empty)
-        self.assertEqual(result.artifacts["value"], 6.0)
-        self.assertEqual(progress, [{"stage": "legacy-adapter"}])
-
-    async def test_legacy_in_place_state_mutation_becomes_a_patch(self) -> None:
-        invocation = SolverInvocation(
-            config={},
-            state={"step": 1},
-            inputs={},
-            world={},
-            geometry=None,
-            progress=None,
-            descriptor={},
-        )
-
-        result = await SpawnSolverExecutor().execute(
-            f"{_FIXTURES}:legacy_mutates_state",
-            invocation,
-            abi_version=1,
-        )
-
-        self.assertIsInstance(result, SolverResult)
-        self.assertFalse(result.state_patch.is_empty)
-        self.assertEqual(result.state_patch.operations[0].value, {"step": 2})
+    async def test_mapping_result_is_rejected(self) -> None:
+        with self.assertRaisesRegex(RemoteSolverError, "must return SolverResult"):
+            await SpawnSolverExecutor().execute(f"{_FIXTURES}:invalid_result", invocation())
 
     async def test_remote_exception_contains_child_traceback(self) -> None:
         with self.assertRaises(RemoteSolverError) as raised:
             await SpawnSolverExecutor().execute(
                 f"{_FIXTURES}:raises_error",
-                {},
+                invocation({}),
             )
 
         self.assertEqual(raised.exception.remote.name, "ValueError")
@@ -195,7 +109,7 @@ class SpawnSolverExecutorTests(unittest.IsolatedAsyncioTestCase):
         task = asyncio.create_task(
             SpawnSolverExecutor(cancellation_grace=0.1).execute(
                 f"{_FIXTURES}:wait_for_cancellation",
-                {"cancellation": None},
+                invocation({"cancellation": None}),
                 cancellation=cancellation,
             )
         )
@@ -209,12 +123,14 @@ class SpawnSolverExecutorTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(SolverExecutionTimeout):
             await SpawnSolverExecutor(cancellation_grace=0.05).execute(
                 f"{_FIXTURES}:blocks_forever",
-                {},
+                invocation({}),
                 timeout=0.1,
             )
 
     async def test_exact_64384_byte_invocation_repeatedly_bootstraps(self) -> None:
-        context = {"payload": b"x" * 64_353}
+        context = invocation({"payload": b"x" * 64_000})
+        payload_size = 64_000 + 64_384 - len(pickle.dumps(context, protocol=pickle.HIGHEST_PROTOCOL))
+        context.config["payload"] = b"x" * payload_size
         self.assertEqual(
             len(pickle.dumps(context, protocol=pickle.HIGHEST_PROTOCOL)),
             64_384,
@@ -223,8 +139,8 @@ class SpawnSolverExecutorTests(unittest.IsolatedAsyncioTestCase):
 
         for _ in range(3):
             result = await executor.execute(f"{_FIXTURES}:payload_size", context)
-            self.assertEqual(result["size"], 64_353)
-            self.assertNotEqual(result["pid"], os.getpid())
+            self.assertEqual(result.artifacts["size"], payload_size)
+            self.assertNotEqual(result.artifacts["pid"], os.getpid())
 
     @unittest.skipUnless(sys.platform == "win32", "Windows stdin inheritance test")
     async def test_resident_stdin_reader_does_not_block_child_bootstrap(self) -> None:
@@ -252,24 +168,24 @@ class SpawnSolverExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("solver child bootstrapped", stderr)
 
     async def test_32mb_invocation_crosses_post_bootstrap_request_pipe(self) -> None:
-        context = {"payload": b"x" * (32 * 1024 * 1024)}
+        context = invocation({"payload": b"x" * (32 * 1024 * 1024)})
         encoded = pickle.dumps(context, protocol=pickle.HIGHEST_PROTOCOL)
         self.assertGreaterEqual(len(encoded), 32 * 1024 * 1024)
 
         executor = SpawnSolverExecutor()
         for _ in range(2):
             result = await executor.execute(f"{_FIXTURES}:payload_size", context)
-            self.assertEqual(result["size"], 32 * 1024 * 1024)
+            self.assertEqual(result.artifacts["size"], 32 * 1024 * 1024)
 
     async def test_slow_codec_does_not_block_event_loop_heartbeat(self) -> None:
         result, ticks = await self._run_with_heartbeat(
             SpawnSolverExecutor(codec=SlowPicklePayloadCodec()).execute(
                 f"{_FIXTURES}:payload_size",
-                {"payload": b"value"},
+                invocation({"payload": b"value"}),
             )
         )
 
-        self.assertEqual(result["size"], 5)
+        self.assertEqual(result.artifacts["size"], 5)
         self.assertGreaterEqual(ticks, 20)
 
     async def test_solver_timeout_begins_only_after_child_decodes_invocation(self) -> None:
@@ -277,11 +193,11 @@ class SpawnSolverExecutorTests(unittest.IsolatedAsyncioTestCase):
             codec=SlowInvocationDecodeCodec(delay=2.5)
         ).execute(
             f"{_FIXTURES}:payload_size",
-            {"payload": b"value"},
+            invocation({"payload": b"value"}),
             timeout=2.0,
         )
 
-        self.assertEqual(result["size"], 5)
+        self.assertEqual(result.artifacts["size"], 5)
 
     @unittest.skipUnless(sys.platform == "win32", "Windows spawn implementation test")
     async def test_slow_process_start_does_not_block_event_loop_heartbeat(self) -> None:
@@ -298,13 +214,13 @@ class SpawnSolverExecutorTests(unittest.IsolatedAsyncioTestCase):
             result, ticks = await self._run_with_heartbeat(
                 SpawnSolverExecutor().execute(
                     f"{_FIXTURES}:payload_size",
-                    {"payload": b"value"},
+                    invocation({"payload": b"value"}),
                 )
             )
         finally:
             popen_spawn_win32.Popen.__init__ = original_init
 
-        self.assertEqual(result["size"], 5)
+        self.assertEqual(result.artifacts["size"], 5)
         self.assertGreaterEqual(ticks, 10)
 
     async def test_child_exit_before_bootstrap_is_reported_and_reaped(self) -> None:
@@ -313,7 +229,7 @@ class SpawnSolverExecutorTests(unittest.IsolatedAsyncioTestCase):
         executor._child_target = exits_before_bootstrap
 
         with self.assertRaises(SolverProcessExitedError) as raised:
-            await executor.execute("unused:solver", {})
+            await executor.execute("unused:solver", invocation({}))
 
         self.assertEqual(raised.exception.exit_code, 29)
         self.assertEqual(
@@ -327,7 +243,7 @@ class SpawnSolverExecutorTests(unittest.IsolatedAsyncioTestCase):
         executor._child_target = closes_request_after_bootstrap
 
         with self.assertRaises((SolverPayloadError, SolverProcessExitedError)):
-            await executor.execute("unused:solver", {"payload": b"value"})
+            await executor.execute("unused:solver", invocation({"payload": b"value"}))
 
         self.assertEqual(
             {child.pid for child in multiprocessing.active_children()},
@@ -341,7 +257,7 @@ class SpawnSolverExecutorTests(unittest.IsolatedAsyncioTestCase):
         executor._child_target = never_starts
 
         with self.assertRaises(SolverExecutionStartupTimeout):
-            await executor.execute("unused:solver", {}, timeout=10)
+            await executor.execute("unused:solver", invocation({}), timeout=10)
 
         self.assertEqual(
             {child.pid for child in multiprocessing.active_children()},
@@ -354,7 +270,7 @@ class SpawnSolverExecutorTests(unittest.IsolatedAsyncioTestCase):
         executor = SpawnSolverExecutor(cancellation_grace=0.05)
         executor._child_target = never_starts
         task = asyncio.create_task(
-            executor.execute("unused:solver", {}, cancellation=cancellation)
+            executor.execute("unused:solver", invocation({}), cancellation=cancellation)
         )
         await asyncio.sleep(0.1)
         cancellation.set()
@@ -383,7 +299,7 @@ class SpawnSolverExecutorTests(unittest.IsolatedAsyncioTestCase):
         executor.CHILD_STARTUP_TIMEOUT_SECONDS = 0.05
         try:
             with self.assertRaises(SolverExecutionStartupTimeout):
-                await executor.execute(f"{_FIXTURES}:payload_size", {"payload": b"x"})
+                await executor.execute(f"{_FIXTURES}:payload_size", invocation({"payload": b"x"}))
             for _ in range(100):
                 if not executor._late_cleanup_tasks:
                     break

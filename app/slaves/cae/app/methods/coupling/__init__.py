@@ -4,7 +4,6 @@ from app.methods.coupling.cell import (
 )
 from app.methods.coupling.structured import (
     project_cell_field_conservative,
-    values_on_structured_grid,
 )
 from app.methods.coupling.values import (
     project_orthotope_scalar_cell_averages_to_structured,
@@ -19,5 +18,4 @@ __all__ = [
     "project_structured_scalar_cell_averages_to_orthotopes",
     "project_structured_to_unstructured_cell_field_conservative",
     "project_unstructured_to_structured_cell_field_conservative",
-    "values_on_structured_grid",
 ]

@@ -17,23 +17,25 @@ selected, remove that Poetry environment and reinstall from this directory.
 
 ## Ownership
 
-- `app/runtime_kernel/api`: Solver ABI, StatePatch, detached domain/field values,
+- `app/kernel/api`: Solver ABI, StatePatch, detached domain/field values,
   and unit contracts.
-- `app/runtime_kernel/coordinator`: immutable RunPlan/TaskSpec snapshots,
+- `app/kernel/coordinator`: immutable RunPlan/TaskSpec snapshots,
   SimulationApi, Python AST policy, and result commit/rollback.
-- `app/runtime_kernel/execution`: spawn child processes, IPC, cancellation,
+- `app/kernel/execution`: spawn child processes, IPC, cancellation,
   temporary workspaces, and mmap transactions.
-- `app/runtime_kernel/resources`: state lineage, live roots, artifact leases,
+- `app/kernel/resources`: state lineage, live roots, artifact leases,
   shared buffers, and run caches.
-- `app/runtime_kernel/transport`: GPStation handlers, schema-based recording
+- `app/kernel/transport`: GPStation handlers, schema-based recording
   conversion, and ACK-owned RecordPackets.
-- `app/runtime_kernel/catalog`: descriptor snapshots and implementation locators.
+- `app/kernel/catalog`: descriptor snapshots and implementation locators.
 - `app/methods`: numerical and geometry building blocks selected by Solvers.
-- `app/solvers/<package>/v<version>/entry.py`: versioned Solver implementations.
+- `app/solvers/<package>/entry.py`: current Solver implementation and readable orchestration.
+- `app/__init__.py` and `app/__main__.py`: package marker and thin executable entry point.
 
-The former top-level modules and `solver_framework` imports are compatibility
-facades. New code uses the three layers above. Do not add registration
-conditionals or Solver manifests.
+All runtime business logic lives in `kernel`; numerical methods and physics
+remain in their own layers. There are no legacy import facades, ABI adapters,
+or versioned implementation directories. Do not add registration conditionals
+or Solver manifests.
 
 ## Contracts
 
@@ -43,6 +45,9 @@ descriptors at startup, then closes the database. Solver modules are imported
 only inside the spawned invocation child. CAD, Geometry, Simulation, Material, Catalog, and built
 Measurement payloads are trusted and unversioned. The worker reads them
 directly; malformed values fail through their natural runtime operation.
+Catalog has one current version per Solver name and rewritten official examples.
+Removed Solver versions fail lookup; old user Experiments are not migrated or
+redirected. Historical code and Catalog releases remain in Git.
 
 Each Solver sees two local scopes: `experiment` for the common scene and `task`
 for its task-local scene. Unit conversion modifies only that Solver view, never
@@ -57,7 +62,9 @@ after a catalog deployment.
 ## Resource and recording boundaries
 
 Solver values use `FieldValue` with a self-contained domain; only the resident
-resource graph uses `ResourceRef`. Existing mapping outputs retain their shapes.
+resource graph uses `ResourceRef`. Domain fields use `FieldValue`; compound
+outputs and retained ray paths use `BundleValue`. ABI 1 and legacy resource
+mappings are not supported.
 State lineage survives explicit root release, while live state, artifacts,
 invocations, and ACK packets independently retain the resources they need.
 `sim.release(state, keep=next_state)` preserves an unchanged revision;
@@ -80,7 +87,9 @@ poetry run python -m pytest tests/test_fdtd_cuda.py -m cuda
 ```
 
 The first command includes import-boundary, unit, lifecycle, and CPU integration
-tests. The second opts into an actual CUDA execution and skips when CUDA is
+tests, including all official Catalog bundles compiled through the UI and run
+as nominal Measurements with real child execution and record ACKs. These tests
+require the UI npm dependencies. The second opts into an actual CUDA execution and skips when CUDA is
 unavailable; report that skip separately from a GPU pass. Retain existing
 numerical tolerances. Compare revision metadata, retained resource nodes and
 mmap files separately when checking repeated calls.

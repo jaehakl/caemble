@@ -5,15 +5,16 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from app.runtime_kernel.coordinator import SimulationApi
-from app.runtime_kernel.coordinator.plan import RunPlan
-from app.runtime_kernel.resources import FileResourceCache
+from app.kernel.coordinator import SimulationApi
+from app.kernel.api import FieldValue
+from app.kernel.coordinator.plan import RunPlan
+from app.kernel.resources import FileResourceCache
 from tests.test_actual_solver_chain import parameter, world
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("dc_version", "heat_version"), (("0.2.0", "0.1.0"), ("0.3.0", "0.2.0")))
-async def test_dc_heat_chain_uses_registered_tasks_ports_and_commit(dc_version, heat_version):
+async def test_dc_heat_chain_uses_registered_tasks_ports_and_commit():
+    dc_version, heat_version = "0.4.0", "0.3.0"
     dc_task = {
         "kernel": {"name": "dc-current-density", "version": dc_version},
         "config": {
@@ -100,15 +101,15 @@ async def test_dc_heat_chain_uses_registered_tasks_ports_and_commit(dc_version, 
     try:
         electric = await sim.run(plan.tasks["electric"])
         joule = sim._artifacts.materialize(electric["artifacts"]["jouleHeating"])
-        assert joule["kind"] == "caemble.structured-field/v1"
-        assert joule["domainRef"]["shape"] == [6, 4, 4]
+        assert isinstance(joule, FieldValue)
+        assert joule.domain.shape == (6, 4, 4)
         assert sim._artifacts.materialize(electric["artifacts"]["totalCurrent"])["value"] > 0
         thermal = await sim.run(
             plan.tasks["thermal"], state=electric["state"],
             inputs={"heatSource": electric["artifacts"]["jouleHeating"]},
         )
         temperature = sim._artifacts.materialize(thermal["artifacts"]["temperature"])
-        assert np.asarray(temperature["value"]).shape == (6, 4, 4)
+        assert np.asarray(temperature.values).shape == (6, 4, 4)
         assert sim._artifacts.materialize(thermal["artifacts"]["maximumTemperature"])["value"] >= 300.0
         assert thermal["state"] is electric["state"]
         assert thermal["state"].revision == 0

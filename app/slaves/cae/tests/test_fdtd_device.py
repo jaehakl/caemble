@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.solvers.fdtd.v1_0_0 import formulation
+from app.solvers.fdtd import formulation
 
 
 def test_select_device_uses_cpu_below_cell_cutoff(

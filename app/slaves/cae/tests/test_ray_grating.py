@@ -4,15 +4,15 @@ import numpy as np
 import pytest
 
 from app.methods.optics import reflect, unit_vector
-from app.solvers.ray_tracing.v0_3_0.grating import diffracted_direction
-from app.solvers.ray_tracing.v0_3_0.formulation_impl import (
+from app.solvers.ray_tracing.grating import diffracted_direction
+from app.solvers.ray_tracing.formulation import (
     EVENT_ABSORPTION,
     EVENT_DIFFRACTION,
     EVENT_POWER_CUTOFF,
     Ray,
     _diffract,
 )
-from app.solvers.ray_tracing.v0_3_0.outputs import PathCollector
+from app.solvers.ray_tracing.outputs import PathCollector
 
 
 @pytest.mark.parametrize('order', [-2, -1, 0, 1, 2])

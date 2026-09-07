@@ -11,7 +11,7 @@ from app.methods.structured import (
     RectilinearTopology,
     rasterize_mesh_cell_centers,
 )
-from tests.versioned_solver_fixtures import cube_mesh
+from tests.solver_fixtures import cube_mesh
 
 
 def test_cartesian_blocks_expose_bounds_tags_and_global_slices() -> None:

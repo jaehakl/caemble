@@ -7,20 +7,14 @@ from typing import Any
 import numpy as np
 import pytest
 
-from app.errors import CaeError
-from app.runtime_kernel.api import InputArtifact, SolverResult
-from app.runtime_kernel.coordinator import SimulationApi
-from app.runtime_kernel.coordinator.run import CaeRun
-from app.runtime_kernel.coordinator.plan import RunPlan, TaskSpec, detached
-from app.runtime_kernel.execution import SolverExecutionTransaction
-from app.runtime_kernel.resources import (
-    ArtifactHandle,
-    Field,
-    StatePatch,
-    StructuredBundle,
-    StructuredGrid,
-)
-from app.runtime_kernel.transport import RecordPacket, RecordResourceHold
+from app.kernel.api.errors import CaeError
+from app.kernel.api import BundleValue, FieldValue, InputArtifact, SolverResult, StatePatch, StructuredGridValue
+from app.kernel.coordinator import SimulationApi
+from app.kernel.coordinator.run import CaeRun
+from app.kernel.coordinator.plan import RunPlan, TaskSpec, detached
+from app.kernel.execution import SolverExecutionTransaction
+from app.kernel.resources import ArtifactHandle
+from app.kernel.transport import RecordPacket, RecordResourceHold
 
 
 class FakeRun:
@@ -47,7 +41,7 @@ class FakeRun:
         specs = {
             name: TaskSpec(
                 name=name, task={"kernel": {"name": name, "version": "1.0.0"}, "config": {}},
-                descriptor=descriptors[name], locator=f"unused:{name}", abi_version=1,
+                descriptor=descriptors[name], locator=f"unused:{name}", abi_version=2,
                 output_specs=output_specs[name], scene={}, material_parameters={},
             )
             for name in ("producer", "consumer")
@@ -95,24 +89,27 @@ class FakeRun:
 
 
 @pytest.mark.asyncio
-async def test_state_and_artifact_share_resources_and_legacy_syntax(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_state_and_artifact_share_canonical_field_resources(monkeypatch: pytest.MonkeyPatch) -> None:
     shared = np.arange(4, dtype=np.float64)
 
     async def invoke(*args: Any, **kwargs: Any) -> SolverExecutionTransaction[SolverResult]:
         del args, kwargs
-        field = {"value": shared, "axes": [{"ticks": [0, 1, 2, 3]}]}
+        field = FieldValue(
+            StructuredGridValue((4,), (np.arange(4.0),), "m"),
+            "cell", "TestField", "1", shared,
+        )
         return SolverExecutionTransaction(SolverResult(StatePatch().put("field", field), {"field": field}))
 
-    monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invoke)
+    monkeypatch.setattr("app.kernel.coordinator.simulation.execute_solver", invoke)
     run = FakeRun()
     sim = SimulationApi(run)
     result = await sim.run(run.producer)
 
     handle = result["artifacts"]["field"]
     assert isinstance(handle, ArtifactHandle)
-    assert result["state"]["field"]["value"] is sim._artifacts.resolve(handle)["value"]
+    assert result["state"]["field"].values is sim._artifacts.resolve(handle).values
     assert result["state"].revision == 1
-    assert not result["state"]["field"]["value"].flags.writeable
+    assert not result["state"]["field"].values.flags.writeable
     sim.close()
 
 
@@ -123,11 +120,11 @@ async def test_typed_handoff_unchanged_revision_record_lease_and_release(
     calls: list[tuple[Any, Any]] = []
 
     async def invoke(
-        task: dict[str, Any], state: Any, inputs: Any, *args: Any, **kwargs: Any
+        task: TaskSpec, state: Any, inputs: Any, *args: Any, **kwargs: Any
     ) -> SolverExecutionTransaction[SolverResult]:
         del args, kwargs
         calls.append((state, inputs))
-        if task["kernel"]["name"] == "producer":
+        if task.name == "producer":
             result = SolverResult(StatePatch().put("step", 1), {"field": {"value": np.ones(3)}})
             return SolverExecutionTransaction(result)
         assert isinstance(inputs["field"], InputArtifact)
@@ -136,7 +133,7 @@ async def test_typed_handoff_unchanged_revision_record_lease_and_release(
         )
         return SolverExecutionTransaction(result)
 
-    monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invoke)
+    monkeypatch.setattr("app.kernel.coordinator.simulation.execute_solver", invoke)
     run = FakeRun()
     sim = SimulationApi(run)
     produced = await sim.run(run.producer)
@@ -167,7 +164,7 @@ async def test_record_structured_bundle_materializes_mappings_without_copying_ar
     sim = SimulationApi(run)
     values = np.arange(12, dtype=np.float32).reshape(2, 2, 3)
     handle = sim._artifacts.publish(
-        StructuredBundle(
+        BundleValue(
             "test/field-series@1",
             {
                 "field": {"value": values},
@@ -206,7 +203,7 @@ async def test_foreign_state_and_invalid_outputs_are_rejected_without_commit(
         result = SolverResult(StatePatch().put("uncommitted", np.ones(2)), {"wrong": np.ones(2)})
         return SolverExecutionTransaction(result)
 
-    monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invalid)
+    monkeypatch.setattr("app.kernel.coordinator.simulation.execute_solver", invalid)
     first = SimulationApi(FakeRun())
     second_run = FakeRun()
     second_run.run_id = "other-run"
@@ -231,7 +228,7 @@ async def test_output_payload_must_match_catalog_dtype_and_shape(
             SolverResult(artifacts={"field": {"value": np.ones((2, 1), dtype=np.float32)}})
         )
 
-    monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invalid)
+    monkeypatch.setattr("app.kernel.coordinator.simulation.execute_solver", invalid)
     run = FakeRun()
     sim = SimulationApi(run)
     baseline = sim._resources.stats()
@@ -253,7 +250,7 @@ async def test_abi2_spatial_field_output_requires_complete_metadata(
             SolverResult(artifacts={"field": {"value": np.ones(2, dtype=np.float64)}})
         )
 
-    monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invalid)
+    monkeypatch.setattr("app.kernel.coordinator.simulation.execute_solver", invalid)
     run = FakeRun()
     run.configure_task("producer", outputs={"field": {
             "payloadKind": "field",
@@ -267,7 +264,7 @@ async def test_abi2_spatial_field_output_requires_complete_metadata(
     )
     sim = SimulationApi(run)
 
-    with pytest.raises(CaeError, match="field metadata is missing"):
+    with pytest.raises(CaeError, match="must be a FieldValue"):
         await sim.run(run.producer)
 
     sim.close()
@@ -277,26 +274,19 @@ async def test_abi2_spatial_field_output_requires_complete_metadata(
 async def test_abi2_spatial_field_output_accepts_complete_domain_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    field = {
-        "kind": "caemble.structured-field/v1",
-        "domainRef": {
-            "kind": "caemble.structured-grid/v1",
-            "id": "line-grid",
-            "referenceLengthUnit": "m",
-            "shape": [2],
-            "axes": [{"ticks": [0.25, 0.75], "spacing": 0.5}],
-        },
-        "location": "cell",
-        "quantityKind": "TestField",
-        "unit": "1",
-        "value": np.ones(2, dtype=np.float64),
-    }
+    field = FieldValue(
+        StructuredGridValue(
+            (2,), (np.array([0.25, 0.75]),), "m", identity="line-grid",
+            metadata={"spacing": [0.5]},
+        ),
+        "cell", "TestField", "1", np.ones(2, dtype=np.float64),
+    )
 
     async def invoke(*args: Any, **kwargs: Any) -> SolverExecutionTransaction[SolverResult]:
         del args, kwargs
         return SolverExecutionTransaction(SolverResult(artifacts={"field": field}))
 
-    monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invoke)
+    monkeypatch.setattr("app.kernel.coordinator.simulation.execute_solver", invoke)
     run = FakeRun()
     run.configure_task("producer", outputs={"field": {
             "payloadKind": "field",
@@ -320,8 +310,8 @@ async def test_abi2_spatial_field_output_accepts_complete_domain_contract(
     assert run.recorded is not None
     recorded = run.recorded[1]
     assert isinstance(recorded, dict)
-    assert recorded["axes"] == field["domainRef"]["axes"]
-    np.testing.assert_array_equal(recorded["value"], field["value"])
+    np.testing.assert_array_equal(recorded["axes"][0]["ticks"], field.domain.axes[0])
+    np.testing.assert_array_equal(recorded["value"], field.values)
     assert_lease_count(sim, handle, 1)
     sim.close()
 
@@ -334,10 +324,10 @@ async def test_typed_field_record_preserves_structured_grid_axes_without_copying
         np.array([0.25, 0.75], dtype=np.float64),
         np.array([1.0, 2.0, 3.0], dtype=np.float64),
     )
-    domain_ref = sim._resources.ingest(StructuredGrid((2, 3), axes, "m"), copy_arrays=False)
+    domain = StructuredGridValue((2, 3), axes, "m")
     values = np.arange(6, dtype=np.float64).reshape(2, 3)
     handle = sim._artifacts.publish(
-        Field(domain_ref, "cell", "TestField", "1", values),
+        FieldValue(domain, "cell", "TestField", "1", values),
         producer_task="producer",
         solver_name="producer",
         solver_version="1.0.0",
@@ -375,7 +365,7 @@ async def test_abi2_spatial_input_rejects_legacy_tensor_before_solver_runs(
             SolverResult(artifacts={"field": {"value": np.ones(2, dtype=np.float64)}})
         )
 
-    monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invoke)
+    monkeypatch.setattr("app.kernel.coordinator.simulation.execute_solver", invoke)
     run = FakeRun()
     run.configure_task("consumer", inputs={"field": {
             "payloadKind": "field",
@@ -390,7 +380,7 @@ async def test_abi2_spatial_input_rejects_legacy_tensor_before_solver_runs(
     sim = SimulationApi(run)
     produced = await sim.run(run.producer)
 
-    with pytest.raises(CaeError, match="field metadata is missing"):
+    with pytest.raises(CaeError, match="must be a FieldValue"):
         await sim.run(
             run.consumer,
             inputs={"field": produced["artifacts"]["field"]},
@@ -412,7 +402,7 @@ async def test_artifact_publish_failure_rolls_back_state_revision_and_resources(
         )
         return SolverExecutionTransaction(result)
 
-    monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invoke)
+    monkeypatch.setattr("app.kernel.coordinator.simulation.execute_solver", invoke)
     run = FakeRun()
     sim = SimulationApi(run)
     baseline = sim._resources.stats()
@@ -445,7 +435,7 @@ async def test_mmap_commit_failure_rolls_back_committed_state_and_artifacts(
             commit=fail_commit,
         )
 
-    monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invoke)
+    monkeypatch.setattr("app.kernel.coordinator.simulation.execute_solver", invoke)
     run = FakeRun()
     sim = SimulationApi(run)
     baseline = sim._resources.stats()
@@ -467,7 +457,7 @@ async def test_record_resource_lease_survives_record_coroutine_cancellation(
         del args, kwargs
         return SolverExecutionTransaction(SolverResult(artifacts={"field": np.ones(2)}))
 
-    monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invoke)
+    monkeypatch.setattr("app.kernel.coordinator.simulation.execute_solver", invoke)
     run = FakeRun()
     sim = SimulationApi(run)
     produced = await sim.run(run.producer)
@@ -549,7 +539,7 @@ async def test_cae_run_defers_resource_close_until_active_execution_stops(
     async def active_execution() -> None:
         await asyncio.Future()
 
-    monkeypatch.setattr("app.runtime_kernel.coordinator.run.emit", lambda value: None)
+    monkeypatch.setattr("app.kernel.coordinator.run.emit", lambda value: None)
     execution = asyncio.create_task(active_execution())
     watchdog = asyncio.create_task(asyncio.sleep(60))
     simulation = CloseSpy()
@@ -583,7 +573,7 @@ def assert_lease_count(sim: SimulationApi, handle: ArtifactHandle, expected: int
 
 
 @pytest.mark.asyncio
-async def test_task_plan_owns_immutable_handles_and_detaches_each_invocation(monkeypatch):
+async def test_task_plan_passes_its_immutable_spec_to_each_invocation(monkeypatch):
     run = FakeRun()
     task = run.producer
     with pytest.raises(TypeError):
@@ -596,13 +586,14 @@ async def test_task_plan_owns_immutable_handles_and_detaches_each_invocation(mon
     with pytest.raises(CaeError, match="registered by this BuiltMeasurement"):
         await sim.run(FakeRun().producer)
 
-    async def invoke(normalized, *args, **kwargs):
-        assert normalized["kernel"]["name"] == "producer"
-        assert kwargs["task_spec"] is run.plan.task_specs["producer"]
-        normalized["kernel"]["name"] = "child-local-change"
+    async def invoke(task_spec, *args, **kwargs):
+        assert task_spec is run.plan.task_specs["producer"]
+        assert task_spec.task["kernel"]["name"] == "producer"
+        with pytest.raises(TypeError):
+            task_spec.task["kernel"]["name"] = "changed"
         return SolverExecutionTransaction(SolverResult(artifacts={"field": np.ones(2)}))
 
-    monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invoke)
+    monkeypatch.setattr("app.kernel.coordinator.simulation.execute_solver", invoke)
     await sim.run(task)
     await sim.run(task)
     assert task["kernel"]["name"] == "producer"
@@ -612,8 +603,8 @@ async def test_task_plan_owns_immutable_handles_and_detaches_each_invocation(mon
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["second-artifact", "ingest", "finalized", "cancelled", "noop"])
 async def test_commit_failure_has_one_complete_rollback_path(monkeypatch, failure):
-    from app.runtime_kernel.coordinator.commit import commit_result
-    from app.runtime_kernel.resources import CyclicResourceError
+    from app.kernel.coordinator.commit import commit_result
+    from app.kernel.resources import CyclicResourceError
 
     run = FakeRun()
     sim = SimulationApi(run)
@@ -676,7 +667,7 @@ async def test_release_keep_preserves_noop_revision_and_checkpoint(monkeypatch):
         patch = StatePatch() if state.get("step") else StatePatch().put("step", 1)
         return SolverExecutionTransaction(SolverResult(patch, {"field": np.ones(2)}))
 
-    monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invoke)
+    monkeypatch.setattr("app.kernel.coordinator.simulation.execute_solver", invoke)
     run = FakeRun()
     sim = SimulationApi(run)
     first = await sim.run(run.producer)
@@ -701,7 +692,7 @@ async def test_invocation_holds_inputs_and_rejects_busy_state_release_atomically
     resume = asyncio.Event()
 
     async def invoke(task, state, inputs, *args, **kwargs):
-        if task["kernel"]["name"] == "producer":
+        if task.name == "producer":
             return SolverExecutionTransaction(SolverResult(StatePatch().put("step", 1), {"field": np.ones(3)}))
         entered.set()
         await resume.wait()
@@ -709,7 +700,7 @@ async def test_invocation_holds_inputs_and_rejects_busy_state_release_atomically
         assert np.sum(inputs["field"].value) == 3
         return SolverExecutionTransaction(SolverResult(artifacts={"answer": 3.0}))
 
-    monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invoke)
+    monkeypatch.setattr("app.kernel.coordinator.simulation.execute_solver", invoke)
     run = FakeRun()
     sim = SimulationApi(run)
     produced = await sim.run(run.producer)
@@ -737,12 +728,12 @@ async def test_cancelled_invocation_releases_holds_and_keeps_cancellation(monkey
     cancellation = asyncio.CancelledError("solver stopped")
 
     async def invoke(task, *args, **kwargs):
-        if task["kernel"]["name"] == "producer":
+        if task.name == "producer":
             return SolverExecutionTransaction(SolverResult(StatePatch().put("step", 1), {"field": np.ones(3)}))
         entered.set()
         raise cancellation
 
-    monkeypatch.setattr("app.runtime_kernel.coordinator.simulation.run_kernel_transaction", invoke)
+    monkeypatch.setattr("app.kernel.coordinator.simulation.execute_solver", invoke)
     run = FakeRun()
     sim = SimulationApi(run)
     produced = await sim.run(run.producer)

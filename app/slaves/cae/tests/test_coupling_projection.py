@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+from app.kernel.api import BundleValue, FieldValue, StructuredGridValue
 import pytest
 
 from app.methods.coupling import (
@@ -8,10 +9,10 @@ from app.methods.coupling import (
     project_unstructured_to_structured_cell_field_conservative,
 )
 from app.methods.mesh import UnstructuredMesh
-from app.methods.structured import VoxelDomain, structured_cell_field, structured_grid_ref
+from app.methods.structured import VoxelDomain, structured_grid_value
 
 
-def _structured_domain_ref(shape: tuple[int, int, int]) -> dict[str, object]:
+def _structured_domain_ref(shape: tuple[int, int, int]) -> StructuredGridValue:
     domain = VoxelDomain(
         shape=shape,
         axis=np.asarray([1.0, 0.0, 0.0]),
@@ -24,7 +25,7 @@ def _structured_domain_ref(shape: tuple[int, int, int]) -> dict[str, object]:
         occupancy=np.ones(np.prod(shape), dtype=np.uint8),
         occupied_count=int(np.prod(shape)),
     )
-    return structured_grid_ref(
+    return structured_grid_value(
         domain,
         geometry_hashes=["geometry"],
         root_ids=["part"],
@@ -61,18 +62,13 @@ def _two_hexahedra() -> UnstructuredMesh:
 def test_structured_to_unstructured_projection_preserves_integral() -> None:
     domain_ref = _structured_domain_ref((4, 1, 1))
     values = np.asarray([[[2.0]], [[2.0]], [[4.0]], [[4.0]]])
-    field = structured_cell_field(
-        domain_ref,
-        values,
-        domain_ref["axes"],
-        quantity_kind="PowerDensity",
-        unit="W.m-3",
-    )
+    field = FieldValue(domain=domain_ref, location="cell", values=values, quantity_kind="PowerDensity", unit="W.m-3")
 
     projected = project_structured_to_unstructured_cell_field_conservative(
         field,
         _two_hexahedra(),
         target_length_unit="m",
+        source_spacing=domain_ref.metadata["spacings"],
     )
 
     np.testing.assert_allclose(projected, [2.0, 4.0])
@@ -90,6 +86,7 @@ def test_unstructured_to_structured_projection_preserves_integral() -> None:
         _two_hexahedra(),
         domain_ref,
         source_length_unit="m",
+        target_spacing=domain_ref.metadata["spacings"],
     )
 
     np.testing.assert_allclose(projected[:, 0, 0], [2.0, 2.0, 4.0, 4.0])
@@ -114,6 +111,7 @@ def test_projection_rejects_general_unstructured_cells() -> None:
             tetrahedron,
             domain_ref,
             source_length_unit="m",
+        target_spacing=domain_ref.metadata["spacings"],
         )
 
 
@@ -128,4 +126,5 @@ def test_projection_rejects_non_matching_support() -> None:
             shifted,
             domain_ref,
             source_length_unit="m",
+        target_spacing=domain_ref.metadata["spacings"],
         )

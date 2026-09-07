@@ -1,2 +1,2 @@
-"""Finite-difference time-domain solvers."""
+"""FDTD solver version 1.0.0."""
 

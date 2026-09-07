@@ -1,12 +1,6 @@
 from app.methods.fields import Field, WorkingField
 from app.methods.structured.box import Box, Halo, Partition, Stencil, StencilTerm
-from app.methods.structured.fields import (
-    STRUCTURED_FIELD_KIND,
-    STRUCTURED_GRID_KIND,
-    is_structured_cell_field,
-    structured_cell_field,
-    structured_grid_ref,
-)
+from app.methods.structured.fields import structured_grid_value
 from app.methods.structured.models import VoxelDomain
 from app.methods.structured.rasterize import rasterize_mesh_cell_centers
 from app.methods.structured.rectilinear import (
@@ -31,8 +25,6 @@ __all__ = [
     "Partition",
     "RectilinearBlock",
     "RectilinearTopology",
-    "STRUCTURED_FIELD_KIND",
-    "STRUCTURED_GRID_KIND",
     "Stencil",
     "StencilTerm",
     "VoxelDomain",
@@ -41,10 +33,8 @@ __all__ = [
     "build_voxel_domain",
     "dense_field",
     "dense_voxel_field",
-    "is_structured_cell_field",
     "rasterize_mesh_cell_centers",
     "round_like_javascript",
-    "structured_cell_field",
-    "structured_grid_ref",
+    "structured_grid_value",
     "voxel_index",
 ]

@@ -7,9 +7,9 @@ import numpy as np
 import pytest
 
 from app.methods.geometry import GeometryService
-from app.runtime_kernel.api import SolverImplementation, SolverInvocation, StructuredBundle
-from app.runtime_kernel.catalog import SolverCatalog
-from app.solvers.fdtd.v1_0_0 import formulation
+from app.kernel.api import SolverImplementation, SolverInvocation, BundleValue
+from app.kernel.catalog import SolverCatalog
+from app.solvers.fdtd import entry, formulation
 
 
 def _box_root(
@@ -65,10 +65,10 @@ async def test_catalog_fdtd_abi2_runs_small_cpu_domain_with_mixed_drude_material
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     catalog = SolverCatalog.discover()
-    descriptor = catalog.descriptor("fdtd", "1.0.0")
-    locator = catalog.locator("fdtd", "1.0.0")
-    assert catalog.abi_version("fdtd", "1.0.0") == 2
-    assert locator == "app.solvers.fdtd.v1_0_0.entry:implementation"
+    descriptor = catalog.descriptor("fdtd", "1.0.1")
+    locator = catalog.locator("fdtd", "1.0.1")
+    assert catalog.abi_version("fdtd", "1.0.1") == 2
+    assert locator == "app.solvers.fdtd.entry:implementation"
 
     module_name, attribute = locator.split(":", maxsplit=1)
     implementation = getattr(importlib.import_module(module_name), attribute)
@@ -230,14 +230,14 @@ async def test_catalog_fdtd_abi2_runs_small_cpu_domain_with_mixed_drude_material
     )
 
     captured: dict[str, Any] = {}
-    original_prepare_domain = formulation.prepare_domain
+    original_prepare_domain = entry.prepare_domain
 
     async def capture_prepared_domain(value: SolverInvocation) -> Any:
         prepared = await original_prepare_domain(value)
         captured["prepared"] = prepared
         return prepared
 
-    monkeypatch.setattr(formulation, "prepare_domain", capture_prepared_domain)
+    monkeypatch.setattr(entry, "prepare_domain", capture_prepared_domain)
     result = await implementation(invocation)
     prepared = captured["prepared"]
 
@@ -281,7 +281,7 @@ async def test_catalog_fdtd_abi2_runs_small_cpu_domain_with_mixed_drude_material
         for method in descriptor["methods"]["outputs"]
     }
     time_bundle = result.artifacts["timeElectric"]
-    assert isinstance(time_bundle, StructuredBundle)
+    assert isinstance(time_bundle, BundleValue)
     assert time_bundle.bundle_type == output_contracts["fdtd.time-electric-field"]["artifactType"]
     assert set(time_bundle.members) == {"field"}
     time_field = time_bundle.members["field"]
@@ -298,7 +298,7 @@ async def test_catalog_fdtd_abi2_runs_small_cpu_domain_with_mixed_drude_material
     assert time_field["unit"] == time_contract["unit"]
 
     spectral_bundle = result.artifacts["spectralMagnetic"]
-    assert isinstance(spectral_bundle, StructuredBundle)
+    assert isinstance(spectral_bundle, BundleValue)
     assert (
         spectral_bundle.bundle_type
         == output_contracts["fdtd.spectral-magnetic-field"]["artifactType"]

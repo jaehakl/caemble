@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.errors import CaeError
-from app.runtime_kernel.coordinator.program import validate_and_load_simulate
+from app.kernel.api.errors import CaeError
+from app.kernel.coordinator.program import validate_and_load_simulate
 
 
 def test_program_allows_nested_state_reads_and_explicit_artifact_handoff() -> None:

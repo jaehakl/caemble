@@ -2,24 +2,22 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from dataclasses import replace
 
 import numpy as np
+from app.kernel.api import BundleValue, FieldValue, StructuredGridValue
 
-from app.methods.coupling import values_on_structured_grid
+from app.methods.coupling import project_structured_scalar_cell_averages
 from app.methods.finite_volume import create_scalar_finite_volume_system
-from app.methods.rays import RAY_PATH_BUNDLE_KIND
 from app.methods.structured import (
-    STRUCTURED_FIELD_KIND,
     VoxelDomain,
-    structured_cell_field,
-    structured_grid_ref,
+    structured_grid_value,
 )
 from app.solvers.dc_current_density.domain import DcDomain
 from app.solvers.dc_current_density.formulation import DcSolution
 from app.solvers.dc_current_density.outputs import build_dc_outputs
 from app.solvers.ray_tracing.outputs import build_ray_outputs
 from app.solvers.steady_state_heat.formulation import _volume_source
-from app.solvers.steady_state_heat.solver import _legacy_heat_source
 
 
 def _domain(shape: tuple[int, int, int]) -> VoxelDomain:
@@ -37,8 +35,8 @@ def _domain(shape: tuple[int, int, int]) -> VoxelDomain:
     )
 
 
-def _domain_ref(domain: VoxelDomain) -> dict[str, object]:
-    return structured_grid_ref(
+def _domain_ref(domain: VoxelDomain) -> StructuredGridValue:
+    return structured_grid_value(
         domain,
         geometry_hashes=["geometry"],
         root_ids=["part"],
@@ -51,15 +49,9 @@ class StructuredCouplingTests(unittest.TestCase):
         domain = _domain((2, 1, 1))
         domain_ref = _domain_ref(domain)
         values = np.asarray([[[2.0]], [[4.0]]])
-        field = structured_cell_field(
-            domain_ref,
-            values,
-            domain_ref["axes"],
-            quantity_kind="PowerDensity",
-            unit="W.m-3",
-        )
+        field = FieldValue(domain=domain_ref, location="cell", values=values, quantity_kind="PowerDensity", unit="W.m-3")
 
-        resolved = values_on_structured_grid(field, domain_ref)
+        resolved = project_structured_scalar_cell_averages(field, domain_ref, source_spacing=field.domain.metadata["spacings"], target_spacing=domain_ref.metadata["spacings"]).values
 
         self.assertIs(resolved, values)
 
@@ -69,15 +61,9 @@ class StructuredCouplingTests(unittest.TestCase):
         source_ref = _domain_ref(source)
         target_ref = _domain_ref(target)
         values = np.asarray([[[2.0]], [[4.0]]])
-        field = structured_cell_field(
-            source_ref,
-            values,
-            source_ref["axes"],
-            quantity_kind="PowerDensity",
-            unit="W.m-3",
-        )
+        field = FieldValue(domain=source_ref, location="cell", values=values, quantity_kind="PowerDensity", unit="W.m-3")
 
-        projected = values_on_structured_grid(field, target_ref)
+        projected = project_structured_scalar_cell_averages(field, target_ref, source_spacing=field.domain.metadata["spacings"], target_spacing=target_ref.metadata["spacings"]).values
 
         np.testing.assert_allclose(projected[:, 0, 0], [2.0, 2.0, 4.0, 4.0])
         source_integral = float(np.sum(values) * source.axial_spacing)
@@ -89,36 +75,20 @@ class StructuredCouplingTests(unittest.TestCase):
         target = _domain((4, 1, 1))
         source_ref = _domain_ref(source)
         target_ref = _domain_ref(target)
-        target_ref["axes"][0]["ticks"] = [tick + 0.25 for tick in target_ref["axes"][0]["ticks"]]
+        target_ref = replace(target_ref, axes=(target_ref.axes[0] + 0.25, *target_ref.axes[1:]))
         values = np.asarray([[[2.0]], [[4.0]]])
-        field = structured_cell_field(
-            source_ref,
-            values,
-            source_ref["axes"],
-            quantity_kind="PowerDensity",
-            unit="W.m-3",
-        )
+        field = FieldValue(domain=source_ref, location="cell", values=values, quantity_kind="PowerDensity", unit="W.m-3")
 
         with self.assertRaisesRegex(ValueError, "same region"):
-            values_on_structured_grid(field, target_ref)
+            project_structured_scalar_cell_averages(field, target_ref, source_spacing=field.domain.metadata["spacings"], target_spacing=target_ref.metadata["spacings"]).values
 
-    def test_heat_source_requires_typed_field_and_legacy_adapter_is_explicit(self) -> None:
+    def test_heat_source_consumes_canonical_field_and_projects_to_target(self) -> None:
         domain = _domain((2, 1, 1))
         domain_ref = _domain_ref(domain)
         values = np.asarray([[[2.0]], [[4.0]]])
-        typed = structured_cell_field(
-            domain_ref,
-            values,
-            domain_ref["axes"],
-            quantity_kind="PowerDensity",
-            unit="W.m-3",
-        )
+        typed = FieldValue(domain=domain_ref, location="cell", values=values, quantity_kind="PowerDensity", unit="W.m-3")
 
         np.testing.assert_allclose(_volume_source(typed, domain, 2.0, domain_ref), [1.0, 2.0])
-        with self.assertRaisesRegex(ValueError, "typed cell field"):
-            _volume_source({"value": values}, domain, 2.0, domain_ref)
-        legacy = _legacy_heat_source({"value": values}, domain_ref)
-        np.testing.assert_allclose(_volume_source(legacy, domain, 2.0, domain_ref), [1.0, 2.0])
         target = _domain((4, 1, 1))
         np.testing.assert_allclose(
             _volume_source(typed, target, 2.0, _domain_ref(target)),
@@ -127,7 +97,7 @@ class StructuredCouplingTests(unittest.TestCase):
 
 
 class SolverOutputTests(unittest.TestCase):
-    def test_dc_joule_heating_is_a_typed_field_with_legacy_tensor_keys(self) -> None:
+    def test_dc_joule_heating_retains_its_canonical_domain(self) -> None:
         domain = _domain((3, 1, 1))
         domain_ref = _domain_ref(domain)
         setup = DcDomain(domain, domain_ref, 1.0, 0.0, 1.0, None, True)
@@ -157,24 +127,23 @@ class SolverOutputTests(unittest.TestCase):
 
         artifacts = asyncio.run(build_dc_outputs(config, descriptor, solution, progress))
         field = artifacts["jouleHeating"]
-        self.assertEqual(field["kind"], STRUCTURED_FIELD_KIND)
-        self.assertEqual(field["domainRef"]["id"], domain_ref["id"])
-        self.assertIn("value", field)
-        self.assertIn("axes", field)
+        self.assertIsInstance(field, FieldValue)
+        self.assertEqual(field.domain.identity, domain_ref.identity)
+        self.assertIsInstance(field.values, np.ndarray)
+        self.assertEqual(field.domain.shape, field.values.shape)
 
     def test_ray_path_artifact_is_only_added_when_requested(self) -> None:
-        bundle = {"vertices": {"value": np.empty((0, 3), dtype=np.float32)}}
+        bundle = BundleValue("caemble.ray/paths@1", {"vertices": {"value": np.empty((0, 3), dtype=np.float32)}})
         config = {"outputs": [{"methodId": "ray.paths", "key": "paths"}]}
         progress_events: list[object] = []
 
         async def progress(event: object) -> None:
             progress_events.append(event)
 
-        artifacts = asyncio.run(build_ray_outputs(config, [], 0.0, bundle, progress))
+        artifacts = asyncio.run(build_ray_outputs(config, [], 0.0, bundle, progress, {}))
 
-        self.assertEqual(artifacts["paths"]["kind"], RAY_PATH_BUNDLE_KIND)
-        self.assertIs(artifacts["paths"]["members"], bundle)
-        self.assertNotIn("kind", bundle)
+        self.assertEqual(artifacts["paths"].bundle_type, "caemble.ray/paths@1")
+        self.assertIs(artifacts["paths"], bundle)
         self.assertEqual(len(progress_events), 1)
 
 

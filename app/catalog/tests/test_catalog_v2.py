@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 import unittest
 
-from caemble_catalog import open_catalog
+from caemble_catalog import CatalogNotFoundError, open_catalog
 from caemble_catalog.admin import insert_solver_manifest
 from caemble_catalog.cli import build_parser
 from caemble_catalog.schema import APPLICATION_ID, SCHEMA_VERSION, create_schema
@@ -37,7 +37,7 @@ class CatalogV2Tests(unittest.TestCase):
             manifests = catalog.solver_manifests()
             artifact_types = catalog.artifact_types()
 
-        self.assertTrue(all(item["abiVersion"] >= 1 for item in manifests))
+        self.assertTrue(all(item["abiVersion"] == 2 for item in manifests))
         self.assertIn("caemble.dc/joule-heating@1", {item["name"] for item in artifact_types})
         joule = next(item for item in artifact_types if item["name"] == "caemble.dc/joule-heating@1")
         self.assertEqual(joule["payloadKind"], "field")
@@ -58,7 +58,7 @@ class CatalogV2Tests(unittest.TestCase):
                 "electro-thermal-notched-bar",
                 namespace="caemble",
                 repository="verified",
-                version="1.0.0",
+                version="2.0.0",
             )
 
         self.assertEqual(total, 9)
@@ -66,7 +66,7 @@ class CatalogV2Tests(unittest.TestCase):
         self.assertEqual(example["title"], "Electro-Thermal Notched Bar")
         self.assertEqual(
             [(item["name"], item["version"]) for item in example["relatedSolvers"]],
-            [("dc-current-density", "0.2.0"), ("steady-state-heat", "0.1.0")],
+            [("dc-current-density", "0.4.0"), ("steady-state-heat", "0.3.0")],
         )
         self.assertEqual(
             set(example["sourceBundle"]["files"]),
@@ -95,21 +95,41 @@ class CatalogV2Tests(unittest.TestCase):
         self.assertIn('inputs={"heatSource": electric["artifacts"]["jouleHeating"]}', simulation_source)
         self.assertIn('sim.release(electric["artifacts"]["jouleHeating"])', simulation_source)
 
-    def test_spectrometer_has_versioned_grating_solver_and_complete_bundle(self) -> None:
+    def test_spectrometer_has_current_grating_solver_and_complete_bundle(self) -> None:
         with open_catalog() as catalog:
-            example = catalog.experiment('caemble:experiment/caemble/verified/czerny-turner-spectrometer@1.0.0')
-            solver = catalog.get_solver_manifest('ray-tracing', '0.3.0')
-            original = catalog.get_solver_manifest('ray-tracing', '0.2.0')
+            example = catalog.experiment('caemble:experiment/caemble/verified/czerny-turner-spectrometer@2.0.0')
+            solver = catalog.get_solver_manifest('ray-tracing', '0.4.0')
         self.assertEqual(example['title'], 'Czerny–Turner Spectrometer')
-        self.assertEqual([(s['name'], s['version']) for s in example['relatedSolvers']], [('ray-tracing', '0.3.0')])
+        self.assertEqual([(s['name'], s['version']) for s in example['relatedSolvers']], [('ray-tracing', '0.4.0')])
         self.assertEqual(set(example['sourceBundle']['files']), {
             'experiment.tsx', 'geometry.tsx', 'layout.ts', 'material.tsx', 'simulate.py', 'tasks/trace.tsx',
         })
         self.assertEqual(solver['abiVersion'], 2)
-        self.assertEqual(solver['implementation'], 'app.solvers.ray_tracing.v0_3_0.entry:implementation')
+        self.assertEqual(solver['implementation'], 'app.solvers.ray_tracing.entry:implementation')
         method = next(m for m in solver['descriptor']['methods']['boundaryConditions'] if m['methodId'] == 'ray.reflection-grating')
         self.assertEqual(set(method['parameters']), {'spacing', 'grooveDirection', 'orders', 'efficiencies'})
-        self.assertNotIn('ray.reflection-grating', {m['methodId'] for m in original['descriptor']['methods']['boundaryConditions']})
+
+    def test_release_has_only_current_solvers_and_examples(self) -> None:
+        expected = {
+            "dc-current-density": "0.4.0", "steady-state-heat": "0.3.0",
+            "ray-tracing": "0.4.0", "fdtd": "1.0.1",
+        }
+        with open_catalog() as catalog:
+            manifests = catalog.solver_manifests()
+            self.assertEqual(len(manifests), len(expected))
+            self.assertEqual({m["descriptor"]["name"]: m["descriptor"]["version"] for m in manifests}, expected)
+            for manifest in manifests:
+                package = manifest["descriptor"]["name"].replace("-", "_")
+                self.assertEqual(manifest["implementation"], f"app.solvers.{package}.entry:implementation")
+            for name, version in [("dc-current-density", "0.3.0"), ("steady-state-heat", "0.2.0"), ("ray-tracing", "0.3.0"), ("fdtd", "1.0.0")]:
+                with self.assertRaises(CatalogNotFoundError):
+                    catalog.get_solver_manifest(name, version)
+            for example in catalog.list_experiments(limit=100)[0]:
+                self.assertEqual(example["version"], "2.0.0")
+                with self.assertRaises(CatalogNotFoundError):
+                    catalog.experiment(example["coordinate"].replace("@2.0.0", "@1.0.0"))
+                for solver in example["relatedSolvers"]:
+                    self.assertEqual(solver["version"], expected[solver["name"]])
 
     def test_new_solver_cli_defaults_to_abi_v2(self) -> None:
         arguments = build_parser().parse_args(

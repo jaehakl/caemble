@@ -2,25 +2,23 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable
 from typing import Any
 
 import numpy as np
 
 from app.methods.structured.models import VoxelDomain
+from app.kernel.api import StructuredGridValue
 from app.methods.structured.voxel import axis_ticks
 
-STRUCTURED_GRID_KIND = "caemble.structured-grid/v1"
-STRUCTURED_FIELD_KIND = "caemble.structured-field/v1"
-
-
-def structured_grid_ref(
+def structured_grid_value(
     domain: VoxelDomain,
     *,
     geometry_hashes: Iterable[str],
     root_ids: Iterable[str],
     reference_length_unit: str,
-) -> dict[str, Any]:
+) -> StructuredGridValue:
+    """Export the voxel field axes, identity, and geometry provenance together."""
     ticks = axis_ticks(domain)
     signature = {
         "geometryHashes": list(geometry_hashes),
@@ -36,42 +34,10 @@ def structured_grid_ref(
     identity = hashlib.sha256(
         json.dumps(signature, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    return {
-        "kind": STRUCTURED_GRID_KIND,
-        "id": identity,
-        **signature,
-        "axes": [
-            {"ticks": list(ticks[0]), "spacing": domain.axial_spacing},
-            {"ticks": list(ticks[1]), "spacing": domain.v_spacing},
-            {"ticks": list(ticks[2]), "spacing": domain.u_spacing},
-        ],
-    }
-
-
-def structured_cell_field(
-    domain_ref: Mapping[str, Any],
-    value: np.ndarray[Any, Any],
-    axes: Sequence[Mapping[str, Any]],
-    *,
-    quantity_kind: str | None,
-    unit: str | None,
-) -> dict[str, Any]:
-    return {
-        "kind": STRUCTURED_FIELD_KIND,
-        "domainRef": dict(domain_ref),
-        "location": "cell",
-        "quantityKind": quantity_kind,
-        "unit": unit,
-        "value": value,
-        "axes": [dict(axis) for axis in axes],
-    }
-
-
-def is_structured_cell_field(value: Any) -> bool:
-    return (
-        isinstance(value, Mapping)
-        and value.get("kind") == STRUCTURED_FIELD_KIND
-        and value.get("location") == "cell"
-        and isinstance(value.get("domainRef"), Mapping)
+    return StructuredGridValue(
+        shape=tuple(signature["shape"]),
+        axes=tuple(np.asarray(axis, dtype=np.float64) for axis in ticks),
+        unit=reference_length_unit,
+        identity=identity,
+        metadata=signature,
     )
-

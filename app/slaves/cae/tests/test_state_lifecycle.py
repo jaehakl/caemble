@@ -5,14 +5,14 @@ import gc
 import numpy as np
 import pytest
 
-from app.runtime_kernel.execution import MmapPayloadCodec
-from app.runtime_kernel.resources import (
+from app.kernel.api import StatePatch
+from app.kernel.execution import MmapPayloadCodec
+from app.kernel.resources import (
     ArtifactStore,
     BufferStore,
     ResourceLeaseError,
     ResourceScopeError,
     ResourceStore,
-    StatePatch,
     StateStore,
 )
 

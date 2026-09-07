@@ -5,7 +5,7 @@ from typing import Any, Awaitable, Callable
 
 import numpy as np
 
-from app.errors import CaeError
+from app.kernel.api.errors import CaeError
 from app.methods.finite_volume.models import FiniteVolumeSystem
 from app.methods.structured.models import VoxelDomain
 from app.methods.structured.voxel import voxel_index

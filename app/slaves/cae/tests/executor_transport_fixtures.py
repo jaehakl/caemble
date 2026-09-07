@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from typing import Any
 
-from app.runtime_kernel.execution.messages import ChildMessage, ChildMessageKind
+from app.kernel.api import SolverInvocation
+from app.kernel.execution.messages import ChildMessage, ChildMessageKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,7 +33,7 @@ class SlowInvocationDecodeCodec:
 
     def decode(self, payload: bytes) -> Any:
         value = pickle.loads(payload)
-        if isinstance(value, dict) and "payload" in value:
+        if isinstance(value, SolverInvocation) and "payload" in value.config:
             time.sleep(self.delay)
         return value
 

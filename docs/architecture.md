@@ -10,7 +10,9 @@ this document describes the implementation boundaries.
 Experiment and Solver SemVer are durable identities. An Experiment is addressed
 by namespace, repository, tag, and SemVer; a Solver is addressed by name and
 SemVer. Published identities are immutable, so a behavior or descriptor change
-gets a new SemVer.
+gets a new SemVer. The official Catalog contains one current version per Solver
+name and current examples. Old user Experiments are not rewritten or redirected:
+removed Solver versions fail lookup. Git preserves prior code and Catalog releases.
 
 CAD source, Geometry scenes, Simulation programs, Material snapshots, Catalog
 slices, and built Measurements are trusted, unversioned application payloads.
@@ -69,13 +71,19 @@ Solver view, never the stored Geometry or frozen Material snapshot.
 
 A task pins a Solver name and SemVer. The active Catalog descriptor supplies
 its implementation locator, parameters, methods, material roles and properties,
-input ports, observations, and reference length unit. The CAE registry imports
-the implementation lazily; there is no central per-Solver dispatch branch.
+input ports, observations, and reference length unit. The resident kernel freezes
+this descriptor in the RunPlan; only the invocation child imports the selected
+implementation. There is no central per-Solver dispatch branch.
 
 Solver-specific physics belongs under
-`app/slaves/cae/app/solvers/<solver_package>/`. Shared geometry, units, tensor,
-and numerical services remain in the solver framework. Catalog editing uses an
-explicit Draft SQLite file and publishes that file to the canonical Catalog.
+`app/slaves/cae/app/solvers/<solver_package>/`, with one current `entry.py` per
+Solver and no implementation version directories. The resident `app/kernel`
+owns execution, resources, Catalog snapshots and transport. `kernel/api` owns
+ABI 2 value and unit contracts, while `app/methods` owns shared geometry and
+numerical operations. `app` itself contains only `__init__.py` and `__main__.py`.
+There are no legacy Solver adapters or import facades. Catalog editing uses an
+explicit Draft SQLite file, rewrites examples for the current versions, removes
+previous identities, and publishes the completed file to the canonical Catalog.
 
 ## Non-sequential ray tracing
 
@@ -132,5 +140,5 @@ dedicated account or container.
 - `app/api/app`: authentication, persistence, catalog routes, and orchestration.
 - `app/catalog`: canonical Catalog and `catalogctl` Draft workflow.
 - `app/launcher`: per-user executable lifecycle and WebRTC signaling.
-- `app/slaves/cae/app`: AST program runtime, Solver framework, and physics.
+- `app/slaves/cae/app`: thin entry point, runtime `kernel`, shared `methods`, and current `solvers`.
 - `app/sdk`: client and worker transport libraries.

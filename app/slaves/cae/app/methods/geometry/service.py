@@ -12,8 +12,8 @@ import manifold3d as manifold
 import numpy as np
 
 from app.methods.geometry.models import ShellLayerGeometry, TriangleProvenance, TriangularMesh
-from app.runtime_kernel.api import ContentKey, ValueCache
-from app.runtime_kernel.api.units import convert_ucum_value
+from app.kernel.api import ContentKey, ValueCache
+from app.kernel.api.units import convert_ucum_value
 
 _BACKEND_VERSION = "manifold3d-3.5.1"
 _MESHING_PROFILE = "canonical-v1"
@@ -96,7 +96,7 @@ class GeometryService:
         vertices = np.asarray(output.vert_properties, dtype=np.float64)[:, :3].copy()
         triangles = np.asarray(output.tri_verts, dtype=np.int64).copy()
         provenance = _output_provenance(output, compiled.provenance, root_id)
-        scale = _length_scale(scene["lengthUnit"], reference_length_unit, root_id)
+        scale = _length_scale(scene["lengthUnit"], reference_length_unit)
         vertices *= scale
         vertices.setflags(write=False)
         triangles.setflags(write=False)
@@ -155,7 +155,7 @@ class GeometryService:
             (float(shell["innerOffset"]), float(shell["outerOffset"])),
             context,
         )
-        scale = _length_scale(scene["lengthUnit"], reference_length_unit, root_id)
+        scale = _length_scale(scene["lengthUnit"], reference_length_unit)
         linear = outer_matrix[:3, :3] * scale
         reverses_orientation = float(np.linalg.det(linear)) < 0
 
@@ -588,12 +588,11 @@ def _shell(
     return _CompiledGeometry(solid, provenance)
 
 
-def _length_scale(unit: str, reference_unit: str, root_id: str) -> float:
-    return convert_ucum_value(1, unit, reference_unit, f"geometry root {root_id!r}.lengthUnit") - convert_ucum_value(
+def _length_scale(unit: str, reference_unit: str) -> float:
+    return convert_ucum_value(1, unit, reference_unit) - convert_ucum_value(
         0,
         unit,
         reference_unit,
-        f"geometry root {root_id!r}.lengthUnit",
     )
 
 

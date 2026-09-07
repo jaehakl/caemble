@@ -7,7 +7,7 @@ import unittest
 
 import numpy as np
 
-from app.runtime_kernel.execution import (
+from app.kernel.execution import (
     MmapPayloadCodec,
     SolverExecutionCancelled,
     SolverExecutionStartupTimeout,
@@ -16,7 +16,8 @@ from app.runtime_kernel.execution import (
     SolverExecutionTimeout,
     SpawnSolverExecutor,
 )
-from app.runtime_kernel.resources import BufferStore
+from app.kernel.resources import BufferStore
+from tests.solver_test_support import invocation
 from tests.executor_transport_fixtures import closes_request_after_bootstrap, never_starts
 
 _FIXTURES = "tests.spawn_executor_fixtures"
@@ -209,20 +210,20 @@ class MmapSpawnExecutorTests(unittest.IsolatedAsyncioTestCase):
 
         result = await executor.execute(
             f"{_FIXTURES}:mmap_roundtrip",
-            {"left": source, "right": source},
+            invocation({"left": source, "right": source}),
         )
 
-        self.assertTrue(result["inputAlias"])
-        self.assertEqual(result["inputFirst"], -100)
+        self.assertTrue(result.artifacts["inputAlias"])
+        self.assertEqual(result.artifacts["inputFirst"], -100)
         self.assertEqual(source[0], 0)
-        self.assertIsInstance(result["readonly"], np.memmap)
-        self.assertIs(result["readonly"], result["readonlyAlias"])
-        self.assertFalse(result["readonly"].flags.writeable)
-        self.assertEqual(result["readonly"].dtype, np.dtype(np.float32))
-        self.assertEqual(result["readonly"].shape, (4, 6))
-        self.assertTrue(result["writable"].flags.writeable)
-        self.assertTrue(result["writable"].flags.f_contiguous)
-        self.assertNotEqual(result["pid"], os.getpid())
+        self.assertIsInstance(result.artifacts["readonly"], np.memmap)
+        self.assertIs(result.artifacts["readonly"], result.artifacts["readonlyAlias"])
+        self.assertFalse(result.artifacts["readonly"].flags.writeable)
+        self.assertEqual(result.artifacts["readonly"].dtype, np.dtype(np.float32))
+        self.assertEqual(result.artifacts["readonly"].shape, (4, 6))
+        self.assertTrue(result.artifacts["writable"].flags.writeable)
+        self.assertTrue(result.artifacts["writable"].flags.f_contiguous)
+        self.assertNotEqual(result.artifacts["pid"], os.getpid())
         self.assertGreater(len(store.files()), 0)
 
         store.close()
@@ -235,11 +236,11 @@ class MmapSpawnExecutorTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "schema rejected"):
             async with await executor.execute_transaction(
                 f"{_FIXTURES}:mmap_roundtrip",
-                {"left": source, "right": source},
+                invocation({"left": source, "right": source}),
             ) as transaction:
                 self.assertEqual(transaction.status, "provisional")
                 self.assertGreater(len(store.files()), 0)
-                self.assertIsInstance(transaction.value["readonly"], np.memmap)
+                self.assertIsInstance(transaction.value.artifacts["readonly"], np.memmap)
                 raise ValueError("schema rejected the solver result")
 
         self.assertEqual(transaction.status, "rolled_back")
@@ -252,7 +253,7 @@ class MmapSpawnExecutorTests(unittest.IsolatedAsyncioTestCase):
         source = np.arange(128, dtype=np.float64)
         transaction = await executor.execute_transaction(
             f"{_FIXTURES}:mmap_roundtrip",
-            {"left": source, "right": source},
+            invocation({"left": source, "right": source}),
         )
 
         self.assertEqual(transaction.status, "provisional")
@@ -271,7 +272,7 @@ class MmapSpawnExecutorTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(SolverProcessExitedError) as raised:
             await executor.execute(
                 f"{_FIXTURES}:crashes_process",
-                {"values": np.arange(1024, dtype=np.float64)},
+                invocation({"values": np.arange(1024, dtype=np.float64)}),
             )
 
         self.assertEqual(raised.exception.exit_code, 23)
@@ -283,7 +284,7 @@ class MmapSpawnExecutorTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(SolverExecutionTimeout):
             await executor.execute(
                 f"{_FIXTURES}:blocks_forever",
-                {"values": np.arange(1024, dtype=np.float64)},
+                invocation({"values": np.arange(1024, dtype=np.float64)}),
                 timeout=0.1,
             )
 
@@ -296,7 +297,7 @@ class MmapSpawnExecutorTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises((SolverPayloadError, SolverProcessExitedError)):
             await executor.execute(
                 "unused:solver",
-                {"values": np.arange(1024, dtype=np.float64)},
+                invocation({"values": np.arange(1024, dtype=np.float64)}),
             )
 
         self.assertEqual(store.files(), ())
@@ -309,7 +310,7 @@ class MmapSpawnExecutorTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(SolverExecutionStartupTimeout):
             await executor.execute(
                 "unused:solver",
-                {"values": np.arange(1024, dtype=np.float64)},
+                invocation({"values": np.arange(1024, dtype=np.float64)}),
             )
 
         self.assertEqual(store.files(), ())
@@ -321,7 +322,7 @@ class MmapSpawnExecutorTests(unittest.IsolatedAsyncioTestCase):
         task = asyncio.create_task(
             executor.execute(
                 "unused:solver",
-                {"values": np.arange(1024, dtype=np.float64)},
+                invocation({"values": np.arange(1024, dtype=np.float64)}),
                 cancellation=cancellation,
             )
         )
@@ -341,9 +342,9 @@ class MmapSpawnExecutorTests(unittest.IsolatedAsyncioTestCase):
             source = np.arange(128, dtype=np.float64) + offset
             result = await executor.execute(
                 f"{_FIXTURES}:mmap_roundtrip",
-                {"left": source, "right": source},
+                invocation({"left": source, "right": source}),
             )
-            child_pids.add(result["pid"])
+            child_pids.add(result.artifacts["pid"])
 
         self.assertEqual(len(child_pids), 3)
         self.assertGreater(len(store.files()), 0)

@@ -4,7 +4,7 @@ CAE Solver를 추가하거나 바꾸기 전에 이 문서와
 `app/slaves/cae/AGENTS.md`를 모두 읽습니다. 사용자용 문법과 현재 예제는
 Workbench의 `/docs`에서 관리합니다.
 
-## 변경하지 않는 상위 계약
+## Experiment와 실행 계약
 
 Experiment source bundle은 CAE 문제의 상위 정의 계층입니다. Solver를
 추가하기 위해 이 구성을 우회하거나 별도 문제 정의 포맷을 만들지 않습니다.
@@ -32,9 +32,9 @@ sim.release(electric["artifacts"]["jouleHeating"])
 ```
 
 `state`는 계산 계보를 잇고, 실제 Solver 간 물리량 전달은 Catalog에 선언한
-output과 typed input port로 표현합니다. Experiment bundle과
-`sim.run`/`sim.record`/`sim.release` API는 Runtime이나 Solver 내부 구조를
-바꾸더라도 호환성을 유지해야 합니다.
+output과 typed input port로 표현합니다. 현재 Experiment bundle은 `sim.run`/`sim.record`/`sim.release`를 사용합니다.
+Catalog는 Solver별 현재 버전과 새 예제만 제공합니다. 제거된 Solver 버전을
+참조하는 Experiment는 오류로 종료하며 자동 변환하거나 다른 버전으로 재지정하지 않습니다.
 
 `simulate.py`는 Python AST allowlist 아래에서 실행되고, 현재
 BuiltMeasurement에 등록된 task만 `sim.run()`에 전달할 수 있습니다. 이
@@ -48,7 +48,9 @@ CAE worker 코드는 다음 세 계층으로 나뉩니다.
 
 ```text
 app/slaves/cae/app/
-├─ runtime_kernel/
+├─ __init__.py        package marker
+├─ __main__.py        실행 진입점
+├─ kernel/
 │  ├─ api/             Solver ABI, StatePatch, 독립적인 DomainValue/FieldValue, 단위 계약
 │  ├─ coordinator/     RunPlan/TaskSpec, SimulationApi, program, commit/rollback
 │  ├─ execution/       spawn child, IPC, mmap serialization
@@ -71,14 +73,14 @@ app/slaves/cae/app/
 │  ├─ rays/
 │  └─ optics/
 └─ solvers/
-   └─ <solver_package>/v<major>_<minor>_<patch>/
+   └─ <solver_package>/
       ├─ entry.py
       ├─ domain.py
       ├─ formulation.py
       └─ outputs.py
 ```
 
-Solver의 공개 의존 방향은 `runtime_kernel.api <- methods <- solvers`입니다.
+Solver의 공개 의존 방향은 `kernel.api <- methods <- solvers`입니다.
 Runtime 내부의 `resources`는 자원 그래프와 lease를 소유합니다. 신규 Solver는
 Store를 생성하거나 `ResourceRef`를 입출력 값에 넣지 않습니다.
 
@@ -94,10 +96,9 @@ Store를 생성하거나 `ResourceRef`를 입출력 값에 넣지 않습니다.
   root입니다. `cal_E` 같은 계산 연산은 외부 함수나 객체로 주입하며 거대한
   Framework base class로 옮기지 않습니다.
 
-CAE의 `app/runtime.py`, `kernels.py`, `program.py`, `handlers.py`와 기존
-`solver_framework` import는 이전 구현을 위한 compatibility facade일 수
-있습니다. 신규 코드는 `runtime_kernel`과 역할별 `methods` package를 직접
-사용합니다.
+`app` 직속에는 package marker와 실행 진입점만 둡니다. 런타임 실행,
+자원, 전송과 Catalog 처리는 `kernel`이 소유합니다. 옛 import 경로의
+호환 facade나 별도 Solver framework를 두지 않습니다.
 
 `RunPlan`은 Measurement 준비 시 normalized config, frozen descriptor, locator,
 ABI, output 계약과 world snapshot을 `TaskSpec`으로 고정합니다. 각 호출은
@@ -111,8 +112,8 @@ state/artifact 등록과 mmap transaction 확정의 실패 복구를 한 경로�
   `app/catalog/caemble_catalog/catalog.sqlite3`입니다.
 - Experiment와 Solver의 SemVer는 공개된 동작을 식별합니다. 이미 publish된
   `(name, version)`의 계약과 locator를 고치지 않고 새 SemVer로 clone합니다.
-  기존 Experiment bundle이 참조하는 버전은 source 변경 없이 계속 실행할 수
-  있어야 합니다.
+  Catalog에는 Solver 이름마다 현재 버전 하나만 남깁니다. 이전 코드와
+  Catalog release 이력은 Git으로 관리하고 worker에 구버전 구현을 남기지 않습니다.
 - CAD, Geometry, Simulation, Material, Catalog, built Measurement payload는
   저장소 내부 생산자가 만든 신뢰 가능한 unversioned 데이터입니다. CAE
   worker에 별도 포맷 게이트, 중복 비즈니스 규칙, 입력 크기 제한을 만들지
@@ -145,13 +146,13 @@ poetry run catalogctl --database $draft query solver
 ```powershell
 poetry run catalogctl --database $draft solver create `
   "solver-name" "1.0.0" `
-  --implementation "app.solvers.solver_package.v1_0_0.entry:implementation" `
+  --implementation "app.solvers.solver_package.entry:implementation" `
   --implementation-abi 2 `
   --description "Solver description"
 ```
 
-공개 계약을 변경한다면 기존 버전을 clone하고 새 버전의 versioned entry로
-locator를 바꿉니다.
+공개 동작이나 계약을 변경하면 새 SemVer로 clone합니다. 구현 위치는 버전
+디렉토리 없이 해당 Solver의 `entry.py` 한 곳으로 유지합니다.
 
 ```powershell
 poetry run catalogctl --database $draft solver clone `
@@ -159,7 +160,7 @@ poetry run catalogctl --database $draft solver clone `
 
 poetry run catalogctl --database $draft solver set-metadata `
   "solver-name" "1.1.0" `
-  --implementation "app.solvers.solver_package.v1_1_0.entry:implementation" `
+  --implementation "app.solvers.solver_package.entry:implementation" `
   --implementation-abi 2
 ```
 
@@ -175,7 +176,10 @@ poetry run catalogctl --database $draft query solver "solver-name" "1.1.0"
 poetry run catalogctl --database $draft query artifact-type
 ```
 
-완성된 Draft를 명시적인 canonical destination으로 publish합니다.
+새 버전의 Example Experiment bundle을 `experiment upsert`로 등록하고
+이전 예제는 `experiment remove`로 제거합니다. 모든 예제 참조를 이관한 뒤
+이전 Solver 버전은 `solver remove`로 제거합니다. CLI는 예제가 참조 중인
+Solver 제거를 거부합니다. 완성된 Draft를 명시적인 canonical destination으로 publish합니다.
 
 ```powershell
 poetry run catalogctl --database $draft publish --destination $catalog
@@ -184,8 +188,8 @@ Pop-Location
 
 Publish는 destination을 원자적으로 교체합니다. 배포 시 API, UI, resident
 CAE worker가 같은 Catalog release를 사용해야 하므로 worker를 다시
-시작합니다. 과거 버전을 참조하는 verified Experiment를 새 Solver 버전으로
-임의 재지정하지 않습니다.
+시작합니다. API, UI와 worker를 함께 갱신해야 합니다. 저장된 사용자
+Experiment의 Solver 버전은 자동으로 바꾸지 않으며 제거된 버전은 조회 오류가 됩니다.
 
 ## Solver descriptor
 
@@ -207,12 +211,12 @@ Catalog 식별자를 문자열 literal로 적습니다. 수치 입력과 일반 
 ABI 2 implementation locator는 다음 형식을 사용합니다.
 
 ```text
-app.solvers.<package>.v<major>_<minor>_<patch>.entry:implementation
+app.solvers.<package>.entry:implementation
 ```
 
 `entry.py`는 Catalog가 가리키는 유일한 공개 진입점입니다. Locator는 metadata
 일 뿐 parent registry에서 import하지 않습니다. Solver별 조건문을
-`runtime_kernel/coordinator/kernels.py`나 다른 중앙 모듈에 추가하지
+`kernel/coordinator/invocation.py`나 다른 중앙 모듈에 추가하지
 않습니다.
 
 ## ABI 2 구현 경계
@@ -220,7 +224,7 @@ app.solvers.<package>.v<major>_<minor>_<patch>.entry:implementation
 신규 Solver는 `SolverImplementation`을 export합니다.
 
 ```python
-from app.runtime_kernel.api import SolverImplementation, SolverInvocation, SolverResult
+from app.kernel.api import SolverImplementation, SolverInvocation, SolverResult
 
 
 async def run(invocation: SolverInvocation) -> SolverResult:
@@ -260,10 +264,9 @@ Solver는 파일 시스템, 네트워크, 프로세스 전역 mutable state나 �
 메모리에 결과 정합성을 의존시키지 않습니다. GPU/device 객체는 child-local로
 유지하고 공유할 결과만 host resource로 반환합니다.
 
-기존 `async run(SolverContext) -> dict` locator는 child의
-`LegacySolverAdapter`가 ABI 2 결과로 변환합니다. Legacy adapter는 기존
-Experiment를 위한 이관 경계이지 신규 Solver 작성 방식이 아닙니다. 새
-version을 만들 때는 versioned `entry.py:implementation`으로 이동합니다.
+ABI 2만 실행합니다. Solver는 `SolverInvocation`을 받고 `SolverResult`를
+반환하며 `StatePatch`, `FieldValue`, `BundleValue` 같은 독립적인 값을 사용합니다.
+ABI 1 adapter나 `SolverContext` 호환 실행 경로는 제공하지 않습니다.
 
 ## State revision
 
@@ -283,10 +286,6 @@ version을 만들 때는 versioned `entry.py:implementation`으로 이동합니�
 - `sim.run(state=...)`에는 같은 Measurement run의 이전 `sim.run()`이 반환한
   live state root만 전달할 수 있습니다. State는 run 밖으로 유출하거나
   영속화하지 않습니다.
-
-Legacy Solver가 기존 state mapping 자체를 반환하면 빈 patch로, 새 dict를
-반환하면 root replacement patch로 변환합니다. 따라서 기존
-`result["state"]["rayPaths"]` 같은 Mapping 읽기도 유지됩니다.
 
 `StateRevision`에는 revision ID, parent revision과 producer task만 남습니다.
 live root와 lease는 별도로 관리하므로 명시적으로 state를 해제해도 계산 계보는
@@ -317,9 +316,9 @@ Solver 경계에서는 `StructuredGridValue`, `UnstructuredMeshValue`,
 `ParticleSetValue`, `RaySetValue`, `FieldValue`, `BundleValue`를 사용합니다.
 `FieldValue.domain`은 실제 domain 값이고, 좌표·connectivity·위치·QuantityKind·
 unit·basis/components·values를 다른 child가 Store 조회 없이 해석할 수 있습니다.
-부모는 이를 내부 domain/field node와 `ResourceRef`로 변환합니다. 기존
-structured-field/ray-path mapping은 compatibility 경계에서 기존 표현으로
-유지합니다.
+부모는 이를 내부 domain/field node와 `ResourceRef`로 변환합니다.
+Solver의 domain field는 `FieldValue`, ray path와 복합 결과는 `BundleValue`로
+전달합니다. 내부 ResourceRef를 Solver 입출력이나 method API에 노출하지 않습니다.
 
 StatePatch와 여러 Artifact를 한 번에 ingest할 때 동일한 domain과 array의
 공유 관계를 보존합니다. mmap으로 전달된 배열은 backing buffer를 재사용하며,
@@ -352,7 +351,7 @@ Measurement run의 state는 거부됩니다.
 ## RecordedData 변환 경계
 
 `transport/recording.py`는 live artifact를 선언된 기록 schema의 값 트리로
-변환하고, 기존 `tensor.py`는 inline tensor 또는 binary attachment를 만듭니다.
+변환하고, `transport/tensor.py`는 inline tensor 또는 binary attachment를 만듭니다.
 Solver output 계약과 RecordedData schema는 별개입니다. 기존 dtype leaf는
 values와 structured axes를 기존 wire 형식으로 기록합니다.
 
@@ -464,8 +463,8 @@ efficiency 같은 일반 RecordedData를 만듭니다.
 - Reflection, transmission, scattering, absorption, detector hit, branching
   상태는 이 선택과 함께 물리적으로 이어져야 합니다.
 
-기존 Ray version의 `state["rayPaths"]` Mapping은 유지합니다. 새 version은
-동일한 path bundle을 typed artifact로도 내보낼 수 있습니다. Path bundle의
+Ray는 path bundle을 `BundleValue`로 state에 보관하고, 요청한 `ray.paths`
+output의 typed artifact로 내보냅니다. 예제에서는 이 artifact를 직접 기록합니다. Path bundle의
 `vertices`, `pathOffsets`, `segmentPower`, `pathWavelength`, `segmentEvent`는
 각각 vertex, variable-length path, segment와 path 축의 의미를 보존해야
 합니다. Viewer 기록은 bundle을 한 번에 `sim.record()`하여 offsets로 path를
@@ -475,7 +474,8 @@ efficiency 같은 일반 RecordedData를 만듭니다.
 
 Solver나 Runtime 경계를 변경할 때 최소한 다음을 확인합니다.
 
-- 기존 DC, Heat, Ray와 verified Experiment bundle이 source 변경 없이 실행
+- 현재 DC, Heat, Ray, FDTD와 모든 Catalog 예제가 새 계약으로 컴파일·실행
+- 제거된 Solver 버전과 ABI 1 요청이 fallback 없이 오류로 종료
 - `sim.run()` state의 nested read, unchanged patch와 branch
 - state/checkpoint 명시적 해제, busy-state 거부와 과거 handle 보관 시 buffer 수
 - Electro-Thermal typed artifact handoff 및 domain projection 보존량

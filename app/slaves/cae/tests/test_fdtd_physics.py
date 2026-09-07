@@ -7,22 +7,22 @@ import numpy as np
 import pytest
 import torch
 
-from app.solvers.fdtd.v1_0_0.detectors import (
+from app.solvers.fdtd.detectors import (
     DetectorRegion,
     SpectralDetector,
     TimeDetector,
     requested_frequencies,
 )
-from app.solvers.fdtd.v1_0_0.materials import build_update_coefficients
-from app.solvers.fdtd.v1_0_0.physics import (
+from app.solvers.fdtd.materials import build_update_coefficients
+from app.solvers.fdtd.physics import (
     EPSILON_0,
     FDTDEngine,
     backward_difference,
     cell_center_fields,
     forward_difference,
 )
-from app.solvers.fdtd.v1_0_0.pml import CpmlState
-from app.solvers.fdtd.v1_0_0.sources import SoftElectricSource, validate_source_timing
+from app.solvers.fdtd.pml import CpmlState
+from app.solvers.fdtd.sources import SoftElectricSource, validate_source_timing
 
 
 def test_unequal_interface_derivative_matches_weighted_ghost_expression() -> None:

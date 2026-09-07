@@ -33,10 +33,10 @@ async def main() -> None:
 
     import numpy as np
 
-    import app.runtime_kernel.coordinator.simulation as simulation_module
-    from app.runtime_kernel.api import SolverResult
-    from app.runtime_kernel.execution import MmapPayloadCodec, SolverExecutionTransaction
-    from app.runtime_kernel.resources import BufferStore, ResourceStore, StatePatch, StateStore
+    import app.kernel.coordinator.simulation as simulation_module
+    from app.kernel.api import SolverResult, StatePatch
+    from app.kernel.execution import MmapPayloadCodec, SolverExecutionTransaction
+    from app.kernel.resources import BufferStore, ResourceStore, StateStore
 
     if args.release_previous and not hasattr(StateStore, "release"):
         parser.error("the selected snapshot does not implement explicit state release")
@@ -67,8 +67,8 @@ async def main() -> None:
     async def invoke(*unused_args, **unused_kwargs):
         return SolverExecutionTransaction(SolverResult(artifacts={"field": {"value": tiny_output}}))
 
-    original = simulation_module.run_kernel_transaction
-    simulation_module.run_kernel_transaction = invoke
+    original = simulation_module.execute_solver
+    simulation_module.execute_solver = invoke
     run = fixture.FakeRun()
     simulation = simulation_module.SimulationApi(run)
     batch_means = []
@@ -91,7 +91,7 @@ async def main() -> None:
         }
     finally:
         simulation.close()
-        simulation_module.run_kernel_transaction = original
+        simulation_module.execute_solver = original
 
     for reuse_mmap in (False, True):
         with BufferStore() as buffers:

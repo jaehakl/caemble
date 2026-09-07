@@ -1,20 +1,22 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Sequence
 from itertools import product
 from typing import Any
 
 import numpy as np
 
 from app.methods.mesh import UnstructuredMesh
-from app.runtime_kernel.api.units import convert_ucum_value
+from app.kernel.api import FieldValue, StructuredGridValue
+from app.kernel.api.units import convert_ucum_value
 
 
 def project_structured_to_unstructured_cell_field_conservative(
-    field: Mapping[str, Any],
+    field: FieldValue,
     target_mesh: UnstructuredMesh,
     *,
     target_length_unit: str,
+    source_spacing: Sequence[float],
 ) -> np.ndarray[Any, Any]:
     """Transfer a scalar cell-average field to an axis-aligned unstructured mesh.
 
@@ -28,16 +30,15 @@ def project_structured_to_unstructured_cell_field_conservative(
     mutual coverage prevents a partial-domain transfer from silently losing or
     creating the integral of the field.
     """
-    source_ref = _structured_domain_ref(field)
-    source_values = np.asarray(field["value"], dtype=np.float64)
-    source_minimum, source_maximum = _structured_cell_bounds(source_ref)
+    source_values = np.asarray(field.values, dtype=np.float64)
+    source_minimum, source_maximum = _structured_cell_bounds(field.domain, source_spacing)
     source_values = _scalar_cell_values(source_values, source_minimum.shape[0], "source")
     target_minimum, target_maximum = _orthotope_cell_bounds(target_mesh)
     target_minimum, target_maximum = _bounds_in_unit(
         target_minimum,
         target_maximum,
         target_length_unit,
-        source_ref["referenceLengthUnit"],
+        field.domain.unit,
     )
     return _project_matching_support(
         source_values,
@@ -51,9 +52,10 @@ def project_structured_to_unstructured_cell_field_conservative(
 def project_unstructured_to_structured_cell_field_conservative(
     values: np.ndarray[Any, Any],
     source_mesh: UnstructuredMesh,
-    target_domain_ref: Mapping[str, Any],
+    target_domain: StructuredGridValue,
     *,
     source_length_unit: str,
+    target_spacing: Sequence[float],
 ) -> np.ndarray[Any, Any]:
     """Transfer scalar cell averages from axis-aligned cells to a structured grid.
 
@@ -62,12 +64,12 @@ def project_unstructured_to_structured_cell_field_conservative(
     has the structured grid's declared shape.
     """
     source_minimum, source_maximum = _orthotope_cell_bounds(source_mesh)
-    target_minimum, target_maximum = _structured_cell_bounds(target_domain_ref)
+    target_minimum, target_maximum = _structured_cell_bounds(target_domain, target_spacing)
     source_minimum, source_maximum = _bounds_in_unit(
         source_minimum,
         source_maximum,
         source_length_unit,
-        target_domain_ref["referenceLengthUnit"],
+        target_domain.unit,
     )
     projected = _project_matching_support(
         _scalar_cell_values(values, source_mesh.cell_count, "source"),
@@ -76,25 +78,20 @@ def project_unstructured_to_structured_cell_field_conservative(
         target_minimum,
         target_maximum,
     )
-    return projected.reshape(tuple(int(size) for size in target_domain_ref["shape"]))
-
-
-def _structured_domain_ref(field: Mapping[str, Any]) -> Mapping[str, Any]:
-    if field.get("location") != "cell" or not isinstance(field.get("domainRef"), Mapping):
-        raise ValueError("structured coupling requires a cell field with a domainRef")
-    return field["domainRef"]
+    return projected.reshape(target_domain.shape)
 
 
 def _structured_cell_bounds(
-    domain_ref: Mapping[str, Any],
+    domain: StructuredGridValue,
+    spacing: Sequence[float],
 ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
-    shape = tuple(int(size) for size in domain_ref["shape"])
-    axes = tuple(domain_ref["axes"])
+    shape = domain.shape
+    axes = domain.axes
     if not 1 <= len(shape) <= 3 or len(axes) != len(shape):
         raise ValueError("structured coupling supports one- to three-dimensional grids")
     edges = tuple(
-        _cell_edges(np.asarray(axis["ticks"], dtype=np.float64), float(axis["spacing"]))
-        for axis in axes
+        _cell_edges(np.asarray(ticks, dtype=np.float64), float(width))
+        for ticks, width in zip(axes, spacing, strict=True)
     )
     if any(axis_edges.size != size + 1 for axis_edges, size in zip(edges, shape, strict=True)):
         raise ValueError("structured axis ticks must match the declared grid shape")
@@ -153,9 +150,9 @@ def _bounds_in_unit(
 ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
     if source_unit == target_unit:
         return minimum, maximum
-    offset = convert_ucum_value(0, source_unit, target_unit, "cell coupling coordinates")
+    offset = convert_ucum_value(0, source_unit, target_unit)
     scale = (
-        convert_ucum_value(1, source_unit, target_unit, "cell coupling coordinates") - offset
+        convert_ucum_value(1, source_unit, target_unit) - offset
     )
     converted_minimum = minimum * scale + offset
     converted_maximum = maximum * scale + offset
