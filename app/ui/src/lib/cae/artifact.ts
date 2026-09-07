@@ -21,6 +21,20 @@ export function parseBuildArtifact(value: unknown): BuildArtifact {
 }
 
 export function parseArtifactInput(value: unknown, artifact: Pick<BuildArtifact, 'source_hash'>): BuiltArtifactInput {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    Array.isArray(value) ||
+    Object.keys(value).some((key) => key !== 'measurement' && key !== 'presentation')
+  ) {
+    throw new Error('Artifact item must contain measurement and optional presentation.')
+  }
+  if (
+    'presentation' in value &&
+    (typeof value.presentation !== 'object' || value.presentation === null || Array.isArray(value.presentation))
+  ) {
+    throw new Error('Artifact presentation must be an object.')
+  }
   const item = value as BuiltArtifactInput
   if (
     !item ||

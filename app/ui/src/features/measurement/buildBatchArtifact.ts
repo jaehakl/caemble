@@ -7,6 +7,7 @@ import type { MeasurementMaterialParameters } from '@/contracts/api/measurement'
 import { fetchCatalogRuntimeSlice } from '@/features/viewer/workspace/catalogRuntime'
 import { prepareBrowserMeasurement } from '@/platform/browser/build'
 import { BrowserArtifactStore } from '@/platform/browser/artifactStore'
+import { parseArtifactInput } from '@/lib/cae/artifact'
 import type { Vars } from '@/lib/cad/model/types'
 
 export type BrowserBatchIntent = Readonly<{
@@ -80,7 +81,7 @@ export async function buildBatchArtifact(
         },
         signal,
       )
-      const bytes = new TextEncoder().encode(JSON.stringify(input))
+      const bytes = new TextEncoder().encode(JSON.stringify(parseArtifactInput(input, artifact)))
       const item = {
         index,
         file: `items/${index}.json`,

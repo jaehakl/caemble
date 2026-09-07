@@ -31,12 +31,16 @@ async function handleValidatedOperation(value: RunnerOperationEnvelope) {
   try {
     installCatalogRuntimeSlice(request.catalog)
     if (request.type === 'prepare') {
+      const { measurement, presentation } = await buildEvaluatedMeasurement(
+        request,
+        evaluateBuildInput(request, request.compiledDocument),
+      )
       response = {
         type: 'preparation-success',
         requestId: request.requestId,
         revision: request.revision,
         documentType: 'experiment',
-        input: await buildEvaluatedMeasurement(request, evaluateBuildInput(request, request.compiledDocument)),
+        input: { measurement, presentation },
       }
     } else if (request.type === 'inspect') {
       const inspection = inspectCompiledDocument(request.compiledDocument)
