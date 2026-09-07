@@ -45,6 +45,7 @@ Thumbs.db
 ### User Data ###
 .data/
 **/.data/
+/.work/
 .models/
 **/.models/
 app/slaves/ai/models.toml
