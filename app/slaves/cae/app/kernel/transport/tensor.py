@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
-from sdk.protocol.messages import DataChannelAttachment
+from sdk.protocol.packets import Attachment
 
 INLINE_LIMIT_BYTES = 64 * 1024
 ATTACHMENT_SHARD_BYTES = 16 * 1024 * 1024
@@ -31,11 +31,8 @@ def dtype_for(name: str) -> np.dtype[Any]:
     return _DTYPES[name]
 
 
-def decode_attachment_tensors(value: Any, attachments: list[DataChannelAttachment]) -> Any:
+def decode_attachment_tensors(value: Any, attachments: list[Attachment]) -> Any:
     files = {attachment.id: attachment.data for attachment in attachments}
-    if isinstance(value, dict) and value.get("kind") == "cae.start.payload-attachments":
-        raw_payload = b"".join(files[item] for item in value["storage"]["ids"])
-        value = json.loads(raw_payload.decode("utf-8"))
 
     def decode(node: Any, dtype_hint: str | None = None) -> Any:
         if isinstance(node, list):
@@ -65,7 +62,7 @@ def encode_tensor(
     schema: dict[str, Any],
     value: Any,
     sequence: int,
-) -> tuple[dict[str, Any], list[DataChannelAttachment], int]:
+) -> tuple[dict[str, Any], list[Attachment], int]:
     axes = None
     raw_value = value
     if isinstance(value, dict) and "value" in value:
@@ -122,11 +119,11 @@ def encode_recorded_data(
     schema: dict[str, Any],
     value: Any,
     sequence: int,
-) -> tuple[dict[str, Any], list[DataChannelAttachment], int]:
+) -> tuple[dict[str, Any], list[Attachment], int]:
     if "dtype" in schema:
         return encode_tensor(name, schema, value, sequence)
     encoded: dict[str, Any] = {}
-    attachments: list[DataChannelAttachment] = []
+    attachments: list[Attachment] = []
     byte_length = 0
     for member_name, member_schema in schema.items():
         member, member_attachments, member_bytes = encode_recorded_data(
@@ -149,7 +146,7 @@ def _inline_tensor(shape: list[int], axes: Any, value: Any) -> dict[str, Any]:
 def _attachment_tensor(
     shape: list[int],
     axes: Any,
-    attachments: list[DataChannelAttachment],
+    attachments: list[Attachment],
     byte_length: int,
 ) -> dict[str, Any]:
     return {
@@ -168,10 +165,10 @@ def _shard(
     sequence: int,
     raw: bytes,
     mime_type: str,
-) -> list[DataChannelAttachment]:
+) -> list[Attachment]:
     count = max(1, math.ceil(len(raw) / ATTACHMENT_SHARD_BYTES))
     return [
-        DataChannelAttachment(
+        Attachment(
             id=f"record-{sequence}-{name.replace('.', '-')}-{index}",
             name=f"{name}.{index + 1:04d}-of-{count:04d}.bin",
             mimeType=mime_type,

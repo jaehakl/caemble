@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from gpstation.db import Launcher
 from gpstation.models import LauncherView
 
-
 ACTIVE_LAUNCHER_STATUSES = {"ready", "busy"}
 RECONCILE_MINIMUM_AGE = timedelta(seconds=30)
 
@@ -55,6 +54,7 @@ class LauncherService:
         launcher_name: str,
         slave_app_ids: list[str],
         ip_address: str | None,
+        job_modes: dict[str, str] | None = None,
     ) -> Launcher:
         now = datetime.now(timezone.utc)
         launcher = Launcher(
@@ -63,6 +63,7 @@ class LauncherService:
             ip_address=ip_address,
             status="ready",
             slave_app_ids=list(dict.fromkeys(slave_app_ids)),
+            job_modes=job_modes or {},
             connected_at=now,
             last_heartbeat_at=now,
         )
@@ -92,8 +93,7 @@ class LauncherService:
         user_id: str | None = None,
     ) -> list[str]:
         clauses = [
-            Launcher.status.in_(ACTIVE_LAUNCHER_STATUSES)
-            | Launcher.disconnected_at.is_(None),
+            Launcher.status.in_(ACTIVE_LAUNCHER_STATUSES) | Launcher.disconnected_at.is_(None),
             Launcher.connected_at < datetime.now(timezone.utc) - RECONCILE_MINIMUM_AGE,
         ]
         if connected_launcher_ids:

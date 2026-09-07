@@ -1,5 +1,4 @@
 export type ReplacementDisposition =
-  | 'blocked-by-pending-record'
   | 'blocked-by-running-workflow'
   | 'blocked-by-save'
   | 'confirm-calculation-replacement'
@@ -24,17 +23,14 @@ export function replacementDisposition({
   calculationRunning,
   experimentDirty,
   measurementRunning,
-  pendingRecord,
   saving,
 }: Readonly<{
   calculationDirty: boolean
   calculationRunning: boolean
   experimentDirty: boolean
   measurementRunning: boolean
-  pendingRecord: boolean
   saving: boolean
 }>): ReplacementDisposition {
-  if (pendingRecord) return 'blocked-by-pending-record'
   if (saving) return 'blocked-by-save'
   if (measurementRunning || calculationRunning) return 'blocked-by-running-workflow'
   if (calculationDirty) return 'confirm-calculation-replacement'

@@ -32,16 +32,64 @@ describe executables and are not Solver descriptors.
 2. Evaluation produces the common Geometry scene and any task-local Geometry.
    Preview meshes are render products, not solver input.
 3. Material assignments are resolved into a frozen Material snapshot.
-4. The UI builds a Measurement containing the trusted Geometry, Simulation,
-   Material, and Catalog payloads for that run.
-5. Job control and attachments travel directly between browser and worker over
-   WebRTC; the API retains orchestration state rather than solver payloads.
-6. `simulate.py` calls a catalog-selected Solver and records its tensors. A
+4. The UI registers a durable batch. Fixed Candidate and prepared Measurement
+   runs retain their Vars and Material snapshots. Generated runs and Repeat Run
+   let the API prepare new Candidates after registration.
+5. The API freezes source, Catalog and visible Material inputs, then invokes a
+   bounded Node child to compile, evaluate, resolve Materials and build canonical
+   Measurements. Preparation uses the same source policy, compiler options,
+   evaluation and Measurement builder as the browser without rendering meshes.
+   Common Geometry and every task share one Material resolution before projection.
+6. Persisted jobs are assigned to available launchers owned by the same user.
+   A launcher starts one CAE worker at a time. Each worker connects directly to
+   the server through a job-scoped WebSocket; binary chunks bypass launcher stdio.
+7. `simulate.py` calls a catalog-selected Solver and records its tensors. A
    record is retained until its acknowledgement, and `sim.release()` ends the
    run-side ownership of the artifact.
-7. The API persists RecordedData for the owning user and Measurement. Analysis
+8. The API stages each acknowledged record for the current execution attempt.
+   After the worker confirms execution and resource cleanup, one transaction
+   publishes RecordedData, Measurement completion, job success and the event.
+   Partial and stale-attempt results are never published. Analysis
    and the 3D Viewer read the persisted tensors through their respective
-   projections.
+projections.
+
+Batch definitions, prepared inputs, progress messages, terminal events and read
+state survive a browser disconnect. The browser subscribes to server events and
+restores snapshots using an event cursor; closing the Workbench only stops that
+subscription. Completed selected Measurements are fetched again for visualization.
+CalculationData postprocessing and Prediction iteration remain browser work and
+do not automatically resume on reconnect. Failed runs require manual retry, which
+reuses an existing prepared input without sampling it again.
+
+Node preparation uses a `Popen` child managed in a background thread, including
+input/output, cancellation and process reaping. This also supports the Windows
+Selector event loop used by Uvicorn reload. Preparation errors retain their
+exception type when no message is supplied and become durable failed items.
+
+The account-level Batch Provider shares snapshots and in-flight page requests.
+Progress events update local data directly; state events coalesce for 250 ms
+before requesting a snapshot. Foreground runs await these shared updates instead
+of polling. Reconnect failures back off at 5, 10 and 30 seconds; a healthy SSE
+connection does not cause periodic detail requests.
+
+GPStation owns `job_batches`, numbered `jobs`, execution-scoped `job_records`
+staging and ordered `job_events`. CAE owns `cae_batches`, frozen Experiment inputs,
+Measurement links and the conversion to RecordedData. Preparation rotates among
+batches with at most one preparing or prepared waiting item per batch. Assignment
+uses owner and execution-mode capability checks, FIFO order and row locks.
+
+Server jobs follow `preparing → queued → assigned → running → finalizing →
+succeeded/failed/cancelled`. Preparation and execution share one attempt number.
+Restarted or disconnected execution fails; unstarted items continue. Cancelling a
+batch also counts unmaterialized items and permanently stops their generation,
+including when a failed materialized item is retried. Queued CAE jobs do not expire.
+
+`/cae/batches` provides submission, listing, detail, cancellation, failed-item
+retry and notification read state. `/cae/events` replays owner-scoped SSE events;
+`/v1/jobs/{id}/stream` authenticates a worker for one Job, Launcher and attempt.
+Event writers serialize commits before assigning event IDs, so a snapshot cursor
+cannot miss a lower ID that commits later. The old Measurement record-upload
+endpoint and CAE WebRTC RPCs are removed.
 
 The browser may keep local draft source independently of an Experiment. Draft
 Geometry becomes Experiment input only through an explicit handoff.
@@ -127,6 +175,15 @@ dedicated account or container.
   RecordedData.
 - Launcher tokens authorize worker control, and one launcher owns one active job
   at a time.
+- GPStation supports separate `webrtc` and `websocket` execution modes. Existing
+  applications default to WebRTC; AI retains its browser Master connection and
+  protocol. CAE declares WebSocket and has no WebRTC fallback.
+- Node preparation runs as a short-lived child with sanitized environment, a
+  synchronous evaluation deadline and a parent process timeout. The artifact
+  contains TypeScript and its declaration assets, and needs only Node.js 22.13 or
+  later. Node permission mode allows reading only the artifact directory and
+  denies filesystem writes and child processes. Source policy and VM timeout
+  are not an operating-system sandbox.
 - The CAE worker preserves run and job identity, record acknowledgement,
   cancellation, and release lifecycle across its streamed messages.
 - API launcher sockets and resident-agent state are process-local, so a
@@ -139,6 +196,7 @@ dedicated account or container.
 - `app/ui/src/features/cae-workbench`: Measurement building and run UI.
 - `app/api/app`: authentication, persistence, catalog routes, and orchestration.
 - `app/catalog`: canonical Catalog and `catalogctl` Draft workflow.
-- `app/launcher`: per-user executable lifecycle and WebRTC signaling.
+- `app/ui/src/server`: canonical CAE input generation and standalone Node entry.
+- `app/launcher`: per-user executable lifecycle and transport capability registration.
 - `app/slaves/cae/app`: thin entry point, runtime `kernel`, shared `methods`, and current `solvers`.
 - `app/sdk`: client and worker transport libraries.

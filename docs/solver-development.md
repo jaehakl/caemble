@@ -343,7 +343,7 @@ reshape하지 않고 해당 domain에 맞는 명시적인 coupling method를 적
 `sim.release(handle)`는 해당 artifact 또는 state root의 lease를 해제합니다.
 같은 Resource를 다른 state,
 다른 artifact, 실행 transaction 또는 RecordPacket이 참조하면 실제 buffer는
-남습니다. `sim.record()`는 브라우저 ACK가 끝날 때까지 별도 lease를 잡은 뒤
+남습니다. `sim.record()`는 서버의 영속 저장 ACK가 끝날 때까지 별도 lease를 잡은 뒤
 해제하므로 Solver나 `simulate.py`가 array를 `resize(0)` 하거나 dict를
 `clear()`해서 수명을 관리하지 않습니다. Released/foreign handle과 다른
 Measurement run의 state는 거부됩니다.

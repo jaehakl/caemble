@@ -29,9 +29,8 @@ describe('Workbench session policy', () => {
       measurementRunning: true,
       saving: true,
     }
-    expect(replacementDisposition({ ...base, pendingRecord: true })).toBe('blocked-by-pending-record')
-    expect(replacementDisposition({ ...base, pendingRecord: false })).toBe('blocked-by-save')
-    expect(replacementDisposition({ ...base, pendingRecord: false, saving: false })).toBe('blocked-by-running-workflow')
+    expect(replacementDisposition({ ...base })).toBe('blocked-by-save')
+    expect(replacementDisposition({ ...base, saving: false })).toBe('blocked-by-running-workflow')
   })
 
   it('asks about Calculation before Experiment and otherwise runs immediately', () => {
@@ -41,7 +40,6 @@ describe('Workbench session policy', () => {
         calculationRunning: false,
         experimentDirty: true,
         measurementRunning: false,
-        pendingRecord: false,
         saving: false,
       }),
     ).toBe('confirm-calculation-replacement')
@@ -51,7 +49,6 @@ describe('Workbench session policy', () => {
         calculationRunning: false,
         experimentDirty: false,
         measurementRunning: false,
-        pendingRecord: false,
         saving: false,
       }),
     ).toBe('run')

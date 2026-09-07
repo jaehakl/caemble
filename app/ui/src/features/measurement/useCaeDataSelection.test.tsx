@@ -101,4 +101,37 @@ describe('useCaeDataSelection', () => {
     expect(result.current.measurement?.id).toBe(2)
     expect(result.current.loading).toBe(false)
   })
+
+  it('does not let a completion refresh supersede the user selection still being fetched', async () => {
+    mocks.readRecordedData.mockResolvedValue({})
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    const { result } = renderHook(() => useCaeDataSelection(10, 'visible'), { wrapper })
+    await act(async () => {
+      await result.current.loadMeasurement(1)
+    })
+    let finish!: (value: object) => void
+    mocks.readRecordedData.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    let pending!: Promise<SavedMeasurement | null>
+    act(() => {
+      pending = result.current.loadMeasurement(2)
+    })
+    await waitFor(() => expect(mocks.readRecordedData).toHaveBeenCalledWith(2, expect.any(Object)))
+    expect(result.current.measurement?.id).toBe(1)
+    await act(async () => {
+      expect(await result.current.loadMeasurement(1, 10, { expectedSelectionId: 1 })).toBeNull()
+    })
+    await act(async () => {
+      finish({})
+      await pending
+    })
+    expect(result.current.measurement?.id).toBe(2)
+    expect(mocks.readRecordedData.mock.calls.map(([id]) => id)).toEqual([1, 2])
+  })
 })

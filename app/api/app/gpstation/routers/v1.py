@@ -15,11 +15,16 @@ from gpstation.service.auth_service import Principal, require_client
 from gpstation.service.job_orchestrator import job_orchestrator
 from gpstation.service.job_service import JobService, build_job_wait_url, job_to_data
 from gpstation.service.launcher_connection import run_launcher_control
+from gpstation.service.worker_connection import run_worker_connection
 from gpstation.service.launcher_service import LauncherService
 from user_auth.routes import get_db
 
-
 router = APIRouter(prefix="/v1")
+
+
+@router.websocket("/jobs/{job_id}/stream")
+async def worker_stream(websocket: WebSocket, job_id: str) -> None:
+    await run_worker_connection(websocket, job_id)
 
 
 @router.get("/launchers", response_model=list[LauncherView], tags=["v1-launchers"])

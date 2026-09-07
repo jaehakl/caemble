@@ -25,6 +25,7 @@ from models import (
 )
 from user_auth.db import User
 from service.experiment_access import require_experiment_read
+from cae.batches import require_no_active_batches
 from utils.crud import CrudSpec, get_list_response
 from utils.crud.common import is_admin_user, normalize_int_ids
 
@@ -370,6 +371,7 @@ async def save_experiment(
         if not family:
             raise _bad("Experiment not found.", code=status.HTTP_404_NOT_FOUND)
         if request.mode == "overwrite":
+            await require_no_active_batches(db, [experiment.id])
             counts = (await _derived_counts(db, [experiment.id]))[experiment.id]
             if source_hash != experiment.source_hash and _source_locked(counts):
                 raise _bad(
@@ -461,6 +463,7 @@ async def delete_experiment_versions(
     rows = list((await db.scalars(query)).all())
     if {row.id for row in rows} != set(ids):
         raise _bad("Experiment not found.", code=status.HTTP_404_NOT_FOUND)
+    await require_no_active_batches(db, ids)
     await _derived_counts(db, ids)
     namespaces_by_owner: dict[str, set[str]] = {}
     for row in rows:

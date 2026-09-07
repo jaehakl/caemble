@@ -101,7 +101,6 @@ function RecordedRows({ rows, depth = 0 }: { rows: readonly SavedRecordedData[];
 export function MeasurementDetail({
   className,
   measurement,
-  pendingSave = false,
   rayPathBundles = [],
   rayPathsDeclared: rayPathsDeclaredProp = false,
   rayPathError = null,
@@ -109,7 +108,6 @@ export function MeasurementDetail({
 }: {
   className?: string
   measurement: SavedMeasurement | null
-  pendingSave?: boolean
   rayPathBundles?: readonly RayPathBundle[]
   rayPathsDeclared?: boolean
   rayPathError?: string | null
@@ -142,7 +140,6 @@ export function MeasurementDetail({
           <h2 className="truncate text-lg font-semibold">#{measurement.id}</h2>
         </div>
         <div className="flex flex-wrap justify-end gap-1.5">
-          {pendingSave ? <Badge className="bg-amber-100 text-amber-900">저장 대기</Badge> : null}
           <Badge className={measurement.recorded_at ? 'bg-emerald-100 text-emerald-800' : undefined}>
             {measurement.recorded_at ? 'Recorded' : 'Prepared'}
           </Badge>

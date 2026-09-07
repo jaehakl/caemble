@@ -111,7 +111,8 @@ export function resolveMaterialParameters(
   const resolved: Record<string, Record<string, FrozenMaterialParameter>> = {}
   const materialColors: Record<string, Readonly<{ color: string; materialId: number }>> = {}
 
-  sceneMaterials.forEach((material) => {
+  // Repeated parts and task scenes share one frozen sample per Material name.
+  new Map(sceneMaterials.map((material) => [material.name, material])).forEach((material) => {
     const explicit = new Map<string, MaterialPropertyValue | MaterialRelationValue>()
     Object.entries(material.variables).forEach(([name, value]) => {
       if (name === 'color') return

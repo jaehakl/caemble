@@ -17,6 +17,7 @@ from gpstation.service.state import RuntimeRegistry, runtime
 from sdk.protocol.messages import (
     JobAnswer,
     JobCancelled,
+    JobCleaned,
     JobError,
     JobProgress,
     JobResult,
@@ -151,7 +152,10 @@ class JobOrchestrator:
             if job is None:
                 return None
             await self.runtime.set_job_event(job_id)
-            if job.launcher_id and job.state in JOB_ACTIVE_STATES:
+            if job.launcher_id and (
+                job.state in JOB_ACTIVE_STATES
+                or (job.job_mode == "websocket" and job.cleaned_at is None)
+            ):
                 active_launcher_id = str(job.launcher_id)
             if send_cancel and active_launcher_id is not None:
                 send_lock = self.launcher_send_lock(active_launcher_id)
@@ -177,6 +181,12 @@ class JobOrchestrator:
                     await self.disconnect_launcher(active_launcher_id)
                     await self.runtime.set_job_event(job_id)
         self.wake_dispatcher()
+        if job.job_mode == "websocket":
+            from gpstation.service.server_handlers import cancel_preparation_handlers
+
+            cancel = cancel_preparation_handlers.get(job.handler_type)
+            if cancel:
+                cancel(job.id)
         return job
 
     async def reset_launcher_worker(
@@ -232,6 +242,19 @@ class JobOrchestrator:
         user_id: str,
         message: LauncherToServerMessage,
     ) -> None:
+        if isinstance(message, JobCleaned):
+            from gpstation.service.worker_connection import worker_cleaned
+
+            if not await worker_cleaned(
+                db,
+                job_id=message.job_id,
+                attempt_count=message.attempt_count,
+                launcher_id=launcher_id,
+                user_id=user_id,
+            ):
+                raise LauncherPolicyViolation("cleanup does not match the assigned attempt")
+            self.wake_dispatcher()
+            return
         if isinstance(message, WorkerResetDone):
             launcher = await self.runtime.get_launcher(launcher_id)
             if launcher is None or not launcher.resetting or launcher.current_job_id is not None:
@@ -247,6 +270,22 @@ class JobOrchestrator:
             raise LauncherPolicyViolation("unsupported launcher job event")
         if not await self.runtime.launcher_matches_job(launcher_id, message.job_id):
             raise LauncherPolicyViolation("launcher event does not match its assigned job")
+
+        current = await db.get(Job, message.job_id)
+        if current is not None and current.job_mode == "websocket":
+            # Server jobs commit through their direct worker connection. Launcher
+            # errors may fail an attempt, but only job.cleaned returns capacity.
+            if isinstance(message, (JobError, JobCancelled)):
+                if message.attempt_count != current.attempt_count:
+                    raise LauncherPolicyViolation("event belongs to a different attempt")
+                await JobService.fail_assigned_job(
+                    db,
+                    job_id=current.id,
+                    launcher_id=launcher_id,
+                    detail=message.detail if isinstance(message, JobError) else message.reason,
+                    state="failed" if isinstance(message, JobError) else "cancelled",
+                )
+            return
 
         try:
             if isinstance(message, JobAnswer):
@@ -429,6 +468,30 @@ class JobOrchestrator:
     ) -> None:
         job_id = str(job.id)
         try:
+            if job.job_mode == "websocket":
+                from gpstation.service.worker_connection import worker_assignment
+
+                async with SessionLocal() as db:
+                    current = await db.get(Job, job.id)
+                    if (
+                        current is None
+                        or current.state != "assigned"
+                        or current.cancel_requested_at is not None
+                    ):
+                        if current is not None:
+                            from gpstation.service.worker_connection import worker_cleaned
+
+                            await worker_cleaned(
+                                db,
+                                job_id=current.id,
+                                attempt_count=current.attempt_count,
+                                launcher_id=launcher_id,
+                                user_id=current.user_id,
+                            )
+                        return
+                    message = await worker_assignment(db, current)
+                await self.send_launcher_message(launcher_id, message)
+                return
             await self.send_launcher_message(
                 launcher_id,
                 {

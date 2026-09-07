@@ -1,7 +1,8 @@
 # Caemble deployment
 
 Caemble은 Ubuntu의 FastAPI 서비스와 정적 Vite UI로 배포한다. 사용자 CAD 코드를 실행하는
-runner는 메인 앱과 다른 origin에서 제공한다.
+runner는 메인 앱과 다른 origin에서 제공한다. 서버의 CAE 입력 생성은 별도 Node child에서
+실행하므로 API 호스트에 Node.js 22.13 이상이 필요하다.
 
 - 메인 앱: `https://www.caemble.com`
 - runner: `https://code-to-cad.caemble.com`
@@ -28,29 +29,35 @@ deployment\build-ui.bat
 ```
 
 이 명령은 JavaScript SDK를 build하고 UI의 TypeScript build와 Vite production build를
-실행한 뒤 `deployment/caemble-ui.tar.gz`를 만든다. artifact와 관련 source를 같은 commit에
-포함한다.
+실행하고 서버 입력 생성기를 build한 뒤 다음 두 artifact를 만든다. artifact와 관련 source를
+같은 commit에 포함한다.
 
-## destructive schema cutover
+- `deployment/caemble-ui.tar.gz`: 웹 UI와 격리된 browser runner
+- `deployment/caemble-cae-preparation.tar.gz`: `prepare.cjs`와 TypeScript 선언 파일
 
-이번 baseline 전환에서는 기존 application schema를 그대로 삭제하고 다시 만든다. 백업,
-이전 row 변환, 호환 alias는 실행하지 않는다.
+서버 입력 생성기는 `app/ui/dist-cae`에 설치되며 서버에는 `node_modules`가 필요 없다.
+개발 환경에서는 `app/ui`에서 `npm run build:cae-preparation`을 실행한다.
+`node app/ui/dist-cae/prepare.cjs --check`로 Node 버전과 선언 파일을 확인할 수 있다.
 
-```bash
-cd /home/ubuntu/caemble
-git pull --ff-only
-RESET_API_SCHEMA=1 bash deployment/update.sh
-```
+API 설정은 `CAE_NODE_EXECUTABLE`(기본 `node`), `CAE_PREPARATION_SCRIPT`(기본
+`app/ui/dist-cae/prepare.cjs`), `CAE_PREPARATION_CONCURRENCY`(기본 `1`)이다.
+입력 생성 child에는 DB 인증 정보나 launcher token을 전달하지 않는다. Node permission mode는
+artifact 디렉터리 읽기만 허용하고 파일 쓰기와 child process 생성을 차단한다. VM 시간 제한과
+source policy는 OS sandbox가 아니므로 운영 계정의 파일·네트워크 권한은 필요한 범위로 제한한다.
 
-`RESET_API_SCHEMA=1`은 `public` schema와 Alembic 이력을 삭제하고 새 baseline을 적용한다.
-이후 일반 배포에는 변수를 주지 않는다.
+## 서버 배치 실행 전환
+
+기존 데이터는 유지하고 일반 Alembic migration을 적용한다. 이번 전환에서는
+`RESET_API_SCHEMA`를 사용하지 않는다. API·UI·Launcher·CAE를 동일 commit으로 전환한다.
 
 ```bash
 bash deployment/update.sh
 ```
 
-스크립트는 API dependency와 migration을 적용하고 UI release symlink를 원자적으로 바꾼 뒤
-API와 Nginx를 다시 올린다.
+스크립트는 Node와 두 artifact를 먼저 확인하고 API를 정지한 뒤 입력 생성기, API dependency와
+migration을 적용한다. UI release symlink를 원자적으로 바꾸고 API와 Nginx를 다시 올린다.
+서버 재시작으로 중단된 실행은 실패로 남으며 미시작 배치 항목은 계속 처리한다. 실패 항목은
+사용자가 수동 재시도한다.
 
 ## systemd
 
@@ -80,15 +87,15 @@ PrivateTmp=true
 WantedBy=multi-user.target
 ```
 
-## launcher 재등록
+## Launcher 업데이트
 
-schema reset 뒤에는 기존 launcher access key가 존재하지 않는다. 먼저 브라우저에서 Google
-OAuth로 로그인하고 Account에서 launcher 용도의 새 token을 직접 발급한다. worker 장비의
+기존 launcher token은 유지한다. 새 장비는 브라우저에서 Google OAuth로 로그인하고
+Account에서 launcher 용도의 token을 발급한다. worker 장비의
 `app/launcher/.env`에는 다음 값만 둔다.
 
 ```dotenv
 CAEMBLE_API_URL=https://www.caemble.com/api
-CAEMBLE_ACCESS_TOKEN=<NEW_LAUNCHER_TOKEN>
+CAEMBLE_ACCESS_TOKEN=<LAUNCHER_TOKEN>
 ```
 
 그 뒤 동일 commit의 SDK, launcher, CAE/AI slave dependency를 설치하고 launcher를 다시
@@ -102,3 +109,10 @@ poetry run launcher
 
 한 launcher는 worker와 job을 한 번에 하나만 실행한다. `models.toml`, 모델 weight, cache,
 `.env`, `.venv`, VOICEVOX runtime은 장비 로컬에 둔다.
+CAE manifest는 `websocket`을 선언하며 worker가 서버로 결과를 직접 업로드한다. AI 등
+기존 `webrtc` manifest의 브라우저 Master 동작은 유지된다.
+
+배포 후에는 같은 사용자 Launcher 두 대에 Repeat Run을 등록하고 브라우저를 닫은 뒤에도
+진행되는지 확인한다. 재접속 시 진행·메시지·완료 알림·선택 Measurement 결과를 확인하고,
+worker 중단과 실패 재시도, AI WebRTC 실행을 각각 확인한다. 배포 스크립트 자체는 이
+브라우저·실제 DB·실제 worker 검증을 대신하지 않는다.

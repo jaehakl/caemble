@@ -40,9 +40,8 @@ def catalog_measurements(tmp_path_factory):
 @pytest.mark.asyncio
 async def test_official_catalog_measurement_runs_and_acknowledges_every_record(key, catalog_measurements):
     measurement = json.loads((catalog_measurements / f"{key}.json").read_text(encoding="utf-8"))
-    run = CaeRun(measurement=measurement, max_run_seconds=240, job_id=f"catalog-{key}", on_cleanup=lambda _: None)
-    run.first_next_watchdog.cancel()
-    run.task = asyncio.create_task(run._execute())
+    run = CaeRun(measurement=measurement, max_run_seconds=240, job_id=f"catalog-{key}")
+    run.start()
     recorded = {}
     try:
         while True:
@@ -68,7 +67,7 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
                     assert np.all(np.isfinite(array)), name
                     recorded[name] = array.copy()
                 run.pending = packet
-                run._acknowledge(packet.sequence)
+                run.acknowledge(packet.sequence)
                 assert packet.ack.done()
                 assert packet.attachments == []
                 continue
@@ -94,5 +93,5 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
             assert np.max(np.abs(recorded["timeElectricField.field"])) > 0
         assert run._record_packets == {}
     finally:
-        run.abort()
+        await run.close()
         await asyncio.gather(run.task, return_exceptions=True)

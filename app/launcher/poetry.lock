@@ -38,6 +38,7 @@ develop = true
 pydantic = ">=2.10,<3.0"
 
 [package.extras]
+server-slave = ["websockets (>=12.0,<16.0)"]
 slave = ["aiortc (>=1.9,<2.0)"]
 
 [package.source]

@@ -5,6 +5,7 @@ import { Toaster } from 'sonner'
 import { clearPrivateQueryScope } from '@/features/auth/queryCache'
 import { privateQueryScope, type PrivateQueryScope } from '@/features/auth/queryKeys'
 import { authQueryOptions } from '@/features/auth/queryOptions'
+import { CaeBatchProvider } from '@/features/cae/CaeBatchProvider'
 
 function PrivateQueryAccountBoundary() {
   const queryClient = useQueryClient()
@@ -35,8 +36,10 @@ export function AppProviders({ children }: { children: ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <PrivateQueryAccountBoundary />
       <TooltipPrimitive.Provider delayDuration={300}>
-        {children}
-        <Toaster closeButton position="bottom-right" richColors />
+        <CaeBatchProvider>
+          {children}
+          <Toaster closeButton position="bottom-right" richColors />
+        </CaeBatchProvider>
       </TooltipPrimitive.Provider>
     </QueryClientProvider>
   )

@@ -245,6 +245,10 @@ class SimulationApi:
                 "simulation state must be None or a live state returned by this sim.run",
             ) from exc
 
+    async def aclose(self) -> None:
+        await self._executor.wait_for_cleanup()
+        self.close()
+
     def close(self) -> None:
         if self._closed:
             return

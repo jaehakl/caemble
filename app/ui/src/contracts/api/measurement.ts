@@ -1,4 +1,3 @@
-import type { PersistedDataTensor } from '../cad-persistence'
 import type { FrozenMaterialParameters } from '../material'
 
 export type { PersistedDataTensor } from '../cad-persistence'
@@ -8,11 +7,6 @@ export type DataSchema = Readonly<Record<string, unknown>>
 export type MeasurementMaterialParameters = Readonly<{
   experiment: FrozenMaterialParameters
   tasks: Readonly<Record<string, FrozenMaterialParameters>>
-}>
-
-export type MeasurementRecordedDataWriteLeaf = Readonly<{
-  experiment_record_id: number
-  data: PersistedDataTensor
 }>
 
 export type MeasurementRecordedDataLeaf = Readonly<{
@@ -37,10 +31,6 @@ export type MeasurementCreateRequest = Readonly<{
   experiment_source_hash: string
   vars: Readonly<Record<string, unknown>>
   material_parameters: MeasurementMaterialParameters
-}>
-
-export type MeasurementRecordRequest = Readonly<{
-  recorded_data: readonly MeasurementRecordedDataWriteLeaf[]
 }>
 
 type MeasurementReadFields = Readonly<{

@@ -96,10 +96,7 @@ export function createRuntimeConsoleStore(dependencies: StoreDependencies = {}):
       ...(progress === undefined ? {} : { progress }),
       ...(details ? { details } : {}),
     })
-    const replacementIndex =
-      progress === undefined || !requestedId
-        ? -1
-        : snapshot.events.findIndex((current) => current.id === event.id && current.progress !== undefined)
+    const replacementIndex = requestedId ? snapshot.events.findIndex((current) => current.id === event.id) : -1
     const nextEvents = [...snapshot.events]
     const nextSizes = [...sizes]
     if (replacementIndex >= 0) {

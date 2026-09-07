@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -11,12 +10,13 @@ from models import (
     MeasurementBase,
     MeasurementCreateRequest,
     MeasurementRecordedDataResponse,
-    MeasurementRecordRequest,
     UserData,
 )
 from service.experiment_access import require_experiment_read
 from utils.crud import CrudSpec, delete_items, get_list_response
 from utils.crud.common import is_admin_user
+from gpstation.db import Job
+from gpstation.service.batches import SERVER_ACTIVE_STATES
 
 
 MEASUREMENT_CRUD_SPEC = CrudSpec(
@@ -133,64 +133,14 @@ async def create_measurement(
     return {"id": measurement.id}
 
 
-async def record_measurement(
-    db: AsyncSession,
-    measurement_id: int,
-    request: MeasurementRecordRequest,
-    *,
-    user: UserData,
-) -> dict[str, int]:
-    measurement = await db.scalar(
-        select(Measurement)
-        .where(Measurement.id == measurement_id)
-        .with_for_update()
-    )
-    if measurement is None or (
-        not is_admin_user(user) and measurement.user_id != user.id
-    ):
-        raise LookupError("Measurement not found.")
-    record_ids = [item.experiment_record_id for item in request.recorded_data]
-    if len(record_ids) != len(set(record_ids)):
-        raise ValueError("recorded_data must not contain duplicate ExperimentRecord IDs.")
-    valid_ids = set(
-        (
-            await db.scalars(
-                select(ExperimentRecord.id).where(
-                    ExperimentRecord.id.in_(record_ids),
-                    ExperimentRecord.experiment_id == measurement.experiment_id,
-                )
-            )
-        ).all()
-    )
-    if valid_ids != set(record_ids):
-        raise ValueError("Every ExperimentRecord must belong to the Measurement Experiment.")
-    try:
-        db.add_all(
-            [
-                RecordedData(
-                    user_id=measurement.user_id,
-                    measurement_id=measurement.id,
-                    experiment_record_id=item.experiment_record_id,
-                    data=item.data,
-                    data_url=None,
-                    file_size=None,
-                )
-                for item in request.recorded_data
-            ]
-        )
-        measurement.recorded_at = datetime.now(timezone.utc)
-        await db.flush()
-        await db.commit()
-    except Exception:
-        await db.rollback()
-        raise
-    return {"id": measurement.id}
-
-
 async def delete_measurements(
     db: AsyncSession,
     ids: list[int],
     *,
     user: UserData,
 ) -> None:
+    rows = (await db.scalars(select(Measurement).where(Measurement.id.in_(ids)).order_by(Measurement.id).with_for_update())).all()
+    job_ids = [row.job_id for row in rows if row.job_id]
+    if job_ids and await db.scalar(select(Job.id).where(Job.id.in_(job_ids), Job.state.in_(SERVER_ACTIVE_STATES)).limit(1)):
+        raise HTTPException(409, "Cancel active CAE jobs before deleting their Measurements.")
     await delete_items(db, MEASUREMENT_WRITE_CRUD_SPEC, ids, user=user)

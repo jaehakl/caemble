@@ -1,22 +1,9 @@
 import type * as Monaco from 'monaco-editor'
 import type { CatalogRuntimeSlice } from '@/contracts/catalog'
-import {
-  EXPERIMENT_ENTRY_PATH,
-  EXPERIMENT_GEOMETRY_PATH,
-  EXPERIMENT_MATERIAL_PATH,
-  cadSourceHash,
-  experimentTaskName,
-  type CadSourceDocument,
-} from '../source/document'
+import { EXPERIMENT_ENTRY_PATH, cadSourceHash, type CadSourceDocument } from '../source/document'
 import { experimentTypeScriptPaths } from '../source/moduleResolution'
-import {
-  analyzeBundleModuleSource,
-  analyzeCadSource,
-  analyzeGeometrySource,
-  analyzeMaterialSource,
-  analyzeTaskSource,
-  assertExperimentModuleGraph,
-} from '../source/sourceAnalysis'
+import { assertExperimentModuleGraph } from '../source/sourceAnalysis'
+import { assertCadSourcePolicy } from '../source/sourcePolicy'
 import { withCatalogTypeEnvironment } from './catalogTypeEnvironment'
 import type { CadDiagnostic, CompiledCadDocument, CompiledCadSource } from './types'
 
@@ -38,14 +25,6 @@ function documentSources(document: CadSourceDocument) {
   return Object.fromEntries(
     experimentTypeScriptPaths(document.sourceBundle.files).map((path) => [path, document.sourceBundle.files[path]]),
   )
-}
-
-function assertSourcePolicy(path: string, source: string) {
-  if (path === EXPERIMENT_ENTRY_PATH) analyzeCadSource(source)
-  else if (path === EXPERIMENT_GEOMETRY_PATH) analyzeGeometrySource(source, { allowEmpty: true })
-  else if (path === EXPERIMENT_MATERIAL_PATH) analyzeMaterialSource(source)
-  else if (experimentTaskName(path) !== null) analyzeTaskSource(source)
-  else analyzeBundleModuleSource(source, path)
 }
 
 function diagnosticMessage(message: string | { messageText: string; next?: readonly unknown[] }): string {
@@ -111,7 +90,7 @@ async function compile(
   const sources = documentSources(document)
   for (const [path, source] of Object.entries(sources)) {
     try {
-      assertSourcePolicy(path, source)
+      assertCadSourcePolicy(path, source)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       throw new CadCompilationError('policy', message, [

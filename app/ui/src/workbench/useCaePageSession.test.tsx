@@ -82,7 +82,7 @@ function createWorkbench() {
       busy: false,
       cancel: vi.fn(),
       error: null,
-      pendingRecordMeasurementId: null,
+      detach: vi.fn(),
       runSelected: vi.fn(),
     },
     restoreDraft: vi.fn(),

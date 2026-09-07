@@ -37,7 +37,7 @@ export function unresolvedMeasurementMaterialRoles(snapshot: EvaluatedExperiment
 }
 
 export function buildMeasurement(
-  snapshot: EvaluatedExperimentSnapshot,
+  snapshot: MeasurementExperimentSnapshot,
   resolution: MeasurementMaterialResolution,
 ): BuiltMeasurement {
   const experiment: MeasurementExperimentSnapshot = {

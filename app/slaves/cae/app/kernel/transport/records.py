@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from sdk.protocol.messages import DataChannelAttachment
+from sdk.protocol.packets import Attachment
 
 
 @dataclass
@@ -34,10 +34,9 @@ class RecordPacket:
     sequence: int
     name: str
     value: dict[str, Any]
-    attachments: list[DataChannelAttachment]
+    attachments: list[Attachment]
     byte_length: int
     ack: asyncio.Future[None]
-    ack_watchdog: asyncio.Task[None] | None = None
     resource_hold: RecordResourceHold | None = None
 
     def release_resources(self) -> None:

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from sdk.slave import SlaveApp, run_app
+from sdk.slave.server import ServerSlaveApp, run_server_app
 
-from app.kernel.transport.handlers import register_handlers
+from app.kernel.transport.handlers import run_measurement
 
-app = SlaveApp(memory={"runs": {}})
-register_handlers(app)
+app = ServerSlaveApp(run_measurement)
 
 
 if __name__ == "__main__":
-    run_app(app)
+    run_server_app(app)

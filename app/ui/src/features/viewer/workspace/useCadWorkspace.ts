@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { releaseRecordedDataAttachments, simulate } from '@/features/cae/client'
 import {
   emitRuntimeActivity,
   type RuntimeActivityCallback,
@@ -33,7 +32,6 @@ import {
   normalizeVars,
   normalizeVarsSchema,
   varsSchemaFingerprint,
-  type RecordedData,
   type Vars,
 } from '@/lib/cad/model'
 import type { SimulationProgramManifest } from '@/lib/cad/simulation'
@@ -49,14 +47,9 @@ import {
   type RunError,
 } from './cadWorkspaceLifecycle'
 import { fetchCatalogRuntimeSlice } from './catalogRuntime'
-import type { SimulationProcess } from './simulationUiTypes'
 
 export type { AppStatus, RunError } from './cadWorkspaceLifecycle'
 export type EvaluationTimeoutMs = 3000 | 10000 | 30000
-
-function requestId(prefix: string) {
-  return `${prefix}-${crypto.randomUUID()}`
-}
 
 function stableInput(value: unknown) {
   return JSON.stringify(value)
@@ -105,15 +98,6 @@ export type CadDocumentController = Readonly<{
   varsSchema: EvaluatedExperimentSnapshot['varsSchema'] | null
 }>
 
-export type SimulationController = Readonly<{
-  canRun: boolean
-  cancel: () => void
-  process: SimulationProcess
-  recordedData: RecordedData | null
-  run: () => string | null
-  stale: boolean
-}>
-
 export type CandidateProvenance = 'editable' | 'persisted-measurement'
 
 export type CandidateVarsRegeneratedEvent = Readonly<{
@@ -126,7 +110,6 @@ export type UseCadWorkspaceOptions = Readonly<{
   candidateVarsPending?: boolean
   candidateProvenance?: CandidateProvenance
   frozenMaterialSnapshot?: unknown | null
-  runtimeEnabled?: boolean
   resetKey?: string | number
   sourceOnlyMaterials?: boolean
   onActivity?: RuntimeActivityCallback
@@ -148,7 +131,6 @@ export function useCadWorkspace(
     candidateVarsPending = false,
     candidateProvenance = 'editable',
     frozenMaterialSnapshot = null,
-    runtimeEnabled = true,
     resetKey = 'default',
     sourceOnlyMaterials = false,
     onActivity,
@@ -156,7 +138,7 @@ export function useCadWorkspace(
   }: UseCadWorkspaceOptions = {},
 ) {
   const [lifecycle, dispatchLifecycle] = useReducer(cadWorkspaceLifecycleReducer, initialCadWorkspaceLifecycleState)
-  const { error, process, stale, status } = lifecycle
+  const { error, status } = lifecycle
   const [diagnostics, setDiagnostics] = useState<readonly CadDiagnostic[]>([])
   const [draftTaskNames, setDraftTaskNames] = useState<readonly string[]>([])
   const [evaluatedSnapshot, setEvaluatedSnapshot] = useState<EvaluatedExperimentSnapshot | null>(null)
@@ -175,17 +157,9 @@ export function useCadWorkspace(
   const [taskScenes, setTaskScenes] = useState<Readonly<Record<string, CadScene>>>(Object.freeze({}))
   const [variables, setVariables] = useState<Readonly<Vars> | null>(null)
   const [varsSchema, setVarsSchema] = useState<EvaluatedExperimentSnapshot['varsSchema'] | null>(null)
-  const [recordedData, setRecordedData] = useState<RecordedData | null>(null)
   const [resultSessionKey, setResultSessionKey] = useState<string | number | null>(null)
 
   const activeEvaluationRef = useRef<AbortController | null>(null)
-  const activeRunRef = useRef<Readonly<{
-    abort: AbortController
-    requestId: string
-    runId: string | null
-    startedAt: number
-  }> | null>(null)
-  const builtMeasurementRef = useRef<BuiltMeasurement | null>(null)
   const candidateCacheRef = useRef<Readonly<{
     dependencyKey: string
     document: ExperimentSourceDocument
@@ -209,7 +183,6 @@ export function useCadWorkspace(
   const lastSchemaFingerprintRef = useRef<string | null>(null)
   const onActivityRef = useRef(onActivity)
   const onCandidateVarsRegeneratedRef = useRef(onCandidateVarsRegenerated)
-  const recordedDataRef = useRef<RecordedData | null>(null)
   const revisionRef = useRef(0)
   const statusRef = useRef<AppStatus>('Ready')
   const successfulRevisionRef = useRef(-1)
@@ -225,36 +198,13 @@ export function useCadWorkspace(
     resetKey: string | number
   }> | null>(null)
 
-  builtMeasurementRef.current = builtMeasurement
   completedCandidateGenerationRef.current = completedCandidateGeneration
   evaluationTimeoutRef.current = evaluationTimeoutMs
   generationRef.current = generation
   onActivityRef.current = onActivity
   onCandidateVarsRegeneratedRef.current = onCandidateVarsRegenerated
-  recordedDataRef.current = recordedData
   statusRef.current = status
   successfulRevisionRef.current = successfulRevision
-
-  const invalidateSimulation = useCallback(() => {
-    const hasRecordedData = recordedDataRef.current !== null
-    const active = activeRunRef.current
-    if (!hasRecordedData && !active) return
-    if (active) {
-      activeRunRef.current = null
-      active.abort.abort()
-    }
-    dispatchLifecycle({
-      type: 'simulationInvalidated',
-      hasRecordedData,
-      active: active
-        ? {
-            runId: active.runId ?? active.requestId,
-            startedAt: active.startedAt,
-            finishedAt: Date.now(),
-          }
-        : null,
-    })
-  }, [])
 
   const varsKey = useMemo(() => stableInput(candidateVars ?? null), [candidateVars])
   const materialsKey = useMemo(() => stableInput(frozenMaterialSnapshot), [frozenMaterialSnapshot])
@@ -279,12 +229,7 @@ export function useCadWorkspace(
       : materialsKey
 
   useEffect(() => {
-    if (!runtimeEnabled) invalidateSimulation()
-  }, [invalidateSimulation, runtimeEnabled])
-
-  useEffect(() => {
     activeEvaluationRef.current?.abort()
-    invalidateSimulation()
     const requestRevision = revisionRef.current + 1
     revisionRef.current = requestRevision
     setRevision(requestRevision)
@@ -305,7 +250,6 @@ export function useCadWorkspace(
       setResultSessionKey(null)
     }
     setBuiltMeasurement(null)
-    builtMeasurementRef.current = null
     setMaterialParameters(null)
     setMaterialWarnings([])
     if (resetPreview) {
@@ -605,7 +549,6 @@ export function useCadWorkspace(
           experiment: built.materialParameters,
           tasks: built.taskMaterialParameters,
         })
-        builtMeasurementRef.current = built
         setBuiltMeasurement(built)
         setEvaluatedSnapshot(snapshot)
         setResultSessionKey(resetKey)
@@ -672,7 +615,6 @@ export function useCadWorkspace(
     candidateProvenance,
     candidateVarsPending,
     generation,
-    invalidateSimulation,
     materialDependencyKey,
     resetKey,
     sourceOnlyMaterials,
@@ -682,8 +624,6 @@ export function useCadWorkspace(
   useEffect(
     () => () => {
       activeEvaluationRef.current?.abort()
-      activeRunRef.current?.abort.abort()
-      releaseRecordedDataAttachments(recordedDataRef.current)
     },
     [],
   )
@@ -782,120 +722,6 @@ export function useCadWorkspace(
     validatedResetKeyRef.current === resetKey
       ? validatedRevision
       : -1
-  const processActive = process.status === 'preparing' || process.status === 'running'
-  const canRun = Boolean(
-    runtimeEnabled &&
-    ownsCurrentSession &&
-    !processActive &&
-    status === 'Ready' &&
-    successfulRevision === revision &&
-    builtMeasurement &&
-    simulationProgram &&
-    Object.keys(simulationProgram.tasks).length > 0,
-  )
-
-  const run = useCallback(() => {
-    const built = builtMeasurementRef.current
-    if (
-      !runtimeEnabled ||
-      !built ||
-      activeRunRef.current ||
-      statusRef.current !== 'Ready' ||
-      successfulRevisionRef.current !== revisionRef.current
-    ) {
-      return null
-    }
-    const id = requestId('simulation')
-    const startedAt = Date.now()
-    releaseRecordedDataAttachments(recordedDataRef.current)
-    recordedDataRef.current = null
-    setRecordedData(null)
-    dispatchLifecycle({ type: 'simulationStarted', runId: id, startedAt })
-    const abort = new AbortController()
-    activeRunRef.current = Object.freeze({ abort, requestId: id, runId: null, startedAt })
-    void simulate(built, {
-      signal: abort.signal,
-      onActivity: onActivityRef.current,
-      onRecord(name, tensor) {
-        if (activeRunRef.current?.requestId !== id) return
-        const next = Object.freeze({ ...(recordedDataRef.current ?? {}), [name]: tensor }) as RecordedData
-        recordedDataRef.current = next
-        setRecordedData(next)
-      },
-      onProgress(progress) {
-        const active = activeRunRef.current
-        if (active?.requestId !== id) return
-        if (active.runId !== progress.runId) activeRunRef.current = Object.freeze({ ...active, runId: progress.runId })
-        dispatchLifecycle({
-          type: 'simulationProgressed',
-          runId: progress.runId,
-          stage: `${progress.task}: ${progress.stage}`,
-          startedAt,
-        })
-      },
-      onStatus(nextStatus) {
-        const active = activeRunRef.current
-        if (active?.requestId !== id) return
-        dispatchLifecycle({
-          type: 'simulationStatusChanged',
-          runId: active.runId ?? id,
-          status: nextStatus === 'validating' ? 'preparing' : 'running',
-          stage: nextStatus,
-          startedAt,
-        })
-      },
-    })
-      .then((result) => {
-        const active = activeRunRef.current
-        if (active?.requestId !== id) {
-          releaseRecordedDataAttachments(result)
-          return
-        }
-        activeRunRef.current = null
-        recordedDataRef.current = result
-        setRecordedData(result)
-        dispatchLifecycle({
-          type: 'simulationSucceeded',
-          runId: active.runId ?? id,
-          startedAt,
-          finishedAt: Date.now(),
-          stale: builtMeasurementRef.current !== built,
-        })
-      })
-      .catch((cause: unknown) => {
-        const active = activeRunRef.current
-        if (active?.requestId !== id) return
-        activeRunRef.current = null
-        releaseRecordedDataAttachments(recordedDataRef.current)
-        recordedDataRef.current = null
-        setRecordedData(null)
-        dispatchLifecycle({
-          type: 'simulationFailed',
-          runId: active.runId ?? id,
-          startedAt,
-          finishedAt: Date.now(),
-          error: cause instanceof Error ? cause.message : String(cause),
-        })
-      })
-    return id
-  }, [runtimeEnabled])
-
-  const cancel = useCallback(() => {
-    const active = activeRunRef.current
-    if (!active) return
-    activeRunRef.current = null
-    active.abort.abort()
-    releaseRecordedDataAttachments(recordedDataRef.current)
-    recordedDataRef.current = null
-    setRecordedData(null)
-    dispatchLifecycle({
-      type: 'simulationCancelled',
-      runId: active.runId ?? active.requestId,
-      startedAt: active.startedAt,
-      finishedAt: Date.now(),
-    })
-  }, [])
-
   const taskSceneHashes = useMemo(
     () =>
       Object.freeze(
@@ -951,13 +777,5 @@ export function useCadWorkspace(
     variables: ownsCurrentSession ? variables : null,
     varsSchema,
   }
-  const simulation: SimulationController = {
-    canRun,
-    cancel,
-    process,
-    recordedData: ownsCurrentSession ? recordedData : null,
-    run,
-    stale,
-  }
-  return { experimentDocument, simulation }
+  return { experimentDocument }
 }

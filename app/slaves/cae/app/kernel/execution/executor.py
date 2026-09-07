@@ -119,6 +119,10 @@ class SpawnSolverExecutor:
         self._child_target = child_main
         self._late_cleanup_tasks: set[asyncio.Task[None]] = set()
 
+    async def wait_for_cleanup(self) -> None:
+        while self._late_cleanup_tasks:
+            await asyncio.gather(*tuple(self._late_cleanup_tasks))
+
     async def execute(
         self,
         locator: str,

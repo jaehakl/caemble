@@ -517,8 +517,8 @@ async def test_cae_run_ack_releases_packet_resources_once() -> None:
     run.pending = packet
     run._record_packets = {packet.sequence: packet}
 
-    run._acknowledge(packet.sequence)
-    run._acknowledge(None)
+    run.acknowledge(packet.sequence)
+    run.acknowledge(None)
 
     assert packet.ack.done()
     assert releases == 1
@@ -527,45 +527,40 @@ async def test_cae_run_ack_releases_packet_resources_once() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cae_run_defers_resource_close_until_active_execution_stops(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_cae_run_waits_for_execution_before_closing_resources() -> None:
+    stopped = asyncio.Event()
+
     class CloseSpy:
         closed = False
 
-        def close(self) -> None:
+        async def aclose(self) -> None:
+            assert stopped.is_set()
             self.closed = True
 
     async def active_execution() -> None:
-        await asyncio.Future()
+        try:
+            await asyncio.Future()
+        finally:
+            await asyncio.sleep(0)
+            stopped.set()
 
-    monkeypatch.setattr("app.kernel.coordinator.run.emit", lambda value: None)
     execution = asyncio.create_task(active_execution())
-    watchdog = asyncio.create_task(asyncio.sleep(60))
+    await asyncio.sleep(0)
     simulation = CloseSpy()
     run = object.__new__(CaeRun)
     run.closed = False
-    run.first_next_watchdog = watchdog
-    run.liveness_task = None
     run.progress_task = None
-    run.heartbeat_task = None
-    run.active_context = None
     run._record_packets = {}
     run.pending = None
     run.simulation_api = simulation
     run.task = execution
-    run.on_cleanup = lambda run_id: None
-    run.run_id = "deferred-close-test"
-    run.job_id = "job"
 
-    run._close()
+    await run.close()
 
-    assert not simulation.closed
-    execution.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await execution
-    await asyncio.sleep(0)
+    assert execution.done()
     assert simulation.closed
+    assert run.simulation_api is None
+
 
 
 def assert_lease_count(sim: SimulationApi, handle: ArtifactHandle, expected: int) -> None:

@@ -26,12 +26,14 @@
     "test:api-contract": "esbuild scripts/test-api-contract-boundary.ts --bundle --platform=node --format=esm --define:import.meta.env={} --alias:@=./src --outfile=node_modules/.tmp/test-api-contract-boundary.mjs && node node_modules/.tmp/test-api-contract-boundary.mjs",
     "test:vars": "esbuild scripts/test-vars-tensor.ts --bundle --platform=node --format=cjs --alias:@=./src --outfile=node_modules/.tmp/test-vars-tensor.cjs && node node_modules/.tmp/test-vars-tensor.cjs",
     "test:prediction": "esbuild scripts/test-prediction-knn.ts --bundle --platform=node --format=esm --jsx=automatic --packages=external --alias:@=./src --outfile=node_modules/.tmp/test-prediction-knn.mjs && node node_modules/.tmp/test-prediction-knn.mjs && esbuild scripts/test-public-demo-landing.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.tmp/test-public-demo-landing.mjs && node node_modules/.tmp/test-public-demo-landing.mjs",
-    "check": "npm run format:check && npm run lint && npm run check:dependencies && npm run test:unit && npm run test:legacy && tsc -b --pretty false",
+    "check": "npm run format:check && npm run lint && npm run check:dependencies && npm run test:unit && npm run test:legacy && npm run test:cae-preparation && tsc -b --pretty false",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check:dependencies": "depcruise --config .dependency-cruiser.cjs src",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:cae-preparation": "node scripts/build-cae-preparation.mjs && node dist-cae/prepare.cjs --check",
+    "test:cae-preparation": "npm run build:cae-preparation && esbuild scripts/test-cae-preparation.ts --bundle --platform=node --format=esm --external:typescript --external:@babel/* --alias:@=./src --outfile=node_modules/.tmp/test-cae-preparation.mjs && node node_modules/.tmp/test-cae-preparation.mjs"
   },
   "dependencies": {
     "@babel/generator": "^7.29.7",

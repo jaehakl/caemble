@@ -1,6 +1,7 @@
 import type * as Monaco from 'monaco-editor'
 import coreTypes from '../api/caemble-core.d.ts?raw'
 import jsxTypes from '../api/cad-jsx.d.ts?raw'
+import { cadCompilerOptions } from './options'
 
 let didSetup = false
 
@@ -9,21 +10,7 @@ export function setupMonaco(monaco: typeof Monaco) {
 
   const typescript = monaco.typescript
 
-  typescript.typescriptDefaults.setCompilerOptions({
-    target: typescript.ScriptTarget.ES2020,
-    module: typescript.ModuleKind.CommonJS,
-    moduleResolution: typescript.ModuleResolutionKind.NodeJs,
-    allowNonTsExtensions: true,
-    allowImportingTsExtensions: true,
-    jsx: typescript.JsxEmit.React,
-    jsxFactory: 'h',
-    jsxFragmentFactory: 'Fragment',
-    strict: true,
-    noEmit: false,
-    noEmitOnError: false,
-    sourceMap: true,
-    inlineSources: true,
-  })
+  typescript.typescriptDefaults.setCompilerOptions(cadCompilerOptions(typescript))
   typescript.typescriptDefaults.setEagerModelSync(true)
 
   typescript.javascriptDefaults.setCompilerOptions({

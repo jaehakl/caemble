@@ -14,6 +14,7 @@ class SlaveApp:
     module: str
     project_dir: Path
     startup_timeout_seconds: float | None = None
+    job_mode: str = "webrtc"
 
     @property
     def python_executable(self) -> Path:
@@ -78,11 +79,15 @@ def load_registry(plugins_dir: Path) -> SlaveAppRegistry:
 
 def load_manifest(manifest_path: Path) -> SlaveApp:
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    job_mode = payload.get("job_mode", "webrtc")
+    if job_mode not in {"webrtc", "websocket"}:
+        raise ValueError(f"Invalid job_mode in {manifest_path}")
     return SlaveApp(
         id=str(payload["id"]),
         name=str(payload.get("name") or payload["id"]),
         module=str(payload["module"]),
         project_dir=manifest_path.parent,
+        job_mode=job_mode,
         startup_timeout_seconds=(
             float(payload["startup_timeout_seconds"])
             if payload.get("startup_timeout_seconds") is not None

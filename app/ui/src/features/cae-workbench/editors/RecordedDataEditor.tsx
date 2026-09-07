@@ -9,7 +9,6 @@ import { RayPathSystemCard } from '@/features/measurement/RayPathSystemCard'
 
 export type RecordedDataEditorProps = {
   measurementId: number | null
-  pendingSave?: boolean
   recordedAt?: string | null
   recordedData?: RecordedData | null
   rayPathBundles?: readonly RayPathBundle[]
@@ -20,7 +19,6 @@ export type RecordedDataEditorProps = {
 
 export function RecordedDataEditor({
   measurementId,
-  pendingSave = false,
   recordedAt = null,
   recordedData,
   rayPathBundles = [],
@@ -58,7 +56,7 @@ export function RecordedDataEditor({
     )
   }
 
-  if (!pendingSave && recordedAt === null) {
+  if (recordedAt === null) {
     return (
       <section
         aria-label="Recorded Data editor"
@@ -78,23 +76,11 @@ export function RecordedDataEditor({
         className="grid h-full min-h-0 place-items-center bg-slate-50 p-8 text-center"
       >
         <div>
-          <h2 className="text-sm font-semibold text-slate-800">
-            {pendingSave ? '세션 결과 저장을 다시 시도하세요' : 'RecordedData가 없습니다'}
-          </h2>
+          <h2 className="text-sm font-semibold text-slate-800">RecordedData가 없습니다</h2>
         </div>
       </section>
     )
   }
 
-  return pendingSave ? (
-    <section className="flex h-full min-h-0 flex-col bg-slate-50">
-      <div className="shrink-0 border-b border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-950" role="alert">
-        실행 결과는 이 세션에 남아 있습니다. 재실행하지 말고 <strong>Retry Saving Results</strong>로 저장만 다시
-        시도하세요.
-      </div>
-      <div className="min-h-0 flex-1">{results}</div>
-    </section>
-  ) : (
-    results
-  )
+  return results
 }

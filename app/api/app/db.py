@@ -369,6 +369,9 @@ class Measurement(TimestampMixin, Base):
         nullable=False,
     )
     recorded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    job_id: Mapped[Optional[str]] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("jobs.id", ondelete="SET NULL"), unique=True,
+    )
 
     user: Mapped["User"] = relationship("User", back_populates="measurements")
     experiment: Mapped["Experiment"] = relationship(back_populates="measurements")

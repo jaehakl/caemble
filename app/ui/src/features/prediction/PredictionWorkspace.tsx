@@ -6,12 +6,7 @@ import type { AvailableExperimentRecord, CalculationDataOutput, CalculationOutpu
 import { usePrivateQueryScope } from '@/features/auth/use-auth'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
 import { calculationSourceHash } from '@/lib/calculation'
-import {
-  varsFingerprint as candidateFingerprint,
-  varsTensorFromFlat,
-  type Tensor,
-  type Vars,
-} from '@/lib/cad/model'
+import { varsFingerprint as candidateFingerprint, varsTensorFromFlat, type Tensor, type Vars } from '@/lib/cad/model'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import { compatibleVarsResetValues } from '../calculation/varsTensor'
 import { availableExperimentsQueryOptions } from '../experiment/queryOptions'
@@ -360,24 +355,27 @@ export function PredictionWorkspace({
     [onActivity, runtime],
   )
 
-  const cancelCurrent = useCallback(() => {
-    const samplingAtCancellation = samplingProgressRef.current
-    const outcome = runtime.cancelCurrent({
-      cancelCalculationData: cancelCalculationDataRef.current,
-      cancelMeasurement: cancelMeasurementRef.current,
-      samplingActive: samplingAtCancellation !== null,
-    })
-    activeForwardVarsFingerprintRef.current = null
-    if (outcome.modelsCleared) setForwardRecordProfiles([])
-    if (outcome.validationActive) {
-      setForwardVarsFingerprint(null)
-      setInverseVarsFingerprint(null)
-    }
-    cancelLifecycle({
-      dataStale: dataStaleRef.current || outcome.validationActive,
-      freshnessPending: freshnessPendingRef.current || Boolean(samplingAtCancellation?.recorded),
-    })
-  }, [cancelLifecycle, dataStaleRef, freshnessPendingRef, runtime, samplingProgressRef])
+  const cancelCurrent = useCallback(
+    (explicit = false) => {
+      const samplingAtCancellation = samplingProgressRef.current
+      const outcome = runtime.cancelCurrent({
+        cancelCalculationData: cancelCalculationDataRef.current,
+        cancelMeasurement: explicit ? cancelMeasurementRef.current : () => measurementActionsRef.current.detach(),
+        samplingActive: samplingAtCancellation !== null,
+      })
+      activeForwardVarsFingerprintRef.current = null
+      if (outcome.modelsCleared) setForwardRecordProfiles([])
+      if (outcome.validationActive) {
+        setForwardVarsFingerprint(null)
+        setInverseVarsFingerprint(null)
+      }
+      cancelLifecycle({
+        dataStale: dataStaleRef.current || outcome.validationActive,
+        freshnessPending: freshnessPendingRef.current || Boolean(samplingAtCancellation?.recorded),
+      })
+    },
+    [cancelLifecycle, dataStaleRef, freshnessPendingRef, runtime, samplingProgressRef],
+  )
 
   useEffect(() => {
     const wasActive = previousActiveRef.current
@@ -982,7 +980,6 @@ export function PredictionWorkspace({
     if (busy || workbench.measurementActions.busy || workbench.calculationDataActions.busy)
       return '진행 중인 작업이 있습니다.'
     if (dataStale) return 'Prediction 데이터를 Reload하세요.'
-    if (workbench.measurementActions.pendingRecordMeasurementId) return 'RecordedData 저장을 먼저 다시 시도하세요.'
     if (workbench.experimentDocument.draftTaskNames.length > 0) return 'Solver가 선택되지 않은 Draft Task가 있습니다.'
     let active = false
     for (const [key, entry] of Object.entries(varsSchema)) {
@@ -1015,7 +1012,6 @@ export function PredictionWorkspace({
     workbench.experimentDocument.draftTaskNames,
     workbench.experimentManageable,
     workbench.measurementActions.busy,
-    workbench.measurementActions.pendingRecordMeasurementId,
   ])
 
   const sampleAndRun = useCallback(
@@ -1183,9 +1179,6 @@ export function PredictionWorkspace({
             if (!runtime.samplingIsCurrent(revision) || (cause as { name?: string })?.name === 'AbortError') break
             failures += 1
             const message = cause instanceof Error ? cause.message : String(cause)
-            const saveBlocked =
-              Boolean(measurementActionsRef.current.pendingRecordMeasurementId) ||
-              /RecordedData.*저장|저장.*RecordedData/.test(message)
             onActivity?.({
               source: 'prediction',
               level: 'error',
@@ -1194,7 +1187,7 @@ export function PredictionWorkspace({
             })
             setSamplingProgress({ attempt, failures, phase: 'candidate', recorded, sessionId, successes, total })
             setStatus(`${attempt}/${total} · Candidate 실패 · 성공 ${successes} · 실패 ${failures} · ${message}`)
-            if (saveBlocked || sourceIdentityRef.current !== sourceIdentity) {
+            if (sourceIdentityRef.current !== sourceIdentity) {
               stoppedReason = message
               setStatus(`${attempt}/${total} · Sampling 중단 · ${message}`)
               break
@@ -1551,7 +1544,7 @@ export function PredictionWorkspace({
           Object.freeze({ fingerprint: currentCandidateFingerprint, message: '사용자가 Forward 갱신을 취소했습니다.' }),
         )
       }
-      cancelCurrent()
+      cancelCurrent(true)
     } else if (command.type === 'sample') void sampleAndRun(command.sampleCount ?? 10)
     else void validatePrediction()
   }, [command?.id])

@@ -16,7 +16,6 @@ from gpstation.service.launcher_service import LauncherService
 from gpstation.service.state import runtime, utcnow
 from sdk.protocol.messages import LauncherHello, parse_launcher_message
 
-
 LAUNCHER_HELLO_TIMEOUT_SECONDS = 10
 
 
@@ -40,14 +39,10 @@ async def run_launcher_control(websocket: WebSocket) -> None:
                     user_id=principal.user_id if principal else None,
                     details={
                         "reason": (
-                            "missing_launcher_scope"
-                            if principal
-                            else "authentication_failed"
+                            "missing_launcher_scope" if principal else "authentication_failed"
                         ),
                         "status_code": error.status_code,
-                        "access_key_id": (
-                            principal.access_key_id if principal else None
-                        ),
+                        "access_key_id": (principal.access_key_id if principal else None),
                     },
                     client_ip=websocket.client.host if websocket.client else None,
                     user_agent=websocket.headers.get("user-agent"),
@@ -85,6 +80,7 @@ async def run_launcher_control(websocket: WebSocket) -> None:
                 user_id=principal.user_id,
                 launcher_name=hello.launcher_name,
                 slave_app_ids=hello.slave_app_ids,
+                job_modes=hello.job_modes,
                 ip_address=websocket.client.host if websocket.client else None,
             )
             launcher_id = str(launcher.id)
@@ -224,9 +220,7 @@ async def handle_launcher_message(
                     },
                 )
                 await db.commit()
-                raise LauncherPolicyViolation(
-                    "launcher access key is no longer active"
-                )
+                raise LauncherPolicyViolation("launcher access key is no longer active")
             await db.rollback()
         await runtime.mark_heartbeat(
             launcher_id,

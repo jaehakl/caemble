@@ -8,4 +8,4 @@ class CaeError(Exception):
 
 
 class ProtocolError(ValueError):
-    """A malformed start/next exchange that must fail the Caemble v1 transport."""
+    """An invalid job or record acknowledgement exchange."""

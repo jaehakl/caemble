@@ -17,7 +17,6 @@ import { ConfirmWorkbenchDialog } from '@/features/cae-workbench/dialogs'
 import { ExperimentEditor, SourcePathPickerDialog } from '@/features/cae-workbench/editors'
 import { ExperimentManager } from '@/features/experiment'
 import { calculationAccessPolicy, type CalculationAgentBridge, type CalculationSaveState } from '@/features/calculation'
-import { flattenRecordedData, recordedDataRules } from '@/features/measurement/recordedData'
 import type {
   PredictionWorkspaceChromeState,
   PredictionWorkspaceCommand,
@@ -36,6 +35,9 @@ import { CalculationWorkbenchContainer } from '@/workbench/CalculationWorkbenchC
 import { WorkbenchShellContainer } from '@/workbench/WorkbenchShellContainer'
 import type { AiChatCommand } from '@/features/ai/AiChatPage'
 import type { AnalysisCommand } from '@/features/analysis/AnalysisPage'
+import { CaeBatchPanel } from '@/features/cae/CaeBatchPanel'
+import { useCaeBatches } from '@/features/cae/CaeBatchProvider'
+import { useCaeBatchConsole } from '@/features/cae/useCaeBatchConsole'
 import { JobsWorkspace } from '@/features/jobs/JobsPage'
 import { LaunchersWorkspace } from '@/features/launchers/LaunchersPage'
 import { MaterialDetail } from '@/features/materials/MaterialDetailPage'
@@ -106,9 +108,17 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     hasUnsavedCalculationWork: calculationDirty,
     allowAdminSection: auth.isPending ? null : Boolean(auth.user?.roles.includes('admin')),
   })
+  const setLayout = page.setLayout
+  const { inspectedBatchId, inspectBatch } = useCaeBatches()
+  const [settingTab, setSettingTab] = useState('launchers')
+  useCaeBatchConsole(runtimeConsole, page.bottomMode === 'console' && page.activeSection !== 'admin')
+  useEffect(() => {
+    if (!inspectedBatchId) return
+    setSettingTab('cae-jobs')
+    setLayout((current) => ({ ...current, activeSection: 'setting' }))
+  }, [inspectedBatchId, setLayout])
   const currentSection = page.activeSection
   const guardReplacement = page.guardReplacement
-  const setLayout = page.setLayout
   const [experimentAuthoringState, setExperimentAuthoringState] = useState<CadEditorAuthoringState | null>(null)
   const [analysisSettingsContainer, setAnalysisSettingsContainer] = useState<HTMLDivElement | null>(null)
   const [predictionVarsContainer, setPredictionVarsContainer] = useState<HTMLDivElement | null>(null)
@@ -250,21 +260,11 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     predictionState,
   })
 
-  const sessionRecordedSchemas = workbench.experimentDocument.simulationProgram?.recordedData ?? Object.freeze({})
-  const sessionRecordedRules = useMemo(
-    () => recordedDataRules(sessionRecordedSchemas, 'measurement.session-recorded-data'),
-    [sessionRecordedSchemas],
-  )
-  const sessionFlatRecordedData = useMemo(
-    () => flattenRecordedData(sessionRecordedSchemas, workbench.simulation.recordedData),
-    [sessionRecordedSchemas, workbench.simulation.recordedData],
-  )
-  const pendingResult = workbench.measurementActions.pendingRecordMeasurementId !== null
-  const activeRecordedData = pendingResult ? workbench.simulation.recordedData : workbench.selection.recordedData
-  const activeFlatRecordedData = pendingResult ? sessionFlatRecordedData : workbench.selection.flatRecordedData
-  const activeRecordedRows = pendingResult ? [] : workbench.selection.recordedRows
-  const activeRecordedSchemas = pendingResult ? sessionRecordedSchemas : workbench.selection.recordedSchemas
-  const activeRecordedRules = pendingResult ? sessionRecordedRules : workbench.selection.recordedRules
+  const activeRecordedData = workbench.selection.recordedData
+  const activeFlatRecordedData = workbench.selection.flatRecordedData
+  const activeRecordedRows = workbench.selection.recordedRows
+  const activeRecordedSchemas = workbench.selection.recordedSchemas
+  const activeRecordedRules = workbench.selection.recordedRules
   const rayPathState = useMemo(() => {
     try {
       return { bundles: parseRayPathBundles(activeRecordedSchemas, activeRecordedData), error: null }
@@ -365,7 +365,29 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         onSelectedItemChange={(item) => page.setLayout((current) => ({ ...current, help: { ...current.help, item } }))}
       />
     ) : (
-      <LaunchersWorkspace className="h-full" compact onRequestLogin={() => page.setDialog('account')} />
+      <PaneTabs
+        label="Setting"
+        options={[
+          { id: 'launchers', label: 'Launchers' },
+          { id: 'cae-jobs', label: 'CAE Jobs' },
+        ]}
+        value={settingTab}
+        onValueChange={(value) => {
+          setSettingTab(value)
+          inspectBatch(null)
+        }}
+        panels={{
+          launchers:
+            settingTab === 'launchers' ? (
+              <LaunchersWorkspace className="h-full" compact onRequestLogin={() => page.setDialog('account')} />
+            ) : null,
+          'cae-jobs': (
+            <p className="p-4 text-sm text-muted-foreground">
+              CAE 배치의 진행 상황을 확인하고 실패한 작업을 재시도하거나 배치를 취소할 수 있습니다.
+            </p>
+          ),
+        }}
+      />
     )
 
   const contextualRightPane =
@@ -391,7 +413,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               disabled={
                 !page.initialized ||
                 Boolean(workbench.experimentRecord && !workbench.experimentManageable) ||
-                pendingResult ||
                 workbench.measurementActions.busy ||
                 workbench.calculationDataActions.busy ||
                 workbench.saving !== null
@@ -441,6 +462,8 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       </Suspense>
     ) : page.activeSection === 'lab' ? null : page.activeSection === 'help' ? (
       <WorkbenchHelpDetail kind={page.help.kind} selectedItem={page.help.item} />
+    ) : settingTab === 'cae-jobs' ? (
+      <CaeBatchPanel />
     ) : (
       <JobsWorkspace className="h-full" compact onRequestLogin={() => page.setDialog('account')} />
     )
@@ -611,17 +634,9 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             dataReadable={experimentDataReadable}
             agentWorkspaceSession={workbench.agentWorkspaceSession}
             bottom={bottomDock}
-            busy={
-              workbench.measurementActions.busy ||
-              workbench.calculationDataActions.busy ||
-              Boolean(workbench.measurementActions.pendingRecordMeasurementId)
-            }
+            busy={workbench.measurementActions.busy || workbench.calculationDataActions.busy}
             calculationDataBusy={workbench.calculationDataActions.busy}
-            candidateEditingDisabled={
-              workbench.measurementActions.busy ||
-              workbench.calculationDataActions.busy ||
-              Boolean(workbench.measurementActions.pendingRecordMeasurementId)
-            }
+            candidateEditingDisabled={workbench.measurementActions.busy || workbench.calculationDataActions.busy}
             candidateSessionKey={`${workbench.experimentId ?? 'none'}`}
             candidateVars={workbench.candidateVars}
             contextPending={workbench.selectionRestoring}
@@ -668,11 +683,11 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         )}
         {!page.initialized ? (
           <div
-            aria-label="CAE 작업 복원 중"
+            aria-label="작업공간 복원 중"
             className="absolute inset-0 z-50 flex items-center justify-center bg-background/55 text-sm font-medium backdrop-blur-[1px]"
             role="status"
           >
-            작업을 복원하는 중입니다.
+            로컬 작업공간을 복원하는 중입니다.
           </div>
         ) : null}
       </div>
@@ -703,11 +718,9 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             <Badge className="h-5 rounded-sm bg-muted px-1.5">Preview only · Task 없음</Badge>
           ) : null}
           <Badge className="h-5 rounded-sm px-1.5">
-            {workbench.measurementActions.pendingRecordMeasurementId
-              ? `Measurement #${workbench.measurementActions.pendingRecordMeasurementId} · 결과 저장 재시도 필요`
-              : workbench.selection.measurement
-                ? `Measurement #${workbench.selection.measurement.id} · ${workbench.selection.measurement.recorded_at ? 'Recorded' : 'Prepared'}`
-                : 'Candidate preview'}
+            {workbench.selection.measurement
+              ? `Measurement #${workbench.selection.measurement.id} · ${workbench.selection.measurement.recorded_at ? 'Recorded' : 'Prepared'}`
+              : 'Candidate preview'}
           </Badge>
         </span>
         {workbench.measurementActions.busy ? (

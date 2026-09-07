@@ -189,11 +189,6 @@ class MeasurementBase(OwnedTimestampFields):
     calculation_data_count: int = 0
 
 
-class MeasurementSaveRecordedData(BaseModel):
-    experiment_record_id: StrictInt
-    data: Any
-
-
 class MeasurementRecordedDataLeaf(BaseModel):
     experiment_record_id: StrictInt
     quantity_kind: Optional[str] = None
@@ -217,10 +212,6 @@ class MeasurementCreateRequest(BaseModel):
     experiment_source_hash: str
     vars: Dict[str, Any]
     material_parameters: Dict[str, Any]
-
-
-class MeasurementRecordRequest(BaseModel):
-    recorded_data: List[MeasurementSaveRecordedData] = Field(default_factory=list)
 
 
 class MeasurementRecordedDataResponse(BaseModel):

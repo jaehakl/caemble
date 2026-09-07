@@ -14,6 +14,7 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
   const [recordedDataTree, setRecordedDataTree] = useState<MeasurementRecordedData>({})
   const [loading, setLoading] = useState(false)
   const requestSequence = useRef(0)
+  const requestedMeasurementId = useRef<number | null>(null)
   const activeQueryKeys = useRef<QueryKey[]>([])
 
   const cancelActiveQueries = useCallback(() => {
@@ -23,6 +24,7 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
   }, [queryClient])
 
   const clearMeasurement = useCallback(() => {
+    requestedMeasurementId.current = null
     requestSequence.current += 1
     cancelActiveQueries()
     setLoading(false)
@@ -32,6 +34,7 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
 
   useEffect(
     () => () => {
+      requestedMeasurementId.current = null
       requestSequence.current += 1
       cancelActiveQueries()
     },
@@ -39,7 +42,16 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
   )
 
   const loadMeasurement = useCallback(
-    async (value: number | SavedMeasurement, expectedExperimentId: number | null = experimentId) => {
+    async (
+      value: number | SavedMeasurement,
+      expectedExperimentId: number | null = experimentId,
+      options: Readonly<{ expectedSelectionId?: number | null }> = {},
+    ) => {
+      const id = typeof value === 'number' ? value : value.id
+      // A result event must not replace a newer selection still being fetched.
+      if (options.expectedSelectionId !== undefined && requestedMeasurementId.current !== options.expectedSelectionId)
+        return null
+      requestedMeasurementId.current = id
       const sequence = ++requestSequence.current
       cancelActiveQueries()
       setLoading(true)

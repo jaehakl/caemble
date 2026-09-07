@@ -2,504 +2,404 @@ import { useCallback, useState, type PropsWithChildren } from 'react'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type {
-  CalculationDataActions,
-  CalculationDataRunSummary,
-} from '@/features/calculation/useCalculationDataActions'
+import type { CaeBatch, CaeEvent } from '@/contracts/api/cae'
+import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
+import type { CalculationDataActions } from '@/features/calculation/useCalculationDataActions'
 import type { SavedMeasurement } from '@/features/cae-workbench/types'
-import type { CadDocumentController, SimulationController } from '@/features/viewer/workspace/useCadWorkspace'
 import type { CaeDataSelection } from './useCaeDataSelection'
+import { ApiError } from '@/api/http'
 import { useCaeMeasurementActions } from './useCaeMeasurementActions'
 
 const mocks = vi.hoisted(() => ({
-  calculateMeasurement: vi.fn(),
-  cancelCalculation: vi.fn(),
   create: vi.fn(),
-  experimentRecordList: vi.fn(),
+  read: vi.fn(),
+  wait: vi.fn(),
+  cancel: vi.fn(),
+  save: vi.fn(),
+  calculate: vi.fn(),
+  cancelCalculation: vi.fn(),
   invalidate: vi.fn(),
-  loadMeasurement: vi.fn(),
-  record: vi.fn(),
-  toastError: vi.fn(),
-  toastSuccess: vi.fn(),
-  toastWarning: vi.fn(),
+  update: vi.fn(),
+  inspect: vi.fn(),
+  load: vi.fn(),
+  generate: vi.fn(),
+  batches: [] as CaeBatch[],
+  events: [] as CaeEvent[],
 }))
+vi.mock('@/api/cae', () => ({ caeBatches: { create: mocks.create, read: mocks.read, cancel: mocks.cancel } }))
+vi.mock('@/api', () => ({ dbTables: { Measurement: { create: mocks.save } } }))
+vi.mock('@/features/cae/CaeBatchProvider', () => ({
+  useCaeBatches: () => ({
+    batches: mocks.batches,
+    events: mocks.events,
+    update: mocks.update,
+    readPage: mocks.read,
+    waitForChange: mocks.wait,
+    inspectBatch: mocks.inspect,
+  }),
+}))
+vi.mock('@/features/auth/use-auth', () => ({ usePrivateQueryScope: () => 'user:first' }))
+vi.mock('./queryInvalidation', () => ({ invalidateMeasurementMutation: mocks.invalidate }))
+vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() } }))
 
-vi.mock('@/api', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/api')>()
+const materialParameters = { experiment: { materials: {} }, tasks: { solve: { materials: {} } } }
+const document = {
+  draftTaskNames: [],
+  revision: 2,
+  successfulRevision: 2,
+  status: 'Ready',
+  runIsBusy: false,
+  variables: { length: 42 },
+  materialParameters,
+  evaluationTimeoutMs: 10_000,
+} as unknown as CadDocumentController
+const summary = { total: 1, completed: 1, succeeded: 1, failed: 0, cancelled: false }
+
+function batch(ids: readonly number[] = [41]): CaeBatch {
   return {
-    ...actual,
-    dbTables: {
-      ...actual.dbTables,
-      ExperimentRecord: { ...actual.dbTables.ExperimentRecord, listRows: mocks.experimentRecordList },
-      Measurement: {
-        ...actual.dbTables.Measurement,
-        create: mocks.create,
-        record: mocks.record,
-      },
-    },
+    id: 'batch-1',
+    experiment_id: 10,
+    mode: 'candidate',
+    total: ids.length,
+    created_count: ids.length,
+    succeeded: ids.length,
+    failed: 0,
+    cancelled: 0,
+    state: 'completed',
+    created_at: '2026-09-07T00:00:00Z',
+    updated_at: '2026-09-07T00:00:01Z',
+    finished_at: '2026-09-07T00:00:01Z',
+    last_event_id: 5,
+    read_event_id: 0,
+    jobs_total: ids.length,
+    jobs: ids.map((id, index) => ({
+      id: `job-${id}`,
+      index,
+      attempt_count: 1,
+      state: 'succeeded',
+      measurement_id: id,
+      progress: null,
+      last_error: null,
+      created_at: '',
+      updated_at: '',
+    })),
   }
-})
-
-vi.mock('@/features/auth/use-auth', () => ({
-  usePrivateQueryScope: () => 'user:first',
-}))
-
-vi.mock('./queryInvalidation', () => ({
-  invalidateMeasurementMutation: mocks.invalidate,
-}))
-
-vi.mock('sonner', () => ({
-  toast: {
-    error: mocks.toastError,
-    success: mocks.toastSuccess,
-    warning: mocks.toastWarning,
-  },
-}))
-
-const successfulCalculation: CalculationDataRunSummary = Object.freeze({
-  total: 1,
-  completed: 1,
-  succeeded: 1,
-  failed: 0,
-  cancelled: false,
-})
-
+}
 function measurement(id: number): SavedMeasurement {
   return {
     id,
     experiment_id: 10,
-    vars: { length: id },
-    material_parameters: { experiment: { materials: {} }, tasks: {} },
+    vars: { length: 42 },
+    material_parameters: materialParameters,
     recorded_at: null,
     calculation_data_count: 0,
   }
 }
-
-function document(overrides: Partial<CadDocumentController> = {}): CadDocumentController {
-  return {
-    candidateGeneration: 0,
-    completedCandidateGeneration: 0,
-    compiledSource: null,
-    diagnostics: [],
-    documentType: 'experiment',
-    draftTaskNames: [],
-    error: null,
-    evaluatedSnapshot: null,
-    evaluationTimeoutMs: 10_000,
-    generateCandidate: vi.fn(),
-    handleAddExperimentFile: vi.fn(),
-    handleAddExperimentTask: vi.fn(),
-    handleExperimentFileChange: vi.fn(),
-    handleRemoveExperimentFile: vi.fn(),
-    handleRemoveExperimentTask: vi.fn(),
-    handleRenderEnd: vi.fn(),
-    handleRenderError: vi.fn(),
-    handleRenderStart: vi.fn(),
-    handleSimulationCodeChange: vi.fn(),
-    handleSourceChange: vi.fn(),
-    materialParameters: { experiment: { materials: {} }, tasks: {} },
-    materialWarnings: [],
-    measurement: null,
-    readOnly: false,
-    resultSessionKey: null,
-    revision: 1,
-    runIsBusy: false,
-    scene: null,
-    sceneHash: null,
-    setEvaluationTimeoutMs: vi.fn(),
-    simulationProgram: {
-      pythonSource: '',
-      tasks: {},
-      recordedData: { output: { dtype: 'int32', tensorOrder: 0 } },
+function renderActions(selected: SavedMeasurement | null = null) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const wrapper = ({ children }: PropsWithChildren) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  )
+  return renderHook(
+    ({ sourceHash }) => {
+      const [row, setRow] = useState(selected)
+      const loadMeasurement = useCallback(async (id: number) => {
+        mocks.load(id)
+        const next = measurement(id)
+        setRow(next)
+        return next
+      }, [])
+      const selection = {
+        measurement: row,
+        loadMeasurement,
+        clearMeasurement: () => setRow(null),
+      } as unknown as CaeDataSelection
+      return useCaeMeasurementActions({
+        authenticated: true,
+        calculationDataActions: {
+          calculateMeasurement: mocks.calculate,
+          cancel: mocks.cancelCalculation,
+        } as unknown as CalculationDataActions,
+        experimentClean: true,
+        experimentDocument: document,
+        experimentId: 10,
+        experimentSourceHash: sourceHash,
+        onGenerateCandidate: mocks.generate,
+        selection,
+      })
     },
-    sourceReadOnly: false,
-    status: 'Ready',
-    successfulCandidateGeneration: 0,
-    successfulRevision: 1,
-    taskSceneHashes: {},
-    taskScenes: {},
-    validatedRevision: 1,
-    variables: { length: 1 },
-    varsSchema: null,
-    ...overrides,
-  }
+    { initialProps: { sourceHash: 'source-hash' }, wrapper },
+  )
 }
 
-function simulation(overrides: Partial<SimulationController> = {}): SimulationController {
-  return {
-    canRun: true,
-    cancel: vi.fn(),
-    process: {
-      runId: null,
-      status: 'idle',
-      engine: null,
-      stage: null,
-      error: null,
-      startedAt: null,
-      finishedAt: null,
-    },
-    recordedData: { output: { shape: [], storage: { kind: 'inline', value: 42 } } },
-    run: vi.fn(() => 'run-1'),
-    stale: false,
-    ...overrides,
-  }
-}
+beforeEach(() => {
+  vi.clearAllMocks()
+  mocks.update.mockImplementation((value: CaeBatch) => value)
+  mocks.wait.mockImplementation(
+    (_id: string, _previous: CaeBatch, signal: AbortSignal) =>
+      new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true })),
+  )
+  mocks.events = []
+  mocks.batches = []
+  mocks.create.mockResolvedValue(batch())
+  mocks.read.mockResolvedValue(batch())
+  mocks.cancel.mockResolvedValue({ ...batch(), state: 'cancelled' })
+  mocks.calculate.mockResolvedValue(summary)
+  mocks.invalidate.mockResolvedValue([])
+})
 
-describe('useCaeMeasurementActions workflows', () => {
-  let queryClient: QueryClient
-  let rows: Map<number, SavedMeasurement>
-
-  beforeEach(() => {
-    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    rows = new Map()
-    mocks.calculateMeasurement.mockReset().mockResolvedValue(successfulCalculation)
-    mocks.cancelCalculation.mockReset()
-    mocks.create.mockReset()
-    mocks.experimentRecordList.mockReset().mockResolvedValue({
-      items: [
-        {
-          id: 7,
-          experiment_id: 10,
-          name: 'output',
-          quantity_kind: null,
-          tensor_order: 0,
-          dtype: 'int32',
-          contract_hash: 'output-contract',
-        },
-      ],
-      total: 1,
-    })
-    mocks.invalidate.mockReset().mockResolvedValue([])
-    mocks.loadMeasurement.mockReset().mockImplementation(async (id: number) => rows.get(id) ?? null)
-    mocks.record.mockReset().mockResolvedValue(undefined)
-  })
-
-  function renderActions({
-    initialMeasurement = null,
-    initialDocument = document(),
-    initialSimulation = simulation(),
-    onGenerateCandidate = vi.fn(() => 1),
-  }: {
-    initialMeasurement?: SavedMeasurement | null
-    initialDocument?: CadDocumentController
-    initialSimulation?: SimulationController
-    onGenerateCandidate?: () => number | null
-  } = {}) {
-    const calculationDataActions = {
-      calculateMeasurement: mocks.calculateMeasurement,
-      cancel: mocks.cancelCalculation,
-    } as unknown as CalculationDataActions
-    const wrapper = ({ children }: PropsWithChildren) => (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+describe('server-owned CAE measurement actions', () => {
+  it('waits for shared events without polling and postprocesses each completion only once', async () => {
+    const initial = {
+      ...batch(),
+      state: 'running' as const,
+      finished_at: null,
+      succeeded: 0,
+      jobs: batch().jobs.map((job) => ({ ...job, state: 'running' })),
+    }
+    mocks.create.mockResolvedValue(initial)
+    let changed!: (value: CaeBatch) => void
+    mocks.wait.mockImplementation(
+      () =>
+        new Promise<CaeBatch>((resolve) => {
+          changed = resolve
+        }),
     )
-    return renderHook(
-      ({ experimentDocument, simulationController }) => {
-        const [selectedMeasurement, setSelectedMeasurement] = useState(initialMeasurement)
-        const clearMeasurement = useCallback(() => setSelectedMeasurement(null), [])
-        const loadMeasurement = useCallback(async (id: number) => {
-          const row = await mocks.loadMeasurement(id)
-          if (row) setSelectedMeasurement(row)
-          return row
-        }, [])
-        const selection = {
-          measurement: selectedMeasurement,
-          clearMeasurement,
-          loadMeasurement,
-        } as unknown as CaeDataSelection
-        return {
-          ...useCaeMeasurementActions({
-            authenticated: true,
-            calculationDataActions,
-            experimentClean: true,
-            experimentDocument,
-            experimentId: 10,
-            experimentSourceHash: 'source-hash',
-            onGenerateCandidate,
-            selection,
-            simulation: simulationController,
-          }),
-          clearSelectedMeasurement: clearMeasurement,
-          selectedMeasurement,
-        }
-      },
-      {
-        initialProps: { experimentDocument: initialDocument, simulationController: initialSimulation },
-        wrapper,
-      },
-    )
-  }
-
-  it('completes Save & Run only after Measurement, RecordedData, and CalculationData succeed', async () => {
-    const saved = measurement(41)
-    rows.set(saved.id, saved)
-    mocks.create.mockResolvedValue({ id: saved.id })
-    const run = vi.fn(() => 'save-run-1')
-    const rendered = renderActions({ initialMeasurement: measurement(40), initialSimulation: simulation({ run }) })
-    await waitFor(() => expect(mocks.experimentRecordList).toHaveBeenCalledOnce())
-
-    let completionPromise!: ReturnType<typeof rendered.result.current.saveAndRunCurrentAsync>
+    const rendered = renderActions()
+    let completion!: Promise<unknown>
     act(() => {
-      completionPromise = rendered.result.current.saveAndRunCurrentAsync()
+      completion = rendered.result.current.saveAndRunCurrentAsync()
     })
-    await waitFor(() => expect(rendered.result.current.selectedMeasurement?.id).toBe(saved.id))
-
-    rendered.rerender({
-      experimentDocument: document({ revision: 2, successfulRevision: 2 }),
-      simulationController: simulation({ run }),
-    })
-    await waitFor(() => expect(run).toHaveBeenCalledOnce())
-
-    rendered.rerender({
-      experimentDocument: document({ revision: 2, successfulRevision: 2 }),
-      simulationController: simulation({
-        run,
-        process: {
-          runId: 'save-run-1',
-          status: 'preparing',
-          engine: null,
-          stage: 'Solver 준비',
-          error: null,
-          startedAt: 1,
-          finishedAt: null,
-        },
-      }),
-    })
-    await waitFor(() => expect(rendered.result.current.stage).toBe('Solver 준비'))
-
-    rendered.rerender({
-      experimentDocument: document({ revision: 2, successfulRevision: 2 }),
-      simulationController: simulation({
-        run,
-        process: {
-          runId: 'save-run-1',
-          status: 'running',
-          engine: { name: 'test', version: '1' },
-          stage: 'Solver 실행',
-          error: null,
-          startedAt: 1,
-          finishedAt: null,
-        },
-      }),
-    })
-    await waitFor(() => expect(rendered.result.current.stage).toBe('Solver 실행'))
-
-    rendered.rerender({
-      experimentDocument: document({ revision: 2, successfulRevision: 2 }),
-      simulationController: simulation({
-        run,
-        process: {
-          runId: 'save-run-1',
-          status: 'succeeded',
-          engine: { name: 'test', version: '1' },
-          stage: '완료',
-          error: null,
-          startedAt: 1,
-          finishedAt: 2,
-        },
-      }),
-    })
-
-    let completion!: Awaited<typeof completionPromise>
+    await waitFor(() => expect(mocks.wait).toHaveBeenCalledOnce())
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30000)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(mocks.read).not.toHaveBeenCalled()
+    expect(mocks.calculate).not.toHaveBeenCalled()
     await act(async () => {
-      completion = await completionPromise
+      changed({ ...batch(), state: 'running', finished_at: null })
     })
-    expect(completion).toEqual({
-      attemptId: 1,
-      measurementId: saved.id,
-      recordedDataSaved: true,
-      calculationSummary: successfulCalculation,
+    await waitFor(() => expect(mocks.calculate).toHaveBeenCalledOnce())
+    await act(async () => {
+      changed(batch())
+      await completion
     })
-    expect(mocks.record).toHaveBeenCalledWith(saved.id, {
-      recorded_data: [{ experiment_record_id: 7, data: { shape: [], storage: { kind: 'inline', value: 42 } } }],
-    })
-    expect(mocks.calculateMeasurement).toHaveBeenCalledWith(saved.id, expect.any(Object))
-    expect(rendered.result.current.operation).toBeNull()
-    expect(rendered.result.current.pendingRecordMeasurementId).toBeNull()
+    expect(mocks.calculate).toHaveBeenCalledOnce()
+    expect(mocks.read).not.toHaveBeenCalled()
   })
 
-  it('cancels an active Save & Run and rejects its completion while preserving the Prepared Measurement', async () => {
-    const saved = measurement(42)
-    rows.set(saved.id, saved)
-    mocks.create.mockResolvedValue({ id: saved.id })
-    const cancelSimulation = vi.fn()
-    const run = vi.fn(() => 'save-run-2')
-    const rendered = renderActions({ initialSimulation: simulation({ cancel: cancelSimulation, run }) })
-
-    let completionPromise!: ReturnType<typeof rendered.result.current.saveAndRunCurrentAsync>
+  it('submits the fixed Candidate and material snapshot and awaits browser CalculationData', async () => {
+    let finishCalculation!: (value: typeof summary) => void
+    mocks.calculate.mockReturnValue(
+      new Promise((resolve) => {
+        finishCalculation = resolve
+      }),
+    )
+    const rendered = renderActions()
+    let completion!: ReturnType<typeof rendered.result.current.saveAndRunCurrentAsync>
     act(() => {
-      completionPromise = rendered.result.current.saveAndRunCurrentAsync()
+      completion = rendered.result.current.saveAndRunCurrentAsync()
     })
-    const rejection = completionPromise.catch((cause: unknown) => cause)
-    await waitFor(() => expect(rendered.result.current.selectedMeasurement?.id).toBe(saved.id))
-    rendered.rerender({
-      experimentDocument: document({ revision: 2, successfulRevision: 2 }),
-      simulationController: simulation({ cancel: cancelSimulation, run }),
+    await waitFor(() => expect(mocks.calculate).toHaveBeenCalledWith(41, expect.any(Object)))
+    expect(mocks.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: 'candidate',
+        vars: { length: 42 },
+        material_parameters: materialParameters,
+        experiment_source_hash: 'source-hash',
+      }),
+    )
+    expect(mocks.save).not.toHaveBeenCalled()
+    expect(rendered.result.current.busy).toBe(true)
+    await act(async () => {
+      finishCalculation(summary)
+      expect(await completion).toMatchObject({
+        measurementId: 41,
+        recordedDataSaved: true,
+        calculationSummary: summary,
+      })
     })
-    await waitFor(() => expect(rendered.result.current.cancelable).toBe(true))
+    expect(rendered.result.current.busy).toBe(false)
+  })
 
+  it('submits Repeat Run once and processes foreground postprocessing sequentially', async () => {
+    mocks.create.mockResolvedValue({ ...batch([41, 42]), mode: 'generate' })
+    let finishFirst!: (value: typeof summary) => void
+    mocks.calculate.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishFirst = resolve
+        }),
+    )
+    const rendered = renderActions()
+    act(() => {
+      rendered.result.current.repeatGenerateAndRun(2)
+    })
+    await waitFor(() => expect(mocks.calculate).toHaveBeenCalledTimes(1))
+    expect(mocks.create).toHaveBeenCalledOnce()
+    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ mode: 'generate', count: 2 }))
+    expect(mocks.generate).not.toHaveBeenCalled()
+    await act(async () => finishFirst(summary))
+    await waitFor(() => expect(mocks.calculate).toHaveBeenCalledTimes(2))
+    expect(mocks.calculate.mock.calls.map(([id]) => id)).toEqual([41, 42])
+  })
+
+  it('keeps the accepted job running after the observer unmounts', async () => {
+    let accept!: (value: CaeBatch) => void
+    mocks.create.mockReturnValue(
+      new Promise((resolve) => {
+        accept = resolve
+      }),
+    )
+    const rendered = renderActions()
+    let completion!: Promise<unknown>
+    act(() => {
+      completion = rendered.result.current.saveAndRunCurrentAsync().catch((cause: unknown) => cause)
+    })
+    rendered.unmount()
+    accept(batch())
+    expect(await completion).toMatchObject({ name: 'AbortError' })
+    expect(mocks.cancel).not.toHaveBeenCalled()
+    expect(mocks.calculate).not.toHaveBeenCalled()
+  })
+
+  it('detaches on source change without cancelling the server job', async () => {
+    let accept!: (value: CaeBatch) => void
+    mocks.create.mockReturnValue(
+      new Promise((resolve) => {
+        accept = resolve
+      }),
+    )
+    const rendered = renderActions()
+    let completion!: Promise<unknown>
+    act(() => {
+      completion = rendered.result.current.saveAndRunCurrentAsync().catch((cause: unknown) => cause)
+    })
+    rendered.rerender({ sourceHash: 'new-source-hash' })
+    await act(async () => {
+      accept(batch())
+      await completion
+    })
+    expect(mocks.cancel).not.toHaveBeenCalled()
+    expect(rendered.result.current.busy).toBe(false)
+  })
+
+  it('delivers an explicit cancellation even when registration is still in flight', async () => {
+    let accept!: (value: CaeBatch) => void
+    mocks.create.mockReturnValue(
+      new Promise((resolve) => {
+        accept = resolve
+      }),
+    )
+    const rendered = renderActions()
+    let completion!: Promise<unknown>
+    act(() => {
+      completion = rendered.result.current.saveAndRunCurrentAsync().catch((cause: unknown) => cause)
+    })
     act(() => rendered.result.current.cancel())
-
-    expect(await rejection).toEqual(
-      expect.objectContaining({ message: expect.stringContaining('Prepared Measurement #42') }),
-    )
-    expect(cancelSimulation).toHaveBeenCalledOnce()
-    expect(rendered.result.current.selectedMeasurement?.id).toBe(saved.id)
-    expect(rendered.result.current.operation).toBeNull()
-    expect(mocks.record).not.toHaveBeenCalled()
-  })
-
-  it('keeps the failed RecordedData request and retries it before automatic CalculationData', async () => {
-    const saved = measurement(51)
-    rows.set(saved.id, saved)
-    mocks.record.mockRejectedValueOnce(new Error('record unavailable')).mockResolvedValueOnce(undefined)
-    const run = vi.fn(() => 'measurement-run')
-    const rendered = renderActions({ initialMeasurement: saved, initialSimulation: simulation({ run }) })
-    await waitFor(() => expect(mocks.experimentRecordList).toHaveBeenCalledOnce())
-
-    act(() => {
-      expect(rendered.result.current.runSelected()).toBe('measurement-run')
-    })
-    rendered.rerender({
-      experimentDocument: document(),
-      simulationController: simulation({
-        run,
-        process: {
-          runId: 'measurement-run',
-          status: 'succeeded',
-          engine: { name: 'test', version: '1' },
-          stage: '완료',
-          error: null,
-          startedAt: 1,
-          finishedAt: 2,
-        },
-      }),
-    })
-    await waitFor(() => expect(rendered.result.current.pendingRecordMeasurementId).toBe(saved.id))
-    expect(mocks.calculateMeasurement).not.toHaveBeenCalled()
-
-    let retried = false
     await act(async () => {
-      retried = await rendered.result.current.retryRecord()
+      accept(batch())
+      await completion
     })
-
-    expect(retried).toBe(true)
-    expect(mocks.record).toHaveBeenCalledTimes(2)
-    expect(mocks.calculateMeasurement).toHaveBeenCalledWith(saved.id, expect.any(Object))
-    expect(rendered.result.current.pendingRecordMeasurementId).toBeNull()
-    expect(rendered.result.current.error).toBeNull()
-    expect(rendered.result.current.operation).toBeNull()
+    expect(mocks.cancel).toHaveBeenCalledWith('batch-1')
   })
 
-  it('runs every Repeat Run attempt sequentially and reports the accumulated result', async () => {
-    const first = measurement(61)
-    const second = measurement(62)
-    rows.set(first.id, first)
-    rows.set(second.id, second)
-    mocks.create.mockResolvedValueOnce({ id: first.id }).mockResolvedValueOnce({ id: second.id })
-    const generate = vi.fn().mockReturnValueOnce(1).mockReturnValueOnce(2)
-    const run = vi.fn().mockReturnValueOnce('repeat-1').mockReturnValueOnce('repeat-2')
-    const rendered = renderActions({ initialSimulation: simulation({ run }), onGenerateCandidate: generate })
-    await waitFor(() => expect(mocks.experimentRecordList).toHaveBeenCalledOnce())
+  it('reloads the selected Measurement after an event and never selects unrelated results', async () => {
+    const rendered = renderActions(measurement(41))
+    mocks.events = [
+      { id: 10, type: 'job.succeeded', batch_id: 'another-batch', measurement_id: 42, payload: {}, created_at: '' },
+    ]
+    rendered.rerender({ sourceHash: 'source-hash' })
+    expect(mocks.load).not.toHaveBeenCalled()
+    mocks.events = [
+      ...mocks.events,
+      { id: 11, type: 'job.succeeded', batch_id: 'batch-1', measurement_id: 41, payload: {}, created_at: '' },
+    ]
+    rendered.rerender({ sourceHash: 'source-hash' })
+    await waitFor(() => expect(mocks.load).toHaveBeenCalledWith(41))
+    expect(mocks.calculate).not.toHaveBeenCalled()
+  })
 
+  it('uses the saved Measurement ID for Prepared Run without creating another Measurement', async () => {
+    const rendered = renderActions(measurement(41))
     act(() => {
-      expect(rendered.result.current.repeatGenerateAndRun(2)).toBe(true)
+      expect(rendered.result.current.runSelected()).toEqual(expect.any(String))
     })
-    expect(rendered.result.current.generateAndRunBatch).toMatchObject({ attempt: 1, total: 2, repeat: true })
+    await waitFor(() => expect(rendered.result.current.busy).toBe(false))
+    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ mode: 'measurement', measurement_id: 41 }))
+    expect(mocks.save).not.toHaveBeenCalled()
+  })
 
-    rendered.rerender({
-      experimentDocument: document({
-        completedCandidateGeneration: 1,
-        revision: 2,
-        successfulCandidateGeneration: 1,
-        successfulRevision: 2,
-      }),
-      simulationController: simulation({ run }),
+  it('opens the existing batch for a linked Prepared Measurement instead of registering it again', () => {
+    mocks.batches = [
+      {
+        ...batch(),
+        state: 'completed',
+        succeeded: 0,
+        failed: 1,
+        jobs: batch().jobs.map((job) => ({ ...job, state: 'failed' })),
+      },
+    ]
+    const rendered = renderActions(measurement(41))
+    act(() => {
+      expect(rendered.result.current.runSelected()).toBeNull()
     })
-    await waitFor(() => expect(rendered.result.current.selectedMeasurement?.id).toBe(first.id))
-    rendered.rerender({
-      experimentDocument: document({
-        completedCandidateGeneration: 1,
-        revision: 3,
-        successfulCandidateGeneration: 1,
-        successfulRevision: 3,
-      }),
-      simulationController: simulation({ run }),
-    })
-    await waitFor(() => expect(run).toHaveBeenCalledTimes(1))
-    rendered.rerender({
-      experimentDocument: document({
-        completedCandidateGeneration: 1,
-        revision: 3,
-        successfulCandidateGeneration: 1,
-        successfulRevision: 3,
-      }),
-      simulationController: simulation({
-        run,
-        process: {
-          runId: 'repeat-1',
-          status: 'succeeded',
-          engine: { name: 'test', version: '1' },
-          stage: '완료',
-          error: null,
-          startedAt: 1,
-          finishedAt: 2,
-        },
-      }),
-    })
-    await waitFor(() => expect(generate).toHaveBeenCalledTimes(2))
-    expect(rendered.result.current.generateAndRunBatch).toMatchObject({
-      attempt: 2,
-      successes: 1,
-      failures: 0,
-    })
+    expect(mocks.inspect).toHaveBeenCalledWith('batch-1')
+    expect(mocks.create).not.toHaveBeenCalled()
+  })
 
-    act(() => rendered.result.current.clearSelectedMeasurement())
-    rendered.rerender({
-      experimentDocument: document({
-        completedCandidateGeneration: 2,
-        revision: 4,
-        successfulCandidateGeneration: 2,
-        successfulRevision: 4,
-      }),
-      simulationController: simulation({ run }),
+  it('opens a linked job outside the snapshot page when registration returns its batch', async () => {
+    mocks.create.mockRejectedValue(
+      new ApiError(409, 'Already linked', { detail: { batch_id: 'batch-1', job_id: 'job-41' } }),
+    )
+    const rendered = renderActions(measurement(41))
+    act(() => {
+      rendered.result.current.runSelected()
     })
-    await waitFor(() => expect(rendered.result.current.selectedMeasurement?.id).toBe(second.id))
-    rendered.rerender({
-      experimentDocument: document({
-        completedCandidateGeneration: 2,
-        revision: 5,
-        successfulCandidateGeneration: 2,
-        successfulRevision: 5,
-      }),
-      simulationController: simulation({ run }),
-    })
-    await waitFor(() => expect(run).toHaveBeenCalledTimes(2))
-    rendered.rerender({
-      experimentDocument: document({
-        completedCandidateGeneration: 2,
-        revision: 5,
-        successfulCandidateGeneration: 2,
-        successfulRevision: 5,
-      }),
-      simulationController: simulation({
-        run,
-        process: {
-          runId: 'repeat-2',
-          status: 'succeeded',
-          engine: { name: 'test', version: '1' },
-          stage: '완료',
-          error: null,
-          startedAt: 3,
-          finishedAt: 4,
-        },
-      }),
-    })
+    await waitFor(() => expect(mocks.inspect).toHaveBeenCalledWith('batch-1'))
+    expect(mocks.read).toHaveBeenCalledWith('batch-1')
+    expect(mocks.calculate).not.toHaveBeenCalled()
+  })
 
-    await waitFor(() => expect(rendered.result.current.operation).toBeNull())
-    expect(rendered.result.current.generateAndRunBatch).toBeNull()
-    expect(mocks.create).toHaveBeenCalledTimes(2)
-    expect(mocks.record).toHaveBeenCalledTimes(2)
-    expect(mocks.calculateMeasurement).toHaveBeenCalledTimes(2)
-    expect(mocks.toastSuccess).toHaveBeenCalledWith('Repeat Run 2회 완료: 성공 2회, 실패 0회')
+  it('visits every paginated result of a large batch exactly once', async () => {
+    const completed = { ...batch(Array.from({ length: 153 }, (_, index) => index + 1)), mode: 'generate' as const }
+    mocks.create.mockResolvedValue({ ...completed, jobs: completed.jobs.slice(0, 50) })
+    mocks.read.mockImplementation(async (_id: string, { offset, limit }: { offset: number; limit: number }) => ({
+      ...completed,
+      jobs: completed.jobs.slice(offset, offset + limit),
+    }))
+    const rendered = renderActions()
+    act(() => {
+      rendered.result.current.repeatGenerateAndRun(153)
+    })
+    await waitFor(() => expect(mocks.calculate).toHaveBeenCalledTimes(153))
+    expect(mocks.read.mock.calls.map(([, page]) => page)).toEqual([
+      { offset: 50, limit: 100 },
+      { offset: 150, limit: 100 },
+    ])
+    expect(mocks.calculate.mock.calls.map(([id]) => id)).toEqual(Array.from({ length: 153 }, (_, index) => index + 1))
+    expect(mocks.create).toHaveBeenCalledOnce()
+  })
+
+  it('reports a server-side cancellation as AbortError so Prediction stops its local loop', async () => {
+    mocks.create.mockResolvedValue({
+      ...batch(),
+      state: 'cancelled',
+      succeeded: 0,
+      cancelled: 1,
+      created_count: 0,
+      jobs_total: 0,
+      jobs: [],
+    })
+    const rendered = renderActions()
+    await act(async () => {
+      await expect(rendered.result.current.saveAndRunCurrentAsync()).rejects.toMatchObject({ name: 'AbortError' })
+    })
+    expect(mocks.calculate).not.toHaveBeenCalled()
   })
 })

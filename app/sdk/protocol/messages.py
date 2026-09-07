@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class SignalPayload(BaseModel):
@@ -18,6 +18,7 @@ class LauncherHello(BaseModel):
     launcher_name: str
     slave_app_ids: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    job_modes: dict[str, Literal["webrtc", "websocket"]] = Field(default_factory=dict)
 
 
 class LauncherHeartbeat(BaseModel):
@@ -42,7 +43,19 @@ class JobStart(BaseModel):
     job_id: str
     handler_type: str
     slave_app_id: str
-    offer: SignalPayload
+    job_mode: Literal["webrtc", "websocket"] = "webrtc"
+    offer: SignalPayload | None = None
+    websocket_url: str | None = None
+    token: str | None = None
+    attempt_count: int = 0
+
+    @model_validator(mode="after")
+    def require_connection(self) -> JobStart:
+        if self.job_mode == "webrtc" and self.offer is None:
+            raise ValueError("WebRTC jobs require an offer")
+        if self.job_mode == "websocket" and (not self.websocket_url or not self.token or self.attempt_count < 1):
+            raise ValueError("WebSocket jobs require a URL, token, and positive attempt_count")
+        return self
 
 
 class JobCancel(BaseModel):
@@ -88,12 +101,20 @@ class JobError(BaseModel):
     job_id: str
     code: str = "job_error"
     detail: str
+    attempt_count: int | None = None
 
 
 class JobCancelled(BaseModel):
     type: Literal["job.cancelled"]
     job_id: str
     reason: str = "cancelled"
+    attempt_count: int | None = None
+
+
+class JobCleaned(BaseModel):
+    type: Literal["job.cleaned"]
+    job_id: str
+    attempt_count: int
 
 
 class WorkerResetDone(BaseModel):
@@ -109,6 +130,7 @@ LauncherToServerMessage = Union[
         JobResult,
         JobError,
         JobCancelled,
+        JobCleaned,
         WorkerResetDone,
     ]
 
@@ -129,6 +151,7 @@ _LAUNCHER_TO_SERVER = {
     "job.result": JobResult,
     "job.error": JobError,
     "job.cancelled": JobCancelled,
+    "job.cleaned": JobCleaned,
     "worker.reset.done": WorkerResetDone,
 }
 _SERVER_TO_LAUNCHER = {

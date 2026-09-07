@@ -14,11 +14,6 @@ const mocks = vi.hoisted(() => ({
   resolveDocumentMaterials: vi.fn(),
 }))
 
-vi.mock('@/features/cae/client', () => ({
-  releaseRecordedDataAttachments: vi.fn(),
-  simulate: vi.fn(),
-}))
-
 vi.mock('@/features/runtime-console/types', () => ({ emitRuntimeActivity: vi.fn() }))
 
 vi.mock('@/lib/cad/compiler/monacoCompiler', () => {

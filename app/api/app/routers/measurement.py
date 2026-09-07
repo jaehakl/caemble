@@ -6,7 +6,6 @@ from models import (
     GetListRequestBase,
     MeasurementCreateRequest,
     MeasurementRecordedDataResponse,
-    MeasurementRecordRequest,
     UserData,
 )
 from service.measurement_service import (
@@ -14,7 +13,6 @@ from service.measurement_service import (
     delete_measurements as delete_measurement_rows,
     get_recorded_data,
     list_measurements as list_measurement_rows,
-    record_measurement as record_measurement_entity,
 )
 from user_auth.routes import get_db
 from user_auth.utils.auth_wrapper import require_roles
@@ -54,37 +52,6 @@ async def create_measurement(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Measurement conflicts with the current database state.",
-        ) from error
-
-
-@router.post("/{measurement_id}/record")
-async def record_measurement(
-    measurement_id: int,
-    request: MeasurementRecordRequest,
-    db: AsyncSession = Depends(get_db),
-    user: UserData = Depends(require_roles(["admin", "user"])),
-):
-    try:
-        return await record_measurement_entity(
-            db,
-            measurement_id,
-            request,
-            user=user,
-        )
-    except LookupError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(error),
-        ) from error
-    except ValueError as error:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(error),
-        ) from error
-    except IntegrityError as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="RecordedData conflicts with the current database state.",
         ) from error
 
 

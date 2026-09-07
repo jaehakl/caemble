@@ -4,7 +4,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
-from sqlalchemy import and_, cast, or_, select, update
+from sqlalchemy import and_, cast, func, or_, select, update
+from fastapi import HTTPException
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
@@ -12,10 +13,10 @@ from sqlalchemy.orm import load_only
 from gpstation.db import Job, Launcher
 from gpstation.models import JobData, JobSummary
 from settings import settings
-
+from gpstation.service.batches import fail_server_jobs, finish_job, job_event, serialize_events
 
 JOB_TERMINAL_STATES = {"succeeded", "failed", "cancelled", "killed"}
-JOB_ACTIVE_STATES = {"assigned", "answer_ready", "running"}
+JOB_ACTIVE_STATES = {"assigned", "answer_ready", "running", "finalizing"}
 JOB_IDLE_TIMEOUT = timedelta(hours=2)
 JOB_MAX_LIFETIME = timedelta(hours=24)
 
@@ -64,6 +65,8 @@ class JobService:
         slave_app_id: str,
         offer: dict[str, Any],
     ) -> Job:
+        if slave_app_id == "cae":
+            raise HTTPException(422, "CAE jobs must be submitted through /cae/batches.")
         job = Job(
             user_id=user_id,
             handler_type=handler_type,
@@ -138,7 +141,11 @@ class JobService:
         if user_id is not None:
             stmt = stmt.where(Job.user_id == user_id)
         if active_only:
-            stmt = stmt.where(Job.state.in_(("queued", "assigned", "answer_ready", "running")))
+            stmt = stmt.where(
+                Job.state.in_(
+                    ("preparing", "queued", "assigned", "answer_ready", "running", "finalizing")
+                )
+            )
         rows = (await db.execute(stmt)).all()
         return [
             JobSummary(
@@ -170,6 +177,7 @@ class JobService:
     ) -> tuple[Job, str] | None:
         if not idle_launcher_ids:
             return None
+        await serialize_events(db)
         assignment = (
             await db.execute(
                 select(Job, Launcher)
@@ -178,10 +186,13 @@ class JobService:
                     and_(
                         Launcher.user_id == Job.user_id,
                         Launcher.slave_app_ids.op("?")(Job.slave_app_id),
+                        func.coalesce(Launcher.job_modes.op("->>")(Job.slave_app_id), "webrtc")
+                        == Job.job_mode,
                     ),
                 )
                 .where(
                     Job.state == "queued",
+                    or_(Job.job_mode == "webrtc", Job.input.is_not(None)),
                     Launcher.id.in_(idle_launcher_ids),
                     Launcher.disconnected_at.is_(None),
                     Launcher.status == "ready",
@@ -209,8 +220,11 @@ class JobService:
         job.launcher_id = launcher_id
         job.state = "assigned"
         job.assigned_at = now
-        job.attempt_count = int(job.attempt_count or 0) + 1
+        if job.job_mode == "webrtc":
+            job.attempt_count = int(job.attempt_count or 0) + 1
         job.updated_at = now
+        if job.job_mode == "websocket":
+            await job_event(db, job, "job.assigned")
         await db.commit()
         return job, launcher_id
 
@@ -368,11 +382,8 @@ class JobService:
         user_id: str | None = None,
         launcher_id: str | None = None,
     ) -> Job | None:
-        stmt = (
-            select(Job)
-            .where(Job.id == job_id)
-            .execution_options(populate_existing=True)
-        )
+        await serialize_events(db)
+        stmt = select(Job).where(Job.id == job_id).execution_options(populate_existing=True)
         if user_id is not None:
             stmt = stmt.where(Job.user_id == user_id)
         if launcher_id is not None:
@@ -388,7 +399,9 @@ class JobService:
         now = utcnow()
         job.cancel_requested_at = now
         job.updated_at = now
-        if job.state == "queued":
+        if job.job_mode == "websocket":
+            await finish_job(db, job, "cancelled", "Cancelled by user.")
+        elif job.state == "queued":
             job.state = "killed"
             job.finished_at = now
         await db.commit()
@@ -403,6 +416,16 @@ class JobService:
         detail: str,
         state: str = "failed",
     ) -> Job | None:
+        await serialize_events(db)
+        server_job = await db.scalar(
+            select(Job)
+            .where(Job.id == job_id, Job.launcher_id == launcher_id, Job.job_mode == "websocket")
+            .with_for_update()
+        )
+        if server_job is not None:
+            await finish_job(db, server_job, state, detail)
+            await db.commit()
+            return server_job
         now = utcnow()
         job = await db.scalar(
             update(Job)
@@ -448,6 +471,7 @@ class JobService:
                     update(Job)
                     .where(
                         Job.launcher_id.in_(launcher_ids),
+                        Job.job_mode == "webrtc",
                         Job.state.in_(JOB_ACTIVE_STATES),
                     )
                     .values(state="failed", last_error=detail, finished_at=now, updated_at=now)
@@ -456,7 +480,7 @@ class JobService:
             ).all()
         )
         await db.commit()
-        return jobs
+        return jobs + await fail_server_jobs(db, detail=detail, launcher_ids=launcher_ids)
 
     @staticmethod
     async def recover_after_server_restart(db: AsyncSession) -> list[Job]:
@@ -472,6 +496,7 @@ class JobService:
                     update(Job)
                     .where(
                         Job.launcher_id.is_not(None),
+                        Job.job_mode == "webrtc",
                         Job.state.in_(JOB_ACTIVE_STATES),
                     )
                     .values(
@@ -489,6 +514,7 @@ class JobService:
 
     @staticmethod
     async def expire_stale_jobs(db: AsyncSession) -> list[Job]:
+        await serialize_events(db)
         now = utcnow()
         jobs = list(
             (
@@ -496,13 +522,30 @@ class JobService:
                     select(Job)
                     .where(
                         or_(
-                            and_(Job.state == "queued", Job.created_at < now - JOB_MAX_LIFETIME),
                             and_(
+                                Job.job_mode == "webrtc",
+                                Job.state == "queued",
+                                Job.created_at < now - JOB_MAX_LIFETIME,
+                            ),
+                            and_(
+                                Job.job_mode == "webrtc",
                                 Job.state.in_(JOB_ACTIVE_STATES),
                                 or_(
                                     Job.created_at < now - JOB_MAX_LIFETIME,
                                     Job.updated_at < now - JOB_IDLE_TIMEOUT,
                                 ),
+                            ),
+                            and_(
+                                Job.job_mode == "websocket",
+                                Job.state == "assigned",
+                                Job.assigned_at < now - timedelta(minutes=2),
+                            ),
+                            and_(
+                                Job.job_mode == "websocket",
+                                Job.state.in_(("running", "finalizing")),
+                                # The live worker connection checks idle frames; a
+                                # progressing large upload must not expire here.
+                                Job.started_at < now - timedelta(hours=2, minutes=3),
                             ),
                         )
                     )
@@ -516,6 +559,9 @@ class JobService:
 
         launcher_ids: set[str] = set()
         for job in jobs:
+            if job.job_mode == "websocket":
+                await finish_job(db, job, "failed", "Worker execution or connection timed out.")
+                continue
             job.state = "failed"
             job.last_error = (
                 "job lifetime exceeded"

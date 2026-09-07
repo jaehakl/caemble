@@ -1,7 +1,10 @@
 # Caemble CAE worker
 
-The CAE worker accepts a trusted built Measurement, executes its Solvers,
-and streams the RecordedData produced by the Experiment.
+The CAE worker receives a trusted built Measurement from the GPStation server
+over its job WebSocket, executes its Solvers, and uploads RecordedData directly
+to the server. The launcher controls its process; browsers observe server events.
+CAE uses only server-master jobs. AI and other WebRTC slaves retain their existing
+master connections.
 
 Read [Solver development](../../../docs/solver-development.md) and this
 project's `AGENTS.md` completely before adding or changing a Solver.
@@ -76,6 +79,13 @@ tensor encoding. Existing tensor schemas keep their wire format. An explicit
 group can additionally preserve domain coordinates, connectivity, identity and
 field metadata using the projection names in the Solver development guide.
 The `/docs` route documents authoring syntax and examples.
+
+Each record retains its resources until the server confirms durable staging.
+Completion is sent only after every record ACK and after invocation children,
+deferred process cleanup, and run resources have closed. The launcher releases
+its job slot after the server completion ACK and the worker's `job.cleaned` message.
+Cancellation and connection loss also await cleanup. Interrupted computations fail;
+retry is an explicit server action, and the worker never restarts computation itself.
 
 ## Tests
 

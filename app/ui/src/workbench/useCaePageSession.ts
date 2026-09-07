@@ -93,7 +93,7 @@ export function useCaePageSession(
   useEffect(
     () => () => {
       const snapshot = persistenceSnapshotRef.current
-      snapshot.workbench.measurementActions.cancel()
+      snapshot.workbench.measurementActions.detach()
       snapshot.workbench.calculationDataActions.cancel()
       if (snapshot.initialized && snapshot.persistenceAvailable) {
         void saveWorkbenchDraft(queryScope, snapshot.createDraft(snapshot.layout)).catch(() => undefined)
@@ -109,14 +109,8 @@ export function useCaePageSession(
         calculationRunning: workbench.calculationDataActions.busy,
         experimentDirty: workbench.hasUnsavedExperimentWork,
         measurementRunning: workbench.measurementActions.busy,
-        pendingRecord: Boolean(workbench.measurementActions.pendingRecordMeasurementId),
         saving: Boolean(workbench.saving),
       })
-      if (disposition === 'blocked-by-pending-record') {
-        toast.error('실행 결과 저장을 다시 시도한 뒤 Experiment 또는 Measurement를 바꾸세요.')
-        cancel?.()
-        return
-      }
       if (disposition === 'blocked-by-save' || disposition === 'blocked-by-running-workflow') {
         toast.error(
           disposition === 'blocked-by-save'
@@ -147,7 +141,6 @@ export function useCaePageSession(
       workbench.hasUnsavedExperimentWork,
       workbench.calculationDataActions.busy,
       workbench.measurementActions.busy,
-      workbench.measurementActions.pendingRecordMeasurementId,
       workbench.saving,
     ],
   )
@@ -320,19 +313,14 @@ export function useCaePageSession(
   }, [createDraft, initialized, layout, persistenceAvailable, queryScope])
 
   useEffect(() => {
-    if (
-      !workbench.hasUnsavedWork &&
-      !hasUnsavedCalculationWork &&
-      !workbench.measurementActions.pendingRecordMeasurementId
-    )
-      return
+    if (!workbench.hasUnsavedWork && !hasUnsavedCalculationWork) return
     const beforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault()
       event.returnValue = ''
     }
     window.addEventListener('beforeunload', beforeUnload)
     return () => window.removeEventListener('beforeunload', beforeUnload)
-  }, [hasUnsavedCalculationWork, workbench.hasUnsavedWork, workbench.measurementActions.pendingRecordMeasurementId])
+  }, [hasUnsavedCalculationWork, workbench.hasUnsavedWork])
 
   const requestRunSelected = useCallback(() => {
     const runId = workbenchRef.current.measurementActions.runSelected()

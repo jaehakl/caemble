@@ -12,6 +12,9 @@ dependencies = [
 slave = [
     "aiortc>=1.9,<2.0",
 ]
+server-slave = [
+    "websockets>=12.0,<16.0",
+]
 
 [tool.poetry]
 packages = [

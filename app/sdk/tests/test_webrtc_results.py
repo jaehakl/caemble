@@ -3,10 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import numpy as np
 import pytest
 
-from app.kernel.transport.tensor import encode_recorded_data
 from sdk.protocol.messages import DataChannelAttachment, DataChannelMessage
 from sdk.slave.app import SlaveApp, SlaveContext
 from sdk.slave.channel import (
@@ -53,45 +51,8 @@ async def test_small_job_result_keeps_inline_wire_shape() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fdtd_time_field_payload_uses_transport_attachment() -> None:
-    rng = np.random.default_rng(1)
-    field = np.zeros((91, 4, 4, 2, 3), dtype=np.float32)
-    field[..., 2] = rng.standard_normal(field.shape[:-1]).astype(np.float32)
-    ticks = [
-        {"name": "time", "unit": "s", "ticks": np.linspace(0, 15e-15, 91)},
-        {"name": "z", "unit": "m", "ticks": np.array([-0.3e-6, -0.1e-6, 0.1e-6, 0.3e-6])},
-        {"name": "y", "unit": "m", "ticks": np.array([-0.3e-6, -0.1e-6, 0.1e-6, 0.3e-6])},
-        {"name": "x", "unit": "m", "ticks": np.array([0.65e-6, 0.85e-6])},
-    ]
-    encoded, attachments, _ = encode_recorded_data(
-        "timeElectricField",
-        {"field": {"dtype": "float32"}},
-        {"field": {"value": field, "axes": ticks}},
-        1,
-    )
-    payload = {
-        "kind": "record",
-        "sequence": 1,
-        "name": "timeElectricField",
-        "value": encoded,
-    }
-    inline_bytes = len(
-        json.dumps(
-            {
-                "kind": "job.result",
-                "id": "call-2",
-                "type": "cae.simulation.next.result",
-                "payload": payload,
-                "attachments": [],
-            },
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    )
-    assert not attachments
-    assert isinstance(encoded["field"]["axes"][0]["ticks"], list)
-    assert inline_bytes > 65_536
-
+async def test_large_result_keeps_user_attachment_and_reconstructs_payload() -> None:
+    payload = {"value": "large payload " * 10000}
     channel = FakeDataChannel()
     user_attachment = DataChannelAttachment(
         id="gpstation-job-result-payload-call-2-0",
@@ -101,7 +62,7 @@ async def test_fdtd_time_field_payload_uses_transport_attachment() -> None:
     )
     message = DataChannelMessage(
         id="result",
-        type="cae.simulation.next.result",
+        type="example.result",
         payload=payload,
         attachments=[user_attachment],
     )

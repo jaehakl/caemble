@@ -35,7 +35,6 @@ import type {
   MeasurementCreateRequest,
   MeasurementRecord,
   MeasurementRecordedData,
-  MeasurementRecordRequest,
   PersistedCalculationRecord,
   PersistedMaterialNameRecord,
   PersistedMaterialParameterQualifierRecord,
@@ -349,11 +348,6 @@ export const dbTables = {
       }),
     create: (payload: MeasurementCreateRequest) =>
       request<{ id: number }>('post', '/measurement/create', payload, {
-        ...csrfOmitted,
-        validate: parseIdResponse,
-      }),
-    record: (id: number, payload: MeasurementRecordRequest) =>
-      request<{ id: number }>('post', `/measurement/${id}/record`, payload, {
         ...csrfOmitted,
         validate: parseIdResponse,
       }),

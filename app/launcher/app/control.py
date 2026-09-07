@@ -119,7 +119,11 @@ async def handle_server_message(manager: WorkerManager, value: Any) -> None:
             job_id=message.job_id,
             handler_type=message.handler_type,
             slave_app_id=message.slave_app_id,
-            offer=message.offer.model_dump(exclude_none=True),
+            offer=message.offer.model_dump(exclude_none=True) if message.offer else None,
+            job_mode=message.job_mode,
+            websocket_url=message.websocket_url,
+            token=message.token,
+            attempt_count=message.attempt_count,
         )
         return
     if isinstance(message, JobCancel):
@@ -160,5 +164,6 @@ def launcher_hello_payload(settings: LauncherSettings, registry: SlaveAppRegistr
         "type": "launcher.hello",
         "launcher_name": settings.launcher_name,
         "slave_app_ids": slave_app_ids,
+        "job_modes": {app_id: registry.require(app_id).job_mode for app_id in slave_app_ids},
         "metadata": registry.metadata(slave_app_ids),
     }

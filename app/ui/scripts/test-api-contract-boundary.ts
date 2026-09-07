@@ -24,7 +24,7 @@ const tableSurface = {
   MaterialParameterQualifier: ['recordType', 'listRows', 'upsertRow', 'deleteRows'],
   Experiment: ['recordType', 'listRows', 'save', 'deleteRows', 'usage', 'available', 'demoCandidates', 'replaceDemos'],
   ExperimentRecord: ['recordType', 'listRows'],
-  Measurement: ['recordType', 'listRows', 'create', 'record', 'readRecordedData', 'deleteRows'],
+  Measurement: ['recordType', 'listRows', 'create', 'readRecordedData', 'deleteRows'],
   RecordedData: ['recordType', 'listRows'],
   Calculation: ['recordType', 'listRows', 'upsertRow', 'deleteRows'],
   CalculationData: ['recordType', 'listRows', 'analysis', 'analysisStatus', 'missing', 'save', 'scalars'],

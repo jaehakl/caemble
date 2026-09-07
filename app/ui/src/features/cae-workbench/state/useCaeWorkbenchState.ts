@@ -269,12 +269,11 @@ export function useCaeWorkbenchState(
     )
   }, [])
 
-  const { experimentDocument, simulation } = useCadWorkspace(experiment, handleExperimentChange, {
+  const { experimentDocument } = useCadWorkspace(experiment, handleExperimentChange, {
     candidateVars: candidateVars ?? undefined,
     candidateVarsPending: pendingMeasurementId !== null,
     candidateProvenance: selection.measurement || pendingMeasurementId ? 'persisted-measurement' : 'editable',
     frozenMaterialSnapshot: candidateMaterialParameters,
-    runtimeEnabled: authenticated,
     resetKey: workspaceSession,
     sourceOnlyMaterials: !authenticated,
     onActivity,
@@ -413,7 +412,7 @@ export function useCaeWorkbenchState(
     experimentSourceHash: experimentRecord?.source_hash ?? null,
     onGenerateCandidate: generateCandidate,
     selection,
-    simulation,
+    onActivity,
   })
 
   const setCandidateVariables = useCallback(
@@ -786,7 +785,6 @@ export function useCaeWorkbenchState(
     measurementActions,
     calculationDataActions,
     experimentDocument,
-    simulation,
     applyExperiment,
     loadExperiment,
     newExperiment,

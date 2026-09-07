@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
+import subprocess
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -38,8 +40,9 @@ class WorkerManager:
         self.current_job_id: str | None = None
         self.worker_status = "idle"
         self.cancel_escalation_task: asyncio.Task[None] | None = None
-        self.cancel_cleanup_confirmed_job_id: str | None = None
-        self.cancel_terminal_forwarded_job_id: str | None = None
+        self.current_job_mode = "webrtc"
+        self.current_attempt_count = 0
+        self.cleaned_attempt: tuple[str, int] | None = None
 
     def current_worker_slave_app_id(self) -> str | None:
         return self.worker.slave_app_id if self.worker is not None else None
@@ -53,7 +56,11 @@ class WorkerManager:
         job_id: str,
         handler_type: str,
         slave_app_id: str,
-        offer: dict[str, Any],
+        offer: dict[str, Any] | None = None,
+        job_mode: str = "webrtc",
+        websocket_url: str | None = None,
+        token: str | None = None,
+        attempt_count: int = 0,
     ) -> None:
         if self.current_job_id is not None:
             await self.send_control(
@@ -76,10 +83,17 @@ class WorkerManager:
             )
             return
 
+        if self.registry.require(slave_app_id).job_mode != job_mode:
+            await self.send_control({"type": "job.error", "job_id": job_id, "attempt_count": attempt_count,
+                                     "code": "job_mode_mismatch", "detail": "slave job mode does not match assignment"})
+            if job_mode == "websocket":
+                await self.send_control({"type": "job.cleaned", "job_id": job_id, "attempt_count": attempt_count})
+            return
+        self.current_job_mode = job_mode
+        self.current_attempt_count = attempt_count
+        self.cleaned_attempt = None
         self.current_job_id = job_id
         self.worker_status = "starting"
-        self.cancel_cleanup_confirmed_job_id = None
-        self.cancel_terminal_forwarded_job_id = None
         try:
             await self.ensure_worker(slave_app_id)
         except Exception as exc:
@@ -93,10 +107,12 @@ class WorkerManager:
                 {
                     "type": "job.error",
                     "job_id": job_id,
+                    **({"attempt_count": attempt_count} if job_mode == "websocket" else {}),
                     "code": "worker_start_failed",
                     "detail": str(exc),
                 }
             )
+            await self.confirm_cleanup(job_id, attempt_count)
             return
 
         if self.worker is None or self.worker.process.stdin is None:
@@ -106,10 +122,12 @@ class WorkerManager:
                 {
                     "type": "job.error",
                     "job_id": job_id,
+                    **({"attempt_count": attempt_count} if job_mode == "websocket" else {}),
                     "code": "worker_missing",
                     "detail": "worker subprocess is not running",
                 }
             )
+            await self.confirm_cleanup(job_id, attempt_count)
             return
 
         self.worker_status = "busy"
@@ -121,7 +139,10 @@ class WorkerManager:
                         "job_id": job_id,
                         "handler_type": handler_type,
                         "slave_app_id": slave_app_id,
-                        "offer": offer,
+                        **({"offer": offer} if job_mode == "webrtc" else {
+                            "job_mode": job_mode, "websocket_url": websocket_url,
+                            "token": token, "attempt_count": attempt_count,
+                        }),
                     }
                 )
             )
@@ -133,10 +154,13 @@ class WorkerManager:
                 {
                     "type": "job.error",
                     "job_id": job_id,
+                    **({"attempt_count": attempt_count} if job_mode == "websocket" else {}),
                     "code": "worker_ipc_failed",
                     "detail": str(exc),
                 }
             )
+            await self.reset_worker("worker IPC failed", cancel_current_job=False)
+            await self.confirm_cleanup(job_id, attempt_count)
 
     async def ensure_worker(self, slave_app_id: str) -> None:
         if self.worker is not None and self.worker.process.returncode is None and self.worker.slave_app_id == slave_app_id:
@@ -155,6 +179,7 @@ class WorkerManager:
             stderr=asyncio.subprocess.PIPE,
             env=subprocess_env(self.settings),
             cwd=slave_app.project_dir,
+            start_new_session=os.name != "nt" and slave_app.job_mode == "websocket",
         )
         ready_event = asyncio.Event()
         worker = ManagedWorker(
@@ -180,13 +205,11 @@ class WorkerManager:
     async def cancel_job(self, job_id: str, reason: str) -> None:
         if self.current_job_id != job_id:
             return
-        if self.cancel_cleanup_confirmed_job_id != job_id:
-            self.cancel_cleanup_confirmed_job_id = None
-        if self.cancel_terminal_forwarded_job_id != job_id:
-            self.cancel_terminal_forwarded_job_id = None
         if self.worker is None or self.worker.process.stdin is None or self.worker.process.returncode is not None:
             self.cancel_cancel_escalation()
-            await self.send_control({"type": "job.cancelled", "job_id": job_id, "reason": reason})
+            await self.send_control({"type": "job.cancelled", "job_id": job_id, "reason": reason,
+                                     **({"attempt_count": self.current_attempt_count} if self.current_job_mode == "websocket" else {})})
+            await self.confirm_cleanup(job_id, self.current_attempt_count)
             self.current_job_id = None
             self.worker_status = "idle"
             return
@@ -201,17 +224,18 @@ class WorkerManager:
 
     async def reset_worker(self, reason: str, *, cancel_current_job: bool = True, notify_reset: bool = False) -> None:
         self.cancel_cancel_escalation()
-        self.cancel_cleanup_confirmed_job_id = None
-        self.cancel_terminal_forwarded_job_id = None
         worker = self.worker
         current_job_id = self.current_job_id if cancel_current_job else None
+        attempt_count = self.current_attempt_count
         self.worker = None
         if cancel_current_job:
             self.current_job_id = None
         self.worker_status = "idle"
         if worker is None:
             if current_job_id is not None:
-                await self.send_control({"type": "job.cancelled", "job_id": current_job_id, "reason": reason})
+                await self.send_control({"type": "job.cancelled", "job_id": current_job_id, "reason": reason,
+                                         **({"attempt_count": attempt_count} if self.current_job_mode == "websocket" else {})})
+                await self.confirm_cleanup(current_job_id, attempt_count)
             if notify_reset:
                 await self.send_control({"type": "worker.reset.done"})
             return
@@ -225,12 +249,27 @@ class WorkerManager:
         try:
             await asyncio.wait_for(worker.process.wait(), timeout=3)
         except TimeoutError:
-            worker.process.terminate()
+            if self.registry.require(worker.slave_app_id).job_mode == "websocket":
+                if os.name == "nt":
+                    killer = await asyncio.create_subprocess_exec(
+                        "taskkill", "/PID", str(worker.process.pid), "/T", "/F",
+                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
+                    await killer.wait()
+                    if killer.returncode != 0 and worker.process.returncode is None:
+                        raise RuntimeError("Could not terminate the server worker process tree")
+                else:
+                    os.killpg(worker.process.pid, signal.SIGKILL)
+            else:
+                worker.process.terminate()
             await worker.process.wait()
         worker.stdout_task.cancel()
         worker.stderr_task.cancel()
         if current_job_id is not None:
-            await self.send_control({"type": "job.cancelled", "job_id": current_job_id, "reason": reason})
+            await self.send_control({"type": "job.cancelled", "job_id": current_job_id, "reason": reason,
+                                         **({"attempt_count": attempt_count} if self.current_job_mode == "websocket" else {})})
+            await self.confirm_cleanup(current_job_id, attempt_count)
         if notify_reset:
             await self.send_control({"type": "worker.reset.done"})
 
@@ -250,23 +289,26 @@ class WorkerManager:
             if worker is not None and worker.process is process and not worker.stopping:
                 if not worker.ready:
                     ready_event.set()
+                    # ensure_worker owns startup failure and emits one terminal
+                    # error after it has stopped this process.
+                    return
                 failed_job_id = self.current_job_id
-                terminal_was_forwarded = self.cancel_terminal_forwarded_job_id == failed_job_id
                 self.worker = None
                 self.current_job_id = None
                 self.worker_status = "error"
                 self.cancel_cancel_escalation()
-                self.cancel_cleanup_confirmed_job_id = None
-                self.cancel_terminal_forwarded_job_id = None
-                if failed_job_id is not None and not terminal_was_forwarded:
+                if failed_job_id is not None:
+                    await process.wait()
                     await self.send_control(
                         {
                             "type": "job.error",
                             "job_id": failed_job_id,
+                            **({"attempt_count": self.current_attempt_count} if self.current_job_mode == "websocket" else {}),
                             "code": "worker_exit",
                             "detail": "worker subprocess exited",
                         }
                     )
+                    await self.confirm_cleanup(failed_job_id, self.current_attempt_count)
 
     async def read_worker_stderr(self, process: asyncio.subprocess.Process) -> None:
         while True:
@@ -288,22 +330,14 @@ class WorkerManager:
                 self.worker.ready = True
                 self.worker.ready_event.set()
             return
-        if message_type == "cae.run.cleaned":
-            job_id = str(message.get("job_id") or "")
-            if (
-                self.current_worker_slave_app_id() == "cae"
-                and self.current_job_id == job_id
-            ):
-                self.cancel_cleanup_confirmed_job_id = job_id
-                if (
-                    self.worker_status == "cancelling"
-                    and self.cancel_terminal_forwarded_job_id == job_id
-                ):
-                    self.cancel_cancel_escalation()
-                    self.current_job_id = None
-                    self.worker_status = "idle"
-                    self.cancel_cleanup_confirmed_job_id = None
-                    self.cancel_terminal_forwarded_job_id = None
+        if message_type == "job.cleaned":
+            if (self.current_job_mode == "websocket" and message.get("job_id") == self.current_job_id
+                    and message.get("attempt_count") == self.current_attempt_count):
+                job_id, attempt_count = self.current_job_id, self.current_attempt_count
+                self.cancel_cancel_escalation()
+                self.current_job_id = None
+                self.worker_status = "idle"
+                await self.confirm_cleanup(job_id, attempt_count)
             return
         if message_type in {
             "job.answer",
@@ -313,55 +347,56 @@ class WorkerManager:
             "job.error",
             "job.cancelled",
         }:
+            if self.current_job_mode == "websocket" and (
+                message.get("job_id") != self.current_job_id
+                or message.get("attempt_count") != self.current_attempt_count
+            ):
+                return
             await self.send_control(message)
             if message_type in {"job.result", "job.error", "job.cancelled"}:
-                job_id = str(message.get("job_id") or "")
-                if (
-                    self.current_worker_slave_app_id() == "cae"
-                    and self.current_job_id == job_id
-                ):
-                    self.cancel_terminal_forwarded_job_id = job_id
-                    if self.cancel_cleanup_confirmed_job_id != job_id:
-                        self.worker_status = "cancelling"
-                        if self.cancel_escalation_task is None:
-                            self.cancel_escalation_task = asyncio.create_task(
-                                self.escalate_cancel(job_id, "CAE run cleanup was not confirmed")
-                            )
-                        return
+                if self.current_job_mode == "websocket":
+                    self.worker_status = "cancelling"
+                    if self.cancel_escalation_task is None:
+                        self.cancel_escalation_task = asyncio.create_task(
+                            self.escalate_cancel(self.current_job_id, "worker cleanup was not confirmed")
+                        )
+                    return
                 self.cancel_cancel_escalation()
                 self.current_job_id = None
                 self.worker_status = "idle"
-                self.cancel_cleanup_confirmed_job_id = None
-                self.cancel_terminal_forwarded_job_id = None
             return
         if message_type == "error" and self.current_job_id is not None:
             await self.send_control(
                 {
                     "type": "job.error",
                     "job_id": self.current_job_id,
+                    **({"attempt_count": self.current_attempt_count} if self.current_job_mode == "websocket" else {}),
                     "code": str(message.get("code") or "worker_error"),
                     "detail": str(message.get("detail") or "worker error"),
                 }
             )
+            if self.current_job_mode == "websocket":
+                await self.reset_worker("worker runtime failed")
+                return
             self.current_job_id = None
             self.worker_status = "idle"
             self.cancel_cancel_escalation()
-            self.cancel_cleanup_confirmed_job_id = None
-            self.cancel_terminal_forwarded_job_id = None
+
+    async def confirm_cleanup(self, job_id: str, attempt_count: int) -> None:
+        attempt = (job_id, attempt_count)
+        if self.current_job_mode != "websocket" or self.cleaned_attempt == attempt:
+            return
+        self.cleaned_attempt = attempt
+        await self.send_control({"type": "job.cleaned", "job_id": job_id, "attempt_count": attempt_count})
 
     async def escalate_cancel(self, job_id: str, reason: str) -> None:
         try:
             await asyncio.sleep(CANCEL_RESET_GRACE_SECONDS)
             if self.current_job_id == job_id:
-                terminal_was_forwarded = self.cancel_terminal_forwarded_job_id == job_id
                 await self.reset_worker(
                     f"job {job_id} did not stop within {CANCEL_RESET_GRACE_SECONDS}s: {reason}",
-                    cancel_current_job=not terminal_was_forwarded,
                     notify_reset=False,
                 )
-                if terminal_was_forwarded:
-                    self.current_job_id = None
-                    self.worker_status = "idle"
         except asyncio.CancelledError:
             return
         finally:
