@@ -1,6 +1,6 @@
 # CAE Solver agent instructions
 
-Read `../../../docs/solver-development.md` completely before editing this subtree for a Solver task.
+Read `../../../docs/development/solver-development.md` completely before editing this subtree for a Solver task.
 
 - Query and modify Solver contracts through `catalogctl --database <draft>` and its Draft SQLite workflow. Never use raw SQL or create a Solver `manifest.json`.
 - Add physics implementation only under `app/solvers/<solver_package>/` and keep solver-specific calculations there.

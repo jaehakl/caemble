@@ -7,7 +7,7 @@ export default tseslint.config(
   {
     ignores: [
       'dist/**',
-      'dist-cae/**',
+      'dist-cli/**',
       'node_modules/**',
       'src/lib/cad/api/*.d.ts',
       'src/lib/cad/elements/generated.ts',
@@ -40,7 +40,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['scripts/**/*.{js,mjs,cjs,ts,tsx}', 'src/server/**/*.ts', '*.{js,mjs,cjs,ts}'],
+    files: ['scripts/**/*.{js,mjs,cjs,ts,tsx}', 'src/cli/**/*.ts', 'src/platform/node/**/*.ts', '*.{js,mjs,cjs,ts}'],
     languageOptions: {
       globals: globals.node,
     },

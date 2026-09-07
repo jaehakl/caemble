@@ -16,7 +16,7 @@ from user_auth.utils.auth_utils import hash_token, random_urlsafe
 ACCESS_KEY_PREFIX = "csk_"
 ACCESS_KEY_TYPE = "user_api"
 ACCESS_KEY_DISPLAY_PREFIX_LENGTH = 16
-ALLOWED_ACCESS_KEY_SCOPES = {"client", "launcher"}
+ALLOWED_ACCESS_KEY_SCOPES = {"client", "launcher", "caemble"}
 
 
 def access_key_to_data(access_key: APIKey) -> AccessKeyData:

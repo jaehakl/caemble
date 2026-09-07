@@ -2,19 +2,6 @@ import type { Vars } from '@/lib/cad/model'
 import type { ExperimentSourceBundle, ExperimentSourceDocument } from '@/lib/cad/source'
 import type { SavedExperiment, SavedMeasurement, WorkbenchDraft } from '../types'
 
-export type AgentExperimentChange = Readonly<{
-  runId: string
-  appliedAt: number
-  status: 'applied' | 'conflicted'
-  files: readonly Readonly<{
-    path: string
-    before: string | null
-    after: string | null
-    addedLines: number
-    removedLines: number
-  }>[]
-}>
-
 export type ExperimentEditingState = Readonly<{
   document: ExperimentSourceDocument | null
   record: SavedExperiment | null
@@ -24,11 +11,6 @@ export type ExperimentEditingState = Readonly<{
   candidateVars: Readonly<Vars> | null
   candidateMaterialParameters: SavedMeasurement['material_parameters'] | null
   workspaceSession: number
-  agentChange: AgentExperimentChange | null
-  agentWorkspaceIdentity: Readonly<{
-    baseHash: string
-    document: ExperimentSourceDocument
-  }> | null
 }>
 
 export const initialExperimentEditingState: ExperimentEditingState = Object.freeze({
@@ -40,8 +22,6 @@ export const initialExperimentEditingState: ExperimentEditingState = Object.free
   candidateVars: null,
   candidateMaterialParameters: null,
   workspaceSession: 0,
-  agentChange: null,
-  agentWorkspaceIdentity: null,
 })
 
 export type ExperimentEditingAction =
@@ -65,17 +45,6 @@ export type ExperimentEditingAction =
       type: 'saveCommitted'
       record: SavedExperiment
       baselineBundle: ExperimentSourceBundle
-    }>
-  | Readonly<{
-      type: 'agentApplied'
-      document: ExperimentSourceDocument
-      change: AgentExperimentChange
-    }>
-  | Readonly<{ type: 'agentUndoApplied'; document: ExperimentSourceDocument }>
-  | Readonly<{ type: 'agentChangeChanged'; change: AgentExperimentChange | null }>
-  | Readonly<{
-      type: 'agentWorkspaceIdentityChanged'
-      identity: ExperimentEditingState['agentWorkspaceIdentity']
     }>
   | Readonly<{
       type: 'candidateLoaded'
@@ -117,8 +86,6 @@ export function experimentEditingReducer(
         candidateVars: null,
         candidateMaterialParameters: null,
         workspaceSession: state.workspaceSession + 1,
-        agentChange: null,
-        agentWorkspaceIdentity: null,
       }
     case 'draftRestored':
       return {
@@ -131,8 +98,6 @@ export function experimentEditingReducer(
         candidateVars: action.draft.candidate.vars,
         candidateMaterialParameters: action.candidateMaterialParameters,
         workspaceSession: state.workspaceSession + 1,
-        agentChange: null,
-        agentWorkspaceIdentity: null,
       }
     case 'newStarted':
       return {
@@ -145,8 +110,6 @@ export function experimentEditingReducer(
         candidateVars: null,
         candidateMaterialParameters: null,
         workspaceSession: state.workspaceSession + 1,
-        agentChange: null,
-        agentWorkspaceIdentity: null,
       }
     case 'detached':
       return {
@@ -157,15 +120,12 @@ export function experimentEditingReducer(
         candidateVars: null,
         candidateMaterialParameters: null,
         workspaceSession: state.workspaceSession + 1,
-        agentChange: null,
-        agentWorkspaceIdentity: null,
       }
     case 'sourceEdited':
       return {
         ...state,
         document: action.document,
         candidateMaterialParameters: null,
-        agentWorkspaceIdentity: null,
       }
     case 'saveCommitted':
       return {
@@ -175,26 +135,6 @@ export function experimentEditingReducer(
         name: action.record.name,
         description: action.record.description ?? '',
       }
-    case 'agentApplied':
-      return {
-        ...state,
-        document: action.document,
-        candidateMaterialParameters: null,
-        agentChange: action.change,
-        agentWorkspaceIdentity: null,
-      }
-    case 'agentUndoApplied':
-      return {
-        ...state,
-        document: action.document,
-        candidateMaterialParameters: null,
-        agentChange: null,
-        agentWorkspaceIdentity: null,
-      }
-    case 'agentChangeChanged':
-      return { ...state, agentChange: action.change }
-    case 'agentWorkspaceIdentityChanged':
-      return { ...state, agentWorkspaceIdentity: action.identity }
     case 'candidateLoaded':
       return {
         ...state,

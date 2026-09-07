@@ -28,6 +28,21 @@ const draft: WorkbenchDraft = {
 beforeEach(() => sessionStorage.clear())
 
 describe('Workbench draft storage', () => {
+  it('migrates the retired Agent dock to Console without discarding the saved draft', async () => {
+    const storageKey = workbenchDraftStorageKey('public')
+    sessionStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        version: WORKBENCH_DRAFT_SCHEMA_VERSION,
+        ownerScope: 'public',
+        draft: { ...draft, layout: { ...draft.layout, bottomMode: 'agent' } },
+      }),
+    )
+    await expect(loadWorkbenchDraft('public')).resolves.toEqual({
+      ...draft,
+      layout: { ...draft.layout, bottomMode: 'console' },
+    })
+  })
   it('round-trips a local draft and clears retired keys', async () => {
     sessionStorage.setItem('caemble:cae-workbench-draft', 'retired')
     sessionStorage.setItem('caemble:cae-workbench-draft:v1', 'retired')

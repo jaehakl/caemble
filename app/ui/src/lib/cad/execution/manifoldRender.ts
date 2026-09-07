@@ -541,7 +541,7 @@ function evaluateNode(
 function meshPart(
   module: ManifoldToplevel,
   root: CanonicalGeometrySceneV1['roots'][number],
-  runtimeScene: CadScene,
+  runtimeScene: Readonly<{tree: CadScene['tree']; parts: readonly Pick<CadScene['parts'][number], 'id' | 'material'>[]}>,
   sources: Map<number, SourceSurfaces>,
 ): SerializableCadScenePart {
   const solid = evaluateNode(module, root.node, sources)
@@ -622,7 +622,7 @@ function semanticTree(tree: CadSceneTreeNode, parts: readonly SerializableCadSce
 
 export async function renderCanonicalGeometryScene(
   scene: CanonicalGeometrySceneV1,
-  runtimeScene: CadScene,
+  runtimeScene: Readonly<{tree: CadScene['tree']; parts: readonly Pick<CadScene['parts'][number], 'id' | 'material'>[]}>,
 ): Promise<SerializableCadScene> {
   const module = await manifoldModule()
   const sources = new Map<number, SourceSurfaces>()

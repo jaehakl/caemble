@@ -10,7 +10,7 @@ import { recordedDataTreeSnapshot } from '../measurement/recordedData'
 import { invalidateCalculationDataMutation } from './queryInvalidation'
 import { executeCalculationDataBatch, type CalculationDataBatchSummary } from './calculationDataBatch'
 
-type SavedCalculation = CalculationRecord & { id: number }
+type SavedCalculation = CalculationRecord & { id: number; revision: number }
 
 export type CalculationDataRunSummary = CalculationDataBatchSummary
 

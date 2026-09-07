@@ -302,12 +302,14 @@ def _ready_calculation(
     preflight_measurement_id: int,
     *,
     calculation_id: int | None = None,
+    base_revision: int = 1,
     description: str | None = None,
     output_layout: dict[str, object] | None = None,
     record_ids: list[int] | None = None,
 ) -> CalculationBase:
     return CalculationBase(
         id=calculation_id,
+        base_revision=base_revision if calculation_id is not None else None,
         experiment_id=experiment_id,
         name=name,
         description=description,
@@ -955,6 +957,7 @@ async def _verify_calculation_data_contract(database: str) -> None:
                         changed_source,
                         first_measurement_id,
                         calculation_id=first_calculation_id,
+                        base_revision=2,
                     )
                 ],
                 user=owner,
@@ -1243,7 +1246,7 @@ class CalculationDatabaseIntegrationTests(unittest.TestCase):
                             await upsert_calculations(session, [
                                 _ready_calculation(
                                     experiment_id, "Coordinates", source, second_id,
-                                    calculation_id=calculation_id, output_layout=mismatch,
+                                    calculation_id=calculation_id, output_layout=mismatch, base_revision=2,
                                 )
                             ], user=owner)
                         self.assertEqual(failure.exception.status_code, 409)

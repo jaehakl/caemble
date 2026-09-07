@@ -29,6 +29,7 @@ const completed: CaeBatch = {
   experiment_id: 7,
   mode: 'generate',
   total: 2,
+  uploaded_count: 0,
   created_count: 2,
   succeeded: 2,
   failed: 0,

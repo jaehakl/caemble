@@ -21,7 +21,7 @@ import gpstation.db  # noqa: E402, F401
 import main  # noqa: E402
 import models as api_models  # noqa: E402
 import user_auth.db  # noqa: E402, F401
-from ai.data_tools import VisibleDataError, VisibleDataReader  # noqa: E402
+from service.data_tools import VisibleDataError, VisibleDataReader  # noqa: E402
 from model_validators import validate_calculation_data_selectors  # noqa: E402
 from models import (  # noqa: E402
     CalculationDataListRequest,
@@ -61,6 +61,7 @@ class CalculationBackendContractTests(unittest.TestCase):
                 "output_layout",
                 "preflight_measurement_id",
                 "contract_status",
+                "revision",
             },
             set(table.columns.keys()),
         )

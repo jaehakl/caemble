@@ -1,9 +1,9 @@
 """Execute the catalog's actual TypeScript bundle and canonical optical scene.
 
-Requires the UI's installed npm dependencies and Node.js. The test invokes the
-same authoring policy, type declarations and geometry evaluator as the UI,
-then traces the exported geometry in real spawn children at two resolutions.
+Requires the built Caemble CLI and Node.js. The CLI only builds the input;
+this test traces its canonical geometry in real spawn children at two resolutions.
 """
+from copy import deepcopy
 import json
 import subprocess
 from pathlib import Path
@@ -12,31 +12,48 @@ import numpy as np
 import pytest
 
 from app.kernel.api import SolverInvocation
-from app.kernel.catalog.normalization import normalize_task_config
+from app.kernel.coordinator.plan import RunPlan, detached
 from app.kernel.execution import SpawnSolverExecutor
 
 
 @pytest.mark.asyncio
 async def test_catalog_spectrometer_separates_three_lines_and_converges(tmp_path: Path):
-    ui = Path(__file__).resolve().parents[3] / 'ui'
+    repo = Path(__file__).resolve().parents[4]
+    artifact = tmp_path / 'spectrometer'
+    materials = tmp_path / 'source-only-materials.json'
+    materials.write_text(json.dumps({'names': [], 'materials': [], 'parameters': [], 'qualifiers': []}), encoding='utf-8')
     subprocess.run([
-        'node', 'node_modules/esbuild/bin/esbuild', 'scripts/test-spectrometer.ts',
-        '--bundle', '--platform=node', '--format=esm', '--external:typescript', '--external:@babel/*',
-        '--alias:@=./src', '--outfile=node_modules/.tmp/test-spectrometer.mjs',
-    ], cwd=ui, check=True, capture_output=True, text=True)
-    subprocess.run([
-        'node', 'node_modules/.tmp/test-spectrometer.mjs',
-        str(ui.parent / 'catalog/caemble_catalog/catalog.sqlite3'), str(tmp_path),
-    ], cwd=ui, check=True, capture_output=True, text=True, encoding='utf-8')
+        'node', str(repo / 'app/ui/dist-cli/caemble.cjs'), '--repo', str(repo),
+        'experiment', 'build', '--example', 'czerny-turner-spectrometer',
+        '--vars-mode', 'nominal', '--out', str(artifact),
+        '--materials', str(materials),
+    ], cwd=repo, check=True, capture_output=True, text=True, encoding='utf-8')
+    manifest = json.loads((artifact / 'manifest.json').read_text(encoding='utf-8'))
+    assert len(manifest['items']) == 1
+    item = json.loads((artifact / manifest['items'][0]['file']).read_text(encoding='utf-8'))
+    measurement = item['measurement']
+    program = measurement['experiment']['simulationProgram']
+    plan = RunPlan.prepare(measurement, program['tasks'], program['recordedData'])
+    spec = plan.task_specs['trace']
+    world = plan.world(spec)
+    refined_world = deepcopy(world)
+    nodes = [root['node'] for root in refined_world['experiment']['roots']]
+    while nodes:
+        node = nodes.pop()
+        if node['kind'] == 'primitive' and node['primitive'] == 'sphere':
+            node['parameters']['segments'] *= 2
+        if 'child' in node:
+            nodes.append(node['child'])
+        nodes.extend(node.get('children', []))
+    # A new geometry identity avoids a cache hit at the coarser resolution.
+    refined_world['experiment']['geometryHash'] += '-refined'
     centers_by_resolution = []
     powers = []
-    for filename in ['measurement.json', 'measurement-refined.json']:
-        data = json.loads((tmp_path / filename).read_text(encoding='utf-8'))
-        config, _ = normalize_task_config(data['descriptor'], data['task']['config'])
+    for input_world in [world, refined_world]:
         result = await SpawnSolverExecutor().execute(
-            'app.solvers.ray_tracing.entry:implementation',
-            SolverInvocation(config=config, state={'upstream': 7}, inputs={}, world=data['world'],
-                             geometry=None, progress=None, descriptor=data['descriptor']),
+            spec.locator,
+            SolverInvocation(config=detached(spec.task['config']), state={'upstream': 7}, inputs={}, world=input_world,
+                             geometry=None, progress=None, descriptor=detached(spec.descriptor)),
         )
         assert result.state_patch.operations[0].path == ('rayPaths',)
         bundle = result.artifacts['rayPaths'].members

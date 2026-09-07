@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import unittest
@@ -28,7 +29,8 @@ from cae.batches import (
 from cae.db import CaeBatch
 from cae.events import stream_events
 from cae.models import BatchCreateRequest
-from cae.preparation import PreparationQueue, prepare_input
+from cae.uploads import CHUNK_BYTES, commit_batch, expire_uploads, finalize_item, measurement_artifact_info, upload_chunk
+from cae.db import CaeUploadChunk
 from cae.recording import complete_job, stage_record
 from db import Experiment, ExperimentRecord, Measurement, RecordedData, make_async_db_url
 from gpstation.db import Job, JobBatch, JobEvent, JobRecord, Launcher
@@ -77,9 +79,22 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.engine.dispose()
 
+    def item(self):
+        return {"measurement": {"kind": "measurement", "experiment": {
+            "kind": "experiment", "sourceHash": self.example["bundleHash"], "variables": {"fixed": 7},
+            "varsSchema": {}, "scene": {}, "taskScenes": {}, "simulationProgram": {
+                "pythonSource": self.example["sourceBundle"]["files"]["simulate.py"], "tasks": {}, "recordedData": {
+                "signal": {"dtype": "float64", "tensorOrder": 0, "quantityKind": "DimensionlessRatio"},
+            }}}, "materialParameters": {}, "taskMaterialParameters": {},
+            "materialWarnings": [], "taskMaterialWarnings": {}}}
+
     async def create(self, *, count=1, request_id=None):
+        raw = json.dumps(self.item(), separators=(",", ":"), ensure_ascii=False).encode()
         request = BatchCreateRequest(request_id=request_id or uuid.uuid4(), experiment_id=self.experiment_id,
-            experiment_source_hash=self.example["bundleHash"], mode="generate", count=count)
+            experiment_source_hash=self.example["bundleHash"], mode="generate",
+            catalog_revision=self.catalog.meta()["catalogRevision"], builder_version="1",
+            items=[{"index": index, "input_hash": hashlib.sha256(raw).hexdigest(), "byte_length": len(raw)}
+                   for index in range(1, count + 1)])
         async with self.sessions() as db:
             batch = await create_batch(db, request, self.owner, self.catalog)
             return batch, request
@@ -87,185 +102,257 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def ready_job(self, batch_id, *, index=1, state="queued", attempt=1):
         async with self.sessions() as db:
             batch = await db.get(JobBatch, batch_id)
-            job = Job(user_id=self.owner_id, batch_id=batch_id, item_index=index, job_mode="websocket",
-                handler_type="cae.simulation", slave_app_id="cae", state=state, attempt_count=attempt,
-                input={"measurement": {"experiment": {"simulationProgram": {"recordedData": {
-                    "signal": {"dtype": "float64", "tensorOrder": 0, "quantityKind": "DimensionlessRatio"},
-                }}}}}, progress=[], offer={})
-            db.add(job)
-            await db.flush()
+            job = await db.scalar(select(Job).where(Job.batch_id == batch_id, Job.item_index == index))
+            job.input = self.item()
+            job.state = state
+            job.attempt_count = attempt
             db.add(Measurement(user_id=self.owner_id, experiment_id=self.experiment_id, job_id=job.id,
-                vars={"fixed": 7}, material_parameters={"experiment": {"materials": {}}, "tasks": {}}))
-            batch.created_count += 1
+                vars={"fixed": 7}, material_parameters={"experiment": {}, "tasks": {}}))
+            batch.state = "queued"
+            batch.uploaded_count += 1
+            cae = await db.get(CaeBatch, batch.id)
+            cae.spec = {**cae.spec, "committed": True}
             await db.commit()
             return job
 
-    async def test_empty_preparation_errors_fail_and_remaining_items_continue(self):
-        batch, _ = await self.create(count=2)
-        with patch("cae.preparation.SessionLocal", self.sessions):
-            queue = PreparationQueue()
-            first = await queue._claim()
-            with patch("cae.preparation.prepare_input", side_effect=NotImplementedError()):
-                await queue._prepare(*first)
-            async with self.sessions() as db:
-                failed = await db.get(Job, first[0])
-                self.assertEqual((failed.state, failed.last_error), ("failed", "NotImplementedError"))
-                self.assertEqual((await db.get(JobBatch, batch.id)).failed, 1)
-            second = await queue._claim()
-            self.assertNotEqual(second[0], first[0])
-            with patch("cae.preparation.prepare_input", side_effect=TimeoutError()):
-                await queue._prepare(*second)
-            async with self.sessions() as db:
-                self.assertEqual((await db.get(JobBatch, batch.id)).state, "completed")
-                await retry_batch(db, batch.id, self.owner_id, [first[0]])
-            retry = await queue._claim()
-            self.assertEqual(retry[:2], (first[0], 2))
-            await queue._prepare(*retry)
-            async with self.sessions() as db:
-                self.assertEqual((await db.get(Job, first[0])).state, "queued")
-
-    async def test_idempotency_owner_snapshot_and_browser_independence(self):
-        batch, request = await self.create(count=1000000)
+    async def test_upload_commit_idempotence_and_owner_isolation(self):
+        batch, request = await self.create(count=2)
+        raw = json.dumps(self.item(), separators=(",", ":"), ensure_ascii=False).encode()
+        sha = hashlib.sha256(raw).hexdigest()
         async with self.sessions() as db:
             duplicate = await create_batch(db, request, self.owner, self.catalog)
             self.assertEqual(duplicate.id, batch.id)
-            self.assertEqual(await db.scalar(select(func.count()).select_from(Job)), 0)
-            frozen = await db.get(CaeBatch, batch.id)
-            self.assertEqual(frozen.spec["source_bundle"], self.example["sourceBundle"])
-            self.assertTrue(frozen.spec["catalog"]["solvers"])
-            self.assertEqual(set(frozen.spec["materials"]), {"names", "materials", "parameters", "qualifiers"})
-        async with self.sessions() as db:
-            with self.assertRaises(HTTPException) as caught:
-                await create_batch(db, request.model_copy(update={"count": 2}), self.owner, self.catalog)
-            self.assertEqual(caught.exception.status_code, 409)
-        async with self.sessions() as db:
-            with self.assertRaises(HTTPException) as caught:
+            self.assertEqual(await db.scalar(select(func.count()).select_from(Measurement)), 0)
+            self.assertEqual(set((await db.scalars(select(Job.state))).all()), {"staged"})
+            with self.assertRaises(HTTPException):
                 await require_batch(db, batch.id, self.other_id)
-            self.assertEqual(caught.exception.status_code, 404)
-            listing = await list_batches(db, self.other_id, experiment_id=None, limit=50, offset=0)
-            self.assertEqual(listing["items"], [])
-            self.assertEqual(listing["cursor"], 0)
         async with self.sessions() as db:
-            listing = await list_batches(db, self.owner_id, experiment_id=self.experiment_id, limit=50, offset=0)
-            self.assertEqual(listing["items"][0]["total"], 1000000)
-            self.assertGreater(listing["cursor"], 0)
-            with self.assertRaises(HTTPException) as caught:
-                await require_no_active_batches(db, [self.experiment_id])
-            self.assertEqual(caught.exception.status_code, 409)
+            with self.assertRaises(HTTPException) as error:
+                await commit_batch(db, batch.id, self.owner, self.catalog)
+            self.assertEqual(error.exception.status_code, 409)
+        for index in (1, 2):
+            async with self.sessions() as db:
+                await upload_chunk(db, batch.id, self.owner_id, index, 0, sha, raw)
+                await upload_chunk(db, batch.id, self.owner_id, index, 0, sha, raw)
+                await finalize_item(db, batch.id, self.owner_id, index)
+                await finalize_item(db, batch.id, self.owner_id, index)
+        async with self.sessions() as db:
+            self.assertEqual(await db.scalar(select(func.count()).select_from(CaeUploadChunk)), 0)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(Measurement)), 0)
+            committed = await commit_batch(db, batch.id, self.owner, self.catalog)
+            self.assertEqual((committed.state, committed.uploaded_count), ("queued", 2))
+            await commit_batch(db, batch.id, self.owner, self.catalog)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(Measurement)), 2)
+            self.assertEqual(set((await db.scalars(select(Job.state))).all()), {"queued"})
+            measurement_id = await db.scalar(select(Measurement.id).order_by(Measurement.id).limit(1))
+            info = await measurement_artifact_info(db, measurement_id, self.owner_id)
+            self.assertEqual(info["input_hash"], sha)
+            self.assertEqual(info["source_hash"], self.example["bundleHash"])
+            self.assertEqual(info["catalog_revision"], self.catalog.meta()["catalogRevision"])
+            with self.assertRaises(HTTPException) as hidden:
+                await measurement_artifact_info(db, measurement_id, self.other_id)
+            self.assertEqual(hidden.exception.status_code, 404)
 
-    async def test_cancel_counts_unmaterialized_items_once(self):
-        batch, _ = await self.create(count=1000000)
-        job = await self.ready_job(batch.id, state="preparing")
+
+    async def test_partial_upload_cancel_cleans_data_and_never_executes(self):
+        batch, request = await self.create(count=2)
+        raw = json.dumps(self.item(), separators=(",", ":"), ensure_ascii=False).encode()
         async with self.sessions() as db:
+            await upload_chunk(db, batch.id, self.owner_id, 1, 0, hashlib.sha256(raw).hexdigest(), raw)
             cancelled, assignments = await cancel_batch(db, batch.id, self.owner_id)
-            self.assertEqual((cancelled.cancelled, cancelled.created_count), (1000000, 1))
-            self.assertEqual(cancelled.state, "cancelled")
-            self.assertEqual(assignments, [])
-            self.assertEqual((await db.get(Job, job.id)).state, "cancelled")
-        async with self.sessions() as db:
-            cancelled, _ = await cancel_batch(db, batch.id, self.owner_id)
-            self.assertEqual(cancelled.cancelled, 1000000)
-            await require_no_active_batches(db, [self.experiment_id])
-        with patch("cae.preparation.SessionLocal", self.sessions):
-            self.assertIsNone(await PreparationQueue()._claim())
+            self.assertEqual((cancelled.cancelled, assignments), (2, []))
+            await cancel_batch(db, batch.id, self.owner_id)
+            self.assertEqual(cancelled.cancelled, 2)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(CaeUploadChunk)), 0)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(Measurement)), 0)
+            with self.assertRaises(HTTPException):
+                await commit_batch(db, batch.id, self.owner, self.catalog)
 
-    async def test_concurrent_duplicate_registration_creates_one_batch(self):
-        request_id = uuid.uuid4()
-        results = await asyncio.gather(self.create(count=3, request_id=request_id), self.create(count=3, request_id=request_id))
-        self.assertEqual(results[0][0].id, results[1][0].id)
+    async def test_chunk_replacement_and_mismatched_hash_rejected(self):
+        batch, request = await self.create()
+        raw = json.dumps(self.item(), separators=(",", ":"), ensure_ascii=False).encode()
         async with self.sessions() as db:
-            self.assertEqual(await db.scalar(select(func.count()).select_from(JobBatch)), 1)
-            self.assertEqual(await db.scalar(select(func.count()).select_from(JobEvent)), 1)
+            with self.assertRaises(HTTPException) as error:
+                await upload_chunk(db, batch.id, self.owner_id, 1, 0, "0" * 64, raw)
+            self.assertEqual(error.exception.status_code, 422)
+        async with self.sessions() as db:
+            await upload_chunk(db, batch.id, self.owner_id, 1, 0, hashlib.sha256(raw).hexdigest(), raw)
+            changed = raw.replace(b"7", b"8", 1)
+            with self.assertRaises(HTTPException) as error:
+                await upload_chunk(db, batch.id, self.owner_id, 1, 0, hashlib.sha256(changed).hexdigest(), changed)
+            self.assertEqual(error.exception.status_code, 409)
 
-    async def test_retry_after_cancel_does_not_generate_cancelled_items(self):
-        batch, _ = await self.create(count=3)
-        job = await self.ready_job(batch.id, state="running")
+    async def test_upload_expiry_preserves_fresh_batches(self):
+        from datetime import timedelta
+        expired, _ = await self.create()
+        fresh, _ = await self.create()
         async with self.sessions() as db:
-            await serialize_events(db)
-            await finish_job(db, await db.get(Job, job.id), "failed", "worker interrupted")
+            await db.execute(update(JobBatch).where(JobBatch.id == expired.id).values(updated_at=utcnow() - timedelta(hours=25)))
             await db.commit()
-        async with self.sessions() as db:
-            cancelled, _ = await cancel_batch(db, batch.id, self.owner_id)
-            self.assertEqual((cancelled.failed, cancelled.cancelled, cancelled.created_count), (1, 2, 1))
-            self.assertTrue(cancelled.generation_stopped)
-        async with self.sessions() as db:
-            retried = await retry_batch(db, batch.id, self.owner_id, [job.id])
-            self.assertEqual((retried.failed, retried.cancelled, retried.created_count), (0, 2, 1))
-            self.assertTrue(retried.generation_stopped)
-        with patch("cae.preparation.SessionLocal", self.sessions):
-            self.assertIsNone(await PreparationQueue()._claim())
-        async with self.sessions() as db:
-            current = await db.get(Job, job.id)
-            self.assertEqual((current.state, current.attempt_count), ("queued", 2))
-            await serialize_events(db)
-            await finish_job(db, current, "succeeded")
-            await db.commit()
-            completed = await db.get(JobBatch, batch.id)
-            self.assertEqual((completed.state, completed.succeeded, completed.cancelled), ("completed", 1, 2))
-            self.assertEqual(await db.scalar(select(func.count()).select_from(Job)), 1)
+            self.assertEqual(await expire_uploads(db), 1)
+            self.assertEqual((await db.get(JobBatch, expired.id)).state, "cancelled")
+            self.assertEqual((await db.get(JobBatch, fresh.id)).state, "uploading")
 
-    async def test_unprepared_retry_waits_for_existing_prepared_job(self):
-        batch, _ = await self.create(count=2)
-        ready = await self.ready_job(batch.id)
-        retry = await self.ready_job(batch.id, index=2, attempt=2)
+    async def test_caemble_key_auth_uses_account_status_scope_and_revocation(self):
+        from fastapi import Request
+        from gpstation.models import AccessKeyCreate
+        from gpstation.service.access_key_service import AccessKeyService
+        from service.client_auth import authenticate_caemble
+        from user_auth.db import Role, User, UserRole
+        request = Request({"type": "http", "path": "/client/capabilities", "headers": []})
         async with self.sessions() as db:
-            await db.execute(update(Job).where(Job.id == retry.id).values(input=null()))
+            role_id = await db.scalar(select(Role.id).where(Role.name == "admin"))
+            db.add(UserRole(user_id=self.owner_id, role_id=role_id))
             await db.commit()
-        with patch("cae.preparation.SessionLocal", self.sessions):
-            queue = PreparationQueue()
-            self.assertIsNone(await queue._claim())
+            key = await AccessKeyService.create_user_access_key(db, self.owner_id,
+                AccessKeyCreate(name="disposable-test", scopes=["caemble"]))
+            token = "Bearer " + key.secret
+            user = await authenticate_caemble(request, db, token)
+            self.assertEqual((user.id, user.roles), (self.owner_id, [RoleEnum.user]))
+            await AccessKeyService.revoke_access_keys(db, [key.access_key.id], user_id=self.owner_id)
+        async with self.sessions() as db:
+            with self.assertRaises(HTTPException) as rejected:
+                await authenticate_caemble(request, db, token)
+            self.assertEqual(rejected.exception.status_code, 401)
+            await db.execute(delete(UserRole).where(UserRole.user_id == self.owner_id))
+            await db.commit()
+
+    async def test_calculation_revision_rejects_stale_concurrent_updates(self):
+        from db import Calculation
+        from service.calculation import upsert_calculations
+        from test_calculation_database import _ready_calculation
+        source = "export default () => ({ dtype: 'float64', data: 1 })"
+        async with self.sessions() as db:
+            measurement = Measurement(user_id=self.owner_id, experiment_id=self.experiment_id,
+                vars={}, material_parameters={}, recorded_at=utcnow())
+            db.add(measurement)
+            await db.commit()
+            measurement_id = measurement.id
+            created = await upsert_calculations(db, [_ready_calculation(
+                self.experiment_id, "CAS", source, measurement_id
+            )], user=self.owner)
+            calculation_id = created[0]["id"]
+            self.assertEqual(created[0]["revision"], 1)
+        async def update_name(name):
             async with self.sessions() as db:
-                (await db.get(Job, ready.id)).state = "assigned"
-                await db.commit()
-            claimed = await queue._claim()
-            self.assertEqual(claimed[:2], (retry.id, 2))
-
-    async def test_never_prepared_batch_wins_after_previous_item_is_assigned(self):
-        first, _ = await self.create(count=1000000)
-        second, _ = await self.create(count=1)
-        with patch("cae.preparation.SessionLocal", self.sessions):
-            queue = PreparationQueue()
-            claimed = await queue._claim()
-            async with self.sessions() as db:
-                job = await db.get(Job, claimed[0])
-                self.assertEqual(job.batch_id, first.id)
-                job.state = "assigned"
-                job.input = {"prepared": True}
-                await db.commit()
-            claimed_next = await queue._claim()
+                try:
+                    rows = await upsert_calculations(db, [_ready_calculation(
+                        self.experiment_id, name, source, measurement_id,
+                        calculation_id=calculation_id, base_revision=1,
+                    )], user=self.owner)
+                    return rows[0]["revision"]
+                except HTTPException as error:
+                    return error.status_code
+        outcomes = await asyncio.wait_for(asyncio.gather(update_name("first"), update_name("second")), 5)
+        self.assertEqual(sorted(outcomes), [2, 409])
         async with self.sessions() as db:
-            self.assertEqual((await db.get(Job, claimed_next[0])).batch_id, second.id)
-            self.assertEqual((await db.get(JobBatch, first.id)).created_count, 1)
+            self.assertEqual((await db.get(Calculation, calculation_id)).revision, 2)
+            await db.execute(delete(Calculation).where(Calculation.id == calculation_id))
+            await db.commit()
 
-    async def test_preparation_round_robin_and_actual_node_input(self):
+    async def test_large_item_chunks_resume_after_session_restart(self):
+        value = self.item()
+        value["presentation"] = {"padding": "x" * CHUNK_BYTES}
+        raw = json.dumps(value, separators=(",", ":")).encode()
+        request = BatchCreateRequest(request_id=uuid.uuid4(), experiment_id=self.experiment_id,
+            experiment_source_hash=self.example["bundleHash"], mode="generate",
+            catalog_revision=self.catalog.meta()["catalogRevision"], builder_version="1",
+            items=[{"index": 1, "input_hash": hashlib.sha256(raw).hexdigest(), "byte_length": len(raw)}])
+        async with self.sessions() as db:
+            batch = await create_batch(db, request, self.owner, self.catalog)
+            first = raw[:CHUNK_BYTES]
+            await upload_chunk(db, batch.id, self.owner_id, 1, 0, hashlib.sha256(first).hexdigest(), first)
+        async with self.sessions() as db:
+            with self.assertRaises(HTTPException):
+                await finalize_item(db, batch.id, self.owner_id, 1)
+        async with self.sessions() as db:
+            second = raw[CHUNK_BYTES:]
+            await upload_chunk(db, batch.id, self.owner_id, 1, 1, hashlib.sha256(second).hexdigest(), second)
+            await finalize_item(db, batch.id, self.owner_id, 1)
+            await commit_batch(db, batch.id, self.owner, self.catalog)
+            job = await db.scalar(select(Job).where(Job.batch_id == batch.id))
+            self.assertEqual(job.input["measurement"], value["measurement"])
+            self.assertEqual(job.artifact_metadata["presentation"], value["presentation"])
+
+    async def test_commit_cancel_race_never_leaves_queued_work_in_cancelled_batch(self):
+        batch, _ = await self.create()
+        raw = json.dumps(self.item(), separators=(",", ":"), ensure_ascii=False).encode()
+        async with self.sessions() as db:
+            await upload_chunk(db, batch.id, self.owner_id, 1, 0, hashlib.sha256(raw).hexdigest(), raw)
+            await finalize_item(db, batch.id, self.owner_id, 1)
+        async def commit():
+            async with self.sessions() as db:
+                try:
+                    await commit_batch(db, batch.id, self.owner, self.catalog)
+                    return "committed"
+                except HTTPException as error:
+                    return error.status_code
+        async def cancel():
+            async with self.sessions() as db:
+                await cancel_batch(db, batch.id, self.owner_id)
+        await asyncio.wait_for(asyncio.gather(commit(), cancel()), 5)
+        async with self.sessions() as db:
+            current = await db.get(JobBatch, batch.id)
+            self.assertEqual((current.state, current.cancelled), ("cancelled", 1))
+            self.assertEqual(set((await db.scalars(select(Job.state))).all()), {"cancelled"})
+
+    async def test_commit_streams_inputs_and_rolls_back_every_item_on_late_failure(self):
+        batch, _ = await self.create(count=12)
+        raw = json.dumps(self.item(), separators=(",", ":"), ensure_ascii=False).encode()
+        for index in range(1, 13):
+            async with self.sessions() as db:
+                await upload_chunk(db, batch.id, self.owner_id, index, 0, hashlib.sha256(raw).hexdigest(), raw)
+                await finalize_item(db, batch.id, self.owner_id, index)
+        async with self.sessions() as db:
+            last = await db.scalar(select(Job).where(Job.batch_id == batch.id, Job.item_index == 12))
+            original = last.input
+            broken = json.loads(json.dumps(original))
+            broken["measurement"]["experiment"]["simulationProgram"]["pythonSource"] += "\n# changed"
+            last.input = broken
+            await db.commit()
+        peak_loaded_jobs = 0
+        async def count_live_inputs(db, batch, kind, **kwargs):
+            nonlocal peak_loaded_jobs
+            peak_loaded_jobs = max(peak_loaded_jobs, sum(isinstance(value, Job) for value in db.identity_map.values()))
+            return await add_event(db, batch, kind, **kwargs)
+        with patch("cae.uploads.add_event", new=count_live_inputs):
+            async with self.sessions() as db:
+                with self.assertRaises(HTTPException) as rejected:
+                    await commit_batch(db, batch.id, self.owner, self.catalog)
+                self.assertEqual(rejected.exception.status_code, 409)
+                await db.rollback()
+            async with self.sessions() as db:
+                self.assertEqual(await db.scalar(select(func.count()).select_from(Measurement)), 0)
+                self.assertEqual(set((await db.scalars(select(Job.state))).all()), {"staged"})
+                self.assertFalse((await db.get(CaeBatch, batch.id)).spec.get("committed"))
+                self.assertEqual(await db.scalar(select(func.count()).select_from(JobEvent).where(JobEvent.type == "job.queued")), 0)
+                await db.execute(update(Job).where(Job.batch_id == batch.id, Job.item_index == 12).values(input=original))
+                await db.commit()
+            async with self.sessions() as db:
+                await commit_batch(db, batch.id, self.owner, self.catalog)
+                await commit_batch(db, batch.id, self.owner, self.catalog)
+                self.assertEqual(await db.scalar(select(func.count()).select_from(Measurement)), 12)
+                self.assertEqual(await db.scalar(select(func.count()).select_from(JobEvent).where(JobEvent.type == "job.queued")), 12)
+                self.assertEqual(await db.scalar(select(func.count()).select_from(JobEvent).where(JobEvent.type == "batch.committed")), 1)
+        self.assertLessEqual(peak_loaded_jobs, 2)
+
+    async def test_dispatch_rotates_between_compatible_batches(self):
         first, _ = await self.create(count=2)
-        second, _ = await self.create(count=2)
-        queue = PreparationQueue()
-        with patch("cae.preparation.SessionLocal", self.sessions):
-            claimed_first = await queue._claim()
-            claimed_second = await queue._claim()
-            self.assertIsNone(await queue._claim())
-        self.assertIsNotNone(claimed_first)
-        self.assertIsNotNone(claimed_second)
+        second, _ = await self.create()
+        await self.ready_job(first.id, index=1)
+        await self.ready_job(first.id, index=2)
+        await self.ready_job(second.id)
+        now = utcnow()
         async with self.sessions() as db:
-            first_job = await db.get(Job, claimed_first[0])
-            second_job = await db.get(Job, claimed_second[0])
-            self.assertEqual((first_job.batch_id, second_job.batch_id), (first.id, second.id))
-            self.assertEqual((first_job.attempt_count, second_job.attempt_count), (1, 1))
-        prepared = await prepare_input(claimed_first[2])
-        self.assertEqual(prepared["measurement"]["kind"], "measurement")
-        self.assertEqual(prepared["measurement"]["experiment"]["sourceHash"], self.example["bundleHash"])
-        self.assertNotIn("renderScene", prepared["measurement"]["experiment"])
-        self.assertEqual(prepared["material_parameters"]["tasks"]["electric"], prepared["material_parameters"]["tasks"]["thermal"])
-        with patch("cae.preparation.SessionLocal", self.sessions), patch("cae.preparation.prepare_input", return_value=prepared):
-            await queue._prepare(*claimed_first)
-        async with self.sessions() as db:
-            job = await db.get(Job, claimed_first[0])
-            self.assertEqual(job.state, "queued")
-            self.assertEqual(job.input["measurement"], prepared["measurement"])
-            measurement = await db.scalar(select(Measurement).where(Measurement.job_id == job.id))
-            self.assertEqual(measurement.vars, prepared["vars"])
-            self.assertIsNone(measurement.recorded_at)
+            launchers = [Launcher(user_id=self.owner_id, launcher_name=str(i), status="ready", slave_app_ids=["cae"],
+                job_modes={"cae": "websocket"}, connected_at=now, last_heartbeat_at=now) for i in range(2)]
+            db.add_all(launchers)
+            await db.commit()
+            ids = {item.id for item in launchers}
+            one = await JobService.claim_next_compatible_job(db, idle_launcher_ids=ids)
+            two = await JobService.claim_next_compatible_job(db, idle_launcher_ids=ids)
+            self.assertEqual((one[0].batch_id, two[0].batch_id), (first.id, second.id))
+            self.assertEqual((one[0].item_index, two[0].item_index), (1, 1))
 
     async def test_concurrent_claims_obey_owner_capability_and_one_slot(self):
         batch, _ = await self.create(count=3)
@@ -388,7 +475,9 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
             cursor = snapshot["cursor"]
         async with self.sessions() as db:
             other = await create_batch(db, BatchCreateRequest(request_id=uuid.uuid4(),
-                experiment_id=self.other_experiment_id, experiment_source_hash="hash-calc-other", mode="generate"),
+                experiment_id=self.other_experiment_id, experiment_source_hash="hash-calc-other", mode="generate",
+                catalog_revision=self.catalog.meta()["catalogRevision"], builder_version="1",
+                items=[{"index": 1, "input_hash": "0" * 64, "byte_length": 100}]),
                 UserData(id=self.other_id, roles=[RoleEnum.user]), self.catalog)
             other_event = other.last_event_id
         async with self.sessions() as db:

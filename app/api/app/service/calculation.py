@@ -67,6 +67,13 @@ async def list_calculations(
         ):
             experiment_id = bounds[0]
     if experiment_id is None:
+        if request.selected_ids and len(request.selected_ids) == 1:
+            # CLI pull uses one exact ID; the shared scope still enforces the
+            # owning Experiment's visibility rather than exposing a global list.
+            return await get_list_response(
+                db, request, CALCULATION_CRUD_SPEC,
+                Calculation.id == request.selected_ids[0], user=user,
+            )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Calculation list requires one Experiment.",
@@ -215,7 +222,7 @@ async def upsert_calculations(
     for item in normalized_items:
         row = existing_by_id.get(item.id)
         if row is None:
-            row = Calculation(experiment_id=item.experiment_id)
+            row = Calculation(experiment_id=item.experiment_id, revision=1)
             db.add(row)
         else:
             existing_experiment = experiments_by_id.get(row.experiment_id)
@@ -232,6 +239,12 @@ async def upsert_calculations(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Calculation cannot be moved to another Experiment.",
                 )
+            if item.base_revision != row.revision:
+                raise HTTPException(409, {
+                    "message": "Calculation changed. Pull its latest revision before saving.",
+                    "revision": row.revision,
+                })
+            row.revision += 1
             source_changed = row.source_code != item.source_code
             if source_changed:
                 await db.execute(
@@ -294,7 +307,7 @@ async def upsert_calculations(
             else "Database constraint violation."
         )
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from error
-    return [{"id": row.id} for row in pending]
+    return [{"id": row.id, "revision": row.revision} for row in pending]
 
 
 async def delete_calculations(

@@ -18,7 +18,13 @@ export default defineConfig(({ mode }) => ({
   },
   server: {
     fs: {
-      allow: [uiRoot, sdkRoot, slavesRoot],
+      allow: [
+        uiRoot,
+        sdkRoot,
+        slavesRoot,
+        fileURLToPath(new URL('../../docs/authoring', import.meta.url)),
+        fileURLToPath(new URL('../../docs/manual', import.meta.url)),
+      ],
     },
     host: 'localhost',
     port: 5173,
@@ -56,10 +62,30 @@ export default defineConfig(({ mode }) => ({
       input: {
         main: 'index.html',
         runner: 'runner.html',
+        render: 'render.html',
       },
     },
   },
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    {
+      name: 'caemble-browser-boundary',
+      generateBundle() {
+        const forbidden = [...this.getModuleIds()].filter((id) =>
+          /\/src\/(cli|platform\/node)\//.test(id.replace(/\\/g, '/')),
+        )
+        if (forbidden.length) throw new Error(`Browser bundle imports Node execution: ${forbidden.join(', ')}`)
+        const privateDocs = [...this.getModuleIds()].filter((id) =>
+          /\/(docs\/(development|operations|archive)\/|src\/documentation\/(development|index)\.ts)/.test(
+            id.replace(/\\/g, '/'),
+          ),
+        )
+        if (privateDocs.length)
+          throw new Error(`Browser bundle imports repository-only documentation: ${privateDocs.join(', ')}`)
+      },
+    },
+  ],
   worker: {
     format: 'es',
   },

@@ -1,3 +1,4 @@
+import { evaluateBuildInput, buildEvaluatedMeasurement } from '@/lib/cae/build'
 /// <reference lib="webworker" />
 
 import { cadSnapshotTransferables } from '../execution/meshSerialization'
@@ -29,7 +30,15 @@ async function handleValidatedOperation(value: RunnerOperationEnvelope) {
   let response: RunnerOperationResultEnvelope['response']
   try {
     installCatalogRuntimeSlice(request.catalog)
-    if (request.type === 'inspect') {
+    if (request.type === 'prepare') {
+      response = {
+        type: 'preparation-success',
+        requestId: request.requestId,
+        revision: request.revision,
+        documentType: 'experiment',
+        input: await buildEvaluatedMeasurement(request, evaluateBuildInput(request, request.compiledDocument)),
+      }
+    } else if (request.type === 'inspect') {
       const inspection = inspectCompiledDocument(request.compiledDocument)
       response = {
         type: 'inspection-success',
@@ -74,11 +83,13 @@ async function handleValidatedOperation(value: RunnerOperationEnvelope) {
         : undefined
     response = {
       type:
-        request.type === 'inspect'
-          ? 'inspection-error'
-          : request.type === 'evaluate'
-            ? 'evaluation-error'
-            : 'geometry-preview-error',
+        request.type === 'prepare'
+          ? 'preparation-error'
+          : request.type === 'inspect'
+            ? 'inspection-error'
+            : request.type === 'evaluate'
+              ? 'evaluation-error'
+              : 'geometry-preview-error',
       requestId: request.requestId,
       revision: request.revision,
       documentType: request.type === 'preview-geometry' ? 'geometry' : 'experiment',

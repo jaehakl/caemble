@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from caemble_catalog import open_catalog
 
 from app.kernel.coordinator.run import CaeRun
 from app.kernel.transport import RecordPacket
@@ -16,19 +17,26 @@ from app.kernel.transport.tensor import dtype_for
 
 @pytest.fixture(scope="module")
 def catalog_measurements(tmp_path_factory):
-    ui = Path(__file__).resolve().parents[3] / "ui"
+    repo = Path(__file__).resolve().parents[4]
     output = tmp_path_factory.mktemp("catalog-measurements")
-    subprocess.run([
-        "node", "node_modules/esbuild/bin/esbuild", "scripts/test-catalog-examples.ts",
-        "--bundle", "--platform=node", "--format=esm", "--external:typescript",
-        "--external:@babel/*", "--alias:@=./src",
-        "--outfile=node_modules/.tmp/test-catalog-examples.mjs",
-    ], cwd=ui, check=True, capture_output=True, text=True, encoding="utf-8")
-    subprocess.run([
-        "node", "node_modules/.tmp/test-catalog-examples.mjs",
-        str(ui.parent / "catalog/caemble_catalog/catalog.sqlite3"), str(output),
-    ], cwd=ui, check=True, capture_output=True, text=True, encoding="utf-8")
-    return output
+    materials = output / "source-only-materials.json"
+    materials.write_text(json.dumps({"names": [], "materials": [], "parameters": [], "qualifiers": []}), encoding="utf-8")
+    with open_catalog() as catalog:
+        examples, _ = catalog.list_experiments(limit=100)
+    measurements = {}
+    for example in examples:
+        artifact = output / example["key"]
+        subprocess.run([
+            "node", str(repo / "app/ui/dist-cli/caemble.cjs"), "--repo", str(repo),
+            "experiment", "build", "--example", example["coordinate"],
+            "--vars-mode", "nominal", "--out", str(artifact),
+            "--materials", str(materials),
+        ], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8")
+        manifest = json.loads((artifact / "manifest.json").read_text(encoding="utf-8"))
+        assert len(manifest["items"]) == 1
+        item = json.loads((artifact / manifest["items"][0]["file"]).read_text(encoding="utf-8"))
+        measurements[example["key"]] = item["measurement"]
+    return measurements
 
 
 @pytest.mark.parametrize("key", [
@@ -39,7 +47,7 @@ def catalog_measurements(tmp_path_factory):
 ])
 @pytest.mark.asyncio
 async def test_official_catalog_measurement_runs_and_acknowledges_every_record(key, catalog_measurements):
-    measurement = json.loads((catalog_measurements / f"{key}.json").read_text(encoding="utf-8"))
+    measurement = catalog_measurements[key]
     run = CaeRun(measurement=measurement, max_run_seconds=240, job_id=f"catalog-{key}")
     run.start()
     recorded = {}

@@ -6,4 +6,3 @@ from typing import Any
 # complete_job(db, job, packet). The GPStation transport owns neither its input
 # schema nor its persistence projection.
 server_handlers: dict[str, Any] = {}
-cancel_preparation_handlers: dict[str, Any] = {}

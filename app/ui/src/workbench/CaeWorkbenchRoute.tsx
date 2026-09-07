@@ -1,8 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { Bot, Database, Rows3 } from 'lucide-react'
+import { Database, Rows3 } from 'lucide-react'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation } from 'react-router'
-import type { AiAgentApplyRequest, AiAgentApplyResult } from '@/api/aiAgent'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuth } from '@/features/auth/use-auth'
@@ -16,7 +15,7 @@ import {
 import { ConfirmWorkbenchDialog } from '@/features/cae-workbench/dialogs'
 import { ExperimentEditor, SourcePathPickerDialog } from '@/features/cae-workbench/editors'
 import { ExperimentManager } from '@/features/experiment'
-import { calculationAccessPolicy, type CalculationAgentBridge, type CalculationSaveState } from '@/features/calculation'
+import { calculationAccessPolicy, type CalculationSaveState } from '@/features/calculation'
 import type {
   PredictionWorkspaceChromeState,
   PredictionWorkspaceCommand,
@@ -55,9 +54,6 @@ import {
 } from '@/features/cae-workbench/useCaePageChrome'
 import { useCaePageSession } from '@/workbench/useCaePageSession'
 
-const AiHelperWorkspace = lazy(() =>
-  import('@/features/ai/AiHelperPage').then((module) => ({ default: module.AiHelperWorkspace })),
-)
 const AiChatWorkspace = lazy(() =>
   import('@/features/ai/AiChatPage').then((module) => ({ default: module.AiChatWorkspace })),
 )
@@ -101,7 +97,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     disabled: true,
     disabledReason: 'Calculation Editor를 불러오는 중입니다.',
   })
-  const [calculationAgentBridge, setCalculationAgentBridge] = useState<CalculationAgentBridge | null>(null)
   const page = useCaePageSession(workbench, {
     authPending: auth.isPending,
     queryScope: auth.queryScope,
@@ -137,7 +132,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const [materialCommand, setMaterialCommand] = useState<Readonly<{ id: number; type: MaterialRibbonCommand }> | null>(
     null,
   )
-  const [agentActivated, setAgentActivated] = useState(false)
   const [labActivated, setLabActivated] = useState(false)
   const [predictionActivated, setPredictionActivated] = useState(false)
   const commandSequence = useRef(0)
@@ -162,12 +156,8 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     files: selectionSourceFiles,
     guardReplacement,
     setLayout,
-    workspaceSession: workbench.agentWorkspaceSession,
+    workspaceSession: workbench.workspaceSession,
   })
-
-  useEffect(() => {
-    if (page.bottomMode === 'agent') setAgentActivated(true)
-  }, [page.bottomMode])
 
   useEffect(() => {
     if (page.activeSection === 'lab') setLabActivated(true)
@@ -262,7 +252,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
 
   const activeRecordedData = workbench.selection.recordedData
   const activeFlatRecordedData = workbench.selection.flatRecordedData
-  const activeRecordedRows = workbench.selection.recordedRows
   const activeRecordedSchemas = workbench.selection.recordedSchemas
   const activeRecordedRules = workbench.selection.recordedRules
   const rayPathState = useMemo(() => {
@@ -272,50 +261,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       return { bundles: [], error: error instanceof Error ? error.message : String(error) }
     }
   }, [activeRecordedData, activeRecordedSchemas])
-
-  const applyAgentBundleNow = async (request: AiAgentApplyRequest) => {
-    if (request.finalDocument.kind !== 'experiment') {
-      return { status: 'conflicted' as const, message: 'Experiment Agent 결과가 아닙니다.' }
-    }
-    const result = await workbench.applyAgentBundle({
-      ...request,
-      finalDocument: request.finalDocument,
-    })
-    if (result.firstChangedFile) {
-      page.setActiveExperimentFile(result.firstChangedFile)
-      page.setLayout((current) => ({
-        ...current,
-        activeSection: 'experiment',
-        rightTabs: { ...current.rightTabs, experiment: 'source' },
-      }))
-    }
-    return result
-  }
-  const applyAgentBundle = (request: AiAgentApplyRequest) => {
-    if (page.activeSection !== 'measurement' || !calculationDirty) return applyAgentBundleNow(request)
-    return new Promise<AiAgentApplyResult>((resolve, reject) => {
-      page.guardReplacement(
-        () => applyAgentBundleNow(request).then(resolve, reject),
-        () =>
-          resolve({
-            message: '저장하지 않은 Calculation 편집을 유지하기 위해 Agent 변경을 적용하지 않았습니다.',
-            status: 'conflicted',
-          }),
-      )
-    })
-  }
-
-  const applyAgentDocument = (request: AiAgentApplyRequest) => {
-    if (request.finalDocument.kind === 'experiment') return applyAgentBundle(request)
-    const experimentHash = workbench.agentWorkspaceIdentity?.baseHash ?? null
-    if (!calculationAgentBridge || !experimentHash || request.referenceHash !== experimentHash) {
-      return Promise.resolve<AiAgentApplyResult>({
-        status: 'conflicted',
-        message: 'Calculation Agent 실행 중 대상 또는 Experiment reference가 변경되었습니다.',
-      })
-    }
-    return calculationAgentBridge.apply(request)
-  }
 
   const leftPane =
     page.activeSection === 'experiment' ? (
@@ -408,7 +353,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         panels={{
           source: (
             <ExperimentEditor
-              agentChange={workbench.agentChange}
               controller={workbench.experimentDocument}
               disabled={
                 !page.initialized ||
@@ -422,7 +366,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               onActiveFileChange={page.setActiveExperimentFile}
               onAuthoringStateChange={setExperimentAuthoringState}
               onSourceRevealRequestHandled={handleSourceRevealRequestHandled}
-              onUndoAgentChange={workbench.undoAgentChange}
               onViewerSelectionQueryChange={handleCodeSelectionQueryChange}
               sourceRevealRequest={sourceRevealRequest}
             />
@@ -547,60 +490,10 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     />
   )
   const ribbon = <WorkbenchRibbon activeSectionId={page.activeSection} panels={chrome.ribbonPanels} />
-  const experimentHash = workbench.agentWorkspaceIdentity?.baseHash ?? null
-  const agentTarget =
-    page.activeSection === 'measurement'
-      ? calculationAgentBridge && workbench.experiment
-        ? {
-            document: {
-              kind: 'calculation' as const,
-              calculationId: calculationAgentBridge.calculationId,
-              experimentId: calculationAgentBridge.experimentId,
-              name: calculationAgentBridge.name,
-              description: calculationAgentBridge.description,
-              sourceCode: calculationAgentBridge.sourceCode,
-              editable: calculationAgentBridge.editable,
-              context: calculationAgentBridge.context,
-              referenceExperiment: workbench.experiment,
-            },
-            baseHash: calculationAgentBridge.baseHash,
-            referenceHash: experimentHash,
-            experimentId: calculationAgentBridge.experimentId,
-            key: `calculation:${calculationAgentBridge.experimentId}:${calculationAgentBridge.calculationId ?? `new:${calculationAgentBridge.workspaceSession}`}`,
-            workspaceSession: calculationAgentBridge.workspaceSession,
-            label: `${calculationAgentBridge.targetLabel}${calculationAgentBridge.name ? ` · ${calculationAgentBridge.name}` : ''}`,
-          }
-        : null
-      : workbench.experiment
-        ? {
-            document: workbench.experiment,
-            baseHash: experimentHash,
-            referenceHash: null,
-            experimentId: workbench.experimentId,
-            key: `experiment:${workbench.experimentId ?? `new:${workbench.agentWorkspaceSession}`}`,
-            workspaceSession: workbench.agentWorkspaceSession,
-            label: `Experiment · ${workbench.experimentName || (workbench.experimentId ? `#${workbench.experimentId}` : 'New')}`,
-          }
-        : null
   const bottomDock = (
     <WorkbenchBottomDock
       mode={page.bottomMode}
       onModeChange={(bottomMode) => page.setLayout((current) => ({ ...current, bottomMode }))}
-      agent={
-        agentActivated ? (
-          <Suspense fallback={<PaneLoading label="AI Agent를 불러오는 중입니다." />}>
-            <AiHelperWorkspace
-              activeExperimentFile={page.activeExperimentFile}
-              activeTab="ai-helper"
-              target={agentTarget}
-              onApplyStagedDocument={applyAgentDocument}
-              onRequestLogin={() => page.setDialog('account')}
-            />
-          </Suspense>
-        ) : (
-          <PaneEmpty icon={<Bot />} title="AI Agent" />
-        )
-      }
       console={<RuntimeConsoleView store={runtimeConsole} />}
     />
   )
@@ -632,7 +525,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             }
             authenticated={auth.isAuthenticated}
             dataReadable={experimentDataReadable}
-            agentWorkspaceSession={workbench.agentWorkspaceSession}
             bottom={bottomDock}
             busy={workbench.measurementActions.busy || workbench.calculationDataActions.busy}
             calculationDataBusy={workbench.calculationDataActions.busy}
@@ -648,7 +540,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             measurementSelectionPending={workbench.selectionRestoring}
             menubar={menubar}
             onActivity={runtimeConsole.append}
-            onAgentBridgeChange={setCalculationAgentBridge}
             onCandidateVariableChange={workbench.setCandidateVariable}
             onCalculationSelectionChange={workbench.selectCalculation}
             onDeleteMeasurements={workbench.measurementActions.deleteMeasurements}
@@ -660,7 +551,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             onUsageChanged={workbench.refreshExperimentUsage}
             publicDemoMutable={workbench.experimentIsDemo && workbench.experimentManageable}
             recordedData={activeFlatRecordedData}
-            recordedRows={activeRecordedRows}
             recordedRules={activeRecordedRules}
             ribbon={ribbon}
             saveCommand={calculationSaveCommand}

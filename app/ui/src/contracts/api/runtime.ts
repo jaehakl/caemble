@@ -1,4 +1,4 @@
-export type AccessKeyScope = 'client' | 'launcher'
+export type AccessKeyScope = 'client' | 'launcher' | 'caemble'
 
 export type AccessKeyRecord = Readonly<{
   id: string

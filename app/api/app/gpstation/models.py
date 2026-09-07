@@ -6,7 +6,7 @@ from pydantic import Field
 from models import BaseModel
 
 
-AccessKeyScope = Literal["client", "launcher"]
+AccessKeyScope = Literal["client", "launcher", "caemble"]
 JobState = str
 
 

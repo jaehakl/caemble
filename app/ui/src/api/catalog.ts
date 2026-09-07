@@ -30,7 +30,7 @@ import {
   parseCatalogSolverDetail,
   parseCatalogSolverList,
 } from '@/contracts/catalogValidators'
-import { request, type RequestContext } from './http'
+import { browserClient, type CaembleClient, type RequestContext } from './http'
 
 export type CatalogExperimentIdentity = Readonly<{
   key: string
@@ -88,7 +88,9 @@ export const catalogQueryKeys = {
   search: (query: string, limit: number) => ['catalog', 'search', query, limit] as const,
 } as const
 
-export const catalogApi = {
+export function createCatalogApi(client: CaembleClient) {
+const { request } = client
+return {
   meta: (context?: RequestContext) =>
     request<CatalogMeta>('get', catalogUrl('/meta'), undefined, {
       signal: context?.signal,
@@ -182,3 +184,5 @@ export const catalogApi = {
       validate: parseCatalogRuntimeSlice,
     }),
 } as const
+}
+export const catalogApi = createCatalogApi(browserClient)

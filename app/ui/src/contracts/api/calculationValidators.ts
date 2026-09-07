@@ -7,6 +7,7 @@ import type {
   CalculationDataRecord,
   CalculationDataSaveResponse,
   CalculationDataScalar,
+  CalculationUpsertResponse,
   PersistedCalculationRecord,
 } from './calculation'
 import { databaseIdSchema, parseGetListResponse } from './validators'
@@ -95,6 +96,7 @@ export const calculationDataOutputSchema = z
 export const persistedCalculationRecordSchema = z
   .object({
     id: databaseIdSchema,
+    revision: z.number().int().positive(),
     experiment_id: databaseIdSchema,
     name: z.string(),
     source_code: z.string(),
@@ -103,6 +105,10 @@ export const persistedCalculationRecordSchema = z
     experiment_record_ids: z.array(databaseIdSchema),
   })
   .passthrough()
+
+export function parseCalculationUpsertResponse(value: unknown): CalculationUpsertResponse[] {
+  return z.array(z.object({ id: databaseIdSchema, revision: z.number().int().positive() }).passthrough()).parse(value)
+}
 
 export const calculationDataRecordSchema = z
   .object({

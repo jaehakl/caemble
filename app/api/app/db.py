@@ -441,6 +441,7 @@ class CalculationExperimentRecord(Base):
 
 class Calculation(TimestampMixin, Base):
     __tablename__ = "calculations"
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     __table_args__ = (
         UniqueConstraint(
             "experiment_id",

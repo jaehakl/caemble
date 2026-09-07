@@ -147,6 +147,7 @@ describe('Prediction context data', () => {
       id: 7,
       experiment_id: 3,
       name: 'Stress',
+      revision: 1,
       source_code: 'return 1',
       source_hash: null,
       output_layout: null,

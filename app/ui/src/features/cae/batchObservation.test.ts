@@ -9,6 +9,7 @@ const batch: CaeBatch = {
   experiment_id: 1,
   mode: 'generate',
   total: 1,
+  uploaded_count: 0,
   created_count: 1,
   succeeded: 0,
   failed: 0,

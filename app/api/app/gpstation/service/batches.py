@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from gpstation.db import Job, JobBatch, JobEvent, JobRecord
 from gpstation.service.state import utcnow
 
-SERVER_ACTIVE_STATES = {"preparing", "queued", "assigned", "running", "finalizing"}
+SERVER_ACTIVE_STATES = {"staged", "queued", "assigned", "running", "finalizing"}
 SERVER_ASSIGNED_STATES = {"assigned", "running", "finalizing"}
 TERMINAL_STATES = {"succeeded", "failed", "cancelled", "killed"}
 
@@ -94,7 +94,7 @@ async def fail_server_jobs(
     db: AsyncSession, *, detail: str, launcher_ids: set[str] | None = None, restarting: bool = False
 ) -> list[Job]:
     await serialize_events(db)
-    states = SERVER_ASSIGNED_STATES | ({"preparing"} if restarting else set())
+    states = SERVER_ASSIGNED_STATES
     query = (
         select(Job)
         .where(Job.job_mode == "websocket", Job.state.in_(states))

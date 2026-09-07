@@ -4,13 +4,13 @@ import {
   calculationEditingReducer,
   createInitialCalculationEditingState,
   selectCalculationEditing,
-  type CalculationAgentChange,
   type SavedCalculation,
 } from './calculationEditingState'
 
 function savedCalculation(id: number, sourceCode: string, name = `Calculation ${id}`): SavedCalculation {
   return {
     id,
+    revision: 1,
     experiment_id: 3,
     name,
     description: `${name} description`,
@@ -19,15 +19,6 @@ function savedCalculation(id: number, sourceCode: string, name = `Calculation ${
     experiment_record_ids: [],
   }
 }
-
-const appliedChange: CalculationAgentChange = Object.freeze({
-  runId: 'run-1',
-  status: 'applied',
-  before: 'return before',
-  after: 'return after',
-  addedLines: 1,
-  removedLines: 1,
-})
 
 describe('calculationEditingReducer', () => {
   it('loads a server record as one clean editing snapshot', () => {
@@ -51,7 +42,7 @@ describe('calculationEditingReducer', () => {
       record: original,
     })
     const edited = calculationEditingReducer(loaded, { type: 'sourceEdited', sourceCode: 'return local' })
-    const refetched = savedCalculation(7, 'return remote', 'Renamed remotely')
+    const refetched = { ...savedCalculation(7, 'return remote', 'Renamed remotely'), revision: 2 }
 
     const protectedDraft = calculationEditingReducer(edited, {
       type: 'serverSnapshotReceived',
@@ -62,6 +53,8 @@ describe('calculationEditingReducer', () => {
     expect(protectedDraft.draft.sourceCode).toBe('return local')
     expect(protectedDraft.draft.name).toBe(original.name)
     expect(protectedDraft.baseline).toBe(loaded.baseline)
+    expect(protectedDraft.draft.baseRevision).toBe(1)
+    expect(protectedDraft.serverSnapshot?.revision).toBe(2)
     expect(selectCalculationEditing(protectedDraft).dirty).toBe(true)
   })
 
@@ -155,50 +148,21 @@ describe('calculationEditingReducer', () => {
     expect(selectCalculationEditing(deleted).dirty).toBe(false)
   })
 
-  it('invalidates Agent state when the externally selected Calculation changes', () => {
-    const staged = calculationEditingReducer(createInitialCalculationEditingState(), {
-      type: 'agentStaged',
-      change: { ...appliedChange, status: 'conflicted' },
-    })
-    const selected = calculationEditingReducer(staged, { type: 'selectionChanged', calculationId: 8 })
+  it('advances the workspace session when the externally selected Calculation changes', () => {
+    const initial = createInitialCalculationEditingState()
+    const selected = calculationEditingReducer(initial, { type: 'selectionChanged', calculationId: 8 })
     const cleared = calculationEditingReducer(selected, {
       type: 'selectionChanged',
       calculationId: null,
       recordName: 'temperature',
     })
 
-    expect(selected).toMatchObject({ agentChange: null, agentDiffOpen: false, targetSession: 1 })
+    expect(selected).toMatchObject({ targetSession: 1 })
     expect(cleared).toMatchObject({
-      agentChange: null,
       draft: { id: null },
       targetSession: 2,
     })
     expect(cleared.draft.sourceCode).toContain('temperature')
     expect(cleared.baseline).toBe(cleared.draft)
-  })
-
-  it('keeps staged Agent changes separate and applies or undoes source atomically', () => {
-    const initial = createInitialCalculationEditingState()
-    const conflictedChange = { ...appliedChange, status: 'conflicted' as const }
-    const staged = calculationEditingReducer(initial, { type: 'agentStaged', change: conflictedChange })
-    const applied = calculationEditingReducer(staged, {
-      type: 'agentApplied',
-      sourceCode: appliedChange.after,
-      change: appliedChange,
-    })
-    const undone = calculationEditingReducer(applied, { type: 'agentUndoApplied' })
-
-    expect(staged).toMatchObject({ agentChange: conflictedChange, agentDiffOpen: true })
-    expect(staged.draft).toBe(initial.draft)
-    expect(applied).toMatchObject({
-      agentChange: appliedChange,
-      agentDiffOpen: false,
-      draft: { sourceCode: appliedChange.after },
-    })
-    expect(undone).toMatchObject({
-      agentChange: null,
-      agentDiffOpen: false,
-      draft: { sourceCode: appliedChange.before },
-    })
   })
 })

@@ -2,6 +2,7 @@ import type * as Monaco from 'monaco-editor'
 import coreTypes from '../api/caemble-core.d.ts?raw'
 import jsxTypes from '../api/cad-jsx.d.ts?raw'
 import { cadCompilerOptions } from './options'
+import { calculationCompilerOptions } from '../../calculation/compilerOptions'
 
 let didSetup = false
 
@@ -13,20 +14,7 @@ export function setupMonaco(monaco: typeof Monaco) {
   typescript.typescriptDefaults.setCompilerOptions(cadCompilerOptions(typescript))
   typescript.typescriptDefaults.setEagerModelSync(true)
 
-  typescript.javascriptDefaults.setCompilerOptions({
-    target: typescript.ScriptTarget.ES2020,
-    module: typescript.ModuleKind.CommonJS,
-    moduleResolution: typescript.ModuleResolutionKind.NodeJs,
-    allowNonTsExtensions: true,
-    allowJs: true,
-    checkJs: true,
-    strict: true,
-    noImplicitAny: false,
-    noEmit: false,
-    noEmitOnError: false,
-    sourceMap: true,
-    inlineSources: true,
-  })
+  typescript.javascriptDefaults.setCompilerOptions(calculationCompilerOptions(typescript))
   typescript.javascriptDefaults.setEagerModelSync(true)
 
   typescript.typescriptDefaults.addExtraLib(coreTypes, 'file:///node_modules/@caemble/core/index.d.ts')

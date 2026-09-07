@@ -19,7 +19,7 @@ export type WorkbenchCalculationSelection = Readonly<{
 export type DefinitionStatus = 'empty' | 'new' | 'saved-clean' | 'saved-dirty'
 
 /** @deprecated The v14 editor dock is retained only for draft migration. */
-export type WorkbenchTabId = 'experiment' | 'experiments' | 'recorded-data' | 'ai-helper'
+export type WorkbenchTabId = 'experiment' | 'experiments' | 'recorded-data'
 
 export const workbenchSectionIds = [
   'experiment',
@@ -34,7 +34,7 @@ export const workbenchSectionIds = [
 ] as const
 export type WorkbenchSectionId = (typeof workbenchSectionIds)[number]
 
-export const bottomDockModes = ['hidden', 'agent', 'console'] as const
+export const bottomDockModes = ['hidden', 'console'] as const
 export type BottomDockMode = (typeof bottomDockModes)[number]
 
 export const experimentRightTabIds = ['source', 'detail'] as const

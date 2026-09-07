@@ -16,9 +16,11 @@ class SolverCatalog:
         self,
         entries: dict[tuple[str, str], dict[str, Any]],
         artifact_types: dict[str, dict[str, Any]] | None = None,
+        catalog_revision: str | None = None,
     ) -> None:
         self._entries = copy.deepcopy(entries)
         self._artifact_types = copy.deepcopy(artifact_types or {})
+        self.catalog_revision = catalog_revision
 
     @classmethod
     def discover(cls, catalog_path: Path | None = None) -> SolverCatalog:
@@ -27,6 +29,7 @@ class SolverCatalog:
             return cls.from_manifests(
                 catalog.solver_manifests(),
                 artifact_types=catalog.artifact_types(),
+                catalog_revision=catalog.meta()["catalogRevision"],
             )
         finally:
             catalog.close()
@@ -37,6 +40,7 @@ class SolverCatalog:
         manifests: list[dict[str, Any]],
         *,
         artifact_types: list[dict[str, Any]] | None = None,
+        catalog_revision: str | None = None,
     ) -> SolverCatalog:
         return cls(
             {
@@ -47,6 +51,7 @@ class SolverCatalog:
                 item["name"]: item
                 for item in artifact_types or ()
             },
+            catalog_revision,
         )
 
     def manifests(self) -> list[dict[str, Any]]:

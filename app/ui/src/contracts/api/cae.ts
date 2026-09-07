@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import type { MeasurementMaterialParameters } from './measurement'
 
 export const caeJobSchema = z
   .object({
@@ -19,13 +18,15 @@ export const caeBatchSchema = z
   .object({
     id: z.string(),
     experiment_id: z.number().int(),
+    request_id: z.string().optional(),
     mode: z.enum(['generate', 'candidate', 'measurement']),
     total: z.number().int(),
+    uploaded_count: z.number().int().default(0),
     created_count: z.number().int(),
     succeeded: z.number().int(),
     failed: z.number().int(),
     cancelled: z.number().int(),
-    state: z.enum(['queued', 'running', 'completed', 'cancelled']),
+    state: z.enum(['uploading', 'queued', 'running', 'completed', 'cancelled']),
     created_at: z.string(),
     updated_at: z.string(),
     finished_at: z.string().nullable(),
@@ -61,9 +62,7 @@ export type CaeBatchRequest = Readonly<{
   experiment_id: number
   experiment_source_hash: string
   mode: 'generate' | 'candidate' | 'measurement'
-  count?: number
-  vars?: Readonly<Record<string, unknown>>
-  material_parameters?: MeasurementMaterialParameters
-  measurement_id?: number
-  evaluation_timeout_ms?: number
+  catalog_revision: string
+  builder_version: '1'
+  items: readonly Readonly<{ index: number; input_hash: string; byte_length: number; measurement_id?: number }>[]
 }>

@@ -1,11 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createCadSourceDocument, type ExperimentSourceBundle } from '@/lib/cad/source'
 import { defaultWorkbenchLayoutState, type SavedExperiment, type WorkbenchDraft } from '../types'
-import {
-  experimentEditingReducer,
-  initialExperimentEditingState,
-  type AgentExperimentChange,
-} from './experimentEditingState'
+import { experimentEditingReducer, initialExperimentEditingState } from './experimentEditingState'
 
 function sourceBundle(source: string): ExperimentSourceBundle {
   return Object.freeze({ files: Object.freeze({ 'experiment.tsx': source }) })
@@ -32,21 +28,6 @@ const materialParameters = Object.freeze({
   tasks: Object.freeze({}),
 })
 
-const agentChange: AgentExperimentChange = Object.freeze({
-  runId: 'run-1',
-  appliedAt: 1,
-  status: 'applied',
-  files: Object.freeze([
-    Object.freeze({
-      path: 'experiment.tsx',
-      before: 'before',
-      after: 'after',
-      addedLines: 1,
-      removedLines: 1,
-    }),
-  ]),
-})
-
 describe('experimentEditingReducer', () => {
   it('loads a server record as one clean snapshot', () => {
     const bundle = sourceBundle('saved source')
@@ -69,12 +50,10 @@ describe('experimentEditingReducer', () => {
       candidateVars: null,
       candidateMaterialParameters: null,
       workspaceSession: 1,
-      agentChange: null,
-      agentWorkspaceIdentity: null,
     })
   })
 
-  it('keeps the loaded baseline while source and Agent edits replace only the draft document', () => {
+  it('keeps the loaded baseline while source edits replace only the draft document', () => {
     const savedBundle = sourceBundle('saved source')
     const savedDocument = createCadSourceDocument('experiment', savedBundle)
     const record = savedExperiment(7, savedBundle)
@@ -88,32 +67,16 @@ describe('experimentEditingReducer', () => {
       vars: { width: 4 },
       materialParameters,
     })
-    const withIdentity = experimentEditingReducer(withCandidate, {
-      type: 'agentWorkspaceIdentityChanged',
-      identity: { baseHash: 'saved-hash', document: savedDocument },
-    })
     const editedDocument = createCadSourceDocument('experiment', sourceBundle('manual edit'))
 
-    const edited = experimentEditingReducer(withIdentity, { type: 'sourceEdited', document: editedDocument })
+    const edited = experimentEditingReducer(withCandidate, { type: 'sourceEdited', document: editedDocument })
 
     expect(edited.document).toBe(editedDocument)
     expect(edited.record).toBe(record)
     expect(edited.baselineBundle).toBe(savedBundle)
     expect(edited.candidateVars).toEqual({ width: 4 })
     expect(edited.candidateMaterialParameters).toBeNull()
-    expect(edited.agentWorkspaceIdentity).toBeNull()
-
-    const agentDocument = createCadSourceDocument('experiment', sourceBundle('agent edit'))
-    const applied = experimentEditingReducer(edited, {
-      type: 'agentApplied',
-      document: agentDocument,
-      change: agentChange,
-    })
-    expect(applied.document).toBe(agentDocument)
-    expect(applied.baselineBundle).toBe(savedBundle)
-    expect(applied.agentChange).toBe(agentChange)
   })
-
   it('commits save metadata without replacing a newer local document', () => {
     const originalBundle = sourceBundle('original')
     const localDocument = createCadSourceDocument('experiment', sourceBundle('local source'))

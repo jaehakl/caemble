@@ -21,8 +21,6 @@ dependencies = [
     "caemble-runtime-sdk",
     "websockets>=12,<16",
     "caemble-catalog",
-    "cryptography>=45,<50",
-    "openai>=2.54,<3",
 ]
 
 [tool.poetry]

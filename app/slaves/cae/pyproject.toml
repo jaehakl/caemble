@@ -23,6 +23,10 @@ caemble-catalog = { path = "../../catalog", develop = true }
 caemble-runtime-sdk = { path = "../../sdk", develop = true, extras = ["server-slave"] }
 torch = { source = "pytorch-cu126" }
 
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.1.1"
+pytest-asyncio = "^1.4.0"
+
 [[tool.poetry.source]]
 name = "pytorch-cu126"
 url = "https://download.pytorch.org/whl/cu126"

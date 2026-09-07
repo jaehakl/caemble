@@ -2,6 +2,36 @@
 module.exports = {
   forbidden: [
     {
+      name: 'web-docs-do-not-import-repository-docs',
+      severity: 'error',
+      from: { path: '^src/(features|routes|workbench|documentation/public)' },
+      to: { path: '^src/documentation/(index|development)\\.ts$' },
+    },
+    {
+      name: 'domain-has-no-node-io',
+      severity: 'error',
+      from: { path: '^src/lib/', pathNot: '\\.(test|spec)\\.' },
+      to: { dependencyTypes: ['core'], path: '^(node:)?(fs|path|child_process|process|http|https|os|net)(/|$)' },
+    },
+    {
+      name: 'browser-has-no-node-runtime',
+      severity: 'error',
+      from: { path: '^src/(features|routes|workbench|platform/browser|platform/isolated-runner)/' },
+      to: { path: '^src/(cli|platform/node)/' },
+    },
+    {
+      name: 'local-execution-does-not-submit',
+      severity: 'error',
+      from: { path: '^src/platform/node/localExecution\\.ts$' },
+      to: { path: '^src/(api|cli)/' },
+    },
+    {
+      name: 'remote-submit-does-not-build-or-run-python',
+      severity: 'error',
+      from: { path: '^src/(api/submitArtifact|cli/batch)\\.ts$' },
+      to: { path: '^src/(platform/node/(build|localExecution|cadCompiler)|lib/cae/build|cli/experiment)\\.ts$' },
+    },
+    {
       name: 'no-circular',
       comment: 'Keep module dependencies acyclic.',
       severity: 'error',
@@ -83,7 +113,7 @@ module.exports = {
       comment: 'All imports must resolve.',
       severity: 'error',
       from: {},
-      to: { couldNotResolve: true, pathNot: '\\?(worker|url)$' },
+      to: { couldNotResolve: true, pathNot: '\\?(worker|url|raw)$' },
     },
   ],
   options: {

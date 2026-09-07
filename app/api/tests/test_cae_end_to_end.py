@@ -1,13 +1,17 @@
-"""Opt-in Node preparation, real CAE child, WebSocket, and PostgreSQL integration."""
+"""Opt-in public CLI build, real CAE child, WebSocket, and PostgreSQL integration."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import socket
+import subprocess
+import tempfile
 import sys
 import unittest
 import uuid
+from contextlib import suppress
 from datetime import timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -18,13 +22,17 @@ from caemble_catalog import Catalog
 from fastapi import FastAPI, WebSocket
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+import numpy as np
 import uvicorn
 import websockets
 
 from cae import recording
-from cae.batches import cancel_batch
+from cae.batches import cancel_batch, create_batch
+from cae.models import BatchCreateRequest
+from cae.uploads import CHUNK_BYTES, commit_batch, finalize_item, upload_chunk
+from models import RoleEnum, UserData
+from service.data_tools import slice_recorded_tensor
 from cae.db import CaeBatch
-from cae.preparation import prepare_input
 from db import Experiment, ExperimentRecord, Measurement, RecordedData, make_async_db_url
 from gpstation.db import Job, JobBatch, JobEvent, JobRecord, Launcher
 from gpstation.service import worker_connection
@@ -251,17 +259,46 @@ class CaeEndToEndTests(unittest.TestCase):
         catalog = Catalog.open_readonly()
         try:
             example = catalog.experiment("electro-thermal-notched-bar")
-            snapshot = catalog.runtime_slice(
-                solvers=[(row["name"], row["version"]) for row in catalog.list_solvers()],
-                quantity_kinds=[row["name"] for row in catalog.list_quantity_kinds(limit=2147483647)[0]],
-                material_parameters=[row["key"] for row in catalog.list_material_parameters(limit=2147483647)[0]],
-                material_models=[row["key"] for row in catalog.list_material_models(limit=2147483647)[0]],
-            )
-            prepared = await prepare_input({
-                "mode": "generate", "source_bundle": example["sourceBundle"], "source_hash": example["bundleHash"],
-                "catalog": snapshot, "materials": {"names": [], "materials": [], "parameters": [], "qualifiers": []},
-                "evaluation_timeout_ms": 3000,
-            })
+            repo = Path(__file__).resolve().parents[3]
+            cae = repo / "app" / "slaves" / "cae"
+            python = os.getenv("CAE_PYTHON") or subprocess.check_output(
+                ["poetry", "env", "info", "--executable"], cwd=cae, text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            ).strip()
+            with tempfile.TemporaryDirectory(prefix="caemble-client-build-") as directory:
+                result = await asyncio.to_thread(subprocess.run, [
+                    "node", str(repo / "app/ui/dist-cli/caemble.cjs"), "--repo", str(repo),
+                    "--python", python, "experiment", "build", "--example", "electro-thermal-notched-bar",
+                    "--vars-mode", "nominal", "--out", directory,
+                ], cwd=repo, capture_output=True, text=True, encoding="utf-8", timeout=180)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                manifest = json.loads((Path(directory) / "manifest.json").read_text(encoding="utf-8"))
+                artifact_bytes = (Path(directory) / manifest["items"][0]["file"]).read_bytes()
+                prepared = json.loads(artifact_bytes)
+                local_directory = Path(directory) / "local-results"
+                local_process = await asyncio.to_thread(subprocess.run, [
+                    "node", str(repo / "app/ui/dist-cli/caemble.cjs"), "--repo", str(repo),
+                    "--python", python, "experiment", "test", directory, "--out", str(local_directory),
+                ], cwd=repo, capture_output=True, text=True, encoding="utf-8", timeout=180)
+                self.assertEqual(local_process.returncode, 0, local_process.stderr)
+                local_manifest = json.loads((local_directory / "1/manifest.json").read_text(encoding="utf-8"))
+                self.assertEqual(local_manifest["state"], "succeeded")
+                self.assertEqual(local_manifest["inputHash"], manifest["items"][0]["input_hash"])
+                self.assertEqual(hashlib.sha256(artifact_bytes).hexdigest(), local_manifest["inputHash"])
+                local_records = {}
+                for local_record in local_manifest["records"]:
+                    payload = json.loads((local_directory / "1" / local_record["path"]).read_text(encoding="utf-8"))
+                    attachments = {item["id"]: (local_directory / "1" / item["path"]).read_bytes()
+                                   for item in local_record["attachments"]}
+                    persisted = recording.persist_record(local_record["schema"], payload["value"], attachments)
+                    pending = [(local_record["name"], local_record["schema"], persisted)]
+                    while pending:
+                        name, schema, tensor = pending.pop()
+                        if "dtype" in schema:
+                            local_records[name] = (schema, tensor)
+                        else:
+                            pending.extend((f"{name}.{key}", member, tensor[key]) for key, member in schema.items())
+
         finally:
             catalog.close()
         measurement_input = prepared["measurement"]
@@ -273,21 +310,9 @@ class CaeEndToEndTests(unittest.TestCase):
             experiment = await db.get(Experiment, experiment_id)
             experiment.source_bundle = example["sourceBundle"]
             experiment.source_hash = example["bundleHash"]
-            batch = JobBatch(user_id=owner, request_id=str(uuid.uuid4()), request_hash="real-cae", total=1,
-                             created_count=1, succeeded=0, failed=0, cancelled=0, state="running")
             launcher = Launcher(user_id=owner, launcher_name="real-cae-process", slave_app_ids=["cae"],
-                                job_modes={"cae": "websocket"}, status="busy", connected_at=utcnow(), last_heartbeat_at=utcnow())
-            db.add_all([batch, launcher])
-            await db.flush()
-            db.add(CaeBatch(batch_id=batch.id, experiment_id=experiment_id, spec={"mode": "generate"}))
-            job = Job(user_id=owner, launcher_id=launcher.id, handler_type="cae.simulation", slave_app_id="cae",
-                      job_mode="websocket", batch_id=batch.id, item_index=1, state="assigned", attempt_count=1,
-                      input={"measurement": measurement_input})
-            db.add(job)
-            await db.flush()
-            measurement = Measurement(user_id=owner, experiment_id=experiment_id, job_id=job.id,
-                                      vars=prepared["vars"], material_parameters=prepared["material_parameters"])
-            db.add(measurement)
+                                job_modes={"cae": "websocket"}, status="ready", connected_at=utcnow(), last_heartbeat_at=utcnow())
+            db.add(launcher)
             leaves = list(schemas.items())
             expected_names = set()
             while leaves:
@@ -300,6 +325,22 @@ class CaeEndToEndTests(unittest.TestCase):
                                         dtype=schema["dtype"], quantity_kind=schema.get("quantityKind"), data_schema=schema,
                                         contract_hash="real-cae-test"))
             await db.commit()
+            user = UserData(id=owner, roles=[RoleEnum.user])
+            with Catalog.open_readonly() as current_catalog:
+                batch = await create_batch(db, BatchCreateRequest(
+                    request_id=uuid.uuid4(), experiment_id=experiment_id,
+                    experiment_source_hash=example["bundleHash"], mode="generate",
+                    catalog_revision=manifest["catalog_revision"], builder_version="1",
+                    items=[{"index": 1, "input_hash": hashlib.sha256(artifact_bytes).hexdigest(),
+                            "byte_length": len(artifact_bytes)}],
+                ), user, current_catalog)
+                for index, start in enumerate(range(0, len(artifact_bytes), CHUNK_BYTES)):
+                    chunk = artifact_bytes[start:start + CHUNK_BYTES]
+                    await upload_chunk(db, batch.id, owner, 1, index, hashlib.sha256(chunk).hexdigest(), chunk)
+                await finalize_item(db, batch.id, owner, 1)
+                await commit_batch(db, batch.id, user, current_catalog)
+            job, _ = await JobService.claim_next_compatible_job(db, idle_launcher_ids={launcher.id})
+            measurement = await db.scalar(select(Measurement).where(Measurement.job_id == job.id))
             assignment = await worker_connection.worker_assignment(db, job)
         await runtime.register_launcher(launcher.id, AsyncMock(), "test-key")
         await runtime.mark_launcher_job(launcher.id, job.id)
@@ -315,7 +356,6 @@ class CaeEndToEndTests(unittest.TestCase):
         assignment["websocket_url"] = f"ws://127.0.0.1:{listener.getsockname()[1]}/jobs/{job.id}"
         server = uvicorn.Server(uvicorn.Config(app, log_level="error", lifespan="off"))
         cae = Path(__file__).resolve().parents[2] / "slaves" / "cae"
-        python = cae / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         process = None
         stderr_task = None
         events = []
@@ -351,6 +391,31 @@ class CaeEndToEndTests(unittest.TestCase):
                     names = set((await db.scalars(select(ExperimentRecord.name).join(RecordedData)
                                                  .where(RecordedData.measurement_id == measurement.id))).all())
                     self.assertEqual(names, expected_names)
+                    self.assertEqual(names, set(local_records))
+                    self.assertEqual(stored_job.artifact_metadata["input_hash"], local_manifest["inputHash"])
+                    self.assertEqual(stored_job.input["measurement"], measurement_input)
+                    rows = (await db.execute(select(RecordedData, ExperimentRecord).join(
+                        ExperimentRecord, ExperimentRecord.id == RecordedData.experiment_record_id
+                    ).where(RecordedData.measurement_id == measurement.id))).all()
+                    for remote_data, record in rows:
+                        schema, local_tensor = local_records[record.name]
+                        self.assertEqual(record.data_schema, schema)
+                        self.assertEqual(record.dtype, schema["dtype"])
+                        self.assertEqual(remote_data.data["shape"], local_tensor["shape"])
+                        self.assertEqual(remote_data.data.get("axes"), local_tensor.get("axes"))
+                        offset = 0
+                        while True:
+                            local_slice = slice_recorded_tensor(local_tensor, record.dtype, offset, 10000)
+                            remote_slice = slice_recorded_tensor(remote_data.data, record.dtype, offset, 10000)
+                            if record.dtype == "string":
+                                self.assertEqual(remote_slice["values"], local_slice["values"])
+                            else:
+                                # Use the existing numerical-test default allclose tolerance.
+                                np.testing.assert_allclose(remote_slice["values"], local_slice["values"], err_msg=record.name)
+                            if local_slice["nextOffset"] is None:
+                                break
+                            offset = local_slice["nextOffset"]
+
                     self.assertEqual(await db.scalar(select(func.count()).select_from(JobRecord)), 0)
                     self.assertEqual((await db.get(JobBatch, batch.id)).succeeded, 1)
                     kinds = list((await db.scalars(select(JobEvent.type).order_by(JobEvent.id))).all())
@@ -360,8 +425,9 @@ class CaeEndToEndTests(unittest.TestCase):
                     self.assertFalse(await runtime.launcher_matches_job(launcher.id, job.id))
         finally:
             if process is not None and process.returncode is None:
-                process.stdin.write(b'{"type":"stop"}\n')
-                await process.stdin.drain()
+                with suppress(BrokenPipeError, ConnectionResetError):
+                    process.stdin.write(b'{"type":"stop"}\n')
+                    await process.stdin.drain()
                 try:
                     await asyncio.wait_for(process.wait(), timeout=10)
                 except TimeoutError:

@@ -4,6 +4,7 @@ import { parseCalculationDataListResponse, parseCalculationListResponse } from '
 function calculationItem(outputLayout: unknown) {
   return {
     id: 1,
+    revision: 1,
     experiment_id: 2,
     name: 'Stress',
     source_code: 'return 0',

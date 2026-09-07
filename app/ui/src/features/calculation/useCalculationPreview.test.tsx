@@ -18,6 +18,7 @@ const output = (value: number): NormalizedCalculationOutput => ({
 })
 
 const baseDraft: CalculationDraft = {
+  baseRevision: 1,
   description: '',
   id: 3,
   name: 'Preview',

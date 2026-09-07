@@ -1,8 +1,7 @@
 import os
-from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel
 
 load_dotenv()
 
@@ -19,9 +18,6 @@ def env_csv(name: str, default: str) -> tuple[str, ...]:
 
 
 class Settings(BaseModel):
-    cae_node_executable: str = os.getenv("CAE_NODE_EXECUTABLE", "node")
-    cae_preparation_script: str = os.getenv("CAE_PREPARATION_SCRIPT", str(Path(__file__).resolve().parents[2] / "ui" / "dist-cae" / "prepare.cjs"))
-    cae_preparation_concurrency: int = max(1, int(os.getenv("CAE_PREPARATION_CONCURRENCY", "1")))
     db_url: str = os.getenv("DB_URL", "")
     google_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "")
     google_client_secret: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
@@ -44,11 +40,7 @@ class Settings(BaseModel):
     CSRF_TTL_SEC: int = int(os.getenv("CSRF_TTL_SEC", "3600"))
     COOKIE_DOMAIN: str = os.getenv("COOKIE_DOMAIN", "")
     SECURE_COOKIES: bool = env_bool("SECURE_COOKIES", True)
-    AI_CREDENTIAL_FERNET_KEYS: tuple[SecretStr, ...] = tuple(
-        SecretStr(value.strip())
-        for value in os.getenv("AI_CREDENTIAL_FERNET_KEYS", "").split(",")
-        if value.strip()
-    )
+
 
 
 settings = Settings()

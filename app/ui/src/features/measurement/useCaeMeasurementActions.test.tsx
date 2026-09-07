@@ -26,6 +26,16 @@ const mocks = vi.hoisted(() => ({
   batches: [] as CaeBatch[],
   events: [] as CaeEvent[],
 }))
+vi.mock('./buildBatchArtifact', () => ({
+  buildBatchArtifact: async (request: unknown) => ({ artifact: request, store: { readItem: vi.fn(), close: vi.fn() } }),
+}))
+vi.mock('@/api/submitArtifact', () => ({
+  submitArtifact: async (options: { artifact: unknown; onRegistered: (id: string) => Promise<void> }) => {
+    const result = await mocks.create(options.artifact)
+    await options.onRegistered(result.id)
+    return result
+  },
+}))
 vi.mock('@/api/cae', () => ({ caeBatches: { create: mocks.create, read: mocks.read, cancel: mocks.cancel } }))
 vi.mock('@/api', () => ({ dbTables: { Measurement: { create: mocks.save } } }))
 vi.mock('@/features/cae/CaeBatchProvider', () => ({
@@ -61,6 +71,7 @@ function batch(ids: readonly number[] = [41]): CaeBatch {
     experiment_id: 10,
     mode: 'candidate',
     total: ids.length,
+    uploaded_count: 0,
     created_count: ids.length,
     succeeded: ids.length,
     failed: 0,
@@ -392,6 +403,7 @@ describe('server-owned CAE measurement actions', () => {
       state: 'cancelled',
       succeeded: 0,
       cancelled: 1,
+      uploaded_count: 0,
       created_count: 0,
       jobs_total: 0,
       jobs: [],

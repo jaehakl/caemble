@@ -261,6 +261,11 @@ async def google_callback(request: Request, state: str = "", code: str = "", db:
 
 @router.get("/me", response_model=UserData)
 async def check_user(request: Request, db: AsyncSession = Depends(get_db)) -> UserData:
+    authorization = request.headers.get("Authorization", "")
+    if authorization.lower().startswith("bearer csk_"):
+        from service.client_auth import authenticate_caemble
+
+        return await authenticate_caemble(request, db, authorization)
     token = request.cookies.get("access_token")
     if not token:
         authorization = request.headers.get("Authorization", "")

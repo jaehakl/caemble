@@ -120,6 +120,7 @@ describe('API read boundaries', () => {
           experiment_id: 2,
           name: 'Stress',
           source_code: 'return 0',
+          revision: 1,
           contract_status: 'needs_preflight',
           experiment_record_ids: [],
           future_field: 'kept',

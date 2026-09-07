@@ -8,9 +8,7 @@ import type { DefinitionFormValues, ExperimentSaveMode } from '@/features/viewer
 import { saveCadDefinition } from '@/features/viewer/persistence/saveDefinition'
 import { useCadWorkspace, type CandidateVarsRegeneratedEvent } from '@/features/viewer/workspace/useCadWorkspace'
 import {
-  cadSourceHash,
   createCadSourceDocument,
-  createExperimentSourceBundle,
   experimentTaskPaths,
   type ExperimentSourceBundle,
   type ExperimentSourceDocument,
@@ -55,35 +53,6 @@ function createExperimentDocument(sourceBundle: ExperimentSourceBundle) {
   return createCadSourceDocument('experiment', sourceBundle)
 }
 
-export type { AgentExperimentChange } from './experimentEditingState'
-
-type AgentApplyRequest = Readonly<{
-  runId: string
-  finalDocument: Readonly<{ kind: 'experiment'; sourceBundle: ExperimentSourceBundle }>
-  baseHash: string
-  sourceHash: string
-  stagedRevision: number
-  workspaceSession: number
-}>
-
-function changedLineCounts(before: string | null, after: string | null) {
-  const beforeLines = before === null ? [] : before.split('\n')
-  const afterLines = after === null ? [] : after.split('\n')
-  let prefix = 0
-  while (prefix < beforeLines.length && prefix < afterLines.length && beforeLines[prefix] === afterLines[prefix]) {
-    prefix += 1
-  }
-  let suffix = 0
-  while (
-    suffix < beforeLines.length - prefix &&
-    suffix < afterLines.length - prefix &&
-    beforeLines[beforeLines.length - suffix - 1] === afterLines[afterLines.length - suffix - 1]
-  ) {
-    suffix += 1
-  }
-  return { addedLines: afterLines.length - prefix - suffix, removedLines: beforeLines.length - prefix - suffix }
-}
-
 export type UseCaeWorkbenchStateOptions = Readonly<{ onActivity?: RuntimeActivityCallback }>
 export type CandidateVariablesOrigin = 'user-vars' | 'prediction-inverse' | 'prediction-sampling'
 
@@ -104,8 +73,6 @@ export function useCaeWorkbenchState(
     candidateVars,
     candidateMaterialParameters,
     workspaceSession,
-    agentChange,
-    agentWorkspaceIdentity,
   } = editing
   const [saving, setSaving] = useState<'experiment' | null>(null)
   const [pendingMeasurementId, setPendingMeasurementId] = useState<number | null>(null)
@@ -280,121 +247,6 @@ export function useCaeWorkbenchState(
     onCandidateVarsRegenerated: handleCandidateVarsRegenerated,
   })
   const experimentSourceValidated = experimentDocument.validatedRevision === experimentDocument.revision
-
-  useEffect(() => {
-    if (!experiment) {
-      dispatchEditing({ type: 'agentWorkspaceIdentityChanged', identity: null })
-      return
-    }
-    let active = true
-    void cadSourceHash(experiment).then(
-      (baseHash) => {
-        if (active) {
-          dispatchEditing({
-            type: 'agentWorkspaceIdentityChanged',
-            identity: Object.freeze({ baseHash, document: experiment }),
-          })
-        }
-      },
-      () => {
-        if (active) dispatchEditing({ type: 'agentWorkspaceIdentityChanged', identity: null })
-      },
-    )
-    return () => {
-      active = false
-    }
-  }, [experiment])
-  const currentAgentWorkspaceIdentity =
-    agentWorkspaceIdentity?.document === experiment
-      ? Object.freeze({
-          baseHash: agentWorkspaceIdentity.baseHash,
-        })
-      : null
-
-  const applyAgentBundle = useCallback(
-    async (request: AgentApplyRequest) => {
-      const current = experimentRef.current
-      if (!current) return { status: 'conflicted' as const, message: 'Experiment가 없습니다.' }
-      let next: ExperimentSourceDocument
-      let finalHash: string
-      try {
-        next = createExperimentDocument(request.finalDocument.sourceBundle)
-        finalHash = await cadSourceHash(next)
-      } catch (cause: unknown) {
-        return { status: 'conflicted' as const, message: cause instanceof Error ? cause.message : String(cause) }
-      }
-      if (finalHash !== request.sourceHash) {
-        return {
-          status: 'conflicted' as const,
-          message: 'Agent 완료 bundle의 source hash가 일치하지 않아 자동 반영하지 않았습니다.',
-        }
-      }
-      const currentHash = await cadSourceHash(current)
-      const conflicted =
-        experimentRef.current !== current ||
-        currentHash !== request.baseHash ||
-        workspaceSession !== request.workspaceSession
-      const comparison = conflicted ? (experimentRef.current ?? current) : current
-      const paths = [
-        ...new Set([...Object.keys(comparison.sourceBundle.files), ...Object.keys(next.sourceBundle.files)]),
-      ].sort()
-      const files = paths.flatMap((path) => {
-        const before = comparison.sourceBundle.files[path] ?? null
-        const after = next.sourceBundle.files[path] ?? null
-        return before === after ? [] : [{ path, before, after, ...changedLineCounts(before, after) }]
-      })
-      const firstChangedFile = files[0]?.path ?? null
-      if (conflicted) {
-        dispatchEditing({
-          type: 'agentChangeChanged',
-          change: files.length
-            ? Object.freeze({ runId: request.runId, appliedAt: Date.now(), status: 'conflicted' as const, files })
-            : null,
-        })
-        return {
-          status: 'conflicted' as const,
-          message: 'Agent 실행 중 Experiment source가 변경되어 staged diff만 표시했습니다.',
-          firstChangedFile,
-          changedFiles: files.length,
-        }
-      }
-      if (!files.length) return { status: 'applied' as const, firstChangedFile: null, changedFiles: 0 }
-      experimentRef.current = next
-      dispatchEditing({
-        type: 'agentApplied',
-        document: next,
-        change: Object.freeze({ runId: request.runId, appliedAt: Date.now(), status: 'applied' as const, files }),
-      })
-      clearMeasurement()
-      return { status: 'applied' as const, firstChangedFile, changedFiles: files.length }
-    },
-    [clearMeasurement, workspaceSession],
-  )
-
-  const undoAgentChange = useCallback(async () => {
-    const current = experimentRef.current
-    if (!current || !agentChange) return false
-    if (agentChange.status === 'conflicted') {
-      dispatchEditing({ type: 'agentChangeChanged', change: null })
-      toast.success('AI Agent staged diff를 닫았습니다.')
-      return true
-    }
-    const files = { ...current.sourceBundle.files }
-    for (const change of agentChange.files) {
-      if ((files[change.path] ?? null) !== change.after) {
-        toast.error(`${change.path}가 Agent 반영 후 다시 수정되어 전체 Undo를 적용하지 않았습니다.`)
-        return false
-      }
-      if (change.before === null) delete files[change.path]
-      else files[change.path] = change.before
-    }
-    const restored = createExperimentDocument(createExperimentSourceBundle(files))
-    experimentRef.current = restored
-    dispatchEditing({ type: 'agentUndoApplied', document: restored })
-    clearMeasurement()
-    toast.success('AI Agent 변경을 되돌렸습니다.')
-    return true
-  }, [agentChange, clearMeasurement])
 
   const generateCandidate = useCallback(() => {
     clearMeasurement()
@@ -770,9 +622,7 @@ export function useCaeWorkbenchState(
     sourceLocked,
     refreshExperimentUsage,
     hasTasks,
-    agentChange,
-    agentWorkspaceIdentity: currentAgentWorkspaceIdentity,
-    agentWorkspaceSession: workspaceSession,
+    workspaceSession,
     candidateVars,
     candidateMaterialParameters,
     setCandidateVariable,
@@ -792,8 +642,6 @@ export function useCaeWorkbenchState(
     saveExperiment,
     restoreDraft,
     draft,
-    applyAgentBundle,
-    undoAgentChange,
   }
 }
 

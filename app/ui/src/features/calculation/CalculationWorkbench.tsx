@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { FilePlus2, LoaderCircle, RotateCcw, Sparkles, Trash2, X } from 'lucide-react'
+import { FilePlus2, LoaderCircle, Trash2 } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -12,18 +12,11 @@ import {
 } from 'react'
 import { toast } from 'sonner'
 import { dbTables, getListRequest, type CalculationOutputLayout, type ExperimentRecordedDataRecord } from '@/api'
-import type { AiAgentApplyRequest, AiAgentApplyResult } from '@/api/aiAgent'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { usePrivateQueryScope } from '@/features/auth/use-auth'
 import { MeasurementExplorer } from '@/features/measurement'
-import type {
-  BottomDockMode,
-  SavedMeasurement,
-  SavedRecordedData,
-  WorkbenchCalculationSelection,
-} from '@/features/cae-workbench/types'
-import { CadDiffEditor } from '@/features/viewer/editor/CadDiffEditor'
+import type { BottomDockMode, SavedMeasurement, WorkbenchCalculationSelection } from '@/features/cae-workbench/types'
 import {
   analyzeCalculationDependencies,
   calculationExperimentRecordReference,
@@ -63,41 +56,9 @@ export type CalculationSaveState = Readonly<{
   disabledReason?: string
 }>
 
-export type CalculationAgentBridge = Readonly<{
-  calculationId: number | null
-  experimentId: number
-  name: string
-  description: string
-  sourceCode: string
-  baseHash: string | null
-  context: Readonly<Record<string, unknown>>
-  editable: boolean
-  targetLabel: string
-  workspaceSession: number
-  apply: (request: AiAgentApplyRequest) => Promise<AiAgentApplyResult>
-}>
-
-function calculationChangedLines(before: string, after: string) {
-  const beforeLines = before.split('\n')
-  const afterLines = after.split('\n')
-  let prefix = 0
-  while (prefix < beforeLines.length && prefix < afterLines.length && beforeLines[prefix] === afterLines[prefix])
-    prefix++
-  let suffix = 0
-  while (
-    suffix < beforeLines.length - prefix &&
-    suffix < afterLines.length - prefix &&
-    beforeLines[beforeLines.length - suffix - 1] === afterLines[afterLines.length - suffix - 1]
-  ) {
-    suffix++
-  }
-  return { addedLines: afterLines.length - prefix - suffix, removedLines: beforeLines.length - prefix - suffix }
-}
-
 export type CalculationWorkbenchProps = Readonly<{
   authenticated: boolean
   dataReadable: boolean
-  agentWorkspaceSession: number
   bottom: ReactNode
   bottomHeightRatio: number
   bottomMode: BottomDockMode
@@ -116,7 +77,6 @@ export type CalculationWorkbenchProps = Readonly<{
   measurementSelectionPending: boolean
   menubar: ReactNode
   onActivity: RuntimeActivityCallback
-  onAgentBridgeChange: (bridge: CalculationAgentBridge | null) => void
   onCalculationSelectionChange: (selection: WorkbenchCalculationSelection) => boolean
   onBottomHeightRatioChange: (ratio: number) => void
   onCandidateVariableChange: (key: string, value: Tensor) => void
@@ -133,7 +93,6 @@ export type CalculationWorkbenchProps = Readonly<{
   onClearMeasurement: () => void
   recordedData: RecordedData | null | undefined
   recordedDataSystemResult?: ReactNode
-  recordedRows: readonly SavedRecordedData[]
   recordedRules: readonly RecordedDataRule[]
   ribbon: ReactNode
   rowRatios: readonly number[]
@@ -148,7 +107,6 @@ export type CalculationWorkbenchProps = Readonly<{
 export function CalculationWorkbench({
   authenticated,
   dataReadable,
-  agentWorkspaceSession,
   bottom,
   bottomHeightRatio,
   bottomMode,
@@ -167,7 +125,6 @@ export function CalculationWorkbench({
   measurementSelectionPending,
   menubar,
   onActivity,
-  onAgentBridgeChange,
   onCalculationSelectionChange,
   onBottomHeightRatioChange,
   onCandidateVariableChange,
@@ -184,7 +141,6 @@ export function CalculationWorkbench({
   onClearMeasurement,
   recordedData,
   recordedDataSystemResult,
-  recordedRows,
   recordedRules,
   ribbon,
   rowRatios,
@@ -202,18 +158,13 @@ export function CalculationWorkbench({
   const queryClient = useQueryClient()
   const queryScope = usePrivateQueryScope()
   const [editing, dispatchEditing] = useReducer(calculationEditingReducer, initialCalculationEditingState)
-  const { agentChange, agentDiffOpen, dirty, draft, targetSession } = selectCalculationEditing(editing)
+  const { dirty, draft } = selectCalculationEditing(editing)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
-  const [agentIdentity, setAgentIdentity] = useState<Readonly<{ sourceCode: string; hash: string }> | null>(null)
   const [inputPanel, setInputPanel] = useState<'measurements' | 'vars'>('measurements')
   const draftRef = useRef(draft)
-  const sourceEditableRef = useRef(sourceEditable)
-  const calculationDataBusyRef = useRef(calculationDataBusy)
   draftRef.current = draft
-  sourceEditableRef.current = sourceEditable
-  calculationDataBusyRef.current = calculationDataBusy
   const appliedExperimentRef = useRef(experimentId)
   const selectedCalculationRef = useRef(selectedCalculationId)
   const defaultCalculationExperimentRef = useRef<number | null>(null)
@@ -221,7 +172,6 @@ export function CalculationWorkbench({
   const mutationSequenceRef = useRef(0)
   const appliedSaveCommandRef = useRef(saveCommand)
   const sourceEditorRef = useRef<CalculationSourceEditorHandle | null>(null)
-  const calculationWorkspaceSession = agentWorkspaceSession * 1_000_000 + targetSession
   const demoSandbox = sourceEditable && !persistable
   const baseSaveDisabledReason = !authenticated
     ? '로그인 후 사용할 수 있습니다.'
@@ -414,179 +364,6 @@ export function CalculationWorkbench({
       measurementLoading,
     ],
   )
-  const agentContext = useMemo(() => {
-    const rowIds = new Map(recordedRows.map((row) => [row.name, row.id ?? null]))
-    const sampleTicks = (ticks: readonly (number | string)[]) => ({
-      count: ticks.length,
-      first: ticks.slice(0, 4),
-      last: ticks.length > 4 ? ticks.slice(-4) : [],
-    })
-    const recorded = recordedSnapshot.summaries.map((summary) => {
-      const leaf = recordedSnapshot.input?.[summary.path]
-      return {
-        id: rowIds.get(summary.path) ?? null,
-        path: summary.path,
-        dtype: leaf?.dtype ?? summary.dtype,
-        shape: summary.shape,
-        actualAxisLengths: summary.actualAxisLengths,
-        axes: (leaf?.axes ?? summary.axes).map((axis) => ({
-          name: axis.name,
-          unit: axis.unit ?? null,
-          ticks: sampleTicks(axis.ticks),
-        })),
-        quantityKind: summary.quantityKind,
-        tensorOrder: leaf?.tensorOrder ?? summary.tensorOrder,
-        unit: summary.unit,
-        valid: summary.valid,
-        error: summary.error,
-      }
-    })
-    const availableExperimentRecords = [...experimentRecordCatalogItems]
-      .sort(
-        (left, right) =>
-          Number(right.used === true) - Number(left.used === true) || left.record.name.localeCompare(right.record.name),
-      )
-      .map(({ record, status, used }) => ({
-        id: record.id,
-        name: record.name,
-        dtype: record.dtype,
-        tensorOrder: record.tensor_order,
-        quantityKind: record.quantity_kind,
-        dataSchema: record.data_schema ?? null,
-        used,
-        selectedMeasurementStatus: status,
-      }))
-    const previewContext =
-      preview.status === 'success'
-        ? {
-            status: preview.status,
-            dtype: preview.output.dtype,
-            shape: preview.output.shape,
-            axes: preview.output.axes.map((axis) => ({
-              name: axis.name,
-              unit: axis.unit ?? null,
-              ticks: sampleTicks(axis.ticks),
-            })),
-            values:
-              typeof preview.output.data === 'number'
-                ? { count: 1, first: [preview.output.data], last: [] }
-                : {
-                    count: preview.output.data.length,
-                    first: preview.output.data.slice(0, 16),
-                    last: preview.output.data.length > 16 ? preview.output.data.slice(-16) : [],
-                  },
-          }
-        : preview.status === 'error'
-          ? { status: preview.status, code: preview.code, message: preview.message }
-          : { status: preview.status, message: preview.message }
-    const context: Record<string, unknown> = {
-      calculation: { dirty, isNew: draft.id === null },
-      measurementId,
-      experimentRecords: availableExperimentRecords,
-      recordedData: recorded,
-      preview: previewContext,
-    }
-    while (
-      new TextEncoder().encode(JSON.stringify(context)).byteLength > 32 * 1024 &&
-      availableExperimentRecords.length
-    ) {
-      availableExperimentRecords.pop()
-      context.experimentRecordsOmitted = experimentRecordCatalogItems.length - availableExperimentRecords.length
-    }
-    while (new TextEncoder().encode(JSON.stringify(context)).byteLength > 32 * 1024 && recorded.length) {
-      recorded.pop()
-      context.recordedDataOmitted = recordedSnapshot.summaries.length - recorded.length
-    }
-    return Object.freeze(context)
-  }, [dirty, draft.id, experimentRecordCatalogItems, measurementId, preview, recordedRows, recordedSnapshot])
-  useEffect(() => {
-    let active = true
-    setAgentIdentity(null)
-    void calculationSourceHash(draft.sourceCode).then((hash) => {
-      if (active) setAgentIdentity({ sourceCode: draft.sourceCode, hash })
-    })
-    return () => {
-      active = false
-    }
-  }, [draft.sourceCode])
-
-  const applyAgentSource = useCallback(
-    async (request: AiAgentApplyRequest): Promise<AiAgentApplyResult> => {
-      const finalDocument = request.finalDocument
-      const current = draftRef.current
-      if (
-        finalDocument.kind !== 'calculation' ||
-        finalDocument.experimentId !== experimentId ||
-        finalDocument.calculationId !== current.id
-      ) {
-        return { status: 'conflicted', message: 'Agent Calculation target이 현재 draft와 일치하지 않습니다.' }
-      }
-      const [currentHash, finalHash] = await Promise.all([
-        calculationSourceHash(current.sourceCode),
-        calculationSourceHash(finalDocument.sourceCode),
-      ])
-      if (finalHash !== request.sourceHash) {
-        return { status: 'conflicted', message: 'Agent 완료 source의 SHA-256이 일치하지 않습니다.' }
-      }
-      const changed = {
-        runId: request.runId,
-        before: current.sourceCode,
-        after: finalDocument.sourceCode,
-        ...calculationChangedLines(current.sourceCode, finalDocument.sourceCode),
-      }
-      if (
-        !sourceEditableRef.current ||
-        calculationDataBusyRef.current ||
-        currentHash !== request.baseHash ||
-        request.workspaceSession !== calculationWorkspaceSession
-      ) {
-        dispatchEditing({ type: 'agentStaged', change: { ...changed, status: 'conflicted' } })
-        return {
-          status: 'conflicted',
-          message: 'Calculation source 또는 target이 변경되어 staged diff만 보존했습니다.',
-        }
-      }
-      if (current.sourceCode === finalDocument.sourceCode) return { status: 'applied', changedFiles: 0 }
-      invalidatePreview('AI source 변경을 기다리는 중…')
-      dispatchEditing({
-        type: 'agentApplied',
-        sourceCode: finalDocument.sourceCode,
-        change: { ...changed, status: 'applied' },
-      })
-      return { status: 'applied', changedFiles: 1, firstChangedFile: 'calculation.js' }
-    },
-    [calculationWorkspaceSession, experimentId, invalidatePreview],
-  )
-
-  const agentBridge = useMemo<CalculationAgentBridge | null>(() => {
-    if (experimentId === null) return null
-    return Object.freeze({
-      calculationId: draft.id,
-      experimentId,
-      name: draft.name,
-      description: draft.description,
-      sourceCode: draft.sourceCode,
-      baseHash: agentIdentity?.sourceCode === draft.sourceCode ? agentIdentity.hash : null,
-      context: agentContext,
-      editable: sourceEditable && !calculationDataBusy,
-      targetLabel: draft.id === null ? 'Calculation New' : `Calculation #${draft.id}`,
-      workspaceSession: calculationWorkspaceSession,
-      apply: applyAgentSource,
-    })
-  }, [
-    agentContext,
-    agentIdentity,
-    applyAgentSource,
-    calculationDataBusy,
-    calculationWorkspaceSession,
-    draft,
-    sourceEditable,
-    experimentId,
-  ])
-
-  useEffect(() => onAgentBridgeChange(agentBridge), [agentBridge, onAgentBridgeChange])
-  useEffect(() => () => onAgentBridgeChange(null), [onAgentBridgeChange])
-
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange])
   useEffect(() => () => onDirtyChange(false), [onDirtyChange])
   useEffect(
@@ -635,7 +412,7 @@ export function CalculationWorkbench({
     ) {
       return
     }
-    if (dirty || agentChange !== null) {
+    if (dirty) {
       dispatchEditing({ type: 'serverSnapshotMissing', recordName: experimentRecords[0]?.name })
       return
     }
@@ -646,7 +423,6 @@ export function CalculationWorkbench({
   }, [
     calculationsQuery.isFetching,
     calculationsQuery.isSuccess,
-    agentChange,
     contextPending,
     dirty,
     experimentRecords,
@@ -779,9 +555,13 @@ export function CalculationWorkbench({
         if (!outputLayout || preflightMeasurementId === null) {
           throw new Error('저장된 Calculation preflight 계약이 없습니다.')
         }
+        if (draft.id !== null && draft.baseRevision === null) {
+          throw new Error('Calculation revision을 확인할 수 없습니다. 최신 항목을 다시 불러오세요.')
+        }
         const [result] = await dbTables.Calculation.upsertRow([
           {
             ...(draft.id === null ? {} : { id: draft.id }),
+            ...(draft.id === null ? {} : { base_revision: draft.baseRevision }),
             description: description || null,
             experiment_id: experimentId,
             name,
@@ -797,7 +577,7 @@ export function CalculationWorkbench({
           await invalidateCalculationMutation(queryClient, queryScope, experimentId)
           return false
         }
-        const next = { ...draft, description, id: result.id, name }
+        const next = { ...draft, description, id: result.id, baseRevision: result.revision, name }
         if (changeCalculationSelection(result.id)) {
           dispatchEditing({ type: 'saveCommitted', draft: next })
           selectedCalculationRef.current = result.id
@@ -934,17 +714,6 @@ export function CalculationWorkbench({
     saveFromShortcut()
   }
 
-  const undoAgentChange = () => {
-    if (!agentChange || agentChange.status !== 'applied') return
-    if (draftRef.current.sourceCode !== agentChange.after) {
-      toast.error('AI 적용 후 source가 다시 변경되어 자동 Undo할 수 없습니다. Diff에서 확인하세요.')
-      dispatchEditing({ type: 'agentDiffOpenChanged', open: true })
-      return
-    }
-    invalidatePreview('AI source 변경을 되돌리는 중…')
-    dispatchEditing({ type: 'agentUndoApplied' })
-  }
-
   const sourceEditorDisabled =
     !sourceEditable || saving || deleting || calculationDataBusy || contextPending || selectedCalculationId !== draft.id
   const insertDisabledReason = !sourceEditable
@@ -957,11 +726,9 @@ export function CalculationWorkbench({
           ? 'CalculationData 작업이 진행 중입니다.'
           : contextPending || selectedCalculationId !== draft.id
             ? 'Calculation context를 불러오는 중입니다.'
-            : agentChange && agentDiffOpen
-              ? 'AI diff를 닫은 뒤 Source Editor에 삽입하세요.'
-              : inputBindingState.error
-                ? inputBindingState.error
-                : null
+            : inputBindingState.error
+              ? inputBindingState.error
+              : null
   const insertExperimentRecord = (recordName: string) => {
     if (insertDisabledReason) return
     try {
@@ -1072,65 +839,18 @@ export function CalculationWorkbench({
                 Demo 원본과 저장 데이터는 읽기 전용입니다. 이 source 변경은 로컬 Preview에만 적용됩니다.
               </div>
             ) : null}
-            {agentChange ? (
-              <div className="flex shrink-0 items-center justify-between gap-2 border-b bg-amber-50 px-3 py-1.5 text-xs text-amber-950">
-                <span className="flex min-w-0 items-center gap-2">
-                  <Sparkles className="size-3.5 shrink-0" />
-                  <strong>{agentChange.status === 'applied' ? 'AI 미검증' : 'AI staged'}</strong>
-                  <span className="text-amber-800">
-                    +{agentChange.addedLines} / -{agentChange.removedLines} lines
-                  </span>
-                </span>
-                <span className="flex shrink-0 items-center gap-1">
-                  <Button
-                    size="sm"
-                    type="button"
-                    variant="outline"
-                    onClick={() => dispatchEditing({ type: 'agentDiffOpenChanged', open: !agentDiffOpen })}
-                  >
-                    JavaScript Diff
-                  </Button>
-                  {agentChange.status === 'applied' ? (
-                    <Button size="sm" type="button" variant="outline" onClick={undoAgentChange}>
-                      <RotateCcw /> Undo
-                    </Button>
-                  ) : null}
-                  <Button
-                    aria-label="AI 변경 상태 닫기"
-                    size="icon"
-                    type="button"
-                    variant="ghost"
-                    onClick={() => dispatchEditing({ type: 'agentChangeDismissed' })}
-                  >
-                    <X />
-                  </Button>
-                </span>
-              </div>
-            ) : null}
             <div className="min-h-0 flex-1">
-              {agentChange && agentDiffOpen ? (
-                <CadDiffEditor
-                  changeId={agentChange.runId}
-                  language="javascript"
-                  modelPath="file:///calculation-agent-diff.js"
-                  modified={agentChange.after}
-                  original={agentChange.before}
-                  readOnly
-                  onChange={() => undefined}
-                />
-              ) : (
-                <CalculationSourceEditor
-                  ref={sourceEditorRef}
-                  diagnostic={preview.status === 'error' && preview.code === 'policy' ? preview.diagnostic : undefined}
-                  disabled={sourceEditorDisabled}
-                  sourceCode={draft.sourceCode}
-                  onSave={saveFromShortcut}
-                  onSourceCodeChange={(sourceCode) => {
-                    invalidatePreview('Source 변경을 기다리는 중…')
-                    dispatchEditing({ type: 'sourceEdited', sourceCode })
-                  }}
-                />
-              )}
+              <CalculationSourceEditor
+                ref={sourceEditorRef}
+                diagnostic={preview.status === 'error' && preview.code === 'policy' ? preview.diagnostic : undefined}
+                disabled={sourceEditorDisabled}
+                sourceCode={draft.sourceCode}
+                onSave={saveFromShortcut}
+                onSourceCodeChange={(sourceCode) => {
+                  invalidatePreview('Source 변경을 기다리는 중…')
+                  dispatchEditing({ type: 'sourceEdited', sourceCode })
+                }}
+              />
             </div>
           </section>
         }

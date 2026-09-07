@@ -228,3 +228,10 @@ export function previewGeometryInIsolatedRunner(
 ) {
   return runInIsolatedRunner(request, callbacks)
 }
+
+export function prepareInIsolatedRunner(
+  request: import('@/lib/cad/worker/protocol').CadPreparationRequest,
+  callbacks: RunnerCallbacks<import('@/lib/cad/worker/protocol').CadPreparationResponse>,
+) {
+  return runInIsolatedRunner(request, callbacks)
+}

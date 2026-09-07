@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +17,7 @@ from cae.batches import (
 )
 from cae.events import stream_events
 from cae.models import BatchCreateRequest, BatchReadRequest, BatchRetryRequest
-from cae.preparation import preparation_queue
+from cae.uploads import CHUNK_BYTES, commit_batch, finalize_item, measurement_artifact, measurement_artifact_info, upload_chunk
 from gpstation.service.job_orchestrator import job_orchestrator
 from gpstation.utils.csrf import require_web_csrf
 from models import UserData
@@ -36,7 +36,6 @@ async def submit_batch(
     user: UserData = Depends(authenticated),
 ):
     batch = await create_batch(db, body, user, request.app.state.catalog)
-    preparation_queue.wakeup.set()
     return await batch_snapshot(db, batch)
 
 
@@ -84,7 +83,6 @@ async def retry(
         user.id,
         [str(value) for value in body.job_ids] if body.job_ids is not None else None,
     )
-    preparation_queue.wakeup.set()
     job_orchestrator.wake_dispatcher()
     return await batch_snapshot(db, batch)
 
@@ -109,3 +107,51 @@ async def events(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.put("/batches/{batch_id}/items/{index}/chunks/{chunk_index}")
+async def put_chunk(
+    batch_id: UUID, index: int, chunk_index: int, request: Request,
+    db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated),
+):
+    content = bytearray()
+    async for part in request.stream():
+        content.extend(part)
+        if len(content) > CHUNK_BYTES:
+            raise HTTPException(413, "Artifact chunks must not exceed 8 MiB.")
+    return await upload_chunk(db, str(batch_id), user.id, index, chunk_index,
+        request.headers.get("x-chunk-sha256", ""), bytes(content))
+
+
+@router.post("/batches/{batch_id}/items/{index}/finalize")
+async def finalize(
+    batch_id: UUID, index: int, db: AsyncSession = Depends(get_db),
+    user: UserData = Depends(authenticated),
+):
+    return await finalize_item(db, str(batch_id), user.id, index)
+
+
+@router.post("/batches/{batch_id}/commit")
+async def commit(
+    batch_id: UUID, request: Request, db: AsyncSession = Depends(get_db),
+    user: UserData = Depends(authenticated),
+):
+    batch = await commit_batch(db, str(batch_id), user, request.app.state.catalog)
+    job_orchestrator.wake_dispatcher()
+    return await batch_snapshot(db, batch)
+
+
+@router.get("/measurements/{measurement_id}/artifact")
+async def artifact(
+    measurement_id: int, db: AsyncSession = Depends(get_db),
+    user: UserData = Depends(authenticated),
+):
+    return await measurement_artifact(db, measurement_id, user.id)
+
+
+@router.get("/measurements/{measurement_id}/artifact-info")
+async def artifact_info(
+    measurement_id: int, db: AsyncSession = Depends(get_db),
+    user: UserData = Depends(authenticated),
+):
+    return await measurement_artifact_info(db, measurement_id, user.id)

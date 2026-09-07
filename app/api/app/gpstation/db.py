@@ -157,6 +157,7 @@ class Job(TimestampMixin, Base):
     )
     item_index: Mapped[Optional[int]] = mapped_column(BigInteger)
     input: Mapped[Optional[dict]] = mapped_column(JSONB)
+    artifact_metadata: Mapped[Optional[dict]] = mapped_column(JSONB)
     worker_token_hash: Mapped[Optional[str]] = mapped_column(Text)
     cleaned_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     offer: Mapped[dict] = mapped_column(
@@ -220,7 +221,10 @@ class JobBatch(TimestampMixin, Base):
     generation_stopped: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
-    last_prepared_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_dispatched_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    uploaded_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     last_event_id: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0, server_default="0"

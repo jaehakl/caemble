@@ -1,9 +1,12 @@
+import { buildBatchArtifact, type BrowserBatchIntent } from './buildBatchArtifact'
+import { submitArtifact } from '@/api/submitArtifact'
+import { browserClient } from '@/api/http'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { dbTables } from '@/api'
 import { caeBatches } from '@/api/cae'
 import { ApiError } from '@/api/http'
-import type { CaeBatch, CaeBatchRequest } from '@/contracts/api/cae'
+import type { CaeBatch } from '@/contracts/api/cae'
 import { usePrivateQueryScope } from '@/features/auth/use-auth'
 import { useCaeBatches } from '@/features/cae/CaeBatchProvider'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
@@ -127,7 +130,7 @@ export function useCaeMeasurementActions({
   }, [experimentDocument, requireExperiment])
 
   const submit = useCallback(
-    (request: CaeBatchRequest, nextOperation: 'generate-and-run' | 'save-and-run' | 'measurement') => {
+    (request: BrowserBatchIntent, nextOperation: 'generate-and-run' | 'save-and-run' | 'measurement') => {
       if (active.current || operation) throw new Error('다른 Measurement 작업이 진행 중입니다.')
       const run = {
         controller: new AbortController(),
@@ -146,7 +149,22 @@ export function useCaeMeasurementActions({
       const calculated = new Set<number>()
       let completion: SaveAndRunCompletion | null = null
       return (async () => {
-        const registered = await caeBatches.create(request)
+        const built = await buildBatchArtifact(request, signal, (completed, total) =>
+          setStage(`?? ${completed}/${total}`),
+        )
+        const registered = await submitArtifact({
+          client: browserClient,
+          artifact: built.artifact,
+          experimentId: request.experiment_id,
+          requestId: request.request_id,
+          readItem: (item) => built.store.readItem(item),
+          signal,
+          onRegistered: async (id) => {
+            run.batchId = id
+            if (run.cancelRequested) await caeBatches.cancel(id)
+          },
+          onProgress: (completed, total) => setStage(`??? ${completed}/${total}`),
+        }).finally(() => built.store.close())
         run.batchId = registered.id
         if (run.cancelRequested) await caeBatches.cancel(registered.id)
         signal.throwIfAborted()

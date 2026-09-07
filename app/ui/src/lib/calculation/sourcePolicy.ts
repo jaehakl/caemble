@@ -4,96 +4,18 @@ import type { NodePath } from '@babel/traverse'
 import type * as t from '@babel/types'
 import type { File } from '@babel/types'
 import { CALCULATION_MATHJS_NAMES } from './mathjsManifest'
-import { CALCULATION_SHADOWED_GLOBAL_NAMES } from './runtimeGlobals'
+import {
+  CALCULATION_ALLOWED_RUNTIME_GLOBALS,
+  CALCULATION_BLOCKED_MEMBER_NAMES,
+  CALCULATION_BLOCKED_GLOBAL_NAMES,
+} from './policyContract'
 import { CalculationExecutionError, type CalculationSourceDiagnostic } from './types'
 
 const traverse = (traverseModule as unknown as { default?: typeof traverseModule }).default ?? traverseModule
 const allowedMathJsNames = new Set<string>(CALCULATION_MATHJS_NAMES)
-const allowedRuntimeGlobals = new Set([
-  'AggregateError',
-  'Array',
-  'ArrayBuffer',
-  'BigInt',
-  'BigInt64Array',
-  'BigUint64Array',
-  'Boolean',
-  'DataView',
-  'Error',
-  'EvalError',
-  'Float32Array',
-  'Float64Array',
-  'Infinity',
-  'Int16Array',
-  'Int32Array',
-  'Int8Array',
-  'JSON',
-  'Map',
-  'Math',
-  'NaN',
-  'Number',
-  'Object',
-  'Promise',
-  'RangeError',
-  'ReferenceError',
-  'RegExp',
-  'Set',
-  'String',
-  'Symbol',
-  'SyntaxError',
-  'TextDecoder',
-  'TextEncoder',
-  'TypeError',
-  'URIError',
-  'Uint16Array',
-  'Uint32Array',
-  'Uint8Array',
-  'Uint8ClampedArray',
-  'WeakMap',
-  'WeakSet',
-  'arguments',
-  'atob',
-  'btoa',
-  'decodeURI',
-  'decodeURIComponent',
-  'encodeURI',
-  'encodeURIComponent',
-  'isFinite',
-  'isNaN',
-  'parseFloat',
-  'parseInt',
-  'structuredClone',
-  'undefined',
-])
-const blockedMemberNames = new Set([
-  '__defineGetter__',
-  '__defineSetter__',
-  '__lookupGetter__',
-  '__lookupSetter__',
-  '__proto__',
-  '_typedFunctionData',
-  'captureStackTrace',
-  'constructor',
-  'fromJSON',
-  'localeCompare',
-  'prepareStackTrace',
-  'prototype',
-  'signatures',
-  'stack',
-  'stackTraceLimit',
-  'toLocaleDateString',
-  'toLocaleString',
-  'toLocaleTimeString',
-])
-const blockedGlobals = new Set([
-  ...CALCULATION_SHADOWED_GLOBAL_NAMES.filter((name) => name !== 'console'),
-  'document',
-  'eval',
-  'exports',
-  'localStorage',
-  'module',
-  'require',
-  'sessionStorage',
-])
+const allowedRuntimeGlobals = new Set<string>(CALCULATION_ALLOWED_RUNTIME_GLOBALS)
+const blockedMemberNames = new Set<string>(CALCULATION_BLOCKED_MEMBER_NAMES)
+const blockedGlobals = new Set<string>(CALCULATION_BLOCKED_GLOBAL_NAMES)
 
 export function createCalculationSourceDiagnostic(
   source: string,
@@ -133,9 +55,32 @@ export function analyzeCalculationSource(source: string): File {
   try {
     ast = parse(source, { sourceType: 'module' })
   } catch (error) {
+    const location = error && typeof error === 'object' && 'loc' in error ? error.loc : undefined
+    const parserLocation =
+      location &&
+      typeof location === 'object' &&
+      'line' in location &&
+      'column' in location &&
+      typeof location.line === 'number' &&
+      typeof location.column === 'number'
+        ? { line: location.line, column: location.column }
+        : undefined
+    const message = error instanceof Error ? error.message : 'Calculation JavaScript could not be parsed.'
     throw new CalculationExecutionError(
       'compile',
-      error instanceof Error ? error.message : 'Calculation JavaScript could not be parsed.',
+      message,
+      parserLocation
+        ? {
+            message,
+            range: {
+              startLineNumber: parserLocation.line,
+              startColumn: parserLocation.column + 1,
+              endLineNumber: parserLocation.line,
+              endColumn: parserLocation.column + 1,
+            },
+            sourceLine: source.split(/\r?\n/)[parserLocation.line - 1] ?? '',
+          }
+        : undefined,
     )
   }
   let defaultExportCount = 0

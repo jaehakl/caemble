@@ -255,6 +255,8 @@ class CalculationOutputLayout(BaseModel):
 
 
 class CalculationBase(TimestampFields):
+    revision: int = Field(default=1, ge=1)
+    base_revision: int | None = Field(default=None, ge=1)
     experiment_id: int
     name: str
     description: Optional[str] = None

@@ -181,12 +181,6 @@ class JobOrchestrator:
                     await self.disconnect_launcher(active_launcher_id)
                     await self.runtime.set_job_event(job_id)
         self.wake_dispatcher()
-        if job.job_mode == "websocket":
-            from gpstation.service.server_handlers import cancel_preparation_handlers
-
-            cancel = cancel_preparation_handlers.get(job.handler_type)
-            if cancel:
-                cancel(job.id)
         return job
 
     async def reset_launcher_worker(
@@ -526,7 +520,10 @@ class JobOrchestrator:
             send_lock.release()
 
     async def _expire_stale_jobs(self) -> None:
+        from cae.uploads import expire_uploads
+
         async with SessionLocal() as db:
+            await expire_uploads(db)
             jobs = await JobService.expire_stale_jobs(db)
         for job in jobs:
             job_id = str(job.id)

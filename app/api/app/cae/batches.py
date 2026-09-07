@@ -5,10 +5,10 @@ import json
 
 from caemble_catalog import Catalog
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from cae.db import CaeBatch
+from cae.db import CaeBatch, CaeUploadChunk
 from cae.models import BatchCreateRequest
 from db import Experiment, Measurement
 from gpstation.db import Job, JobBatch
@@ -20,13 +20,7 @@ from gpstation.service.batches import (
     serialize_events,
 )
 from gpstation.service.state import utcnow
-from models import GetListRequestBase, UserData
-from service.material.manager import (
-    list_material_names,
-    list_material_parameter_qualifiers,
-    list_material_parameters,
-    list_materials,
-)
+from models import UserData
 from utils.crud.common import is_admin_user
 
 
@@ -52,17 +46,17 @@ async def create_batch(
     request_hash = hashlib.sha256(
         json.dumps(request_data, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
     ).hexdigest()
-    existing = await db.scalar(
-        select(JobBatch).where(
-            JobBatch.user_id == user.id, JobBatch.request_id == str(request.request_id)
-        )
-    )
+    existing = await db.scalar(select(JobBatch).where(
+        JobBatch.user_id == user.id, JobBatch.request_id == str(request.request_id)
+    ))
     if existing:
         if existing.request_hash != request_hash:
             raise HTTPException(409, "This request_id was already used for a different batch.")
         await require_batch(db, existing.id, user.id)
         await db.commit()
         return existing
+    if request.catalog_revision != catalog.meta()["catalogRevision"]:
+        raise HTTPException(409, "Catalog revision changed. Rebuild with the server Catalog.")
     experiment = await db.scalar(
         select(Experiment).where(Experiment.id == request.experiment_id).with_for_update()
     )
@@ -72,100 +66,25 @@ async def create_batch(
         raise HTTPException(404, "Experiment not found.")
     if experiment.source_hash != request.experiment_source_hash:
         raise HTTPException(409, "The Experiment source changed before batch submission.")
-    fixed_vars, fixed_materials = request.vars, request.material_parameters
-    measurement = None
-    if request.mode == "measurement":
-        measurement = await db.scalar(
-            select(Measurement)
-            .where(
-                Measurement.id == request.measurement_id,
-                Measurement.user_id == user.id,
-                Measurement.experiment_id == experiment.id,
-            )
-            .with_for_update()
-        )
-        if measurement is None:
-            raise HTTPException(404, "Measurement not found.")
-        if measurement.job_id is not None:
-            job = await db.get(Job, measurement.job_id)
-            raise HTTPException(
-                409,
-                {
-                    "message": "This Measurement already has a job. Open its batch to view or retry it.",
-                    "batch_id": job.batch_id,
-                    "job_id": job.id,
-                },
-            )
-        if measurement.recorded_at is not None:
-            raise HTTPException(409, "This Measurement is already recorded.")
-        fixed_vars, fixed_materials = measurement.vars, measurement.material_parameters
-    materials = {}
-    for name, reader in (
-        ("names", list_material_names),
-        ("materials", list_materials),
-        ("parameters", list_material_parameters),
-        ("qualifiers", list_material_parameter_qualifiers),
-    ):
-        response = await reader(db, GetListRequestBase(scope="visible", limit=None), user=user)
-        materials[name] = [item.model_dump(mode="json") for item in response["items"]]
-    solvers = catalog.list_solvers()
-    catalog_snapshot = catalog.runtime_slice(
-        solvers=[(solver["name"], solver["version"]) for solver in solvers],
-        quantity_kinds=[row["name"] for row in catalog.list_quantity_kinds(limit=2147483647)[0]],
-        material_parameters=[
-            row["key"] for row in catalog.list_material_parameters(limit=2147483647)[0]
-        ],
-        material_models=[row["key"] for row in catalog.list_material_models(limit=2147483647)[0]],
-    )
     batch = JobBatch(
-        user_id=user.id,
-        request_id=str(request.request_id),
-        request_hash=request_hash,
-        total=request.count,
-        created_count=0,
-        succeeded=0,
-        failed=0,
-        cancelled=0,
-        state="queued",
-        last_event_id=0,
-        read_event_id=0,
+        user_id=user.id, request_id=str(request.request_id), request_hash=request_hash,
+        total=len(request.items), created_count=len(request.items), uploaded_count=0,
+        succeeded=0, failed=0, cancelled=0, state="uploading", generation_stopped=True,
+        last_event_id=0, read_event_id=0,
     )
     db.add(batch)
     await db.flush()
-    db.add(
-        CaeBatch(
-            batch_id=batch.id,
-            experiment_id=experiment.id,
-            spec={
-                "mode": request.mode,
-                "source_bundle": experiment.source_bundle,
-                "source_hash": experiment.source_hash,
-                "vars": fixed_vars,
-                "material_parameters": fixed_materials,
-                "catalog": catalog_snapshot,
-                "materials": materials,
-                "evaluation_timeout_ms": request.evaluation_timeout_ms,
-                "measurement_id": request.measurement_id,
-            },
-        )
-    )
-    if measurement is not None:
-        job = Job(
-            user_id=user.id,
-            batch_id=batch.id,
-            item_index=1,
-            handler_type="cae.simulation",
-            slave_app_id="cae",
-            job_mode="websocket",
-            state="queued",
-            attempt_count=1,
-            progress=[],
-            offer={},
-        )
-        db.add(job)
-        await db.flush()
-        measurement.job_id = job.id
-        batch.created_count = 1
+    db.add(CaeBatch(batch_id=batch.id, experiment_id=experiment.id, spec={
+        "mode": request.mode, "source_hash": experiment.source_hash,
+        "catalog_revision": request.catalog_revision, "builder_version": request.builder_version,
+    }))
+    for item in request.items:
+        db.add(Job(
+            user_id=user.id, batch_id=batch.id, item_index=item.index,
+            handler_type="cae.simulation", slave_app_id="cae", job_mode="websocket",
+            state="staged", attempt_count=1, progress=[], offer={},
+            artifact_metadata=item.model_dump(mode="json"),
+        ))
     await add_event(db, batch, "batch.created", payload={"experiment_id": experiment.id})
     await db.commit()
     return batch
@@ -187,10 +106,12 @@ async def batch_snapshot(
     ).all()
     return {
         "id": batch.id,
+        "request_id": batch.request_id,
         "experiment_id": cae.experiment_id,
         "mode": cae.spec["mode"],
         "total": batch.total,
         "created_count": batch.created_count,
+        "uploaded_count": batch.uploaded_count,
         "succeeded": batch.succeeded,
         "failed": batch.failed,
         "cancelled": batch.cancelled,
@@ -207,6 +128,8 @@ async def batch_snapshot(
                 "index": job.item_index,
                 "attempt_count": job.attempt_count,
                 "state": job.state,
+                "uploaded": job.input is not None,
+                "input_hash": (job.artifact_metadata or {}).get("input_hash"),
                 "measurement_id": measurement_id,
                 "progress": (job.progress[-1].get("progress") if job.progress else None),
                 "last_error": job.last_error,
@@ -249,6 +172,7 @@ async def cancel_batch(
     batch = await require_batch(db, batch_id, user_id, lock=True)
     cancellations = []
     if batch.state not in {"completed", "cancelled"}:
+        was_uploading = batch.state == "uploading"
         batch.state = "cancelled"
         if not batch.generation_stopped:
             batch.cancelled += batch.total - batch.created_count
@@ -266,6 +190,16 @@ async def cancel_batch(
             if job.launcher_id and job.cleaned_at is None:
                 cancellations.append((job.launcher_id, job.id))
             await finish_job(db, job, "cancelled", "Cancelled by user.")
+        if was_uploading:
+            await db.execute(delete(CaeUploadChunk).where(
+                CaeUploadChunk.job_id.in_(select(Job.id).where(Job.batch_id == batch.id))
+            ))
+            for job in jobs:
+                job.input = None
+                job.artifact_metadata = {
+                    key: value for key, value in (job.artifact_metadata or {}).items()
+                    if key in {"index", "input_hash", "byte_length", "measurement_id"}
+                }
         if batch.finished_at is None:
             batch.finished_at = utcnow()
             await add_event(db, batch, "batch.cancelled", payload={"cancelled": batch.cancelled})
@@ -292,6 +226,8 @@ async def retry_batch(
     if any(job.launcher_id and job.cleaned_at is None for job in jobs):
         raise HTTPException(409, "Wait for worker cleanup before retrying.")
     cae = await db.get(CaeBatch, batch.id)
+    if any(job.input is None for job in jobs):
+        raise HTTPException(409, "This legacy job has no saved input. Rebuild with the current client.")
     experiment = await db.scalar(
         select(Experiment).where(Experiment.id == cae.experiment_id).with_for_update()
     )
@@ -325,7 +261,7 @@ async def require_no_active_batches(db: AsyncSession, experiment_ids: list[int])
         select(CaeBatch.batch_id)
         .join(JobBatch, JobBatch.id == CaeBatch.batch_id)
         .where(
-            CaeBatch.experiment_id.in_(experiment_ids), JobBatch.state.in_(("queued", "running"))
+            CaeBatch.experiment_id.in_(experiment_ids), JobBatch.state.in_(("uploading", "queued", "running"))
         )
         .limit(1)
     )
@@ -342,14 +278,9 @@ async def mark_batch_read(db: AsyncSession, batch_id: str, user_id: str, event_i
 
 
 async def stop_batch(db: AsyncSession, batch_id: str, user_id: str) -> JobBatch:
-    from cae.preparation import preparation_queue
     from gpstation.service.job_orchestrator import job_orchestrator
 
     batch, assignments = await cancel_batch(db, batch_id, user_id)
-    for job_id in list(preparation_queue.running):
-        job = await db.get(Job, job_id)
-        if job and job.batch_id == batch.id:
-            preparation_queue.cancel(job_id)
     for launcher_id, job_id in assignments:
         try:
             async with job_orchestrator.launcher_send_lock(launcher_id):

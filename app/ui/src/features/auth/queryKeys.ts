@@ -12,7 +12,6 @@ export const privateQueryKeys = {
 export const privateCacheQueryRoots = [
   privateQueryKeys.all,
   ['admin'],
-  ['ai-agent'],
   ['cae-workbench'],
   ['experiment'],
   ['materials'],

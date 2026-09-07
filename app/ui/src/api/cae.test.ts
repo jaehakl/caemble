@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { caeBatches, subscribeCaeEvents } from './cae'
 
 const mocks = vi.hoisted(() => ({ request: vi.fn() }))
-vi.mock('./http', () => ({ API_URL: '/api', request: mocks.request }))
+vi.mock('./http', () => ({ API_URL: '/api', browserClient: { request: mocks.request } }))
 
 beforeEach(() => vi.clearAllMocks())
 afterEach(() => vi.unstubAllGlobals())
@@ -14,7 +14,9 @@ describe('CAE batch API boundary', () => {
       experiment_id: 7,
       experiment_source_hash: 'hash',
       mode: 'generate' as const,
-      count: 10,
+      catalog_revision: 'catalog',
+      builder_version: '1' as const,
+      items: [{ index: 1, input_hash: 'a'.repeat(64), byte_length: 123 }],
     }
     caeBatches.create(body)
     expect(mocks.request).toHaveBeenCalledWith(

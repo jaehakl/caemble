@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import type { CatalogExperimentDetail, CatalogRuntimeSlice } from '../src/contracts/catalog'
 import type { CompiledCadDocument } from '../src/lib/cad/compiler/types'
-import { compileServerCadDocument } from '../src/server/cadCompiler'
+import { compileNodeCadDocument } from '../src/platform/node/cadCompiler'
 
 export function readCatalogExamples(database: string) {
   return JSON.parse(
@@ -38,7 +38,7 @@ export function compileCatalogExample(
   example: CatalogExperimentDetail,
   catalog: CatalogRuntimeSlice,
 ): CompiledCadDocument {
-  return compileServerCadDocument(
+  return compileNodeCadDocument(
     example.sourceBundle.files,
     example.bundleHash,
     catalog,

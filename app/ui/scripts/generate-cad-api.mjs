@@ -316,7 +316,10 @@ const authoringReferencePayload = authoringReferenceModule.buildCadAuthoringRefe
   experimentSkeleton: localExperimentCodeModule.starterExperimentSourceBundle.files['experiment.tsx'],
   geometrySkeleton: localExperimentCodeModule.starterExperimentSourceBundle.files['geometry.tsx'],
 })
-await emit('../api/app/ai/cad_authoring_reference.json', `${JSON.stringify(authoringReferencePayload, null, 2)}\n`)
+await emit(
+  'src/authoring/generated/cad-reference.json',
+  await formatGenerated('src/authoring/generated/cad-reference.json', JSON.stringify(authoringReferencePayload)),
+)
 
 if (changed.length > 0) {
   console.log(`Updated generated CAD API files:\n${changed.map((file) => `- ${file}`).join('\n')}`)

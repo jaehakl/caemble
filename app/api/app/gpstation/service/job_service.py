@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
-from gpstation.db import Job, Launcher
+from gpstation.db import Job, JobBatch, Launcher
 from gpstation.models import JobData, JobSummary
 from settings import settings
 from gpstation.service.batches import fail_server_jobs, finish_job, job_event, serialize_events
@@ -143,7 +143,7 @@ class JobService:
         if active_only:
             stmt = stmt.where(
                 Job.state.in_(
-                    ("preparing", "queued", "assigned", "answer_ready", "running", "finalizing")
+                    ("staged", "queued", "assigned", "answer_ready", "running", "finalizing")
                 )
             )
         rows = (await db.execute(stmt)).all()
@@ -181,6 +181,7 @@ class JobService:
         assignment = (
             await db.execute(
                 select(Job, Launcher)
+                .outerjoin(JobBatch, JobBatch.id == Job.batch_id)
                 .join(
                     Launcher,
                     and_(
@@ -198,7 +199,9 @@ class JobService:
                     Launcher.status == "ready",
                 )
                 .order_by(
+                    func.coalesce(JobBatch.last_dispatched_at, JobBatch.created_at, Job.created_at).asc(),
                     Job.created_at.asc(),
+                    Job.item_index.asc().nulls_last(),
                     Job.id.asc(),
                     Launcher.last_heartbeat_at.desc(),
                     Launcher.connected_at.asc(),
@@ -223,6 +226,10 @@ class JobService:
         if job.job_mode == "webrtc":
             job.attempt_count = int(job.attempt_count or 0) + 1
         job.updated_at = now
+        if job.batch_id is not None:
+            batch = await db.get(JobBatch, job.batch_id)
+            batch.last_dispatched_at = func.now()
+            batch.state = "running"
         if job.job_mode == "websocket":
             await job_event(db, job, "job.assigned")
         await db.commit()

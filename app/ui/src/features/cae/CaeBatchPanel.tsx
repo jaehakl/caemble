@@ -6,6 +6,7 @@ import type { CaeBatch } from '@/contracts/api/cae'
 import { Button } from '@/components/ui/button'
 import { useCaeBatches } from './CaeBatchProvider'
 import { describeCaeProgress } from './progress'
+import { resumeBrowserUpload } from './resumeUpload'
 
 export function CaeBatchPanel() {
   const { queryScope } = useAuth()
@@ -23,8 +24,20 @@ function BatchPanel() {
   const [offset, setOffset] = useState(0)
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const uploadRef = useRef<AbortController | null>(null)
+  const mounted = useRef(true)
+  const [uploadProgress, setUploadProgress] = useState<{ batchId: string; completed: number; total: number } | null>(
+    null,
+  )
   const batch = batches.find((item) => item.id === selected)
   const visibleJobs = detail ? withProgress(detail).jobs : []
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      uploadRef.current?.abort()
+    }
+  }, [])
   useEffect(() => {
     if (!inspectedBatchId) return
     setSelected(inspectedBatchId)
@@ -51,16 +64,47 @@ function BatchPanel() {
     setActionError(null)
     try {
       const value = await operation()
+      if (!mounted.current) return
       update(value)
       if (selectionRef.current === value.id) {
         setDetail(value)
         setOffset(0)
       }
     } catch (cause) {
-      if (selectionRef.current === selectionAtStart)
+      if (mounted.current && selectionRef.current === selectionAtStart)
         setActionError(cause instanceof Error ? cause.message : '작업 요청에 실패했습니다.')
     } finally {
-      setBusy(false)
+      if (mounted.current) setBusy(false)
+    }
+  }
+
+  async function resume(value: CaeBatch) {
+    const controller = new AbortController()
+    uploadRef.current = controller
+    setBusy(true)
+    setActionError(null)
+    setUploadProgress({ batchId: value.id, completed: value.uploaded_count, total: value.total })
+    try {
+      const completed = await resumeBrowserUpload(value, controller.signal, (count, total) => {
+        if (!controller.signal.aborted)
+          setUploadProgress({ batchId: value.id, completed: Math.max(value.uploaded_count, count), total })
+      })
+      if (controller.signal.aborted || !mounted.current) return
+      update(completed)
+      if (selectionRef.current === completed.id) {
+        setDetail(completed)
+        setOffset(0)
+      }
+    } catch (cause) {
+      if (!controller.signal.aborted && mounted.current && selectionRef.current === value.id) {
+        setActionError(cause instanceof Error ? cause.message : '업로드를 재개하지 못했습니다.')
+      }
+    } finally {
+      if (mounted.current && uploadRef.current === controller) {
+        uploadRef.current = null
+        setBusy(false)
+        setUploadProgress(null)
+      }
     }
   }
 
@@ -103,12 +147,21 @@ function BatchPanel() {
                   {item.mode === 'generate' ? 'Generate & Run' : 'Run'}
                 </p>
                 <p className="mt-1">
-                  {item.state} · 성공 {item.succeeded} / 실패 {item.failed} / 취소 {item.cancelled}
+                  {item.state === 'uploading'
+                    ? `업로드 ${uploadProgress?.batchId === item.id ? uploadProgress.completed : item.uploaded_count} / ${item.total}`
+                    : `${item.state} · 성공 ${item.succeeded} / 실패 ${item.failed} / 취소 ${item.cancelled}`}
                 </p>
                 <progress
                   className="mt-2 h-2 w-full"
                   max={item.total}
-                  value={item.succeeded + item.failed + item.cancelled}
+                  aria-label={`Batch ${item.id} ${item.state === 'uploading' ? '업로드' : '실행'} 진행률`}
+                  value={
+                    item.state === 'uploading'
+                      ? uploadProgress?.batchId === item.id
+                        ? uploadProgress.completed
+                        : item.uploaded_count
+                      : item.succeeded + item.failed + item.cancelled
+                  }
                 />
                 <p className="mt-1 text-xs text-muted-foreground">
                   {new Date(item.created_at).toLocaleString()}
@@ -123,6 +176,11 @@ function BatchPanel() {
             <>
               <p className="font-mono text-xs break-all text-muted-foreground">{detail.id}</p>
               <div className="flex gap-2">
+                {detail.state === 'uploading' ? (
+                  <Button size="sm" disabled={busy} onClick={() => void resume(detail)}>
+                    {uploadProgress?.batchId === detail.id ? '업로드 재개 중…' : '업로드 재개'}
+                  </Button>
+                ) : null}
                 <Button
                   size="sm"
                   variant="outline"
@@ -134,12 +192,22 @@ function BatchPanel() {
                 <Button
                   size="sm"
                   variant="destructive"
-                  disabled={busy || Boolean(detail.finished_at)}
-                  onClick={() => void act(() => caeBatches.cancel(detail.id))}
+                  disabled={(busy && uploadProgress?.batchId !== detail.id) || Boolean(detail.finished_at)}
+                  onClick={() => {
+                    uploadRef.current?.abort()
+                    uploadRef.current = null
+                    setUploadProgress(null)
+                    void act(() => caeBatches.cancel(detail.id))
+                  }}
                 >
                   Batch 취소
                 </Button>
               </div>
+              {detail.state === 'uploading' ? (
+                <p className="text-sm text-muted-foreground">
+                  이 브라우저에 저장된 빌드 결과로 남은 업로드를 이어갑니다. 업로드가 모두 끝나면 작업이 시작됩니다.
+                </p>
+              ) : null}
               <ul aria-label="CAE 개별 작업" className="max-h-[42vh] space-y-2 overflow-y-auto">
                 {visibleJobs.map((job) => {
                   const progress = describeCaeProgress(job.progress)

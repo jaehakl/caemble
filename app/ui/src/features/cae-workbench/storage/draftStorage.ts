@@ -14,7 +14,7 @@ import {
 
 export const WORKBENCH_DRAFT_STORAGE_KEY = 'caemble:workbench-draft'
 export const WORKBENCH_DRAFT_SCHEMA_VERSION = 2 as const
-const RETIRED_DRAFT_KEYS = ['caemble:cae-workbench-draft', 'caemble:cae-workbench-draft:v1'] as const
+const RETIRED_DRAFT_KEYS = ['caemble:cae-workbench-draft', 'caemble:cae-workbench-draft:v1', 'caemble.ai-helper.agent-session', 'caemble.ai-helper.conversation-v1'] as const
 
 const sourceBundleSchema = z.object({ files: z.record(z.string(), z.string()) }).passthrough()
 const ratioSchema = z.number().finite().min(0).max(1)
@@ -64,7 +64,7 @@ const storedDraftBaseSchema = z
           .tuple([ratioSchema, ratioSchema, ratioSchema])
           .catch([...defaultWorkbenchLayoutState.calculationLeftRowRatios!] as [number, number, number]),
         calculationOutputChartRatio: ratioSchema.catch(defaultWorkbenchLayoutState.calculationOutputChartRatio!),
-        bottomMode: z.enum(bottomDockModes).catch(defaultWorkbenchLayoutState.bottomMode),
+        bottomMode: z.preprocess((value) => value === 'agent' ? 'console' : value, z.enum(bottomDockModes).catch(defaultWorkbenchLayoutState.bottomMode)),
         bottomHeightRatio: ratioSchema.catch(defaultWorkbenchLayoutState.bottomHeightRatio),
         viewerExpanded: z.boolean(),
         rightTabs: z.object({

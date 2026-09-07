@@ -1,13 +1,13 @@
 import type { CadWorkerRequest, CadWorkerResponse } from '@/lib/cad/worker/protocol'
 
 export type RunnerOperationEnvelope = Readonly<{
-  type: 'inspect' | 'evaluate' | 'preview-geometry'
+  type: 'inspect' | 'evaluate' | 'preview-geometry' | 'prepare'
   nonce: string
   request: CadWorkerRequest
 }>
 export type RunnerOperationStartedEnvelope = Readonly<{
   type: 'operation-started'
-  operation: 'inspect' | 'evaluate' | 'preview-geometry'
+  operation: 'inspect' | 'evaluate' | 'preview-geometry' | 'prepare'
   nonce: string
   requestId: string
   revision: number
@@ -15,7 +15,7 @@ export type RunnerOperationStartedEnvelope = Readonly<{
 }>
 export type RunnerOperationResultEnvelope = Readonly<{
   type: 'operation-result'
-  operation: 'inspect' | 'evaluate' | 'preview-geometry'
+  operation: 'inspect' | 'evaluate' | 'preview-geometry' | 'prepare'
   nonce: string
   response: CadWorkerResponse
 }>
@@ -49,7 +49,12 @@ function secureNonce(value: unknown): asserts value is string {
 
 export function assertCadWorkerRequest(value: unknown): asserts value is CadWorkerRequest {
   const request = secureEnvelope(value)
-  if (request.type !== 'inspect' && request.type !== 'evaluate' && request.type !== 'preview-geometry') {
+  if (
+    request.type !== 'inspect' &&
+    request.type !== 'evaluate' &&
+    request.type !== 'preview-geometry' &&
+    request.type !== 'prepare'
+  ) {
     throw new Error('Runner operation is invalid.')
   }
 }
@@ -103,7 +108,12 @@ export function runnerOperationRejectionEnvelope(
     const envelope = secureEnvelope(value)
     secureNonce(envelope.nonce)
     const request = secureEnvelope(envelope.request)
-    if (envelope.type !== 'inspect' && envelope.type !== 'evaluate' && envelope.type !== 'preview-geometry')
+    if (
+      envelope.type !== 'inspect' &&
+      envelope.type !== 'evaluate' &&
+      envelope.type !== 'preview-geometry' &&
+      envelope.type !== 'prepare'
+    )
       return undefined
     return {
       type: 'operation-result',
@@ -111,11 +121,13 @@ export function runnerOperationRejectionEnvelope(
       nonce: envelope.nonce,
       response: {
         type:
-          envelope.type === 'inspect'
-            ? 'inspection-error'
-            : envelope.type === 'evaluate'
-              ? 'evaluation-error'
-              : 'geometry-preview-error',
+          envelope.type === 'prepare'
+            ? 'preparation-error'
+            : envelope.type === 'inspect'
+              ? 'inspection-error'
+              : envelope.type === 'evaluate'
+                ? 'evaluation-error'
+                : 'geometry-preview-error',
         requestId: String(request.requestId),
         revision: Number(request.revision),
         documentType: envelope.type === 'preview-geometry' ? 'geometry' : 'experiment',

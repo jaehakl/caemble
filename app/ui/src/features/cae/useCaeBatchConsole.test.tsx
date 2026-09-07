@@ -78,6 +78,7 @@ it('restores unread completions once and marks them read only when Console is vi
       experiment_id: 1,
       mode: 'generate',
       total: 1,
+      uploaded_count: 0,
       created_count: 1,
       succeeded: 1,
       failed: 0,

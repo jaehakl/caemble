@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, cpSync, rmSync } from 'node:fs'
+import { mkdtempSync, cpSync, existsSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { compileCatalogExample, readCatalogExamples } from './catalog-example-support'
-import { prepareCaeMeasurement, type CaePreparationRequest } from '../src/server/caePreparation'
+import { prepareCaeMeasurement, type CaePreparationRequest } from '../src/platform/node/build'
 import { executeCompiledDocument, inspectCompiledDocument } from '../src/lib/cad/execution/userModule'
 import { canonicalGeometryScene } from '../src/lib/cad/evaluation/canonical'
 import { buildMeasurement } from '../src/lib/cad/execution/measurement'
@@ -15,15 +15,13 @@ import type { Tensor } from '../src/lib/cad/model/types'
 const { examples, catalog } = readCatalogExamples(path.resolve('../catalog/caemble_catalog/catalog.sqlite3'))
 const declarations = path.resolve('src/lib/cad/api')
 const materials = { names: [], materials: [], parameters: [], qualifiers: [] }
-const temporary = mkdtempSync(path.join(os.tmpdir(), 'caemble-preparation-'))
-cpSync('dist-cae', temporary, { recursive: true })
-const executable = path.join(temporary, 'prepare.cjs')
+const temporary = mkdtempSync(path.join(os.tmpdir(), 'caemble-client-build-'))
+cpSync('dist-cli', temporary, { recursive: true })
+const executable = path.join(temporary, 'worker.cjs')
 
 try {
-  assert.equal(
-    JSON.parse(execFileSync(process.execPath, [executable, '--check'], { cwd: temporary, encoding: 'utf8' })).ready,
-    true,
-  )
+  assert.ok(existsSync(executable))
+  assert.ok(existsSync(path.join(temporary, 'caemble-core.d.ts')))
   for (const example of examples) {
     installCatalogRuntimeSlice(catalog)
     const compiled = compileCatalogExample(example, catalog)
@@ -76,17 +74,20 @@ try {
       material_parameters: { experiment: expected.materialParameters, tasks: expected.taskMaterialParameters },
       materials,
     }
-    const actual = JSON.parse(
-      execFileSync(process.execPath, [executable], {
-        cwd: temporary,
-        input: JSON.stringify(request),
-        encoding: 'utf8',
-        maxBuffer: 32 * 1024 * 1024,
-      }),
-    )
+    const output = path.join(temporary, `${example.key}.json`)
+    execFileSync(process.execPath, [executable], {
+      cwd: temporary,
+      input: JSON.stringify({ operation: 'build', build: request, output }),
+      encoding: 'utf8',
+      maxBuffer: 32 * 1024 * 1024,
+    })
+    const actual = JSON.parse(readFileSync(output, 'utf8'))
     assert.deepEqual(actual.measurement, JSON.parse(JSON.stringify(expected)), example.key)
-    assert.deepEqual(actual.vars, vars)
-    assert.deepEqual(actual.material_parameters, request.material_parameters)
+    assert.deepEqual(actual.measurement.experiment.variables, vars)
+    assert.deepEqual(
+      { experiment: actual.measurement.materialParameters, tasks: actual.measurement.taskMaterialParameters },
+      request.material_parameters,
+    )
     assert.equal('renderScene' in actual.measurement.experiment, false)
     console.log(`${example.key}: isolated artifact matches canonical browser input`)
   }
@@ -199,7 +200,11 @@ try {
 
   const invalid = spawnSync(process.execPath, [executable], {
     cwd: temporary,
-    input: JSON.stringify({ ...request, mode: 'measurement' }),
+    input: JSON.stringify({
+      operation: 'build',
+      build: { ...request, mode: 'measurement' },
+      output: path.join(temporary, 'invalid.json'),
+    }),
     encoding: 'utf8',
   })
   assert.equal(invalid.status, 1)
@@ -210,11 +215,15 @@ try {
   }
   const rejected = spawnSync(process.execPath, [executable], {
     cwd: temporary,
-    input: JSON.stringify({ ...request, source_bundle: forbidden }),
+    input: JSON.stringify({
+      operation: 'build',
+      build: { ...request, source_bundle: forbidden },
+      output: path.join(temporary, 'forbidden.json'),
+    }),
     encoding: 'utf8',
   })
   assert.equal(rejected.status, 1)
-  assert.equal(JSON.parse(rejected.stdout).error.code, 'preparation_failed')
+  assert.match(JSON.parse(rejected.stdout).error.message, /process|forbidden|policy/iu)
   const looping = {
     files: {
       'experiment.tsx':
@@ -226,15 +235,25 @@ try {
   }
   const timedOut = spawnSync(process.execPath, [executable], {
     cwd: temporary,
-    input: JSON.stringify({ ...request, source_bundle: looping, evaluation_timeout_ms: 10 }),
+    input: JSON.stringify({
+      operation: 'build',
+      build: { ...request, source_bundle: looping, evaluation_timeout_ms: 10 },
+      output: path.join(temporary, 'loop.json'),
+    }),
     encoding: 'utf8',
     timeout: 10_000,
   })
   assert.equal(timedOut.status, 1)
-  assert.equal(JSON.parse(timedOut.stdout).error.code, 'evaluation_timeout')
-  console.log('Material sampling, fixed retry, Tensor Vars, policy errors, and standalone deployment passed')
+  const timeoutDiagnostic = JSON.parse(timedOut.stdout).error
+  assert.equal(timeoutDiagnostic.code, 'ERR_SCRIPT_EXECUTION_TIMEOUT')
+  assert.equal(timeoutDiagnostic.stage, 'build')
+  assert.equal(timeoutDiagnostic.sourceHash, request.source_hash)
+  assert.equal(timeoutDiagnostic.referenceId, 'diagnostic.experiment')
+  assert.equal(timeoutDiagnostic.location, null)
+  assert.equal(timeoutDiagnostic.diagnostics[0].location, null)
+  console.log('Material sampling, fixed retry, Tensor Vars, policy errors, and isolated CLI worker passed')
 } finally {
   assert.equal(path.dirname(temporary), path.resolve(os.tmpdir()))
-  assert.ok(path.basename(temporary).startsWith('caemble-preparation-'))
+  assert.ok(path.basename(temporary).startsWith('caemble-client-build-'))
   rmSync(temporary, { recursive: true, force: true })
 }
