@@ -56,15 +56,24 @@ CLI나 인증정보를 웹 서버 정적 루트에 복사하지 않는다. 기�
 첫 전환에서도 기존 `update.sh`가 먼저 checkout을 갱신하지 않도록, 위 명령으로 새 배포 스크립트를
 checkout 외부에서 실행한다.
 
-스크립트는 `git fetch` 후 upstream commit을 고정하고, 해당 commit의 drain 검사기·Nginx 설정·웹
+스크립트는 `git fetch` 후 upstream commit을 고정하고, 해당 commit의 Nginx 설정·웹
 artifact를 임시 디렉터리에 준비한다. 이때 실행 중인 checkout의 코드와 canonical Catalog는 변경하지
-않는다. Nginx admission gate를 설치하여 신규 배치·retry·commit을 잠시 차단하며 조회·SSE와 worker
-연결은 유지한다. 임시 `check-cae-drain.py`를 기존 API Poetry 환경과 명시한 `app/api/.env`로 실행하여
-활성 배치와 worker cleanup을 확인한다. 기본 300초 안에 완료되지 않으면 기존 Nginx 설정을 복구하고
-gate를 해제한다. 기존 API와 checkout은 그대로 유지된다.
-`CAE_DRAIN_TIMEOUT_SECONDS`로 대기 시간을 조정한다. 미완료 업로드는 전환 전에 취소한다.
+않는다. Nginx admission gate를 설치하여 신규 배치·retry·commit을 잠시 차단한 뒤 API를 즉시 정지한다.
+활성 배치와 worker cleanup 완료는 기다리지 않으며, 실행 중인 시뮬레이션은 중단된다.
 
-검사 통과 후에만 API를 정지하고, 고정한 commit으로 fast-forward하여 API와 Catalog를 함께 전환한다.
+API 종료 전에 `/etc/systemd/system/<API_SERVICE>.service.d/99-caemble-stop.conf`에
+`TimeoutStopSec=3s`, `KillMode=control-group`, `SendSIGKILL=yes`를 설치하고 `daemon-reload`한다.
+`API_SERVICE`에 이미 `.service`가 있으면 중복으로 붙이지 않는다. 기존 `ExecStart`는 유지한다.
+3초 안에 정상 종료하지 않으면 systemd가 서비스 프로세스를 강제 종료한다. 로그에는 종료 시작과
+소요 시간을 표시한다. 이 제한은 API 종료 대기에만 적용하며 dependency 설치·migration 시간은 포함하지 않는다.
+
+Launcher는 API 연결 해제 시 기존 worker 종료 처리를 수행하고, 3초 안에 끝나지 않는 CAE worker는
+프로세스 트리를 강제 종료한다. 원격 worker의 실제 종료 시점은 연결 단절 감지에 영향을 받으며,
+배포는 완료 확인을 기다리지 않는다. 중단 작업은 기존 연결 해제·재시작 복구로 종료 상태에 반영하며,
+재시작 복구 시 `failed`와 `server restarted` 사유를 유지한다. 완료 결과는 보존하고 아직 실행되지 않은
+대기 작업은 재시작 후 실행한다.
+
+API 정지 후 고정한 commit으로 fast-forward하여 API와 Catalog를 함께 전환한다.
 dependency와 migration을 적용한 후 준비한 정적 release를 원자적으로 전환하고 API와 Nginx를 다시
 올린 뒤 신규 제출을 허용한다. schema reset은 사용하지 않는다. `UI_ARTIFACT` 또는
 `NGINX_CONFIG_SOURCE`를 지정하면 해당 파일을 임시 디렉터리에 복사하여 사용한다.
@@ -94,6 +103,9 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/ubuntu/.local/bin/poetry run uvicorn main:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1
 Restart=always
 RestartSec=3
+TimeoutStopSec=3s
+KillMode=control-group
+SendSIGKILL=yes
 NoNewPrivileges=true
 PrivateTmp=true
 

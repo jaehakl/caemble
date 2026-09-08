@@ -35,14 +35,13 @@ cleanup() {
     if [[ "$gate_owned" == true ]]; then
         sudo rm -f /run/caemble-draining || true
     fi
-    rm -f "$staging_dir/check-cae-drain.py" "$staging_dir/app.conf" "$staging_dir/caemble-ui.tar.gz" || true
+    rm -f "$staging_dir/api-stop.conf" "$staging_dir/app.conf" "$staging_dir/caemble-ui.tar.gz" || true
     sudo rm -f "$staging_dir/previous-app.conf" || true
     rmdir "$staging_dir" || true
     exit "$status"
 }
 trap cleanup EXIT
 
-git show "$incoming_commit:deployment/check-cae-drain.py" > "$staging_dir/check-cae-drain.py"
 if [[ -n "${NGINX_CONFIG_SOURCE:-}" ]]; then
     cp "$NGINX_CONFIG_SOURCE" "$staging_dir/app.conf"
 else
@@ -64,7 +63,7 @@ if sudo test -e "$NGINX_CONFIG_TARGET"; then
     had_nginx_config=true
 fi
 
-echo "[2/6] Close new batch admissions and drain the existing API"
+echo "[2/6] Close new batch admissions and stop the existing API (7s limit)"
 nginx_changed=true
 sudo install -m 644 "$staging_dir/app.conf" "$NGINX_CONFIG_TARGET"
 sudo nginx -t
@@ -75,8 +74,20 @@ cd "$API_DIR"
 api_service_installed=false
 if sudo systemctl cat "$API_SERVICE" >/dev/null 2>&1; then
     api_service_installed=true
-    poetry run python "$staging_dir/check-cae-drain.py" --env "$API_DIR/.env"
+    api_service_unit="${API_SERVICE%.service}.service"
+    cat > "$staging_dir/api-stop.conf" <<'EOF'
+[Service]
+TimeoutStopSec=3s
+KillMode=control-group
+SendSIGKILL=yes
+EOF
+    sudo install -D -m 644 "$staging_dir/api-stop.conf" \
+        "/etc/systemd/system/$api_service_unit.d/99-caemble-stop.conf"
+    sudo systemctl daemon-reload
+    echo "Stopping $API_SERVICE: running simulations will be interrupted; force-kill after 7s."
+    stop_started=$SECONDS
     sudo systemctl stop "$API_SERVICE"
+    echo "API stop completed in $((SECONDS - stop_started))s."
 fi
 
 echo "[3/6] Activate the pinned API and Catalog, install dependencies, and migrate"
