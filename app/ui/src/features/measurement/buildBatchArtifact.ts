@@ -18,6 +18,14 @@ export type BrowserBatchIntent = Readonly<{
   material_snapshot?: MeasurementMaterialSnapshot
   measurement_id?: number
   evaluation_timeout_ms?: number
+  candidates?: BrowserBatchCandidates
+}>
+
+export type BrowserBatchCandidates = Readonly<{
+  count: number
+  next: (attempt: number, signal: AbortSignal) => Promise<Readonly<Vars>>
+  accepted: (attempt: number) => Promise<void>
+  failed: (attempt: number, cause: unknown) => void
 }>
 
 export async function buildBatchArtifact(
@@ -32,6 +40,8 @@ export async function buildBatchArtifact(
     )
   ).items.find((item) => item.id === request.experiment_id)
   if (!saved?.source_bundle) throw new Error('Experiment source bundle is missing.')
+  if (saved.source_hash && saved.source_hash !== request.experiment_source_hash)
+    throw new Error('Experiment source changed before preparing the Batch.')
   const source_bundle = saved.source_bundle
   const catalog = await fetchCatalogRuntimeSlice(source_bundle)
   let vars = request.vars
@@ -60,22 +70,36 @@ export async function buildBatchArtifact(
     items: [],
   }
   try {
-    const total = request.mode === 'generate' ? (request.count ?? 1) : 1
-    for (let index = 1; index <= total; index++) {
+    const total = request.candidates?.count ?? (request.mode === 'generate' ? (request.count ?? 1) : 1)
+    if (!Number.isSafeInteger(total) || total < 1) throw new Error('Batch count must be a positive safe integer.')
+    if (request.candidates && request.mode !== 'candidate') throw new Error('Candidate inputs require candidate mode.')
+    for (let attempt = 1; attempt <= total; attempt++) {
       signal.throwIfAborted()
-      const input = await prepareBrowserMeasurement(
-        {
-          source_bundle,
-          source_hash: artifact.source_hash,
-          catalog,
-          mode: request.mode,
-          vars: vars as Vars | undefined,
-          material_snapshot,
-          evaluation_timeout_ms: request.evaluation_timeout_ms,
-        },
-        signal,
-      )
-      const bytes = new TextEncoder().encode(JSON.stringify(parseArtifactInput(input, artifact)))
+      let bytes: Uint8Array
+      try {
+        const candidateVars = request.candidates ? await request.candidates.next(attempt, signal) : vars
+        const input = await prepareBrowserMeasurement(
+          {
+            source_bundle,
+            source_hash: artifact.source_hash,
+            catalog,
+            mode: request.mode,
+            vars: candidateVars as Vars | undefined,
+            material_snapshot,
+            evaluation_timeout_ms: request.evaluation_timeout_ms,
+          },
+          signal,
+        )
+        bytes = new TextEncoder().encode(JSON.stringify(parseArtifactInput(input, artifact)))
+      } catch (cause) {
+        signal.throwIfAborted()
+        if (!request.candidates || (cause as { name?: string })?.name === 'AbortError') throw cause
+        request.candidates.failed(attempt, cause)
+        onProgress(attempt, total)
+        continue
+      }
+      signal.throwIfAborted()
+      const index = artifact.items.length + 1
       const item = {
         index,
         file: `items/${index}.json`,
@@ -85,8 +109,10 @@ export async function buildBatchArtifact(
       }
       await store.saveItem(item, bytes)
       artifact.items.push(item)
-      onProgress(index, total)
+      await request.candidates?.accepted(attempt)
+      onProgress(attempt, total)
     }
+    if (!artifact.items.length) throw new Error('준비에 성공한 Sampling 후보가 없습니다.')
     await store.saveManifest(artifact)
     return { artifact, store }
   } catch (error) {

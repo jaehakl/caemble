@@ -1141,7 +1141,7 @@ assert.equal(
     ...calculationTensor,
     axes: [{ name: 'time', ticks: [0, 2], unit: 's' }],
   }).compatible,
-  false,
+  true,
 )
 assert.equal(
   comparePredictionOutput(

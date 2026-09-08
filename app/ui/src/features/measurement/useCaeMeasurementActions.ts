@@ -1,4 +1,4 @@
-import { buildBatchArtifact, type BrowserBatchIntent } from './buildBatchArtifact'
+import { buildBatchArtifact, type BrowserBatchIntent, type BrowserBatchCandidates } from './buildBatchArtifact'
 import { submitArtifact } from '@/api/submitArtifact'
 import { browserClient } from '@/api/http'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -21,6 +21,16 @@ export type SaveAndRunCompletion = Readonly<{
   measurementId: number
   recordedDataSaved: true
   calculationSummary: CalculationDataRunSummary
+}>
+
+export type CandidateBatchProgress = Readonly<{
+  batchId: string
+  total: number
+  succeeded: number
+  failed: number
+  cancelled: number
+  calculationFailed: number
+  calculated: number
 }>
 
 export function useCaeMeasurementActions({
@@ -130,7 +140,11 @@ export function useCaeMeasurementActions({
   }, [experimentDocument, requireExperiment])
 
   const submit = useCallback(
-    (request: BrowserBatchIntent, nextOperation: 'generate-and-run' | 'save-and-run' | 'measurement') => {
+    (
+      request: BrowserBatchIntent,
+      nextOperation: 'generate-and-run' | 'save-and-run' | 'measurement',
+      onBatchProgress?: (progress: CandidateBatchProgress) => void,
+    ) => {
       if (active.current || operation) throw new Error('다른 Measurement 작업이 진행 중입니다.')
       const run = {
         controller: new AbortController(),
@@ -147,10 +161,12 @@ export function useCaeMeasurementActions({
       const { signal } = run.controller
       const initialSelectionId = latest.current.selection.measurement?.id ?? null
       const calculated = new Set<number>()
+      let calculationFailed = 0
+      let calculationCompleted = 0
       let completion: SaveAndRunCompletion | null = null
       return (async () => {
         const built = await buildBatchArtifact(request, signal, (completed, total) =>
-          setStage(`?? ${completed}/${total}`),
+          setStage(`입력 준비 ${completed}/${total}`),
         )
         const registered = await submitArtifact({
           client: browserClient,
@@ -163,7 +179,7 @@ export function useCaeMeasurementActions({
             run.batchId = id
             if (run.cancelRequested) await caeBatches.cancel(id)
           },
-          onProgress: (completed, total) => setStage(`??? ${completed}/${total}`),
+          onProgress: (completed, total) => setStage(`업로드 ${completed}/${total}`),
         }).finally(() => built.store.close())
         run.batchId = registered.id
         if (run.cancelRequested) await caeBatches.cancel(registered.id)
@@ -188,8 +204,17 @@ export function useCaeMeasurementActions({
           }
           signal.throwIfAborted()
           setBatch(snapshot)
+          onBatchProgress?.({
+            batchId: snapshot.id,
+            total: snapshot.total,
+            succeeded: snapshot.succeeded,
+            failed: snapshot.failed,
+            cancelled: snapshot.cancelled,
+            calculationFailed,
+            calculated: calculationCompleted,
+          })
           setStage(
-            `${snapshot.succeeded + snapshot.failed + snapshot.cancelled}/${snapshot.total} · CAE ${snapshot.state}`,
+            `${snapshot.succeeded + snapshot.failed + snapshot.cancelled}/${snapshot.total} · CAE ${snapshot.state} · 성공 ${snapshot.succeeded} · 실패 ${snapshot.failed} · 취소 ${snapshot.cancelled}`,
           )
           for (const measurementId of run.completed) {
             run.completed.delete(measurementId)
@@ -200,6 +225,7 @@ export function useCaeMeasurementActions({
             const current = latest.current
             const selectedId = current.selection.measurement?.id ?? null
             if (
+              !request.candidates &&
               current.experimentId === request.experiment_id &&
               (selectedId === measurementId || (completion === null && selectedId === initialSelectionId))
             )
@@ -208,23 +234,46 @@ export function useCaeMeasurementActions({
                 .catch(() => null)
             signal.throwIfAborted()
             setAutomaticCalculationData(true)
-            const calculationSummary = await current.calculationDataActions.calculateMeasurement(measurementId, {
-              onProgress: (progress) => {
-                if (!signal.aborted) setStage(`${progress.stage} · ${progress.completed}/${progress.total}`)
-              },
-            })
-            signal.throwIfAborted()
-            setAutomaticCalculationData(false)
-            completion = { attemptId, measurementId: measurementId, recordedDataSaved: true, calculationSummary }
-            if (calculationSummary.failed) {
-              const message = `Measurement #${measurementId}: CalculationData ${calculationSummary.failed}개 실패`
+            try {
+              const calculationSummary = await current.calculationDataActions.calculateMeasurement(measurementId, {
+                onProgress: (progress) => {
+                  if (!signal.aborted) setStage(`${progress.stage} · ${progress.completed}/${progress.total}`)
+                },
+              })
+              signal.throwIfAborted()
+              setAutomaticCalculationData(false)
+              completion = { attemptId, measurementId: measurementId, recordedDataSaved: true, calculationSummary }
+              calculationCompleted += 1
+              if (calculationSummary.failed || calculationSummary.cancelled) calculationFailed += 1
+              if (calculationSummary.failed) {
+                const message = `Measurement #${measurementId}: CalculationData ${calculationSummary.failed}개 실패`
+                setError(message)
+                latest.current.onActivity?.({ source: 'calculation', level: 'warning', message })
+              }
+            } catch (cause) {
+              signal.throwIfAborted()
+              if (!request.candidates) throw cause
+              calculationCompleted += 1
+              calculationFailed += 1
+              const message = `Measurement #${measurementId}: CalculationData 실패 · ${cause instanceof Error ? cause.message : String(cause)}`
               setError(message)
               latest.current.onActivity?.({ source: 'calculation', level: 'warning', message })
+            } finally {
+              if (!signal.aborted) setAutomaticCalculationData(false)
             }
+            onBatchProgress?.({
+              batchId: snapshot.id,
+              total: snapshot.total,
+              succeeded: snapshot.succeeded,
+              failed: snapshot.failed,
+              cancelled: snapshot.cancelled,
+              calculationFailed,
+              calculated: calculationCompleted,
+            })
           }
           if (snapshot.finished_at || snapshot.state === 'completed' || snapshot.state === 'cancelled') {
             if (snapshot.state === 'cancelled') throw new DOMException('CAE batch를 취소했습니다.', 'AbortError')
-            if (request.mode !== 'generate' && !completion)
+            if (request.mode !== 'generate' && !request.candidates && !completion)
               throw new Error(jobs.find((job) => job.last_error)?.last_error ?? 'CAE 작업이 완료되지 않았습니다.')
             return completion
           }
@@ -289,6 +338,31 @@ export function useCaeMeasurementActions({
   const saveAndRunCurrent = useCallback(() => {
     void saveAndRunCurrentAsync().catch(reportFailure)
   }, [reportFailure, saveAndRunCurrentAsync])
+  const runCandidatesAsync = useCallback(
+    async (
+      candidates: BrowserBatchCandidates,
+      onProgress: (progress: CandidateBatchProgress) => void,
+    ): Promise<CandidateBatchProgress> => {
+      let summary: CandidateBatchProgress | null = null
+      await submit(
+        {
+          ...requireExperiment(),
+          request_id: crypto.randomUUID(),
+          mode: 'candidate',
+          candidates,
+          evaluation_timeout_ms: experimentDocument.evaluationTimeoutMs,
+        },
+        'save-and-run',
+        (progress) => {
+          summary = progress
+          onProgress(progress)
+        },
+      )
+      if (!summary) throw new Error('CAE Batch 결과를 찾을 수 없습니다.')
+      return summary
+    },
+    [experimentDocument.evaluationTimeoutMs, requireExperiment, submit],
+  )
   const runSelected = useCallback(() => {
     try {
       const identity = requireExperiment()
@@ -424,6 +498,7 @@ export function useCaeMeasurementActions({
     operation,
     repeatGenerateAndRun,
     runSelected,
+    runCandidatesAsync,
     saveAndRunCurrent,
     saveAndRunCurrentAsync,
     saveCurrent,

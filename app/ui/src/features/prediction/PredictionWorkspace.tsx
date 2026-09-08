@@ -46,7 +46,7 @@ import {
   loadPredictionValidationData,
   type PredictionContext,
 } from './predictionContextData'
-import { predictionSamplingCandidateWaitResult, type PredictionSamplingRange } from './sampling'
+import type { PredictionSamplingRange } from './sampling'
 import { usePredictionController, type PredictionForwardRecordProfile } from './usePredictionController'
 import {
   defaultPredictionSetup as defaultSetup,
@@ -1089,6 +1089,7 @@ export function PredictionWorkspace({
       let recorded = 0
       let attempted = 0
       let stoppedReason: string | null = null
+      let batchSummary = ''
       activeForwardVarsFingerprintRef.current = null
       runtime.resetWorker()
       clearModelCaches()
@@ -1121,127 +1122,68 @@ export function PredictionWorkspace({
           phase: 'sampling',
           message: `[Sampling] ${profile.existingCenterCount.toLocaleString()} centers · ${profile.candidateCount.toLocaleString()} candidates/window · ${profile.activeComponentCount.toLocaleString()} active components`,
         })
-        for (let attempt = 1; attempt <= total; attempt += 1) {
-          if (!runtime.samplingIsCurrent(revision)) break
-          if (sourceIdentityRef.current !== sourceIdentity) {
-            stoppedReason = 'Experiment 또는 source가 변경되었습니다.'
-            break
-          }
-          attempted = attempt
-          setSamplingProgress({ attempt, failures, phase: 'sampling', recorded, sessionId, successes, total })
-          setStatus(`${attempt}/${total} · Sampling 후보 선택 · 성공 ${successes} · 실패 ${failures}`)
-          let sample: readonly import('./knn').PredictionTensorSample[] | null = null
-          try {
-            sample = await runtime.nextSample(sessionId, fingerprint, attempt)
-            if (!runtime.samplingIsCurrent(revision)) break
-            const nextVars = Object.freeze(
-              Object.fromEntries(
-                sample.map((entry) => [entry.layout.key, varsTensorFromFlat(entry.values, entry.layout.shape)]),
-              ),
-            ) as Readonly<Vars>
-            const expectedFingerprint = candidateFingerprint(nextVars)
-            const baselineRevision = experimentDocumentRef.current.revision
-            setSamplingProgress({ attempt, failures, phase: 'candidate', recorded, sessionId, successes, total })
-            setStatus(`${attempt}/${total} · Candidate 평가 · 성공 ${successes} · 실패 ${failures}`)
-            suppressedCandidateRef.current = expectedFingerprint
-            if (!setCandidateVariablesRef.current(nextVars, 'prediction-sampling')) {
-              throw new Error('Sampling Candidate Vars를 적용하지 못했습니다.')
-            }
-            await new Promise<void>((resolve, reject) => {
-              const deadline = Date.now() + Math.max(30_000, experimentDocumentRef.current.evaluationTimeoutMs + 15_000)
-              let observedExpectedCandidate = false
-              let timer: number | null = null
-              let settled = false
-              const finish = (callback: () => void) => {
-                if (settled) return
-                settled = true
-                if (timer !== null) window.clearTimeout(timer)
-                runtime.clearSamplingCandidateWait(cancelWait)
-                callback()
+        let sample: readonly import('./knn').PredictionTensorSample[] | null = null
+        let preparationFailures = 0
+        await measurementActionsRef.current.runCandidatesAsync(
+          {
+            count: total,
+            next: async (attempt, signal) => {
+              signal.throwIfAborted()
+              if (!runtime.samplingIsCurrent(revision) || sourceIdentityRef.current !== sourceIdentity) {
+                throw new DOMException('Experiment 또는 source가 변경되어 Sampling을 중단합니다.', 'AbortError')
               }
-              const cancelWait = () =>
-                finish(() => reject(new DOMException('Sampling이 취소되었습니다.', 'AbortError')))
-              runtime.setSamplingCandidateWait(cancelWait)
-              const poll = () => {
-                timer = null
-                const document = experimentDocumentRef.current
-                const currentVars = candidateVarsRef.current
-                const waitResult = predictionSamplingCandidateWaitResult({
-                  baselineRevision,
-                  cancelRequested: !runtime.samplingIsCurrent(revision),
-                  currentCandidateFingerprint: candidateFingerprint(currentVars),
-                  deadline,
-                  documentCandidateFingerprint: candidateFingerprint(document.variables),
-                  documentRevision: document.revision,
-                  documentStatus: document.status,
-                  expectedFingerprint,
-                  now: Date.now(),
-                  observedExpectedCandidate,
-                  sourceChanged: sourceIdentityRef.current !== sourceIdentity,
-                  successfulRevision: document.successfulRevision,
-                })
-                observedExpectedCandidate = waitResult.observedExpectedCandidate
-                if (waitResult.state === 'ready') {
-                  finish(() => resolve())
-                  return
-                }
-                if (waitResult.state === 'cancelled') {
-                  cancelWait()
-                  return
-                }
-                if (waitResult.state === 'source-changed') {
-                  finish(() => reject(new Error('Experiment 또는 source가 변경되어 Sampling을 중단합니다.')))
-                  return
-                }
-                if (waitResult.state === 'error') {
-                  finish(() => reject(new Error(document.error?.message ?? 'Sampling Candidate 평가에 실패했습니다.')))
-                  return
-                }
-                if (waitResult.state === 'replaced') {
-                  finish(() => reject(new Error('Sampling Candidate가 다른 Candidate로 교체되었습니다.')))
-                  return
-                }
-                if (waitResult.state === 'timeout') {
-                  finish(() => reject(new Error('Sampling Candidate 평가 제한 시간을 초과했습니다.')))
-                  return
-                }
-                timer = window.setTimeout(poll, 50)
-              }
-              poll()
+              attempted = attempt
+              setSamplingProgress({ attempt, failures, phase: 'candidate', recorded, sessionId, successes, total })
+              setStatus(`${attempt}/${total} · 샘플 입력 준비 · 준비 실패 ${preparationFailures}`)
+              sample = await runtime.nextSample(sessionId, fingerprint, attempt)
+              signal.throwIfAborted()
+              return Object.freeze(
+                Object.fromEntries(
+                  sample.map((entry) => [entry.layout.key, varsTensorFromFlat(entry.values, entry.layout.shape)]),
+                ),
+              ) as Readonly<Vars>
+            },
+            accepted: async () => {
+              if (!runtime.samplingIsCurrent(revision))
+                throw new DOMException('Sampling이 취소되었습니다.', 'AbortError')
+              await runtime.acceptSample(sessionId, fingerprint, sample!)
+            },
+            failed: (attempt, cause) => {
+              preparationFailures += 1
+              failures = preparationFailures
+              const message = cause instanceof Error ? cause.message : String(cause)
+              onActivity?.({
+                source: 'prediction',
+                level: 'error',
+                phase: 'sampling',
+                message: `[Sampling ${attempt}/${total}] 입력 준비 실패 · ${message}`,
+              })
+            },
+          },
+          (progress) => {
+            if (!runtime.samplingIsCurrent(revision)) return
+            recorded = progress.succeeded
+            successes = progress.calculated - progress.calculationFailed
+            failures = preparationFailures + progress.failed + progress.calculationFailed
+            setSamplingProgress({
+              attempt: attempted,
+              failures,
+              phase: 'simulation',
+              recorded,
+              sessionId,
+              successes,
+              total,
             })
-            if (!runtime.samplingIsCurrent(revision)) break
-            setSamplingProgress({ attempt, failures, phase: 'simulation', recorded, sessionId, successes, total })
-            setStatus(`${attempt}/${total} · Simulation 및 RecordedData 저장 · 성공 ${successes} · 실패 ${failures}`)
-            const completion = await measurementActionsRef.current.saveAndRunCurrentAsync()
-            if (!runtime.samplingIsCurrent(revision)) break
-            recorded += 1
-            await runtime.acceptSample(sessionId, fingerprint, sample)
-            if (completion.calculationSummary.failed === 0 && !completion.calculationSummary.cancelled) successes += 1
-            else failures += 1
-            setSamplingProgress({ attempt, failures, phase: 'sampling', recorded, sessionId, successes, total })
-            setStatus(`${attempt}/${total} · 시도 완료 · 성공 ${successes} · 실패 ${failures}`)
-          } catch (cause: unknown) {
-            if (!runtime.samplingIsCurrent(revision) || (cause as { name?: string })?.name === 'AbortError') break
-            failures += 1
-            const message = cause instanceof Error ? cause.message : String(cause)
-            onActivity?.({
-              source: 'prediction',
-              level: 'error',
-              phase: 'sampling',
-              message: `[Sampling ${attempt}/${total}] ${message}`,
-            })
-            setSamplingProgress({ attempt, failures, phase: 'candidate', recorded, sessionId, successes, total })
-            setStatus(`${attempt}/${total} · Candidate 실패 · 성공 ${successes} · 실패 ${failures} · ${message}`)
-            if (sourceIdentityRef.current !== sourceIdentity) {
-              stoppedReason = message
-              setStatus(`${attempt}/${total} · Sampling 중단 · ${message}`)
-              break
-            }
-          }
-        }
+            batchSummary = `Batch ${progress.batchId} · 서버 성공 ${progress.succeeded}/${progress.total} · 실패 ${progress.failed} · 취소 ${progress.cancelled} · Calculation 완료 ${progress.calculated} · 실패 ${progress.calculationFailed} · 준비 실패 ${preparationFailures}`
+            setStatus(batchSummary)
+          },
+        )
       } catch (cause: unknown) {
+        if (runtime.samplingIsCurrent(revision) && (cause as { name?: string })?.name === 'AbortError')
+          stoppedReason = 'Sampling이 취소되었습니다.'
         if (runtime.samplingIsCurrent(revision) && (cause as { name?: string })?.name !== 'AbortError') {
           const message = cause instanceof Error ? cause.message : String(cause)
+          stoppedReason = message
           setStatus(`Sampling 실패 · ${message}`)
           toast.error(message)
         }
@@ -1267,7 +1209,7 @@ export function PredictionWorkspace({
             clearSampling: true,
             status: stoppedReason
               ? `Sampling 중단 · ${attempted}/${total}회 · 성공 ${successes} · 실패 ${failures} · ${stoppedReason}`
-              : `Sampling 완료 · ${attempted}/${total}회 · 성공 ${successes} · 실패 ${failures} · Recorded ${recorded}`,
+              : `Sampling 완료 · ${batchSummary || `${attempted}/${total}회 · 성공 ${successes} · 실패 ${failures} · Recorded ${recorded}`}`,
           })
           if (recorded === 0) skipNextPredictionBusyCheckRef.current = true
           if (recorded === 0 && candidateVarsRef.current) {
@@ -1296,7 +1238,7 @@ export function PredictionWorkspace({
   )
 
   useEffect(() => {
-    if (!samplingProgress || samplingProgress.phase !== 'simulation' || !workbench.measurementActions.stage) return
+    if (!samplingProgress || !workbench.measurementActions.stage) return
     setStatus(
       `${samplingProgress.attempt}/${samplingProgress.total} · ${workbench.measurementActions.stage} · 성공 ${samplingProgress.successes} · 실패 ${samplingProgress.failures}`,
     )
@@ -1805,7 +1747,7 @@ export function PredictionWorkspace({
           direction !== 'inverse'
             ? 'unavailable'
             : repredictedOutput
-              ? repredictedMetric?.compatible
+              ? comparePredictionOutput(repredictedOutput, repredictedOutput).compatible
                 ? 'ready'
                 : 'incompatible'
               : busy
@@ -1817,7 +1759,7 @@ export function PredictionWorkspace({
             : validationRow?.error
               ? 'unavailable'
               : validationRow?.actual
-                ? validationRow.metric?.compatible
+                ? comparePredictionOutput(validationRow.actual, validationRow.actual).compatible
                   ? 'ready'
                   : 'incompatible'
                 : 'unavailable'
@@ -1869,7 +1811,7 @@ export function PredictionWorkspace({
             error:
               validating || retryingValidation
                 ? null
-                : (validationRow?.error ?? validationRow?.metric?.message ?? null),
+                : (validationRow?.error ?? (actualStatus === 'incompatible' ? validationRow?.metric?.message : null)),
             metric: validationRow?.metric ?? null,
             output: actualOutput ?? null,
             snapshotKey: validationSnapshotCurrent?.snapshotFingerprint ?? null,
@@ -1896,7 +1838,9 @@ export function PredictionWorkspace({
                   error:
                     repredictedStatus === 'incompatible'
                       ? repredictedMetric?.message
-                      : (surrogateErrors[calculation.id] ?? null),
+                      : repredictedOutput
+                        ? null
+                        : (surrogateErrors[calculation.id] ?? null),
                   metric: repredictedMetric,
                   output: repredictedStatus === 'ready' ? repredictedOutput : null,
                   snapshotKey:

@@ -105,15 +105,7 @@ function outputSignature(output: CalculationDataOutput) {
   ) {
     return null
   }
-  return JSON.stringify([
-    output.dtype,
-    [...output.shape],
-    output.axes.map((axis) => ({
-      name: axis.name,
-      ticks: [...axis.ticks],
-      ...(axis.unit === undefined ? {} : { unit: axis.unit }),
-    })),
-  ])
+  return JSON.stringify(output.shape)
 }
 
 export function comparePredictionOutput(
@@ -125,13 +117,13 @@ export function comparePredictionOutput(
   if (referenceSignature === null || actualSignature === null) {
     return incompatibleMetric('비교할 CalculationData shape 또는 axes가 올바르지 않습니다.')
   }
-  if (referenceSignature !== actualSignature) {
-    return incompatibleMetric('dtype, shape 또는 axes가 Prediction snapshot과 다릅니다.')
-  }
   const expected = flatOutput(reference)
   const observed = flatOutput(actual)
-  if (expected === null || observed === null || expected.length !== observed.length) {
+  if (expected === null || observed === null) {
     return incompatibleMetric('비교할 tensor 값이 유한하지 않거나 길이가 다릅니다.')
+  }
+  if (referenceSignature !== actualSignature) {
+    return incompatibleMetric(`shape가 다릅니다. 기준 ${referenceSignature}, 실제 ${actualSignature}`)
   }
   const errors = expected.map((value, index) => Math.abs(observed[index] - value))
   if (errors.some((value) => !Number.isFinite(value))) {

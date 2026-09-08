@@ -285,6 +285,18 @@ export function PredictionCalculationPane({
                 ? [output.data as number]
                 : (output.data as readonly number[])
               : null
+            const series = [
+              ...(item.repredicted
+                ? [{ ...item.repredicted, ...calculationSeriesStyle.repredicted, id: 'repredicted' }]
+                : []),
+              { ...item.actual, ...calculationSeriesStyle.actual, id: 'actual' },
+            ].map((entry) => ({
+              ...entry,
+              separate:
+                entry.status === 'ready' &&
+                entry.output !== null &&
+                (!output || !comparePredictionOutput(output, entry.output).compatible),
+            }))
             return (
               <Card key={item.calculationId}>
                 <CardHeader className="gap-2 p-4 pb-3">
@@ -327,42 +339,21 @@ export function PredictionCalculationPane({
                         comparison={{
                           primaryColor: calculationSeriesStyle[item.primary.role].color,
                           primaryLabel: calculationSeriesStyle[item.primary.role].label,
-                          series: [
-                            ...(item.repredicted
-                              ? [
-                                  {
-                                    ...calculationSeriesStyle.repredicted,
-                                    id: 'repredicted',
-                                    message: item.repredicted.error,
-                                    status: item.repredicted.status,
-                                    value:
-                                      item.repredicted.status === 'ready' && item.repredicted.output
-                                        ? varsTensorFromFlat(
-                                            item.repredicted.output.shape.length === 0
-                                              ? [item.repredicted.output.data as number]
-                                              : (item.repredicted.output.data as readonly number[]),
-                                            item.repredicted.output.shape,
-                                          )
-                                        : null,
-                                  },
-                                ]
-                              : []),
-                            {
-                              ...calculationSeriesStyle.actual,
-                              id: 'actual',
-                              message: item.actual.error,
-                              status: item.actual.status,
+                          series: series
+                            .filter((entry) => !entry.separate)
+                            .map((entry) => ({
+                              ...entry,
+                              message: entry.error,
                               value:
-                                item.actual.status === 'ready' && item.actual.output
+                                entry.status === 'ready' && entry.output
                                   ? varsTensorFromFlat(
-                                      item.actual.output.shape.length === 0
-                                        ? [item.actual.output.data as number]
-                                        : (item.actual.output.data as readonly number[]),
-                                      item.actual.output.shape,
+                                      entry.output.shape.length === 0
+                                        ? [entry.output.data as number]
+                                        : (entry.output.data as readonly number[]),
+                                      entry.output.shape,
                                     )
                                   : null,
-                            },
-                          ],
+                            })),
                         }}
                         constraintMaximum={item.constraintMaximum}
                         constraintMinimum={item.constraintMinimum}
@@ -395,6 +386,15 @@ export function PredictionCalculationPane({
                           {metricSummary(item.actual.metric)}
                         </p>
                       ) : null}
+                      {item.repredicted?.status === 'ready' &&
+                      item.repredicted.output &&
+                      item.actual.status === 'ready' &&
+                      item.actual.output ? (
+                        <p className="rounded-md border px-2 py-1.5 text-xs">
+                          Re-predicted ↔ Actual ·{' '}
+                          {metricSummary(comparePredictionOutput(item.repredicted.output, item.actual.output))}
+                        </p>
+                      ) : null}
                       {item.repredicted?.error && !item.repredicted.metric ? (
                         <p className="rounded-md border border-violet-300/70 bg-violet-50 px-2 py-1.5 text-xs text-violet-950">
                           Re-predicted · {item.repredicted.error}
@@ -411,6 +411,43 @@ export function PredictionCalculationPane({
                       편집할 CalculationData output이 없습니다.
                     </div>
                   )}
+                  {series
+                    .filter((entry) => entry.separate)
+                    .map((entry) => {
+                      const separateOutput = entry.output!
+                      const [minimum, maximum] = predictionOutputRange([separateOutput])
+                      return (
+                        <section
+                          className="mt-3 space-y-2 rounded-md border p-2"
+                          aria-label={entry.label}
+                          key={entry.id}
+                        >
+                          <p className="text-xs font-medium" style={{ color: entry.color }}>
+                            {entry.label}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            원래 좌표로 별도 표시합니다. 기준 시리즈와 겹치기 및 오차 계산은 사용할 수 없습니다.
+                          </p>
+                          <TensorEditor
+                            axes={separateOutput.axes}
+                            disabled
+                            label={`${item.name} ${entry.label}`}
+                            minimum={minimum}
+                            maximum={maximum}
+                            displayDomainResetKey={`${resetKey}:${entry.snapshotKey}:${entry.id}`}
+                            selectionResetKey={`${resetKey}:${entry.snapshotKey}:${entry.id}`}
+                            shape={separateOutput.shape}
+                            value={varsTensorFromFlat(
+                              separateOutput.shape.length === 0
+                                ? [separateOutput.data as number]
+                                : (separateOutput.data as readonly number[]),
+                              separateOutput.shape,
+                            )}
+                            onValueChange={() => undefined}
+                          />
+                        </section>
+                      )
+                    })}
                 </CardContent>
               </Card>
             )

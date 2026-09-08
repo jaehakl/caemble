@@ -167,6 +167,68 @@ beforeEach(() => {
 })
 
 describe('server-owned CAE measurement actions', () => {
+  it('submits one multi-Candidate batch and continues after Calculation failures across result pages', async () => {
+    const completed = batch(Array.from({ length: 102 }, (_, index) => index + 1))
+    mocks.create.mockResolvedValue({ ...completed, jobs: completed.jobs.slice(0, 100) })
+    mocks.read.mockResolvedValue({ ...completed, jobs: completed.jobs.slice(100) })
+    mocks.calculate.mockRejectedValueOnce(new Error('Calculation failed'))
+    const rendered = renderActions()
+    const progress = vi.fn()
+    await act(async () => {
+      const result = await rendered.result.current.runCandidatesAsync(
+        { count: 102, next: async () => ({ x: 1 }), accepted: vi.fn(), failed: vi.fn() },
+        progress,
+      )
+      expect(result).toMatchObject({ total: 102, succeeded: 102, calculated: 102, calculationFailed: 1 })
+    })
+    expect(mocks.create).toHaveBeenCalledOnce()
+    expect(mocks.create).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'candidate', candidates: expect.objectContaining({ count: 102 }) }),
+    )
+    expect(mocks.calculate).toHaveBeenCalledTimes(102)
+    expect(new Set(mocks.calculate.mock.calls.map(([id]) => id)).size).toBe(102)
+    expect(mocks.read).toHaveBeenCalledWith('batch-1', { offset: 100, limit: 100 })
+    expect(mocks.load).not.toHaveBeenCalled()
+  })
+
+  it('returns a batch summary even when all server jobs fail', async () => {
+    mocks.create.mockResolvedValue({
+      ...batch([41, 42]),
+      succeeded: 0,
+      failed: 2,
+      jobs: batch([41, 42]).jobs.map((job) => ({ ...job, state: 'failed' })),
+    })
+    const rendered = renderActions()
+    await act(async () => {
+      expect(
+        await rendered.result.current.runCandidatesAsync(
+          { count: 2, next: async () => ({ x: 1 }), accepted: vi.fn(), failed: vi.fn() },
+          vi.fn(),
+        ),
+      ).toMatchObject({ succeeded: 0, failed: 2, calculated: 0 })
+    })
+    expect(mocks.calculate).not.toHaveBeenCalled()
+  })
+
+  it.each(['cancel', 'source-change'] as const)('handles %s while a Candidate Batch is running', async (action) => {
+    mocks.create.mockResolvedValue({ ...batch(), state: 'running', finished_at: null, succeeded: 0, jobs: [] })
+    const rendered = renderActions()
+    let completion!: Promise<unknown>
+    act(() => {
+      completion = rendered.result.current
+        .runCandidatesAsync({ count: 3, next: async () => ({ x: 1 }), accepted: vi.fn(), failed: vi.fn() }, vi.fn())
+        .catch((cause: unknown) => cause)
+    })
+    await waitFor(() => expect(mocks.wait).toHaveBeenCalledOnce())
+    if (action === 'cancel') act(() => rendered.result.current.cancel())
+    else rendered.rerender({ sourceHash: 'changed-source' })
+    await act(async () => {
+      expect(await completion).toMatchObject({ name: 'AbortError' })
+    })
+    if (action === 'cancel') expect(mocks.cancel).toHaveBeenCalledWith('batch-1')
+    else expect(mocks.cancel).not.toHaveBeenCalled()
+    expect(mocks.calculate).not.toHaveBeenCalled()
+  })
   it('waits for shared events without polling and postprocesses each completion only once', async () => {
     const initial = {
       ...batch(),

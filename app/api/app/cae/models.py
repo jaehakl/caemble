@@ -38,8 +38,8 @@ class BatchCreateRequest(BaseModel):
         ids = [item.measurement_id for item in self.items if item.measurement_id is not None]
         if len(ids) != len(set(ids)):
             raise ValueError("A Measurement may only appear once in a batch.")
-        if self.mode != "generate" and len(self.items) != 1:
-            raise ValueError("Only generated batches may contain multiple items.")
+        if self.mode == "measurement" and len(self.items) != 1:
+            raise ValueError("Measurement batches must contain exactly one item.")
         if self.mode == "measurement" and not ids:
             raise ValueError("measurement mode requires an existing measurement_id.")
         return self
