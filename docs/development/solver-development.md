@@ -2,7 +2,7 @@
 
 CAE Solver를 추가하거나 바꾸기 전에 이 문서와
 `app/slaves/cae/AGENTS.md`를 모두 읽습니다. 사용자용 문법과 현재 예제는
-Workbench의 `/docs`에서 관리합니다.
+Workbench의 Help에서 관리합니다.
 
 ## Experiment와 실행 계약
 

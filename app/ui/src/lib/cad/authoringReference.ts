@@ -13,7 +13,7 @@ export function buildCadAuthoringReference({
 }>) {
   const core = [
     '# Official CAD authoring grammar',
-    'Authority: Caemble app contract. Manuals: /docs?section=reference and /docs?section=geometry.',
+    'Authority: Caemble app contract. Manuals: /?help=manual&item=reference-core-api and /?help=geometry.',
     '',
     '## Complete experiment.tsx skeleton',
     '```tsx',

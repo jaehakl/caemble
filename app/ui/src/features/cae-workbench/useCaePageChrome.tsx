@@ -1,16 +1,12 @@
 import { useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import {
   Beaker,
-  BookOpenText,
-  Boxes,
   ChartNoAxesCombined,
   CircleUserRound,
   Database,
   Download,
   FlaskConical,
-  Gauge,
   GitBranch,
-  Layers3,
   MessageCircle,
   Info,
   Pencil,
@@ -34,7 +30,7 @@ import {
 } from '@/features/cae-workbench/chrome'
 import type { CalculationSaveState } from '@/features/calculation'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
-import type { AnalysisTabId, HelpKindId, WorkbenchSectionId } from '@/features/cae-workbench/types'
+import type { AnalysisTabId, WorkbenchSectionId } from '@/features/cae-workbench/types'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
 import type { WorkbenchDialog } from './caePageTypes'
@@ -61,7 +57,6 @@ export function useCaePageChrome({
   calculationSaveState,
   experimentAuthoringState,
   guardReplacement,
-  helpKind,
   requestAnalysisCommand,
   requestCalculationSave,
   selectedCalculationId,
@@ -73,7 +68,6 @@ export function useCaePageChrome({
   setActiveSection,
   setAnalysisTab,
   setDialog,
-  setHelpKind,
   workbench,
   predictionState,
 }: {
@@ -84,7 +78,6 @@ export function useCaePageChrome({
   calculationSaveState: CalculationSaveState
   experimentAuthoringState: CadEditorAuthoringState | null
   guardReplacement: (run: () => unknown | Promise<unknown>) => void
-  helpKind: HelpKindId
   requestAnalysisCommand: (command: AnalysisRibbonCommand) => void
   requestCalculationSave: () => void
   selectedCalculationId: number | null
@@ -96,7 +89,6 @@ export function useCaePageChrome({
   setActiveSection: (section: WorkbenchSectionId) => void
   setAnalysisTab: (tab: AnalysisTabId) => void
   setDialog: Dispatch<SetStateAction<WorkbenchDialog>>
-  setHelpKind: (kind: HelpKindId) => void
   workbench: CaeWorkbenchState
   predictionState: PredictionRibbonState
 }) {
@@ -616,43 +608,6 @@ export function useCaePageChrome({
     pressed: analysisTab === tab,
     onSelect: () => setAnalysisTab(tab),
   }))
-  const helpActions: readonly WorkbenchAction[] = [
-    {
-      id: 'help-manual',
-      label: 'Manual',
-      icon: <BookOpenText />,
-      pressed: helpKind === 'manual',
-      onSelect: () => setHelpKind('manual'),
-    },
-    {
-      id: 'help-geometry',
-      label: 'Geometry',
-      icon: <Boxes />,
-      pressed: helpKind === 'geometry',
-      onSelect: () => setHelpKind('geometry'),
-    },
-    {
-      id: 'help-materials',
-      label: 'Material Model',
-      icon: <Layers3 />,
-      pressed: helpKind === 'materials',
-      onSelect: () => setHelpKind('materials'),
-    },
-    {
-      id: 'help-quantity',
-      label: 'Quantity',
-      icon: <Gauge />,
-      pressed: helpKind === 'quantity-kinds',
-      onSelect: () => setHelpKind('quantity-kinds'),
-    },
-    {
-      id: 'help-solvers',
-      label: 'Solvers',
-      icon: <FlaskConical />,
-      pressed: helpKind === 'solvers',
-      onSelect: () => setHelpKind('solvers'),
-    },
-  ]
 
   const ribbonPanels: readonly WorkbenchRibbonPanel[] = [
     {
@@ -798,15 +753,7 @@ export function useCaePageChrome({
         </WorkbenchRibbonGroup>
       ),
     },
-    {
-      sectionId: 'help',
-      label: 'Help',
-      content: (
-        <WorkbenchRibbonGroup label="Manual & Catalog">
-          <WorkbenchRibbonActions actions={helpActions} />
-        </WorkbenchRibbonGroup>
-      ),
-    },
+
     {
       sectionId: 'setting',
       label: 'Setting',

@@ -1,7 +1,8 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Gauge, LoaderCircle } from 'lucide-react'
-import { useDeferredValue, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
+import { useDebouncedValue } from '@/shared/useDebouncedValue'
 import { Link } from 'react-router'
 import { type CatalogQuantityKind, type CatalogQuantityKindDetail } from '@/api/catalog'
 import { CatalogPageLayout } from '@/components/CatalogPageLayout'
@@ -18,7 +19,7 @@ const columns: ColumnDef<CatalogQuantityKind, unknown>[] = [
   {
     accessorKey: 'name',
     header: 'Name',
-    cell: ({ row }) => <code className="text-xs font-semibold text-orange-700">{row.original.name}</code>,
+    cell: ({ row }) => <code className="text-xs font-semibold text-primary">{row.original.name}</code>,
   },
   { accessorKey: 'domain', header: 'Domain', cell: ({ row }) => <Badge>{row.original.domain}</Badge> },
   {
@@ -51,8 +52,8 @@ export function QuantityCatalog({
   const [unit, setUnit] = useState('')
   const [domain, setDomain] = useState('')
   const [tensorOrder, setTensorOrder] = useState('all')
-  const deferredQuery = useDeferredValue(query)
-  const deferredUnit = useDeferredValue(unit)
+  const deferredQuery = useDebouncedValue(query)
+  const deferredUnit = useDebouncedValue(unit)
   const selectedName = selectedKey === undefined ? internalSelectedName : selectedKey
   const selectName = onSelectedKeyChange ?? setInternalSelectedName
   const listQuery = {
@@ -73,7 +74,7 @@ export function QuantityCatalog({
   return (
     <CatalogPageLayout
       count={total}
-      description="SQLite 카탈로그에서 조회한 표준 물리량, 단위 및 Solver 사용 관계"
+      description="표준 물리량의 단위와 Material Model·Solver 사용 관계를 확인합니다."
       embedded={embedded}
       title="Physical Quantity Kinds"
       filters={
@@ -145,7 +146,14 @@ export function QuantityCatalog({
           </>
         )
       }
-      detail={<QuantityDetail detail={detail.data} error={detail.error} pending={detail.isPending && !!selectedName} />}
+      detail={
+        <QuantityDetail
+          detail={detail.data}
+          error={detail.error}
+          pending={detail.isPending && !!selectedName}
+          onRetry={() => void detail.refetch()}
+        />
+      }
     />
   )
 }
@@ -154,13 +162,15 @@ function QuantityDetail({
   detail,
   error,
   pending,
+  onRetry,
 }: {
   detail?: CatalogQuantityKindDetail
   error: Error | null
   pending: boolean
+  onRetry?: () => void
 }) {
   if (pending) return <CatalogLoading label="관계 정보를 조회하고 있습니다." />
-  if (error) return <CatalogError error={error} />
+  if (error) return <CatalogError error={error} onRetry={onRetry} />
   if (!detail) {
     return (
       <CardContent className="flex min-h-60 flex-col items-center justify-center p-8 text-center">
@@ -204,9 +214,9 @@ function QuantityDetail({
         <RelationList title="Model parameters">
           {detail.materialModels.map((parameter) => (
             <Link
-              className="block rounded border p-2 font-mono text-xs text-orange-700 hover:bg-orange-50"
+              className="block rounded border p-2 font-mono text-xs text-primary hover:bg-primary/10"
               key={`${parameter.key}:${parameter.path}`}
-              to={`/docs?section=materials&item=${encodeURIComponent(parameter.key)}`}
+              to={`/?help=materials&item=${encodeURIComponent(parameter.key)}`}
             >
               {parameter.key}
               <span className="mt-1 block font-sans text-muted-foreground">
@@ -218,11 +228,11 @@ function QuantityDetail({
         <RelationList title="Solver usages">
           {detail.solverUsages.map((usage, index) => (
             <Link
-              className="block rounded border p-2 text-xs hover:bg-orange-50"
+              className="block rounded border p-2 text-xs hover:bg-primary/10"
               key={`${usage.solverName}@${usage.solverVersion}:${usage.path}:${index}`}
-              to={`/docs?section=solvers&item=${encodeURIComponent(`${usage.solverName}@${usage.solverVersion}`)}`}
+              to={`/?help=solvers&item=${encodeURIComponent(`${usage.solverName}@${usage.solverVersion}`)}`}
             >
-              <code className="font-semibold text-orange-700">
+              <code className="font-semibold text-primary">
                 {usage.solverName}@{usage.solverVersion}
               </code>
               <span className="mt-1 block text-muted-foreground">

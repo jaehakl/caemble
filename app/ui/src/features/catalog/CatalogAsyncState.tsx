@@ -1,3 +1,4 @@
+import { ApiError } from '@/api/http'
 import { LoaderCircle, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
@@ -13,7 +14,11 @@ export function CatalogLoading({ label }: { label: string }) {
 export function CatalogError({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
   return (
     <div className="flex min-h-60 flex-col items-center justify-center p-8 text-center">
-      <p className="font-medium text-destructive">Catalog API를 사용할 수 없습니다.</p>
+      <p className="font-medium text-destructive">
+        {error instanceof ApiError && error.status === 404
+          ? '카탈로그 항목을 찾을 수 없습니다.'
+          : '카탈로그를 불러오지 못했습니다.'}
+      </p>
       <p className="mt-2 max-w-xl text-sm text-muted-foreground">
         {error instanceof Error ? error.message : String(error)}
       </p>

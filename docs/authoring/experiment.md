@@ -13,11 +13,11 @@ Work in the Caemble monorepo and read AGENTS.md first. The external agent owns i
 
 For a failure, retain stage, message, supplied file/range, source hash and job/measurement IDs. Follow diagnostic.experiment. Do not manufacture a line number for a policy failure that reports only a message. Rebuild after source or Catalog changes. A retry should refer to the same known input, or explicitly be a new experiment condition.
 
-Catalog data stays solely in app/catalog/caemble_catalog/catalog.sqlite3. Read it through the existing Catalog Python library; do not create a JSON/TS/Markdown copy or a separate Node SQLite adapter. User documentation is maintained as shared Markdown and displayed in web /docs and CLI; implementation and operations notes use the development and operations documents.
+Catalog data stays solely in app/catalog/caemble_catalog/catalog.sqlite3. Read it through the existing Catalog Python library; do not create a JSON/TS/Markdown copy or a separate Node SQLite adapter. User documentation is maintained as shared Markdown and displayed in Workbench Help and CLI; implementation and operations notes use the development and operations documents.
 
 Executable command sequence (PowerShell 7, from the repository root; Node >=24.14 and the checkout's CAE Python environment installed). Run each command only after the preceding command succeeds. Choose an actual Catalog Example key from the listing; quoted REPLACE values below are user selections, not Catalog identifiers. Output directories must be empty. Configure CAEMBLE_API_URL and a caemble-scope CAEMBLE_API_TOKEN in .env for server operations.
 
-~~~powershell
+```powershell
 npm --prefix app/ui run build:cli
 $caembleCli = (Resolve-Path app/ui/dist-cli/caemble.cjs).Path
 node $caembleCli doctor
@@ -32,19 +32,19 @@ node $caembleCli experiment check .work/experiment --vars-mode nominal --out .wo
 node $caembleCli png geometry .work/checked --out .work/geometry.png
 node $caembleCli experiment test .work/checked --out .work/local-results --timeout 120
 node $caembleCli data inspect --result .work/local-results/1
-~~~
+```
 
 Both check and build run source/type checks, local input construction and the existing Python simulate.py validator. Neither starts a Solver. check accepts --out and produces the same artifact format as build, so the checked artifact above is already reusable. experiment test consumes that artifact and runs the local Solver; it creates no server batch and uploads no source. Inspect the local manifest, records and numerical expectations before continuing. Ctrl+C during test requests local cancellation and cleanup.
 
 For an existing server Experiment, use experiment pull <id> --out <empty-directory> instead of init, then edit the pulled directory. Preserve its caemble.json baseBundleHash. For a new Experiment, choose the intended namespace/repository/key in that metadata before push. The following is an explicit server write sequence:
 
-~~~powershell
+```powershell
 node $caembleCli doctor --api
 $saved = node $caembleCli experiment push .work/experiment --artifact .work/checked --json | ConvertFrom-Json
 $batch = node $caembleCli batch submit .work/checked --experiment $saved.id --json | ConvertFrom-Json
 node $caembleCli batch watch $batch.id
 node $caembleCli batch show $batch.id
-~~~
+```
 
 push stores source using its base identity and checks its matching artifact. batch submit uploads the already built item bytes and commits the remote batch; it performs no local Solver execution or rebuilding. The local test and server submission above reuse .work/checked exactly. watch emits observation events: Ctrl+C or an observation timeout leaves the remote batch running. Use batch cancel <batch-id> only when cancellation is intended. Inspect the job Measurement IDs returned by batch show with measurement inspect <measurement-id>; fetch persisted records before claiming numerical success.
 

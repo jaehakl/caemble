@@ -2,6 +2,21 @@
 
 Caemble의 Experiment는 공통 형상과 변수, Material, solver Task, 실행 프로그램과 RecordedData 계약을 하나의 source bundle로 관리합니다.
 
+## 먼저 준비할 것
+
+형상과 문서는 로그인 없이 살펴볼 수 있습니다. 서버에 Measurement를 저장하고 Solver를 실행하려면 로그인과 사용 가능한 내 CAE Launcher가 필요합니다. 실행 전에 **Setting → Launchers**에서 연결 상태를 확인하세요.
+
+## 첫 실행의 목표
+
+| 단계      | 할 일                                           | 확인할 결과                                                  |
+| --------- | ----------------------------------------------- | ------------------------------------------------------------ |
+| 작성      | Experiment에서 예제를 열고 Source를 확인합니다. | source 상태가 `Ready`이고 Viewer에 형상이 보입니다.          |
+| 조건 확인 | Vars와 Material Parameter를 확인합니다.         | 원하는 Candidate의 형상과 값이 일치합니다.                   |
+| 저장·실행 | Measurement를 준비하고 실행합니다.              | CAE Jobs에 작업이 등록되고 Console에 진행 상태가 표시됩니다. |
+| 결과 확인 | 완료된 Measurement를 선택합니다.                | RecordedData가 표시되고 Calculation에서 계산할 수 있습니다.  |
+
+## 순서대로 진행하기
+
 1. 로그인하고 CAE Launcher가 연결되어 있는지 확인합니다.
 2. 상단 **Experiment** 메뉴를 선택하고 왼쪽 목록에서 Example 또는 저장된 namespace / repository / SemVer Version을 연 뒤, 오른쪽 Source 탭에서 source bundle을 작성합니다.
 3. source 상태가 `Ready`가 될 때까지 compile/evaluate 오류를 해결합니다.
@@ -14,6 +29,14 @@ Caemble의 Experiment는 공통 형상과 변수, Material, solver Task, 실행 
 10. 기존 Prepared Measurement는 **Run**으로 실행합니다. 실행이 실패한 작업은 **CAE 작업**에서 재시도하세요. 서버나 worker 연결 중단을 포함한 실패는 자동으로 다시 실행하지 않습니다.
 11. CAE worker가 결과를 서버에 직접 전송하고 RecordedData가 원자적으로 저장되면 Measurement는 Recorded 상태가 됩니다. 선택 중인 Measurement의 결과는 서버 완료 이벤트를 받은 뒤 즉시 다시 불러옵니다.
 
+## 실행 전후에 기억할 점
+
 Measurement는 immutable Experiment revision을 가리킵니다. 생성 요청의 source hash가 현재 revision과 다르면 저장이 거부되므로, source가 바뀌면 새 revision에서 새 Measurement를 준비하세요.
 
 Task 파일이 하나도 없는 Experiment도 Geometry preview와 Experiment 저장은 사용할 수 있습니다. 이 경우 Measurement 생성·선택·분석과 Simulation 실행은 Task를 추가할 때까지 비활성화됩니다.
+
+## 다음 단계
+
+- source가 준비되지 않으면 [Ready 문제 해결](../troubleshooting/troubleshooting-ready.md)을 확인하세요.
+- 실행 후에는 [Calculation으로 결과 계산](workbench-calculation.md)을 이어서 진행하세요.
+- 정확한 문법이나 완성 예제는 Help의 **Geometry**, **Solver**, **Examples**에서 찾을 수 있습니다.

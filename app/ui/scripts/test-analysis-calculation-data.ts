@@ -213,7 +213,7 @@ assert.doesNotMatch(engineSource, /ml-random-forest|predictDataset|fitRidge|Rand
 const typesSource = readFileSync('src/features/analysis/analysis-types.ts', 'utf8')
 assert.doesNotMatch(typesSource, /AnalysisPredictionResult|AnalysisWhatIfResult|type: 'predict/u)
 
-const docsSource = readFileSync('src/features/docs/docsKnowledge.ts', 'utf8')
+const docsSource = readFileSync('../../docs/manual/workbench/workbench-analysis.md', 'utf8')
 assert.doesNotMatch(docsSource, /Analysis: Explore, Mining, Prediction|Prediction CSV|OOF 검증으로 Ridge/u)
 
 console.info('CalculationData Analysis tests passed.')

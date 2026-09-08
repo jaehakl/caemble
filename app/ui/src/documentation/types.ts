@@ -12,3 +12,6 @@ export type DocumentPage = Readonly<{
   aliases?: readonly string[]
   collapsed?: boolean
 }>
+
+export const helpKindIds = ['home', 'manual', 'geometry', 'materials', 'quantity-kinds', 'solvers', 'examples'] as const
+export type HelpKindId = (typeof helpKindIds)[number]

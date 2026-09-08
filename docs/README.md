@@ -1,6 +1,6 @@
 # Caemble documentation
 
-This directory contains the maintained prose sources. Web `/docs` and CLI
+This directory contains the maintained prose sources. Workbench Help and CLI
 `docs search/show` use the same user-manual and authoring text. The CLI also
 provides development and operations documents. Catalog entries, syntax declarations,
 and executable examples come from their implementations and fixtures.

@@ -112,21 +112,25 @@ vi.mock('@/features/ai/AiChatPage', () => ({
   AiChatWorkspace: ({ settingsContainer }: { settingsContainer: HTMLDivElement | null }) =>
     settingsContainer ? createPortal(<section>AI settings</section>, settingsContainer) : null,
 }))
-vi.mock('@/features/cae-workbench/WorkbenchHelp', () => ({
-  WorkbenchHelpExplorer: ({
+vi.mock('@/features/help/HelpWorkspace', () => ({
+  HelpWorkspace: ({
     kind,
-    onSelectedItemChange,
+    item,
+    onNavigate,
+    onClose,
   }: {
     kind: string
-    onSelectedItemChange: (key: string) => void
+    item: string | null
+    onNavigate: (href: string) => void
+    onClose: () => void
   }) => (
-    <section>
+    <section aria-label="Help workspace">
       <span>{kind}</span>
-      <button onClick={() => onSelectedItemChange('test.response@1')}>Select model</button>
+      <span>{item}</span>
+      <button onClick={() => onNavigate('/?help=materials')}>Material Model</button>
+      <button onClick={() => onNavigate('/?help=materials&item=test.response%401')}>Select model</button>
+      <button onClick={onClose}>Close Help</button>
     </section>
-  ),
-  WorkbenchHelpDetail: ({ selectedItem }: { selectedItem: string | null }) => (
-    <section>{selectedItem ?? 'Choose model'}</section>
   ),
 }))
 vi.mock('@/features/cae-workbench/dialogs', () => ({ ConfirmWorkbenchDialog: () => null }))
@@ -156,15 +160,19 @@ describe('Workbench portal navigation', () => {
       </QueryClientProvider>,
     )
     const left = within(screen.getByRole('complementary', { name: 'Left pane' }))
-    const right = within(screen.getByRole('complementary', { name: 'Right pane' }))
     expect(screen.queryByRole('button', { name: 'material' })).not.toBeInTheDocument()
     fireEvent.change(await left.findByLabelText('Candidate variable'), { target: { value: '11' } })
     fireEvent.click(screen.getByRole('button', { name: 'help' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Material Model' }))
-    expect(await left.findByText('materials')).toBeInTheDocument()
-    fireEvent.click(await left.findByRole('button', { name: 'Select model' }))
-    expect(right.getByText('test.response@1')).toBeInTheDocument()
-    expect(left.queryByLabelText('Candidate variable')).not.toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: 'Material Model' }))
+    const help = within(await screen.findByRole('region', { name: 'Help workspace' }))
+    expect(await help.findByText('materials')).toBeInTheDocument()
+    fireEvent.click(help.getByRole('button', { name: 'Select model' }))
+    expect(await help.findByText('test.response@1')).toBeInTheDocument()
+    expect(left.getByLabelText('Candidate variable')).toHaveValue('11')
+    expect(left.getByLabelText('Candidate variable')).not.toBeVisible()
+    fireEvent.click(help.getByRole('button', { name: 'Close Help' }))
+    expect(left.getByLabelText('Candidate variable')).toHaveValue('11')
+    expect(left.getByLabelText('Candidate variable')).toBeVisible()
 
     fireEvent.click(screen.getByRole('button', { name: 'analysis' }))
     expect(await left.findByText('Analysis settings')).toBeInTheDocument()
@@ -175,7 +183,8 @@ describe('Workbench portal navigation', () => {
     await waitFor(() => expect(left.getByLabelText('Candidate variable')).toHaveValue('11'))
     expect(left.queryByText('AI settings')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'help' }))
-    expect(left.getByText('materials')).toBeInTheDocument()
-    expect(right.getByText('test.response@1')).toBeInTheDocument()
+    const restored = within(await screen.findByRole('region', { name: 'Help workspace' }))
+    expect(await restored.findByText('materials')).toBeInTheDocument()
+    expect(restored.getByText('test.response@1')).toBeInTheDocument()
   })
 })

@@ -1,7 +1,9 @@
 import type { CatalogSearchItem } from '@/api/catalog'
 import { cadElementCatalog } from '@/lib/cad/catalog'
 import { publicDocuments } from '@/documentation/public'
-import { docsSectionHref, type DocsSectionId } from './docsRoute'
+import { helpHref, type HelpKindId } from './helpNavigation'
+import type { ManualSection } from './types'
+type DocsSectionId = ManualSection | HelpKindId
 
 export type DocsKnowledgeChunk = Readonly<{
   aliases?: readonly string[]
@@ -21,7 +23,7 @@ export const manualDocsKnowledge: readonly DocsKnowledgeChunk[] = publicDocument
   ...document,
   section: document.section!,
   keywords: document.keywords,
-  href: docsSectionHref(document.section!, undefined, document.anchor),
+  href: helpHref('manual', document.id),
 }))
 
 export const catalogDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze([
@@ -32,7 +34,7 @@ export const catalogDocsKnowledge: readonly DocsKnowledgeChunk[] = Object.freeze
       title: entry.authoringName,
       summary: entry.summary,
       item: entry.tag,
-      href: docsSectionHref('geometry', entry.tag),
+      href: helpHref('geometry', entry.tag),
       keywords: Object.freeze([
         entry.authoringName,
         entry.tag,
@@ -76,17 +78,19 @@ export function catalogSearchKnowledge(items: readonly CatalogSearchItem[]): rea
       const section =
         item.kind === 'quantityKind'
           ? 'quantity-kinds'
-          : item.kind === 'solver' || item.kind === 'experiment'
-            ? 'solvers'
-            : 'materials'
-      const selectedItem = item.kind === 'experiment' ? `experiment:${item.key}` : item.key
+          : item.kind === 'experiment'
+            ? 'examples'
+            : item.kind === 'solver'
+              ? 'solvers'
+              : 'materials'
+      const selectedItem = item.key
       return Object.freeze({
         id: `${item.kind}:${item.key}`,
         section,
         title: item.title,
         summary: item.subtitle,
         item: selectedItem,
-        href: docsSectionHref(section, selectedItem),
+        href: helpHref(section, selectedItem),
         keywords: Object.freeze([item.kind, item.key, item.title, item.subtitle]),
         content: item.subtitle,
       })
@@ -111,9 +115,7 @@ export function searchDocsKnowledge(
       const title = chunk.title.normalize('NFKC').toLocaleLowerCase()
       const normalizedKeywords = chunk.keywords.map((keyword) => keyword.normalize('NFKC').toLocaleLowerCase())
       const keywords = normalizedKeywords.join(' ')
-      const text = `${title} ${chunk.summary} ${keywords}${chunk.item ? ` ${chunk.content}` : ''}`
-        .normalize('NFKC')
-        .toLocaleLowerCase()
+      const text = `${title} ${chunk.summary} ${keywords} ${chunk.content}`.normalize('NFKC').toLocaleLowerCase()
       const matchedTerms = terms.filter((term) => text.includes(term)).length
       if (!text.includes(needle) && matchedTerms === 0) return []
       const rank =

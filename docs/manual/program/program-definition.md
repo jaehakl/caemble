@@ -15,4 +15,4 @@ varsSchema: {
 
 Candidate는 선언한 shape와 정확히 같은 dense rectangular numeric tensor여야 합니다. 축별 범위가 다르면 `positionX`, `positionY`, `positionZ`처럼 의미별 scalar 변수로 분리한 뒤 Geometry callback에서 다시 조합하세요. Geometry callback은 `({ vars })`로 값을 받고 외부의 변경 가능한 상태에 의존하지 않아야 합니다. 같은 parent 아래의 component `id`는 고유해야 하며, 이 ID를 `geometryGroup`에 넣어 `experiment.geometry.<group>`으로 참조합니다. CAD API v1의 surface member는 `<geometry-id>/surface/<non-negative-index>` 형식이며 Geometry Catalog에 표시된 primitive별 고정 slot을 사용합니다.
 
-[Electro-Thermal Notched Bar의 canonical experiment.tsx 열기](/docs?section=solvers&item=experiment:caemble:experiment/caemble/verified/electro-thermal-notched-bar@3.0.0)
+[Electro-Thermal Notched Bar의 canonical experiment.tsx 열기](/?help=examples&item=caemble:experiment/caemble/verified/electro-thermal-notched-bar@3.0.0)

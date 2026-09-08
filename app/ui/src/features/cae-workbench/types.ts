@@ -45,8 +45,8 @@ export type MeasurementRightTabId = (typeof measurementRightTabIds)[number]
 export const analysisTabIds = ['explore', 'mining', 'data'] as const
 export type AnalysisTabId = (typeof analysisTabIds)[number]
 
-export const helpKindIds = ['manual', 'geometry', 'materials', 'quantity-kinds', 'solvers'] as const
-export type HelpKindId = (typeof helpKindIds)[number]
+import type { HelpKindId } from '@/documentation/types'
+export { helpKindIds, type HelpKindId } from '@/documentation/types'
 
 export const workbenchLayoutLimits = Object.freeze({
   appMinWidthPx: 1280,
@@ -94,7 +94,7 @@ export const defaultWorkbenchLayoutState: WorkbenchLayoutState = Object.freeze({
   viewerExpanded: false,
   rightTabs: Object.freeze({ experiment: 'source', measurement: 'recorded-data' }),
   analysisTab: 'explore',
-  help: Object.freeze({ kind: 'manual', item: 'program-overview' }),
+  help: Object.freeze({ kind: 'home', item: null }),
 })
 
 export type WorkbenchDraftDomain = Readonly<{

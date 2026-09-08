@@ -118,3 +118,23 @@ export function recordedDataRuntimeQueryOptions(quantityKindNames: readonly stri
     enabled,
   })
 }
+
+export function catalogSolversInfiniteQueryOptions(query: ListQuery) {
+  return infiniteQueryOptions({
+    queryKey: [...catalogQueryKeys.solvers(query), 'infinite'] as const,
+    queryFn: ({ pageParam, signal }) => catalogApi.listSolvers({ ...query, cursor: pageParam }, { signal }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.nextCursor ?? undefined,
+    retry: false,
+  })
+}
+
+export function catalogExperimentsInfiniteQueryOptions(query: ListQuery) {
+  return infiniteQueryOptions({
+    queryKey: [...catalogQueryKeys.experiments(query), 'infinite'] as const,
+    queryFn: ({ pageParam, signal }) => catalogApi.listExperiments({ ...query, cursor: pageParam }, { signal }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.nextCursor ?? undefined,
+    retry: false,
+  })
+}

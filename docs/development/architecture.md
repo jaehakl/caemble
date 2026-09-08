@@ -2,7 +2,7 @@
 
 Caemble is a local-first CAE Workbench. The browser authors and previews an
 Experiment, the API owns persistence and orchestration, and a per-user launcher
-runs isolated worker applications. The in-app `/docs` route is the user manual;
+runs isolated worker applications. Workbench Help is the user manual;
 this document describes the implementation boundaries.
 
 ## Identities and payloads

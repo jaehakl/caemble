@@ -1,5 +1,5 @@
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table'
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
 
@@ -21,7 +21,8 @@ export function DataTable<T>({
   selectedKey?: string
 }) {
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const table = useReactTable({ data: [...data], columns, getCoreRowModel: getCoreRowModel() })
+  const rows = useMemo(() => [...data], [data])
+  const table = useReactTable({ data: rows, columns, getCoreRowModel: getCoreRowModel() })
 
   useEffect(
     () => () => {
@@ -50,8 +51,17 @@ export function DataTable<T>({
             return (
               <TableRow
                 aria-selected={key === selectedKey}
+                tabIndex={onRowClick || onRowDoubleClick ? 0 : undefined}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    if (onRowClick) onRowClick(row.original)
+                    else onRowDoubleClick?.(row.original)
+                  }
+                }}
                 className={cn(
-                  (onRowClick || onRowDoubleClick) && 'cursor-pointer',
+                  (onRowClick || onRowDoubleClick) &&
+                    'cursor-pointer focus-visible:outline-2 focus-visible:outline-ring',
                   key === selectedKey && 'bg-orange-50 hover:bg-orange-50',
                 )}
                 key={key}

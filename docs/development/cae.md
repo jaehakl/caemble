@@ -84,7 +84,7 @@ Recording projects artifacts onto the declared RecordedData schema before
 tensor encoding. Existing tensor schemas keep their wire format. An explicit
 group can additionally preserve domain coordinates, connectivity, identity and
 field metadata using the projection names in the Solver development guide.
-The `/docs` route documents authoring syntax and examples.
+Workbench Help documents authoring syntax and examples.
 
 Each record retains its resources until the server confirms durable staging.
 Completion is sent only after every record ACK and after invocation children,

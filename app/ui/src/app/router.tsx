@@ -1,4 +1,5 @@
-import { createBrowserRouter } from 'react-router'
+import { createBrowserRouter, Navigate, useLocation } from 'react-router'
+import { legacyDocsHref } from '@/documentation/helpNavigation'
 import { RouteErrorPage } from '@/features/error/RouteErrorPage'
 
 export const appRoutePaths = ['index', 'docs', '*'] as const
@@ -20,16 +21,10 @@ export function createAppRouter() {
     },
     {
       path: '/docs',
-      lazy: () => import('@/routes/DocsRoute'),
-      ErrorBoundary: RouteErrorPage,
-      hydrateFallbackElement: (
-        <div className="flex min-h-dvh items-center justify-center bg-white px-6 text-slate-900">
-          <div className="text-center">
-            <div className="mx-auto size-10 animate-pulse rounded-xl bg-orange-600" />
-            <p className="mt-4 text-sm font-medium">문서와 카탈로그를 불러오는 중입니다.</p>
-          </div>
-        </div>
-      ),
+      Component: () => {
+        const location = useLocation()
+        return <Navigate replace to={legacyDocsHref(location.search, location.hash)} />
+      },
     },
     {
       path: '*',

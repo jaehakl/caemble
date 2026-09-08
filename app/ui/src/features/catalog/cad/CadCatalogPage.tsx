@@ -17,7 +17,7 @@ const columns: ColumnDef<CadCatalogEntry, unknown>[] = [
   {
     accessorKey: 'authoringName',
     header: 'Tag',
-    cell: ({ row }) => <code className="font-semibold text-orange-700">{row.original.authoringName}</code>,
+    cell: ({ row }) => <code className="font-semibold text-primary">{row.original.authoringName}</code>,
   },
   { accessorKey: 'category', header: '종류', cell: ({ row }) => <Badge>{row.original.category}</Badge> },
   {
@@ -119,8 +119,8 @@ export function GeometryCatalog({
                 </Button>
               </div>
 
-              <div className="mt-6 rounded-lg border bg-slate-50 p-4 text-sm text-slate-700">
-                <p className="font-medium text-slate-950">
+              <div className="mt-6 rounded-lg border bg-muted/30 p-4 text-sm text-foreground">
+                <p className="font-medium text-foreground">
                   {selected.standardTransforms ? '공통 identity와 transform' : 'Transform wrapper 계약'}
                 </p>
                 {selected.standardTransforms ? (
@@ -139,8 +139,8 @@ export function GeometryCatalog({
                   </p>
                 )}
                 <a
-                  className="mt-2 inline-block font-medium text-orange-700 underline underline-offset-4"
-                  href="/docs?section=reference#cad-reference-geometry-transforms"
+                  className="mt-2 inline-block font-medium text-primary underline underline-offset-4"
+                  href="/?help=manual&item=reference-geometry-transforms"
                 >
                   좌표계·identity·migration 계약 보기
                 </a>
@@ -150,7 +150,7 @@ export function GeometryCatalog({
                 <h3 className="text-sm font-semibold">Properties</h3>
                 <div className="mt-2 overflow-x-auto rounded-lg border">
                   <table className="w-full min-w-[640px] border-collapse text-left text-sm">
-                    <thead className="bg-slate-50 text-xs text-slate-600">
+                    <thead className="bg-muted/30 text-xs text-muted-foreground">
                       <tr>
                         <th className="border-b px-3 py-2 font-medium">이름</th>
                         <th className="border-b px-3 py-2 font-medium">타입</th>
@@ -234,13 +234,12 @@ export function GeometryCatalog({
                   <code>{selected.example}</code>
                 </pre>
               </div>
-
             </CardContent>
           </>
         ) : (
           <CardContent className="flex min-h-60 flex-col items-center justify-center p-8 text-center">
             <Check className="mb-3 size-8 text-muted-foreground" />
-            <p className="font-medium">요소를 선택하세요</p>
+            <p className="font-medium">{selectedTag ? 'Geometry 항목을 찾을 수 없습니다' : '요소를 선택하세요'}</p>
             <p className="mt-1 text-sm text-muted-foreground">
               목록의 행을 누르면 prop, 기본값, origin, surface와 공식 예제를 볼 수 있습니다.
             </p>

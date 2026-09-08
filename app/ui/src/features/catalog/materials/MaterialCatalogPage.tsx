@@ -1,7 +1,8 @@
 ﻿import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Layers3, LoaderCircle } from 'lucide-react'
-import { useDeferredValue, useState } from 'react'
+import { useMemo, useState } from 'react'
+import { useDebouncedValue } from '@/shared/useDebouncedValue'
 import { Link } from 'react-router'
 import type { CatalogMaterialModel, ModelParameterSchema } from '@/contracts/catalog'
 import { CatalogPageLayout } from '@/components/CatalogPageLayout'
@@ -17,7 +18,7 @@ const columns: ColumnDef<CatalogMaterialModel, unknown>[] = [
   {
     accessorKey: 'key',
     header: 'Model',
-    cell: ({ row }) => <code className="text-xs font-semibold text-orange-700">{row.original.key}</code>,
+    cell: ({ row }) => <code className="text-xs font-semibold text-primary">{row.original.key}</code>,
   },
   { accessorKey: 'labelKo', header: '이름' },
   {
@@ -38,7 +39,7 @@ export function MaterialCatalog({
 } = {}) {
   const [internalSelectedKey, setInternalSelectedKey] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const deferredQuery = useDeferredValue(query.trim())
+  const deferredQuery = useDebouncedValue(query.trim())
   const selectedKey = controlledSelectedKey === undefined ? internalSelectedKey : controlledSelectedKey
   const selectKey = onSelectedKeyChange ?? setInternalSelectedKey
   const models = useInfiniteQuery(catalogMaterialModelsInfiniteQueryOptions({ q: deferredQuery, limit: 100 }))
@@ -46,6 +47,7 @@ export function MaterialCatalog({
     ...catalogMaterialModelQueryOptions(selectedKey ?? '', Boolean(selectedKey)),
     retry: false,
   })
+  const rows = useMemo(() => models.data?.pages.flatMap((page) => page.items) ?? [], [models.data])
   return (
     <CatalogPageLayout
       count={models.data?.pages[0]?.total ?? 0}
@@ -64,12 +66,12 @@ export function MaterialCatalog({
         models.isPending ? (
           <CatalogLoading label="Model Catalog를 조회하고 있습니다." />
         ) : models.isError ? (
-          <CatalogError error={models.error} />
+          <CatalogError error={models.error} onRetry={() => void models.refetch()} />
         ) : (
           <>
             <DataTable
               columns={columns}
-              data={models.data.pages.flatMap((page) => page.items)}
+              data={rows}
               getRowKey={(row) => row.key}
               onRowClick={(row) => selectKey(row.key)}
               selectedKey={selectedKey ?? undefined}
@@ -90,7 +92,12 @@ export function MaterialCatalog({
         )
       }
       detail={
-        <MaterialModelDetail detail={detail.data} error={detail.error} pending={detail.isPending && !!selectedKey} />
+        <MaterialModelDetail
+          detail={detail.data}
+          error={detail.error}
+          pending={detail.isPending && !!selectedKey}
+          onRetry={() => void detail.refetch()}
+        />
       }
     />
   )
@@ -100,13 +107,15 @@ export function MaterialModelDetail({
   detail,
   error,
   pending,
+  onRetry,
 }: {
   detail?: CatalogMaterialModel
   error: Error | null
   pending: boolean
+  onRetry?: () => void
 }) {
   if (pending) return <CatalogLoading label="Material Model 정의를 조회하고 있습니다." />
-  if (error) return <CatalogError error={error} />
+  if (error) return <CatalogError error={error} onRetry={onRetry} />
   if (!detail)
     return (
       <CardContent className="flex min-h-60 flex-col items-center justify-center p-8 text-center">
@@ -144,11 +153,11 @@ export function MaterialModelDetail({
             {detail.solverRequirements?.length ? (
               detail.solverRequirements.map((requirement, index) => (
                 <Link
-                  className="block rounded border p-2 text-xs hover:bg-orange-50"
+                  className="block rounded border p-2 text-xs hover:bg-primary/10"
                   key={`${requirement.solverName}@${requirement.solverVersion}:${requirement.role}:${index}`}
-                  to={`/docs?section=solvers&item=${encodeURIComponent(`${requirement.solverName}@${requirement.solverVersion}`)}`}
+                  to={`/?help=solvers&item=${encodeURIComponent(`${requirement.solverName}@${requirement.solverVersion}`)}`}
                 >
-                  <code className="font-semibold text-orange-700">
+                  <code className="font-semibold text-primary">
                     {requirement.solverName}@{requirement.solverVersion}
                   </code>
                   <span className="mt-1 block text-muted-foreground">
@@ -193,8 +202,8 @@ function ModelParameterTree({
           </p>
           {schema.quantityKind ? (
             <Link
-              className="font-mono text-orange-700"
-              to={`/docs?section=quantity-kinds&item=${encodeURIComponent(schema.quantityKind)}`}
+              className="font-mono text-primary"
+              to={`/?help=quantity-kinds&item=${encodeURIComponent(schema.quantityKind)}`}
             >
               {schema.quantityKind}
             </Link>

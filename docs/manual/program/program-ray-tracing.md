@@ -12,13 +12,13 @@
 
 `<coating>` element를 따로 만들지 마세요. Solver가 canonical `<shell>`의 **각 layer에 대한 물리적 두께**를 판정합니다. 두께가 엄격히 `50 µm` 미만인 layer는 transfer-matrix method(TMM) 박막으로 적응형 처리하고, 인접한 박막 layer는 하나의 multilayer stack으로 계산합니다. 정확히 `50 µm`인 layer와 그보다 두꺼운 layer는 일반 광선–표면 collision으로 추적됩니다.
 
-박막과 체적에 사용할 광학 모델과 계수는 `material.tsx`에 명시합니다. Solver의 지원 모델과 입력 규격은 [Model Catalog](/docs?section=materials)에서 확인하세요. 주파수 표본 모델은 Hz로 엄격히 증가하는 표본열을 받아 광원 파장의 `frequency = c / wavelength`에서 각 성분을 선형 보간합니다. 표본 범위 밖에서는 가장 가까운 끝점 값을 사용합니다. 복소 굴절률 모델의 부호 및 감쇠 해석은 모델의 관례를 따릅니다.
+박막과 체적에 사용할 광학 모델과 계수는 `material.tsx`에 명시합니다. Solver의 지원 모델과 입력 규격은 [Model Catalog](/?help=materials)에서 확인하세요. 주파수 표본 모델은 Hz로 엄격히 증가하는 표본열을 받아 광원 파장의 `frequency = c / wavelength`에서 각 성분을 선형 보간합니다. 표본 범위 밖에서는 가장 가까운 끝점 값을 사용합니다. 복소 굴절률 모델의 부호 및 감쇠 해석은 모델의 관례를 따릅니다.
 
 ### Detector와 ray path
 
 Detector surface에서 irradiance, detected power, source 대비 efficiency를 기록할 수 있습니다. Ray path 시각화가 필요하면 semantic group `rayPaths` 안에 `vertices`, `pathOffsets`, `segmentPower`, `pathWavelength`, `segmentEvent` 다섯 tensor를 함께 선언하고 Task outputs에 `ray.paths`를 요청하고 `sim.record("rayPaths", result["artifacts"]["rayPaths"])`로 기록하세요. 기록이 끝나면 `sim.release(result["artifacts"])`로 해제합니다. 각 path는 최대 32개 segment를 담고 `maxPaths`는 65,536 이하입니다. Workbench는 이 group을 직접 3D Viewer에 표시합니다.
 
-[Folded Ray-Tracing Bench의 검증된 source, detector와 ray-path 계약 열기](/docs?section=solvers&item=experiment:caemble:experiment/caemble/verified/folded-ray-tracing@3.0.0)
+[Folded Ray-Tracing Bench의 검증된 source, detector와 ray-path 계약 열기](/?help=examples&item=caemble:experiment/caemble/verified/folded-ray-tracing@3.0.0)
 
 ### 회절격자 Spectrometer
 
@@ -30,4 +30,4 @@ Examples에서 **Czerny–Turner Spectrometer**를 열면 슬릿, 두 오목거�
 
 검출기는 기준 파장의 +1차 광로에 배치되어 있습니다. 3D Viewer에서 파장별 광선과 diffraction 이벤트를 확인하고 검출기 조도, 검출 파워, 효율을 함께 보세요. 거울은 정점 곡률을 초점거리에 맞춘 편평 타원면 오목거울입니다. 격자의 효율과 거울 광학 상수는 교육용 지정값이며, 홈 형상에 따른 편광·파장별 효율, 위상 지연과 회절 한계 분해능은 계산하지 않습니다.
 
-[Spectrometer 예제의 source와 Solver 계약 열기](/docs?section=solvers&item=experiment:caemble:experiment/caemble/verified/czerny-turner-spectrometer@3.0.0)
+[Spectrometer 예제의 source와 Solver 계약 열기](/?help=examples&item=caemble:experiment/caemble/verified/czerny-turner-spectrometer@3.0.0)

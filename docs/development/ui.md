@@ -3,7 +3,7 @@
 Commands and component-relative paths in this document are relative to `app/ui`, unless stated otherwise.
 
 React 19, React Router Data Mode, Tailwind CSS v4, and Vite power the Caemble
-Workbench. The product routes are `/` for the Workbench and `/docs` for the
+Workbench. The product route is `/` for the Workbench, including Help for the
 manual/catalog reference. Workspaces and managers open from the Workbench;
 unsupported historical routes return Not Found.
 
@@ -51,14 +51,14 @@ children or browser export assets.
 The CLI has no interactive local web server. PNG export loads the built viewer
 and charts in headless Chromium; install it with `npm run install:chromium`.
 `npm run test:cli` checks the public command boundary using the same grammar
-fixtures as `/docs`. Set `CAEMBLE_TEST_PNG=1` to include PNG exports after a UI
+fixtures as Help. Set `CAEMBLE_TEST_PNG=1` to include PNG exports after a UI
 build. User workflows use the shared Markdown in `docs/authoring` and `docs/manual`;
 implementation-derived language references remain in `src/authoring`.
 
 ## Ownership
 
 - `src/app`: providers and router bootstrap.
-- `src/routes`: only the `/`, `/docs`, and Not Found route entries.
+- `src/routes`: the Workbench and Not Found route entries. The router redirects legacy `/docs` links into Help.
 - `src/workbench`: Workbench session orchestration, scoped shell store, and
   feature-to-shell adapters.
 - `src/features`: user-facing workflows such as Experiment, Measurement,
@@ -103,7 +103,7 @@ in the shared manual Markdown and executable example/element registries. See
 ## Catalog and generated sources
 
 The shared SQLite catalog is the only source for QuantityKind, Material, and
-Solver data. The UI has no full catalog or Solver-manifest copy. `/docs` queries
+Solver data. The UI has no full catalog or Solver-manifest copy. Help queries
 the catalog API, while an Experiment requests only the pinned runtime slice it
 references.
 

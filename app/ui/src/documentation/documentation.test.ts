@@ -8,7 +8,7 @@ import { publicDocuments } from './public'
 import { documentBody, manualBody } from './body'
 import { authoringGuides } from '@/authoring/guides'
 import { getAuthoringReference } from '@/authoring'
-import { manualDocsKnowledge } from '@/features/docs/docsKnowledge'
+import { manualDocsKnowledge } from '@/documentation/knowledge'
 import { CALCULATION_SOURCE_SKELETON } from '@/lib/calculation/declarations'
 
 const repo = path.resolve('../..')
@@ -23,7 +23,7 @@ describe('shared documentation sources', () => {
       publicDocuments.map(({ id, section, anchor, aliases }) => ({ id, section, anchor, aliases: aliases ?? [] })),
     ).toEqual(navigation)
     for (const page of manualDocsKnowledge) {
-      expect(page.href).toBe(`/docs?section=${page.section}#${page.anchor}`)
+      expect(page.href).toBe(`/?help=manual&item=${page.id}`)
     }
   })
 
@@ -80,6 +80,15 @@ describe('shared documentation sources', () => {
       for (const match of text.replace(/`[^`\n]+`/g, '').matchAll(/\]\(([^\s)]+)\)/g)) {
         const href = match[1]
         if (/^[a-z][a-z\d+.-]*:/i.test(href)) continue
+        if (href.startsWith('/?help=')) {
+          const url = new URL(href, 'https://caemble.invalid')
+          if (
+            url.searchParams.get('help') === 'manual' &&
+            !publicDocuments.some((page) => page.id === url.searchParams.get('item'))
+          )
+            failures.push(`${file}: unknown Help document ${href}`)
+          continue
+        }
         if (href.startsWith('/docs')) {
           const url = new URL(href, 'https://caemble.invalid')
           if (

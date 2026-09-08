@@ -99,11 +99,6 @@ src/features/analysis/analysis.worker.ts
 src/features/cae-workbench/CaeUtilityDialogs.tsx
 src/features/cae-workbench/CaeWorkbenchDialogs.tsx
 src/features/cae-workbench/GeometryAuthoringRibbon.tsx
-src/features/cae-workbench/WorkbenchHelp.tsx
-src/features/catalog/cad/CadCatalogPage.tsx
-src/features/catalog/materials/MaterialCatalogPage.tsx
-src/features/catalog/quantity-kinds/QuantityKindCatalogPage.tsx
-src/features/catalog/solvers/SolverCatalogPage.tsx
 src/features/jobs/JobsPage.tsx
 src/features/launchers/LaunchersPage.tsx
 src/features/materials/CatalogPickerDialog.tsx

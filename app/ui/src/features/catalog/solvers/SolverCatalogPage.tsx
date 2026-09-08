@@ -1,7 +1,9 @@
-import { useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Cpu, FlaskConical } from 'lucide-react'
-import { useDeferredValue, useEffect, useState } from 'react'
+import { useMemo, useState } from 'react'
+import { useDebouncedValue } from '@/shared/useDebouncedValue'
+import { CopyButton } from '@/components/CopyButton'
 import { Link } from 'react-router'
 import { type CatalogExperimentListItem, type CatalogSolverDetail, type CatalogSolverListItem } from '@/api/catalog'
 import { CatalogPageLayout } from '@/components/CatalogPageLayout'
@@ -16,14 +18,15 @@ import {
   catalogExperimentQueryOptions,
   catalogExperimentsQueryOptions,
   catalogSolverQueryOptions,
-  catalogSolversQueryOptions,
+  catalogSolversInfiniteQueryOptions,
+  catalogExperimentsInfiniteQueryOptions,
 } from '../queryOptions'
 
 const columns: ColumnDef<CatalogSolverListItem, unknown>[] = [
   {
     accessorKey: 'name',
     header: 'Solver',
-    cell: ({ row }) => <code className="font-semibold text-orange-700">{row.original.name}</code>,
+    cell: ({ row }) => <code className="font-semibold text-primary">{row.original.name}</code>,
   },
   { accessorKey: 'version', header: 'Version', cell: ({ row }) => <Badge>{row.original.version}</Badge> },
   {
@@ -44,27 +47,15 @@ export function PhysicsCatalog({
 } = {}) {
   const [internalSelectedKey, setInternalSelectedKey] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const [catalogTab, setCatalogTab] = useState<'solvers' | 'experiments'>(
-    controlledSelectedKey?.startsWith('experiment:') ? 'experiments' : 'solvers',
-  )
-  useEffect(() => {
-    if (controlledSelectedKey?.startsWith('experiment:')) setCatalogTab('experiments')
-    else if (controlledSelectedKey) setCatalogTab('solvers')
-  }, [controlledSelectedKey])
-  const deferredQuery = useDeferredValue(query.trim())
-  const selectedKey =
-    controlledSelectedKey === undefined
-      ? internalSelectedKey
-      : controlledSelectedKey?.startsWith('experiment:')
-        ? null
-        : controlledSelectedKey
+  const deferredQuery = useDebouncedValue(query.trim())
+  const selectedKey = controlledSelectedKey === undefined ? internalSelectedKey : controlledSelectedKey
   const selectKey = onSelectedKeyChange ?? setInternalSelectedKey
   const separator = selectedKey?.lastIndexOf('@') ?? -1
   const selectedName = separator > 0 ? selectedKey!.slice(0, separator) : ''
   const selectedVersion = separator > 0 ? selectedKey!.slice(separator + 1) : ''
   const listQuery = { q: deferredQuery, limit: 100 }
-  const solvers = useQuery({
-    ...catalogSolversQueryOptions(listQuery),
+  const solvers = useInfiniteQuery({
+    ...catalogSolversInfiniteQueryOptions(listQuery),
     retry: false,
   })
   const detail = useQuery({
@@ -77,91 +68,82 @@ export function PhysicsCatalog({
       Boolean(selectedName && selectedVersion),
     ),
   )
-  const rows = solvers.data?.items ?? []
+  const rows = useMemo(() => solvers.data?.pages.flatMap((page) => page.items) ?? [], [solvers.data])
 
   return (
-    <Tabs value={catalogTab} onValueChange={(value) => setCatalogTab(value as typeof catalogTab)}>
-      <div className="border-b px-4 pt-4 sm:px-6">
-        <TabsList className="grid w-full max-w-md grid-cols-2">
-          <TabsTrigger value="solvers">Solvers</TabsTrigger>
-          <TabsTrigger value="experiments">Examples</TabsTrigger>
-        </TabsList>
-      </div>
-      <TabsContent className="mt-0" value="solvers">
-        <CatalogPageLayout
-          count={solvers.data?.total ?? 0}
-          description="SQLite 카탈로그에서 조회한 활성 Solver 계약과 데이터 관계"
-          embedded={embedded}
-          title="Simulations & Analysis"
-          filters={
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <Input
-                className="max-w-md"
-                aria-label="Solver 검색"
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="solver 이름 또는 설명"
-                value={query}
-              />
-              <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Cpu className="size-4" />
-                Catalog API · active versions
-              </span>
-            </div>
-          }
-          list={
-            solvers.isPending ? (
-              <CatalogLoading label="Solver 카탈로그를 조회하고 있습니다." />
-            ) : solvers.isError ? (
-              <CatalogError error={solvers.error} />
-            ) : rows.length === 0 ? (
-              <div className="flex min-h-60 flex-col items-center justify-center p-8 text-center">
-                <p className="font-medium">등록된 활성 Solver가 없습니다.</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  검색 조건을 바꾸거나 카탈로그 배포 상태를 확인하세요.
-                </p>
-              </div>
-            ) : (
-              <DataTable
-                columns={columns}
-                data={rows}
-                getRowKey={solverKey}
-                onRowClick={(row) => selectKey(solverKey(row))}
-                selectedKey={selectedKey ?? undefined}
-              />
-            )
-          }
-          detail={
-            <SolverDetail
-              detail={detail.data}
-              error={detail.error}
-              pending={detail.isPending && !!selectedKey}
-              relatedExperiments={relatedExperiments.data?.items ?? []}
-              onSelectExperiment={(coordinate) => {
-                setCatalogTab('experiments')
-                onSelectedKeyChange?.(`experiment:${coordinate}`)
-              }}
+    <CatalogPageLayout
+      count={solvers.data?.pages[0]?.total ?? 0}
+      description="Solver의 입력 규격, 재료 요구 사항과 결과 연결 관계를 확인합니다."
+      embedded={embedded}
+      title="Simulations & Analysis"
+      filters={
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <Input
+            className="max-w-md"
+            aria-label="Solver 검색"
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="solver 이름 또는 설명"
+            value={query}
+          />
+          <span className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Cpu className="size-4" />
+            활성 Solver 버전
+          </span>
+        </div>
+      }
+      list={
+        solvers.isPending ? (
+          <CatalogLoading label="Solver 카탈로그를 조회하고 있습니다." />
+        ) : solvers.isError ? (
+          <CatalogError error={solvers.error} onRetry={() => void solvers.refetch()} />
+        ) : rows.length === 0 ? (
+          <div className="flex min-h-60 flex-col items-center justify-center p-8 text-center">
+            <p className="font-medium">등록된 활성 Solver가 없습니다.</p>
+            <p className="mt-1 text-sm text-muted-foreground">검색 조건을 바꾸거나 카탈로그 배포 상태를 확인하세요.</p>
+          </div>
+        ) : (
+          <>
+            <DataTable
+              columns={columns}
+              data={rows}
+              getRowKey={solverKey}
+              onRowClick={(row) => selectKey(solverKey(row))}
+              selectedKey={selectedKey ?? undefined}
             />
+            {solvers.hasNextPage ? (
+              <Button
+                className="m-3"
+                variant="outline"
+                disabled={solvers.isFetchingNextPage}
+                onClick={() => void solvers.fetchNextPage()}
+              >
+                더 불러오기
+              </Button>
+            ) : null}
+          </>
+        )
+      }
+      detail={
+        <SolverDetail
+          detail={detail.data}
+          error={
+            selectedKey && (!selectedName || !selectedVersion)
+              ? new Error('Solver 이름과 버전이 포함된 항목을 선택하세요.')
+              : detail.error
           }
-        />
-      </TabsContent>
-      <TabsContent className="mt-0" value="experiments">
-        <ExampleExperimentCatalog
-          embedded={embedded}
-          selectedKey={
-            controlledSelectedKey?.startsWith('experiment:') ? controlledSelectedKey.slice('experiment:'.length) : null
-          }
-          onSelect={(key) => onSelectedKeyChange?.(`experiment:${key}`)}
-          onSelectSolver={(name, version) => {
-            setCatalogTab('solvers')
-            selectKey(`${name}@${version}`)
+          pending={detail.isPending && Boolean(selectedName && selectedVersion)}
+          onRetry={() => void detail.refetch()}
+          relatedExperiments={relatedExperiments.data?.items ?? []}
+          onSelectExperiment={(coordinate) => {
+            selectKey(`experiment:${coordinate}`)
           }}
         />
-      </TabsContent>
-    </Tabs>
+      }
+    />
   )
 }
 
-function ExampleExperimentCatalog({
+export function ExampleExperimentCatalog({
   embedded,
   onSelect,
   onSelectSolver,
@@ -177,8 +159,9 @@ function ExampleExperimentCatalog({
   const [activeFile, setActiveFile] = useState('experiment.tsx')
   const activeKey = selectedKey ?? internalKey
   const select = onSelect ?? setInternalKey
-  const listQuery = useQuery(catalogExperimentsQueryOptions({ q: query.trim(), limit: 100 }))
-  const listedExperiments = listQuery.data?.items ?? []
+  const settledQuery = useDebouncedValue(query.trim())
+  const listQuery = useInfiniteQuery(catalogExperimentsInfiniteQueryOptions({ q: settledQuery, limit: 100 }))
+  const listedExperiments = useMemo(() => listQuery.data?.pages.flatMap((page) => page.items) ?? [], [listQuery.data])
   const exactIdentity = listedExperiments.find((item) => item.coordinate === activeKey)
   const keyMatches = listedExperiments.filter((item) => item.key === activeKey)
   const activeIdentity = exactIdentity ?? (keyMatches.length === 1 ? keyMatches[0] : activeKey)
@@ -188,8 +171,8 @@ function ExampleExperimentCatalog({
 
   return (
     <CatalogPageLayout
-      count={listQuery.data?.total ?? 0}
-      description="SQLite 카탈로그에서 제공하는 읽기 전용 Experiment 예제"
+      count={listQuery.data?.pages[0]?.total ?? 0}
+      description="완성된 Experiment의 구성과 소스를 살펴보세요."
       embedded={embedded}
       title="Examples"
       filters={
@@ -204,30 +187,45 @@ function ExampleExperimentCatalog({
         listQuery.isLoading ? (
           <CatalogLoading label="Example을 조회하고 있습니다." />
         ) : listQuery.isError ? (
-          <CatalogError error={listQuery.error} />
+          <CatalogError error={listQuery.error} onRetry={() => void listQuery.refetch()} />
         ) : (
-          <ul className="divide-y">
-            {listedExperiments.map((item) => (
-              <li key={item.coordinate}>
-                <button
-                  className={`grid w-full gap-1 p-3 text-left hover:bg-muted/60 ${activeKey === item.coordinate || (keyMatches.length === 1 && activeKey === item.key) ? 'bg-orange-50' : ''}`}
-                  type="button"
-                  onClick={() => select(item.coordinate)}
-                >
-                  <span className="font-medium">{item.title}</span>
-                  <span className="font-mono text-xs text-muted-foreground">{item.coordinate}</span>
-                  <span className="line-clamp-2 text-sm text-muted-foreground">{item.description}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <>
+            <ul className="divide-y">
+              {listedExperiments.map((item) => (
+                <li key={item.coordinate}>
+                  <button
+                    className={`grid w-full gap-1 p-3 text-left hover:bg-muted/60 ${activeKey === item.coordinate || (keyMatches.length === 1 && activeKey === item.key) ? 'bg-primary/10' : ''}`}
+                    type="button"
+                    onClick={() => select(item.coordinate)}
+                  >
+                    <span className="font-medium">{item.title}</span>
+                    <span className="font-mono text-xs text-muted-foreground">{item.coordinate}</span>
+                    <span className="line-clamp-2 text-sm text-muted-foreground">{item.description}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {!listedExperiments.length ? (
+              <p className="p-6 text-sm text-muted-foreground">검색 결과가 없습니다.</p>
+            ) : null}
+            {listQuery.hasNextPage ? (
+              <Button
+                className="m-3"
+                variant="outline"
+                disabled={listQuery.isFetchingNextPage}
+                onClick={() => void listQuery.fetchNextPage()}
+              >
+                더 불러오기
+              </Button>
+            ) : null}
+          </>
         )
       }
       detail={
         detailQuery.isLoading ? (
           <CatalogLoading label="Example detail을 조회하고 있습니다." />
         ) : detailQuery.isError ? (
-          <CatalogError error={detailQuery.error} />
+          <CatalogError error={detailQuery.error} onRetry={() => void detailQuery.refetch()} />
         ) : detailQuery.data ? (
           <>
             <CardHeader>
@@ -253,7 +251,10 @@ function ExampleExperimentCatalog({
                 </div>
               </div>
               <div>
-                <h3 className="mb-2 text-sm font-semibold">Source bundle</h3>
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold">Source bundle · 읽기 전용</h3>
+                  <CopyButton text={detailQuery.data.sourceBundle.files[selectedFile] ?? ''} label="파일 내용 복사" />
+                </div>
                 <Tabs value={selectedFile} onValueChange={setActiveFile}>
                   <TabsList className="flex h-auto max-w-full justify-start overflow-x-auto">
                     {sourceFiles.map((file) => (
@@ -292,16 +293,18 @@ function SolverDetail({
   error,
   onSelectExperiment,
   pending,
+  onRetry,
   relatedExperiments,
 }: {
   detail?: CatalogSolverDetail
   error: Error | null
   onSelectExperiment: (coordinate: string) => void
   pending: boolean
+  onRetry?: () => void
   relatedExperiments: readonly CatalogExperimentListItem[]
 }) {
   if (pending) return <CatalogLoading label="Solver 관계 정보를 조회하고 있습니다." />
-  if (error) return <CatalogError error={error} />
+  if (error) return <CatalogError error={error} onRetry={onRetry} />
   if (!detail) {
     return (
       <CardContent className="flex min-h-60 flex-col items-center justify-center p-8 text-center">
@@ -366,7 +369,7 @@ function SolverDetail({
             {methods.map(({ category, method }) => (
               <div className="rounded-lg border p-3" key={`${category}:${method.methodId}`}>
                 <div className="flex items-center justify-between gap-2">
-                  <code className="text-xs font-semibold text-orange-700">{method.methodId}</code>
+                  <code className="text-xs font-semibold text-primary">{method.methodId}</code>
                   <Badge>{category}</Badge>
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">{method.description}</p>
@@ -395,7 +398,7 @@ function SolverDetail({
             {descriptor.materials.length ? (
               descriptor.materials.map((material) => (
                 <div className="rounded-lg border p-3" key={material.role}>
-                  <code className="text-xs font-semibold text-orange-700">{material.role}</code>
+                  <code className="text-xs font-semibold text-primary">{material.role}</code>
                   <p className="mt-1 text-xs text-muted-foreground">{material.description}</p>
                   <p className="mt-2 text-[11px] text-muted-foreground">
                     {material.target.category === 'geometry'
@@ -411,8 +414,8 @@ function SolverDetail({
                         </p>
                         <div className="flex flex-wrap gap-1">
                           {group.oneOf.map((key) => (
-                            <Link key={key} to={`/docs?section=materials&item=${encodeURIComponent(key)}`}>
-                              <Badge className="font-mono font-normal hover:bg-orange-100">{key}</Badge>
+                            <Link key={key} to={`/?help=materials&item=${encodeURIComponent(key)}`}>
+                              <Badge className="font-mono font-normal hover:bg-primary/15">{key}</Badge>
                             </Link>
                           ))}
                         </div>
@@ -430,7 +433,7 @@ function SolverDetail({
             <ArtifactRelations title="Consumes" items={detail.consumesArtifacts} />
             {Object.entries(descriptor.inputPorts).map(([name, port]) => (
               <div className="rounded-lg border p-3" key={name}>
-                <code className="text-xs font-semibold text-orange-700">{name}</code>
+                <code className="text-xs font-semibold text-primary">{name}</code>
                 <p className="mt-1 text-xs text-muted-foreground">{port.description}</p>
                 <p className="mt-2 text-[11px]">
                   Accepts {port.artifactTypes.join(', ')} · {port.minimumOccurrences}..{port.maximumOccurrences}
@@ -457,7 +460,7 @@ function ContractCard({
 }) {
   return (
     <div className={`rounded-lg border p-3 ${className}`}>
-      <code className="text-xs font-semibold text-orange-700">{title}</code>
+      <code className="text-xs font-semibold text-primary">{title}</code>
       <p className="mt-1 text-xs text-muted-foreground">{description}</p>
       <div className="mt-2 flex flex-wrap gap-1">
         {Object.entries(values)
@@ -492,16 +495,16 @@ function ArtifactRelations({
             return (
               <div className="rounded-lg border p-3 text-xs" key={index}>
                 <p>
-                  <code className="font-semibold text-orange-700">{item.artifactType}</code> ·{' '}
+                  <code className="font-semibold text-primary">{item.artifactType}</code> ·{' '}
                   {'methodId' in item ? item.methodId : item.inputPort}
                 </p>
                 <div className="mt-2 flex flex-wrap gap-1">
                   {peers.map((peer) => (
                     <Link
                       key={`${peer.solverName}@${peer.solverVersion}:${peer.label}`}
-                      to={`/docs?section=solvers&item=${encodeURIComponent(`${peer.solverName}@${peer.solverVersion}`)}`}
+                      to={`/?help=solvers&item=${encodeURIComponent(`${peer.solverName}@${peer.solverVersion}`)}`}
                     >
-                      <Badge className="font-mono font-normal hover:bg-orange-100">
+                      <Badge className="font-mono font-normal hover:bg-primary/15">
                         {peer.solverName}@{peer.solverVersion} · {peer.label}
                       </Badge>
                     </Link>

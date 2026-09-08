@@ -67,7 +67,7 @@ Pop-Location
 ```
 
 The Workbench opens at `http://localhost:5173/`; its user manual and live
-catalog reference are at `http://localhost:5173/docs`. An unauthenticated user
+catalog reference are at `http://localhost:5173/?help=home`. An unauthenticated user
 can edit and preview a local Starter. Sign-in is required for persistence,
 provider-backed AI, and remote execution.
 
@@ -82,7 +82,7 @@ short agent entry point. The web manual and CLI share Markdown sources for
 [Experiment](docs/authoring/experiment.md), [Calculation](docs/authoring/calculation.md),
 and [Solver](docs/authoring/solver.md) authoring.
 
-- The in-app `/docs` route is the canonical user manual for Workbench authoring,
+- Workbench Help is the canonical user manual for Workbench authoring,
   current examples, and live catalog reference.
 - [Architecture](docs/development/architecture.md) explains trusted payloads, runtime
   boundaries, and where to read the implementation.
@@ -109,5 +109,3 @@ Detailed setup and ownership notes are maintained centrally:
 - Launcher WebSocket and dispatcher state are process-local, so the API must
   run as one worker/replica.
 - Google STUN is the default ICE service; no managed TURN service is included.
-
-
