@@ -1,4 +1,4 @@
-import type { CalculationDataOutput } from '@/api'
+import type { CalculationDataOutput, CalculationOutputLayout } from '@/api'
 import { fitTensorDisplayDomain } from '@/components/tensor-editor/displayDomain'
 import type { PredictionTensorLayout, PredictionTrainingRow } from './knn'
 
@@ -16,6 +16,21 @@ export type InverseValidationPair = Readonly<{
   calculationId: number
   reference: CalculationDataOutput
 }>
+
+export function calculationOutputContract(output: CalculationDataOutput | CalculationOutputLayout) {
+  return Object.freeze({
+    dtype: output.dtype,
+    shape: Object.freeze([...output.shape]),
+    axes: Object.freeze(
+      output.axes.map((axis) =>
+        Object.freeze({
+          name: axis.name,
+          ...(axis.unit ? { unit: axis.unit } : {}),
+        }),
+      ),
+    ),
+  })
+}
 
 function stableEuclideanNorm(values: readonly number[]) {
   let scale = 0

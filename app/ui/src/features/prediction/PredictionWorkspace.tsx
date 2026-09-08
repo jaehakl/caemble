@@ -86,6 +86,7 @@ type ValidationRow = Readonly<{
 
 type ValidationResult = Readonly<{
   aggregateError: number | null
+  calculationContractFingerprint: string
   candidateVarsFingerprint: string
   calculationWeights: Readonly<Record<number, number>>
   direction: PredictionDirection
@@ -99,6 +100,7 @@ type ValidationResult = Readonly<{
   snapshotFingerprint: string
   sourceFingerprints: Readonly<Record<number, string>>
   setupFingerprint: string
+  sourceIdentity: string
   summary: string
   transactionId: number
 }>
@@ -240,7 +242,9 @@ export function PredictionWorkspace({
   const [validation, setValidation] = useState<ValidationResult | null>(null)
   const [samplingRanges, setSamplingRanges] = useState<Readonly<Record<string, PredictionSamplingRange>>>({})
   const calculationValuesRef = useRef(calculationValues)
+  const validationRef = useRef(validation)
   calculationValuesRef.current = calculationValues
+  validationRef.current = validation
   cancelMeasurementRef.current = workbench.measurementActions.cancel
   cancelCalculationDataRef.current = workbench.calculationDataActions.cancel
 
@@ -294,6 +298,9 @@ export function PredictionWorkspace({
         ? context.calculations.filter((calculation) => setup.calculationIds.includes(calculation.id))
         : [],
     [context, contextExperimentMatches, setup.calculationIds],
+  )
+  const selectedCalculationContractFingerprint = predictionFingerprint(
+    selectedCalculations.map((calculation) => [calculation.id, calculation.source_hash, calculation.output_layout]),
   )
   contextRef.current = context
   experimentIdRef.current = experimentId
@@ -436,7 +443,25 @@ export function PredictionWorkspace({
         setDataStale(false)
         setFreshnessPending(false)
         skipNextPredictionBusyCheckRef.current = true
-        if (!options.preserveValidation) setValidation(null)
+        const preservedValidation = options.preserveValidation ? validationRef.current : null
+        const nextCalculationContractFingerprint = preservedValidation
+          ? predictionFingerprint(
+              nextContext.calculations
+                .filter((calculation) => setup.calculationIds.includes(calculation.id))
+                .map((calculation) => [calculation.id, calculation.source_hash, calculation.output_layout]),
+            )
+          : null
+        if (
+          !preservedValidation ||
+          preservedValidation.direction !== direction ||
+          preservedValidation.experimentId !== experimentId ||
+          preservedValidation.setupFingerprint !== predictionFingerprint([setup]) ||
+          preservedValidation.sourceIdentity !== sourceIdentity ||
+          preservedValidation.calculationContractFingerprint !== nextCalculationContractFingerprint
+        ) {
+          validationRef.current = null
+          setValidation(null)
+        }
         setSetup((current) => {
           const valid = current.calculationIds.filter((id) => readyCalculations.some((row) => row.id === id))
           const fallback =
@@ -492,6 +517,9 @@ export function PredictionWorkspace({
       queryScope,
       runtime,
       selectedCalculationId,
+      direction,
+      setup,
+      sourceIdentity,
       setDataStale,
       setFreshnessPending,
       setStatus,
@@ -505,6 +533,7 @@ export function PredictionWorkspace({
     clearModelCaches()
     runtime.clearInverseRows()
     setContext(null)
+    validationRef.current = null
     setValidation(null)
     setDetailsOpen(false)
     calculationValuesRef.current = {}
@@ -881,6 +910,20 @@ export function PredictionWorkspace({
     validating,
   ])
 
+  const previousCandidateFingerprintRef = useRef(currentCandidateFingerprint)
+  useEffect(() => {
+    const previousFingerprint = previousCandidateFingerprintRef.current
+    previousCandidateFingerprintRef.current = currentCandidateFingerprint
+    if (previousFingerprint === currentCandidateFingerprint) return
+    if (suppressedCandidateRef.current === currentCandidateFingerprint) {
+      suppressedCandidateRef.current = null
+      return
+    }
+    if (!validationRef.current) return
+    validationRef.current = null
+    setValidation(null)
+  }, [currentCandidateFingerprint])
+
   const changeCalculationOutput = useCallback(
     (calculationId: number, output: CalculationDataOutput) => {
       if (freshnessPendingRef.current || dataStaleRef.current) return
@@ -893,6 +936,7 @@ export function PredictionWorkspace({
       setInverseVarsFingerprint(null)
       setForwardVarsFingerprint(null)
       setForwardFailure(null)
+      validationRef.current = null
       setValidation(null)
       setSurrogateValues({})
       setSurrogateErrors({})
@@ -1060,6 +1104,7 @@ export function PredictionWorkspace({
           total,
         },
       })
+      validationRef.current = null
       setValidation(null)
       try {
         const profile = await runtime.startSampling(sessionId, {
@@ -1276,7 +1321,11 @@ export function PredictionWorkspace({
     const frozenPrimaryRevision = runtime.currentPrimaryRevision()
     const frozenRepredicted = Object.freeze(frozenDirection === 'inverse' ? { ...surrogateValues } : {})
     const frozenSetup = setup
+    const frozenCalculationContractFingerprint = selectedCalculationContractFingerprint
+    const frozenSourceIdentity = sourceIdentity
     const frozenTransactionId = runtime.currentTransaction()
+    validationRef.current = null
+    setValidation(null)
     startOperation('validation', 'Validation · Candidate 저장과 Simulation 실행 중…')
     setSetupOpen(false)
     setDetailsDirection(frozenDirection)
@@ -1358,28 +1407,30 @@ export function PredictionWorkspace({
             )
           : null
       const summary = `Measurement #${completion.measurementId} · ${frozenDirection} 검증 · ${rows.length - failed}/${rows.length}개 비교 완료${aggregateError === null ? '' : ` · Aggregate ${aggregateError.toPrecision(5)}`}`
-      setValidation(
-        Object.freeze({
-          aggregateError,
-          candidateVarsFingerprint: currentCandidateFingerprint,
-          calculationWeights: frozenSetup.calculationWeights,
-          direction: frozenDirection,
-          experimentId: experimentId!,
-          inverseInputLayouts:
-            frozenDirection === 'inverse' && frozenProfile?.direction === 'inverse' ? frozenProfile.inputLayouts : null,
-          inverseInputScales:
-            frozenDirection === 'inverse' && frozenProfile?.direction === 'inverse' ? frozenProfile.inputScales : null,
-          measurementId: completion.measurementId,
-          primaryRevision: frozenPrimaryRevision,
-          repredicted: frozenRepredicted,
-          rows: Object.freeze(rows),
-          snapshotFingerprint,
-          sourceFingerprints: Object.freeze(Object.fromEntries(sourceFingerprintEntries)),
-          setupFingerprint: predictionFingerprint([frozenSetup]),
-          summary,
-          transactionId: frozenTransactionId,
-        }),
-      )
+      const nextValidation = Object.freeze({
+        aggregateError,
+        calculationContractFingerprint: frozenCalculationContractFingerprint,
+        candidateVarsFingerprint: currentCandidateFingerprint,
+        calculationWeights: frozenSetup.calculationWeights,
+        direction: frozenDirection,
+        experimentId: experimentId!,
+        inverseInputLayouts:
+          frozenDirection === 'inverse' && frozenProfile?.direction === 'inverse' ? frozenProfile.inputLayouts : null,
+        inverseInputScales:
+          frozenDirection === 'inverse' && frozenProfile?.direction === 'inverse' ? frozenProfile.inputScales : null,
+        measurementId: completion.measurementId,
+        primaryRevision: frozenPrimaryRevision,
+        repredicted: frozenRepredicted,
+        rows: Object.freeze(rows),
+        snapshotFingerprint,
+        sourceFingerprints: Object.freeze(Object.fromEntries(sourceFingerprintEntries)),
+        setupFingerprint: predictionFingerprint([frozenSetup]),
+        sourceIdentity: frozenSourceIdentity,
+        summary,
+        transactionId: frozenTransactionId,
+      })
+      validationRef.current = nextValidation
+      setValidation(nextValidation)
       setStatus(summary)
       runtime.resetWorker()
       clearModelCaches()
@@ -1414,11 +1465,13 @@ export function PredictionWorkspace({
     queryScope,
     runtime,
     selectedCalculations,
+    selectedCalculationContractFingerprint,
     setFreshnessPending,
     setStatus,
     setup,
     setup.calculationIds,
     startOperation,
+    sourceIdentity,
     surrogateValues,
     validationDisabledReason,
     workbench.measurementActions,
@@ -1494,14 +1547,14 @@ export function PredictionWorkspace({
             )
           : null
       const summary = `Measurement #${validation.measurementId} · ${validation.direction} 검증 · ${rows.length - failed}/${rows.length}개 비교 완료${aggregateError === null ? '' : ` · Aggregate ${aggregateError.toPrecision(5)}`}`
-      setValidation(
-        Object.freeze({
-          ...validation,
-          aggregateError,
-          rows: Object.freeze(rows),
-          summary,
-        }),
-      )
+      const nextValidation = Object.freeze({
+        ...validation,
+        aggregateError,
+        rows: Object.freeze(rows),
+        summary,
+      })
+      validationRef.current = nextValidation
+      setValidation(nextValidation)
       setStatus(summary)
     } catch (cause: unknown) {
       if (!runtime.validationIsCurrent(validationRevision)) return
@@ -1638,6 +1691,8 @@ export function PredictionWorkspace({
     runtime.resetWorker()
     setSetup(setupDraft)
     setSetupOpen(false)
+    validationRef.current = null
+    setValidation(null)
     clearModelCaches()
     setProfiles({})
     setNeighborsByDirection({})
@@ -1724,30 +1779,28 @@ export function PredictionWorkspace({
     () =>
       selectedCalculations.map((calculation) => {
         const committedOutput = calculationValues[calculation.id] ?? null
-        const output =
-          committedOutput ?? (calculation.output_layout ? calculationPlaceholder(calculation.output_layout) : null)
         const validationSnapshotCurrent =
           validation?.direction === direction &&
           validation.experimentId === experimentId &&
-          validation.candidateVarsFingerprint === currentCandidateFingerprint &&
-          validation.setupFingerprint === predictionFingerprint([setup])
+          validation.setupFingerprint === predictionFingerprint([setup]) &&
+          validation.sourceIdentity === sourceIdentity &&
+          validation.calculationContractFingerprint === selectedCalculationContractFingerprint
             ? validation
             : null
         const candidateValidationRow = validationSnapshotCurrent?.rows.find(
           (row) => row.calculationId === calculation.id,
         )
-        const validationRow =
-          committedOutput &&
-          candidateValidationRow &&
-          predictionFingerprint([candidateValidationRow.reference]) === predictionFingerprint([committedOutput])
-            ? candidateValidationRow
-            : null
+        const validationRow = candidateValidationRow ?? null
+        const output =
+          validationRow?.reference ??
+          committedOutput ??
+          (calculation.output_layout ? calculationPlaceholder(calculation.output_layout) : null)
         const repredictedOutput =
           direction === 'inverse'
             ? (validationSnapshotCurrent?.repredicted[calculation.id] ?? surrogateValues[calculation.id] ?? null)
             : null
         const repredictedMetric =
-          committedOutput && repredictedOutput ? comparePredictionOutput(committedOutput, repredictedOutput) : null
+          output && repredictedOutput ? comparePredictionOutput(output, repredictedOutput) : null
         const repredictedStatus =
           direction !== 'inverse'
             ? 'unavailable'
@@ -1776,8 +1829,11 @@ export function PredictionWorkspace({
               ? [-3.402_823_466_385_288_6e38, 3.402_823_466_385_288_6e38]
               : [-Number.MAX_VALUE, Number.MAX_VALUE]))
           : [-Number.MAX_VALUE, Number.MAX_VALUE]
-        const primaryStatus =
-          direction === 'forward'
+        const primaryStatus = validationSnapshotCurrent
+          ? output
+            ? ('ready' as const)
+            : ('unavailable' as const)
+          : direction === 'forward'
             ? forwardRefreshState === 'ready'
               ? committedOutput
                 ? ('ready' as const)
@@ -1790,23 +1846,24 @@ export function PredictionWorkspace({
               : busy
                 ? ('updating' as const)
                 : ('unavailable' as const)
-        const primaryError =
-          calculationErrors[calculation.id] ??
-          (direction === 'forward'
-            ? forwardRefreshState === 'waiting-candidate'
-              ? '현재 Candidate를 평가하는 중입니다.'
-              : forwardRefreshState === 'updating'
-                ? '현재 Vars의 Forward 결과를 갱신하는 중입니다.'
-                : forwardRefreshState === 'failed'
-                  ? (currentForwardFailure?.message ?? 'Forward 결과 갱신에 실패했습니다.')
-                  : committedOutput
-                    ? null
-                    : 'Prediction 결과가 없습니다.'
-            : committedOutput
-              ? null
-              : busy
-                ? 'Prediction 결과를 계산하는 중입니다.'
-                : 'Prediction 결과가 없습니다.')
+        const primaryError = validationSnapshotCurrent
+          ? null
+          : (calculationErrors[calculation.id] ??
+            (direction === 'forward'
+              ? forwardRefreshState === 'waiting-candidate'
+                ? '현재 Candidate를 평가하는 중입니다.'
+                : forwardRefreshState === 'updating'
+                  ? '현재 Vars의 Forward 결과를 갱신하는 중입니다.'
+                  : forwardRefreshState === 'failed'
+                    ? (currentForwardFailure?.message ?? 'Forward 결과 갱신에 실패했습니다.')
+                    : committedOutput
+                      ? null
+                      : 'Prediction 결과가 없습니다.'
+              : committedOutput
+                ? null
+                : busy
+                  ? 'Prediction 결과를 계산하는 중입니다.'
+                  : 'Prediction 결과가 없습니다.'))
         return Object.freeze({
           actual: Object.freeze({
             error:
@@ -1854,7 +1911,6 @@ export function PredictionWorkspace({
       busy,
       calculationErrors,
       calculationValues,
-      currentCandidateFingerprint,
       currentForwardFailure,
       direction,
       experimentId,
@@ -1864,6 +1920,8 @@ export function PredictionWorkspace({
       runtime,
       selectedCalculations,
       setup,
+      selectedCalculationContractFingerprint,
+      sourceIdentity,
       surrogateErrors,
       surrogateValues,
       validation,
@@ -1959,6 +2017,7 @@ export function PredictionWorkspace({
         setForwardFailure(null)
         setInverseVarsFingerprint(null)
         setCalculationErrors({})
+        validationRef.current = null
         setValidation(null)
         setSurrogateValues({})
         setSurrogateErrors({})

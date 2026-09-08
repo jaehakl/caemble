@@ -46,6 +46,7 @@ import {
   predictionSamplingCandidateWaitResult,
 } from '../src/features/prediction/sampling'
 import {
+  calculationOutputContract,
   comparePredictionOutput,
   inverseValidationAggregateError,
   inverseValidationAggregateErrorFromScales,
@@ -1200,6 +1201,32 @@ assert.deepEqual(
     { dtype: 'float64', shape: [], data: 5, axes: [] },
   ]),
   [1.85, 5.15],
+)
+assert.deepEqual(
+  calculationOutputContract({
+    dtype: 'float64',
+    shape: [2],
+    data: [1, 2],
+    axes: [{ name: 'time', ticks: [0, 1], unit: 's' }],
+  }),
+  calculationOutputContract({
+    dtype: 'float64',
+    shape: [2],
+    axes: [{ name: 'time', ticks: [10, 20], unit: 's' }],
+  }),
+)
+assert.notDeepEqual(
+  calculationOutputContract({
+    dtype: 'float64',
+    shape: [2],
+    data: [1, 2],
+    axes: [{ name: 'time', ticks: [0, 1], unit: 's' }],
+  }),
+  calculationOutputContract({
+    dtype: 'float64',
+    shape: [2],
+    axes: [{ name: 'frequency', ticks: [0, 1], unit: 'Hz' }],
+  }),
 )
 assert.deepEqual(fitTensorDisplayDomain([]), [-1, 1])
 assert.deepEqual(fitTensorDisplayDomain([0, 0]), [-0.5, 0.5])

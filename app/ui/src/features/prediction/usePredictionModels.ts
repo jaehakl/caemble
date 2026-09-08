@@ -4,7 +4,6 @@ import {
   getListRequest,
   type CalculationDataOutput,
   type CalculationDataRecord,
-  type CalculationOutputLayout,
   type RecordedDataRecord,
 } from '@/api'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
@@ -24,6 +23,7 @@ import {
 } from './data'
 import { emitPredictionCohortDiagnostics, emitPredictionQueryDiagnostics } from './diagnostics'
 import { PREDICTION_NUMERIC_CELL_LIMIT } from './knn'
+import { calculationOutputContract } from './metrics'
 import type { PredictionNumericDtype, PredictionResult, PredictionTrainingRow, PredictionWeighting } from './knn'
 import type { PredictionWorkerModelProfile } from './protocol'
 import type { PredictionKMode } from './PredictionPanels'
@@ -56,22 +56,6 @@ export const defaultPredictionSetup: PredictionSetup = Object.freeze({
   manualK: 1,
   weighting: 'distance',
 })
-
-function calculationOutputLayout(output: CalculationDataOutput | CalculationOutputLayout) {
-  return Object.freeze({
-    dtype: output.dtype,
-    shape: Object.freeze([...output.shape]),
-    axes: Object.freeze(
-      output.axes.map((axis) =>
-        Object.freeze({
-          name: axis.name,
-          ticks: Object.freeze([...axis.ticks]),
-          ...(axis.unit ? { unit: axis.unit } : {}),
-        }),
-      ),
-    ),
-  })
-}
 
 async function rowsInBatches<T>(items: readonly T[], size: number, run: (item: T) => Promise<void>) {
   for (let offset = 0; offset < items.length; offset += size) {
@@ -511,10 +495,10 @@ export function usePredictionModels({
               }),
           })
           if (
-            predictionFingerprint([calculationOutputLayout(output)]) !==
-            predictionFingerprint([calculationOutputLayout(calculation.output_layout)])
+            predictionFingerprint([calculationOutputContract(output)]) !==
+            predictionFingerprint([calculationOutputContract(calculation.output_layout)])
           ) {
-            throw new Error('Calculation 결과 layout이 저장된 preflight 계약과 다릅니다.')
+            throw new Error('Calculation 결과의 dtype, shape, axis 이름 또는 unit이 저장된 preflight 계약과 다릅니다.')
           }
           values[calculation.id] = output
         } catch (cause: unknown) {
