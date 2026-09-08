@@ -62,9 +62,11 @@ artifact를 임시 디렉터리에 준비한다. 이때 실행 중인 checkout�
 활성 배치와 worker cleanup 완료는 기다리지 않으며, 실행 중인 시뮬레이션은 중단된다.
 
 API 종료 전에 `/etc/systemd/system/<API_SERVICE>.service.d/99-caemble-stop.conf`에
-`TimeoutStopSec=3s`, `KillMode=control-group`, `SendSIGKILL=yes`를 설치하고 `daemon-reload`한다.
+`TimeoutStopSec`, `KillMode=control-group`, `SendSIGKILL=yes`를 설치하고 `daemon-reload`한다.
 `API_SERVICE`에 이미 `.service`가 있으면 중복으로 붙이지 않는다. 기존 `ExecStart`는 유지한다.
-3초 안에 정상 종료하지 않으면 systemd가 서비스 프로세스를 강제 종료한다. 로그에는 종료 시작과
+`deployment/update.sh` 상단의 `API_STOP_TIMEOUT_SECONDS` 한 곳에서 종료 제한을 설정하며,
+systemd 설정과 안내 로그에 같은 값을 사용한다. 이 시간 안에 정상 종료하지 않으면
+systemd가 서비스 프로세스를 강제 종료한다. 로그에는 종료 시작과
 소요 시간을 표시한다. 이 제한은 API 종료 대기에만 적용하며 dependency 설치·migration 시간은 포함하지 않는다.
 
 Launcher는 API 연결 해제 시 기존 worker 종료 처리를 수행하고, 3초 안에 끝나지 않는 CAE worker는
@@ -103,7 +105,6 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/ubuntu/.local/bin/poetry run uvicorn main:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1
 Restart=always
 RestartSec=3
-TimeoutStopSec=3s
 KillMode=control-group
 SendSIGKILL=yes
 NoNewPrivileges=true

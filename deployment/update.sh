@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+API_STOP_TIMEOUT_SECONDS=5
+
 APP_DIR=${APP_DIR:-/home/ubuntu/caemble}
 API_DIR=${API_DIR:-$APP_DIR/app/api}
 WEB_ROOT=${WEB_ROOT:-/var/www/caemble}
@@ -63,7 +65,7 @@ if sudo test -e "$NGINX_CONFIG_TARGET"; then
     had_nginx_config=true
 fi
 
-echo "[2/6] Close new batch admissions and stop the existing API (7s limit)"
+echo "[2/6] Close new batch admissions and stop the existing API (${API_STOP_TIMEOUT_SECONDS}s limit)"
 nginx_changed=true
 sudo install -m 644 "$staging_dir/app.conf" "$NGINX_CONFIG_TARGET"
 sudo nginx -t
@@ -75,16 +77,16 @@ api_service_installed=false
 if sudo systemctl cat "$API_SERVICE" >/dev/null 2>&1; then
     api_service_installed=true
     api_service_unit="${API_SERVICE%.service}.service"
-    cat > "$staging_dir/api-stop.conf" <<'EOF'
+    cat > "$staging_dir/api-stop.conf" <<EOF
 [Service]
-TimeoutStopSec=3s
+TimeoutStopSec=${API_STOP_TIMEOUT_SECONDS}s
 KillMode=control-group
 SendSIGKILL=yes
 EOF
     sudo install -D -m 644 "$staging_dir/api-stop.conf" \
         "/etc/systemd/system/$api_service_unit.d/99-caemble-stop.conf"
     sudo systemctl daemon-reload
-    echo "Stopping $API_SERVICE: running simulations will be interrupted; force-kill after 7s."
+    echo "Stopping $API_SERVICE: running simulations will be interrupted; force-kill after ${API_STOP_TIMEOUT_SECONDS}s."
     stop_started=$SECONDS
     sudo systemctl stop "$API_SERVICE"
     echo "API stop completed in $((SECONDS - stop_started))s."
