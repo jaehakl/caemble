@@ -21,7 +21,7 @@ class BatchCreateRequest(BaseModel):
     experiment_source_hash: str
     mode: Literal["generate", "candidate", "measurement"]
     catalog_revision: str
-    builder_version: Literal["1"]
+    builder_version: Literal["2"]
     items: list[BatchItemManifest] = Field(min_length=1)
 
     @model_validator(mode="before")

@@ -8,9 +8,9 @@ const emptyCatalog: CatalogRuntimeSlice = {
   catalogRevision: 'syntax-fixture',
   solvers: [],
   quantityKinds: [],
-  materialParameters: [],
+
   materialModels: [],
-  materialGlobalQualifiers: [],
+
   warnings: [],
 }
 

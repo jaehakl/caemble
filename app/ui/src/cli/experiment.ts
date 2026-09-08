@@ -5,14 +5,12 @@ import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createDbTables, getListRequest } from '@/api/api'
-import { fetchBuildMaterials } from '@/api/buildContext'
 import { BUILD_VERSION, type BuildArtifact } from '@/contracts/build'
 import type { CatalogRuntimeSlice, CatalogExperimentDetail } from '@/contracts/catalog'
 import type { ExperimentSourceBundle } from '@/contracts/cad-persistence'
 import { cadSourceHash } from '@/lib/cad/source/document'
 import { experimentRecordContracts } from '@/lib/cad/simulation/recordedData'
 import { parseArtifactInput } from '@/lib/cae/artifact'
-import type { CaePreparationRequest } from '@/lib/cae/build'
 import { catalogCommand, commandJson, CliError, verifyPython } from '@/platform/node/environment'
 import { readSourceBundle, openArtifact, writeSourceBundle } from '@/platform/node/artifact'
 import type { CommandContext } from './types'
@@ -32,14 +30,9 @@ export async function buildExperiment(context: CommandContext, output: string) {
   const source_bundle: ExperimentSourceBundle = example?.sourceBundle ?? (await readSourceBundle(source))
   const source_hash = await cadSourceHash({ kind: 'experiment', sourceBundle: source_bundle })
   const catalog = (await catalogCommand(environment, 'runtime', [], options.catalog as string)) as CatalogRuntimeSlice
-  const materials: CaePreparationRequest['materials'] = options.materials
-    ? JSON.parse(await readFile(String(options.materials), 'utf8'))
-    : environment.apiUrl && environment.token
-      ? await fetchBuildMaterials(context.client(), signal)
-      : { names: [], materials: [], parameters: [], qualifiers: [] }
   const vars = options.vars ? JSON.parse(await readFile(String(options.vars), 'utf8')) : undefined
-  const frozen = options['material-parameters']
-    ? JSON.parse(await readFile(String(options['material-parameters']), 'utf8'))
+  const frozen = options['material-snapshot']
+    ? JSON.parse(await readFile(String(options['material-snapshot']), 'utf8'))
     : undefined
   const mode = options.mode ?? 'generate'
   if (mode !== 'generate' && mode !== 'candidate' && mode !== 'measurement') throw new CliError('Invalid --mode.')
@@ -53,7 +46,7 @@ export async function buildExperiment(context: CommandContext, output: string) {
   await mkdir(path.join(output, 'items'))
   const artifact: BuildArtifact = {
     kind: 'caemble.build',
-    version: 1,
+    version: 2,
     source_hash,
     catalog_revision: catalog.catalogRevision,
     builder_version: BUILD_VERSION,
@@ -76,11 +69,10 @@ export async function buildExperiment(context: CommandContext, output: string) {
           source_bundle,
           source_hash,
           catalog,
-          materials,
           mode,
           vars,
           vars_mode: varsMode,
-          material_parameters: frozen,
+          material_snapshot: frozen,
           evaluation_timeout_ms: Number(options['evaluation-timeout'] ?? 3000),
         },
       },

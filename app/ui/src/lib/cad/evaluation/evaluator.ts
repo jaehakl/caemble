@@ -1,4 +1,4 @@
-import { CadModelError, Material, resolveMaterialVariables } from '../model/core'
+import { CadModelError, Material } from '../model/core'
 import { deriveGeometrySurfaces } from '../geometry/surfaces'
 import { getCadElementDefinition } from './registry'
 import { flattenValues, Fragment, isCadNode } from './jsx'
@@ -402,10 +402,8 @@ export function evaluateCadScene(
       if (!material) {
         material = Object.freeze({
           name: part.material.name,
-          ...(part.material.source === undefined ? {} : { source: part.material.source }),
-          ...(part.material.version === undefined ? {} : { version: part.material.version }),
-          errorRate: part.material.errorRate,
-          variables: resolveMaterialVariables(part.material),
+          ...(part.material.color === undefined ? {} : { color: part.material.color }),
+          models: part.material.models,
         })
         sceneMaterials.set(part.material, material)
       }
@@ -419,9 +417,7 @@ export function evaluateCadScene(
         : {
             material: {
               name: part.material.name,
-              ...(part.material.source === undefined ? {} : { source: part.material.source }),
-              ...(part.material.version === undefined ? {} : { version: part.material.version }),
-            },
+                    },
           }),
       node: identifyRootShell(part.canonicalNode, id),
     })

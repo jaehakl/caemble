@@ -1,4 +1,6 @@
 dist
+dist-cli
+dist-cae
 node_modules
 
 # Existing formatting debt captured before enabling format:check.

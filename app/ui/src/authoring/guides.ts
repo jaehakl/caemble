@@ -33,6 +33,7 @@ export const authoringGuides: readonly AuthoringGuide[] = [
     referenceIds: [
       'experiment.contract',
       'experiment.modules',
+      'experiment.materials',
       'experiment.geometry',
       'experiment.simulate',
       'diagnostic.experiment',
@@ -71,7 +72,7 @@ export const authoringGuides: readonly AuthoringGuide[] = [
     id: 'solver',
     title: 'Develop a Solver in the existing CAE architecture',
     summary:
-      'Use the live Catalog Draft workflow and ABI 2 implementation, then validate a complete Experiment through the common builder.',
+      'Use the live Catalog Draft workflow and ABI 3 implementation, then validate a complete Experiment through the common builder.',
     sourcePaths: [
       'docs/authoring/solver.md',
       'docs/development/solver-development.md',

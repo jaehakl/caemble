@@ -6,7 +6,8 @@ import { executeCompiledDocument, inspectCompiledDocument } from '../src/lib/cad
 import { canonicalGeometryScene } from '../src/lib/cad/evaluation/canonical'
 import { assertExperimentAuthoringSemantics } from '../src/lib/cad/simulation/authoringSemantics'
 import { installCatalogRuntimeSlice } from '../src/lib/catalog/runtime'
-import { sourceOnlyMaterialParameters } from '../src/lib/material'
+import { resolveSceneMaterials } from '../src/lib/material/document'
+import { buildMeasurement } from '../src/lib/cad/execution/measurement'
 import type { Tensor } from '../src/lib/cad/model/types'
 
 const database = path.resolve(process.argv[2] ?? '../catalog/caemble_catalog/catalog.sqlite3')
@@ -40,33 +41,18 @@ for (const example of examples) {
     example.relatedSolvers.map((solver) => `${solver.name}@${solver.version}`).sort(),
     `${example.key}: relatedSolvers must match the executable task identities`,
   )
-  const materials = sourceOnlyMaterialParameters(
-    evaluated.scene.parts.flatMap((part) => (part.material ? [part.material] : [])),
-  )
-  const taskMaterials = Object.fromEntries(
-    taskNames.map((name) => [
-      name,
-      sourceOnlyMaterialParameters(
-        evaluated.taskScenes[name].parts.flatMap((part) => (part.material ? [part.material] : [])),
-      ),
-    ]),
-  )
-  const measurement = {
-    experiment: {
+  const measurement = buildMeasurement(
+    {
+      ...evaluated,
       scene: await canonicalGeometryScene(evaluated.scene),
       taskScenes: Object.fromEntries(
         await Promise.all(
           taskNames.map(async (name) => [name, await canonicalGeometryScene(evaluated.taskScenes[name])]),
         ),
       ),
-      simulationProgram: evaluated.simulationProgram,
-      variables,
     },
-    materialParameters: materials.materialParameters,
-    materialWarnings: materials.warnings,
-    taskMaterialParameters: Object.fromEntries(taskNames.map((name) => [name, taskMaterials[name].materialParameters])),
-    taskMaterialWarnings: Object.fromEntries(taskNames.map((name) => [name, taskMaterials[name].warnings])),
-  }
+    resolveSceneMaterials(evaluated, null, catalog),
+  )
   writeFileSync(path.join(outputDirectory, `${example.key}.json`), JSON.stringify(measurement), 'utf8')
   console.log(`${example.coordinate}: compiled, evaluated, and built ${taskNames.length} tasks`)
 }

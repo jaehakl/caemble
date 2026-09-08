@@ -1,6 +1,5 @@
 import { infiniteQueryOptions, queryOptions } from '@tanstack/react-query'
 import { catalogApi, catalogQueryKeys, type CatalogExperimentIdentity } from '@/api/catalog'
-import { ApiError } from '@/api/http'
 import type { ListQuery } from '@/contracts/catalog'
 
 export function catalogMetaQueryOptions() {
@@ -36,37 +35,21 @@ export function catalogQuantityKindQueryOptions(name: string, enabled = true) {
   })
 }
 
-export function catalogMaterialParametersQueryOptions(query: ListQuery, enabled = true) {
-  return queryOptions({
-    queryKey: catalogQueryKeys.materialParametersList(query),
-    queryFn: ({ signal }) => catalogApi.listMaterialParameters(query, { signal }),
-    enabled,
-  })
-}
-
-export function catalogMaterialParametersInfiniteQueryOptions(query: ListQuery) {
-  return infiniteQueryOptions({
-    queryKey: catalogQueryKeys.materialParametersInfinite(query),
-    queryFn: ({ pageParam, signal }) => catalogApi.listMaterialParameters({ ...query, cursor: pageParam }, { signal }),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (page) => page.nextCursor ?? undefined,
-    retry: false,
-  })
-}
-
-export function catalogMaterialParameterQueryOptions(key: string, enabled = true) {
-  return queryOptions({
-    queryKey: catalogQueryKeys.materialParameter(key),
-    queryFn: ({ signal }) => catalogApi.getMaterialParameter(key, { signal }),
-    enabled,
-  })
-}
-
 export function catalogMaterialModelsQueryOptions(query: ListQuery, enabled = true) {
   return queryOptions({
     queryKey: catalogQueryKeys.materialModels(query),
     queryFn: ({ signal }) => catalogApi.listMaterialModels(query, { signal }),
     enabled,
+  })
+}
+
+export function catalogMaterialModelsInfiniteQueryOptions(query: ListQuery) {
+  return infiniteQueryOptions({
+    queryKey: [...catalogQueryKeys.materialModels(query), 'infinite'] as const,
+    queryFn: ({ pageParam, signal }) => catalogApi.listMaterialModels({ ...query, cursor: pageParam }, { signal }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.nextCursor ?? undefined,
+    retry: false,
   })
 }
 
@@ -120,39 +103,6 @@ export function catalogSearchQueryOptions(query: string, limit = 50, enabled = t
   })
 }
 
-export function materialManagerRuntimeQueryOptions(parameterNames: readonly string[], enabled = true) {
-  return queryOptions({
-    queryKey: catalogQueryKeys.materialManagerRuntime(parameterNames),
-    queryFn: async ({ signal }) => {
-      const materialParameters: string[] = []
-      const materialModels: string[] = []
-      for (const name of parameterNames) {
-        try {
-          if (name.startsWith('model.')) {
-            await catalogApi.getMaterialModel(name, { signal })
-            materialModels.push(name)
-          } else {
-            await catalogApi.getMaterialParameter(name, { signal })
-            materialParameters.push(name)
-          }
-        } catch (error) {
-          if (!(error instanceof ApiError) || error.status !== 404) throw error
-        }
-      }
-      return catalogApi.runtimeSlice(
-        {
-          solvers: [],
-          quantityKinds: [],
-          materialParameters,
-          materialModels,
-        },
-        { signal },
-      )
-    },
-    enabled,
-  })
-}
-
 export function recordedDataRuntimeQueryOptions(quantityKindNames: readonly string[], enabled = true) {
   return queryOptions({
     queryKey: catalogQueryKeys.recordedDataRuntime(quantityKindNames),
@@ -161,7 +111,6 @@ export function recordedDataRuntimeQueryOptions(quantityKindNames: readonly stri
         {
           solvers: [],
           quantityKinds: quantityKindNames,
-          materialParameters: [],
           materialModels: [],
         },
         { signal },

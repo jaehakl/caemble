@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import path from 'node:path'
 import type { CalculationDataAnalysisItem, MeasurementRecord } from '../src/api'
+import type { CatalogMaterialModel } from '../src/contracts/catalog'
 import {
   analyzeRelationships,
   buildAnalysisDataset,
@@ -10,20 +13,57 @@ import {
   mineDataset,
 } from '../src/features/analysis/analysis-engine'
 
+const modelDefinitions = JSON.parse(
+  execFileSync(
+    'python',
+    [
+      '-X',
+      'utf8',
+      '-c',
+      "import json,sys\nsys.path.insert(0,sys.argv[2])\nfrom caemble_catalog import open_catalog\nwith open_catalog(sys.argv[1]) as c: print(json.dumps([c.material_model('optics.frequency-sampled-complex-index@1')]))",
+      path.resolve('../catalog/caemble_catalog/catalog.sqlite3'),
+      path.resolve('../catalog'),
+    ],
+    { encoding: 'utf8' },
+  ),
+) as CatalogMaterialModel[]
+
 const measurements = [
   ...Array.from({ length: 24 }, (_, index) => ({
     id: index + 1,
     experiment_id: 7,
     vars: { x: index + 1, z: (index + 1) ** 2 },
-    material_parameters: {
+    material_snapshot: {
       experiment: {
         materials: {
-          Alloy: {
-            density: { value: { kind: 'constant', unit: 'kg/m3', value: 7_000 + index * 10 } },
+          Glass: {
+            models: {
+              optical: {
+                model: 'optics.frequency-sampled-complex-index@1',
+                parameters: {
+                  samples: [
+                    {
+                      frequency: { dtype: 'float64', unit: 'Hz', value: 1e14 },
+                      n: { dtype: 'float64', unit: '{fraction}', value: 1.4 + index / 100 },
+                      k: { dtype: 'float64', unit: '1', value: 0 },
+                    },
+                    {
+                      frequency: { dtype: 'float64', unit: 'Hz', value: 2e14 },
+                      n: { dtype: 'float64', unit: '{fraction}', value: 1.5 + index / 100 },
+                      k: { dtype: 'float64', unit: '1', value: 0 },
+                    },
+                  ],
+                },
+              },
+            },
           },
         },
       },
       tasks: {},
+      sourceHash: 'analysis-source',
+      varsHash: `analysis-vars-${index}`,
+      modelDefinitions,
+      selections: {},
     },
     recorded_at: '2026-01-01T00:00:00Z',
     calculation_data_count: 0,
@@ -33,7 +73,14 @@ const measurements = [
     id: 999,
     experiment_id: 7,
     vars: { x: 999, z: 999 },
-    material_parameters: { experiment: { materials: {} }, tasks: {} },
+    material_snapshot: {
+      experiment: { materials: {} },
+      tasks: {},
+      sourceHash: 'analysis-source',
+      varsHash: 'analysis-vars-999',
+      modelDefinitions: [],
+      selections: {},
+    },
     recorded_at: null,
     calculation_data_count: 0,
     updated_at: '2026-02-01T00:00:00Z',
@@ -100,8 +147,17 @@ assert.equal(
 )
 assert.equal(dataset.columns.get('measurement.vars.x')?.descriptor.source, 'measurement-vars')
 assert.equal(
-  dataset.columns.get('measurement.material.experiment.Alloy.density')?.descriptor.source,
+  dataset.columns.get('measurement.material.experiment.Glass.models.optical.parameters.samples[0].n')?.descriptor
+    .source,
   'measurement-material',
+)
+assert.equal(
+  dataset.columns.get('measurement.material.experiment.Glass.models.optical.parameters.samples[1].n')?.descriptor.unit,
+  '{fraction}',
+)
+assert.equal(
+  dataset.columns.get('measurement.material.experiment.Glass.models.optical.parameters.samples[1].n')?.values[0],
+  1.5,
 )
 
 const scalarKey = 'target:calculation:10'

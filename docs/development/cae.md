@@ -44,12 +44,16 @@ or Solver manifests.
 
 ## Contracts
 
-QuantityKind, Material, and Solver data comes only from
+QuantityKind, Material Model definitions, and Solver descriptors come only from
 `app/catalog/caemble_catalog/catalog.sqlite3`. The worker loads active Solver
-descriptors at startup, then closes the database. Solver modules are imported
-only inside the spawned invocation child. CAD, Geometry, Simulation, Material, Catalog, and built
-Measurement payloads are trusted and unversioned. The worker reads them
-directly; malformed values fail through their natural runtime operation.
+descriptors and model definitions at startup, then closes the database. Solver
+modules are imported only inside the spawned invocation child. ABI 3 receives
+Material model instances, normalized parameters and model-group selections from
+the saved BuiltMeasurement. RunPlan validates captured definitions and parameter
+structure before invoking a Solver, which checks its numerical constraints.
+Material names identify only inputs within that Experiment; the worker never
+uses them to fetch coefficients. New Candidate Vars cause material.tsx to be
+reevaluated, while a recorded Measurement retains its original input snapshot.
 Catalog has one current version per Solver name and rewritten official examples.
 Removed Solver versions fail lookup; old user Experiments are not migrated or
 redirected. Historical code and Catalog releases remain in Git.
@@ -68,7 +72,7 @@ after a catalog deployment.
 
 Solver values use `FieldValue` with a self-contained domain; only the resident
 resource graph uses `ResourceRef`. Domain fields use `FieldValue`; compound
-outputs and retained ray paths use `BundleValue`. ABI 1 and legacy resource
+outputs and retained ray paths use `BundleValue`. ABI 1, ABI 2 and legacy resource
 mappings are not supported.
 State lineage survives explicit root release, while live state, artifacts,
 invocations, and ACK packets independently retain the resources they need.

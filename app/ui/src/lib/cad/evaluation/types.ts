@@ -1,4 +1,5 @@
-import type { Material, ResolvedMaterialVariables } from '../model/core'
+import type { Material } from '../model/core'
+import type { MaterialDefinition } from '@/contracts/material'
 import type { Rotation, Vec3 } from '../model/types'
 import type { UcumUnit } from '../model/units'
 import type { CanonicalGeometryNodeV1 } from './canonicalTypes'
@@ -43,13 +44,7 @@ export type CadScenePart = {
   surfaces: CadSceneSurface[]
 }
 
-export type CadSceneMaterial = Readonly<{
-  name: string
-  source?: string
-  version?: string
-  errorRate?: number
-  variables: ResolvedMaterialVariables
-}>
+export type CadSceneMaterial = MaterialDefinition & Readonly<{ name: string }>
 
 export type CadSceneTreeNode = {
   key: string

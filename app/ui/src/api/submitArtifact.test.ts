@@ -20,12 +20,12 @@ describe('prebuilt remote submission', () => {
     const item = { index: 1, file: 'items/1.json', input_hash: await sha256Bytes(bytes), byte_length: bytes.byteLength }
     const artifact: BuildArtifact = {
       kind: 'caemble.build',
-      version: 1,
+      version: 2,
       mode: 'generate',
       source_hash,
       source_bundle,
       catalog_revision: 'revision',
-      builder_version: '1',
+      builder_version: '2',
       items: [item],
     }
     const received = new Map<string, Uint8Array>()
@@ -103,12 +103,12 @@ describe('prebuilt remote submission', () => {
     })
     const artifact: BuildArtifact = {
       kind: 'caemble.build',
-      version: 1,
+      version: 2,
       mode: 'generate',
       source_hash: 'a'.repeat(64),
       source_bundle: { files: {} },
       catalog_revision: 'r',
-      builder_version: '1',
+      builder_version: '2',
       items: [{ index: 1, file: 'items/1.json', input_hash: 'b'.repeat(64), byte_length: 1 }],
     }
     await expect(

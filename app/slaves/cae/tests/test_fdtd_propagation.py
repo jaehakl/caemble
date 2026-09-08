@@ -25,7 +25,6 @@ def _vacuum_engine(cell_count: int, *, pml_cells: int = 0) -> FDTDEngine:
         relative_permittivity,
         absent,
         absent,
-        absent,
         models,
         dt,
         periodic,

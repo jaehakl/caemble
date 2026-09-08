@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, status
+from caemble_catalog import Catalog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +17,7 @@ from service.measurement_service import (
 )
 from user_auth.routes import get_db
 from user_auth.utils.auth_wrapper import require_roles
+from routers.catalog import get_catalog
 
 
 router = APIRouter(prefix="/measurement", tags=["measurement"])
@@ -35,9 +37,10 @@ async def create_measurement(
     request: MeasurementCreateRequest,
     db: AsyncSession = Depends(get_db),
     user: UserData = Depends(require_roles(["admin", "user"])),
+    catalog: Catalog = Depends(get_catalog),
 ):
     try:
-        return await create_measurement_entity(db, request, user=user)
+        return await create_measurement_entity(db, request, user=user, catalog=catalog)
     except LookupError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

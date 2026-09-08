@@ -60,7 +60,7 @@ async def test_record_ack_wait_starts_after_upload(monkeypatch, acknowledged) ->
                 "pythonSource": "async def simulate(*, sim, tasks, vars):\n    await sim.record('result', 2.5)\n    return None\n",
             },
         },
-        "materialParameters": {}, "materialWarnings": [],
+        "materialSnapshot": {"materials": {}}, "taskMaterialSnapshots": {}, "modelDefinitions": [], "materialSelections": {},
     }
     result = handlers.run_measurement(
         {"measurement": measurement}, [], SimpleNamespace(job_id="slow-upload", send=send, receive=receive),

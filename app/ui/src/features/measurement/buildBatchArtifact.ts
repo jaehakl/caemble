@@ -1,9 +1,7 @@
 import { dbTables, getListRequest } from '@/api'
-import { browserClient } from '@/api/http'
-import { fetchBuildMaterials } from '@/api/buildContext'
 import { sha256Bytes } from '@/api/submitArtifact'
 import { BUILD_VERSION, type BuildArtifact } from '@/contracts/build'
-import type { MeasurementMaterialParameters } from '@/contracts/api/measurement'
+import type { MeasurementMaterialSnapshot } from '@/contracts/api/measurement'
 import { fetchCatalogRuntimeSlice } from '@/features/viewer/workspace/catalogRuntime'
 import { prepareBrowserMeasurement } from '@/platform/browser/build'
 import { BrowserArtifactStore } from '@/platform/browser/artifactStore'
@@ -17,7 +15,7 @@ export type BrowserBatchIntent = Readonly<{
   mode: 'generate' | 'candidate' | 'measurement'
   count?: number
   vars?: Readonly<Record<string, unknown>>
-  material_parameters?: MeasurementMaterialParameters
+  material_snapshot?: MeasurementMaterialSnapshot
   measurement_id?: number
   evaluation_timeout_ms?: number
 }>
@@ -35,12 +33,9 @@ export async function buildBatchArtifact(
   ).items.find((item) => item.id === request.experiment_id)
   if (!saved?.source_bundle) throw new Error('Experiment source bundle is missing.')
   const source_bundle = saved.source_bundle
-  const [catalog, materials] = await Promise.all([
-    fetchCatalogRuntimeSlice(source_bundle),
-    fetchBuildMaterials(browserClient, signal),
-  ])
+  const catalog = await fetchCatalogRuntimeSlice(source_bundle)
   let vars = request.vars
-  let material_parameters = request.material_parameters
+  let material_snapshot = request.material_snapshot
   if (request.mode === 'measurement') {
     const measurement = (
       await dbTables.Measurement.listRows(
@@ -51,12 +46,12 @@ export async function buildBatchArtifact(
     if (!measurement || measurement.experiment_id !== request.experiment_id)
       throw new Error('The Measurement no longer belongs to this Experiment.')
     vars = measurement.vars
-    material_parameters = measurement.material_parameters
+    material_snapshot = measurement.material_snapshot
   }
   const store = await BrowserArtifactStore.open(request.request_id)
   const artifact: BuildArtifact = {
     kind: 'caemble.build',
-    version: 1,
+    version: 2,
     source_hash: request.experiment_source_hash,
     source_bundle,
     catalog_revision: catalog.catalogRevision,
@@ -73,10 +68,9 @@ export async function buildBatchArtifact(
           source_bundle,
           source_hash: artifact.source_hash,
           catalog,
-          materials,
           mode: request.mode,
           vars: vars as Vars | undefined,
-          material_parameters,
+          material_snapshot,
           evaluation_timeout_ms: request.evaluation_timeout_ms,
         },
         signal,

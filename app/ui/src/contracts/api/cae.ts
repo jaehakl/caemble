@@ -63,6 +63,6 @@ export type CaeBatchRequest = Readonly<{
   experiment_source_hash: string
   mode: 'generate' | 'candidate' | 'measurement'
   catalog_revision: string
-  builder_version: '1'
+  builder_version: '2'
   items: readonly Readonly<{ index: number; input_hash: string; byte_length: number; measurement_id?: number }>[]
 }>

@@ -46,12 +46,9 @@ describe('Catalog API response boundaries', () => {
       quantityKindDataVersion: '1',
       materialCatalogVersion: '1',
       quantityKindCount: 1,
-      materialParameterCount: 2,
       materialModelCount: 1,
       solverCount: 1,
       experimentCount: 1,
-      materialGlobalQualifiers: ['temperature'],
-      materialDesignRules: { canonicalKey: 'domain.name' },
       futureField: 'kept',
     })
 
@@ -92,7 +89,7 @@ describe('Catalog API response boundaries', () => {
     expect(result[0]).toMatchObject({ kind: 'futureCatalogResource', futureField: true })
   })
 
-  it('rejects unsupported MaterialModel semantics before they reach sampled-relation consumers', async () => {
+  it('rejects obsolete sampled-relation Catalog records', async () => {
     stubJson({
       items: [
         {
@@ -190,15 +187,15 @@ describe('Catalog API response boundaries', () => {
       catalogRevision: 'revision-1',
       solvers: [{ name: 'solver', version: '1.0.0', descriptor }],
       quantityKinds: [{ ...quantityKind, applicableUnits: 'm' }],
-      materialParameters: [],
+
       materialModels: [],
-      materialGlobalQualifiers: [],
+
       warnings: [],
     })
 
-    await expect(
-      catalogApi.runtimeSlice({ solvers: [], quantityKinds: [], materialParameters: [], materialModels: [] }),
-    ).rejects.toMatchObject({ name: 'ApiContractError', path: '/catalog/runtime-slice' })
+    await expect(catalogApi.runtimeSlice({ solvers: [], quantityKinds: [], materialModels: [] })).rejects.toMatchObject(
+      { name: 'ApiContractError', path: '/catalog/runtime-slice' },
+    )
   })
 
   it('validates Experiment source bundles while retaining future summary fields', async () => {

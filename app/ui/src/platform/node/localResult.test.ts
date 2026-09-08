@@ -94,10 +94,10 @@ async function fixture() {
     path.join(artifact, 'manifest.json'),
     JSON.stringify({
       kind: 'caemble.build',
-      version: 1,
+      version: 2,
       source_hash: sourceHash,
       catalog_revision: 'fixture-catalog',
-      builder_version: '1',
+      builder_version: '2',
       mode: 'generate',
       source_bundle: sourceBundle,
       items: [{ index: 1, file: 'items/1.json', input_hash: inputHash, byte_length: input.byteLength }],

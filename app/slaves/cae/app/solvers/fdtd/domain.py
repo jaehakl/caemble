@@ -19,7 +19,7 @@ def _ceil_cell_count(length: float, cell_size: float) -> int:
 class FDTDRegion:
     bounds: Bounds3D
     background: Any
-    model: str
+    drude_method: str
 
     def __post_init__(self) -> None:
         if len(self.bounds) != 3 or any(len(axis) != 2 for axis in self.bounds):
@@ -37,7 +37,7 @@ class FDTDRegion:
 class FDTDBlockMetadata:
     kind: BlockKind
     background: Any
-    model: str
+    drude_method: str
     inherited_from: tuple[int, int, int]
 
 
@@ -199,7 +199,7 @@ def build_fdtd_domain(
         blocks[block.index] = FDTDBlockMetadata(
             kind,
             background_region.background,
-            background_region.model,
+            background_region.drude_method,
             inherited_from,
         )
 

@@ -18,12 +18,7 @@ export type {
   EvaluatedRuntimeDocumentSnapshot,
   MeasurementExperimentSnapshot,
 } from './snapshot'
-export {
-  applyFrozenMaterialParameters,
-  buildMeasurement,
-  buildSourceOnlyMeasurement,
-  unresolvedMeasurementMaterialRoles,
-} from './measurement'
+export { applyMaterialSnapshot, buildMeasurement, unresolvedMeasurementMaterialRoles } from './measurement'
 export type { BuiltMeasurement, MeasurementMaterialResolution, TaskMaterialResolution } from './measurement'
 export { deserializeCadScene, serializeCadScene } from './mesh'
 export type { SerializableCadMesh, SerializableCadScene, SerializableCadScenePart } from './mesh'

@@ -55,9 +55,9 @@ class CalculationCliTests(unittest.IsolatedAsyncioTestCase):
             role = await db.scalar(select(Role.id).where(Role.name == "user"))
             db.add(UserRole(user_id=self.owner, role_id=role))
             measurements = [Measurement(user_id=self.owner, experiment_id=self.experiment,
-                vars={}, material_parameters={}, recorded_at=utcnow()) for _ in range(53)]
+                vars={}, material_snapshot={}, recorded_at=utcnow()) for _ in range(53)]
             foreign_measurement = Measurement(user_id=self.other, experiment_id=self.other_experiment,
-                vars={}, material_parameters={}, recorded_at=utcnow())
+                vars={}, material_snapshot={}, recorded_at=utcnow())
             db.add_all([*measurements, foreign_measurement])
             await db.commit()
             calculation_id = (await upsert_calculations(db, [_ready_calculation(

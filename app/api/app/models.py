@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, EmailStr, Field, RootModel, StrictFloat, StrictInt, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, RootModel, StrictFloat, StrictInt, field_validator, model_validator
 
 from model_validators import (
     validate_calculation_data_axis,
@@ -99,35 +99,6 @@ class OwnedTimestampFields(TimestampFields):
     user_id: Optional[str] = None
 
 
-class MaterialBase(OwnedTimestampFields):
-    inchi: Optional[str] = None
-    description: Optional[str] = None
-    color: Optional[str] = None
-
-
-class MaterialNameBase(OwnedTimestampFields):
-    material_id: int
-    name: str
-
-
-class MaterialParameterBase(OwnedTimestampFields):
-    material_id: int
-    name: str
-    value: Any
-    source: Optional[str] = None
-    version: Optional[str] = None
-    description: Optional[str] = None
-    temperature: Optional[float] = None
-    pressure: Optional[float] = None
-    frequency: Optional[float] = None
-
-
-class MaterialParameterQualifierBase(TimestampFields):
-    material_parameter_id: int
-    name: str
-    value: float
-
-
 class ExperimentSourceBundle(BaseModel):
     files: Dict[str, str]
 
@@ -184,7 +155,7 @@ class MeasurementBase(OwnedTimestampFields):
     user_id: str
     experiment_id: int
     vars: Dict[str, Any]
-    material_parameters: Dict[str, Any]
+    material_snapshot: Dict[str, Any]
     recorded_at: Optional[datetime] = None
     calculation_data_count: int = 0
 
@@ -208,10 +179,18 @@ MeasurementRecordedDataNode = Union[MeasurementRecordedDataLeaf, MeasurementReco
 
 
 class MeasurementCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     experiment_id: int
-    experiment_source_hash: str
+    experiment_source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     vars: Dict[str, Any]
-    material_parameters: Dict[str, Any]
+    material_snapshot: Dict[str, Any]
+
+    @field_validator("material_snapshot")
+    @classmethod
+    def check_material_snapshot(cls, value):
+        from service.material_snapshot import validate_material_snapshot
+
+        return validate_material_snapshot(value)
 
 
 class MeasurementRecordedDataResponse(BaseModel):

@@ -21,7 +21,6 @@ with open_catalog(sys.argv[1]) as c:
  runtime=c.runtime_slice(
   solvers=[(s['name'],s['version']) for s in solvers],
   quantity_kinds=[q['name'] for q in c.list_quantity_kinds(limit=10000)[0]],
-  material_parameters=[m['key'] for m in c.list_material_parameters(limit=10000)[0]],
   material_models=[m['key'] for m in c.list_material_models(limit=10000)[0]])
  examples=[c.experiment(e['coordinate']) for e in c.list_experiments(limit=10000)[0]]
  print(json.dumps(dict(examples=examples,catalog=runtime)))

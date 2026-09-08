@@ -47,10 +47,9 @@ def allocate_simulation(
             for axis in prepared.widths
         )
         coefficients = build_update_coefficients(
-            prepared.relative_permittivity,
-            prepared.epsilon_infinity,
+            prepared.epsilon_instantaneous,
             prepared.plasma_frequency,
-            prepared.collision_frequency,
+            prepared.damping_frequency,
             prepared.model_codes,
             prepared.dt,
             prepared.domain.topology.periodic,

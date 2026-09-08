@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import importlib
+import copy
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
 import pytest
+import torch
 
 from app.methods.geometry import GeometryService
 from app.kernel.api import SolverImplementation, SolverInvocation, BundleValue
 from app.kernel.catalog import SolverCatalog
 from app.solvers.fdtd import entry, formulation
+from app.solvers.fdtd.materials import build_update_coefficients
 
 
 def _box_root(
@@ -57,23 +61,26 @@ def _box_root(
 
 
 def _material_value(value: float | list[float], unit: str) -> dict[str, Any]:
-    return {"value": {"dtype": "float64", "value": value, "unit": unit}}
+    return {"dtype": "float64", "value": value, "unit": unit}
 
 
 @pytest.mark.asyncio
-async def test_catalog_fdtd_abi2_runs_small_cpu_domain_with_mixed_drude_materials(
+@pytest.mark.parametrize(("drude_method", "plasma_frequency"), [("RC", 5e7), ("RC", 0.0), ("TRC", 0.0)])
+async def test_catalog_fdtd_abi3_runs_small_cpu_domain_with_mixed_drude_materials(
     monkeypatch: pytest.MonkeyPatch,
+    drude_method: str,
+    plasma_frequency: float,
 ) -> None:
     catalog = SolverCatalog.discover()
-    descriptor = catalog.descriptor("fdtd", "1.0.1")
-    locator = catalog.locator("fdtd", "1.0.1")
-    assert catalog.abi_version("fdtd", "1.0.1") == 2
+    descriptor = catalog.descriptor("fdtd", "2.0.0")
+    locator = catalog.locator("fdtd", "2.0.0")
+    assert catalog.abi_version("fdtd", "2.0.0") == 3
     assert locator == "app.solvers.fdtd.entry:implementation"
 
     module_name, attribute = locator.split(":", maxsplit=1)
     implementation = getattr(importlib.import_module(module_name), attribute)
     assert isinstance(implementation, SolverImplementation)
-    assert implementation.abi_version == 2
+    assert implementation.abi_version == 3
 
     main_size = (4.0, 4.0, 4.0)
     task_roots = [
@@ -110,47 +117,42 @@ async def test_catalog_fdtd_abi2_runs_small_cpu_domain_with_mixed_drude_material
         "geometryGroups": [{"name": "materials", "rootIds": ["drude", "later-dielectric"]}],
         "surfaceGroups": [],
     }
-    identity = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+    identity = np.eye(3).tolist()
     world = {
         "experiment": experiment_scene,
         "task": task_scene,
         "materials": {
             "task": {
-                "parameters": {
-                    "materials": {
-                        "Main Background": {
-                            "electrical.relative_permittivity": _material_value(identity, "{fraction}")
-                        },
-                        "Buffer Background": {
-                            "electrical.relative_permittivity": _material_value(
-                                [2.0 * value for value in identity], "{fraction}"
-                            )
-                        },
-                    }
-                },
-                "warnings": [],
+                "Main Background": {"models": {"electric": {
+                    "model": "em.nondispersive-isotropic@1",
+                    "parameters": {"epsilon": _material_value(identity, "{fraction}")},
+                }}},
+                "Buffer Background": {"models": {"electric": {
+                    "model": "em.nondispersive-isotropic@1",
+                    "parameters": {"epsilon": _material_value((np.eye(3) * 2).tolist(), "{fraction}")},
+                }}},
             },
             "experiment": {
-                "parameters": {
-                    "materials": {
-                        "Drude Medium": {
-                            "electrical.relative_permittivity": _material_value(
-                                [2.0 * value for value in identity], "{fraction}"
-                            ),
-                            "electrical.drude_infinite_frequency_relative_permittivity": (
-                                _material_value(identity, "{fraction}")
-                            ),
-                            "electrical.drude_plasma_frequency": _material_value(5e7, "Hz"),
-                            "electrical.drude_collision_frequency": _material_value(1e7, "Hz"),
-                        },
-                        "Later Dielectric": {
-                            "electrical.relative_permittivity": _material_value(
-                                [4.0 * value for value in identity], "{fraction}"
-                            )
-                        },
-                    }
-                },
-                "warnings": [],
+                "Drude Medium": {"models": {"electric": {
+                    "model": "em.drude-isotropic@1",
+                    "parameters": {
+                        "epsilonInfinity": _material_value(identity, "{fraction}"),
+                        "plasmaFrequency": _material_value(plasma_frequency, "Hz"),
+                        "dampingFrequency": _material_value(1e7, "Hz"),
+                    },
+                }}},
+                "Later Dielectric": {"models": {"electric": {
+                    "model": "em.nondispersive-isotropic@1",
+                    "parameters": {"epsilon": _material_value((np.eye(3) * 4).tolist(), "{fraction}")},
+                }}},
+            },
+        },
+        "materialSelections": {
+            "mainBackground": {"Main Background": {"electricResponse": "electric"}},
+            "bufferBackground": {"Buffer Background": {"electricResponse": "electric"}},
+            "geometryOverlay": {
+                "Drude Medium": {"electricResponse": "electric"},
+                "Later Dielectric": {"electricResponse": "electric"},
             },
         },
     }
@@ -173,13 +175,13 @@ async def test_catalog_fdtd_abi2_runs_small_cpu_domain_with_mixed_drude_material
                     "cellSizeX": {"value": 1.0},
                     "cellSizeY": {"value": 1.0},
                     "cellSizeZ": {"value": 1.0},
-                    "model": "Drude_RC",
+                    "drudeMethod": drude_method,
                 },
             },
             {
                 "methodId": "fdtd.buffer-region",
                 "target": ["task.geometry.buffer"],
-                "parameters": {"cellSize": {"value": 2.0}, "model": "default"},
+                "parameters": {"cellSize": {"value": 2.0}, "drudeMethod": "none"},
             },
         ],
         "boundaryConditions": [
@@ -259,14 +261,11 @@ async def test_catalog_fdtd_abi2_runs_small_cpu_domain_with_mixed_drude_material
         int(np.argmin(np.abs(y_ticks - 1.5))),
         int(np.argmin(np.abs(x_ticks - 1.5))),
     )
-    assert prepared.relative_permittivity[drude_index] == pytest.approx(2.0)
-    assert prepared.epsilon_infinity[drude_index] == pytest.approx(1.0)
-    assert prepared.plasma_frequency[drude_index] == pytest.approx(5e7)
-    assert prepared.relative_permittivity[later_index] == pytest.approx(4.0)
-    assert np.isnan(prepared.epsilon_infinity[later_index])
+    assert prepared.epsilon_instantaneous[drude_index] == pytest.approx(1.0)
+    assert prepared.plasma_frequency[drude_index] == pytest.approx(plasma_frequency)
+    assert prepared.epsilon_instantaneous[later_index] == pytest.approx(4.0)
     assert np.isnan(prepared.plasma_frequency[later_index])
-    assert prepared.relative_permittivity[background_index] == pytest.approx(1.0)
-    assert np.isnan(prepared.epsilon_infinity[background_index])
+    assert prepared.epsilon_instantaneous[background_index] == pytest.approx(1.0)
 
     assert result.state_patch.is_empty
     assert result.observations["device"] == "cpu"
@@ -319,8 +318,38 @@ async def test_catalog_fdtd_abi2_runs_small_cpu_domain_with_mixed_drude_material
         block.kind == "buffer" for block in prepared.domain.blocks.values()
     )
     assert all(
-        block.model == prepared.domain.blocks[block.inherited_from].model
+        block.drude_method == prepared.domain.blocks[block.inherited_from].drude_method
         and block.background is prepared.domain.blocks[block.inherited_from].background
         for block in prepared.domain.blocks.values()
         if block.kind == "pml"
     )
+
+    if plasma_frequency == 0:
+        dielectric_world = copy.deepcopy(world)
+        dielectric_model = dielectric_world["materials"]["experiment"]["Drude Medium"]["models"]["electric"]
+        dielectric_model["model"] = "em.nondispersive-isotropic@1"
+        dielectric_model["parameters"] = {"epsilon": dielectric_model["parameters"]["epsilonInfinity"]}
+        reference = await original_prepare_domain(replace(invocation, world=dielectric_world))
+        coefficients, reference_coefficients = [
+            build_update_coefficients(
+                domain.epsilon_instantaneous, domain.plasma_frequency, domain.damping_frequency,
+                domain.model_codes, domain.dt, domain.domain.topology.periodic, torch.device("cpu"),
+            )
+            for domain in (prepared, reference)
+        ]
+        np.testing.assert_array_equal(prepared.epsilon_instantaneous, reference.epsilon_instantaneous)
+        torch.testing.assert_close(coefficients.curl, reference_coefficients.curl)
+        assert coefficients.previous is None
+        assert coefficients.current is None
+        assert coefficients.current_new is None
+        assert coefficients.current_old is None
+
+    unsupported_world = copy.deepcopy(world)
+    unsupported_world["materials"]["experiment"]["Drude Medium"]["models"]["electric"]["parameters"]["dampingFrequency"]["value"] = 0
+    with pytest.raises(ValueError, match="dampingFrequency must be positive and finite for FDTD RC/TRC"):
+        await original_prepare_domain(replace(invocation, world=unsupported_world))
+
+    incompatible = copy.deepcopy(config)
+    incompatible["initializations"][0]["parameters"]["drudeMethod"] = "none"
+    with pytest.raises(ValueError, match="Drude Material occupies a region"):
+        await original_prepare_domain(replace(invocation, config=incompatible))

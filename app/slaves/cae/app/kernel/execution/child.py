@@ -110,14 +110,16 @@ def child_main(
 async def _invoke(
     locator: str, invocation: SolverInvocation, expected_abi_version: int,
 ) -> SolverResult:
-    if expected_abi_version != 2:
-        raise TypeError(f"unsupported Catalog solver ABI version {expected_abi_version!r}; expected 2")
+    if expected_abi_version != 3:
+        raise TypeError(f"unsupported Catalog solver ABI version {expected_abi_version!r}; expected 3")
     module_name, separator, attribute = locator.partition(":")
     if not separator or not module_name or not attribute:
         raise ValueError(f"invalid solver locator {locator!r}; expected 'module.path:attribute'")
     implementation = getattr(importlib.import_module(module_name), attribute)
     if not isinstance(implementation, SolverImplementation):
-        raise TypeError(f"solver {locator} must export an ABI 2 SolverImplementation")
+        raise TypeError(f"solver {locator} must export an ABI 3 SolverImplementation")
+    if implementation.abi_version != expected_abi_version:
+        raise TypeError(f"solver {locator} implementation ABI does not match Catalog ABI {expected_abi_version}")
     result = await implementation.run(invocation)
     if not isinstance(result, SolverResult):
         raise TypeError(f"solver {locator} must return SolverResult")

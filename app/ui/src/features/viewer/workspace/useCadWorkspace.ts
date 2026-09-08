@@ -1,3 +1,5 @@
+import { measurementMaterialSnapshot } from '@/lib/cad/execution/measurement'
+import { readMeasurementMaterialSnapshot } from '../persistence/contracts'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import {
   emitRuntimeActivity,
@@ -17,7 +19,7 @@ import {
 import { CadCompilationError } from '@/lib/cad/compiler/monacoCompiler'
 import type { CadScene } from '@/lib/cad/evaluation/types'
 import {
-  applyFrozenMaterialParameters,
+  applyMaterialSnapshot,
   buildMeasurement,
   CadDocumentEvaluationError,
   deserializeCadScene,
@@ -38,7 +40,7 @@ import type { SimulationProgramManifest } from '@/lib/cad/simulation'
 import type { CadDiagnostic } from '@/lib/cad/worker/protocol'
 import { sourceCatalogRuntimeSlice } from '@/lib/catalog/runtime'
 import { catalogDraftTaskNames } from '@/lib/catalog/solverTasks'
-import type { MeasurementMaterialParameters } from '../persistence/contracts'
+import type { MeasurementMaterialSnapshot } from '../persistence/contracts'
 import { resolveDocumentMaterials } from '../persistence/resolveMaterials'
 import {
   cadWorkspaceLifecycleReducer,
@@ -76,7 +78,7 @@ export type CadDocumentController = Readonly<{
   handleRenderStart: () => void
   handleSimulationCodeChange: (source: string) => void
   handleSourceChange: (source: string) => void
-  materialParameters: MeasurementMaterialParameters | null
+  materialSnapshot: MeasurementMaterialSnapshot | null
   materialWarnings: readonly string[]
   readOnly: boolean
   measurement: BuiltMeasurement | null
@@ -109,9 +111,8 @@ export type UseCadWorkspaceOptions = Readonly<{
   candidateVars?: Readonly<Vars>
   candidateVarsPending?: boolean
   candidateProvenance?: CandidateProvenance
-  frozenMaterialSnapshot?: unknown | null
+  persistedMaterialSnapshot?: unknown | null
   resetKey?: string | number
-  sourceOnlyMaterials?: boolean
   onActivity?: RuntimeActivityCallback
   onCandidateVarsRegenerated?: (event: CandidateVarsRegeneratedEvent) => void
 }>
@@ -130,9 +131,8 @@ export function useCadWorkspace(
     candidateVars,
     candidateVarsPending = false,
     candidateProvenance = 'editable',
-    frozenMaterialSnapshot = null,
+    persistedMaterialSnapshot = null,
     resetKey = 'default',
-    sourceOnlyMaterials = false,
     onActivity,
     onCandidateVarsRegenerated,
   }: UseCadWorkspaceOptions = {},
@@ -145,7 +145,7 @@ export function useCadWorkspace(
   const [evaluationTimeoutMs, setEvaluationTimeoutMs] = useState<EvaluationTimeoutMs>(3000)
   const [generation, setGeneration] = useState(0)
   const [completedCandidateGeneration, setCompletedCandidateGeneration] = useState(0)
-  const [materialParameters, setMaterialParameters] = useState<MeasurementMaterialParameters | null>(null)
+  const [materialSnapshot, setMaterialSnapshot] = useState<MeasurementMaterialSnapshot | null>(null)
   const [materialWarnings, setMaterialWarnings] = useState<readonly string[]>([])
   const [builtMeasurement, setBuiltMeasurement] = useState<BuiltMeasurement | null>(null)
   const [revision, setRevision] = useState(0)
@@ -176,7 +176,6 @@ export function useCadWorkspace(
     document: ExperimentSourceDocument
     outputKey: string
     resetKey: string | number
-    sourceOnlyMaterials: boolean
   }> | null>(null)
   const evaluationTimeoutRef = useRef<EvaluationTimeoutMs>(evaluationTimeoutMs)
   const generationRef = useRef(0)
@@ -207,7 +206,7 @@ export function useCadWorkspace(
   successfulRevisionRef.current = successfulRevision
 
   const varsKey = useMemo(() => stableInput(candidateVars ?? null), [candidateVars])
-  const materialsKey = useMemo(() => stableInput(frozenMaterialSnapshot), [frozenMaterialSnapshot])
+  const materialsKey = useMemo(() => stableInput(persistedMaterialSnapshot), [persistedMaterialSnapshot])
   const cachedCandidate = candidateCacheRef.current
   const editableMaterialEcho = editableMaterialEchoRef.current
   const candidateDependencyKey =
@@ -223,7 +222,6 @@ export function useCadWorkspace(
     editableMaterialEcho !== null &&
     editableMaterialEcho.document === experiment &&
     editableMaterialEcho.resetKey === resetKey &&
-    editableMaterialEcho.sourceOnlyMaterials === sourceOnlyMaterials &&
     editableMaterialEcho.outputKey === materialsKey
       ? editableMaterialEcho.dependencyKey
       : materialsKey
@@ -240,7 +238,7 @@ export function useCadWorkspace(
     const resetPreview = resetKeyRef.current !== resetKey
     resetKeyRef.current = resetKey
     const sessionCandidateVars = resetPreview ? undefined : candidateVars
-    const sessionMaterialSnapshot = resetPreview ? null : frozenMaterialSnapshot
+    const sessionMaterialSnapshot = resetPreview ? null : persistedMaterialSnapshot
     if (resetPreview) {
       candidateCacheRef.current = null
       editableMaterialEchoRef.current = null
@@ -250,7 +248,7 @@ export function useCadWorkspace(
       setResultSessionKey(null)
     }
     setBuiltMeasurement(null)
-    setMaterialParameters(null)
+    setMaterialSnapshot(null)
     setMaterialWarnings([])
     if (resetPreview) {
       setScene(null)
@@ -450,19 +448,19 @@ export function useCadWorkspace(
         })
         const resolution = await resolveDocumentMaterials(
           snapshot,
-          explicitGeneration ? null : sessionMaterialSnapshot,
-          sourceOnlyMaterials,
+          candidateProvenance === 'persisted-measurement' && !explicitGeneration ? readMeasurementMaterialSnapshot(sessionMaterialSnapshot) : null,
+          catalog,
         )
         if (abort.signal.aborted || revisionRef.current !== requestRevision) return
-        const commonScene = applyFrozenMaterialParameters(
+        const commonScene = applyMaterialSnapshot(
           deserializeCadScene(snapshot.renderScene),
-          resolution.materialParameters,
+          resolution.materialSnapshot,
         )
         const nextTaskScenes = Object.freeze(
           Object.fromEntries(
             Object.entries(snapshot.taskRenderScenes).map(([name, serialized]) => [
               name,
-              applyFrozenMaterialParameters(deserializeCadScene(serialized), resolution.taskMaterialParameters[name]),
+              applyMaterialSnapshot(deserializeCadScene(serialized), resolution.taskMaterialSnapshots[name]),
             ]),
           ),
         )
@@ -495,7 +493,6 @@ export function useCadWorkspace(
             document: evaluationDocument,
             outputKey,
             resetKey,
-            sourceOnlyMaterials,
           })
         }
         if (unresolved.length > 0) {
@@ -533,7 +530,7 @@ export function useCadWorkspace(
           setScene(commonScene)
           setTaskScenes(nextTaskScenes)
           setSimulationProgram(null)
-          setMaterialParameters(null)
+          setMaterialSnapshot(null)
           setMaterialWarnings(resolutionWarnings)
           rememberEditableMaterialOutput(materialsKey)
           completeCandidateGeneration()
@@ -545,10 +542,7 @@ export function useCadWorkspace(
           return
         }
         const built = buildMeasurement(snapshot, resolution)
-        const persistedMaterials: MeasurementMaterialParameters = Object.freeze({
-          experiment: built.materialParameters,
-          tasks: built.taskMaterialParameters,
-        })
+        const persistedMaterials = measurementMaterialSnapshot(built)
         setBuiltMeasurement(built)
         setEvaluatedSnapshot(snapshot)
         setResultSessionKey(resetKey)
@@ -557,7 +551,7 @@ export function useCadWorkspace(
         setScene(commonScene)
         setTaskScenes(nextTaskScenes)
         setSimulationProgram(snapshot.simulationProgram)
-        setMaterialParameters(persistedMaterials)
+        setMaterialSnapshot(persistedMaterials)
         setMaterialWarnings(resolutionWarnings)
         rememberEditableMaterialOutput(stableInput(persistedMaterials))
         completeCandidateGeneration()
@@ -617,7 +611,6 @@ export function useCadWorkspace(
     generation,
     materialDependencyKey,
     resetKey,
-    sourceOnlyMaterials,
     candidateDependencyKey,
   ])
 
@@ -756,7 +749,7 @@ export function useCadWorkspace(
     handleRenderStart,
     handleSimulationCodeChange,
     handleSourceChange,
-    materialParameters: ownsCurrentSession ? materialParameters : null,
+    materialSnapshot: ownsCurrentSession ? materialSnapshot : null,
     materialWarnings,
     readOnly: sourceReadOnly,
     measurement: ownsCurrentSession ? builtMeasurement : null,

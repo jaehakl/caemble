@@ -248,7 +248,7 @@ class CalculationBackendContractTests(unittest.TestCase):
             user_id="00000000-0000-0000-0000-000000000001",
             experiment_id=1,
             vars={},
-            material_parameters={},
+            material_snapshot={},
         )
         self.assertEqual(measurement.calculation_data_count, 0)
 
@@ -260,7 +260,8 @@ class CalculationBackendContractTests(unittest.TestCase):
             and value.__module__ == "models"
             and issubclass(value, BaseModel)
         }
-        self.assertGreaterEqual(len(model_names), 29)
+        self.assertTrue({"MeasurementBase", "MeasurementCreateRequest", "ExperimentBase"}.issubset(model_names))
+        self.assertTrue({"MaterialBase", "MaterialNameBase", "MaterialParameterBase", "MaterialParameterQualifierBase"}.isdisjoint(model_names))
         self.assertTrue(
             {
                 "AuthenticatedUserData",

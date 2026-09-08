@@ -12,17 +12,16 @@ from app.kernel.api import SolverInvocation
 from app.kernel.api.world import experiment_scene, geometry_parts, task_scene
 
 from .domain import Bounds3D, FDTDDomain, FDTDRegion, build_fdtd_domain
-from .materials import MODEL_CODES, MaterialProperties, material_properties
+from .materials import DRUDE_METHOD_CODES, MaterialProperties, material_properties
 from .physics import LIGHT_SPEED
 
 
 @dataclass(frozen=True, slots=True)
 class PreparedDomain:
     domain: FDTDDomain
-    relative_permittivity: np.ndarray[Any, np.dtype[np.float32]]
-    epsilon_infinity: np.ndarray[Any, np.dtype[np.float32]]
+    epsilon_instantaneous: np.ndarray[Any, np.dtype[np.float32]]
     plasma_frequency: np.ndarray[Any, np.dtype[np.float32]]
-    collision_frequency: np.ndarray[Any, np.dtype[np.float32]]
+    damping_frequency: np.ndarray[Any, np.dtype[np.float32]]
     model_codes: np.ndarray[Any, np.dtype[np.uint8]]
     widths: tuple[np.ndarray[Any, np.dtype[np.float32]], ...]
     pml_cells: tuple[tuple[int, int], tuple[int, int], tuple[int, int]]
@@ -40,7 +39,7 @@ async def prepare_domain(invocation: SolverInvocation) -> PreparedDomain:
         _positive_float(main_rule["parameters"][name], name)
         for name in ("cellSizeX", "cellSizeY", "cellSizeZ")
     )
-    main_model = _model(main_rule["parameters"]["model"])
+    main_drude_method = _drude_method(main_rule["parameters"]["drudeMethod"])
     buffer_part = None
     buffer_region = None
     buffer_cell_size = None
@@ -55,7 +54,7 @@ async def prepare_domain(invocation: SolverInvocation) -> PreparedDomain:
         buffer_region = FDTDRegion(
             buffer_bounds,
             buffer_part,
-            _model(buffer_rule["parameters"]["model"]),
+            _drude_method(buffer_rule["parameters"]["drudeMethod"]),
         )
 
     parameters = config["parameters"]
@@ -67,7 +66,7 @@ async def prepare_domain(invocation: SolverInvocation) -> PreparedDomain:
     if pml_type != "cpml":
         raise ValueError(f"unsupported pmlType {pml_type!r}")
     domain = build_fdtd_domain(
-        FDTDRegion(main_bounds, main_part, main_model),
+        FDTDRegion(main_bounds, main_part, main_drude_method),
         main_cell_sizes,
         buffer=buffer_region,
         buffer_cell_size=buffer_cell_size,
@@ -76,12 +75,11 @@ async def prepare_domain(invocation: SolverInvocation) -> PreparedDomain:
         pml_cell_size=_positive_float(parameters["pmlCellSize"], "pmlCellSize"),
     )
     shape = tuple(reversed(domain.topology.global_shape))
-    relative_permittivity = np.empty(shape, dtype=np.float32)
-    epsilon_infinity = np.full(shape, np.nan, dtype=np.float32)
+    epsilon_instantaneous = np.empty(shape, dtype=np.float32)
     plasma_frequency = np.full(shape, np.nan, dtype=np.float32)
-    collision_frequency = np.full(shape, np.nan, dtype=np.float32)
+    damping_frequency = np.full(shape, np.nan, dtype=np.float32)
     model_codes = np.empty(shape, dtype=np.uint8)
-    property_cache: dict[tuple[str, str], MaterialProperties] = {}
+    property_cache: dict[tuple[str, str, str], MaterialProperties] = {}
 
     for block in domain.topology.blocks:
         metadata = domain.blocks[block.index]
@@ -91,17 +89,17 @@ async def prepare_domain(invocation: SolverInvocation) -> PreparedDomain:
             invocation,
             part,
             "task",
+            "mainBackground" if part["id"] == main_part["id"] else "bufferBackground",
         )
         index = tuple(reversed(block.global_slices))
         _paint_material(
             index,
             properties,
-            relative_permittivity,
-            epsilon_infinity,
+            epsilon_instantaneous,
             plasma_frequency,
-            collision_frequency,
+            damping_frequency,
         )
-        model_codes[index] = MODEL_CODES[metadata.model]
+        model_codes[index] = DRUDE_METHOD_CODES[metadata.drude_method]
 
     experiment = experiment_scene(invocation.world)
     x_ticks, y_ticks, z_ticks = domain.cell_ticks
@@ -121,16 +119,19 @@ async def prepare_domain(invocation: SolverInvocation) -> PreparedDomain:
         )
         if not np.any(mask):
             continue
-        properties = _cached_material(property_cache, invocation, root, "experiment")
+        properties = _cached_material(property_cache, invocation, root, "experiment", "geometryOverlay")
         _paint_material(
             mask,
             properties,
-            relative_permittivity,
-            epsilon_infinity,
+            epsilon_instantaneous,
             plasma_frequency,
-            collision_frequency,
+            damping_frequency,
         )
 
+    drude_cells = np.isfinite(plasma_frequency)
+    if np.any(drude_cells & (model_codes == 0)):
+        raise ValueError("Drude Material occupies a region whose drudeMethod is 'none'; select RC or TRC")
+    model_codes[~drude_cells] = 0
     widths = tuple(
         np.asarray(
             [segment.cell_size for segment in domain.topology.axes[axis] for _ in range(segment.cell_count)],
@@ -152,10 +153,9 @@ async def prepare_domain(invocation: SolverInvocation) -> PreparedDomain:
     dt = 0.5 * min(float(np.min(axis_widths)) for axis_widths in widths) / LIGHT_SPEED
     return PreparedDomain(
         domain,
-        relative_permittivity,
-        epsilon_infinity,
+        epsilon_instantaneous,
         plasma_frequency,
-        collision_frequency,
+        damping_frequency,
         model_codes,
         widths,
         pml_cells,
@@ -238,19 +238,20 @@ def detector_indices(
 
 
 def _cached_material(
-    cache: dict[tuple[str, str], MaterialProperties],
+    cache: dict[tuple[str, str, str], MaterialProperties],
     invocation: SolverInvocation,
     part: dict[str, Any],
     source: str,
+    role: str,
 ) -> MaterialProperties:
     material_name = part.get("material", {}).get("name")
-    key = (source, str(material_name))
+    key = (source, str(material_name), role)
     if key not in cache:
         cache[key] = material_properties(
             invocation.world,
             part,
-            invocation.descriptor,
             source=source,
+            role=role,
         )
     return cache[key]
 
@@ -258,20 +259,17 @@ def _cached_material(
 def _paint_material(
     index: Any,
     properties: MaterialProperties,
-    relative_permittivity: np.ndarray,
-    epsilon_infinity: np.ndarray,
+    epsilon_instantaneous: np.ndarray,
     plasma_frequency: np.ndarray,
-    collision_frequency: np.ndarray,
+    damping_frequency: np.ndarray,
 ) -> None:
-    relative_permittivity[index] = properties.relative_permittivity
+    epsilon_instantaneous[index] = properties.epsilon_instantaneous
     if properties.has_drude:
-        epsilon_infinity[index] = properties.epsilon_infinity
         plasma_frequency[index] = properties.plasma_frequency
-        collision_frequency[index] = properties.collision_frequency
+        damping_frequency[index] = properties.damping_frequency
     else:
-        epsilon_infinity[index] = np.nan
         plasma_frequency[index] = np.nan
-        collision_frequency[index] = np.nan
+        damping_frequency[index] = np.nan
 
 
 def _target_part(scene: dict[str, Any], rule: dict[str, Any], label: str) -> dict[str, Any]:
@@ -298,10 +296,10 @@ def _one_rule(
     return rules[0] if rules else None
 
 
-def _model(value: Any) -> str:
+def _drude_method(value: Any) -> str:
     model = str(_raw(value))
-    if model not in MODEL_CODES:
-        raise ValueError(f"unsupported FDTD material model {model!r}")
+    if model not in DRUDE_METHOD_CODES:
+        raise ValueError(f"unsupported FDTD Drude method {model!r}")
     return model
 
 

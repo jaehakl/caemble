@@ -10,6 +10,7 @@ from typing import Any, Callable
 from .admin import (
     create_draft,
     insert_experiment,
+    insert_material_model,
     insert_solver_manifest,
     publish_draft,
     rebase_database,
@@ -127,13 +128,15 @@ def _run_query(args: argparse.Namespace) -> Any:
                 return catalog.list_solvers()
             if args.resource == "experiment":
                 return catalog.list_experiments(limit=10_000)[0]
+            if args.resource == "material-model":
+                return catalog.material_models()
             if args.resource == "artifact-type":
                 return catalog.artifact_types()
             raise CatalogError(f"{args.resource} query requires KEY")
         if args.resource == "quantity-kind":
             return {**catalog.quantity_kind(args.key), **catalog.quantity_kind_relations(args.key)}
-        if args.resource == "material-parameter":
-            return {**catalog.material_parameter(args.key), **catalog.material_parameter_relations(args.key)}
+        if args.resource == "material-model":
+            return {**catalog.material_model(args.key), **catalog.material_model_relations(args.key)}
         if args.resource == "artifact-type":
             return catalog.artifact_type(args.key)
         if args.resource == "experiment":
@@ -299,7 +302,8 @@ def _run_solver(args: argparse.Namespace) -> None:
     handler = {
         "parameter": _edit_parameter,
         "material-role": _edit_material_role,
-        "material-property": _edit_material_property,
+        "material-model-group": _edit_material_model_group,
+            "material-model-option": _edit_material_model_option,
         "method": _edit_method,
         "method-parameter": _edit_method_parameter,
         "input-port": _edit_input_port,
@@ -375,96 +379,17 @@ def _edit_quantity_kind(args: argparse.Namespace) -> None:
     refresh_derived_data(args.database)
 
 
-def _edit_material_parameter(args: argparse.Namespace) -> None:
-    with writable_connection(args.database) as connection:
-        if args.material_parameter_action == "remove":
-            if connection.execute("DELETE FROM material_parameters WHERE key = ?", (args.key,)).rowcount != 1:
-                raise CatalogNotFoundError(f"Unknown Material parameter: {args.key}")
-        else:
-            domain, separator, _ = args.key.partition(".")
-            if not separator:
-                raise CatalogError("Material parameter key must use domain.property syntax")
-            connection.execute(
-                """
-                INSERT INTO material_parameters(key, domain, label_ko, quantity_kind) VALUES (?, ?, ?, ?)
-                ON CONFLICT(key) DO UPDATE SET domain=excluded.domain, label_ko=excluded.label_ko,
-                  quantity_kind=excluded.quantity_kind
-                """,
-                (args.key, domain, args.label_ko, args.quantity_kind),
-            )
-            _replace_sequence(
-                connection,
-                "material_parameter_qualifiers",
-                "material_parameter",
-                args.key,
-                "qualifier",
-                args.qualifier,
-            )
-    refresh_derived_data(args.database)
-
-
 def _edit_material_model(args: argparse.Namespace) -> None:
     with writable_connection(args.database) as connection:
         if args.material_model_action == "remove":
             if connection.execute("DELETE FROM material_models WHERE key = ?", (args.key,)).rowcount != 1:
                 raise CatalogNotFoundError(f"Unknown Material model: {args.key}")
         else:
-            connection.execute(
-                """
-                INSERT INTO material_models VALUES (?, ?, 'sampled_relation', ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(key) DO UPDATE SET label_ko=excluded.label_ko, input_name=excluded.input_name,
-                  input_quantity_kind=excluded.input_quantity_kind, output_name=excluded.output_name,
-                  output_quantity_kind=excluded.output_quantity_kind, minimum_samples=excluded.minimum_samples,
-                  shared_basis=excluded.shared_basis
-                """,
-                (
-                    args.key,
-                    args.label_ko,
-                    args.input_name,
-                    args.input_quantity_kind,
-                    args.output_name,
-                    args.output_quantity_kind,
-                    args.minimum_samples,
-                    int(args.shared_basis),
-                ),
-            )
-    refresh_derived_data(args.database)
-
-
-def _edit_global_qualifier(args: argparse.Namespace) -> None:
-    with writable_connection(args.database) as connection:
-        values = [
-            row["qualifier"]
-            for row in connection.execute("SELECT qualifier FROM material_global_qualifiers ORDER BY ordinal")
-        ]
-        if args.global_qualifier_action == "add":
-            if args.qualifier in values:
-                raise CatalogError(f"Global qualifier already exists: {args.qualifier}")
-            position = len(values) if args.position is None else args.position
-            if position < 0 or position > len(values):
-                raise CatalogError("Qualifier position is outside the list")
-            values.insert(position, args.qualifier)
-        elif args.global_qualifier_action == "remove":
-            if args.qualifier not in values:
-                raise CatalogNotFoundError(f"Unknown global qualifier: {args.qualifier}")
-            values.remove(args.qualifier)
-        else:
-            if set(args.qualifiers) != set(values) or len(args.qualifiers) != len(values):
-                raise CatalogError("Reorder must contain every existing qualifier exactly once")
-            values = args.qualifiers
-        _replace_sequence(connection, "material_global_qualifiers", None, None, "qualifier", values)
-    refresh_derived_data(args.database)
-
-
-def _edit_design_rule(args: argparse.Namespace) -> None:
-    with writable_connection(args.database) as connection:
-        if args.design_rule_action == "set":
-            connection.execute(
-                "INSERT INTO material_design_rules VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET description=excluded.description",
-                (args.key, args.description),
-            )
-        elif connection.execute("DELETE FROM material_design_rules WHERE key = ?", (args.key,)).rowcount != 1:
-            raise CatalogNotFoundError(f"Unknown design rule: {args.key}")
+            insert_material_model(connection, {
+                "key": args.key, "labelKo": args.label_ko, "description": args.description,
+                "equation": args.equation, "conventions": args.conventions,
+                "parameterSchema": args.schema_json,
+            })
     refresh_derived_data(args.database)
 
 
@@ -498,31 +423,52 @@ def _edit_material_role(args: argparse.Namespace) -> None:
                 {
                     "role": args.role,
                     "description": args.description,
-                    "target": {"category": args.target_category, "methodId": args.target_method_id},
-                    "properties": {},
+                    "target": {"category": args.target_category, **({"source": args.target_source} if args.target_category == "geometry" else {"methodId": args.target_method_id})},
+                    "modelGroups": [],
                 }
             )
         else:
             existing.update(
                 description=args.description,
-                target={"category": args.target_category, "methodId": args.target_method_id},
+                target={"category": args.target_category, **({"source": args.target_source} if args.target_category == "geometry" else {"methodId": args.target_method_id})},
             )
 
     _mutate(args.database, args.name, args.version, operation)
 
 
-def _edit_material_property(args: argparse.Namespace) -> None:
+def _edit_material_model_group(args: argparse.Namespace) -> None:
     def operation(manifest: dict[str, Any]) -> None:
-        values = _material_role(manifest["descriptor"], args.role)["properties"]
+        groups = _material_role(manifest["descriptor"], args.role)["modelGroups"]
+        existing = next((group for group in groups if group["key"] == args.group), None)
         if args.row_action == "remove":
-            _named_remove(values, args.material_parameter, "Solver material property")
+            if existing is None:
+                raise CatalogNotFoundError(f"Unknown model group: {args.group}")
+            groups.remove(existing)
         else:
-            _named_upsert(
-                values,
-                args.material_parameter,
-                {"description": args.description, "data": args.data_json},
-            )
+            if not args.model or len(args.model) != len(set(args.model)):
+                raise CatalogError("A model group requires unique --model options")
+            value = {"key": args.group, "required": args.required, "oneOf": args.model}
+            if existing is None:
+                groups.append(value)
+            else:
+                existing.update(value)
+    _mutate(args.database, args.name, args.version, operation)
 
+
+def _edit_material_model_option(args: argparse.Namespace) -> None:
+    def operation(manifest: dict[str, Any]) -> None:
+        groups = _material_role(manifest["descriptor"], args.role)["modelGroups"]
+        group = next((item for item in groups if item["key"] == args.group), None)
+        if group is None:
+            raise CatalogNotFoundError(f"Unknown model group: {args.group}")
+        if args.row_action == "remove":
+            if args.model not in group["oneOf"]:
+                raise CatalogNotFoundError(f"Unknown model option: {args.model}")
+            if len(group["oneOf"]) == 1:
+                raise CatalogError("A model group must retain at least one option")
+            group["oneOf"].remove(args.model)
+        elif args.model not in group["oneOf"]:
+            group["oneOf"].append(args.model)
     _mutate(args.database, args.name, args.version, operation)
 
 
@@ -637,7 +583,7 @@ def build_parser() -> argparse.ArgumentParser:
     query = commands.add_parser("query")
     query.add_argument(
         "resource",
-        choices=("meta", "quantity-kind", "material-parameter", "artifact-type", "solver", "experiment"),
+        choices=("meta", "quantity-kind", "material-model", "artifact-type", "solver", "experiment"),
     )
     query.add_argument("key", nargs="?")
     query.add_argument("version", nargs="?")
@@ -667,7 +613,7 @@ def build_parser() -> argparse.ArgumentParser:
     create_solver = solver_actions.add_parser("create")
     _identity(create_solver)
     create_solver.add_argument("--implementation", required=True)
-    create_solver.add_argument("--implementation-abi", type=int, default=2)
+    create_solver.add_argument("--implementation-abi", type=int, default=3)
     create_solver.add_argument("--description", required=True)
     create_solver.add_argument("--reference-length-unit", default="m")
     create_solver.add_argument("--minimum-outputs", type=int, default=1)
@@ -697,16 +643,26 @@ def build_parser() -> argparse.ArgumentParser:
         _identity(item)
         item.add_argument("role")
     upsert.add_argument("--description", required=True)
-    upsert.add_argument("--target-category", choices=("initializations", "boundaryConditions", "outputs"), required=True)
-    upsert.add_argument("--target-method-id", required=True)
+    upsert.add_argument("--target-category", choices=("initializations", "boundaryConditions", "outputs", "geometry"), required=True)
+    upsert.add_argument("--target-method-id")
+    upsert.add_argument("--target-source", choices=("experiment", "task"))
 
-    prop = solver_actions.add_parser("material-property")
-    upsert, remove = _row_actions(prop)
+    group = solver_actions.add_parser("material-model-group")
+    upsert, remove = _row_actions(group)
     for item in (upsert, remove):
         _identity(item)
         item.add_argument("role")
-        item.add_argument("material_parameter")
-    _descriptor(upsert)
+        item.add_argument("group")
+    upsert.add_argument("--required", action=argparse.BooleanOptionalAction, default=True)
+    upsert.add_argument("--model", action="append", required=True)
+
+    option = solver_actions.add_parser("material-model-option")
+    upsert, remove = _row_actions(option)
+    for item in (upsert, remove):
+        _identity(item)
+        item.add_argument("role")
+        item.add_argument("group")
+        item.add_argument("model")
 
     method = solver_actions.add_parser("method")
     upsert, remove = _row_actions(method)
@@ -777,46 +733,16 @@ def build_parser() -> argparse.ArgumentParser:
     reorder.add_argument("name")
     reorder.add_argument("units", nargs="+")
 
-    material_parameter = commands.add_parser("material-parameter")
-    material_parameter_actions = material_parameter.add_subparsers(dest="material_parameter_action", required=True)
-    upsert = material_parameter_actions.add_parser("upsert")
-    upsert.add_argument("key")
-    upsert.add_argument("--label-ko", required=True)
-    upsert.add_argument("--quantity-kind", required=True)
-    upsert.add_argument("--qualifier", action="append", default=[])
-    remove = material_parameter_actions.add_parser("remove")
-    remove.add_argument("key")
-
     material_model = commands.add_parser("material-model")
     material_model_actions = material_model.add_subparsers(dest="material_model_action", required=True)
     upsert = material_model_actions.add_parser("upsert")
     upsert.add_argument("key")
     upsert.add_argument("--label-ko", required=True)
-    upsert.add_argument("--input-name", required=True)
-    upsert.add_argument("--input-quantity-kind", required=True)
-    upsert.add_argument("--output-name", required=True)
-    upsert.add_argument("--output-quantity-kind", required=True)
-    upsert.add_argument("--minimum-samples", type=int, default=2)
-    upsert.add_argument("--shared-basis", action=argparse.BooleanOptionalAction, default=False)
+    upsert.add_argument("--description", required=True)
+    upsert.add_argument("--equation", required=True)
+    upsert.add_argument("--conventions", required=True)
+    upsert.add_argument("--schema-json", type=_data, required=True)
     remove = material_model_actions.add_parser("remove")
-    remove.add_argument("key")
-
-    global_qualifier = commands.add_parser("global-qualifier")
-    global_actions = global_qualifier.add_subparsers(dest="global_qualifier_action", required=True)
-    add = global_actions.add_parser("add")
-    add.add_argument("qualifier")
-    add.add_argument("--position", type=int)
-    remove = global_actions.add_parser("remove")
-    remove.add_argument("qualifier")
-    reorder = global_actions.add_parser("reorder")
-    reorder.add_argument("qualifiers", nargs="+")
-
-    design_rule = commands.add_parser("design-rule")
-    design_actions = design_rule.add_subparsers(dest="design_rule_action", required=True)
-    set_rule = design_actions.add_parser("set")
-    set_rule.add_argument("key")
-    set_rule.add_argument("description")
-    remove = design_actions.add_parser("remove")
     remove.add_argument("key")
 
     metadata = commands.add_parser("metadata")
@@ -849,10 +775,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             handler = {
                 "quantity-kind": _edit_quantity_kind,
-                "material-parameter": _edit_material_parameter,
                 "material-model": _edit_material_model,
-                "global-qualifier": _edit_global_qualifier,
-                "design-rule": _edit_design_rule,
                 "metadata": _edit_metadata,
                 "experiment": _edit_experiment,
             }[args.command]

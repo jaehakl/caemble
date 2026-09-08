@@ -19,6 +19,7 @@ from gpstation.db import Job, JobBatch
 from gpstation.service.batches import add_event, serialize_events
 from gpstation.service.state import utcnow
 from models import UserData
+from service.material_snapshot import validate_material_snapshot
 from utils.crud.common import is_admin_user
 
 CHUNK_BYTES = 8 * 1024 * 1024
@@ -68,19 +69,30 @@ def validate_artifact_item(value: object, source_hash: str) -> dict:
     for key in ("variables", "varsSchema", "scene", "taskScenes", "simulationProgram"):
         if not isinstance(experiment.get(key), dict):
             raise HTTPException(422, f"BuiltMeasurement experiment.{key} must be an object.")
-    for key in ("materialParameters", "taskMaterialParameters", "taskMaterialWarnings"):
+    for key in ("materialSnapshot", "taskMaterialSnapshots", "materialSelections"):
         if not isinstance(measurement.get(key), dict):
             raise HTTPException(422, f"BuiltMeasurement {key} must be an object.")
-    if not isinstance(measurement.get("materialWarnings"), list):
-        raise HTTPException(422, "BuiltMeasurement materialWarnings must be an array.")
+    if any(key in measurement for key in ("materialParameters", "taskMaterialParameters", "materialWarnings", "taskMaterialWarnings")):
+        raise HTTPException(422, "Legacy Material inputs are not supported. Rebuild with the current client.")
     program = experiment["simulationProgram"]
     if not isinstance(program.get("pythonSource"), str) or not program["pythonSource"].strip():
         raise HTTPException(422, "BuiltMeasurement must retain its Python program source.")
     if not isinstance(program.get("tasks"), dict) or not isinstance(program.get("recordedData"), dict):
         raise HTTPException(422, "BuiltMeasurement program tasks and recordedData must be objects.")
     tasks = set(program["tasks"])
-    if tasks != set(experiment["taskScenes"]) or tasks != set(measurement["taskMaterialParameters"]) or tasks != set(measurement["taskMaterialWarnings"]):
+    if tasks != set(experiment["taskScenes"]) or tasks != set(measurement["taskMaterialSnapshots"]) or tasks != set(measurement["materialSelections"]):
         raise HTTPException(422, "Frozen Task scenes and Material snapshots must match the program tasks.")
+    try:
+        validate_material_snapshot({
+            "experiment": measurement["materialSnapshot"],
+            "tasks": measurement["taskMaterialSnapshots"],
+            "modelDefinitions": measurement.get("modelDefinitions"),
+            "selections": measurement["materialSelections"],
+            "sourceHash": experiment["sourceHash"],
+            "varsHash": measurement.get("varsHash"),
+        }, source_hash=source_hash, variables=experiment["variables"])
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
     for name, task in program["tasks"].items():
         kernel = task.get("kernel") if isinstance(task, dict) else None
         if not isinstance(kernel, dict) or not all(isinstance(kernel.get(key), str) and kernel[key] for key in ("name", "version")):
@@ -171,7 +183,17 @@ async def commit_batch(db: AsyncSession, batch_id: str, user: UserData, catalog:
                 except CatalogNotFoundError as error:
                     raise HTTPException(409, f"Task {name} references a Solver unavailable in the current Catalog.") from error
             variables = measurement_input["experiment"]["variables"]
-            materials = {"experiment": measurement_input["materialParameters"], "tasks": measurement_input["taskMaterialParameters"]}
+            try:
+                materials = validate_material_snapshot({
+                    "experiment": measurement_input["materialSnapshot"],
+                    "tasks": measurement_input["taskMaterialSnapshots"],
+                    "modelDefinitions": measurement_input["modelDefinitions"],
+                    "selections": measurement_input["materialSelections"],
+                    "sourceHash": measurement_input["experiment"]["sourceHash"],
+                    "varsHash": measurement_input["varsHash"],
+                }, source_hash=experiment.source_hash, variables=variables, catalog=catalog)
+            except ValueError as error:
+                raise HTTPException(422, str(error)) from error
             measurement_id = job.artifact_metadata.get("measurement_id")
             if measurement_id is not None:
                 measurement = await db.scalar(select(Measurement).where(
@@ -182,12 +204,12 @@ async def commit_batch(db: AsyncSession, batch_id: str, user: UserData, catalog:
                     raise HTTPException(404, "Measurement not found.")
                 if measurement.job_id is not None or measurement.recorded_at is not None:
                     raise HTTPException(409, "Measurement already has an execution. Open its batch to retry.")
-                if measurement.vars != variables or measurement.material_parameters != materials:
+                if measurement.vars != variables or measurement.material_snapshot != materials:
                     raise HTTPException(409, "Artifact differs from the saved Measurement inputs.")
                 measurement.job_id = job.id
             else:
                 measurement = Measurement(user_id=user.id, experiment_id=experiment.id,
-                    vars=variables, material_parameters=materials, job_id=job.id)
+                    vars=variables, material_snapshot=materials, job_id=job.id)
                 db.add(measurement)
             await db.flush()
             job.state = "queued"

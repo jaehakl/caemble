@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { Database, Rows3 } from 'lucide-react'
+import { Rows3 } from 'lucide-react'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation } from 'react-router'
 import { Badge } from '@/components/ui/badge'
@@ -39,8 +39,6 @@ import { useCaeBatches } from '@/features/cae/CaeBatchProvider'
 import { useCaeBatchConsole } from '@/features/cae/useCaeBatchConsole'
 import { JobsWorkspace } from '@/features/jobs/JobsPage'
 import { LaunchersWorkspace } from '@/features/launchers/LaunchersPage'
-import { MaterialDetail } from '@/features/materials/MaterialDetailPage'
-import { MaterialList } from '@/features/materials/MaterialListPage'
 import { CaeWorkbenchDialogs } from '@/features/cae-workbench/CaeWorkbenchDialogs'
 import { AdminWorkspace } from '@/features/cae-workbench/AdminWorkspace'
 import { ExperimentDetail } from '@/features/cae-workbench/WorkbenchDetails'
@@ -49,7 +47,6 @@ import {
   useCaePageChrome,
   type AnalysisRibbonCommand,
   type LabRibbonCommand,
-  type MaterialRibbonCommand,
   type PredictionRibbonCommand,
 } from '@/features/cae-workbench/useCaePageChrome'
 import { useCaePageSession } from '@/workbench/useCaePageSession'
@@ -129,13 +126,9 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     validateDisabledReason: 'Prediction 결과가 필요합니다.',
   })
   const [chatCommand, setChatCommand] = useState<AiChatCommand | null>(null)
-  const [materialCommand, setMaterialCommand] = useState<Readonly<{ id: number; type: MaterialRibbonCommand }> | null>(
-    null,
-  )
   const [labActivated, setLabActivated] = useState(false)
   const [predictionActivated, setPredictionActivated] = useState(false)
   const commandSequence = useRef(0)
-  const selectedMaterialId = page.materialId
   const selectionSourceFiles =
     workbench.experiment?.kind === 'experiment' ? workbench.experiment.sourceBundle.files : null
   const {
@@ -168,12 +161,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     if (page.activeSection !== 'analysis') setAnalysisCommand(null)
     if (page.activeSection !== 'prediction') setPredictionCommand(null)
     if (page.activeSection !== 'lab') setChatCommand(null)
-    if (page.activeSection !== 'material') setMaterialCommand(null)
   }, [page.activeSection])
-
-  useEffect(() => {
-    setMaterialCommand(null)
-  }, [selectedMaterialId])
 
   const setActiveSection = useCallback(
     (nextSection: WorkbenchSectionId) => {
@@ -188,10 +176,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     [auth.user?.roles, calculationDirty, currentSection, guardReplacement, setLayout],
   )
 
-  const setSelectedMaterialId = useCallback(
-    (materialId: number | null) => setLayout((current) => ({ ...current, materialId })),
-    [setLayout],
-  )
   const setAnalysisTab = useCallback(
     (analysisTab: AnalysisTabId) => setLayout((current) => ({ ...current, analysisTab })),
     [setLayout],
@@ -209,9 +193,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   }, [])
   const requestLabCommand = useCallback((type: LabRibbonCommand) => {
     setChatCommand({ id: ++commandSequence.current, type })
-  }, [])
-  const requestMaterialCommand = useCallback((type: MaterialRibbonCommand) => {
-    setMaterialCommand({ id: ++commandSequence.current, type })
   }, [])
   const requestPredictionCommand = useCallback((type: PredictionRibbonCommand, sampleCount?: number) => {
     setPredictionCommand({ id: ++commandSequence.current, type, sampleCount })
@@ -232,14 +213,12 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     experimentAuthoringState,
     guardReplacement: page.guardReplacement,
     helpKind: page.help.kind,
-    materialSelected: selectedMaterialId !== null,
     refreshRuntime,
     requestAnalysisCommand,
     requestCalculationSave,
     requestPredictionCommand,
     selectedCalculationId: workbench.selectionContext.calculationId,
     requestLabCommand,
-    requestMaterialCommand,
     requestRunSelected: page.requestRunSelected,
     runSafely: page.runSafely,
     setActiveSection,
@@ -287,22 +266,19 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         }
       />
     ) : page.activeSection === 'measurement' ? null : page.activeSection === 'prediction' ? (
-      <div className="h-full min-h-0 overflow-hidden bg-background p-2" ref={setPredictionVarsContainer} />
-    ) : page.activeSection === 'material' ? (
-      <MaterialList
-        command={
-          materialCommand?.type === 'new' || materialCommand?.type === 'refresh'
-            ? { id: materialCommand.id, type: materialCommand.type }
-            : null
-        }
-        compact
-        selectedMaterialId={selectedMaterialId}
-        onSelectMaterial={setSelectedMaterialId}
+      <div
+        key="prediction-vars"
+        className="h-full min-h-0 overflow-hidden bg-background p-2"
+        ref={setPredictionVarsContainer}
       />
     ) : page.activeSection === 'analysis' ? (
-      <div className="h-full min-h-0 overflow-auto bg-background" ref={setAnalysisSettingsContainer} />
+      <div
+        key="analysis-settings"
+        className="h-full min-h-0 overflow-auto bg-background"
+        ref={setAnalysisSettingsContainer}
+      />
     ) : page.activeSection === 'lab' ? (
-      <div className="h-full min-h-0 overflow-auto bg-background" ref={setChatSettingsContainer} />
+      <div key="chat-settings" className="h-full min-h-0 overflow-auto bg-background" ref={setChatSettingsContainer} />
     ) : page.activeSection === 'help' ? (
       <WorkbenchHelpExplorer
         kind={page.help.kind}
@@ -374,23 +350,7 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         }}
       />
     ) : page.activeSection === 'measurement' || page.activeSection === 'prediction' ? null : page.activeSection ===
-      'material' ? (
-      selectedMaterialId ? (
-        <MaterialDetail
-          command={
-            materialCommand && materialCommand.type !== 'new' && materialCommand.type !== 'refresh'
-              ? { id: materialCommand.id, type: materialCommand.type }
-              : null
-          }
-          compact
-          materialId={selectedMaterialId}
-          onDeleted={() => setSelectedMaterialId(null)}
-          onRequestLogin={() => page.setDialog('account')}
-        />
-      ) : (
-        <PaneEmpty icon={<Database />} title="Material을 선택하세요" />
-      )
-    ) : page.activeSection === 'analysis' ? (
+      'analysis' ? (
       <Suspense fallback={<PaneLoading label="Analysis를 불러오는 중입니다." />}>
         <AnalysisWorkspace
           command={analysisCommand}
@@ -709,18 +669,6 @@ function PaneTabs({
         </TabsContent>
       ))}
     </Tabs>
-  )
-}
-
-function PaneEmpty({ description, icon, title }: { description?: string; icon: ReactNode; title: string }) {
-  return (
-    <div className="grid h-full place-items-center p-6 text-center">
-      <div className="max-w-xs text-muted-foreground [&_svg]:mx-auto [&_svg]:size-8">
-        {icon}
-        <p className="mt-3 font-medium text-foreground">{title}</p>
-        {description ? <p className="mt-1 text-sm">{description}</p> : null}
-      </div>
-    </div>
   )
 }
 

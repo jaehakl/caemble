@@ -52,10 +52,9 @@ def catalog_query(args: argparse.Namespace) -> Any:
                 "implementation": manifest["implementation"],
                 "abiVersion": manifest["abiVersion"],
             }
-        if args.resource in {"quantity-kinds", "material-parameters", "material-models", "examples"}:
+        if args.resource in {"quantity-kinds", "material-models", "examples"}:
             readers = {
                 "quantity-kinds": catalog.list_quantity_kinds,
-                "material-parameters": catalog.list_material_parameters,
                 "material-models": catalog.list_material_models,
                 "examples": catalog.list_experiments,
             }
@@ -63,8 +62,6 @@ def catalog_query(args: argparse.Namespace) -> Any:
             return {"items": items, "total": total}
         if args.resource == "quantity-kind":
             return {**catalog.quantity_kind(args.key), **catalog.quantity_kind_relations(args.key)}
-        if args.resource == "material-parameter":
-            return {**catalog.material_parameter(args.key), **catalog.material_parameter_relations(args.key)}
         if args.resource == "material-model":
             return catalog.material_model(args.key)
         if args.resource == "artifact-types":
@@ -80,13 +77,11 @@ def catalog_query(args: argparse.Namespace) -> Any:
             request = {
                 "solvers": catalog.list_solvers(),
                 "quantityKinds": [item["name"] for item in catalog.list_quantity_kinds(limit=meta["quantityKindCount"])[0]],
-                "materialParameters": [item["key"] for item in catalog.list_material_parameters(limit=meta["materialParameterCount"])[0]],
                 "materialModels": [item["key"] for item in catalog.material_models()],
             }
         return catalog.runtime_slice(
             solvers=[(item["name"], item["version"]) for item in request.get("solvers", [])],
             quantity_kinds=request.get("quantityKinds", []),
-            material_parameters=request.get("materialParameters", []),
             material_models=request.get("materialModels", []),
         )
 
@@ -320,7 +315,7 @@ def main(argv: list[str] | None = None) -> int:
     catalog = commands.add_parser("catalog")
     catalog.add_argument("resource", choices=(
         "meta", "search", "solvers", "solver", "quantity-kinds", "quantity-kind",
-        "material-parameters", "material-parameter", "material-models", "material-model",
+        "material-models", "material-model",
         "artifact-types", "artifact-type", "examples", "example", "runtime",
     ))
     catalog.add_argument("--database", type=Path)

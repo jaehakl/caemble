@@ -3,11 +3,7 @@ import type { ColumnDef } from '@tanstack/react-table'
 import { Cpu, FlaskConical } from 'lucide-react'
 import { useDeferredValue, useEffect, useState } from 'react'
 import { Link } from 'react-router'
-import {
-  type CatalogExperimentListItem,
-  type CatalogSolverDetail,
-  type CatalogSolverListItem,
-} from '@/api/catalog'
+import { type CatalogExperimentListItem, type CatalogSolverDetail, type CatalogSolverListItem } from '@/api/catalog'
 import { CatalogPageLayout } from '@/components/CatalogPageLayout'
 import { DataTable } from '@/components/DataTable'
 import { Badge } from '@/components/ui/badge'
@@ -402,13 +398,25 @@ function SolverDetail({
                   <code className="text-xs font-semibold text-orange-700">{material.role}</code>
                   <p className="mt-1 text-xs text-muted-foreground">{material.description}</p>
                   <p className="mt-2 text-[11px] text-muted-foreground">
-                    Required by {material.target.category}.{material.target.methodId}
+                    {material.target.category === 'geometry'
+                      ? `${material.target.source}.geometry`
+                      : `${material.target.category}.${material.target.methodId}`}
+                    의 각 Material에 적용
                   </p>
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {Object.keys(material.properties).map((key) => (
-                      <Link key={key} to={`/docs?section=materials&item=${encodeURIComponent(key)}`}>
-                        <Badge className="font-mono font-normal hover:bg-orange-100">{key}</Badge>
-                      </Link>
+                  <div className="mt-3 space-y-3">
+                    {material.modelGroups.map((group) => (
+                      <div key={group.key}>
+                        <p className="mb-1 text-xs font-medium">
+                          {group.key} · {group.required ? '필수' : '선택'} · 하나 선택
+                        </p>
+                        <div className="flex flex-wrap gap-1">
+                          {group.oneOf.map((key) => (
+                            <Link key={key} to={`/docs?section=materials&item=${encodeURIComponent(key)}`}>
+                              <Badge className="font-mono font-normal hover:bg-orange-100">{key}</Badge>
+                            </Link>
+                          ))}
+                        </div>
+                      </div>
                     ))}
                   </div>
                 </div>

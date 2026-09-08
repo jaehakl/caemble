@@ -17,12 +17,9 @@ class CatalogMeta(CatalogModel):
     quantity_kind_data_version: str
     material_catalog_version: str
     quantity_kind_count: int
-    material_parameter_count: int
     material_model_count: int
     solver_count: int
     experiment_count: int
-    material_global_qualifiers: list[str]
-    material_design_rules: dict[str, str]
 
 
 class QuantityKind(CatalogModel):
@@ -37,6 +34,7 @@ class QuantityKind(CatalogModel):
 class MaterialLink(CatalogModel):
     key: str
     label_ko: str
+    path: str
 
 
 class SolverQuantityKindUsage(CatalogModel):
@@ -49,16 +47,8 @@ class SolverQuantityKindUsage(CatalogModel):
 
 
 class QuantityKindDetail(QuantityKind):
-    material_parameters: list[MaterialLink]
+    material_models: list[MaterialLink]
     solver_usages: list[SolverQuantityKindUsage]
-
-
-class MaterialParameter(CatalogModel):
-    key: str
-    domain: str
-    label_ko: str
-    quantity_kind: str
-    special_qualifiers: list[str]
 
 
 class SolverMaterialRequirement(CatalogModel):
@@ -66,32 +56,24 @@ class SolverMaterialRequirement(CatalogModel):
     solver_version: str
     role: str
     role_description: str | None = None
-    method_category: str
-    method_id: str
-    material_parameter: str | None = None
-    description: str
-    quantity_kind: str | None = None
-    unit: str | None = None
-
-
-class MaterialParameterDetail(MaterialParameter):
-    quantity_kind_definition: QuantityKind
-    solver_requirements: list[SolverMaterialRequirement]
-
-
-class MaterialModelEndpoint(CatalogModel):
-    name: str
-    quantity_kind: str
+    method_category: str | None = None
+    method_id: str | None = None
+    group_key: str
+    required: bool
+    model: str | None = None
 
 
 class MaterialModel(CatalogModel):
     key: str
     label_ko: str
-    kind: str
-    input: MaterialModelEndpoint
-    output: MaterialModelEndpoint
-    minimum_samples: int
-    shared_basis: bool
+    description: str
+    equation: str
+    conventions: str
+    parameter_schema: dict[str, Any]
+
+
+class MaterialModelDetail(MaterialModel):
+    solver_requirements: list[SolverMaterialRequirement]
 
 
 class SolverSummary(CatalogModel):
@@ -184,9 +166,9 @@ class SolverIdentity(CatalogModel):
 
 
 class CatalogRuntimeSliceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     solvers: list[SolverIdentity] = Field(default_factory=list)
     quantityKinds: list[CatalogIdentifier] = Field(default_factory=list)
-    materialParameters: list[CatalogIdentifier] = Field(default_factory=list)
     materialModels: list[CatalogIdentifier] = Field(default_factory=list)
 
 
@@ -200,7 +182,5 @@ class CatalogRuntimeSlice(CatalogModel):
     catalog_revision: str
     solvers: list[RuntimeSolver]
     quantity_kinds: list[QuantityKind]
-    material_parameters: list[MaterialParameter]
     material_models: list[MaterialModel]
-    material_global_qualifiers: list[str]
     warnings: list[str]

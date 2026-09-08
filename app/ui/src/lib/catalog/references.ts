@@ -35,9 +35,7 @@ const EMPTY_DRAFT_CATALOG_RUNTIME_SLICE: CatalogRuntimeSlice = deepFreeze({
   catalogRevision: 'draft-only-empty',
   solvers: [],
   quantityKinds: [],
-  materialParameters: [],
   materialModels: [],
-  materialGlobalQualifiers: [],
   warnings: [],
 })
 
@@ -90,7 +88,6 @@ function collectFileReferences(
   const ast = parseCadSource(source, policy, path)
   const analysis = { bindings: collectSourceBindings(ast.program.body) }
   const quantityKinds = new Set<string>()
-  const materialParameters = new Set<string>()
   const materialModels = new Set<string>()
   const materialConstructors = new Set(
     ast.program.body.flatMap((statement) => {
@@ -128,35 +125,48 @@ function collectFileReferences(
       materialConstructors.has((node.callee as { name: string }).name)
     ) {
       const args = node.arguments as unknown[]
-      const variables = args.length >= 3 ? args[2] : args.length === 2 ? args[1] : undefined
-      if (variables !== undefined) {
-        const expression = resolveSourceBinding(
-          sourceExpression(variables, 'Material variables or source selector'),
+      if (args.length > 2) throw new SourceAnalysisError('Material accepts only a name and { color?, models? }.')
+      if (args[1] !== undefined) {
+        const options = resolveSourceBinding(
+          sourceExpression(args[1], 'Material options'),
           analysis.bindings,
         ).expression
-        if (
-          args.length === 2 &&
-          (expression.type === 'StringLiteral' ||
-            (expression.type === 'TemplateLiteral' && expression.expressions.length === 0))
-        ) {
-          Object.entries(node).forEach(([key, child]) => {
-            if (!['loc', 'start', 'end'].includes(key)) visit(child)
-          })
-          return
-        }
-        if (expression.type !== 'ObjectExpression') {
-          throw new SourceAnalysisError(
-            'Material variables must use an object literal so catalog keys are known before evaluation.',
-          )
-        }
-        expression.properties.forEach((property) => {
-          if (property.type === 'SpreadElement') {
-            throw new SourceAnalysisError('Material variables cannot spread catalog keys; write each key directly.')
-          }
+        if (options.type !== 'ObjectExpression')
+          throw new SourceAnalysisError('Material options must be a fixed object literal.')
+        for (const property of options.properties) {
+          if (property.type !== 'ObjectProperty')
+            throw new SourceAnalysisError('Material options must use explicit property names.')
           const key = propertyName(property, analysis)
-          if (key.startsWith('model.')) materialModels.add(key)
-          else if (key.includes('.')) materialParameters.add(key)
-        })
+          if (key === 'color') continue
+          if (key !== 'models')
+            throw new SourceAnalysisError(`Material.${key} is not allowed; define physical parameters inside models.`)
+          const models = resolveSourceBinding(
+            sourceExpression(property.value, 'Material.models'),
+            analysis.bindings,
+          ).expression
+          if (models.type !== 'ObjectExpression')
+            throw new SourceAnalysisError('Material.models must use a fixed instance map.')
+          for (const instance of models.properties) {
+            if (instance.type !== 'ObjectProperty')
+              throw new SourceAnalysisError('Material.models must declare each model instance explicitly.')
+            propertyName(instance, analysis)
+            const definition = resolveSourceBinding(
+              sourceExpression(instance.value, 'Model instance'),
+              analysis.bindings,
+            ).expression
+            if (definition.type !== 'ObjectExpression')
+              throw new SourceAnalysisError('Model instances must use fixed object literals.')
+            const selectors = definition.properties.filter(
+              (field): field is ObjectProperty =>
+                field.type === 'ObjectProperty' && propertyName(field, analysis) === 'model',
+            )
+            if (selectors.length !== 1)
+              throw new SourceAnalysisError('Each model instance must declare model exactly once.')
+            materialModels.add(
+              staticString(sourceExpression(selectors[0].value, 'Model identity'), analysis, 'Model identity'),
+            )
+          }
+        }
       }
     }
     Object.entries(node).forEach(([key, child]) => {
@@ -164,7 +174,7 @@ function collectFileReferences(
     })
   }
   visit(ast.program)
-  return { quantityKinds, materialParameters, materialModels }
+  return { quantityKinds, materialModels }
 }
 
 export function extractCatalogSourceReferences(bundle: ExperimentSourceBundle): CatalogSourceReferences {
@@ -179,7 +189,6 @@ export function extractCatalogSourceReferences(bundle: ExperimentSourceBundle): 
     .filter(({ solver }) => solver.name === DRAFT_TASK_KERNEL.name && solver.version === DRAFT_TASK_KERNEL.version)
     .map(({ taskName }) => taskName)
   const quantityKinds = new Set<string>()
-  const materialParameters = new Set<string>()
   const materialModels = new Set<string>()
   const sourceFiles = experimentTypeScriptPaths(bundle.files).map(
     (path) =>
@@ -199,14 +208,12 @@ export function extractCatalogSourceReferences(bundle: ExperimentSourceBundle): 
   sourceFiles.forEach(([path, policy]) => {
     const found = collectFileReferences(path, bundle.files[path], policy)
     found.quantityKinds.forEach((name) => quantityKinds.add(name))
-    found.materialParameters.forEach((key) => materialParameters.add(key))
     found.materialModels.forEach((key) => materialModels.add(key))
   })
   return Object.freeze({
     solvers: Object.freeze(solvers),
     draftTaskNames: Object.freeze(draftTaskNames),
     quantityKinds: Object.freeze([...quantityKinds].sort()),
-    materialParameters: Object.freeze([...materialParameters].sort()),
     materialModels: Object.freeze([...materialModels].sort()),
   })
 }
@@ -220,7 +227,6 @@ export function createCachedCatalogRuntimeSliceResolver(
     if (
       references.solvers.length === 0 &&
       references.quantityKinds.length === 0 &&
-      references.materialParameters.length === 0 &&
       references.materialModels.length === 0
     ) {
       return EMPTY_DRAFT_CATALOG_RUNTIME_SLICE
@@ -228,7 +234,6 @@ export function createCachedCatalogRuntimeSliceResolver(
     const request: CatalogRuntimeSliceRequest = Object.freeze({
       solvers: references.solvers,
       quantityKinds: references.quantityKinds,
-      materialParameters: references.materialParameters,
       materialModels: references.materialModels,
     })
     const key = JSON.stringify(request)

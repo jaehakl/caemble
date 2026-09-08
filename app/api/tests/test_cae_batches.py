@@ -40,6 +40,7 @@ from gpstation.service.state import utcnow
 from gpstation.service.worker_connection import worker_cleaned
 from models import RoleEnum, UserData
 from service.measurement_service import delete_measurements
+from service.material_snapshot import material_vars_hash
 from settings import settings
 
 
@@ -85,14 +86,14 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
             "varsSchema": {}, "scene": {}, "taskScenes": {}, "simulationProgram": {
                 "pythonSource": self.example["sourceBundle"]["files"]["simulate.py"], "tasks": {}, "recordedData": {
                 "signal": {"dtype": "float64", "tensorOrder": 0, "quantityKind": "DimensionlessRatio"},
-            }}}, "materialParameters": {}, "taskMaterialParameters": {},
-            "materialWarnings": [], "taskMaterialWarnings": {}}}
+            }}}, "materialSnapshot": {"materials": {}}, "taskMaterialSnapshots": {},
+            "modelDefinitions": [], "materialSelections": {}, "varsHash": material_vars_hash({"fixed": 7})}}
 
     async def create(self, *, count=1, request_id=None):
         raw = json.dumps(self.item(), separators=(",", ":"), ensure_ascii=False).encode()
         request = BatchCreateRequest(request_id=request_id or uuid.uuid4(), experiment_id=self.experiment_id,
             experiment_source_hash=self.example["bundleHash"], mode="generate",
-            catalog_revision=self.catalog.meta()["catalogRevision"], builder_version="1",
+            catalog_revision=self.catalog.meta()["catalogRevision"], builder_version="2",
             items=[{"index": index, "input_hash": hashlib.sha256(raw).hexdigest(), "byte_length": len(raw)}
                    for index in range(1, count + 1)])
         async with self.sessions() as db:
@@ -107,7 +108,7 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
             job.state = state
             job.attempt_count = attempt
             db.add(Measurement(user_id=self.owner_id, experiment_id=self.experiment_id, job_id=job.id,
-                vars={"fixed": 7}, material_parameters={"experiment": {}, "tasks": {}}))
+                vars={"fixed": 7}, material_snapshot={"experiment": {}, "tasks": {}}))
             batch.state = "queued"
             batch.uploaded_count += 1
             cae = await db.get(CaeBatch, batch.id)
@@ -224,7 +225,7 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
         source = "export default () => ({ dtype: 'float64', data: 1 })"
         async with self.sessions() as db:
             measurement = Measurement(user_id=self.owner_id, experiment_id=self.experiment_id,
-                vars={}, material_parameters={}, recorded_at=utcnow())
+                vars={}, material_snapshot={}, recorded_at=utcnow())
             db.add(measurement)
             await db.commit()
             measurement_id = measurement.id
@@ -256,7 +257,7 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
         raw = json.dumps(value, separators=(",", ":")).encode()
         request = BatchCreateRequest(request_id=uuid.uuid4(), experiment_id=self.experiment_id,
             experiment_source_hash=self.example["bundleHash"], mode="generate",
-            catalog_revision=self.catalog.meta()["catalogRevision"], builder_version="1",
+            catalog_revision=self.catalog.meta()["catalogRevision"], builder_version="2",
             items=[{"index": 1, "input_hash": hashlib.sha256(raw).hexdigest(), "byte_length": len(raw)}])
         async with self.sessions() as db:
             batch = await create_batch(db, request, self.owner, self.catalog)
@@ -476,7 +477,7 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async with self.sessions() as db:
             other = await create_batch(db, BatchCreateRequest(request_id=uuid.uuid4(),
                 experiment_id=self.other_experiment_id, experiment_source_hash="hash-calc-other", mode="generate",
-                catalog_revision=self.catalog.meta()["catalogRevision"], builder_version="1",
+                catalog_revision=self.catalog.meta()["catalogRevision"], builder_version="2",
                 items=[{"index": 1, "input_hash": "0" * 64, "byte_length": 100}]),
                 UserData(id=self.other_id, roles=[RoleEnum.user]), self.catalog)
             other_event = other.last_event_id
@@ -567,7 +568,7 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
         database = f"caemble_calculation_test_{uuid.uuid4().hex}"
         try:
             asyncio.run(_create_database(database))
-            _upgrade(database, "head")
+            _upgrade(database, "000000000007")
             owner_id, _, experiment_id, _ = asyncio.run(_seed_owners(database))
             async def seed_existing():
                 engine = create_async_engine(make_async_db_url(_database_url(database)))
@@ -575,7 +576,7 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
                     async with async_sessionmaker(engine, expire_on_commit=False)() as db:
                         job = Job(user_id=owner_id, handler_type="ai.chat", slave_app_id="ai", state="succeeded", offer={"sdp": "retained"})
                         measurement = Measurement(user_id=owner_id, experiment_id=experiment_id, vars={"retained": 1},
-                            material_parameters={"retained": True}, recorded_at=utcnow())
+                            material_snapshot={"retained": True}, recorded_at=utcnow())
                         record = ExperimentRecord(experiment_id=experiment_id, name="signal", dtype="float64",
                             tensor_order=0, contract_hash="retained", data_schema={})
                         db.add_all([job, measurement, record])

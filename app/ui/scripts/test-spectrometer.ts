@@ -5,7 +5,7 @@ import { executeCompiledDocument } from '../src/lib/cad/execution/userModule'
 import { canonicalGeometryScene } from '../src/lib/cad/evaluation/canonical'
 import { assertExperimentAuthoringSemantics } from '../src/lib/cad/simulation/authoringSemantics'
 import { installCatalogRuntimeSlice } from '../src/lib/catalog/runtime'
-import { sourceOnlyMaterialParameters } from '../src/lib/material'
+import { resolveSceneMaterials } from '../src/lib/material/document'
 import { compileCatalogExample, readCatalogExamples } from './catalog-example-support'
 
 const database = path.resolve(process.argv[2] ?? '../catalog/caemble_catalog/catalog.sqlite3')
@@ -61,9 +61,7 @@ assertExperimentAuthoringSemantics(catalog, {
   ...evaluated,
   simulationProgram: { ...evaluated.simulationProgram, tasks: { trace: percentTask } },
 })
-const materials = sourceOnlyMaterialParameters(
-  evaluated.scene.parts.flatMap((part) => (part.material ? [part.material] : [])),
-)
+const materials = resolveSceneMaterials(evaluated, null, catalog)
 const taskScene = await canonicalGeometryScene(evaluated.taskScenes.trace)
 writeFileSync(
   path.join(outputDirectory, 'measurement.json'),
@@ -73,11 +71,12 @@ writeFileSync(
     simulationProgram: evaluated.simulationProgram,
     variables: nominal,
     world: {
+      materialSelections: materials.materialSelections.trace,
       experiment: originalScene,
       task: taskScene,
       materials: {
-        experiment: { parameters: materials.materialParameters },
-        task: { parameters: { materials: {} } },
+        experiment: materials.materialSnapshot.materials,
+        task: materials.taskMaterialSnapshots.trace.materials,
       },
     },
   }),

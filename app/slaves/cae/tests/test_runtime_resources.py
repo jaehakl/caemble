@@ -243,7 +243,7 @@ async def test_solver_implementation_returns_explicit_state_patch() -> None:
         )
 
     invocation = SolverInvocation({}, {"seed": 2}, {}, {}, None, None, {})
-    implementation = SolverImplementation(abi_version=2, run=run)
+    implementation = SolverImplementation(abi_version=3, run=run)
     result = await implementation(invocation)
     assert result.state_patch.operations[0].path == ("continued",)
     assert result.state_patch.operations[0].value == 3
@@ -252,10 +252,10 @@ async def test_solver_implementation_returns_explicit_state_patch() -> None:
     np.testing.assert_array_equal(result.artifacts["field"], [1.0])
 
 
-@pytest.mark.parametrize("abi_version", (1, 3))
+@pytest.mark.parametrize("abi_version", (1, 2, 4))
 def test_solver_implementation_rejects_unsupported_abi(abi_version: int) -> None:
     async def run(invocation: SolverInvocation) -> SolverResult:
         return SolverResult()
 
-    with pytest.raises(ValueError, match="only supports ABI version 2"):
+    with pytest.raises(ValueError, match="only supports ABI version 3"):
         SolverImplementation(abi_version=abi_version, run=run)

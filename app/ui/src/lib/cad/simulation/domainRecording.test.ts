@@ -22,7 +22,7 @@ sys.path.insert(0,sys.argv[1])
 from caemble_catalog import open_catalog
 from tests.recording_fixtures import MESH_FIELD_SCHEMA
 with open_catalog() as catalog:
-    data=catalog.runtime_slice(solvers=[],quantity_kinds=['Length','thermodynamics.Temperature'],material_parameters=[])
+    data=catalog.runtime_slice(solvers=[],quantity_kinds=['Length','thermodynamics.Temperature'],material_models=[])
     print(json.dumps({'catalog':data,'schema':MESH_FIELD_SCHEMA}))`,
           path.resolve('../slaves/cae'),
           path.resolve('../catalog'),

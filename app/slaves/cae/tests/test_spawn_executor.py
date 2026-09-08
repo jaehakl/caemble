@@ -80,14 +80,16 @@ class SpawnSolverExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(first.artifacts["pid"], second.artifacts["pid"])
 
     async def test_callable_without_implementation_is_rejected(self) -> None:
-        with self.assertRaisesRegex(RemoteSolverError, "must export an ABI 2 SolverImplementation"):
+        with self.assertRaisesRegex(RemoteSolverError, "must export an ABI 3 SolverImplementation"):
             await SpawnSolverExecutor().execute(f"{_FIXTURES}:unregistered_runner", invocation())
 
-    async def test_abi_one_is_rejected(self) -> None:
-        with self.assertRaisesRegex(RemoteSolverError, "unsupported Catalog solver ABI"):
-            await SpawnSolverExecutor().execute(
-                f"{_FIXTURES}:payload_size", invocation({"payload": b"x"}), abi_version=1,
-            )
+    async def test_previous_abis_are_rejected(self) -> None:
+        for abi_version in (1, 2):
+            with self.subTest(abi_version=abi_version):
+                with self.assertRaisesRegex(RemoteSolverError, "unsupported Catalog solver ABI"):
+                    await SpawnSolverExecutor().execute(
+                        f"{_FIXTURES}:payload_size", invocation({"payload": b"x"}), abi_version=abi_version,
+                    )
 
     async def test_mapping_result_is_rejected(self) -> None:
         with self.assertRaisesRegex(RemoteSolverError, "must return SolverResult"):

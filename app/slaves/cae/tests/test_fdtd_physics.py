@@ -63,7 +63,6 @@ def test_periodic_difference_wraps_the_packed_grid_seam() -> None:
         (0, False, "default"),
         (1, True, "rc"),
         (2, True, "trc"),
-        (2, False, "default"),
     ),
 )
 def test_material_models_match_their_direct_one_step_recurrence(
@@ -78,12 +77,7 @@ def test_material_models_match_their_direct_one_step_recurrence(
     collision_frequency = 2.0e8
     shape = (1, 1, 1)
     coefficients = build_update_coefficients(
-        np.full(shape, relative_permittivity, dtype=np.float32),
-        np.full(
-            shape,
-            epsilon_infinity if has_drude else np.nan,
-            dtype=np.float32,
-        ),
+        np.full(shape, epsilon_infinity if has_drude else relative_permittivity, dtype=np.float32),
         np.full(
             shape,
             plasma_frequency if has_drude else np.nan,
@@ -109,7 +103,7 @@ def test_material_models_match_their_direct_one_step_recurrence(
         if formula == "rc":
             inverse = 1.0 / (epsilon_infinity + chi0)
             expected = (
-                inverse,
+                epsilon_infinity * inverse,
                 inverse * dt / EPSILON_0,
                 -inverse,
                 decay,
@@ -199,7 +193,7 @@ def test_material_models_match_their_direct_one_step_recurrence(
 
 
 @pytest.mark.parametrize(("model_code", "formula"), ((1, "rc"), (2, "trc")))
-def test_drude_interface_weights_constitutive_update_but_not_current_recurrence(
+def test_drude_interface_uses_one_constitutive_denominator_and_averaged_current(
     model_code: int,
     formula: str,
 ) -> None:
@@ -209,8 +203,8 @@ def test_drude_interface_weights_constitutive_update_but_not_current_recurrence(
     plasma_frequency = 1.0e9
     collision_frequency = 2.0e8
     shape = (1, 2, 1)
-    drude = np.full(shape, np.nan, dtype=np.float32)
-    drude[:, 0, :] = epsilon_infinity
+    instantaneous = np.full(shape, relative_permittivity, dtype=np.float32)
+    instantaneous[:, 0, :] = epsilon_infinity
     plasma = np.full(shape, np.nan, dtype=np.float32)
     plasma[:, 0, :] = plasma_frequency
     collision = np.full(shape, np.nan, dtype=np.float32)
@@ -219,8 +213,7 @@ def test_drude_interface_weights_constitutive_update_but_not_current_recurrence(
     models[:, 0, :] = model_code
 
     coefficients = build_update_coefficients(
-        np.full(shape, relative_permittivity, dtype=np.float32),
-        drude,
+        instantaneous,
         plasma,
         collision,
         models,
@@ -234,16 +227,12 @@ def test_drude_interface_weights_constitutive_update_but_not_current_recurrence(
     decay = math.exp(-omega_c * dt)
     chi0 = omega_p**2 * dt / omega_c - (omega_p / omega_c) ** 2 * (1.0 - decay)
     dchi0 = -((omega_p / omega_c) * (1.0 - decay)) ** 2
-    inverse = 1.0 / (
-        epsilon_infinity + (chi0 if formula == "rc" else 0.5 * chi0)
-    )
+    epsilon_edge = (relative_permittivity + epsilon_infinity) / 2
+    weight = 0.5 if formula == "rc" else 0.25
+    inverse = 1.0 / (epsilon_edge + weight * chi0)
     target = (0, 0, 0, 0)
-    expected_previous = (
-        0.5 + 0.5 * inverse
-        if formula == "rc"
-        else 0.5 + 0.5 * inverse * (epsilon_infinity - 0.5 * chi0)
-    )
-    expected_curl = 0.5 * dt / (EPSILON_0 * relative_permittivity) + 0.5 * inverse * dt / EPSILON_0
+    expected_previous = (epsilon_edge - (0 if formula == "rc" else 0.25 * chi0)) * inverse
+    expected_curl = inverse * dt / EPSILON_0
 
     assert coefficients.previous is not None
     assert coefficients.current is not None
@@ -252,16 +241,56 @@ def test_drude_interface_weights_constitutive_update_but_not_current_recurrence(
     assert coefficients.current_old is not None
     assert coefficients.previous[target] == pytest.approx(expected_previous, rel=2e-5)
     assert coefficients.curl[target] == pytest.approx(expected_curl, rel=2e-5)
-    assert coefficients.current[target] == pytest.approx(-0.5 * inverse, rel=2e-5)
+    assert coefficients.current[target] == pytest.approx(-inverse, rel=2e-5)
     assert coefficients.current_decay[target] == pytest.approx(decay, rel=2e-5)
     assert coefficients.current_new[target] == pytest.approx(
-        (-dchi0 if formula == "rc" else -0.5 * dchi0),
+        (-0.5 * dchi0 if formula == "rc" else -0.25 * dchi0),
         rel=5e-5,
     )
     assert coefficients.current_old[target] == pytest.approx(
-        (0.0 if formula == "rc" else -0.5 * dchi0),
+        (0.0 if formula == "rc" else -0.25 * dchi0),
         rel=5e-5,
     )
+
+
+@pytest.mark.parametrize("model_code", [1, 2])
+def test_drude_zero_plasma_limit_matches_instantaneous_dielectric_interface(model_code: int) -> None:
+    shape = (1, 2, 1)
+    epsilon = np.array([[[2.0], [4.0]]], dtype=np.float32)
+    plasma = np.array([[[0.0], [np.nan]]], dtype=np.float32)
+    damping = np.array([[[1e8], [np.nan]]], dtype=np.float32)
+    codes = np.array([[[model_code], [0]]], dtype=np.uint8)
+    coefficients = build_update_coefficients(
+        epsilon, plasma, damping, codes, 1e-12, (True, True, True), torch.device("cpu"),
+    )
+    reference = build_update_coefficients(
+        epsilon, np.full(shape, np.nan), np.full(shape, np.nan), np.zeros(shape, dtype=np.uint8),
+        1e-12, (True, True, True), torch.device("cpu"),
+    )
+    torch.testing.assert_close(coefficients.curl, reference.curl)
+    assert coefficients.previous is None
+    assert coefficients.current is None
+    assert coefficients.current_new is None
+    assert coefficients.current_old is None
+
+
+@pytest.mark.parametrize("model_code", [1, 2])
+def test_zero_plasma_cell_matches_dielectric_beside_active_drude_cell(model_code: int) -> None:
+    epsilon = np.array([[[2.0], [3.0], [4.0]]], dtype=np.float32)
+    plasma = np.array([[[0.0], [1e9], [np.nan]]], dtype=np.float32)
+    damping = np.array([[[1e8], [2e8], [np.nan]]], dtype=np.float32)
+    codes = np.array([[[model_code], [model_code], [0]]], dtype=np.uint8)
+    actual = build_update_coefficients(
+        epsilon, plasma, damping, codes, 1e-12, (True, True, True), torch.device("cpu"),
+    )
+    plasma[:, 0, :] = np.nan
+    damping[:, 0, :] = np.nan
+    codes[:, 0, :] = 0
+    reference = build_update_coefficients(
+        epsilon, plasma, damping, codes, 1e-12, (True, True, True), torch.device("cpu"),
+    )
+    for field in ("previous", "curl", "current", "current_decay", "current_new", "current_old"):
+        torch.testing.assert_close(getattr(actual, field), getattr(reference, field))
 
 
 def test_gaussian_and_cw_sources_use_reference_cutoff_envelopes() -> None:

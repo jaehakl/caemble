@@ -80,114 +80,6 @@ class TimestampMixin:
     )
 
 
-class Material(TimestampMixin, Base):
-    __tablename__ = "materials"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[Optional[str]] = mapped_column(
-        UUID(as_uuid=False),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=True,
-    )
-    inchi: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    color: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-
-    user: Mapped[Optional["User"]] = relationship("User", back_populates="materials")
-    names: Mapped[List["MaterialName"]] = relationship(
-        back_populates="material",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
-    parameters: Mapped[List["MaterialParameter"]] = relationship(
-        back_populates="material",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
-
-
-class MaterialName(TimestampMixin, Base):
-    __tablename__ = "material_names"
-    __table_args__ = (
-        Index(
-            "uq_material_names_public_name",
-            "name",
-            unique=True,
-            postgresql_where=text("user_id IS NULL"),
-        ),
-        Index(
-            "uq_material_names_user_name",
-            "user_id",
-            "name",
-            unique=True,
-            postgresql_where=text("user_id IS NOT NULL"),
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[Optional[str]] = mapped_column(
-        UUID(as_uuid=False),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=True,
-    )
-    material_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("materials.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-
-    user: Mapped[Optional["User"]] = relationship("User", back_populates="material_names")
-    material: Mapped["Material"] = relationship(back_populates="names")
-
-
-class MaterialParameter(TimestampMixin, Base):
-    __tablename__ = "material_parameters"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[Optional[str]] = mapped_column(
-        UUID(as_uuid=False),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=True,
-    )
-    material_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("materials.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    value: Mapped[Any] = mapped_column(JSONB, nullable=False)
-    source: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    version: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    temperature: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    pressure: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    frequency: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-
-    user: Mapped[Optional["User"]] = relationship("User", back_populates="material_parameters")
-    material: Mapped["Material"] = relationship(back_populates="parameters")
-    qualifiers: Mapped[List["MaterialParameterQualifier"]] = relationship(
-        back_populates="material_parameter",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
-
-
-class MaterialParameterQualifier(TimestampMixin, Base):
-    __tablename__ = "material_parameter_qualifiers"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    material_parameter_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("material_parameters.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    value: Mapped[float] = mapped_column(Float, nullable=False)
-
-    material_parameter: Mapped["MaterialParameter"] = relationship(back_populates="qualifiers")
-
-
 class ExperimentNamespace(TimestampMixin, Base):
     __tablename__ = "experiment_namespaces"
     __table_args__ = (UniqueConstraint("namespace", "user_id", name="uq_experiment_namespaces_namespace_user_id"),)
@@ -364,7 +256,7 @@ class Measurement(TimestampMixin, Base):
         JSONB,
         nullable=False,
     )
-    material_parameters: Mapped[dict[str, Any]] = mapped_column(
+    material_snapshot: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
         nullable=False,
     )

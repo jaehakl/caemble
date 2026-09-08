@@ -66,16 +66,15 @@ def scene() -> dict[str, Any]:
 
 
 def world() -> dict[str, Any]:
-    tensor = lambda value, unit: {
-        "value": {"dtype": "float64", "value": [value, 0, 0, 0, value, 0, 0, 0, value], "unit": unit}
-    }
-    parameters = {
-        "materials": {
-            "Copper": {
-                "electrical.conductivity": tensor(5.8e7, "S.m-1"),
-                "thermal.conductivity": tensor(400.0, "W.m-1.K-1"),
-            }
-        }
+    materials = {
+        "Copper": {"models": {
+            "electrical": {"model": "electrical.ohmic-conduction@1", "parameters": {
+                "sigma": {"dtype": "float64", "value": (np.eye(3) * 5.8e7).tolist(), "unit": "S.m-1"},
+            }},
+            "thermal": {"model": "heat.fourier-conduction@1", "parameters": {
+                "k": {"dtype": "float64", "value": (np.eye(3) * 400).tolist(), "unit": "W.m-1.K-1"},
+            }},
+        }},
     }
     empty_task_scene = {
         "geometryHash": "empty-task",
@@ -87,9 +86,13 @@ def world() -> dict[str, Any]:
     return {
         "experiment": scene(),
         "task": empty_task_scene,
+        "materialSelections": {
+            "conductor": {"Copper": {"conduction": "electrical"}},
+            "thermalDomain": {"Copper": {"conduction": "thermal"}},
+        },
         "materials": {
-            "experiment": {"parameters": parameters, "warnings": []},
-            "task": {"parameters": {"materials": {}}, "warnings": []},
+            "experiment": materials,
+            "task": {},
         },
     }
 
@@ -100,7 +103,7 @@ def parameter(value: Any) -> dict[str, Any]:
 
 @pytest.mark.asyncio
 async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path) -> None:
-    dc_version, heat_version = "0.4.0", "0.3.0"
+    dc_version, heat_version = "0.5.0", "0.4.0"
     catalog = SolverCatalog.discover()
     executor = SpawnSolverExecutor()
     progress: list[Any] = []
@@ -145,7 +148,7 @@ async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path) -> None:
     }
     dc_spec = TaskSpec(
         "electric", dc_task, catalog.descriptor("dc-current-density", dc_version),
-        catalog.locator("dc-current-density", dc_version), 2, {}, {}, {},
+        catalog.locator("dc-current-density", dc_version), 3, {}, {}, {},
     )
     electric_transaction = await execute_solver(
         dc_spec,
@@ -211,7 +214,7 @@ async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path) -> None:
     )
     heat_spec = TaskSpec(
         "thermal", heat_task, catalog.descriptor("steady-state-heat", heat_version),
-        catalog.locator("steady-state-heat", heat_version), 2, {}, {}, {},
+        catalog.locator("steady-state-heat", heat_version), 3, {}, {}, {},
     )
     thermal_transaction = await execute_solver(
         heat_spec,

@@ -7,9 +7,9 @@ const runtimeSlice: CatalogRuntimeSlice = {
   catalogRevision: 'test-revision',
   solvers: [],
   quantityKinds: [],
-  materialParameters: [],
+
   materialModels: [],
-  materialGlobalQualifiers: [],
+
   warnings: [],
 }
 
@@ -35,7 +35,7 @@ describe('catalog runtime slice resolution', () => {
     expect(fetchRuntimeSlice).toHaveBeenCalledOnce()
     expect(fetchRuntimeSlice).toHaveBeenCalledWith({
       materialModels: [],
-      materialParameters: [],
+
       quantityKinds: ['length'],
       solvers: [],
     })

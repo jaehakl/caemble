@@ -53,5 +53,5 @@ async def consume(invocation: SolverInvocation) -> SolverResult:
     )
 
 
-producer = SolverImplementation(abi_version=2, run=produce)
-consumer = SolverImplementation(abi_version=2, run=consume)
+producer = SolverImplementation(abi_version=3, run=produce)
+consumer = SolverImplementation(abi_version=3, run=consume)

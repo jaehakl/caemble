@@ -12,7 +12,7 @@ describe('artifact item envelope', () => {
     expect(parseArtifactInput(presented, artifact)).toBe(presented)
   })
 
-  it.each(['vars', 'material_parameters', 'warnings'])('rejects the build-only field %s', (key) => {
+  it.each(['vars', 'material_snapshot', 'warnings'])('rejects the build-only field %s', (key) => {
     expect(() => parseArtifactInput({ measurement, [key]: {} }, artifact)).toThrow(
       'Artifact item must contain measurement and optional presentation.',
     )

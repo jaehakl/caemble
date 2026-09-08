@@ -10,7 +10,7 @@ from app.kernel.api.world import (
     experiment_scene,
     geometry_part,
     grid_shape,
-    material_property_value,
+    material_model,
     scalar_parameter,
     single_method,
     surface,
@@ -52,6 +52,13 @@ async def build_heat_domain(context: SolverInvocation) -> HeatDomain:
         context.progress,
         "Heat domain",
     )
+    model = material_model(context.world, part, "thermalDomain", "conduction")
+    if model is None or model["model"] != "heat.fourier-conduction@1":
+        raise ValueError("thermalDomain requires a Fourier conduction model")
+    tensor = np.asarray(model["parameters"]["k"]["value"], dtype=np.float64).reshape(3, 3)
+    conductivity = float(np.trace(tensor) / 3)
+    if conductivity <= 0 or not np.allclose(tensor, np.eye(3) * conductivity, rtol=1e-6, atol=1e-9):
+        raise ValueError("Heat requires a positive isotropic conductivity tensor")
     return HeatDomain(
         domain,
         structured_grid_value(
@@ -60,7 +67,7 @@ async def build_heat_domain(context: SolverInvocation) -> HeatDomain:
             root_ids=[part["id"]],
             reference_length_unit=context.descriptor["referenceLengthUnit"],
         ),
-        float(np.trace(material_property_value(context.world, part, context.descriptor, "thermal.conductivity").reshape(3, 3)) / 3),
+        conductivity,
         scalar_parameter(boundaries[0]["parameters"]["temperature"]),
         scalar_parameter(boundaries[1]["parameters"]["temperature"]),
     )

@@ -78,11 +78,13 @@ export type KernelOutputMethodDescriptor = KernelMethodDescriptor &
 export type KernelMaterialDescriptor = Readonly<{
   role: string
   description: string
-  target: Readonly<{
-    category: 'initializations' | 'boundaryConditions' | 'outputs'
-    methodId: string
-  }>
-  properties: Readonly<Record<string, KernelParameterDescriptor>>
+  target:
+    | Readonly<{
+        category: 'initializations' | 'boundaryConditions' | 'outputs'
+        methodId: string
+      }>
+    | Readonly<{ category: 'geometry'; source: 'experiment' | 'task' }>
+  modelGroups: readonly Readonly<{ key: string; required: boolean; oneOf: readonly string[] }>[]
 }>
 
 export type KernelInputPortDescriptor = Readonly<{

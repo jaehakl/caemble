@@ -8,4 +8,4 @@
 - unit은 [Quantity Catalog](/docs?section=quantity-kinds)의 `applicableUnits`에 있고 worker가 변환할 수 있는 UCUM 문자열이어야 합니다.
 - `{fraction}`처럼 중괄호가 있는 UCUM annotation도 문자열 그대로 사용합니다.
 
-Material catalog에 key가 존재한다는 사실만으로 임의 unit이 허용되는 것은 아닙니다. Material의 QuantityKind와 실제 worker unit converter 계약을 모두 만족해야 합니다.
+Model Catalog의 각 파라미터가 요구하는 QuantityKind·shape·unit과 실제 worker의 단위 변환 계약을 모두 만족해야 합니다.

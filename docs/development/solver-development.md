@@ -108,16 +108,17 @@ state/artifact 등록과 mmap transaction 확정의 실패 복구를 한 경로�
 
 ## 기본 원칙
 
-- QuantityKind, Material, Solver, Experiment 데이터의 단일 원본은
+- QuantityKind, Material Model 정의, Solver, Experiment Catalog 데이터의 단일 원본은
   `app/catalog/caemble_catalog/catalog.sqlite3`입니다.
 - Experiment와 Solver의 SemVer는 공개된 동작을 식별합니다. 이미 publish된
   `(name, version)`의 계약과 locator를 고치지 않고 새 SemVer로 clone합니다.
   Catalog에는 Solver 이름마다 현재 버전 하나만 남깁니다. 이전 코드와
   Catalog release 이력은 Git으로 관리하고 worker에 구버전 구현을 남기지 않습니다.
-- CAD, Geometry, Simulation, Material, Catalog, built Measurement payload는
-  저장소 내부 생산자가 만든 신뢰 가능한 unversioned 데이터입니다. CAE
-  worker에 별도 포맷 게이트, 중복 비즈니스 규칙, 입력 크기 제한을 만들지
-  않습니다.
+- CAD, Geometry, Simulation, Catalog, built Measurement payload는 저장소 내부
+  생산자가 만드는 데이터입니다. Material model 입력은 Catalog의 공통 Python
+  schema validator로 필수 값, 중첩 객체, 반복 항, shape, 단위를 검증하고
+  Task의 역할별 모델 선택을 다시 확인합니다. 별도 포맷 게이트, 중복 비즈니스
+  규칙, geometry/resource 검증이나 입력 크기 제한은 추가하지 않습니다.
 - Catalog 편집에는 raw SQL이나 별도 JSON/TS/Markdown 원본을 사용하지
   않습니다. 중앙 registry 분기나 Solver용 `manifest.json`도 만들지
   않습니다. `app/slaves/cae/manifest.json`은 launcher executable
@@ -141,13 +142,13 @@ poetry run catalogctl --database $draft draft create --source $catalog
 poetry run catalogctl --database $draft query solver
 ```
 
-신규 Solver는 ABI 2 locator와 함께 생성합니다.
+신규 Solver는 ABI 3 locator와 함께 생성합니다.
 
 ```powershell
 poetry run catalogctl --database $draft solver create `
   "solver-name" "1.0.0" `
   --implementation "app.solvers.solver_package.entry:implementation" `
-  --implementation-abi 2 `
+  --implementation-abi 3 `
   --description "Solver description"
 ```
 
@@ -161,10 +162,10 @@ poetry run catalogctl --database $draft solver clone `
 poetry run catalogctl --database $draft solver set-metadata `
   "solver-name" "1.1.0" `
   --implementation "app.solvers.solver_package.entry:implementation" `
-  --implementation-abi 2
+  --implementation-abi 3
 ```
 
-이어지는 `solver parameter`, `material-role`, `material-property`, `method`,
+이어지는 `solver parameter`, `material-role`, `material-model-group`, `material-model-option`, `method`,
 `method-parameter`, `input-port`, `observation`, `set-metadata` 명령도 모두
 동일한 `--database $draft`를 사용합니다. Output method와 input port에는
 canonical artifact type을 선언하고, producer와 consumer가 같은 물리 계약을
@@ -199,7 +200,7 @@ Catalog descriptor가 다음 경계를 소유합니다.
 - reference length unit과 일반 parameters
 - initialization/output methods와 method parameters
 - Geometry/material input ports와 typed artifact input ports
-- material roles와 필요한 Material properties
+- Material 역할과 지원하는 모델 선택 그룹
 - observations, output QuantityKind와 artifact contract
 - 선택 가능한 설정을 위한 metadata
 
@@ -208,7 +209,7 @@ Catalog 식별자를 문자열 literal로 적습니다. 수치 입력과 일반 
 계산식이어도 됩니다. Detector의 총 검출 파워처럼 복사 에너지인 출력에는
 `optics.RadiantFlux`를 사용합니다.
 
-ABI 2 implementation locator는 다음 형식을 사용합니다.
+ABI 3 implementation locator는 다음 형식을 사용합니다.
 
 ```text
 app.solvers.<package>.entry:implementation
@@ -219,7 +220,7 @@ app.solvers.<package>.entry:implementation
 `kernel/coordinator/invocation.py`나 다른 중앙 모듈에 추가하지
 않습니다.
 
-## ABI 2 구현 경계
+## ABI 3 구현 경계
 
 신규 Solver는 `SolverImplementation`을 export합니다.
 
@@ -232,7 +233,7 @@ async def run(invocation: SolverInvocation) -> SolverResult:
     ...
 
 
-implementation = SolverImplementation(abi_version=2, run=run)
+implementation = SolverImplementation(abi_version=3, run=run)
 ```
 
 `SolverInvocation`은 호출마다 다음 값을 제공합니다.
@@ -264,9 +265,36 @@ Solver는 파일 시스템, 네트워크, 프로세스 전역 mutable state나 �
 메모리에 결과 정합성을 의존시키지 않습니다. GPU/device 객체는 child-local로
 유지하고 공유할 결과만 host resource로 반환합니다.
 
-ABI 2만 실행합니다. Solver는 `SolverInvocation`을 받고 `SolverResult`를
+ABI 3만 실행합니다. Solver는 `SolverInvocation`을 받고 `SolverResult`를
 반환하며 `StatePatch`, `FieldValue`, `BundleValue` 같은 독립적인 값을 사용합니다.
-ABI 1 adapter나 `SolverContext` 호환 실행 경로는 제공하지 않습니다.
+이전 ABI adapter나 `SolverContext` 호환 실행 경로는 제공하지 않습니다.
+
+## Material Model 입력
+
+`material.tsx`는 Material별 모델 인스턴스와 모든 계수를 직접 구성합니다.
+Material 이름은 이 Experiment 내부 식별자이며 외부 물성 조회나 sampling에
+사용하지 않습니다. Catalog는 `model@version` 정의와 재귀 parameter schema를,
+Solver는 역할별 `modelGroups`와 수치 구현을 소유합니다. 그룹 사이는 AND,
+그룹 안에서는 정확히 하나를 선택하며 모호하면 Task의 명시적 선택이 필요합니다.
+
+BuiltMeasurement의 `materialSnapshot`, `taskMaterialSnapshots`,
+`modelDefinitions`, `materialSelections`를 RunPlan에서 고정합니다.
+`world.materials[source][materialName].models[instanceName]`과
+`world.materialSelections[role][materialName][group]`으로 선택된 입력을 읽습니다.
+새 vars로 만드는 Candidate는 소스를 다시 평가하며 이전 계수를 덮어쓰지 않습니다.
+
+FDTD Material은 비분산 epsilon 또는 Drude epsilonInfinity와 두 주파수만
+소유합니다. main/buffer의 `drudeMethod`는 `none`, `RC`, `TRC` 수치법이며
+인접 PML로 상속됩니다. Drude가 `none` region을 차지하면 오류입니다.
+각 cell의 순간 유전율을 edge로 평균하고 susceptibility 기여를 같은 denominator에
+합칩니다. 별도 fallback 유전율이나 Material별 RC/TRC 모델은 없습니다.
+현재 RC/TRC 구현은 양의 plasma/damping 주파수만 지원합니다.
+
+Ray는 complex index의 n과 k를 모두 명시적으로 받습니다. 독립적인 bulk
+absorption 모델이 있으면 그 alpha를 쓰고, 없으면 `4*pi*k/lambda`를 사용합니다.
+Frequency 표본은 Hz에서 선형 보간하고 범위 밖에서는 끝 값을 사용합니다.
+산란 모델이 없으면 bulk 산란 기여가 없으며 `ray.hg-medium`의 적용 대상과
+Task anisotropy 설정이 해당 산란 과정의 활성화를 소유합니다.
 
 ## State revision
 
@@ -417,13 +445,12 @@ slot입니다. Triangle 순서로 표면을 재식별하거나 Solver별 triangu
 경로를 만들지 않습니다. Transform과 Boolean을 거친 뒤에도 provenance로
 emitter, detector와 boundary를 찾습니다.
 
-길이는 descriptor의 reference unit으로 Solver-local 변환합니다. Material
-property도 QuantityKind 차원에 따라 local unit으로 변환합니다. 이 변환은
+길이는 descriptor의 reference unit으로 Solver-local 변환합니다. Model Parameter도 QuantityKind 차원에 따라 단위를 정규화합니다. 이 변환은
 저장된 Geometry와 frozen Material snapshot을 수정하지 않습니다.
 
-물성의 값 읽기·단위 변환과 3×3 tensor의 `trace / 3` scalar 환산은 별도
+모델 파라미터의 값 읽기·단위 변환과 3×3 tensor의 `trace / 3` scalar 환산은 별도
 책임입니다. 환산은 이를 사용하는 numerical method에서 명시적으로 수행하며
-기존 수치 가정을 일반적인 Runtime 물성 조회 속에 숨기지 않습니다.
+기존 수치 가정을 일반적인 Runtime 모델 조회 속에 숨기지 않습니다.
 
 Structured field를 내보낼 때는 계산 domain identity를 함께 구성합니다.
 예를 들어 DC의 Joule heating과 Heat의 source field는 동일 domain이면 값을
@@ -523,7 +550,7 @@ Solver child, 수치 결과와 ACK를 검증합니다. pytest에서 CLI의
 Solver나 Runtime 경계를 변경할 때 최소한 다음을 확인합니다.
 
 - 현재 DC, Heat, Ray, FDTD와 모든 Catalog 예제가 새 계약으로 컴파일·실행
-- 제거된 Solver 버전과 ABI 1 요청이 fallback 없이 오류로 종료
+- 제거된 Solver 버전과 ABI 1/2 요청이 fallback 없이 오류로 종료
 - `sim.run()` state의 nested read, unchanged patch와 branch
 - state/checkpoint 명시적 해제, busy-state 거부와 과거 handle 보관 시 buffer 수
 - Electro-Thermal typed artifact handoff 및 domain projection 보존량

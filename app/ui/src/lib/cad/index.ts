@@ -82,14 +82,8 @@ export type {
   IntegerDataDType,
   IntrinsicGeometryAttributes,
   DataTensorInput,
-  MaterialDataValueDescriptor,
-  MaterialQuantitySeries,
-  MaterialSampledRelation,
-  MaterialVariable,
-  MaterialVariables,
   MatrixValue,
   NonFloatDataDType,
-  NormalizedMaterialVariables,
   PersistedDataTensor,
   QuantityKindDomain,
   QuantityKindName,
@@ -103,7 +97,6 @@ export type {
   RecordedDataResultAxis,
   RecordedDataRule,
   RecordedDataTensor,
-  ResolvedMaterialVariables,
   ScalarQuantityKindName,
   ScalarValue,
   GeometryGroupMap,
@@ -117,15 +110,11 @@ export type { Rotation, Tensor, Vars, Vec3 } from './model/types'
 export { createSolidPointTester } from './geometry/solid'
 export type { SolidPointTester } from './geometry/solid'
 export type {
-  MaterialCatalogKey,
-  MaterialModelDefinition,
-  MaterialModelDefinitionFor,
-  MaterialModelKey,
-  MaterialPropertyDefinition,
-  MaterialPropertyDefinitionFor,
-  MaterialPropertyKey,
-  MaterialPropertyQuantityKind,
-} from '../material/data'
+  MaterialDefinition,
+  MaterialModelInstance,
+  MaterialSnapshot,
+  TaskMaterialSelections,
+} from '@/contracts/material'
 export {
   EXPERIMENT_ENTRY_PATH,
   EXPERIMENT_GEOMETRY_PATH,
@@ -187,12 +176,7 @@ export type {
   EvaluatedRuntimeDocumentSnapshot,
   MeasurementExperimentSnapshot,
 } from './execution/snapshot'
-export {
-  applyFrozenMaterialParameters,
-  buildMeasurement,
-  buildSourceOnlyMeasurement,
-  unresolvedMeasurementMaterialRoles,
-} from './execution/measurement'
+export { applyMaterialSnapshot, buildMeasurement, unresolvedMeasurementMaterialRoles } from './execution/measurement'
 export type { BuiltMeasurement, MeasurementMaterialResolution, TaskMaterialResolution } from './execution/measurement'
 export { deserializeCadScene, serializeCadScene } from './execution/mesh'
 export type { SerializableCadMesh, SerializableCadScene, SerializableCadScenePart } from './execution/mesh'

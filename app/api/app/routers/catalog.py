@@ -12,8 +12,7 @@ from catalog_models import (
     ExperimentDetail,
     ExperimentSummary,
     MaterialModel,
-    MaterialParameter,
-    MaterialParameterDetail,
+    MaterialModelDetail,
     QuantityKind,
     QuantityKindDetail,
     SolverDetail,
@@ -24,12 +23,10 @@ from service.catalog import (
     catalog_meta,
     get_experiment,
     get_material_model,
-    get_material_parameter,
     get_quantity_kind,
     get_solver,
     list_experiments,
     list_material_models,
-    list_material_parameters,
     list_quantity_kinds,
     list_solvers,
     search_catalog,
@@ -121,46 +118,6 @@ def quantity_kind(
     return result
 
 
-@router.get("/material-parameters", response_model=CatalogPage[MaterialParameter])
-def material_parameters(
-    response: Response,
-    q: str | None = Query(default=None),
-    domain: str | None = Query(default=None),
-    quantity_kind: str | None = Query(default=None, alias="quantityKind"),
-    solver_name: str | None = Query(default=None, alias="solverName"),
-    solver_version: str | None = Query(default=None, alias="solverVersion"),
-    limit: int = Query(default=50),
-    cursor: str | None = Query(default=None),
-    catalog: Catalog = Depends(get_catalog),
-):
-    result, revision = list_material_parameters(
-        catalog,
-        query=q,
-        domain=domain,
-        quantity_kind=quantity_kind,
-        solver_name=solver_name,
-        solver_version=solver_version,
-        limit=limit,
-        cursor=cursor,
-    )
-    _cache(response, revision)
-    return result
-
-
-@router.get("/material-parameters/{key:path}", response_model=MaterialParameterDetail)
-def material_parameter(
-    key: str,
-    response: Response,
-    catalog: Catalog = Depends(get_catalog),
-):
-    try:
-        result, revision = get_material_parameter(catalog, key)
-    except CatalogNotFoundError as error:
-        raise _not_found(error) from error
-    _cache(response, revision)
-    return result
-
-
 @router.get("/material-models", response_model=CatalogPage[MaterialModel])
 def material_models(
     response: Response,
@@ -179,7 +136,7 @@ def material_models(
     return result
 
 
-@router.get("/material-models/{key:path}", response_model=MaterialModel)
+@router.get("/material-models/{key:path}", response_model=MaterialModelDetail)
 def material_model(
     key: str,
     response: Response,

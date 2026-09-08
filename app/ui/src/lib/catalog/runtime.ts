@@ -1,6 +1,4 @@
 import type {
-  CatalogMaterialModel,
-  CatalogMaterialParameter,
   CatalogQuantityKind,
   CatalogRuntimeSlice,
 } from '@/contracts/catalog'
@@ -32,14 +30,6 @@ export function getRuntimeQuantityKind(name: string): CatalogQuantityKind {
   const definition = activeCatalogRuntimeSlice().quantityKinds.find((entry) => entry.name === name)
   if (!definition) throw new CadModelError(`QuantityKind ${name} is not included in the active Solver catalog slice.`)
   return definition
-}
-
-export function getRuntimeMaterialParameter(key: string): CatalogMaterialParameter | undefined {
-  return activeCatalogRuntimeSlice().materialParameters.find((entry) => entry.key === key)
-}
-
-export function getRuntimeMaterialModel(key: string): CatalogMaterialModel | undefined {
-  return activeCatalogRuntimeSlice().materialModels.find((entry) => entry.key === key)
 }
 
 export function registerSourceCatalogRuntimeSlice(sourceHash: string, slice: CatalogRuntimeSlice) {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from caemble_catalog import open_catalog
 
 import numpy as np
 import pytest
@@ -14,7 +15,7 @@ from tests.test_actual_solver_chain import parameter, world
 
 @pytest.mark.asyncio
 async def test_dc_heat_chain_uses_registered_tasks_ports_and_commit():
-    dc_version, heat_version = "0.4.0", "0.3.0"
+    dc_version, heat_version = "0.5.0", "0.4.0"
     dc_task = {
         "kernel": {"name": "dc-current-density", "version": dc_version},
         "config": {
@@ -84,12 +85,15 @@ async def test_dc_heat_chain_uses_registered_tasks_ports_and_commit():
         },
     }
     scene = world()
+    with open_catalog() as catalog:
+        used_models = {model["model"] for materials in scene["materials"].values() for material in materials.values() for model in material["models"].values()}
+        definitions = [model for model in catalog.material_models() if model["key"] in used_models]
     plan = RunPlan.prepare({
         "experiment": {"scene": scene["experiment"], "taskScenes": {"electric": scene["task"], "thermal": scene["task"]}},
-        "materialParameters": scene["materials"]["experiment"]["parameters"],
-        "materialWarnings": scene["materials"]["experiment"]["warnings"],
-        "taskMaterialParameters": {name: scene["materials"]["task"]["parameters"] for name in ("electric", "thermal")},
-        "taskMaterialWarnings": {name: scene["materials"]["task"]["warnings"] for name in ("electric", "thermal")},
+        "materialSnapshot": {"materials": scene["materials"]["experiment"]},
+        "taskMaterialSnapshots": {name: {"materials": scene["materials"]["task"]} for name in ("electric", "thermal")},
+        "modelDefinitions": definitions,
+        "materialSelections": {"electric": {}, "thermal": {}},
     }, {"electric": dc_task, "thermal": heat_task}, {})
     progress = []
 

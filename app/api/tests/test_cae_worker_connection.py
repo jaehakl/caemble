@@ -166,7 +166,7 @@ class WorkerConnectionTests(unittest.TestCase):
                 user_id=owner,
                 experiment_id=experiment_id,
                 vars={},
-                material_parameters={},
+                material_snapshot={},
                 job_id=job.id,
             )
             db.add_all(

@@ -1,6 +1,6 @@
 # 편집, Candidate 생성과 실행 결과의 관계
 
-Source를 수정하면 `Dirty → Checking → Compiling → Evaluating → Resolving Materials → Ready` 순서로 검증됩니다. `Error`가 보이면 가장 먼저 diagnostics의 파일명과 line을 확인합니다.
+Source를 수정하면 `Dirty → Checking → Compiling → Evaluating → Ready` 순서로 검증됩니다. `Error`가 보이면 가장 먼저 diagnostics의 파일명과 line을 확인합니다.
 
 - **Source 수정**은 새 revision을 compile합니다.
 - **Generate Candidate**는 source를 바꾸지 않고 완전한 새 vars를 생성해 preview합니다.

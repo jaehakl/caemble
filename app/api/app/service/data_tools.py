@@ -9,16 +9,13 @@ from datetime import date, datetime
 from itertools import islice
 from typing import Any, Iterable
 
-from sqlalchemy import Text, and_, cast, or_, select
+from sqlalchemy import Text, cast, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import (
     Calculation,
     Experiment,
     ExperimentRecord,
-    Material,
-    MaterialName,
-    MaterialParameter,
     Measurement,
     RecordedData,
 )
@@ -43,44 +40,6 @@ class VisibleDataReader:
         limit: int,
     ) -> list[dict[str, Any]]:
         pattern = _search_pattern(query)
-        if resource == "material":
-            statement = (
-                select(
-                    Material.id,
-                    Material.description,
-                    Material.color,
-                    Material.updated_at,
-                    MaterialName.name,
-                )
-                .outerjoin(
-                    MaterialName,
-                    and_(
-                        MaterialName.material_id == Material.id,
-                        _visible(MaterialName.user_id, self.user_id),
-                    ),
-                )
-                .where(
-                    _visible(Material.user_id, self.user_id),
-                    or_(
-                        MaterialName.name.ilike(pattern, escape="\\"),
-                        Material.description.ilike(pattern, escape="\\"),
-                        Material.inchi.ilike(pattern, escape="\\"),
-                    ),
-                )
-                .order_by(Material.updated_at.desc(), Material.id.desc())
-                .limit(limit)
-            )
-            rows = (await self.db.execute(statement)).mappings().all()
-            return [
-                {
-                    "id": row["id"],
-                    "name": row["name"] or f"Material {row['id']}",
-                    "description": row["description"],
-                    "color": row["color"],
-                    "updatedAt": _json_value(row["updated_at"]),
-                }
-                for row in rows
-            ]
         if resource == "calculation":
             statement = (
                 select(
@@ -123,8 +82,6 @@ class VisibleDataReader:
         return [_json_mapping(row) for row in (await self.db.execute(statement)).mappings().all()]
 
     async def detail(self, resource: VisibleResource, resource_id: int) -> dict[str, Any]:
-        if resource == "material":
-            return await self._material_detail(resource_id)
         if resource == "experiment":
             row = await self._one_visible(
                 select(
@@ -202,7 +159,7 @@ class VisibleDataReader:
                     Measurement.id,
                     Measurement.experiment_id,
                     Measurement.vars,
-                    Measurement.material_parameters,
+                    Measurement.material_snapshot,
                     Measurement.recorded_at,
                     Measurement.updated_at,
                 ),
@@ -235,7 +192,7 @@ class VisibleDataReader:
             return {
                 **_json_mapping(row),
                 "vars": _bounded_value(row["vars"]),
-                "material_parameters": _bounded_value(row["material_parameters"]),
+                "material_snapshot": _bounded_value(row["material_snapshot"]),
                 "recordedData": [_json_mapping(item) for item in recorded_rows],
             }
         if resource == "recorded_data":
@@ -378,51 +335,6 @@ class VisibleDataReader:
                 RecordedData.user_id == self.user_id,
             )
         raise VisibleDataError("Visible data resource is not supported")
-
-    async def _material_detail(self, resource_id: int) -> dict[str, Any]:
-        row = await self._one_visible(
-            select(Material.id, Material.inchi, Material.description, Material.color, Material.updated_at),
-            Material,
-            resource_id,
-        )
-        names = (
-            await self.db.scalars(
-                select(MaterialName.name)
-                .where(
-                    MaterialName.material_id == resource_id,
-                    _visible(MaterialName.user_id, self.user_id),
-                )
-                .order_by(MaterialName.name)
-            )
-        ).all()
-        parameters = (
-            await self.db.execute(
-                select(
-                    MaterialParameter.name,
-                    MaterialParameter.value,
-                    MaterialParameter.source,
-                    MaterialParameter.version,
-                    MaterialParameter.description,
-                    MaterialParameter.temperature,
-                    MaterialParameter.pressure,
-                    MaterialParameter.frequency,
-                )
-                .where(
-                    MaterialParameter.material_id == resource_id,
-                    _visible(MaterialParameter.user_id, self.user_id),
-                )
-                .order_by(MaterialParameter.name, MaterialParameter.id)
-            )
-        ).mappings().all()
-        value = {
-            **_json_mapping(row),
-            "names": list(names),
-            "parameters": [
-                {**_json_mapping(parameter), "value": _bounded_value(parameter["value"])}
-                for parameter in parameters
-            ],
-        }
-        return value
 
     async def _recorded_row(self, resource_id: int, *, include_data: bool) -> Any:
         columns = [

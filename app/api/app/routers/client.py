@@ -10,12 +10,12 @@ from user_auth.utils.auth_wrapper import require_roles
 
 router = APIRouter(tags=["client"])
 authenticated = require_roles(["admin", "user"])
-Resource = Literal["material", "experiment", "calculation", "measurement", "recorded_data"]
+Resource = Literal["experiment", "calculation", "measurement", "recorded_data"]
 
 
 @router.get("/client/capabilities")
 async def capabilities(request: Request, user: UserData = Depends(authenticated)):
-    return {"protocol": 1, "builder_version": "1",
+    return {"protocol": 1, "builder_version": "2",
             "catalog_revision": request.app.state.catalog.meta()["catalogRevision"],
             "chunk_bytes": 8 * 1024 * 1024,
             "authentication": ["cookie", "caemble"], "server_prepare": False}

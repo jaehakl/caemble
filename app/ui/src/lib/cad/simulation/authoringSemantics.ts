@@ -1,8 +1,10 @@
+import { normalizeMaterialModels } from '../model/materialNormalization'
+import { selectTaskMaterialModels } from '../../material/selection'
 import type { CatalogRuntimeSlice } from '@/contracts/catalog'
 import { geometries } from '@jscad/modeling'
 import { DRAFT_TASK_KERNEL } from '@/lib/catalog/draftTask'
 import type { EvaluatedRuntimeDocumentSnapshot } from '../execution/snapshot'
-import type { CadScene, CadScenePart } from '../evaluation/types'
+import type { CadScene } from '../evaluation/types'
 import { CadModelError } from '../model/errors'
 import { convertUcumValue } from '../model/units'
 import type {
@@ -161,7 +163,6 @@ function validateValue(
   path: string,
   catalog: CatalogRuntimeSlice,
   issues: KernelContractIssue[],
-  materialValue = false,
 ) {
   const descriptor = isRecord(value) ? value : undefined
   const float = spec.dtype === 'float16' || spec.dtype === 'float32' || spec.dtype === 'float64'
@@ -177,7 +178,6 @@ function validateValue(
       'unit',
       'quantityKind',
       'basis',
-      ...(materialValue ? ['errorRate'] : []),
     ])
     Reflect.ownKeys(descriptor).forEach((key) => {
       if (typeof key !== 'string' || !allowed.has(key)) addIssue(issues, `${path}.${String(key)}`, 'is not allowed.')
@@ -205,17 +205,6 @@ function validateValue(
   ) {
     addIssue(issues, path, 'non-float data must not declare quantity metadata.')
   }
-  if (materialValue && descriptor?.errorRate !== undefined) {
-    if (
-      typeof descriptor.errorRate !== 'number' ||
-      !Number.isFinite(descriptor.errorRate) ||
-      descriptor.errorRate < 0 ||
-      descriptor.errorRate >= 1
-    ) {
-      addIssue(issues, `${path}.errorRate`, 'must be a finite number in [0, 1).')
-    }
-  }
-
   const outerShape: number[] = []
   const actualAxes = descriptor?.axes
   if (spec.axes === undefined) {
@@ -310,13 +299,12 @@ function validateParameters(
   path: string,
   catalog: CatalogRuntimeSlice,
   issues: KernelContractIssue[],
-  materialValues = false,
 ) {
   if (!isRecord(values)) {
     addIssue(issues, path, 'must be an object.')
     return
   }
-  if (!materialValues) {
+  {
     Object.keys(values).forEach((name) => {
       if (!Object.prototype.hasOwnProperty.call(specs, name)) addIssue(issues, `${path}.${name}`, 'is not declared.')
     })
@@ -328,24 +316,12 @@ function validateParameters(
   }
   Object.entries(values).forEach(([name, value]) => {
     const spec = specs[name]
-    if (spec) validateValue(value, spec.data, `${path}.${name}`, catalog, issues, materialValues)
+    if (spec) validateValue(value, spec.data, `${path}.${name}`, catalog, issues)
   })
 }
 
 function targetGroup(scene: CadScene, kind: 'geometry' | 'surface', name: string) {
   return (kind === 'geometry' ? scene.geometryGroups : scene.surfaceGroups).find((candidate) => candidate.name === name)
-}
-
-function resolvedTargetParts(scene: CadScene, kind: 'geometry' | 'surface', name: string): readonly CadScenePart[] {
-  const group = targetGroup(scene, kind, name)
-  if (!group) return []
-  if (kind === 'geometry') {
-    return group.geometryIds.flatMap((id) => {
-      const part = scene.parts.find((candidate) => candidate.id === id)
-      return part ? [part] : []
-    })
-  }
-  return scene.parts.filter((part) => part.surfaces.some((surface) => group.surfaceIds.includes(surface.id)))
 }
 
 function validateCalls(
@@ -493,159 +469,6 @@ function validateCalls(
   })
 }
 
-function validateMaterials(
-  descriptor: KernelDescriptor,
-  config: Readonly<Record<string, unknown>>,
-  scenes: Readonly<{ experiment: CadScene; task: CadScene }>,
-  path: string,
-  catalog: CatalogRuntimeSlice,
-  issues: KernelContractIssue[],
-) {
-  descriptor.materials.forEach((material) => {
-    const calls = config[material.target.category]
-    if (!Array.isArray(calls)) return
-    calls.forEach((call, callIndex) => {
-      if (!isRecord(call) || call.methodId !== material.target.methodId || !Array.isArray(call.target)) return
-      call.target.forEach((target) => {
-        if (typeof target !== 'string') return
-        const match = /^(experiment|task)\.(geometry|surface)\.(.+)$/u.exec(target)
-        if (!match) return
-        const source = match[1] as 'experiment' | 'task'
-        const kind = match[2] as 'geometry' | 'surface'
-        resolvedTargetParts(scenes[source], kind, match[3]).forEach((part) => {
-          if (!part.material) return
-          validateParameters(
-            part.material.variables,
-            material.properties,
-            `${path}.${material.target.category}[${callIndex}].material[${JSON.stringify(part.id)}]`,
-            catalog,
-            issues,
-            true,
-          )
-        })
-      })
-    })
-  })
-}
-
-function validateMaterialParameter(
-  value: unknown,
-  quantityKindName: string,
-  path: string,
-  catalog: CatalogRuntimeSlice,
-  issues: KernelContractIssue[],
-) {
-  if (!isRecord(value)) {
-    addIssue(issues, path, 'must be a MaterialParameter value descriptor.')
-    return
-  }
-  const allowed = new Set(['dtype', 'unit', 'quantityKind', 'errorRate', 'basis', 'value'])
-  Reflect.ownKeys(value).forEach((key) => {
-    if (typeof key !== 'string' || !allowed.has(key)) addIssue(issues, `${path}.${String(key)}`, 'is not allowed.')
-  })
-  if (value.dtype !== 'float16' && value.dtype !== 'float32' && value.dtype !== 'float64') {
-    addIssue(issues, `${path}.dtype`, 'must be float16, float32, or float64.')
-    return
-  }
-  if (value.quantityKind !== quantityKindName) addIssue(issues, `${path}.quantityKind`, `must be ${quantityKindName}.`)
-  const kind = quantityKind(catalog, quantityKindName)
-  if (!kind) {
-    addIssue(issues, `${path}.quantityKind`, 'is not in the active Catalog slice.')
-    return
-  }
-  compatibleUnit(value.unit, kind.applicableUnits[0], `${path}.unit`, issues)
-  if (kind.tensorOrder === 0 && value.basis !== undefined)
-    addIssue(issues, `${path}.basis`, 'is forbidden for a scalar QuantityKind.')
-  if (kind.tensorOrder > 0 && value.basis !== undefined) validateBasis(value.basis, `${path}.basis`, issues)
-  dataLeaves(
-    value.value,
-    Array.from({ length: kind.tensorOrder }, () => 3),
-    `${path}.value`,
-    value.dtype,
-    issues,
-  )
-  if (
-    typeof value.errorRate !== 'number' ||
-    !Number.isFinite(value.errorRate) ||
-    value.errorRate < 0 ||
-    value.errorRate >= 1
-  ) {
-    addIssue(issues, `${path}.errorRate`, 'must be a finite number in [0, 1).')
-  }
-}
-
-function validateMaterialSeries(
-  value: unknown,
-  quantityKindName: string,
-  path: string,
-  catalog: CatalogRuntimeSlice,
-  issues: KernelContractIssue[],
-) {
-  if (!isRecord(value)) {
-    addIssue(issues, path, 'must be a quantity series.')
-    return undefined
-  }
-  Reflect.ownKeys(value).forEach((key) => {
-    if (typeof key !== 'string' || !['unit', 'values', 'basis'].includes(key)) {
-      addIssue(issues, `${path}.${String(key)}`, 'is not allowed.')
-    }
-  })
-  const kind = quantityKind(catalog, quantityKindName)
-  if (!kind) {
-    addIssue(issues, `${path}.quantityKind`, `${quantityKindName} is not in the active Catalog slice.`)
-    return undefined
-  }
-  compatibleUnit(value.unit, kind.applicableUnits[0], `${path}.unit`, issues)
-  if (kind.tensorOrder === 0 && value.basis !== undefined)
-    addIssue(issues, `${path}.basis`, 'is forbidden for a scalar QuantityKind.')
-  if (kind.tensorOrder > 0 && value.basis !== undefined) validateBasis(value.basis, `${path}.basis`, issues)
-  if (!Array.isArray(value.values)) {
-    addIssue(issues, `${path}.values`, 'must be an array.')
-    return undefined
-  }
-  value.values.forEach((sample, index) => {
-    dataLeaves(
-      sample,
-      Array.from({ length: kind.tensorOrder }, () => 3),
-      `${path}.values[${index}]`,
-      'float64',
-      issues,
-    )
-  })
-  return value
-}
-
-function validateMaterialModel(
-  value: unknown,
-  model: CatalogRuntimeSlice['materialModels'][number],
-  path: string,
-  catalog: CatalogRuntimeSlice,
-  issues: KernelContractIssue[],
-) {
-  if (!isRecord(value)) {
-    addIssue(issues, path, 'must be a sampled_relation Material model.')
-    return
-  }
-  Reflect.ownKeys(value).forEach((key) => {
-    if (typeof key !== 'string' || !['kind', 'input', 'output'].includes(key)) {
-      addIssue(issues, `${path}.${String(key)}`, 'is not allowed.')
-    }
-  })
-  if (value.kind !== 'sampled_relation') addIssue(issues, `${path}.kind`, 'must be sampled_relation.')
-  const input = validateMaterialSeries(value.input, model.input.quantityKind, `${path}.input`, catalog, issues)
-  const output = validateMaterialSeries(value.output, model.output.quantityKind, `${path}.output`, catalog, issues)
-  if (!input || !output || !Array.isArray(input.values) || !Array.isArray(output.values)) return
-  if (input.values.length < model.minimumSamples) {
-    addIssue(issues, `${path}.input.values`, `must contain at least ${model.minimumSamples} samples.`)
-  }
-  if (input.values.length !== output.values.length) {
-    addIssue(issues, path, 'input and output must contain the same number of samples.')
-  }
-  if (model.sharedBasis && JSON.stringify(input.basis) !== JSON.stringify(output.basis)) {
-    addIssue(issues, path, 'input and output must use the same Cartesian basis.')
-  }
-}
-
 function validateSceneMaterials(
   scene: CadScene,
   path: string,
@@ -657,44 +480,12 @@ function validateSceneMaterials(
     if (!part.material || checked.has(part.material)) return
     checked.add(part.material)
     const materialPath = `${path}.material[${JSON.stringify(part.id)}]`
-    if (!part.material.name.trim()) addIssue(issues, `${materialPath}.name`, 'must be a non-empty string.')
-    if (
-      typeof part.material.errorRate !== 'number' ||
-      !Number.isFinite(part.material.errorRate) ||
-      part.material.errorRate < 0 ||
-      part.material.errorRate >= 1
-    ) {
-      addIssue(issues, `${materialPath}.errorRate`, 'must be a finite number in [0, 1).')
+    try {
+      if (!part.material.name.trim()) throw new CadModelError(`${materialPath}.name must be non-empty.`)
+      normalizeMaterialModels(part.material.models, `${materialPath}.models`, catalog)
+    } catch (error) {
+      addIssue(issues, materialPath, error instanceof Error ? error.message : String(error))
     }
-    Object.entries(part.material.variables).forEach(([key, value]) => {
-      if (key === 'color') {
-        if (typeof value !== 'string' || !/^#[0-9a-f]{6}$/iu.test(value)) {
-          addIssue(issues, `${materialPath}.variables.color`, 'must use #RRGGBB format.')
-        }
-        return
-      }
-      const parameter = catalog.materialParameters.find((candidate) => candidate.key === key)
-      if (parameter) {
-        validateMaterialParameter(
-          value,
-          parameter.quantityKind,
-          `${materialPath}.variables[${JSON.stringify(key)}]`,
-          catalog,
-          issues,
-        )
-        return
-      }
-      const model = catalog.materialModels.find((candidate) => candidate.key === key)
-      if (model) {
-        validateMaterialModel(value, model, `${materialPath}.variables[${JSON.stringify(key)}]`, catalog, issues)
-        return
-      }
-      addIssue(
-        issues,
-        `${materialPath}.variables[${JSON.stringify(key)}]`,
-        'is not a MaterialParameter or MaterialModel in the active Catalog slice.',
-      )
-    })
   })
 }
 
@@ -888,7 +679,7 @@ export function assertExperimentAuthoringSemantics(
       return
     }
     const config = task.config
-    const allowed = new Set(['parameters', ...methodCategories])
+    const allowed = new Set(['parameters', 'materialModels', ...methodCategories])
     Reflect.ownKeys(config).forEach((key) => {
       if (typeof key !== 'string' || !allowed.has(key)) addIssue(issues, `${path}.${String(key)}`, 'is not allowed.')
     })
@@ -904,7 +695,11 @@ export function assertExperimentAuthoringSemantics(
         `must contain at least ${solver.descriptor.minimumOutputs ?? 0} output requests.`,
       )
     }
-    validateMaterials(solver.descriptor, config, scenes, path, catalog, issues)
+    try {
+      selectTaskMaterialModels(solver.descriptor, config, scenes, path)
+    } catch (error) {
+      addIssue(issues, path, error instanceof Error ? error.message : String(error))
+    }
   })
   if (issues.length > 0) {
     throw new CadModelError(

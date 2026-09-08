@@ -18,10 +18,6 @@ const tableSurface = {
   AccessKey: ['list', 'create', 'revoke'],
   Launcher: ['list', 'runtime', 'reconcile', 'cancelCurrentJob', 'resetWorker'],
   Job: ['list', 'kill'],
-  Material: ['recordType', 'listRows', 'upsertRow', 'deleteRows'],
-  MaterialName: ['recordType', 'listRows', 'upsertRow', 'deleteRows'],
-  MaterialParameter: ['recordType', 'listRows', 'upsertRow', 'deleteRows'],
-  MaterialParameterQualifier: ['recordType', 'listRows', 'upsertRow', 'deleteRows'],
   Experiment: ['recordType', 'listRows', 'save', 'deleteRows', 'usage', 'available', 'demoCandidates', 'replaceDemos'],
   ExperimentRecord: ['recordType', 'listRows'],
   Measurement: ['recordType', 'listRows', 'create', 'readRecordedData', 'deleteRows'],
@@ -120,7 +116,14 @@ const measurement = await dbTables.Measurement.create({
   experiment_id: 1,
   experiment_source_hash: 'source-hash',
   vars: {},
-  material_parameters: { experiment: { materials: {} }, tasks: {} },
+  material_snapshot: {
+    experiment: { materials: {} },
+    tasks: {},
+    sourceHash: 'source-hash',
+    varsHash: 'vars',
+    modelDefinitions: [],
+    selections: {},
+  },
 })
 assert(measurement.id === 7, 'Measurement create must validate and return its id response')
 const measurementCall = calls.find((call) => call.path === '/api/measurement/create')

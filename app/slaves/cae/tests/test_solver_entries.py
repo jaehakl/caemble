@@ -52,7 +52,7 @@ async def test_solver_entries_run_only_in_spawn_children() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ray_abi2_patches_ray_paths_without_replacing_upstream_state() -> None:
+async def test_ray_abi3_patches_ray_paths_without_replacing_upstream_state() -> None:
     invocation = replace(_ray_invocation(), state={"upstream": {"kept": 7}})
     result = await SpawnSolverExecutor().execute(
         f"{_RAY_ENTRY}:implementation",
@@ -109,7 +109,7 @@ def _dc_invocation() -> SolverInvocation:
         world=_world(),
         geometry=CubeGeometry(),
         progress=None,
-        descriptor=_material_descriptor("electrical.conductivity", "S.m-1"),
+        descriptor={"referenceLengthUnit": "m", "methods": {"outputs": []}},
     )
 
 
@@ -128,7 +128,7 @@ def _heat_invocation() -> SolverInvocation:
     )
     domain_ref = structured_grid_value(
         domain,
-        geometry_hashes=["abi2-cube"],
+        geometry_hashes=["abi3-cube"],
         root_ids=["solid"],
         reference_length_unit="m",
     )
@@ -177,7 +177,7 @@ def _heat_invocation() -> SolverInvocation:
         world=_world(),
         geometry=CubeGeometry(),
         progress=None,
-        descriptor=_material_descriptor("thermal.conductivity", "W.m-1.K-1"),
+        descriptor={"referenceLengthUnit": "m", "methods": {"outputs": []}},
     )
 
 
@@ -211,7 +211,7 @@ def _ray_invocation() -> SolverInvocation:
 
 def _world() -> dict[str, Any]:
     scene = {
-        "geometryHash": "abi2-cube",
+        "geometryHash": "abi3-cube",
         "lengthUnit": "m",
         "roots": [{
             "id": "solid", "material": {"name": "test-material"},
@@ -236,7 +236,7 @@ def _world() -> dict[str, Any]:
             },
         ],
     }
-    tensor = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+    tensor = np.eye(3).tolist()
     return {
         "experiment": scene,
         "task": {
@@ -247,29 +247,18 @@ def _world() -> dict[str, Any]:
             "surfaceGroups": [],
         },
         "materials": {
-            "experiment": {
-                "parameters": {
-                    "materials": {
-                        "test-material": {
-                            "electrical.conductivity": {
-                                "value": {"value": tensor, "unit": "S.m-1"}
-                            },
-                            "thermal.conductivity": {
-                                "value": {"value": tensor, "unit": "W.m-1.K-1"}
-                            },
-                        }
-                    }
-                },
-                "warnings": [],
-            },
-            "task": {"parameters": {"materials": {}}, "warnings": []},
+            "experiment": {"test-material": {"models": {
+                "electrical": {"model": "electrical.ohmic-conduction@1", "parameters": {
+                    "sigma": {"value": tensor, "unit": "S.m-1"},
+                }},
+                "thermal": {"model": "heat.fourier-conduction@1", "parameters": {
+                    "k": {"value": tensor, "unit": "W.m-1.K-1"},
+                }},
+            }}},
+            "task": {},
         },
-    }
-
-
-def _material_descriptor(property_name: str, unit: str) -> dict[str, Any]:
-    return {
-        "referenceLengthUnit": "m",
-        "materials": [{"properties": {property_name: {"data": {"unit": unit}}}}],
-        "methods": {"outputs": []},
+        "materialSelections": {
+            "conductor": {"test-material": {"conduction": "electrical"}},
+            "thermalDomain": {"test-material": {"conduction": "thermal"}},
+        },
     }

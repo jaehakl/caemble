@@ -19,8 +19,6 @@ from app.kernel.transport.tensor import dtype_for
 def catalog_measurements(tmp_path_factory):
     repo = Path(__file__).resolve().parents[4]
     output = tmp_path_factory.mktemp("catalog-measurements")
-    materials = output / "source-only-materials.json"
-    materials.write_text(json.dumps({"names": [], "materials": [], "parameters": [], "qualifiers": []}), encoding="utf-8")
     with open_catalog() as catalog:
         examples, _ = catalog.list_experiments(limit=100)
     measurements = {}
@@ -30,7 +28,6 @@ def catalog_measurements(tmp_path_factory):
             "node", str(repo / "app/ui/dist-cli/caemble.cjs"), "--repo", str(repo),
             "experiment", "build", "--example", example["coordinate"],
             "--vars-mode", "nominal", "--out", str(artifact),
-            "--materials", str(materials),
         ], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8")
         manifest = json.loads((artifact / "manifest.json").read_text(encoding="utf-8"))
         assert len(manifest["items"]) == 1

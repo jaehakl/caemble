@@ -1,26 +1,30 @@
-import type { FrozenMaterialParameters, MaterialResolution } from '../../material'
-import { projectMaterialResolution, sourceOnlyMaterialParameters } from '../../material'
-import { getRuntimeMaterialParameter } from '../../catalog/runtime'
-import { QuantityKind } from '../../quantitykind'
-import { identityCartesianBasis } from '../../quantitykind/identityBasis'
+import type { MaterialSnapshot, TaskMaterialSelections } from '@/contracts/material'
+import type { CatalogMaterialModel } from '@/contracts/catalog'
+import type { MeasurementMaterialSnapshot } from '@/contracts/api/measurement'
+import { materialVarsHash, type MaterialResolution } from '../../material/resolution'
 import type { CadScene } from '../evaluation/types'
-import { deserializeCadScene } from './mesh'
 import type { EvaluatedExperimentSnapshot, MeasurementExperimentSnapshot } from './snapshotTypes'
 
 export type TaskMaterialResolution = Readonly<{
-  taskMaterialParameters: Readonly<Record<string, FrozenMaterialParameters>>
+  taskMaterialSnapshots: Readonly<Record<string, MaterialSnapshot>>
   taskMaterialWarnings: Readonly<Record<string, readonly string[]>>
 }>
 
-export type MeasurementMaterialResolution = MaterialResolution & TaskMaterialResolution
+export type MeasurementMaterialResolution = MaterialResolution &
+  TaskMaterialResolution &
+  Readonly<{
+    modelDefinitions: readonly CatalogMaterialModel[]
+    materialSelections: Readonly<Record<string, TaskMaterialSelections>>
+  }>
 
 export type BuiltMeasurement = Readonly<{
   kind: 'measurement'
   experiment: MeasurementExperimentSnapshot
-  materialParameters: FrozenMaterialParameters
-  materialWarnings: readonly string[]
-  taskMaterialParameters: Readonly<Record<string, FrozenMaterialParameters>>
-  taskMaterialWarnings: Readonly<Record<string, readonly string[]>>
+  varsHash: string
+  materialSnapshot: MaterialSnapshot
+  taskMaterialSnapshots: Readonly<Record<string, MaterialSnapshot>>
+  modelDefinitions: readonly CatalogMaterialModel[]
+  materialSelections: Readonly<Record<string, TaskMaterialSelections>>
 }>
 
 export function unresolvedMeasurementMaterialRoles(snapshot: EvaluatedExperimentSnapshot) {
@@ -49,76 +53,36 @@ export function buildMeasurement(
     taskScenes: snapshot.taskScenes,
     simulationProgram: snapshot.simulationProgram,
   }
-  const measurement = Object.freeze({
-    kind: 'measurement' as const,
+  return Object.freeze({
+    kind: 'measurement',
     experiment: Object.freeze(experiment),
-    materialParameters: resolution.materialParameters,
-    materialWarnings: Object.freeze([...resolution.warnings]),
-    taskMaterialParameters: resolution.taskMaterialParameters,
-    taskMaterialWarnings: resolution.taskMaterialWarnings,
-  })
-  return measurement
-}
-
-export function buildSourceOnlyMeasurement(snapshot: EvaluatedExperimentSnapshot) {
-  const experimentMaterials = deserializeCadScene(snapshot.renderScene).parts.flatMap((part) =>
-    part.material ? [part.material] : [],
-  )
-  const taskMaterials = Object.fromEntries(
-    Object.entries(snapshot.taskRenderScenes).map(([name, scene]) => [
-      name,
-      deserializeCadScene(scene).parts.flatMap((part) => (part.material ? [part.material] : [])),
-    ]),
-  )
-  const sharedResolution = sourceOnlyMaterialParameters([
-    ...experimentMaterials,
-    ...Object.values(taskMaterials).flat(),
-  ])
-  const experimentResolution = projectMaterialResolution(sharedResolution, experimentMaterials)
-  const taskResolutions = Object.fromEntries(
-    Object.entries(taskMaterials).map(([name, materials]) => [
-      name,
-      projectMaterialResolution(sharedResolution, materials),
-    ]),
-  )
-  return buildMeasurement(snapshot, {
-    materialParameters: experimentResolution.materialParameters,
-    warnings: experimentResolution.warnings,
-    taskMaterialParameters: Object.freeze(
-      Object.fromEntries(Object.entries(taskResolutions).map(([name, item]) => [name, item.materialParameters])),
-    ),
-    taskMaterialWarnings: Object.freeze(
-      Object.fromEntries(
-        Object.entries(taskResolutions).map(([name, item]) => [name, Object.freeze([...item.warnings])]),
-      ),
-    ),
+    varsHash: materialVarsHash(snapshot.variables),
+    materialSnapshot: resolution.materialSnapshot,
+    taskMaterialSnapshots: resolution.taskMaterialSnapshots,
+    modelDefinitions: resolution.modelDefinitions,
+    materialSelections: resolution.materialSelections,
   })
 }
 
-export function applyFrozenMaterialParameters(scene: CadScene, frozen: FrozenMaterialParameters): CadScene {
+export function measurementMaterialSnapshot(built: BuiltMeasurement): MeasurementMaterialSnapshot {
+  return Object.freeze({
+    experiment: built.materialSnapshot,
+    tasks: built.taskMaterialSnapshots,
+    sourceHash: built.experiment.sourceHash,
+    varsHash: built.varsHash,
+    modelDefinitions: built.modelDefinitions,
+    selections: built.materialSelections,
+  })
+}
+
+export function applyMaterialSnapshot(scene: CadScene, frozen: MaterialSnapshot): CadScene {
   return {
     ...scene,
     parts: scene.parts.map((part) => {
       if (!part.material) return part
-      const entries = frozen.materials[part.material.name]
-      if (!entries) return part
-      const color = part.material.variables.color ?? frozen.materialColors?.[part.material.name]?.color
-      const variables: Record<string, unknown> = { ...(color === undefined ? {} : { color }) }
-      Object.entries(entries).forEach(([name, entry]) => {
-        const definition = getRuntimeMaterialParameter(name)
-        variables[name] =
-          definition && 'dtype' in entry.value
-            ? Object.freeze({
-                ...entry.value,
-                quantityKind: definition.quantityKind,
-                ...(QuantityKind[definition.quantityKind].tensorOrder() === 0 ? {} : { basis: identityCartesianBasis }),
-              })
-            : entry.value
-      })
-      return {
-        ...part,
-        material: Object.freeze({ ...part.material, variables: Object.freeze(variables) }),
-      }
+      const definition = frozen.materials[part.material.name]
+      if (!definition) throw new Error(`Saved Material ${part.material.name} is missing from the snapshot.`)
+      return { ...part, material: Object.freeze({ name: part.material.name, ...definition }) }
     }),
   }
 }

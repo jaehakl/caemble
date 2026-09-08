@@ -36,7 +36,7 @@ class FakeCatalog:
         return {"name": name, "domain": "mechanical"}
 
     def quantity_kind_relations(self, name):
-        return {"materialParameters": [f"{name}/density"], "solverUsages": []}
+        return {"materialModels": [f"{name}/density"], "solverUsages": []}
 
     def search(self, query, *, limit):
         return [{"kind": "quantity-kind", "key": query}][:limit]
@@ -89,19 +89,17 @@ class CatalogServiceTests(unittest.TestCase):
             CatalogRuntimeSliceRequest(
                 solvers=[{"name": "solver", "version": "1"}],
                 quantityKinds=["stress"],
-                materialParameters=["density"],
                 materialModels=["elastic"],
             ),
         )
         self.assertEqual("revision-7", revision)
-        self.assertEqual(["stress/density"], detail["materialParameters"])
+        self.assertEqual(["stress/density"], detail["materialModels"])
         self.assertEqual("stress", search["items"][0]["key"])
         self.assertEqual("revision-7", runtime["catalogRevision"])
         self.assertEqual(
             {
                 "solvers": [("solver", "1")],
                 "quantity_kinds": ["stress"],
-                "material_parameters": ["density"],
                 "material_models": ["elastic"],
             },
             catalog.runtime_arguments,

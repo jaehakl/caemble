@@ -937,7 +937,7 @@ export function PredictionWorkspace({
     if (direction === 'forward' && forwardRefreshState === 'updating')
       return '현재 Vars의 Forward 결과를 갱신하는 중입니다.'
     if (busy) return '진행 중인 작업이 있습니다.'
-    if (!workbench.experimentDocument.materialParameters) return '현재 Candidate의 평가 결과가 준비되지 않았습니다.'
+    if (!workbench.experimentDocument.materialSnapshot) return '현재 Candidate의 평가 결과가 준비되지 않았습니다.'
     if (workbench.experimentDocument.draftTaskNames.length > 0) {
       return 'Solver가 선택되지 않은 Draft Task가 있어 검증할 수 없습니다.'
     }
@@ -965,7 +965,7 @@ export function PredictionWorkspace({
     validating,
     workbench.calculationDataActions.busy,
     workbench.experimentDocument.draftTaskNames,
-    workbench.experimentDocument.materialParameters,
+    workbench.experimentDocument.materialSnapshot,
     workbench.experimentClean,
     workbench.measurementActions.busy,
     workbench.experimentManageable,
@@ -1908,21 +1908,8 @@ export function PredictionWorkspace({
         `현재 query의 metadata 차이 ${lastResult.queryDiagnostics.length.toLocaleString()}개를 무시하고 같은 shape의 cell index 기준으로 예측했습니다.`,
       )
     }
-    if (context && profile && workbench.experimentDocument.materialParameters) {
-      const currentMaterial = predictionFingerprint([workbench.experimentDocument.materialParameters])
-      const differentMaterials = context.measurements.filter(
-        (measurement) =>
-          profile.includedMeasurementIds.includes(measurement.id) &&
-          predictionFingerprint([measurement.material_parameters]) !== currentMaterial,
-      ).length
-      if (differentMaterials > 0) {
-        warnings.push(
-          `Material은 모델 입력에서 제외됩니다. cohort 중 ${differentMaterials.toLocaleString()}개 Measurement의 Material snapshot이 현재 Candidate와 다릅니다.`,
-        )
-      }
-    }
     return warnings.length ? warnings.join('\n') : null
-  }, [context, lastResult, profile, workbench.experimentDocument.materialParameters])
+  }, [lastResult, profile])
 
   const varsPane = (
     <PredictionVarsPane

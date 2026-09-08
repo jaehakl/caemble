@@ -82,8 +82,6 @@ export type CanonicalGeometryNodeV1 =
 
 export type CanonicalGeometryMaterialV1 = Readonly<{
   name: string
-  source?: string
-  version?: string
 }>
 
 export type CanonicalGeometryRootV1 = Readonly<{

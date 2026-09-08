@@ -9,22 +9,51 @@ export type CatalogQuantityKind = Readonly<{
   applicableUnits: readonly string[]
 }>
 
-export type CatalogMaterialParameter = Readonly<{
-  key: string
-  domain: string
-  labelKo: string
-  quantityKind: string
-  specialQualifiers: readonly string[]
-}>
+export type ModelParameterSchema = Readonly<{ description?: string; omission?: string }> &
+  (
+    | Readonly<{
+        kind: 'value'
+        dtype?:
+          | 'float16'
+          | 'float32'
+          | 'float64'
+          | 'int8'
+          | 'int16'
+          | 'int32'
+          | 'int64'
+          | 'uint8'
+          | 'uint16'
+          | 'uint32'
+          | 'uint64'
+          | 'bool'
+          | 'string'
+        shape?: readonly number[]
+        quantityKind?: string
+        unit?: string
+        minimum?: number
+        maximum?: number
+        exclusiveMinimum?: boolean
+        exclusiveMaximum?: boolean
+        values?: readonly string[]
+      }>
+    | Readonly<{ kind: 'object'; fields: Readonly<Record<string, ModelParameterSchema>>; required?: readonly string[] }>
+    | Readonly<{
+        kind: 'list'
+        items: ModelParameterSchema
+        minimumLength?: number
+        maximumLength?: number
+        increasingBy?: string
+      }>
+  )
 
 export type CatalogMaterialModel = Readonly<{
   key: string
   labelKo: string
-  kind: 'sampled_relation'
-  input: Readonly<{ name: string; quantityKind: string }>
-  output: Readonly<{ name: string; quantityKind: string }>
-  minimumSamples: number
-  sharedBasis: boolean
+  description: string
+  equation: string
+  conventions: string
+  parameterSchema: ModelParameterSchema
+  solverRequirements?: readonly MaterialRequirement[]
 }>
 
 export type CatalogSolverListItem = Readonly<{
@@ -45,32 +74,22 @@ type MaterialRequirement = Readonly<{
   solverName: string
   solverVersion: string
   role: string
-  methodCategory: string
-  methodId: string
-  description: string
+  groupKey: string
+  required: boolean
 }>
 
 export type CatalogMeta = Readonly<{
   catalogRevision: string
   quantityKindCount: number
-  materialParameterCount: number
   materialModelCount: number
   solverCount: number
   experimentCount: number
-  materialGlobalQualifiers: readonly string[]
-  materialDesignRules: Readonly<Record<string, string>>
 }>
 
 export type CatalogQuantityKindDetail = CatalogQuantityKind &
   Readonly<{
-    materialParameters: readonly Readonly<{ key: string; labelKo: string }>[]
+    materialModels: readonly Readonly<{ key: string; labelKo: string; path: string }>[]
     solverUsages: readonly QuantityKindUsage[]
-  }>
-
-export type CatalogMaterialParameterDetail = CatalogMaterialParameter &
-  Readonly<{
-    quantityKindDefinition: CatalogQuantityKind
-    solverRequirements: readonly MaterialRequirement[]
   }>
 
 export type CatalogSolverDetail = CatalogSolverListItem &
@@ -121,9 +140,7 @@ export type CatalogRuntimeSlice = Readonly<{
   catalogRevision: string
   solvers: readonly Readonly<{ name: string; version: string; descriptor: KernelDescriptor }>[]
   quantityKinds: readonly CatalogQuantityKind[]
-  materialParameters: readonly CatalogMaterialParameter[]
   materialModels: readonly CatalogMaterialModel[]
-  materialGlobalQualifiers: readonly string[]
   warnings: readonly string[]
 }>
 
@@ -148,6 +165,5 @@ export type CatalogList<T> = Readonly<{ items: readonly T[]; nextCursor: string 
 export type CatalogRuntimeSliceRequest = Readonly<{
   solvers: readonly Readonly<{ name: string; version: string }>[]
   quantityKinds: readonly string[]
-  materialParameters: readonly string[]
   materialModels: readonly string[]
 }>

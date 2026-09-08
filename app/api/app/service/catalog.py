@@ -84,38 +84,6 @@ def get_quantity_kind(catalog: Catalog, name: str) -> tuple[dict[str, Any], str]
     return result, _revision(catalog)
 
 
-def list_material_parameters(
-    catalog: Catalog,
-    *,
-    query: str | None,
-    domain: str | None,
-    quantity_kind: str | None,
-    solver_name: str | None,
-    solver_version: str | None,
-    limit: int,
-    cursor: str | None,
-) -> tuple[dict[str, Any], str]:
-    offset = _offset(cursor)
-    items, total = catalog.list_material_parameters(
-        query=query,
-        domain=domain,
-        solver_name=solver_name,
-        solver_version=solver_version,
-        quantity_kind=quantity_kind,
-        limit=limit,
-        offset=offset,
-    )
-    return _page(catalog, items, total, offset)
-
-
-def get_material_parameter(catalog: Catalog, key: str) -> tuple[dict[str, Any], str]:
-    result = {
-        **catalog.material_parameter(key),
-        **catalog.material_parameter_relations(key),
-    }
-    return result, _revision(catalog)
-
-
 def list_material_models(
     catalog: Catalog,
     *,
@@ -133,7 +101,7 @@ def list_material_models(
 
 
 def get_material_model(catalog: Catalog, key: str) -> tuple[dict[str, Any], str]:
-    return catalog.material_model(key), _revision(catalog)
+    return {**catalog.material_model(key), **catalog.material_model_relations(key)}, _revision(catalog)
 
 
 def list_solvers(
@@ -213,7 +181,6 @@ def build_runtime_slice(
     result = catalog.runtime_slice(
         solvers=[(item.name, item.version) for item in request.solvers],
         quantity_kinds=request.quantityKinds,
-        material_parameters=request.materialParameters,
         material_models=request.materialModels,
     )
     return result, _revision(catalog)

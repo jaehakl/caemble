@@ -35,6 +35,6 @@ async def run(invocation: SolverInvocation) -> SolverResult:
     )
 
 
-implementation = SolverImplementation(abi_version=2, run=run)
+implementation = SolverImplementation(abi_version=3, run=run)
 
 __all__ = ["implementation"]

@@ -1,30 +1,20 @@
-import type { MeasurementCreateRequest, MeasurementMaterialParameters } from '@/contracts/api/measurement'
-import type { FrozenMaterialParameters } from '@/contracts/material'
+import type { MeasurementMaterialSnapshot } from '@/contracts/api/measurement'
+export type { MeasurementMaterialSnapshot } from '@/contracts/api/measurement'
 
-export type { MeasurementMaterialParameters } from '@/contracts/api/measurement'
-
-export function readMeasurementMaterialParameters(
+export function readMeasurementMaterialSnapshot(
   value: unknown,
   _taskNames?: readonly string[],
-): MeasurementMaterialParameters | null {
-  void _taskNames
-  return value as MeasurementMaterialParameters
-}
-
-export function createMeasurementRecord(
-  experimentId: number,
-  experimentSourceHash: string,
-  variables: Readonly<Record<string, unknown>>,
-  experimentMaterials: FrozenMaterialParameters,
-  taskMaterials: Readonly<Record<string, FrozenMaterialParameters>>,
-): MeasurementCreateRequest {
-  return {
-    experiment_id: experimentId,
-    experiment_source_hash: experimentSourceHash,
-    vars: { ...variables },
-    material_parameters: {
-      experiment: experimentMaterials,
-      tasks: { ...taskMaterials },
-    },
-  }
+): MeasurementMaterialSnapshot | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const snapshot = value as MeasurementMaterialSnapshot
+  if (
+    !snapshot.experiment?.materials ||
+    !snapshot.tasks ||
+    !snapshot.sourceHash ||
+    !snapshot.varsHash ||
+    !Array.isArray(snapshot.modelDefinitions) ||
+    !snapshot.selections
+  )
+    throw new Error('Saved Material snapshot uses an unsupported contract.')
+  return snapshot
 }

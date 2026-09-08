@@ -11,8 +11,7 @@ from user_auth.db import User, UserRole
 from user_auth.routes import user_data
 
 CAEMBLE_RESOURCES = {
-    "client", "cae", "catalog", "material", "material_name", "material_parameter",
-    "material_parameter_qualifier", "experiment", "experiment_record", "measurement",
+    "client", "cae", "catalog", "experiment", "experiment_record", "measurement",
     "recorded_data", "calculation", "calculation_data", "data",
 }
 

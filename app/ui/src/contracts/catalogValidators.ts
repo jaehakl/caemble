@@ -4,8 +4,7 @@ import type {
   CatalogExperimentListItem,
   CatalogList,
   CatalogMaterialModel,
-  CatalogMaterialParameter,
-  CatalogMaterialParameterDetail,
+  ModelParameterSchema,
   CatalogMeta,
   CatalogQuantityKind,
   CatalogQuantityKindDetail,
@@ -28,32 +27,71 @@ const quantityKindSchema = z
   })
   .passthrough()
 
-const materialParameterSchema = z
-  .object({
-    key: z.string(),
-    domain: z.string(),
-    labelKo: z.string(),
-    quantityKind: z.string(),
-    specialQualifiers: z.array(z.string()),
-  })
-  .passthrough()
-
-const materialModelEndpointSchema = z
-  .object({
-    name: z.string(),
-    quantityKind: z.string(),
-  })
-  .passthrough()
+export const modelParameterSchema: z.ZodType<ModelParameterSchema> = z.lazy(() =>
+  z.discriminatedUnion('kind', [
+    z
+      .object({
+        kind: z.literal('value'),
+        dtype: z
+          .enum([
+            'float16',
+            'float32',
+            'float64',
+            'int8',
+            'int16',
+            'int32',
+            'int64',
+            'uint8',
+            'uint16',
+            'uint32',
+            'uint64',
+            'bool',
+            'string',
+          ])
+          .optional(),
+        shape: z.array(nonnegativeIntegerSchema).optional(),
+        quantityKind: z.string().optional(),
+        unit: z.string().optional(),
+        minimum: z.number().optional(),
+        maximum: z.number().optional(),
+        exclusiveMinimum: z.boolean().optional(),
+        exclusiveMaximum: z.boolean().optional(),
+        values: z.array(z.string()).optional(),
+        description: z.string().optional(),
+        omission: z.string().optional(),
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal('object'),
+        fields: z.record(z.string(), modelParameterSchema),
+        required: z.array(z.string()).optional(),
+        description: z.string().optional(),
+        omission: z.string().optional(),
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal('list'),
+        items: modelParameterSchema,
+        minimumLength: nonnegativeIntegerSchema.optional(),
+        maximumLength: nonnegativeIntegerSchema.optional(),
+        increasingBy: z.string().optional(),
+        description: z.string().optional(),
+        omission: z.string().optional(),
+      })
+      .strict(),
+  ]),
+)
 
 const materialModelSchema = z
   .object({
     key: z.string(),
     labelKo: z.string(),
-    kind: z.literal('sampled_relation'),
-    input: materialModelEndpointSchema,
-    output: materialModelEndpointSchema,
-    minimumSamples: nonnegativeIntegerSchema,
-    sharedBasis: z.boolean(),
+    description: z.string(),
+    equation: z.string(),
+    conventions: z.string(),
+    parameterSchema: modelParameterSchema,
   })
   .passthrough()
 
@@ -82,10 +120,11 @@ const solverMaterialRequirementSchema = z
     solverVersion: z.string(),
     role: z.string(),
     roleDescription: z.string().nullable().optional(),
-    methodCategory: z.string(),
-    methodId: z.string(),
-    materialParameter: z.string().nullable().optional(),
-    description: z.string(),
+    methodCategory: z.string().optional(),
+    methodId: z.string().optional(),
+    description: z.string().optional(),
+    groupKey: z.string(),
+    required: z.boolean(),
     quantityKind: z.string().nullable().optional(),
     unit: z.string().nullable().optional(),
   })
@@ -192,13 +231,11 @@ const kernelMaterialSchema = z
   .object({
     role: z.string(),
     description: z.string(),
-    target: z
-      .object({
-        category: z.enum(['initializations', 'boundaryConditions', 'outputs']),
-        methodId: z.string(),
-      })
-      .passthrough(),
-    properties: z.record(z.string(), kernelParameterSchema),
+    target: z.union([
+      z.object({ category: z.enum(['initializations', 'boundaryConditions', 'outputs']), methodId: z.string() }),
+      z.object({ category: z.literal('geometry'), source: z.enum(['experiment', 'task']) }),
+    ]),
+    modelGroups: z.array(z.object({ key: z.string(), required: z.boolean(), oneOf: z.array(z.string()).min(1) })),
   })
   .passthrough()
 
@@ -245,20 +282,16 @@ const kernelDescriptorSchema = z
   .passthrough()
 
 const quantityKindDetailSchema = quantityKindSchema.extend({
-  materialParameters: z.array(
+  materialModels: z.array(
     z
       .object({
         key: z.string(),
         labelKo: z.string(),
+        path: z.string(),
       })
       .passthrough(),
   ),
   solverUsages: z.array(solverQuantityKindUsageSchema),
-})
-
-const materialParameterDetailSchema = materialParameterSchema.extend({
-  quantityKindDefinition: quantityKindSchema,
-  solverRequirements: z.array(solverMaterialRequirementSchema),
 })
 
 const artifactConsumerSchema = z
@@ -329,12 +362,9 @@ const catalogMetaSchema = z
   .object({
     catalogRevision: z.string(),
     quantityKindCount: nonnegativeIntegerSchema,
-    materialParameterCount: nonnegativeIntegerSchema,
     materialModelCount: nonnegativeIntegerSchema,
     solverCount: nonnegativeIntegerSchema,
     experimentCount: nonnegativeIntegerSchema,
-    materialGlobalQualifiers: z.array(z.string()),
-    materialDesignRules: z.record(z.string(), z.string()),
   })
   .passthrough()
 
@@ -366,9 +396,7 @@ const runtimeSliceSchema = z
         .passthrough(),
     ),
     quantityKinds: z.array(quantityKindSchema),
-    materialParameters: z.array(materialParameterSchema),
     materialModels: z.array(materialModelSchema),
-    materialGlobalQualifiers: z.array(z.string()),
     warnings: z.array(z.string()),
   })
   .passthrough()
@@ -394,14 +422,6 @@ export function parseCatalogQuantityKindList(value: unknown): CatalogList<Catalo
 
 export function parseCatalogQuantityKindDetail(value: unknown): CatalogQuantityKindDetail {
   return quantityKindDetailSchema.parse(value) as CatalogQuantityKindDetail
-}
-
-export function parseCatalogMaterialParameterList(value: unknown): CatalogList<CatalogMaterialParameter> {
-  return parseCatalogList(value, materialParameterSchema)
-}
-
-export function parseCatalogMaterialParameterDetail(value: unknown): CatalogMaterialParameterDetail {
-  return materialParameterDetailSchema.parse(value) as CatalogMaterialParameterDetail
 }
 
 export function parseCatalogMaterialModelList(value: unknown): CatalogList<CatalogMaterialModel> {

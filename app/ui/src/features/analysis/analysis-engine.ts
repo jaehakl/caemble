@@ -132,28 +132,26 @@ function extractMaterials(
   observations: NumericObservation[],
 ) {
   if (!isRecord(value) || !isRecord(value.materials)) return
-  Object.entries(value.materials).forEach(([materialName, rawParameters]) => {
-    if (!isRecord(rawParameters)) return
-    Object.entries(rawParameters).forEach(([parameterName, rawParameter]) => {
-      if (!isRecord(rawParameter) || !isRecord(rawParameter.value)) return
-      const parameterValue = rawParameter.value
-      if (parameterValue.kind === 'sampled_relation' || typeof parameterValue.unit !== 'string') return
-      const tensor = numericTensor(parameterValue.value)
-      if (!tensor) return
-      const root = `${prefix}.${materialName}.${parameterName}`
-      const signature = `${parameterValue.unit}:${JSON.stringify(tensor.shape)}`
-      tensor.flat.forEach((item, index) => {
-        const key = `${root}${componentPath(index, tensor.shape)}`
-        observations.push({
-          key,
-          label: key,
-          source,
-          value: item,
-          unit: parameterValue.unit as string,
-          root,
-          signature,
-        })
-      })
+  Object.entries(value.materials).forEach(([materialName, material]) => {
+    if (!isRecord(material) || !isRecord(material.models)) return
+    Object.entries(material.models).forEach(([instanceName, instance]) => {
+      if (!isRecord(instance) || typeof instance.model !== 'string') return
+      const visit = (parameter: unknown, root: string) => {
+        const quantity = isRecord(parameter) && typeof parameter.unit === 'string' ? parameter : null
+        const tensor = numericTensor(quantity ? quantity.value : parameter)
+        if (tensor) {
+          const signature = JSON.stringify([instance.model, quantity?.unit, quantity?.dtype, quantity?.basis, tensor.shape])
+          tensor.flat.forEach((item, index) => {
+            const key = `${root}${componentPath(index, tensor.shape)}`
+            observations.push({ key, label: key, source, value: item, root, signature, ...(quantity ? { unit: quantity.unit as string } : {}) })
+          })
+        } else if (Array.isArray(parameter)) {
+          parameter.forEach((child, index) => visit(child, `${root}[${index}]`))
+        } else if (isRecord(parameter) && !quantity) {
+          Object.entries(parameter).forEach(([key, child]) => visit(child, `${root}.${key}`))
+        }
+      }
+      visit(instance.parameters, `${prefix}.${materialName}.models.${instanceName}.parameters`)
     })
   })
 }
@@ -242,7 +240,7 @@ function inputFingerprint(measurement: MeasurementRecord) {
     canonicalInput({
       experimentId: measurement.experiment_id,
       vars: measurement.vars,
-      materialParameters: measurement.material_parameters,
+      materialSnapshot: measurement.material_snapshot,
     }),
   )
   let first = 0x811c9dc5
@@ -331,7 +329,7 @@ export function buildAnalysisDataset({
 
     const observations: NumericObservation[] = []
     extractVars(measurement.vars, 'measurement.vars', 'measurement-vars', observations)
-    const materials = measurement.material_parameters
+    const materials = measurement.material_snapshot
     if (isRecord(materials)) {
       extractMaterials(materials.experiment, 'measurement.material.experiment', 'measurement-material', observations)
       if (isRecord(materials.tasks)) {

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const BUILD_VERSION = '1' as const
+export const BUILD_VERSION = '2' as const
 export const UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 export const artifactItemSchema = z.object({
   index: z.number().int().positive(),
@@ -11,7 +11,7 @@ export const artifactItemSchema = z.object({
 })
 export const buildArtifactSchema = z.object({
   kind: z.literal('caemble.build'),
-  version: z.literal(1),
+  version: z.literal(2),
   source_hash: z.string().regex(/^[a-f0-9]{64}$/),
   catalog_revision: z.string().min(1),
   builder_version: z.literal(BUILD_VERSION),

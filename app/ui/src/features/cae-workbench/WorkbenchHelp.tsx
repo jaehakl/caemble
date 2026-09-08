@@ -8,13 +8,12 @@ import { Input } from '@/components/ui/input'
 import {
   catalogMaterialModelQueryOptions,
   catalogMaterialModelsQueryOptions,
-  catalogMaterialParameterQueryOptions,
-  catalogMaterialParametersQueryOptions,
   catalogQuantityKindQueryOptions,
   catalogQuantityKindsQueryOptions,
   catalogSolverQueryOptions,
   catalogSolversQueryOptions,
 } from '@/features/catalog/queryOptions'
+import { MaterialModelDetail } from '@/features/catalog/materials/MaterialCatalogPage'
 import { cadElementCatalog } from '@/lib/cad/catalog'
 import { cn } from '@/lib/utils'
 import type { HelpKindId } from '@/features/cae-workbench/types'
@@ -33,9 +32,6 @@ export function WorkbenchHelpExplorer({
   const needle = query.trim().toLocaleLowerCase()
   const quantityKinds = useQuery(
     catalogQuantityKindsQueryOptions({ q: query.trim(), limit: 100 }, kind === 'quantity-kinds'),
-  )
-  const materialParameters = useQuery(
-    catalogMaterialParametersQueryOptions({ q: query.trim(), limit: 100 }, kind === 'materials'),
   )
   const materialModels = useQuery(
     catalogMaterialModelsQueryOptions({ q: query.trim(), limit: 100 }, kind === 'materials'),
@@ -60,17 +56,11 @@ export function WorkbenchHelpExplorer({
     }
     if (kind === 'materials') {
       return [
-        ...(materialParameters.data?.items ?? []).map((item) => ({
-          id: item.key,
-          title: item.labelKo || item.key,
-          summary: item.quantityKind,
-          group: 'parameter',
-        })),
         ...(materialModels.data?.items ?? []).map((item) => ({
           id: item.key,
           title: item.labelKo || item.key,
-          summary: `${item.input.quantityKind} → ${item.output.quantityKind}`,
-          group: 'model',
+          summary: item.description,
+          group: 'Material Model',
         })),
       ]
     }
@@ -88,25 +78,17 @@ export function WorkbenchHelpExplorer({
       summary: item.description,
       group: `v${item.version}`,
     }))
-  }, [
-    kind,
-    materialModels.data?.items,
-    materialParameters.data?.items,
-    needle,
-    quantityKinds.data?.items,
-    solvers.data?.items,
-  ])
+  }, [kind, materialModels.data?.items, needle, quantityKinds.data?.items, solvers.data?.items])
 
   const loading =
     (quantityKinds.isPending && kind === 'quantity-kinds') ||
-    (materialParameters.isPending && kind === 'materials') ||
     (materialModels.isPending && kind === 'materials') ||
     (solvers.isPending && kind === 'solvers')
   const error =
     kind === 'quantity-kinds'
       ? quantityKinds.error
       : kind === 'materials'
-        ? (materialParameters.error ?? materialModels.error)
+        ? materialModels.error
         : kind === 'solvers'
           ? solvers.error
           : null
@@ -173,17 +155,8 @@ export function WorkbenchHelpExplorer({
 }
 
 export function WorkbenchHelpDetail({ kind, selectedItem }: { kind: HelpKindId; selectedItem: string | null }) {
-  const materialParameter = useQuery(
-    catalogMaterialParameterQueryOptions(
-      selectedItem ?? '',
-      kind === 'materials' && Boolean(selectedItem && !selectedItem.startsWith('model.')),
-    ),
-  )
   const materialModel = useQuery(
-    catalogMaterialModelQueryOptions(
-      selectedItem ?? '',
-      kind === 'materials' && Boolean(selectedItem?.startsWith('model.')),
-    ),
+    catalogMaterialModelQueryOptions(selectedItem ?? '', kind === 'materials' && Boolean(selectedItem)),
   )
   const quantityKind = useQuery(
     catalogQuantityKindQueryOptions(selectedItem ?? '', kind === 'quantity-kinds' && Boolean(selectedItem)),
@@ -192,11 +165,7 @@ export function WorkbenchHelpDetail({ kind, selectedItem }: { kind: HelpKindId; 
   const solverName = solverSeparator > 0 ? selectedItem!.slice(0, solverSeparator) : ''
   const solverVersion = solverSeparator > 0 ? selectedItem!.slice(solverSeparator + 1) : ''
   const solver = useQuery(
-    catalogSolverQueryOptions(
-      solverName,
-      solverVersion,
-      kind === 'solvers' && Boolean(solverName && solverVersion),
-    ),
+    catalogSolverQueryOptions(solverName, solverVersion, kind === 'solvers' && Boolean(solverName && solverVersion)),
   )
 
   if (!selectedItem) return <EmptyHelpDetail kind={kind} />
@@ -219,7 +188,6 @@ export function WorkbenchHelpDetail({ kind, selectedItem }: { kind: HelpKindId; 
   }
 
   const pending =
-    (materialParameter.isPending && materialParameter.fetchStatus !== 'idle') ||
     (materialModel.isPending && materialModel.fetchStatus !== 'idle') ||
     (quantityKind.isPending && quantityKind.fetchStatus !== 'idle') ||
     (solver.isPending && solver.fetchStatus !== 'idle')
@@ -230,36 +198,13 @@ export function WorkbenchHelpDetail({ kind, selectedItem }: { kind: HelpKindId; 
       </p>
     )
   }
-  const error = materialParameter.error ?? materialModel.error ?? quantityKind.error ?? solver.error
+  const error = materialModel.error ?? quantityKind.error ?? solver.error
   if (error) return <p className="p-5 text-sm text-destructive">Detail을 불러오지 못했습니다.</p>
 
   if (kind === 'materials') {
-    const parameter = materialParameter.data
-    const model = materialModel.data
     return (
-      <article className="h-full space-y-5 overflow-auto p-5 text-sm">
-        <Badge>{model ? 'Material model' : 'Material parameter'}</Badge>
-        <h2 className="font-mono text-xl font-semibold break-all">{model?.key ?? parameter?.key}</h2>
-        <p className="text-muted-foreground">{model?.labelKo ?? parameter?.labelKo}</p>
-        {parameter ? (
-          <>
-            <DetailRow label="Domain" value={parameter.domain} />
-            <DetailRow label="Quantity Kind" value={parameter.quantityKind} mono />
-            <DetailRow label="Qualifiers" value={parameter.specialQualifiers.join(', ') || '없음'} />
-            <DetailRow
-              label="Required by solvers"
-              value={`${parameter.solverRequirements.length.toLocaleString()} contracts`}
-            />
-          </>
-        ) : null}
-        {model ? (
-          <>
-            <DetailRow label="Input" value={`${model.input.name} · ${model.input.quantityKind}`} mono />
-            <DetailRow label="Output" value={`${model.output.name} · ${model.output.quantityKind}`} mono />
-            <DetailRow label="Minimum samples" value={String(model.minimumSamples)} />
-            <DetailRow label="Shared basis" value={model.sharedBasis ? '예' : '아니오'} />
-          </>
-        ) : null}
+      <article className="h-full overflow-auto">
+        <MaterialModelDetail detail={materialModel.data} error={materialModel.error} pending={false} />
       </article>
     )
   }
@@ -273,8 +218,8 @@ export function WorkbenchHelpDetail({ kind, selectedItem }: { kind: HelpKindId; 
         <DetailRow label="Tensor order" value={String(detail.tensorOrder)} />
         <DetailRow label="Applicable units" value={detail.applicableUnits.join(', ') || '없음'} mono />
         <DetailRow
-          label="Material parameters"
-          value={detail.materialParameters.map((item) => item.key).join(', ') || '없음'}
+          label="Material Model parameters"
+          value={detail.materialModels.map((item) => `${item.key}: ${item.path}`).join(', ') || '없음'}
           mono
         />
         <DetailRow label="Solver usages" value={`${detail.solverUsages.length.toLocaleString()} contracts`} />
@@ -289,7 +234,10 @@ export function WorkbenchHelpDetail({ kind, selectedItem }: { kind: HelpKindId; 
         <h2 className="font-mono text-xl font-semibold break-all">{detail.name}</h2>
         <p className="text-muted-foreground">{detail.description}</p>
         <DetailRow label="Reference length unit" value={detail.descriptor.referenceLengthUnit} mono />
-        <DetailRow label="Materials" value={`${detail.materialRequirements.length.toLocaleString()} requirements`} />
+        <DetailRow
+          label="Material Model requirements"
+          value={`${detail.materialRequirements.length.toLocaleString()} requirements`}
+        />
         <DetailRow label="Quantity kinds" value={`${detail.quantityKindUsages.length.toLocaleString()} usages`} />
         <DetailRow
           label="Artifact ports"
@@ -307,7 +255,7 @@ function helpKindTitle(kind: HelpKindId) {
     : kind === 'geometry'
       ? 'Geometry Catalog'
       : kind === 'materials'
-        ? 'Material Catalog'
+        ? 'Material Model'
         : kind === 'quantity-kinds'
           ? 'Quantity Catalog'
           : 'Physics / Solvers'

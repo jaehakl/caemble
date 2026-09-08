@@ -86,7 +86,7 @@ export function MeasurementExplorer({
     const trimmed = search.trim()
     const searchedId = Number(trimmed)
     const textFilter: Record<string, string[]> =
-      trimmed && !Number.isSafeInteger(searchedId) ? { vars: [trimmed], material_parameters: [trimmed] } : {}
+      trimmed && !Number.isSafeInteger(searchedId) ? { vars: [trimmed], material_snapshot: [trimmed] } : {}
     return {
       ...getListRequest('visible'),
       offset: page * pageSize,

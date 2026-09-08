@@ -38,7 +38,7 @@ export const persistedMeasurementRecordSchema = z
     id: databaseIdSchema,
     experiment_id: databaseIdSchema,
     vars: objectSchema,
-    material_parameters: objectSchema,
+    material_snapshot: objectSchema,
     recorded_at: z.string().nullable(),
     calculation_data_count: z.number().int().nonnegative(),
   })

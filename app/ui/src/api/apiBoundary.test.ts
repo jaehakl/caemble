@@ -3,7 +3,6 @@ import { dbTables, getListRequest } from './api'
 import { ApiContractError } from './http'
 import { parseCalculationListResponse } from '@/contracts/api/calculationValidators'
 import { parseExperimentListResponse } from '@/contracts/api/experimentValidators'
-import { parseMaterialNameListResponse } from '@/contracts/api/materialValidators'
 import { parseMeasurementListResponse } from '@/contracts/api/measurementValidators'
 
 function jsonResponse(body: unknown) {
@@ -26,7 +25,7 @@ describe('API read boundaries', () => {
               id: 'not-a-database-id',
               experiment_id: 1,
               vars: {},
-              material_parameters: {},
+              material_snapshot: {},
               recorded_at: null,
               calculation_data_count: 0,
             },
@@ -70,17 +69,12 @@ describe('API read boundaries', () => {
   })
 
   it('validates identity and relationship fields for core persisted domains', () => {
-    expect(() => parseMaterialNameListResponse({ items: [{ id: 1, name: 'Steel' }], total: 1 })).toThrow()
     expect(() => parseExperimentListResponse({ items: [{ id: 1 }], total: 1 })).toThrow()
     expect(() => parseMeasurementListResponse({ items: [{ id: 1 }], total: 1 })).toThrow()
     expect(() => parseCalculationListResponse({ items: [{ id: 1 }], total: 1 })).toThrow()
   })
 
   it('keeps unmodeled response fields while validating core persisted fields', () => {
-    const materialNames = parseMaterialNameListResponse({
-      items: [{ id: 1, material_id: 2, name: 'Steel', future_field: 'kept' }],
-      total: 1,
-    })
     const experiments = parseExperimentListResponse({
       items: [
         {
@@ -105,7 +99,7 @@ describe('API read boundaries', () => {
           id: 1,
           experiment_id: 2,
           vars: {},
-          material_parameters: {},
+          material_snapshot: {},
           recorded_at: null,
           calculation_data_count: 0,
           future_field: 'kept',
@@ -129,7 +123,6 @@ describe('API read boundaries', () => {
       total: 1,
     })
 
-    expect(materialNames.items[0]).toHaveProperty('future_field', 'kept')
     expect(experiments.items[0]).toHaveProperty('future_field', 'kept')
     expect(measurements.items[0]).toHaveProperty('future_field', 'kept')
     expect(calculations.items[0]).toHaveProperty('future_field', 'kept')

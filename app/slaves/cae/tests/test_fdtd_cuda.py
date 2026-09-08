@@ -20,7 +20,7 @@ def test_cuda_fdtd_with_cpml_matches_cpu(model: int) -> None:
     for device_name in ("cpu", "cuda"):
         device = torch.device(device_name)
         coefficients = build_update_coefficients(
-            np.full(shape, 2.0, np.float32), np.ones(shape, np.float32),
+            np.ones(shape, np.float32),
             np.full(shape, 1e14, np.float32), np.full(shape, 1e12, np.float32),
             np.full(shape, model, np.uint8), dt, (False, True, True), device,
         )

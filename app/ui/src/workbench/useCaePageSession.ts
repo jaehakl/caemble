@@ -162,7 +162,7 @@ export function useCaePageSession(
         name: 'Starter Experiment',
         description: '브라우저에서 바로 편집하고 렌더링할 수 있는 로컬 Starter입니다.',
       },
-      candidate: { vars: null, materialParameters: null },
+      candidate: { vars: null, materialSnapshot: null },
       selection: { experimentId: null, measurementId: null, calculationId: null },
       layout: defaultWorkbenchLayoutState,
     })
@@ -172,11 +172,7 @@ export function useCaePageSession(
       let draft: WorkbenchDraft | null = null
       try {
         try {
-          draft = await loadWorkbenchDraft(queryScope, () =>
-            window.confirm(
-              '업데이트 전에 저장된 로컬 작업은 계정 정보가 없습니다. 이 브라우저의 이전 작업이 맞다면 현재 세션으로 가져올까요?',
-            ),
-          )
+          draft = await loadWorkbenchDraft(queryScope)
         } catch (cause: unknown) {
           if (cancelled) return
           setPersistenceAvailable(false)

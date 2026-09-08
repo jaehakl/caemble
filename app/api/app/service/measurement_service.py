@@ -1,5 +1,6 @@
 from typing import Any
 
+from caemble_catalog import Catalog
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +14,7 @@ from models import (
     UserData,
 )
 from service.experiment_access import require_experiment_read
+from service.material_snapshot import validate_material_snapshot
 from utils.crud import CrudSpec, delete_items, get_list_response
 from utils.crud.common import is_admin_user
 from gpstation.db import Job
@@ -106,6 +108,7 @@ async def create_measurement(
     request: MeasurementCreateRequest,
     *,
     user: UserData,
+    catalog: Catalog,
 ) -> dict[str, int]:
     experiment = await db.scalar(
         select(Experiment)
@@ -116,11 +119,14 @@ async def create_measurement(
         not is_admin_user(user) and experiment.user_id not in {None, user.id}
     ):
         raise LookupError("experiment_id not found.")
+    if experiment.source_hash != request.experiment_source_hash:
+        raise HTTPException(409, "Experiment source changed before Measurement creation.")
+    validate_material_snapshot(request.material_snapshot, source_hash=experiment.source_hash, variables=request.vars, catalog=catalog)
     measurement = Measurement(
         user_id=user.id,
         experiment_id=experiment.id,
         vars=request.vars,
-        material_parameters=request.material_parameters,
+        material_snapshot=request.material_snapshot,
         recorded_at=None,
     )
     db.add(measurement)

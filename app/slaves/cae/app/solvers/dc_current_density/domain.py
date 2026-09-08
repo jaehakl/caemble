@@ -15,7 +15,7 @@ from app.kernel.api.world import (
     geometry_part,
     geometry_parts,
     grid_shape,
-    material_property_value,
+    material_model,
     scalar_parameter,
     surface,
     target_group,
@@ -62,7 +62,7 @@ async def build_dc_domain(context: SolverInvocation) -> DcDomain:
     surface_mode = len(surface_source) == len(surface_reference) == 1 and not electrode_source and not electrode_reference
     shape = grid_shape(grid_rule)
     conductivities = [
-        float(np.trace(material_property_value(world, part, descriptor, "electrical.conductivity").reshape(3, 3)) / 3)
+        _conductivity(world, part, "conductor", "experiment")
         for part in parts
     ]
     fixed_values: np.ndarray[Any, Any] | None = None
@@ -85,10 +85,8 @@ async def build_dc_domain(context: SolverInvocation) -> DcDomain:
         source_rule, reference_rule = electrode_source[0], electrode_reference[0]
         source_parts = geometry_parts(task, target_group(source_rule, "geometry", "task"))
         reference_parts = geometry_parts(task, target_group(reference_rule, "geometry", "task"))
-        conductivities.extend(
-            float(np.trace(material_property_value(world, part, descriptor, "electrical.conductivity", "task").reshape(3, 3)) / 3)
-            for part in source_parts + reference_parts
-        )
+        conductivities.extend(_conductivity(world, part, "source-electrode", "task") for part in source_parts)
+        conductivities.extend(_conductivity(world, part, "reference-electrode", "task") for part in reference_parts)
         electrode_domain = await build_electrode_voxel_domain(
             [
                 await context.geometry.triangular_mesh(
@@ -129,6 +127,8 @@ async def build_dc_domain(context: SolverInvocation) -> DcDomain:
         )
         geometry_hashes.append(task["geometryHash"])
         root_ids.extend(part["id"] for part in source_parts + reference_parts)
+    if not np.allclose(conductivities, conductivities[0], rtol=1e-6, atol=0):
+        raise ValueError("DC requires homogeneous conductivity across the conductor and electrodes")
     source_voltage = scalar_parameter(source_rule["parameters"]["voltage"])
     reference_voltage = scalar_parameter(reference_rule["parameters"]["voltage"])
     return DcDomain(
@@ -145,6 +145,17 @@ async def build_dc_domain(context: SolverInvocation) -> DcDomain:
         fixed_values,
         surface_mode,
     )
+
+
+def _conductivity(world: dict[str, Any], part: dict[str, Any], role: str, source: str) -> float:
+    model = material_model(world, part, role, "conduction", source)
+    if model is None or model["model"] != "electrical.ohmic-conduction@1":
+        raise ValueError(f"{role} requires an Ohmic conduction model")
+    tensor = np.asarray(model["parameters"]["sigma"]["value"], dtype=np.float64).reshape(3, 3)
+    conductivity = float(np.trace(tensor) / 3)
+    if conductivity <= 0 or not np.allclose(tensor, np.eye(3) * conductivity, rtol=1e-6, atol=1e-9):
+        raise ValueError("DC requires a positive isotropic conductivity tensor")
+    return conductivity
 
 
 async def build_electrode_voxel_domain(

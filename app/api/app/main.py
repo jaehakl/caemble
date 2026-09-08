@@ -10,7 +10,6 @@ from routers import (
     demo_experiment,
     experiment,
     experiment_record,
-    material,
     measurement,
     recorded_data,
     users,
@@ -22,7 +21,6 @@ app = server()
 app.include_router(cae_router)
 app.include_router(client.router)
 app.include_router(catalog.router)
-app.include_router(material.router)
 app.include_router(experiment.router)
 app.include_router(experiment_record.router)
 app.include_router(measurement.router)

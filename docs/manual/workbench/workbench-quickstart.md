@@ -5,7 +5,7 @@ Caemble의 Experiment는 공통 형상과 변수, Material, solver Task, 실행 
 1. 로그인하고 CAE Launcher가 연결되어 있는지 확인합니다.
 2. 상단 **Experiment** 메뉴를 선택하고 왼쪽 목록에서 Example 또는 저장된 namespace / repository / SemVer Version을 연 뒤, 오른쪽 Source 탭에서 source bundle을 작성합니다.
 3. source 상태가 `Ready`가 될 때까지 compile/evaluate 오류를 해결합니다.
-4. **Generate Candidate**로 `varsSchema` 범위의 새 변수 조건과 frozen Material 값을 미리 봅니다.
+4. **Generate Candidate**로 `varsSchema` 범위의 새 변수 조건과 그 조건에서 만든 Model Parameter를 미리 봅니다.
 5. 원하는 조건이면 **Save Current Measurement**로 변수와 Material snapshot을 고정합니다. 이 단계는 solver를 실행하지 않습니다.
 6. 상단 **Calculation** 메뉴의 왼쪽 점 배열에서 prepared Measurement를 선택합니다. Ctrl/Cmd+클릭으로 여러 항목을 선택하고 Shift+클릭으로 현재 페이지의 범위를 선택할 수 있습니다.
 7. **Generate & Run**은 브라우저에서 새 Candidate와 실행 입력을 build한 뒤 서버에 batch로 제출합니다. **Save & Run**은 화면에서 확인한 Vars와 Material snapshot을 그대로 고정하여 build합니다.

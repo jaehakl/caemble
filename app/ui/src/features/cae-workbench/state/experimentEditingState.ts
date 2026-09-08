@@ -9,7 +9,7 @@ export type ExperimentEditingState = Readonly<{
   name: string
   description: string
   candidateVars: Readonly<Vars> | null
-  candidateMaterialParameters: SavedMeasurement['material_parameters'] | null
+  candidateMaterialSnapshot: SavedMeasurement['material_snapshot'] | null
   workspaceSession: number
 }>
 
@@ -20,7 +20,7 @@ export const initialExperimentEditingState: ExperimentEditingState = Object.free
   name: 'Untitled Experiment',
   description: '',
   candidateVars: null,
-  candidateMaterialParameters: null,
+  candidateMaterialSnapshot: null,
   workspaceSession: 0,
 })
 
@@ -30,7 +30,7 @@ export type ExperimentEditingAction =
       type: 'draftRestored'
       draft: WorkbenchDraft
       document: ExperimentSourceDocument | null
-      candidateMaterialParameters: SavedMeasurement['material_parameters'] | null
+      candidateMaterialSnapshot: SavedMeasurement['material_snapshot'] | null
     }>
   | Readonly<{
       type: 'newStarted'
@@ -49,17 +49,17 @@ export type ExperimentEditingAction =
   | Readonly<{
       type: 'candidateLoaded'
       vars: Readonly<Vars>
-      materialParameters: SavedMeasurement['material_parameters']
+      materialSnapshot: SavedMeasurement['material_snapshot']
     }>
   | Readonly<{
       type: 'candidateVariablesChanged'
       vars: Readonly<Vars>
-      clearMaterialParameters?: boolean
+      clearMaterialSnapshot?: boolean
     }>
   | Readonly<{
       type: 'candidateEvaluationAccepted'
       vars: Readonly<Vars>
-      materialParameters?: SavedMeasurement['material_parameters']
+      materialSnapshot?: SavedMeasurement['material_snapshot']
     }>
   | Readonly<{ type: 'candidateCleared' }>
   | Readonly<{ type: 'candidateMaterialCleared' }>
@@ -84,7 +84,7 @@ export function experimentEditingReducer(
         name: action.record.name,
         description: action.record.description ?? '',
         candidateVars: null,
-        candidateMaterialParameters: null,
+        candidateMaterialSnapshot: null,
         workspaceSession: state.workspaceSession + 1,
       }
     case 'draftRestored':
@@ -96,7 +96,7 @@ export function experimentEditingReducer(
         name: action.draft.experiment.name,
         description: action.draft.experiment.description,
         candidateVars: action.draft.candidate.vars,
-        candidateMaterialParameters: action.candidateMaterialParameters,
+        candidateMaterialSnapshot: action.candidateMaterialSnapshot,
         workspaceSession: state.workspaceSession + 1,
       }
     case 'newStarted':
@@ -108,7 +108,7 @@ export function experimentEditingReducer(
         name: action.name,
         description: action.description,
         candidateVars: null,
-        candidateMaterialParameters: null,
+        candidateMaterialSnapshot: null,
         workspaceSession: state.workspaceSession + 1,
       }
     case 'detached':
@@ -118,14 +118,14 @@ export function experimentEditingReducer(
         record: null,
         baselineBundle: null,
         candidateVars: null,
-        candidateMaterialParameters: null,
+        candidateMaterialSnapshot: null,
         workspaceSession: state.workspaceSession + 1,
       }
     case 'sourceEdited':
       return {
         ...state,
         document: action.document,
-        candidateMaterialParameters: null,
+        candidateMaterialSnapshot: null,
       }
     case 'saveCommitted':
       return {
@@ -139,24 +139,24 @@ export function experimentEditingReducer(
       return {
         ...state,
         candidateVars: action.vars,
-        candidateMaterialParameters: action.materialParameters,
+        candidateMaterialSnapshot: action.materialSnapshot,
       }
     case 'candidateVariablesChanged':
       return {
         ...state,
         candidateVars: action.vars,
-        candidateMaterialParameters: action.clearMaterialParameters ? null : state.candidateMaterialParameters,
+        candidateMaterialSnapshot: action.clearMaterialSnapshot ? null : state.candidateMaterialSnapshot,
       }
     case 'candidateEvaluationAccepted':
       return {
         ...state,
         candidateVars: action.vars,
-        candidateMaterialParameters: action.materialParameters ?? state.candidateMaterialParameters,
+        candidateMaterialSnapshot: action.materialSnapshot ?? state.candidateMaterialSnapshot,
       }
     case 'candidateCleared':
-      return { ...state, candidateVars: null, candidateMaterialParameters: null }
+      return { ...state, candidateVars: null, candidateMaterialSnapshot: null }
     case 'candidateMaterialCleared':
-      return { ...state, candidateMaterialParameters: null }
+      return { ...state, candidateMaterialSnapshot: null }
     case 'usageRefreshed':
       return state.record?.id === action.experimentId
         ? {

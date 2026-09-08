@@ -20,7 +20,7 @@ const draft: WorkbenchDraft = {
     name: 'Local draft',
     description: '',
   },
-  candidate: { vars: null, materialParameters: null },
+  candidate: { vars: null, materialSnapshot: null },
   selection: { experimentId: null, measurementId: null, calculationId: null },
   layout: defaultWorkbenchLayoutState,
 }
@@ -43,6 +43,30 @@ describe('Workbench draft storage', () => {
       layout: { ...draft.layout, bottomMode: 'console' },
     })
   })
+
+  it('restores the retired Material section as Help Material Model', async () => {
+    const storageKey = workbenchDraftStorageKey('public')
+    sessionStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        version: WORKBENCH_DRAFT_SCHEMA_VERSION,
+        ownerScope: 'public',
+        draft: {
+          ...draft,
+          layout: {
+            ...draft.layout,
+            activeSection: 'material',
+            help: { kind: 'solvers', item: 'fdtd@2.0.0' },
+          },
+        },
+      }),
+    )
+
+    const restored = await loadWorkbenchDraft('public')
+    expect(restored?.layout.activeSection).toBe('help')
+    expect(restored?.layout.help).toEqual({ kind: 'materials', item: null })
+  })
+
   it('round-trips a local draft and clears retired keys', async () => {
     sessionStorage.setItem('caemble:cae-workbench-draft', 'retired')
     sessionStorage.setItem('caemble:cae-workbench-draft:v1', 'retired')
@@ -53,80 +77,16 @@ describe('Workbench draft storage', () => {
     expect(sessionStorage.getItem('caemble:cae-workbench-draft:v1')).toBeNull()
   })
 
-  it('migrates the previous unscoped draft into the resolved owner scope', async () => {
+  it('discards incompatible legacy drafts instead of restoring old Material snapshots', async () => {
     sessionStorage.setItem('caemble:workbench-draft', JSON.stringify(draft))
-
-    await expect(loadWorkbenchDraft('user:first', () => true)).resolves.toEqual(draft)
+    await expect(loadWorkbenchDraft('public')).resolves.toBeNull()
     expect(sessionStorage.getItem('caemble:workbench-draft')).toBeNull()
-    expect(sessionStorage.getItem(workbenchDraftStorageKey('user:first'))).not.toBeNull()
-  })
-
-  it('never infers the legacy draft owner from the selected Experiment owner', async () => {
-    const accountDraft = {
-      ...draft,
-      experiment: {
-        ...draft.experiment,
-        record: {
-          id: 1,
-          user_id: 'first',
-          namespace: 'first',
-          repository_slug: 'private',
-          experiment_key: 'draft',
-          version_major: 1,
-          version_minor: 0,
-          version_patch: 0,
-          name: 'Private',
-          source_bundle: draft.experiment.baselineBundle!,
-          source_hash: 'hash',
-        },
-      },
-      selection: { experimentId: 1, measurementId: null, calculationId: null },
-    } satisfies WorkbenchDraft
-    sessionStorage.setItem('caemble:workbench-draft', JSON.stringify(accountDraft))
-
-    await expect(loadWorkbenchDraft('user:second')).resolves.toBeNull()
-    expect(sessionStorage.getItem('caemble:workbench-draft')).not.toBeNull()
-    expect(sessionStorage.getItem(workbenchDraftStorageKey('user:second'))).toBeNull()
-
-    await expect(loadWorkbenchDraft('user:second', () => true)).resolves.toEqual(accountDraft)
-    expect(sessionStorage.getItem('caemble:workbench-draft')).toBeNull()
-  })
-
-  it('requires explicit confirmation before assigning an ownerless legacy draft', async () => {
-    sessionStorage.setItem('caemble:workbench-draft', JSON.stringify(draft))
-
-    await expect(loadWorkbenchDraft('public', () => false)).resolves.toBeNull()
-    expect(sessionStorage.getItem('caemble:workbench-draft')).not.toBeNull()
-    expect(sessionStorage.getItem(workbenchDraftStorageKey('public'))).toBeNull()
-  })
-
-  it('migrates a scoped v1 draft while preserving its Experiment and Measurement', async () => {
-    const record = {
-      id: 4,
-      user_id: 'first',
-      namespace: 'first',
-      repository_slug: 'private',
-      experiment_key: 'draft',
-      version_major: 1,
-      version_minor: 0,
-      version_patch: 0,
-      name: 'Private',
-      source_bundle: draft.experiment.baselineBundle!,
-      source_hash: 'hash',
+    for (const version of [1, 2]) {
+      const key = workbenchDraftStorageKey('user:first')
+      sessionStorage.setItem(key, JSON.stringify({ version, ownerScope: 'user:first', draft }))
+      await expect(loadWorkbenchDraft('user:first')).resolves.toBeNull()
+      expect(sessionStorage.getItem(key)).toBeNull()
     }
-    const storageKey = workbenchDraftStorageKey('user:first')
-    sessionStorage.setItem(
-      storageKey,
-      JSON.stringify({
-        version: 1,
-        ownerScope: 'user:first',
-        draft: { ...draft, experiment: { ...draft.experiment, record }, selection: { measurementId: 12 } },
-      }),
-    )
-
-    const restored = await loadWorkbenchDraft('user:first')
-    expect(restored?.selection).toEqual({ experimentId: 4, measurementId: 12, calculationId: null })
-    expect(JSON.parse(sessionStorage.getItem(storageKey)!).version).toBe(WORKBENCH_DRAFT_SCHEMA_VERSION)
   })
 
   it('round-trips the full scoped selection context', async () => {

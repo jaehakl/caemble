@@ -24,7 +24,7 @@ function MaterialSnapshot({
   snapshot,
 }: {
   label: string
-  snapshot: SavedMeasurement['material_parameters']['experiment']
+  snapshot: SavedMeasurement['material_snapshot']['experiment']
 }) {
   return (
     <div className="rounded-md border p-3">
@@ -36,7 +36,6 @@ function MaterialSnapshot({
         {JSON.stringify(
           {
             materials: snapshot.materials,
-            ...(snapshot.materialColors ? { materialColors: snapshot.materialColors } : {}),
           },
           null,
           2,
@@ -177,8 +176,8 @@ export function MeasurementDetail({
         <h3 className="text-sm font-semibold" id="measurement-materials-title">
           Material snapshots
         </h3>
-        <MaterialSnapshot label="Experiment" snapshot={measurement.material_parameters.experiment} />
-        {Object.entries(measurement.material_parameters.tasks).map(([taskName, snapshot]) => (
+        <MaterialSnapshot label="Experiment" snapshot={measurement.material_snapshot.experiment} />
+        {Object.entries(measurement.material_snapshot.tasks).map(([taskName, snapshot]) => (
           <MaterialSnapshot key={taskName} label={`Task · ${taskName}`} snapshot={snapshot} />
         ))}
       </section>

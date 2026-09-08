@@ -6,8 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from app.kernel.api.units import convert_ucum_value
-
+from app.kernel.api.world import material_model
 from app.methods.optics import VACUUM_LIGHT_SPEED
 
 
@@ -20,49 +19,41 @@ class OpticalMaterial:
 
 
 def optical_material(
-    world: dict[str, Any],
-    descriptor: dict[str, Any],
-    name: str | None,
-    wavelength: float,
+    world: dict[str, Any], name: str | None, wavelength: float,
 ) -> OpticalMaterial:
     if name is None:
         return OpticalMaterial("vacuum", 1 + 0j, 0.0, 0.0)
-    refractive = _property(world, descriptor, name, "optical.refractive_index", wavelength, None)
-    extinction = _property(world, descriptor, name, "optical.extinction_coefficient", wavelength, 0.0)
-    absorption = _property(world, descriptor, name, "optical.absorption_coefficient", wavelength, None)
-    scattering = _property(world, descriptor, name, "optical.scattering_coefficient", wavelength, 0.0)
-    if absorption is None:
-        absorption = 4 * math.pi * extinction / wavelength
+    part = {"material": {"name": name}}
+    optical = material_model(world, part, "opticalDomain", "opticalResponse")
+    if optical is None:
+        raise ValueError(f"Material {name!r} requires a complex refractive-index model")
+    refractive = _parameter(optical, "n", wavelength)
+    extinction = _parameter(optical, "k", wavelength)
+    absorption_model = material_model(world, part, "opticalDomain", "absorption")
+    scattering_model = material_model(world, part, "opticalDomain", "scattering")
+    absorption = (
+        4 * math.pi * extinction / wavelength
+        if absorption_model is None else _parameter(absorption_model, "alpha", wavelength)
+    )
+    scattering = 0.0 if scattering_model is None else _parameter(scattering_model, "sigma", wavelength)
     return OpticalMaterial(name, complex(refractive, -extinction), absorption, scattering)
 
 
-def _property(
-    world: dict[str, Any],
-    descriptor: dict[str, Any],
-    material_name: str,
-    property_name: str,
-    wavelength: float,
-    default: float | None,
-) -> float | None:
-    entry = world["materials"]["experiment"]["parameters"]["materials"][material_name].get(property_name)
-    if entry is None:
-        return default
-    value = entry["value"]
-    expected = next(
-        role["properties"][property_name]["data"]
-        for role in descriptor["materials"]
-        if property_name in role["properties"]
-    )
-    source_unit = value["unit"]
-    target_unit = expected["unit"]
-    offset = convert_ucum_value(0, source_unit, target_unit)
-    scale = convert_ucum_value(1, source_unit, target_unit) - offset
-    raw = value["value"]
-    axes = value.get("axes")
-    if axes is None:
-        return float(raw) * scale + offset
-    axis = axes[0]
-    ticks = np.asarray(axis["ticks"], dtype=np.float64)
-    samples = np.asarray(raw, dtype=np.float64)
-    frequency = VACUUM_LIGHT_SPEED / wavelength
-    return float(np.interp(frequency, ticks, samples)) * scale + offset
+def _parameter(model: dict[str, Any], name: str, wavelength: float) -> float:
+    parameters = model["parameters"]
+    if model["model"] in {
+        "optics.constant-complex-index@1", "optics.constant-absorption@1",
+        "optics.constant-scattering@1",
+    }:
+        return float(parameters[name]["value"])
+    if model["model"] in {
+        "optics.frequency-sampled-complex-index@1", "optics.frequency-sampled-absorption@1",
+        "optics.frequency-sampled-scattering@1",
+    }:
+        samples = parameters["samples"]
+        return float(np.interp(
+            VACUUM_LIGHT_SPEED / wavelength,
+            [sample["frequency"]["value"] for sample in samples],
+            [sample[name]["value"] for sample in samples],
+        ))
+    raise ValueError(f"Ray tracing does not implement model {model['model']!r}")

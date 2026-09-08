@@ -13,6 +13,7 @@ from typing import Any, Iterable
 from .database import Catalog
 from .errors import CatalogError, CatalogNotFoundError
 from .schema import APPLICATION_ID, TABLE_ORDER, create_schema, parse_experiment_version
+from .model_schema import schema_values, validate_parameter_schema
 
 
 def canonical_json(value: Any) -> str:
@@ -85,17 +86,13 @@ def insert_solver_manifest(connection: sqlite3.Connection, manifest: dict[str, A
         target = material["target"]
         connection.execute(
             "INSERT INTO solver_material_roles VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (*solver, role_ordinal, role, material["description"], target["category"], target["methodId"]),
+            (*solver, role_ordinal, role, material["description"], target["category"], target["source"] if target["category"] == "geometry" else target["methodId"]),
         )
-        for ordinal, (key, prop) in enumerate(material.get("properties", {}).items()):
-            data = prop["data"]
-            connection.execute(
-                "INSERT INTO solver_material_properties VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (*solver, role, ordinal, key, prop["description"], canonical_json(data)),
-            )
-            usage_ordinal = _insert_data_usages(
-                connection, solver, data, "material", f"materials.{role}.properties.{key}", usage_ordinal
-            )
+        for ordinal, group in enumerate(material.get("modelGroups", [])):
+            connection.execute("INSERT INTO solver_material_model_groups VALUES (?, ?, ?, ?, ?, ?)",
+                (*solver, role, group["key"], ordinal, int(group["required"])))
+            connection.executemany("INSERT INTO solver_material_model_options VALUES (?, ?, ?, ?, ?, ?)",
+                [(*solver, role, group["key"], index, key) for index, key in enumerate(group["oneOf"])])
     for port_ordinal, (name, port) in enumerate(descriptor.get("inputPorts", {}).items()):
         data = port["data"]
         connection.execute(
@@ -225,6 +222,26 @@ def insert_experiment(connection: sqlite3.Connection, experiment: dict[str, Any]
     )
 
 
+def insert_material_model(connection: sqlite3.Connection, definition: dict[str, Any]) -> None:
+    key = definition["key"]
+    base, separator, version = key.rpartition("@")
+    if not separator or not base or not version.isascii() or not version.isdigit() or str(int(version)) != version or int(version) < 1:
+        raise CatalogError("Material model key must contain an exact positive version: model-id@1")
+    validate_parameter_schema(definition["parameterSchema"])
+    if definition["parameterSchema"]["kind"] != "object":
+        raise CatalogError("Material model parameterSchema must be an object")
+    connection.execute(
+        "INSERT INTO material_models VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET label_ko=excluded.label_ko, description=excluded.description, equation=excluded.equation, conventions=excluded.conventions, parameter_schema_json=excluded.parameter_schema_json",
+        (key, definition["labelKo"], definition["description"], definition["equation"], definition["conventions"], canonical_json(definition["parameterSchema"])),
+    )
+    connection.execute("DELETE FROM material_model_quantity_kind_usages WHERE model_key = ?", (key,))
+    for path, leaf in schema_values(definition["parameterSchema"]):
+        if quantity_kind := leaf.get("quantityKind"):
+            if not connection.execute("SELECT 1 FROM quantity_kind_units WHERE quantity_kind = ? AND unit = ?", (quantity_kind, leaf["unit"])).fetchone():
+                raise CatalogError(f"{key}.{path}: unit {leaf['unit']} is not registered for {quantity_kind}")
+            connection.execute("INSERT INTO material_model_quantity_kind_usages VALUES (?, ?, ?, ?)", (key, path, quantity_kind, leaf["unit"]))
+
+
 def create_database(path: Path, dataset: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
@@ -249,40 +266,8 @@ def create_database(path: Path, dataset: dict[str, Any]) -> None:
                 )
                 for ordinal, unit in enumerate(definition["applicableUnits"]):
                     connection.execute("INSERT INTO quantity_kind_units VALUES (?, ?, ?)", (name, ordinal, unit))
-            for definition in dataset["materialParameters"]:
-                connection.execute(
-                    "INSERT INTO material_parameters VALUES (?, ?, ?, ?)",
-                    (
-                        definition["key"],
-                        definition["key"].split(".", 1)[0],
-                        definition["label_ko"],
-                        definition["quantity_kind"],
-                    ),
-                )
-                for ordinal, qualifier in enumerate(definition.get("special_qualifiers", [])):
-                    connection.execute(
-                        "INSERT INTO material_parameter_qualifiers VALUES (?, ?, ?)",
-                        (definition["key"], ordinal, qualifier),
-                    )
-            for ordinal, qualifier in enumerate(dataset["materialGlobalQualifiers"]):
-                connection.execute("INSERT INTO material_global_qualifiers VALUES (?, ?)", (ordinal, qualifier))
-            for key, description in dataset["materialDesignRules"].items():
-                connection.execute("INSERT INTO material_design_rules VALUES (?, ?)", (key, description))
-            for relation in dataset["materialModels"]:
-                connection.execute(
-                    "INSERT INTO material_models VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        relation["key"],
-                        relation["label_ko"],
-                        relation["kind"],
-                        relation["input"]["name"],
-                        relation["input"]["quantity_kind"],
-                        relation["output"]["name"],
-                        relation["output"]["quantity_kind"],
-                        relation["minimum_samples"],
-                        int(relation["shared_basis"]),
-                    ),
-                )
+            for definition in dataset["materialModels"]:
+                insert_material_model(connection, definition)
             for manifest in dataset["solverManifests"]:
                 insert_solver_manifest(connection, manifest)
             for experiment in dataset.get("experiments", []):
@@ -346,6 +331,22 @@ def rebase_database(path: Path) -> None:
                     if table not in source_tables:
                         continue
                     source_columns = {row[1] for row in source.execute(f'PRAGMA table_info("{table}")')}
+                    if table == "material_models" and "parameter_schema_json" not in source_columns:
+                        for row in source.execute("SELECT * FROM material_models ORDER BY key"):
+                            fields = {}
+                            for endpoint in ("input", "output"):
+                                quantity = row[f"{endpoint}_quantity_kind"]
+                                order = source.execute("SELECT tensor_order FROM quantity_kinds WHERE name = ?", (quantity,)).fetchone()[0]
+                                unit = source.execute("SELECT unit FROM quantity_kind_units WHERE quantity_kind = ? ORDER BY ordinal LIMIT 1", (quantity,)).fetchone()[0]
+                                fields[row[f"{endpoint}_name"]] = {"kind": "value", "dtype": "float64", "shape": [3] * order, "quantityKind": quantity, "unit": unit}
+                            insert_material_model(target, {
+                                "key": row["key"] + "@1", "labelKo": row["label_ko"],
+                                "description": "Measured paired samples of the constitutive relation.",
+                                "equation": "y_i = R(x_i)",
+                                "conventions": "Each sample contains one complete input/output pair. " + ("Input and output vector components use the same Cartesian basis." if row["shared_basis"] else "Input and output quantities have independent physical meanings."),
+                                "parameterSchema": {"kind": "object", "required": ["samples"], "fields": {"samples": {"kind": "list", "minimumLength": row["minimum_samples"], "items": {"kind": "object", "required": list(fields), "fields": fields}}}},
+                            })
+                        continue
                     columns = [
                         row[1]
                         for row in target.execute(f'PRAGMA table_info("{table}")')
@@ -379,6 +380,14 @@ def publish_draft(source: Path, destination: Path) -> dict[str, Any]:
     refresh_derived_data(source)
     with Catalog.open_readonly(source, immutable=False) as catalog:
         meta = catalog.meta()
+        for model in catalog.material_models():
+            validate_parameter_schema(model["parameterSchema"])
+        for manifest in catalog.solver_manifests():
+            for role in manifest["descriptor"]["materials"]:
+                if not role["modelGroups"] or any(not group["oneOf"] for group in role["modelGroups"]):
+                    raise CatalogError(f"Solver {manifest['descriptor']['name']} role {role['role']} requires nonempty model groups")
+        if catalog._all("PRAGMA foreign_key_check"):
+            raise CatalogError("Catalog contains invalid foreign-key references")
     destination_path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary_name = tempfile.mkstemp(prefix="catalog-", suffix=".sqlite3", dir=destination_path.parent)
     os.close(fd)
@@ -415,20 +424,11 @@ def _rebuild_solver_usages(connection: sqlite3.Connection) -> None:
                 connection, solver, json.loads(row["data_json"]), "parameter", f"parameters.{row['name']}", ordinal
             )
         for row in connection.execute(
-            """
-            SELECT role, material_parameter, data_json FROM solver_material_properties
-            WHERE solver_name = ? AND solver_version = ? ORDER BY role, ordinal
-            """,
-            solver,
+            "SELECT o.role, o.group_key, o.model_key, u.path, u.quantity_kind, u.unit FROM solver_material_model_options o JOIN material_model_quantity_kind_usages u ON u.model_key=o.model_key WHERE o.solver_name=? AND o.solver_version=? ORDER BY o.role,o.group_key,o.ordinal,u.path", solver,
         ):
-            ordinal = _insert_data_usages(
-                connection,
-                solver,
-                json.loads(row["data_json"]),
-                "material",
-                f"materials.{row['role']}.properties.{row['material_parameter']}",
-                ordinal,
-            )
+            connection.execute("INSERT INTO solver_quantity_kind_usages VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (*solver, ordinal, row["quantity_kind"], "material", f"materials.{row['role']}.modelGroups.{row['group_key']}.{row['model_key']}.{row['path']}", row["unit"]))
+            ordinal += 1
         for row in connection.execute(
             "SELECT name, data_json FROM solver_input_ports WHERE solver_name = ? AND solver_version = ? ORDER BY ordinal",
             solver,

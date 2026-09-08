@@ -52,7 +52,6 @@ export type PredictionRibbonState = Readonly<{
   validateDisabledReason?: string
 }>
 export type LabRibbonCommand = 'new' | 'end' | 'cancel'
-export type MaterialRibbonCommand = 'new' | 'edit' | 'add-name' | 'add-parameter' | 'delete' | 'refresh'
 
 export function useCaePageChrome({
   analysisTab,
@@ -63,12 +62,10 @@ export function useCaePageChrome({
   experimentAuthoringState,
   guardReplacement,
   helpKind,
-  materialSelected,
   requestAnalysisCommand,
   requestCalculationSave,
   selectedCalculationId,
   requestLabCommand,
-  requestMaterialCommand,
   requestPredictionCommand,
   refreshRuntime,
   requestRunSelected,
@@ -88,12 +85,10 @@ export function useCaePageChrome({
   experimentAuthoringState: CadEditorAuthoringState | null
   guardReplacement: (run: () => unknown | Promise<unknown>) => void
   helpKind: HelpKindId
-  materialSelected: boolean
   requestAnalysisCommand: (command: AnalysisRibbonCommand) => void
   requestCalculationSave: () => void
   selectedCalculationId: number | null
   requestLabCommand: (command: LabRibbonCommand) => void
-  requestMaterialCommand: (command: MaterialRibbonCommand) => void
   requestPredictionCommand: (command: PredictionRibbonCommand, sampleCount?: number) => void
   refreshRuntime: () => void
   requestRunSelected: () => void
@@ -133,7 +128,7 @@ export function useCaePageChrome({
       workbench.experimentDocument.status !== 'Ready' ||
       workbench.experimentDocument.successfulRevision !== workbench.experimentDocument.revision ||
       !workbench.experimentDocument.variables ||
-      !workbench.experimentDocument.materialParameters
+      !workbench.experimentDocument.materialSnapshot
         ? '저장할 Candidate 평가가 완료되지 않았습니다.'
         : undefined
     const draftPreviewReason = workbench.experimentDocument.draftTaskNames.length
@@ -265,7 +260,7 @@ export function useCaePageChrome({
             workbench.experimentDocument.status !== 'Ready' ||
             workbench.experimentDocument.successfulRevision !== workbench.experimentDocument.revision ||
             !workbench.experimentDocument.variables ||
-            !workbench.experimentDocument.materialParameters ||
+            !workbench.experimentDocument.materialSnapshot ||
             caeBusy),
         disabledReason: !authenticated
           ? loginReason
@@ -486,52 +481,6 @@ export function useCaePageChrome({
         disabledReason: !dataReadable ? loginReason : !workbench.experimentClean ? savedReason : undefined,
         onSelect: () => setActiveSection('analysis'),
       },
-      materialNew: {
-        id: 'material-new',
-        label: 'New',
-        icon: <Plus />,
-        disabled: !authenticated,
-        disabledReason: !authenticated ? loginReason : undefined,
-        onSelect: () => requestMaterialCommand('new'),
-      },
-      materialEdit: {
-        id: 'material-edit',
-        label: 'Edit',
-        icon: <Pencil />,
-        disabled: !authenticated || !materialSelected,
-        disabledReason: !authenticated ? loginReason : !materialSelected ? 'Material을 선택하세요.' : undefined,
-        onSelect: () => requestMaterialCommand('edit'),
-      },
-      materialName: {
-        id: 'material-name',
-        label: 'Add Name',
-        icon: <Plus />,
-        disabled: !authenticated || !materialSelected,
-        disabledReason: !authenticated ? loginReason : !materialSelected ? 'Material을 선택하세요.' : undefined,
-        onSelect: () => requestMaterialCommand('add-name'),
-      },
-      materialParameter: {
-        id: 'material-parameter',
-        label: 'Add Parameter',
-        icon: <Database />,
-        disabled: !authenticated || !materialSelected,
-        disabledReason: !authenticated ? loginReason : !materialSelected ? 'Material을 선택하세요.' : undefined,
-        onSelect: () => requestMaterialCommand('add-parameter'),
-      },
-      materialDelete: {
-        id: 'material-delete',
-        label: 'Delete',
-        icon: <Trash2 />,
-        disabled: !authenticated || !materialSelected,
-        disabledReason: !authenticated ? loginReason : !materialSelected ? 'Material을 선택하세요.' : undefined,
-        onSelect: () => requestMaterialCommand('delete'),
-      },
-      materialRefresh: {
-        id: 'material-refresh',
-        label: 'Refresh',
-        icon: <RefreshCw />,
-        onSelect: () => requestMaterialCommand('refresh'),
-      },
       account: { id: 'account', label: 'Account', icon: <CircleUserRound />, onSelect: () => setDialog('account') },
       labChat: {
         id: 'lab-chat',
@@ -645,11 +594,9 @@ export function useCaePageChrome({
     calculationDirty,
     calculationSaveState,
     guardReplacement,
-    materialSelected,
     requestAnalysisCommand,
     requestCalculationSave,
     requestLabCommand,
-    requestMaterialCommand,
     requestPredictionCommand,
     refreshRuntime,
     requestRunSelected,
@@ -686,7 +633,7 @@ export function useCaePageChrome({
     },
     {
       id: 'help-materials',
-      label: 'Material',
+      label: 'Material Model',
       icon: <Layers3 />,
       pressed: helpKind === 'materials',
       onSelect: () => setHelpKind('materials'),
@@ -826,24 +773,6 @@ export function useCaePageChrome({
             <WorkbenchRibbonActions actions={predictionState.busy ? [] : [actions.predictionSample]} />
           </WorkbenchRibbonGroup>
         </>
-      ),
-    },
-    {
-      sectionId: 'material',
-      label: 'Material',
-      content: (
-        <WorkbenchRibbonGroup label="Material">
-          <WorkbenchRibbonActions
-            actions={[
-              actions.materialNew,
-              actions.materialEdit,
-              actions.materialName,
-              actions.materialParameter,
-              actions.materialDelete,
-              actions.materialRefresh,
-            ]}
-          />
-        </WorkbenchRibbonGroup>
       ),
     },
     {

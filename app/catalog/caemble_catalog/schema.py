@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 APPLICATION_ID = 0x43414531  # "CAE1"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SEMVER_COMPONENT_MAX = 2_147_483_647
 EXPERIMENT_COORDINATE_PREFIX = "caemble:experiment/"
 
@@ -36,16 +36,14 @@ TABLE_ORDER = (
     "catalog_metadata",
     "quantity_kinds",
     "quantity_kind_units",
-    "material_parameters",
-    "material_parameter_qualifiers",
-    "material_global_qualifiers",
-    "material_design_rules",
     "material_models",
+    "material_model_quantity_kind_usages",
     "artifact_types",
     "solvers",
     "solver_parameters",
     "solver_material_roles",
-    "solver_material_properties",
+    "solver_material_model_groups",
+    "solver_material_model_options",
     "solver_input_ports",
     "solver_input_artifact_types",
     "solver_observations",
@@ -83,41 +81,21 @@ CREATE TABLE quantity_kind_units (
     UNIQUE (quantity_kind, unit)
 ) STRICT;
 
-CREATE TABLE material_parameters (
-    key TEXT PRIMARY KEY,
-    domain TEXT NOT NULL,
-    label_ko TEXT NOT NULL,
-    quantity_kind TEXT NOT NULL REFERENCES quantity_kinds(name)
-) STRICT;
-
-CREATE TABLE material_parameter_qualifiers (
-    material_parameter TEXT NOT NULL REFERENCES material_parameters(key) ON DELETE CASCADE,
-    ordinal INTEGER NOT NULL,
-    qualifier TEXT NOT NULL,
-    PRIMARY KEY (material_parameter, ordinal),
-    UNIQUE (material_parameter, qualifier)
-) STRICT;
-
-CREATE TABLE material_global_qualifiers (
-    ordinal INTEGER PRIMARY KEY,
-    qualifier TEXT NOT NULL UNIQUE
-) STRICT;
-
-CREATE TABLE material_design_rules (
-    key TEXT PRIMARY KEY,
-    description TEXT NOT NULL
-) STRICT;
-
 CREATE TABLE material_models (
     key TEXT PRIMARY KEY,
     label_ko TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    input_name TEXT NOT NULL,
-    input_quantity_kind TEXT NOT NULL REFERENCES quantity_kinds(name),
-    output_name TEXT NOT NULL,
-    output_quantity_kind TEXT NOT NULL REFERENCES quantity_kinds(name),
-    minimum_samples INTEGER NOT NULL,
-    shared_basis INTEGER NOT NULL
+    description TEXT NOT NULL,
+    equation TEXT NOT NULL,
+    conventions TEXT NOT NULL,
+    parameter_schema_json TEXT NOT NULL CHECK(json_valid(parameter_schema_json))
+) STRICT;
+
+CREATE TABLE material_model_quantity_kind_usages (
+    model_key TEXT NOT NULL REFERENCES material_models(key) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    quantity_kind TEXT NOT NULL REFERENCES quantity_kinds(name),
+    unit TEXT,
+    PRIMARY KEY (model_key, path)
 ) STRICT;
 
 CREATE TABLE solvers (
@@ -162,18 +140,30 @@ CREATE TABLE solver_material_roles (
     FOREIGN KEY (solver_name, solver_version) REFERENCES solvers(name, version) ON DELETE CASCADE
 ) STRICT;
 
-CREATE TABLE solver_material_properties (
+CREATE TABLE solver_material_model_groups (
     solver_name TEXT NOT NULL,
     solver_version TEXT NOT NULL,
     role TEXT NOT NULL,
+    key TEXT NOT NULL,
     ordinal INTEGER NOT NULL,
-    material_parameter TEXT NOT NULL REFERENCES material_parameters(key),
-    description TEXT NOT NULL,
-    data_json TEXT NOT NULL,
-    PRIMARY KEY (solver_name, solver_version, role, material_parameter),
+    required INTEGER NOT NULL CHECK(required IN (0, 1)),
+    PRIMARY KEY (solver_name, solver_version, role, key),
     UNIQUE (solver_name, solver_version, role, ordinal),
     FOREIGN KEY (solver_name, solver_version, role)
       REFERENCES solver_material_roles(solver_name, solver_version, role) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE solver_material_model_options (
+    solver_name TEXT NOT NULL,
+    solver_version TEXT NOT NULL,
+    role TEXT NOT NULL,
+    group_key TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    model_key TEXT NOT NULL REFERENCES material_models(key),
+    PRIMARY KEY (solver_name, solver_version, role, group_key, model_key),
+    UNIQUE (solver_name, solver_version, role, group_key, ordinal),
+    FOREIGN KEY (solver_name, solver_version, role, group_key)
+      REFERENCES solver_material_model_groups(solver_name, solver_version, role, key) ON DELETE CASCADE
 ) STRICT;
 
 CREATE TABLE solver_input_ports (
@@ -311,13 +301,15 @@ ON experiment_solvers(solver_name, solver_version, experiment_id);
 CREATE INDEX experiments_key_idx ON experiments(key);
 
 CREATE VIEW solver_material_requirements AS
-SELECT p.solver_name, p.solver_version, p.role, r.description AS role_description,
-       r.target_category, r.target_method_id, p.material_parameter,
-       p.description, json_extract(p.data_json, '$.quantityKind') AS quantity_kind,
-       json_extract(p.data_json, '$.unit') AS unit
-FROM solver_material_properties AS p
+SELECT g.solver_name, g.solver_version, g.role, r.description AS role_description,
+       r.target_category, r.target_method_id, g.key AS group_key, g.required,
+       o.model_key
+FROM solver_material_model_groups AS g
 JOIN solver_material_roles AS r
-  ON r.solver_name = p.solver_name AND r.solver_version = p.solver_version AND r.role = p.role;
+  ON r.solver_name = g.solver_name AND r.solver_version = g.solver_version AND r.role = g.role
+JOIN solver_material_model_options AS o
+  ON o.solver_name = g.solver_name AND o.solver_version = g.solver_version
+ AND o.role = g.role AND o.group_key = g.key;
 
 CREATE VIEW quantity_kind_solver_usages AS
 SELECT u.quantity_kind, u.solver_name, u.solver_version, u.context, u.path, u.unit

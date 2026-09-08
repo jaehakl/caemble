@@ -5,7 +5,7 @@ import type { ExperimentSourceDocument } from '@/lib/cad/source'
 import { useCadWorkspace } from './useCadWorkspace'
 
 const mocks = vi.hoisted(() => ({
-  applyFrozenMaterialParameters: vi.fn(),
+  applyMaterialSnapshot: vi.fn(),
   buildMeasurement: vi.fn(),
   deserializeCadScene: vi.fn(),
   evaluateDocument: vi.fn(),
@@ -24,7 +24,7 @@ vi.mock('@/lib/cad/compiler/monacoCompiler', () => {
 vi.mock('@/lib/cad/execution', () => {
   class CadDocumentEvaluationError extends Error {}
   return {
-    applyFrozenMaterialParameters: mocks.applyFrozenMaterialParameters,
+    applyMaterialSnapshot: mocks.applyMaterialSnapshot,
     buildMeasurement: mocks.buildMeasurement,
     CadDocumentEvaluationError,
     deserializeCadScene: mocks.deserializeCadScene,
@@ -85,15 +85,21 @@ function evaluatedSnapshot(sourceHash: string): EvaluatedExperimentSnapshot {
 }
 
 beforeEach(() => {
-  mocks.applyFrozenMaterialParameters.mockReset().mockImplementation((scene) => scene)
-  mocks.buildMeasurement.mockReset().mockReturnValue({ materialParameters: {}, taskMaterialParameters: {} })
+  mocks.applyMaterialSnapshot.mockReset().mockImplementation((scene) => scene)
+  mocks.buildMeasurement.mockReset().mockImplementation((snapshot, resolution) => ({
+    experiment: snapshot,
+    ...resolution,
+    varsHash: 'vars',
+    modelDefinitions: [],
+    materialSelections: {},
+  }))
   mocks.deserializeCadScene.mockReset().mockImplementation((scene) => scene)
   mocks.evaluateDocument.mockReset().mockResolvedValue(evaluatedSnapshot('default'))
   mocks.fetchCatalogRuntimeSlice.mockReset().mockResolvedValue({ catalogRevision: 'test' })
   mocks.inspectDocument.mockReset().mockResolvedValue({ varsSchema: Object.freeze({}) })
   mocks.resolveDocumentMaterials.mockReset().mockResolvedValue({
-    materialParameters: Object.freeze({}),
-    taskMaterialParameters: Object.freeze({}),
+    materialSnapshot: Object.freeze({}),
+    taskMaterialSnapshots: Object.freeze({}),
     warnings: Object.freeze([]),
     taskMaterialWarnings: Object.freeze({}),
   })

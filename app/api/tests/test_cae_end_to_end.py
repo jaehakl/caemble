@@ -95,7 +95,7 @@ class CaeEndToEndTests(unittest.TestCase):
             db.add(job)
             await db.flush()
             measurement = Measurement(user_id=owner, experiment_id=experiment_id, job_id=job.id,
-                                      vars={}, material_parameters={})
+                                      vars={}, material_snapshot={})
             db.add(measurement)
             db.add(ExperimentRecord(experiment_id=experiment_id, name="result", tensor_order=0,
                                     dtype="float64", data_schema=schema, contract_hash="transport-test"))
@@ -330,7 +330,7 @@ class CaeEndToEndTests(unittest.TestCase):
                 batch = await create_batch(db, BatchCreateRequest(
                     request_id=uuid.uuid4(), experiment_id=experiment_id,
                     experiment_source_hash=example["bundleHash"], mode="generate",
-                    catalog_revision=manifest["catalog_revision"], builder_version="1",
+                    catalog_revision=manifest["catalog_revision"], builder_version="2",
                     items=[{"index": 1, "input_hash": hashlib.sha256(artifact_bytes).hexdigest(),
                             "byte_length": len(artifact_bytes)}],
                 ), user, current_catalog)

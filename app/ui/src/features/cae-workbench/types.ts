@@ -25,7 +25,6 @@ export const workbenchSectionIds = [
   'experiment',
   'measurement',
   'prediction',
-  'material',
   'analysis',
   'admin',
   'lab',
@@ -63,7 +62,6 @@ export const workbenchLayoutLimits = Object.freeze({
 export type WorkbenchLayoutState = Readonly<{
   activeSection: WorkbenchSectionId
   activeExperimentFile: string | null
-  materialId: number | null
   leftWidthRatio: number
   rightWidthRatio: number
   calculationColumnRatios?: readonly [number, number, number, number]
@@ -86,7 +84,6 @@ export type WorkbenchLayoutState = Readonly<{
 export const defaultWorkbenchLayoutState: WorkbenchLayoutState = Object.freeze({
   activeSection: 'prediction',
   activeExperimentFile: 'experiment.tsx',
-  materialId: null,
   leftWidthRatio: 0.234,
   rightWidthRatio: 0.5,
   calculationColumnRatios: Object.freeze([0.22, 0.26, 0.26, 0.26] as const),
@@ -111,7 +108,7 @@ export type WorkbenchDraftDomain = Readonly<{
   }>
   candidate: Readonly<{
     vars: Readonly<Vars> | null
-    materialParameters: SavedMeasurement['material_parameters'] | null
+    materialSnapshot: SavedMeasurement['material_snapshot'] | null
   }>
   selection: WorkbenchSelectionContext
 }>

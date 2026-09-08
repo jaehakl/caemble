@@ -52,7 +52,14 @@ vi.mock('@/features/auth/use-auth', () => ({ usePrivateQueryScope: () => 'user:f
 vi.mock('./queryInvalidation', () => ({ invalidateMeasurementMutation: mocks.invalidate }))
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() } }))
 
-const materialParameters = { experiment: { materials: {} }, tasks: { solve: { materials: {} } } }
+const materialSnapshot = {
+  sourceHash: 'source',
+  varsHash: 'vars',
+  modelDefinitions: [],
+  selections: {},
+  experiment: { materials: {} },
+  tasks: { solve: { materials: {} } },
+}
 const document = {
   draftTaskNames: [],
   revision: 2,
@@ -60,7 +67,7 @@ const document = {
   status: 'Ready',
   runIsBusy: false,
   variables: { length: 42 },
-  materialParameters,
+  materialSnapshot,
   evaluationTimeoutMs: 10_000,
 } as unknown as CadDocumentController
 const summary = { total: 1, completed: 1, succeeded: 1, failed: 0, cancelled: false }
@@ -101,7 +108,7 @@ function measurement(id: number): SavedMeasurement {
     id,
     experiment_id: 10,
     vars: { length: 42 },
-    material_parameters: materialParameters,
+    material_snapshot: materialSnapshot,
     recorded_at: null,
     calculation_data_count: 0,
   }
@@ -221,7 +228,7 @@ describe('server-owned CAE measurement actions', () => {
       expect.objectContaining({
         mode: 'candidate',
         vars: { length: 42 },
-        material_parameters: materialParameters,
+        material_snapshot: materialSnapshot,
         experiment_source_hash: 'source-hash',
       }),
     )

@@ -1,6 +1,6 @@
 # Admin: 공개 Demo 큐레이션
 
-**Admin** 메뉴는 admin 역할에만 표시되며 **Users**, **All Experiments**, **Demo Curation**, **Public Materials** 화면을 제공합니다. 기존 Experiment와 Material 화면의 관리자 기능도 그대로 사용할 수 있습니다.
+**Admin** 메뉴는 admin 역할에만 표시되며 **Users**, **All Experiments**, **Demo Curation** 화면을 제공합니다. 모델 정의는 **Model Catalog**에서 조회하며, 재료별 계수를 저장하는 관리 화면은 제공하지 않습니다.
 
 Demo Curation에는 admin 사용자가 소유한 정확한 Experiment Version만 등록할 수 있습니다. 완전한 Recorded Measurement와 그 Measurement를 사용하는 ready Calculation 및 CalculationData가 하나 이상 있어야 **Ready**가 됩니다. 순서를 바꾸고 대표 Demo를 별표로 지정한 뒤 저장하세요. 대표 Demo를 해제하거나 삭제하면 다음 순서의 정상 Demo가 대표가 됩니다.
 

@@ -37,7 +37,7 @@ const docsSections = [
   { id: 'reference' as const, group: 'Manual' as const, label: 'API / CAD Reference', icon: BookOpenText },
   { id: 'troubleshooting' as const, group: 'Manual' as const, label: 'Troubleshooting', icon: CircleAlert },
   { id: 'geometry' as const, group: 'Catalogs' as const, label: 'Geometry Catalog', icon: Boxes },
-  { id: 'materials' as const, group: 'Catalogs' as const, label: 'Material Catalog', icon: Layers3 },
+  { id: 'materials' as const, group: 'Catalogs' as const, label: 'Model Catalog', icon: Layers3 },
   { id: 'quantity-kinds' as const, group: 'Catalogs' as const, label: 'Quantity Catalog', icon: Gauge },
   { id: 'solvers' as const, group: 'Catalogs' as const, label: 'Physics Catalog', icon: FlaskConical },
 ] as const
@@ -205,7 +205,7 @@ export function DocsPage() {
 
               {catalogSearch.isError ? (
                 <p className="mt-6 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                  Catalog API를 읽지 못해 Material, QuantityKind와 Solver 항목은 검색 결과에서 제외했습니다.
+                  Catalog API를 읽지 못해 Model, QuantityKind와 Solver 항목은 검색 결과에서 제외했습니다.
                 </p>
               ) : null}
             </section>

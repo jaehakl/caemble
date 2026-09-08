@@ -149,7 +149,7 @@ def test_catalog_locators_point_to_one_current_entry_per_solver() -> None:
         module, attribute = item["implementation"].split(":")
         assert re.fullmatch(r"app\.solvers\.[a-z_]+\.entry", module)
         assert attribute == "implementation"
-        assert item["abiVersion"] == 2
+        assert item["abiVersion"] == 3
         entry = APP.parent / (module.replace(".", "/") + ".py")
         tree = ast.parse(entry.read_text(encoding="utf-8"))
         run = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "run")

@@ -101,7 +101,7 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
       recordedRules: snapshot.rules,
       recordedSchemas: snapshot.schemas,
       variables: measurement?.vars as Readonly<Vars> | undefined,
-      materialSnapshot: measurement?.material_parameters ?? null,
+      materialSnapshot: measurement?.material_snapshot ?? null,
       loading,
       clearAll: clearMeasurement,
       clearMeasurement,

@@ -178,7 +178,7 @@ def _trace_one(
         _segment(ray, ray.origin + ray.direction * escape_distance, EVENT_ESCAPE)
         collector.finish(ray)
         return []
-    medium = optical_material(world, descriptor, ray.medium_name, ray.wavelength)
+    medium = optical_material(world, ray.medium_name, ray.wavelength)
     travel = hit.distance
     anisotropy = bulk_scatter.get(ray.medium_root) if ray.medium_root is not None else None
     if anisotropy is not None and medium.scattering_coefficient > 0:
@@ -253,8 +253,8 @@ def _trace_one(
         )
         target_root = target_stack[-1][0] if target_stack else None
         target_name = target_stack[-1][1] if target_stack else None
-        incident = optical_material(world, descriptor, ray.medium_name, ray.wavelength)
-        target = optical_material(world, descriptor, target_name, ray.wavelength)
+        incident = optical_material(world, ray.medium_name, ray.wavelength)
+        target = optical_material(world, target_name, ray.wavelength)
         reflected, transmitted, s_axis = interface_stokes(
             ray.stokes,
             ray.basis,
@@ -328,11 +328,11 @@ def _thin_interaction(
     )
     target_root = target_stack[-1][0] if target_stack else None
     target_name = target_stack[-1][1] if target_stack else None
-    incident = optical_material(world, descriptor, incident_name, ray.wavelength)
-    target = optical_material(world, descriptor, target_name, ray.wavelength)
+    incident = optical_material(world, incident_name, ray.wavelength)
+    target = optical_material(world, target_name, ray.wavelength)
     layer_values: list[tuple[complex, float]] = []
     for layer, material_name in ordered:
-        material = optical_material(world, descriptor, material_name, ray.wavelength)
+        material = optical_material(world, material_name, ray.wavelength)
         if layer.minimum_thickness == layer.maximum_thickness:
             thickness = layer.maximum_thickness
         else:

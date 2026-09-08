@@ -10,7 +10,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { privateQueryScope } from '@/features/auth/queryKeys'
 import { adminDemoCandidatesQueryOptions, adminExperimentsQueryOptions } from '@/features/experiment/queryOptions'
 import { invalidateExperimentSummaries } from '@/features/experiment/queryInvalidation'
-import { MaterialManager } from '@/features/materials/MaterialManager'
 import { adminQueryKeys, adminUsersQueryOptions } from './adminQueryOptions'
 
 function countLabel(experiment: AvailableExperimentRecord) {
@@ -84,7 +83,6 @@ export function AdminWorkspace({
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="experiments">All Experiments</TabsTrigger>
           <TabsTrigger value="demos">Demo Curation</TabsTrigger>
-          <TabsTrigger value="materials">Public Materials</TabsTrigger>
         </TabsList>
 
         <TabsContent className="mt-4" value="users">
@@ -234,10 +232,6 @@ export function AdminWorkspace({
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
-
-        <TabsContent className="mt-4" value="materials">
-          <MaterialManager scope="public" />
         </TabsContent>
       </Tabs>
     </div>

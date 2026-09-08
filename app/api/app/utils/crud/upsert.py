@@ -44,11 +44,6 @@ def _scalar_fk_relationships(model: type[Any]) -> dict[str, type[Any]]:
 def _constraint_detail(error: IntegrityError) -> str:
     constraint_name = getattr(getattr(error, "orig", None), "diag", None)
     constraint_name = getattr(constraint_name, "constraint_name", "")
-    if constraint_name in {
-        "uq_material_names_public_name",
-        "uq_material_names_user_name",
-    }:
-        return "Material name already exists in this visibility scope."
     if constraint_name == "uq_calculations_experiment_id_name":
         return "Calculation name already exists in this Experiment."
     return "Database constraint violation."

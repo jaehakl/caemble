@@ -34,10 +34,10 @@ def local_input(tmp_path: Path):
                 "recordedData": {"signal": {"dtype": "float64", "axes": [{"name": "x"}]}, "label": {"dtype": "string"}},
             },
         },
-        "materialParameters": {"materials": {}},
-        "materialWarnings": [],
-        "taskMaterialParameters": {},
-        "taskMaterialWarnings": {},
+        "materialSnapshot": {"materials": {}},
+        "taskMaterialSnapshots": {},
+        "modelDefinitions": [],
+        "materialSelections": {},
     }
     path = tmp_path / "한글 input.json"
     path.write_text(json.dumps({"measurement": measurement}, ensure_ascii=False), encoding="utf-8")

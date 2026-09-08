@@ -1,12 +1,8 @@
 import type { Tensor, Vars, Vec3 } from './types'
 import { CadModelError } from './errors'
-import { Material } from './material'
 import type {
   DataDType,
   DataValueDescriptor,
-  FloatDataDType,
-  ResolvedMaterialDataValueDescriptor,
-  ResolvedMaterialVariables,
   ScalarValue,
 } from './descriptor'
 
@@ -25,12 +21,6 @@ export type {
   SurfaceGroupMap,
 } from './structure'
 export { Material } from './material'
-export {
-  DEFAULT_MATERIAL_ERROR_RATE,
-  normalizeMaterialDataValueDescriptor,
-  normalizeMaterialErrorRate,
-  normalizeMaterialSampledRelation,
-} from './materialNormalization'
 export { CadModelError } from './errors'
 export { Mat } from './descriptor'
 export type {
@@ -46,14 +36,8 @@ export type {
   ExperimentTarget,
   FloatDataDType,
   IntegerDataDType,
-  MaterialDataValueDescriptor,
-  MaterialQuantitySeries,
-  MaterialSampledRelation,
-  MaterialVariable,
-  MaterialVariables,
   MatrixValue,
   NonFloatDataDType,
-  NormalizedMaterialVariables,
   PersistedDataTensor,
   RecordedData,
   RecordedDataAxis,
@@ -64,8 +48,6 @@ export type {
   RecordedDataResultAxis,
   RecordedDataRule,
   RecordedDataTensor,
-  ResolvedMaterialDataValueDescriptor,
-  ResolvedMaterialVariables,
   ScalarValue,
 } from './descriptor'
 export type { UcumUnit } from './units'
@@ -114,40 +96,6 @@ export function normalizeDataValue(
 
 export function normalizeDataValueDescriptor(value: unknown, _path = 'Data value descriptor'): DataValueDescriptor {
   return value as DataValueDescriptor
-}
-
-export function applyMaterialErrorMultiplier(
-  value: number | readonly unknown[],
-  _dtype: FloatDataDType,
-  multiplier: number,
-  path: string,
-): number | readonly unknown[] {
-  if (Array.isArray(value)) {
-    return Object.freeze(
-      value.map((item) => applyMaterialErrorMultiplier(item as number | readonly unknown[], _dtype, multiplier, path)),
-    )
-  }
-  return (value as number) * multiplier
-}
-
-export function resolveMaterialVariables(material: Material): ResolvedMaterialVariables {
-  const resolved = Object.fromEntries(
-    Object.entries(material.variables).map(([key, value]) => {
-      if (isPlainObject(value) && 'dtype' in value && Object.prototype.hasOwnProperty.call(value, 'errorRate')) {
-        const parameter = value as ResolvedMaterialDataValueDescriptor
-        return [key, Object.freeze({
-          dtype: parameter.dtype,
-          unit: parameter.unit,
-          quantityKind: parameter.quantityKind,
-          errorRate: parameter.errorRate,
-          ...(parameter.basis === undefined ? {} : { basis: parameter.basis }),
-          value: parameter.value,
-        })]
-      }
-      return [key, value]
-    }),
-  )
-  return Object.freeze(resolved) as ResolvedMaterialVariables
 }
 
 let activeVars: Readonly<Vars> | null = null

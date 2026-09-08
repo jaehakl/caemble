@@ -3,8 +3,6 @@ import type {
   CatalogExperimentListItem,
   CatalogList,
   CatalogMaterialModel,
-  CatalogMaterialParameter,
-  CatalogMaterialParameterDetail,
   CatalogMeta,
   CatalogQuantityKind,
   CatalogQuantityKindDetail,
@@ -20,8 +18,6 @@ import {
   parseCatalogExperimentList,
   parseCatalogMaterialModel,
   parseCatalogMaterialModelList,
-  parseCatalogMaterialParameterDetail,
-  parseCatalogMaterialParameterList,
   parseCatalogMeta,
   parseCatalogQuantityKindDetail,
   parseCatalogQuantityKindList,
@@ -51,8 +47,6 @@ function catalogUrl(path: string, query: ListQuery = {}) {
 
 export type {
   CatalogMaterialModel,
-  CatalogMaterialParameter,
-  CatalogMaterialParameterDetail,
   CatalogMeta,
   CatalogExperimentDetail,
   CatalogExperimentListItem,
@@ -71,13 +65,8 @@ export const catalogQueryKeys = {
   quantityKindsList: (query: ListQuery) => ['catalog', 'quantity-kinds', 'list', query] as const,
   quantityKindsInfinite: (query: ListQuery) => ['catalog', 'quantity-kinds', 'infinite', query] as const,
   quantityKind: (name: string) => ['catalog', 'quantity-kind', name] as const,
-  materialParametersList: (query: ListQuery) => ['catalog', 'material-parameters', 'list', query] as const,
-  materialParametersInfinite: (query: ListQuery) => ['catalog', 'material-parameters', 'infinite', query] as const,
-  materialParameter: (key: string) => ['catalog', 'material-parameter', key] as const,
   materialModels: (query: ListQuery) => ['catalog', 'material-models', query] as const,
   materialModel: (key: string) => ['catalog', 'material-model', key] as const,
-  materialManagerRuntime: (parameterNames: readonly string[]) =>
-    ['catalog', 'material-manager-runtime', parameterNames] as const,
   recordedDataRuntime: (quantityKindNames: readonly string[]) =>
     ['catalog', 'recorded-data-runtime', quantityKindNames] as const,
   solvers: (query: ListQuery) => ['catalog', 'solvers', query] as const,
@@ -107,18 +96,6 @@ return {
       catalogUrl(`/quantity-kinds/${encodeURIComponent(name)}`),
       undefined,
       { signal: context?.signal, validate: parseCatalogQuantityKindDetail },
-    ),
-  listMaterialParameters: (query: ListQuery = {}, context?: RequestContext) =>
-    request<CatalogList<CatalogMaterialParameter>>('get', catalogUrl('/material-parameters', query), undefined, {
-      signal: context?.signal,
-      validate: parseCatalogMaterialParameterList,
-    }),
-  getMaterialParameter: (key: string, context?: RequestContext) =>
-    request<CatalogMaterialParameterDetail>(
-      'get',
-      catalogUrl(`/material-parameters/${encodeURIComponent(key)}`),
-      undefined,
-      { signal: context?.signal, validate: parseCatalogMaterialParameterDetail },
     ),
   listMaterialModels: (query: ListQuery = {}, context?: RequestContext) =>
     request<CatalogList<CatalogMaterialModel>>('get', catalogUrl('/material-models', query), undefined, {

@@ -148,98 +148,15 @@ export type ApplicableUnit<Name extends QuantityKindName> = Name extends keyof C
 // </generated:quantity-kind-types>`
 }
 
-function materialCatalogTypes(properties, models) {
-  void properties
-  void models
+function materialCatalogTypes() {
   return `// <generated:material-catalog-types>
-// Catalog keys are augmented in memory from the active Solver runtime slice.
-export interface MaterialPropertyQuantityKindMap {}
-export type MaterialPropertyKey = keyof MaterialPropertyQuantityKindMap extends never
-  ? string
-  : keyof MaterialPropertyQuantityKindMap
-export type MaterialPropertyQuantityKind<Key extends MaterialPropertyKey> = Key extends keyof MaterialPropertyQuantityKindMap
-  ? MaterialPropertyQuantityKindMap[Key]
-  : QuantityKindName
-export type MaterialPropertyDefinitionFor<Key extends MaterialPropertyKey> = Readonly<{
-  key: Key
-  quantity_kind: MaterialPropertyQuantityKind<Key>
-}>
-
-export interface MaterialModelDefinitionMap {}
-export type MaterialModelKey = keyof MaterialModelDefinitionMap extends never ? string : keyof MaterialModelDefinitionMap
-export type MaterialModelDefinitionFor<Key extends MaterialModelKey> = Key extends keyof MaterialModelDefinitionMap
-  ? MaterialModelDefinitionMap[Key]
-  : Readonly<{
-      key: Key
-      kind: 'sampled_relation'
-      input: Readonly<{ quantity_kind: QuantityKindName }>
-      output: Readonly<{ quantity_kind: QuantityKindName }>
-      minimum_samples: number
-      shared_basis: boolean
-    }>
-export type MaterialCatalogKey = MaterialPropertyKey | MaterialModelKey
-
-type MaterialAuthoringBasis<Name extends QuantityKindName> = Name extends ScalarQuantityKindName
-  ? Readonly<{ basis?: never }>
-  : Readonly<{ basis?: CartesianBasis }>
-type MaterialNormalizedBasis<Name extends QuantityKindName> = Name extends ScalarQuantityKindName
-  ? Readonly<{ basis?: never }>
-  : Readonly<{ basis: CartesianBasis }>
-
-export type MaterialDataValueDescriptor<
-  Key extends MaterialPropertyKey = MaterialPropertyKey,
-> = Key extends MaterialPropertyKey ? Readonly<{
-  dtype: FloatDataDType
-  value: number | readonly unknown[]
-  unit: ApplicableUnit<MaterialPropertyQuantityKind<Key>>
-  errorRate?: number
-  axes?: never
-  quantityKind?: never
-}> & MaterialAuthoringBasis<MaterialPropertyQuantityKind<Key>> : never
-
-export type NormalizedMaterialDataValueDescriptor<
-  Key extends MaterialPropertyKey = MaterialPropertyKey,
-> = Key extends MaterialPropertyKey ? Readonly<{
-  dtype: FloatDataDType
-  value: number | readonly unknown[]
-  unit: UcumUnit
-  quantityKind: MaterialPropertyQuantityKind<Key>
-  errorRate: number
-  axes?: never
-}> & MaterialNormalizedBasis<MaterialPropertyQuantityKind<Key>> : never
-
-type MaterialModelInputQuantityKind<Key extends MaterialModelKey> =
-  MaterialModelDefinitionFor<Key>['input']['quantity_kind']
-type MaterialModelOutputQuantityKind<Key extends MaterialModelKey> =
-  MaterialModelDefinitionFor<Key>['output']['quantity_kind']
-export type MaterialQuantitySeries<Name extends QuantityKindName> = Readonly<{
-  unit: ApplicableUnit<Name>
-  values: readonly unknown[]
-}> & MaterialAuthoringBasis<Name>
-export type MaterialSampledRelation<
-  Key extends MaterialModelKey = MaterialModelKey,
-> = Key extends MaterialModelKey ? Readonly<{
-  kind: 'sampled_relation'
-  input: MaterialQuantitySeries<MaterialModelInputQuantityKind<Key>>
-  output: MaterialQuantitySeries<MaterialModelOutputQuantityKind<Key>>
-}> : never
-
-export type MaterialVariable = string | MaterialDataValueDescriptor | MaterialSampledRelation
-export type MaterialVariables = keyof MaterialPropertyQuantityKindMap extends never
-  ? Readonly<Record<string, unknown> & { color?: string; errorRate?: number }>
-  : Readonly<
-      { [Key in keyof MaterialPropertyQuantityKindMap]?: MaterialDataValueDescriptor<Key> } &
-      { [Key in keyof MaterialModelDefinitionMap]?: MaterialSampledRelation<Key> } &
-      { color?: string; errorRate?: number }
-    >
-export type NormalizedMaterialVariables = keyof MaterialPropertyQuantityKindMap extends never
-  ? Readonly<Record<string, unknown> & { color?: string }>
-  : Readonly<
-      { [Key in keyof MaterialPropertyQuantityKindMap]?: NormalizedMaterialDataValueDescriptor<Key> } &
-      { [Key in keyof MaterialModelDefinitionMap]?: MaterialSampledRelation<Key> } &
-      { color?: string }
-    >
-export type ResolvedMaterialVariables = NormalizedMaterialVariables
+// Model input types are augmented in memory from the active Catalog slice.
+export interface MaterialModelParameterMap {}
+export type MaterialModelKey = keyof MaterialModelParameterMap extends never ? string : keyof MaterialModelParameterMap
+export type MaterialModelInstance = keyof MaterialModelParameterMap extends never
+  ? Readonly<{ model: string; parameters: Readonly<Record<string, unknown>> }>
+  : { [Key in keyof MaterialModelParameterMap]: Readonly<{ model: Key; parameters: MaterialModelParameterMap[Key] }> }[keyof MaterialModelParameterMap]
+export type MaterialOptions = Readonly<{ color?: string; models?: Readonly<Record<string, MaterialModelInstance>> }>
 // </generated:material-catalog-types>`
 }
 

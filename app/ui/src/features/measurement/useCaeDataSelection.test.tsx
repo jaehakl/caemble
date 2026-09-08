@@ -31,7 +31,14 @@ function measurement(id: number): SavedMeasurement {
     id,
     experiment_id: 10,
     vars: {},
-    material_parameters: { experiment: { materials: {} }, tasks: {} },
+    material_snapshot: {
+      experiment: { materials: {} },
+      tasks: {},
+      sourceHash: 'source',
+      varsHash: 'vars',
+      modelDefinitions: [],
+      selections: {},
+    },
     recorded_at: null,
     calculation_data_count: 0,
   }

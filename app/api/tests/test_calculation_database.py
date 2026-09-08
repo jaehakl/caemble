@@ -272,7 +272,7 @@ async def _seed_conflicting_legacy_recorded_data(database: str) -> tuple[int, in
             measurement_ids.append(
                 await connection.fetchval(
                     """
-                    INSERT INTO measurements (user_id, experiment_id, vars, material_parameters, recorded_at)
+                    INSERT INTO measurements (user_id, experiment_id, vars, material_snapshot, recorded_at)
                     VALUES ($1, $2, '{}'::jsonb, '{}'::jsonb, now()) RETURNING id
                     """,
                     owner_id,
@@ -362,7 +362,7 @@ async def _seed_calculation_data(database: str) -> tuple[str, str, int, int, int
                 await connection.fetchval(
                     """
                     INSERT INTO measurements (
-                        user_id, experiment_id, vars, material_parameters, recorded_at
+                        user_id, experiment_id, vars, material_snapshot, recorded_at
                     ) VALUES ($1, $2, '{}'::jsonb, '{}'::jsonb, CASE WHEN $3 THEN now() ELSE NULL END)
                     RETURNING id
                     """,
@@ -373,7 +373,7 @@ async def _seed_calculation_data(database: str) -> tuple[str, str, int, int, int
             )
         other_measurement_id = await connection.fetchval(
             """
-            INSERT INTO measurements (user_id, experiment_id, vars, material_parameters, recorded_at)
+            INSERT INTO measurements (user_id, experiment_id, vars, material_snapshot, recorded_at)
             VALUES ($1, $2, '{}'::jsonb, '{}'::jsonb, now()) RETURNING id
             """,
             other_id,
@@ -406,14 +406,14 @@ async def _verify_crud_contract(database: str) -> None:
                 user_id=owner_id,
                 experiment_id=experiment_id,
                 vars={},
-                material_parameters={},
+                material_snapshot={},
                 recorded_at=datetime.now(timezone.utc),
             )
             other_preflight = Measurement(
                 user_id=other_id,
                 experiment_id=other_experiment_id,
                 vars={},
-                material_parameters={},
+                material_snapshot={},
                 recorded_at=datetime.now(timezone.utc),
             )
             session.add_all([owner_preflight, other_preflight])

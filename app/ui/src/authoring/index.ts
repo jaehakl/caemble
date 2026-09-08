@@ -1,3 +1,4 @@
+import materialAuthoringManual from '../../../../docs/manual/program/program-materials.md?raw'
 import { buildCadAuthoringReference } from '../lib/cad/authoringReference'
 import { cadAuthoringContract, cadElementCatalog } from '../lib/cad/elements/generated'
 import { starterExperimentSourceBundle } from '../lib/localExperimentCode'
@@ -58,6 +59,14 @@ const references: readonly AuthoringReference[] = [
       'app/ui/src/lib/cad/source/sourceAnalysis.ts',
       'app/ui/src/lib/cad/source/sourcePolicy.ts',
     ],
+  },
+  {
+    id: 'experiment.materials',
+    title: 'Experiment Material models and parameters',
+    kind: 'contract',
+    summary: 'Explicit model instances, parameter structures, role selection, and captured execution inputs.',
+    content: materialAuthoringManual,
+    sourcePaths: ['docs/manual/program/program-materials.md', 'app/ui/src/lib/cad/api/caemble-core.d.ts'],
   },
   {
     id: 'experiment.geometry',
@@ -149,7 +158,7 @@ const references: readonly AuthoringReference[] = [
     id: 'solver.workflow',
     title: 'Solver development source of truth',
     kind: 'contract',
-    summary: 'Read the live development guide, CAE instructions, Catalog library and ABI 2 types.',
+    summary: 'Read the live development guide, CAE instructions, Catalog library and ABI 3 types.',
     content: authoringGuides.find(({ id }) => id === 'solver')!.content,
     sourcePaths: authoringGuides.find(({ id }) => id === 'solver')!.sourcePaths,
   },

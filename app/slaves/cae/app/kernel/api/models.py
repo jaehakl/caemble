@@ -73,8 +73,8 @@ class SolverImplementation:
     run: SolverRunner
 
     def __post_init__(self) -> None:
-        if self.abi_version != 2:
-            raise ValueError("SolverImplementation only supports ABI version 2")
+        if self.abi_version != 3:
+            raise ValueError("SolverImplementation only supports ABI version 3")
 
     async def __call__(self, invocation: SolverInvocation) -> SolverResult:
         return await self.run(invocation)

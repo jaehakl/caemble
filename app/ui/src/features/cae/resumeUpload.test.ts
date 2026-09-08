@@ -9,11 +9,11 @@ vi.mock('@/api/submitArtifact', () => ({ submitArtifact: mocks.submit }))
 
 const artifact: BuildArtifact = {
   kind: 'caemble.build',
-  version: 1,
+  version: 2,
   mode: 'generate',
   source_hash: 'a'.repeat(64),
   catalog_revision: 'original-catalog',
-  builder_version: '1',
+  builder_version: '2',
   source_bundle: { files: {} },
   items: [{ index: 1, file: 'items/1.json', input_hash: 'b'.repeat(64), byte_length: 3 }],
 }

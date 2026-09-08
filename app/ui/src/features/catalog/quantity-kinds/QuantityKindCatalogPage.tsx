@@ -138,8 +138,7 @@ export function QuantityCatalog({
                   variant="outline"
                   onClick={() => void quantities.fetchNextPage()}
                 >
-                  {quantities.isFetchingNextPage ? <LoaderCircle className="animate-spin" /> : null}
-                  더 불러오기
+                  {quantities.isFetchingNextPage ? <LoaderCircle className="animate-spin" /> : null}더 불러오기
                 </Button>
               </div>
             ) : null}
@@ -196,18 +195,23 @@ function QuantityDetail({
           <p className="mb-2 text-xs font-medium text-muted-foreground">Applicable UCUM units</p>
           <div className="flex max-h-40 flex-wrap gap-1.5 overflow-auto">
             {detail.applicableUnits.map((value) => (
-              <Badge className="font-mono font-normal" key={value}>{value}</Badge>
+              <Badge className="font-mono font-normal" key={value}>
+                {value}
+              </Badge>
             ))}
           </div>
         </div>
-        <RelationList title="Material parameters">
-          {detail.materialParameters.map((parameter) => (
+        <RelationList title="Model parameters">
+          {detail.materialModels.map((parameter) => (
             <Link
               className="block rounded border p-2 font-mono text-xs text-orange-700 hover:bg-orange-50"
-              key={parameter.key}
+              key={`${parameter.key}:${parameter.path}`}
               to={`/docs?section=materials&item=${encodeURIComponent(parameter.key)}`}
             >
-              {parameter.key}<span className="mt-1 block font-sans text-muted-foreground">{parameter.labelKo}</span>
+              {parameter.key}
+              <span className="mt-1 block font-sans text-muted-foreground">
+                {parameter.labelKo} · {parameter.path}
+              </span>
             </Link>
           ))}
         </RelationList>
@@ -218,8 +222,13 @@ function QuantityDetail({
               key={`${usage.solverName}@${usage.solverVersion}:${usage.path}:${index}`}
               to={`/docs?section=solvers&item=${encodeURIComponent(`${usage.solverName}@${usage.solverVersion}`)}`}
             >
-              <code className="font-semibold text-orange-700">{usage.solverName}@{usage.solverVersion}</code>
-              <span className="mt-1 block text-muted-foreground">{usage.context} · {usage.path}{usage.unit ? ` · ${usage.unit}` : ''}</span>
+              <code className="font-semibold text-orange-700">
+                {usage.solverName}@{usage.solverVersion}
+              </code>
+              <span className="mt-1 block text-muted-foreground">
+                {usage.context} · {usage.path}
+                {usage.unit ? ` · ${usage.unit}` : ''}
+              </span>
             </Link>
           ))}
         </RelationList>
@@ -229,6 +238,10 @@ function QuantityDetail({
 }
 
 function RelationList({ children, title }: { children: React.ReactNode; title: string }) {
-  return <div><p className="mb-2 text-xs font-medium text-muted-foreground">{title}</p><div className="space-y-2">{children}</div></div>
+  return (
+    <div>
+      <p className="mb-2 text-xs font-medium text-muted-foreground">{title}</p>
+      <div className="space-y-2">{children}</div>
+    </div>
+  )
 }
-

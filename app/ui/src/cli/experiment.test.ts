@@ -35,9 +35,9 @@ export default experiment({
       catalogRevision: 'contract-fixture',
       solvers: [],
       quantityKinds: [],
-      materialParameters: [],
+
       materialModels: [],
-      materialGlobalQualifiers: [],
+
       warnings: [],
     }
     const sourceHash = await cadSourceHash({ kind: 'experiment', sourceBundle })
@@ -46,7 +46,7 @@ export default experiment({
         source_bundle: sourceBundle,
         source_hash: sourceHash,
         catalog,
-        materials: { names: [], materials: [], parameters: [], qualifiers: [] },
+
         mode: 'generate',
         vars_mode: 'nominal',
       },
@@ -91,8 +91,8 @@ export default experiment({
       path.join(artifact, 'manifest.json'),
       JSON.stringify({
         kind: 'caemble.build',
-        version: 1,
-        builder_version: '1',
+        version: 2,
+        builder_version: '2',
         source_hash: sourceHash,
         catalog_revision: catalog.catalogRevision,
         mode: 'generate',

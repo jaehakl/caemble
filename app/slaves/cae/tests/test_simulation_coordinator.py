@@ -41,12 +41,12 @@ class FakeRun:
         specs = {
             name: TaskSpec(
                 name=name, task={"kernel": {"name": name, "version": "1.0.0"}, "config": {}},
-                descriptor=descriptors[name], locator=f"unused:{name}", abi_version=2,
-                output_specs=output_specs[name], scene={}, material_parameters={},
+                descriptor=descriptors[name], locator=f"unused:{name}", abi_version=3,
+                output_specs=output_specs[name], scene={}, material_snapshot={},
             )
             for name in ("producer", "consumer")
         }
-        self.plan = RunPlan(specs, {}, {}, (), {
+        self.plan = RunPlan(specs, {}, {}, {
             "field": {"dtype": "float64", "axes": [{"name": "x"}]},
             "field-series": {
                 "field": {"dtype": "float32", "axes": [{"name": "time"}, {"name": "x"}, {"name": "y"}]},
@@ -64,7 +64,7 @@ class FakeRun:
     def consumer(self):
         return self.plan.tasks["consumer"]
 
-    def configure_task(self, name, *, outputs=None, inputs=None, abi_version=2):
+    def configure_task(self, name, *, outputs=None, inputs=None, abi_version=3):
         spec = self.plan.task_specs[name]
         output_specs = detached(spec.output_specs)
         descriptor = detached(spec.descriptor)
@@ -241,7 +241,7 @@ async def test_output_payload_must_match_catalog_dtype_and_shape(
 
 
 @pytest.mark.asyncio
-async def test_abi2_spatial_field_output_requires_complete_metadata(
+async def test_abi3_spatial_field_output_requires_complete_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def invalid(*args: Any, **kwargs: Any) -> SolverExecutionTransaction[SolverResult]:
@@ -271,7 +271,7 @@ async def test_abi2_spatial_field_output_requires_complete_metadata(
 
 
 @pytest.mark.asyncio
-async def test_abi2_spatial_field_output_accepts_complete_domain_contract(
+async def test_abi3_spatial_field_output_accepts_complete_domain_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     field = FieldValue(
@@ -352,7 +352,7 @@ async def test_typed_field_record_preserves_structured_grid_axes_without_copying
 
 
 @pytest.mark.asyncio
-async def test_abi2_spatial_input_rejects_legacy_tensor_before_solver_runs(
+async def test_abi3_spatial_input_rejects_legacy_tensor_before_solver_runs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = 0

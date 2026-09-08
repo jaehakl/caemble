@@ -337,7 +337,6 @@ export async function buildAgentContext(context: CommandContext, scenario: Autho
           args: ['--key', solver.name, '--version', solver.version],
         })),
         ...names.quantityKinds.map((key) => ({ kind: 'quantity-kind', key, args: ['--key', key] })),
-        ...names.materialParameters.map((key) => ({ kind: 'material-parameter', key, args: ['--key', key] })),
         ...names.materialModels.map((key) => ({ kind: 'material-model', key, args: ['--key', key] })),
       ]
     : []

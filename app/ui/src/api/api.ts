@@ -26,22 +26,10 @@ import type {
   JobSummary,
   LauncherRecord,
   LauncherRuntime,
-  MaterialNameRecord,
-  MaterialNameUpsertInput,
-  MaterialParameterQualifierRecord,
-  MaterialParameterQualifierUpsertInput,
-  MaterialParameterRecord,
-  MaterialParameterUpsertInput,
-  MaterialRecord,
-  MaterialUpsertInput,
   MeasurementCreateRequest,
   MeasurementRecord,
   MeasurementRecordedData,
   PersistedCalculationRecord,
-  PersistedMaterialNameRecord,
-  PersistedMaterialParameterQualifierRecord,
-  PersistedMaterialParameterRecord,
-  PersistedMaterialRecord,
   PersistedMeasurementRecord,
   PersistedRecordedDataRecord,
   RecordedDataRecord,
@@ -49,7 +37,6 @@ import type {
   SaveExperimentRequest,
   SaveExperimentResponse,
   SavedExperimentRecord,
-  UpsertResponse,
   UserRecord,
 } from '@/contracts/api'
 import {
@@ -70,12 +57,6 @@ import {
   parseSaveExperimentResponse,
 } from '@/contracts/api/experimentValidators'
 import {
-  parseMaterialListResponse,
-  parseMaterialNameListResponse,
-  parseMaterialParameterListResponse,
-  parseMaterialParameterQualifierListResponse,
-} from '@/contracts/api/materialValidators'
-import {
   parseMeasurementListResponse,
   parseMeasurementRecordedDataResponse,
   parseRecordedDataListResponse,
@@ -93,12 +74,7 @@ import {
   parseUserRecord,
   parseUserRecordList,
 } from '@/contracts/api/runtimeValidators'
-import {
-  parseBooleanResponse,
-  parseEmptyResponse,
-  parseIdResponse,
-  parseUpsertResponseList,
-} from '@/contracts/api/validators'
+import { parseBooleanResponse, parseEmptyResponse, parseIdResponse } from '@/contracts/api/validators'
 
 export type * from '@/contracts/api'
 
@@ -213,78 +189,6 @@ export function createDbTables(client: CaembleClient) {
         request<{ ok: true }>('post', `/web/jobs/${encodeURIComponent(id)}/kill`, undefined, {
           ...csrfRequired,
           validate: parseOkResponse,
-        }),
-    },
-    Material: {
-      recordType: undefined as unknown as MaterialRecord,
-      listRows: (payload: GetListRequest = getListRequest(), context?: RequestContext) =>
-        request<GetListResponse<PersistedMaterialRecord>>('post', '/material/list', payload, {
-          ...csrfOmitted,
-          signal: context?.signal,
-          validate: parseMaterialListResponse,
-        }),
-      upsertRow: (payload: readonly MaterialUpsertInput[]) =>
-        request<UpsertResponse[]>('post', '/material/upsert', payload, {
-          ...csrfOmitted,
-          validate: parseUpsertResponseList,
-        }),
-      deleteRows: (ids: readonly number[]) =>
-        request<void>('delete', '/material/', ids, { ...csrfOmitted, validate: parseEmptyResponse }),
-    },
-    MaterialName: {
-      recordType: undefined as unknown as MaterialNameRecord,
-      listRows: (payload: GetListRequest = getListRequest(), context?: RequestContext) =>
-        request<GetListResponse<PersistedMaterialNameRecord>>('post', '/material_name/list', payload, {
-          ...csrfOmitted,
-          signal: context?.signal,
-          validate: parseMaterialNameListResponse,
-        }),
-      upsertRow: (payload: readonly MaterialNameUpsertInput[]) =>
-        request<UpsertResponse[]>('post', '/material_name/upsert', payload, {
-          ...csrfOmitted,
-          validate: parseUpsertResponseList,
-        }),
-      deleteRows: (ids: readonly number[]) =>
-        request<void>('delete', '/material_name/', ids, { ...csrfOmitted, validate: parseEmptyResponse }),
-    },
-    MaterialParameter: {
-      recordType: undefined as unknown as MaterialParameterRecord,
-      listRows: (payload: GetListRequest = getListRequest(), context?: RequestContext) =>
-        request<GetListResponse<PersistedMaterialParameterRecord>>('post', '/material_parameter/list', payload, {
-          ...csrfOmitted,
-          signal: context?.signal,
-          validate: parseMaterialParameterListResponse,
-        }),
-      upsertRow: (payload: readonly MaterialParameterUpsertInput[]) =>
-        request<UpsertResponse[]>('post', '/material_parameter/upsert', payload, {
-          ...csrfOmitted,
-          validate: parseUpsertResponseList,
-        }),
-      deleteRows: (ids: readonly number[]) =>
-        request<void>('delete', '/material_parameter/', ids, { ...csrfOmitted, validate: parseEmptyResponse }),
-    },
-    MaterialParameterQualifier: {
-      recordType: undefined as unknown as MaterialParameterQualifierRecord,
-      listRows: (payload: GetListRequest = getListRequest(), context?: RequestContext) =>
-        request<GetListResponse<PersistedMaterialParameterQualifierRecord>>(
-          'post',
-          '/material_parameter_qualifier/list',
-          payload,
-          {
-            ...csrfOmitted,
-            signal: context?.signal,
-            validate: parseMaterialParameterQualifierListResponse,
-          },
-        ),
-      upsertRow: (payload: readonly MaterialParameterQualifierUpsertInput[]) =>
-        request<UpsertResponse[]>('post', '/material_parameter_qualifier/upsert', payload, {
-          ...csrfOmitted,
-          validate: parseUpsertResponseList,
-        }),
-      deleteRows: (ids: readonly number[]) =>
-        request<void>('delete', '/material_parameter_qualifier/', ids, {
-          ...csrfOmitted,
-          validate: parseEmptyResponse,
         }),
     },
     Experiment: {

@@ -28,7 +28,7 @@ const localDraft: WorkbenchDraft = {
     name: 'Local draft',
     record: null,
   },
-  candidate: { materialParameters: null, vars: null },
+  candidate: { materialSnapshot: null, vars: null },
   layout: defaultWorkbenchLayoutState,
   selection: { experimentId: null, measurementId: null, calculationId: null },
 }

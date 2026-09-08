@@ -3,11 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { catalogQueryKeys } from '@/api/catalog'
 import {
   catalogSearchQueryOptions,
-  catalogMaterialParametersInfiniteQueryOptions,
-  catalogMaterialParametersQueryOptions,
+  catalogMaterialModelsInfiniteQueryOptions,
+  catalogMaterialModelsQueryOptions,
   catalogQuantityKindsInfiniteQueryOptions,
   catalogQuantityKindsQueryOptions,
-  materialManagerRuntimeQueryOptions,
   recordedDataRuntimeQueryOptions,
 } from './queryOptions'
 
@@ -20,8 +19,8 @@ describe('Catalog Query policy', () => {
     expect(catalogQuantityKindsQueryOptions(query).queryKey).not.toEqual(
       catalogQuantityKindsInfiniteQueryOptions(query).queryKey,
     )
-    expect(catalogMaterialParametersQueryOptions(query).queryKey).not.toEqual(
-      catalogMaterialParametersInfiniteQueryOptions(query).queryKey,
+    expect(catalogMaterialModelsQueryOptions(query).queryKey).not.toEqual(
+      catalogMaterialModelsInfiniteQueryOptions(query).queryKey,
     )
   })
 
@@ -42,7 +41,7 @@ describe('Catalog Query policy', () => {
       }),
     )
     const controller = new AbortController()
-    const options = catalogMaterialParametersQueryOptions({ q: 'steel', limit: 100 })
+    const options = catalogMaterialModelsQueryOptions({ q: 'steel', limit: 100 })
     if (typeof options.queryFn !== 'function') throw new Error('Catalog list queryFn is unavailable.')
 
     await options.queryFn({
@@ -66,9 +65,7 @@ describe('Catalog Query policy', () => {
             catalogRevision: 'test',
             solvers: [],
             quantityKinds: [],
-            materialParameters: [],
             materialModels: [],
-            materialGlobalQualifiers: [],
             warnings: [],
           }),
           { status: 200, headers: { 'content-type': 'application/json' } },
@@ -89,52 +86,5 @@ describe('Catalog Query policy', () => {
 
     expect(options.queryKey).toEqual(catalogQueryKeys.recordedDataRuntime(quantityKinds))
     expect(fetchSignal).toBe(controller.signal)
-  })
-
-  it('forwards one signal through material detail discovery and runtime hydration', async () => {
-    const fetchSignals: (AbortSignal | null)[] = []
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        fetchSignals.push(init?.signal ?? null)
-        const body = String(input).includes('/runtime-slice')
-          ? {
-              catalogRevision: 'test',
-              solvers: [],
-              quantityKinds: [],
-              materialParameters: [],
-              materialModels: [],
-              materialGlobalQualifiers: [],
-              warnings: [],
-            }
-          : {
-              key: 'model.elastic',
-              labelKo: '탄성 모델',
-              kind: 'sampled_relation',
-              input: { name: 'strain', quantityKind: 'mechanics.strain' },
-              output: { name: 'stress', quantityKind: 'mechanics.stress' },
-              minimumSamples: 2,
-              sharedBasis: true,
-            }
-        return new Response(JSON.stringify(body), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        })
-      }),
-    )
-    const parameterNames = ['model.elastic'] as const
-    const controller = new AbortController()
-    const options = materialManagerRuntimeQueryOptions(parameterNames)
-    if (typeof options.queryFn !== 'function') throw new Error('Material runtime queryFn is unavailable.')
-
-    await options.queryFn({
-      client: new QueryClient(),
-      queryKey: options.queryKey,
-      signal: controller.signal,
-      meta: undefined,
-    })
-
-    expect(options.queryKey).toEqual(catalogQueryKeys.materialManagerRuntime(parameterNames))
-    expect(fetchSignals).toEqual([controller.signal, controller.signal])
   })
 })

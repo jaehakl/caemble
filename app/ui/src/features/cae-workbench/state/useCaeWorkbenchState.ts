@@ -71,7 +71,7 @@ export function useCaeWorkbenchState(
     name: experimentName,
     description: experimentDescription,
     candidateVars,
-    candidateMaterialParameters,
+    candidateMaterialSnapshot,
     workspaceSession,
   } = editing
   const [saving, setSaving] = useState<'experiment' | null>(null)
@@ -171,7 +171,7 @@ export function useCaeWorkbenchState(
       dispatchEditing({
         type: 'candidateLoaded',
         vars: row.vars as Readonly<Vars>,
-        materialParameters: row.material_parameters,
+        materialSnapshot: row.material_snapshot,
       })
       setPendingMeasurementId(null)
       setSelectionRestoreStatus('idle')
@@ -240,9 +240,8 @@ export function useCaeWorkbenchState(
     candidateVars: candidateVars ?? undefined,
     candidateVarsPending: pendingMeasurementId !== null,
     candidateProvenance: selection.measurement || pendingMeasurementId ? 'persisted-measurement' : 'editable',
-    frozenMaterialSnapshot: candidateMaterialParameters,
+    persistedMaterialSnapshot: candidateMaterialSnapshot,
     resetKey: workspaceSession,
-    sourceOnlyMaterials: !authenticated,
     onActivity,
     onCandidateVarsRegenerated: handleCandidateVarsRegenerated,
   })
@@ -286,7 +285,7 @@ export function useCaeWorkbenchState(
         dispatchEditing({
           type: 'candidateVariablesChanged',
           vars: Object.freeze(normalized),
-          clearMaterialParameters: origin === 'prediction-sampling',
+          clearMaterialSnapshot: origin === 'prediction-sampling',
         })
         return true
       } catch (cause: unknown) {
@@ -328,10 +327,10 @@ export function useCaeWorkbenchState(
     dispatchEditing({
       type: 'candidateEvaluationAccepted',
       vars: experimentDocument.variables,
-      ...(experimentDocument.materialParameters ? { materialParameters: experimentDocument.materialParameters } : {}),
+      ...(experimentDocument.materialSnapshot ? { materialSnapshot: experimentDocument.materialSnapshot } : {}),
     })
   }, [
-    experimentDocument.materialParameters,
+    experimentDocument.materialSnapshot,
     experimentDocument.resultSessionKey,
     experimentDocument.revision,
     experimentDocument.status,
@@ -538,7 +537,7 @@ export function useCaeWorkbenchState(
         type: 'draftRestored',
         draft,
         document,
-        candidateMaterialParameters: authenticated ? draft.candidate.materialParameters : null,
+        candidateMaterialSnapshot: authenticated ? draft.candidate.materialSnapshot : null,
       })
       selectionContextRef.current = restoredSelection
       setStoredSelectionContext(restoredSelection)
@@ -558,13 +557,13 @@ export function useCaeWorkbenchState(
         name: experimentName,
         description: experimentDescription,
       },
-      candidate: { vars: candidateVars, materialParameters: candidateMaterialParameters },
+      candidate: { vars: candidateVars, materialSnapshot: candidateMaterialSnapshot },
       selection: selectionContext,
       layout,
     }),
     [
       baselineExperimentBundle,
-      candidateMaterialParameters,
+      candidateMaterialSnapshot,
       candidateVars,
       experiment,
       experimentDescription,
@@ -624,7 +623,7 @@ export function useCaeWorkbenchState(
     hasTasks,
     workspaceSession,
     candidateVars,
-    candidateMaterialParameters,
+    candidateMaterialSnapshot,
     setCandidateVariable,
     setCandidateVariables,
     saving,

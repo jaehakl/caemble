@@ -9,7 +9,7 @@ from app.solvers.fdtd.domain import FDTDRegion, build_fdtd_domain
 
 def test_main_is_ceil_expanded_around_its_fixed_center() -> None:
     domain = build_fdtd_domain(
-        FDTDRegion(((-0.6, 0.6), (-1.1, 1.1), (-0.2, 0.2)), "main-material", "default"),
+        FDTDRegion(((-0.6, 0.6), (-1.1, 1.1), (-0.2, 0.2)), "main-material", "none"),
         (0.5, 1.0, 0.3),
         periodic=(True, True, True),
         pml_thickness=1.0,
@@ -24,12 +24,12 @@ def test_main_is_ceil_expanded_around_its_fixed_center() -> None:
 
 def test_buffer_omits_zero_and_one_cell_sides_but_keeps_larger_gaps() -> None:
     domain = build_fdtd_domain(
-        FDTDRegion(((-1.0, 1.0),) * 3, "main", "default"),
+        FDTDRegion(((-1.0, 1.0),) * 3, "main", "none"),
         (0.5, 0.5, 0.5),
         buffer=FDTDRegion(
             ((-1.0, 2.0), (-1.6, 1.6), (-2.1, 1.0)),
             "buffer",
-            "Drude_RC",
+            "RC",
         ),
         buffer_cell_size=0.6,
         periodic=(True, True, True),
@@ -46,9 +46,9 @@ def test_buffer_omits_zero_and_one_cell_sides_but_keeps_larger_gaps() -> None:
 
 def test_full_buffer_shell_has_at_most_twenty_six_blocks() -> None:
     domain = build_fdtd_domain(
-        FDTDRegion(((-1.0, 1.0),) * 3, "main", "default"),
+        FDTDRegion(((-1.0, 1.0),) * 3, "main", "none"),
         (0.5, 0.5, 0.5),
-        buffer=FDTDRegion(((-3.0, 3.0),) * 3, "buffer", "Drude_TRC"),
+        buffer=FDTDRegion(((-3.0, 3.0),) * 3, "buffer", "TRC"),
         buffer_cell_size=1.0,
         periodic=(True, True, True),
         pml_thickness=1.0,
@@ -62,7 +62,7 @@ def test_full_buffer_shell_has_at_most_twenty_six_blocks() -> None:
 
 def test_periodic_axes_do_not_receive_pml_segments() -> None:
     domain = build_fdtd_domain(
-        FDTDRegion(((0.0, 1.0),) * 3, "main", "default"),
+        FDTDRegion(((0.0, 1.0),) * 3, "main", "none"),
         (0.5, 0.5, 0.5),
         periodic=(True, False, True),
         pml_thickness=0.8,
@@ -78,12 +78,12 @@ def test_periodic_axes_do_not_receive_pml_segments() -> None:
 
 def test_pml_inherits_nearest_core_background_and_model() -> None:
     domain = build_fdtd_domain(
-        FDTDRegion(((-1.0, 1.0),) * 3, "main-bg", "default"),
+        FDTDRegion(((-1.0, 1.0),) * 3, "main-bg", "none"),
         (0.5, 0.5, 0.5),
         buffer=FDTDRegion(
             ((-3.0, 1.4), (-1.0, 1.0), (-1.0, 1.0)),
             "buffer-bg",
-            "Drude_RC",
+            "RC",
         ),
         buffer_cell_size=1.0,
         periodic=(False, True, True),
@@ -95,17 +95,17 @@ def test_pml_inherits_nearest_core_background_and_model() -> None:
     upper_pml = domain.blocks[(3, 0, 0)]
     assert lower_pml.kind == "pml"
     assert lower_pml.inherited_from == (1, 0, 0)
-    assert (lower_pml.background, lower_pml.model) == ("buffer-bg", "Drude_RC")
+    assert (lower_pml.background, lower_pml.drude_method) == ("buffer-bg", "RC")
     assert upper_pml.kind == "pml"
     assert upper_pml.inherited_from == (2, 0, 0)
-    assert (upper_pml.background, upper_pml.model) == ("main-bg", "default")
+    assert (upper_pml.background, upper_pml.drude_method) == ("main-bg", "none")
 
 
 def test_pml_face_blocks_keep_the_core_tangential_grid() -> None:
     domain = build_fdtd_domain(
-        FDTDRegion(((-1.0, 1.0),) * 3, "main", "default"),
+        FDTDRegion(((-1.0, 1.0),) * 3, "main", "none"),
         (0.5, 0.25, 0.2),
-        buffer=FDTDRegion(((-3.0, 3.0),) * 3, "buffer", "Drude_RC"),
+        buffer=FDTDRegion(((-3.0, 3.0),) * 3, "buffer", "RC"),
         buffer_cell_size=1.0,
         periodic=(False, False, False),
         pml_thickness=1.0,
@@ -123,23 +123,23 @@ def test_pml_face_blocks_keep_the_core_tangential_grid() -> None:
 
 def test_domain_rejects_invalid_bounds_buffer_containment_and_cell_sizes() -> None:
     with pytest.raises(ValueError, match="finite and increasing"):
-        FDTDRegion(((0.0, 0.0), (0.0, 1.0), (0.0, 1.0)), "main", "default")
+        FDTDRegion(((0.0, 0.0), (0.0, 1.0), (0.0, 1.0)), "main", "none")
 
-    main = FDTDRegion(((0.0, 1.1),) * 3, "main", "default")
+    main = FDTDRegion(((0.0, 1.1),) * 3, "main", "none")
     with pytest.raises(ValueError, match="expanded main"):
         build_fdtd_domain(
             main,
             (0.5, 0.5, 0.5),
-            buffer=FDTDRegion(((0.0, 1.1),) * 3, "buffer", "default"),
+            buffer=FDTDRegion(((0.0, 1.1),) * 3, "buffer", "none"),
             buffer_cell_size=0.6,
             pml_thickness=1.0,
             pml_cell_size=0.5,
         )
     with pytest.raises(ValueError, match="larger than every"):
         build_fdtd_domain(
-            FDTDRegion(((0.0, 1.0),) * 3, "main", "default"),
+            FDTDRegion(((0.0, 1.0),) * 3, "main", "none"),
             (0.5, 0.4, 0.3),
-            buffer=FDTDRegion(((-1.0, 2.0),) * 3, "buffer", "default"),
+            buffer=FDTDRegion(((-1.0, 2.0),) * 3, "buffer", "none"),
             buffer_cell_size=0.5,
             pml_thickness=1.0,
             pml_cell_size=0.5,

@@ -119,13 +119,13 @@ export function useCaeMeasurementActions({
       experimentDocument.status !== 'Ready' ||
       experimentDocument.successfulRevision !== experimentDocument.revision ||
       !experimentDocument.variables ||
-      !experimentDocument.materialParameters
+      !experimentDocument.materialSnapshot
     )
       throw new Error('Candidate 평가가 완료되지 않았습니다.')
     return {
       ...identity,
       vars: experimentDocument.variables,
-      material_parameters: experimentDocument.materialParameters,
+      material_snapshot: experimentDocument.materialSnapshot,
     }
   }, [experimentDocument, requireExperiment])
 

@@ -23,7 +23,11 @@ function savedExperiment(id: number, source: ExperimentSourceBundle, name = `Exp
   }
 }
 
-const materialParameters = Object.freeze({
+const materialSnapshot = Object.freeze({
+  sourceHash: 'source',
+  varsHash: 'vars',
+  modelDefinitions: [],
+  selections: {},
   experiment: Object.freeze({ materials: Object.freeze({}) }),
   tasks: Object.freeze({}),
 })
@@ -36,7 +40,7 @@ describe('experimentEditingReducer', () => {
     const dirtyState = experimentEditingReducer(initialExperimentEditingState, {
       type: 'candidateLoaded',
       vars: { width: 3 },
-      materialParameters,
+      materialSnapshot,
     })
 
     const loaded = experimentEditingReducer(dirtyState, { type: 'recordLoaded', document, record })
@@ -48,7 +52,7 @@ describe('experimentEditingReducer', () => {
       name: record.name,
       description: record.description,
       candidateVars: null,
-      candidateMaterialParameters: null,
+      candidateMaterialSnapshot: null,
       workspaceSession: 1,
     })
   })
@@ -65,7 +69,7 @@ describe('experimentEditingReducer', () => {
     const withCandidate = experimentEditingReducer(loaded, {
       type: 'candidateLoaded',
       vars: { width: 4 },
-      materialParameters,
+      materialSnapshot,
     })
     const editedDocument = createCadSourceDocument('experiment', sourceBundle('manual edit'))
 
@@ -75,7 +79,7 @@ describe('experimentEditingReducer', () => {
     expect(edited.record).toBe(record)
     expect(edited.baselineBundle).toBe(savedBundle)
     expect(edited.candidateVars).toEqual({ width: 4 })
-    expect(edited.candidateMaterialParameters).toBeNull()
+    expect(edited.candidateMaterialSnapshot).toBeNull()
   })
   it('commits save metadata without replacing a newer local document', () => {
     const originalBundle = sourceBundle('original')
@@ -114,7 +118,7 @@ describe('experimentEditingReducer', () => {
         name: 'Local Draft',
         description: 'restored locally',
       },
-      candidate: { vars: { width: 8 }, materialParameters },
+      candidate: { vars: { width: 8 }, materialSnapshot },
       selection: { experimentId: 9, measurementId: 12, calculationId: 7 },
       layout: defaultWorkbenchLayoutState,
     }
@@ -123,7 +127,7 @@ describe('experimentEditingReducer', () => {
       type: 'draftRestored',
       draft,
       document,
-      candidateMaterialParameters: materialParameters,
+      candidateMaterialSnapshot: materialSnapshot,
     })
     expect(restored).toMatchObject({
       document,
@@ -131,7 +135,7 @@ describe('experimentEditingReducer', () => {
       baselineBundle: bundle,
       name: 'Local Draft',
       candidateVars: { width: 8 },
-      candidateMaterialParameters: materialParameters,
+      candidateMaterialSnapshot: materialSnapshot,
       workspaceSession: 1,
     })
 
@@ -150,7 +154,7 @@ describe('experimentEditingReducer', () => {
       baselineBundle: newBundle,
       name: 'New Experiment',
       candidateVars: null,
-      candidateMaterialParameters: null,
+      candidateMaterialSnapshot: null,
       workspaceSession: 2,
     })
 
@@ -169,7 +173,7 @@ describe('experimentEditingReducer', () => {
     const withCandidate = experimentEditingReducer(initialExperimentEditingState, {
       type: 'candidateLoaded',
       vars: { width: 1 },
-      materialParameters,
+      materialSnapshot,
     })
 
     const variablesOnly = experimentEditingReducer(withCandidate, {
@@ -177,17 +181,18 @@ describe('experimentEditingReducer', () => {
       vars: { width: 2 },
     })
     expect(variablesOnly.candidateVars).toEqual({ width: 2 })
-    expect(variablesOnly.candidateMaterialParameters).toBe(materialParameters)
+    expect(variablesOnly.candidateMaterialSnapshot).toBe(materialSnapshot)
 
     const nextMaterials = Object.freeze({
-      experiment: Object.freeze({ materials: Object.freeze({ steel: Object.freeze({}) }) }),
+      ...materialSnapshot,
+      experiment: Object.freeze({ materials: Object.freeze({ steel: Object.freeze({ models: {} }) }) }),
       tasks: Object.freeze({}),
     })
     const echoed = experimentEditingReducer(variablesOnly, {
       type: 'candidateEvaluationAccepted',
       vars: { width: 2 },
-      materialParameters: nextMaterials,
+      materialSnapshot: nextMaterials,
     })
-    expect(echoed.candidateMaterialParameters).toBe(nextMaterials)
+    expect(echoed.candidateMaterialSnapshot).toBe(nextMaterials)
   })
 })

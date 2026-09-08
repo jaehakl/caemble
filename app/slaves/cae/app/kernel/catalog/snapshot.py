@@ -17,10 +17,12 @@ class SolverCatalog:
         entries: dict[tuple[str, str], dict[str, Any]],
         artifact_types: dict[str, dict[str, Any]] | None = None,
         catalog_revision: str | None = None,
+        material_models: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         self._entries = copy.deepcopy(entries)
         self._artifact_types = copy.deepcopy(artifact_types or {})
         self.catalog_revision = catalog_revision
+        self._material_models = copy.deepcopy(material_models or {})
 
     @classmethod
     def discover(cls, catalog_path: Path | None = None) -> SolverCatalog:
@@ -30,6 +32,7 @@ class SolverCatalog:
                 catalog.solver_manifests(),
                 artifact_types=catalog.artifact_types(),
                 catalog_revision=catalog.meta()["catalogRevision"],
+                material_models=catalog.material_models(),
             )
         finally:
             catalog.close()
@@ -41,6 +44,7 @@ class SolverCatalog:
         *,
         artifact_types: list[dict[str, Any]] | None = None,
         catalog_revision: str | None = None,
+        material_models: list[dict[str, Any]] | None = None,
     ) -> SolverCatalog:
         return cls(
             {
@@ -52,6 +56,7 @@ class SolverCatalog:
                 for item in artifact_types or ()
             },
             catalog_revision,
+            {item["key"]: item for item in material_models or ()},
         )
 
     def manifests(self) -> list[dict[str, Any]]:
@@ -77,6 +82,12 @@ class SolverCatalog:
             return copy.deepcopy(self._artifact_types[name])
         except KeyError as error:
             raise CaeError("artifact_type_not_found", f"Artifact type {name!r} is not registered") from error
+
+    def material_model(self, key: str) -> dict[str, Any]:
+        try:
+            return copy.deepcopy(self._material_models[key])
+        except KeyError as error:
+            raise CaeError("invalid_material", f"Material model {key!r} is not registered") from error
 
 
 solver_catalog = SolverCatalog.discover()

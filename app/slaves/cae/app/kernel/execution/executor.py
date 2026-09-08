@@ -131,7 +131,7 @@ class SpawnSolverExecutor:
         progress: ProgressHandler | None = None,
         cancellation: CancellationSignal | None = None,
         timeout: float | None = None,
-        abi_version: int = 2,
+        abi_version: int = 3,
     ) -> SolverResult:
         transaction = await self.execute_transaction(
             locator,
@@ -159,7 +159,7 @@ class SpawnSolverExecutor:
         progress: ProgressHandler | None = None,
         cancellation: CancellationSignal | None = None,
         timeout: float | None = None,
-        abi_version: int = 2,
+        abi_version: int = 3,
     ) -> SolverExecutionTransaction[SolverResult]:
         if timeout is not None and timeout <= 0:
             raise ValueError("timeout must be positive")

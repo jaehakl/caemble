@@ -9,13 +9,13 @@ import type { RunnerOperationResultEnvelope } from '@/platform/isolated-runner/p
 import type { BuiltArtifactInput } from '@/lib/cae/artifact'
 import type { BuildArtifact } from '@/contracts/build'
 import type { CaePreparationRequest } from '@/lib/cae/build'
+import { measurementMaterialSnapshot } from '@/lib/cad/execution/measurement'
 import { sha256Bytes } from '@/api/submitArtifact'
 import { buildBatchArtifact } from '@/features/measurement/buildBatchArtifact'
 
 const mocks = vi.hoisted(() => ({
   experiment: vi.fn(),
   catalog: vi.fn(),
-  materials: vi.fn(),
   compile: vi.fn(),
   prepare: vi.fn(),
   saveItem: vi.fn(),
@@ -23,7 +23,6 @@ const mocks = vi.hoisted(() => ({
   close: vi.fn(),
 }))
 vi.mock('@/api', () => ({ dbTables: { Experiment: { listRows: mocks.experiment } }, getListRequest: () => ({}) }))
-vi.mock('@/api/buildContext', () => ({ fetchBuildMaterials: mocks.materials }))
 vi.mock('@/features/viewer/workspace/catalogRuntime', () => ({ fetchCatalogRuntimeSlice: mocks.catalog }))
 vi.mock('@/lib/cad/compiler/monacoCompiler', () => ({ compileCadDocument: mocks.compile }))
 vi.mock('@/platform/isolated-runner/client', () => ({ prepareInIsolatedRunner: mocks.prepare }))
@@ -50,12 +49,10 @@ describe('browser build artifact contract', () => {
     await import('@/lib/cad/runner/evaluation.worker')
     const { examples, catalog } = readCatalogExamples(path.resolve('../catalog/caemble_catalog/catalog.sqlite3'))
     const example = examples.find((item) => item.key === 'electro-thermal-notched-bar')!
-    const materials = { names: [], materials: [], parameters: [], qualifiers: [] }
     sourceHash = example.bundleHash
-    request = { source_bundle: example.sourceBundle, source_hash: sourceHash, catalog, materials, mode: 'generate' }
+    request = { source_bundle: example.sourceBundle, source_hash: sourceHash, catalog, mode: 'generate' }
     mocks.experiment.mockResolvedValue({ items: [{ id: 7, source_bundle: example.sourceBundle }] })
     mocks.catalog.mockResolvedValue(catalog)
-    mocks.materials.mockResolvedValue(materials)
     mocks.compile.mockResolvedValue(compileCatalogExample(example, catalog))
     mocks.prepare.mockImplementation(
       (request: CadPreparationRequest, callbacks: { onResponse: (response: CadPreparationResponse) => void }) => {
@@ -92,10 +89,7 @@ describe('browser build artifact contract', () => {
         ...request,
         mode: 'measurement',
         vars: input.measurement.experiment.variables,
-        material_parameters: {
-          experiment: input.measurement.materialParameters,
-          tasks: input.measurement.taskMaterialParameters,
-        },
+        material_snapshot: measurementMaterialSnapshot(input.measurement),
       },
       path.resolve('src/lib/cad/api'),
     )
@@ -125,7 +119,6 @@ describe('browser build artifact contract', () => {
   it('rejects a malformed worker input before saving or hashing it', async () => {
     mocks.experiment.mockResolvedValue({ items: [{ id: 7, source_bundle: request.source_bundle }] })
     mocks.catalog.mockResolvedValue(request.catalog)
-    mocks.materials.mockResolvedValue(request.materials)
     mocks.compile.mockResolvedValue({ sourceHash })
     mocks.prepare.mockImplementation(
       (_request: CadPreparationRequest, callbacks: { onResponse: (response: unknown) => void }) => {

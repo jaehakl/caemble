@@ -59,7 +59,7 @@ const draft = {
     name: 'Starter Experiment',
     description: '',
   },
-  candidate: { vars: null, materialParameters: null },
+  candidate: { vars: null, materialSnapshot: null },
   selection: { measurementId: null },
   layout: defaultWorkbenchLayoutState,
 } as unknown as WorkbenchDraft

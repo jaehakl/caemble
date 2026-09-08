@@ -20,13 +20,10 @@ from app.kernel.execution import SpawnSolverExecutor
 async def test_catalog_spectrometer_separates_three_lines_and_converges(tmp_path: Path):
     repo = Path(__file__).resolve().parents[4]
     artifact = tmp_path / 'spectrometer'
-    materials = tmp_path / 'source-only-materials.json'
-    materials.write_text(json.dumps({'names': [], 'materials': [], 'parameters': [], 'qualifiers': []}), encoding='utf-8')
     subprocess.run([
         'node', str(repo / 'app/ui/dist-cli/caemble.cjs'), '--repo', str(repo),
         'experiment', 'build', '--example', 'czerny-turner-spectrometer',
         '--vars-mode', 'nominal', '--out', str(artifact),
-        '--materials', str(materials),
     ], cwd=repo, check=True, capture_output=True, text=True, encoding='utf-8')
     manifest = json.loads((artifact / 'manifest.json').read_text(encoding='utf-8'))
     assert len(manifest['items']) == 1

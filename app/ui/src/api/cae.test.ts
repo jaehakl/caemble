@@ -15,7 +15,7 @@ describe('CAE batch API boundary', () => {
       experiment_source_hash: 'hash',
       mode: 'generate' as const,
       catalog_revision: 'catalog',
-      builder_version: '1' as const,
+      builder_version: '2' as const,
       items: [{ index: 1, input_hash: 'a'.repeat(64), byte_length: 123 }],
     }
     caeBatches.create(body)

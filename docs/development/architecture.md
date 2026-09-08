@@ -15,13 +15,14 @@ name and current examples. Old user Experiments are not rewritten or redirected:
 removed Solver versions fail lookup. Git preserves prior code and Catalog releases.
 
 CAD source, Geometry scenes, Simulation programs, Material snapshots, Catalog
-slices, and built Measurements retain their existing internal contracts. A versioned
-BuildArtifact envelope adds release, source and input hashes at the client/API
-boundary; it does not introduce another Solver ABI. The CAE worker applies unit and geometry
-transformations needed by a Solver, while malformed values fail at their natural
-runtime operation.
+slices, and built Measurements have separate responsibilities. BuildArtifact v2
+retains release, source and input hashes at the client/API boundary. Solver ABI 3
+receives explicit Material model instances and the selected instance for each
+required model group. The shared model input validator checks structure, units
+and declared ranges; the Solver owns numerical preparation and computation.
+Geometry transformations affect only the Solver view.
 
-QuantityKind, Material, Solver, and Experiment catalog records live only in
+QuantityKind, Material Model, Solver, and Experiment catalog records live only in
 `app/catalog/caemble_catalog/catalog.sqlite3`. Launcher `manifest.json` files
 describe executables and are not Solver descriptors.
 
@@ -31,10 +32,13 @@ describe executables and are not Solver descriptors.
    source in the isolated browser runner.
 2. Evaluation produces the common Geometry scene and any task-local Geometry.
    Preview meshes are render products, not solver input.
-3. Material assignments are resolved into a frozen Material snapshot.
+3. Each evaluation constructs Experiment-local Material model instances from
+   explicit parameters and Vars. Model schemas normalize those inputs, and each
+   Task selects compatible instances for its Material roles. Material names never
+   retrieve coefficients from a database.
 4. The browser or monorepo Node CLI freezes source, Catalog and Material context,
    builds every item, and stores exact artifact bytes in IndexedDB or on disk.
-   Shared TypeScript compilation, evaluation, Material resolution and Measurement
+   Shared TypeScript compilation, evaluation, model validation and Measurement
    construction are independent of API transport and rendering.
 5. The API accepts a manifest and 8 MiB chunks, checks length and SHA256, and
    persists finalized BuiltMeasurements without executing user code. One commit
@@ -51,7 +55,7 @@ describe executables and are not Solver descriptors.
    publishes RecordedData, Measurement completion, job success and the event.
    Partial and stale-attempt results are never published. Analysis
    and the 3D Viewer read the persisted tensors through their respective
-projections.
+   projections.
 
 Batch definitions, prepared inputs, progress messages, terminal events and read
 state survive a browser disconnect. The browser subscribes to server events and
@@ -59,7 +63,9 @@ restores snapshots using an event cursor; closing the Workbench only stops that
 subscription. Completed selected Measurements are fetched again for visualization.
 CalculationData postprocessing runs explicitly in the browser or CLI; Prediction iteration remains browser work. Both
 do not automatically resume on reconnect. Failed runs require manual retry, which
-reuses an existing prepared input without sampling it again.
+reuses the saved source, Vars, model definitions, selections and parameters.
+A newly generated Candidate reevaluates material.tsx for its new Vars; it does
+not inherit the selected Measurement's parameter snapshot.
 
 Local `experiment test` reads the same artifact and invokes the selected checkout's
 CAE Python bridge. It uses existing program validation, CaeRun, Solver children,
@@ -121,7 +127,7 @@ Solver view, never the stored Geometry or frozen Material snapshot.
 ## Solver and Catalog boundary
 
 A task pins a Solver name and SemVer. The active Catalog descriptor supplies
-its implementation locator, parameters, methods, material roles and properties,
+its implementation locator, configuration parameters, methods, Material roles and model groups,
 input ports, observations, and reference length unit. The resident kernel freezes
 this descriptor in the RunPlan; only the invocation child imports the selected
 implementation. There is no central per-Solver dispatch branch.
@@ -130,7 +136,7 @@ Solver-specific physics belongs under
 `app/slaves/cae/app/solvers/<solver_package>/`, with one current `entry.py` per
 Solver and no implementation version directories. The resident `app/kernel`
 owns execution, resources, Catalog snapshots and transport. `kernel/api` owns
-ABI 2 value and unit contracts, while `app/methods` owns shared geometry and
+ABI 3 value and unit contracts, while `app/methods` owns shared geometry and
 numerical operations. `app` itself contains only `__init__.py` and `__main__.py`.
 There are no legacy Solver adapters or import facades. Catalog editing uses an
 explicit Draft SQLite file, rewrites examples for the current versions, removes
@@ -153,13 +159,13 @@ ray branching.
 Visual paths use the semantic RecordedData group `rayPaths`, recorded in one
 call as five aligned tensors:
 
-| Member | Type and meaning |
-| --- | --- |
-| `vertices` | `float32[V, 3]` flattened vertex positions |
-| `pathOffsets` | `uint32[P + 1]` vertex offsets, ending at `V` |
-| `segmentPower` | `float32[S]` radiant flux aligned to segments |
-| `pathWavelength` | `float32[P]` one wavelength per path |
-| `segmentEvent` | `uint8[S]` event code aligned to segments |
+| Member           | Type and meaning                              |
+| ---------------- | --------------------------------------------- |
+| `vertices`       | `float32[V, 3]` flattened vertex positions    |
+| `pathOffsets`    | `uint32[P + 1]` vertex offsets, ending at `V` |
+| `segmentPower`   | `float32[S]` radiant flux aligned to segments |
+| `pathWavelength` | `float32[P]` one wavelength per path          |
+| `segmentEvent`   | `uint8[S]` event code aligned to segments     |
 
 The persisted names are `rayPaths.<member>`. The Viewer reconstructs paths from
 the offsets; generic Analysis excludes these system tensors by requesting

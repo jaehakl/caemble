@@ -17,7 +17,7 @@ def test_task_snapshot_and_each_invocation_isolate_nested_numpy_arrays():
     source = np.arange(12, dtype=np.int32).reshape(3, 4).view(ParameterArray)
     spec = TaskSpec(
         "fixture", {"kernel": {"name": "fixture", "version": "1.0.0"}, "config": {"nested": [source]}},
-        {"inputPorts": {}}, "unused:fixture", 2, {}, {}, {},
+        {"inputPorts": {}}, "unused:fixture", 3, {}, {}, {},
     )
     snapshot = spec.task["config"]["nested"][0]
     source[0, 0] = -1
@@ -51,7 +51,7 @@ async def test_mesh_particle_bundle_cross_actual_children_and_coordinator_contra
         "producer": TaskSpec(
             "producer", {"kernel": {"name": "test-producer", "version": "1.0.0"}, "config": {}},
             {"inputPorts": {}, "observations": {"pid": {"type": "number"}}},
-            "tests.coordinator_value_fixtures:producer", 2, outputs, {}, {},
+            "tests.coordinator_value_fixtures:producer", 3, outputs, {}, {},
         ),
         "consumer": TaskSpec(
             "consumer", {"kernel": {"name": "test-consumer", "version": "1.0.0"}, "config": {}},
@@ -59,11 +59,11 @@ async def test_mesh_particle_bundle_cross_actual_children_and_coordinator_contra
                 "artifactTypes": [output["artifactType"]], "minimumOccurrences": 1, "maximumOccurrences": 1,
                 "data": output["data"], "payloadKind": output["payloadKind"],
             } for name, output in outputs.items()}, "observations": {"pid": {"type": "number"}}},
-            "tests.coordinator_value_fixtures:consumer", 2,
+            "tests.coordinator_value_fixtures:consumer", 3,
             {"answer": {"artifactType": "test/answer@1", "data": {"dtype": "float64"}}}, {}, {},
         ),
     }
-    plan = RunPlan(specs, {}, {}, (), {})
+    plan = RunPlan(specs, {}, {}, {})
     progress = []
 
     async def report(value):

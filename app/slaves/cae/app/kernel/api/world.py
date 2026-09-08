@@ -4,9 +4,6 @@ from typing import Any
 
 import numpy as np
 
-from app.kernel.api.units import convert_ucum_value
-
-
 def experiment_scene(world: dict[str, Any]) -> dict[str, Any]:
     return world["experiment"]
 
@@ -56,23 +53,14 @@ def scalar_parameter(value: Any) -> float:
     return float(value)
 
 
-def material_property_value(
+def material_model(
     world: dict[str, Any],
     part: dict[str, Any],
-    solver_descriptor: dict[str, Any],
-    property_name: str,
+    role: str,
+    group: str,
     source: str = "experiment",
-) -> np.ndarray[Any, Any]:
-    """Read a material property in the solver's unit without reducing its tensor."""
+) -> dict[str, Any] | None:
+    """Read the explicitly selected model instance for a Material role/group."""
     material_name = part["material"]["name"]
-    descriptor = world["materials"][source]["parameters"]["materials"][material_name][
-        property_name
-    ]["value"]
-    expected = next(
-        role["properties"][property_name]["data"]
-        for role in solver_descriptor["materials"]
-        if property_name in role["properties"]
-    )
-    offset = convert_ucum_value(0, descriptor["unit"], expected["unit"])
-    scale = convert_ucum_value(1, descriptor["unit"], expected["unit"]) - offset
-    return np.asarray(descriptor["value"], dtype=np.float64) * scale + offset
+    instance = world["materialSelections"].get(role, {}).get(material_name, {}).get(group)
+    return None if instance is None else world["materials"][source][material_name]["models"][instance]

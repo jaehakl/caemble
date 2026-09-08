@@ -39,7 +39,7 @@ Auto k는 포함된 행 수 `n`에 대해 `round(sqrt(n))`을 사용하되 1–1
 
 각 Vars 카드의 **Sampling Min/Max**는 schema 범위 안에서 탐색 범위를 추가로 좁힙니다. Tensor Vars는 모든 cell에 같은 Min/Max를 사용하고 이 범위는 Experiment 또는 varsSchema가 바뀌면 초기화되며 저장되지 않습니다. 리본의 N은 시도 횟수이며 양의 JavaScript safe integer여야 합니다.
 
-**Sample & Run**은 선택 범위 안의 중복 없는 Recorded Measurement를 center로 사용합니다. 첫 center가 없으면 범위 정중앙에서 시작하고, 이후에는 정규화된 Vars별 평균제곱거리를 균형 있게 사용한 결정적 farthest-point/k-center 근사로 다음 후보를 고릅니다. 성공해 RecordedData가 저장된 점만 즉시 center가 되며 Candidate 평가, Simulation 또는 Calculation 일부 실패는 집계하고 다음 시도를 계속합니다. RecordedData 저장 실패, Cancel, Experiment 또는 source 변경은 batch를 중단합니다. 각 후보에서는 frozen Material snapshot을 비우고 새 Vars로 source-defined Material과 `errorRate`를 다시 평가합니다. batch 종료·취소·중단 뒤 저장된 점이 있으면 모델은 한 번만 자동 갱신됩니다.
+**Sample & Run**은 선택 범위 안의 중복 없는 Recorded Measurement를 center로 사용합니다. 첫 center가 없으면 범위 정중앙에서 시작하고, 이후에는 정규화된 Vars별 평균제곱거리를 균형 있게 사용한 결정적 farthest-point/k-center 근사로 다음 후보를 고릅니다. 성공해 RecordedData가 저장된 점만 즉시 center가 되며 Candidate 평가, Simulation 또는 Calculation 일부 실패는 집계하고 다음 시도를 계속합니다. RecordedData 저장 실패, Cancel, Experiment 또는 source 변경은 batch를 중단합니다. 각 후보에서는 새 Vars로 `material.tsx`를 다시 평가하여 모델 파라미터 snapshot을 생성합니다. batch 종료·취소·중단 뒤 저장된 점이 있으면 모델은 한 번만 자동 갱신됩니다.
 
 ### Save & Run 검증
 

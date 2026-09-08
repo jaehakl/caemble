@@ -1,16 +1,4 @@
-import type {
-  CartesianBasis,
-  QuantityMetadata,
-  QuantityKindName,
-  ScalarQuantityKindName,
-  TensorQuantityKindName,
-} from '../../quantitykind/runtime'
-import type {
-  MaterialModelDefinitionFor,
-  MaterialModelKey,
-  MaterialPropertyKey,
-  MaterialPropertyQuantityKind,
-} from '../../material/data'
+import type { QuantityMetadata, ScalarQuantityKindName, TensorQuantityKindName } from '../../quantitykind/runtime'
 import type {
   PersistedDataTensor as PersistedDataTensorContract,
   RecordedDataAxis as RecordedDataAxisContract,
@@ -59,61 +47,7 @@ export type DataValueDescriptor = Readonly<{
 }> &
   DataTypeMetadata
 export type MatrixValue = readonly (readonly number[])[]
-type MaterialInputBasisMetadata<Name extends QuantityKindName> = Readonly<{ basis?: CartesianBasis }> & {
-  readonly __quantityKind?: Name
-}
-
-export type MaterialDataValueDescriptor<Key extends MaterialPropertyKey = MaterialPropertyKey> =
-  Key extends MaterialPropertyKey
-    ? Readonly<{
-        dtype: FloatDataDType
-        value: number | readonly unknown[]
-        unit: UcumUnit
-        errorRate?: number
-        axes?: never
-        quantityKind?: never
-      }> &
-        MaterialInputBasisMetadata<MaterialPropertyQuantityKind<Key>>
-    : never
-
-export type ResolvedMaterialDataValueDescriptor<Key extends MaterialPropertyKey = MaterialPropertyKey> =
-  Key extends MaterialPropertyKey
-    ? Readonly<{
-        dtype: FloatDataDType
-        value: number | readonly unknown[]
-        unit: UcumUnit
-        quantityKind: MaterialPropertyQuantityKind<Key>
-        errorRate: number
-        axes?: never
-      }> &
-        MaterialInputBasisMetadata<MaterialPropertyQuantityKind<Key>>
-    : never
-
-type MaterialModelInputQuantityKind<Key extends MaterialModelKey> =
-  MaterialModelDefinitionFor<Key>['input']['quantity_kind']
-type MaterialModelOutputQuantityKind<Key extends MaterialModelKey> =
-  MaterialModelDefinitionFor<Key>['output']['quantity_kind']
-
-export type MaterialQuantitySeries<Name extends QuantityKindName> = Readonly<{
-  unit: UcumUnit
-  values: readonly unknown[]
-}> &
-  MaterialInputBasisMetadata<Name>
-
-export type MaterialSampledRelation<Key extends MaterialModelKey = MaterialModelKey> = Key extends MaterialModelKey
-  ? Readonly<{
-      kind: 'sampled_relation'
-      input: MaterialQuantitySeries<MaterialModelInputQuantityKind<Key>>
-      output: MaterialQuantitySeries<MaterialModelOutputQuantityKind<Key>>
-    }>
-  : never
-
 export type ScalarValue = boolean | string | number
-export type MaterialVariable = string | MaterialDataValueDescriptor | MaterialSampledRelation
-// The selected runtime slice supplies exact authoring keys to Monaco; application runtime values are validated.
-export type MaterialVariables = Readonly<Record<string, any> & { color?: string; errorRate?: number }>
-export type NormalizedMaterialVariables = Readonly<Record<string, any> & { color?: string }>
-export type ResolvedMaterialVariables = Readonly<Record<string, any> & { color?: string }>
 export type ExperimentParameter = ScalarValue | DataValueDescriptor
 export type ExperimentParameters = Readonly<Record<string, ExperimentParameter>>
 export type RecordedDataResultAxis = DataSchemaAxis

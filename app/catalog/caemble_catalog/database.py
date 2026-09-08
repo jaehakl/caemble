@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Iterator, Sequence
 
 from .errors import CatalogAmbiguousError, CatalogIntegrityError, CatalogNotFoundError
-from .schema import APPLICATION_ID, EXPERIMENT_COORDINATE_PREFIX, parse_experiment_coordinate, parse_experiment_version
+from .schema import APPLICATION_ID, SCHEMA_VERSION, EXPERIMENT_COORDINATE_PREFIX, parse_experiment_coordinate, parse_experiment_version
 
 
 def catalog_path() -> Path:
@@ -72,37 +72,20 @@ class Catalog:
         application_id = self._one("PRAGMA application_id")[0]
         if application_id != APPLICATION_ID:
             raise CatalogIntegrityError(f"Unsupported catalog application_id: {application_id}")
+        version = self._one("PRAGMA user_version")[0]
+        if version != SCHEMA_VERSION:
+            raise CatalogIntegrityError(f"Unsupported Catalog schema {version}; expected {SCHEMA_VERSION}. Rebase a Draft before publishing.")
 
     def meta(self) -> dict[str, Any]:
         metadata = {row["key"]: row["value"] for row in self._all("SELECT key, value FROM catalog_metadata")}
-        counts = self._one(
-            """
-            SELECT
-              (SELECT count(*) FROM quantity_kinds) AS quantity_kind_count,
-              (SELECT count(*) FROM material_parameters) AS material_parameter_count,
-              (SELECT count(*) FROM material_models) AS material_model_count,
-              (SELECT count(*) FROM solvers) AS solver_count,
-              (SELECT count(*) FROM experiments) AS experiment_count
-            """
-        )
-        global_qualifiers = [
-            row["qualifier"] for row in self._all("SELECT qualifier FROM material_global_qualifiers ORDER BY ordinal")
-        ]
-        design_rules = {
-            row["key"]: row["description"]
-            for row in self._all("SELECT key, description FROM material_design_rules ORDER BY key")
-        }
         return {
             "catalogRevision": metadata["catalogRevision"],
             "quantityKindDataVersion": metadata["quantityKindDataVersion"],
             "materialCatalogVersion": metadata["materialCatalogVersion"],
-            "quantityKindCount": counts["quantity_kind_count"],
-            "materialParameterCount": counts["material_parameter_count"],
-            "materialModelCount": counts["material_model_count"],
-            "solverCount": counts["solver_count"],
-            "experimentCount": counts["experiment_count"],
-            "materialGlobalQualifiers": global_qualifiers,
-            "materialDesignRules": design_rules,
+            **{name: self._one(f"SELECT count(*) AS count FROM {table}")["count"] for name, table in (
+                ("quantityKindCount", "quantity_kinds"), ("materialModelCount", "material_models"),
+                ("solverCount", "solvers"), ("experimentCount", "experiments"),
+            )},
         }
 
     def quantity_kind(self, name: str) -> dict[str, Any]:
@@ -181,7 +164,7 @@ class Catalog:
     def quantity_kind_relations(self, name: str) -> dict[str, Any]:
         self.quantity_kind(name)
         materials = self._all(
-            "SELECT key, label_ko FROM material_parameters WHERE quantity_kind = ? ORDER BY key",
+            "SELECT m.key, m.label_ko, u.path FROM material_models m JOIN material_model_quantity_kind_usages u ON u.model_key = m.key WHERE u.quantity_kind = ? ORDER BY m.key, u.path",
             (name,),
         )
         usages = self._all(
@@ -193,7 +176,7 @@ class Catalog:
             (name,),
         )
         return {
-            "materialParameters": [{"key": row["key"], "labelKo": row["label_ko"]} for row in materials],
+            "materialModels": [{"key": row["key"], "labelKo": row["label_ko"], "path": row["path"]} for row in materials],
             "solverUsages": [
                 {
                     "solverName": row["solver_name"],
@@ -206,104 +189,23 @@ class Catalog:
             ],
         }
 
-    def material_parameter(self, key: str) -> dict[str, Any]:
-        row = self._one(
-            "SELECT key, domain, label_ko, quantity_kind FROM material_parameters WHERE key = ?",
-            (key,),
-        )
-        if row is None:
-            raise CatalogNotFoundError(f"Unknown Material parameter: {key}")
-        qualifiers = self._all(
-            "SELECT qualifier FROM material_parameter_qualifiers WHERE material_parameter = ? ORDER BY ordinal",
-            (key,),
-        )
-        return {
-            "key": row["key"],
-            "domain": row["domain"],
-            "labelKo": row["label_ko"],
-            "quantityKind": row["quantity_kind"],
-            "specialQualifiers": [item["qualifier"] for item in qualifiers],
-        }
-
-    def list_material_parameters(
-        self,
-        *,
-        query: str | None = None,
-        domain: str | None = None,
-        solver_name: str | None = None,
-        solver_version: str | None = None,
-        quantity_kind: str | None = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> tuple[list[dict[str, Any]], int]:
-        joins = ""
-        clauses: list[str] = []
-        parameters: list[object] = []
-        if solver_name is not None:
-            joins = " JOIN solver_material_properties p ON p.material_parameter = m.key"
-            clauses.append("p.solver_name = ?")
-            parameters.append(solver_name)
-            if solver_version is not None:
-                clauses.append("p.solver_version = ?")
-                parameters.append(solver_version)
-        if query:
-            clauses.append("(m.key LIKE ? ESCAPE '\\' OR m.label_ko LIKE ? ESCAPE '\\')")
-            escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            parameters.extend((f"%{escaped}%", f"%{escaped}%"))
-        if domain:
-            clauses.append("m.domain = ?")
-            parameters.append(domain)
-        if quantity_kind:
-            clauses.append("m.quantity_kind = ?")
-            parameters.append(quantity_kind)
-        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-        total = self._one(f"SELECT count(DISTINCT m.key) AS value FROM material_parameters m{joins}{where}", parameters)[
-            "value"
-        ]
-        rows = self._all(
-            f"SELECT DISTINCT m.key FROM material_parameters m{joins}{where} ORDER BY m.key LIMIT ? OFFSET ?",
-            (*parameters, limit, offset),
-        )
-        return [self.material_parameter(row["key"]) for row in rows], total
-
-    def material_parameter_relations(self, key: str) -> dict[str, Any]:
-        material = self.material_parameter(key)
-        requirements = self._all(
-            """
-            SELECT solver_name, solver_version, role, target_category, target_method_id, description
-            FROM solver_material_requirements WHERE material_parameter = ?
-            ORDER BY solver_name, solver_version, role
-            """,
-            (key,),
-        )
-        return {
-            "quantityKindDefinition": self.quantity_kind(material["quantityKind"]),
-            "solverRequirements": [
-                {
-                    "solverName": row["solver_name"],
-                    "solverVersion": row["solver_version"],
-                    "role": row["role"],
-                    "methodCategory": row["target_category"],
-                    "methodId": row["target_method_id"],
-                    "description": row["description"],
-                }
-                for row in requirements
-            ],
-        }
-
     def material_model(self, key: str) -> dict[str, Any]:
         row = self._one("SELECT * FROM material_models WHERE key = ?", (key,))
         if row is None:
             raise CatalogNotFoundError(f"Unknown Material model: {key}")
         return {
-            "key": row["key"],
-            "labelKo": row["label_ko"],
-            "kind": row["kind"],
-            "input": {"name": row["input_name"], "quantityKind": row["input_quantity_kind"]},
-            "output": {"name": row["output_name"], "quantityKind": row["output_quantity_kind"]},
-            "minimumSamples": row["minimum_samples"],
-            "sharedBasis": bool(row["shared_basis"]),
+            "key": row["key"], "labelKo": row["label_ko"], "description": row["description"],
+            "equation": row["equation"], "conventions": row["conventions"],
+            "parameterSchema": _json(row["parameter_schema_json"]),
         }
+
+    def material_model_relations(self, key: str) -> dict[str, Any]:
+        self.material_model(key)
+        return {"solverRequirements": [
+            {"solverName": row["solver_name"], "solverVersion": row["solver_version"],
+             "role": row["role"], "groupKey": row["group_key"], "required": bool(row["required"])}
+            for row in self._all("SELECT * FROM solver_material_requirements WHERE model_key = ? ORDER BY solver_name, solver_version, role, group_key", (key,))
+        ]}
 
     def material_models(self) -> list[dict[str, Any]]:
         return [self.material_model(row["key"]) for row in self._all("SELECT key FROM material_models ORDER BY key")]
@@ -374,27 +276,16 @@ class Catalog:
         )
         descriptor["materials"] = []
         for role in roles:
-            properties = self._all(
-                """
-                SELECT material_parameter, description, data_json FROM solver_material_properties
-                WHERE solver_name = ? AND solver_version = ? AND role = ? ORDER BY ordinal
-                """,
-                (name, version, role["role"]),
-            )
-            descriptor["materials"].append(
-                {
-                    "role": role["role"],
-                    "description": role["description"],
-                    "target": {"category": role["target_category"], "methodId": role["target_method_id"]},
-                    "properties": {
-                        item["material_parameter"]: {
-                            "description": item["description"],
-                            "data": _json(item["data_json"]),
-                        }
-                        for item in properties
-                    },
-                }
-            )
+            groups = []
+            for group in self._all("SELECT * FROM solver_material_model_groups WHERE solver_name = ? AND solver_version = ? AND role = ? ORDER BY ordinal", (name, version, role["role"])):
+                options = self._all("SELECT model_key FROM solver_material_model_options WHERE solver_name = ? AND solver_version = ? AND role = ? AND group_key = ? ORDER BY ordinal", (name, version, role["role"], group["key"]))
+                groups.append({"key": group["key"], "required": bool(group["required"]), "oneOf": [item["model_key"] for item in options]})
+            target_key = "source" if role["target_category"] == "geometry" else "methodId"
+            descriptor["materials"].append({
+                "role": role["role"], "description": role["description"],
+                "target": {"category": role["target_category"], target_key: role["target_method_id"]},
+                "modelGroups": groups,
+            })
         descriptor["inputPorts"] = {}
         for port in self._all(
             "SELECT * FROM solver_input_ports WHERE solver_name = ? AND solver_version = ? ORDER BY ordinal",
@@ -504,7 +395,7 @@ class Catalog:
         summary = self.solver_summary(name, version)
         manifest = self.get_solver_manifest(name, version)
         requirements = self._all(
-            "SELECT * FROM solver_material_requirements WHERE solver_name = ? AND solver_version = ? ORDER BY role, material_parameter",
+            "SELECT * FROM solver_material_requirements WHERE solver_name = ? AND solver_version = ? ORDER BY role, group_key, model_key",
             (name, version),
         )
         usages = self._all(
@@ -587,10 +478,9 @@ class Catalog:
                     "roleDescription": row["role_description"],
                     "methodCategory": row["target_category"],
                     "methodId": row["target_method_id"],
-                    "materialParameter": row["material_parameter"],
-                    "description": row["description"],
-                    "quantityKind": row["quantity_kind"],
-                    "unit": row["unit"],
+                    "groupKey": row["group_key"],
+                    "required": bool(row["required"]),
+                    "model": row["model_key"],
                 }
                 for row in requirements
             ],
@@ -786,9 +676,6 @@ class Catalog:
                      domain || ' · QuantityKind' AS subtitle, name AS sort_key
               FROM quantity_kinds WHERE name LIKE ? ESCAPE '\\' OR coalesce(description, '') LIKE ? ESCAPE '\\'
               UNION ALL
-              SELECT 'materialParameter', key, label_ko, key, key
-              FROM material_parameters WHERE key LIKE ? ESCAPE '\\' OR label_ko LIKE ? ESCAPE '\\'
-              UNION ALL
               SELECT 'materialModel', key, label_ko, key, key
               FROM material_models WHERE key LIKE ? ESCAPE '\\' OR label_ko LIKE ? ESCAPE '\\'
               UNION ALL
@@ -809,88 +696,39 @@ class Catalog:
                      version_major || '.' || version_minor || '.' || version_patch) LIKE ? ESCAPE '\\'
             ) ORDER BY sort_key, kind LIMIT ?
             """,
-            (like, like, like, like, like, like, like, like, like, like, like, like, limit),
+            (like, like, like, like, like, like, like, like, like, like, limit),
         )
         return [dict(row) for row in rows]
 
     def runtime_slice(
-        self,
-        *,
-        solvers: Sequence[tuple[str, str]],
-        quantity_kinds: Sequence[str],
-        material_parameters: Sequence[str],
+        self, *, solvers: Sequence[tuple[str, str]], quantity_kinds: Sequence[str],
         material_models: Sequence[str] = (),
     ) -> dict[str, Any]:
         manifests = [self.get_solver_manifest(name, version) for name, version in dict.fromkeys(solvers)]
-        material_names = set(material_parameters)
+        model_names = set(material_models)
         quantity_names = set(quantity_kinds)
+        supported_models = set()
         for manifest in manifests:
-            name = manifest["descriptor"]["name"]
-            version = manifest["descriptor"]["version"]
-            quantity_names.update(
-                row["quantity_kind"]
-                for row in self._all(
-                    "SELECT DISTINCT quantity_kind FROM solver_quantity_kind_usages WHERE solver_name = ? AND solver_version = ?",
-                    (name, version),
-                )
-            )
-            material_names.update(
-                row["material_parameter"]
-                for row in self._all(
-                    "SELECT DISTINCT material_parameter FROM solver_material_properties WHERE solver_name = ? AND solver_version = ?",
-                    (name, version),
-                )
-            )
-        materials = [self.material_parameter(key) for key in sorted(material_names)]
-        quantity_names.update(item["quantityKind"] for item in materials)
-        models = [self.material_model(key) for key in sorted(dict.fromkeys(material_models))]
+            descriptor = manifest["descriptor"]
+            quantity_names.update(row["quantity_kind"] for row in self._all(
+                "SELECT DISTINCT quantity_kind FROM solver_quantity_kind_usages WHERE solver_name = ? AND solver_version = ?",
+                (descriptor["name"], descriptor["version"]),
+            ))
+            for role in descriptor["materials"]:
+                for group in role["modelGroups"]:
+                    supported_models.update(group["oneOf"])
+        model_names.update(supported_models)
+        models = [self.material_model(key) for key in sorted(model_names)]
         for model in models:
-            quantity_names.add(model["input"]["quantityKind"])
-            quantity_names.add(model["output"]["quantityKind"])
-        quantities = [self.quantity_kind(name) for name in sorted(quantity_names)]
-        selected_solvers = {item for item in dict.fromkeys(solvers)}
-        warnings: list[str] = []
-        for key in material_parameters:
-            usages = {
-                (row["solver_name"], row["solver_version"])
-                for row in self._all(
-                    "SELECT solver_name, solver_version FROM solver_material_properties WHERE material_parameter = ?",
-                    (key,),
-                )
-            }
-            if selected_solvers and usages.isdisjoint(selected_solvers):
-                warnings.append(f"Material parameter {key} is valid but unused by the selected Solver(s).")
-        for name in quantity_kinds:
-            usages = {
-                (row["solver_name"], row["solver_version"])
-                for row in self._all(
-                    "SELECT solver_name, solver_version FROM solver_quantity_kind_usages WHERE quantity_kind = ?",
-                    (name,),
-                )
-            }
-            if selected_solvers and usages.isdisjoint(selected_solvers):
-                warnings.append(f"QuantityKind {name} is valid but unused by the selected Solver(s).")
-        if selected_solvers:
-            warnings.extend(
-                f"Material model {key} is valid but unused by the selected Solver(s)."
-                for key in dict.fromkeys(material_models)
-            )
-        meta = self.meta()
+            quantity_names.update(row["quantity_kind"] for row in self._all(
+                "SELECT DISTINCT quantity_kind FROM material_model_quantity_kind_usages WHERE model_key = ?", (model["key"],),
+            ))
         return {
-            "catalogRevision": meta["catalogRevision"],
-            "solvers": [
-                {
-                    "name": manifest["descriptor"]["name"],
-                    "version": manifest["descriptor"]["version"],
-                    "descriptor": manifest["descriptor"],
-                }
-                for manifest in manifests
-            ],
-            "quantityKinds": quantities,
-            "materialParameters": materials,
+            "catalogRevision": self.meta()["catalogRevision"],
+            "solvers": [{"name": item["descriptor"]["name"], "version": item["descriptor"]["version"], "descriptor": item["descriptor"]} for item in manifests],
+            "quantityKinds": [self.quantity_kind(name) for name in sorted(quantity_names)],
             "materialModels": models,
-            "materialGlobalQualifiers": meta["materialGlobalQualifiers"],
-            "warnings": warnings,
+            "warnings": [f"Material model {key} is valid but unused by the selected Solver(s)." for key in sorted(set(material_models) - supported_models)] if manifests else [],
         }
 
 
