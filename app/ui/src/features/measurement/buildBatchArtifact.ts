@@ -23,6 +23,7 @@ export type BrowserBatchIntent = Readonly<{
 
 export type BrowserBatchCandidates = Readonly<{
   count: number
+  algorithm?: 'monte-carlo' | 'latin-hypercube'
   next: (attempt: number, signal: AbortSignal) => Promise<Readonly<Vars>>
   accepted: (attempt: number) => Promise<void>
   failed: (attempt: number, cause: unknown) => void

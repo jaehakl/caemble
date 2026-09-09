@@ -31,6 +31,7 @@ other manual pages by title, keywords, or body. `docs show experiment`,
 
 - [Workers and Launcher](operations/workers.md)
 - [Deployment](operations/deployment.md)
+- [Object storage](operations/object-storage.md)
 
 ## Giving Codex a task
 

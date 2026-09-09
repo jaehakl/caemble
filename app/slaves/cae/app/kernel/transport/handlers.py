@@ -19,6 +19,15 @@ async def run_measurement(
     attachments: list[Attachment],
     context: ServerJobContext,
 ) -> dict[str, Any]:
+    from app.kernel.transport.object_storage import externalize_record, read_object, resolve_input
+    if "artifact" in message:
+        artifact = await read_object(context, message["artifact"])
+        built = artifact["measurement"]
+        projection = {**built, "experiment": {**built["experiment"], "scene": {},
+                      "taskScenes": {name: {} for name in built["experiment"]["taskScenes"]}}}
+        if projection != await resolve_input(context, message["measurement"]):
+            raise ProtocolError("Stored input differs from its registered Measurement metadata.")
+        message = {**message, "measurement": built}
     async def progress(value: Any) -> None:
         await context.send({"type": "job.progress", "progress": value})
 
@@ -34,9 +43,11 @@ async def run_measurement(
             item = await run.queue.get()
             if isinstance(item, RecordPacket):
                 run.pending = item
+                stored = message.get("storage_version") == 1
+                value = await externalize_record(context, item.value, {part.id: part.data for part in item.attachments}) if stored else item.value
                 await context.send(
-                    {"type": "job.record", "sequence": item.sequence, "name": item.name, "value": item.value},
-                    item.attachments,
+                    {"type": "job.record", "sequence": item.sequence, "name": item.name, "value": value},
+                    () if stored else item.attachments,
                 )
                 acknowledgement, _ = await asyncio.wait_for(
                     context.receive(), timeout=RECORD_ACK_TIMEOUT_SECONDS,

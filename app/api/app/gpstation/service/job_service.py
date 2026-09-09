@@ -189,6 +189,8 @@ class JobService:
                         Launcher.slave_app_ids.op("?")(Job.slave_app_id),
                         func.coalesce(Launcher.job_modes.op("->>")(Job.slave_app_id), "webrtc")
                         == Job.job_mode,
+                        or_(func.coalesce(Job.input["storage_version"].astext, "0") != "1",
+                            Launcher.storage_versions.op("->>")(Job.slave_app_id) == "1"),
                     ),
                 )
                 .where(

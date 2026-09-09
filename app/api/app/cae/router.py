@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +17,7 @@ from cae.batches import (
 )
 from cae.events import stream_events
 from cae.models import BatchCreateRequest, BatchReadRequest, BatchRetryRequest
-from cae.uploads import CHUNK_BYTES, commit_batch, finalize_item, measurement_artifact, measurement_artifact_info, upload_chunk
+from cae.uploads import CHUNK_BYTES, commit_batch, finalize_item, finalize_stored_item, measurement_artifact, measurement_artifact_info, upload_chunk
 from gpstation.service.job_orchestrator import job_orchestrator
 from gpstation.utils.csrf import require_web_csrf
 from models import UserData
@@ -127,7 +127,10 @@ async def put_chunk(
 async def finalize(
     batch_id: UUID, index: int, db: AsyncSession = Depends(get_db),
     user: UserData = Depends(authenticated),
+    body: dict = Body(default={}),
 ):
+    if "input" in body:
+        return await finalize_stored_item(db, str(batch_id), user.id, index, body)
     return await finalize_item(db, str(batch_id), user.id, index)
 
 

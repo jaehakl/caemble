@@ -18,6 +18,11 @@ def env_csv(name: str, default: str) -> tuple[str, ...]:
 
 
 class Settings(BaseModel):
+    aws_access_key_id: str = os.getenv("AWS_ACCESS_KEY_ID", "")
+    aws_secret_access_key: str = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+    aws_region: str = os.getenv("AWS_REGION", "")
+    s3_bucket: str = os.getenv("S3_BUCKET", "")
+    s3_endpoint_url: str = os.getenv("S3_ENDPOINT_URL", "")
     db_url: str = os.getenv("DB_URL", "")
     google_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "")
     google_client_secret: str = os.getenv("GOOGLE_CLIENT_SECRET", "")

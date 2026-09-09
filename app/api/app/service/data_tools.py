@@ -273,6 +273,15 @@ class VisibleDataReader:
         row = await self._recorded_row(resource_id, include_data=True)
         if row["data"] is None:
             raise VisibleDataError("RecordedData payload is not stored inline")
+        from storage.service import object_refs
+        if list(object_refs(row["data"])):
+            total = math.prod(row["data"]["shape"]) if row["data"]["shape"] else 1
+            if offset < 0 or offset > total or count < 1 or count > 10000:
+                raise VisibleDataError("Slice offset or count is outside the available tensor.")
+            return {"id": row["id"], "name": row["name"], "dtype": row["dtype"],
+                    "schema": row["data_schema"] or {"dtype": row["dtype"]},
+                    "quantityKind": row["quantity_kind"], "downloadRequired": True,
+                    "data": row["data"], "offset": offset, "count": count}
         result = slice_recorded_tensor(row["data"], row["dtype"], offset, count)
         return {
             "id": row["id"],

@@ -10,7 +10,7 @@ export function measurementsQueryOptions(
 ) {
   return queryOptions({
     queryKey: measurementQueryKeys.list(scope, experimentId, request),
-    queryFn: ({ signal }) => dbTables.Measurement.listRows(request, { signal }),
+    queryFn: ({ signal }) => dbTables.Measurement.listRows(request, { signal, resolveObjects: false }),
   })
 }
 

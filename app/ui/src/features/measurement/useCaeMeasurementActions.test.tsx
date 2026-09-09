@@ -67,6 +67,7 @@ const document = {
   status: 'Ready',
   runIsBusy: false,
   variables: { length: 42 },
+  varsSchema: { length: { shape: [], min: 10, max: 50 }, tensor: { shape: [2], min: 2, max: 2 } },
   materialSnapshot,
   evaluationTimeoutMs: 10_000,
 } as unknown as CadDocumentController
@@ -322,7 +323,17 @@ describe('server-owned CAE measurement actions', () => {
     })
     await waitFor(() => expect(mocks.calculate).toHaveBeenCalledTimes(1))
     expect(mocks.create).toHaveBeenCalledOnce()
-    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ mode: 'generate', count: 2 }))
+    expect(mocks.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: 'candidate',
+        candidates: expect.objectContaining({ algorithm: 'monte-carlo', count: 2 }),
+      }),
+    )
+    const sampler = mocks.create.mock.calls[0][0].candidates
+    const values = await sampler.next(1, new AbortController().signal)
+    expect(values.length).toBeGreaterThanOrEqual(10)
+    expect(values.length).toBeLessThanOrEqual(50)
+    expect(values.tensor).toEqual([2, 2])
     expect(mocks.generate).not.toHaveBeenCalled()
     await act(async () => finishFirst(summary))
     await waitFor(() => expect(mocks.calculate).toHaveBeenCalledTimes(2))

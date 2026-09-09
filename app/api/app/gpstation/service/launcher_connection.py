@@ -81,6 +81,7 @@ async def run_launcher_control(websocket: WebSocket) -> None:
                 launcher_name=hello.launcher_name,
                 slave_app_ids=hello.slave_app_ids,
                 job_modes=hello.job_modes,
+                storage_versions=hello.storage_versions,
                 ip_address=websocket.client.host if websocket.client else None,
             )
             launcher_id = str(launcher.id)

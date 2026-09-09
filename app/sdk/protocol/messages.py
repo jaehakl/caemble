@@ -19,6 +19,7 @@ class LauncherHello(BaseModel):
     slave_app_ids: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     job_modes: dict[str, Literal["webrtc", "websocket"]] = Field(default_factory=dict)
+    storage_versions: dict[str, Literal[1]] = Field(default_factory=dict)
 
 
 class LauncherHeartbeat(BaseModel):

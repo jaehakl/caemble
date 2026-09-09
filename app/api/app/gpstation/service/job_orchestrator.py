@@ -39,6 +39,7 @@ class JobOrchestrator:
         self.runtime = registry
         self._dispatch_wakeup = asyncio.Event()
         self._dispatcher_task: asyncio.Task[None] | None = None
+        self._storage_cleanup_task: asyncio.Task[None] | None = None
         self._assignment_lock = asyncio.Lock()
         self._launcher_send_locks: dict[str, asyncio.Lock] = {}
 
@@ -46,9 +47,16 @@ class JobOrchestrator:
         if self._dispatcher_task is not None and not self._dispatcher_task.done():
             return
         self._dispatcher_task = asyncio.create_task(self._dispatch_loop(), name="job-dispatcher")
+        self._storage_cleanup_task = asyncio.create_task(self._storage_cleanup_loop(), name="storage-cleanup")
         self.wake_dispatcher()
 
     async def stop_dispatcher(self) -> None:
+        cleanup = self._storage_cleanup_task
+        self._storage_cleanup_task = None
+        if cleanup is not None:
+            cleanup.cancel()
+            with suppress(asyncio.CancelledError):
+                await cleanup
         task = self._dispatcher_task
         self._dispatcher_task = None
         if task is None:
@@ -545,6 +553,20 @@ class JobOrchestrator:
                 except Exception:
                     pass
                 await self.disconnect_launcher(launcher_id, code=1008)
+
+    async def _storage_cleanup_loop(self) -> None:
+        from storage.service import cleanup_objects
+
+        while True:
+            try:
+                async with SessionLocal() as db:
+                    await cleanup_objects(db)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Avoid logging provider exceptions which may contain signed URLs.
+                print("object storage cleanup failed; retrying next sweep", flush=True)
+            await asyncio.sleep(60)
 
     async def _dispatch_loop(self) -> None:
         while True:

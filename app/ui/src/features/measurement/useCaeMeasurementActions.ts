@@ -1,4 +1,5 @@
 import { buildBatchArtifact, type BrowserBatchIntent, type BrowserBatchCandidates } from './buildBatchArtifact'
+import { generateRandomVars } from '@/lib/cad/model/vars'
 import { submitArtifact } from '@/api/submitArtifact'
 import { browserClient } from '@/api/http'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -63,6 +64,7 @@ export function useCaeMeasurementActions({
   const [stage, setStage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [batch, setBatch] = useState<CaeBatch | null>(null)
+  const [samplingTotal, setSamplingTotal] = useState<number | null>(null)
   const [automaticCalculationData, setAutomaticCalculationData] = useState(false)
   const calculating = useRef(false)
   calculating.current = automaticCalculationData
@@ -155,6 +157,7 @@ export function useCaeMeasurementActions({
       const attemptId = ++sequence.current
       active.current = run
       setOperation(nextOperation)
+      setSamplingTotal(request.candidates?.algorithm === 'monte-carlo' ? request.candidates.count : null)
       setError(null)
       setStage('CAE batch 등록')
       setBatch(null)
@@ -403,12 +406,28 @@ export function useCaeMeasurementActions({
     (count: number) => {
       try {
         if (!Number.isSafeInteger(count) || count < 1) throw new Error('반복 횟수는 양의 정수여야 합니다.')
+        const schema = experimentDocument.varsSchema
+        if (!schema) throw new Error('Vars schema 평가가 완료되지 않았습니다.')
         void submit(
           {
             ...requireExperiment(),
             request_id: crypto.randomUUID(),
-            mode: 'generate',
-            count,
+            mode: 'candidate',
+            candidates: {
+              count,
+              algorithm: 'monte-carlo',
+              accepted: async () => {},
+              next: async (_attempt, signal) => {
+                signal.throwIfAborted()
+                return generateRandomVars(schema)
+              },
+              failed: (attempt, cause) =>
+                latest.current.onActivity?.({
+                  source: 'cae',
+                  level: 'error',
+                  message: `[Monte Carlo ${attempt}/${count}] 입력 준비 실패 · ${cause instanceof Error ? cause.message : String(cause)}`,
+                }),
+            },
             evaluation_timeout_ms: experimentDocument.evaluationTimeoutMs,
           },
           'generate-and-run',
@@ -419,9 +438,26 @@ export function useCaeMeasurementActions({
         return false
       }
     },
-    [experimentDocument.evaluationTimeoutMs, reportFailure, requireExperiment, submit],
+    [experimentDocument.evaluationTimeoutMs, experimentDocument.varsSchema, reportFailure, requireExperiment, submit],
   )
-  const generateAndRun = useCallback(() => repeatGenerateAndRun(1), [repeatGenerateAndRun])
+  const generateAndRun = useCallback(() => {
+    try {
+      void submit(
+        {
+          ...requireExperiment(),
+          request_id: crypto.randomUUID(),
+          mode: 'generate',
+          count: 1,
+          evaluation_timeout_ms: experimentDocument.evaluationTimeoutMs,
+        },
+        'generate-and-run',
+      ).catch(reportFailure)
+      return true
+    } catch (cause) {
+      reportFailure(cause)
+      return false
+    }
+  }, [experimentDocument.evaluationTimeoutMs, reportFailure, requireExperiment, submit])
   const generateCandidate = useCallback(() => {
     if (operation || experimentDocument.runIsBusy) return
     try {
@@ -485,13 +521,13 @@ export function useCaeMeasurementActions({
     error,
     generateAndRun,
     generateAndRunBatch:
-      batch?.mode === 'generate'
+      batch?.mode === 'generate' || (operation === 'generate-and-run' && samplingTotal !== null)
         ? {
-            attempt: batch.succeeded + batch.failed + batch.cancelled,
-            failures: batch.failed,
-            repeat: batch.total > 1,
-            successes: batch.succeeded,
-            total: batch.total,
+            attempt: batch ? batch.succeeded + batch.failed + batch.cancelled : 0,
+            failures: batch?.failed ?? 0,
+            repeat: samplingTotal !== null,
+            successes: batch?.succeeded ?? 0,
+            total: batch?.total ?? samplingTotal ?? 1,
           }
         : null,
     generateCandidate,

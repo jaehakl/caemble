@@ -37,7 +37,7 @@ cleanup() {
     if [[ "$gate_owned" == true ]]; then
         sudo rm -f /run/caemble-draining || true
     fi
-    rm -f "$staging_dir/api-stop.conf" "$staging_dir/app.conf" "$staging_dir/caemble-ui.tar.gz" || true
+    rm -f "$staging_dir/render-storage-csp.py" "$staging_dir/api-stop.conf" "$staging_dir/app.conf" "$staging_dir/caemble-ui.tar.gz" || true
     sudo rm -f "$staging_dir/previous-app.conf" || true
     rmdir "$staging_dir" || true
     exit "$status"
@@ -49,6 +49,8 @@ if [[ -n "${NGINX_CONFIG_SOURCE:-}" ]]; then
 else
     git show "$incoming_commit:deployment/app.conf" > "$staging_dir/app.conf"
 fi
+git show "$incoming_commit:deployment/render-storage-csp.py" > "$staging_dir/render-storage-csp.py"
+(cd "$API_DIR" && poetry run python "$staging_dir/render-storage-csp.py" "$staging_dir/app.conf" "$API_DIR/.env")
 if [[ -n "${UI_ARTIFACT:-}" ]]; then
     cp "$UI_ARTIFACT" "$staging_dir/caemble-ui.tar.gz"
 else

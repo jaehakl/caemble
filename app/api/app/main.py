@@ -2,6 +2,7 @@ from cae.router import router as cae_router
 from gpstation.routers import v1 as gpstation_v1
 from gpstation.routers import web as gpstation_web
 from initserver import server
+from storage.router import router as storage_router
 from routers import (
     calculation,
     calculation_data,
@@ -19,6 +20,7 @@ from routers import (
 app = server()
 
 app.include_router(cae_router)
+app.include_router(storage_router)
 app.include_router(client.router)
 app.include_router(catalog.router)
 app.include_router(experiment.router)

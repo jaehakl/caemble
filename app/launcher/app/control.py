@@ -165,5 +165,7 @@ def launcher_hello_payload(settings: LauncherSettings, registry: SlaveAppRegistr
         "launcher_name": settings.launcher_name,
         "slave_app_ids": slave_app_ids,
         "job_modes": {app_id: registry.require(app_id).job_mode for app_id in slave_app_ids},
+        "storage_versions": {app_id: registry.require(app_id).storage_version for app_id in slave_app_ids
+                             if registry.require(app_id).storage_version is not None},
         "metadata": registry.metadata(slave_app_ids),
     }

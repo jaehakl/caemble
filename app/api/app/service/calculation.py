@@ -282,6 +282,9 @@ async def upsert_calculations(
     try:
         await db.flush()
         for row, item in dependencies:
+            from storage.service import bind_objects
+            await bind_objects(db, row.output_layout, user_id=user.id, experiment_id=row.experiment_id,
+                               calculation_id=row.id, purpose="layout")
             await db.execute(
                 delete(CalculationExperimentRecord).where(
                     CalculationExperimentRecord.calculation_id == row.id

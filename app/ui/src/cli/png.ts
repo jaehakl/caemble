@@ -20,7 +20,10 @@ export async function pngCommand(command: string, context: CommandContext) {
     if (options.measurement) {
       const input = await context
         .client()
-        .request('get', `/cae/measurements/${Number(options.measurement)}/artifact`, undefined, { signal })
+        .request('get', `/cae/measurements/${Number(options.measurement)}/artifact`, undefined, {
+          signal,
+          resolveObjects: true,
+        })
       payload = { kind: 'geometry', input, task: options.task }
       const metadata = await context
         .client()

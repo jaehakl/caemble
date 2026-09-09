@@ -1,4 +1,6 @@
 import type { CalculationUpsertResponse } from '@/contracts/api/calculation'
+import { externalizeObjects } from './objectStorage'
+import { calculationDataOutputSchema } from '@/contracts/api/calculationValidators'
 import { parseCalculationUpsertResponse } from '@/contracts/api/calculationValidators'
 import { API_URL, request, browserClient, type CaembleClient } from './http'
 import type { RequestContext } from './http'
@@ -252,20 +254,30 @@ export function createDbTables(client: CaembleClient) {
         request<GetListResponse<PersistedMeasurementRecord>>('post', '/measurement/list', payload, {
           ...csrfOmitted,
           signal: context?.signal,
+          resolveObjects: context?.resolveObjects ?? true,
           validate: parseMeasurementListResponse,
         }),
-      create: (payload: MeasurementCreateRequest) =>
-        request<{ id: number }>('post', '/measurement/create', payload, {
-          ...csrfOmitted,
-          validate: parseIdResponse,
-        }),
+      create: async (payload: MeasurementCreateRequest) =>
+        request<{ id: number }>(
+          'post',
+          '/measurement/create',
+          await externalizeObjects(
+            client,
+            { purpose: 'measurement', experiment_id: payload.experiment_id, request_id: crypto.randomUUID() },
+            payload,
+          ),
+          {
+            ...csrfOmitted,
+            validate: parseIdResponse,
+          },
+        ),
       readRecordedData: async (id: number, context?: RequestContext) =>
         (
           await request<Readonly<{ recorded_data: MeasurementRecordedData }>>(
             'get',
             `/measurement/${id}/recorded-data`,
             undefined,
-            { signal: context?.signal, validate: parseMeasurementRecordedDataResponse },
+            { signal: context?.signal, resolveObjects: true, validate: parseMeasurementRecordedDataResponse },
           )
         ).recorded_data,
       deleteRows: (ids: readonly number[]) =>
@@ -281,6 +293,7 @@ export function createDbTables(client: CaembleClient) {
         request<GetListResponse<PersistedRecordedDataRecord>>('post', '/recorded_data/list', payload, {
           ...csrfOmitted,
           signal: context?.signal,
+          resolveObjects: context?.resolveObjects ?? true,
           validate: parseRecordedDataListResponse,
         }),
     },
@@ -290,13 +303,26 @@ export function createDbTables(client: CaembleClient) {
         request<GetListResponse<PersistedCalculationRecord>>('post', '/calculation/list', payload, {
           ...csrfOmitted,
           signal: context?.signal,
+          resolveObjects: true,
           validate: parseCalculationListResponse,
         }),
-      upsertRow: (payload: readonly CalculationUpsertInput[]) =>
-        request<CalculationUpsertResponse[]>('post', '/calculation/upsert', payload, {
+      upsertRow: async (payload: readonly CalculationUpsertInput[]) => {
+        const stored = []
+        for (const item of payload) {
+          stored.push({
+            ...item,
+            output_layout: await externalizeObjects(
+              client,
+              { purpose: 'layout', experiment_id: item.experiment_id, request_id: crypto.randomUUID() },
+              item.output_layout,
+            ),
+          })
+        }
+        return request<CalculationUpsertResponse[]>('post', '/calculation/upsert', stored, {
           ...csrfOmitted,
           validate: parseCalculationUpsertResponse,
-        }),
+        })
+      },
       deleteRows: (ids: readonly number[]) =>
         request<void>('delete', '/calculation/', ids, { ...csrfOmitted, validate: parseEmptyResponse }),
     },
@@ -306,6 +332,7 @@ export function createDbTables(client: CaembleClient) {
         request<GetListResponse<CalculationDataRecord>>('post', '/calculation_data/list', payload, {
           ...csrfOmitted,
           signal: context?.signal,
+          resolveObjects: context?.resolveObjects ?? true,
           validate: parseCalculationDataListResponse,
         }),
       analysis: (experimentId: number, context?: RequestContext) =>
@@ -330,7 +357,7 @@ export function createDbTables(client: CaembleClient) {
           signal: context?.signal,
           validate: parseCalculationDataMissingResponse,
         }),
-      save: (
+      save: async (
         payload: Readonly<{
           calculation_id: number
           measurement_id: number
@@ -338,12 +365,44 @@ export function createDbTables(client: CaembleClient) {
           data: CalculationDataOutput
         }>,
         context?: RequestContext,
-      ) =>
-        request<CalculationDataSaveResponse>('post', '/calculation_data/save', payload, {
-          ...csrfOmitted,
-          signal: context?.signal,
-          validate: parseCalculationDataSaveResponse,
-        }),
+      ) => {
+        calculationDataOutputSchema.parse(payload.data)
+        const values = Array.isArray(payload.data.data) ? payload.data.data : [payload.data.data]
+        const count = values.length
+        let scale = 0
+        for (const value of values) scale = Math.max(scale, Math.abs(value))
+        let scaledMean = 0
+        if (scale) for (const value of values) scaledMean += value / scale / count
+        let variance = 0
+        if (scale && count > 1) for (const value of values) variance += (value / scale - scaledMean) ** 2 / (count - 1)
+        const mean = count ? scale * scaledMean : null
+        const std = count ? scale * Math.sqrt(variance) : null
+        const data = (await externalizeObjects(
+          client,
+          { purpose: 'calculation', measurement_id: payload.measurement_id, calculation_id: payload.calculation_id },
+          payload.data,
+          context?.signal,
+        )) as Record<string, unknown>
+        if (data.data && typeof data.data === 'object' && !Array.isArray(data.data)) {
+          data.summary = {
+            kind: 'tensor',
+            rank: payload.data.shape.length,
+            count,
+            mean: mean !== null && Number.isFinite(mean) ? mean : null,
+            std: std !== null && Number.isFinite(std) ? std : null,
+          }
+        }
+        return request<CalculationDataSaveResponse>(
+          'post',
+          '/calculation_data/save',
+          { ...payload, data },
+          {
+            ...csrfOmitted,
+            signal: context?.signal,
+            validate: parseCalculationDataSaveResponse,
+          },
+        )
+      },
       scalars: (
         payload: Readonly<{ calculation_id: number; exclude_measurement_id?: number }>,
         context?: RequestContext,

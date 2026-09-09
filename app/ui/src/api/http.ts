@@ -3,7 +3,7 @@ export const API_URL = (import.meta.env?.VITE_API_BASE_URL?.trim() || '/api').re
 export type HttpMethod = 'get' | 'post' | 'put' | 'delete'
 export type CsrfPolicy = 'auto' | 'required' | 'omit'
 export type ResponseValidator<T> = (body: unknown) => T
-export type RequestContext = Readonly<{ signal?: AbortSignal }>
+export type RequestContext = Readonly<{ signal?: AbortSignal; resolveObjects?: boolean }>
 
 export type RequestOptions<T> = RequestContext &
   Readonly<{
@@ -141,7 +141,7 @@ export function createCaembleClient(config: CaembleClientOptions) {
           : JSON.stringify(data),
       signal: options.signal,
     })
-    const body = await responseBody(response)
+    let body = await responseBody(response)
     if (csrfProtected && retryCsrf && response.status === 403) {
       csrfToken = null
       return send<T>(method, url, data, false, options)
@@ -158,6 +158,10 @@ export function createCaembleClient(config: CaembleClientOptions) {
             ? rawDetail.message
             : `API 요청에 실패했습니다. (${response.status})`
       throw new ApiError(response.status, detail, body)
+    }
+    if (options.resolveObjects) {
+      const { resolveObjects } = await import('./objectStorage')
+      body = await resolveObjects({ request } as CaembleClient, body, options.signal)
     }
     if (!options.validate) return body as T
     try {

@@ -163,7 +163,10 @@ async def run_worker_connection(websocket: WebSocket, job_id: str) -> None:
             packet, attachments = await receive_packet(receive)
             kind = packet.get("type")
             async with SessionLocal() as db:
-                await serialize_events(db)
+                # Storage HEAD/signing does not emit events. Keep its network
+                # latency out of the global event lock while fencing this job.
+                if not isinstance(kind, str) or not kind.startswith("job.storage."):
+                    await serialize_events(db)
                 job = await db.scalar(
                     select(Job)
                     .where(
@@ -185,6 +188,10 @@ async def run_worker_connection(websocket: WebSocket, job_id: str) -> None:
                         await job_event(db, job, "job.progress", {"progress": progress})
                 elif kind == "job.record":
                     await handler.stage_record(db, job, packet, attachments)
+                elif kind.startswith("job.storage.") and hasattr(handler, "storage_packet"):
+                    if attachments:
+                        raise ValueError("Storage requests must not carry binary bodies.")
+                    storage_reply = await handler.storage_packet(db, job, packet)
                 elif kind == "job.complete":
                     job.state = "finalizing"
                     await job_event(db, job, "job.finalizing")
@@ -201,6 +208,8 @@ async def run_worker_connection(websocket: WebSocket, job_id: str) -> None:
                 complete = kind in {"job.failed", "job.cancelled"}
             if kind == "job.record":
                 await send({"type": "job.record.ack", "sequence": packet["sequence"]})
+            elif kind.startswith("job.storage."):
+                await send(storage_reply)
             elif kind == "job.complete":
                 async with SessionLocal() as db:
                     await serialize_events(db)

@@ -17,6 +17,7 @@ from settings import settings  # noqa: E402
 import user_auth.db  # noqa: E402, F401
 import gpstation.db  # noqa: E402, F401
 import cae.db  # noqa: E402, F401
+import storage.db  # noqa: E402, F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

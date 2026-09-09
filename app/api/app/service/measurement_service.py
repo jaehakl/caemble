@@ -132,6 +132,9 @@ async def create_measurement(
     db.add(measurement)
     try:
         await db.flush()
+        from storage.service import bind_objects
+        await bind_objects(db, {"vars": request.vars, "materials": request.material_snapshot},
+                           user_id=user.id, experiment_id=experiment.id, measurement_id=measurement.id)
         await db.commit()
     except Exception:
         await db.rollback()

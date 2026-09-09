@@ -220,7 +220,7 @@ CalculationDataDType = Literal[
 
 class CalculationDataAxis(BaseModel):
     name: str
-    ticks: List[Union[StrictInt, StrictFloat]]
+    ticks: Union[List[Union[StrictInt, StrictFloat]], Dict[str, Any]]
     unit: Optional[str] = None
     _validate_ticks = model_validator(mode="after")(validate_calculation_data_axis)
 
@@ -252,6 +252,7 @@ class CalculationDataOutput(BaseModel):
     shape: List[StrictInt]
     data: Any
     axes: List[CalculationDataAxis]
+    summary: Optional[Dict[str, Any]] = Field(default=None, exclude_if=lambda value: value is None)
 
     _validate_output = model_validator(mode="after")(validate_calculation_data_output)
 

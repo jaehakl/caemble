@@ -15,6 +15,7 @@ class SlaveApp:
     project_dir: Path
     startup_timeout_seconds: float | None = None
     job_mode: str = "webrtc"
+    storage_version: int | None = None
 
     @property
     def python_executable(self) -> Path:
@@ -88,6 +89,7 @@ def load_manifest(manifest_path: Path) -> SlaveApp:
         module=str(payload["module"]),
         project_dir=manifest_path.parent,
         job_mode=job_mode,
+        storage_version=payload.get("storage_version"),
         startup_timeout_seconds=(
             float(payload["startup_timeout_seconds"])
             if payload.get("startup_timeout_seconds") is not None

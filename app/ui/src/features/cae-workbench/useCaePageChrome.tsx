@@ -401,7 +401,7 @@ export function useCaePageChrome({
       },
       repeatGenerateAndRun: {
         id: 'repeat-generate-and-run',
-        label: cancellingRepeatRun ? 'Cancel' : 'Repeat Run',
+        label: cancellingRepeatRun ? 'Cancel' : 'Sample & Run',
         icon: cancellingRepeatRun ? <Square /> : <RefreshCw />,
         disabled:
           !cancellingRepeatRun &&
@@ -670,7 +670,7 @@ export function useCaePageChrome({
             <WorkbenchRibbonActions actions={[actions.saveAndRunCurrent, actions.generateAndRun]} />
             <label className="flex h-[68px] w-16 shrink-0 flex-col items-center justify-center gap-1 text-[10px] text-muted-foreground">
               <input
-                aria-label="Repeat Run 횟수"
+                aria-label="Monte Carlo Sample & Run 횟수"
                 aria-invalid={!repeatCountValid}
                 className="h-7 w-14 rounded border border-border bg-background px-1 text-center text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={workbench.measurementActions.busy || workbench.calculationDataActions.busy}
@@ -680,7 +680,7 @@ export function useCaePageChrome({
                 value={repeatCountInput}
                 onChange={(event) => setRepeatCountInput(event.target.value)}
               />
-              <span>Times</span>
+              <span>Random · N</span>
             </label>
             <WorkbenchRibbonActions
               actions={[actions.repeatGenerateAndRun, actions.runSelected, actions.analyzeMeasurements]}
@@ -713,7 +713,7 @@ export function useCaePageChrome({
           <WorkbenchRibbonGroup label="Sampling">
             <label className="flex h-[68px] w-16 shrink-0 flex-col items-center justify-center gap-1 text-[10px] text-muted-foreground">
               <input
-                aria-label="Sample & Run 횟수"
+                aria-label="Latin Hypercube Sample & Run 횟수"
                 aria-invalid={!samplingCountValid}
                 className="h-7 w-14 rounded border border-border bg-background px-1 text-center text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={predictionState.busy}
@@ -723,7 +723,7 @@ export function useCaePageChrome({
                 value={samplingCountInput}
                 onChange={(event) => setSamplingCountInput(event.target.value)}
               />
-              <span>Times</span>
+              <span>LHS · N</span>
             </label>
             <WorkbenchRibbonActions actions={predictionState.busy ? [] : [actions.predictionSample]} />
           </WorkbenchRibbonGroup>

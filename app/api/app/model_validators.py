@@ -1,8 +1,12 @@
 import math
 from typing import Any
+from storage.contracts import reference_length
 
 
 def validate_calculation_data_axis(value: Any) -> Any:
+    if isinstance(value.ticks, dict):
+        reference_length(value.ticks)
+        return value
     if any(isinstance(tick, bool) or not math.isfinite(tick) for tick in value.ticks):
         raise ValueError("CalculationData axis ticks must be finite numbers.")
     return value
@@ -16,7 +20,7 @@ def validate_calculation_output_layout(value: Any) -> Any:
     if len(value.axes) != len(value.shape):
         raise ValueError("Calculation output axes must match output rank.")
     for index, axis in enumerate(value.axes):
-        if len(axis.ticks) != value.shape[index]:
+        if reference_length(axis.ticks) != value.shape[index]:
             raise ValueError("Calculation output axis ticks must match output shape.")
     if (math.prod(value.shape) if value.shape else 1) > 5_000_000:
         raise ValueError("Calculation output exceeds the element limit.")
@@ -31,13 +35,27 @@ def validate_calculation_data_output(value: Any) -> Any:
     if len(value.axes) != len(value.shape):
         raise ValueError("CalculationData axes must match output rank.")
     for index, axis in enumerate(value.axes):
-        if len(axis.ticks) != value.shape[index]:
+        if reference_length(axis.ticks) != value.shape[index]:
             raise ValueError("CalculationData axis ticks must match output shape.")
 
     values = value.data if isinstance(value.data, list) else [value.data]
     expected = math.prod(value.shape) if value.shape else 1
     if expected > 5_000_000:
         raise ValueError("CalculationData output exceeds the element limit.")
+    if isinstance(value.data, dict):
+        if not value.shape or reference_length(value.data) != expected:
+            raise ValueError("CalculationData object length must match its shape.")
+        summary = value.summary
+        if (not isinstance(summary, dict) or summary.get("kind") != "tensor"
+                or summary.get("rank") != len(value.shape) or summary.get("count") != expected):
+            raise ValueError("Stored CalculationData requires a matching tensor summary.")
+        for key in ("mean", "std"):
+            number = summary.get(key)
+            if number is not None and (type(number) not in (int, float) or not math.isfinite(number)):
+                raise ValueError("CalculationData summary must contain finite statistics.")
+        if summary.get("std") is not None and summary["std"] < 0:
+            raise ValueError("CalculationData standard deviation cannot be negative.")
+        return value
     if (
         len(values) != expected
         or (value.shape and not isinstance(value.data, list))

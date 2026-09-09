@@ -169,6 +169,10 @@ async def _calculation_test_databases() -> set[str]:
 async def _replace_calculation_with_legacy_tables(database: str) -> None:
     connection = await asyncpg.connect(**_connect_arguments(database))
     try:
+        # The baseline builds current ORM metadata; remove post-baseline storage
+        # before reconstructing the historical Calculation schema in this fixture.
+        await connection.execute("DROP TABLE IF EXISTS storage_objects")
+        await connection.execute("ALTER TABLE launchers DROP COLUMN IF EXISTS storage_versions")
         await connection.execute("DROP TABLE IF EXISTS calculation_data")
         await connection.execute("DROP TABLE IF EXISTS calculation_experiment_records")
         await connection.execute("DROP TABLE calculations")

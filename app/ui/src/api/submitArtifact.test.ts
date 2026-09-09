@@ -44,8 +44,8 @@ describe('prebuilt remote submission', () => {
         fetch: async (url, options) => {
           const pathname = new URL(String(url)).pathname
           paths.push(pathname)
-          if (options?.method === 'PUT')
-            uploaded.push(JSON.parse(await (options.body as Blob).text()).measurement.experiment.variables.sample)
+          if (pathname.endsWith('/finalize'))
+            uploaded.push(JSON.parse(String(options?.body)).input.measurement.experiment.variables.sample)
           if (pathname.endsWith('/batches'))
             expect(JSON.parse(String(options?.body))).toMatchObject({
               mode: 'candidate',
@@ -90,17 +90,24 @@ describe('prebuilt remote submission', () => {
       vi.unstubAllGlobals()
     }
   })
-  it('resumes identical chunks and commits only after every frozen input is finalized', async () => {
+  it('sends large built bytes only to S3 and commits after verified upload', async () => {
     vi.stubGlobal('crypto', webcrypto)
-    const source_bundle = { files: { 'experiment.tsx': 'export {}\n', 'simulate.py': '# source\n' } }
+    const source_bundle = { files: { 'experiment.tsx': 'export {}' } }
     const source_hash = await cadSourceHash({ kind: 'experiment', sourceBundle: source_bundle })
-    const bytes = new TextEncoder().encode(
-      JSON.stringify({
-        measurement: { kind: 'measurement', experiment: { sourceHash: source_hash, variables: { sample: 12 } } },
-        presentation: { padding: 'x'.repeat(UPLOAD_CHUNK_BYTES) },
-      }),
-    )
-    const item = { index: 1, file: 'items/1.json', input_hash: await sha256Bytes(bytes), byte_length: bytes.byteLength }
+    const input = {
+      measurement: {
+        kind: 'measurement',
+        experiment: {
+          sourceHash: source_hash,
+          variables: { sample: 12 },
+          scene: { mesh: 'x'.repeat(UPLOAD_CHUNK_BYTES) },
+          taskScenes: {},
+          simulationProgram: { pythonSource: 'print(1)', tasks: {}, recordedData: {} },
+        },
+      },
+    }
+    const bytes = new TextEncoder().encode(JSON.stringify(input))
+    const item = { index: 1, file: 'items/1.json', input_hash: await sha256Bytes(bytes), byte_length: bytes.length }
     const artifact: BuildArtifact = {
       kind: 'caemble.build',
       version: 2,
@@ -111,69 +118,88 @@ describe('prebuilt remote submission', () => {
       builder_version: '2',
       items: [item],
     }
-    const received = new Map<string, Uint8Array>()
-    let failOnce = true,
-      finalized = false,
-      committed = false
-    const requestBodies: unknown[] = []
-    const fetch: typeof globalThis.fetch = async (url, options) => {
-      const pathname = new URL(String(url)).pathname
-      expect(new Headers(options?.headers).get('authorization')).toBe('Bearer test-key')
-      expect(options?.credentials).toBe('omit')
-      expect(options?.redirect).toBe('error')
-      expect(pathname).not.toMatch(/csrf|prepare|validate/)
-      if (options?.method === 'PUT') {
-        const chunk = new Uint8Array(await (options.body as Blob).arrayBuffer())
-        expect(await sha256Bytes(chunk)).toBe(new Headers(options.headers).get('x-chunk-sha256'))
-        if (received.has(pathname)) expect(Buffer.from(chunk).equals(Buffer.from(received.get(pathname)!))).toBe(true)
-        received.set(pathname, chunk)
-        if (pathname.endsWith('/chunks/1') && failOnce) {
-          failOnce = false
-          return Response.json({ detail: 'temporary failure' }, { status: 503 })
-        }
-      } else if (pathname.endsWith('/finalize')) finalized = true
-      else if (pathname.endsWith('/commit')) {
-        expect(finalized).toBe(true)
-        committed = true
-      } else requestBodies.push(JSON.parse(String(options?.body)))
-      return Response.json(
-        pathname.endsWith('/batches') || pathname.endsWith('/commit')
-          ? {
-              id: 'batch',
-              experiment_id: 7,
-              mode: 'generate',
-              total: 1,
-              created_count: committed ? 1 : 0,
-              uploaded_count: finalized ? 1 : 0,
-              succeeded: 0,
-              failed: 0,
-              cancelled: 0,
-              state: committed ? 'queued' : 'uploading',
-              created_at: '',
-              updated_at: '',
-              finished_at: null,
-              last_event_id: 0,
-              read_event_id: 0,
-            }
-          : { ok: true },
-      )
+    const received: Uint8Array[] = []
+    let reference: Record<string, unknown>,
+      verified = false,
+      finalized = false
+    const transport: typeof fetch = async (url, options) => {
+      const address = new URL(String(url))
+      if (address.hostname === 'bucket.example') {
+        expect(new Headers(options?.headers).has('authorization')).toBe(false)
+        received.push(new Uint8Array(await (options!.body as Blob).arrayBuffer()))
+        return new Response('')
+      }
+      const body = options?.body ? JSON.parse(String(options.body)) : undefined
+      expect(JSON.stringify(body ?? {}).length).toBeLessThan(65536)
+      if (address.pathname === '/storage/uploads') {
+        const { chunks, ...metadata } = body.manifest
+        reference = { kind: 'caemble.object', version: 1, id: 'object', ...metadata }
+        return Response.json({
+          reference,
+          parts: chunks.map((part: object, index: number) => ({
+            ...part,
+            headers: {},
+            url: `https://bucket.example/${index}`,
+          })),
+        })
+      }
+      if (address.pathname.endsWith('/complete')) {
+        expect(Buffer.concat(received.map((part) => Buffer.from(part))).equals(Buffer.from(bytes))).toBe(true)
+        verified = true
+        return Response.json({ reference: reference!, ready: true })
+      }
+      if (address.pathname.endsWith('/finalize')) {
+        expect(verified).toBe(true)
+        expect(body).toMatchObject({ input: reference!, projection: { measurement: { experiment: { scene: {} } } } })
+        finalized = true
+        return Response.json({ ok: true })
+      }
+      if (address.pathname.endsWith('/commit')) expect(finalized).toBe(true)
+      return Response.json({
+        id: 'batch',
+        experiment_id: 7,
+        mode: 'generate',
+        total: 1,
+        created_count: 1,
+        succeeded: 0,
+        failed: 0,
+        cancelled: 0,
+        state: finalized ? 'queued' : 'uploading',
+        created_at: '',
+        updated_at: '',
+        finished_at: null,
+        last_event_id: 0,
+        read_event_id: 0,
+        jobs: [
+          {
+            id: 'job',
+            index: 1,
+            attempt_count: 1,
+            state: 'staged',
+            measurement_id: null,
+            progress: null,
+            last_error: null,
+            created_at: '',
+            updated_at: '',
+          },
+        ],
+      })
     }
-    const client = createCaembleClient({
-      baseUrl: 'https://api.example',
-      auth: { kind: 'bearer', token: 'test-key' },
-      fetch,
-    })
-    const options = { client, artifact, experimentId: 7, requestId: 'fixed-request', readItem: async () => bytes }
-    await expect(submitArtifact(options)).rejects.toThrow('temporary failure')
-    expect(committed).toBe(false)
-    expect(finalized).toBe(false)
-    expect((await submitArtifact(options)).state).toBe('queued')
-    expect(requestBodies[0]).toEqual(requestBodies[1])
-    expect(received.size).toBe(2)
-    expect(Buffer.concat([...received.values()].map((chunk) => Buffer.from(chunk))).equals(Buffer.from(bytes))).toBe(
-      true,
-    )
-    vi.unstubAllGlobals()
+    vi.stubGlobal('fetch', transport)
+    try {
+      const client = createCaembleClient({
+        baseUrl: 'https://api.example',
+        auth: { kind: 'bearer', token: 'key' },
+        fetch: transport,
+      })
+      expect(
+        (await submitArtifact({ client, artifact, experimentId: 7, requestId: 'request', readItem: async () => bytes }))
+          .state,
+      ).toBe('queued')
+      expect(received).toHaveLength(2)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('refuses altered source before registering an upload and altered input before uploading', async () => {

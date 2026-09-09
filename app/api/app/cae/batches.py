@@ -77,6 +77,7 @@ async def create_batch(
     db.add(CaeBatch(batch_id=batch.id, experiment_id=experiment.id, spec={
         "mode": request.mode, "source_hash": experiment.source_hash,
         "catalog_revision": request.catalog_revision, "builder_version": request.builder_version,
+        "storage_version": request.storage_version,
     }))
     for item in request.items:
         db.add(Job(

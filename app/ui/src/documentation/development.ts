@@ -7,6 +7,7 @@ import page5 from '../../../../docs/development/cad-elements.md?raw'
 import page6 from '../../../../docs/development/documentation.md?raw'
 import page7 from '../../../../docs/operations/deployment.md?raw'
 import page8 from '../../../../docs/operations/workers.md?raw'
+import storagePage from '../../../../docs/operations/object-storage.md?raw'
 import page9 from '../../../../docs/README.md?raw'
 import type { DocumentPage } from './types'
 import { documentBody } from './body'
@@ -102,6 +103,16 @@ export const developmentDocuments: readonly DocumentPage[] = [
       keywords: ['workers', 'Launcher', 'AI'],
     },
     content: documentBody(page8),
+  },
+  {
+    ...{
+      id: 'operations.object-storage',
+      title: '대용량 데이터의 S3 직접 전송',
+      summary: 'AWS 설정, 브라우저 CORS, 배포와 객체 보관',
+      sourcePath: 'docs/operations/object-storage.md',
+      keywords: ['S3', 'AWS', 'storage', 'CORS'],
+    },
+    content: documentBody(storagePage),
   },
   {
     ...{

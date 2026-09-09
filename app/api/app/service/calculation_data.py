@@ -158,7 +158,7 @@ async def analyze_calculation_data(
         summary = (
             {"kind": "scalar", "value": float(output.data)}
             if not output.shape
-            else _tensor_summary(output)
+            else output.summary if isinstance(output.data, dict) else _tensor_summary(output)
         )
         items.append(
             {
@@ -396,6 +396,11 @@ async def save_calculation_data(
         data=data.model_dump(mode="json"),
     )
     db.add(row)
+    await db.flush()
+    from storage.service import bind_objects
+    await bind_objects(db, data.model_dump(mode="json"), user_id=user.id,
+                       experiment_id=measurement.experiment_id, measurement_id=measurement.id,
+                       calculation_id=calculation.id, calculation_data_id=row.id)
     try:
         await db.flush()
         await db.commit()

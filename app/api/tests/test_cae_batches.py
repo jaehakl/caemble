@@ -116,6 +116,133 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
             return job
 
+    async def test_s3_input_and_record_commit_without_storing_large_bodies(self):
+        import base64
+        from storage.db import StorageObject
+        from storage.service import prepare_upload, finish_upload, owned_object, cleanup_objects
+        from cae.uploads import finalize_stored_item
+        from datetime import timedelta
+        value = self.item()
+        value["measurement"]["experiment"]["scene"] = {"mesh": [0.125] * 20000}
+        raw = json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode()
+        digest = hashlib.sha256(raw).hexdigest()
+        request = BatchCreateRequest(request_id=uuid.uuid4(), experiment_id=self.experiment_id,
+            experiment_source_hash=self.example["bundleHash"], mode="candidate", storage_version=1,
+            catalog_revision=self.catalog.meta()["catalogRevision"], builder_version="2",
+            items=[{"index": 1, "input_hash": digest, "byte_length": len(raw)}])
+        bucket_objects = {}
+        def head(**kwargs):
+            content = bucket_objects[kwargs["Key"]]
+            return {"ContentLength": len(content), "ChecksumSHA256": base64.b64encode(hashlib.sha256(content).digest()).decode()}
+        bucket = SimpleNamespace(generate_presigned_url=lambda *args, **kwargs: "https://bucket.test/object",
+                                 head_object=head, delete_object=lambda **kwargs: bucket_objects.pop(kwargs["Key"], None))
+        with patch("storage.service.bucket_client", return_value=bucket):
+            async with self.sessions() as db:
+                batch = await create_batch(db, request, self.owner, self.catalog)
+                job = await db.scalar(select(Job).where(Job.batch_id == batch.id))
+                ticket = await prepare_upload(db, {"encoding": "json", "sha256": digest, "byteLength": len(raw),
+                    "chunks": [{"sha256": digest, "byteLength": len(raw)}]}, user_id=self.owner_id,
+                    experiment_id=self.experiment_id, purpose="input", job_id=job.id)
+                input_id = ticket["reference"]["id"]
+                bucket_objects[f"caemble/objects/{input_id}/00000000"] = raw
+                await finish_upload(db, await owned_object(db, input_id, self.owner_id))
+                await db.commit()
+                await finalize_stored_item(db, batch.id, self.owner_id, 1, {"input": ticket["reference"], "projection": self.item()})
+                await commit_batch(db, batch.id, self.owner, self.catalog)
+                await db.refresh(job)
+                self.assertLess(len(json.dumps(job.input)), 65536)
+                self.assertEqual(job.input["artifact"], ticket["reference"])
+                self.assertEqual(await db.scalar(select(func.count()).select_from(CaeUploadChunk)), 0)
+                measurement = await db.scalar(select(Measurement).where(Measurement.job_id == job.id))
+                measurement_id = measurement.id
+                db.add(ExperimentRecord(experiment_id=self.experiment_id, name="signal", dtype="float64",
+                    tensor_order=0, quantity_kind="DimensionlessRatio", data_schema={"dtype": "float64"}, contract_hash="a" * 64))
+                record_raw = b"\x00" * 80000
+                record_hash = hashlib.sha256(record_raw).hexdigest()
+                record_ticket = await prepare_upload(db, {"encoding": "base64", "sha256": record_hash,
+                    "byteLength": len(record_raw), "chunks": [{"sha256": record_hash, "byteLength": len(record_raw)}]},
+                    user_id=self.owner_id, experiment_id=self.experiment_id, purpose="record", job_id=job.id,
+                    attempt=job.attempt_count, measurement_id=measurement_id)
+                record_id = record_ticket["reference"]["id"]
+                bucket_objects[f"caemble/objects/{record_id}/00000000"] = record_raw
+                await finish_upload(db, await owned_object(db, record_id, self.owner_id))
+                await db.commit()
+                packet = {"sequence": 1, "name": "signal", "value": {"shape": [10000],
+                    "storage": {"kind": "base64", "data": record_ticket["reference"], "byteLength": len(record_raw)}}}
+                await stage_record(db, job, packet, [])
+                await db.commit()
+                self.assertFalse((await db.get(StorageObject, record_id)).bound)
+                await complete_job(db, job, {"recordSequences": [1]})
+                await db.commit()
+                self.assertTrue((await db.get(StorageObject, record_id)).bound)
+                self.assertLess(len(json.dumps((await db.scalar(select(RecordedData))).data)), 1024)
+                from db import Calculation, CalculationData
+                from models import CalculationBase, CalculationDataOutput
+                from service.calculation import upsert_calculations
+                from service.calculation_data import save_calculation_data, analyze_calculation_data
+                source_hash = hashlib.sha256(b"0").hexdigest()
+                calculation = Calculation(experiment_id=self.experiment_id, name="s3-test", source_code="0",
+                    source_hash=source_hash, contract_status="ready", output_layout={"dtype": "float64",
+                        "shape": [20000], "axes": [{"name": "x", "ticks": list(range(20000)), "unit": None}]})
+                db.add(calculation)
+                await db.flush()
+                calculated = json.dumps([0.125] * 20000).encode()
+                calculated_hash = hashlib.sha256(calculated).hexdigest()
+                calculated_ticket = await prepare_upload(db, {"encoding": "json", "sha256": calculated_hash,
+                    "byteLength": len(calculated), "length": 20000,
+                    "chunks": [{"sha256": calculated_hash, "byteLength": len(calculated)}]}, user_id=self.owner_id,
+                    experiment_id=self.experiment_id, purpose="calculation", measurement_id=measurement_id,
+                    calculation_id=calculation.id)
+                calculated_id = calculated_ticket["reference"]["id"]
+                bucket_objects[f"caemble/objects/{calculated_id}/00000000"] = calculated
+                await finish_upload(db, await owned_object(db, calculated_id, self.owner_id))
+                layout_ticket = await prepare_upload(db, {"encoding": "json", "sha256": calculated_hash,
+                    "byteLength": len(calculated), "length": 20000,
+                    "chunks": [{"sha256": calculated_hash, "byteLength": len(calculated)}]}, user_id=self.owner_id,
+                    experiment_id=self.experiment_id, purpose="layout", request_id=str(uuid.uuid4()))
+                layout_id = layout_ticket["reference"]["id"]
+                bucket_objects[f"caemble/objects/{layout_id}/00000000"] = calculated
+                await finish_upload(db, await owned_object(db, layout_id, self.owner_id))
+                await upsert_calculations(db, [CalculationBase(id=calculation.id, base_revision=1,
+                    experiment_id=self.experiment_id, name="s3-test", source_code="0", source_hash=source_hash, contract_status="ready",
+                    experiment_record_ids=[], preflight_measurement_id=measurement_id, output_layout={
+                        "dtype": "float64", "shape": [20000], "axes": [{"name": "x", "ticks": layout_ticket["reference"]}]})], user=self.owner)
+                self.assertEqual((await db.get(StorageObject, layout_id)).calculation_id, calculation.id)
+                self.assertLess(len(json.dumps(calculation.output_layout)), 1024)
+                calculation_id = calculation.id
+                summary = {"kind": "tensor", "rank": 1, "count": 20000, "mean": 0.125, "std": 0.0}
+                output = CalculationDataOutput.model_validate({"dtype": "float64", "shape": [20000],
+                    "axes": [{"name": "x", "ticks": calculated_ticket["reference"]}],
+                    "data": calculated_ticket["reference"], "summary": summary})
+                saved = await save_calculation_data(db, calculation.id, measurement_id, source_hash, output, user=self.owner)
+                self.assertEqual((await analyze_calculation_data(db, self.experiment_id, user=self.owner))["items"][0]["summary"], summary)
+                self.assertLess(len(json.dumps((await db.get(CalculationData, saved["id"])).data)), 2048)
+                await db.execute(delete(CalculationData).where(CalculationData.id == saved["id"]))
+                await db.execute(update(StorageObject).values(updated_at=utcnow() - timedelta(hours=25)))
+                job.state = "succeeded"
+                await db.commit()
+            async with self.sessions() as db:
+                await cleanup_objects(db)
+                self.assertTrue((await db.get(StorageObject, calculated_id)).deleting)
+                await db.execute(update(StorageObject).values(updated_at=utcnow() - timedelta(hours=25)))
+                await db.commit()
+                await cleanup_objects(db)
+                self.assertEqual(await db.scalar(select(func.count()).select_from(StorageObject)), 3)
+                self.assertNotIn(f"caemble/objects/{calculated_id}/00000000", bucket_objects)
+                job = await db.get(Job, job.id)
+                job.state = "succeeded"
+                await db.execute(delete(Measurement).where(Measurement.id == measurement_id))
+                await db.execute(delete(Calculation).where(Calculation.id == calculation_id))
+                await db.execute(update(StorageObject).values(updated_at=utcnow() - timedelta(hours=25)))
+                await db.commit()
+            async with self.sessions() as db:
+                await cleanup_objects(db)
+                await db.execute(update(StorageObject).values(updated_at=utcnow() - timedelta(hours=25)))
+                await db.commit()
+                await cleanup_objects(db)
+                self.assertEqual(await db.scalar(select(func.count()).select_from(StorageObject)), 0)
+                self.assertEqual(bucket_objects, {})
+
     async def test_upload_commit_idempotence_and_owner_isolation(self):
         batch, request = await self.create(count=2)
         raw = json.dumps(self.item(), separators=(",", ":"), ensure_ascii=False).encode()
@@ -336,6 +463,22 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await db.scalar(select(func.count()).select_from(JobEvent).where(JobEvent.type == "job.queued")), 12)
                 self.assertEqual(await db.scalar(select(func.count()).select_from(JobEvent).where(JobEvent.type == "batch.committed")), 1)
         self.assertLessEqual(peak_loaded_jobs, 2)
+
+    async def test_object_jobs_wait_for_storage_capable_launcher(self):
+        batch, _ = await self.create()
+        job = await self.ready_job(batch.id)
+        async with self.sessions() as db:
+            await db.execute(update(Job).where(Job.id == job.id).values(input={**job.input, "storage_version": 1}))
+            now = utcnow()
+            launcher = Launcher(user_id=self.owner_id, launcher_name="legacy", status="ready", slave_app_ids=["cae"],
+                job_modes={"cae": "websocket"}, storage_versions={}, connected_at=now, last_heartbeat_at=now)
+            db.add(launcher)
+            await db.commit()
+            self.assertIsNone(await JobService.claim_next_compatible_job(db, idle_launcher_ids={launcher.id}))
+            launcher.storage_versions = {"cae": 1}
+            await db.commit()
+            assignment = await JobService.claim_next_compatible_job(db, idle_launcher_ids={launcher.id})
+            self.assertEqual(assignment[0].id, job.id)
 
     async def test_dispatch_rotates_between_compatible_batches(self):
         first, _ = await self.create(count=2)

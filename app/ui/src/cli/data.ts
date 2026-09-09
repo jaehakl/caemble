@@ -4,6 +4,9 @@ import { CliError } from '@/platform/node/environment'
 import { exportLocalResult, inspectLocalResult, sliceLocalResult } from '@/platform/node/localResult'
 import type { CommandContext } from './types'
 import { createDbTables, getListRequest } from '@/api/api'
+import { resolveObjects } from '@/api/objectStorage'
+import { createDataTensorAccessor } from '@/lib/cad/model/dataTensor'
+import type { DataSchema, DataTensor } from '@/lib/cad/model/core'
 
 export async function dataCommand(group: string, command: string, context: CommandContext) {
   const { args, options, signal } = context
@@ -46,6 +49,30 @@ export async function dataCommand(group: string, command: string, context: Comma
           undefined,
           { signal },
         )
+  }
+  if (command === 'slice' && result && typeof result === 'object' && 'downloadRequired' in result) {
+    const stored = (await resolveObjects(context.client(), result, signal)) as unknown as {
+      id: number
+      name: string
+      schema: DataSchema
+      quantityKind: string | null
+      data: DataTensor
+      offset: number
+      count: number
+    }
+    const accessor = createDataTensorAccessor(stored.schema, stored.data, 'RecordedData')
+    const count = Math.min(stored.count, accessor.size - stored.offset)
+    const nextOffset = stored.offset + count
+    result = {
+      id: stored.id,
+      name: stored.name,
+      quantityKind: stored.quantityKind,
+      shape: accessor.shape,
+      totalValues: accessor.size,
+      offset: stored.offset,
+      values: Array.from({ length: count }, (_, index) => accessor.at(stored.offset + index)),
+      nextOffset: nextOffset < accessor.size ? nextOffset : null,
+    }
   }
   if (command === 'export') {
     if (!options.out) throw new CliError('data export requires --out.')

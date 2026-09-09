@@ -3,5 +3,6 @@
   "name": "CAE",
   "module": "app",
   "job_mode": "websocket",
+  "storage_version": 1,
   "startup_timeout_seconds": 60
 }

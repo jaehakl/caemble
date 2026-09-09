@@ -12,6 +12,10 @@ Node CLI에서 완성해서 업로드한다. API 호스트에는 Node 런타임�
 
 ## API 환경
 
+대용량 입력·결과에는 기존 AWS Bucket 설정을 사용한다. 배포 전에
+[S3 직접 전송 설정](object-storage.md)의 버킷 권한과 브라우저 CORS를 확인한다.
+배포 스크립트는 `.env`의 endpoint로 Nginx CSP를 렌더링한다.
+
 `app/api/.env.example`을 `app/api/.env`로 복사하고 PostgreSQL, Google OAuth, JWT,
 cookie 설정을 운영값으로 설정한다. 인증 cookie가 runner origin으로
 전달되지 않도록 `COOKIE_DOMAIN`은 비워 둔다.

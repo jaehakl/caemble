@@ -25,6 +25,45 @@ from utils.crud.common import is_admin_user
 CHUNK_BYTES = 8 * 1024 * 1024
 
 
+async def finalize_stored_item(db, batch_id, user_id, index, body):
+    from storage.service import INLINE_BYTES, bind_objects
+    await serialize_events(db)
+    batch = await require_batch(db, batch_id, user_id, lock=True)
+    cae = await db.get(CaeBatch, batch.id)
+    if batch.state != "uploading" or cae.spec.get("storage_version") != 1:
+        raise HTTPException(409, "Batch is not accepting object-backed inputs.")
+    job = await db.scalar(select(Job).where(Job.batch_id == batch.id, Job.item_index == index).with_for_update())
+    if job is None:
+        raise HTTPException(404, "Input job not found.")
+    stored = body["input"]
+    external = isinstance(stored, dict) and stored.get("kind") == "caemble.object"
+    item = validate_artifact_item(body.get("projection") if external else stored, cae.spec["source_hash"])
+    if external:
+        if stored.get("sha256") != job.artifact_metadata["input_hash"] or stored.get("byteLength") != job.artifact_metadata["byte_length"] or stored.get("encoding") != "json":
+            raise HTTPException(422, "Input reference differs from the build manifest.")
+    else:
+        raw = json.dumps(stored, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
+        # Inline hashes are verified by the Client and Slave; JSON parsing may
+        # change numeric spelling between JavaScript and Python.
+        if len(raw) > INLINE_BYTES:
+            raise HTTPException(413, "Large inputs must be uploaded directly to object storage.")
+    await bind_objects(db, body, user_id=user_id, experiment_id=cae.experiment_id, job_id=job.id)
+    payload = {"measurement": item["measurement"], "storage_version": 1,
+               **({"artifact": stored} if external else {})}
+    if job.input is not None:
+        if job.input != payload:
+            raise HTTPException(409, "Finalized input cannot change.")
+    else:
+        job.input = payload
+        if not external and "presentation" in item:
+            job.artifact_metadata = {**job.artifact_metadata, "presentation": item["presentation"]}
+        batch.uploaded_count += 1
+        await add_event(db, batch, "item.uploaded", job=job, payload={"uploaded_count": batch.uploaded_count})
+    batch.updated_at = utcnow()
+    await db.commit()
+    return {"ok": True, "index": index, "input_hash": job.artifact_metadata["input_hash"]}
+
+
 async def upload_chunk(
     db: AsyncSession, batch_id: str, user_id: str, index: int,
     chunk_index: int, sha256: str, data: bytes,
@@ -32,6 +71,9 @@ async def upload_chunk(
     batch = await require_batch(db, batch_id, user_id, lock=True)
     if batch.state != "uploading":
         raise HTTPException(409, "Batch is no longer accepting uploads.")
+    cae = await db.get(CaeBatch, batch.id)
+    if cae.spec.get("storage_version") == 1:
+        raise HTTPException(409, "Upload this batch's input directly to object storage.")
     job = await db.scalar(select(Job).where(Job.batch_id == batch.id, Job.item_index == index))
     if job is None:
         raise HTTPException(404, "Artifact item not found.")
@@ -204,14 +246,31 @@ async def commit_batch(db: AsyncSession, batch_id: str, user: UserData, catalog:
                     raise HTTPException(404, "Measurement not found.")
                 if measurement.job_id is not None or measurement.recorded_at is not None:
                     raise HTTPException(409, "Measurement already has an execution. Open its batch to retry.")
-                if measurement.vars != variables or measurement.material_snapshot != materials:
+                from storage.service import object_refs
+                has_objects = bool(list(object_refs([measurement.vars, measurement.material_snapshot, variables, materials])))
+                if not has_objects and (measurement.vars != variables or measurement.material_snapshot != materials):
                     raise HTTPException(409, "Artifact differs from the saved Measurement inputs.")
+                if has_objects:
+                    if measurement.material_snapshot["varsHash"] != materials["varsHash"]:
+                        raise HTTPException(409, "Artifact differs from the saved Measurement Vars.")
+                    # The Slave compares the full downloaded artifact against this
+                    # saved projection before executing; references may have different IDs.
+                    frozen = measurement.material_snapshot
+                    measurement_input = {**measurement_input,
+                        "experiment": {**measurement_input["experiment"], "variables": measurement.vars},
+                        "materialSnapshot": frozen["experiment"], "taskMaterialSnapshots": frozen["tasks"],
+                        "modelDefinitions": frozen["modelDefinitions"], "materialSelections": frozen["selections"]}
+                    job.input = {**job.input, "measurement": measurement_input}
                 measurement.job_id = job.id
             else:
                 measurement = Measurement(user_id=user.id, experiment_id=experiment.id,
                     vars=variables, material_snapshot=materials, job_id=job.id)
                 db.add(measurement)
             await db.flush()
+            if job.input.get("storage_version") == 1:
+                from storage.service import bind_objects
+                await bind_objects(db, job.input, user_id=user.id, experiment_id=experiment.id,
+                                   job_id=job.id, measurement_id=measurement.id)
             job.state = "queued"
             job.updated_at = utcnow()
             await add_event(db, batch, "job.queued", job=job, payload={"measurement_id": measurement.id})
@@ -252,7 +311,9 @@ async def measurement_artifact(db: AsyncSession, measurement_id: int, user_id: s
         raise HTTPException(404, "This Measurement has no saved build artifact. Rebuild with the current client.")
     job, cae = row
     metadata = job.artifact_metadata or {}
-    return {**job.input, **({"presentation": metadata["presentation"]} if "presentation" in metadata else {})}
+    if "artifact" in job.input:
+        return job.input["artifact"]
+    return {"measurement": job.input["measurement"], **({"presentation": metadata["presentation"]} if "presentation" in metadata else {})}
 
 
 async def measurement_artifact_info(db: AsyncSession, measurement_id: int, user_id: str) -> dict:

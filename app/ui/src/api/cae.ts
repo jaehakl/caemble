@@ -19,13 +19,11 @@ export function createCaeBatches(client: CaembleClient) {
         headers: { 'X-Chunk-SHA256': hash },
         signal,
       }),
-    finalize: (id: string, index: number, signal?: AbortSignal) =>
-      request(
-        'post',
-        `/cae/batches/${encodeURIComponent(id)}/items/${index}/finalize`,
-        {},
-        { csrf: 'required', signal },
-      ),
+    finalize: (id: string, index: number, signal?: AbortSignal, body: unknown = {}) =>
+      request('post', `/cae/batches/${encodeURIComponent(id)}/items/${index}/finalize`, body, {
+        csrf: 'required',
+        signal,
+      }),
     commit: (id: string, signal?: AbortSignal) =>
       request(
         'post',

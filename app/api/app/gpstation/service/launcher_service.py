@@ -55,6 +55,7 @@ class LauncherService:
         slave_app_ids: list[str],
         ip_address: str | None,
         job_modes: dict[str, str] | None = None,
+        storage_versions: dict[str, int] | None = None,
     ) -> Launcher:
         now = datetime.now(timezone.utc)
         launcher = Launcher(
@@ -64,6 +65,7 @@ class LauncherService:
             status="ready",
             slave_app_ids=list(dict.fromkeys(slave_app_ids)),
             job_modes=job_modes or {},
+            storage_versions=storage_versions or {},
             connected_at=now,
             last_heartbeat_at=now,
         )

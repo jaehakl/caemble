@@ -37,6 +37,22 @@ def persist_record(schema: dict, value: dict, attachments: dict[str, bytes]) -> 
         }
     tensor = {"shape": value["shape"], **({"axes": value["axes"]} if "axes" in value else {})}
     storage = value["storage"]
+    if storage["kind"] == "base64":
+        from storage.contracts import ObjectReference
+        data = storage["data"]
+        if isinstance(data, dict):
+            ref = ObjectReference.model_validate(data)
+            if ref.encoding != "base64" or ref.byteLength != storage["byteLength"]:
+                raise ValueError("Recorded binary reference has the wrong encoding or size.")
+            size = ref.byteLength
+        else:
+            size = len(base64.b64decode(data, validate=True))
+            if size != storage["byteLength"]:
+                raise ValueError("Recorded binary size mismatch.")
+        if schema["dtype"] != "string" and size != math.prod(value["shape"]) * struct.calcsize("<" + NUMERIC_FORMATS[schema["dtype"]]):
+            raise ValueError("Recorded binary shape mismatch.")
+        tensor["storage"] = storage
+        return tensor
     if storage["kind"] == "inline":
         tensor["storage"] = storage
         return tensor
@@ -74,6 +90,13 @@ def persist_record(schema: dict, value: dict, attachments: dict[str, bytes]) -> 
 
 
 async def stage_record(db: AsyncSession, job: Job, payload: dict, attachments: list) -> None:
+    if job.input.get("storage_version") == 1:
+        from storage.service import bind_objects
+        measurement = await db.scalar(select(Measurement).where(Measurement.job_id == job.id))
+        if measurement is None:
+            raise ValueError("Assigned Measurement is missing.")
+        await bind_objects(db, payload, user_id=job.user_id, experiment_id=measurement.experiment_id,
+                           job_id=job.id, attempt=job.attempt_count, measurement_id=measurement.id, bind=False)
     sequence, name = payload["sequence"], payload["name"]
     schemas = job.input["measurement"]["experiment"]["simulationProgram"]["recordedData"]
     if (
@@ -159,7 +182,36 @@ async def complete_job(db: AsyncSession, job: Job, packet: dict) -> dict:
                 add_leaves(f"{name}.{member_name}", member_schema, value[member_name])
 
     for record in staged:
+        if job.input.get("storage_version") == 1:
+            from storage.service import bind_objects
+            await bind_objects(db, record.payload, user_id=job.user_id, experiment_id=measurement.experiment_id,
+                               job_id=job.id, attempt=job.attempt_count, measurement_id=measurement.id)
         add_leaves(record.name, schemas[record.name], record.payload)
     measurement.recorded_at = utcnow()
     await db.flush()
     return {"measurement_id": measurement.id}
+
+
+async def storage_packet(db, job, packet):
+    from fastapi import HTTPException
+    from storage.service import prepare_upload, finish_upload, owned_object, object_refs, download_parts
+    operation = packet["type"].removeprefix("job.storage.")
+    measurement = await db.scalar(select(Measurement).where(Measurement.job_id == job.id))
+    if measurement is None or job.input.get("storage_version") != 1:
+        raise ValueError("Job does not support object storage.")
+    if operation == "prepare":
+        result = await prepare_upload(db, packet["manifest"], user_id=job.user_id,
+            experiment_id=measurement.experiment_id, purpose="record", job_id=job.id,
+            attempt=job.attempt_count, measurement_id=measurement.id)
+    elif operation == "complete":
+        row = await owned_object(db, packet["object_id"], job.user_id)
+        if row.job_id != job.id or row.attempt != job.attempt_count or row.purpose != "record":
+            raise HTTPException(403, "Object belongs to another attempt.")
+        result = await finish_upload(db, row)
+    elif operation == "read":
+        if packet["reference"] not in list(object_refs(job.input)):
+            raise HTTPException(403, "Object is not an assigned input.")
+        result = await download_parts(db, packet["reference"])
+    else:
+        raise ValueError("Unknown storage operation.")
+    return {"type": f"job.storage.{operation}.ack", **result}

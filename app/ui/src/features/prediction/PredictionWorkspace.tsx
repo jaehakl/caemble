@@ -1127,6 +1127,7 @@ export function PredictionWorkspace({
         await measurementActionsRef.current.runCandidatesAsync(
           {
             count: total,
+            algorithm: 'latin-hypercube',
             next: async (attempt, signal) => {
               signal.throwIfAborted()
               if (!runtime.samplingIsCurrent(revision) || sourceIdentityRef.current !== sourceIdentity) {

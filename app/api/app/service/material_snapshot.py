@@ -50,12 +50,21 @@ def validate_material_snapshot(
         raise ValueError(f"{path}.varsHash must be a vars fingerprint.")
     if source_hash is not None and value["sourceHash"] != source_hash:
         raise ValueError(f"{path}.sourceHash differs from the Experiment source.")
-    if variables is not None and value["varsHash"] != material_vars_hash(variables):
+    from storage.service import object_refs
+    from storage.contracts import ObjectReference
+    refs = list(object_refs(value)) + list(object_refs(variables))
+    if variables is not None and not list(object_refs(variables)) and value["varsHash"] != material_vars_hash(variables):
         raise ValueError(f"{path}.varsHash differs from the Measurement vars.")
     if not isinstance(value["tasks"], dict) or not isinstance(value["selections"], dict):
         raise ValueError(f"{path}.tasks and selections must be objects.")
     if set(value["tasks"]) != set(value["selections"]):
         raise ValueError(f"{path}.selections must identify every Task exactly once.")
+    if refs:
+        for ref in refs:
+            ObjectReference.model_validate(ref)
+        # Ownership/completion is checked by the saving transaction. Full model
+        # parameter validation stays at the Client/Slave boundary after hydration.
+        return value
     if not isinstance(value["modelDefinitions"], list):
         raise ValueError(f"{path}.modelDefinitions must be an array.")
     definitions = {}
