@@ -65,16 +65,18 @@ export function createRenderParts(
   parts: CadScenePart[],
   selections: ReadonlyMap<string, RenderPartSelection> = new Map(),
   xrayEnabled = false,
+  forceWireframe = false,
 ): RenderPart[] {
   return parts.map((part) => {
     const color = scenePartColor(part)
     const selection = selections.get(part.id)
-    const wireframe = color === undefined
+    const wireframe = forceWireframe ? !selection?.geometry : color === undefined
     const selectedSurface = selection && !selection.geometry && selection.polygonIndices.size > 0
     const geometry = selection?.geometry ? geometryWithSelectedPolygons(part.geometry, null) : part.geometry
     const baseColor = color === undefined ? wireframeColor : colorFromHex(color)
-    const edgeColor: RenderColor =
-      !wireframe && xrayEnabled
+    const edgeColor: RenderColor = forceWireframe
+      ? [0, 0, 0, 1]
+      : !wireframe && xrayEnabled
         ? [baseColor[0] * xrayEdgeBrightness, baseColor[1] * xrayEdgeBrightness, baseColor[2] * xrayEdgeBrightness, 1]
         : baseColor
     let renderColor = baseColor

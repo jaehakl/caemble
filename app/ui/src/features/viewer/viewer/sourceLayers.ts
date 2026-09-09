@@ -50,6 +50,11 @@ export function createLayerRenderParts(
         }
         selections.set(match.geometryId, current)
       })
-    return createRenderParts(layer.parts, selections as ReadonlyMap<string, RenderPartSelection>, xrayEnabled)
+    return createRenderParts(
+      layer.parts,
+      selections as ReadonlyMap<string, RenderPartSelection>,
+      xrayEnabled,
+      layer.source === 'task',
+    )
   })
 }
