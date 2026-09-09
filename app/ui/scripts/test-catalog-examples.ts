@@ -9,10 +9,13 @@ import { installCatalogRuntimeSlice } from '../src/lib/catalog/runtime'
 import { resolveSceneMaterials } from '../src/lib/material/document'
 import { buildMeasurement } from '../src/lib/cad/execution/measurement'
 import type { Tensor } from '../src/lib/cad/model/types'
+import { parseCatalogRuntimeSlice } from '../src/contracts/catalogValidators'
 
 const database = path.resolve(process.argv[2] ?? '../catalog/caemble_catalog/catalog.sqlite3')
 const outputDirectory = path.resolve(process.argv[3] ?? 'node_modules/.tmp/catalog-examples')
 const { examples, catalog } = readCatalogExamples(database)
+// Exercise the same response boundary as POST /catalog/runtime-slice before installation.
+parseCatalogRuntimeSlice(catalog)
 installCatalogRuntimeSlice(catalog)
 mkdirSync(outputDirectory, { recursive: true })
 

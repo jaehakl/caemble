@@ -52,6 +52,15 @@ def test_tfsf_matches_auxiliary_plane_wave_and_cancels_all_exterior_faces(axis, 
     assert maximum_error / maximum_field < 3e-5
 
 
+def test_tfsf_rejects_zero_direction():
+    widths = tuple(torch.full((10,), 20e-9) for _ in range(3))
+    engine = FDTDEngine(widths, (False, False, False), 1e-17,
+                        ElectricUpdateCoefficients(None, torch.tensor(1e-17/EPSILON_0), None, None, None, None))
+    with pytest.raises(ValueError, match="direction -1/\\+1"):
+        TfsfSource(engine, np.ones((10, 10, 10), dtype=bool), 2, 0,
+                   np.array([1., 0., 0.]), 3e14, 2e14, 0, 1e-14, 100)
+
+
 def test_tfsf_rejects_longitudinal_polarization():
     widths = tuple(torch.full((10,), 20e-9) for _ in range(3))
     engine = FDTDEngine(widths, (False, False, False), 1e-17,
