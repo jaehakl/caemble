@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from time import perf_counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -107,20 +108,35 @@ async def prepare_domain(invocation: SolverInvocation) -> PreparedDomain:
     # In an already-vacuum background, repainting every particle as vacuum is
     # a no-op. Keep the exact same domain/dt without triangulating the overlays.
     roots = () if vacuum_reference and np.all(epsilon_instantaneous == 1) and np.all(np.isnan(plasma_frequency)) else experiment["roots"]
-    for root in roots:
+    mesh_total_seconds = raster_total_seconds = 0.0
+    for particle_index, root in enumerate(roots):
+        started = perf_counter()
+        async def particle_progress(event):
+            await invocation.progress({**event, "particleIndex": particle_index + 1,
+                                       "particleCount": len(roots), "rootId": root["id"],
+                                       "message": f"{event['stage']} · particle {particle_index + 1}/{len(roots)}"})
+
         mesh = await invocation.geometry.triangular_mesh(
             experiment,
             root["id"],
             invocation.descriptor["referenceLengthUnit"],
-            invocation.progress,
+            particle_progress if invocation.progress is not None else None,
         )
+        mesh_seconds = perf_counter() - started
+        mesh_total_seconds += mesh_seconds
+        started = perf_counter()
         mask = await rasterize_mesh_cell_centers(
             mesh,
             x_ticks,
             y_ticks,
             z_ticks,
-            invocation.progress,
+            particle_progress if invocation.progress is not None else None,
         )
+        raster_seconds = perf_counter() - started
+        raster_total_seconds += raster_seconds
+        if invocation.progress is not None:
+            await particle_progress({"stage": "structured-rasterization", "completed": 1, "total": 1,
+                                     "meshSeconds": mesh_seconds, "rasterSeconds": raster_seconds})
         if not np.any(mask):
             continue
         if vacuum_reference:
@@ -137,6 +153,10 @@ async def prepare_domain(invocation: SolverInvocation) -> PreparedDomain:
             damping_frequency,
         )
 
+    if invocation.progress is not None:
+        await invocation.progress({"stage": "fdtd-material-preparation", "completed": len(roots),
+                                   "total": len(roots), "meshSeconds": mesh_total_seconds,
+                                   "rasterSeconds": raster_total_seconds})
     drude_cells = np.isfinite(plasma_frequency)
     if np.any(drude_cells & (model_codes == 0)):
         raise ValueError("Drude Material occupies a region whose drudeMethod is 'none'; select RC or TRC")

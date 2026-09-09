@@ -8,6 +8,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 from caemble_catalog import open_catalog
+from app.methods.geometry import GeometryService
+from app.methods.structured import rasterize_mesh_cell_centers
+from app.solvers.fdtd.materials import MaterialProperties
+from app.solvers.fdtd.setup import _paint_material
 
 
 @pytest.mark.parametrize("diameter_nm", [100, 150, 200])
@@ -18,7 +22,7 @@ def test_catalog_fcc_geometry_diameter_layers_and_noncontact(tmp_path, diameter_
     directory = tmp_path / "source"
     for name, content in example["sourceBundle"]["files"].items():
         if name == "experiment.tsx":
-            content = content.replace("{ min: 100, max: 200 }", f"{{ min: {diameter_nm}, max: {diameter_nm} }}")
+            content = content.replace("min: 100, max: 200", f"min: {diameter_nm}, max: {diameter_nm}")
         path = directory / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
@@ -31,7 +35,17 @@ def test_catalog_fcc_geometry_diameter_layers_and_noncontact(tmp_path, diameter_
     manifest = json.loads((build / "manifest.json").read_text(encoding="utf-8"))
     measurement = json.loads((build / manifest["items"][0]["file"]).read_text(encoding="utf-8"))["measurement"]
     experiment = measurement["experiment"]
-    assert experiment["variables"]["diameterNm"] == diameter_nm
+    assert set(experiment["simulationProgram"]["recordedData"]) == {
+        f"{name}{wavelength}" for name in ("scattered", "referenceScattered", "incident")
+        for wavelength in (1000, 1500)
+    }
+    for layer, size in (("lower", 5), ("upper", 4)):
+        np.testing.assert_array_equal(experiment["variables"][layer + "DiameterNm"], np.full((size, size), diameter_nm))
+        assert experiment["varsSchema"][layer + "DiameterNm"]["shape"] == [size, size]
+        assert experiment["varsSchema"][layer + "PositionOffsetNm"]["shape"] == [size, size, 3]
+        for axis in ("Azimuthal", "Polar"):
+            for field in ("Amplitude", "Phase"):
+                assert experiment["varsSchema"][layer + axis + field]["shape"] == [size, size, 2]
     roots = experiment["scene"]["roots"]
     assert len(roots) == 41
     centers = []
@@ -57,14 +71,111 @@ def test_catalog_fcc_geometry_diameter_layers_and_noncontact(tmp_path, diameter_
     assert distances.min() > diameter_nm * 1e-3
 
 
-@pytest.mark.parametrize("wavelength_nm", [800, 1500])
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scenario", ["single", "varied", "max_offsets", "collision", "touch", "interlayer"])
+async def test_layer_tensor_positions_shapes_and_collision(tmp_path, scenario):
+    repo = Path(__file__).resolve().parents[4]
+    variables = {}
+    for layer, n in (("lower", 5), ("upper", 4)):
+        variables[layer + "DiameterNm"] = np.full((n, n), 150.).tolist()
+        variables[layer + "PositionOffsetNm"] = np.zeros((n, n, 3)).tolist()
+        for axis in ("Azimuthal", "Polar"):
+            for field in ("Amplitude", "Phase"):
+                variables[layer + axis + field] = np.zeros((n, n, 2)).tolist()
+    if scenario == "max_offsets":
+        for layer, n in (("lower", 5), ("upper", 4)):
+            variables[layer+"DiameterNm"] = np.full((n, n), 200.).tolist()
+            variables[layer+"PositionOffsetNm"] = np.full((n, n, 3), 50.).tolist()
+            for axis in ("Azimuthal", "Polar"):
+                variables[layer+axis+"Amplitude"] = np.full((n, n, 2), .04).tolist()
+                variables[layer+axis+"Phase"] = np.full((n, n, 2), 1.).tolist()
+    elif scenario == "single":
+        variables["upperDiameterNm"][1][2] = 180
+        variables["upperPositionOffsetNm"][1][2] = [50, -50, 50]
+        variables["upperAzimuthalAmplitude"][1][2] = [.04, -.04]
+        variables["upperPolarAmplitude"][1][2] = [-.04, .04]
+        variables["upperAzimuthalPhase"][1][2] = [1.2, -.8]
+        variables["upperPolarPhase"][1][2] = [-1.8, .3]
+    elif scenario == "varied":
+        for layer, n in (("lower", 5), ("upper", 4)):
+            for x in range(n):
+                for y in range(n):
+                    i = x*n+y
+                    variables[layer+"DiameterNm"][x][y] = 100+2*i
+                    variables[layer+"PositionOffsetNm"][x][y] = [5*np.sin(i), 7*np.cos(i), 6*np.sin(i+.3)]
+                    variables[layer+"AzimuthalAmplitude"][x][y] = [.04*np.sin(i), .03*np.cos(i)]
+                    variables[layer+"PolarAmplitude"][x][y] = [.03*np.cos(i), -.02*np.sin(i)]
+    elif scenario == "interlayer":
+        variables["lowerDiameterNm"][0][0] = variables["upperDiameterNm"][0][0] = 200
+        variables["lowerPositionOffsetNm"][0][0] = [50, 50, 50]
+        variables["upperPositionOffsetNm"][0][0] = [-50, -50, -50]
+    else:
+        variables["lowerDiameterNm"][0][0] = variables["lowerDiameterNm"][1][0] = 200
+        variables["lowerPositionOffsetNm"][0][0] = [50, 0, 0]
+        variables["lowerPositionOffsetNm"][1][0] = [-50 if scenario == "collision" else 0, 0, 0]
+    values = tmp_path / "vars.json"
+    values.write_text(json.dumps(variables), encoding="utf-8")
+    build = tmp_path / "build"
+    result = subprocess.run([
+        "node", str(repo / "app/ui/dist-cli/caemble.cjs"), "experiment", "build",
+        "--example", "gold-fcc-fresnel", "--mode", "candidate", "--vars", str(values), "--out", str(build),
+    ], cwd=repo, capture_output=True, text=True, encoding="utf-8", timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
+    measurement = json.loads((build / "items/1.json").read_text(encoding="utf-8"))["measurement"]
+    scene = measurement["experiment"]["scene"]
+    assert len(scene["roots"]) == 41
+    service = GeometryService()
+    index = 0
+    for layer, n, z in (("lower", 5, -.25/(2*np.sqrt(2))), ("upper", 4, .25/(2*np.sqrt(2)))):
+        for x in range(n):
+            for y in range(n):
+                center = np.array([(x-(n-1)/2)*.25, (y-(n-1)/2)*.25, z])
+                center += np.array(variables[layer+"PositionOffsetNm"][x][y])*.001
+                node = scene["roots"][index]["node"]
+                transform = np.eye(4)
+                while node["kind"] in {"transform", "instance"}:
+                    transform = transform @ np.array(node["matrix"]).reshape(4, 4)
+                    node = node["child"]
+                np.testing.assert_allclose(transform[:3, 3], center, atol=1e-12)
+                mesh = await service.triangular_mesh(scene, scene["roots"][index]["id"], "um")
+                assert np.all(np.abs(mesh.vertices) < np.array([.75, .75, .30]) - .01)
+                radius = np.linalg.norm(mesh.vertices-center, axis=1).max()
+                assert radius*2000 == pytest.approx(variables[layer+"DiameterNm"][x][y], rel=2e-6)
+                edges = np.sort(np.concatenate([mesh.triangles[:,[0,1]], mesh.triangles[:,[1,2]], mesh.triangles[:,[2,0]]]),axis=1)
+                assert np.all(np.unique(edges,axis=0,return_counts=True)[1] == 2)
+                index += 1
+
+    if scenario in ("collision", "interlayer"):
+        ticks = np.arange(-.65, .01, .01) + .005
+        z_ticks = np.arange(-.25, .26, .01) + .005
+        masks = []
+        for particle in (0, 5 if scenario == "collision" else 25):
+            mesh = await service.triangular_mesh(scene, scene["roots"][particle]["id"], "um")
+            masks.append(await rasterize_mesh_cell_centers(mesh, ticks, ticks, z_ticks))
+        assert np.any(masks[0] & masks[1])
+        union = masks[0] | masks[1]
+        epsilon = np.ones(union.shape)
+        plasma = np.full(union.shape, np.nan)
+        damping = np.full(union.shape, np.nan)
+        gold = MaterialProperties(9., 1.37e16, 1e14)
+        for mask in masks:
+            _paint_material(mask, gold, epsilon, plasma, damping)
+        np.testing.assert_array_equal(epsilon != 1, union)
+        np.testing.assert_array_equal(epsilon[union], 9.)
+        np.testing.assert_array_equal(plasma[union], 1.37e16)
+        np.testing.assert_array_equal(damping[union], 1e14)
+        assert np.all(np.isnan(plasma[~union]))
+        assert np.all(np.isnan(damping[~union]))
+
+
+@pytest.mark.parametrize("wavelength_nm", [1000, 1500])
 @pytest.mark.parametrize("scenario", ["vacuum", "gaussian", "quadrature"])
 def test_catalog_fresnel_matches_complex_gaussian_and_vacuum(tmp_path, wavelength_nm, scenario):
     repo = Path(__file__).resolve().parents[4]
     with open_catalog() as catalog:
         example = catalog.experiment("gold-fcc-fresnel")
-    assert len(example["calculations"]) == 8
-    calculation = example["calculations"][(wavelength_nm - 800) // 100]
+    assert len(example["calculations"]) == 2
+    calculation = example["calculations"][[1000, 1500].index(wavelength_nm)]
     source = tmp_path / "calculation.js"
     source.write_text(calculation["source_code"], encoding="utf-8")
     ticks = np.linspace(-2e-6, 2e-6, 81)

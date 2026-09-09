@@ -1,6 +1,7 @@
 """Prepare the FDTD problem, allocate its engine, advance time, and publish outputs."""
 
 import math
+from time import perf_counter
 
 from app.kernel.api import SolverImplementation, SolverInvocation, SolverResult
 
@@ -21,10 +22,14 @@ async def run(invocation: SolverInvocation) -> SolverResult:
     engine, sources, time_detectors, spectral_detectors = allocate_simulation(
         prepared, source_plans, output_plans, parameters, simulation_time,
     )
+    propagation_started = perf_counter()
     await propagate(
         engine, sources, time_detectors, spectral_detectors, step_count,
         invocation.progress, invocation.cancellation,
     )
+    if invocation.progress is not None:
+        await invocation.progress({"stage": "fdtd-propagation", "completed": step_count,
+                                   "total": step_count, "seconds": perf_counter() - propagation_started})
 
     pml_cell_size = _positive_float(parameters["pmlCellSize"], "pmlCellSize")
     center_wavelength = _positive_float(parameters["pmlCenterWavelength"], "pmlCenterWavelength")

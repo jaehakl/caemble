@@ -64,6 +64,21 @@ async def rasterize_mesh_cell_centers(
         mesh_extent,
         np.finfo(np.float64).eps * coordinate_scale * 64.0,
     )
+    # Keep the original tolerances/origin, but cast rays only near this mesh.
+    # Barycentric acceptance can extend a triangle by two edge tolerances.
+    padding = tolerance + 2 * barycentric_tolerance * mesh_extent
+    minimum = np.min(mesh.vertices, axis=0) - padding
+    maximum = np.max(mesh.vertices, axis=0) + padding
+    ix, iy, iz = (
+        np.flatnonzero((ticks >= low) & (ticks <= high))
+        for ticks, low, high in zip((x, y, z), minimum, maximum)
+    )
+    x, y, z = x[ix], y[iy], z[iz]
+    column_count = y.size * z.size if x.size else 0
+    if not column_count:
+        if progress is not None:
+            await progress({"stage": "structured-rasterization", "completed": 0, "total": 0})
+        return mask
     yy, zz = np.meshgrid(y, z)
     columns = np.column_stack(
         (
@@ -99,7 +114,7 @@ async def rasterize_mesh_cell_centers(
                     == 1
                 )
                 column = start + local_index
-                mask[column // y.size, column % y.size] = inside
+                mask[iz[column // y.size], iy[column % y.size], ix] = inside
 
         if progress is not None:
             await progress(

@@ -4,6 +4,7 @@ import importlib
 import copy
 from dataclasses import replace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import numpy as np
 import pytest
@@ -220,13 +221,14 @@ async def test_catalog_fdtd_abi3_runs_small_cpu_domain_with_mixed_drude_material
             },
         ],
     }
+    progress = AsyncMock()
     invocation = SolverInvocation(
         config=config,
         state={},
         inputs={},
         world=world,
         geometry=GeometryService(),
-        progress=None,
+        progress=progress,
         descriptor=descriptor,
         task_name="fdtd-integration",
     )
@@ -241,6 +243,14 @@ async def test_catalog_fdtd_abi3_runs_small_cpu_domain_with_mixed_drude_material
 
     monkeypatch.setattr(entry, "prepare_domain", capture_prepared_domain)
     result = await implementation(invocation)
+    events = [call.args[0] for call in progress.await_args_list]
+    preparation = next(event for event in events if event["stage"] == "fdtd-material-preparation")
+    particles = [event for event in events if "rasterSeconds" in event and "particleIndex" in event]
+    assert preparation["completed"] == preparation["total"] == len(particles)
+    assert preparation["meshSeconds"] == pytest.approx(sum(event["meshSeconds"] for event in particles))
+    assert preparation["rasterSeconds"] == pytest.approx(sum(event["rasterSeconds"] for event in particles))
+    assert [event["particleIndex"] for event in particles] == list(range(1, len(particles)+1))
+    assert events[-1]["stage"] == "fdtd-propagation" and events[-1]["seconds"] >= 0
     prepared = captured["prepared"]
 
     x_ticks, y_ticks, z_ticks = (

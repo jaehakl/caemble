@@ -118,8 +118,8 @@ def test_mesh_rasterization_returns_piecewise_grid_cell_center_mask() -> None:
     np.testing.assert_array_equal(mask, expected)
     assert progress_events[-1] == {
         "stage": "structured-rasterization",
-        "completed": 16,
-        "total": 16,
+        "completed": 4,
+        "total": 4,
     }
 
 
@@ -144,3 +144,29 @@ def test_mesh_rasterization_is_scale_independent_for_si_micrometer_geometry() ->
     expected = np.zeros((4, 4, 4), dtype=np.bool_)
     expected[1:3, 1:3, 1:3] = True
     np.testing.assert_array_equal(mask, expected)
+
+
+@pytest.mark.parametrize("angle", [0.23, 0.71])
+def test_rasterization_crops_translated_rotated_mesh_on_nonuniform_grid(angle):
+    mesh = cube_mesh()
+    rotation = np.array([[np.cos(angle), -np.sin(angle), 0],
+                         [np.sin(angle), np.cos(angle), 0], [0, 0, 1]])
+    center = np.array([0.3, -0.2, 0.1])
+    vertices = (mesh.vertices - 0.5) @ rotation.T * 0.15 + center
+    moved = TriangularMesh(vertices, mesh.triangles, mesh.triangle_provenance)
+    ticks = [np.sort(np.random.default_rng(i).uniform(-1, 1, 83)) for i in range(3)]
+    zz, yy, xx = np.meshgrid(ticks[2], ticks[1], ticks[0], indexing="ij")
+    local = (np.stack([xx, yy, zz], axis=-1) - center) @ rotation / 0.15
+    expected = np.all(np.abs(local) < 0.5, axis=-1)
+    actual = asyncio.run(rasterize_mesh_cell_centers(moved, *ticks))
+    np.testing.assert_array_equal(actual, expected)
+
+
+def test_rasterization_preserves_face_convention_and_skips_empty_bounds():
+    mesh = cube_mesh()
+    ticks = [-1., 0., 0.5, 1., 2.]
+    actual = asyncio.run(rasterize_mesh_cell_centers(mesh, ticks, ticks, ticks))
+    expected = np.zeros((5, 5, 5), dtype=bool)
+    expected[1:4, 1:4, 1:3] = True
+    np.testing.assert_array_equal(actual, expected)
+    assert not asyncio.run(rasterize_mesh_cell_centers(mesh, [2., 3.], ticks, ticks)).any()

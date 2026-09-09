@@ -125,8 +125,8 @@ class CatalogV3Tests(unittest.TestCase):
                 with self.assertRaises(CatalogNotFoundError):
                     catalog.get_solver_manifest(name, version)
             for example in catalog.list_experiments(limit=100)[0]:
-                self.assertEqual(example["version"], {"gold-fcc-fresnel": "1.0.0", "fdtd-drude-slab": "3.1.0"}.get(example["key"], "3.0.0"))
-                previous = {"gold-fcc-fresnel": "0.0.0", "fdtd-drude-slab": "3.0.0"}.get(example["key"], "2.0.0")
+                self.assertEqual(example["version"], {"gold-fcc-fresnel": "2.1.0", "fdtd-drude-slab": "3.1.0"}.get(example["key"], "3.0.0"))
+                previous = {"gold-fcc-fresnel": "2.0.0", "fdtd-drude-slab": "3.0.0"}.get(example["key"], "2.0.0")
                 with self.assertRaises(CatalogNotFoundError):
                     catalog.experiment(example["coordinate"].rsplit("@", 1)[0] + "@" + previous)
                 for solver in example["relatedSolvers"]:
