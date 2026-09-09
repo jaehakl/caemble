@@ -1,3 +1,4 @@
+import type { CalculationDefinition } from '@/api'
 import type { Vars } from '@/lib/cad/model'
 import type { ExperimentSourceBundle, ExperimentSourceDocument } from '@/lib/cad/source'
 import type { SavedExperiment, SavedMeasurement, WorkbenchDraft } from '../types'
@@ -5,6 +6,7 @@ import type { SavedExperiment, SavedMeasurement, WorkbenchDraft } from '../types
 export type ExperimentEditingState = Readonly<{
   document: ExperimentSourceDocument | null
   record: SavedExperiment | null
+  calculations: readonly CalculationDefinition[]
   baselineBundle: ExperimentSourceBundle | null
   name: string
   description: string
@@ -16,6 +18,7 @@ export type ExperimentEditingState = Readonly<{
 export const initialExperimentEditingState: ExperimentEditingState = Object.freeze({
   document: null,
   record: null,
+  calculations: [],
   baselineBundle: null,
   name: 'Untitled Experiment',
   description: '',
@@ -34,6 +37,7 @@ export type ExperimentEditingAction =
     }>
   | Readonly<{
       type: 'newStarted'
+      calculations?: readonly CalculationDefinition[]
       document: ExperimentSourceDocument
       sourceBundle: ExperimentSourceBundle
       name: string
@@ -80,6 +84,7 @@ export function experimentEditingReducer(
         ...state,
         document: action.document,
         record: action.record,
+        calculations: [],
         baselineBundle: action.record.source_bundle,
         name: action.record.name,
         description: action.record.description ?? '',
@@ -92,6 +97,7 @@ export function experimentEditingReducer(
         ...state,
         document: action.document,
         record: action.draft.experiment.record,
+        calculations: action.draft.experiment.calculations ?? [],
         baselineBundle: action.draft.experiment.baselineBundle,
         name: action.draft.experiment.name,
         description: action.draft.experiment.description,
@@ -104,6 +110,7 @@ export function experimentEditingReducer(
         ...state,
         document: action.document,
         record: null,
+        calculations: action.calculations ?? [],
         baselineBundle: action.sourceBundle,
         name: action.name,
         description: action.description,
@@ -116,6 +123,7 @@ export function experimentEditingReducer(
         ...state,
         document: action.document,
         record: null,
+        calculations: [],
         baselineBundle: null,
         candidateVars: null,
         candidateMaterialSnapshot: null,
@@ -131,6 +139,7 @@ export function experimentEditingReducer(
       return {
         ...state,
         record: action.record,
+        calculations: [],
         baselineBundle: action.baselineBundle,
         name: action.record.name,
         description: action.record.description ?? '',

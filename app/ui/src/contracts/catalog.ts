@@ -1,3 +1,4 @@
+import type { CalculationDefinition } from './api/calculation'
 import type { KernelDescriptor } from './solver'
 
 export type CatalogQuantityKind = Readonly<{
@@ -126,6 +127,7 @@ export type CatalogExperimentListItem = Readonly<{
 
 export type CatalogExperimentDetail = CatalogExperimentListItem &
   Readonly<{
+    calculations: readonly CalculationDefinition[]
     sourceBundle: Readonly<{ files: Readonly<Record<string, string>> }>
   }>
 

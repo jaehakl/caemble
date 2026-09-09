@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 APPLICATION_ID = 0x43414531  # "CAE1"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 SEMVER_COMPONENT_MAX = 2_147_483_647
 EXPERIMENT_COORDINATE_PREFIX = "caemble:experiment/"
 
@@ -52,6 +52,7 @@ TABLE_ORDER = (
     "solver_quantity_kind_usages",
     "experiments",
     "experiment_files",
+    "experiment_calculations",
     "experiment_concepts",
     "experiment_solvers",
 )
@@ -274,6 +275,16 @@ CREATE TABLE experiment_files (
     path TEXT NOT NULL,
     source TEXT NOT NULL,
     PRIMARY KEY (experiment_id, path),
+    UNIQUE (experiment_id, ordinal)
+) STRICT;
+
+CREATE TABLE experiment_calculations (
+    experiment_id INTEGER NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+    name TEXT NOT NULL CHECK(length(trim(name)) > 0 AND name = trim(name)),
+    description TEXT,
+    source_code TEXT NOT NULL CHECK(length(trim(source_code)) > 0),
+    PRIMARY KEY (experiment_id, name),
     UNIQUE (experiment_id, ordinal)
 ) STRICT;
 

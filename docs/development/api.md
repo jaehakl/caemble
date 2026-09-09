@@ -81,3 +81,10 @@ physics execution remain in the UI/CAE worker boundary.
 QuantityKind, Material, and Solver catalog data is read from
 `app/catalog/caemble_catalog/catalog.sqlite3`. Never introduce parallel catalog
 data in API source, JSON, generated JavaScript, or Markdown.
+
+
+### Experiment Calculation copies
+
+`POST /experiment/save` accepts either `copyCalculationsFromExperimentId` or `calculations` on `mode: "create"`. Inline definitions contain `name`, optional nullable `description`, and `source_code`; names must be nonempty and unique within the target Experiment. A source Experiment must be readable by the caller. `new_version` automatically copies all saved Calculations from its `experimentId`; `overwrite` never adds copies. Creation of the Experiment, its Records, and its Calculations is atomic.
+
+Copies start at revision 1 with `contract_status: "needs_preflight"`, a freshly computed source hash, and no output layout, preflight Measurement, Record links, or CalculationData. The existing Calculation upsert still requires a successful target Measurement preflight. `sourceLocked` depends only on `derivedCounts.measurements > 0`. Without Measurements, changing source or Record contracts invalidates Calculation contracts and increments their revisions; metadata-only saves preserve them.

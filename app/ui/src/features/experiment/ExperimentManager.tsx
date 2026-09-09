@@ -1,3 +1,4 @@
+import type { CalculationDefinition } from '@/api'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { LoaderCircle, Search, Trash2 } from 'lucide-react'
@@ -23,7 +24,12 @@ type ExperimentManagerProps = {
   selectedId: number | null
   user: UserData | null
   onDeleteSelected?: (row: SavedExperiment) => void
-  onOpenExample: (sourceBundle: SavedExperiment['source_bundle'], name: string, description: string) => void
+  onOpenExample: (
+    sourceBundle: SavedExperiment['source_bundle'],
+    name: string,
+    description: string,
+    calculations: readonly CalculationDefinition[],
+  ) => void
   onOpenSaved: (row: SavedExperiment) => void
 }
 
@@ -146,7 +152,7 @@ export function ExperimentManager({
     setLoadingExample(experiment.coordinate)
     try {
       const item = await catalogApi.getExperiment(experiment)
-      onOpenExample(item.sourceBundle, item.title, item.description)
+      onOpenExample(item.sourceBundle, item.title, item.description, item.calculations)
     } catch (cause: unknown) {
       toast.error(cause instanceof Error ? cause.message : 'Example을 불러오지 못했습니다.')
     } finally {

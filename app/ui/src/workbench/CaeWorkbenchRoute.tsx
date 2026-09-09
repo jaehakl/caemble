@@ -307,9 +307,9 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             page.setLayout((current) => ({ ...current, activeSection: 'experiment' }))
           })
         }
-        onOpenExample={(sourceBundle, name, description) =>
+        onOpenExample={(sourceBundle, name, description, calculations) =>
           page.guardReplacement(() => {
-            workbench.newExperiment(sourceBundle, name, description)
+            workbench.newExperiment(sourceBundle, name, description, calculations)
             page.setLayout((current) => ({ ...current, activeSection: 'experiment' }))
           })
         }

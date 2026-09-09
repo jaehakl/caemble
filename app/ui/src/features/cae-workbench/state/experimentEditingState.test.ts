@@ -196,3 +196,47 @@ describe('experimentEditingReducer', () => {
     expect(echoed.candidateMaterialSnapshot).toBe(nextMaterials)
   })
 })
+
+it('retains example Calculations through edits and restoration and clears them on save or replacement', () => {
+  const bundle = sourceBundle('example')
+  const document = createCadSourceDocument('experiment', bundle)
+  const calculations = [{ name: 'Mean', source_code: 'export default () => 1' }]
+  const opened = experimentEditingReducer(initialExperimentEditingState, {
+    type: 'newStarted',
+    document,
+    sourceBundle: bundle,
+    name: 'Example',
+    description: '',
+    calculations,
+  })
+  const edited = experimentEditingReducer(opened, { type: 'sourceEdited', document })
+  expect(edited.calculations).toEqual(calculations)
+  const draft: WorkbenchDraft = {
+    savedAt: 0,
+    experiment: { document, record: null, baselineBundle: bundle, name: 'Example', description: '', calculations },
+    candidate: { vars: null, materialSnapshot: null },
+    selection: { experimentId: null, measurementId: null, calculationId: null },
+    layout: defaultWorkbenchLayoutState,
+  }
+  const restored = experimentEditingReducer(initialExperimentEditingState, {
+    type: 'draftRestored',
+    draft,
+    document,
+    candidateMaterialSnapshot: null,
+  })
+  expect(restored.calculations).toEqual(calculations)
+  const record = savedExperiment(42, bundle)
+  expect(
+    experimentEditingReducer(restored, { type: 'saveCommitted', record, baselineBundle: bundle }).calculations,
+  ).toEqual([])
+  expect(experimentEditingReducer(restored, { type: 'recordLoaded', record, document }).calculations).toEqual([])
+  expect(
+    experimentEditingReducer(restored, {
+      type: 'newStarted',
+      document,
+      sourceBundle: bundle,
+      name: 'New',
+      description: '',
+    }).calculations,
+  ).toEqual([])
+})

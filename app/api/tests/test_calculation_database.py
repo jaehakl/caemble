@@ -562,7 +562,7 @@ async def _verify_crud_contract(database: str) -> None:
                 assert error.detail["code"] == "experiment_source_locked"
                 assert error.detail["derivedCounts"]["calculations"] == 1
             else:
-                raise AssertionError("Experiment source overwrite ignored Calculation lock")
+                raise AssertionError("Experiment source overwrite ignored Measurement lock")
 
         async with sessions() as session:
             await delete_calculations(session, [calculation_id], user=owner)

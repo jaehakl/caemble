@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db import Calculation, Experiment, ExperimentDemo, ExperimentNamespace, ExperimentRecord, Measurement, RecordedData
+from db import Calculation, CalculationExperimentRecord, Experiment, ExperimentDemo, ExperimentNamespace, ExperimentRecord, Measurement, RecordedData
 from models import (
     ExperimentBase,
     ExperimentRecordBase,
@@ -122,7 +122,7 @@ async def _sync_experiment_records(
     experiment: Experiment,
     records: list[ExperimentRecordContract],
     counts: dict[str, int],
-) -> None:
+) -> bool:
     requested: dict[str, dict[str, Any]] = {}
     for record in records:
         payload = _record_payload(record)
@@ -151,7 +151,7 @@ async def _sync_experiment_records(
         raise _bad(
             {
                 "code": "experiment_record_contract_locked",
-                "message": "ExperimentRecord contract cannot change while derived data exists.",
+                "message": "ExperimentRecord contract cannot change while Measurements exist.",
                 "expected": existing_payloads,
                 "actual": requested,
             },
@@ -173,6 +173,7 @@ async def _sync_experiment_records(
     missing_ids = [record.id for record in existing if record.name not in requested]
     if missing_ids:
         await db.execute(delete(ExperimentRecord).where(ExperimentRecord.id.in_(missing_ids)))
+    return existing_payloads != requested
 
 
 async def _claim_namespace(db: AsyncSession, user_id: str, namespace: str) -> None:
@@ -235,7 +236,7 @@ async def _derived_counts(
 
 
 def _source_locked(counts: dict[str, int]) -> bool:
-    return any(counts.values())
+    return counts["measurements"] > 0
 
 
 async def experiment_usage(db: AsyncSession, experiment_ids: Iterable[int], *, user: Any) -> dict[str, Any]:
@@ -284,6 +285,19 @@ async def save_experiment(
     *,
     user: Any,
 ) -> dict[str, Any]:
+    try:
+        return await _save_experiment(db, request, user=user)
+    except Exception:
+        await db.rollback()
+        raise
+
+
+async def _save_experiment(
+    db: AsyncSession,
+    request: SaveExperimentRequest,
+    *,
+    user: Any,
+) -> dict[str, Any]:
     source_bundle = _source_bundle_payload(request.sourceBundle)
     source_hash = _bundle_hash(source_bundle)
     name = request.name.strip()
@@ -293,6 +307,12 @@ async def save_experiment(
     if namespace == "caemble":
         raise _bad("The caemble namespace is reserved for Examples.", code=status.HTTP_409_CONFLICT)
 
+    copy_source_id = request.copyCalculationsFromExperimentId
+    if request.mode == "new_version":
+        copy_source_id = request.experimentId
+    if copy_source_id is not None:
+        await require_experiment_read(db, copy_source_id, user)
+    source_changed = False
     counts = {"measurements": 0, "recordedData": 0, "calculations": 0}
     if request.mode == "create":
         major, minor, patch = _parse_version(request.initialVersion)
@@ -377,7 +397,7 @@ async def save_experiment(
                 raise _bad(
                     {
                         "code": "experiment_source_locked",
-                        "message": "Experiment source cannot be overwritten while derived data exists.",
+                        "message": "Experiment source cannot be overwritten while Measurements exist.",
                         "derivedCounts": counts,
                     },
                     code=status.HTTP_409_CONFLICT,
@@ -411,6 +431,7 @@ async def save_experiment(
             version.experiment_key = key
 
         if request.mode == "overwrite":
+            source_changed = experiment.source_hash != source_hash
             experiment.name = name
             experiment.description = request.description
             experiment.source_bundle = source_bundle
@@ -433,9 +454,47 @@ async def save_experiment(
         if identity_changed:
             await _cleanup_empty_namespaces(db, owner.id, [previous_namespace])
     try:
+        if request.mode == "create" and copy_source_id is not None:
+            source_id = await db.scalar(
+                select(Experiment.id).where(Experiment.id == copy_source_id).with_for_update()
+            )
+            if source_id is None:
+                raise _bad("Experiment not found.", code=status.HTTP_404_NOT_FOUND)
         await db.flush()
-        await _sync_experiment_records(db, experiment, request.records, counts)
+        records_changed = await _sync_experiment_records(db, experiment, request.records, counts)
+        if request.mode == "overwrite" and (source_changed or records_changed):
+            calculations = list((await db.scalars(
+                select(Calculation).where(Calculation.experiment_id == experiment.id)
+                .order_by(Calculation.id).with_for_update()
+            )).all())
+            for calculation in calculations:
+                calculation.contract_status = "needs_preflight"
+                calculation.output_layout = None
+                calculation.preflight_measurement_id = None
+                calculation.revision += 1
+            await db.execute(delete(CalculationExperimentRecord).where(
+                CalculationExperimentRecord.calculation_id.in_([row.id for row in calculations])
+            ))
+        definitions = request.calculations or []
+        if copy_source_id is not None:
+            definitions = list((await db.scalars(
+                select(Calculation).where(Calculation.experiment_id == copy_source_id)
+                .order_by(Calculation.id).with_for_update()
+            )).all())
+        for definition in definitions:
+            db.add(Calculation(
+                experiment_id=experiment.id,
+                name=definition.name,
+                description=definition.description,
+                source_code=definition.source_code,
+                source_hash=hashlib.sha256(definition.source_code.encode("utf-8")).hexdigest(),
+                revision=1,
+                contract_status="needs_preflight",
+                output_layout=None,
+                preflight_measurement_id=None,
+            ))
         await db.flush()
+        counts = (await _derived_counts(db, [experiment.id]))[experiment.id]
         await db.commit()
     except IntegrityError as error:
         await db.rollback()

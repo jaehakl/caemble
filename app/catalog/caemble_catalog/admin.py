@@ -177,7 +177,33 @@ def insert_solver_manifest(connection: sqlite3.Connection, manifest: dict[str, A
                 )
 
 
+def validate_experiment_calculations(calculations: Any) -> list[dict[str, Any]]:
+    if not isinstance(calculations, list):
+        raise CatalogError("Experiment calculations must be a list")
+    names: set[str] = set()
+    normalized = []
+    for item in calculations:
+        if not isinstance(item, dict) or set(item) - {"name", "description", "source_code"}:
+            raise CatalogError("Calculation requires name, optional description, and source_code")
+        name = item.get("name")
+        source = item.get("source_code")
+        description = item.get("description")
+        if not isinstance(name, str) or not name.strip():
+            raise CatalogError("Calculation name must not be empty")
+        if not isinstance(source, str) or not source.strip():
+            raise CatalogError("Calculation source_code must not be empty")
+        if description is not None and not isinstance(description, str):
+            raise CatalogError("Calculation description must be a string or null")
+        name = name.strip()
+        if name in names:
+            raise CatalogError(f"Duplicate Calculation name: {name}")
+        names.add(name)
+        normalized.append({"name": name, "description": description, "source_code": source})
+    return normalized
+
+
 def insert_experiment(connection: sqlite3.Connection, experiment: dict[str, Any]) -> None:
+    calculations = validate_experiment_calculations(experiment.get("calculations", []))
     bundle = experiment["sourceBundle"]
     bundle_hash = hashlib.sha256(canonical_json(bundle).encode("utf-8")).hexdigest()
     try:
@@ -200,6 +226,11 @@ def insert_experiment(connection: sqlite3.Connection, experiment: dict[str, Any]
         ),
     )
     experiment_id = cursor.lastrowid
+    connection.executemany(
+        "INSERT INTO experiment_calculations(experiment_id, ordinal, name, description, source_code) VALUES (?, ?, ?, ?, ?)",
+        [(experiment_id, ordinal, item["name"], item["description"], item["source_code"])
+         for ordinal, item in enumerate(calculations)],
+    )
     connection.executemany(
         "INSERT INTO experiment_files(experiment_id, ordinal, path, source) VALUES (?, ?, ?, ?)",
         [
@@ -380,6 +411,8 @@ def publish_draft(source: Path, destination: Path) -> dict[str, Any]:
     refresh_derived_data(source)
     with Catalog.open_readonly(source, immutable=False) as catalog:
         meta = catalog.meta()
+        for experiment in catalog.list_experiments(limit=1_000_000)[0]:
+            validate_experiment_calculations(catalog.experiment(experiment["coordinate"])["calculations"])
         for model in catalog.material_models():
             validate_parameter_schema(model["parameterSchema"])
         for manifest in catalog.solver_manifests():

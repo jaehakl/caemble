@@ -1,3 +1,4 @@
+import type { CalculationDefinition } from './calculation'
 import type { ExperimentSourceBundle } from '../cad-persistence'
 import type { DataSchema } from './measurement'
 
@@ -30,7 +31,12 @@ type ExperimentMetadata = Readonly<{
 
 export type SaveExperimentRequest = ExperimentMetadata &
   (
-    | Readonly<{ mode: 'create'; initialVersion?: '0.1.0' }>
+    | Readonly<{
+        mode: 'create'
+        initialVersion?: '0.1.0'
+        copyCalculationsFromExperimentId?: number
+        calculations?: readonly CalculationDefinition[]
+      }>
     | Readonly<{ mode: 'overwrite'; experimentId: number; baseBundleHash: string }>
     | Readonly<{ mode: 'new_version'; experimentId: number; baseBundleHash: string; bump: 'patch' | 'minor' | 'major' }>
   )

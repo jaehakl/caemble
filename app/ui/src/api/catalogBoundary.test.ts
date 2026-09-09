@@ -210,6 +210,7 @@ describe('Catalog API response boundaries', () => {
       bundleHash: 'hash',
       concepts: [],
       relatedSolvers: [],
+      calculations: [],
       sourceBundle: { files: { 'experiment.tsx': 42 } },
     })
 
@@ -217,5 +218,27 @@ describe('Catalog API response boundaries', () => {
       name: 'ApiContractError',
       path: '/catalog/experiments/beam',
     })
+  })
+
+  it('preserves example Calculation definitions and rejects malformed definitions', async () => {
+    const calculations = [{ name: '평균', description: '예제', source_code: 'export default () => 1' }]
+    const example = {
+      key: 'beam',
+      namespace: 'caemble',
+      repository: 'examples',
+      version: '1.0.0',
+      coordinate: 'caemble:experiment/caemble/examples/beam@1.0.0',
+      title: 'Beam',
+      description: 'Example',
+      bundleHash: 'hash',
+      concepts: [],
+      relatedSolvers: [],
+      calculations,
+      sourceBundle: { files: { 'experiment.tsx': 'export default null' } },
+    }
+    stubJson(example)
+    await expect(catalogApi.getExperiment('beam')).resolves.toMatchObject({ calculations })
+    stubJson({ ...example, calculations: [{ name: 'Mean', source_code: 42 }] })
+    await expect(catalogApi.getExperiment('beam')).rejects.toBeInstanceOf(ApiContractError)
   })
 })

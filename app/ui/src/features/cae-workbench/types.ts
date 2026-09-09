@@ -1,4 +1,4 @@
-import type { MeasurementRecord, RecordedDataRecord, SavedExperimentRecord } from '@/api'
+import type { CalculationDefinition, MeasurementRecord, RecordedDataRecord, SavedExperimentRecord } from '@/api'
 import type { Vars } from '@/lib/cad/model'
 import type { ExperimentSourceBundle, ExperimentSourceDocument } from '@/lib/cad/source'
 
@@ -101,6 +101,7 @@ export type WorkbenchDraftDomain = Readonly<{
   savedAt: number
   experiment: Readonly<{
     record: SavedExperiment | null
+    calculations?: readonly CalculationDefinition[]
     baselineBundle: ExperimentSourceBundle | null
     document: ExperimentSourceDocument | null
     name: string

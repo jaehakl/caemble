@@ -135,6 +135,21 @@ class ExperimentRecordListResponse(BaseModel):
     items: List[ExperimentRecordBase]
 
 
+class CalculationDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    description: Optional[str] = None
+    source_code: str
+
+    @field_validator("name", "source_code")
+    @classmethod
+    def require_nonempty(cls, value: str, info: Any) -> str:
+        if not value.strip():
+            raise ValueError(f"Calculation {info.field_name} must not be empty")
+        return value.strip() if info.field_name == "name" else value
+
+
 class SaveExperimentRequest(BaseModel):
     mode: str
     namespace: str
@@ -149,6 +164,20 @@ class SaveExperimentRequest(BaseModel):
     sourceBundle: ExperimentSourceBundle
     bundleHash: str
     records: List[ExperimentRecordContract]
+    copyCalculationsFromExperimentId: Optional[StrictInt] = Field(default=None, gt=0)
+    calculations: Optional[List[CalculationDefinition]] = None
+
+    @model_validator(mode="after")
+    def validate_calculation_copy(self):
+        if self.copyCalculationsFromExperimentId is not None or self.calculations is not None:
+            if self.mode != "create":
+                raise ValueError("Calculation copy inputs are only allowed when creating an Experiment")
+            if self.copyCalculationsFromExperimentId is not None and self.calculations is not None:
+                raise ValueError("Specify a source Experiment or Calculation definitions, not both")
+        names = [item.name for item in self.calculations or []]
+        if len(names) != len(set(names)):
+            raise ValueError("Calculation names must be unique within an Experiment")
+        return self
 
 
 class MeasurementBase(OwnedTimestampFields):

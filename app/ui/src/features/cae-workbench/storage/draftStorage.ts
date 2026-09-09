@@ -1,3 +1,4 @@
+import { calculationDefinitionSchema } from '@/contracts/api/calculationValidators'
 import { z } from 'zod'
 import { savedExperimentRecordSchema } from '@/contracts/api/experimentValidators'
 import type { PrivateQueryScope } from '@/features/auth/queryKeys'
@@ -30,6 +31,7 @@ const storedDraftBaseSchema = z
     savedAt: z.number().finite(),
     experiment: z.object({
       record: savedExperimentRecordSchema.nullable(),
+      calculations: z.array(calculationDefinitionSchema).optional(),
       baselineBundle: sourceBundleSchema.nullable(),
       document: z.object({ kind: z.literal('experiment'), sourceBundle: sourceBundleSchema }).passthrough().nullable(),
       name: z.string(),

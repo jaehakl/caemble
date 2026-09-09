@@ -1,3 +1,4 @@
+import type { CalculationDefinition } from '@/api'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -470,12 +471,13 @@ export function useCaeWorkbenchState(
       sourceBundle: ExperimentSourceBundle = starterExperimentSourceBundle,
       name = 'Starter Experiment',
       description = '',
+      calculations: readonly CalculationDefinition[] = [],
     ) => {
       const document = createExperimentDocument(sourceBundle)
       requestSequence.current += 1
       resetSelectionForExperiment(null)
       experimentRef.current = document
-      dispatchEditing({ type: 'newStarted', document, sourceBundle, name, description })
+      dispatchEditing({ type: 'newStarted', document, sourceBundle, name, description, calculations })
     },
     [resetSelectionForExperiment],
   )
@@ -508,7 +510,7 @@ export function useCaeWorkbenchState(
       const manageable = experimentRecord && (experimentRecord.user_id === user.id || user.roles.includes('admin'))
       if (mode !== 'create' && !manageable) throw new Error('이 Experiment는 Save As로 저장하세요.')
       if (mode === 'overwrite' && experimentRecord?.sourceLocked && experimentDirty) {
-        throw new Error('연결 데이터가 있는 Version은 잠겨 있습니다. Save New Version을 사용하세요.')
+        throw new Error('Measurement가 있는 Version은 잠겨 있습니다. Save New Version을 사용하세요.')
       }
       setSaving('experiment')
       const sourceSequence = requestSequence.current
@@ -516,6 +518,7 @@ export function useCaeWorkbenchState(
       try {
         const result = await saveCadDefinition({
           document: savedDocument,
+          calculations: editing.calculations,
           mode,
           savedSourceBundle: experimentId ? baselineExperimentBundle : null,
           selectedId: experimentId,
@@ -562,6 +565,7 @@ export function useCaeWorkbenchState(
     },
     [
       authenticated,
+      editing.calculations,
       baselineExperimentBundle,
       experiment,
       experimentDirty,
@@ -616,12 +620,14 @@ export function useCaeWorkbenchState(
         document: experiment,
         name: experimentName,
         description: experimentDescription,
+        calculations: editing.calculations,
       },
       candidate: { vars: candidateVars, materialSnapshot: candidateMaterialSnapshot },
       selection: selectionContext,
       layout,
     }),
     [
+      editing.calculations,
       baselineExperimentBundle,
       candidateMaterialSnapshot,
       candidateVars,

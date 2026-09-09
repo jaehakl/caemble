@@ -1,3 +1,9 @@
+export type CalculationDefinition = Readonly<{
+  name: string
+  description?: string | null
+  source_code: string
+}>
+
 export type CalculationDataAxis = Readonly<{
   name: string
   ticks: readonly number[]

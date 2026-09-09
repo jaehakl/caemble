@@ -49,3 +49,12 @@ node $caembleCli batch show $batch.id
 push stores source using its base identity and checks its matching artifact. batch submit uploads large already built item bytes directly to S3 and commits their references in the remote batch; it performs no local Solver execution or rebuilding. The local test and server submission above reuse .work/checked exactly. watch emits observation events: Ctrl+C or an observation timeout leaves the remote batch running. Use batch cancel <batch-id> only when cancellation is intended. Inspect the job Measurement IDs returned by batch show with measurement inspect <measurement-id>; fetch persisted records before claiming numerical success.
 
 To build a larger batch after the small test succeeds, use experiment build .work/experiment --count 10 --vars-mode random --out .work/batch-build, then batch submit .work/batch-build --experiment <saved-experiment-id>. All ten inputs are built and validated locally before any batch submission. Keep .work/batch-build for retry or inspection. Rebuild after changing source, variables, explicit Material model snapshots or Catalog; do not reuse an artifact with a different source or Catalog identity. For a locked source, select the intended --new-version patch|minor|major on push, then use the returned Experiment ID.
+
+
+## 예제 Calculation 등록과 동반 저장
+
+Catalog Draft의 `catalogctl --database <draft.sqlite3> experiment upsert ... --bundle-file <bundle.json> --calculations-file <calculations.json>`으로 예제 Version에 Calculation을 등록합니다. Calculation 파일은 `name`, 선택적 `description`, `source_code`를 가진 객체의 JSON 배열입니다. 예제 안에서 이름은 중복될 수 없습니다. 파일을 생략하면 기존 목록을 유지하고, 빈 배열을 지정하면 목록을 비웁니다. 이 파일은 등록 입력이며 최종 카탈로그 데이터는 SQLite에만 보관합니다. 기존 Draft는 `catalogctl --database <draft.sqlite3> rebase` 후 사용하고 검증한 Draft를 publish합니다.
+
+예제 상세 조회에는 `calculations`가 포함됩니다. `experiment init --example ...`은 이를 로컬 `caemble.json`에 함께 보관하고 최초 `experiment push`에서 Experiment와 한 번에 저장합니다. `--new-version`으로 저장하면 서버의 선택한 원본 Version에 저장된 Calculation을 복사합니다. 이름·설명·코드만 복사되므로 대상 Measurement로 Calculation preflight를 다시 수행해야 합니다. 기존 예제에 Calculation 등록은 필수가 아닙니다.
+
+Experiment source와 Record 계약의 덮어쓰기 잠금은 Measurement 존재 여부만으로 결정합니다. Calculation만 있는 Experiment는 덮어쓸 수 있으며, source 또는 Record 계약 변경 시 Calculation 검증 상태가 초기화됩니다.

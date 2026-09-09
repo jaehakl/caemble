@@ -1,4 +1,4 @@
-import { dbTables, type ExperimentRecordContract, type SaveExperimentResponse } from '@/api'
+import { dbTables, type CalculationDefinition, type ExperimentRecordContract, type SaveExperimentResponse } from '@/api'
 import { rawCodeHash } from '@/lib/cad/compiler/semanticHash'
 import type { CadSourceDocument, ExperimentSourceBundle } from '@/lib/cad/source'
 import type { DefinitionFormValues, ExperimentSaveMode } from './SaveDefinitionDialog'
@@ -31,12 +31,14 @@ export async function saveCadDefinition({
   savedSourceBundle,
   selectedId,
   records,
+  calculations,
   values,
 }: {
   document: CadSourceDocument
   mode: ExperimentSaveMode
   savedSourceBundle?: ExperimentSourceBundle | null
   selectedId: number | null
+  calculations?: readonly CalculationDefinition[]
   records: readonly ExperimentRecordContract[]
   values: DefinitionFormValues
 }): Promise<
@@ -58,7 +60,13 @@ export async function saveCadDefinition({
     repository: values.repository,
     key: values.key,
     ...(mode === 'create'
-      ? { mode, initialVersion: '0.1.0' as const }
+      ? {
+          mode,
+          initialVersion: '0.1.0' as const,
+          ...(selectedId !== null
+            ? { copyCalculationsFromExperimentId: selectedId }
+            : { calculations: calculations ?? [] }),
+        }
       : mode === 'overwrite'
         ? { mode, experimentId: selectedId!, baseBundleHash: baseBundleHash! }
         : { mode, experimentId: selectedId!, baseBundleHash: baseBundleHash!, bump: values.bump }),

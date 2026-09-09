@@ -164,6 +164,7 @@ export async function experimentCommand(command: string, context: CommandContext
       metadata = {
         kind: 'experiment',
         example: options.example,
+        calculations: example.calculations,
         namespace: 'local',
         repository: 'experiments',
         key: example.key,
@@ -229,7 +230,7 @@ export async function experimentCommand(command: string, context: CommandContext
       bundleHash,
       records,
       ...(mode === 'create'
-        ? { mode, initialVersion: '0.1.0' }
+        ? { mode, initialVersion: '0.1.0', calculations: metadata.calculations ?? [] }
         : mode === 'overwrite'
           ? { mode, experimentId: metadata.id, baseBundleHash: metadata.baseBundleHash }
           : {

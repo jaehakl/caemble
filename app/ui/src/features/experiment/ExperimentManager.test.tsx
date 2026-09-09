@@ -69,7 +69,12 @@ beforeEach(() => {
       },
     ],
   })
-  mocks.detail.mockResolvedValue({ sourceBundle: {}, title: 'Heat example', description: '' })
+  mocks.detail.mockResolvedValue({
+    sourceBundle: {},
+    title: 'Heat example',
+    description: '',
+    calculations: [{ name: 'Mean', source_code: 'export default () => 1' }],
+  })
 })
 it('orders and deduplicates namespaces and opens the active source', async () => {
   const user = userEvent.setup()
@@ -84,7 +89,11 @@ it('orders and deduplicates namespaces and opens the active source', async () =>
   expect(onOpenSaved).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }))
   await user.click(screen.getByRole('tab', { name: '예제' }))
   await user.click(await screen.findByRole('button', { name: /Heat example/ }))
-  await waitFor(() => expect(onOpenExample).toHaveBeenCalledWith({}, 'Heat example', ''))
+  await waitFor(() =>
+    expect(onOpenExample).toHaveBeenCalledWith({}, 'Heat example', '', [
+      { name: 'Mean', source_code: 'export default () => 1' },
+    ]),
+  )
   expect(screen.queryByText('Experiment 2')).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: /삭제/ })).not.toBeInTheDocument()
 })

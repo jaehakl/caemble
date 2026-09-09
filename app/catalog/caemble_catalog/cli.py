@@ -227,6 +227,20 @@ def _edit_experiment(args: argparse.Namespace) -> None:
                 version = parse_experiment_version(args.version)
             except ValueError as error:
                 raise CatalogError(str(error)) from error
+            if args.calculations_file is not None:
+                try:
+                    calculations = json.loads(args.calculations_file.read_text(encoding="utf-8"))
+                except (OSError, ValueError) as error:
+                    raise CatalogError(f"Cannot read Calculation definitions: {error}") from error
+            else:
+                calculations = [dict(row) for row in connection.execute(
+                    """SELECT c.name, c.description, c.source_code FROM experiment_calculations c
+                       JOIN experiments e ON e.id = c.experiment_id
+                       WHERE e.key = ? AND e.namespace = ? AND e.repository_slug = ?
+                         AND e.version_major = ? AND e.version_minor = ? AND e.version_patch = ?
+                       ORDER BY c.ordinal""",
+                    (args.key, args.namespace, args.repository, *version),
+                )]
             connection.execute(
                 """DELETE FROM experiments
                    WHERE key = ? AND namespace = ? AND repository_slug = ?
@@ -245,6 +259,7 @@ def _edit_experiment(args: argparse.Namespace) -> None:
                     "concepts": args.concept,
                     "relatedSolvers": related_solvers,
                     "sourceBundle": _load_json_file(args.bundle_file, "Experiment source bundle"),
+                    "calculations": calculations,
                 },
             )
     refresh_derived_data(args.database)
@@ -600,6 +615,7 @@ def build_parser() -> argparse.ArgumentParser:
     upsert.add_argument("--title", required=True)
     upsert.add_argument("--description", required=True)
     upsert.add_argument("--bundle-file", type=Path, required=True)
+    upsert.add_argument("--calculations-file", type=Path, help="Calculation definition list; omitted preserves existing definitions")
     upsert.add_argument("--concept", action="append", default=[])
     upsert.add_argument("--solver", action="append", default=[])
     remove = experiment_actions.add_parser("remove")

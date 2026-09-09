@@ -5,7 +5,7 @@ from typing import Any, Generic, TypeVar
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
-from models import ExperimentSourceBundle
+from models import CalculationDefinition, ExperimentSourceBundle
 
 
 class CatalogModel(BaseModel):
@@ -135,6 +135,7 @@ class ExperimentSummary(CatalogModel):
 
 class ExperimentDetail(ExperimentSummary):
     source_bundle: ExperimentSourceBundle
+    calculations: list[CalculationDefinition]
 
 
 class CatalogSearchItem(CatalogModel):

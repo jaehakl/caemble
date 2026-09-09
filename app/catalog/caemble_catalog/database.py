@@ -592,6 +592,10 @@ class Catalog:
             ],
         }
         if include_bundle:
+            result["calculations"] = [dict(item) for item in self._all(
+                "SELECT name, description, source_code FROM experiment_calculations WHERE experiment_id = ? ORDER BY ordinal",
+                (experiment_id,),
+            )]
             result["sourceBundle"] = {
                 "files": {
                     item["path"]: item["source"]

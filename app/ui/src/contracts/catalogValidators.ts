@@ -1,3 +1,4 @@
+import { calculationDefinitionSchema } from './api/calculationValidators'
 import { z } from 'zod'
 import type {
   CatalogExperimentDetail,
@@ -351,6 +352,7 @@ const experimentSummarySchema = z
   .passthrough()
 
 const experimentDetailSchema = experimentSummarySchema.extend({
+  calculations: z.array(calculationDefinitionSchema),
   sourceBundle: z
     .object({
       files: z.record(z.string(), z.string()),

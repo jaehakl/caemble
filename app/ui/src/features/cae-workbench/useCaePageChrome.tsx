@@ -191,7 +191,7 @@ export function useCaePageChrome({
               : workbench.experimentRecord && !workbench.experimentManageable
                 ? '다른 사용자의 Experiment는 Save As로 저장하세요.'
                 : workbench.sourceLocked && workbench.experimentDirty
-                  ? '연결 데이터가 있는 Version은 잠겨 있습니다. Save New Version을 사용하세요.'
+                  ? 'Measurement가 있는 Version은 잠겨 있습니다. Save New Version을 사용하세요.'
                   : sourceLockReason,
         onSelect: () => setDialog('save-experiment'),
       },

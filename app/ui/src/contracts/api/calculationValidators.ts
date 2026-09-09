@@ -12,6 +12,14 @@ import type {
 } from './calculation'
 import { databaseIdSchema, parseGetListResponse } from './validators'
 
+export const calculationDefinitionSchema = z
+  .object({
+    name: z.string().trim().min(1),
+    description: z.string().nullable().optional(),
+    source_code: z.string().refine((value) => value.trim().length > 0, 'Calculation source must not be empty'),
+  })
+  .strict()
+
 const calculationDataDTypeSchema = z.enum(['float32', 'float64', 'int8', 'int16', 'int32', 'uint8', 'uint16', 'uint32'])
 const calculationIntegerRanges: Readonly<Partial<Record<CalculationDataOutput['dtype'], readonly [number, number]>>> = {
   int8: [-128, 127],

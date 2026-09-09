@@ -221,3 +221,14 @@ describe('Workbench draft storage', () => {
     expect(sessionStorage.length).toBe(0)
   })
 })
+
+it('preserves example Calculations through draft storage', async () => {
+  const calculations = [{ name: '평균', description: '예제', source_code: 'export default () => 1' }]
+  const exampleDraft = { ...draft, experiment: { ...draft.experiment, calculations } }
+  await saveWorkbenchDraft('public', exampleDraft)
+  await expect(loadWorkbenchDraft('public')).resolves.toEqual(
+    expect.objectContaining({
+      experiment: expect.objectContaining({ calculations }),
+    }),
+  )
+})
