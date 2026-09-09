@@ -24,6 +24,7 @@ export function RuntimeConsoleView({ store }: { store: RuntimeConsoleStore }) {
   const events = useMemo(
     () =>
       snapshot.events.filter((event) => {
+        if (event.source === 'cad' && event.level === 'info') return false
         if (source !== 'all' && event.source !== source) return false
         if (level !== 'all' && event.level !== level) return false
         if (!normalizedQuery) return true
