@@ -61,7 +61,7 @@ class CatalogV3Tests(unittest.TestCase):
                 version="3.0.0",
             )
 
-        self.assertEqual(total, 9)
+        self.assertEqual(total, 10)
         self.assertTrue(removed_keys.isdisjoint(item["key"] for item in experiments))
         self.assertEqual(example["title"], "Electro-Thermal Notched Bar")
         self.assertEqual(
@@ -112,7 +112,7 @@ class CatalogV3Tests(unittest.TestCase):
     def test_release_has_only_current_solvers_and_examples(self) -> None:
         expected = {
             "dc-current-density": "0.5.0", "steady-state-heat": "0.4.0",
-            "ray-tracing": "0.5.0", "fdtd": "2.0.0",
+            "ray-tracing": "0.5.0", "fdtd": "2.1.0",
         }
         with open_catalog() as catalog:
             manifests = catalog.solver_manifests()
@@ -121,13 +121,14 @@ class CatalogV3Tests(unittest.TestCase):
             for manifest in manifests:
                 package = manifest["descriptor"]["name"].replace("-", "_")
                 self.assertEqual(manifest["implementation"], f"app.solvers.{package}.entry:implementation")
-            for name, version in [("dc-current-density", "0.4.0"), ("steady-state-heat", "0.3.0"), ("ray-tracing", "0.4.0"), ("fdtd", "1.0.1")]:
+            for name, version in [("dc-current-density", "0.4.0"), ("steady-state-heat", "0.3.0"), ("ray-tracing", "0.4.0"), ("fdtd", "1.0.1"), ("fdtd", "2.0.0")]:
                 with self.assertRaises(CatalogNotFoundError):
                     catalog.get_solver_manifest(name, version)
             for example in catalog.list_experiments(limit=100)[0]:
-                self.assertEqual(example["version"], "3.0.0")
+                self.assertEqual(example["version"], {"gold-fcc-fresnel": "1.0.0", "fdtd-drude-slab": "3.1.0"}.get(example["key"], "3.0.0"))
+                previous = {"gold-fcc-fresnel": "0.0.0", "fdtd-drude-slab": "3.0.0"}.get(example["key"], "2.0.0")
                 with self.assertRaises(CatalogNotFoundError):
-                    catalog.experiment(example["coordinate"].replace("@3.0.0", "@2.0.0"))
+                    catalog.experiment(example["coordinate"].rsplit("@", 1)[0] + "@" + previous)
                 for solver in example["relatedSolvers"]:
                     self.assertEqual(solver["version"], expected[solver["name"]])
 

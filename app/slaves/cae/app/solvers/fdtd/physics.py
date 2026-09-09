@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 import torch
 
 from .pml import CpmlState
+
+if TYPE_CHECKING:
+    from .tfsf import TfsfSource
 
 
 LIGHT_SPEED = 299_792_458.0
@@ -168,6 +171,7 @@ class FDTDEngine:
     dt: float
     coefficients: ElectricUpdateCoefficients
     cpml: CpmlState | None = None
+    incident_sources: list[TfsfSource] = field(default_factory=list)
     electric: torch.Tensor = field(init=False)
     magnetic: torch.Tensor = field(init=False)
     current: torch.Tensor | None = field(init=False)
@@ -265,6 +269,8 @@ class FDTDEngine:
                 self.periodic[axis],
                 forward,
             )
+        for source in self.incident_sources:
+            source.correct(kind, field_component, axis, derivative)
         if self.cpml is not None:
             derivative = self.cpml.correct(kind, field_component, axis, derivative)
         return derivative

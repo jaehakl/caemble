@@ -100,6 +100,8 @@ class SourcePlan:
     bandwidth: float
     start_time: float
     end_time: float
+    axis: int | None = None
+    direction: int = 1
 
 
 async def prepare_sources(
@@ -109,7 +111,7 @@ async def prepare_sources(
     scene = task_scene(invocation.world)
     plans: list[SourcePlan] = []
     for index, rule in enumerate(invocation.config["boundaryConditions"]):
-        if rule["methodId"] != "fdtd.soft-electric-source":
+        if rule["methodId"] not in {"fdtd.soft-electric-source", "fdtd.tfsf-plane-wave"}:
             continue
         part = _target_part(scene, rule, f"source {index}")
         bounds = await axis_aligned_box_bounds(invocation, scene, part, f"source {index}")
@@ -126,6 +128,25 @@ async def prepare_sources(
         amplitude = np.asarray(_raw(parameters["amplitude"]), dtype=np.float32)
         if amplitude.shape != (3,) or np.any(~np.isfinite(amplitude)):
             raise ValueError("source amplitude must be finite [Ex, Ey, Ez]")
+        is_tfsf = rule["methodId"] == "fdtd.tfsf-plane-wave"
+        if is_tfsf:
+            if any(prepared.domain.topology.periodic):
+                raise ValueError("TFSF requires nonperiodic boundaries")
+            # A one-cell exterior/interior collar must remain vacuum and outside CPML.
+            collar = np.zeros_like(mask)
+            for dimension in range(3):
+                collar |= mask != np.roll(mask, 1, axis=dimension)
+                collar |= mask != np.roll(mask, -1, axis=dimension)
+            for axis_index, indices in enumerate((x, y, z)):
+                lower, upper = prepared.pml_cells[axis_index]
+                count = mask.shape[2 - axis_index]
+                if indices[0] <= lower + 1 or indices[-1] >= count - upper - 2:
+                    raise ValueError("TFSF faces require a vacuum collar outside CPML")
+                widths = prepared.widths[axis_index][indices[0]-1:indices[-1]+2]
+                if not np.allclose(widths, widths[0], rtol=1e-5, atol=0):
+                    raise ValueError("TFSF box and its collar require uniform grid spacing")
+            if np.any(prepared.epsilon_instantaneous[collar] != 1) or np.any(np.isfinite(prepared.plasma_frequency[collar])):
+                raise ValueError("TFSF boundary must lie in vacuum, outside all materials")
         plans.append(
             SourcePlan(
                 mask,
@@ -135,6 +156,8 @@ async def prepare_sources(
                 _nonnegative_float(parameters["bandwidth"], "bandwidth"),
                 _nonnegative_float(parameters["startTime"], "startTime"),
                 _positive_float(parameters["endTime"], "endTime"),
+                "xyz".index(str(_raw(parameters["axis"]))) if is_tfsf else None,
+                int(_raw(parameters["direction"])) if is_tfsf else 1,
             )
         )
     return plans

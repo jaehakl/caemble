@@ -13,6 +13,7 @@ from .physics import FDTDEngine, cell_center_fields
 from .pml import CpmlState
 from .setup import PreparedDomain, _positive_float
 from .sources import SourcePlan, SoftElectricSource, validate_source_timing
+from .tfsf import TfsfSource
 
 
 def allocate_simulation(
@@ -88,7 +89,21 @@ def allocate_simulation(
                 plan.end_time,
             )
             for plan in source_plans
+            if plan.axis is None
         ]
+        for plan in source_plans:
+            if plan.axis is not None:
+                if plan.waveform != "gaussian" or plan.bandwidth <= 0:
+                    raise ValueError("TFSF requires a Gaussian pulse with positive bandwidth")
+                if plan.end_time <= plan.start_time or plan.end_time > simulation_time:
+                    raise ValueError("TFSF requires startTime < endTime <= simulationTime")
+                if plan.frequency + 0.5 * plan.bandwidth > 0.5 / prepared.dt:
+                    raise ValueError("TFSF source exceeds the timestep Nyquist limit")
+                engine.incident_sources.append(TfsfSource(
+                    engine, plan.mask, plan.axis, plan.direction, plan.amplitude,
+                    plan.frequency, plan.bandwidth, plan.start_time, plan.end_time,
+                    math.ceil(simulation_time / prepared.dt),
+                ))
         for source in sources:
             validate_source_timing(
                 source,
@@ -155,8 +170,14 @@ async def propagate(
         source_time = (step - 1) * engine.dt
         for source in sources:
             source.apply(engine.electric, source_time)
+        for source in engine.incident_sources:
+            source.inject(source_time)
         engine.step_magnetic()
+        for source in engine.incident_sources:
+            source.step_magnetic()
         engine.step_electric()
+        for source in engine.incident_sources:
+            source.step_electric()
         time = step * engine.dt
         if time_detectors or spectral_detectors:
             centered_electric, centered_magnetic = cell_center_fields(

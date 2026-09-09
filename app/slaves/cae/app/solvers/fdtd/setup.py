@@ -103,7 +103,11 @@ async def prepare_domain(invocation: SolverInvocation) -> PreparedDomain:
 
     experiment = experiment_scene(invocation.world)
     x_ticks, y_ticks, z_ticks = domain.cell_ticks
-    for root in experiment["roots"]:
+    vacuum_reference = _boolean(parameters.get("vacuumReference", False), "vacuumReference")
+    # In an already-vacuum background, repainting every particle as vacuum is
+    # a no-op. Keep the exact same domain/dt without triangulating the overlays.
+    roots = () if vacuum_reference and np.all(epsilon_instantaneous == 1) and np.all(np.isnan(plasma_frequency)) else experiment["roots"]
+    for root in roots:
         mesh = await invocation.geometry.triangular_mesh(
             experiment,
             root["id"],
@@ -118,6 +122,11 @@ async def prepare_domain(invocation: SolverInvocation) -> PreparedDomain:
             invocation.progress,
         )
         if not np.any(mask):
+            continue
+        if vacuum_reference:
+            epsilon_instantaneous[mask] = 1
+            plasma_frequency[mask] = np.nan
+            damping_frequency[mask] = np.nan
             continue
         properties = _cached_material(property_cache, invocation, root, "experiment", "geometryOverlay")
         _paint_material(

@@ -72,9 +72,9 @@ async def test_catalog_fdtd_abi3_runs_small_cpu_domain_with_mixed_drude_material
     plasma_frequency: float,
 ) -> None:
     catalog = SolverCatalog.discover()
-    descriptor = catalog.descriptor("fdtd", "2.0.0")
-    locator = catalog.locator("fdtd", "2.0.0")
-    assert catalog.abi_version("fdtd", "2.0.0") == 3
+    descriptor = catalog.descriptor("fdtd", "2.1.0")
+    locator = catalog.locator("fdtd", "2.1.0")
+    assert catalog.abi_version("fdtd", "2.1.0") == 3
     assert locator == "app.solvers.fdtd.entry:implementation"
 
     module_name, attribute = locator.split(":", maxsplit=1)
@@ -353,3 +353,19 @@ async def test_catalog_fdtd_abi3_runs_small_cpu_domain_with_mixed_drude_material
     incompatible["initializations"][0]["parameters"]["drudeMethod"] = "none"
     with pytest.raises(ValueError, match="Drude Material occupies a region"):
         await original_prepare_domain(replace(invocation, config=incompatible))
+
+    vacuum_config = copy.deepcopy(config)
+    vacuum_config["parameters"]["vacuumReference"] = True
+    vacuum = await original_prepare_domain(replace(invocation, config=vacuum_config))
+    assert vacuum.dt == prepared.dt
+    assert vacuum.domain.cell_ticks == prepared.domain.cell_ticks
+    assert np.all(np.isnan(vacuum.plasma_frequency))
+    assert np.all(vacuum.model_codes == 0)
+    assert np.max(vacuum.epsilon_instantaneous) == 2  # buffer background is retained
+    vacuum_world = copy.deepcopy(world)
+    vacuum_world["materials"]["task"]["Buffer Background"]["models"]["electric"]["parameters"]["epsilon"] = _material_value(identity, "{fraction}")
+    empty = await original_prepare_domain(replace(invocation, config=vacuum_config, world=vacuum_world))
+    assert empty.dt == prepared.dt
+    assert empty.domain.cell_ticks == prepared.domain.cell_ticks
+    assert np.all(empty.epsilon_instantaneous == 1)
+    assert np.all(np.isnan(empty.plasma_frequency))

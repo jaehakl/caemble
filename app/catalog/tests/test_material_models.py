@@ -45,7 +45,7 @@ class MaterialModelTests(unittest.TestCase):
             tables = {row[0] for row in catalog._all("SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertNotIn("material_parameters", tables)
             self.assertNotIn("solver_material_properties", tables)
-            fdtd = catalog.get_solver_manifest("fdtd", "2.0.0")["descriptor"]
+            fdtd = catalog.get_solver_manifest("fdtd", "2.1.0")["descriptor"]
             overlay = next(role for role in fdtd["materials"] if role["role"] == "geometryOverlay")
             self.assertEqual(overlay["target"], {"category": "geometry", "source": "experiment"})
 

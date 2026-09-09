@@ -56,4 +56,4 @@ for (const example of examples) {
   writeFileSync(path.join(outputDirectory, `${example.key}.json`), JSON.stringify(measurement), 'utf8')
   console.log(`${example.coordinate}: compiled, evaluated, and built ${taskNames.length} tasks`)
 }
-assert.equal(examples.length, 9)
+assert.equal(examples.length, 10)

@@ -175,7 +175,7 @@ def test_model_selection_rejects_unknown_empty_role():
 @pytest.mark.parametrize("reference", [None, {}, {"name": "unknown"}, {"name": []}])
 def test_applicable_geometry_requires_a_material_snapshot(reference):
     with open_catalog() as catalog:
-        descriptor = catalog.get_solver_manifest("fdtd", "2.0.0")["descriptor"]
+        descriptor = catalog.get_solver_manifest("fdtd", "2.1.0")["descriptor"]
     scene = {"roots": [{"id": "part", "material": reference}]}
     with pytest.raises(CaeError, match="geometry part requires an explicit Material"):
         select_material_models(descriptor, {}, {"experiment": scene}, {"experiment": {}}, {})
