@@ -2,6 +2,7 @@ import type { PropsWithChildren } from 'react'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { toast } from 'sonner'
 import type { UserData } from '@/api'
 import { defaultWorkbenchLayoutState, type SavedExperiment, type WorkbenchDraft } from '../types'
 import { useCaeWorkbenchState } from './useCaeWorkbenchState'
@@ -167,14 +168,14 @@ describe('useCaeWorkbenchState draft restoration', () => {
   it('commits only the latest Experiment when requests finish out of order', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const pending = new Map<number, (value: unknown) => void>()
-    vi.spyOn(queryClient, 'fetchQuery').mockImplementation(
-      (options) =>
-        new Promise((resolve) => {
-          const id = options.queryKey[options.queryKey.length - 1]
-          if (typeof id !== 'number') throw new Error('Experiment detail key is missing its ID.')
-          pending.set(id, resolve)
-        }),
-    )
+    vi.spyOn(queryClient, 'fetchQuery').mockImplementation((options) => {
+      if (options.queryKey.includes('measurements')) return Promise.resolve({ items: [] }) as never
+      return new Promise((resolve) => {
+        const id = options.queryKey[options.queryKey.length - 1]
+        if (typeof id !== 'number') throw new Error('Experiment detail key is missing its ID.')
+        pending.set(id, resolve)
+      })
+    })
     const wrapper = ({ children }: PropsWithChildren) => (
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     )
@@ -265,5 +266,129 @@ describe('useCaeWorkbenchState draft restoration', () => {
     await act(async () => void (await pendingMeasurement))
 
     expect(result.current.selectionContext).toEqual({ experimentId: 8, measurementId: null, calculationId: null })
+  })
+})
+
+describe('Experiment automatic Measurement selection', () => {
+  function setup() {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    )
+    return { client, ...renderHook(() => useCaeWorkbenchState(firstUser, true), { wrapper }) }
+  }
+
+  it('requests the newest recorded Measurement with an ID tie break and restores its candidate', async () => {
+    const { client, result } = setup()
+    const fetchQuery = vi.spyOn(client, 'fetchQuery').mockResolvedValue({ items: [mocks.measurement] } as never)
+    await act(async () => {
+      await result.current.loadExperiment(savedExperiment(7))
+    })
+    await waitFor(() => expect(result.current.selectionContext.measurementId).toBe(41))
+    const key = fetchQuery.mock.calls[0][0].queryKey
+    expect(key[key.length - 1]).toMatchObject({
+      scope: 'visible',
+      filter: { experiment_id: [7, 7] },
+      null_filter: { recorded_at: 'is_not_null' },
+      sort: [
+        ['recorded_at', 'desc'],
+        ['id', 'desc'],
+      ],
+      limit: 1,
+    })
+    expect(mocks.loadBaseMeasurement).toHaveBeenCalledWith(41, 7)
+    expect(result.current.candidateVars).toEqual(mocks.measurement.vars)
+    expect(result.current.candidateMaterialSnapshot).toEqual(mocks.measurement.material_snapshot)
+    expect(result.current.selectionRestoring).toBe(false)
+  })
+
+  it('keeps the Experiment open with no Measurement when no recorded result exists', async () => {
+    const { client, result } = setup()
+    vi.spyOn(client, 'fetchQuery').mockResolvedValue({ items: [] } as never)
+    await act(async () => {
+      await result.current.loadExperiment(savedExperiment(7))
+    })
+    expect(result.current.experimentId).toBe(7)
+    expect(result.current.selectionContext.measurementId).toBeNull()
+    expect(mocks.loadBaseMeasurement).not.toHaveBeenCalled()
+    expect(result.current.selectionRestoring).toBe(false)
+  })
+
+  it.each(['list', 'recorded data'])(
+    'keeps the Experiment open on %s failure without selecting another result',
+    async (failure) => {
+      const { client, result } = setup()
+      const fetchQuery = vi.spyOn(client, 'fetchQuery')
+      const error = vi.spyOn(toast, 'error')
+      if (failure === 'list') fetchQuery.mockRejectedValue(new Error('offline'))
+      else {
+        fetchQuery.mockResolvedValue({ items: [mocks.measurement] } as never)
+        mocks.loadBaseMeasurement.mockRejectedValueOnce(new Error('offline'))
+      }
+      await act(async () => {
+        await result.current.loadExperiment(savedExperiment(7))
+      })
+      await waitFor(() => expect(error).toHaveBeenCalledWith('offline'))
+      expect(result.current.experimentId).toBe(7)
+      expect(result.current.selectionContext.measurementId).toBeNull()
+      expect(result.current.selectionRestoring).toBe(false)
+      expect(fetchQuery).toHaveBeenCalledOnce()
+    },
+  )
+
+  it.each(['experiment', 'new', 'manual'])(
+    'ignores an automatic list response after a newer %s selection',
+    async (action) => {
+      const { client, result } = setup()
+      let resolveList!: (value: unknown) => void
+      vi.spyOn(client, 'fetchQuery').mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveList = resolve
+          }) as never,
+      )
+      let opening!: Promise<SavedExperiment>
+      act(() => {
+        opening = result.current.loadExperiment(savedExperiment(7))
+      })
+      if (action === 'experiment') act(() => result.current.applyExperiment(savedExperiment(8)))
+      else if (action === 'new') act(() => result.current.newExperiment())
+      else
+        await act(async () => {
+          await result.current.selection.loadMeasurement(mocks.measurement)
+        })
+      const calls = mocks.loadBaseMeasurement.mock.calls.length
+      await act(async () => {
+        resolveList({ items: [{ ...mocks.measurement, id: 99 }] })
+        await opening
+      })
+      expect(mocks.loadBaseMeasurement).toHaveBeenCalledTimes(calls)
+      expect(result.current.selectionContext.measurementId).toBe(action === 'manual' ? 41 : null)
+      expect(result.current.experimentId).toBe(action === 'experiment' ? 8 : action === 'new' ? null : 7)
+    },
+  )
+
+  it('does not commit a late automatic result after a manual Measurement wins', async () => {
+    const { client, result } = setup()
+    vi.spyOn(client, 'fetchQuery').mockResolvedValue({ items: [mocks.measurement] } as never)
+    let resolveResult!: (value: typeof mocks.measurement) => void
+    mocks.loadBaseMeasurement.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveResult = resolve
+        }),
+    )
+    await act(async () => {
+      await result.current.loadExperiment(savedExperiment(7))
+    })
+    await waitFor(() => expect(mocks.loadBaseMeasurement).toHaveBeenCalledWith(41, 7))
+    const manual = { ...mocks.measurement, id: 42, vars: { width: 9 } }
+    mocks.loadBaseMeasurement.mockResolvedValueOnce(manual)
+    await act(async () => {
+      await result.current.selection.loadMeasurement(manual)
+    })
+    await act(async () => resolveResult(mocks.measurement))
+    expect(result.current.selectionContext.measurementId).toBe(42)
+    expect(result.current.candidateVars).toEqual({ width: 9 })
   })
 })

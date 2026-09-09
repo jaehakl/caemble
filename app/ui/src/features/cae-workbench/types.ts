@@ -82,7 +82,7 @@ export type WorkbenchLayoutState = Readonly<{
 }>
 
 export const defaultWorkbenchLayoutState: WorkbenchLayoutState = Object.freeze({
-  activeSection: 'prediction',
+  activeSection: 'experiment',
   activeExperimentFile: 'experiment.tsx',
   leftWidthRatio: 0.234,
   rightWidthRatio: 0.5,

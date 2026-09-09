@@ -2,6 +2,10 @@
 
 Caemble의 Experiment는 공통 형상과 변수, Material, solver Task, 실행 프로그램과 RecordedData 계약을 하나의 source bundle로 관리합니다.
 
+복원할 로컬 작업이나 URL로 지정한 Experiment가 없으면 **Experiment** 화면에서 첫 namespace의 첫 Experiment를 자동으로 엽니다. 내 namespace, 공개 Demo namespace, **예제** 순으로 탭이 표시되며 각 그룹의 namespace는 이름순입니다. 저장된 Experiment가 없으면 첫 예제를 엽니다. 기존 로컬 작업과 저장된 선택은 재방문 시 복원됩니다.
+
+저장된 Experiment를 열면 결과가 기록된 Measurement 중 가장 최근 항목을 자동으로 불러옵니다. 해당 Measurement의 Vars·Material과 RecordedData가 적용되고 ray 경로 등 지원되는 결과가 Viewer에 표시됩니다. 기록된 결과가 없으면 Experiment만 표시하며 Solver를 자동 실행하지 않습니다.
+
 ## 먼저 준비할 것
 
 형상과 문서는 로그인 없이 살펴볼 수 있습니다. 서버에 Measurement를 저장하고 Solver를 실행하려면 로그인과 사용 가능한 내 CAE Launcher가 필요합니다. 실행 전에 **Setting → Launchers**에서 연결 상태를 확인하세요.
@@ -18,7 +22,7 @@ Caemble의 Experiment는 공통 형상과 변수, Material, solver Task, 실행 
 ## 순서대로 진행하기
 
 1. 로그인하고 CAE Launcher가 연결되어 있는지 확인합니다.
-2. 상단 **Experiment** 메뉴를 선택하고 왼쪽 목록에서 Example 또는 저장된 namespace / repository / SemVer Version을 연 뒤, 오른쪽 Source 탭에서 source bundle을 작성합니다.
+2. 상단 **Experiment** 메뉴를 선택하고 왼쪽 namespace 탭 또는 **예제** 탭에서 Experiment Version을 연 뒤, 오른쪽 Source 탭에서 source bundle을 작성합니다.
 3. source 상태가 `Ready`가 될 때까지 compile/evaluate 오류를 해결합니다.
 4. **Generate Candidate**로 `varsSchema` 범위의 새 변수 조건과 그 조건에서 만든 Model Parameter를 미리 봅니다.
 5. 원하는 조건이면 **Save Current Measurement**로 변수와 Material snapshot을 고정합니다. 이 단계는 solver를 실행하지 않습니다.

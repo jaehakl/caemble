@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { dbTables, type UserData } from '@/api'
+import { dbTables, getListRequest, type UserData } from '@/api'
 import { privateQueryScope } from '@/features/auth/queryKeys'
 import type { RuntimeActivityCallback } from '@/features/runtime-console/types'
 import type { DefinitionFormValues, ExperimentSaveMode } from '@/features/viewer/persistence/SaveDefinitionDialog'
@@ -15,6 +15,7 @@ import {
 } from '@/lib/cad/source'
 import { varsFingerprint, type Tensor, type Vars } from '@/lib/cad/model'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
+import { measurementsQueryOptions } from '@/features/measurement/queryOptions'
 import { useCaeDataSelection } from '@/features/measurement/useCaeDataSelection'
 import { useCaeMeasurementActions } from '@/features/measurement/useCaeMeasurementActions'
 import type {
@@ -88,6 +89,14 @@ export function useCaeWorkbenchState(
     calculationId: null,
   })
   const requestSequence = useRef(0)
+  const measurementRequestSequence = useRef(0)
+  useEffect(
+    () => () => {
+      requestSequence.current += 1
+      measurementRequestSequence.current += 1
+    },
+    [queryScope],
+  )
   const experimentRef = useRef(experiment)
   const authenticatedRef = useRef(authenticated)
   experimentRef.current = experiment
@@ -124,6 +133,7 @@ export function useCaeWorkbenchState(
   const clearMeasurement = useCallback(() => {
     const current = selectionContextRef.current
     if (current.experimentId !== experimentId) return false
+    measurementRequestSequence.current += 1
     setPendingMeasurementId(null)
     setSelectionRestoreStatus('idle')
     clearBaseMeasurement()
@@ -139,6 +149,7 @@ export function useCaeWorkbenchState(
         nextExperimentId === null
           ? { experimentId: null, measurementId: null, calculationId: null }
           : { experimentId: nextExperimentId, measurementId: null, calculationId: null }
+      measurementRequestSequence.current += 1
       setPendingMeasurementId(null)
       setSelectionRestoreStatus('idle')
       clearBaseMeasurement()
@@ -160,8 +171,22 @@ export function useCaeWorkbenchState(
       ) {
         return null
       }
-      const row = await loadBaseMeasurement(value, expectedExperimentId)
-      if (!row) return null
+      const sequence = ++measurementRequestSequence.current
+      setPendingMeasurementId(null)
+      setSelectionRestoreStatus('restoring')
+      let row: SavedMeasurement | null
+      try {
+        row = await loadBaseMeasurement(value, expectedExperimentId)
+      } catch (cause: unknown) {
+        if (sequence !== measurementRequestSequence.current) return null
+        setSelectionRestoreStatus('failed')
+        throw cause
+      }
+      if (sequence !== measurementRequestSequence.current) return null
+      if (!row) {
+        setSelectionRestoreStatus('idle')
+        return null
+      }
       if (row.experiment_id !== expectedExperimentId) return null
       const current = selectionContextRef.current
       if (current.experimentId !== row.experiment_id) return null
@@ -238,8 +263,11 @@ export function useCaeWorkbenchState(
 
   const { experimentDocument } = useCadWorkspace(experiment, handleExperimentChange, {
     candidateVars: candidateVars ?? undefined,
-    candidateVarsPending: pendingMeasurementId !== null,
-    candidateProvenance: selection.measurement || pendingMeasurementId ? 'persisted-measurement' : 'editable',
+    candidateVarsPending: pendingMeasurementId !== null || selectionRestoreStatus === 'restoring',
+    candidateProvenance:
+      selection.measurement || pendingMeasurementId || selectionRestoreStatus === 'restoring'
+        ? 'persisted-measurement'
+        : 'editable',
     persistedMaterialSnapshot: candidateMaterialSnapshot,
     resetKey: workspaceSession,
     onActivity,
@@ -345,8 +373,10 @@ export function useCaeWorkbenchState(
     if ((!authenticated && !experimentRecord?.isDemo) || !pendingMeasurementId || !experimentId) return
     const measurementId = pendingMeasurementId
     setSelectionRestoreStatus('restoring')
-    void loadMeasurement(measurementId, experimentId).catch((cause: unknown) => {
-      if (measurementId !== pendingMeasurementId) return
+    const loading = loadMeasurement(measurementId, experimentId)
+    const sequence = measurementRequestSequence.current
+    void loading.catch((cause: unknown) => {
+      if (sequence !== measurementRequestSequence.current) return
       const current = selectionContextRef.current
       if (current.experimentId === experimentId && current.measurementId === measurementId) {
         const next = { ...current, measurementId: null }
@@ -386,6 +416,35 @@ export function useCaeWorkbenchState(
           : value
       if (sequence !== requestSequence.current) return row
       applyExperimentState(row)
+      const measurementSequence = measurementRequestSequence.current
+      setSelectionRestoreStatus('restoring')
+      try {
+        const response = await queryClient.fetchQuery(
+          measurementsQueryOptions(queryScope, row.id, {
+            ...getListRequest('visible'),
+            filter: { experiment_id: [row.id, row.id] },
+            null_filter: { recorded_at: 'is_not_null' },
+            sort: [
+              ['recorded_at', 'desc'],
+              ['id', 'desc'],
+            ],
+            limit: 1,
+          }),
+        )
+        if (sequence !== requestSequence.current || measurementSequence !== measurementRequestSequence.current)
+          return row
+        const latest = response.items[0]
+        if (latest && latest.experiment_id === row.id && latest.recorded_at) {
+          setPendingMeasurementId(latest.id)
+        } else {
+          setSelectionRestoreStatus('idle')
+        }
+      } catch (cause: unknown) {
+        if (sequence !== requestSequence.current || measurementSequence !== measurementRequestSequence.current)
+          return row
+        setSelectionRestoreStatus('failed')
+        toast.error(cause instanceof Error ? cause.message : 'Measurement 목록을 불러오지 못했습니다.')
+      }
       return row
     },
     [applyExperimentState, queryClient, queryScope],
@@ -521,6 +580,7 @@ export function useCaeWorkbenchState(
   const restoreDraft = useCallback(
     (draft: WorkbenchDraft) => {
       requestSequence.current += 1
+      measurementRequestSequence.current += 1
       clearBaseMeasurement()
       const restoredExperimentId = draft.experiment.record?.id ?? null
       const restoredSelection: WorkbenchSelectionContext =

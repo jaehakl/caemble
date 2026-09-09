@@ -8,11 +8,11 @@ import { calculationDetailQueryOptions } from '@/features/calculation/queryOptio
 import { loadWorkbenchDraft, saveWorkbenchDraft } from '@/features/cae-workbench/storage/draftStorage'
 import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWorkbenchState'
 import { defaultWorkbenchLayoutState, type WorkbenchDraft } from '@/features/cae-workbench/types'
-import {
-  draftNeedsPredictionLandingPreservation,
-  predictionLandingExperiment,
-} from '@/features/cae-workbench/predictionLandingPolicy'
+import { draftNeedsLandingPreservation } from '@/features/cae-workbench/experimentLandingPolicy'
 import { availableExperimentsQueryOptions, experimentDetailQueryOptions } from '@/features/experiment/queryOptions'
+import { experimentManagerListing } from '@/features/experiment/managerListing'
+import { catalogExperimentsQueryOptions } from '@/features/catalog/queryOptions'
+import { catalogApi } from '@/api/catalog'
 import { measurementDetailQueryOptions } from '@/features/measurement/queryOptions'
 import { createCadSourceDocument } from '@/lib/cad/source'
 import { starterExperimentSourceBundle } from '@/lib/localExperimentCode'
@@ -72,7 +72,7 @@ export function useCaePageSession(
 
   useEffect(() => {
     if (allowAdminSection !== false || layout.activeSection !== 'admin') return
-    setLayout((current) => ({ ...current, activeSection: 'prediction' }))
+    setLayout((current) => ({ ...current, activeSection: 'experiment' }))
   }, [allowAdminSection, layout.activeSection, setLayout])
 
   useEffect(() => {
@@ -182,7 +182,7 @@ export function useCaePageSession(
 
         const urlExperimentId = readWorkbenchUrlExperiment(initialSearchParams)
         const draftExperimentId = draft?.experiment.record?.id ?? null
-        const draftNeedsPreservation = draftNeedsPredictionLandingPreservation(draft, starterExperimentSourceBundle)
+        const draftNeedsPreservation = draftNeedsLandingPreservation(draft, starterExperimentSourceBundle)
         let restoreLocalDraft = false
         let openedUrlExperiment = false
 
@@ -204,7 +204,7 @@ export function useCaePageSession(
               } else {
                 await currentWorkbench.loadExperiment(row)
                 if (cancelled) return
-                setLayout({ ...defaultWorkbenchLayoutState, activeSection: 'prediction' })
+                setLayout({ ...defaultWorkbenchLayoutState, activeSection: 'experiment' })
                 openedUrlExperiment = true
               }
             } catch (cause: unknown) {
@@ -215,7 +215,7 @@ export function useCaePageSession(
                   ...draft,
                   experiment: { ...draft.experiment, record: null, baselineBundle: null },
                   selection: { experimentId: null, measurementId: null, calculationId: null },
-                  layout: { ...draft.layout, activeSection: 'prediction' },
+                  layout: { ...draft.layout, activeSection: 'experiment' },
                 }
               }
               if (draft) restoreLocalDraft = true
@@ -264,10 +264,19 @@ export function useCaePageSession(
           } else {
             const available = await queryClient.ensureQueryData(availableExperimentsQueryOptions(queryScope))
             if (cancelled) return
-            const selected = predictionLandingExperiment(available, draftExperimentId)
-            if (selected) {
-              await currentWorkbench.loadExperiment(selected)
+            const selected = experimentManagerListing(available).versions[0]
+            if (selected?.kind === 'saved') {
+              await currentWorkbench.loadExperiment(selected.row)
               if (cancelled) return
+            } else {
+              const examples = await queryClient.fetchQuery(catalogExperimentsQueryOptions({ q: '', limit: 100 }))
+              if (cancelled) return
+              const first = experimentManagerListing(undefined, examples.items).versions[0]
+              if (first?.kind === 'example') {
+                const detail = await catalogApi.getExperiment(first.item)
+                if (cancelled) return
+                currentWorkbench.newExperiment(detail.sourceBundle, detail.title, detail.description)
+              }
             }
             setLayout(defaultWorkbenchLayoutState)
           }

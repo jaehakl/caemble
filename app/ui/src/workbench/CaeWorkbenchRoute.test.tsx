@@ -161,6 +161,7 @@ describe('Workbench portal navigation', () => {
     )
     const left = within(screen.getByRole('complementary', { name: 'Left pane' }))
     expect(screen.queryByRole('button', { name: 'material' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'prediction' }))
     fireEvent.change(await left.findByLabelText('Candidate variable'), { target: { value: '11' } })
     fireEvent.click(screen.getByRole('button', { name: 'help' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Material Model' }))

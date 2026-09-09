@@ -7,6 +7,7 @@ import type { CaeWorkbenchState } from '@/features/cae-workbench/state/useCaeWor
 import { loadWorkbenchDraft, saveWorkbenchDraft } from '@/features/cae-workbench/storage/draftStorage'
 import { defaultWorkbenchLayoutState, type WorkbenchDraft } from '@/features/cae-workbench/types'
 import { WorkbenchShellProvider } from './state/workbenchShellStore'
+import { catalogApi } from '@/api/catalog'
 import { useCaePageSession } from './useCaePageSession'
 
 vi.mock('@/features/cae-workbench/storage/draftStorage', () => ({
@@ -78,6 +79,7 @@ function createWorkbench() {
     hasUnsavedExperimentWork: false,
     hasUnsavedWork: false,
     loadExperiment: vi.fn(),
+    newExperiment: vi.fn(),
     measurementActions: {
       busy: false,
       cancel: vi.fn(),
@@ -195,14 +197,14 @@ describe('useCaePageSession', () => {
       workbench,
     })
 
-    await waitFor(() => expect(screen.getByTestId('session-state')).toHaveTextContent('true|prediction'))
+    await waitFor(() => expect(screen.getByTestId('session-state')).toHaveTextContent('true|experiment'))
     await waitFor(() => expect(router.state.location.search).toBe('?keep=yes'))
     expect(workbench.restoreDraft).toHaveBeenLastCalledWith(localDraft)
     expect(workbench.loadExperiment).not.toHaveBeenCalled()
     expect(fetchQuery).not.toHaveBeenCalled()
   })
 
-  it('opens a confirmed URL Experiment in Prediction with empty children', async () => {
+  it('opens a confirmed URL Experiment in Experiment through the common loading flow', async () => {
     vi.mocked(loadWorkbenchDraft).mockResolvedValue(localDraft)
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const row = savedExperiment(7)
@@ -214,7 +216,7 @@ describe('useCaePageSession', () => {
       workbench,
     })
 
-    await waitFor(() => expect(screen.getByTestId('session-state')).toHaveTextContent('true|prediction'))
+    await waitFor(() => expect(screen.getByTestId('session-state')).toHaveTextContent('true|experiment'))
     await waitFor(() => expect(router.state.location.search).toBe('?keep=yes&experiment=7'))
     expect(workbench.loadExperiment).toHaveBeenCalledWith(row)
     expect(workbench.selectionContext).toEqual({ experimentId: 7, measurementId: null, calculationId: null })
@@ -226,7 +228,7 @@ describe('useCaePageSession', () => {
     vi.spyOn(client, 'fetchQuery').mockResolvedValue(savedExperiment(7) as never)
     const workbench = createWorkbench()
     const { router } = renderSession({ client, initialUrl: '/?experiment=7', workbench })
-    await waitFor(() => expect(screen.getByTestId('session-state')).toHaveTextContent('true|prediction'))
+    await waitFor(() => expect(screen.getByTestId('session-state')).toHaveTextContent('true|experiment'))
 
     fireEvent.click(screen.getByTestId('experiment-tab'))
     fireEvent.click(screen.getByTestId('calculation-tab'))
@@ -243,7 +245,7 @@ describe('useCaePageSession', () => {
     vi.spyOn(client, 'fetchQuery').mockResolvedValue(savedExperiment(7) as never)
     const workbench = createWorkbench()
     const { router } = renderSession({ client, initialUrl: '/?keep=yes&experiment=7', workbench })
-    await waitFor(() => expect(screen.getByTestId('session-state')).toHaveTextContent('true|prediction'))
+    await waitFor(() => expect(screen.getByTestId('session-state')).toHaveTextContent('true|experiment'))
 
     fireEvent.click(screen.getByTestId('experiment-8'))
     await waitFor(() => expect(router.state.location.search).toBe('?keep=yes&experiment=8'))
@@ -268,7 +270,7 @@ describe('useCaePageSession', () => {
     const { router } = renderSession({ client, initialUrl: '/', workbench })
 
     await waitFor(() => expect(fetchQuery).toHaveBeenCalledTimes(2))
-    expect(screen.getByTestId('session-state')).toHaveTextContent('false|prediction')
+    expect(screen.getByTestId('session-state')).toHaveTextContent('false|experiment')
     await act(async () => {
       resolveMeasurement({ id: 41, experiment_id: 7 })
       resolveCalculation({ id: 9, experiment_id: 7 })
@@ -313,4 +315,63 @@ describe('useCaePageSession', () => {
     expect(workbench.restoreDraft).toHaveBeenLastCalledWith(draft)
     await waitFor(() => expect(router.state.location.search).toBe('?experiment=8'))
   })
+})
+
+it('opens the first namespace and version from the Manager ordering on fresh entry', async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const first = { ...savedExperiment(9), namespace: 'alpha', version_patch: 2 }
+  vi.spyOn(client, 'ensureQueryData').mockResolvedValue({
+    mine: [{ ...savedExperiment(1), namespace: 'zeta' }, { ...first, id: 8, version_patch: 1 }, first],
+    demos: [{ ...savedExperiment(10), namespace: 'aaa', demoDefault: true }],
+  } as never)
+  const workbench = createWorkbench()
+  renderSession({ client, initialUrl: '/', workbench })
+  await waitFor(() => expect(screen.getByTestId('session-state')).toHaveTextContent('true|experiment'))
+  expect(workbench.loadExperiment).toHaveBeenCalledExactlyOnceWith(first)
+})
+
+it('chooses the first Demo namespace without requiring Prediction data', async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const first = { ...savedExperiment(9), namespace: 'alpha', predictionReady: false }
+  vi.spyOn(client, 'ensureQueryData').mockResolvedValue({
+    mine: [],
+    demos: [{ ...savedExperiment(1), namespace: 'zeta', demoDefault: true }, first],
+  } as never)
+  const workbench = createWorkbench()
+  renderSession({ client, initialUrl: '/', workbench })
+  await waitFor(() => expect(workbench.loadExperiment).toHaveBeenCalledExactlyOnceWith(first))
+})
+
+it.each([true, false])('falls back to the first catalog example or Starter (has examples: %s)', async (hasExamples) => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  vi.spyOn(client, 'ensureQueryData').mockResolvedValue({ mine: [], demos: [] } as never)
+  const first = {
+    namespace: 'caemble',
+    repository: 'repo',
+    key: 'alpha',
+    version: '1.0.0',
+    coordinate: 'caemble:experiment/caemble/repo/alpha@1.0.0',
+    title: 'First',
+    description: '',
+  }
+  vi.spyOn(client, 'fetchQuery').mockResolvedValue({
+    items: hasExamples ? [{ ...first, key: 'zeta' }, first] : [],
+  } as never)
+  const detail = {
+    sourceBundle: { files: { 'experiment.tsx': 'export default null' } },
+    title: 'First',
+    description: '',
+  }
+  const getExample = vi.spyOn(catalogApi, 'getExperiment').mockResolvedValue(detail as never)
+  const workbench = createWorkbench()
+  renderSession({ client, initialUrl: '/', workbench })
+  await waitFor(() => expect(screen.getByTestId('session-state')).toHaveTextContent('true|experiment'))
+  if (hasExamples) {
+    expect(getExample).toHaveBeenCalledExactlyOnceWith(first)
+    expect(workbench.newExperiment).toHaveBeenCalledExactlyOnceWith(detail.sourceBundle, 'First', '')
+  } else {
+    expect(getExample).not.toHaveBeenCalled()
+    expect(workbench.newExperiment).not.toHaveBeenCalled()
+  }
+  expect(workbench.loadExperiment).not.toHaveBeenCalled()
 })

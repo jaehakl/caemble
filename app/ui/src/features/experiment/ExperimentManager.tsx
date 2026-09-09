@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { LoaderCircle, Search, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -8,10 +8,12 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { privateQueryScope } from '@/features/auth/queryKeys'
 import { catalogExperimentsQueryOptions } from '@/features/catalog/queryOptions'
 import { invalidateExperimentMutation } from './queryInvalidation'
 import type { SavedExperiment } from '@/features/cae-workbench/types'
+import { experimentManagerListing } from './managerListing'
 import { availableExperimentsQueryOptions } from './queryOptions'
 
 type ExperimentManagerProps = {
@@ -25,34 +27,6 @@ type ExperimentManagerProps = {
   onOpenSaved: (row: SavedExperiment) => void
 }
 
-type ManagedExperimentVersion =
-  | Readonly<{
-      kind: 'example'
-      coordinate: string
-      description: string
-      experimentKey: string
-      identity: string
-      name: string
-      namespace: string
-      repository: string
-      version: string
-      versionParts: readonly [number, number, number]
-      item: CatalogExperimentListItem
-    }>
-  | Readonly<{
-      kind: 'saved'
-      coordinate: string
-      description: string
-      experimentKey: string
-      identity: string
-      name: string
-      namespace: string
-      repository: string
-      version: string
-      versionParts: readonly [number, number, number]
-      row: SavedExperimentRecord
-    }>
-
 export function ExperimentManager({
   authenticated,
   busy = false,
@@ -64,97 +38,76 @@ export function ExperimentManager({
   onDeleteSelected,
 }: ExperimentManagerProps) {
   const queryClient = useQueryClient()
-  const [search, setSearch] = useState('')
-  const [namespace, setNamespace] = useState('all')
-  const [repository, setRepository] = useState('all')
+  const [selectedTab, setSelectedTab] = useState<string | null>(null)
+  const [filters, setFilters] = useState<Record<string, { search: string; repository: string }>>({})
   const [loadingExample, setLoadingExample] = useState<string | null>(null)
   const queryScope = authenticated ? privateQueryScope(user) : 'public'
 
-  const exampleQuery = useQuery(catalogExperimentsQueryOptions({ q: search.trim(), limit: 100 }))
   const availableQuery = useQuery(availableExperimentsQueryOptions(queryScope))
-  const managedVersions = useMemo<readonly ManagedExperimentVersion[]>(() => {
-    const examples = (exampleQuery.data?.items ?? []).map((item): ManagedExperimentVersion => {
-      const versionParts = item.version.split('.').map(Number) as [number, number, number]
-      return {
-        kind: 'example',
-        coordinate: item.coordinate,
-        description: item.description || '설명 없음',
-        experimentKey: item.key,
-        identity: `${item.namespace}/${item.repository}/${item.key}`,
-        name: item.title,
-        namespace: item.namespace,
-        repository: item.repository,
-        version: item.version,
-        versionParts,
-        item,
-      }
-    })
-    const needle = search.trim().toLocaleLowerCase()
-    const mine = availableQuery.data?.mine ?? []
-    const mineIds = new Set(mine.map((row) => row.id))
-    const saved = [...mine, ...(availableQuery.data?.demos ?? []).filter((row) => !mineIds.has(row.id))]
-      .filter((row) => !needle || `${row.name} ${row.description ?? ''}`.toLocaleLowerCase().includes(needle))
-      .map((row): ManagedExperimentVersion => {
-        const version = row.version ?? `${row.version_major}.${row.version_minor}.${row.version_patch}`
-        const identity = `${row.namespace}/${row.repository_slug}/${row.experiment_key}`
-        return {
-          kind: 'saved',
-          coordinate: row.coordinate ?? `caemble:experiment/${identity}@${version}`,
-          description: row.description || '설명 없음',
-          experimentKey: row.experiment_key,
-          identity,
-          name: row.name,
-          namespace: row.namespace,
-          repository: row.repository_slug,
-          version,
-          versionParts: [row.version_major, row.version_minor, row.version_patch],
-          row,
-        }
-      })
-    return Object.freeze([...examples, ...saved])
-  }, [availableQuery.data, exampleQuery.data?.items, search])
-  const namespaces = useMemo(() => {
-    return [...new Set(managedVersions.map((item) => item.namespace))].sort()
-  }, [managedVersions])
-  const repositories = useMemo(
+  const { tabs } = useMemo(() => experimentManagerListing(availableQuery.data), [availableQuery.data])
+  const revealedId = useRef<number | null>(null)
+  useEffect(() => {
+    if (selectedId === null) {
+      revealedId.current = null
+      return
+    }
+    if (revealedId.current === selectedId) return
+    const selected = [...(availableQuery.data?.mine ?? []), ...(availableQuery.data?.demos ?? [])].find(
+      (row) => row.id === selectedId,
+    )
+    if (!selected) return
+    revealedId.current = selectedId
+    setSelectedTab(`namespace:${selected.namespace}`)
+  }, [availableQuery.data, selectedId])
+  const activeTab =
+    selectedTab !== null && tabs.some((tab) => tab.value === selectedTab)
+      ? selectedTab
+      : availableQuery.isPending
+        ? ''
+        : tabs[0].value
+  const filterKey = `${queryScope}/${activeTab}`
+  const search = filters[filterKey]?.search ?? ''
+  const repository = filters[filterKey]?.repository ?? 'all'
+  const example = activeTab === 'example'
+  const exampleQuery = useQuery(
+    catalogExperimentsQueryOptions({ q: example ? search.trim() : '', limit: 100 }, example),
+  )
+  const activeQuery = example ? exampleQuery : availableQuery
+
+  useEffect(() => {
+    if (!availableQuery.isPending && activeTab !== selectedTab && !selectedId) setSelectedTab(activeTab)
+  }, [activeTab, availableQuery.isPending, selectedId, selectedTab])
+  const managedVersions = useMemo(
     () =>
-      [
-        ...new Set(
-          managedVersions
-            .filter((item) => namespace === 'all' || item.namespace === namespace)
-            .map((item) => item.repository),
-        ),
-      ].sort(),
-    [managedVersions, namespace],
+      experimentManagerListing(availableQuery.data, exampleQuery.data?.items).versions.filter((item) =>
+        example ? item.kind === 'example' : item.kind === 'saved' && `namespace:${item.namespace}` === activeTab,
+      ),
+    [activeTab, availableQuery.data, example, exampleQuery.data?.items],
+  )
+  const repositories = useMemo(
+    () => [...new Set(managedVersions.map((item) => item.repository))].sort(),
+    [managedVersions],
   )
   const visibleVersions = useMemo(() => {
-    return managedVersions
-      .filter(
-        (item) =>
-          (namespace === 'all' || item.namespace === namespace) &&
-          (repository === 'all' || item.repository === repository),
-      )
-      .sort(
-        (left, right) =>
-          (left.kind === right.kind ? 0 : left.kind === 'saved' ? -1 : 1) ||
-          left.identity.localeCompare(right.identity) ||
-          right.versionParts[0] - left.versionParts[0] ||
-          right.versionParts[1] - left.versionParts[1] ||
-          right.versionParts[2] - left.versionParts[2] ||
-          left.coordinate.localeCompare(right.coordinate),
-      )
-  }, [managedVersions, namespace, repository])
+    const needle = search.trim().toLocaleLowerCase()
+    return managedVersions.filter(
+      (item) =>
+        (example || !needle || `${item.name} ${item.description}`.toLocaleLowerCase().includes(needle)) &&
+        (repository === 'all' || item.repository === repository),
+    )
+  }, [example, managedVersions, repository, search])
 
-  const filtersReady = !exampleQuery.isPending && !availableQuery.isPending
   useEffect(() => {
-    if (filtersReady && namespace !== 'all' && !namespaces.includes(namespace)) {
-      setNamespace('all')
-      setRepository('all')
+    if (
+      activeQuery.isSuccess &&
+      !activeQuery.isFetching &&
+      !search &&
+      repository !== 'all' &&
+      !repositories.includes(repository)
+    ) {
+      setFilters((current) => ({ ...current, [filterKey]: { search, repository: 'all' } }))
     }
-  }, [filtersReady, namespace, namespaces])
-  useEffect(() => {
-    if (filtersReady && repository !== 'all' && !repositories.includes(repository)) setRepository('all')
-  }, [filtersReady, repositories, repository])
+  }, [activeQuery.isFetching, activeQuery.isSuccess, filterKey, repositories, repository, search])
 
   const deleteMutation = useMutation({
     mutationFn: async (row: SavedExperimentRecord) => {
@@ -203,142 +156,141 @@ export function ExperimentManager({
 
   return (
     <section aria-label="Experiment Manager" className="flex h-full min-h-0 flex-col bg-background">
-      <header className={`space-y-3 border-b ${compact ? 'p-3' : 'p-4'}`}>
-        <h2 className="font-semibold">Experiment Manager</h2>
-        <label className="relative block">
-          <Search className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground" />
-          <Input
-            aria-label="Experiment 검색"
-            className="pl-9"
-            placeholder="이름 또는 설명 검색"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-        </label>
-        <div className={compact ? 'grid gap-2' : 'grid gap-2 sm:grid-cols-2'}>
-          <Select
-            value={namespace}
-            onValueChange={(value) => {
-              setNamespace(value)
-              setRepository('all')
-            }}
-          >
-            <SelectTrigger aria-label="Namespace 필터">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">모든 namespace</SelectItem>
-              {namespaces.map((value) => (
-                <SelectItem key={value} value={value}>
-                  {value}
-                </SelectItem>
+      <Tabs value={activeTab} onValueChange={setSelectedTab} className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className={`space-y-3 border-b ${compact ? 'p-3' : 'p-4'}`}>
+          <h2 className="font-semibold">Experiment Manager</h2>
+          <div className="overflow-x-auto">
+            <TabsList aria-label="Experiment namespace" className="w-max justify-start">
+              {tabs.map((tab) => (
+                <TabsTrigger key={tab.value} value={tab.value} disabled={availableQuery.isPending}>
+                  {tab.label}
+                </TabsTrigger>
               ))}
-            </SelectContent>
-          </Select>
-          <Select value={repository} onValueChange={setRepository}>
-            <SelectTrigger aria-label="Repository 필터">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">모든 repository</SelectItem>
-              {repositories.map((value) => (
-                <SelectItem key={value} value={value}>
-                  {value}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </header>
-      <div className={`flex min-h-0 flex-1 flex-col gap-3 ${compact ? 'p-2' : 'p-4'}`}>
-        <div className="min-h-0 flex-1 overflow-auto rounded-md border">
-          {exampleQuery.isError ? (
-            <div
-              className="border-b border-destructive/25 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-              role="alert"
+            </TabsList>
+          </div>
+          <label className="relative block">
+            <Search className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground" />
+            <Input
+              aria-label="Experiment 검색"
+              className="pl-9"
+              placeholder="이름 또는 설명 검색"
+              value={search}
+              onChange={(event) =>
+                setFilters((current) => ({ ...current, [filterKey]: { search: event.target.value, repository } }))
+              }
+            />
+          </label>
+          <div>
+            <Select
+              value={repository}
+              onValueChange={(value) =>
+                setFilters((current) => ({ ...current, [filterKey]: { search, repository: value } }))
+              }
             >
-              Example 목록을 불러오지 못했습니다.
-            </div>
-          ) : null}
-          {availableQuery.isError ? (
-            <div
-              className="border-b border-destructive/25 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-              role="alert"
-            >
-              저장된 Experiment 목록을 불러오지 못했습니다.
-            </div>
-          ) : null}
-          {visibleVersions.length ? (
-            <ul className="divide-y">
-              {visibleVersions.map((item) => {
-                const savedRow = item.kind === 'saved' ? item.row : null
-                const manageable = Boolean(
-                  savedRow &&
-                  user &&
-                  (user.roles.includes('admin') || (!savedRow.isDemo && savedRow.user_id === user.id)),
-                )
-                const counts = savedRow?.derivedCounts
-                const linked = counts ? counts.measurements + counts.recordedData + counts.calculations : 0
-                return (
-                  <li className={savedRow?.id === selectedId ? 'bg-orange-50/70' : undefined} key={item.coordinate}>
-                    <div className={`flex items-start gap-3 ${compact ? 'p-3' : 'p-4'}`}>
-                      <button
-                        className="min-w-0 flex-1 text-left disabled:opacity-50"
-                        disabled={busy || (item.kind === 'example' && loadingExample !== null)}
-                        type="button"
-                        onClick={() =>
-                          item.kind === 'example'
-                            ? void openExample(item.item)
-                            : onOpenSaved(item.row as SavedExperiment)
-                        }
-                      >
-                        <span className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium">{item.name}</span>
-                          <Badge className="bg-muted text-foreground">v{item.version}</Badge>
-                          {item.kind === 'example' && loadingExample === item.coordinate ? (
-                            <LoaderCircle className="size-4 animate-spin" />
-                          ) : null}
-                          {savedRow?.sourceLocked ? <Badge className="bg-amber-600 text-white">Locked</Badge> : null}
-                          {savedRow?.isDemo ? (
-                            <Badge>{manageable ? 'Demo · 관리자 편집 가능' : 'Demo · 읽기 전용'}</Badge>
-                          ) : null}
-                          {linked ? (
-                            <Badge className="border bg-transparent text-foreground">
-                              연결 데이터 {linked.toLocaleString()}
-                            </Badge>
-                          ) : null}
-                        </span>
-                        <span
-                          className={`mt-1 line-clamp-2 block text-muted-foreground ${compact ? 'text-xs leading-5' : 'text-sm'}`}
-                          title={item.description}
-                        >
-                          {item.description}
-                        </span>
-                      </button>
-                      {manageable && savedRow ? (
-                        <Button
-                          aria-label={`${savedRow.name} v${item.version} 삭제`}
-                          disabled={busy || deleteMutation.isPending}
-                          size="icon"
+              <SelectTrigger aria-label="Repository 필터">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">모든 repository</SelectItem>
+                {repositories.map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {value}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </header>
+        <TabsContent value={activeTab} className={`mt-0 flex min-h-0 flex-1 flex-col gap-3 ${compact ? 'p-2' : 'p-4'}`}>
+          <div className="min-h-0 flex-1 overflow-auto rounded-md border">
+            {example && exampleQuery.isError ? (
+              <div
+                className="border-b border-destructive/25 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+                role="alert"
+              >
+                예제 목록을 불러오지 못했습니다.
+              </div>
+            ) : null}
+            {!example && availableQuery.isError ? (
+              <div
+                className="border-b border-destructive/25 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+                role="alert"
+              >
+                저장된 Experiment 목록을 불러오지 못했습니다.
+              </div>
+            ) : null}
+            {visibleVersions.length ? (
+              <ul className="divide-y">
+                {visibleVersions.map((item) => {
+                  const savedRow = item.kind === 'saved' ? item.row : null
+                  const manageable = Boolean(
+                    savedRow &&
+                    user &&
+                    (user.roles.includes('admin') || (!savedRow.isDemo && savedRow.user_id === user.id)),
+                  )
+                  const counts = savedRow?.derivedCounts
+                  const linked = counts ? counts.measurements + counts.recordedData + counts.calculations : 0
+                  return (
+                    <li className={savedRow?.id === selectedId ? 'bg-orange-50/70' : undefined} key={item.coordinate}>
+                      <div className={`flex items-start gap-3 ${compact ? 'p-3' : 'p-4'}`}>
+                        <button
+                          className="min-w-0 flex-1 text-left disabled:opacity-50"
+                          disabled={busy || (item.kind === 'example' && loadingExample !== null)}
                           type="button"
-                          variant="ghost"
-                          onClick={() => deleteMutation.mutate(savedRow)}
+                          onClick={() =>
+                            item.kind === 'example'
+                              ? void openExample(item.item)
+                              : onOpenSaved(item.row as SavedExperiment)
+                          }
                         >
-                          <Trash2 className="text-destructive" />
-                        </Button>
-                      ) : null}
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
-          ) : exampleQuery.isPending || availableQuery.isPending ? (
-            <ManagerMessage loading>Experiment 목록을 불러오는 중…</ManagerMessage>
-          ) : (
-            <ManagerMessage>조건에 맞는 Experiment가 없습니다.</ManagerMessage>
-          )}
-        </div>
-      </div>
+                          <span className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium">{item.name}</span>
+                            <Badge className="bg-muted text-foreground">v{item.version}</Badge>
+                            {item.kind === 'example' && loadingExample === item.coordinate ? (
+                              <LoaderCircle className="size-4 animate-spin" />
+                            ) : null}
+                            {savedRow?.sourceLocked ? <Badge className="bg-amber-600 text-white">Locked</Badge> : null}
+                            {savedRow?.isDemo ? (
+                              <Badge>{manageable ? 'Demo · 관리자 편집 가능' : 'Demo · 읽기 전용'}</Badge>
+                            ) : null}
+                            {linked ? (
+                              <Badge className="border bg-transparent text-foreground">
+                                연결 데이터 {linked.toLocaleString()}
+                              </Badge>
+                            ) : null}
+                          </span>
+                          <span
+                            className={`mt-1 line-clamp-2 block text-muted-foreground ${compact ? 'text-xs leading-5' : 'text-sm'}`}
+                            title={item.description}
+                          >
+                            {item.description}
+                          </span>
+                        </button>
+                        {manageable && savedRow ? (
+                          <Button
+                            aria-label={`${savedRow.name} v${item.version} 삭제`}
+                            disabled={busy || deleteMutation.isPending}
+                            size="icon"
+                            type="button"
+                            variant="ghost"
+                            onClick={() => deleteMutation.mutate(savedRow)}
+                          >
+                            <Trash2 className="text-destructive" />
+                          </Button>
+                        ) : null}
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : activeQuery.isPending ? (
+              <ManagerMessage loading>Experiment 목록을 불러오는 중…</ManagerMessage>
+            ) : (
+              <ManagerMessage>조건에 맞는 Experiment가 없습니다.</ManagerMessage>
+            )}
+          </div>
+        </TabsContent>
+      </Tabs>
     </section>
   )
 }

@@ -1,10 +1,8 @@
+import { experimentManagerListing } from '@/features/experiment/managerListing'
 import { readFileSync } from 'node:fs'
 import type { AvailableExperimentRecord } from '@/api'
 import { defaultWorkbenchLayoutState, workbenchSectionIds, type WorkbenchDraft } from '@/features/cae-workbench/types'
-import {
-  draftNeedsPredictionLandingPreservation,
-  predictionLandingExperiment,
-} from '@/features/cae-workbench/predictionLandingPolicy'
+import { draftNeedsLandingPreservation } from '@/features/cae-workbench/experimentLandingPolicy'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message)
@@ -30,23 +28,23 @@ function experiment(id: number, options: Partial<AvailableExperimentRecord> = {}
   }
 }
 
-assert(defaultWorkbenchLayoutState.activeSection === 'prediction', 'bare Workbench must start in Prediction')
+assert(defaultWorkbenchLayoutState.activeSection === 'experiment', 'bare Workbench must start in Experiment')
 assert(workbenchSectionIds.includes('admin'), 'Workbench must define the admin section')
 
 const recent = experiment(1)
 const lastReady = experiment(2)
 const representative = experiment(3, { isDemo: true, demoDefault: true, demoOrder: 0 })
 assert(
-  predictionLandingExperiment({ mine: [recent, lastReady], demos: [representative] }, 2)?.id === 2,
-  'last ready owned Experiment must win',
+  experimentManagerListing({ mine: [lastReady, recent], demos: [representative] }).versions[0]?.name === recent.name,
+  'first sorted owned Experiment must win',
 )
 assert(
-  predictionLandingExperiment({ mine: [recent], demos: [representative] }, null)?.id === 1,
+  experimentManagerListing({ mine: [recent], demos: [representative] }).versions[0]?.name === recent.name,
   'recent owned Experiment must precede Demo',
 )
 assert(
-  predictionLandingExperiment({ mine: [], demos: [representative] }, null)?.id === 3,
-  'anonymous landing must choose the representative Demo',
+  experimentManagerListing({ mine: [], demos: [representative] }).versions[0]?.name === representative.name,
+  'anonymous landing must choose the first sorted Demo',
 )
 
 const starterBundle = { files: { 'experiment.tsx': 'starter' } }
@@ -63,9 +61,9 @@ const draft = {
   selection: { measurementId: null },
   layout: defaultWorkbenchLayoutState,
 } as unknown as WorkbenchDraft
-assert(!draftNeedsPredictionLandingPreservation(draft, starterBundle), 'pristine Starter may be replaced')
+assert(!draftNeedsLandingPreservation(draft, starterBundle), 'pristine Starter may be replaced')
 assert(
-  draftNeedsPredictionLandingPreservation(
+  draftNeedsLandingPreservation(
     { ...draft, experiment: { ...draft.experiment, name: 'My local draft' } },
     starterBundle,
   ),
