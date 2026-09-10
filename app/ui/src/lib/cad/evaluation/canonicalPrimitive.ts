@@ -1,5 +1,8 @@
 import type { CanonicalGeometryNodeV1, CanonicalPrimitiveNameV1 } from './canonicalTypes'
 import { canonicalFiberNode } from '../elements/primitives/fiber/runtime'
+import { sampleFiber } from '../elements/primitives/fiber/sampling'
+import type { FiberAttributes } from '../elements/primitives/fiber/definition'
+import type { GeometryEvaluationProfile } from './precision'
 
 type FourierMode = Readonly<{ amplitude: number; phase: number }>
 
@@ -12,8 +15,20 @@ export function canonicalPrimitiveNode(
   nodeId: string,
   props: Record<string, unknown>,
   geometry: unknown,
+  profile?: GeometryEvaluationProfile,
 ): CanonicalGeometryNodeV1 {
-  if (primitive === 'fiber') return canonicalFiberNode(geometry, nodeId)
+  if (profile) {
+    props = { ...props }
+    for (const name of ['segments', 'azimuthalSegments', 'polarSegments', 'radialSegments']) {
+      if (name in props) props[name] = Math.max(Number(props[name] ?? 0), profile.angularSegments)
+    }
+    if ('verticalSegments' in props)
+      props.verticalSegments = Math.max(Number(props.verticalSegments), profile.angularSegments)
+    if (primitive === 'fiber') props.pathSegments = Math.max(Number(props.pathSegments), profile.pathSegments)
+  }
+  if (primitive === 'fiber') {
+    return canonicalFiberNode(geometry, nodeId, profile ? sampleFiber(props as FiberAttributes) : undefined)
+  }
 
   let parameters: Readonly<Record<string, unknown>>
   if (primitive === 'box') {

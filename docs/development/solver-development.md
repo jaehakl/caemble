@@ -380,8 +380,10 @@ Measurement run의 state는 거부됩니다.
 
 `transport/recording.py`는 live artifact를 선언된 기록 schema의 값 트리로
 변환하고, `transport/tensor.py`는 inline tensor 또는 binary attachment를 만듭니다.
-Solver output 계약과 RecordedData schema는 별개입니다. 기존 dtype leaf는
-values와 structured axes를 기존 wire 형식으로 기록합니다.
+Solver output 계약과 RecordedData schema는 별개입니다. `{ task, output }` 기록
+참조는 공통 빌드에서 Catalog data 계약과 공통 도메인 직렬화 규칙으로 확장합니다.
+기존 수동 dtype/group 선언도 유지합니다. 구조 체적 Field의 ordinal 축과
+structured Field의 실제 좌표 축을 모두 기존 wire 형식으로 기록합니다.
 
 domain을 보존하려면 새 group schema에 `domain`, `location`, `quantity`,
 `valueUnit`, `values`를 명시합니다. mesh domain은 `kind`, `identity`,

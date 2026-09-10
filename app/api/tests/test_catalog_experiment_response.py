@@ -22,7 +22,7 @@ class CatalogExperimentResponseTests(unittest.TestCase):
     def test_http_response_preserves_empty_and_multiple_calculations(self):
         with open_catalog() as catalog:
             example = catalog.experiment(
-                "caemble:experiment/caemble/verified/czerny-turner-spectrometer@3.0.0"
+                "caemble:experiment/caemble/verified/czerny-turner-spectrometer@3.0.1"
             )
         definitions = [
             {"name": "평균", "description": "예제 계산", "source_code": "export default () => ({ dtype: 'float64', data: 1 })"},
@@ -42,7 +42,7 @@ class CatalogExperimentResponseTests(unittest.TestCase):
                     with TestClient(app) as client:
                         response = client.get(
                             "/catalog/experiments/http-response-test",
-                            params={"namespace": "caemble", "repository": "verified", "version": "3.0.0"},
+                            params={"namespace": "caemble", "repository": "verified", "version": example["version"]},
                         )
                     self.assertEqual(response.status_code, 200, response.text)
                     payload = response.json()
@@ -53,7 +53,7 @@ class CatalogExperimentResponseTests(unittest.TestCase):
     def test_calculations_are_required_in_detail_contract(self):
         with open_catalog() as catalog:
             example = catalog.experiment(
-                "caemble:experiment/caemble/verified/czerny-turner-spectrometer@3.0.0"
+                "caemble:experiment/caemble/verified/czerny-turner-spectrometer@3.0.1"
             )
         del example["calculations"]
         with self.assertRaises(ValidationError):

@@ -24,21 +24,48 @@ from .coupling import (
     initialize_motion,
     predict_motion,
 )
-from .domain import build_model, parameter
+from .domain import build_geometry_model, parameter
 from .formulation import prepare_matrices
 from .outputs import build_outputs, configure_history
 from .state import append_history, encode_state, read_state
 
 
 async def run(invocation: SolverInvocation) -> SolverResult:
-    model = build_model(invocation)
-    configure_history(model, invocation.config["outputs"])
     parameters = {key: parameter(value) for key, value in invocation.config["parameters"].items()}
+    analysis = parameters["analysis"]
+    transfer_rules = [
+        rule for rule in invocation.config["boundaryConditions"]
+        if rule["methodId"] == "fea.resultant-transfer"
+    ]
+    connected_inputs = {
+        name for name, value in invocation.inputs.items()
+        if value is not None and (not isinstance(value, (list, tuple)) or len(value))
+    }
+    if analysis not in ("static", "buckling") and transfer_rules:
+        raise ValueError("fea.resultant-transfer is supported only for static and buckling analysis")
+    transient_inputs = connected_inputs & {"loads", "previousMotion", "control"}
+    if analysis != "transient" and transient_inputs:
+        raise ValueError(f"{', '.join(sorted(transient_inputs))} input is supported only for transient analysis")
+    if not transfer_rules and connected_inputs & {"sourceLoads", "sourceMotion"}:
+        raise ValueError("sourceLoads/sourceMotion inputs require fea.resultant-transfer")
+    if "control" in connected_inputs and not any(
+        rule["methodId"] == "fea.rotor" for rule in invocation.config["initializations"]
+    ):
+        raise ValueError("control input requires a fea.rotor initialization")
+    model = await build_geometry_model(invocation)
+    configure_history(model, invocation.config["outputs"])
     if invocation.cancellation is not None:
         invocation.cancellation.raise_if_cancelled()
     matrices = prepare_matrices(model)
     stiffness, mass, damping, prepared = matrices
-    analysis = parameters["analysis"]
+    for rule in invocation.config["initializations"]:
+        if rule["methodId"] == "fea.damping":
+            alpha = float(parameter(rule["parameters"]["dampingMass"]))
+            beta = float(parameter(rule["parameters"]["dampingStiffness"]))
+            if min(alpha, beta) < 0:
+                raise ValueError("Rayleigh damping coefficients must be nonnegative")
+            damping = damping + alpha * mass + beta * stiffness
+    matrices = stiffness, mass, damping, prepared
     motion = None
     coupling_residual, converged = 0.0, True
     history_complete = True

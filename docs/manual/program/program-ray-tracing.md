@@ -30,4 +30,4 @@ Examples에서 **Czerny–Turner Spectrometer**를 열면 슬릿, 두 오목거�
 
 검출기는 기준 파장의 +1차 광로에 배치되어 있습니다. 3D Viewer에서 파장별 광선과 diffraction 이벤트를 확인하고 검출기 조도, 검출 파워, 효율을 함께 보세요. 거울은 정점 곡률을 초점거리에 맞춘 편평 타원면 오목거울입니다. 격자의 효율과 거울 광학 상수는 교육용 지정값이며, 홈 형상에 따른 편광·파장별 효율, 위상 지연과 회절 한계 분해능은 계산하지 않습니다.
 
-[Spectrometer 예제의 source와 Solver 계약 열기](/?help=examples&item=caemble:experiment/caemble/verified/czerny-turner-spectrometer@3.0.0)
+[Spectrometer 예제의 source와 Solver 계약 열기](/?help=examples&item=caemble:experiment/caemble/verified/czerny-turner-spectrometer@3.0.1)

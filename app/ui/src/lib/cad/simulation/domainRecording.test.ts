@@ -6,6 +6,7 @@ import { installCatalogRuntimeSlice } from '../../catalog/runtime'
 import { canonicalRecordedDataTree } from './authoring'
 import { assertExperimentAuthoringSemantics } from './authoringSemantics'
 import type { RecordedDataSpecNode } from './types'
+import { resolveRecordedOutputReferences } from './outputRecording'
 
 describe('domain preserving RecordedData', () => {
   it('accepts the worker mesh field declaration with the real Catalog', () => {
@@ -22,7 +23,7 @@ sys.path.insert(0,sys.argv[1])
 from caemble_catalog import open_catalog
 from tests.recording_fixtures import MESH_FIELD_SCHEMA
 with open_catalog() as catalog:
-    data=catalog.runtime_slice(solvers=[],quantity_kinds=['Length','thermodynamics.Temperature'],material_models=[])
+    data=catalog.runtime_slice(solvers=[('structural-mechanics','2.0.0')],quantity_kinds=['Length','thermodynamics.Temperature'],material_models=[])
     print(json.dumps({'catalog':data,'schema':MESH_FIELD_SCHEMA}))`,
           path.resolve('../slaves/cae'),
           path.resolve('../catalog'),
@@ -31,6 +32,30 @@ with open_catalog() as catalog:
       ),
     ) as { catalog: CatalogRuntimeSlice; schema: RecordedDataSpecNode }
     installCatalogRuntimeSlice(fixture.catalog)
+    const tasks = {
+      solid: {
+        kind: 'caemble-kernel-task' as const,
+        kernel: { name: 'structural-mechanics', version: '2.0.0' },
+        config: {
+          outputs: [
+            { key: 'motion', methodId: 'fea.displacement' },
+            { key: 'modes', methodId: 'fea.modes' },
+          ],
+        },
+      },
+    }
+    const reference = resolveRecordedOutputReferences({ task: 'solid', output: 'motion' }, tasks, 'recordedData.motion')
+    expect(reference).toHaveProperty('domain.cells.tet4')
+    expect(canonicalRecordedDataTree({ motion: reference })).toHaveProperty('motion.values.tensorOrder', 1)
+    expect(resolveRecordedOutputReferences({ task: 'solid', output: 'modes' }, tasks, 'modes')).toHaveProperty(
+      'frequencies',
+    )
+    expect(() => resolveRecordedOutputReferences({ task: 'absent', output: 'motion' }, tasks, 'record')).toThrow(
+      'unknown Task',
+    )
+    expect(() => resolveRecordedOutputReferences({ task: 'solid', output: 'absent' }, tasks, 'record')).toThrow(
+      'unknown output',
+    )
     const recordedData = canonicalRecordedDataTree({ mesh: fixture.schema })
     const evaluated = {
       scene: { parts: [] },

@@ -10,7 +10,7 @@ from copy import deepcopy
 
 import numpy as np
 from scipy import linalg, sparse
-from scipy.sparse.linalg import MatrixRankWarning, eigsh, spsolve
+from scipy.sparse.linalg import ArpackNoConvergence, MatrixRankWarning, eigsh, spsolve
 
 from .constraints import (
     constraint_transform,
@@ -66,6 +66,16 @@ def solve_linear(matrix, rhs):
     return value
 
 
+def _positive_sparse_mass(matrix):
+    """Whether a large symmetric mass matrix has no physical nullspace."""
+    mass_scale = max(float(abs(matrix).max()), 1.)
+    try:
+        smallest = float(eigsh(matrix, k=1, which="SA", return_eigenvectors=False, tol=1e-9)[0])
+    except (ArpackNoConvergence, RuntimeError, ValueError):
+        return False
+    return smallest > mass_scale * 1e-12
+
+
 def initial_solution(model):
     n = len(model.points)
     return StructuralSolution(np.zeros((n, 6)), np.zeros((n, 6)), np.zeros((n, 6)), np.tile(np.eye(3), (n, 1, 1)), np.zeros((n, 6)), {}, [None] * len(model.elements), [None] * len(model.elements))
@@ -113,15 +123,18 @@ def kinematic_rates(model, orientations, velocity, acceleration, pitch_rate=0., 
         rate_transform = T + correction @ T
     if not model.links:
         return velocity, acceleration, velocity_factor * rate_transform, acceleration_factor * rate_transform
-    # 연결되지 않은 절점은 V=cv*T, A=ca*T 그대로다. 강체 연결에 참여하는
-    # 몇 절점의 행만 작은 배열로 꺼내 갱신한다. 전체 자유도 수의 제곱에
-    # 비례하는 dense 배열을 매 Newton 반복에서 복사할 필요가 없다.
-    linked_nodes = sorted({node for master, slave, _ in model.links for node in (master, slave)})
-    offsets = {node: 6 * index for index, node in enumerate(linked_nodes)}
-    linked_rows = (6 * np.asarray(linked_nodes)[:, None] + np.arange(6)).ravel()
-    linked_transform = T[linked_rows].toarray()
-    linked_rate_transform = rate_transform[linked_rows].toarray()
-    V, A = velocity_factor * linked_rate_transform, acceleration_factor * linked_rate_transform
+    # 초기 가속도처럼 Jacobian 배율이 모두 0이면 값만 전파한다. 그 외에도
+    # attachment surface의 절점 수 × 전체 모델 DOF인 dense 배열을 만들지
+    # 않고 링크 행만 sparse로 유지한다.
+    derivatives_requested = velocity_factor != 0 or acceleration_factor != 0
+    if derivatives_requested:
+        linked_nodes = sorted({node for master, slave, _ in model.links for node in (master, slave)})
+        offsets = {node: 6 * index for index, node in enumerate(linked_nodes)}
+        linked_rows = (6 * np.asarray(linked_nodes)[:, None] + np.arange(6)).ravel()
+        linked_transform = T[linked_rows].tocsr()
+        linked_rate_transform = rate_transform[linked_rows].tocsr()
+        V = (velocity_factor * linked_rate_transform).tolil()
+        A = (acceleration_factor * linked_rate_transform).tolil()
     pitch_roots = set() if model.rotor is None else set(model.rotor["bladeRootNodes"])
     remaining, completed = list(model.links), set()
     dependent = {slave for _, slave, _ in remaining}
@@ -133,43 +146,56 @@ def kinematic_rates(model, orientations, velocity, acceleration, pitch_rate=0., 
             arm0 = model.points[slave] - model.points[master]
             arm = orientations[master] @ arm0
             omega, alpha = velocity[master, 3:], acceleration[master, 3:]
-            master_translation = slice(offsets[master], offsets[master] + 3)
-            master_rotation = slice(offsets[master] + 3, offsets[master] + 6)
-            spin = linked_transform[master_rotation]
-            arm_derivative = -skew(arm) @ spin
             target_v = velocity[master, :3] + cross(omega, arm)
             target_a = acceleration[master, :3] + cross(alpha, arm) + cross(omega, cross(omega, arm))
-            target_V = V[master_translation] - skew(arm) @ V[master_rotation] + skew(omega) @ arm_derivative
-            target_A = (
-                A[master_translation] - skew(arm) @ A[master_rotation]
-                + (-skew(cross(omega, arm)) - skew(omega) @ skew(arm)) @ V[master_rotation]
-                + (skew(alpha) + skew(omega) @ skew(omega)) @ arm_derivative
-            )
+            if derivatives_requested:
+                master_translation = slice(offsets[master], offsets[master] + 3)
+                master_rotation = slice(offsets[master] + 3, offsets[master] + 6)
+                spin = linked_transform[master_rotation]
+                arm_derivative = sparse.csr_matrix(-skew(arm)) @ spin
+                rotation_V = V[master_rotation].tocsr()
+                target_V = (
+                    V[master_translation].tocsr()
+                    - sparse.csr_matrix(skew(arm)) @ rotation_V
+                    + sparse.csr_matrix(skew(omega)) @ arm_derivative
+                )
+                target_A = (
+                    A[master_translation].tocsr()
+                    - sparse.csr_matrix(skew(arm)) @ A[master_rotation].tocsr()
+                    + sparse.csr_matrix(-skew(cross(omega, arm)) - skew(omega) @ skew(arm)) @ rotation_V
+                    + sparse.csr_matrix(skew(alpha) + skew(omega) @ skew(omega)) @ arm_derivative
+                )
             for component in components:
-                row = offsets[slave] + component
                 if component < 3:
                     velocity[slave, component], acceleration[slave, component] = target_v[component], target_a[component]
-                    V[row], A[row] = target_V[component], target_A[component]
+                    if derivatives_requested:
+                        row = offsets[slave] + component
+                        V[row], A[row] = target_V.getrow(component), target_A.getrow(component)
                 else:
                     velocity[slave, component], acceleration[slave, component] = velocity[master, component], acceleration[master, component]
-                    V[row], A[row] = V[offsets[master] + component], A[offsets[master] + component]
+                    if derivatives_requested:
+                        row = offsets[slave] + component
+                        V[row], A[row] = V[offsets[master] + component], A[offsets[master] + component]
             if slave in joints:
                 axis = orientations[master][:, joints[slave][1]]
                 rate, second_rate = joint_rates[slave]
-                rows = slice(offsets[slave] + 3, offsets[slave] + 6)
-                joint_row = axis @ (linked_transform[rows] - spin)
-                axis_derivative = -skew(axis) @ spin
-                rate_derivative = velocity_factor * joint_row
-                acceleration_derivative = acceleration_factor * joint_row
                 velocity[slave, 3:] = omega + axis * rate
                 acceleration[slave, 3:] = alpha + axis * second_rate + cross(omega, axis * rate)
-                V[rows] = V[master_rotation] + np.outer(axis, rate_derivative) + rate * axis_derivative
-                A[rows] = (
-                    A[master_rotation] + np.outer(axis, acceleration_derivative)
-                    - skew(axis * rate) @ V[master_rotation]
-                    + (second_rate * np.eye(3) + rate * skew(omega)) @ axis_derivative
-                    + skew(omega) @ np.outer(axis, rate_derivative)
-                )
+                if derivatives_requested:
+                    rows = slice(offsets[slave] + 3, offsets[slave] + 6)
+                    joint_row = sparse.csr_matrix(axis.reshape(1, 3)) @ (linked_transform[rows] - spin)
+                    axis_derivative = sparse.csr_matrix(-skew(axis)) @ spin
+                    rate_derivative = velocity_factor * joint_row
+                    acceleration_derivative = acceleration_factor * joint_row
+                    axis_column = sparse.csr_matrix(axis.reshape(3, 1))
+                    axis_rate = axis_column @ rate_derivative
+                    V[rows] = V[master_rotation].tocsr() + axis_rate + rate * axis_derivative
+                    A[rows] = (
+                        A[master_rotation].tocsr() + axis_column @ acceleration_derivative
+                        - sparse.csr_matrix(skew(axis * rate)) @ V[master_rotation].tocsr()
+                        + sparse.csr_matrix(second_rate * np.eye(3) + rate * skew(omega)) @ axis_derivative
+                        + sparse.csr_matrix(skew(omega)) @ axis_rate
+                    )
             elif slave in pitch_roots:
                 axis = orientations[master] @ (arm0 / np.linalg.norm(arm0))
                 # IEC의 양의 feather pitch는 이 모델의 바깥쪽 span 축에서
@@ -177,16 +203,25 @@ def kinematic_rates(model, orientations, velocity, acceleration, pitch_rate=0., 
                 pitch_velocity, pitch_accel = -axis * pitch_rate, -axis * pitch_acceleration
                 velocity[slave, 3:] = omega + pitch_velocity
                 acceleration[slave, 3:] = alpha + cross(omega, pitch_velocity) + pitch_accel
-                rows = slice(offsets[slave] + 3, offsets[slave] + 6)
-                V[rows] = V[master_rotation] - skew(pitch_velocity) @ spin
-                A[rows] = A[master_rotation] - skew(pitch_velocity) @ V[master_rotation] - (skew(omega) @ skew(pitch_velocity) + skew(pitch_accel)) @ spin
+                if derivatives_requested:
+                    rows = slice(offsets[slave] + 3, offsets[slave] + 6)
+                    V[rows] = V[master_rotation].tocsr() - sparse.csr_matrix(skew(pitch_velocity)) @ spin
+                    A[rows] = (
+                        A[master_rotation].tocsr()
+                        - sparse.csr_matrix(skew(pitch_velocity)) @ V[master_rotation].tocsr()
+                        - sparse.csr_matrix(skew(omega) @ skew(pitch_velocity) + skew(pitch_accel)) @ spin
+                    )
             completed.add(slave)
             remaining = [link for link in remaining if link[1] != slave]
+    if not derivatives_requested:
+        empty = sparse.csr_matrix(T.shape)
+        return velocity, acceleration, empty, empty
     derivatives = []
     for updated, factor in ((V, velocity_factor), (A, acceleration_factor)):
-        correction = updated - factor * linked_rate_transform
-        rows, columns = np.nonzero(correction)
-        change = sparse.csr_matrix((correction[rows, columns], (linked_rows[rows], columns)), shape=T.shape)
+        correction = (updated.tocsr() - factor * linked_rate_transform).tocoo()
+        change = sparse.csr_matrix(
+            (correction.data, (linked_rows[correction.row], correction.col)), shape=T.shape,
+        )
         derivatives.append(factor * rate_transform + change)
     return velocity, acceleration, *derivatives
 
@@ -329,18 +364,22 @@ def initialize_acceleration(model, solution, prepared, stiffness, mass, damping,
     internal, _, history, stresses, energy = structural_response(model, result.displacement, result.orientations, prepared, result.element_history, geometric, approximate_tangent=True)
     inertia, moving_mass, _, _, kinetic = inertial_response(model, result.displacement, result.orientations, velocity, convective - gravity.reshape(-1, 6), prepared, mass, geometric)
     rhs = np.asarray(T.T @ (external - mass @ gravity - internal - damping @ velocity.ravel() - inertia))
-    reduced_mass = (T.T @ moving_mass @ T).toarray()
+    reduced_mass = (T.T @ moving_mass @ T).tocsr()
     if len(rhs):
-        diagonal = np.abs(np.diag(reduced_mass))
-        scaling = np.ones(len(rhs))
-        scaling[diagonal > 0] = 1 / np.sqrt(diagonal[diagonal > 0])
-        values, vectors = linalg.eigh(reduced_mass * np.outer(scaling, scaling))
-        tolerance = max(np.max(np.abs(values)), 1.) * 1e-12
-        positive = values > tolerance
-        projected = vectors.T @ (scaling * rhs)
-        if np.linalg.norm(projected[~positive]) > 1e-8 * max(np.linalg.norm(projected), 1.):
-            raise ValueError("massless coordinates must be in equilibrium before initializing acceleration")
-        independent = scaling * (vectors[:, positive] @ (projected[positive] / values[positive]))
+        if len(rhs) > 128 and _positive_sparse_mass(reduced_mass):
+            independent = solve_linear(reduced_mass, rhs)
+        else:
+            dense_mass = reduced_mass.toarray()
+            diagonal = np.abs(np.diag(dense_mass))
+            scaling = np.ones(len(rhs))
+            scaling[diagonal > 0] = 1 / np.sqrt(diagonal[diagonal > 0])
+            values, vectors = linalg.eigh(dense_mass * np.outer(scaling, scaling))
+            tolerance = max(np.max(np.abs(values)), 1.) * 1e-12
+            positive = values > tolerance
+            projected = vectors.T @ (scaling * rhs)
+            if np.linalg.norm(projected[~positive]) > 1e-8 * max(np.linalg.norm(projected), 1.):
+                raise ValueError("massless coordinates must be in equilibrium before initializing acceleration")
+            independent = scaling * (vectors[:, positive] @ (projected[positive] / values[positive]))
         acceleration = np.asarray(T @ independent).reshape(-1, 6) + convective
     else:
         acceleration = convective
@@ -353,12 +392,9 @@ def initialize_acceleration(model, solution, prepared, stiffness, mass, damping,
     return result
 
 
-def modal_analysis(model, stiffness, mass, count):
-    """질량 없는 shell drilling 자유도는 정적 축약한다. 가짜 관성을 추가하지 않는다."""
-    T = constraint_transform(model, np.tile(np.eye(3), (len(model.points), 1, 1)))
-    K, M = (T.T @ stiffness @ T).toarray(), (T.T @ mass @ T).toarray()
-    if not len(M) or count < 1:
-        raise ValueError("modal analysis requires free degrees of freedom and a positive mode count")
+def _dense_modal_eigenpairs(stiffness, mass, count):
+    """Small/mass-singular reference path, including shell drilling condensation."""
+    K, M = stiffness.toarray(), mass.toarray()
     # 기울어진 shell의 drilling 무질량 방향은 xyz 중 어느 하나가 아닙니다.
     # 대각항만 검사하면 놓치므로 질량의 실제 영공간을 구해 축약합니다.
     diagonal = np.abs(np.diag(M))
@@ -398,26 +434,92 @@ def modal_analysis(model, stiffness, mass, count):
     if len(selected) < count:
         raise ValueError("requested more positive modes than the constrained model has")
     values, vectors = values[selected], vectors[:, selected]
-    modes = np.asarray(T @ (S @ vectors)).T.reshape(count, len(model.points), 6)
     for value, vector in zip(values, vectors.T):
         physical = S @ vector
         residual = np.linalg.norm(K @ physical - value * M @ physical) / max(np.linalg.norm(K @ physical), 1e-30)
         if residual > 1e-8:
             raise ValueError("modal eigenpair did not meet the 1e-8 residual criterion")
+    return values, S @ vectors
+
+
+def _sparse_modal_eigenpairs(stiffness, mass, count):
+    """Lowest positive modes without materializing the 3D volume matrices."""
+    size = stiffness.shape[0]
+    diagonal_mass = mass.diagonal()
+    stiffness_scale = np.max(
+        np.divide(np.abs(stiffness.diagonal()), diagonal_mass, out=np.zeros(size), where=diagonal_mass > 0),
+        initial=1.,
+    )
+    zero_tolerance = stiffness_scale * 1e-12
+    requested = min(size - 1, max(count + 8, 2 * count))
+    while requested > 0:
+        try:
+            values, vectors = eigsh(
+                stiffness, k=requested, M=mass,
+                sigma=-max(stiffness_scale, 1.) * 1e-10,
+                which="LM", tol=1e-10,
+            )
+        except (ArpackNoConvergence, RuntimeError, ValueError) as error:
+            raise ValueError("sparse modal eigensolve failed; check mass and constraints") from error
+        selected = np.flatnonzero(values > zero_tolerance)
+        selected = selected[np.argsort(values[selected])][:count]
+        if len(selected) == count:
+            values, vectors = values[selected], vectors[:, selected]
+            norms = np.sqrt(np.einsum("ij,ij->j", vectors, mass @ vectors))
+            return values, vectors / norms
+        if requested == size - 1:
+            break
+        requested = min(size - 1, max(requested + 8, requested * 2))
+    raise ValueError("requested more positive modes than the constrained model has")
+
+
+def modal_analysis(model, stiffness, mass, count):
+    """Mass-normalized modes; generated solid models stay sparse.
+
+    Small systems and the legacy shell drilling nullspace retain the exact dense
+    condensation.  A positive-definite large mass matrix uses sparse
+    shift-invert and explicitly skips rigid-body eigenvalues.
+    """
+    T = constraint_transform(model, np.tile(np.eye(3), (len(model.points), 1, 1)))
+    stiffness, mass = ((T.T @ matrix @ T).tocsr() for matrix in (stiffness, mass))
+    if stiffness.shape[0] == 0 or count < 1:
+        raise ValueError("modal analysis requires free degrees of freedom and a positive mode count")
+    use_dense = stiffness.shape[0] <= 128 or not _positive_sparse_mass(mass)
+    values, vectors = (
+        _dense_modal_eigenpairs(stiffness, mass, count)
+        if use_dense else _sparse_modal_eigenpairs(stiffness, mass, count)
+    )
+    modes = np.asarray(T @ vectors).T.reshape(count, len(model.points), 6)
     return {"frequencies": np.sqrt(values) / (2 * np.pi), "modes": modes}
 
 
 def buckling_analysis(model, stiffness, displacement, prepared, count):
     T = constraint_transform(model, np.tile(np.eye(3), (len(model.points), 1, 1)))
-    K = (T.T @ stiffness @ T).toarray()
-    G = (T.T @ geometric_matrix(model, displacement, prepared) @ T).toarray()
-    # -G는 양정일 필요가 없다. modal용 SPD eigensolver에 억지로 넣지 않는다.
-    values, vectors = linalg.eig(K, -G)
-    usable = np.flatnonzero(np.isfinite(values) & (np.abs(values.imag) < 1e-8 * np.maximum(1, np.abs(values.real))) & (values.real > 0))
-    selected = usable[np.argsort(values[usable].real)][:count]
-    if len(selected) < count:
+    K = (T.T @ stiffness @ T).tocsr()
+    G = (T.T @ geometric_matrix(model, displacement, prepared) @ T).tocsr()
+    size = K.shape[0]
+    if size == 0 or count < 1:
+        raise ValueError("buckling analysis requires free degrees of freedom and a positive mode count")
+    if size <= 128 or count >= size - 1:
+        dense_K, dense_G = K.toarray(), G.toarray()
+        # -G는 양정일 필요가 없다. modal용 SPD eigensolver에 억지로 넣지 않는다.
+        raw, vectors = linalg.eig(dense_K, -dense_G)
+        usable = np.flatnonzero(np.isfinite(raw) & (np.abs(raw.imag) < 1e-8 * np.maximum(1, np.abs(raw.real))) & (raw.real > 0))
+        selected = usable[np.argsort(raw[usable].real)][:count]
+        values, vectors = raw[selected].real, vectors[:, selected].real
+    else:
+        requested = min(size - 1, max(count + 4, 2 * count))
+        try:
+            # -G phi = mu K phi, lambda = 1/mu.  K is the positive
+            # constrained elastic metric, so eigsh accepts the indefinite G.
+            reciprocals, vectors = eigsh(-G, k=requested, M=K, which="LA", tol=1e-10)
+        except (ArpackNoConvergence, RuntimeError, ValueError) as error:
+            raise ValueError("sparse buckling eigensolve failed; check supports and preload") from error
+        usable = np.flatnonzero(np.isfinite(reciprocals) & (reciprocals > 0))
+        selected = usable[np.argsort(1 / reciprocals[usable])][:count]
+        values, vectors = 1 / reciprocals[selected], vectors[:, selected]
+    if len(values) < count:
         raise ValueError("preload has fewer positive finite buckling factors than requested")
-    values, vectors = values[selected].real, vectors[:, selected].real
     for value, vector in zip(values, vectors.T):
         if np.linalg.norm(K @ vector + value * G @ vector) / max(np.linalg.norm(K @ vector), 1e-30) > 1e-8:
             raise ValueError("buckling eigenpair did not meet the 1e-8 residual criterion")

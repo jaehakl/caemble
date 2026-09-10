@@ -7,6 +7,7 @@ import type { RayPathBundle, UcumUnit } from '@/lib/cad/model'
 import { scenePartColor, unassignedGeometryColor } from './materialColor'
 import { createWireframeGeometries, geometryWithSelectedPolygons, viewerSelectionColor } from './renderParts'
 import { createRayPathRenderGeometries } from './rayPathRendering'
+import type { createMeshFieldRenderData } from './meshFields'
 import { createLayerRenderParts, scaleViewerLayers, type CadViewerSource, type JscadViewerLayer } from './sourceLayers'
 import {
   createCadViewerPickParts,
@@ -89,6 +90,8 @@ type JscadViewerProps = {
   onToggleViewerExpanded?: () => void
   selectionQuery?: CadViewerSelectionQuery | null
   rayPaths?: readonly RayPathBundle[]
+  meshRenderData?: ReturnType<typeof createMeshFieldRenderData>
+  meshIdentity?: string
   viewerExpanded?: boolean
   selectionSourceStatus?: Readonly<Record<string, CadViewerSourceLookupStatus>>
   visibleSources?: readonly CadViewerSource[]
@@ -128,6 +131,18 @@ function drawRayPaths(regl: ReglCommandBuilder) {
     },
   })
 }
+function drawRecordedMesh(regl: ReglCommandBuilder) {
+  return regl({
+    primitive: regl.prop('primitive'),
+    vert: rayPathVertexShader,
+    frag: rayPathFragmentShader,
+    attributes: { position: regl.prop('positions'), color: regl.prop('colors') },
+    elements: regl.prop('indices'),
+    depth: { enable: true, func: 'lequal' },
+    cull: { enable: false },
+    polygonOffset: { enable: true, offset: [1, 1] },
+  })
+}
 const cameraViewDirections = {
   default: [1, 1, 1],
   x: [1, 0, 0],
@@ -137,6 +152,7 @@ const cameraViewDirections = {
 
 export function ViewerToolbar({
   availableSources = [],
+  meshMode = false,
   onPickModeChange,
   onSetCameraView,
   onToggleSource,
@@ -148,6 +164,7 @@ export function ViewerToolbar({
   xrayEnabled,
 }: {
   availableSources?: readonly CadViewerSource[]
+  meshMode?: boolean
   onPickModeChange: (mode: CadViewerPickMode) => void
   onSetCameraView: (view: CameraView) => void
   onToggleSource?: (source: CadViewerSource) => void
@@ -174,39 +191,43 @@ export function ViewerToolbar({
         ))}
       </div>
 
-      <button
-        aria-label="Toggle X-ray"
-        aria-pressed={xrayEnabled}
-        className={`rounded border px-2 py-1 text-[11px] font-medium transition-colors ${
-          xrayEnabled
-            ? 'border-sky-400 bg-sky-50 text-sky-900'
-            : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-800'
-        }`}
-        title="내부 Geometry를 보기 위한 반투명 표시"
-        type="button"
-        onClick={onToggleXray}
-      >
-        X-ray
-      </button>
-
-      <div aria-label="Viewer selection mode" className="flex items-center gap-1 border-l border-slate-200 pl-3">
-        {(['off', 'geometry', 'surface'] as const).map((mode) => (
+      {!meshMode ? (
+        <>
           <button
-            aria-label={`Selection mode ${mode}`}
-            aria-pressed={pickMode === mode}
+            aria-label="Toggle X-ray"
+            aria-pressed={xrayEnabled}
             className={`rounded border px-2 py-1 text-[11px] font-medium transition-colors ${
-              pickMode === mode
-                ? 'border-orange-400 bg-orange-50 text-orange-900'
+              xrayEnabled
+                ? 'border-sky-400 bg-sky-50 text-sky-900'
                 : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-800'
             }`}
-            key={mode}
+            title="내부 Geometry를 보기 위한 반투명 표시"
             type="button"
-            onClick={() => onPickModeChange(mode)}
+            onClick={onToggleXray}
           >
-            {mode === 'off' ? 'Off' : mode === 'geometry' ? 'Geometry' : 'Surface'}
+            X-ray
           </button>
-        ))}
-      </div>
+
+          <div aria-label="Viewer selection mode" className="flex items-center gap-1 border-l border-slate-200 pl-3">
+            {(['off', 'geometry', 'surface'] as const).map((mode) => (
+              <button
+                aria-label={`Selection mode ${mode}`}
+                aria-pressed={pickMode === mode}
+                className={`rounded border px-2 py-1 text-[11px] font-medium transition-colors ${
+                  pickMode === mode
+                    ? 'border-orange-400 bg-orange-50 text-orange-900'
+                    : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-800'
+                }`}
+                key={mode}
+                type="button"
+                onClick={() => onPickModeChange(mode)}
+              >
+                {mode === 'off' ? 'Off' : mode === 'geometry' ? 'Geometry' : 'Surface'}
+              </button>
+            ))}
+          </div>
+        </>
+      ) : null}
 
       {onToggleSource ? (
         <div aria-label="Viewer sources" className="flex items-center gap-1 border-l border-slate-200 pl-3">
@@ -264,6 +285,8 @@ function JscadViewer({
   onToggleSource,
   onToggleViewerExpanded,
   rayPaths = [],
+  meshRenderData,
+  meshIdentity,
   selectionQuery = null,
   selectionSourceStatus = {},
   viewerExpanded,
@@ -311,6 +334,16 @@ function JscadViewer({
     [rayPathGeometries],
   )
   const rayPathCount = rayPaths.reduce((sum, bundle) => sum + bundle.pathCount, 0)
+  const meshVisualsRef = useRef<Record<string, unknown>>({
+    drawCmd: 'drawRecordedMesh',
+    show: true,
+    transparent: false,
+  })
+  const meshEntities = useMemo(
+    () => meshRenderData?.geometries.map((geometry) => ({ ...geometry, visuals: meshVisualsRef.current })) ?? [],
+    [meshRenderData],
+  )
+  const lastFittedMeshRef = useRef<string | undefined>(undefined)
   const raySegmentCount = rayPaths.reduce((sum, bundle) => sum + bundle.segmentCount, 0)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const cameraRef = useRef<RendererState | null>(null)
@@ -356,6 +389,7 @@ function JscadViewer({
     const canvas = canvasRef.current
     if (!canvas) return
     delete rayPathVisualsRef.current.cacheId
+    delete meshVisualsRef.current.cacheId
 
     const perspectiveCamera = renderer.cameras.perspective
     const orbit = renderer.controls.orbit
@@ -388,6 +422,7 @@ function JscadViewer({
     cameraRef.current = camera
     controlsRef.current = controls
     lastFittedPartsRef.current = null
+    lastFittedMeshRef.current = undefined
     rendererEntityCacheRef.current.clear()
     referenceEntitiesRef.current = [
       {
@@ -409,6 +444,7 @@ function JscadViewer({
         drawLines: renderer.drawCommands.drawLines,
         drawMesh: renderer.drawCommands.drawMesh,
         drawRayPaths,
+        drawRecordedMesh,
       },
       entities: [],
       glOptions: { canvas },
@@ -468,6 +504,33 @@ function JscadViewer({
 
   useEffect(() => {
     if (!optionsRef.current || !renderRef.current || !cameraRef.current || !controlsRef.current) return
+
+    if (meshRenderData) {
+      onRenderStart()
+      optionsRef.current.entities = meshEntities
+      if (lastFittedMeshRef.current !== meshIdentity) {
+        const { min, max } = meshRenderData.bounds
+        const target = min.map((minimum, index) => (minimum + max[index]) / 2)
+        const diameter = Math.hypot(...max.map((maximum, index) => maximum - min[index]))
+        const distance = (Math.max(diameter, Number.EPSILON) * 0.6) / Math.sin(Number(cameraRef.current.fov) / 2)
+        Object.assign(cameraRef.current, {
+          target,
+          position: target.map((coordinate) => coordinate + distance / Math.sqrt(3)),
+          near: Math.max(diameter * 1e-5, 1e-10),
+          far: Math.max(diameter * 100, 1),
+        })
+        const canvas = canvasRef.current!
+        renderer.cameras.perspective.setProjection(cameraRef.current, cameraRef.current, {
+          width: canvas.width,
+          height: canvas.height,
+        })
+        Object.assign(controlsRef.current, { phiDelta: 0, thetaDelta: 0, scale: 1 })
+        lastFittedMeshRef.current = meshIdentity
+      }
+      renderer.cameras.perspective.update(cameraRef.current, cameraRef.current)
+      if (renderScene()) onRenderEnd()
+      return
+    }
 
     if (parts.length === 0) {
       optionsRef.current.entities = [...referenceEntitiesRef.current, ...rayPathEntities]
@@ -588,6 +651,9 @@ function JscadViewer({
     onRenderError,
     onRenderStart,
     parts,
+    meshEntities,
+    meshIdentity,
+    meshRenderData,
     rayPathEntities,
     renderScene,
     selectionMatches,
@@ -623,8 +689,8 @@ function JscadViewer({
     const directionLength = Math.hypot(...direction)
 
     Object.assign(cameraRef.current, {
-      position: direction.map((component) => (component / directionLength) * distance),
-      target: [0, 0, 0],
+      position: direction.map((component, index) => target[index] + (component / directionLength) * distance),
+      target: [...target],
       up: view === 'z' ? [0, 1, 0] : [0, 0, 1],
     })
     Object.assign(controlsRef.current, { phiDelta: 0, scale: 1, thetaDelta: 0 })
@@ -662,6 +728,7 @@ function JscadViewer({
     <div className="flex h-full min-h-[320px] w-full flex-col overflow-hidden bg-slate-50 lg:min-h-0">
       <ViewerToolbar
         availableSources={availableSources}
+        meshMode={Boolean(meshRenderData)}
         pickMode={pickMode}
         visibleSources={visibleSources}
         onPickModeChange={setPickMode}
@@ -882,7 +949,7 @@ function JscadViewer({
           </div>
         ) : null}
 
-        {parts.length === 0 && rayPathCount === 0 ? (
+        {parts.length === 0 && rayPathCount === 0 && !meshRenderData ? (
           <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-slate-500">
             {emptyMessage}
           </div>

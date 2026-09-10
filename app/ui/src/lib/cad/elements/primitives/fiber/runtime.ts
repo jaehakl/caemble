@@ -43,8 +43,8 @@ export function createFiberGeometry(attributes: FiberAttributes) {
   return createFiberGeometryFromSampled(sampleFiber(attributes))
 }
 
-export function canonicalFiberNode(geometry: unknown, nodeId: string): CanonicalFiberNodeV1 {
-  const sampled = sampledFiberByGeometry.get(geometry as object)!
+export function canonicalFiberNode(geometry: unknown, nodeId: string, evaluated?: SampledFiber): CanonicalFiberNodeV1 {
+  const sampled = evaluated ?? sampledFiberByGeometry.get(geometry as object)!
   return {
     kind: 'fiber',
     nodeId,

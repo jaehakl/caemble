@@ -16,8 +16,9 @@ from .analysis import (
     transient_step,
 )
 from .constraints import enforce_links, revolute_joints, spring_gradient
-from .domain import parameter
-from .outputs import interface_members
+from .continuum import physical_angular_velocities, physical_orientation_matrices
+from .domain import distribute_resultant, parameter, surface_region
+from .outputs import interface_members, interface_metadata
 from .rotations import (
     rotation_exp,
     rotation_exp_many,
@@ -97,13 +98,28 @@ def apply_resultant_loads(invocation, model):
             force -= np.einsum("nij,nj->ni", added_mass, acceleration)
     for rule in rules:
         p = {key: parameter(value) for key, value in rule["parameters"].items()}
-        source = np.asarray([source_lookup[int(node)] for node in p["sourceNodeIds"]])
-        target = np.asarray([target_lookup[int(node)] for node in p["targetNodeIds"]])
+        if "sourceRegion" in p:
+            regions = motion_input.value.metadata.get("regions", {})
+            if p["sourceRegion"] not in regions or not len(regions[p["sourceRegion"]]):
+                raise ValueError("resultant transfer sourceRegion is absent from sourceMotion geometry metadata")
+            source = np.asarray([source_lookup[int(node)] for node in regions[p["sourceRegion"]]])
+            region = surface_region(model, rule["target"][0])
+            target = region["nodes"]
+        else:
+            # Explicit arrays are retained only for internal numerical fixtures.
+            if model.physical_node_count is not None:
+                raise ValueError("generated structural models require a semantic sourceRegion for resultant transfer")
+            source = np.asarray([source_lookup[int(node)] for node in p["sourceNodeIds"]])
+            target = np.asarray([target_lookup[int(node)] for node in p["targetNodeIds"]])
         if len(set(source)) != len(source) or len(set(target)) != len(target) or not len(source):
             raise ValueError("resultant transfer requires unique nonempty source and target node IDs")
         reference = np.asarray(p["referencePoint"], dtype=float)
         arms = np.asarray(motion["positions"])[-1, source] - reference
         resultant = np.r_[force[source].sum(axis=0), (moment[source] + np.cross(arms, force[source])).sum(axis=0)]
+        if "sourceRegion" in p:
+            target, distributed = distribute_resultant(model.points, region["faces"], resultant[:3], resultant[3:], reference)
+            np.add.at(model.force[:, :3], target, distributed)
+            continue
         # m와 rad의 서로 다른 척도로 인한 조건수 악화를 막기 위해 팔 길이를 정규화한다.
         target_arms = model.points[target] - reference
         length = max(np.max(np.linalg.norm(target_arms, axis=1), initial=0), 1e-12)
@@ -121,8 +137,21 @@ def initialize_motion(model, initializations):
     for rule in initializations:
         if rule["methodId"] == "fea.initial-motion":
             p = rule["parameters"]
-            solution.velocity[:, :3] = np.asarray(parameter(p["initialVelocity"]))
-            solution.velocity[:, 3:] = np.asarray(parameter(p["initialAngularVelocity"]))
+            velocity = np.asarray(parameter(p["initialVelocity"]))
+            angular = np.asarray(parameter(p["initialAngularVelocity"]))
+            if model.physical_node_count is None:
+                solution.velocity[:, :3] = velocity
+                solution.velocity[:, 3:] = angular
+                continue
+            selected = np.unique(np.concatenate([model.cell_regions[target] for target in rule["target"]]))
+            nodes = np.unique(np.concatenate([model.elements[index].nodes for index in selected]))
+            reference = np.asarray(parameter(p["referencePoint"]))
+            solution.velocity[nodes, :3] = velocity + np.cross(angular, model.points[nodes] - reference)
+            solution.velocity[nodes, 3:] = angular
+            for target, node in model.provenance.get("auxiliaryNodes", {}).items():
+                if np.isin(model.boundary_regions[target]["nodes"], nodes).all():
+                    solution.velocity[node, :3] = velocity + np.cross(angular, model.points[node] - reference)
+                    solution.velocity[node, 3:] = angular
     pitch = 0.0
     if model.rotor is not None:
         rotor = model.rotor
@@ -135,12 +164,24 @@ def initialize_motion(model, initializations):
         solution.displacement[generator, 3] = angle * rotor["gearRatio"]
         solution.orientations[generator] = rotation_exp(np.array([angle * rotor["gearRatio"], 0, 0]))
         solution.velocity[generator, 3] = speed * rotor["gearRatio"]
+        for name, center, ratio in (("hubBodyNodes", hub, 1.), ("generatorBodyNodes", generator, rotor["gearRatio"])):
+            nodes = rotor.get(name, ())
+            for node in nodes:
+                position = model.points[center] + solution.orientations[center] @ (model.points[node] - model.points[center])
+                solution.displacement[node, :3] = position - model.points[node]
+                solution.orientations[node] = solution.orientations[center]
+                solution.velocity[node, :3] = np.cross([speed * ratio, 0, 0], position - model.points[center])
+                solution.velocity[node, 3:] = [speed * ratio, 0, 0]
+                solution.acceleration[node, :3] = np.cross([speed * ratio, 0, 0], solution.velocity[node, :3])
         for root, nodes in zip(rotor["bladeRootNodes"], rotor["bladeNodeIds"]):
             span = model.points[root] - model.points[hub]
             span /= np.linalg.norm(span)
             pitch_rotation = rotation_exp(-span * pitch)
             for node in nodes:
-                position = model.points[hub] + rotation @ (model.points[node] - model.points[hub])
+                reference = model.points[node]
+                if model.physical_node_count is not None:
+                    reference = model.points[root] + pitch_rotation @ (reference - model.points[root])
+                position = model.points[hub] + rotation @ (reference - model.points[hub])
                 solution.displacement[node, :3] = position - model.points[node]
                 solution.displacement[node, 3:] = [angle, 0, 0]
                 solution.orientations[node] = rotation @ pitch_rotation
@@ -161,7 +202,7 @@ def motion_from_samples(model, samples, pitches, iteration):
         r = model.rotor
         rotor_speeds = np.array([s.orientations[r["nacelleNode"]][:, 0] @ (s.velocity[r["hubNode"], 3:] - s.velocity[r["nacelleNode"], 3:]) for s in samples])
         generator_speeds = np.array([s.orientations[r["nacelleNode"]][:, 0] @ (s.velocity[r["generatorNode"], 3:] - s.velocity[r["nacelleNode"], 3:]) for s in samples])
-    return {"modelIdentity": model.identity, "nodeIds": model.node_ids.astype(np.int32), "times": np.asarray([s.time for s in samples], dtype=float), "positions": np.asarray([model.points + s.displacement[:, :3] for s in samples]), "orientations": np.asarray([s.orientations @ frames for s in samples]), "velocities": np.asarray([s.velocity[:, :3] for s in samples]), "angularVelocities": np.asarray([s.velocity[:, 3:] for s in samples]), "accelerations": np.asarray([s.acceleration[:, :3] for s in samples]), "rotorSpeed": rotor_speeds, "generatorSpeed": generator_speeds, "pitch": np.asarray(pitches, dtype=float), "couplingIteration": np.asarray(iteration, dtype=np.int32)}
+    return {"modelIdentity": model.identity, "nodeIds": model.node_ids.astype(np.int32), "times": np.asarray([s.time for s in samples], dtype=float), "positions": np.asarray([model.points + s.displacement[:, :3] for s in samples]), "orientations": np.asarray([physical_orientation_matrices(model, s.displacement, s.orientations) @ frames for s in samples]), "velocities": np.asarray([s.velocity[:, :3] for s in samples]), "angularVelocities": np.asarray([physical_angular_velocities(model, s.displacement, s.velocity) for s in samples]), "accelerations": np.asarray([s.acceleration[:, :3] for s in samples]), "rotorSpeed": rotor_speeds, "generatorSpeed": generator_speeds, "pitch": np.asarray(pitches, dtype=float), "couplingIteration": np.asarray(iteration, dtype=np.int32)}
 
 
 def clock_tolerance(settings):
@@ -201,7 +242,11 @@ def predict_motion(model, solution, settings):
         enforce_links(model, candidate.displacement, candidate.orientations, pitch)
         candidate.velocity, candidate.acceleration, _, _ = kinematic_rates(model, candidate.orientations, candidate.velocity, solution.acceleration, joint_rates=joint_rates)
         samples.append(candidate)
-    return BundleValue("caemble.mechanics/motion@1", motion_from_samples(model, samples, [pitch] * len(samples), 0))
+    return BundleValue(
+        "caemble.mechanics/motion@1",
+        motion_from_samples(model, samples, [pitch] * len(samples), 0),
+        interface_metadata(model),
+    )
 
 
 def advance_window(invocation, model, solution, settings, matrices):
@@ -232,6 +277,8 @@ def advance_window(invocation, model, solution, settings, matrices):
             raise ValueError("load waveform shapes must agree with its time and node coordinates")
         if load["modelIdentity"] != model.identity or not np.array_equal(load["nodeIds"], model.node_ids) or not np.allclose(load["times"], times, rtol=0, atol=1e-10):
             raise ValueError("load and motion identities, node IDs and sample times must agree")
+        if model.physical_node_count is not None and np.any(np.asarray(load["moments"])[:, :model.physical_node_count] != 0):
+            raise ValueError("coupled moment on a physical solid node requires the semantic attachment reference node or resultant-transfer")
         generalized_load = np.concatenate((load["forces"], load["moments"]), axis=2).reshape(len(times), -1)
         if np.any(generalized_load[:, inactive] != 0):
             raise ValueError("a coupled force/moment acts on an inactive structural DOF")
@@ -382,5 +429,5 @@ def advance_window(invocation, model, solution, settings, matrices):
                 prior = np.asarray(old["orientations"])[t, node]
                 rotations[t, node] = rotation_exp(weight * rotation_log(actual["orientations"][t, node] @ prior.T)) @ prior
         relaxed["orientations"] = rotations
-        motion = BundleValue("caemble.mechanics/motion@1", relaxed, {"trialSignals": signals, "iterationResidual": iteration_residual, "residualScales": scales, "relaxation": weight})
+        motion = BundleValue("caemble.mechanics/motion@1", relaxed, {**previous.metadata, "trialSignals": signals, "iterationResidual": iteration_residual, "residualScales": scales, "relaxation": weight})
     return solution, motion, residual, converged

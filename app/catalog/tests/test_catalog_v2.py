@@ -51,6 +51,7 @@ class CatalogV3Tests(unittest.TestCase):
             "dc-uniform-bar",
             "dc-notched-current-density",
             "electro-thermal-uniform-bar",
+            "nrel5mw-oc3-operating",
         }
         with open_catalog() as catalog:
             experiments, total = catalog.list_experiments(limit=100)
@@ -61,7 +62,7 @@ class CatalogV3Tests(unittest.TestCase):
                 version="3.0.0",
             )
 
-        self.assertEqual(total, 16)
+        self.assertEqual(total, 15)
         self.assertTrue(removed_keys.isdisjoint(item["key"] for item in experiments))
         self.assertEqual(example["title"], "Electro-Thermal Notched Bar")
         self.assertEqual(
@@ -97,12 +98,12 @@ class CatalogV3Tests(unittest.TestCase):
 
     def test_spectrometer_has_current_grating_solver_and_complete_bundle(self) -> None:
         with open_catalog() as catalog:
-            example = catalog.experiment('caemble:experiment/caemble/verified/czerny-turner-spectrometer@3.0.0')
+            example = catalog.experiment('caemble:experiment/caemble/verified/czerny-turner-spectrometer@3.0.1')
             solver = catalog.get_solver_manifest('ray-tracing', '0.5.0')
         self.assertEqual(example['title'], 'Czerny–Turner Spectrometer')
         self.assertEqual([(s['name'], s['version']) for s in example['relatedSolvers']], [('ray-tracing', '0.5.0')])
         self.assertEqual(set(example['sourceBundle']['files']), {
-            'experiment.tsx', 'geometry.tsx', 'layout.ts', 'material.tsx', 'simulate.py', 'tasks/trace.tsx',
+            'experiment.tsx', 'geometry.tsx', 'material.tsx', 'simulate.py', 'tasks/trace.tsx',
         })
         self.assertEqual(solver['abiVersion'], 3)
         self.assertEqual(solver['implementation'], 'app.solvers.ray_tracing.entry:implementation')
@@ -113,8 +114,7 @@ class CatalogV3Tests(unittest.TestCase):
         expected = {
             "dc-current-density": "0.5.0", "steady-state-heat": "0.4.0",
             "ray-tracing": "0.5.0", "fdtd": "2.1.0",
-            "structural-mechanics": "1.0.0", "aerodynamic-loading": "1.0.0",
-            "hydrodynamic-loading": "1.0.0", "wind-turbine-control": "1.0.0",
+            "structural-mechanics": "2.0.0",
         }
         with open_catalog() as catalog:
             manifests = catalog.solver_manifests()
@@ -123,17 +123,67 @@ class CatalogV3Tests(unittest.TestCase):
             for manifest in manifests:
                 package = manifest["descriptor"]["name"].replace("-", "_")
                 self.assertEqual(manifest["implementation"], f"app.solvers.{package}.entry:implementation")
-            for name, version in [("dc-current-density", "0.4.0"), ("steady-state-heat", "0.3.0"), ("ray-tracing", "0.4.0"), ("fdtd", "1.0.1"), ("fdtd", "2.0.0")]:
+            for name, version in [("dc-current-density", "0.4.0"), ("steady-state-heat", "0.3.0"), ("ray-tracing", "0.4.0"), ("fdtd", "1.0.1"), ("fdtd", "2.0.0"), ("structural-mechanics", "1.0.0"), ("aerodynamic-loading", "1.0.0"), ("hydrodynamic-loading", "1.0.0"), ("wind-turbine-control", "1.0.0")]:
                 with self.assertRaises(CatalogNotFoundError):
                     catalog.get_solver_manifest(name, version)
             for example in catalog.list_experiments(limit=100)[0]:
-                expected_version = "1.0.0" if example["repository"] == "fea" else {"gold-fcc-fresnel": "2.1.0", "fdtd-drude-slab": "3.1.0"}.get(example["key"], "3.0.0")
+                expected_version = "2.0.1" if example["repository"] == "fea" else {"gold-fcc-fresnel": "2.1.0", "fdtd-drude-slab": "3.1.0", "czerny-turner-spectrometer": "3.0.1"}.get(example["key"], "3.0.0")
                 self.assertEqual(example["version"], expected_version)
-                previous = "0.0.0" if example["repository"] == "fea" else {"gold-fcc-fresnel": "2.0.0", "fdtd-drude-slab": "3.0.0"}.get(example["key"], "2.0.0")
+                previous = "1.0.0" if example["repository"] == "fea" else {"gold-fcc-fresnel": "2.0.0", "fdtd-drude-slab": "3.0.0"}.get(example["key"], "2.0.0")
                 with self.assertRaises(CatalogNotFoundError):
                     catalog.experiment(example["coordinate"].rsplit("@", 1)[0] + "@" + previous)
                 for solver in example["relatedSolvers"]:
                     self.assertEqual(solver["version"], expected[solver["name"]])
+
+    def test_structural_contract_owns_mesh_and_uses_semantic_boundaries(self) -> None:
+        with open_catalog() as catalog:
+            descriptor = catalog.get_solver_manifest("structural-mechanics", "2.0.0")["descriptor"]
+            penalty = catalog.quantity_kind("mechanics.NormalContactStiffness")
+        self.assertEqual(descriptor["parameters"]["spatialResolution"]["data"]["unit"], "m")
+        initializations = {method["methodId"]: method for method in descriptor["methods"]["initializations"]}
+        boundaries = {method["methodId"]: method for method in descriptor["methods"]["boundaryConditions"]}
+        outputs = {method["methodId"]: method for method in descriptor["methods"]["outputs"]}
+        self.assertIn("fea.body", initializations)
+        self.assertEqual(initializations["fea.body"]["target"]["kind"], "geometry")
+        self.assertEqual(initializations["fea.body"]["minimumOccurrences"], 1)
+        for method_id in ("fea.fixed", "fea.surface-load", "fea.pressure", "fea.traction", "fea.contact"):
+            self.assertEqual(boundaries[method_id]["target"]["kind"], "surface")
+        removed_methods = {
+            "fea.nodes", "fea.truss2", "fea.beam2", "fea.generalized-beam2", "fea.tri3", "fea.quad4",
+            "fea.tet4", "fea.hex8", "fea.shell4", "fea.line-mesh", "fea.plate-mesh", "fea.cylinder-mesh",
+            "fea.brick-mesh", "fea.node-set", "fea.face-set",
+        }
+        self.assertTrue(removed_methods.isdisjoint(initializations))
+        internal_parameters = {"nodeId", "nodeIds", "connectivity", "nodeIdStart", "master", "slave", "nodeA", "nodeB", "dofA", "dofB"}
+        for methods in descriptor["methods"].values():
+            for method in methods:
+                self.assertTrue(internal_parameters.isdisjoint(method["parameters"]), method["methodId"])
+        self.assertEqual(outputs["fea.stress-field"]["data"]["axes"][-1]["length"], 6)
+        self.assertEqual(outputs["fea.history"]["target"]["kind"], "surface")
+        self.assertEqual(outputs["fea.reaction-moment"]["artifactType"], "caemble.mechanics/reaction-moment@2")
+        self.assertEqual(outputs["fea.section-forces"]["artifactType"], "caemble.mechanics/section-forces@2")
+        self.assertEqual(penalty["tensorOrder"], 0)
+        self.assertIn("N.m-3", penalty["applicableUnits"])
+        self.assertEqual(boundaries["fea.contact"]["parameters"]["penalty"]["data"]["quantityKind"], penalty["name"])
+
+    def test_structural_examples_define_csg_instead_of_task_mesh_arrays(self) -> None:
+        with open_catalog() as catalog:
+            examples = [item for item in catalog.list_experiments(limit=100)[0] if item["repository"] == "fea"]
+            self.assertEqual({item["key"] for item in examples}, {
+                "boolean-connection-solid", "curved-tower-shell", "structural-analysis-modes",
+                "structural-element-basics", "structural-nonlinear-materials",
+            })
+            for item in examples:
+                example = catalog.experiment(item["coordinate"])
+                files = example["sourceBundle"]["files"]
+                self.assertTrue({"experiment.tsx", "material.tsx", "simulate.py"}.issubset(files))
+                tasks = {path: source for path, source in files.items() if path.startswith("tasks/")}
+                self.assertTrue(tasks)
+                for path, source in tasks.items():
+                    self.assertIn("fea.body", source, path)
+                    self.assertNotRegex(source, r"\b(?:connectivity|nodeIds|nodeIdStart)\s*:")
+                    self.assertLess(len(source.splitlines()), 1000, path)
+                self.assertEqual([(solver["name"], solver["version"]) for solver in example["relatedSolvers"]], [("structural-mechanics", "2.0.0")])
 
     def test_new_solver_cli_defaults_to_abi_v3(self) -> None:
         arguments = build_parser().parse_args(

@@ -17,12 +17,14 @@ import type {
   MaterialBinding,
 } from './types'
 import { normalizeUcumUnit, type UcumUnit } from '../model/units'
+import type { GeometryEvaluationProfile } from './precision'
 
 type EvaluationState = {
   nodes: Map<string, CadSceneTreeNode>
   explicitIdsByParent: Map<string, Set<string>>
   localIdsByParent: Map<string, Set<string>>
   rootLabel: string
+  profile?: GeometryEvaluationProfile
 }
 
 const localGeometryIdPattern = /^[\p{L}\p{N}_-]+$/u
@@ -264,7 +266,7 @@ function evaluateNode(
     parts = [
       {
         geometry,
-        canonicalNode: canonicalPrimitiveNode(definition.tag, globalId!, resolvedProps, geometry),
+        canonicalNode: canonicalPrimitiveNode(definition.tag, globalId!, resolvedProps, geometry, state.profile),
         materialRole: binding.role,
         ...(binding.material === undefined ? {} : { material: binding.material }),
         surfaces: definition.createSurfaces(geometry, resolvedProps),
@@ -324,6 +326,7 @@ export function evaluateCadScene(
   groupOptions: CadSceneGroupOptions = {},
   rootLabel = 'Experiment',
   rawLengthUnit: UcumUnit = 'm',
+  profile?: GeometryEvaluationProfile,
 ): CadScene {
   const lengthUnit = normalizeUcumUnit(rawLengthUnit, `${rootLabel} scene lengthUnit`)
   const rootKey = rootLabel.toLowerCase()
@@ -333,6 +336,7 @@ export function evaluateCadScene(
     explicitIdsByParent: new Map(),
     localIdsByParent: new Map(),
     rootLabel,
+    profile,
   }
   const evaluatedParts = evaluateNode(root, new Map(), state, tree, `${rootKey}/root`, '', undefined)
 
@@ -434,7 +438,7 @@ export function evaluateCadScene(
   annotateGeometryNodes(tree)
 
   const scene = applyCadSceneGroups({ lengthUnit, parts, tree, geometryGroups: [], surfaceGroups: [] }, groupOptions)
-  const canonical = registerCanonicalGeometryScene(scene, canonicalRoots, groupOptions)
+  const canonical = registerCanonicalGeometryScene(scene, canonicalRoots, groupOptions, profile)
   scene.surfaceGroups = canonical.surfaceGroups.map((group) => {
     const entries = canonicalSurfaceMemberEntries(group)
     entries.forEach(({ memberId, selector }) => {

@@ -9,7 +9,7 @@ import pytest
 from app.kernel.catalog import solver_catalog
 from app.kernel.resources import ResourceStore
 from app.solvers.structural_mechanics.analysis import initial_solution
-from app.solvers.structural_mechanics.domain import build_model
+from tests.structural_fixture import build_model
 from app.solvers.structural_mechanics.outputs import build_outputs
 
 
@@ -46,7 +46,7 @@ def mesh_invocation():
 def test_named_sets_survive_field_resource_roundtrip_with_original_ids_and_cad_provenance():
     invocation = mesh_invocation()
     model = build_model(invocation)
-    field = build_outputs(invocation.config, solver_catalog.descriptor("structural-mechanics", "1.0.0"), model, initial_solution(model))["displacement"]
+    field = build_outputs(invocation.config, solver_catalog.descriptor("structural-mechanics", "2.0.0"), model, initial_solution(model))["displacement"]
     resources = ResourceStore()
     try:
         restored = resources.resolve(resources.ingest(field))

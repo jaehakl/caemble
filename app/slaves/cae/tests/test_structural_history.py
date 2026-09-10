@@ -103,11 +103,18 @@ def test_scalar_mechanical_history_survives_without_requested_node_output():
 
 
 @pytest.mark.parametrize("complete", [False, True])
-def test_recorded_history_retains_physical_time_and_selected_node_axes(complete):
-    """실제 ABI/기록 경계를 통과해도 Calculation용 시간/절점 좌표가 남아야 합니다."""
+def test_recorded_history_retains_physical_time_and_semantic_region_axes(complete):
+    """실제 ABI/기록 경계를 통과해도 시간/표면 영역 좌표가 남아야 합니다."""
     model, solution, _, _ = history_case()
-    descriptor = solver_catalog.descriptor("structural-mechanics", "1.0.0")
-    config = {"outputs": [{"methodId": "fea.history", "key": "history", "parameters": {"nodeIds": [90, 10], "scope": "final"}}]}
+    target = "experiment.surface.measurement"
+    model.boundary_regions[target] = {
+        "faces": np.empty((0, 3), dtype=int), "nodes": np.array([2, 0]),
+        "weights": np.array([.25, .75]), "area": 1., "rootId": "fixture",
+        "referencePoint": np.zeros(3),
+    }
+    model.result_requests["history"] = {"regions": [target]}
+    descriptor = solver_catalog.descriptor("structural-mechanics", "2.0.0")
+    config = {"outputs": [{"methodId": "fea.history", "key": "history", "target": [target], "parameters": {"scope": "final"}}]}
     definition = next(item for item in descriptor["methods"]["outputs"] if item["methodId"] == "fea.history")
     value = build_outputs(config, descriptor, model, solution, history_complete=complete)["history"]
     validate_artifact_payload(value, definition["data"], "history")
@@ -115,16 +122,16 @@ def test_recorded_history_retains_physical_time_and_selected_node_axes(complete)
     artifacts = ArtifactStore(resources)
     leases = []
     try:
-        handle = artifacts.publish(value, producer_task="structure", solver_name="structural-mechanics", solver_version="1.0.0", output_name="history", artifact_type=definition["artifactType"], state_revision=1)
+        handle = artifacts.publish(value, producer_task="structure", solver_name="structural-mechanics", solver_version="2.0.0", output_name="history", artifact_type=definition["artifactType"], state_revision=1)
         schema = definition["data"]["members"]
         recorded = materialize_record_value(handle, schema, resources=resources, artifacts=artifacts, owner="record", leases=leases)
         encoded, attachments, _ = encode_recorded_data("history", schema, recorded, 1)
         assert not attachments
         expected_times = [0.] if complete else []
         assert encoded["rotorSpeed"]["axes"] == [{"ticks": expected_times, "unit": "s"}]
-        assert encoded["displacement"]["axes"] == [{"ticks": expected_times, "unit": "s"}, {"ticks": [90, 10]}, {"implicitOrdinal": True}]
-        assert encoded["nodeIds"]["axes"] == [{"ticks": [90, 10]}]
-        assert encoded["displacement"]["shape"] == [int(complete), 2, 3]
+        assert encoded["displacement"]["axes"] == [{"ticks": expected_times, "unit": "s"}, {"ticks": [target]}, {"implicitOrdinal": True}]
+        assert encoded["regionIds"]["axes"] == [{"ticks": [target]}]
+        assert encoded["displacement"]["shape"] == [int(complete), 1, 3]
     finally:
         for lease in reversed(leases):
             resources.release(lease)

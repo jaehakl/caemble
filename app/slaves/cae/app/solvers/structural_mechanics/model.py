@@ -43,6 +43,11 @@ class StructuralModel:
     # 해석 자유도/경계조건을 자동 변경하지 않는 이름 있는 메시 그룹이다.
     node_sets: dict[str, dict[str, Any]] = field(default_factory=dict)
     face_sets: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # CSG volume nodes precede internal connection/reference nodes.
+    physical_node_count: int | None = None
+    boundary_regions: dict[str, dict[str, Any]] = field(default_factory=dict)
+    cell_regions: dict[str, np.ndarray] = field(default_factory=dict)
+    result_requests: dict[str, Any] = field(default_factory=dict)
 
     @property
     def size(self) -> int:

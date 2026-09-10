@@ -1,5 +1,6 @@
 import page0 from '../../../../docs/development/architecture.md?raw'
 import page1 from '../../../../docs/development/solver-development.md?raw'
+import structuralMechanicsPage from '../../../../docs/development/structural-mechanics.md?raw'
 import page2 from '../../../../docs/development/ui.md?raw'
 import page3 from '../../../../docs/development/api.md?raw'
 import page4 from '../../../../docs/development/cae.md?raw'
@@ -33,6 +34,14 @@ export const developmentDocuments: readonly DocumentPage[] = [
       keywords: ['solver', 'ABI', 'Catalog', 'pytest'],
     },
     content: documentBody(page1),
+  },
+  {
+    id: 'development.structural-mechanics',
+    title: 'CSG 기반 구조해석 구현',
+    summary: '자동 체적 메쉬, 구조 물리와 기록·상태 검증',
+    sourcePath: 'docs/development/structural-mechanics.md',
+    keywords: ['structural', 'CSG', 'mesh', 'Netgen', '구조해석'],
+    content: documentBody(structuralMechanicsPage),
   },
   {
     ...{

@@ -2,8 +2,9 @@
 
 import numpy as np
 
+from .continuum import physical_rotation_vectors
 from .model import StructuralSolution
-from .rotations import rotation_log
+from .outputs import physical_support_reactions
 
 
 def encode_state(model, solution):
@@ -29,8 +30,9 @@ def history_sample(model, solution, pitch=0.0, torque=0.0):
         rotor_speed = float(axis @ (solution.velocity[r["hubNode"], 3:] - solution.velocity[r["nacelleNode"], 3:]))
         generator_speed = float(axis @ (solution.velocity[r["generatorNode"], 3:] - solution.velocity[r["nacelleNode"], 3:]))
     nodes = np.arange(len(model.points)) if model.history_nodes is None else model.history_nodes
-    rotations = np.asarray([rotation_log(solution.orientations[node]) for node in nodes]).reshape(-1, 3)
-    return {"times": solution.time, "displacement": solution.displacement[nodes, :3].copy(), "rotation": rotations, "velocity": solution.velocity[nodes, :3].copy(), "reaction": solution.reaction[nodes, :3].copy(), "reactionMoment": solution.reaction[nodes, 3:].copy(), "rotorSpeed": rotor_speed, "generatorSpeed": generator_speed, "pitch": pitch, "generatorTorque": torque, "power": torque * generator_speed, "strainEnergy": solution.strain_energy, "kineticEnergy": solution.kinetic_energy}
+    rotations = physical_rotation_vectors(model, solution.displacement, solution.orientations)[nodes]
+    reactions = physical_support_reactions(model, solution.reaction, solution.displacement)[nodes]
+    return {"times": solution.time, "displacement": solution.displacement[nodes, :3].copy(), "rotation": rotations, "velocity": solution.velocity[nodes, :3].copy(), "reaction": reactions[:, :3], "reactionMoment": reactions[:, 3:], "rotorSpeed": rotor_speed, "generatorSpeed": generator_speed, "pitch": pitch, "generatorTorque": torque, "power": torque * generator_speed, "strainEnergy": solution.strain_energy, "kineticEnergy": solution.kinetic_energy}
 
 
 def append_history(model, solution, pitch=0.0, torque=0.0, *, samples=None):

@@ -8,6 +8,7 @@ import { compileCatalogExample, readCatalogExamples } from './catalog-example-su
 import { prepareCaeMeasurement, type CaePreparationRequest } from '../src/platform/node/build'
 import { executeCompiledDocument, inspectCompiledDocument } from '../src/lib/cad/execution/userModule'
 import { canonicalGeometryScene } from '../src/lib/cad/evaluation/canonical'
+import { analysisGeometryProfile } from '../src/lib/cad/evaluation/precision'
 import { buildMeasurement, measurementMaterialSnapshot } from '../src/lib/cad/execution/measurement'
 import { resolveSceneMaterials } from '../src/lib/material/document'
 import { installCatalogRuntimeSlice } from '../src/lib/catalog/runtime'
@@ -36,7 +37,12 @@ try {
         ),
       ]),
     )
-    const evaluated = executeCompiledDocument(compiled, vars, example.sourceBundle.files['simulate.py'])
+    const evaluated = executeCompiledDocument(
+      compiled,
+      vars,
+      example.sourceBundle.files['simulate.py'],
+      analysisGeometryProfile,
+    )
     const taskNames = Object.keys(evaluated.taskScenes).sort()
     const expected = buildMeasurement(
       {
@@ -75,7 +81,7 @@ try {
     assert.equal('renderScene' in actual.measurement.experiment, false)
     console.log(`${example.key}: isolated artifact matches canonical browser input`)
   }
-  assert.equal(examples.length, 9)
+  assert.equal(examples.length, 15)
 
   const fdtd = examples.find((example) => example.key === 'fdtd-drude-slab')!
   const trcBundle = fdtd.sourceBundle

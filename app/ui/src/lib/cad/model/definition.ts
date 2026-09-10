@@ -1,5 +1,6 @@
 import { canonicalRecordedDataTree, simulationProgramManifestFromResolved } from '../simulation/authoring'
-import type { DefinedKernelTask, KernelIdentity, RecordedDataSchemaTree, RecordedDataSpecNode } from '../simulation/types'
+import { resolveRecordedOutputReferences } from '../simulation/outputRecording'
+import type { DefinedKernelTask, KernelIdentity, RecordedDataSpecNode } from '../simulation/types'
 import { normalizeGeometryGroup, type GeometryGroupMap, type SurfaceGroupMap } from './structure'
 import type { Tensor, Vars } from './types'
 import type { UcumUnit } from './units'
@@ -106,7 +107,7 @@ export class ExperimentDefinition<
     )
     this.geometryGroup = normalizeGeometryGroup(options.geometryGroup, 'geometryGroup', 'Experiment')
     this.surfaceGroup = normalizeGeometryGroup(options.surfaceGroup, 'surfaceGroup', 'Experiment')
-    this.recordedData = canonicalRecordedDataTree(options.recordedData) as unknown as Recorded
+    this.recordedData = Object.freeze({ ...options.recordedData }) as Recorded
     this.geometryFactory = options.geometry
     Object.freeze(this)
   }
@@ -131,10 +132,13 @@ export class ExperimentDefinition<
     const tasks = Object.freeze(
       Object.fromEntries(Object.entries(taskDefinitions).map(([name, task]) => [name, task.createResolvedTask(vars)])),
     )
+    const recordedData = canonicalRecordedDataTree(Object.fromEntries(Object.entries(this.recordedData).map(
+      ([name, node]) => [name, resolveRecordedOutputReferences(node, tasks, `recordedData.${name}`)],
+    )))
     return Object.freeze({
       tasks,
-      recordedData: this.recordedData,
-      manifest: simulationProgramManifestFromResolved(tasks, this.recordedData as unknown as RecordedDataSchemaTree, pythonSource),
+      recordedData,
+      manifest: simulationProgramManifestFromResolved(tasks, recordedData, pythonSource),
     })
   }
 }

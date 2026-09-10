@@ -85,6 +85,80 @@ function fixture() {
 }
 
 describe('direct object storage', () => {
+  it('downloads at most four distinct references concurrently and reports completion', async () => {
+    const { client, requests } = fixture()
+    const refs = await Promise.all(
+      Array.from({ length: 9 }, (_, i) => uploadObject(client, {}, new TextEncoder().encode(JSON.stringify([i])))),
+    )
+    const fetcher = globalThis.fetch
+    let active = 0
+    let maximum = 0
+    vi.stubGlobal('fetch', async (...args: Parameters<typeof fetch>) => {
+      active++
+      maximum = Math.max(maximum, active)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      try {
+        return await fetcher(...args)
+      } finally {
+        active--
+      }
+    })
+    const progress = vi.fn()
+    expect(await resolveObjects(client, [...refs, refs[0]], undefined, progress)).toEqual([
+      ...Array.from({ length: 9 }, (_, i) => [i]),
+      [0],
+    ])
+    expect(maximum).toBe(4)
+    expect(requests.filter((r) => r.url.includes('/storage/objects/'))).toHaveLength(9)
+    expect(progress).toHaveBeenLastCalledWith({ completed: 9, total: 9 })
+  })
+
+  it('cancels queued downloads without requesting their tickets', async () => {
+    const { client, requests } = fixture()
+    const refs = await Promise.all(
+      Array.from({ length: 9 }, (_, i) => uploadObject(client, {}, new TextEncoder().encode(JSON.stringify([i])))),
+    )
+    const controller = new AbortController()
+    controller.abort()
+    await expect(resolveObjects(client, refs, controller.signal)).rejects.toThrow()
+    expect(requests.filter((r) => r.url.includes('/storage/objects/'))).toHaveLength(0)
+  })
+
+  it('aborts in-flight downloads and leaves the rest of the queue unstarted', async () => {
+    const { client, requests } = fixture()
+    const refs = await Promise.all(
+      Array.from({ length: 9 }, (_, i) => uploadObject(client, {}, new TextEncoder().encode(JSON.stringify([i])))),
+    )
+    const controller = new AbortController()
+    let started = 0
+    vi.stubGlobal(
+      'fetch',
+      (_url: unknown, options: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          options.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true })
+          if (++started === 4) controller.abort()
+        }),
+    )
+    await expect(resolveObjects(client, refs, controller.signal)).rejects.toThrow()
+    expect(started).toBe(4)
+    expect(requests.filter((r) => r.url.includes('/storage/objects/'))).toHaveLength(4)
+  })
+
+  it('renews an expired download ticket before retrying the same reference', async () => {
+    const { client, requests } = fixture()
+    const ref = await uploadObject(client, {}, new TextEncoder().encode('[1,2,3]'))
+    const fetcher = globalThis.fetch
+    let first = true
+    vi.stubGlobal('fetch', (...args: Parameters<typeof fetch>) => {
+      if (first) {
+        first = false
+        return Promise.resolve(new Response('', { status: 403 }))
+      }
+      return fetcher(...args)
+    })
+    expect(await resolveObjects(client, ref)).toEqual([1, 2, 3])
+    expect(requests.filter((r) => r.url.includes('/storage/objects/'))).toHaveLength(2)
+  })
   it('stores both Calculation preflight coordinates and output arrays through the bucket', async () => {
     const { client, requests } = fixture()
     const tables = createDbTables(client)

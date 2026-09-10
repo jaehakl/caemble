@@ -57,13 +57,26 @@ def materialize_record_value(
                         for index, axis in enumerate(value.domain.axes)
                     ],
                 }
-            return value.values
+            axes = schema.get("axes", [])
+            if any("ticks" not in axis and (axis.get("unit") or axis.get("quantityKind") or
+                   axis.get("name") in ("time", "frequency", "sample")) for axis in axes):
+                raise CaeError("invalid_record", "Unstructured field cannot supply physical axis coordinates")
+            return {"value": value.values, "axes": [
+                {"ticks": axis["ticks"]} if "ticks" in axis else {"implicitOrdinal": True} for axis in axes
+            ]}
+        field_values = value.values
+        if isinstance(value.domain, StructuredGridValue):
+            spacings = value.domain.metadata.get("spacings")
+            field_values = {"value": value.values, "axes": [
+                {"ticks": axis, **({"spacing": spacings[index]} if spacings is not None else {})}
+                for index, axis in enumerate(value.domain.axes)
+            ]}
         value = {
             "domain": value.domain,
             "location": str(value.location),
             "quantity": value.quantity_kind,
             "valueUnit": value.unit,
-            "values": value.values,
+            "values": field_values,
             **({"components": value.components} if value.components is not None else {}),
             **({"componentBasis": value.basis} if value.basis is not None else {}),
             "metadata": value.metadata,
@@ -108,6 +121,16 @@ def materialize_record_value(
     elif isinstance(value, BundleValue):
         value = value.members
 
+    if "dtype" in schema and isinstance(value, Mapping) and "value" in value:
+        return value
+    if project_members and "dtype" in schema and schema.get("axes"):
+        axes = schema["axes"]
+        if all(not axis.get("unit") and not axis.get("quantityKind") and
+               axis.get("name") not in ("time", "frequency", "sample") for axis in axes):
+            return {"value": value, "axes": [
+                {"ticks": axis["ticks"]} if "ticks" in axis else {"implicitOrdinal": True}
+                for axis in axes
+            ]}
     if isinstance(value, Mapping):
         members = schema if project_members and "dtype" not in schema else value
         return {

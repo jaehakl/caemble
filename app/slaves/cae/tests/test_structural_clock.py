@@ -9,7 +9,7 @@ from app.kernel.api import SolverInvocation
 from app.kernel.catalog import solver_catalog
 from app.solvers.structural_mechanics.analysis import initial_solution
 from app.solvers.structural_mechanics.coupling import clock_tolerance, predict_motion
-from app.solvers.structural_mechanics.domain import build_model
+from tests.structural_fixture import build_model
 from app.solvers.structural_mechanics.entry import run
 from app.solvers.structural_mechanics.outputs import configure_history
 from app.solvers.structural_mechanics.state import append_history, encode_state
@@ -38,10 +38,16 @@ def clock_invocation(duration, time, dt=.005, window=.05):
             {"methodId": "fea.time", "parameters": settings},
         ],
         "boundaryConditions": [],
-        "outputs": [{"methodId": "fea.history", "key": "history", "parameters": {"nodeIds": [1], "scope": "final"}}, {"methodId": "fea.motion", "key": "motion", "parameters": {}}],
+        "outputs": [{"methodId": "fea.history", "key": "history", "target": ["experiment.surface.clock"], "parameters": {"scope": "final"}}, {"methodId": "fea.motion", "key": "motion", "parameters": {}}],
     }
-    invocation = SolverInvocation(config, {}, {}, {}, None, None, solver_catalog.descriptor("structural-mechanics", "1.0.0"), task_name="structure")
+    invocation = SolverInvocation(config, {}, {}, {}, None, None, solver_catalog.descriptor("structural-mechanics", "2.0.0"), task_name="structure")
     model = build_model(invocation)
+    model.boundary_regions["experiment.surface.clock"] = {
+        "faces": np.empty((0, 3), dtype=int), "nodes": np.array([0]),
+        "weights": np.array([1.]), "area": 1., "rootId": "clock",
+        "referencePoint": np.zeros(3),
+    }
+    model.result_requests["history"] = {"regions": ["experiment.surface.clock"]}
     configure_history(model, config["outputs"])
     solution = initial_solution(model)
     append_history(model, solution)
@@ -54,9 +60,12 @@ def clock_invocation(duration, time, dt=.005, window=.05):
 
 @pytest.mark.parametrize("duration", [.1, 8., 300.])
 @pytest.mark.asyncio
-async def test_final_history_is_nonempty_and_no_tiny_next_window_is_predicted(duration):
+async def test_final_history_is_nonempty_and_no_tiny_next_window_is_predicted(duration, monkeypatch):
     start = accumulated_time(duration - .05)
-    invocation, _, _, settings = clock_invocation(duration, start)
+    invocation, model, _, settings = clock_invocation(duration, start)
+    async def prepared_model(_invocation):
+        return model
+    monkeypatch.setattr("app.solvers.structural_mechanics.entry.build_geometry_model", prepared_model)
     result = await run(invocation)
     actual_time = result.observations["time"]
     assert abs(actual_time - duration) <= clock_tolerance(settings)
@@ -72,9 +81,12 @@ async def test_final_history_is_nonempty_and_no_tiny_next_window_is_predicted(du
 
 
 @pytest.mark.asyncio
-async def test_refined_dt_after_long_negative_tail_keeps_the_original_output_grid():
+async def test_refined_dt_after_long_negative_tail_keeps_the_original_output_grid(monkeypatch):
     start = accumulated_time(240.)
-    invocation, _, _, settings = clock_invocation(240.05, start, dt=.0025)
+    invocation, model, _, settings = clock_invocation(240.05, start, dt=.0025)
+    async def prepared_model(_invocation):
+        return model
+    monkeypatch.setattr("app.solvers.structural_mechanics.entry.build_geometry_model", prepared_model)
     result = await run(invocation)
     times = result.artifacts["history"].members["times"]["value"][2:]
     # dt=.0025 표본 중 outputInterval=.005에 해당하는 표본만 골라야 한다.

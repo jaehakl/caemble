@@ -23,6 +23,7 @@ other manual pages by title, keywords, or body. `docs show experiment`,
 - [API](development/api.md)
 - [CAE kernel](development/cae.md)
 - [Solver development contract](development/solver-development.md)
+- [CSG structural mechanics](development/structural-mechanics.md)
 - [CAD elements](development/cad-elements.md)
 - [Documentation maintenance](development/documentation.md)
 - [SDKs](../app/sdk/README.md): independently distributed SDK documentation stays with the packages.

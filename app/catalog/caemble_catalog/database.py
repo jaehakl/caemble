@@ -714,6 +714,11 @@ class Catalog:
         supported_models = set()
         for manifest in manifests:
             descriptor = manifest["descriptor"]
+            # Domain-preserving output references also record the common mesh metadata.
+            if any(method["data"].get("axes", [{}])[0:1] and
+                   method["data"].get("axes", [{}])[0].get("name") in ("node", "cell")
+                   for method in descriptor["methods"]["outputs"]):
+                quantity_names.update(("Length", "Volume", "Dimensionless", "mechanics.ForceMagnitude"))
             quantity_names.update(row["quantity_kind"] for row in self._all(
                 "SELECT DISTINCT quantity_kind FROM solver_quantity_kind_usages WHERE solver_name = ? AND solver_version = ?",
                 (descriptor["name"], descriptor["version"]),

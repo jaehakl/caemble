@@ -1,5 +1,6 @@
 import type { CadScene } from './types'
 import type { CadSceneGroupOptions } from './groups'
+import type { GeometryEvaluationProfile } from './precision'
 import type {
   CanonicalGeometryNodeV1,
   CanonicalGeometryRootV1,
@@ -118,8 +119,10 @@ export function registerCanonicalGeometryScene(
   scene: CadScene,
   roots: readonly CanonicalGeometryRootV1[],
   options: CadSceneGroupOptions,
+  evaluationProfile?: GeometryEvaluationProfile,
 ) {
   const draft: CanonicalGeometrySceneDraftV1 = {
+    ...(evaluationProfile ? { evaluationProfile } : {}),
     lengthUnit: scene.lengthUnit,
     roots,
     geometryGroups: scene.geometryGroups.map((group) => ({

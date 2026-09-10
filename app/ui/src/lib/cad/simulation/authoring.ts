@@ -1,5 +1,6 @@
 import { getQuantityKindTensorOrder } from '../../quantitykind/runtime'
 import { CadModelError } from '../model/errors'
+import { resolveRecordedOutputReferences } from './outputRecording'
 import type {
   DefinedKernelTask,
   KernelIdentity,
@@ -91,7 +92,9 @@ export function simulationProgramManifest(
   recordedData: Readonly<Record<string, RecordedDataSpecNode>>,
   pythonSource: string,
 ): SimulationProgramManifest {
-  return buildSimulationProgramManifest(tasks, canonicalRecordedDataTree(recordedData), pythonSource)
+  const resolved = Object.fromEntries(Object.entries(recordedData).map(([name, node]) =>
+    [name, resolveRecordedOutputReferences(node, tasks, `recordedData.${name}`)]))
+  return buildSimulationProgramManifest(tasks, canonicalRecordedDataTree(resolved), pythonSource)
 }
 
 export function simulationProgramManifestFromResolved(

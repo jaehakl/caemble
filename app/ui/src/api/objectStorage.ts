@@ -120,84 +120,113 @@ export async function externalizeObjects(
 }
 
 /** Resolve references only at a consumer boundary, never inside an API list endpoint. */
-export async function resolveObjects<T>(client: CaembleClient, value: T, signal?: AbortSignal): Promise<T> {
-  const pending = new Map<string, Promise<unknown>>()
-  async function visit(member: unknown): Promise<unknown> {
+export type ObjectDownloadProgress = Readonly<{ completed: number; total: number }>
+
+export async function resolveObjects<T>(
+  client: CaembleClient,
+  value: T,
+  signal?: AbortSignal,
+  onProgress?: (progress: ObjectDownloadProgress) => void,
+): Promise<T> {
+  const references = new Map<string, ObjectReference>()
+  const resolved = new Map<string, unknown>()
+  function collect(member: unknown): void {
     signal?.throwIfAborted()
     if (member && typeof member === 'object' && 'kind' in member && member.kind === 'caemble.object') {
       const ref = member as ObjectReference
       if (ref.version !== 1 || !['json', 'base64'].includes(ref.encoding) || !/^[a-f0-9]{64}$/.test(ref.sha256))
         throw new Error('Unsupported stored object reference.')
       const key = JSON.stringify(ref)
-      if (!pending.has(key))
-        pending.set(
-          key,
-          (async () => {
-            let ticket = await client.request<ObjectTicket>(
-              'get',
-              `/storage/objects/${encodeURIComponent(ref.id)}`,
-              undefined,
-              { signal },
-            )
-            if (
-              ticket.reference.sha256 !== ref.sha256 ||
-              ticket.reference.byteLength !== ref.byteLength ||
-              ticket.reference.encoding !== ref.encoding
-            )
-              throw new Error('Stored object identity does not match its reference.')
-            const bytes = new Uint8Array(ref.byteLength)
-            let offset = 0
-            for (let index = 0; index < ticket.parts.length; index++) {
-              let partBytes: Uint8Array | undefined
-              for (let attempt = 0; ; attempt++) {
-                try {
-                  const response = await fetch(ticket.parts[index].url, {
-                    credentials: 'omit',
-                    redirect: 'error',
-                    signal,
-                  })
-                  if (!response.ok) throw new Error(`S3 download failed (${response.status}).`)
-                  partBytes = new Uint8Array(await response.arrayBuffer())
-                  break
-                } catch (error) {
-                  signal?.throwIfAborted()
-                  if (attempt >= 2) throw error
-                  ticket = await client.request<ObjectTicket>(
-                    'get',
-                    `/storage/objects/${encodeURIComponent(ref.id)}`,
-                    undefined,
-                    { signal },
-                  )
-                }
+      references.set(key, ref)
+    } else if (Array.isArray(member)) member.forEach(collect)
+    else if (member && typeof member === 'object') Object.values(member).forEach(collect)
+  }
+  collect(value)
+  const queue = [...references.entries()]
+  let next = 0
+  let completed = 0
+  let failed = false
+  onProgress?.({ completed, total: queue.length })
+  async function download() {
+    while (!failed && next < queue.length) {
+      signal?.throwIfAborted()
+      const [key, ref] = queue[next++]
+      try {
+        const result = await (async () => {
+          let ticket = await client.request<ObjectTicket>(
+            'get',
+            `/storage/objects/${encodeURIComponent(ref.id)}`,
+            undefined,
+            { signal },
+          )
+          if (
+            ticket.reference.sha256 !== ref.sha256 ||
+            ticket.reference.byteLength !== ref.byteLength ||
+            ticket.reference.encoding !== ref.encoding
+          )
+            throw new Error('Stored object identity does not match its reference.')
+          const bytes = new Uint8Array(ref.byteLength)
+          let offset = 0
+          for (let index = 0; index < ticket.parts.length; index++) {
+            let partBytes: Uint8Array | undefined
+            for (let attempt = 0; ; attempt++) {
+              try {
+                const response = await fetch(ticket.parts[index].url, {
+                  credentials: 'omit',
+                  redirect: 'error',
+                  signal,
+                })
+                if (!response.ok) throw new Error(`S3 download failed (${response.status}).`)
+                partBytes = new Uint8Array(await response.arrayBuffer())
+                break
+              } catch (error) {
+                signal?.throwIfAborted()
+                if (attempt >= 2) throw error
+                ticket = await client.request<ObjectTicket>(
+                  'get',
+                  `/storage/objects/${encodeURIComponent(ref.id)}`,
+                  undefined,
+                  { signal },
+                )
               }
-              const part = ticket.parts[index]
-              if (partBytes.length !== part.byteLength || (await objectHash(partBytes)) !== part.sha256)
-                throw new Error('Stored object chunk checksum does not match.')
-              bytes.set(partBytes, offset)
-              offset += partBytes.length
             }
-            if (offset !== ref.byteLength || (await objectHash(bytes)) !== ref.sha256)
-              throw new Error('Stored object checksum does not match.')
-            if (ref.encoding === 'json') return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
-            let binary = ''
-            for (let start = 0; start < bytes.length; start += 8192)
-              binary += String.fromCharCode(...bytes.subarray(start, start + 8192))
-            return btoa(binary)
-          })(),
-        )
-      return pending.get(key)
+            const part = ticket.parts[index]
+            if (partBytes.length !== part.byteLength || (await objectHash(partBytes)) !== part.sha256)
+              throw new Error('Stored object chunk checksum does not match.')
+            bytes.set(partBytes, offset)
+            offset += partBytes.length
+          }
+          if (offset !== ref.byteLength || (await objectHash(bytes)) !== ref.sha256)
+            throw new Error('Stored object checksum does not match.')
+          if (ref.encoding === 'json') return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
+          let binary = ''
+          for (let start = 0; start < bytes.length; start += 8192)
+            binary += String.fromCharCode(...bytes.subarray(start, start + 8192))
+          return btoa(binary)
+        })()
+        signal?.throwIfAborted()
+        resolved.set(key, result)
+        onProgress?.({ completed: ++completed, total: queue.length })
+      } catch (error) {
+        failed = true
+        throw error
+      }
     }
+  }
+  await Promise.all(Array.from({ length: Math.min(4, queue.length) }, download))
+  function visit(member: unknown): unknown {
+    signal?.throwIfAborted()
+    if (member && typeof member === 'object' && 'kind' in member && member.kind === 'caemble.object')
+      return resolved.get(JSON.stringify(member))
     if (Array.isArray(member)) {
-      const result = []
-      for (const child of member) result.push(await visit(child))
-      return result
+      return member.map(visit)
     }
     if (member && typeof member === 'object') {
       const entries = []
-      for (const [key, child] of Object.entries(member)) entries.push([key, await visit(child)])
+      for (const [key, child] of Object.entries(member)) entries.push([key, visit(child)])
       return Object.fromEntries(entries)
     }
     return member
   }
-  return (await visit(value)) as T
+  return visit(value) as T
 }

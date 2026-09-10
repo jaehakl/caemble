@@ -3,7 +3,11 @@ export const API_URL = (import.meta.env?.VITE_API_BASE_URL?.trim() || '/api').re
 export type HttpMethod = 'get' | 'post' | 'put' | 'delete'
 export type CsrfPolicy = 'auto' | 'required' | 'omit'
 export type ResponseValidator<T> = (body: unknown) => T
-export type RequestContext = Readonly<{ signal?: AbortSignal; resolveObjects?: boolean }>
+export type RequestContext = Readonly<{
+  signal?: AbortSignal
+  resolveObjects?: boolean
+  onObjectProgress?: (progress: Readonly<{ completed: number; total: number }>) => void
+}>
 
 export type RequestOptions<T> = RequestContext &
   Readonly<{
@@ -161,7 +165,7 @@ export function createCaembleClient(config: CaembleClientOptions) {
     }
     if (options.resolveObjects) {
       const { resolveObjects } = await import('./objectStorage')
-      body = await resolveObjects({ request } as CaembleClient, body, options.signal)
+      body = await resolveObjects({ request } as CaembleClient, body, options.signal, options.onObjectProgress)
     }
     if (!options.validate) return body as T
     try {

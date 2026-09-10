@@ -140,7 +140,24 @@ async def test_layer_tensor_positions_shapes_and_collision(tmp_path, scenario):
                 mesh = await service.triangular_mesh(scene, scene["roots"][index]["id"], "um")
                 assert np.all(np.abs(mesh.vertices) < np.array([.75, .75, .30]) - .01)
                 radius = np.linalg.norm(mesh.vertices-center, axis=1).max()
-                assert radius*2000 == pytest.approx(variables[layer+"DiameterNm"][x][y], rel=2e-6)
+                parameters = node["parameters"]
+                maxima = []
+                # The example normalizes its original 32 x 24 authoring samples.
+                # Analysis evaluates that same Fourier function more densely: a
+                # newly resolved maximum must not be clipped or interpolated from
+                # the preview merely to preserve its sampled bounding radius.
+                for azimuthal_segments, polar_segments in (
+                    (32, 24),
+                    (parameters["azimuthalSegments"], parameters["polarSegments"]),
+                ):
+                    theta = 2 * np.pi * np.arange(azimuthal_segments) / azimuthal_segments
+                    phi = np.pi * np.arange(1, polar_segments) / polar_segments
+                    azimuthal = sum(mode["amplitude"] * np.cos(i * theta + mode["phase"]) for i, mode in enumerate(parameters["azimuthalCurve"]))
+                    polar = sum(mode["amplitude"] * np.cos(i * phi + mode["phase"]) for i, mode in enumerate(parameters["polarCurve"]))
+                    poles = sum(mode["amplitude"] * np.cos(i * np.array([0., np.pi]) + mode["phase"]) for i, mode in enumerate(parameters["polarCurve"]))
+                    maxima.append(max(float(np.max(azimuthal[:, None] * polar)), float(np.max(azimuthal[0] * poles))))
+                assert maxima[0] * 2000 == pytest.approx(variables[layer+"DiameterNm"][x][y], rel=2e-6)
+                assert radius == pytest.approx(maxima[1], rel=2e-6)
                 edges = np.sort(np.concatenate([mesh.triangles[:,[0,1]], mesh.triangles[:,[1,2]], mesh.triangles[:,[2,0]]]),axis=1)
                 assert np.all(np.unique(edges,axis=0,return_counts=True)[1] == 2)
                 index += 1

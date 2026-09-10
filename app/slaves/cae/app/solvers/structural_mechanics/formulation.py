@@ -25,6 +25,7 @@ from .continuum import (
     element_nonlinear_response,
     element_response,
     geometric_stiffness,
+    tet4_corotational_response,
 )
 from .corotation import _perturbed_configuration, shell_deformation
 from .rotations import cross, skew, skew_many
@@ -163,6 +164,11 @@ def structural_response(model, displacement, orientations, prepared, committed, 
         elif geometric and element.kind == "shell4":
             from .corotation import shell_corotational_response
             internal, tangent, stored_energy, stress = shell_corotational_response(points, displacement[element.nodes, :3], orientations[element.nodes], element.section)
+        elif geometric and element.kind == "tet4" and element.material["model"] != "mechanics.j2-plasticity@1":
+            internal, tangent, stored_energy, stress = tet4_corotational_response(
+                points, displacement[element.nodes, :3], element.material["C"],
+                consistent_tangent=not approximate_tangent, reference_stiffness=data["K"],
+            )
         elif element.material["model"] == "mechanics.j2-plasticity@1":
             if geometric:
                 raise ValueError("solid J2 uses small strain; finite-strain J2 is not implemented")
@@ -175,8 +181,8 @@ def structural_response(model, displacement, orientations, prepared, committed, 
                 elastic_strain = B @ values_u - new_state["plasticStrain"][q]
                 stored_energy += 0.5 * elastic_strain @ stress[q] * weight
         else:
-            if geometric and element.kind in ("tet4", "hex8", "tri3", "quad4"):
-                raise ValueError("finite geometry is supported for truss, beam and shell blocks; continuum blocks use small strain")
+            if geometric and element.kind in ("hex8", "tri3", "quad4"):
+                raise ValueError("finite geometry is supported for truss, beam, shell and tet4 blocks; other continuum blocks use small strain")
             tangent = data["K"]
             internal = tangent @ values_u
             stored_energy = float(values_u @ internal / 2)
@@ -263,6 +269,11 @@ def strain_rate_damping(model, displacement, orientations, prepared, coefficient
                 minus = _perturbed_configuration(displacement[nodes, :3], orientations[nodes], column, -step)
                 jacobian[:, column] = (shell_deformation(points, *plus) - shell_deformation(points, *minus)) / (2 * step)
             block = jacobian.T @ data["K"] @ jacobian
+        elif element.kind == "tet4":
+            block = tet4_corotational_response(
+                points, displacement[nodes, :3], element.material["C"],
+                consistent_tangent=False, reference_stiffness=data["K"],
+            )[1]
         else:
             block = data["K"]
         rows.append(np.repeat(dofs, len(dofs)))

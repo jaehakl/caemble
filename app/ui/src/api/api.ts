@@ -277,7 +277,11 @@ export function createDbTables(client: CaembleClient) {
             'get',
             `/measurement/${id}/recorded-data`,
             undefined,
-            { signal: context?.signal, resolveObjects: true, validate: parseMeasurementRecordedDataResponse },
+            {
+              ...context,
+              resolveObjects: context?.resolveObjects ?? true,
+              validate: parseMeasurementRecordedDataResponse,
+            },
           )
         ).recorded_data,
       deleteRows: (ids: readonly number[]) =>

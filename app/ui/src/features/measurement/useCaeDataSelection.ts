@@ -13,6 +13,7 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
   const [measurement, setMeasurement] = useState<SavedMeasurement | null>(null)
   const [recordedDataTree, setRecordedDataTree] = useState<MeasurementRecordedData>({})
   const [loading, setLoading] = useState(false)
+  const [downloadProgress, setDownloadProgress] = useState<Readonly<{ completed: number; total: number }> | null>(null)
   const requestSequence = useRef(0)
   const requestedMeasurementId = useRef<number | null>(null)
   const activeQueryKeys = useRef<QueryKey[]>([])
@@ -28,6 +29,7 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
     requestSequence.current += 1
     cancelActiveQueries()
     setLoading(false)
+    setDownloadProgress(null)
     setMeasurement(null)
     setRecordedDataTree({})
   }, [cancelActiveQueries])
@@ -55,6 +57,7 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
       const sequence = ++requestSequence.current
       cancelActiveQueries()
       setLoading(true)
+      setDownloadProgress(null)
       try {
         let row: SavedMeasurement
         if (typeof value === 'number') {
@@ -67,7 +70,10 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
         if (expectedExperimentId !== null && row.experiment_id !== expectedExperimentId) {
           throw new Error('현재 Experiment에 속한 Measurement가 아닙니다.')
         }
-        const recordedDataOptions = measurementRecordedDataQueryOptions(queryScope, row.id)
+        if (sequence !== requestSequence.current) return null
+        const recordedDataOptions = measurementRecordedDataQueryOptions(queryScope, row.id, (progress) => {
+          if (sequence === requestSequence.current) setDownloadProgress(progress)
+        })
         activeQueryKeys.current = [recordedDataOptions.queryKey]
         const recorded = await queryClient.fetchQuery(recordedDataOptions)
         if (sequence !== requestSequence.current) return null
@@ -103,11 +109,12 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
       variables: measurement?.vars as Readonly<Vars> | undefined,
       materialSnapshot: measurement?.material_snapshot ?? null,
       loading,
+      downloadProgress,
       clearAll: clearMeasurement,
       clearMeasurement,
       loadMeasurement,
     }),
-    [clearMeasurement, loadMeasurement, loading, measurement, snapshot],
+    [clearMeasurement, downloadProgress, loadMeasurement, loading, measurement, snapshot],
   )
 }
 

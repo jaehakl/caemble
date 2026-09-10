@@ -15,6 +15,7 @@ import {
 } from '../source/document'
 import { resolveExperimentModuleSpecifier } from '../source/moduleResolution'
 import type { EvaluatedRuntimeDocumentSnapshot } from './snapshot'
+import type { GeometryEvaluationProfile } from '../evaluation/precision'
 
 const coreModule = Object.freeze({
   ...cadPrimitiveAuthoringBindings,
@@ -254,8 +255,8 @@ export function inspectCompiledDocument(compiled: CompiledCadDocument): CadInspe
   return Object.freeze({ varsSchema: entry.varsSchema })
 }
 
-function emptyTaskScene(label: string, lengthUnit: UcumUnit): CadScene {
-  return evaluateCadScene([], {}, label, lengthUnit)
+function emptyTaskScene(label: string, lengthUnit: UcumUnit, profile?: GeometryEvaluationProfile): CadScene {
+  return evaluateCadScene([], {}, label, lengthUnit, profile)
 }
 
 export function evaluateDocumentEntry(
@@ -264,6 +265,7 @@ export function evaluateDocumentEntry(
   vars: ExternalVars,
   pythonSource: string,
   taskDefinitions: Readonly<Record<string, TaskDefinition>>,
+  profile?: GeometryEvaluationProfile,
 ): CadExecutionResult {
   if (typeof pythonSource !== 'string' || !pythonSource.trim()) {
     throw new CadModelError('Experiment evaluation requires non-empty Python simulation source.')
@@ -276,6 +278,7 @@ export function evaluateDocumentEntry(
       { geometryGroup: entry.geometryGroup, surfaceGroup: entry.surfaceGroup },
       'Experiment',
       entry.lengthUnit,
+      profile,
     )
     const taskScenes = Object.freeze(
       Object.fromEntries(
@@ -286,12 +289,13 @@ export function evaluateDocumentEntry(
           return [
             name,
             root === undefined
-              ? emptyTaskScene(label, lengthUnit)
+              ? emptyTaskScene(label, lengthUnit, profile)
               : evaluateCadScene(
                   root,
                   { geometryGroup: task.geometryGroup, surfaceGroup: task.surfaceGroup },
                   label,
                   lengthUnit,
+                  profile,
                 ),
           ]
         }),
@@ -319,7 +323,7 @@ export function executeCompiledCode(
   return evaluateDocumentEntry(loadCompiledCode(jsCode), sourceHash, vars, pythonSource, taskDefinitions)
 }
 
-export function executeCompiledDocument(compiled: CompiledCadDocument, vars: ExternalVars, pythonSource?: string) {
+export function executeCompiledDocument(compiled: CompiledCadDocument, vars: ExternalVars, pythonSource?: string, profile?: GeometryEvaluationProfile) {
   const loader = compiledModuleLoader(compiled)
   compiledMaterialRuntime(loader)
   const entry = compiledExperimentEntry(loader)
@@ -332,6 +336,7 @@ export function executeCompiledDocument(compiled: CompiledCadDocument, vars: Ext
     vars,
     pythonSource,
     taskDefinitionsFromCompiled(compiled, loader),
+    profile,
   )
 }
 

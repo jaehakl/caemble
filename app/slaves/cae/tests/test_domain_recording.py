@@ -45,10 +45,13 @@ def test_mesh_field_record_roundtrip_preserves_domain_and_physical_meaning(node_
         recorded = materialize_record_value(
             handle, MESH_FIELD_SCHEMA, resources=resources, artifacts=artifacts, owner="record", leases=leases,
         )
-        assert recorded["values"] is resources.resolve(handle.resource_ref).values
+        assert recorded["values"]["value"] is resources.resolve(handle.resource_ref).values
         assert recorded["domain"]["metadata"] == {"sourceIdentity": "original-domain"}
         artifacts.release(handle)
         encoded, attachments, _ = encode_recorded_data("mesh", MESH_FIELD_SCHEMA, recorded, 1)
+        assert encoded["values"]["axes"] == [{"implicitOrdinal": True}]
+        assert encoded["domain"]["points"]["axes"] == [{"implicitOrdinal": True}] * 2
+        assert encoded["domain"]["cells"]["tetra4"]["axes"] == [{"implicitOrdinal": True}] * 2
         assert bool(attachments) is (node_count == 10000)
         decoded = decode_record(MESH_FIELD_SCHEMA, encoded, attachments)
         np.testing.assert_array_equal(decoded["domain"]["points"], points)
@@ -155,6 +158,41 @@ def test_bundle_tensor_axes_are_values_not_nested_schemas() -> None:
         assert recorded["vertices"]["value"] is values
         assert recorded["vertices"]["axes"][0]["ticks"] is ticks
         assert recorded["vertices"]["axes"][0]["name"] == "vertex"
+    finally:
+        artifacts.close()
+        resources.close()
+
+
+@pytest.mark.parametrize("location,quantity,unit,shape,axes", [
+    ("node", "kinematics.Displacement", "m", (4, 3), [{"name": "node"}]),
+    ("cell", "Pressure", "Pa", (1, 6), [{"name": "cell"}, {"length": 6}]),
+])
+def test_field_component_dimensions_do_not_become_spatial_axes(location, quantity, unit, shape, axes):
+    resources = ResourceStore()
+    artifacts = ArtifactStore(resources)
+    domain = UnstructuredMeshValue(np.zeros((4, 3)), {"tet4": np.array([[0, 1, 2, 3]])}, "m", "mesh")
+    field = FieldValue(domain, location, quantity, unit, np.zeros(shape))
+    schema = {"dtype": "float64", "quantityKind": quantity, "unit": unit, "axes": axes}
+    try:
+        recorded = materialize_record_value(field, schema, resources=resources, artifacts=artifacts, owner="record", leases=[])
+        encoded, _, _ = encode_recorded_data("field", schema, recorded, 1)
+        assert encoded["shape"] == list(shape)
+        assert encoded["axes"] == [{"implicitOrdinal": True}] * len(axes)
+    finally:
+        artifacts.close()
+        resources.close()
+
+
+@pytest.mark.parametrize("name,unit", [("time", "s"), ("frequency", "Hz")])
+def test_physical_bundle_axes_survive_record_encoding(name, unit):
+    resources = ResourceStore()
+    artifacts = ArtifactStore(resources)
+    schema = {"values": {"dtype": "float64", "axes": [{"name": name, "unit": unit}]}}
+    value = BundleValue("fixture/physical", {"values": {"value": np.ones(3), "axes": [{"ticks": [0.1, 0.4, 0.9]}]}})
+    try:
+        recorded = materialize_record_value(value, schema, resources=resources, artifacts=artifacts, owner="record", leases=[])
+        encoded, _, _ = encode_recorded_data("field", schema, recorded, 1)
+        assert encoded["values"]["axes"] == [{"ticks": [0.1, 0.4, 0.9]}]
     finally:
         artifacts.close()
         resources.close()

@@ -30,10 +30,14 @@ export function measurementDetailQueryOptions(
   })
 }
 
-export function measurementRecordedDataQueryOptions(scope: PrivateQueryScope, measurementId: number) {
+export function measurementRecordedDataQueryOptions(
+  scope: PrivateQueryScope,
+  measurementId: number,
+  onObjectProgress?: (progress: Readonly<{ completed: number; total: number }>) => void,
+) {
   return queryOptions({
     queryKey: measurementQueryKeys.recordedData(scope, measurementId),
-    queryFn: ({ signal }) => dbTables.Measurement.readRecordedData(measurementId, { signal }),
+    queryFn: ({ signal }) => dbTables.Measurement.readRecordedData(measurementId, { signal, onObjectProgress }),
     staleTime: 30_000,
   })
 }

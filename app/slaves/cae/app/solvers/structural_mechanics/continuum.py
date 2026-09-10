@@ -16,6 +16,7 @@ from itertools import product
 import numpy as np
 
 from .materials import j2_return
+from .rotations import rotation_log_many
 
 
 def plane_elasticity(elasticity: np.ndarray, plane: str = "stress") -> np.ndarray:
@@ -166,6 +167,238 @@ def element_response(
             full_strains[:, outside] = -np.linalg.solve(elasticity[np.ix_(outside, outside)], elasticity[np.ix_(outside, inside)] @ strains.T).T
         return strains, full_strains @ elasticity.T
     return strains, strains @ matrix.T
+
+
+def _symmetric_voigt(tensor: np.ndarray) -> np.ndarray:
+    """3x3 symmetric tensor -> engineering-strain ordered Voigt vector."""
+    return np.array([
+        tensor[0, 0], tensor[1, 1], tensor[2, 2],
+        2 * tensor[0, 1], 2 * tensor[1, 2], 2 * tensor[0, 2],
+    ])
+
+
+def _stress_tensor(values: np.ndarray) -> np.ndarray:
+    """[xx,yy,zz,xy,yz,xz] stress vector -> symmetric tensor."""
+    return np.array([
+        [values[0], values[3], values[5]],
+        [values[3], values[1], values[4]],
+        [values[5], values[4], values[2]],
+    ])
+
+
+def tet4_deformation_gradient(
+    coordinates: np.ndarray, displacement: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Return ``F``, reference shape gradients and volume for a linear tet."""
+    coordinates = np.asarray(coordinates, dtype=float)
+    displacement = np.asarray(displacement, dtype=float)
+    if coordinates.shape != (4, 3) or displacement.shape != (4, 3):
+        raise ValueError("tet4 corotation requires four 3D coordinates and displacements")
+    samples = integration_points("tet4", coordinates)
+    gradients = samples[0][3]
+    volume = float(sum(sample[2] for sample in samples))
+    deformation = (coordinates + displacement).T @ gradients
+    if np.linalg.det(deformation) <= 1e-10:
+        raise ValueError("tet4 current configuration is inverted or degenerate")
+    return deformation, gradients, volume
+
+
+def _polar_decomposition(
+    deformation: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return proper rotation, right stretch, stretches and material axes."""
+    left, _, right = np.linalg.svd(deformation)
+    rotation = left @ right
+    if np.linalg.det(rotation) <= 0:
+        raise ValueError("tet4 current configuration is inverted or degenerate")
+    stretch = rotation.T @ deformation
+    stretch = (stretch + stretch.T) / 2
+    stretches, directions = np.linalg.eigh(stretch)
+    if np.min(stretches) <= 1e-10:
+        raise ValueError("tet4 polar stretch is singular")
+    return rotation, stretch, stretches, directions
+
+
+def _tet4_corotated_stress(
+    deformation: np.ndarray, elasticity: np.ndarray,
+) -> tuple[np.ndarray, float, np.ndarray, np.ndarray]:
+    """First Piola stress for a polar-corotated small-strain solid.
+
+    The constitutive law remains the existing reference-frame linear elastic
+    law.  Only the element's proper polar rotation is removed.  Differentiating
+    ``U`` in ``F = R U`` is important for an orthotropic law: simply rotating a
+    linear nodal force omits the work of the moving frame.
+    """
+    rotation, stretch, stretches, directions = _polar_decomposition(deformation)
+    strain = _symmetric_voigt(stretch - np.eye(3))
+    stress_values = np.asarray(elasticity, dtype=float) @ strain
+    material_stress = _stress_tensor(stress_values)
+
+    # Adjoint of dU/dF in the principal-stretch basis.  The off-diagonal
+    # factors retain the frame derivative when stress and stretch do not share
+    # principal axes (the ordinary case for rotated orthotropy).
+    local_stress = directions.T @ material_stress @ directions
+    factors = 2 * stretches[:, None] / (stretches[:, None] + stretches[None, :])
+    np.fill_diagonal(factors, 1.)
+    first_piola = rotation @ directions @ (factors * local_stress) @ directions.T
+    energy_density = float(strain @ stress_values / 2)
+
+    # This spatial stress is work-conjugate to current area and therefore can
+    # be integrated directly for a section resultant.
+    spatial_stress = first_piola @ deformation.T / np.linalg.det(deformation)
+    spatial_stress = (spatial_stress + spatial_stress.T) / 2
+    return first_piola, energy_density, rotation, spatial_stress
+
+
+def tet4_corotational_response(
+    coordinates: np.ndarray, displacement: np.ndarray, elasticity: np.ndarray,
+    *, consistent_tangent=True, reference_stiffness=None,
+) -> tuple[np.ndarray, np.ndarray, float, np.ndarray]:
+    """Objective tet4 force and consistent tangent with a small-strain law.
+
+    The nine-component material tangent is the centered derivative of the
+    exact polar-energy stress.  It is then assembled analytically with the
+    constant tet shape gradients.  This avoids differentiating twelve nodal
+    forces independently while retaining the rotation and geometric terms.
+    """
+    deformation, gradients, volume = tet4_deformation_gradient(coordinates, displacement)
+    first_piola, density, rotation, spatial_stress = _tet4_corotated_stress(deformation, elasticity)
+    internal = volume * np.einsum("iJ,aJ->ai", first_piola, gradients)
+
+    if consistent_tangent:
+        derivative = np.empty((3, 3, 3, 3))
+        step = 2e-6 * max(1., np.linalg.norm(deformation))
+        for component in range(3):
+            for axis in range(3):
+                perturbation = np.zeros((3, 3))
+                perturbation[component, axis] = step
+                plus = _tet4_corotated_stress(deformation + perturbation, elasticity)[0]
+                minus = _tet4_corotated_stress(deformation - perturbation, elasticity)[0]
+                derivative[:, :, component, axis] = (plus - minus) / (2 * step)
+        tangent = volume * np.einsum(
+            "iJjL,aJ,bL->aibj", derivative, gradients, gradients,
+        ).reshape(12, 12)
+    else:
+        if reference_stiffness is None:
+            reference_stiffness = element_matrices("tet4", coordinates, elasticity, 0.)[0]
+        transform = np.kron(np.eye(4), rotation)
+        tangent = transform @ reference_stiffness @ transform.T
+    stress = np.array([
+        spatial_stress[0, 0], spatial_stress[1, 1], spatial_stress[2, 2],
+        spatial_stress[0, 1], spatial_stress[1, 2], spatial_stress[0, 2],
+    ])
+    return internal.ravel(), tangent, density * volume, np.tile(stress, (4, 1))
+
+
+def physical_orientation_matrices(
+    model, displacement: np.ndarray, orientations: np.ndarray,
+) -> np.ndarray:
+    """Return physical polar frames while retaining auxiliary reference frames.
+
+    A generated tet mesh has translational physical degrees of freedom only.
+    Each physical nodal frame is therefore the proper polar projection of the
+    volume-weighted rotations of its incident tetrahedra.  Explicit legacy
+    fixtures and generated auxiliary connector nodes keep their stored frames.
+    """
+    result = np.asarray(orientations, dtype=float).copy()
+    physical_count = getattr(model, "physical_node_count", None)
+    if physical_count is None:
+        return result
+    physical_count = int(physical_count)
+    projected = np.zeros((physical_count, 3, 3))
+    weights = np.zeros(physical_count)
+    for element in model.elements:
+        if element.kind != "tet4" or np.any(element.nodes >= physical_count):
+            continue
+        deformation, _, volume = tet4_deformation_gradient(
+            model.points[element.nodes], np.asarray(displacement)[element.nodes, :3],
+        )
+        rotation = _polar_decomposition(deformation)[0]
+        for node in element.nodes:
+            projected[node] += volume * rotation
+            weights[node] += volume
+    for node in np.flatnonzero(weights > 0):
+        left, _, right = np.linalg.svd(projected[node])
+        result[node] = left @ np.diag([1., 1., np.linalg.det(left @ right)]) @ right
+    return result
+
+
+def physical_angular_velocities(
+    model, displacement: np.ndarray, velocity: np.ndarray,
+) -> np.ndarray:
+    """Derive physical-node angular velocity from the exact polar rate.
+
+    For ``F = R U``, in the principal basis of ``U`` the material spin is
+    ``Omega_ij = (A_ij - A_ji) / (u_i + u_j)``, where
+    ``A = R.T @ Fdot``.  It is transformed back to the spatial frame and
+    volume averaged at nodes.  Auxiliary connector angular DOFs are retained.
+    """
+    velocity = np.asarray(velocity)
+    result = velocity[:, 3:].copy()
+    physical_count = getattr(model, "physical_node_count", None)
+    if physical_count is None:
+        return result
+    physical_count = int(physical_count)
+    projected = np.zeros((physical_count, 3), dtype=np.result_type(velocity, float))
+    weights = np.zeros(physical_count)
+    for element in model.elements:
+        if element.kind != "tet4" or np.any(element.nodes >= physical_count):
+            continue
+        deformation, gradients, volume = tet4_deformation_gradient(
+            model.points[element.nodes], np.asarray(displacement)[element.nodes, :3],
+        )
+        rotation, _, stretches, directions = _polar_decomposition(deformation)
+        deformation_rate = velocity[element.nodes, :3].T @ gradients
+        local_rate = directions.T @ rotation.T @ deformation_rate @ directions
+        spin = (local_rate - local_rate.T) / (stretches[:, None] + stretches[None, :])
+        spatial_spin = rotation @ directions @ spin @ directions.T @ rotation.T
+        value = np.array([spatial_spin[2, 1], spatial_spin[0, 2], spatial_spin[1, 0]])
+        for node in element.nodes:
+            projected[node] += volume * value
+            weights[node] += volume
+    selected = np.flatnonzero(weights > 0)
+    result[selected] = projected[selected] / weights[selected, None]
+    return result
+
+
+def physical_rotation_vectors(model, displacement: np.ndarray, orientations: np.ndarray, *, linear=False) -> np.ndarray:
+    """Rotations on generated solid nodes, excluding auxiliary references.
+
+    Finite responses use a volume-weighted polar-rotation projection.  Linear
+    spectra use the axial vector of ``skew(grad(u))`` so modal and complex
+    harmonic amplitudes remain linear.  Legacy explicit models retain their
+    stored rotational degrees of freedom unchanged.
+    """
+    stored = rotation_log_many(orientations).astype(np.result_type(displacement, float), copy=False)
+    physical_count = getattr(model, "physical_node_count", None)
+    if physical_count is None:
+        return stored
+    physical_count = int(physical_count)
+    weights = np.zeros(physical_count)
+    if linear:
+        projected = np.zeros((physical_count, 3), dtype=np.result_type(displacement))
+    else:
+        rotations = physical_orientation_matrices(model, displacement, orientations)
+        stored[:physical_count] = rotation_log_many(rotations[:physical_count])
+        return stored
+    for element in model.elements:
+        if element.kind != "tet4" or np.any(element.nodes >= physical_count):
+            continue
+        values = np.asarray(displacement)[element.nodes, :3]
+        if linear:
+            samples = integration_points("tet4", model.points[element.nodes])
+            volume = float(sum(sample[2] for sample in samples))
+            gradient = values.T @ samples[0][3]
+            spin = (gradient - gradient.T) / 2
+            value = np.array([spin[2, 1], spin[0, 2], spin[1, 0]])
+        for node in element.nodes:
+            projected[node] += volume * value
+            weights[node] += volume
+    selected = np.flatnonzero(weights > 0)
+    if linear:
+        stored[selected] = projected[selected] / weights[selected, None]
+        return stored
+    return stored
 
 
 def geometric_stiffness(

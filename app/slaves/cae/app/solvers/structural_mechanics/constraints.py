@@ -7,6 +7,7 @@
 
 import numpy as np
 from scipy import sparse
+from scipy.spatial import cKDTree
 
 from .rotations import cross, rotation_exp, skew
 
@@ -191,12 +192,125 @@ def support_reactions(model, orientations, nodal_residual):
     return reactions
 
 
-def contact_response(points, displacement, contacts):
-    """마찰 없는 작은 미끄럼 node-to-face penalty 접촉.
+def _triangle_projection(point, triangle):
+    """Oriented plane gap and barycentric coordinates, or None off the face."""
+    a, b, c = triangle
+    first, second = b - a, c - a
+    cross_value = np.cross(first, second)
+    magnitude = np.linalg.norm(cross_value)
+    if magnitude <= np.finfo(float).eps * max(np.linalg.norm(first) * np.linalg.norm(second), 1.):
+        raise ValueError("contact master face is degenerate")
+    normal = cross_value / magnitude
+    gap = float((point - a) @ normal)
+    projected = point - gap * normal
+    gram = np.array([[first @ first, first @ second], [first @ second, second @ second]])
+    coordinates = np.linalg.solve(gram, np.array([first @ (projected - a), second @ (projected - a)]))
+    weights = np.r_[1 - coordinates.sum(), coordinates]
+    tolerance = 2e-10
+    if np.min(weights) < -tolerance or np.max(weights) > 1 + tolerance:
+        return None
+    weights = np.clip(weights, 0., 1.)
+    weights /= weights.sum()
+    return gap, weights, normal
 
-    법선 방향 gap이 음수일 때만 압축 반력을 만든다. master 세 절점에도
-    같은 shape function으로 반력을 나누어 힘과 모멘트를 보존한다.
-    법선 방향은 명시적 face 절점 순서다. 인장 접촉력은 발생하지 않는다.
+
+def _surface_contact_response(points, current, contact, size):
+    """Area-integrated slave-surface contact with a centroid spatial index."""
+    slave_faces = np.asarray(contact["slaveFaces"], dtype=int)
+    master_faces = np.asarray(contact["masterFaces"], dtype=int)
+    if slave_faces.ndim != 2 or slave_faces.shape[1] != 3 or master_faces.ndim != 2 or master_faces.shape[1] != 3:
+        raise ValueError("surface contact requires triangular slaveFaces and masterFaces")
+    if not len(slave_faces) or not len(master_faces):
+        raise ValueError("surface contact requires nonempty slaveFaces and masterFaces")
+    master_triangles = current[master_faces]
+    centroids = master_triangles.mean(axis=1)
+    radii = np.max(np.linalg.norm(master_triangles - centroids[:, None], axis=2), axis=1)
+    tree = cKDTree(centroids)
+    maximum_radius = float(np.max(radii, initial=0.))
+    search_distance = float(contact.get("searchDistance", np.inf))
+    penalty = float(contact["penalty"])
+    quadrature = np.array([[2 / 3, 1 / 6, 1 / 6], [1 / 6, 2 / 3, 1 / 6], [1 / 6, 1 / 6, 2 / 3]])
+    force = np.zeros(size)
+    rows, columns, values, active = [], [], [], []
+    for slave_face in slave_faces:
+        reference = points[slave_face]
+        area = np.linalg.norm(np.cross(reference[1] - reference[0], reference[2] - reference[0])) / 2
+        if area <= np.finfo(float).eps:
+            raise ValueError("contact slave face is degenerate")
+        for slave_weights in quadrature:
+            point = slave_weights @ current[slave_face]
+            distance, nearest = tree.query(point)
+            candidate_ids = tree.query_ball_point(point, float(distance + radii[int(nearest)] + maximum_radius))
+            matches = []
+            for face_index in candidate_ids:
+                master_face = master_faces[face_index]
+                if np.intersect1d(slave_face, master_face).size:
+                    continue
+                projected = _triangle_projection(point, master_triangles[face_index])
+                if projected is None:
+                    continue
+                gap, master_weights, normal = projected
+                if gap >= 0 or -gap > search_distance:
+                    continue
+                matches.append((abs(gap), tuple(sorted(map(int, master_face))), int(face_index), gap, master_weights, normal))
+            if not matches:
+                continue
+            _, _, face_index, gap, master_weights, normal = min(matches, key=lambda item: item[:3])
+            master_face = master_faces[face_index]
+            nodes = np.r_[slave_face, master_face]
+            coefficients = np.r_[slave_weights, -master_weights]
+            dofs = np.array([6 * node + axis for node in nodes for axis in range(3)])
+            gradient = np.outer(coefficients, normal).ravel()
+            integration_weight = area / 3
+            np.add.at(force, dofs, penalty * gap * integration_weight * gradient)
+            block = penalty * integration_weight * np.outer(gradient, gradient)
+            rows.extend(np.repeat(dofs, len(dofs)))
+            columns.extend(np.tile(dofs, len(dofs)))
+            values.extend(block.ravel())
+            active.append({
+                "slaveFace": np.asarray(slave_face), "masterFace": np.asarray(master_face),
+                "gap": gap, "normalForce": float(-penalty * gap * integration_weight),
+            })
+    tangent = sparse.csr_matrix((values, (rows, columns)), shape=(size, size))
+    return force, tangent, active
+
+
+def _point_contact_response(points, current, contact, size):
+    """Legacy node-to-face contract retained for direct numerical fixtures."""
+    force = np.zeros(size)
+    rows, columns, values, active = [], [], [], []
+    penalty = contact["penalty"]
+    for slave in contact["slaves"]:
+        for face in contact["faces"]:
+            projected = _triangle_projection(current[slave], current[face])
+            if projected is None:
+                continue
+            gap, weights, normal = projected
+            if gap >= 0:
+                continue
+            nodes = np.r_[slave, face]
+            coefficients = np.r_[1.0, -weights]
+            dofs = np.array([6 * node + k for node in nodes for k in range(3)])
+            gradient = np.outer(coefficients, normal).ravel()
+            np.add.at(force, dofs, penalty * gap * gradient)
+            block = penalty * np.outer(gradient, gradient)
+            rows.extend(np.repeat(dofs, len(dofs)))
+            columns.extend(np.tile(dofs, len(dofs)))
+            values.extend(block.ravel())
+            active.append({"slave": int(slave), "face": np.asarray(face), "gap": float(gap), "normalForce": float(-penalty * gap)})
+            break
+    tangent = sparse.csr_matrix((values, (rows, columns)), shape=(size, size))
+    return force, tangent, active
+
+
+def contact_response(points, displacement, contacts):
+    """Frictionless penalty contact for legacy points or generated surfaces.
+
+    Generated surfaces use three-point triangle quadrature and a pressure-like
+    penalty per penetration, so uniform refinement does not multiply contact
+    stiffness.  A centroid KD tree limits projection tests.  Each quadrature
+    point deterministically owns one matching master triangle, including a
+    shared edge, and therefore cannot double its reaction.
     """
     size = len(points) * 6
     force = np.zeros(size)
@@ -204,31 +318,16 @@ def contact_response(points, displacement, contacts):
     active = []
     current = points + displacement[:, :3]
     for contact in contacts:
-        penalty = contact["penalty"]
-        for slave in contact["slaves"]:
-            for face in contact["faces"]:
-                a, b, c = current[face]
-                cross = np.cross(b - a, c - a)
-                norm = np.linalg.norm(cross)
-                if norm == 0:
-                    raise ValueError("contact master face is degenerate")
-                normal = cross / norm
-                gap = (current[slave] - a) @ normal
-                projected = current[slave] - gap * normal
-                uv = np.linalg.lstsq(np.column_stack((b - a, c - a)), projected - a, rcond=None)[0]
-                weights = np.r_[1 - sum(uv), uv]
-                if gap >= 0 or min(weights) < -1e-10:
-                    continue
-                nodes = np.r_[slave, face]
-                coefficients = np.r_[1.0, -weights]
-                dofs = np.array([6 * node + k for node in nodes for k in range(3)])
-                gradient = np.outer(coefficients, normal).ravel()
-                np.add.at(force, dofs, penalty * gap * gradient)
-                block = penalty * np.outer(gradient, gradient)
-                rows.extend(np.repeat(dofs, len(dofs)))
-                columns.extend(np.tile(dofs, len(dofs)))
-                values.extend(block.ravel())
-                active.append({"slave": int(slave), "face": np.asarray(face), "gap": float(gap), "normalForce": float(-penalty * gap)})
-                break
+        response = (
+            _surface_contact_response(points, current, contact, size)
+            if "slaveFaces" in contact else _point_contact_response(points, current, contact, size)
+        )
+        local_force, local_tangent, local_active = response
+        force += local_force
+        entries = local_tangent.tocoo()
+        rows.extend(entries.row)
+        columns.extend(entries.col)
+        values.extend(entries.data)
+        active.extend(local_active)
     tangent = sparse.csr_matrix((values, (rows, columns)), shape=(size, size))
     return force, tangent, active

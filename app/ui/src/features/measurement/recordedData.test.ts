@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { parseMeasurementRecordedDataResponse } from '@/contracts/api/measurementValidators'
 import { recordedDataTreeSnapshot } from './recordedData'
+import { createCalculationInput } from '@/lib/calculation/input'
 
 function recordedDataLeaf(overrides: Readonly<Record<string, unknown>> = {}) {
   return {
@@ -15,6 +16,36 @@ function recordedDataLeaf(overrides: Readonly<Record<string, unknown>> = {}) {
 }
 
 describe('Measurement recorded-data wire contract', () => {
+  it('reopens legacy mesh records as Calculation inputs without changing the API response', () => {
+    const response = parseMeasurementRecordedDataResponse({
+      recorded_data: {
+        displacement: {
+          domain: {
+            kind: recordedDataLeaf({
+              dtype: 'string',
+              data_schema: { dtype: 'string' },
+              data: { shape: [], storage: { kind: 'inline', value: 'unstructured-mesh' } },
+            }),
+            cells: {
+              tet4: recordedDataLeaf({
+                experiment_record_id: 12,
+                dtype: 'int32',
+                data_schema: { dtype: 'int32', axes: [{ name: 'cell' }, { length: 4 }] },
+                data: { shape: [1, 4], storage: { kind: 'inline', value: [[0, 1, 2, 3]] } },
+              }),
+            },
+          },
+        },
+      },
+    })
+    const before = JSON.stringify(response)
+    const snapshot = recordedDataTreeSnapshot(response.recorded_data, 57)
+    expect(() => createCalculationInput(snapshot.rules, snapshot.flatData)).not.toThrow()
+    expect(JSON.stringify(response)).toBe(before)
+    expect(snapshot.flatData['displacement.domain.cells.tet4']).toMatchObject({
+      axes: [{ implicitOrdinal: true }, { implicitOrdinal: true }],
+    })
+  })
   it('accepts the backend null data schema and preserves it in the snapshot row', () => {
     const response = parseMeasurementRecordedDataResponse({
       recorded_data: { stress: recordedDataLeaf() },

@@ -1,4 +1,5 @@
 import type { UcumUnit } from '../model/units'
+import type { GeometryEvaluationProfile } from './precision'
 
 export type CanonicalVec3V1 = readonly [number, number, number]
 export type CanonicalAffineMatrixV1 = readonly [
@@ -117,6 +118,7 @@ export type CanonicalSurfaceGroupV1 = Readonly<{
 
 export type CanonicalGeometrySceneV1 = Readonly<{
   geometryHash: string
+  evaluationProfile?: GeometryEvaluationProfile
   lengthUnit: UcumUnit
   roots: readonly CanonicalGeometryRootV1[]
   geometryGroups: readonly CanonicalGeometryGroupV1[]

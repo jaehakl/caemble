@@ -476,6 +476,10 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         page.setLayout((current) => ({ ...current, viewerExpanded: !current.viewerExpanded }))
       }
       rayPaths={rayPathState.bundles}
+      recordedData={workbench.selection.flatRecordedData}
+      recordedRules={workbench.selection.recordedRules}
+      loading={workbench.selection.loading}
+      downloadProgress={workbench.selection.downloadProgress}
       selectionQuery={viewerSelectionQuery}
       selectionSourceStatus={selectionSourceStatus}
       viewerExpanded={page.viewerExpanded}

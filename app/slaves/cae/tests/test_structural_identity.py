@@ -11,7 +11,8 @@ from app.kernel.catalog import solver_catalog
 from app.kernel.resources import ResourceStore
 from app.solvers.structural_mechanics.analysis import initial_solution
 from app.solvers.structural_mechanics.constraints import constraint_transform
-from app.solvers.structural_mechanics.domain import build_model, update_fingerprint
+from app.solvers.structural_mechanics.domain import update_fingerprint
+from tests.structural_fixture import build_model
 from app.solvers.structural_mechanics.outputs import build_outputs
 from app.solvers.structural_mechanics.state import encode_state, read_state
 
@@ -86,7 +87,7 @@ def test_each_element_block_retains_cad_target_and_ids_in_public_mesh_metadata()
     invocation = generalized_beam_invocation()
     invocation.config["initializations"].append(deepcopy(invocation.config["initializations"][1]))
     model = build_model(invocation)
-    descriptor = solver_catalog.descriptor("structural-mechanics", "1.0.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "2.0.0")
     field = build_outputs(invocation.config, descriptor, model, initial_solution(model))["displacement"]
     resources = ResourceStore()
     try:

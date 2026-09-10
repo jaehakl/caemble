@@ -129,6 +129,14 @@ def test_coupled_loads_on_missing_dofs_are_rejected_instead_of_discarded():
         advance_window(invocation, model, solution, settings, prepare_matrices(model))
 
 
+def test_coupled_solid_node_moment_requires_a_semantic_attachment_reference():
+    model, solution, settings, invocation = translation_case()
+    model.physical_node_count = 1
+    invocation.inputs["loads"][0].value.members["moments"][:, 0, 2] = 1.
+    with pytest.raises(ValueError, match="physical solid node requires the semantic attachment reference"):
+        advance_window(invocation, model, solution, settings, prepare_matrices(model))
+
+
 def test_detailed_submodel_preserves_eccentric_force_moment_and_virtual_work():
     points = np.array([[2., -1., 0.], [2., 1., 0.], [2., 0., 1.]])
     model = StructuralModel(np.array([10, 11, 12]), points, [], np.arange(18), np.empty(0, dtype=int), np.zeros((3, 6)))
