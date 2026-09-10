@@ -61,7 +61,7 @@ class CatalogV3Tests(unittest.TestCase):
                 version="3.0.0",
             )
 
-        self.assertEqual(total, 10)
+        self.assertEqual(total, 16)
         self.assertTrue(removed_keys.isdisjoint(item["key"] for item in experiments))
         self.assertEqual(example["title"], "Electro-Thermal Notched Bar")
         self.assertEqual(
@@ -113,6 +113,8 @@ class CatalogV3Tests(unittest.TestCase):
         expected = {
             "dc-current-density": "0.5.0", "steady-state-heat": "0.4.0",
             "ray-tracing": "0.5.0", "fdtd": "2.1.0",
+            "structural-mechanics": "1.0.0", "aerodynamic-loading": "1.0.0",
+            "hydrodynamic-loading": "1.0.0", "wind-turbine-control": "1.0.0",
         }
         with open_catalog() as catalog:
             manifests = catalog.solver_manifests()
@@ -125,8 +127,9 @@ class CatalogV3Tests(unittest.TestCase):
                 with self.assertRaises(CatalogNotFoundError):
                     catalog.get_solver_manifest(name, version)
             for example in catalog.list_experiments(limit=100)[0]:
-                self.assertEqual(example["version"], {"gold-fcc-fresnel": "2.1.0", "fdtd-drude-slab": "3.1.0"}.get(example["key"], "3.0.0"))
-                previous = {"gold-fcc-fresnel": "2.0.0", "fdtd-drude-slab": "3.0.0"}.get(example["key"], "2.0.0")
+                expected_version = "1.0.0" if example["repository"] == "fea" else {"gold-fcc-fresnel": "2.1.0", "fdtd-drude-slab": "3.1.0"}.get(example["key"], "3.0.0")
+                self.assertEqual(example["version"], expected_version)
+                previous = "0.0.0" if example["repository"] == "fea" else {"gold-fcc-fresnel": "2.0.0", "fdtd-drude-slab": "3.0.0"}.get(example["key"], "2.0.0")
                 with self.assertRaises(CatalogNotFoundError):
                     catalog.experiment(example["coordinate"].rsplit("@", 1)[0] + "@" + previous)
                 for solver in example["relatedSolvers"]:
