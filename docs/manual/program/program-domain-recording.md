@@ -109,3 +109,25 @@ complex64 spectral 결과의 3D 단면에서 `표시 모드 → 진동`을 선�
 Gold FCC에서는 결과를 선택한 뒤 `진동`, 1000 nm 또는 1500 nm, Ex·Ey·Ez를
 차례로 선택하고 재생하세요. 0°는 실수부, 90°는 허수부의 음수, 180°는 실수부의
 음수입니다. 단면을 옮겨도 카메라와 범례가 자동으로 바뀌지 않는지 확인하세요.
+
+### Catalog·Draft에서 임시 실행
+
+**Experiment 탭**에서 Catalog 예제나 Draft를 열고 Vars 준비가 끝나면
+**약식 / 정식 (Full)**을 선택한 뒤 **실행**을 누릅니다. 기본은 약식입니다.
+로그인과 연결된 CAE Launcher가 필요하며 진행 중에는 취소할 수 있습니다.
+
+약식은 정확도 목표 없이 요청한 결과를 실제 계산합니다. FDTD는 cell size를
+4배로, ray tracing은 ray 수를 1/100(최소 1개)로 줄입니다. FEA는 mesh와 전체
+시간 구간을 유지하며 transient 계산 시간 간격을 늘립니다. 정식은 원래 설정을
+사용합니다. 실패한 Solver를 다른 설정으로 자동 재실행하지 않습니다.
+
+완료하면 기존 Viewer의 결과 선택에서 원하는 결과를 고릅니다. 약식/Full
+결과는 실행 당시 Geometry와 Vars에 연결되며, Draft를 편집해도 그 결과가
+바뀌지는 않습니다. **임시 결과 닫기**로 현재 작업 화면으로 돌아갑니다.
+Experiment나 Measurement는 저장하지 않습니다. 작은 결과는 DB에, 큰 결과는
+Bucket에 저장하고 완료 후 24시간이 지나면 서버가 정리합니다.
+
+직접 확인할 때는 Gold FCC Array를 약식으로 실행하여 `referenceScattered`,
+`incident`, `scattered`의 주파수와 성분을 선택하고 3D 단면을 확인하세요.
+Structural 예제에서는 mesh 유지, 변형과 시간 재생을 확인하세요. 이후
+Measurement를 전환하여 임시 결과 선택과 재생이 초기화되는지 확인합니다.

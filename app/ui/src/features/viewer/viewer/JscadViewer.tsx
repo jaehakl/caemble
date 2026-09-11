@@ -90,6 +90,7 @@ type JscadViewerProps = {
   selectionQuery?: CadViewerSelectionQuery | null
   polylines?: readonly PolylineBundle[]
   meshRenderData?: ReturnType<typeof createMeshFieldRenderData>
+  preserveCameraOnUpdate?: boolean
   meshIdentity?: string
   heatmapRenderData?: HeatmapRenderData
   viewerExpanded?: boolean
@@ -305,6 +306,7 @@ function JscadViewer({
   polylines = [],
   meshRenderData,
   meshIdentity,
+  preserveCameraOnUpdate = false,
   heatmapRenderData,
   selectionQuery = null,
   selectionSourceStatus = {},
@@ -515,7 +517,7 @@ function JscadViewer({
         drawLines: renderer.drawCommands.drawLines,
         drawMesh: renderer.drawCommands.drawMesh,
         drawRayPaths,
-        drawRecordedMesh,
+        drawRecordedMesh: (regl: ReglCommandBuilder) => drawRecordedMesh(regl, false),
         drawHeatmap: (regl: ReglCommandBuilder) => drawRecordedMesh(regl, true),
       },
       entities: [],
@@ -577,8 +579,10 @@ function JscadViewer({
   useEffect(() => {
     if (!optionsRef.current || !renderRef.current || !cameraRef.current || !controlsRef.current) return
 
+    const sceneChanged = lastFittedPartsRef.current !== parts || lastFittedResultRef.current !== resultIdentity
     const shouldFit =
-      Boolean(sceneBounds) && (lastFittedPartsRef.current !== parts || lastFittedResultRef.current !== resultIdentity)
+      Boolean(sceneBounds) &&
+      (lastFittedResultRef.current === null || (!preserveCameraOnUpdate && sceneChanged))
     if (sceneBounds) {
       const diameter = Math.max(
         Math.hypot(...sceneBounds[1].map((value, axis) => value - sceneBounds[0][axis])),
@@ -688,7 +692,7 @@ function JscadViewer({
       Object.assign(controlsRef.current, updated.controls)
       renderer.cameras.perspective.update(cameraRef.current, cameraRef.current)
       if (!renderScene()) return
-      if (shouldFit) {
+      if (shouldFit || sceneChanged) {
         lastFittedPartsRef.current = parts
         lastFittedResultRef.current = resultIdentity
         onRenderEnd()
@@ -699,6 +703,7 @@ function JscadViewer({
     }
   }, [
     displayLayers,
+    preserveCameraOnUpdate,
     sceneBounds,
     resultIdentity,
     lengthUnit,

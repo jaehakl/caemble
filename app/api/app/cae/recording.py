@@ -94,10 +94,10 @@ async def stage_record(db: AsyncSession, job: Job, payload: dict, attachments: l
     if job.input.get("storage_version") == 1:
         from storage.service import bind_objects
         measurement = await db.scalar(select(Measurement).where(Measurement.job_id == job.id))
-        if measurement is None:
+        if measurement is None and not job.input.get("preflight"):
             raise ValueError("Assigned Measurement is missing.")
-        await bind_objects(db, payload, user_id=job.user_id, experiment_id=measurement.experiment_id,
-                           job_id=job.id, attempt=job.attempt_count, measurement_id=measurement.id, bind=False)
+        await bind_objects(db, payload, user_id=job.user_id, experiment_id=measurement.experiment_id if measurement else None,
+                           job_id=job.id, attempt=job.attempt_count, measurement_id=measurement.id if measurement else None, bind=False)
     sequence, name = payload["sequence"], payload["name"]
     schemas = job.input["measurement"]["experiment"]["simulationProgram"]["recordedData"]
     if (
@@ -136,6 +136,28 @@ async def stage_record(db: AsyncSession, job: Job, payload: dict, attachments: l
 
 
 async def complete_job(db: AsyncSession, job: Job, packet: dict) -> dict:
+    if job.input.get("preflight"):
+        from storage.service import bind_objects
+        if packet.get("executionMode") != job.input["execution_mode"]:
+            raise ValueError("Preflight execution mode was not acknowledged. Restart the updated CAE worker.")
+        staged = (await db.scalars(select(JobRecord).where(
+            JobRecord.job_id == job.id, JobRecord.attempt_count == job.attempt_count
+        ).order_by(JobRecord.sequence))).all()
+        schemas = job.input["measurement"]["experiment"]["simulationProgram"]["recordedData"]
+        if [row.sequence for row in staged] != packet["recordSequences"] or {row.name for row in staged} != set(schemas):
+            raise ValueError("Preflight terminal records differ from the declared outputs.")
+        for row in staged:
+            await bind_objects(db, row.payload, user_id=job.user_id, experiment_id=None,
+                               job_id=job.id, attempt=job.attempt_count)
+        # finish_job deletes staging records in this same transaction. Keep the
+        # completed tensors (including object references) on their owning job.
+        job.artifact_metadata = {
+            **(job.artifact_metadata or {}),
+            "recorded_data": {row.name: row.payload for row in staged},
+            "execution_trace": packet.get("executionTrace", []),
+        }
+        await db.flush()
+        return {"preflight_id": job.batch_id}
     sequences = packet["recordSequences"]
     measurement = await db.scalar(
         select(Measurement).where(Measurement.job_id == job.id).with_for_update()
@@ -198,12 +220,12 @@ async def storage_packet(db, job, packet):
     from storage.service import prepare_upload, finish_upload, owned_object, object_refs, download_parts
     operation = packet["type"].removeprefix("job.storage.")
     measurement = await db.scalar(select(Measurement).where(Measurement.job_id == job.id))
-    if measurement is None or job.input.get("storage_version") != 1:
+    if (measurement is None and not job.input.get("preflight")) or job.input.get("storage_version") != 1:
         raise ValueError("Job does not support object storage.")
     if operation == "prepare":
         result = await prepare_upload(db, packet["manifest"], user_id=job.user_id,
-            experiment_id=measurement.experiment_id, purpose="record", job_id=job.id,
-            attempt=job.attempt_count, measurement_id=measurement.id)
+            experiment_id=measurement.experiment_id if measurement else None, purpose="record", job_id=job.id,
+            attempt=job.attempt_count, measurement_id=measurement.id if measurement else None)
     elif operation == "complete":
         row = await owned_object(db, packet["object_id"], job.user_id)
         if row.job_id != job.id or row.attempt != job.attempt_count or row.purpose != "record":

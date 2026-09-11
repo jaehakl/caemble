@@ -1,3 +1,4 @@
+import { materialVarsHash } from '@/lib/material/resolution'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import { WorkbenchViewer } from './WorkbenchViewer'
@@ -5,8 +6,8 @@ import { WorkbenchViewer } from './WorkbenchViewer'
 vi.mock('@/features/viewer/viewer/CadViewer', () => ({ default: () => <div>Geometry preview</div> }))
 vi.mock('@/features/viewer/viewer/MeshFieldResult', () => ({ MeshFieldResult: () => <div>Stored volume field</div> }))
 vi.mock('@/features/viewer/viewer/meshFields', () => ({
-  parseRecordedMeshFields: () => ({
-    fields: [{ label: 'displacement', identity: 'mesh' }],
+  parseRecordedMeshFields: (_rules: unknown, _data: unknown, contracts: Record<string, { visualization: { kind: string } }>) => ({
+    fields: Object.entries(contracts).filter(([, value]) => value.visualization.kind === 'mesh-field').map(([label]) => ({ label, identity: 'mesh' })),
     errors: [],
     labels: ['displacement'],
   }),
@@ -46,4 +47,68 @@ it('shows stored mesh results centrally, permits Geometry review, and displays d
   fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: '' } })
   expect(screen.getByText('Geometry preview')).toBeTruthy()
   expect(screen.queryByText('Stored volume field')).toBeNull()
+})
+
+it('shows the selected result error instead of an empty structured-field renderer', () => {
+  render(
+    <WorkbenchViewer
+      resultContracts={{
+        field: {
+          task: 'wave',
+          output: 'field',
+          solver: { name: 'fixture', version: '1.0.0' },
+          artifactType: 'fixture@1',
+          catalogRevision: 'frozen',
+          schema: {},
+          visualization: {
+            kind: 'structured-field',
+            coordinateSpace: 'experiment',
+            grid: { xyzAxes: [3, 2, 1], sampleAxis: 0, sampleKind: 'frequency', componentAxis: 4 },
+          },
+        },
+      }}
+      resultErrors={{ field: '응답에 선언된 결과 데이터가 없습니다.' }}
+      experiment={null}
+      experimentDocument={{} as Parameters<typeof WorkbenchViewer>[0]['experimentDocument']}
+      onFindSelectionSource={vi.fn()}
+      onSelectionQueryChange={vi.fn()}
+      onSelectionSourcePathsChange={vi.fn()}
+      onToggleViewerExpanded={vi.fn()}
+      selectionQuery={null}
+      selectionSourceStatus={{}}
+      viewerExpanded={false}
+    />,
+  )
+  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: 'field' } })
+  expect(screen.getAllByText('field: 응답에 선언된 결과 데이터가 없습니다.')).toHaveLength(1)
+  expect(screen.queryByText('기록된 장 데이터가 없습니다.')).toBeNull()
+})
+
+
+it('randomly selects an overlay result once, retains selection and explicit Geometry, and reports a removed result', () => {
+  const contract = {
+    task: 'solid', output: 'field', solver: { name: 'fixture', version: '1' }, artifactType: 'fixture@1',
+    catalogRevision: 'frozen', schema: {}, visualization: { kind: 'mesh-field' as const, coordinateSpace: 'experiment' as const },
+  }
+  const props: Parameters<typeof WorkbenchViewer>[0] = {
+    experiment: null, experimentDocument: { evaluatedSnapshot: { sourceHash: 'source', variables: {} } } as Parameters<typeof WorkbenchViewer>[0]['experimentDocument'],
+    onFindSelectionSource: vi.fn(), onSelectionQueryChange: vi.fn(), onSelectionSourcePathsChange: vi.fn(), onToggleViewerExpanded: vi.fn(),
+    selectionQuery: null, selectionSourceStatus: {}, viewerExpanded: false,
+    resultContracts: { first: contract, second: contract }, resultSourceHash: 'source',
+    resultVarsHash: materialVarsHash({}),
+  }
+  const random = vi.spyOn(Math, 'random').mockReturnValue(0.9)
+  const { rerender } = render(<WorkbenchViewer {...props} />)
+  rerender(<WorkbenchViewer {...props} autoSelectResult recordedData={{}} />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('second')
+  const calls = random.mock.calls.length
+  rerender(<WorkbenchViewer {...props} autoSelectResult recordedData={{}} />)
+  expect(random).toHaveBeenCalledTimes(calls)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('second')
+  rerender(<WorkbenchViewer {...props} autoSelectResult recordedData={{}} resultContracts={{ first: contract }} />)
+  expect(screen.getByText('second: 새 실행에 선택한 결과가 없습니다.')).toBeInTheDocument()
+  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: '' } })
+  rerender(<WorkbenchViewer {...props} autoSelectResult recordedData={{}} />)
+  expect(screen.getByLabelText('Viewer 결과 선택')).toHaveValue('')
+  expect(screen.getByText('Geometry preview')).toBeInTheDocument()
 })

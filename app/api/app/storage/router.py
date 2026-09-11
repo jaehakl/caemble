@@ -40,8 +40,14 @@ async def prepare(body: dict = Body(), db: AsyncSession = Depends(get_db),
             raise HTTPException(404, "Measurement not found.")
         experiment_id = target.experiment_id
     if experiment_id is None:
-        raise HTTPException(422, "Upload scope requires an Experiment.")
-    await require_experiment_write(db, experiment_id, user)
+        if purpose != "input":
+            raise HTTPException(422, "Upload scope requires an Experiment.")
+        job = await db.get(Job, scope.get("job_id")) if scope.get("job_id") else None
+        cae = await db.get(CaeBatch, job.batch_id) if job and job.user_id == user.id else None
+        if cae is None or not cae.spec.get("preflight"):
+            raise HTTPException(404, "Preflight input not found.")
+    else:
+        await require_experiment_write(db, experiment_id, user)
     job_id, measurement_id, calculation_id = scope.get("job_id"), scope.get("measurement_id"), scope.get("calculation_id")
     if purpose == "input":
         job = await db.get(Job, job_id) if job_id else None
@@ -87,8 +93,14 @@ async def complete(object_id: UUID, db: AsyncSession = Depends(get_db),
 async def read(object_id: UUID, db: AsyncSession = Depends(get_db),
                user: UserData | None = Depends(require_roles(["*"]))):
     row = await db.get(StorageObject, str(object_id))
-    if row is None or row.experiment_id is None:
+    if row is None:
         raise HTTPException(404, "Object not found.")
+    if row.experiment_id is None:
+        from cae.preflight import require_preflight_job
+        if user is None or row.user_id != user.id:
+            raise HTTPException(404, "Object not found.")
+        await require_preflight_job(db, row.job_id, user.id)
+        return await download_parts(db, reference(row))
     if row.bound and ((row.purpose in {"measurement", "record", "calculation"} and row.measurement_id is None)
                       or (row.purpose == "layout" and row.calculation_id is None)
                       or (row.purpose == "calculation" and row.calculation_data_id is None)):

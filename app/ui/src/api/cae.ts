@@ -11,7 +11,10 @@ export function createCaeBatches(client: CaembleClient) {
   const { request } = client
   return {
     create: (body: CaeBatchRequest) =>
-      request('post', '/cae/batches', body, { csrf: 'required', validate: (value) => caeBatchSchema.parse(value) }),
+      request('post', body.preflight ? '/cae/preflights' : '/cae/batches', body, {
+        csrf: 'required',
+        validate: (value) => caeBatchSchema.parse(value),
+      }),
     uploadChunk: (id: string, index: number, chunk: number, bytes: Uint8Array, hash: string, signal?: AbortSignal) =>
       request('put', `/cae/batches/${encodeURIComponent(id)}/items/${index}/chunks/${chunk}`, undefined, {
         csrf: 'required',

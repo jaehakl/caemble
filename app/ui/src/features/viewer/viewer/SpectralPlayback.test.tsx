@@ -176,3 +176,21 @@ it('keeps separate static and oscillation manual ranges and resets a different r
   expect(callbacks.size).toBe(0)
   expect(screen.getByLabelText('장 표시 모드')).toHaveValue('static')
 })
+
+
+it('preserves oscillation settings but stops playback and clamps the sample on data replacement', () => {
+  const props = { name: 'field', contract, rules, displayUnit: 'm' as const, renderViewer: () => <div>slice</div> }
+  const { rerender } = render(<StructuredFieldResult {...props} data={{ field: tensor }} />)
+  fireEvent.change(screen.getByLabelText('장 표시 모드'), { target: { value: 'oscillating' } })
+  fireEvent.click(screen.getByText('재생'))
+  expect(screen.getByText('일시정지')).toBeInTheDocument()
+  rerender(<StructuredFieldResult {...props} data={{ field: { ...tensor } }} />)
+  expect(screen.getByText('재생')).toBeInTheDocument()
+  expect(screen.getByLabelText('장 표시 모드')).toHaveValue('oscillating')
+  expect(screen.getByLabelText('반복')).toBeChecked()
+  fireEvent.change(screen.getByLabelText('주파수 / 진공 파장'), { target: { value: '1' } })
+  const smaller = { ...tensor, shape: [1, ...tensor.shape.slice(1)], axes: [{ ticks: [3e14] }, ...tensor.axes!.slice(1)] }
+  rerender(<StructuredFieldResult {...props} data={{ field: smaller }} />)
+  expect(screen.getByLabelText('주파수 / 진공 파장')).toHaveValue('0')
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})

@@ -556,10 +556,12 @@ class JobOrchestrator:
 
     async def _storage_cleanup_loop(self) -> None:
         from storage.service import cleanup_objects
+        from cae.preflight import expire_preflights
 
         while True:
             try:
                 async with SessionLocal() as db:
+                    await expire_preflights(db)
                     await cleanup_objects(db)
             except asyncio.CancelledError:
                 raise

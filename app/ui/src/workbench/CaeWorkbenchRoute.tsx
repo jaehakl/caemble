@@ -1,3 +1,4 @@
+import { usePreflight } from '@/features/measurement/usePreflight'
 import { useQueryClient } from '@tanstack/react-query'
 import { Rows3 } from 'lucide-react'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -87,6 +88,11 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const queryClient = useQueryClient()
   const runtimeConsole = useMemo(() => createRuntimeConsoleStore(), [])
   const workbench = useCaeWorkbenchState(auth.user, auth.isAuthenticated, { onActivity: runtimeConsole.append })
+  const preflight = usePreflight(
+    workbench.experiment,
+    workbench.experimentDocument,
+    `${workbench.experimentId ?? ''}:${workbench.experimentDocument.resultSessionKey ?? ''}:${workbench.selection.measurement?.id ?? ''}`,
+  )
   const experimentDataReadable = auth.isAuthenticated || workbench.experimentIsDemo
   const calculationAccess = calculationAccessPolicy({
     dataReadable: experimentDataReadable,
@@ -274,6 +280,48 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     setDialog: page.setDialog,
     workbench,
     predictionState,
+    preflightControls: (
+      <div className="flex items-center gap-2 px-2 text-xs">
+          <select
+            aria-label="Preflight 실행 모드"
+            value={preflight.mode}
+            disabled={preflight.busy}
+            onChange={(event) => preflight.setMode(event.target.value as 'brief' | 'full')}
+          >
+            <option value="brief">약식</option>
+            <option value="full">정식 (Full)</option>
+          </select>
+          <button
+            type="button"
+            className="rounded border px-3 py-1"
+            disabled={
+              preflight.busy || !workbench.experimentDocument.measurement || workbench.experimentDocument.runIsBusy
+            }
+            onClick={() => {
+              if (!auth.isAuthenticated) page.setDialog('account')
+              else void preflight.run()
+            }}
+          >
+            실행
+          </button>
+          <button
+            type="button"
+            className="rounded border px-3 py-1"
+            disabled={preflight.busy || !workbench.experiment || workbench.experimentDocument.runIsBusy}
+            onClick={() => {
+              if (!auth.isAuthenticated) page.setDialog('account')
+              else void preflight.run(true)
+            }}
+          >
+            Candidate 재생성 + 실행
+          </button>
+          {preflight.busy ? (
+            <button type="button" onClick={() => void preflight.cancel()}>
+              취소
+            </button>
+          ) : null}
+      </div>
+    ),
   })
 
   const activeFlatRecordedData = workbench.selection.flatRecordedData
@@ -345,42 +393,59 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
 
   const contextualRightPane =
     page.activeSection === 'experiment' ? (
-      <PaneTabs
-        label="Experiment"
-        options={[
-          { id: 'source', label: 'Source' },
-          { id: 'detail', label: 'Detail' },
-        ]}
-        value={page.rightTabs.experiment}
-        onValueChange={(experiment) =>
-          page.setLayout((current) => ({
-            ...current,
-            rightTabs: { ...current.rightTabs, experiment: experiment as 'source' | 'detail' },
-          }))
-        }
-        panels={{
-          source: (
-            <ExperimentEditor
-              controller={workbench.experimentDocument}
-              disabled={
-                !page.initialized ||
-                Boolean(workbench.experimentRecord && !workbench.experimentManageable) ||
-                workbench.measurementActions.busy ||
-                workbench.calculationDataActions.busy ||
-                workbench.saving !== null
-              }
-              document={workbench.experiment?.kind === 'experiment' ? workbench.experiment : null}
-              initialActiveFile={page.activeExperimentFile}
-              onActiveFileChange={page.setActiveExperimentFile}
-              onAuthoringStateChange={setExperimentAuthoringState}
-              onSourceRevealRequestHandled={handleSourceRevealRequestHandled}
-              onViewerSelectionQueryChange={handleCodeSelectionQueryChange}
-              sourceRevealRequest={sourceRevealRequest}
-            />
-          ),
-          detail: <ExperimentDetail workbench={workbench} />,
-        }}
-      />
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="flex flex-wrap items-center gap-2 border-b p-2 text-xs">
+          {preflight.result ? (
+            <button type="button" onClick={preflight.clear}>
+              임시 결과 닫기
+            </button>
+          ) : null}
+          <span role="status">{preflight.status}</span>
+          {preflight.error ? (
+            <span role="alert" className="text-red-700">
+              {preflight.error}
+            </span>
+          ) : null}
+        </div>
+        <div className="min-h-0 flex-1">
+          <PaneTabs
+            label="Experiment"
+            options={[
+              { id: 'source', label: 'Source' },
+              { id: 'detail', label: 'Detail' },
+            ]}
+            value={page.rightTabs.experiment}
+            onValueChange={(experiment) =>
+              page.setLayout((current) => ({
+                ...current,
+                rightTabs: { ...current.rightTabs, experiment: experiment as 'source' | 'detail' },
+              }))
+            }
+            panels={{
+              source: (
+                <ExperimentEditor
+                  controller={workbench.experimentDocument}
+                  disabled={
+                    !page.initialized ||
+                    Boolean(workbench.experimentRecord && !workbench.experimentManageable) ||
+                    workbench.measurementActions.busy ||
+                    workbench.calculationDataActions.busy ||
+                    workbench.saving !== null
+                  }
+                  document={workbench.experiment?.kind === 'experiment' ? workbench.experiment : null}
+                  initialActiveFile={page.activeExperimentFile}
+                  onActiveFileChange={page.setActiveExperimentFile}
+                  onAuthoringStateChange={setExperimentAuthoringState}
+                  onSourceRevealRequestHandled={handleSourceRevealRequestHandled}
+                  onViewerSelectionQueryChange={handleCodeSelectionQueryChange}
+                  sourceRevealRequest={sourceRevealRequest}
+                />
+              ),
+              detail: <ExperimentDetail workbench={workbench} />,
+            }}
+          />
+        </div>
+      </div>
     ) : page.activeSection === 'measurement' || page.activeSection === 'prediction' ? null : page.activeSection ===
       'analysis' ? (
       <Suspense fallback={<PaneLoading label="Analysis를 불러오는 중입니다." />}>
@@ -453,30 +518,41 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     </div>
   )
 
+  const preview = preflight.result
   const viewerPane = (
-    <WorkbenchViewer
-      activeExperimentTaskName={page.activeExperimentFile}
-      experiment={workbench.experiment}
-      experimentDocument={workbench.experimentDocument}
-      onFindSelectionSource={findSelectionSource}
-      onSelectionQueryChange={handleViewerSelectionQueryChange}
-      onSelectionSourcePathsChange={handleSelectionSourcePathsChange}
-      onToggleViewerExpanded={() =>
-        page.setLayout((current) => ({ ...current, viewerExpanded: !current.viewerExpanded }))
-      }
-      key={workbench.selection.measurement?.id ?? 'geometry'}
-      resultContracts={workbench.selection.resultContracts}
-      resultErrors={workbench.selection.resultErrors}
-      resultSourceHash={workbench.selection.materialSnapshot?.sourceHash}
-      resultVarsHash={workbench.selection.materialSnapshot?.varsHash}
-      recordedData={workbench.selection.flatRecordedData}
-      recordedRules={workbench.selection.recordedRules}
-      loading={workbench.selection.loading}
-      downloadProgress={workbench.selection.downloadProgress}
-      selectionQuery={viewerSelectionQuery}
-      selectionSourceStatus={selectionSourceStatus}
-      viewerExpanded={page.viewerExpanded}
-    />
+    <div className="flex h-full min-h-0 flex-col">
+      {preview ? (
+        <div className="border-b p-2 text-xs">
+          {preview.payload.execution_mode === 'brief' ? '약식 결과' : '정식 (Full) 결과'} · 실행 당시 Geometry / Vars
+        </div>
+      ) : null}
+      <div className="min-h-0 flex-1">
+        <WorkbenchViewer
+          activeExperimentTaskName={page.activeExperimentFile}
+          experiment={preview?.experiment ?? workbench.experiment}
+          experimentDocument={preview?.document ?? workbench.experimentDocument}
+          onFindSelectionSource={findSelectionSource}
+          onSelectionQueryChange={handleViewerSelectionQueryChange}
+          onSelectionSourcePathsChange={handleSelectionSourcePathsChange}
+          onToggleViewerExpanded={() =>
+            page.setLayout((current) => ({ ...current, viewerExpanded: !current.viewerExpanded }))
+          }
+          key={`${workbench.experimentId ?? ''}:${workbench.experimentDocument.resultSessionKey ?? ''}:${workbench.selection.measurement?.id ?? 'geometry'}:${preflight.viewerEpoch}`}
+          autoSelectResult={Boolean(preview)}
+          resultContracts={preview?.payload.result_contracts ?? workbench.selection.resultContracts}
+          resultErrors={preview?.errors ?? workbench.selection.resultErrors}
+          resultSourceHash={preview?.payload.source_hash ?? workbench.selection.materialSnapshot?.sourceHash}
+          resultVarsHash={preview?.payload.vars_hash ?? workbench.selection.materialSnapshot?.varsHash}
+          recordedData={preview?.data ?? workbench.selection.flatRecordedData}
+          recordedRules={preview?.rules ?? workbench.selection.recordedRules}
+          loading={!preview && workbench.selection.loading}
+          downloadProgress={workbench.selection.downloadProgress}
+          selectionQuery={viewerSelectionQuery}
+          selectionSourceStatus={selectionSourceStatus}
+          viewerExpanded={page.viewerExpanded}
+        />
+      </div>
+    </div>
   )
   const menubar = (
     <WorkbenchMenubar

@@ -43,6 +43,9 @@ async def create_batch(
 ) -> JobBatch:
     await serialize_events(db)
     request_data = request.model_dump(mode="json")
+    if not request.preflight:
+        for key in ("preflight", "execution_mode", "source_bundle"):
+            request_data.pop(key)
     request_hash = hashlib.sha256(
         json.dumps(request_data, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
     ).hexdigest()
@@ -57,15 +60,21 @@ async def create_batch(
         return existing
     if request.catalog_revision != catalog.meta()["catalogRevision"]:
         raise HTTPException(409, "Catalog revision changed. Rebuild with the server Catalog.")
-    experiment = await db.scalar(
-        select(Experiment).where(Experiment.id == request.experiment_id).with_for_update()
-    )
-    if experiment is None or (
-        not is_admin_user(user) and experiment.user_id not in {None, user.id}
-    ):
-        raise HTTPException(404, "Experiment not found.")
-    if experiment.source_hash != request.experiment_source_hash:
-        raise HTTPException(409, "The Experiment source changed before batch submission.")
+    experiment = None
+    if request.preflight:
+        from service.experiment import _bundle_hash
+        if _bundle_hash(request.source_bundle) != request.experiment_source_hash:
+            raise HTTPException(422, "Preflight source bundle hash differs from its manifest.")
+    else:
+        experiment = await db.scalar(
+            select(Experiment).where(Experiment.id == request.experiment_id).with_for_update()
+        )
+        if experiment is None or (
+            not is_admin_user(user) and experiment.user_id not in {None, user.id}
+        ):
+            raise HTTPException(404, "Experiment not found.")
+        if experiment.source_hash != request.experiment_source_hash:
+            raise HTTPException(409, "The Experiment source changed before batch submission.")
     batch = JobBatch(
         user_id=user.id, request_id=str(request.request_id), request_hash=request_hash,
         total=len(request.items), created_count=len(request.items), uploaded_count=0,
@@ -74,10 +83,12 @@ async def create_batch(
     )
     db.add(batch)
     await db.flush()
-    db.add(CaeBatch(batch_id=batch.id, experiment_id=experiment.id, spec={
-        "mode": request.mode, "source_hash": experiment.source_hash,
+    db.add(CaeBatch(batch_id=batch.id, experiment_id=request.experiment_id, spec={
+        "mode": request.mode, "source_hash": request.experiment_source_hash,
         "catalog_revision": request.catalog_revision, "builder_version": request.builder_version,
         "storage_version": request.storage_version,
+        "preflight": request.preflight, "execution_mode": request.execution_mode,
+        **({"source_bundle": request.source_bundle} if request.preflight else {}),
     }))
     for item in request.items:
         db.add(Job(
@@ -86,7 +97,7 @@ async def create_batch(
             state="staged", attempt_count=1, progress=[], offer={},
             artifact_metadata=item.model_dump(mode="json"),
         ))
-    await add_event(db, batch, "batch.created", payload={"experiment_id": experiment.id})
+    await add_event(db, batch, "batch.created", payload={"experiment_id": request.experiment_id})
     await db.commit()
     return batch
 
@@ -110,6 +121,8 @@ async def batch_snapshot(
         "request_id": batch.request_id,
         "experiment_id": cae.experiment_id,
         "mode": cae.spec["mode"],
+        "preflight": cae.spec.get("preflight", False),
+        "execution_mode": cae.spec.get("execution_mode", "full"),
         "total": batch.total,
         "created_count": batch.created_count,
         "uploaded_count": batch.uploaded_count,
@@ -229,6 +242,8 @@ async def retry_batch(
     cae = await db.get(CaeBatch, batch.id)
     if any(job.input is None for job in jobs):
         raise HTTPException(409, "This legacy job has no saved input. Rebuild with the current client.")
+    if cae.spec.get("preflight"):
+        raise HTTPException(409, "Start a new Preflight from the Experiment tab.")
     experiment = await db.scalar(
         select(Experiment).where(Experiment.id == cae.experiment_id).with_for_update()
     )

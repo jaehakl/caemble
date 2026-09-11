@@ -39,6 +39,25 @@ async def submit_batch(
     return await batch_snapshot(db, batch)
 
 
+@router.post("/preflights")
+async def submit_preflight(
+    body: BatchCreateRequest, request: Request, db: AsyncSession = Depends(get_db),
+    user: UserData = Depends(authenticated),
+):
+    if not body.preflight:
+        raise HTTPException(422, "Expected a Preflight request.")
+    batch = await create_batch(db, body, user, request.app.state.catalog)
+    return await batch_snapshot(db, batch)
+
+
+@router.get("/preflights/{batch_id}/result")
+async def read_preflight_result(
+    batch_id: UUID, db: AsyncSession = Depends(get_db), user: UserData = Depends(authenticated),
+):
+    from cae.preflight import preflight_result
+    return await preflight_result(db, str(batch_id), user.id)
+
+
 @router.get("/batches")
 async def batches(
     experiment_id: int | None = None,

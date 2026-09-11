@@ -37,6 +37,18 @@ async def run(invocation: SolverInvocation) -> SolverResult:
     )
 
 
-implementation = SolverImplementation(abi_version=3, run=run)
+def prepare_brief(invocation):
+    from copy import deepcopy
+    config = deepcopy(dict(invocation.config))
+    for rule in config["initializations"]:
+        values = rule["parameters"]
+        if "rayCount" in values:
+            value = values["rayCount"]
+            count = max(1, int(value["value"] if isinstance(value, dict) else value) // 100)
+            values["rayCount"] = {**value, "value": count} if isinstance(value, dict) else count
+    return config
+
+
+implementation = SolverImplementation(abi_version=3, run=run, prepare_brief=prepare_brief)
 
 __all__ = ["implementation"]

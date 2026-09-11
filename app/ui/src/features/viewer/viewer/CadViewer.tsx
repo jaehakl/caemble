@@ -22,6 +22,7 @@ export type CadViewerProps = {
   onToggleViewerExpanded?: () => void
   polylines?: readonly PolylineBundle[]
   meshRenderData?: ReturnType<typeof createMeshFieldRenderData>
+  preserveCameraOnUpdate?: boolean
   meshIdentity?: string
   heatmapRenderData?: HeatmapRenderData
   displayUnit?: UcumUnit
@@ -43,6 +44,7 @@ export function CadViewer({
   polylines,
   meshRenderData,
   meshIdentity,
+  preserveCameraOnUpdate = false,
   heatmapRenderData,
   displayUnit,
   selectionQuery,
@@ -78,6 +80,7 @@ export function CadViewer({
         polylines={polylines}
         meshRenderData={meshRenderData}
         meshIdentity={meshIdentity}
+        preserveCameraOnUpdate={preserveCameraOnUpdate}
         heatmapRenderData={heatmapRenderData}
         selectionQuery={selectionQuery}
         selectionSourceStatus={selectionSourceStatus}

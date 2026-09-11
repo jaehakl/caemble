@@ -245,6 +245,8 @@ def detector_indices(
     ticks: tuple[tuple[float, ...], tuple[float, ...], tuple[float, ...]],
     strides: tuple[int, int, int],
     label: str,
+    *,
+    nearest_core_cell: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     tolerance = max(max(maximum - minimum for minimum, maximum in core_bounds) * 1e-10, 1e-12)
     if any(
@@ -260,6 +262,16 @@ def detector_indices(
             (axis_ticks >= bounds[axis][0] - tolerance)
             & (axis_ticks <= bounds[axis][1] + tolerance)
         )[:: strides[axis]]
+        if indices.size == 0 and nearest_core_cell:
+            core_indices = np.flatnonzero(
+                (axis_ticks >= core_bounds[axis][0])
+                & (axis_ticks <= core_bounds[axis][1])
+            )
+            if core_indices.size:
+                center = (bounds[axis][0] + bounds[axis][1]) / 2
+                # Grid ticks are increasing: argmin chooses the lower cell on a tie.
+                nearest = core_indices[np.argmin(np.abs(axis_ticks[core_indices] - center))]
+                indices = np.asarray([nearest], dtype=np.int64)
         if indices.size == 0:
             raise ValueError(f"{label} does not contain an FDTD cell center on axis {axis}")
         selected.append(indices.astype(np.int64, copy=False))

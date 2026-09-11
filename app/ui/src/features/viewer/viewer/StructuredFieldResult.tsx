@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { RecordedResultContract } from '@/contracts/results'
 import type { RecordedData, RecordedDataRule, UcumUnit } from '@/lib/cad/model'
 import { isDataTensor } from '@/lib/cad/model/dataTensor'
@@ -50,9 +50,9 @@ function FieldControls({
 }) {
   const singleton = field.spatial.findIndex((axis) => axis.ticks.length === 1)
   const [normal, setNormal] = useState(singleton < 0 ? 2 : singleton)
-  const [index, setIndex] = useState(Math.floor(field.spatial[singleton < 0 ? 2 : singleton].ticks.length / 2))
-  const [sample, setSample] = useState(0)
-  const [component, setComponent] = useState(-1)
+  const [sliceIndex, setIndex] = useState(Math.floor(field.spatial[singleton < 0 ? 2 : singleton].ticks.length / 2))
+  const [sampleIndex, setSample] = useState(0)
+  const [componentIndex, setComponent] = useState(-1)
   const [representation, setRepresentation] = useState('abs')
   const [opacity, setOpacity] = useState(0.8)
   const [staticFixed, setStaticFixed] = useState<readonly [number, number] | null>(null)
@@ -60,6 +60,15 @@ function FieldControls({
   const [oscillating, setOscillating] = useState(false)
   const [phase, setPhase] = useState(0)
   const [oscillationFixed, setOscillationFixed] = useState<readonly [number, number] | null>(null)
+  const index = Math.min(sliceIndex, field.spatial[normal].ticks.length - 1)
+  const sample = Math.min(sampleIndex, field.sampleTicks.length - 1)
+  const component = componentIndex >= field.components.length ? (oscillating ? 0 : -1) : componentIndex
+  useEffect(() => {
+    setIndex(index)
+    setSample(sample)
+    setComponent(component)
+    if (field.grid.sampleKind !== 'frequency' || rule.result.dtype !== 'complex64') setOscillating(false)
+  }, [field, rule, index, sample, component])
   const fixed = oscillating ? oscillationFixed : staticFixed
   const setFixed = oscillating ? setOscillationFixed : setStaticFixed
   const spectral = field.grid.sampleKind === 'frequency'
@@ -230,7 +239,7 @@ function FieldControls({
         </label>
       </div>
       {oscillating && !details ? (
-        <SpectralPlayback key={sample} frequency={current} phase={phase} onPhase={setPhase} />
+        <SpectralPlayback frequency={current} phase={phase} onPhase={setPhase} dataVersion={field} />
       ) : null}
       <div className="flex items-center gap-2 p-2 text-xs" role="status">
         {oscillating && rendered.zero ? <span>영장 · 모든 표본의 진폭 0</span> : null}

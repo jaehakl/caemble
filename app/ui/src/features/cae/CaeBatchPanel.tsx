@@ -143,7 +143,7 @@ function BatchPanel() {
                 }}
               >
                 <p className="font-medium">
-                  Experiment #{item.experiment_id} · {item.total}회{' '}
+                  {item.preflight ? 'Preflight' : `Experiment #${item.experiment_id}`} · {item.total}회{' '}
                   {item.mode === 'generate' ? 'Generate & Run' : 'Run'}
                 </p>
                 <p className="mt-1">
@@ -176,7 +176,7 @@ function BatchPanel() {
             <>
               <p className="font-mono text-xs break-all text-muted-foreground">{detail.id}</p>
               <div className="flex gap-2">
-                {detail.state === 'uploading' ? (
+                {detail.state === 'uploading' && !detail.preflight ? (
                   <Button size="sm" disabled={busy} onClick={() => void resume(detail)}>
                     {uploadProgress?.batchId === detail.id ? '업로드 재개 중…' : '업로드 재개'}
                   </Button>
@@ -184,7 +184,7 @@ function BatchPanel() {
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={busy || detail.failed === 0}
+                  disabled={busy || detail.failed === 0 || detail.preflight}
                   onClick={() => void act(() => caeBatches.retry(detail.id))}
                 >
                   실패한 작업 재시도
@@ -203,7 +203,7 @@ function BatchPanel() {
                   Batch 취소
                 </Button>
               </div>
-              {detail.state === 'uploading' ? (
+              {detail.state === 'uploading' && !detail.preflight ? (
                 <p className="text-sm text-muted-foreground">
                   이 브라우저에 저장된 빌드 결과로 남은 업로드를 이어갑니다. 업로드가 모두 끝나면 작업이 시작됩니다.
                 </p>
@@ -231,7 +231,7 @@ function BatchPanel() {
                       {job.last_error ? (
                         <p className="mt-1 text-xs break-words text-destructive">{job.last_error}</p>
                       ) : null}
-                      {job.state === 'failed' ? (
+                      {job.state === 'failed' && !detail.preflight ? (
                         <Button
                           className="mt-2"
                           size="sm"

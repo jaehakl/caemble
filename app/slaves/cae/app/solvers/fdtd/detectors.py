@@ -226,8 +226,18 @@ async def prepare_detectors(
             prepared.domain.cell_ticks,
             strides,
             f"detector {index}",
+            nearest_core_cell=invocation.execution_mode == "brief",
         )
         domain_ticks = prepared.domain.cell_ticks
+        recorded_bounds = list(bounds)
+        if invocation.execution_mode == "brief":
+            tolerance = max(max(hi - lo for lo, hi in prepared.domain.core_bounds) * 1e-10, 1e-12)
+            for axis, indices in enumerate((x, y, z)):
+                tick = domain_ticks[axis][int(indices[0])]
+                if indices.size == 1 and (tick < bounds[axis][0] - tolerance or tick > bounds[axis][1] + tolerance):
+                    edges = prepared.domain.boundary_ticks[axis]
+                    cell = int(indices[0])
+                    recorded_bounds[axis] = (edges[cell], edges[cell + 1])
         region = DetectorRegion(
             z,
             y,
@@ -237,7 +247,7 @@ async def prepare_detectors(
                 np.asarray(domain_ticks[1], dtype=np.float64)[y],
                 np.asarray(domain_ticks[0], dtype=np.float64)[x],
             ),
-            tuple(bounds[axis] for axis in (2, 1, 0)),
+            tuple(recorded_bounds[axis] for axis in (2, 1, 0)),
         )
         artifact_type, field_kind = _OUTPUT_TYPES[method]
         if method.startswith("fdtd.time-"):

@@ -55,6 +55,7 @@ class SolverInvocation:
     cancellation: CancellationToken | None = None
     resources: SolverResourceServices = field(default_factory=SolverResourceServices)
     task_name: str | None = None
+    execution_mode: str = "full"
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +63,7 @@ class SolverResult:
     state_patch: StatePatch = field(default_factory=StatePatch)
     artifacts: Mapping[str, Any] = field(default_factory=dict)
     observations: Mapping[str, Any] = field(default_factory=dict)
+    execution_metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 SolverRunner: TypeAlias = Callable[[SolverInvocation], Awaitable[SolverResult]]
@@ -71,6 +73,8 @@ SolverRunner: TypeAlias = Callable[[SolverInvocation], Awaitable[SolverResult]]
 class SolverImplementation:
     abi_version: int
     run: SolverRunner
+    prepare_brief: Callable[[SolverInvocation], Mapping[str, Any]] | None = None
+    brief_policy_version: str = "1"
 
     def __post_init__(self) -> None:
         if self.abi_version != 3:

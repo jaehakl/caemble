@@ -212,6 +212,12 @@ async def cleanup_objects(db):
             measurement = await db.scalar(select(Measurement.id).where(Measurement.job_id == row.job_id)) if job else None
             alive = alive and job is not None and (measurement is not None or job.state in {"staged", "queued", "assigned", "running", "finalizing"})
             alive = alive and any(ref.get("id") == row.id for ref in object_refs(job.input if job else None))
+        if row.experiment_id is None and row.job_id and not row.deleting:
+            job = await db.get(Job, row.job_id)
+            from cae.db import CaeBatch
+            cae = await db.get(CaeBatch, job.batch_id) if job else None
+            if cae and cae.spec.get("preflight"):
+                alive = row.user_id is not None and (job.finished_at is None or job.finished_at > cutoff)
         if alive and not row.deleting:
             row.updated_at = utcnow()
             continue

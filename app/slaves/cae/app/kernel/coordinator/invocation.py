@@ -21,6 +21,7 @@ async def execute_solver(
     cancellation: CancellationSignal | None = None,
     timeout: float | None = None,
     resources: SolverResourceServices | None = None,
+    execution_mode: str = "full",
 ) -> SolverExecutionTransaction[SolverResult]:
     invocation = SolverInvocation(
         config=detached(task_spec.task["config"]),
@@ -33,6 +34,7 @@ async def execute_solver(
         materials=world.get("materials", {}),
         resources=resources or SolverResourceServices(),
         task_name=task_spec.name,
+        execution_mode=execution_mode,
     )
     return await executor.execute_transaction(
         task_spec.locator,

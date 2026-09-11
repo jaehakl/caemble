@@ -49,6 +49,7 @@ async def finalize_stored_item(db, batch_id, user_id, index, body):
             raise HTTPException(413, "Large inputs must be uploaded directly to object storage.")
     await bind_objects(db, body, user_id=user_id, experiment_id=cae.experiment_id, job_id=job.id)
     payload = {"measurement": item["measurement"], "storage_version": 1,
+               **({"execution_mode": cae.spec["execution_mode"], "preflight": True} if cae.spec.get("preflight") else {}),
                **({"artifact": stored} if external else {})}
     if job.input is not None:
         if job.input != payload:
@@ -199,13 +200,15 @@ async def commit_batch(db: AsyncSession, batch_id: str, user: UserData, catalog:
         raise HTTPException(409, "Upload and finalize every artifact before committing.")
     if cae.spec["catalog_revision"] != catalog.meta()["catalogRevision"]:
         raise HTTPException(409, "Catalog changed. Rebuild before submitting.")
-    experiment = await db.scalar(select(Experiment).where(
-        Experiment.id == cae.experiment_id
-    ).with_for_update())
-    if experiment is None or (not is_admin_user(user) and experiment.user_id not in {None, user.id}):
-        raise HTTPException(404, "Experiment not found.")
-    if experiment.source_hash != cae.spec["source_hash"]:
-        raise HTTPException(409, "Experiment source changed before commit.")
+    experiment = None
+    if not cae.spec.get("preflight"):
+        experiment = await db.scalar(select(Experiment).where(
+            Experiment.id == cae.experiment_id
+        ).with_for_update())
+        if experiment is None or (not is_admin_user(user) and experiment.user_id not in {None, user.id}):
+            raise HTTPException(404, "Experiment not found.")
+        if experiment.source_hash != cae.spec["source_hash"]:
+            raise HTTPException(409, "Experiment source changed before commit.")
     total, incomplete = (await db.execute(select(
         func.count(Job.id), func.count(Job.id).filter(or_(
             Job.input.is_(None), func.jsonb_typeof(Job.input) != "object", Job.state != "staged",
@@ -219,9 +222,9 @@ async def commit_batch(db: AsyncSession, batch_id: str, user: UserData, catalog:
         async for job in jobs:
             measurement_input = job.input["measurement"]
             program = measurement_input["experiment"]["simulationProgram"]
-            if program["resultContracts"] != experiment.result_contracts:
+            if experiment is not None and program["resultContracts"] != experiment.result_contracts:
                 raise HTTPException(409, "Artifact result contracts differ from the saved Experiment.")
-            if program["pythonSource"] != experiment.source_bundle.get("files", {}).get("simulate.py"):
+            if program["pythonSource"] != (experiment.source_bundle if experiment is not None else cae.spec["source_bundle"]).get("files", {}).get("simulate.py"):
                 raise HTTPException(409, "Artifact Python program differs from the saved Experiment source.")
             for name, task in program["tasks"].items():
                 try:
@@ -237,9 +240,16 @@ async def commit_batch(db: AsyncSession, batch_id: str, user: UserData, catalog:
                     "selections": measurement_input["materialSelections"],
                     "sourceHash": measurement_input["experiment"]["sourceHash"],
                     "varsHash": measurement_input["varsHash"],
-                }, source_hash=experiment.source_hash, variables=variables, catalog=catalog)
+                }, source_hash=cae.spec["source_hash"], variables=variables, catalog=catalog)
             except ValueError as error:
                 raise HTTPException(422, str(error)) from error
+            if cae.spec.get("preflight"):
+                from storage.service import bind_objects
+                await bind_objects(db, job.input, user_id=user.id, experiment_id=None, job_id=job.id)
+                job.state = "queued"
+                job.updated_at = utcnow()
+                await add_event(db, batch, "job.queued", job=job)
+                continue
             measurement_id = job.artifact_metadata.get("measurement_id")
             if measurement_id is not None:
                 measurement = await db.scalar(select(Measurement).where(

@@ -16,6 +16,7 @@ export function MeshPlayback({
   const [playing, setPlaying] = useState(false)
   const [repeat, setRepeat] = useState(false)
   const [speed, setSpeed] = useState(1)
+  useEffect(() => { setPlaying(false) }, [times])
   const frameRef = useRef(frame)
   frameRef.current = frame
   const duration = times[times.length - 1] - times[0]

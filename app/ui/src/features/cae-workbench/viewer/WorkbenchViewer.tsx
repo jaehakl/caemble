@@ -1,6 +1,6 @@
 import { StructuredFieldResult } from '@/features/viewer/viewer/StructuredFieldResult'
 import type { HeatmapRenderData } from '@/features/viewer/viewer/structuredField'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { materialVarsHash } from '@/lib/material/resolution'
 import CadViewer from '@/features/viewer/viewer/CadViewer'
 import type { RecordedResultContracts } from '@/contracts/results'
@@ -32,6 +32,7 @@ export function WorkbenchViewer({
   recordedRules = [],
   loading = false,
   downloadProgress,
+  autoSelectResult = false,
 }: {
   activeExperimentTaskName?: string | null
   experiment: ExperimentSourceDocument | null
@@ -51,6 +52,7 @@ export function WorkbenchViewer({
   recordedRules?: readonly RecordedDataRule[]
   loading?: boolean
   downloadProgress?: Readonly<{ completed: number; total: number }> | null
+  autoSelectResult?: boolean
 }) {
   const mesh = useMemo(
     () => parseRecordedMeshFields(recordedRules, recordedData, resultContracts ?? {}),
@@ -62,6 +64,7 @@ export function WorkbenchViewer({
   )
   const [overlay, setOverlay] = useState<readonly string[]>([])
   const [selectedView, setSelectedView] = useState('')
+  const selectionMade = useRef(false)
   const selectedField = mesh.fields.find((field) => field.label === selectedView)
   const selectedContract = resultContracts?.[selectedView]
   const viewerDocument = useMemo(
@@ -89,6 +92,22 @@ export function WorkbenchViewer({
     experimentDocument.evaluatedSnapshot?.sourceHash === resultSourceHash &&
     materialVarsHash(experimentDocument.evaluatedSnapshot.variables) === resultVarsHash,
   )
+  useEffect(() => {
+    if (!autoSelectResult || !recordedData || selectionMade.current) return
+    const candidates = Object.entries(resultContracts ?? {}).filter(([name, result]) => {
+      if (resultErrors[name]) return false
+      if (result.visualization.kind === 'mesh-field') return mesh.fields.some((field) => field.label === name)
+      if (result.visualization.kind === 'polyline') return polylines.bundles.some((bundle) => bundle.id === name)
+      return Object.keys(recordedData).some((path) => path === name || path.startsWith(`${name}.`))
+    })
+    const spatial = candidates.filter(([, result]) =>
+      frameMatches && result.visualization.coordinateSpace === 'experiment' &&
+      (result.visualization.kind === 'mesh-field' || result.visualization.kind === 'polyline' ||
+        (result.visualization.kind === 'structured-field' && result.visualization.grid)),
+    )
+    setSelectedView((spatial.length ? spatial[Math.floor(Math.random() * spatial.length)] : candidates[candidates.length - 1])?.[0] ?? '')
+    selectionMade.current = candidates.length > 0
+  }, [autoSelectResult, recordedData, resultContracts, resultErrors, mesh, polylines, frameMatches])
   const canOverlayGeometry =
     frameMatches && (!selectedContract || selectedContract.visualization.coordinateSpace === 'experiment')
   const sceneDocument = selectedView !== '' && !canOverlayGeometry ? null : viewerDocument
@@ -131,6 +150,7 @@ export function WorkbenchViewer({
         heatmapRenderData={heatmapRenderData}
         meshIdentity={selectedField?.identity}
         displayUnit={displayUnit}
+        preserveCameraOnUpdate={autoSelectResult}
         selectionQuery={selectionQuery}
         selectionSourceStatus={selectionSourceStatus}
         onToggleViewerExpanded={onToggleViewerExpanded}
@@ -144,9 +164,10 @@ export function WorkbenchViewer({
         <select
           aria-label="Viewer 결과 선택"
           value={selectedView}
-          onChange={(event) => setSelectedView(event.target.value)}
+          onChange={(event) => { selectionMade.current = true; setSelectedView(event.target.value) }}
         >
           <option value="">Geometry</option>
+          {selectedView && !selectedContract ? <option value={selectedView}>{selectedView} · 결과 없음</option> : null}
           {Object.entries(resultContracts ?? {}).map(([name, result]) => (
             <option key={name} value={name}>
               {name} · {result.visualization.kind}
@@ -157,6 +178,7 @@ export function WorkbenchViewer({
           .filter(([, result]) => result.visualization.kind === 'polyline')
           .map(([name, result]) => {
             const compatible =
+              polylines.bundles.some((bundle) => bundle.id === name) &&
               frameMatches &&
               result.visualization.coordinateSpace === 'experiment' &&
               (!selectedContract || selectedContract.visualization.coordinateSpace === 'experiment')
@@ -174,10 +196,16 @@ export function WorkbenchViewer({
                     setOverlay(event.target.checked ? [...overlay, name] : overlay.filter((item) => item !== name))
                   }
                 />{' '}
-                {name}
+                {name}{overlay.includes(name) && !compatible ? ' · Overlay를 표시할 수 없습니다.' : ''}
               </label>
             )
           })}
+        {overlay.filter((name) => !resultContracts?.[name]).map((name) => (
+          <label key={name} title="새 실행에 결과가 없어 표시할 수 없습니다.">
+            <input type="checkbox" checked aria-label={`${name} Overlay`} onChange={() => setOverlay(overlay.filter((item) => item !== name))} />
+            {name} · 결과 없음
+          </label>
+        ))}
         {loading ? (
           <span role="status">
             저장 결과 불러오는 중{downloadProgress ? ` · ${downloadProgress.completed}/${downloadProgress.total}` : '…'}
@@ -193,7 +221,13 @@ export function WorkbenchViewer({
         </p>
       ) : null}
       <div className="min-h-0 flex-1 overflow-auto">
-        {selectedField ? (
+        {selectedView && !selectedContract ? (
+          <p role="alert" className="p-3 text-red-700">{selectedView}: 새 실행에 선택한 결과가 없습니다.</p>
+        ) : resultErrors[selectedView] ? (
+          <p role="alert" className="p-3 text-red-700">
+            {selectedView}: {resultErrors[selectedView]}
+          </p>
+        ) : selectedField ? (
           <MeshFieldResult
             key={selectedView}
             field={selectedField}
@@ -227,11 +261,13 @@ export function WorkbenchViewer({
         ...Object.entries(resultErrors).map(([label, message]) => ({ label, message })),
         ...mesh.errors.filter((error) => !resultErrors[error.label]),
         ...polylines.errors.filter((error) => !resultErrors[error.label]),
-      ].map((error) => (
-        <p role="alert" key={error.label} className="bg-rose-50 p-2 text-xs text-red-700">
-          {error.label}: {error.message}
-        </p>
-      ))}
+      ]
+        .filter((error) => error.label !== selectedView || !resultErrors[selectedView])
+        .map((error) => (
+          <p role="alert" key={error.label} className="bg-rose-50 p-2 text-xs text-red-700">
+            {error.label}: {error.message}
+          </p>
+        ))}
     </div>
   )
 }

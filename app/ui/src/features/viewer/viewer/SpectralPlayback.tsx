@@ -4,7 +4,9 @@ export function SpectralPlayback({
   frequency,
   phase,
   onPhase,
+  dataVersion,
 }: {
+  dataVersion?: unknown
   frequency: number
   phase: number
   onPhase: (degrees: number) => void
@@ -12,6 +14,7 @@ export function SpectralPlayback({
   const [playing, setPlaying] = useState(false)
   const [repeat, setRepeat] = useState(true)
   const [speed, setSpeed] = useState(1)
+  useEffect(() => { setPlaying(false) }, [dataVersion, frequency])
   const phaseRef = useRef(phase)
   phaseRef.current = phase
   useEffect(() => {

@@ -36,6 +36,7 @@ async def run_measurement(
         max_run_seconds=DEFAULT_MAX_RUN_SECONDS,
         job_id=context.job_id,
         on_progress=progress,
+        execution_mode=message.get("execution_mode", "full"),
     )
     try:
         run.start()
@@ -59,6 +60,7 @@ async def run_measurement(
             if item["kind"] == "failed":
                 raise CaeError(item["error"]["code"], item["error"]["message"])
             if item["kind"] == "complete":
-                return {"recordSequences": item["recordSequences"]}
+                return {"recordSequences": item["recordSequences"],
+                        **({"executionMode": run.execution_mode, "executionTrace": run.trace} if message.get("preflight") else {})}
     finally:
         await run.close()

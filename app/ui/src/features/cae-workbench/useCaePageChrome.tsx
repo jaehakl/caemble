@@ -1,4 +1,4 @@
-import { useMemo, useState, type Dispatch, type SetStateAction } from 'react'
+import { useMemo, useState, type Dispatch, type SetStateAction, type ReactNode } from 'react'
 import {
   Beaker,
   ChartNoAxesCombined,
@@ -70,6 +70,7 @@ export function useCaePageChrome({
   setDialog,
   workbench,
   predictionState,
+  preflightControls,
 }: {
   analysisTab: AnalysisTabId
   authenticated: boolean
@@ -91,6 +92,7 @@ export function useCaePageChrome({
   setDialog: Dispatch<SetStateAction<WorkbenchDialog>>
   workbench: CaeWorkbenchState
   predictionState: PredictionRibbonState
+  preflightControls?: ReactNode
 }) {
   const [repeatCountInput, setRepeatCountInput] = useState('10')
   const repeatCount = Number(repeatCountInput)
@@ -629,6 +631,7 @@ export function useCaePageChrome({
           <WorkbenchRibbonGroup label="Candidate">
             <WorkbenchRibbonActions actions={[actions.generateCandidate, actions.saveCurrentMeasurement]} />
           </WorkbenchRibbonGroup>
+          {preflightControls ? <WorkbenchRibbonGroup label="Preflight">{preflightControls}</WorkbenchRibbonGroup> : null}
           <WorkbenchRibbonGroup label="Geometry">
             <GeometryAuthoringRibbon state={experimentAuthoringState} />
           </WorkbenchRibbonGroup>

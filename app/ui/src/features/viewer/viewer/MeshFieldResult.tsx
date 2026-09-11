@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   automaticDeformationScale,
   matchMeshDisplacement,
@@ -56,7 +56,13 @@ export function MeshFieldResult({
   const [deformed, setDeformed] = useState(true)
   const [scaleMode, setScaleMode] = useState('auto')
   const [manualScale, setManualScale] = useState(1)
-  const [frame, setFrame] = useState(0)
+  const [frameIndex, setFrame] = useState(0)
+  const frame = Math.min(frameIndex, Math.max(0, (field.times?.length ?? 1) - 1))
+  useEffect(() => {
+    setFrame(frame)
+    setView((current) => typeof current.component === 'number' && current.component >= field.componentCount
+      ? { ...current, component: 'magnitude' } : current)
+  }, [field, frame])
   const canDeform = Boolean(displacement?.location === 'node' && displacement.componentCount === 3)
   const autoScale = useMemo(() => (displacement ? automaticDeformationScale(displacement) : 1), [displacement])
   const deformationScale =

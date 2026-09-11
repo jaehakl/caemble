@@ -15,8 +15,8 @@ class CaeBatch(Base):
     batch_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False), ForeignKey("job_batches.id", ondelete="CASCADE"), primary_key=True
     )
-    experiment_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("experiments.id", ondelete="CASCADE"), index=True
+    experiment_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("experiments.id", ondelete="CASCADE"), index=True, nullable=True
     )
     spec: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
