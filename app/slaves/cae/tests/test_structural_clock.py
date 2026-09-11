@@ -40,7 +40,7 @@ def clock_invocation(duration, time, dt=.005, window=.05):
         "boundaryConditions": [],
         "outputs": [{"methodId": "fea.history", "key": "history", "target": ["experiment.surface.clock"], "parameters": {"scope": "final"}}, {"methodId": "fea.motion", "key": "motion", "parameters": {}}],
     }
-    invocation = SolverInvocation(config, {}, {}, {}, None, None, solver_catalog.descriptor("structural-mechanics", "2.0.0"), task_name="structure")
+    invocation = SolverInvocation(config, {}, {}, {}, None, None, solver_catalog.descriptor("structural-mechanics", "3.0.0"), task_name="structure")
     model = build_model(invocation)
     model.boundary_regions["experiment.surface.clock"] = {
         "faces": np.empty((0, 3), dtype=int), "nodes": np.array([0]),

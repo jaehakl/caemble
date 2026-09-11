@@ -92,7 +92,6 @@ export type CalculationWorkbenchProps = Readonly<{
   onSelectMeasurement: (row: SavedMeasurement) => void
   onClearMeasurement: () => void
   recordedData: RecordedData | null | undefined
-  recordedDataSystemResult?: ReactNode
   recordedRules: readonly RecordedDataRule[]
   ribbon: ReactNode
   rowRatios: readonly number[]
@@ -140,7 +139,6 @@ export function CalculationWorkbench({
   onSelectMeasurement,
   onClearMeasurement,
   recordedData,
-  recordedDataSystemResult,
   recordedRules,
   ribbon,
   rowRatios,
@@ -946,7 +944,6 @@ export function CalculationWorkbench({
         }
         recordedDataSummary={
           <ExperimentRecordCatalog
-            systemResult={recordedDataSystemResult}
             analysisError={dependencyState.error?.message ?? null}
             experimentId={experimentId}
             insertDisabledReason={insertDisabledReason}

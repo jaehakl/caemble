@@ -2,9 +2,7 @@ import { Database, FlaskConical } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
-import { isRayPathRecordedDataName, type RayPathBundle } from '@/lib/cad/model'
 import type { SavedMeasurement, SavedRecordedData } from '@/features/cae-workbench/types'
-import { RayPathSystemCard } from './RayPathSystemCard'
 
 function formatDate(value: string | null | undefined) {
   return value ? new Date(value).toLocaleString('ko-KR') : '—'
@@ -100,16 +98,10 @@ function RecordedRows({ rows, depth = 0 }: { rows: readonly SavedRecordedData[];
 export function MeasurementDetail({
   className,
   measurement,
-  rayPathBundles = [],
-  rayPathsDeclared: rayPathsDeclaredProp = false,
-  rayPathError = null,
   recordedRows = [],
 }: {
   className?: string
   measurement: SavedMeasurement | null
-  rayPathBundles?: readonly RayPathBundle[]
-  rayPathsDeclared?: boolean
-  rayPathError?: string | null
   recordedRows?: readonly SavedRecordedData[]
 }) {
   if (!measurement)
@@ -124,12 +116,7 @@ export function MeasurementDetail({
       </div>
     )
 
-  const regularRows = recordedRows.filter((row) => !isRayPathRecordedDataName(row.name))
-  const rayPathsDeclared =
-    rayPathsDeclaredProp || recordedRows.some((row) => isRayPathRecordedDataName(row.name))
-  const hasRayPathSystemResult = rayPathsDeclared || rayPathBundles.length > 0 || Boolean(rayPathError)
-  const displayedResultCount =
-    new Set(regularRows.map((row) => row.name.split('.')[0])).size + (hasRayPathSystemResult ? 1 : 0)
+  const displayedResultCount = new Set(recordedRows.map((row) => row.name.split('.')[0])).size
 
   return (
     <div className={cn('h-full space-y-4 overflow-y-auto p-3', className)}>
@@ -192,8 +179,7 @@ export function MeasurementDetail({
         </div>
         {displayedResultCount ? (
           <div className="space-y-2">
-            <RayPathSystemCard bundles={rayPathBundles} declared={rayPathsDeclared} error={rayPathError} />
-            <RecordedRows rows={regularRows} />
+            <RecordedRows rows={recordedRows} />
           </div>
         ) : (
           <div className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">

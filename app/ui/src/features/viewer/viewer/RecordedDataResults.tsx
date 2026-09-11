@@ -17,8 +17,6 @@ import {
 } from './recordedData'
 import { componentIndexPaths, componentLabel } from './recordedComponents'
 import { Heatmap } from './Heatmap'
-import { parseRecordedMeshFields } from './meshFields'
-import { MeshFieldResult } from './MeshFieldResult'
 
 type RecordedDataResultsProps = {
   displayUnits?: RecordedDataDisplayUnits
@@ -660,25 +658,9 @@ function RecordedDataResultsContent({
   recordedData,
   rules,
 }: RecordedDataResultsProps & { quantityKinds: RecordedQuantityKinds }) {
-  const meshes = useMemo(() => parseRecordedMeshFields(rules, recordedData), [rules, recordedData])
-  const tensorRules = useMemo(
-    () => rules.filter((rule) => !meshes.fields.some((field) => rule.label.startsWith(`${field.label}.`))),
-    [rules, meshes.fields],
-  )
-  const tensorData = useMemo(
-    () =>
-      recordedData
-        ? Object.fromEntries(
-            Object.entries(recordedData).filter(
-              ([label]) => !meshes.fields.some((field) => label.startsWith(`${field.label}.`)),
-            ),
-          )
-        : recordedData,
-    [recordedData, meshes.fields],
-  )
   const resolved = useMemo(
-    () => resolveCadViewerRecordedData(tensorRules, tensorData, quantityKinds),
-    [quantityKinds, tensorData, tensorRules],
+    () => resolveCadViewerRecordedData(rules, recordedData, quantityKinds),
+    [quantityKinds, recordedData, rules],
   )
 
   return (
@@ -703,14 +685,6 @@ function RecordedDataResultsContent({
         ) : null}
 
         <div className="space-y-4">
-          {meshes.errors.map(({ label, message }) => (
-            <div key={label} role="alert" className="rounded bg-rose-50 p-3 text-sm text-rose-700">
-              {label}: {message}
-            </div>
-          ))}
-          {meshes.fields.map((field) => (
-            <MeshFieldResult field={field} key={`${field.label}:${field.identity}`} />
-          ))}
           {resolved.entries.map((entry) => (
             <RecordedResultCard
               displayUnits={displayUnits[entry.rule.label]}

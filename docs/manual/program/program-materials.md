@@ -14,4 +14,4 @@ Solver의 모델 그룹은 각 대상 Material에 따로 적용됩니다. 필수
 
 Vars를 바꾸어 새 Candidate를 만들면 `material.tsx`도 다시 평가합니다. Measurement에는 실제 사용한 모델 정의·계수·선택 결과와 source/vars 식별자를 저장합니다. 저장된 실행 입력은 그 snapshot으로 재현하며 현재 소스나 외부 계수로 덮어쓰지 않습니다.
 
-[Two-material Wheel Assembly의 canonical Experiment bundle 열기](/?help=examples&item=caemble:experiment/caemble/assemblies/two-material-wheel-assembly@3.0.0)
+[Two-material Wheel Assembly의 canonical Experiment bundle 열기](/?help=examples&item=caemble:experiment/caemble/assemblies/two-material-wheel-assembly@4.0.0)

@@ -73,9 +73,9 @@ async def test_catalog_fdtd_abi3_runs_small_cpu_domain_with_mixed_drude_material
     plasma_frequency: float,
 ) -> None:
     catalog = SolverCatalog.discover()
-    descriptor = catalog.descriptor("fdtd", "2.1.0")
-    locator = catalog.locator("fdtd", "2.1.0")
-    assert catalog.abi_version("fdtd", "2.1.0") == 3
+    descriptor = catalog.descriptor("fdtd", "3.0.0")
+    locator = catalog.locator("fdtd", "3.0.0")
+    assert catalog.abi_version("fdtd", "3.0.0") == 3
     assert locator == "app.solvers.fdtd.entry:implementation"
 
     module_name, attribute = locator.split(":", maxsplit=1)

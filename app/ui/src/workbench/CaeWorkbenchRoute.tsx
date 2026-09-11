@@ -27,8 +27,6 @@ import { createRuntimeConsoleStore, RuntimeConsoleView } from '@/features/runtim
 import { runtimeQueryKeys } from '@/features/runtime/queryKeys'
 import type { CadEditorAuthoringState } from '@/features/viewer/editor/CadEditor'
 import { useSelectionSourceNavigation } from '@/features/cae-workbench/viewer/useSelectionSourceNavigation'
-import { parseRayPathBundles } from '@/lib/cad/model'
-import { RayPathSystemCard } from '@/features/measurement/RayPathSystemCard'
 import { WorkbenchShellProvider } from '@/workbench/state/workbenchShellStore'
 import { CalculationWorkbenchContainer } from '@/workbench/CalculationWorkbenchContainer'
 import { WorkbenchShellContainer } from '@/workbench/WorkbenchShellContainer'
@@ -278,17 +276,8 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     predictionState,
   })
 
-  const activeRecordedData = workbench.selection.recordedData
   const activeFlatRecordedData = workbench.selection.flatRecordedData
-  const activeRecordedSchemas = workbench.selection.recordedSchemas
   const activeRecordedRules = workbench.selection.recordedRules
-  const rayPathState = useMemo(() => {
-    try {
-      return { bundles: parseRayPathBundles(activeRecordedSchemas, activeRecordedData), error: null }
-    } catch (error) {
-      return { bundles: [], error: error instanceof Error ? error.message : String(error) }
-    }
-  }, [activeRecordedData, activeRecordedSchemas])
 
   const leftPane =
     page.activeSection === 'experiment' ? (
@@ -475,7 +464,11 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       onToggleViewerExpanded={() =>
         page.setLayout((current) => ({ ...current, viewerExpanded: !current.viewerExpanded }))
       }
-      rayPaths={rayPathState.bundles}
+      key={workbench.selection.measurement?.id ?? 'geometry'}
+      resultContracts={workbench.selection.resultContracts}
+      resultErrors={workbench.selection.resultErrors}
+      resultSourceHash={workbench.selection.materialSnapshot?.sourceHash}
+      resultVarsHash={workbench.selection.materialSnapshot?.varsHash}
       recordedData={workbench.selection.flatRecordedData}
       recordedRules={workbench.selection.recordedRules}
       loading={workbench.selection.loading}
@@ -526,13 +519,6 @@ function CaeWorkbenchPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             </div>
           ) : page.activeSection === 'measurement' ? (
             <CalculationWorkbenchContainer
-              recordedDataSystemResult={
-                <RayPathSystemCard
-                  bundles={rayPathState.bundles}
-                  declared={'rayPaths' in activeRecordedSchemas}
-                  error={rayPathState.error}
-                />
-              }
               authenticated={auth.isAuthenticated}
               dataReadable={experimentDataReadable}
               bottom={bottomDock}

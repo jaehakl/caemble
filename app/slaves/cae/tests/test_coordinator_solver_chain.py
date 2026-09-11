@@ -15,7 +15,7 @@ from tests.test_actual_solver_chain import parameter, world
 
 @pytest.mark.asyncio
 async def test_dc_heat_chain_uses_registered_tasks_ports_and_commit():
-    dc_version, heat_version = "0.5.0", "0.4.0"
+    dc_version, heat_version = "1.0.0", "1.0.0"
     dc_task = {
         "kernel": {"name": "dc-current-density", "version": dc_version},
         "config": {
@@ -89,7 +89,7 @@ async def test_dc_heat_chain_uses_registered_tasks_ports_and_commit():
         used_models = {model["model"] for materials in scene["materials"].values() for material in materials.values() for model in material["models"].values()}
         definitions = [model for model in catalog.material_models() if model["key"] in used_models]
     plan = RunPlan.prepare({
-        "experiment": {"scene": scene["experiment"], "taskScenes": {"electric": scene["task"], "thermal": scene["task"]}},
+        "experiment": {"simulationProgram": {"resultContracts": {}}, "scene": scene["experiment"], "taskScenes": {"electric": scene["task"], "thermal": scene["task"]}},
         "materialSnapshot": {"materials": scene["materials"]["experiment"]},
         "taskMaterialSnapshots": {name: {"materials": scene["materials"]["task"]} for name in ("electric", "thermal")},
         "modelDefinitions": definitions,

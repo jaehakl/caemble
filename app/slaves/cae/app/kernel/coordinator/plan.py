@@ -89,10 +89,11 @@ class RunPlan:
     scene: Mapping[str, Any]
     material_snapshot: Mapping[str, Any]
     schemas: Mapping[str, Any]
+    result_contracts: Mapping[str, Any] = field(default_factory=dict)
     tasks: TaskHandles = field(init=False)
 
     def __post_init__(self) -> None:
-        for name in ("task_specs", "scene", "material_snapshot", "schemas"):
+        for name in ("task_specs", "scene", "material_snapshot", "schemas", "result_contracts"):
             object.__setattr__(self, name, read_only(getattr(self, name)))
         object.__setattr__(self, "tasks", TaskHandles(self.task_specs))
 
@@ -176,11 +177,26 @@ class RunPlan:
         used_definitions = {model["model"] for material in known_materials.values() for model in material["models"].values()}
         if set(definitions) != used_definitions:
             raise CaeError("invalid_material", "modelDefinitions must capture exactly the models present in Material snapshots")
+        contracts = measurement["experiment"]["simulationProgram"].get("resultContracts")
+        if not isinstance(contracts, Mapping) or set(contracts) != set(schemas):
+            raise CaeError("invalid_record", "BuiltMeasurement requires semantic resultContracts for every record")
+        for name, contract in contracts.items():
+            if not isinstance(contract, dict):
+                raise CaeError("invalid_record", f"RecordedData {name!r} requires a frozen output contract")
+            task_spec = specs.get(contract.get("task"))
+            output = task_spec.output_specs.get(contract.get("output")) if task_spec else None
+            if (not output or contract.get("solver") != task_spec.task["kernel"]
+                    or contract.get("artifactType") != output["artifactType"]
+                    or contract.get("catalogRevision") != solver_catalog.catalog_revision
+                    or contract.get("visualization") != detached(output["data"].get("visualization"))
+                    or contract.get("schema") != schemas[name]):
+                raise CaeError("invalid_record", f"RecordedData {name!r} does not match its frozen output contract")
         return cls(
             task_specs=specs,
             scene=measurement["experiment"]["scene"],
             material_snapshot=experiment_materials,
             schemas=schemas,
+            result_contracts=contracts,
         )
 
     def resolve(self, task: Mapping[str, Any]) -> TaskSpec:

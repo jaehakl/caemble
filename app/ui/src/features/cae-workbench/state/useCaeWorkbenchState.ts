@@ -208,6 +208,8 @@ export function useCaeWorkbenchState(
 
   const selection = useMemo(
     () => ({
+      resultContracts: baseSelection.resultContracts,
+      resultErrors: baseSelection.resultErrors,
       measurement,
       recordedRows,
       recordedData,
@@ -223,6 +225,8 @@ export function useCaeWorkbenchState(
       loadMeasurement,
     }),
     [
+      baseSelection.resultContracts,
+      baseSelection.resultErrors,
       clearMeasurement,
       flatRecordedData,
       loadMeasurement,
@@ -524,6 +528,7 @@ export function useCaeWorkbenchState(
           mode,
           savedSourceBundle: experimentId ? baselineExperimentBundle : null,
           selectedId: experimentId,
+          resultContracts: experimentDocument.simulationProgram?.resultContracts ?? {},
           records: experimentRecordContracts(experimentDocument.simulationProgram?.recordedData ?? Object.freeze({})),
           values,
         })
@@ -575,6 +580,7 @@ export function useCaeWorkbenchState(
       experimentRecord,
       experimentSourceValidated,
       experimentDocument.simulationProgram?.recordedData,
+      experimentDocument.simulationProgram?.resultContracts,
       invalidate,
       queryClient,
       queryScope,

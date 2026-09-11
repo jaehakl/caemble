@@ -49,7 +49,7 @@ def catalog_measurements(tmp_path_factory):
     "fdtd-drude-slab", "folded-ray-tracing",
     "structural-element-basics", "structural-analysis-modes",
     "curved-tower-shell", "boolean-connection-solid",
-    "structural-nonlinear-materials",
+    "structural-nonlinear-materials", "structural-optical-results",
 ])
 @pytest.mark.asyncio
 async def test_official_catalog_measurement_runs_and_acknowledges_every_record(key, catalog_measurements):
@@ -116,11 +116,18 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
             assert recorded["maximumTemperature"] > measurement["experiment"]["variables"]["fixedTemperature"]
         if "detectorPower" in recorded:
             assert recorded["detectorPower"] > 0
-            assert 0 < recorded["detectorEfficiency"] <= 1
-        if "rayPaths.pathOffsets" in recorded:
-            offsets = recorded["rayPaths.pathOffsets"]
-            assert offsets[-1] == len(recorded["rayPaths.vertices"])
-            assert len(offsets) == len(recorded["rayPaths.pathWavelength"]) + 1
+            if "detectorEfficiency" in recorded:
+                assert 0 < recorded["detectorEfficiency"] <= 1
+        for name, contract in measurement["experiment"]["simulationProgram"]["resultContracts"].items():
+            if contract["visualization"]["kind"] == "polyline":
+                offsets = recorded[name + "." + contract["visualization"]["offsets"]]
+                vertices = recorded[name + "." + contract["visualization"]["vertices"]]
+                assert offsets[-1] == len(vertices)
+                assert np.all(np.diff(offsets) >= 2)
+        if key == "structural-optical-results":
+            assert set(run.recorded_names) == {"displacement", "stress", "reaction", "opticalTrajectories", "secondaryTrajectories", "detectorPower"}
+            assert np.max(np.abs(recorded["stress.values"])) > 0
+            assert np.max(np.abs(recorded["displacement.values"])) > 0
         if "timeElectricField.field" in recorded:
             assert np.max(np.abs(recorded["timeElectricField.field"])) > 0
         # Recorded mesh topology, physical locations and CAD region provenance are
@@ -188,12 +195,12 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
                 "torsion": ([0, 0, 0], [100, 0, 0]),
             }
             for task, (force, moment) in loads.items():
-                prefix = task + ".displacement"
+                prefix = task + "_displacement"
                 points, _, volumes = meshes[prefix]
                 displacement = recorded[prefix + ".values"]
-                reactions = recorded[task + ".reaction.values"]
+                reactions = recorded[task + "_reaction.values"]
                 np.testing.assert_allclose(volumes.sum(), 1 * .3 * .3, rtol=1e-10)
-                np.testing.assert_array_equal(recorded[prefix + ".domain.identity"], recorded[task + ".reaction.domain.identity"])
+                np.testing.assert_array_equal(recorded[prefix + ".domain.identity"], recorded[task + "_reaction.domain.identity"])
                 np.testing.assert_allclose(reactions.sum(axis=0), -np.asarray(force), atol=1e-6)
                 np.testing.assert_allclose(np.cross(points - [1, 0, 0], reactions).sum(axis=0), -np.asarray(moment), atol=1e-6)
                 support = np.isclose(points[:, 0], 0)
@@ -226,28 +233,28 @@ async def test_official_catalog_measurement_runs_and_acknowledges_every_record(k
             assert np.max(np.abs(recorded["harmonic.displacementReal"])) > 0
             assert np.max(np.abs(recorded["transientMesh.values"])) > 0
         if key == "structural-nonlinear-materials":
-            assert np.max(recorded["plastic.stress.equivalentPlasticStrain"]) > 0
+            assert np.max(recorded["plastic_stress.equivalentPlasticStrain"]) > 0
             for task, force in {"plastic": [35e6, 0, 0], "contact": [0, 0, -200], "laminate": [10000, 0, 0]}.items():
-                residual = recorded[task + ".reaction.values"].sum(axis=0) + force
+                residual = recorded[task + "_reaction.values"].sum(axis=0) + force
                 assert np.linalg.norm(residual) < 1e-6 * np.linalg.norm(force)
-            points, cells, _ = meshes["contact.displacement"]
-            displaced = points + recorded["contact.displacement.values"]
+            points, cells, _ = meshes["contact_displacement"]
+            displaced = points + recorded["contact_displacement.values"]
             slider_bottom = np.isclose(points[:, 2], .1999)
             base_top = np.isclose(points[:, 2], .2)
             assert np.any(slider_bottom) and np.any(base_top)
             penetration = displaced[base_top, 2].max() - displaced[slider_bottom, 2].mean()
             # Contact pressure = penalty * penetration on the 0.4 × 0.4 face.
             assert 0 < penetration < 2 * 200 / (1e9 * .4 * .4)
-            contact_regions = recorded["contact.displacement.domain.metadata.cellRegions"]
+            contact_regions = recorded["contact_displacement.domain.metadata.cellRegions"]
             assert len(np.intersect1d(cells[contact_regions == 0], cells[contact_regions == 1])) == 0
-            points, cells, _ = meshes["laminate.displacement"]
-            regions = recorded["laminate.displacement.domain.metadata.cellRegions"]
+            points, cells, _ = meshes["laminate_displacement"]
+            regions = recorded["laminate_displacement.domain.metadata.cellRegions"]
             shared_nodes = np.intersect1d(cells[regions == 0], cells[regions == 1])
             assert len(shared_nodes) > 0
             np.testing.assert_allclose(points[shared_nodes, 2], .2, atol=1e-10)
             laminate_group = next(group for group in measurement["experiment"]["scene"]["geometryGroups"]
                                   if group["name"] == "laminate")
-            assert set(recorded["laminate.displacement.domain.metadata.regionIds"]) == {
+            assert set(recorded["laminate_displacement.domain.metadata.regionIds"]) == {
                 "experiment:" + root_id for root_id in laminate_group["rootIds"]
             }
         if key in {"curved-tower-shell", "boolean-connection-solid"}:

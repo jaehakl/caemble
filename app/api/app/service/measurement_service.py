@@ -100,7 +100,10 @@ async def get_recorded_data(
             "data_schema": record.data_schema,
             "data": row.data,
         }
-    return MeasurementRecordedDataResponse.model_validate({"recorded_data": tree})
+    experiment = await db.get(Experiment, measurement.experiment_id)
+    return MeasurementRecordedDataResponse.model_validate({
+        "recorded_data": tree, "result_contracts": experiment.result_contracts,
+    })
 
 
 async def create_measurement(

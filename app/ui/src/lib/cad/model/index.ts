@@ -61,13 +61,7 @@ export type {
 } from './core'
 export { normalizeRecordedData, normalizeRecordedDataTensor } from './recordedData'
 export type { ResolvedRecordedTensor } from './recordedData'
-export {
-  isRayPathRecordedDataName,
-  parseRayPathBundles,
-  RAY_PATH_EVENT_NAMES,
-  type RayPathBundle,
-  type RayPathEventName,
-} from './rayPaths'
+export { type PolylineBundle } from './rayPaths'
 export {
   DATA_TENSOR_ATTACHMENT_SHARD_BYTES,
   DATA_TENSOR_INLINE_BYTES,

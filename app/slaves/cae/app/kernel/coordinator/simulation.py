@@ -183,6 +183,15 @@ class SimulationApi:
         try:
             if not isinstance(name, str) or name not in self._run.plan.schemas:
                 raise CaeError("invalid_record", f"RecordedData {name!r} is not declared")
+            contract = self._run.plan.result_contracts[name]
+            if not isinstance(value, ArtifactHandle) or not self._artifacts.is_live(value):
+                raise CaeError("invalid_record", "sim.record requires a live output artifact")
+            provenance = value.provenance
+            if (provenance.producer_task != contract["task"] or provenance.output_name != contract["output"]
+                    or provenance.solver_name != contract["solver"]["name"]
+                    or provenance.solver_version != contract["solver"]["version"]
+                    or provenance.artifact_type != contract["artifactType"]):
+                raise CaeError("invalid_record", f"RecordedData {name!r} requires its declared Task/output artifact")
             materialized = materialize_record_value(
                 value, self._run.plan.schemas[name], resources=self._resources,
                 artifacts=self._artifacts, owner=f"record:{name}", leases=leases,

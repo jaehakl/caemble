@@ -140,6 +140,7 @@ class Experiment(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     source_bundle: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    result_contracts: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     source_hash: Mapped[str] = mapped_column(Text, nullable=False)
     code_embedding: Mapped[Optional[List[float]]] = mapped_column(
         Vector(768),

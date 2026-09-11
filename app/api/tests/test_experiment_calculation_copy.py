@@ -22,6 +22,7 @@ from models import CalculationBase, CalculationDataOutput, RoleEnum, SaveExperim
 from service.calculation import upsert_calculations
 from service.calculation_data import save_calculation_data
 from service.experiment import _source_locked, save_experiment
+from service.measurement_service import get_recorded_data
 from test_calculation_database import _create_database, _database_url, _drop_database, _seed_owners, _upgrade
 
 
@@ -31,7 +32,7 @@ DEFINITIONS = [
 ]
 RECORD = {"name": "signal", "quantity_kind": None, "tensor_order": 0, "dtype": "float64", "data_schema": {"dtype": "float64"}}
 CREATE = dict(mode="create", namespace="calc-owner", repository="copies", key="original", name="Original",
-              sourceBundle={"files": {"experiment.tsx": "export default null"}}, bundleHash="server-computes-hash", records=[RECORD])
+              sourceBundle={"files": {"experiment.tsx": "export default null"}}, bundleHash="server-computes-hash", records=[RECORD], result_contracts={"signal": {"task": "fixture", "output": "signal", "solver": {"name": "fixture", "version": "1.0.0"}, "artifactType": "fixture@1", "catalogRevision": "fixture", "visualization": {"kind": "tensor"}, "schema": {"dtype": "float64", "tensorOrder": 0}}})
 
 
 class ExperimentCalculationRequestTests(unittest.TestCase):
@@ -67,6 +68,7 @@ class ExperimentCalculationCopyDatabaseTests(unittest.TestCase):
             try:
                 async with sessions() as db:
                     original = await save_experiment(db, SaveExperimentRequest(**CREATE, calculations=DEFINITIONS), user=owner)
+                    self.assertEqual(original["result_contracts"], CREATE["result_contracts"])
                     self.assertEqual(original["derivedCounts"], {"measurements": 0, "recordedData": 0, "calculations": 2})
                     self.assertFalse(original["sourceLocked"])
                     rows = list((await db.scalars(select(Calculation).where(Calculation.experiment_id == original["id"]).order_by(Calculation.id))).all())
@@ -125,7 +127,7 @@ class ExperimentCalculationCopyDatabaseTests(unittest.TestCase):
                     # After Measurement removal, source and Record changes invalidate existing contracts.
                     await db.execute(delete(Measurement).where(Measurement.experiment_id == original["id"]))
                     await db.commit()
-                    changed = await save_experiment(db, SaveExperimentRequest(**{**overwrite, "sourceBundle": changed_source, "records": [{**RECORD, "name": "renamed"}]}), user=owner)
+                    changed = await save_experiment(db, SaveExperimentRequest(**{**overwrite, "sourceBundle": changed_source, "records": [{**RECORD, "name": "renamed"}], "result_contracts": {"renamed": CREATE["result_contracts"]["signal"]}}), user=owner)
                     await db.refresh(rows[0])
                     self.assertFalse(changed["sourceLocked"])
                     self.assertEqual((rows[0].contract_status, rows[0].revision, rows[0].output_layout, rows[0].preflight_measurement_id), ("needs_preflight", 3, None, None))
@@ -137,10 +139,14 @@ class ExperimentCalculationCopyDatabaseTests(unittest.TestCase):
 
                     # Unrecorded Measurements also lock; no Calculation or RecordedData is required.
                     empty = await save_experiment(db, SaveExperimentRequest(**{**CREATE, "key": "empty"}), user=owner)
-                    db.add(Measurement(user_id=owner_id, experiment_id=empty["id"], vars={}, material_snapshot={}))
+                    stored_measurement = Measurement(user_id=owner_id, experiment_id=empty["id"], vars={}, material_snapshot={})
+                    db.add(stored_measurement)
                     await db.commit()
+                    reopened = await get_recorded_data(db, stored_measurement.id, user=owner)
+                    self.assertEqual(reopened.result_contracts, CREATE["result_contracts"])
+                    self.assertEqual(reopened.recorded_data, {})
                     with self.assertRaises(HTTPException) as failure:
-                        await save_experiment(db, SaveExperimentRequest(**{**overwrite, "key": "empty", "experimentId": empty["id"], "baseBundleHash": empty["bundleHash"], "records": []}), user=owner)
+                        await save_experiment(db, SaveExperimentRequest(**{**overwrite, "key": "empty", "experimentId": empty["id"], "baseBundleHash": empty["bundleHash"], "records": [], "result_contracts": {}}), user=owner)
                     self.assertEqual(failure.exception.detail["code"], "experiment_record_contract_locked")
 
                     with self.assertRaises(HTTPException) as failure:

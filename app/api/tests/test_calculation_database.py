@@ -554,6 +554,7 @@ async def _verify_crud_contract(database: str) -> None:
                         ),
                         bundleHash="client-value-is-not-trusted",
                         records=[],
+                        result_contracts={},
                     ),
                     user=owner,
                 )

@@ -169,7 +169,7 @@ async def _sync_experiment_records(
         record.tensor_order = payload["tensor_order"]
         record.dtype = payload["dtype"]
         record.data_schema = payload["data_schema"]
-        record.contract_hash = _record_hash(payload)
+        record.contract_hash = _record_hash({**payload, "result_contract": experiment.result_contracts.get(name.split(".")[0])})
     missing_ids = [record.id for record in existing if record.name not in requested]
     if missing_ids:
         await db.execute(delete(ExperimentRecord).where(ExperimentRecord.id.in_(missing_ids)))
@@ -274,6 +274,7 @@ def _save_response(
         "version": _version_text(experiment),
         "coordinate": _coordinate(experiment),
         "bundleHash": experiment.source_hash,
+        "result_contracts": experiment.result_contracts,
         "sourceLocked": _source_locked(counts),
         "derivedCounts": counts,
     }
@@ -461,7 +462,37 @@ async def _save_experiment(
             if source_id is None:
                 raise _bad("Experiment not found.", code=status.HTTP_404_NOT_FOUND)
         await db.flush()
+        contracts_changed = experiment.result_contracts != request.result_contracts
+        if contracts_changed and _source_locked(counts):
+            raise _bad({"code": "experiment_record_contract_locked", "message": "Result contracts cannot change while Measurements exist."}, code=status.HTTP_409_CONFLICT)
+        roots = {record.name.split(".")[0] for record in request.records}
+        if roots != set(request.result_contracts):
+            raise _bad("Every recorded result requires a semantic output contract.")
+        for result in request.result_contracts.values():
+            if not isinstance(result, dict) or not {"task", "output", "solver", "artifactType", "catalogRevision", "visualization", "schema"} <= result.keys():
+                raise _bad("Invalid semantic result contract.")
+        expected_leaves = {}
+        pending = [(name, result["schema"]) for name, result in request.result_contracts.items()]
+        for name, result in request.result_contracts.items():
+            visual = result.get("visualization")
+            if not isinstance(visual, dict) or visual.get("kind") not in {"tensor", "bundle", "mesh-field", "structured-field", "polyline"}:
+                raise _bad(f"Result {name} has no supported semantic visualization contract.")
+            if visual["kind"] == "polyline" and not all(isinstance(visual.get(key), str) for key in ("vertices", "offsets")):
+                raise _bad(f"Result {name} requires polyline member bindings.")
+        while pending:
+            path, schema = pending.pop()
+            if not isinstance(schema, dict):
+                raise _bad(f"Invalid result schema at {path}.")
+            if "dtype" not in schema:
+                pending.extend((f"{path}.{member}", child) for member, child in schema.items())
+            else:
+                expected_leaves[path] = {"name": path, "dtype": schema["dtype"], "tensor_order": schema.get("tensorOrder", 0),
+                    "quantity_kind": schema.get("quantityKind"), "data_schema": {key: value for key, value in schema.items() if key != "tensorOrder"}}
+        if expected_leaves != {record.name: _record_payload(record) for record in request.records}:
+            raise _bad("Recorded tensor schemas differ from the frozen result contracts.")
+        experiment.result_contracts = request.result_contracts
         records_changed = await _sync_experiment_records(db, experiment, request.records, counts)
+        records_changed = records_changed or contracts_changed
         if request.mode == "overwrite" and (source_changed or records_changed):
             calculations = list((await db.scalars(
                 select(Calculation).where(Calculation.experiment_id == experiment.id)

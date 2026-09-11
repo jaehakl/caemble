@@ -229,6 +229,7 @@ export async function experimentCommand(command: string, context: CommandContext
       sourceBundle,
       bundleHash,
       records,
+      result_contracts: first.measurement.experiment.simulationProgram.resultContracts,
       ...(mode === 'create'
         ? { mode, initialVersion: '0.1.0', calculations: metadata.calculations ?? [] }
         : mode === 'overwrite'

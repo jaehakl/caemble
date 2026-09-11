@@ -37,7 +37,7 @@ export async function dataCommand(group: string, command: string, context: Comma
         )
       ).items.find((row) => row.id === id)
     else if (command === 'export' && resource === 'measurement')
-      result = await createDbTables(context.client()).Measurement.readRecordedData(id, { signal })
+      result = await createDbTables(context.client()).Measurement.readResults(id, { signal })
     else
       result = await context
         .client()

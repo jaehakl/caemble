@@ -1,3 +1,4 @@
+import type { RecordedResultContracts } from '@/contracts/results'
 import { dbTables, type CalculationDefinition, type ExperimentRecordContract, type SaveExperimentResponse } from '@/api'
 import { rawCodeHash } from '@/lib/cad/compiler/semanticHash'
 import type { CadSourceDocument, ExperimentSourceBundle } from '@/lib/cad/source'
@@ -31,6 +32,7 @@ export async function saveCadDefinition({
   savedSourceBundle,
   selectedId,
   records,
+  resultContracts,
   calculations,
   values,
 }: {
@@ -40,6 +42,7 @@ export async function saveCadDefinition({
   selectedId: number | null
   calculations?: readonly CalculationDefinition[]
   records: readonly ExperimentRecordContract[]
+  resultContracts: RecordedResultContracts
   values: DefinitionFormValues
 }): Promise<
   SaveExperimentResponse & {
@@ -75,6 +78,7 @@ export async function saveCadDefinition({
     sourceBundle,
     bundleHash,
     records,
+    result_contracts: resultContracts,
   })
   return { ...result, sourceBundle }
 }

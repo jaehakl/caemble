@@ -1,19 +1,12 @@
-import {
-  isRayPathRecordedDataName,
-  type RayPathBundle,
-  type RecordedData,
-  type RecordedDataRule,
-} from '@/lib/cad/model'
-import RecordedDataResults from '@/features/viewer/viewer/RecordedDataResults'
-import { RayPathSystemCard } from '@/features/measurement/RayPathSystemCard'
+import type { RecordedData, RecordedDataRule } from '@/lib/cad/model'
+import type { RecordedResultContracts } from '@/contracts/results'
+import { ResultTensorView } from '@/features/viewer/viewer/ResultTensorView'
 
 export type RecordedDataEditorProps = {
   measurementId: number | null
   recordedAt?: string | null
   recordedData?: RecordedData | null
-  rayPathBundles?: readonly RayPathBundle[]
-  rayPathError?: string | null
-  rayPathsDeclared?: boolean
+  resultContracts?: RecordedResultContracts | null
   rules: readonly RecordedDataRule[]
 }
 
@@ -21,66 +14,33 @@ export function RecordedDataEditor({
   measurementId,
   recordedAt = null,
   recordedData,
-  rayPathBundles = [],
-  rayPathError = null,
-  rayPathsDeclared = false,
+  resultContracts,
   rules,
 }: RecordedDataEditorProps) {
-  const regularRules = rules.filter((rule) => !isRayPathRecordedDataName(rule.label))
-  const regularRecordedData = recordedData
-    ? (Object.freeze(
-        Object.fromEntries(Object.entries(recordedData).filter(([name]) => !isRayPathRecordedDataName(name))),
-      ) as RecordedData)
-    : recordedData
-  const regularResults =
-    regularRules.length > 0 ? <RecordedDataResults recordedData={regularRecordedData} rules={regularRules} /> : null
-  const results =
-    rayPathsDeclared || rayPathBundles.length > 0 || rayPathError ? (
-      <div className="h-full min-h-0 space-y-3 overflow-y-auto p-3">
-        <RayPathSystemCard bundles={rayPathBundles} declared={rayPathsDeclared} error={rayPathError} />
-        {regularResults}
-      </div>
-    ) : (
-      regularResults
-    )
-  if (measurementId === null) {
+  const message =
+    measurementId === null
+      ? 'Measurement를 선택하세요'
+      : recordedAt === null
+        ? '실행되지 않은 Measurement입니다'
+        : !resultContracts
+          ? '이전 결과 계약은 새 Viewer에서 지원하지 않습니다.'
+          : null
+  if (message)
     return (
-      <section
-        aria-label="Recorded Data editor"
-        className="grid h-full min-h-0 place-items-center bg-slate-50 p-8 text-center"
-      >
-        <div>
-          <h2 className="text-sm font-semibold text-slate-800">Measurement를 선택하세요</h2>
-        </div>
+      <section className="grid h-full place-items-center p-8" aria-label="Recorded Data editor">
+        {message}
       </section>
     )
-  }
-
-  if (recordedAt === null) {
-    return (
-      <section
-        aria-label="Recorded Data editor"
-        className="grid h-full min-h-0 place-items-center bg-slate-50 p-8 text-center"
-      >
-        <div>
-          <h2 className="text-sm font-semibold text-slate-800">실행되지 않은 Measurement입니다</h2>
-        </div>
-      </section>
-    )
-  }
-
-  if (regularRules.length === 0 && !rayPathsDeclared && rayPathBundles.length === 0 && !rayPathError) {
-    return (
-      <section
-        aria-label="Recorded Data editor"
-        className="grid h-full min-h-0 place-items-center bg-slate-50 p-8 text-center"
-      >
-        <div>
-          <h2 className="text-sm font-semibold text-slate-800">RecordedData가 없습니다</h2>
-        </div>
-      </section>
-    )
-  }
-
-  return results
+  return (
+    <section className="h-full overflow-auto">
+      {Object.entries(resultContracts ?? {}).map(([name, contract]) => (
+        <article key={name} className="border-b">
+          <h3 className="p-3 text-sm">
+            {name} · {contract.visualization.kind}
+          </h3>
+          <ResultTensorView name={name} contract={contract} rules={rules} data={recordedData} />
+        </article>
+      ))}
+    </section>
+  )
 }

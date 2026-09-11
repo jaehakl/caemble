@@ -380,25 +380,25 @@ Measurement run의 state는 거부됩니다.
 
 `transport/recording.py`는 live artifact를 선언된 기록 schema의 값 트리로
 변환하고, `transport/tensor.py`는 inline tensor 또는 binary attachment를 만듭니다.
-Solver output 계약과 RecordedData schema는 별개입니다. `{ task, output }` 기록
-참조는 공통 빌드에서 Catalog data 계약과 공통 도메인 직렬화 규칙으로 확장합니다.
-기존 수동 dtype/group 선언도 유지합니다. 구조 체적 Field의 ordinal 축과
-structured Field의 실제 좌표 축을 모두 기존 wire 형식으로 기록합니다.
+Experiment는 `{ task, output }` 참조만 선언합니다. 공통 빌드가 Catalog output의
+데이터 구조, `visualization`, 선택적인 `recording` projection을 해석해 고정된
+결과 계약과 tensor schema를 만듭니다. 수동 dtype/group schema는 거부됩니다.
+`sim.record`는 live artifact의 Task·output·Solver 버전·artifactType 출처가
+고정된 계약과 일치하는지 검사합니다.
 
-domain을 보존하려면 새 group schema에 `domain`, `location`, `quantity`,
-`valueUnit`, `values`를 명시합니다. mesh domain은 `kind`, `identity`,
-`lengthUnit`, `points`, `cells`를 제공하고, named cell block은 `cells` 아래에
-선언합니다. structured domain은 `shape`, `coordinates.axis0`,
-`coordinates.axis1` 등의 좌표 vector를 제공합니다. 선택한 `components`,
-`componentBasis`, `metadata`와 domain provenance도 선언한 하위 멤버만 기록하며,
-없는 값을 요청하면 기록이 실패합니다.
+Catalog output은 mesh-field, polyline, structured-field, tensor, bundle의
+시각화 의미와 필요한 멤버 연결·공간 축·component 의미를 명시합니다.
+축 이름이나 Solver 이름으로 renderer를 추론하지 않습니다. 수치 artifact의
+입출력 호환성 비교에서는 표시용 visualization/recording metadata를 제외합니다.
+Catalog 데이터 변경은 Draft SQLite와 catalogctl로 수행하며 계약의 breaking
+변경은 Solver major 버전과 공식 예제를 함께 전환합니다.
 
-Float leaf에는 기존 QuantityKind·unit·필요한 basis를 선언합니다. group의
-멤버 이름으로 `unit`, `quantityKind`, `basis`, `axes`, `tensorOrder`를 사용하면
-기존 authoring descriptor와 충돌하므로 위의 projection 이름을 사용합니다.
-이 확장은 worker 기록의 의미 보존을 제공하며 범용 mesh viewer나 영속 checkpoint
-복원을 추가하지 않습니다. complex tensor dtype은 추가하지 않고, 필요한
-실수부·허수부를 명시적인 기존 dtype leaf로 기록합니다.
+mesh-field recording projection은 메쉬·연결·Field와 provenance를 기존 tensor
+leaf로 보존합니다. structured-field는 기록된 실제 공간 좌표 축을 사용합니다.
+Float leaf에는 QuantityKind·unit·필요한 basis를 고정하며 복소수는 명시적인
+실수부·허수부 leaf로 기록합니다. inline/attachment wire ABI는 유지합니다.
+고정된 결과 계약은 Experiment 저장 및 조회와 로컬 export에 함께 포함됩니다.
+이는 checkpoint 복원 기능을 추가하지 않습니다.
 
 ## 호출별 process transaction
 

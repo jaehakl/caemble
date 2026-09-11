@@ -9,7 +9,6 @@ export type GetListRequest = Readonly<{
   null_filter?: Readonly<Record<string, 'is_null' | 'is_not_null'>>
   sort: readonly [string, 'asc' | 'desc'] | readonly (readonly [string, 'asc' | 'desc'])[] | null
   random?: boolean
-  include_system?: boolean
 }>
 
 export type GetListResponse<TItem> = { items: TItem[]; total: number }

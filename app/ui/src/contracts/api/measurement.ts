@@ -1,3 +1,4 @@
+import type { RecordedResultContracts } from '../results'
 import type { MaterialSnapshot, TaskMaterialSelections } from '../material'
 import type { CatalogMaterialModel } from '../catalog'
 
@@ -72,3 +73,9 @@ type RecordedDataReadFields = Readonly<{
 export type PersistedRecordedDataRecord = RecordedDataReadFields & Readonly<{ id: number }>
 /** Compatibility alias. List endpoints return PersistedRecordedDataRecord. */
 export type RecordedDataRecord = RecordedDataReadFields & Readonly<{ id?: number }>
+
+export type MeasurementResults = Readonly<{
+  recorded_data: MeasurementRecordedData
+  result_contracts: RecordedResultContracts | null
+  result_errors?: Readonly<Record<string, string>>
+}>

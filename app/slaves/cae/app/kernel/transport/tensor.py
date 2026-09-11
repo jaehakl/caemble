@@ -79,7 +79,7 @@ def encode_tensor(
             shape = list(array.shape)
             normalized = array.tolist()
         raw = json.dumps(normalized, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        if len(raw) <= INLINE_LIMIT_BYTES and not is_ray_path_recorded_data_name(name):
+        if len(raw) <= INLINE_LIMIT_BYTES:
             return _inline_tensor(shape, axes, normalized), [], len(raw)
         attachments = _shard(name, sequence, raw, "application/json; charset=utf-8")
         return _attachment_tensor(shape, axes, attachments, len(raw)), attachments, len(raw)
@@ -88,7 +88,7 @@ def encode_tensor(
     shape = list(encoded.shape)
     raw = encoded.tobytes(order="C")
     if encoded.ndim == 0 or (
-        len(raw) <= INLINE_LIMIT_BYTES and not is_ray_path_recorded_data_name(name)
+        len(raw) <= INLINE_LIMIT_BYTES
     ):
         inline_value = encoded.item() if encoded.ndim == 0 else encoded.tolist()
         if dtype_name == "bool":
@@ -108,10 +108,6 @@ def _materialize_metadata(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_materialize_metadata(item) for item in value]
     return value
-
-
-def is_ray_path_recorded_data_name(name: str) -> bool:
-    return name.startswith("rayPaths.")
 
 
 def encode_recorded_data(

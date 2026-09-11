@@ -1,6 +1,5 @@
-import { canonicalRecordedDataTree, simulationProgramManifestFromResolved } from '../simulation/authoring'
-import { resolveRecordedOutputReferences } from '../simulation/outputRecording'
-import type { DefinedKernelTask, KernelIdentity, RecordedDataSpecNode } from '../simulation/types'
+import { simulationProgramManifest } from '../simulation/authoring'
+import type { DefinedKernelTask, KernelIdentity, RecordedOutputReference } from '../simulation/types'
 import { normalizeGeometryGroup, type GeometryGroupMap, type SurfaceGroupMap } from './structure'
 import type { Tensor, Vars } from './types'
 import type { UcumUnit } from './units'
@@ -37,7 +36,7 @@ export type TaskModelContext = Readonly<{ vars: Readonly<Vars> }>
 
 export type ExperimentDefinitionOptions<
   Schema extends VarsSchemaDefinition,
-  Recorded extends Readonly<Record<string, RecordedDataSpecNode>>,
+  Recorded extends Readonly<Record<string, RecordedOutputReference>>,
 > = Readonly<{
   geometry: (context: ModelContext<Schema>) => unknown
   lengthUnit: UcumUnit
@@ -85,7 +84,7 @@ export class TaskDefinition<Config = unknown> {
 
 export class ExperimentDefinition<
   Schema extends VarsSchemaDefinition = VarsSchemaDefinition,
-  Recorded extends Readonly<Record<string, RecordedDataSpecNode>> = Readonly<Record<string, RecordedDataSpecNode>>,
+  Recorded extends Readonly<Record<string, RecordedOutputReference>> = Readonly<Record<string, RecordedOutputReference>>,
 > {
   readonly documentType = 'experiment' as const
   readonly lengthUnit: UcumUnit
@@ -132,20 +131,14 @@ export class ExperimentDefinition<
     const tasks = Object.freeze(
       Object.fromEntries(Object.entries(taskDefinitions).map(([name, task]) => [name, task.createResolvedTask(vars)])),
     )
-    const recordedData = canonicalRecordedDataTree(Object.fromEntries(Object.entries(this.recordedData).map(
-      ([name, node]) => [name, resolveRecordedOutputReferences(node, tasks, `recordedData.${name}`)],
-    )))
-    return Object.freeze({
-      tasks,
-      recordedData,
-      manifest: simulationProgramManifestFromResolved(tasks, recordedData, pythonSource),
-    })
+    const manifest = simulationProgramManifest(tasks, this.recordedData, pythonSource)
+    return Object.freeze({ tasks, recordedData: manifest.recordedData, manifest })
   }
 }
 
 export function experiment<
   const Schema extends VarsSchemaDefinition,
-  const Recorded extends Readonly<Record<string, RecordedDataSpecNode>>,
+  const Recorded extends Readonly<Record<string, RecordedOutputReference>>,
 >(options: ExperimentDefinitionOptions<Schema, Recorded>) {
   return new ExperimentDefinition(options)
 }

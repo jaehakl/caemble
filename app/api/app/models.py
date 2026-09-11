@@ -84,7 +84,6 @@ class CalculationDataListRequest(GetListRequestBase):
 
 
 class RecordedDataListRequest(GetListRequestBase):
-    include_system: bool = True
     experiment_id: Optional[StrictInt] = None
     experiment_record_ids: Optional[List[StrictInt]] = None
 
@@ -115,6 +114,7 @@ class ExperimentBase(OwnedTimestampFields):
     description: Optional[str] = None
     source_bundle: ExperimentSourceBundle
     source_hash: str
+    result_contracts: Optional[Dict[str, Any]] = None
 
 
 class ExperimentRecordContract(BaseModel):
@@ -164,6 +164,7 @@ class SaveExperimentRequest(BaseModel):
     sourceBundle: ExperimentSourceBundle
     bundleHash: str
     records: List[ExperimentRecordContract]
+    result_contracts: Dict[str, Any]
     copyCalculationsFromExperimentId: Optional[StrictInt] = Field(default=None, gt=0)
     calculations: Optional[List[CalculationDefinition]] = None
 
@@ -224,6 +225,8 @@ class MeasurementCreateRequest(BaseModel):
 
 class MeasurementRecordedDataResponse(BaseModel):
     recorded_data: Dict[str, MeasurementRecordedDataNode] = Field(default_factory=dict)
+
+    result_contracts: Optional[Dict[str, Any]] = None
 
 
 class RecordedDataBase(OwnedTimestampFields):

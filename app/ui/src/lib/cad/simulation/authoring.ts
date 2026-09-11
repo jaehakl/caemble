@@ -1,6 +1,7 @@
+import type { RecordedResultContracts } from '@/contracts/results'
 import { getQuantityKindTensorOrder } from '../../quantitykind/runtime'
 import { CadModelError } from '../model/errors'
-import { resolveRecordedOutputReferences } from './outputRecording'
+import { resolveRecordedResult } from './outputRecording'
 import type {
   DefinedKernelTask,
   KernelIdentity,
@@ -69,6 +70,7 @@ function buildSimulationProgramManifest(
   tasks: Readonly<Record<string, DefinedKernelTask>>,
   recordedData: RecordedDataSchemaTree,
   pythonSource: string,
+  resultContracts: RecordedResultContracts,
 ): SimulationProgramManifest {
   return Object.freeze({
     pythonSource,
@@ -84,6 +86,7 @@ function buildSimulationProgramManifest(
       ),
     ),
     recordedData,
+    resultContracts,
   })
 }
 
@@ -92,15 +95,11 @@ export function simulationProgramManifest(
   recordedData: Readonly<Record<string, RecordedDataSpecNode>>,
   pythonSource: string,
 ): SimulationProgramManifest {
-  const resolved = Object.fromEntries(Object.entries(recordedData).map(([name, node]) =>
-    [name, resolveRecordedOutputReferences(node, tasks, `recordedData.${name}`)]))
-  return buildSimulationProgramManifest(tasks, canonicalRecordedDataTree(resolved), pythonSource)
-}
-
-export function simulationProgramManifestFromResolved(
-  tasks: Readonly<Record<string, DefinedKernelTask>>,
-  recordedData: RecordedDataSchemaTree,
-  pythonSource: string,
-): SimulationProgramManifest {
-  return buildSimulationProgramManifest(tasks, recordedData, pythonSource)
+  const results = Object.fromEntries(Object.entries(recordedData).map(([name, node]) =>
+    [name, resolveRecordedResult(node, tasks, `recordedData.${name}`)]))
+  const schemas = canonicalRecordedDataTree(Object.fromEntries(Object.entries(results).map(([name, result]) =>
+    [name, result.schema as RecordedDataSpecNode])))
+  const contracts = Object.fromEntries(Object.entries(results).map(([name, result]) =>
+    [name, { ...result, schema: schemas[name] }]))
+  return buildSimulationProgramManifest(tasks, schemas, pythonSource, contracts)
 }

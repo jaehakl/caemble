@@ -1,3 +1,4 @@
+import type { RecordedResultContracts } from '@/contracts/results'
 import { constants } from 'node:fs'
 import { copyFile, mkdir, open, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -39,6 +40,7 @@ async function loadLocalResult(location: string): Promise<{
   directory: string
   manifest: LocalResultManifest
   schemas: RecordedDataSchemaTree
+  resultContracts: RecordedResultContracts
   rules: readonly RecordedDataRule[]
   flat: RecordedData
   attachments: Map<string, LocalAttachment>
@@ -92,6 +94,7 @@ async function loadLocalResult(location: string): Promise<{
     directory,
     manifest,
     schemas,
+    resultContracts: input.measurement.experiment.simulationProgram.resultContracts,
     rules: recordedDataRules(schemas, 'local.recorded-data'),
     flat: flattenRecordedData(schemas, records)!,
     attachments,
@@ -181,6 +184,7 @@ export async function inspectLocalResult(location: string) {
   const result = await loadLocalResult(location)
   return {
     manifest: result.manifest,
+    resultContracts: result.resultContracts,
     records: result.rules.map((rule) => {
       const tensor = result.flat[rule.label]
       return {

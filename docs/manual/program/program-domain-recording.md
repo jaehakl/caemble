@@ -1,24 +1,21 @@
-# Domain을 함께 보존하는 RecordedData
+# Catalog 기반 RecordedData와 Viewer
 
-기존 tensor RecordedData는 같은 dtype·shape·axes 형식으로 기록됩니다. Solver 출력은 `recordedData`에서 `{ task: 'detail', output: 'displacement' }`처럼 참조할 수 있습니다. `task`는 `tasks/detail.tsx`의 이름이고 `output`은 해당 Task의 `config.outputs`에 지정한 `key`입니다. 이름은 실제 Task 선언과 일치해야 하며, 없는 참조는 빌드 오류입니다.
+Experiment의 `recordedData`는 `결과이름: { task, output }`으로 선언합니다. `task`는 Task 파일의 이름이고 `output`은 해당 Task가 요청한 output의 `key`입니다. 결과 이름은 자유롭게 정합니다. 수동 dtype/group schema와 예약 결과 이름은 지원하지 않습니다.
 
-공통 빌드가 Catalog 출력 계약에서 기록 스키마를 생성합니다. 구조 체적의 node/cell Field는 메쉬·재료 영역·표면 출처·품질·지지 및 하중 위치까지 보존하고, bundle 출력은 선언된 멤버를 기록합니다. 사용자가 connectivity나 중첩 스키마를 소스 번들에 작성할 필요가 없습니다. 브라우저와 CLI는 같은 해석기를 사용합니다. `simulate.py`의 `await sim.record(name, artifact)` 호출은 유지하며 선택하지 않은 출력은 자동 기록하지 않습니다.
+공통 빌드는 Catalog output의 데이터 구조와 semantic visualization 계약을 해석하고, Task·output·Solver 버전·Catalog revision·확장된 tensor schema를 결과 계약에 고정합니다. 같은 Experiment에서 여러 Solver의 결과를 함께 선언할 수 있습니다. 실행 순서와 데이터 전달은 `simulate.py`의 `sim.run`, `sim.record`, `sim.release`가 소유합니다. `sim.record(name, artifact)`에는 선언한 Task/output에서 생성된 live artifact를 전달해야 합니다. 모양이 같은 다른 출력, 임의 값, 해제된 artifact는 거부됩니다.
 
-사용자 정의 기록에는 아래의 수동 group/leaf 선언도 계속 사용할 수 있습니다. Solver 간 전달 계약과 기록 계약은 별개이므로 기록할 항목을 명시적으로 선택합니다.
+Experiment와 Measurement 결과 조회, CLI 로컬 결과 및 export에는 고정된 결과 계약이 함께 제공됩니다. 저장 결과를 열 때 최신 Catalog나 편집 중인 소스로 재해석하지 않습니다. Measurement가 있는 Experiment의 계약은 변경할 수 없습니다. 새 계약이 없는 과거 데이터는 보존하지만 새 Viewer에서 미지원 상태로 표시하며 이름이나 축을 이용해 복원하지 않습니다.
 
-저장된 Measurement를 선택하면 중앙 Viewer에서 Geometry와 기록된 메쉬 Field를 전환할 수 있습니다. 다운로드는 최대 4개를 병렬 처리하고 진행 개수를 표시합니다. 이전 메쉬 기록에서 빠진 ordinal 축은 읽을 때만 보완하며, 원본 저장 데이터와 Experiment 소스는 수정하지 않습니다. 시간·주파수 같은 물리 좌표는 임의로 생성하지 않습니다.
+Viewer의 공통 결과 선택 영역에서 Geometry와 모든 논리적 결과를 선택합니다. renderer는 결과 이름이 아닌 저장된 semantic kind로 결정합니다.
 
-- Field group: `domain`, `location`, `quantity`, `valueUnit`, `values`
-- Mesh domain: `kind`, `identity`, `lengthUnit`, `points`, `cells`와 그 아래 선언한 cell block
-- Structured domain: `kind`, `identity`, `lengthUnit`, `shape`, `coordinates.axis0`, `coordinates.axis1` 등의 좌표 vector
-- 선택 항목: `components`, `componentBasis`, `metadata`와 `domain.metadata` 아래에 선언한 provenance
+- `mesh-field`: 기록된 메쉬와 Field를 표시합니다. 성분·크기, 단면, 모서리, 범례를 제공합니다. displacement 의미가 선언된 결과는 변형 배율을, stress 의미가 선언된 결과는 von Mises 표시를 제공합니다.
+- `polyline`: 계약에 연결된 정점과 offset으로 경로를 구성합니다. 여러 결과를 독립적으로 선택할 수 있습니다.
+- `structured-field`: 기록된 공간 축의 slice와 나머지 시간·주파수·component 축의 index를 선택합니다.
+- `tensor`: chart/table/heatmap과 추가 축의 index 선택을 제공합니다.
+- `bundle`: 계약에 선언된 구성 데이터를 상세 항목으로 선택합니다. stress 상세 bundle도 이 방식으로 표시합니다.
 
-각 마지막 항목은 기존 dtype tensor descriptor로 선언합니다. `points`와 `values` 같은 float 항목에는 Catalog의 QuantityKind·unit과 필요한 basis를 지정하고, connectivity에는 integer dtype을 사용합니다. `kind`, `identity`, `location`, `quantity`, `lengthUnit`, `valueUnit`은 string 항목입니다. 없는 항목을 요청하면 기록이 실패하며, metadata는 선언한 하위 항목만 보존됩니다.
+초기 Overlay는 기준 Geometry 위 mesh field 하나와 여러 polyline 결과를 지원합니다. 길이 단위를 변환하며 같은 Experiment 좌표계로 선언된 결과만 연결합니다. 현재 Geometry source 또는 Vars가 저장 결과와 다르면 Geometry Overlay를 표시하지 않습니다. 기본 Geometry는 원래 좌표이며 변형 배율이 적용된 mesh와 원래 좌표의 polyline을 동시에 표시하지 않습니다. Measurement를 바꾸면 선택과 Overlay를 초기화합니다. 개별 결과의 형식 오류는 다른 결과 조회를 막지 않습니다.
 
-Group의 멤버 이름에 `unit`, `quantityKind`, `basis`, `axes`, `tensorOrder`를 사용하면 tensor descriptor와 충돌합니다. 단위 이름을 별도 값으로 기록할 때는 위의 `lengthUnit`·`valueUnit`, 물리량 이름에는 `quantity`를 사용하세요. 복소값은 새 dtype을 만들지 않고 실수부·허수부처럼 명시적인 기존 dtype 항목으로 기록합니다.
+데이터 전송은 기존 tensor dtype·shape·axes 및 inline/attachment 형식을 사용합니다. 확장된 dotted tensor leaf와 ExperimentRecord ID는 Calculation에서 그대로 참조합니다. 논리적 결과의 계약 metadata는 tensor leaf가 아니며 CalculationData 후처리는 유지됩니다.
 
-Recorded Data 결과 화면은 `kind`가 `unstructured-mesh`인 Field group의 실제 계산 메쉬를 표시합니다. `cells.tet4`와 절점(`node`) 또는 요소(`cell`) 값이 필요합니다. 벡터 성분·크기, 응력 성분·von Mises, 메쉬 모서리와 X/Y/Z 단면을 선택할 수 있습니다. 단면은 기록된 체적 요소를 잘라서 생성하며 새로운 해석을 실행하지 않습니다. 변위 Field는 배율을 지정해 변형 형상을 표시할 수 있고, 색상 범례에는 기록된 물리량 단위를 표시합니다.
-
-구조 Solver가 제공하는 `domain.metadata.boundaryFaces`, `cellRegions`, `regionIds`, `supportNodes`, `loadPoints`, `loadVectors`를 함께 기록하면 경계면·재료 영역·지지점·하중 방향도 검토할 수 있습니다. 메쉬 연결 번호는 생성된 결과 내부의 식별자입니다. 사용자 task의 경계조건과 관측은 원래 Geometry의 의미 있는 면·영역을 참조하므로 메쉬 해상도가 달라져도 task를 다시 작성하지 않습니다.
-
-브라우저와 CLI는 공통 해석 준비 프로파일로 원래 CSG 및 Fiber 함수를 조밀하게 평가합니다. 화면 미리보기의 분할 설정과 해석 형상 준비는 분리되며, 평가 프로파일과 실제 표본은 형상 hash에 포함됩니다. 형상 분할 정밀도와 Solver의 체적 메쉬 해상도는 서로 다른 단계입니다. 기록된 메쉬는 과거 계산 형상을 보존하지만 다른 실험의 checkpoint로 복원되지는 않습니다.
+[Structural Optical Results 공식 예제](/?help=examples&item=caemble:experiment/caemble/verified/structural-optical-results@1.0.0)는 한 Experiment에서 displacement·stress-field·reaction과 서로 다른 이름의 ray 결과 두 개를 기록합니다.

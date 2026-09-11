@@ -279,7 +279,7 @@ export const manualDocuments: readonly DocumentPage[] = [
       id: 'program-domain-recording',
       section: 'program',
       anchor: 'experiment-program-domain-recording',
-      title: 'Domain을 함께 보존하는 RecordedData',
+      title: 'Catalog 기반 RecordedData와 Viewer',
       summary: 'Field artifact의 좌표, connectivity와 물리적 의미를 명시적인 기록 group에 보존합니다.',
       keywords: ['RecordedData', 'FieldValue', 'domain', 'mesh', 'connectivity', 'quantity', 'valueUnit'],
     },

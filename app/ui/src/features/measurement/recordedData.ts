@@ -12,8 +12,6 @@ import type {
 } from '@/api'
 import type { SavedRecordedData } from '@/features/cae-workbench/types'
 import { recordedDataRules } from '@/lib/cad/simulation/recordedData'
-import { restoreDomainRecordAxes } from '@/lib/cad/simulation/domainRecordAxes'
-import { isDataTensor } from '@/lib/cad/model/dataTensor'
 export { experimentRecordContracts, flattenRecordedData, recordedDataRules } from '@/lib/cad/simulation/recordedData'
 
 const namePattern = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/u
@@ -45,14 +43,7 @@ function freezeTree(value: Record<string, unknown>): Readonly<Record<string, unk
 }
 
 export function recordedDataSnapshot(rows: readonly SavedRecordedData[]) {
-  const presentRows = rows.filter((row) => row.data !== null && row.data !== undefined)
-  const meshRoots = presentRows.filter((row) => row.name.endsWith('.domain.kind') &&
-    isDataTensor(row.data) && row.data.storage.kind === 'inline' && row.data.storage.value === 'unstructured-mesh')
-    .map((row) => row.name.slice(0, -12))
-  const usableRows = presentRows.map((row) => ({ ...row, data: isDataTensor(row.data) ? restoreDomainRecordAxes(
-    row.data, row.data_schema, row.tensor_order,
-    meshRoots.some((root) => row.name.startsWith(`${root}.domain.`) || row.name === `${root}.values`),
-  ) : row.data }))
+  const usableRows = rows.filter((row) => row.data !== null && row.data !== undefined)
   const data: Record<string, unknown> = {}
   const schemas: Record<string, unknown> = {}
   usableRows.forEach((row) => {

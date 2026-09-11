@@ -8,7 +8,7 @@ import { useCaeDataSelection } from './useCaeDataSelection'
 
 const mocks = vi.hoisted(() => ({
   listRows: vi.fn(),
-  readRecordedData: vi.fn(),
+  readResults: vi.fn(),
 }))
 
 vi.mock('@/api', async (importOriginal) => {
@@ -20,7 +20,7 @@ vi.mock('@/api', async (importOriginal) => {
       Measurement: {
         ...actual.dbTables.Measurement,
         listRows: mocks.listRows,
-        readRecordedData: mocks.readRecordedData,
+        readResults: mocks.readResults,
       },
     },
   }
@@ -54,7 +54,7 @@ describe('useCaeDataSelection', () => {
       items: [measurement(request.selected_ids[0]!)],
       total: 1,
     }))
-    mocks.readRecordedData.mockReset()
+    mocks.readResults.mockReset()
   })
 
   it('keeps the public snapshot identity across an unrelated parent rerender', () => {
@@ -75,7 +75,7 @@ describe('useCaeDataSelection', () => {
 
   it('aborts the superseded request and only commits the latest Measurement', async () => {
     let firstSignal: AbortSignal | undefined
-    mocks.readRecordedData
+    mocks.readResults
       .mockImplementationOnce((_id: number, context?: { signal?: AbortSignal }) => {
         firstSignal = context?.signal
         return new Promise((_resolve, reject) => {
@@ -86,7 +86,7 @@ describe('useCaeDataSelection', () => {
           )
         })
       })
-      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ recorded_data: {}, result_contracts: {} })
 
     const wrapper = ({ children }: PropsWithChildren) => (
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
@@ -97,7 +97,7 @@ describe('useCaeDataSelection', () => {
     act(() => {
       firstLoad = result.current.loadMeasurement(1)
     })
-    await waitFor(() => expect(mocks.readRecordedData).toHaveBeenCalledWith(1, expect.any(Object)))
+    await waitFor(() => expect(mocks.readResults).toHaveBeenCalledWith(1, expect.any(Object)))
 
     await act(async () => {
       await result.current.loadMeasurement(2)
@@ -110,7 +110,7 @@ describe('useCaeDataSelection', () => {
   })
 
   it('does not let a completion refresh supersede the user selection still being fetched', async () => {
-    mocks.readRecordedData.mockResolvedValue({})
+    mocks.readResults.mockResolvedValue({ recorded_data: {}, result_contracts: {} })
     const wrapper = ({ children }: PropsWithChildren) => (
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     )
@@ -119,7 +119,7 @@ describe('useCaeDataSelection', () => {
       await result.current.loadMeasurement(1)
     })
     let finish!: (value: object) => void
-    mocks.readRecordedData.mockImplementationOnce(
+    mocks.readResults.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           finish = resolve
@@ -129,16 +129,16 @@ describe('useCaeDataSelection', () => {
     act(() => {
       pending = result.current.loadMeasurement(2)
     })
-    await waitFor(() => expect(mocks.readRecordedData).toHaveBeenCalledWith(2, expect.any(Object)))
+    await waitFor(() => expect(mocks.readResults).toHaveBeenCalledWith(2, expect.any(Object)))
     expect(result.current.measurement?.id).toBe(1)
     await act(async () => {
       expect(await result.current.loadMeasurement(1, 10, { expectedSelectionId: 1 })).toBeNull()
     })
     await act(async () => {
-      finish({})
+      finish({ recorded_data: {}, result_contracts: {} })
       await pending
     })
     expect(result.current.measurement?.id).toBe(2)
-    expect(mocks.readRecordedData.mock.calls.map(([id]) => id)).toEqual([1, 2])
+    expect(mocks.readResults.mock.calls.map(([id]) => id)).toEqual([1, 2])
   })
 })

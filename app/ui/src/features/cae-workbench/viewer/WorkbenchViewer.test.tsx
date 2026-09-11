@@ -15,6 +15,17 @@ vi.mock('@/features/viewer/viewer/meshFields', () => ({
 it('shows stored mesh results centrally, permits Geometry review, and displays download progress', () => {
   render(
     <WorkbenchViewer
+      resultContracts={{
+        displacement: {
+          task: 'solid',
+          output: 'motion',
+          solver: { name: 'fixture', version: '1.0.0' },
+          artifactType: 'fixture@1',
+          catalogRevision: 'frozen',
+          schema: {},
+          visualization: { kind: 'mesh-field', coordinateSpace: 'experiment' },
+        },
+      }}
       experiment={null}
       experimentDocument={{} as Parameters<typeof WorkbenchViewer>[0]['experimentDocument']}
       onFindSelectionSource={vi.fn()}
@@ -28,9 +39,11 @@ it('shows stored mesh results centrally, permits Geometry review, and displays d
       downloadProgress={{ completed: 4, total: 40 }}
     />,
   )
+  expect(screen.getByText('Geometry preview')).toBeTruthy()
+  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: 'displacement' } })
   expect(screen.getByText('Stored volume field')).toBeTruthy()
-  expect(screen.getByRole('status').textContent).toContain('4/40')
-  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: 'geometry' } })
+  expect(screen.getByText(/4\/40/)).toBeTruthy()
+  fireEvent.change(screen.getByLabelText('Viewer 결과 선택'), { target: { value: '' } })
   expect(screen.getByText('Geometry preview')).toBeTruthy()
   expect(screen.queryByText('Stored volume field')).toBeNull()
 })

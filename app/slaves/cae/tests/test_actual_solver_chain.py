@@ -103,7 +103,7 @@ def parameter(value: Any) -> dict[str, Any]:
 
 @pytest.mark.asyncio
 async def test_dc_to_heat_runs_in_distinct_children(tmp_path: Path) -> None:
-    dc_version, heat_version = "0.5.0", "0.4.0"
+    dc_version, heat_version = "1.0.0", "1.0.0"
     catalog = SolverCatalog.discover()
     executor = SpawnSolverExecutor()
     progress: list[Any] = []

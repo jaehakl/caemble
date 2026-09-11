@@ -46,7 +46,7 @@ def mesh_invocation():
 def test_named_sets_survive_field_resource_roundtrip_with_original_ids_and_cad_provenance():
     invocation = mesh_invocation()
     model = build_model(invocation)
-    field = build_outputs(invocation.config, solver_catalog.descriptor("structural-mechanics", "2.0.0"), model, initial_solution(model))["displacement"]
+    field = build_outputs(invocation.config, solver_catalog.descriptor("structural-mechanics", "3.0.0"), model, initial_solution(model))["displacement"]
     resources = ResourceStore()
     try:
         restored = resources.resolve(resources.ingest(field))

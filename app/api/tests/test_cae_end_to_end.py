@@ -310,6 +310,7 @@ class CaeEndToEndTests(unittest.TestCase):
             experiment = await db.get(Experiment, experiment_id)
             experiment.source_bundle = example["sourceBundle"]
             experiment.source_hash = example["bundleHash"]
+            experiment.result_contracts = measurement_input["experiment"]["simulationProgram"]["resultContracts"]
             launcher = Launcher(user_id=owner, launcher_name="real-cae-process", slave_app_ids=["cae"],
                                 job_modes={"cae": "websocket"}, status="ready", connected_at=utcnow(), last_heartbeat_at=utcnow())
             db.add(launcher)

@@ -17,23 +17,22 @@ from service.recorded_data import list_recorded_data  # noqa: E402
 
 
 class RecordedDataServiceTests(unittest.IsolatedAsyncioTestCase):
-    async def test_system_filter_is_owned_by_service(self) -> None:
+    async def test_result_names_are_not_filtered(self) -> None:
         with patch(
             "service.recorded_data.get_list_response",
             new=AsyncMock(return_value={"total": 0, "items": []}),
         ) as get_list:
             await list_recorded_data(
                 object(),  # type: ignore[arg-type]
-                RecordedDataListRequest(include_system=False),
+                RecordedDataListRequest(),
                 user=None,
             )
             clause = get_list.await_args.args[3]
-            self.assertIn("experiment_records.name NOT LIKE", str(clause))
-            self.assertEqual(2, str(clause).count("NOT LIKE"))
+            self.assertIsNone(clause)
 
             await list_recorded_data(
                 object(),  # type: ignore[arg-type]
-                RecordedDataListRequest(include_system=True),
+                RecordedDataListRequest(),
                 user=None,
             )
             self.assertIsNone(get_list.await_args.args[3])

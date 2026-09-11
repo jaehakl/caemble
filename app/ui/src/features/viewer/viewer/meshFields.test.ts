@@ -1,3 +1,4 @@
+import type { RecordedResultContracts } from '@/contracts/results'
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import {
@@ -75,13 +76,28 @@ function fixture(stress = false) {
     rules.push({ label, methodId: 'test', target: [], parameters: {}, result: schema })
     data[label] = createDataTensor(schema, { value: value as Parameters<typeof createDataTensor>[1]['value'] })
   }
-  return { rules, data: data as RecordedData }
+  const contracts: RecordedResultContracts = {
+    field: {
+      task: 'solver',
+      output: 'field',
+      solver: { name: 'fixture', version: '1.0.0' },
+      artifactType: 'fixture@1',
+      catalogRevision: 'fixture',
+      schema: {},
+      visualization: {
+        kind: 'mesh-field',
+        coordinateSpace: 'experiment',
+        valueKind: stress ? 'stress' : 'displacement',
+      },
+    },
+  }
+  return { rules, data: data as RecordedData, contracts }
 }
 
 describe('recorded mesh fields', () => {
   it('restores mesh identity, values, semantic metadata and exterior faces', () => {
     const input = fixture()
-    const result = parseRecordedMeshFields(input.rules, input.data)
+    const result = parseRecordedMeshFields(input.rules, input.data, input.contracts)
     expect(result.errors).toEqual([])
     expect(result.fields).toHaveLength(1)
     const field = result.fields[0]
@@ -101,7 +117,7 @@ describe('recorded mesh fields', () => {
       'field.domain.metadata.loadPoints': { shape: [0, 3], storage: { kind: 'inline', value: [] } },
       'field.domain.metadata.loadVectors': { shape: [0, 3], storage: { kind: 'inline', value: [] } },
     }
-    const empty = parseRecordedMeshFields(input.rules, emptyOverlays)
+    const empty = parseRecordedMeshFields(input.rules, emptyOverlays, input.contracts)
     expect(empty.errors).toEqual([])
     expect(empty.fields[0].loadPoints).toHaveLength(0)
     expect(createMeshFieldRenderData(empty.fields[0], view).geometries).toHaveLength(2)
@@ -109,7 +125,7 @@ describe('recorded mesh fields', () => {
 
   it('uses cell stress values, von Mises and interpolated section caps', () => {
     const input = fixture(true)
-    const field = parseRecordedMeshFields(input.rules, input.data).fields[0]
+    const field = parseRecordedMeshFields(input.rules, input.data, input.contracts).fields[0]
     const rendered = createMeshFieldRenderData(field, {
       ...view,
       component: 'vonMises',
@@ -139,7 +155,7 @@ describe('recorded mesh fields', () => {
   it('keeps a pure moment load location visible without inventing a force arrow', () => {
     const input = fixture()
     const field = {
-      ...parseRecordedMeshFields(input.rules, input.data).fields[0],
+      ...parseRecordedMeshFields(input.rules, input.data, input.contracts).fields[0],
       supportNodes: new Uint32Array(),
       loadVectors: new Float64Array(3),
     }
@@ -166,19 +182,19 @@ describe('recorded mesh fields', () => {
       ...input.data,
       'field.domain.cells.tet4': createDataTensor({ dtype: 'int32' }, { value: [[0, 1, 2, 7]] }),
     }
-    expect(parseRecordedMeshFields(input.rules, invalid).errors[0].message).toMatch(/absent node/)
+    expect(parseRecordedMeshFields(input.rules, invalid, input.contracts).errors[0].message).toMatch(/absent node/)
     const mismatch = { ...input.data, 'field.values': createDataTensor({ dtype: 'int32' }, { value: [[1, 2, 3]] }) }
-    expect(parseRecordedMeshFields(input.rules, mismatch).errors[0].message).toMatch(/do not match/)
+    expect(parseRecordedMeshFields(input.rules, mismatch, input.contracts).errors[0].message).toMatch(/do not match/)
     const badRegion = {
       ...input.data,
       'field.domain.metadata.cellRegions': createDataTensor({ dtype: 'int32' }, { value: [2] }),
     }
-    expect(parseRecordedMeshFields(input.rules, badRegion).errors[0].message).toMatch(/absent region/)
+    expect(parseRecordedMeshFields(input.rules, badRegion, input.contracts).errors[0].message).toMatch(/absent region/)
     const badSupport = {
       ...input.data,
       'field.domain.metadata.supportNodes': createDataTensor({ dtype: 'int32' }, { value: [-1] }),
     }
-    expect(parseRecordedMeshFields(input.rules, badSupport).errors[0].message).toMatch(/absent node/)
+    expect(parseRecordedMeshFields(input.rules, badSupport, input.contracts).errors[0].message).toMatch(/absent node/)
     const badLoad = {
       ...input.data,
       'field.domain.metadata.loadVectors': createDataTensor(
@@ -186,12 +202,12 @@ describe('recorded mesh fields', () => {
         { value: [[0, 1]] },
       ),
     }
-    expect(parseRecordedMeshFields(input.rules, badLoad).errors[0].message).toMatch(/matching shapes/)
+    expect(parseRecordedMeshFields(input.rules, badLoad, input.contracts).errors[0].message).toMatch(/matching shapes/)
   })
 
   it('decodes attachment-backed records and chunks geometry beyond 65k vertices', () => {
     const input = fixture()
-    const field = parseRecordedMeshFields(input.rules, input.data).fields[0]
+    const field = parseRecordedMeshFields(input.rules, input.data, input.contracts).fields[0]
     const count = 18_000
     const points = Array.from({ length: count * 4 }, (_, index) => [
       field.points[(index % 4) * 3] + Math.floor(index / 4) * 2,
@@ -217,7 +233,7 @@ describe('recorded mesh fields', () => {
         }),
         'field.domain.metadata.cellRegions': createDataTensor({ dtype: 'int32' }, { value: Array(count).fill(0) }),
       }
-      const parsed = parseRecordedMeshFields(input.rules, data)
+      const parsed = parseRecordedMeshFields(input.rules, data, input.contracts)
       expect(parsed.errors).toEqual([])
       const rendered = createMeshFieldRenderData(parsed.fields[0], { ...view, overlays: false, wireframe: false })
       expect(rendered.geometries.length).toBeGreaterThan(1)
@@ -268,11 +284,11 @@ describe('recorded mesh fields', () => {
       }),
       'field.domain.metadata.cellRegions': createDataTensor({ dtype: 'int32' }, { value: [0, 0] }),
     }
-    const field = parseRecordedMeshFields(input.rules, data).fields[0]
+    const field = parseRecordedMeshFields(input.rules, data, input.contracts).fields[0]
     expect(field.boundaryFaces.length).toBe(18)
-    const single = parseRecordedMeshFields(input.rules, input.data).fields[0]
+    const single = parseRecordedMeshFields(input.rules, input.data, input.contracts).fields[0]
     expect(createMeshFieldRenderData(single, { ...view, deformationScale: 2 }).bounds.max).toEqual([3, 3, 3])
-    const other: RecordedMeshField = { ...single, quantity: 'mechanics.Force', valueUnit: 'N' }
+    const other: RecordedMeshField = { ...single, quantity: 'mechanics.Force', valueUnit: 'N', valueKind: undefined }
     expect(createMeshFieldRenderData(other, { ...view, deformationScale: 2 }).bounds.max).toEqual([1, 1, 1])
   })
 })

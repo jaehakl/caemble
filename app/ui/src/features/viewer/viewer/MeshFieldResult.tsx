@@ -1,13 +1,23 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import JscadViewer from './JscadViewer'
 import { createMeshFieldRenderData, meshMaterialColors, type MeshFieldView, type RecordedMeshField } from './meshFields'
 import type { JscadViewerLayer } from './model'
 
 const noLayers: readonly JscadViewerLayer[] = Object.freeze([])
 
-export function MeshFieldResult({ field, onRendered }: { field: RecordedMeshField; onRendered?: () => void }) {
+export function MeshFieldResult({
+  field,
+  onRendered,
+  renderViewer,
+  displayUnit = field.lengthUnit,
+}: {
+  field: RecordedMeshField
+  onRendered?: () => void
+  displayUnit?: typeof field.lengthUnit
+  renderViewer?: (data: ReturnType<typeof createMeshFieldRenderData>, view: MeshFieldView) => ReactNode
+}) {
   const [view, setView] = useState<MeshFieldView>({
-    component: field.componentCount === 6 || field.componentCount === 9 ? 'vonMises' : 'magnitude',
+    component: field.valueKind === 'stress' ? 'vonMises' : 'magnitude',
     wireframe: true,
     overlays: true,
     clipAxis: -1,
@@ -17,13 +27,13 @@ export function MeshFieldResult({ field, onRendered }: { field: RecordedMeshFiel
   const [error, setError] = useState<string | null>(null)
   const rendered = useMemo(() => {
     try {
-      return { data: createMeshFieldRenderData(field, view), error: null }
+      return { data: createMeshFieldRenderData(field, view, displayUnit), error: null }
     } catch (error) {
       return { data: null, error: error instanceof Error ? error.message : String(error) }
     }
-  }, [field, view])
+  }, [field, view, displayUnit])
   const onRender = useCallback(() => {}, [])
-  const canDeform = field.location === 'node' && field.componentCount === 3 && /displacement/i.test(field.quantity)
+  const canDeform = field.location === 'node' && field.componentCount === 3 && field.valueKind === 'displacement'
   const component = typeof view.component === 'number' ? field.components[view.component] : view.component
   return (
     <article
@@ -53,9 +63,7 @@ export function MeshFieldResult({ field, onRendered }: { field: RecordedMeshFiel
             }
           >
             <option value="magnitude">{field.componentCount === 1 ? 'Value' : 'Magnitude'}</option>
-            {field.componentCount === 6 || field.componentCount === 9 ? (
-              <option value="vonMises">von Mises</option>
-            ) : null}
+            {field.valueKind === 'stress' ? <option value="vonMises">von Mises</option> : null}
             {field.components.map((name, index) => (
               <option key={index} value={index}>
                 {name}
@@ -134,15 +142,19 @@ export function MeshFieldResult({ field, onRendered }: { field: RecordedMeshFiel
       ) : null}
       {rendered.data ? (
         <div className="h-[480px] overflow-hidden rounded border border-slate-200">
-          <JscadViewer
-            layers={noLayers}
-            lengthUnit={field.lengthUnit}
-            meshRenderData={rendered.data}
-            meshIdentity={field.identity}
-            onRenderStart={onRender}
-            onRenderEnd={onRendered ?? onRender}
-            onRenderError={setError}
-          />
+          {renderViewer ? (
+            renderViewer(rendered.data, view)
+          ) : (
+            <JscadViewer
+              layers={noLayers}
+              lengthUnit={field.lengthUnit}
+              meshRenderData={rendered.data}
+              meshIdentity={field.identity}
+              onRenderStart={onRender}
+              onRenderEnd={onRendered ?? onRender}
+              onRenderError={setError}
+            />
+          )}
         </div>
       ) : null}
       <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-600">

@@ -121,6 +121,8 @@ def validate_artifact_item(value: object, source_hash: str) -> dict:
         raise HTTPException(422, "BuiltMeasurement must retain its Python program source.")
     if not isinstance(program.get("tasks"), dict) or not isinstance(program.get("recordedData"), dict):
         raise HTTPException(422, "BuiltMeasurement program tasks and recordedData must be objects.")
+    if not isinstance(program.get("resultContracts"), dict) or set(program["resultContracts"]) != set(program["recordedData"]):
+        raise HTTPException(422, "BuiltMeasurement requires semantic result contracts. Rebuild with the current client.")
     tasks = set(program["tasks"])
     if tasks != set(experiment["taskScenes"]) or tasks != set(measurement["taskMaterialSnapshots"]) or tasks != set(measurement["materialSelections"]):
         raise HTTPException(422, "Frozen Task scenes and Material snapshots must match the program tasks.")
@@ -217,6 +219,8 @@ async def commit_batch(db: AsyncSession, batch_id: str, user: UserData, catalog:
         async for job in jobs:
             measurement_input = job.input["measurement"]
             program = measurement_input["experiment"]["simulationProgram"]
+            if program["resultContracts"] != experiment.result_contracts:
+                raise HTTPException(409, "Artifact result contracts differ from the saved Experiment.")
             if program["pythonSource"] != experiment.source_bundle.get("files", {}).get("simulate.py"):
                 raise HTTPException(409, "Artifact Python program differs from the saved Experiment source.")
             for name, task in program["tasks"].items():

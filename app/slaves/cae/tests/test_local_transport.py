@@ -13,14 +13,39 @@ from caemble_catalog import catalog_path, open_catalog
 
 from app.kernel.api.errors import CaeError
 from app.kernel.coordinator.run import CaeRun
+from app.kernel.coordinator.plan import RunPlan
+from app.kernel.coordinator.simulation import SimulationApi
 from app.kernel.transport import local
 
 
 CAE = Path(__file__).resolve().parents[1]
+ORIGINAL_RECORD = SimulationApi.record
+
+
+def transport_plan(measurement, tasks, schemas):
+    # Transport tests isolate serialization and ACKs from Catalog compilation.
+    contracts = {name: {"task": "fixture", "output": name, "solver": {"name": "fixture", "version": "1"},
+                        "artifactType": "fixture/" + name} for name in schemas}
+    return RunPlan({}, {}, {}, schemas, contracts)
+
+
+async def record_fixture_artifact(self, name, value):
+    handle = self._artifacts.publish(value, producer_task="fixture", output_name=name,
+        solver_name="fixture", solver_version="1", artifact_type="fixture/" + name, state_revision=0)
+    try:
+        return await ORIGINAL_RECORD(self, name, handle)
+    finally:
+        self.release(handle)
+
+
+FIXTURE_BRIDGE = "from tests.test_local_transport import *; RunPlan.prepare = staticmethod(transport_plan); SimulationApi.record = record_fixture_artifact; raise SystemExit(local.main())"
+
 
 
 @pytest.fixture
-def local_input(tmp_path: Path):
+def local_input(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(RunPlan, "prepare", staticmethod(transport_plan))
+    monkeypatch.setattr(SimulationApi, "record", record_fixture_artifact)
     measurement = {
         "kind": "measurement",
         "experiment": {
@@ -48,7 +73,7 @@ def local_input(tmp_path: Path):
 
 def bridge(*arguments: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, "-X", "utf8", "-m", "app.kernel.transport.local", *arguments],
+        [sys.executable, "-X", "utf8", "-c", FIXTURE_BRIDGE, *arguments],
         cwd=CAE, input=stdin, capture_output=True, text=True, encoding="utf-8", timeout=30,
     )
 
@@ -261,7 +286,7 @@ def test_stdin_cancel_finishes_and_preserves_cancelled_manifest(local_input, tmp
 def test_success_exits_even_when_parent_keeps_stdin_open(local_input, tmp_path):
     path, _, revision = local_input
     with subprocess.Popen(
-        [sys.executable, "-X", "utf8", "-m", "app.kernel.transport.local", "run",
+        [sys.executable, "-X", "utf8", "-c", FIXTURE_BRIDGE, "run",
          "--input", str(path), "--input-hash", hashlib.sha256(path.read_bytes()).hexdigest(),
          "--out", str(tmp_path / "open-stdin"), "--catalog-revision", revision],
         cwd=CAE, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

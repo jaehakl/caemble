@@ -360,7 +360,7 @@ export type KernelIdentity = Readonly<{
 
 export type ExperimentDefinitionOptions<
   Schema extends VarsSchemaDefinition,
-  Recorded extends Readonly<Record<string, RecordedDataSpecNode>>,
+  Recorded extends Readonly<Record<string, RecordedOutputReference>>,
 > = Readonly<{
   geometry: (context: ModelContext<Schema>) => unknown
   lengthUnit: UcumUnit
@@ -381,7 +381,9 @@ export type TaskDefinitionOptions<Config> = Readonly<{
 
 export class ExperimentDefinition<
   Schema extends VarsSchemaDefinition = VarsSchemaDefinition,
-  Recorded extends Readonly<Record<string, RecordedDataSpecNode>> = Readonly<Record<string, RecordedDataSpecNode>>,
+  Recorded extends Readonly<Record<string, RecordedOutputReference>> = Readonly<
+    Record<string, RecordedOutputReference>
+  >,
 > {
   constructor(options: ExperimentDefinitionOptions<Schema, Recorded>)
   readonly documentType: 'experiment'
@@ -403,7 +405,7 @@ export class TaskDefinition<Config = unknown> {
 
 export declare function experiment<
   const Schema extends VarsSchemaDefinition,
-  const Recorded extends Readonly<Record<string, RecordedDataSpecNode>>,
+  const Recorded extends Readonly<Record<string, RecordedOutputReference>>,
 >(options: ExperimentDefinitionOptions<Schema, Recorded>): ExperimentDefinition<Schema, Recorded>
 
 export declare function defineTask<const Config>(options: TaskDefinitionOptions<Config>): TaskDefinition<Config>

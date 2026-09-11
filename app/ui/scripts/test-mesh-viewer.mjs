@@ -34,6 +34,7 @@ const field = {
   lengthUnit: 'm',
   valueUnit: 'm',
   quantity: 'kinematics.Displacement',
+  valueKind: 'displacement',
   location: 'node',
   points: points.flat(),
   cells: cells.flat(),
@@ -204,18 +205,20 @@ try {
     localResults.push({
       schemas,
       records,
+      contracts: input.measurement.experiment.simulationProgram.resultContracts,
       variables: input.measurement.experiment.variables,
       sourceHash: manifest.sourceHash,
     })
     await page.reload()
     await page.getByRole('article', { name: 'Displacement mesh field' }).waitFor()
     const reopened = await page.evaluate(
-      async ({ schemas, records }) => {
+      async ({ schemas, records, contracts }) => {
         const { recordedDataRules, flattenRecordedData } = await import('/src/lib/cad/simulation/recordedData.ts')
         const { parseRecordedMeshFields } = await import('/src/features/viewer/viewer/meshFields.ts')
         const parsed = parseRecordedMeshFields(
           recordedDataRules(schemas, 'local.recorded-data'),
           flattenRecordedData(schemas, records),
+          contracts,
         )
         if (parsed.errors.length) throw new Error(JSON.stringify(parsed.errors))
         window.reopenedMeshFields = parsed.fields
@@ -228,7 +231,7 @@ try {
           quantity,
         }))
       },
-      { schemas, records },
+      { schemas, records, contracts: input.measurement.experiment.simulationProgram.resultContracts },
     )
     for (const componentCount of [3, 6]) {
       const selected = reopened.find(
@@ -259,10 +262,11 @@ try {
     const updates = await page.evaluate(async (results) => {
       const { recordedDataRules, flattenRecordedData } = await import('/src/lib/cad/simulation/recordedData.ts')
       const { parseRecordedMeshFields } = await import('/src/features/viewer/viewer/meshFields.ts')
-      window.meshUpdateFields = results.map(({ schemas, records }) => {
+      window.meshUpdateFields = results.map(({ schemas, records, contracts }) => {
         const parsed = parseRecordedMeshFields(
           recordedDataRules(schemas, 'local.recorded-data'),
           flattenRecordedData(schemas, records),
+          contracts,
         )
         if (parsed.errors.length) throw new Error(JSON.stringify(parsed.errors))
         const field = parsed.fields.find((item) => /displacement/i.test(item.quantity))

@@ -1,3 +1,4 @@
+import { recordedResultContractsSchema } from '../resultValidators'
 import { z } from 'zod'
 import type {
   AvailableExperimentRecord,
@@ -62,6 +63,7 @@ const saveExperimentResponseSchema = z
     version: z.string(),
     coordinate: z.string(),
     bundleHash: z.string(),
+    result_contracts: recordedResultContractsSchema,
     sourceLocked: z.boolean(),
     derivedCounts: experimentDerivedCountsSchema,
   })

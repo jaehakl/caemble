@@ -1,3 +1,5 @@
+import { recordedResultContractsSchema } from '../resultValidators'
+import type { MeasurementResults } from './measurement'
 import { z } from 'zod'
 import type {
   MeasurementRecordedData,
@@ -64,8 +66,8 @@ export function parseRecordedDataListResponse(value: unknown) {
   return parseGetListResponse<PersistedRecordedDataRecord>(value, persistedRecordedDataRecordSchema)
 }
 
-export function parseMeasurementRecordedDataResponse(
-  value: unknown,
-): Readonly<{ recorded_data: MeasurementRecordedData }> {
-  return measurementRecordedDataResponseSchema.parse(value)
+export function parseMeasurementRecordedDataResponse(value: unknown): MeasurementResults {
+  const parsed = measurementRecordedDataResponseSchema.parse(value)
+  const envelope = z.object({ result_contracts: recordedResultContractsSchema.nullable() }).parse(value)
+  return { ...parsed, result_contracts: envelope.result_contracts }
 }

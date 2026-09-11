@@ -4,7 +4,6 @@ import { convertUcumValue } from '@/lib/cad/model/units'
 import { getQuantityKindTensorOrder } from '@/lib/quantitykind/runtime'
 import { CALCULATION_INPUT_MAX_BYTES, CalculationExecutionError, type CalculationInput } from './types'
 import { assertCalculationInput } from './validation'
-import { restoreDomainRecordAxes } from '@/lib/cad/simulation/domainRecordAxes'
 
 type ResolvedRuleResult = RecordedDataRule['result'] & Readonly<{ tensorOrder?: number }>
 
@@ -12,15 +11,6 @@ export function createCalculationInput(
   rules: readonly RecordedDataRule[],
   flatRecordedData: RecordedData | Readonly<Record<string, RecordedDataTensor | undefined>>,
 ): CalculationInput {
-  const meshRoots = Object.entries(flatRecordedData)
-    .filter(
-      ([name, value]) =>
-        name.endsWith('.domain.kind') &&
-        isDataTensor(value) &&
-        value.storage.kind === 'inline' &&
-        value.storage.value === 'unstructured-mesh',
-    )
-    .map(([name]) => name.slice(0, -12))
   const resolved = rules.map((rule) => {
     const tensor = flatRecordedData[rule.label] as RecordedDataTensor | undefined
     if (tensor === undefined) throw new Error(`RecordedData ${rule.label} is missing.`)
@@ -34,12 +24,7 @@ export function createCalculationInput(
     return {
       result,
       rule,
-      tensor: restoreDomainRecordAxes(
-        tensor,
-        result,
-        tensorOrder,
-        meshRoots.some((root) => rule.label.startsWith(`${root}.domain.`) || rule.label === `${root}.values`),
-      ),
+      tensor,
       tensorOrder,
     }
   })

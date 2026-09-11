@@ -1,7 +1,7 @@
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import ExperimentRecord, Measurement, RecordedData
@@ -23,13 +23,6 @@ async def list_recorded_data(
     user: UserData | None,
 ) -> dict[str, Any]:
     clauses = []
-    if not request.include_system:
-        clauses.append(
-            and_(
-                RecordedData.experiment_record.has(~ExperimentRecord.name.like("@caemble/%")),
-                RecordedData.experiment_record.has(~ExperimentRecord.name.like("rayPaths.%")),
-            )
-        )
     if request.experiment_id is not None:
         if request.experiment_id <= 0:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="experiment_id must be positive.")

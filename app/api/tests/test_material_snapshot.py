@@ -37,7 +37,7 @@ class MaterialSnapshotTests(unittest.IsolatedAsyncioTestCase):
             "experiment": {
                 "sourceHash": snapshot["sourceHash"], "variables": {"value": 7},
                 "varsSchema": {}, "scene": {}, "taskScenes": {},
-                "simulationProgram": {"pythonSource": "async def simulate(*, sim, tasks, vars):\n    pass\n", "tasks": {}, "recordedData": {}},
+                "simulationProgram": {"pythonSource": "async def simulate(*, sim, tasks, vars):\n    pass\n", "tasks": {}, "recordedData": {}, "resultContracts": {}},
             },
         }}
 

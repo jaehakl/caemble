@@ -1,3 +1,4 @@
+import type { RecordedResultContracts } from '@/contracts/results'
 import { convertUcumValue, type RecordedData, type RecordedDataRule, type UcumUnit } from '@/lib/cad/model'
 import { createDataTensorAccessor, type DataTensorAccessor } from '@/lib/cad/model/dataTensor'
 
@@ -7,6 +8,7 @@ export type RecordedMeshField = Readonly<{
   lengthUnit: UcumUnit
   valueUnit: UcumUnit
   quantity: string
+  valueKind?: 'displacement' | 'stress'
   location: 'node' | 'cell'
   points: Float64Array
   cells: Uint32Array
@@ -55,10 +57,14 @@ const tetEdges = [
 export const meshMaterialColors = ['#60a5fa', '#fbbf24', '#a78bfa', '#34d399', '#fb7185', '#22d3ee'] as const
 
 /** Restores domain-preserving records using the same inline/attachment accessor as tensor plots. */
-export function parseRecordedMeshFields(rules: readonly RecordedDataRule[], data?: RecordedData | null) {
+export function parseRecordedMeshFields(
+  rules: readonly RecordedDataRule[],
+  data?: RecordedData | null,
+  contracts: RecordedResultContracts = {},
+) {
   const fields: RecordedMeshField[] = []
   const errors: { label: string; message: string }[] = []
-  const labels = rules.filter((rule) => rule.label.endsWith('.domain.kind')).map((rule) => rule.label.slice(0, -12))
+  const labels = Object.keys(contracts).filter((label) => contracts[label].visualization.kind === 'mesh-field')
   const byLabel = new Map(rules.map((rule) => [rule.label, rule]))
   if (!data) return { fields, errors, labels }
   for (const label of labels) {
@@ -154,20 +160,17 @@ export function parseRecordedMeshFields(rules: readonly RecordedDataRule[], data
           lengthUnit: String(read('domain.lengthUnit')?.at(0) ?? 'm') as UcumUnit,
           valueUnit: String(read('valueUnit')?.at(0) ?? byLabel.get(`${label}.values`)?.result.unit ?? '1') as UcumUnit,
           quantity: String(read('quantity')?.at(0) ?? ''),
+          valueKind: contracts[label].visualization.valueKind,
           location,
           points: pointValues,
           cells: connectivity,
           values: valueValues,
           componentCount,
-          components: components
-            ? Array.from({ length: components.size }, (_, index) => String(components.at(index)))
-            : componentCount === 6
-              ? ['xx', 'yy', 'zz', 'xy', 'yz', 'xz']
-              : componentCount === 3
-                ? ['x', 'y', 'z']
-                : componentCount === 9
-                  ? ['xx', 'xy', 'xz', 'yx', 'yy', 'yz', 'zx', 'zy', 'zz']
-                  : ['value'],
+          components:
+            contracts[label].visualization.components ??
+            (components
+              ? Array.from({ length: components.size }, (_, index) => String(components.at(index)))
+              : Array.from({ length: componentCount }, (_, index) => String(index))),
           boundaryFaces: Uint32Array.from(boundary.flatMap((face) => face.nodes)),
           boundaryCells: Uint32Array.from(boundary.map((face) => face.cell)),
           cellRegions: Uint32Array.from({ length: cells.shape[0] }, (_, index) => Number(regions?.at(index) ?? 0)),
@@ -198,7 +201,7 @@ export function createMeshFieldRenderData(
 ) {
   const lengthScale = convertUcumValue(1, field.lengthUnit, displayUnit, 'Mesh display length')
   const displacementScale =
-    field.componentCount === 3 && field.location === 'node' && /displacement/i.test(field.quantity)
+    field.componentCount === 3 && field.location === 'node' && field.valueKind === 'displacement'
       ? convertUcumValue(1, field.valueUnit, displayUnit, 'Mesh displacement') * view.deformationScale
       : 0
   const points = Float64Array.from(

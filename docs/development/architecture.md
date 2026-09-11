@@ -156,20 +156,20 @@ collisions. This adaptive choice remains part of the physical tracing state,
 including reflection, transmission, scattering, absorption, detector hits, and
 ray branching.
 
-Visual paths use the semantic RecordedData group `rayPaths`, recorded in one
-call as five aligned tensors:
+All RecordedData declarations are `{ task, output }` references. The build freezes
+Catalog output data schemas and semantic visualization contracts alongside Task,
+output key, Solver version and Catalog revision. These contracts travel with the
+Experiment, Measurement result envelope and offline export. Reading historical
+results does not consult the current Catalog. Records without frozen contracts
+remain stored but are unsupported by the new Viewer.
 
-| Member           | Type and meaning                              |
-| ---------------- | --------------------------------------------- |
-| `vertices`       | `float32[V, 3]` flattened vertex positions    |
-| `pathOffsets`    | `uint32[P + 1]` vertex offsets, ending at `V` |
-| `segmentPower`   | `float32[S]` radiant flux aligned to segments |
-| `pathWavelength` | `float32[P]` one wavelength per path          |
-| `segmentEvent`   | `uint8[S]` event code aligned to segments     |
-
-The persisted names are `rayPaths.<member>`. The Viewer reconstructs paths from
-the offsets; generic Analysis excludes these system tensors by requesting
-RecordedData with `include_system: false`.
+The Viewer selects renderers by semantic kind: mesh-field, polyline,
+structured-field, tensor or bundle. Paths have no reserved root or special result
+card. Contract member bindings connect vertices, offsets and optional attributes.
+Calculation continues to address the existing dotted tensor leaves; result
+contract metadata is not a tensor leaf. A shared scene supports one mesh field
+and multiple polylines in the Experiment coordinate space. Deformed meshes cannot
+be overlaid with undeformed paths.
 
 ## Execution, authentication, and ownership
 

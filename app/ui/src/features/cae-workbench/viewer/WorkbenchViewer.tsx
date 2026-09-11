@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react'
+import { materialVarsHash } from '@/lib/material/resolution'
 import CadViewer from '@/features/viewer/viewer/CadViewer'
-import type { RayPathBundle } from '@/lib/cad/model'
+import type { RecordedResultContracts } from '@/contracts/results'
+import { parseResultPolylines } from '@/features/viewer/viewer/resultPolylines'
+import { ResultTensorView } from '@/features/viewer/viewer/ResultTensorView'
 import { experimentTaskName, type ExperimentSourceDocument } from '@/lib/cad/source'
 import type { CadDocumentController } from '@/features/viewer/workspace/useCadWorkspace'
 import type { CadViewerSelectionQuery, CadViewerSourceLookupStatus } from '@/features/viewer/viewer/selection'
@@ -16,7 +19,10 @@ export function WorkbenchViewer({
   onSelectionQueryChange,
   onSelectionSourcePathsChange,
   onToggleViewerExpanded,
-  rayPaths,
+  resultContracts,
+  resultErrors = {},
+  resultSourceHash,
+  resultVarsHash,
   selectionQuery,
   selectionSourceStatus,
   viewerExpanded,
@@ -32,7 +38,10 @@ export function WorkbenchViewer({
   onSelectionQueryChange: (query: CadViewerSelectionQuery | null) => void
   onSelectionSourcePathsChange: (values: readonly string[]) => void
   onToggleViewerExpanded: () => void
-  rayPaths?: readonly RayPathBundle[]
+  resultErrors?: Readonly<Record<string, string>>
+  resultContracts?: RecordedResultContracts | null
+  resultSourceHash?: string | null
+  resultVarsHash?: string | null
   selectionQuery: CadViewerSelectionQuery | null
   selectionSourceStatus: Readonly<Record<string, CadViewerSourceLookupStatus>>
   viewerExpanded: boolean
@@ -41,9 +50,18 @@ export function WorkbenchViewer({
   loading?: boolean
   downloadProgress?: Readonly<{ completed: number; total: number }> | null
 }) {
-  const mesh = useMemo(() => parseRecordedMeshFields(recordedRules, recordedData), [recordedRules, recordedData])
-  const [selectedView, setSelectedView] = useState('mesh')
-  const selectedField = mesh.fields.find((field) => field.label === selectedView) ?? mesh.fields[0]
+  const mesh = useMemo(
+    () => parseRecordedMeshFields(recordedRules, recordedData, resultContracts ?? {}),
+    [recordedRules, recordedData, resultContracts],
+  )
+  const polylines = useMemo(
+    () => parseResultPolylines(resultContracts ?? {}, recordedRules, recordedData),
+    [resultContracts, recordedRules, recordedData],
+  )
+  const [overlay, setOverlay] = useState<readonly string[]>([])
+  const [selectedView, setSelectedView] = useState('')
+  const selectedField = mesh.fields.find((field) => field.label === selectedView)
+  const selectedContract = resultContracts?.[selectedView]
   const viewerDocument = useMemo(
     () =>
       experiment
@@ -63,56 +81,136 @@ export function WorkbenchViewer({
     ],
   )
 
+  const frameMatches = Boolean(
+    resultSourceHash &&
+    resultVarsHash &&
+    experimentDocument.evaluatedSnapshot?.sourceHash === resultSourceHash &&
+    materialVarsHash(experimentDocument.evaluatedSnapshot.variables) === resultVarsHash,
+  )
+  const canOverlayGeometry =
+    frameMatches && (!selectedContract || selectedContract.visualization.coordinateSpace === 'experiment')
+  const sceneDocument = selectedView !== '' && !canOverlayGeometry ? null : viewerDocument
+  const displayUnit = sceneDocument?.scene?.lengthUnit ?? selectedField?.lengthUnit ?? 'm'
+  const selectedLines = polylines.bundles.filter(
+    (bundle) =>
+      bundle.id === selectedView ||
+      (overlay.includes(bundle.id) &&
+        frameMatches &&
+        resultContracts?.[bundle.id].visualization.coordinateSpace === 'experiment' &&
+        (!selectedContract || selectedContract.visualization.coordinateSpace === 'experiment')),
+  )
+  const renderScene = (
+    meshRenderData?: Parameters<NonNullable<Parameters<typeof MeshFieldResult>[0]['renderViewer']>>[0],
+    deformationScale = 0,
+  ) => (
+    <>
+      {deformationScale > 0 && selectedLines.length ? (
+        <p role="status" className="bg-amber-50 p-2 text-xs">
+          변형 표시 중에는 원래 좌표의 polyline Overlay를 표시하지 않습니다.
+        </p>
+      ) : null}
+      <CadViewer
+        activeExperimentTaskName={activeExperimentTaskName ? experimentTaskName(activeExperimentTaskName) : null}
+        experiment={sceneDocument}
+        onFindSelectionSource={onFindSelectionSource}
+        onRenderEnd={experimentDocument.handleRenderEnd}
+        onRenderError={experimentDocument.handleRenderError}
+        onRenderStart={experimentDocument.handleRenderStart}
+        onSelectionQueryChange={onSelectionQueryChange}
+        onSelectionSourcePathsChange={onSelectionSourcePathsChange}
+        polylines={deformationScale > 0 ? [] : selectedLines}
+        meshRenderData={meshRenderData}
+        meshIdentity={selectedField?.identity}
+        displayUnit={displayUnit}
+        selectionQuery={selectionQuery}
+        selectionSourceStatus={selectionSourceStatus}
+        onToggleViewerExpanded={onToggleViewerExpanded}
+        viewerExpanded={viewerExpanded}
+      />
+    </>
+  )
   return (
-    <div className="relative h-full min-h-0">
-      {loading ? (
-        <div role="status" className="absolute top-2 left-2 z-20 rounded bg-white p-2 text-xs shadow">
-          저장 결과 불러오는 중{downloadProgress ? ` · ${downloadProgress.completed}/${downloadProgress.total}` : '…'}
-        </div>
+    <div className="relative flex h-full min-h-0 flex-col">
+      <div className="flex flex-wrap items-center gap-3 border-b bg-white p-2 text-xs">
+        <select
+          aria-label="Viewer 결과 선택"
+          value={selectedView}
+          onChange={(event) => setSelectedView(event.target.value)}
+        >
+          <option value="">Geometry</option>
+          {Object.entries(resultContracts ?? {}).map(([name, result]) => (
+            <option key={name} value={name}>
+              {name} · {result.visualization.kind}
+            </option>
+          ))}
+        </select>
+        {Object.entries(resultContracts ?? {})
+          .filter(([, result]) => result.visualization.kind === 'polyline')
+          .map(([name, result]) => {
+            const compatible =
+              frameMatches &&
+              result.visualization.coordinateSpace === 'experiment' &&
+              (!selectedContract || selectedContract.visualization.coordinateSpace === 'experiment')
+            return (
+              <label
+                key={name}
+                title={compatible ? 'Geometry 좌표에 겹쳐 표시' : '선택 결과와 좌표계를 연결할 수 없습니다.'}
+              >
+                <input
+                  type="checkbox"
+                  aria-label={`${name} Overlay`}
+                  disabled={!compatible || name === selectedView}
+                  checked={name === selectedView || overlay.includes(name)}
+                  onChange={(event) =>
+                    setOverlay(event.target.checked ? [...overlay, name] : overlay.filter((item) => item !== name))
+                  }
+                />{' '}
+                {name}
+              </label>
+            )
+          })}
+        {loading ? (
+          <span role="status">
+            저장 결과 불러오는 중{downloadProgress ? ` · ${downloadProgress.completed}/${downloadProgress.total}` : '…'}
+          </span>
+        ) : null}
+        {!resultContracts && recordedRules.length ? (
+          <span role="status">이전 결과 계약은 새 Viewer에서 지원하지 않습니다.</span>
+        ) : null}
+      </div>
+      {!canOverlayGeometry && selectedView !== '' ? (
+        <p role="status" className="p-2 text-xs">
+          현재 Geometry와 저장 결과의 source 또는 Vars 좌표가 달라 Geometry Overlay를 표시하지 않습니다.
+        </p>
       ) : null}
-      {mesh.labels.length > 0 ? (
-        <div className="absolute top-2 right-2 z-20 rounded bg-white p-1 shadow">
-          <select
-            aria-label="Viewer 결과 선택"
-            value={selectedView === 'geometry' ? 'geometry' : (selectedField?.label ?? 'mesh')}
-            onChange={(event) => setSelectedView(event.target.value)}
-          >
-            <option value="geometry">Geometry</option>
-            {mesh.fields.map((field) => (
-              <option key={field.label} value={field.label}>
-                {field.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      ) : null}
-      {selectedView !== 'geometry' && selectedField ? (
-        <div className="h-full overflow-auto pt-8" aria-busy={loading}>
-          <MeshFieldResult key={`${selectedField.identity}:${selectedField.label}`} field={selectedField} />
-        </div>
-      ) : (
-        <>
-          <CadViewer
-            activeExperimentTaskName={activeExperimentTaskName ? experimentTaskName(activeExperimentTaskName) : null}
-            experiment={viewerDocument}
-            onFindSelectionSource={onFindSelectionSource}
-            onRenderEnd={experimentDocument.handleRenderEnd}
-            onRenderError={experimentDocument.handleRenderError}
-            onRenderStart={experimentDocument.handleRenderStart}
-            onSelectionQueryChange={onSelectionQueryChange}
-            onSelectionSourcePathsChange={onSelectionSourcePathsChange}
-            rayPaths={rayPaths}
-            selectionQuery={selectionQuery}
-            selectionSourceStatus={selectionSourceStatus}
-            onToggleViewerExpanded={onToggleViewerExpanded}
-            viewerExpanded={viewerExpanded}
+      <div className="min-h-0 flex-1 overflow-auto">
+        {selectedField ? (
+          <MeshFieldResult
+            key={selectedView}
+            field={selectedField}
+            displayUnit={displayUnit}
+            renderViewer={(data, view) => renderScene(data, view.deformationScale)}
           />
-        </>
-      )}
-      {mesh.errors.map((error) => (
-        <div role="alert" key={error.label} className="absolute bottom-2 left-2 bg-white p-2 text-red-700">
+        ) : selectedContract && !['mesh-field', 'polyline'].includes(selectedContract.visualization.kind) ? (
+          <ResultTensorView
+            key={selectedView}
+            name={selectedView}
+            contract={selectedContract}
+            rules={recordedRules}
+            data={recordedData}
+          />
+        ) : (
+          renderScene()
+        )}
+      </div>
+      {[
+        ...Object.entries(resultErrors).map(([label, message]) => ({ label, message })),
+        ...mesh.errors.filter((error) => !resultErrors[error.label]),
+        ...polylines.errors.filter((error) => !resultErrors[error.label]),
+      ].map((error) => (
+        <p role="alert" key={error.label} className="bg-rose-50 p-2 text-xs text-red-700">
           {error.label}: {error.message}
-        </div>
+        </p>
       ))}
     </div>
   )

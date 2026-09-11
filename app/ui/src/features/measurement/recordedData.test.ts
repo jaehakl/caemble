@@ -16,8 +16,9 @@ function recordedDataLeaf(overrides: Readonly<Record<string, unknown>> = {}) {
 }
 
 describe('Measurement recorded-data wire contract', () => {
-  it('reopens legacy mesh records as Calculation inputs without changing the API response', () => {
+  it('reads explicitly stored mesh axes as Calculation inputs without changing the API response', () => {
     const response = parseMeasurementRecordedDataResponse({
+      result_contracts: null,
       recorded_data: {
         displacement: {
           domain: {
@@ -31,7 +32,11 @@ describe('Measurement recorded-data wire contract', () => {
                 experiment_record_id: 12,
                 dtype: 'int32',
                 data_schema: { dtype: 'int32', axes: [{ name: 'cell' }, { length: 4 }] },
-                data: { shape: [1, 4], storage: { kind: 'inline', value: [[0, 1, 2, 3]] } },
+                data: {
+                  shape: [1, 4],
+                  axes: [{ implicitOrdinal: true }, { implicitOrdinal: true }],
+                  storage: { kind: 'inline', value: [[0, 1, 2, 3]] },
+                },
               }),
             },
           },
@@ -48,6 +53,7 @@ describe('Measurement recorded-data wire contract', () => {
   })
   it('accepts the backend null data schema and preserves it in the snapshot row', () => {
     const response = parseMeasurementRecordedDataResponse({
+      result_contracts: null,
       recorded_data: { stress: recordedDataLeaf() },
     })
 
@@ -64,6 +70,7 @@ describe('Measurement recorded-data wire contract', () => {
 
   it('treats dtype as a valid group path segment instead of a leaf discriminant', () => {
     const response = parseMeasurementRecordedDataResponse({
+      result_contracts: null,
       recorded_data: { group: { dtype: recordedDataLeaf({ experiment_record_id: 12 }) } },
     })
 

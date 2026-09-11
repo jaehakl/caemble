@@ -8,6 +8,7 @@ import pytest
 
 from app.kernel.transport.tensor import decode_attachment_tensors, encode_recorded_data
 from app.kernel.coordinator.simulation import SimulationApi
+from app.kernel.coordinator.plan import RunPlan
 from app.kernel.transport import handlers
 from sdk.protocol.packets import receive_packet, send_packet
 
@@ -33,7 +34,8 @@ async def test_fdtd_tensor_and_axis_metadata_round_trip_through_server_packets()
 @pytest.mark.asyncio
 @pytest.mark.parametrize("acknowledged", [False, True])
 async def test_record_ack_wait_starts_after_upload(monkeypatch, acknowledged) -> None:
-    # Use a scalar producer to exercise recording without starting a solver.
+    # Isolate transport timing from Catalog/build validation and solver execution.
+    monkeypatch.setattr(RunPlan, "prepare", staticmethod(lambda measurement, tasks, schemas: RunPlan({}, {}, {}, schemas)))
     monkeypatch.setattr(SimulationApi, "record", lambda self, name, value: self._run.record(name, value))
     monkeypatch.setattr(handlers, "RECORD_ACK_TIMEOUT_SECONDS", 0.02)
     uploaded = False

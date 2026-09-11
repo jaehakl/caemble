@@ -53,6 +53,11 @@ class FakeRun:
                 "time": {"dtype": "float32", "axes": [{"name": "time"}]},
             },
         })
+        self.plan = replace(self.plan, result_contracts={
+            name: {"task": "producer", "output": "field", "solver": {"name": "producer", "version": "1.0.0"},
+                   "artifactType": "test/field-series@1" if name == "field-series" else "test/field@1"}
+            for name in self.plan.schemas
+        })
         self.recorded: tuple[str, Any] | None = None
         self.on_record = None
 

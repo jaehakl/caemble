@@ -1,4 +1,5 @@
 import type { DataTensor as CadDataTensor, RecordedDataResult } from '../model/descriptor'
+import type { RecordedResultContracts } from '@/contracts/results'
 
 export type RecordedDataSpec = RecordedDataResult
 export type ResolvedDataSchema = RecordedDataSpec & Readonly<{ tensorOrder: number }>
@@ -30,4 +31,5 @@ export type SimulationProgramManifest = Readonly<{
   pythonSource: string
   tasks: Readonly<Record<string, SimulationProgramTaskManifest>>
   recordedData: RecordedDataSchemaTree
+  resultContracts: RecordedResultContracts
 }>

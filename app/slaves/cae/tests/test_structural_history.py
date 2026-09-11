@@ -113,7 +113,7 @@ def test_recorded_history_retains_physical_time_and_semantic_region_axes(complet
         "referencePoint": np.zeros(3),
     }
     model.result_requests["history"] = {"regions": [target]}
-    descriptor = solver_catalog.descriptor("structural-mechanics", "2.0.0")
+    descriptor = solver_catalog.descriptor("structural-mechanics", "3.0.0")
     config = {"outputs": [{"methodId": "fea.history", "key": "history", "target": [target], "parameters": {"scope": "final"}}]}
     definition = next(item for item in descriptor["methods"]["outputs"] if item["methodId"] == "fea.history")
     value = build_outputs(config, descriptor, model, solution, history_complete=complete)["history"]
@@ -122,7 +122,7 @@ def test_recorded_history_retains_physical_time_and_semantic_region_axes(complet
     artifacts = ArtifactStore(resources)
     leases = []
     try:
-        handle = artifacts.publish(value, producer_task="structure", solver_name="structural-mechanics", solver_version="2.0.0", output_name="history", artifact_type=definition["artifactType"], state_revision=1)
+        handle = artifacts.publish(value, producer_task="structure", solver_name="structural-mechanics", solver_version="3.0.0", output_name="history", artifact_type=definition["artifactType"], state_revision=1)
         schema = definition["data"]["members"]
         recorded = materialize_record_value(handle, schema, resources=resources, artifacts=artifacts, owner="record", leases=leases)
         encoded, attachments, _ = encode_recorded_data("history", schema, recorded, 1)

@@ -17,6 +17,7 @@ const field: RecordedMeshField = {
   lengthUnit: 'm',
   valueUnit: 'Pa',
   quantity: 'Pressure',
+  valueKind: 'stress',
   location: 'cell',
   points: new Float64Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]),
   cells: new Uint32Array([0, 1, 2, 3]),

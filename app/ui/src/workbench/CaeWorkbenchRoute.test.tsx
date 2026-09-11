@@ -44,7 +44,7 @@ vi.mock('@/features/cae-workbench/viewer/useSelectionSourceNavigation', () => ({
 }))
 vi.mock('@/features/cae/CaeBatchProvider', () => ({ useCaeBatches: () => ({ inspectedBatchId: null }) }))
 vi.mock('@/features/cae/useCaeBatchConsole', () => ({ useCaeBatchConsole: () => undefined }))
-vi.mock('@/lib/cad/model', () => ({ parseRayPathBundles: () => [] }))
+vi.mock('@/lib/cad/model', () => ({ parsePolylineBundles: () => [] }))
 vi.mock('@/features/cae-workbench/chrome', () => ({
   defaultWorkbenchSections: [{ id: 'prediction' }, { id: 'analysis' }, { id: 'lab' }, { id: 'help' }],
   WorkbenchMenubar: ({
@@ -141,7 +141,6 @@ vi.mock('@/features/cae-workbench/editors', () => ({
 vi.mock('@/features/experiment', () => ({ ExperimentManager: () => null }))
 vi.mock('@/features/cae-workbench/viewer/WorkbenchViewer', () => ({ WorkbenchViewer: () => null }))
 vi.mock('@/features/runtime-console', () => ({ createRuntimeConsoleStore: () => ({}), RuntimeConsoleView: () => null }))
-vi.mock('@/features/measurement/RayPathSystemCard', () => ({ RayPathSystemCard: () => null }))
 vi.mock('./CalculationWorkbenchContainer', () => ({ CalculationWorkbenchContainer: () => null }))
 vi.mock('@/features/cae/CaeBatchPanel', () => ({ CaeBatchPanel: () => null }))
 vi.mock('@/features/jobs/JobsPage', () => ({ JobsWorkspace: () => null }))

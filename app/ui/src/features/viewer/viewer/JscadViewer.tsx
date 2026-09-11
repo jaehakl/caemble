@@ -1,9 +1,11 @@
+import { measurements } from '@jscad/modeling'
+import { cameraClipping, panCamera } from './cameraClipping'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as reglRenderer from '@jscad/regl-renderer'
 import { Copy, Focus, Maximize2, Minimize2, SearchCode, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { CadScenePart } from '@/lib/cad/evaluation/types'
-import type { RayPathBundle, UcumUnit } from '@/lib/cad/model'
+import type { PolylineBundle, UcumUnit } from '@/lib/cad/model'
 import { scenePartColor, unassignedGeometryColor } from './materialColor'
 import { createWireframeGeometries, geometryWithSelectedPolygons, viewerSelectionColor } from './renderParts'
 import { createRayPathRenderGeometries } from './rayPathRendering'
@@ -44,10 +46,6 @@ type ReglRendererApi = {
   controls: {
     orbit: {
       defaults: RendererState
-      pan: (
-        state: RendererState & { camera: RendererState; controls: RendererState; speed: number },
-        delta: number[],
-      ) => RendererChange
       rotate: (
         state: RendererState & { camera: RendererState; controls: RendererState; speed: number },
         angle: number[],
@@ -89,7 +87,7 @@ type JscadViewerProps = {
   onToggleSource?: (source: CadViewerSource) => void
   onToggleViewerExpanded?: () => void
   selectionQuery?: CadViewerSelectionQuery | null
-  rayPaths?: readonly RayPathBundle[]
+  polylines?: readonly PolylineBundle[]
   meshRenderData?: ReturnType<typeof createMeshFieldRenderData>
   meshIdentity?: string
   viewerExpanded?: boolean
@@ -134,13 +132,27 @@ function drawRayPaths(regl: ReglCommandBuilder) {
 function drawRecordedMesh(regl: ReglCommandBuilder) {
   return regl({
     primitive: regl.prop('primitive'),
-    vert: rayPathVertexShader,
+    vert: `
+      precision mediump float;
+      uniform mat4 view, projection;
+      uniform float depthBias;
+      attribute vec3 position;
+      attribute vec4 color;
+      varying vec4 vertexColor;
+      void main() {
+        vertexColor = color;
+        gl_Position = projection * view * vec4(position, 1.0);
+        gl_Position.z -= depthBias * gl_Position.w;
+      }
+    `,
     frag: rayPathFragmentShader,
     attributes: { position: regl.prop('positions'), color: regl.prop('colors') },
+    uniforms: {
+      depthBias: (_context: unknown, props: { primitive: string }) => (props.primitive === 'lines' ? 2e-5 : 1e-5),
+    },
     elements: regl.prop('indices'),
     depth: { enable: true, func: 'lequal' },
     cull: { enable: false },
-    polygonOffset: { enable: true, offset: [1, 1] },
   })
 }
 const cameraViewDirections = {
@@ -284,7 +296,7 @@ function JscadViewer({
   onSelectionSourcePathsChange,
   onToggleSource,
   onToggleViewerExpanded,
-  rayPaths = [],
+  polylines = [],
   meshRenderData,
   meshIdentity,
   selectionQuery = null,
@@ -317,7 +329,7 @@ function JscadViewer({
     () => (pickMode === 'off' ? [] : createCadViewerPickParts(displayLayers)),
     [displayLayers, pickMode],
   )
-  const rayPathGeometries = useMemo(() => createRayPathRenderGeometries(rayPaths, lengthUnit), [lengthUnit, rayPaths])
+  const rayPathGeometries = useMemo(() => createRayPathRenderGeometries(polylines, lengthUnit), [lengthUnit, polylines])
   const rayPathVisualsRef = useRef<Record<string, unknown>>({
     drawCmd: 'drawRayPaths',
     show: true,
@@ -333,7 +345,7 @@ function JscadViewer({
       })),
     [rayPathGeometries],
   )
-  const rayPathCount = rayPaths.reduce((sum, bundle) => sum + bundle.pathCount, 0)
+  const rayPathCount = polylines.reduce((sum, bundle) => sum + bundle.pathCount, 0)
   const meshVisualsRef = useRef<Record<string, unknown>>({
     drawCmd: 'drawRecordedMesh',
     show: true,
@@ -343,8 +355,38 @@ function JscadViewer({
     () => meshRenderData?.geometries.map((geometry) => ({ ...geometry, visuals: meshVisualsRef.current })) ?? [],
     [meshRenderData],
   )
-  const lastFittedMeshRef = useRef<string | undefined>(undefined)
-  const raySegmentCount = rayPaths.reduce((sum, bundle) => sum + bundle.segmentCount, 0)
+  const resultIdentity = JSON.stringify([meshIdentity, polylines.map((bundle) => bundle.id)])
+  const lastFittedResultRef = useRef<string | null>(null)
+  const geometryBounds = useMemo(() => {
+    const boxes = displayLayers.flatMap((layer) =>
+      layer.parts.map((part) =>
+        measurements.measureBoundingBox(part.geometry as Parameters<typeof measurements.measureBoundingBox>[0]),
+      ),
+    )
+    return boxes
+  }, [displayLayers])
+  const sceneBounds = useMemo(() => {
+    const min = [Infinity, Infinity, Infinity],
+      max = [-Infinity, -Infinity, -Infinity]
+    const boxes = [
+      ...geometryBounds,
+      ...(meshRenderData ? [[meshRenderData.bounds.min, meshRenderData.bounds.max]] : []),
+    ]
+    for (const [lower, upper] of boxes)
+      for (let axis = 0; axis < 3; axis++) {
+        min[axis] = Math.min(min[axis], lower[axis])
+        max[axis] = Math.max(max[axis], upper[axis])
+      }
+    for (const geometry of rayPathGeometries)
+      geometry.positions.forEach((value, index) => {
+        min[index % 3] = Math.min(min[index % 3], value)
+        max[index % 3] = Math.max(max[index % 3], value)
+      })
+    return min.every(Number.isFinite) && max.every(Number.isFinite) ? ([min, max] as const) : null
+  }, [geometryBounds, meshRenderData, rayPathGeometries])
+  const sceneBoundsRef = useRef(sceneBounds)
+  sceneBoundsRef.current = sceneBounds
+  const raySegmentCount = polylines.reduce((sum, bundle) => sum + bundle.segmentCount, 0)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const cameraRef = useRef<RendererState | null>(null)
   const controlsRef = useRef<RendererState | null>(null)
@@ -376,6 +418,15 @@ function JscadViewer({
   const renderScene = useCallback(() => {
     if (!renderRef.current || !optionsRef.current) return false
     try {
+      const camera = cameraRef.current
+      const canvas = canvasRef.current
+      if (camera && canvas) {
+        Object.assign(
+          camera,
+          cameraClipping(sceneBoundsRef.current, camera.position as number[], camera.target as number[]),
+        )
+        renderer.cameras.perspective.setProjection(camera, camera, { width: canvas.width, height: canvas.height })
+      }
       renderRef.current(optionsRef.current)
       return true
     } catch (error) {
@@ -422,7 +473,7 @@ function JscadViewer({
     cameraRef.current = camera
     controlsRef.current = controls
     lastFittedPartsRef.current = null
-    lastFittedMeshRef.current = undefined
+    lastFittedResultRef.current = null
     rendererEntityCacheRef.current.clear()
     referenceEntitiesRef.current = [
       {
@@ -505,41 +556,19 @@ function JscadViewer({
   useEffect(() => {
     if (!optionsRef.current || !renderRef.current || !cameraRef.current || !controlsRef.current) return
 
-    if (meshRenderData) {
-      onRenderStart()
-      optionsRef.current.entities = meshEntities
-      if (lastFittedMeshRef.current !== meshIdentity) {
-        const { min, max } = meshRenderData.bounds
-        const target = min.map((minimum, index) => (minimum + max[index]) / 2)
-        const diameter = Math.hypot(...max.map((maximum, index) => maximum - min[index]))
-        const distance = (Math.max(diameter, Number.EPSILON) * 0.6) / Math.sin(Number(cameraRef.current.fov) / 2)
-        Object.assign(cameraRef.current, {
-          target,
-          position: target.map((coordinate) => coordinate + distance / Math.sqrt(3)),
-          near: Math.max(diameter * 1e-5, 1e-10),
-          far: Math.max(diameter * 100, 1),
-        })
-        const canvas = canvasRef.current!
-        renderer.cameras.perspective.setProjection(cameraRef.current, cameraRef.current, {
-          width: canvas.width,
-          height: canvas.height,
-        })
-        Object.assign(controlsRef.current, { phiDelta: 0, thetaDelta: 0, scale: 1 })
-        lastFittedMeshRef.current = meshIdentity
+    const shouldFit =
+      Boolean(sceneBounds) && (lastFittedPartsRef.current !== parts || lastFittedResultRef.current !== resultIdentity)
+    if (sceneBounds) {
+      const diameter = Math.max(
+        Math.hypot(...sceneBounds[1].map((value, axis) => value - sceneBounds[0][axis])),
+        Number.EPSILON,
+      )
+      controlsRef.current.limits = {
+        ...(controlsRef.current.limits as object),
+        minDistance: diameter * 1e-6,
+        maxDistance: diameter * 1e6,
       }
-      renderer.cameras.perspective.update(cameraRef.current, cameraRef.current)
-      if (renderScene()) onRenderEnd()
-      return
     }
-
-    if (parts.length === 0) {
-      optionsRef.current.entities = [...referenceEntitiesRef.current, ...rayPathEntities]
-      renderScene()
-      lastFittedPartsRef.current = null
-      return
-    }
-
-    const shouldFit = lastFittedPartsRef.current !== parts
     if (shouldFit) onRenderStart()
 
     try {
@@ -611,18 +640,19 @@ function JscadViewer({
         }
       }
 
-      optionsRef.current.entities = [...referenceEntitiesRef.current, ...geometryEntities, ...rayPathEntities]
+      optionsRef.current.entities = [
+        ...referenceEntitiesRef.current,
+        ...geometryEntities,
+        ...meshEntities,
+        ...rayPathEntities,
+      ]
       if (shouldFit) {
-        const meshFitEntities = geometryEntities.filter((entity) => {
-          const visuals = entity.visuals
-          return (
-            typeof visuals === 'object' && visuals !== null && 'drawCmd' in visuals && visuals.drawCmd === 'drawMesh'
-          )
-        })
         const zoomed = renderer.controls.orbit.zoomToFit({
           camera: cameraRef.current,
           controls: controlsRef.current,
-          entities: meshFitEntities.length > 0 ? meshFitEntities : geometryEntities,
+          entities: [
+            { geometry: { positions: sceneBounds, transforms: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] } },
+          ],
         })
         Object.assign(cameraRef.current, zoomed.camera)
         Object.assign(controlsRef.current, zoomed.controls)
@@ -638,6 +668,7 @@ function JscadViewer({
       if (!renderScene()) return
       if (shouldFit) {
         lastFittedPartsRef.current = parts
+        lastFittedResultRef.current = resultIdentity
         onRenderEnd()
       }
     } catch (error) {
@@ -646,6 +677,8 @@ function JscadViewer({
     }
   }, [
     displayLayers,
+    sceneBounds,
+    resultIdentity,
     lengthUnit,
     onRenderEnd,
     onRenderError,
@@ -728,7 +761,7 @@ function JscadViewer({
     <div className="flex h-full min-h-[320px] w-full flex-col overflow-hidden bg-slate-50 lg:min-h-0">
       <ViewerToolbar
         availableSources={availableSources}
-        meshMode={Boolean(meshRenderData)}
+        meshMode={Boolean(meshRenderData) && parts.length === 0}
         pickMode={pickMode}
         visibleSources={visibleSources}
         onPickModeChange={setPickMode}
@@ -777,18 +810,30 @@ function JscadViewer({
             event.preventDefault()
             const dx = event.clientX - lastPoint.x
             const dy = event.clientY - lastPoint.y
-            const controlChange =
-              lastPoint.button === 2
-                ? renderer.controls.orbit.pan({ camera: cameraRef.current, controls: controlsRef.current, speed: 1 }, [
-                    -dx,
-                    dy,
-                  ])
-                : renderer.controls.orbit.rotate(
-                    { camera: cameraRef.current, controls: controlsRef.current, speed: 0.006 },
-                    [dx, dy],
-                  )
-            Object.assign(cameraRef.current, controlChange.camera)
-            Object.assign(controlsRef.current, controlChange.controls)
+            if (lastPoint.button === 2) {
+              const rect = event.currentTarget.getBoundingClientRect()
+              Object.assign(
+                cameraRef.current,
+                panCamera({
+                  aspect: cameraRef.current.aspect as number,
+                  deltaX: dx,
+                  deltaY: dy,
+                  fov: cameraRef.current.fov as number,
+                  height: rect.height,
+                  position: cameraRef.current.position as number[],
+                  target: cameraRef.current.target as number[],
+                  up: cameraRef.current.up as number[],
+                  width: rect.width,
+                }),
+              )
+            } else {
+              const controlChange = renderer.controls.orbit.rotate(
+                { camera: cameraRef.current, controls: controlsRef.current, speed: 0.006 },
+                [dx, dy],
+              )
+              Object.assign(cameraRef.current, controlChange.camera)
+              Object.assign(controlsRef.current, controlChange.controls)
+            }
             lastPointRef.current = {
               ...lastPoint,
               moved:
@@ -957,7 +1002,7 @@ function JscadViewer({
 
         {rayPathCount > 0 ? (
           <div className="pointer-events-none absolute bottom-3 left-3 rounded border border-slate-200 bg-white/90 px-3 py-2 text-xs text-slate-700 shadow-sm backdrop-blur-sm">
-            Ray paths · {rayPathCount.toLocaleString()} paths · {raySegmentCount.toLocaleString()} segments
+            Polylines · {rayPathCount.toLocaleString()} paths · {raySegmentCount.toLocaleString()} segments
           </div>
         ) : null}
 

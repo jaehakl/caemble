@@ -1,3 +1,4 @@
+import type { RecordedResultContracts } from '@/contracts/results'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient, type QueryKey } from '@tanstack/react-query'
 import type { MeasurementRecordedData } from '@/api'
@@ -12,6 +13,8 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
   const queryScope = usePrivateQueryScope()
   const [measurement, setMeasurement] = useState<SavedMeasurement | null>(null)
   const [recordedDataTree, setRecordedDataTree] = useState<MeasurementRecordedData>({})
+  const [resultContracts, setResultContracts] = useState<RecordedResultContracts | null>(null)
+  const [resultErrors, setResultErrors] = useState<Readonly<Record<string, string>>>({})
   const [loading, setLoading] = useState(false)
   const [downloadProgress, setDownloadProgress] = useState<Readonly<{ completed: number; total: number }> | null>(null)
   const requestSequence = useRef(0)
@@ -32,6 +35,8 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
     setDownloadProgress(null)
     setMeasurement(null)
     setRecordedDataTree({})
+    setResultContracts(null)
+    setResultErrors({})
   }, [cancelActiveQueries])
 
   useEffect(
@@ -78,7 +83,9 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
         const recorded = await queryClient.fetchQuery(recordedDataOptions)
         if (sequence !== requestSequence.current) return null
         setMeasurement(row)
-        setRecordedDataTree(recorded)
+        setRecordedDataTree(recorded.recorded_data)
+        setResultContracts(recorded.result_contracts)
+        setResultErrors(recorded.result_errors ?? {})
         return row
       } catch (error: unknown) {
         if (sequence !== requestSequence.current) return null
@@ -100,6 +107,8 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
 
   return useMemo(
     () => ({
+      resultContracts,
+      resultErrors,
       measurement,
       recordedRows: snapshot.rows,
       recordedData: snapshot.data,
@@ -114,7 +123,16 @@ export function useCaeDataSelection(experimentId: number | null, scope: 'mine' |
       clearMeasurement,
       loadMeasurement,
     }),
-    [clearMeasurement, downloadProgress, loadMeasurement, loading, measurement, snapshot],
+    [
+      clearMeasurement,
+      downloadProgress,
+      loadMeasurement,
+      loading,
+      measurement,
+      snapshot,
+      resultContracts,
+      resultErrors,
+    ],
   )
 }
 

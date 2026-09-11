@@ -583,49 +583,6 @@ function validateRecordedSchema(
   }
 }
 
-function validateRayPaths(recordedData: Readonly<Record<string, unknown>>, issues: KernelContractIssue[]) {
-  const rayPaths = recordedData.rayPaths
-  if (rayPaths === undefined) return
-  if (!isRecord(rayPaths) || Object.prototype.hasOwnProperty.call(rayPaths, 'dtype')) {
-    addIssue(issues, 'recordedData.rayPaths', 'must be the reserved ray-path group.')
-    return
-  }
-  const expected = Object.freeze({
-    vertices: ['float32', 2, 'Length', 'm'],
-    pathOffsets: ['uint32', 1, undefined, undefined],
-    segmentPower: ['float32', 1, 'optics.RadiantFlux', 'W'],
-    pathWavelength: ['float32', 1, 'Wavelength', 'm'],
-    segmentEvent: ['uint8', 1, undefined, undefined],
-  } as const)
-  Object.keys(rayPaths).forEach((name) => {
-    if (!Object.prototype.hasOwnProperty.call(expected, name))
-      addIssue(issues, `recordedData.rayPaths.${name}`, 'is not a reserved ray-path member.')
-  })
-  Object.entries(expected).forEach(([name, [dtype, rank, quantityKindName, unit]]) => {
-    const member = rayPaths[name]
-    const path = `recordedData.rayPaths.${name}`
-    if (!isRecord(member) || member.dtype !== dtype || !Array.isArray(member.axes) || member.axes.length !== rank) {
-      addIssue(issues, path, `must be a rank-${rank} ${dtype} tensor descriptor.`)
-      return
-    }
-    if (quantityKindName === undefined) {
-      if (member.quantityKind !== undefined || member.unit !== undefined || member.basis !== undefined) {
-        addIssue(issues, path, 'must not declare quantity metadata.')
-      }
-    } else {
-      if (member.quantityKind !== quantityKindName)
-        addIssue(issues, `${path}.quantityKind`, `must be ${quantityKindName}.`)
-      compatibleUnit(member.unit, unit, `${path}.unit`, issues)
-    }
-  })
-  const vertices = rayPaths.vertices
-  if (isRecord(vertices) && Array.isArray(vertices.axes)) {
-    const componentAxis = vertices.axes[1]
-    if (!isRecord(componentAxis) || componentAxis.length !== 3) {
-      addIssue(issues, 'recordedData.rayPaths.vertices.axes[1].length', 'must be 3.')
-    }
-  }
-}
 
 export function assertExperimentAuthoringSemantics(
   catalog: CatalogRuntimeSlice,
@@ -633,7 +590,6 @@ export function assertExperimentAuthoringSemantics(
 ) {
   const issues: KernelContractIssue[] = []
   validateRecordedSchema(evaluated.simulationProgram.recordedData, 'recordedData', catalog, issues, false)
-  validateRayPaths(evaluated.simulationProgram.recordedData, issues)
   const checkedMaterials = new Set<object>()
   validateSceneMaterials(evaluated.scene, 'experiment.geometry', catalog, checkedMaterials, issues)
   Object.entries(evaluated.taskScenes).forEach(([taskName, scene]) => {

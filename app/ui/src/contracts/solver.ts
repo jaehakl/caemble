@@ -33,7 +33,23 @@ export type KernelStructuredBundleSpec = Readonly<{
   resourceKind: 'structuredBundle'
   members: Readonly<Record<string, KernelDataSpec>>
 }>
-export type KernelArtifactDataSpec = KernelDataSpec | KernelStructuredBundleSpec
+export type ResultVisualization = Readonly<{
+  kind: 'tensor' | 'bundle' | 'mesh-field' | 'structured-field' | 'polyline'
+  coordinateSpace?: 'experiment'
+  valuePath?: string
+  spatialAxes?: readonly number[]
+  components?: readonly string[]
+  valueKind?: 'displacement' | 'stress'
+  vertices?: string
+  offsets?: string
+  attributes?: Readonly<Record<string, Readonly<{ path: string; association: 'path' | 'segment' }>>>
+}>
+
+export type KernelArtifactDataSpec = (KernelDataSpec | KernelStructuredBundleSpec) &
+  Readonly<{
+    visualization?: ResultVisualization
+    recording?: 'mesh-field' | 'structured-field'
+  }>
 
 export type KernelValueSpec = KernelDataSpec &
   Readonly<{

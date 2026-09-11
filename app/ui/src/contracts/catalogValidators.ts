@@ -1,3 +1,4 @@
+import { resultVisualizationSchema } from './resultValidators'
 import { calculationDefinitionSchema } from './api/calculationValidators'
 import { z } from 'zod'
 import type {
@@ -225,7 +226,12 @@ const kernelMethodSchema = z
 
 const kernelOutputMethodSchema = kernelMethodSchema.extend({
   artifactType: z.string(),
-  data: kernelArtifactDataSpecSchema,
+  data: kernelArtifactDataSpecSchema.and(
+    z.object({
+      visualization: resultVisualizationSchema,
+      recording: z.enum(['mesh-field', 'structured-field']).optional(),
+    }),
+  ),
 })
 
 const kernelMaterialSchema = z

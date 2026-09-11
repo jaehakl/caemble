@@ -11,6 +11,7 @@ const common = {
   document: createCadSourceDocument('experiment', sourceBundle),
   savedSourceBundle: sourceBundle,
   records: [],
+  resultContracts: {},
   calculations,
   values: { namespace: 'user', repository: 'repo', key: 'copy', name: 'Copy', description: '', bump: 'patch' as const },
 }

@@ -1,9 +1,11 @@
+import type { createMeshFieldRenderData } from './meshFields'
 import { useCallback, useMemo, useState } from 'react'
 import { resolveCadViewerContent, type CadViewerDocument } from './cadViewerContent'
 import JscadViewer from './JscadViewer'
 import type { CadViewerSource } from './sourceLayers'
 import type { CadViewerSelectionQuery, CadViewerSourceLookupStatus } from './selection'
-import type { RayPathBundle } from '@/lib/cad/model'
+import type { UcumUnit } from '@/lib/cad/model'
+import type { PolylineBundle } from '@/lib/cad/model'
 
 export type { CadViewerDocument } from './cadViewerContent'
 
@@ -17,7 +19,10 @@ export type CadViewerProps = {
   onSelectionQueryChange?: (query: CadViewerSelectionQuery | null) => void
   onSelectionSourcePathsChange?: (values: readonly string[]) => void
   onToggleViewerExpanded?: () => void
-  rayPaths?: readonly RayPathBundle[]
+  polylines?: readonly PolylineBundle[]
+  meshRenderData?: ReturnType<typeof createMeshFieldRenderData>
+  meshIdentity?: string
+  displayUnit?: UcumUnit
   selectionQuery?: CadViewerSelectionQuery | null
   selectionSourceStatus?: Readonly<Record<string, CadViewerSourceLookupStatus>>
   viewerExpanded?: boolean
@@ -33,7 +38,10 @@ export function CadViewer({
   onSelectionQueryChange,
   onSelectionSourcePathsChange,
   onToggleViewerExpanded,
-  rayPaths,
+  polylines,
+  meshRenderData,
+  meshIdentity,
+  displayUnit,
   selectionQuery,
   selectionSourceStatus,
   viewerExpanded,
@@ -60,11 +68,13 @@ export function CadViewer({
         availableSources={content.availableSources}
         emptyMessage={content.emptyMessage}
         layers={content.layers}
-        lengthUnit={content.lengthUnit}
+        lengthUnit={displayUnit ?? content.lengthUnit}
         onFindSelectionSource={onFindSelectionSource}
         onSelectionQueryChange={onSelectionQueryChange}
         onSelectionSourcePathsChange={onSelectionSourcePathsChange}
-        rayPaths={rayPaths}
+        polylines={polylines}
+        meshRenderData={meshRenderData}
+        meshIdentity={meshIdentity}
         selectionQuery={selectionQuery}
         selectionSourceStatus={selectionSourceStatus}
         visibleSources={content.visibleSources}

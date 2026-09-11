@@ -1,3 +1,4 @@
+import type { RecordedResultContracts } from '../results'
 import type { CalculationDefinition } from './calculation'
 import type { ExperimentSourceBundle } from '../cad-persistence'
 import type { DataSchema } from './measurement'
@@ -27,6 +28,7 @@ type ExperimentMetadata = Readonly<{
   sourceBundle: ExperimentSourceBundle
   bundleHash: string
   records: readonly ExperimentRecordContract[]
+  result_contracts: RecordedResultContracts
 }>
 
 export type SaveExperimentRequest = ExperimentMetadata &
@@ -50,6 +52,7 @@ export type SaveExperimentResponse = Readonly<{
   version: string
   coordinate: string
   bundleHash: string
+  result_contracts: RecordedResultContracts
   sourceLocked: boolean
   derivedCounts: ExperimentDerivedCounts
 }>
@@ -77,6 +80,7 @@ export type SavedExperimentRecord = Readonly<{
   description?: string | null
   source_bundle: ExperimentSourceBundle
   source_hash: string
+  result_contracts?: RecordedResultContracts | null
   repository?: string
   key?: string
   version?: string

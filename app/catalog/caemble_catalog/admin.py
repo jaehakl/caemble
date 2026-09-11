@@ -516,7 +516,11 @@ def _rebuild_artifact_types(connection: sqlite3.Connection) -> None:
            ORDER BY artifact_type"""
     ).fetchall()
     for row in rows:
-        data_json = canonical_json(json.loads(row["data_json"]))
+        # Presentation and recording projections do not change the Solver-to-Solver value ABI.
+        data = json.loads(row["data_json"])
+        data.pop("visualization", None)
+        data.pop("recording", None)
+        data_json = canonical_json(data)
         previous = contracts.setdefault(row["artifact_type"], data_json)
         if previous != data_json:
             raise CatalogError(f"Artifact type {row['artifact_type']} has conflicting data contracts")

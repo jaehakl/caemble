@@ -1,3 +1,4 @@
+import { readMeasurementResults } from './measurementResults'
 import type { CalculationUpsertResponse } from '@/contracts/api/calculation'
 import { externalizeObjects } from './objectStorage'
 import { calculationDataOutputSchema } from '@/contracts/api/calculationValidators'
@@ -271,6 +272,7 @@ export function createDbTables(client: CaembleClient) {
             validate: parseIdResponse,
           },
         ),
+      readResults: (id: number, context?: RequestContext) => readMeasurementResults(client, id, context),
       readRecordedData: async (id: number, context?: RequestContext) =>
         (
           await request<Readonly<{ recorded_data: MeasurementRecordedData }>>(

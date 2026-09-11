@@ -194,6 +194,7 @@ class VisibleDataReader:
                 "vars": _bounded_value(row["vars"]),
                 "material_snapshot": _bounded_value(row["material_snapshot"]),
                 "recordedData": [_json_mapping(item) for item in recorded_rows],
+                "resultContracts": (await self.db.get(Experiment, row["experiment_id"])).result_contracts,
             }
         if resource == "recorded_data":
             row = await self._recorded_row(resource_id, include_data=False)

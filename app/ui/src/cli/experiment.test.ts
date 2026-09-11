@@ -32,10 +32,14 @@ it.each(['create', 'overwrite', 'new_version'] as const)(
 export default experiment({
   varsSchema: {}, lengthUnit: 'mm', geometry: () => [],
   recordedData: {
-    samples: { dtype: 'int32', axes: [{ name: 'samples' }] },
-    group: { label: { dtype: 'string' } },
+    samples: { task: 'fixture', output: 'samples' },
+    group: { task: 'fixture', output: 'group' },
   },
 })`,
+          'tasks/fixture.tsx': `import { defineTask } from '@caemble/core'
+export default defineTask({ kernel: { name: 'fixture', version: '1.0.0' }, config: () => ({ parameters: {}, initializations: [], boundaryConditions: [], outputs: [
+{ key: 'samples', methodId: 'samples', target: [], parameters: {} }, { key: 'group', methodId: 'group', target: [], parameters: {} }
+] }) })`,
           'geometry.tsx': 'export {}',
           'material.tsx': 'export {}',
           'simulate.py': 'def simulate(context):\n    return {}\n',
@@ -43,7 +47,66 @@ export default experiment({
       }
       const catalog: CatalogRuntimeSlice = {
         catalogRevision: 'contract-fixture',
-        solvers: [],
+        solvers: [
+          {
+            name: 'fixture',
+            version: '1.0.0',
+            descriptor: {
+              name: 'fixture',
+              version: '1.0.0',
+              description: '',
+              referenceLengthUnit: 'mm',
+              parameters: {},
+              materials: [],
+              inputPorts: {},
+              observations: {},
+              methods: {
+                initializations: [],
+                boundaryConditions: [],
+                outputs: [
+                  {
+                    methodId: 'samples',
+                    description: '',
+                    minimumOccurrences: 0,
+                    maximumOccurrences: 1,
+                    target: {
+                      source: 'experiment',
+                      kind: 'geometry',
+                      minimumTargets: 0,
+                      maximumTargets: 0,
+                      minimumResolved: 0,
+                      maximumResolved: 0,
+                    },
+                    parameters: {},
+                    artifactType: 'fixture/samples@1',
+                    data: { dtype: 'int32', axes: [{ name: 'samples' }], visualization: { kind: 'tensor' } },
+                  },
+                  {
+                    methodId: 'group',
+                    description: '',
+                    minimumOccurrences: 0,
+                    maximumOccurrences: 1,
+                    target: {
+                      source: 'experiment',
+                      kind: 'geometry',
+                      minimumTargets: 0,
+                      maximumTargets: 0,
+                      minimumResolved: 0,
+                      maximumResolved: 0,
+                    },
+                    parameters: {},
+                    artifactType: 'fixture/group@1',
+                    data: {
+                      resourceKind: 'structuredBundle',
+                      members: { label: { dtype: 'string' } },
+                      visualization: { kind: 'bundle' },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
         quantityKinds: [],
 
         materialModels: [],
@@ -138,6 +201,7 @@ export default experiment({
             coordinate: '@fixture/tests/same-source@0.1.0',
             bundleHash: sourceHash,
             sourceLocked: true,
+            result_contracts: {},
             derivedCounts: { measurements: 1, recordedData: 2, calculations: 0 },
           })
         },

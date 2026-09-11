@@ -17,7 +17,7 @@ class MaterialModelTests(unittest.TestCase):
     def test_runtime_slice_expands_model_and_nested_quantity_dependencies(self):
         with open_catalog() as catalog:
             result = catalog.runtime_slice(
-                solvers=[("ray-tracing", "0.5.0")], quantity_kinds=[],
+                solvers=[("ray-tracing", "1.0.0")], quantity_kinds=[],
                 material_models=["heat.fourier-conduction@1"],
             )
             names = {model["key"] for model in result["materialModels"]}
@@ -45,7 +45,7 @@ class MaterialModelTests(unittest.TestCase):
             tables = {row[0] for row in catalog._all("SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertNotIn("material_parameters", tables)
             self.assertNotIn("solver_material_properties", tables)
-            fdtd = catalog.get_solver_manifest("fdtd", "2.1.0")["descriptor"]
+            fdtd = catalog.get_solver_manifest("fdtd", "3.0.0")["descriptor"]
             overlay = next(role for role in fdtd["materials"] if role["role"] == "geometryOverlay")
             self.assertEqual(overlay["target"], {"category": "geometry", "source": "experiment"})
 
@@ -56,12 +56,12 @@ class MaterialModelTests(unittest.TestCase):
                 with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                     return main(["--database", str(draft), *args])
             self.assertEqual(run("draft", "create", "--source", str(catalog_path())), 0)
-            identity = ("ray-tracing", "0.5.0", "opticalDomain", "opticalResponse")
+            identity = ("ray-tracing", "1.0.0", "opticalDomain", "opticalResponse")
             self.assertEqual(run("solver", "material-model-option", "remove", *identity, "optics.frequency-sampled-complex-index@1"), 0)
             self.assertEqual(run("solver", "material-model-option", "upsert", *identity, "missing.model@1"), 1)
             self.assertEqual(run("solver", "material-model-option", "remove", *identity, "optics.constant-complex-index@1"), 1)
             with open_catalog(draft) as catalog:
-                group = catalog.get_solver_manifest("ray-tracing", "0.5.0")["descriptor"]["materials"][0]["modelGroups"][0]
+                group = catalog.get_solver_manifest("ray-tracing", "1.0.0")["descriptor"]["materials"][0]["modelGroups"][0]
                 self.assertEqual(group["oneOf"], ["optics.constant-complex-index@1"])
             self.assertEqual(run("solver", "material-model-option", "upsert", *identity, "optics.frequency-sampled-complex-index@1"), 0)
             self.assertEqual(run("query", "material-model", "optics.constant-complex-index@1"), 0)

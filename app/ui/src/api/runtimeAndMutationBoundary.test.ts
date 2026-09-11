@@ -164,6 +164,7 @@ describe('core mutation response contracts', () => {
         coordinate: 'caemble:experiment/user/workspace/beam@0.1.0',
         bundleHash: 'hash',
         sourceLocked: true,
+        result_contracts: {},
         derivedCounts: { measurements: 1, recordedData: -1, calculations: 1 },
       }),
     ).toThrow()

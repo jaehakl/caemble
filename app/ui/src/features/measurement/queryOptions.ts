@@ -37,7 +37,7 @@ export function measurementRecordedDataQueryOptions(
 ) {
   return queryOptions({
     queryKey: measurementQueryKeys.recordedData(scope, measurementId),
-    queryFn: ({ signal }) => dbTables.Measurement.readRecordedData(measurementId, { signal, onObjectProgress }),
+    queryFn: ({ signal }) => dbTables.Measurement.readResults(measurementId, { signal, onObjectProgress }),
     staleTime: 30_000,
   })
 }

@@ -20,7 +20,7 @@ const tableSurface = {
   Job: ['list', 'kill'],
   Experiment: ['recordType', 'listRows', 'save', 'deleteRows', 'usage', 'available', 'demoCandidates', 'replaceDemos'],
   ExperimentRecord: ['recordType', 'listRows'],
-  Measurement: ['recordType', 'listRows', 'create', 'readRecordedData', 'deleteRows'],
+  Measurement: ['recordType', 'listRows', 'create', 'readResults', 'readRecordedData', 'deleteRows'],
   RecordedData: ['recordType', 'listRows'],
   Calculation: ['recordType', 'listRows', 'upsertRow', 'deleteRows'],
   CalculationData: ['recordType', 'listRows', 'analysis', 'analysisStatus', 'missing', 'save', 'scalars'],

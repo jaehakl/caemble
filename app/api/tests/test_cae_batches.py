@@ -75,6 +75,7 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
             experiment = await db.get(Experiment, self.experiment_id)
             experiment.source_bundle = self.example["sourceBundle"]
             experiment.source_hash = self.example["bundleHash"]
+            experiment.result_contracts = self.item()["measurement"]["experiment"]["simulationProgram"]["resultContracts"]
             await db.commit()
 
     async def asyncTearDown(self):
@@ -84,6 +85,7 @@ class CaeBatchDatabaseTests(unittest.IsolatedAsyncioTestCase):
         return {"measurement": {"kind": "measurement", "experiment": {
             "kind": "experiment", "sourceHash": self.example["bundleHash"], "variables": {"fixed": 7},
             "varsSchema": {}, "scene": {}, "taskScenes": {}, "simulationProgram": {
+                "resultContracts": {"signal": {"task": "fixture", "output": "signal", "solver": {"name": "fixture", "version": "1"}, "artifactType": "fixture", "catalogRevision": self.catalog.meta()["catalogRevision"], "visualization": {"kind": "tensor"}, "schema": {"dtype": "float64", "tensorOrder": 0, "quantityKind": "DimensionlessRatio"}}},
                 "pythonSource": self.example["sourceBundle"]["files"]["simulate.py"], "tasks": {}, "recordedData": {
                 "signal": {"dtype": "float64", "tensorOrder": 0, "quantityKind": "DimensionlessRatio"},
             }}}, "materialSnapshot": {"materials": {}}, "taskMaterialSnapshots": {},

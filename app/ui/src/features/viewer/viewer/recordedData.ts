@@ -41,6 +41,11 @@ export type ResolvedRecordedData = Readonly<{
 
 function quantityKindDefinition(rule: RecordedDataRule, quantityKinds: RecordedQuantityKinds) {
   if (!rule.result.quantityKind) return undefined
+  const storedOrder = (rule.result as RecordedDataRule['result'] & { tensorOrder?: number }).tensorOrder
+  if (storedOrder !== undefined) return {
+    name: rule.result.quantityKind, domain: '', tensorOrder: storedOrder, opaque: false,
+    applicableUnits: rule.result.unit ? [rule.result.unit] : [],
+  }
   const definition = quantityKinds.get(rule.result.quantityKind)
   if (!definition) throw new Error(`QuantityKind ${rule.result.quantityKind}의 Catalog 정의가 없습니다.`)
   return definition
